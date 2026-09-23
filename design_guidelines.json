@@ -1,0 +1,318 @@
+{
+  "project_name": "Growth Diligence",
+  "app_type": "dashboard",
+  "design_philosophy": {
+    "concept": "Institutional Bloomberg Terminal meets Modern Precision SaaS",
+    "emotional_tone": "Authoritative, deterministic, forensic, unshakeable trust",
+    "forbidden_patterns": [
+      "No generic AI purple/violet gradients (#7351B7 or similar)",
+      "No rounded-3xl toy-like SaaS card aesthetic",
+      "No Inter or generic sans for key headings and analytical overlines",
+      "No ungrounded metric cards without trace lineage indicators",
+      "No transparent dropdown or navigation backgrounds"
+    ],
+    "fusion_influences": [
+      "Swiss Grid & Financial Ticker precision (tabular lining numerals, crisp 1px borders)",
+      "Institutional Terminal command center ergonomics (obsidian canvas, high density, dark slate layers)",
+      "Forensic Audit lineage (amber/emerald deterministic signals, pinpoint row-level provenance tooltips)"
+    ]
+  },
+  "theme": {
+    "default_mode": "dark",
+    "supports_toggle": true,
+    "rationale": "Financial diligence analysts and growth investors examine dense cohort grids, multi-currency revenue lines, and CRM pipelines over long sessions. A deep Obsidian/Graphite theme paired with crisp contrast reduces eye strain and reinforces the institutional terminal gravity."
+  },
+  "typography": {
+    "font_family_headings": "Outfit, -apple-system, BlinkMacSystemFont, sans-serif",
+    "font_family_body": "IBM Plex Sans, -apple-system, BlinkMacSystemFont, sans-serif",
+    "font_family_mono_numbers": "JetBrains Mono, Menlo, monospace",
+    "google_fonts_import": "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap",
+    "scale": {
+      "h1": "text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight font-heading leading-tight",
+      "h2": "text-2xl sm:text-3xl font-semibold tracking-tight font-heading",
+      "h3": "text-xl sm:text-2xl font-semibold font-heading",
+      "h4": "text-base sm:text-lg font-medium text-slate-200",
+      "kpi_large": "text-3xl sm:text-4xl font-mono font-bold tracking-tight text-white",
+      "kpi_sub": "text-sm text-slate-400 font-sans",
+      "table_header": "text-xs font-mono uppercase tracking-wider text-slate-400 font-semibold",
+      "table_cell": "text-xs sm:text-sm font-mono text-slate-200",
+      "provenance_chip": "text-[10px] font-mono tracking-tight font-medium uppercase px-1.5 py-0.5 rounded border"
+    }
+  },
+  "colors": {
+    "palette": {
+      "canvas_base": "#0B0F17",
+      "surface_card": "#111726",
+      "surface_card_subtle": "#161F33",
+      "surface_elevated": "#1D2840",
+      "surface_hover": "#22304E",
+      "border_default": "#1E293B",
+      "border_highlight": "#334155",
+      "text_primary": "#F8FAFC",
+      "text_secondary": "#94A3B8",
+      "text_tertiary": "#64748B",
+      "accent_primary": "#0284C7",
+      "accent_primary_hover": "#0369A1",
+      "provenance_badge_bg": "#0F172A",
+      "provenance_badge_border": "#38BDF8"
+    },
+    "semantic_states": {
+      "verified_healthy": {
+        "text": "#10B981",
+        "bg": "rgba(16, 185, 129, 0.12)",
+        "border": "#059669",
+        "label": "Audit Verified"
+      },
+      "growth_positive": {
+        "text": "#34D399",
+        "bg": "rgba(52, 211, 153, 0.1)",
+        "label": "Exceeding Target"
+      },
+      "warning_divergence": {
+        "text": "#F59E0B",
+        "bg": "rgba(245, 158, 11, 0.12)",
+        "border": "#D97706",
+        "label": "Assumption Gap / At Risk"
+      },
+      "critical_churn": {
+        "text": "#F43F5E",
+        "bg": "rgba(244, 63, 94, 0.12)",
+        "border": "#E11D48",
+        "label": "High Churn / Breach"
+      },
+      "not_computable": {
+        "text": "#94A3B8",
+        "bg": "rgba(148, 163, 184, 0.08)",
+        "border": "#475569",
+        "label": "Missing Input Field"
+      }
+    },
+    "cohort_retention_heatmap": {
+      "tier_100_plus": "bg-emerald-600/90 text-white font-mono",
+      "tier_90_99": "bg-emerald-700/70 text-slate-100 font-mono",
+      "tier_80_89": "bg-emerald-900/50 text-slate-200 font-mono",
+      "tier_70_79": "bg-amber-900/40 text-amber-200 font-mono",
+      "tier_below_70": "bg-rose-950/60 text-rose-300 font-mono",
+      "tier_empty": "bg-slate-900/60 text-slate-600 font-mono"
+    }
+  },
+  "layout_and_grids": {
+    "dashboard_mode": "High Density Terminal Grid (Mode B)",
+    "container_max_width": "max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-6",
+    "grid_metric_strip": "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4 mb-6",
+    "grid_main_charts": "grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6",
+    "chart_left_span": "lg:col-span-8",
+    "chart_right_span": "lg:col-span-4",
+    "grid_tables": "grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6",
+    "cohort_table_span": "lg:col-span-8",
+    "missing_data_panel_span": "lg:col-span-4",
+    "surface_card_style": "bg-[#111726] border border-[#1E293B] rounded-lg p-5 shadow-sm hover:border-[#334155] transition-colors relative overflow-hidden"
+  },
+  "component_specifications": {
+    "header_navigation": {
+      "type": "Fixed institutional command bar",
+      "classes": "sticky top-0 z-50 bg-[#0B0F17]/90 backdrop-blur-md border-b border-[#1E293B] px-6 py-3.5 flex items-center justify-between",
+      "elements": [
+        "Brand Logo: 'GROWTH DILIGENCE' with terminal node icon and institutional badge ('v1.0 Deterministic Engine')",
+        "Active Audit Selector: Dropdown showing target ARR, reporting currency, and company name with quick switch",
+        "Primary Tab Navigation: 'Audit Hub' | 'Upload & Mapping' | 'Growth Dashboard' | 'Missing Data & Diagnostics'",
+        "Live Status Indicator: Green pulsing node 'Deterministic Model Active — 0% Heuristics'",
+        "CTA Button: '+ New Audit' button (sharp corners, border-slate-700 bg-sky-600 hover:bg-sky-500 text-white font-medium)"
+      ]
+    },
+    "metric_cards_with_provenance": {
+      "kpis": [
+        {
+          "id": "arr",
+          "label": "Ending ARR",
+          "value": "$24.8M",
+          "delta": "+38.4% YoY",
+          "status": "growth_positive",
+          "source_reference": {
+            "file": "Q4_Revenue_Lines.xlsx",
+            "sheet": "Arr_Schedule_FY25",
+            "rows": "Rows 14–482",
+            "deterministic_rule": "Sum of active recurring contract lines * FX_USD"
+          }
+        },
+        {
+          "id": "nrr",
+          "label": "Net Revenue Retention",
+          "value": "118.4%",
+          "delta": "+2.1% vs Target",
+          "status": "growth_positive",
+          "source_reference": {
+            "file": "Customer_Billing_Ledger.csv",
+            "sheet": "Billing_Cohort_T12",
+            "rows": "Rows 2–1,840",
+            "deterministic_rule": "(Ending ARR Cohort - Churn + Expansions) / Starting ARR Cohort"
+          }
+        },
+        {
+          "id": "gross_churn",
+          "label": "Gross Revenue Churn",
+          "value": "6.8%",
+          "delta": "-0.9% (Improving)",
+          "status": "growth_positive",
+          "source_reference": {
+            "file": "Q4_Revenue_Lines.xlsx",
+            "sheet": "Churn_Events_FY25",
+            "rows": "Rows 8–96",
+            "deterministic_rule": "Contract cancellations & down-sells divided by base ARR"
+          }
+        },
+        {
+          "id": "cac_payback",
+          "label": "CAC Payback Period",
+          "value": "14.2 mos",
+          "delta": "vs 12.0 mo target",
+          "status": "warning_divergence",
+          "source_reference": {
+            "file": "P&L_Audited_FY24_25.xlsx",
+            "sheet": "Sales_Marketing_Opex",
+            "rows": "Rows 54–78 & CRM_Deals.csv",
+            "deterministic_rule": "(Prior Q S&M Expense) / (Net New ARR * Gross Margin 76%)"
+          }
+        },
+        {
+          "id": "sales_cycle",
+          "label": "Median Sales Cycle",
+          "value": "64 days",
+          "delta": "+8 days vs last Q",
+          "status": "warning_divergence",
+          "source_reference": {
+            "file": "Hubspot_CRM_Deals.csv",
+            "sheet": "Closed_Won_Deals",
+            "rows": "Rows 1–320",
+            "deterministic_rule": "Median(Closed_Date - Deal_Created_Date) for closed won stage"
+          }
+        },
+        {
+          "id": "win_rate",
+          "label": "Opportunity Win Rate",
+          "value": "27.4%",
+          "delta": "+1.8% vs benchmark",
+          "status": "growth_positive",
+          "source_reference": {
+            "file": "Hubspot_CRM_Deals.csv",
+            "sheet": "Opportunity_Pipeline",
+            "rows": "Rows 1–1,140",
+            "deterministic_rule": "Closed Won count / (Closed Won + Closed Lost count)"
+          }
+        }
+      ],
+      "hover_provenance_spec": {
+        "interaction": "On cursor hover over any number, a pinned inspection popover appears with 1px border (#38BDF8), showing exact file name, sheet tab, row coordinates, deterministic formula, and an 'Inspect Source Rows' action button."
+      }
+    },
+    "upload_and_mapping_wizard": {
+      "steps": [
+        "1. File Ingestion (Drag-and-drop Revenue lines, CRM deals, P&L statements)",
+        "2. Header-to-Field Mapping (Automated fuzzy matching with interactive override dropdowns)",
+        "3. Multi-Currency FX Configuration (Base USD, EUR, GBP, JPY with audit spot rate overrides)",
+        "4. Billing & Terms Calibration (Annual upfront vs monthly in-advance, churn recognition rules)"
+      ],
+      "required_field_mappings": {
+        "revenue_schedule": ["customer_id", "contract_start", "contract_end", "arr_value", "currency", "segment"],
+        "crm_deals": ["deal_id", "stage_name", "created_date", "close_date", "deal_value", "owner"],
+        "pl_financials": ["fiscal_month", "sales_marketing_expense", "gross_margin_pct", "headcount"]
+      }
+    },
+    "cohort_retention_table": {
+      "type": "Deterministic heatmap matrix",
+      "x_axis": "Month 0, Month 3, Month 6, Month 9, Month 12, Month 18, Month 24",
+      "y_axis": "Cohort vintage (Q1 2023, Q2 2023, Q3 2023, Q4 2023, Q1 2024, Q2 2024, Q3 2024, Q4 2024)",
+      "cell_interaction": "Hovering cell highlights exact cohort starting ARR, retained ARR, expansion ARR, and points to Revenue ledger rows"
+    },
+    "charts_suite": {
+      "chart_1": {
+        "title": "Monthly MRR Trajectory by Segment (Stacked)",
+        "type": "Stacked Area / Bar Chart (Recharts)",
+        "segments": ["Enterprise", "Mid-Market", "Commercial / SMB"],
+        "provenance": "Aggregated deterministically across 1,840 active subscription line items"
+      },
+      "chart_2": {
+        "title": "NRR Cohort Drift Over Time",
+        "type": "Multi-line with benchmark band (100% baseline)",
+        "provenance": "Derived from Net Expansion vs Gross Churn ledger"
+      },
+      "chart_3": {
+        "title": "Growth Target Sanity: Required vs Observed Net-New Customers",
+        "type": "Composed Bar + Target Trajectory Step Line",
+        "provenance": "Compares CRM Pipeline velocity against required Target ARR velocity"
+      }
+    },
+    "missing_data_panel": {
+      "type": "Forensic Diagnostics Panel",
+      "description": "Explains with mathematical transparency why specific metrics are currently UNCOMPUTABLE, preventing false confidence in diligence.",
+      "items": [
+        {
+          "metric": "Magic Number (Sales Efficiency)",
+          "reason": "Missing Q3 Sales & Marketing expense line in P&L spreadsheet",
+          "unlocked_by": "Upload P&L statement with 'Sales & Marketing Operating Expense' column or map cell C42",
+          "status": "blocked"
+        },
+        {
+          "metric": "Lead-to-Opportunity Conversion Velocity",
+          "reason": "CRM export lacks top-of-funnel 'MQL_Created_Date' field",
+          "unlocked_by": "Export Hubspot Lifecycle Stage history or map 'First Inbound Touch' column",
+          "status": "warning"
+        },
+        {
+          "metric": "Logo Churn by Cohort (Mid-Market)",
+          "reason": "Subscription cancellations lack distinct customer cancellation date",
+          "unlocked_by": "Map 'Cancellation_Date' or enable auto-infer from Contract End date in Settings",
+          "status": "blocked"
+        }
+      ]
+    }
+  },
+  "interactive_states_and_testing": {
+    "test_id_conventions": {
+      "metric_card": "data-testid=\"metric-card-{metric-id}\"",
+      "provenance_trigger": "data-testid=\"provenance-hover-{metric-id}\"",
+      "provenance_tooltip": "data-testid=\"provenance-popover-{metric-id}\"",
+      "new_audit_btn": "data-testid=\"create-audit-button\"",
+      "audit_table_row": "data-testid=\"audit-row-{audit-id}\"",
+      "delete_audit_btn": "data-testid=\"delete-audit-{audit-id}\"",
+      "upload_dropzone": "data-testid=\"upload-dropzone-{file-type}\"",
+      "column_mapping_select": "data-testid=\"map-column-{field-name}\"",
+      "confirm_mapping_btn": "data-testid=\"confirm-mapping-button\"",
+      "tab_dashboard": "data-testid=\"nav-tab-growth-dashboard\"",
+      "tab_audit_list": "data-testid=\"nav-tab-audit-list\"",
+      "tab_mapping": "data-testid=\"nav-tab-mapping-wizard\"",
+      "tab_missing_data": "data-testid=\"nav-tab-missing-data\"",
+      "cohort_cell": "data-testid=\"cohort-cell-{cohort}-{month}\"",
+      "currency_selector": "data-testid=\"reporting-currency-select\"",
+      "missing_data_resolve_btn": "data-testid=\"resolve-missing-data-{metric-id}\""
+    }
+  },
+  "curated_image_assets": {
+    "trading_terminal_workspace": {
+      "url": "https://images.unsplash.com/photo-1707762890671-52ef6d6f51e7?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1NzZ8MHwxfHNlYXJjaHwzfHxmaW5hbmNpYWwlMjBhbmFseXRpY3MlMjBpbnN0aXR1dGlvbiUyMHRyYWRpbmclMjBkZXNrfGVufDB8fHx8MTc5MDE3NjcyNHww&ixlib=rb-4.1.0&q=85",
+      "description": "Forensic financial analyst desk with multi-monitor data charts and quantitative models",
+      "usage_location": "Audit Hub empty state / diligence briefing background scrim (max opacity bg-black/40)"
+    },
+    "forensic_code_terminal": {
+      "url": "https://images.pexels.com/photos/11798249/pexels-photo-11798249.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "description": "High-density stock and valuation figures on workstation monitor",
+      "usage_location": "Deterministic Engine Verification modal hero illustration"
+    }
+  },
+  "instructions_to_main_agent": [
+    "1. Structure the application around 4 primary tabs: 'Audit Management' (list, create, delete audits), 'Data Ingestion & Mapping' (multi-file upload, field mapper, FX rates, terms), 'Growth Dashboard' (KPIs with provenance hover, segment breakdown, cohort retention heatmap, stacked MRR and trajectory charts), and 'Forensic Diagnostics & Missing Data' (uncomputable metrics with unlocking prerequisites).",
+    "2. Ensure EVERY metric number on the dashboard includes the interactive provenance hover card (data-testid='provenance-hover-{metric-id}'). When hovered, it must reveal the exact file name, sheet tab, row boundaries, and deterministic mathematical formula used.",
+    "3. Use JetBrains Mono or monospace font for all financial figures, cohort retention percentages, dates, and currency values with tabular-nums.",
+    "4. Implement mock initial audits (e.g. 'Apex Cloud Corp — Series B Diligence', 'OmniData Systems — Growth Buyout Review', 'Vanguard SaaS — Q3 Checkup') with preloaded deterministic data so the user can immediately experience the interactive lineage and cohort heatmap without needing to upload files first.",
+    "5. In the Upload & Mapping Wizard, provide functional mock file upload with auto-mapped fields, an editable dropdown for each field, currency selector (USD, EUR, GBP, JPY), and dynamic missing-data notifications when key fields are deliberately unmapped.",
+    "6. Adhere strictly to the dark institutional palette (#0B0F17 base, #111726 cards, #1E293B borders) with crisp emerald, amber, and sky blue accents. Avoid purple SaaS gradients entirely.",
+    "7. Include all required data-testid attributes listed in interactive_states_and_testing for automated test durability."
+  ],
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": {
+    "component_reuse": "Prioritize using existing primitives from src/components/ui/ (Dialog, Tabs, Popover, DropdownMenu, HoverCard, Tooltip, Sonner toasts). Override fixed h-9 heights where appropriate.",
+    "contrast_and_accessibility": "Ensure all text meets APCA/WCAG AA contrast against slate-900 backgrounds. Always provide explicit hover text colors.",
+    "toasts": "Use Sonner for user actions (Audit created, File mapped, FX rate updated, Audit exported).",
+    "spacing": "Maintain generous internal padding (p-5 or p-6 in cards, p-8 in wizard panels) to prevent border collisions.",
+    "motion": "Use crisp micro-interactions via framer-motion (0.15s - 0.2s duration) with smooth opacity/transform transitions."
+  }
+}

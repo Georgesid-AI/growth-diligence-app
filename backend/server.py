@@ -1,0 +1,367 @@
+from fastapi import FastAPI, APIRouter, HTTPException, UploadFile, File
+from dotenv import load_dotenv
+from starlette.middleware.cors import CORSMiddleware
+from motor.motor_asyncio import AsyncIOMotorClient
+import os
+import io
+import logging
+import uuid
+from pathlib import Path
+from datetime import datetime, timezone
+from typing import Optional
+
+import pandas as pd
+from pydantic import BaseModel, Field
+
+import growth_engine as ge
+import demo_data
+
+ROOT_DIR = Path(__file__).parent
+load_dotenv(ROOT_DIR / ".env")
+
+mongo_url = os.environ["MONGO_URL"]
+client = AsyncIOMotorClient(mongo_url)
+db = client[os.environ["DB_NAME"]]
+
+app = FastAPI(title="Growth Diligence Engine")
+api = APIRouter(prefix="/api")
+logger = logging.getLogger("growth")
+logging.basicConfig(level=logging.INFO)
+
+# ---------------------------------------------------------------------------
+# Dataset field definitions (normalized names + fuzzy-match aliases)
+# ---------------------------------------------------------------------------
+FIELD_DEFS = {
+    "revenue": {
+        "required": {
+            "customer_id": ["customer", "customer id", "account", "client", "cust"],
+            "invoice_date": ["invoice date", "date", "billing date", "posted"],
+            "amount": ["amount", "value", "revenue", "total", "arr", "mrr"],
+            "currency": ["currency", "ccy", "curr"],
+        },
+        "optional": {
+            "service_start": ["service start", "start date", "period start", "term start"],
+            "service_end": ["service end", "end date", "period end", "term end"],
+            "segment": ["segment", "tier", "size", "band"],
+            "revenue_type": ["revenue type", "type", "recurring", "rec/one-off"],
+        },
+        "dates": ["invoice_date", "service_start", "service_end"],
+        "numeric": ["amount"],
+    },
+    "crm": {
+        "required": {
+            "deal_id": ["deal id", "opportunity id", "deal", "id"],
+            "created_date": ["created", "create date", "created date", "open date"],
+            "close_date": ["close date", "closed", "won date", "close"],
+            "stage": ["stage", "status", "outcome"],
+            "amount": ["amount", "value", "deal value", "acv"],
+        },
+        "optional": {
+            "segment": ["segment", "tier", "size"],
+            "founder_involved": ["founder", "founder involved", "founder-led", "exec involved"],
+        },
+        "dates": ["created_date", "close_date"],
+        "numeric": ["amount"],
+    },
+    "pnl": {
+        "required": {
+            "month": ["month", "period", "date", "fiscal month"],
+            "sm_expense": ["sales & marketing", "s&m", "sales and marketing", "marketing expense", "sm expense"],
+            "revenue": ["revenue", "total revenue", "sales", "turnover"],
+            "cost_of_revenue": ["cost of revenue", "cogs", "cost of sales", "cost"],
+        },
+        "optional": {},
+        "dates": ["month"],
+        "numeric": ["sm_expense", "revenue", "cost_of_revenue"],
+    },
+}
+
+
+def _score(field, alias, lc):
+    if lc == alias:
+        return 100
+    if lc.startswith(alias) or alias.startswith(lc):
+        return 80 if min(len(lc), len(alias)) >= 4 else 30
+    if alias in lc:  # alias is a substring of the column header
+        return 60
+    if lc in alias and len(lc) >= 4:  # column header is a substring of the alias
+        return 40
+    return 0
+
+
+def suggest_mapping(dtype: str, columns: list) -> dict:
+    defs = FIELD_DEFS[dtype]
+    all_fields = {**defs["required"], **defs["optional"]}
+    lowered = {c.lower().strip(): c for c in columns}
+    # score every (field, column) pair
+    candidates = []
+    for field, aliases in all_fields.items():
+        for alias in [field.replace("_", " ")] + aliases:
+            for lc, orig in lowered.items():
+                s = _score(field, alias, lc)
+                if s:
+                    candidates.append((s, field, orig))
+    candidates.sort(reverse=True, key=lambda x: x[0])
+    mapping = {f: None for f in all_fields}
+    used_cols = set()
+    for s, field, col in candidates:
+        if mapping[field] is None and col not in used_cols:
+            mapping[field] = col
+            used_cols.add(col)
+    return mapping
+
+
+def parse_file(content: bytes, filename: str):
+    if filename.lower().endswith(".csv"):
+        df = pd.read_csv(io.BytesIO(content))
+        sheet = "CSV"
+    elif filename.lower().endswith((".xlsx", ".xls")):
+        xls = pd.ExcelFile(io.BytesIO(content))
+        sheet = xls.sheet_names[0]
+        df = xls.parse(sheet)
+    else:
+        raise HTTPException(400, "Only .xlsx and .csv files are supported")
+    df.columns = [str(c) for c in df.columns]
+    return df, sheet
+
+
+def df_to_records(df: pd.DataFrame):
+    d = df.astype(object).where(pd.notnull(df), None)
+    recs = d.to_dict("records")
+    for r in recs:
+        for k, v in r.items():
+            if isinstance(v, (pd.Timestamp, datetime)):
+                r[k] = v.isoformat()
+            elif isinstance(v, float) and (v != v or v in (float("inf"), float("-inf"))):
+                r[k] = None
+    return recs
+
+
+def normalize(rows: list, dtype: str, mapping: dict) -> pd.DataFrame:
+    if not rows:
+        return pd.DataFrame()
+    raw = pd.DataFrame(rows)
+    defs = FIELD_DEFS[dtype]
+    out = pd.DataFrame()
+    out["_row"] = range(2, len(raw) + 2)
+    for field, col in mapping.items():
+        if col and col in raw.columns:
+            out[field] = raw[col].values
+    for f in defs["dates"]:
+        if f in out.columns:
+            out[f] = pd.to_datetime(out[f], errors="coerce")
+    for f in defs["numeric"]:
+        if f in out.columns:
+            out[f] = pd.to_numeric(out[f], errors="coerce")
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Models
+# ---------------------------------------------------------------------------
+class AuditCreate(BaseModel):
+    company_name: str
+    reporting_currency: str = "EUR"
+    target_arr: float = 0
+    target_date: Optional[str] = None
+
+
+class MappingPayload(BaseModel):
+    mapping: dict
+    fx: dict = Field(default_factory=dict)
+    billing_terms: dict = Field(default_factory=dict)
+
+
+async def audit_public(a: dict) -> dict:
+    a.pop("_id", None)
+    ds = await db.datasets.find({"audit_id": a["id"]}, {"rows": 0, "_id": 0}).to_list(10)
+    a["datasets"] = {
+        d["dtype"]: {k: d.get(k) for k in ("file", "sheet", "columns", "mapping", "fx", "billing_terms", "preview", "row_count")}
+        for d in ds
+    }
+    return a
+
+
+# ---------------------------------------------------------------------------
+# Audit CRUD
+# ---------------------------------------------------------------------------
+@api.get("/")
+async def root():
+    return {"service": "growth-diligence", "status": "ok"}
+
+
+@api.post("/audits")
+async def create_audit(payload: AuditCreate):
+    audit = {
+        "id": str(uuid.uuid4()),
+        "company_name": payload.company_name,
+        "reporting_currency": payload.reporting_currency,
+        "target_arr": payload.target_arr,
+        "target_date": payload.target_date,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "status": "draft",
+        "results": None,
+    }
+    await db.audits.insert_one(dict(audit))
+    return audit
+
+
+@api.get("/audits")
+async def list_audits():
+    return await db.audits.find({}, {"_id": 0, "results": 0}).sort("created_at", -1).to_list(200)
+
+
+@api.get("/audits/{audit_id}")
+async def get_audit(audit_id: str):
+    a = await db.audits.find_one({"id": audit_id})
+    if not a:
+        raise HTTPException(404, "Audit not found")
+    return await audit_public(a)
+
+
+@api.delete("/audits/{audit_id}")
+async def delete_audit(audit_id: str):
+    a = await db.audits.find_one({"id": audit_id})
+    if not a:
+        raise HTTPException(404, "Audit not found")
+    await db.audits.delete_one({"id": audit_id})
+    await db.datasets.delete_many({"audit_id": audit_id})
+    return {"deleted": audit_id}
+
+
+# ---------------------------------------------------------------------------
+# Datasets: upload + mapping
+# ---------------------------------------------------------------------------
+@api.post("/audits/{audit_id}/datasets/{dtype}/upload")
+async def upload_dataset(audit_id: str, dtype: str, file: UploadFile = File(...)):
+    if dtype not in FIELD_DEFS:
+        raise HTTPException(400, "Unknown dataset type")
+    a = await db.audits.find_one({"id": audit_id})
+    if not a:
+        raise HTTPException(404, "Audit not found")
+    content = await file.read()
+    df, sheet = parse_file(content, file.filename)
+    columns = list(df.columns)
+    rows = df_to_records(df)
+    mapping = suggest_mapping(dtype, columns)
+    preview = rows[:8]
+    await db.datasets.replace_one(
+        {"audit_id": audit_id, "dtype": dtype},
+        {"audit_id": audit_id, "dtype": dtype, "file": file.filename, "sheet": sheet,
+         "columns": columns, "rows": rows, "row_count": len(rows), "mapping": mapping,
+         "fx": {}, "billing_terms": {}, "preview": preview},
+        upsert=True,
+    )
+    return {
+        "dtype": dtype, "file": file.filename, "sheet": sheet, "columns": columns,
+        "row_count": len(rows), "suggested_mapping": mapping, "preview": preview,
+        "fields": {"required": list(FIELD_DEFS[dtype]["required"]), "optional": list(FIELD_DEFS[dtype]["optional"])},
+    }
+
+
+@api.get("/fields")
+async def get_fields():
+    return {dt: {"required": list(v["required"]), "optional": list(v["optional"])} for dt, v in FIELD_DEFS.items()}
+
+
+@api.put("/audits/{audit_id}/datasets/{dtype}/mapping")
+async def save_mapping(audit_id: str, dtype: str, payload: MappingPayload):
+    ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype})
+    if not ds:
+        raise HTTPException(404, "Dataset not uploaded")
+    await db.datasets.update_one(
+        {"audit_id": audit_id, "dtype": dtype},
+        {"$set": {"mapping": payload.mapping, "fx": payload.fx, "billing_terms": payload.billing_terms}},
+    )
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Compute
+# ---------------------------------------------------------------------------
+@api.post("/audits/{audit_id}/compute")
+async def compute_audit(audit_id: str):
+    a = await db.audits.find_one({"id": audit_id})
+    if not a:
+        raise HTTPException(404, "Audit not found")
+    ds = {d["dtype"]: d for d in await db.datasets.find({"audit_id": audit_id}).to_list(10)}
+    if "revenue" not in ds:
+        raise HTTPException(409, "Revenue lines are required before compute")
+
+    rev = normalize(ds["revenue"]["rows"], "revenue", ds["revenue"]["mapping"])
+    crm = normalize(ds["crm"]["rows"], "crm", ds["crm"]["mapping"]) if "crm" in ds else pd.DataFrame()
+    pnl = normalize(ds["pnl"]["rows"], "pnl", ds["pnl"]["mapping"]) if "pnl" in ds else pd.DataFrame()
+
+    fx = {k.upper(): float(v) for k, v in ds["revenue"].get("fx", {}).items()}
+    fx[a["reporting_currency"].upper()] = 1.0
+    config = {
+        "reporting_currency": a["reporting_currency"], "target_arr": a["target_arr"],
+        "target_date": a["target_date"], "fx": fx,
+        "billing_terms": ds["revenue"].get("billing_terms", {}), "default_l": 1,
+    }
+    sources = {t: {"file": ds[t]["file"], "sheet": ds[t]["sheet"]} for t in ds}
+    results = ge.compute_all(rev, crm, pnl, config, sources)
+    await db.audits.update_one(
+        {"id": audit_id},
+        {"$set": {"results": results, "status": "computed", "computed_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    return results
+
+
+@api.get("/audits/{audit_id}/results")
+async def get_results(audit_id: str):
+    a = await db.audits.find_one({"id": audit_id}, {"_id": 0})
+    if not a:
+        raise HTTPException(404, "Audit not found")
+    if not a.get("results"):
+        raise HTTPException(409, "Audit not computed yet")
+    keys = ("id", "company_name", "reporting_currency", "target_arr", "target_date", "status", "computed_at")
+    return {"audit": {k: a.get(k) for k in keys}, "results": a["results"]}
+
+
+app.include_router(api)
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.on_event("startup")
+async def seed_demo():
+    if await db.audits.count_documents({"demo": True}) > 0:
+        return
+    for spec in demo_data.DEMO_AUDITS:
+        datasets, meta = demo_data.build(spec)
+        audit_id = str(uuid.uuid4())
+        norm = {}
+        for dtype, (df, mapping) in datasets.items():
+            recs = df_to_records(df)
+            await db.datasets.replace_one(
+                {"audit_id": audit_id, "dtype": dtype},
+                {"audit_id": audit_id, "dtype": dtype, "file": meta[dtype]["file"], "sheet": meta[dtype]["sheet"],
+                 "columns": list(df.columns), "rows": recs, "row_count": len(recs),
+                 "mapping": mapping, "fx": meta.get("fx", {}), "billing_terms": {}, "preview": recs[:8]},
+                upsert=True,
+            )
+            norm[dtype] = normalize(recs, dtype, mapping)
+        fx = {k.upper(): v for k, v in meta.get("fx", {}).items()}
+        fx[spec["reporting_currency"].upper()] = 1.0
+        config = {"reporting_currency": spec["reporting_currency"], "target_arr": spec["target_arr"],
+                  "target_date": spec["target_date"], "fx": fx, "billing_terms": {}, "default_l": 1}
+        sources = {t: {"file": meta[t]["file"], "sheet": meta[t]["sheet"]} for t in datasets}
+        results = ge.compute_all(norm["revenue"], norm["crm"], norm["pnl"], config, sources)
+        await db.audits.insert_one({
+            "id": audit_id, "company_name": spec["company_name"], "reporting_currency": spec["reporting_currency"],
+            "target_arr": spec["target_arr"], "target_date": spec["target_date"],
+            "created_at": datetime.now(timezone.utc).isoformat(), "status": "computed",
+            "computed_at": datetime.now(timezone.utc).isoformat(), "results": results, "demo": True,
+        })
+    logger.info("Seeded demo audits")
+
+
+@app.on_event("shutdown")
+async def shutdown_db_client():
+    client.close()
