@@ -155,6 +155,84 @@ def test_save_mapping_and_compute(session, new_audit, uploaded):
             f"{key} missing source metadata: {m.get('source')}"
 
 
+# --- Billing terms (NEW feature) ---
+@pytest.fixture(scope="module")
+def bt_audit(session):
+    r = session.post(f"{API}/audits", json={"company_name": "TEST_BT", "reporting_currency": "EUR"}, timeout=30)
+    a = r.json()
+    # Upload sample revenue (no service_start/end columns)
+    with open(SAMPLES["revenue"], "rb") as f:
+        up = session.post(f"{API}/audits/{a['id']}/datasets/revenue/upload",
+                          files={"file": ("revenue.csv", f, "text/csv")}, timeout=60).json()
+    yield a, up
+    session.delete(f"{API}/audits/{a['id']}", timeout=30)
+
+
+def test_revenue_customers_endpoint_no_service_dates(session, bt_audit):
+    a, up = bt_audit
+    r = session.get(f"{API}/audits/{a['id']}/datasets/revenue/customers?customer_col=Customer", timeout=30)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["has_service_dates"] is False
+    assert body["billing_terms"] == {}
+    assert set(body["customers"]) == {f"CUST-{i}" for i in range(1, 6)}
+
+
+def test_save_and_get_billing_terms_persistence(session, bt_audit):
+    a, up = bt_audit
+    payload = {"mapping": up["suggested_mapping"], "fx": {}, "billing_terms": {"CUST-1": "annual"}}
+    r = session.put(f"{API}/audits/{a['id']}/datasets/revenue/mapping", json=payload, timeout=30)
+    assert r.status_code == 200
+    got = session.get(f"{API}/audits/{a['id']}", timeout=30).json()
+    assert got["datasets"]["revenue"]["billing_terms"] == {"CUST-1": "annual"}
+
+
+def _single_row_revenue_csv():
+    return b"Customer,Invoice Date,Amount,Currency\nACME,2023-01-01,1200,EUR\n"
+
+
+@pytest.mark.parametrize("term,expected_months,expected_per_month", [
+    ("annual", 12, 100.0),
+    ("quarterly", 3, 400.0),
+    ("monthly", 1, 1200.0),
+])
+def test_mrr_spread_by_billing_term(session, term, expected_months, expected_per_month):
+    """Core rule: 1200 with billing term should spread evenly."""
+    r = session.post(f"{API}/audits", json={"company_name": f"TEST_SPREAD_{term}", "reporting_currency": "EUR"}, timeout=30)
+    aid = r.json()["id"]
+    try:
+        files = {"file": ("rev.csv", io.BytesIO(_single_row_revenue_csv()), "text/csv")}
+        up = session.post(f"{API}/audits/{aid}/datasets/revenue/upload", files=files, timeout=30).json()
+        payload = {"mapping": up["suggested_mapping"], "fx": {}, "billing_terms": {"ACME": term}}
+        pr = session.put(f"{API}/audits/{aid}/datasets/revenue/mapping", json=payload, timeout=30)
+        assert pr.status_code == 200
+        cr = session.post(f"{API}/audits/{aid}/compute", timeout=60)
+        assert cr.status_code == 200, cr.text
+        res = cr.json()
+        series = res["mrr_series"]["data"]
+        assert len(series) == expected_months, f"expected {expected_months} months, got {len(series)}: {series}"
+        for row in series:
+            assert abs(row["total"] - expected_per_month) < 0.01, f"month {row['month']} total={row['total']} expected {expected_per_month}"
+    finally:
+        session.delete(f"{API}/audits/{aid}", timeout=30)
+
+
+def test_mrr_spread_defaults_to_monthly_when_absent(session):
+    r = session.post(f"{API}/audits", json={"company_name": "TEST_SPREAD_default", "reporting_currency": "EUR"}, timeout=30)
+    aid = r.json()["id"]
+    try:
+        files = {"file": ("rev.csv", io.BytesIO(_single_row_revenue_csv()), "text/csv")}
+        up = session.post(f"{API}/audits/{aid}/datasets/revenue/upload", files=files, timeout=30).json()
+        payload = {"mapping": up["suggested_mapping"], "fx": {}, "billing_terms": {}}
+        session.put(f"{API}/audits/{aid}/datasets/revenue/mapping", json=payload, timeout=30)
+        cr = session.post(f"{API}/audits/{aid}/compute", timeout=60).json()
+        series = cr["mrr_series"]["data"]
+        assert len(series) == 1
+        assert abs(series[0]["total"] - 1200.0) < 0.01
+    finally:
+        session.delete(f"{API}/audits/{aid}", timeout=30)
+
+
 # --- Delete ---
 def test_delete_audit_cleans_datasets(session):
     r = session.post(f"{API}/audits", json={"company_name": "TEST_Del", "reporting_currency": "EUR"}, timeout=30)

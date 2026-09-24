@@ -1,0 +1,23 @@
+{
+  "summary": "Verified new per-customer BILLING TERM feature end-to-end. Backend: 16/16 pytest passing (added 6 new tests: revenue_customers endpoint, billing_terms persistence via PUT+GET, parametrized MRR-spread rule for annual/quarterly/monthly, and default-monthly-when-absent). Core rule verified: 1200 EUR single-row invoice spreads to 12x100 (annual), 3x400 (quarterly), 1x1200 (monthly/absent) in results.mrr_series.data. Frontend: BillingTerms section renders on /audit/{id}/mapping when revenue is uploaded and service dates are NOT mapped. Lists 5 customers from sample_data/revenue.csv, apply-all-annual sets CUST-1 select to 'annual', per-customer manual select works, search-input filters (typed 'CUST-2' -> 1 visible row), Confirm mapping persists billing_terms={'CUST-1':'annual'} to backend. When service_start AND service_end are mapped, the per-customer list disappears (0 rows) and explanatory note 'per-customer billing terms aren't needed' is visible. Regression: existing seeded demo audits still open, full upload+compute flow still works (test_save_mapping_and_compute passing).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "growth_engine.build_mrr_matrix correctly uses billing_terms.get(cust,'monthly') and TERM_MONTHS map; unknown term strings fall back to 1 month via .get(term,1) which is safe.",
+    "server.save_mapping persists billing_terms in the dataset doc; compute_audit passes ds['revenue']['billing_terms'] into config; audit_public exposes billing_terms in datasets.revenue payload — flow is clean.",
+    "MappingWizard BillingTerms component correctly re-fetches customers on customerCol change, and short-circuits to explanatory note when hasServiceDates is true. Note: when hasServiceDates is true the wrapper div no longer carries data-testid='billing-terms-section' — this matches the spec (per-customer list absent), but if a test wants to assert 'section visible with note', a testid on the alt branch would help. Non-blocking."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100% (16/16 pytest)", "frontend": "100% for all billing-terms flows tested"},
+  "test_credentials": "N/A - no auth",
+  "seed_data_creation": "Ephemeral TEST_ audits created and deleted per test.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Billing terms feature verified. Regression suite lives in /app/backend/tests/backend_test.py (16 tests including parametrized MRR-spread). Frontend selectors used: billing-terms-section, billing-row-{cust}, billing-term-{cust}, billing-apply-all-{term}, billing-search-input, confirm-mapping-button-revenue, compute-button.",
+  "rca of the issue": "N/A - feature verification, no bug"
+}
