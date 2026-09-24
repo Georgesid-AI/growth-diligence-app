@@ -1,0 +1,32 @@
+{
+  "summary": "Regression retest for Growth Diligence Phase 1. CRITICAL bug from iteration_1 (GET /api/audits/{demo_id} returning 500 due to NaN/Inf in results) is FIXED. Backend pytest suite is now 10/10 passing (added dedicated regression test test_demo_audit_get_returns_200_with_datasets that hits BOTH seeded demo audits and asserts 200 + datasets field). Frontend: opened a demo audit from the hub -> all three top-nav tabs (nav-tab-growth-dashboard, nav-tab-mapping-wizard, nav-tab-missing-data) now render and are visible; all 6 metric cards render with real values (ARR $2.10M, NRR 104.6%, Gross Churn 15.1%, CAC Payback 11.1 mo, Sales Cycle 62.5d, Win Rate 36.0%); provenance-hover-arr reveals provenance-popover-arr with File=Revenue_Lines.xlsx / Sheet=Billing / Rows=2-775; cohort heatmap renders 168 cohort-cell-* cells; clicking nav-tab-missing-data navigates to /diagnostics which shows both 'Missing Data' and 'Anomaly Flags' sections. Downstream HIGH issue from iteration_1 (hidden nav tabs) is also fixed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard", "issues": ["No data-testid on the MRR-by-segment area chart, NRR line chart, or Path to Plan panel (only cohort-cell-* was found). Charts render visually but automated tests must fall back to text/DOM heuristics. Consider adding data-testid='mrr-by-segment-chart', 'nrr-chart', 'path-to-plan-panel' for testability."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Optional: add data-testids on Dashboard charts (mrr-by-segment-chart, nrr-chart, path-to-plan-panel) for stronger automated coverage. Not blocking."
+  ],
+  "critical_code_review_comments": [
+    "sanitize() recursion approach in server.py is correct and applied at all four required exits (audit_public, get_results, compute output, versioned reseed). No further float-serialization edge cases surfaced across 10 backend tests + full UI walkthrough of a demo audit."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "100% (10/10 pytest)", "frontend": "100% for all requested regression checks"},
+  "test_credentials": "N/A - Phase 1 has no auth",
+  "seed_data_creation": "None. Reused seeded demo audits and /app/sample_data CSVs.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend regression at /app/backend/tests/backend_test.py now includes test_demo_audit_get_returns_200_with_datasets which locks in the NaN/Inf sanitize fix. If any new metric added later returns NaN/Inf, this test will still pass at the endpoint level but engine tests should also cover the new metric. UI charts (MRR area/NRR line/Path to Plan) currently lack data-testids; use text or role selectors if needed.",
+  "rca of the issue": "Previous 500 root cause was NaN/Inf values in the stored results dict being serialized by starlette's default json.dumps(allow_nan=False). Fix applied by main agent: a recursive sanitize() helper that replaces non-finite floats with None, invoked in audit_public(), get_results(), compute output before persisting, plus a versioned reseed_demo() to clean pre-existing bad demo docs. Verified: curl GET on both demo ids returns 200 with a 'datasets' object; UI Layout no longer sees null audit and renders all 3 nav tabs."
+}

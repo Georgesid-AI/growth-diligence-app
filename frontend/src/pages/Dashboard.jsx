@@ -114,7 +114,7 @@ export default function Dashboard() {
 
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6">
-        <Card className="lg:col-span-8" title="Monthly MRR by Segment" hint={`${r.mrr_series.months.length} months · recurring only`}>
+        <Card className="lg:col-span-8" testid="mrr-by-segment-chart" title="Monthly MRR by Segment" hint={`${r.mrr_series.months.length} months · recurring only`}>
           <ResponsiveContainer width="100%" height={300}>
             <AreaChart data={r.mrr_series.data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1E293B" />
@@ -130,7 +130,7 @@ export default function Dashboard() {
           </ResponsiveContainer>
         </Card>
 
-        <Card className="lg:col-span-4" title="NRR Over Time" hint="100% baseline">
+        <Card className="lg:col-span-4" testid="nrr-chart" title="NRR Over Time" hint="100% baseline">
           {r.nrr?.series ? (
             <ResponsiveContainer width="100%" height={300}>
               <LineChart data={r.nrr.series} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
@@ -183,7 +183,7 @@ export default function Dashboard() {
           </div>
         </Card>
 
-        <Card className="lg:col-span-4" title="Path to Plan" hint="required vs observed net-new customers / year">
+        <Card className="lg:col-span-4" testid="path-to-plan-panel" title="Path to Plan" hint="required vs observed net-new customers / year">
           {r.acv_path ? (
             <>
               <div className="grid grid-cols-2 gap-3 mb-4">
@@ -335,9 +335,9 @@ export default function Dashboard() {
   );
 }
 
-function Card({ title, hint, className = "", children }) {
+function Card({ title, hint, className = "", testid, children }) {
   return (
-    <div className={`bg-[#111726] border border-[#1E293B] rounded-lg p-5 ${className}`}>
+    <div data-testid={testid} className={`bg-[#111726] border border-[#1E293B] rounded-lg p-5 ${className}`}>
       <div className="flex items-baseline justify-between mb-4">
         <h3 className="font-heading font-semibold text-white text-sm">{title}</h3>
         {hint && <span className="text-[10px] font-mono text-slate-500">{hint}</span>}

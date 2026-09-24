@@ -41,6 +41,19 @@ def test_demo_audit_results_endpoint(session):
     assert "arr" in body["results"]
 
 
+def test_demo_audit_get_returns_200_with_datasets(session):
+    """Regression: GET /api/audits/{id} must return 200 (not 500) for BOTH seeded demo audits with 'datasets'."""
+    r = session.get(f"{API}/audits", timeout=30)
+    demos = [a for a in r.json() if a.get("status") == "computed"]
+    assert len(demos) >= 2, f"expected 2 demo audits, got {len(demos)}"
+    for a in demos[:2]:
+        rr = session.get(f"{API}/audits/{a['id']}", timeout=30)
+        assert rr.status_code == 200, f"demo {a['id']} GET failed: {rr.status_code} {rr.text[:200]}"
+        body = rr.json()
+        assert "datasets" in body and isinstance(body["datasets"], dict), \
+            f"demo {a['id']} missing datasets: keys={list(body.keys())}"
+
+
 # --- CRUD ---
 @pytest.fixture(scope="module")
 def new_audit(session):
