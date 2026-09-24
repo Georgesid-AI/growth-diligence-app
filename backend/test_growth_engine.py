@@ -471,6 +471,54 @@ def _missing_data():
     return True, needed.issubset(metrics)
 
 
+# --- As-of month (item 1) ---------------------------------------------------
+@case("As-of month: current MRR taken at as-of, not latest")
+def _asof_current():
+    rows = monthly_lines("A", {i: 100 + i for i in range(16)})  # rising MRR, months 0..15
+    config = {"reporting_currency": "EUR", "target_arr": 0, "target_date": None,
+              "fx": {}, "billing_terms": {}, "default_l": 1, "as_of_month": str(month(12).to_period("M"))}
+    res = ge.compute_all(rev_df([{**r, "invoice_date": r["invoice_date"]} for r in rows]), pd.DataFrame(), pd.DataFrame(), config, {})
+    # as-of is index 12 -> MRR must be 112 (not 115 from the latest month)
+    return 112.0, res["arr"]["mrr"]
+
+
+@case("As-of month: charts/series end at as-of month")
+def _asof_series_end():
+    rows = monthly_lines("A", {i: 100 for i in range(16)})
+    config = {"reporting_currency": "EUR", "target_arr": 0, "target_date": None,
+              "fx": {}, "billing_terms": {}, "default_l": 1, "as_of_month": str(month(12).to_period("M"))}
+    res = ge.compute_all(rev_df(rows), pd.DataFrame(), pd.DataFrame(), config, {})
+    return ("2024-01", 13), (res["mrr_series"]["months"][-1], len(res["mrr_series"]["months"]))
+
+
+@case("As-of month defaults to last P&L month")
+def _asof_default_pnl():
+    rows = monthly_lines("A", {i: 100 for i in range(16)})
+    pnl = pd.DataFrame([{"month": month(i), "sm_expense": 100, "revenue": 100, "cost_of_revenue": 20, "_row": i + 2}
+                        for i in range(10)])  # P&L only through index 9
+    config = {"reporting_currency": "EUR", "target_arr": 0, "target_date": None,
+              "fx": {}, "billing_terms": {}, "default_l": 1, "as_of_month": None}
+    res = ge.compute_all(rev_df(rows), pd.DataFrame(), pnl, config, {})
+    return "2023-10", res["as_of_month"]  # index 9 = 2023-10
+
+
+# --- Win rate excludes invalid deals (item 2) -------------------------------
+@case("Win rate excludes close<created deals (3W/2L = 60%)")
+def _winrate_excl_invalid():
+    created = pd.Timestamp("2024-01-01")
+    deals = pd.DataFrame([
+        {"deal_id": 1, "stage": "won", "created_date": created, "close_date": created + pd.Timedelta(days=30), "_row": 1},
+        {"deal_id": 2, "stage": "won", "created_date": created, "close_date": created + pd.Timedelta(days=40), "_row": 2},
+        {"deal_id": 3, "stage": "won", "created_date": created, "close_date": created + pd.Timedelta(days=50), "_row": 3},
+        {"deal_id": 4, "stage": "lost", "created_date": created, "close_date": created + pd.Timedelta(days=20), "_row": 4},
+        {"deal_id": 5, "stage": "lost", "created_date": created, "close_date": created + pd.Timedelta(days=25), "_row": 5},
+        {"deal_id": 6, "stage": "won", "created_date": created, "close_date": created - pd.Timedelta(days=5), "_row": 6},   # invalid
+        {"deal_id": 7, "stage": "lost", "created_date": created, "close_date": created - pd.Timedelta(days=3), "_row": 7},  # invalid
+    ])
+    wr = ge.compute_win_rate(deals, False)
+    return (60.0, 3, 2, 2), (wr["win_rate_pct"], wr["won"], wr["lost"], wr["excluded_invalid"])
+
+
 # ---------------------------------------------------------------------------
 # Runner + pytest hooks
 # ---------------------------------------------------------------------------

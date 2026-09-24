@@ -22,7 +22,7 @@ export default function AuditHub() {
   const [audits, setAudits] = useState(null);
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ company_name: "", reporting_currency: "EUR", target_arr: "", target_date: "" });
+  const [form, setForm] = useState({ company_name: "", reporting_currency: "EUR", target_arr: "", target_date: "", as_of_month: "" });
 
   const load = () => listAudits().then(setAudits);
   useEffect(() => { load(); }, []);
@@ -36,10 +36,11 @@ export default function AuditHub() {
         reporting_currency: form.reporting_currency,
         target_arr: parseFloat(form.target_arr) || 0,
         target_date: form.target_date || null,
+        as_of_month: form.as_of_month || null,
       });
       toast.success("Audit created");
       setOpen(false);
-      setForm({ company_name: "", reporting_currency: "EUR", target_arr: "", target_date: "" });
+      setForm({ company_name: "", reporting_currency: "EUR", target_arr: "", target_date: "", as_of_month: "" });
       nav(`/audit/${a.id}/mapping`);
     } catch (e) {
       toast.error("Failed to create audit");
@@ -121,6 +122,16 @@ export default function AuditHub() {
                   type="date"
                   value={form.target_date}
                   onChange={(e) => setForm({ ...form, target_date: e.target.value })}
+                  className="mt-1.5 bg-[#0B0F17] border-[#1E293B] font-mono"
+                />
+              </div>
+              <div>
+                <Label className="text-slate-300">As-of month <span className="text-slate-500 text-xs">(optional — defaults to last P&L month)</span></Label>
+                <Input
+                  data-testid="audit-asof-month-input"
+                  type="month"
+                  value={form.as_of_month}
+                  onChange={(e) => setForm({ ...form, as_of_month: e.target.value })}
                   className="mt-1.5 bg-[#0B0F17] border-[#1E293B] font-mono"
                 />
               </div>

@@ -4,11 +4,11 @@ import {
   AreaChart, Area, LineChart, Line, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid,
   Tooltip as RTooltip, ResponsiveContainer, ReferenceLine, Legend,
 } from "recharts";
-import { Loader2, AlertTriangle, TrendingUp } from "lucide-react";
+import { Loader2, AlertTriangle, TrendingUp, Download } from "lucide-react";
 import { Layout } from "@/components/Layout";
 import { MetricCard } from "@/components/MetricCard";
 import { Provenance } from "@/components/Provenance";
-import { getAudit, getResults } from "@/lib/api";
+import { getAudit, getResults, exportUrl } from "@/lib/api";
 import { money, pct, num } from "@/lib/format";
 
 const SEG_COLORS = ["#38BDF8", "#34D399", "#FBBF24", "#F472B6", "#94A3B8"];
@@ -52,6 +52,17 @@ export default function Dashboard() {
       </Layout>
     );
   }
+  if (error === "error") {
+    return (
+      <Layout audit={audit}>
+        <div className="border border-dashed border-[#1E293B] rounded-xl py-24 text-center">
+          <AlertTriangle className="h-10 w-10 text-rose-500 mx-auto mb-4" />
+          <p className="text-slate-300 mb-4">Couldn't load this audit's results.</p>
+          <button onClick={() => nav("/")} className="text-sky-400 hover:text-sky-300 underline">Back to Audit Hub →</button>
+        </div>
+      </Layout>
+    );
+  }
   if (!data) {
     return (
       <Layout audit={audit}>
@@ -89,9 +100,14 @@ export default function Dashboard() {
         <div>
           <h1 className="font-heading text-2xl sm:text-3xl font-bold tracking-tight text-white">{audit?.company_name}</h1>
           <p className="text-slate-500 text-xs font-mono mt-1">
-            Reporting currency {ccy} · computed {data.audit.computed_at?.slice(0, 10)} · hover any figure for source lineage
+            {r.as_of_month ? <span className="text-sky-400">as of {r.as_of_month}</span> : null}
+            {r.as_of_month ? " · " : ""}Reporting currency {ccy} · computed {data.audit.computed_at?.slice(0, 10)} · hover any figure for source lineage
           </p>
         </div>
+        <a href={exportUrl(id)} data-testid="export-results-button"
+          className="inline-flex items-center gap-2 px-3.5 py-2 rounded-md bg-[#1D2840] border border-[#334155] text-sm text-slate-200 hover:bg-[#22304E] transition-colors">
+          <Download className="h-4 w-4" /> Export results
+        </a>
       </div>
 
       {/* Metric strip */}
@@ -109,7 +125,8 @@ export default function Dashboard() {
           sub={r.sales_cycle ? `IQR ${r.sales_cycle.iqr?.[0]}–${r.sales_cycle.iqr?.[1]} · n=${r.sales_cycle.n}` : ""} />
         <MetricCard id="win_rate" label="Win Rate" status="neutral" source={r.win_rate?.source}
           value={r.win_rate ? pct(r.win_rate.win_rate_pct) : "n/c"}
-          sub={r.win_rate ? `${r.win_rate.won}W / ${r.win_rate.lost}L` : ""} />
+          sub={r.win_rate ? `${r.win_rate.won}W / ${r.win_rate.lost}L` : ""}
+          note={r.win_rate?.excluded_invalid ? `${r.win_rate.excluded_invalid} invalid excluded` : ""} />
       </div>
 
       {/* Charts */}
@@ -287,7 +304,9 @@ export default function Dashboard() {
                       <td className="py-1.5 pr-3">{v.gross_margin_pct != null ? `${v.gross_margin_pct}%` : "—"}</td>
                       {["L0", "L1", "L2"].map((L) => (
                         <td key={L} className="py-1.5 pr-3">
-                          {v[L].months != null ? `${v[L].months}` : <span className="text-slate-600" title={v[L].reason}>n/c</span>}
+                          {v[L].months != null
+                            ? <span title={v[L].sm_expense != null ? `S&M used: ${money(v[L].sm_expense, ccy)} · New MRR: ${money(v.new_mrr, ccy)} · GM: ${v.gross_margin_pct}%` : ""}>{v[L].months}</span>
+                            : <span className="text-slate-600" title={v[L].reason}>n/c</span>}
                         </td>
                       ))}
                     </tr>

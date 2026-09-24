@@ -6,7 +6,7 @@ import { Layout } from "@/components/Layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { getAudit, getFields, uploadDataset, saveMapping, computeAudit, getRevenueCustomers } from "@/lib/api";
+import { getAudit, getFields, uploadDataset, saveMapping, computeAudit, getRevenueCustomers, updateAudit } from "@/lib/api";
 
 const DTYPES = [
   { key: "revenue", label: "Revenue Lines", desc: "Recurring & one-off invoices — the basis for MRR/ARR, NRR and churn.", required: true },
@@ -21,13 +21,15 @@ export default function MappingWizard() {
   const [audit, setAudit] = useState(null);
   const [fields, setFields] = useState(null);
   const [computing, setComputing] = useState(false);
+  const [asOf, setAsOf] = useState("");
 
-  const load = useCallback(() => getAudit(id).then(setAudit), [id]);
+  const load = useCallback(() => getAudit(id).then((a) => { setAudit(a); setAsOf(a.as_of_month || ""); }), [id]);
   useEffect(() => { load(); getFields().then(setFields); }, [load]);
 
   const runCompute = async () => {
     setComputing(true);
     try {
+      await updateAudit(id, { as_of_month: asOf || null });
       await computeAudit(id);
       toast.success("Metrics computed");
       nav(`/audit/${id}/dashboard`);
@@ -55,10 +57,23 @@ export default function MappingWizard() {
             dependent metric to the diagnostics panel.
           </p>
         </div>
-        <Button data-testid="compute-button" onClick={runCompute} disabled={!hasRevenue || computing}
-          className="bg-sky-600 hover:bg-sky-500 gap-2">
-          {computing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />} Compute Metrics
-        </Button>
+        <div className="flex items-end gap-3">
+          <div>
+            <label className="text-[11px] font-mono uppercase tracking-wider text-slate-400 block mb-1">As-of month</label>
+            <Input
+              data-testid="asof-month-input"
+              type="month"
+              value={asOf}
+              onChange={(e) => setAsOf(e.target.value)}
+              className="h-9 w-40 bg-[#0B0F17] border-[#1E293B] font-mono"
+              placeholder="last P&L month"
+            />
+          </div>
+          <Button data-testid="compute-button" onClick={runCompute} disabled={!hasRevenue || computing}
+            className="bg-sky-600 hover:bg-sky-500 gap-2">
+            {computing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />} Compute Metrics
+          </Button>
+        </div>
       </div>
 
       <div className="space-y-5">

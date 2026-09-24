@@ -339,12 +339,20 @@ def compute_win_rate(deals: pd.DataFrame, founder_available: bool):
     if deals.empty:
         return None
     d = deals.copy()
+    # Exclude deals whose close date precedes their created date (per approved amendment) —
+    # same exclusion applied to sales cycle.
+    created = pd.to_datetime(d["created_date"], errors="coerce") if "created_date" in d.columns else pd.Series(pd.NaT, index=d.index)
+    closed = pd.to_datetime(d["close_date"], errors="coerce") if "close_date" in d.columns else pd.Series(pd.NaT, index=d.index)
+    invalid = created.notna() & closed.notna() & (closed < created)
+    excluded = int(invalid.sum())
+    d = d[~invalid].copy()
     d["stage_l"] = d.get("stage", "").astype(str).str.lower().str.strip()
     won = d["stage_l"].isin(WON_ALIASES).sum()
     lost = d["stage_l"].isin(LOST_ALIASES).sum()
     total = won + lost
     overall = won / total if total else None
-    out = {"won": int(won), "lost": int(lost), "win_rate_pct": _round(overall * 100) if overall is not None else None}
+    out = {"won": int(won), "lost": int(lost), "win_rate_pct": _round(overall * 100) if overall is not None else None,
+           "excluded_invalid": excluded}
 
     if founder_available and "founder_involved" in d.columns:
         split = {}
@@ -527,6 +535,32 @@ def compute_cohort_retention(mrr: pd.DataFrame, first_month: dict):
 # Orchestrator
 # ---------------------------------------------------------------------------
 
+def _first_months(mrr: pd.DataFrame) -> dict:
+    fm = {}
+    for cust in mrr.index:
+        active = mrr.columns[(mrr.loc[cust] > 0).values]
+        if len(active):
+            fm[cust] = active.min()
+    return fm
+
+
+def _resolve_as_of(as_of_str, pnl: pd.DataFrame, mrr: pd.DataFrame):
+    """As-of month = explicit override, else last P&L month, else last MRR month."""
+    if as_of_str:
+        try:
+            return pd.Period(str(as_of_str), "M")
+        except Exception:
+            pass
+    if pnl is not None and not pnl.empty and "month" in pnl.columns:
+        months = [_month_of(x) for x in pnl["month"]]
+        months = [m for m in months if m is not None]
+        if months:
+            return max(months)
+    if mrr is not None and not mrr.empty:
+        return mrr.columns[-1]
+    return None
+
+
 def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, config: dict, sources: dict):
     """Run the full engine. `sources` maps dataset -> {file, sheet}."""
     billing_terms = config.get("billing_terms", {})
@@ -541,6 +575,16 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
 
     mrr, seg_map, first_month, contrib_rows, mrr_notes = build_mrr_matrix(rev, billing_terms, fx)
 
+    # As-of month: truncate all "current"/time-series views to <= as_of. MRR after the
+    # as-of month is deferred revenue and must not appear in current figures.
+    as_of = _resolve_as_of(config.get("as_of_month"), pnl, mrr)
+    if not mrr.empty and as_of is not None:
+        keep = [c for c in mrr.columns if c <= as_of]
+        mrr = mrr.loc[:, keep] if keep else mrr.iloc[:, :0]
+        first_month = _first_months(mrr)
+    if not pnl.empty and as_of is not None and "month" in pnl.columns:
+        pnl = pnl[[(_month_of(x) is not None and _month_of(x) <= as_of) for x in pnl["month"]]]
+
     missing_data = []
     rev_src = sources.get("revenue", {"file": "revenue", "sheet": "Sheet1"})
     crm_src = sources.get("crm", {"file": "crm", "sheet": "Sheet1"})
@@ -551,7 +595,7 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
         s.add_rows(rows)
         return s.to_dict(rule)
 
-    results = {"reporting_currency": reporting_currency}
+    results = {"reporting_currency": reporting_currency, "as_of_month": _period_str(as_of) if as_of is not None else None}
 
     # ARR / MRR current
     if not mrr.empty:

@@ -7,8 +7,10 @@ export const api = axios.create({ baseURL: API });
 export const listAudits = () => api.get("/audits").then((r) => r.data);
 export const getAudit = (id) => api.get(`/audits/${id}`).then((r) => r.data);
 export const createAudit = (payload) => api.post("/audits", payload).then((r) => r.data);
+export const updateAudit = (id, payload) => api.put(`/audits/${id}`, payload).then((r) => r.data);
 export const deleteAudit = (id) => api.delete(`/audits/${id}`).then((r) => r.data);
 export const getResults = (id) => api.get(`/audits/${id}/results`).then((r) => r.data);
+export const exportUrl = (id) => `${API}/audits/${id}/export`;
 export const getFields = () => api.get("/fields").then((r) => r.data);
 export const computeAudit = (id) => api.post(`/audits/${id}/compute`).then((r) => r.data);
 export const saveMapping = (id, dtype, payload) =>
