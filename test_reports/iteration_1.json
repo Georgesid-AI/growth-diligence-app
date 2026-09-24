@@ -1,0 +1,55 @@
+{
+  "summary": "Growth Diligence Phase 1 tested end-to-end: 9/9 backend pytest cases pass (demo seed listing, CRUD, upload+suggested mapping incl. correct pnl cost_of_revenue disambiguation, save mapping, compute w/ NRR≈112.7 & sales cycle≈60 & missing_data=[], provenance sources present, results 409 for draft, delete cascade). Full UI flow verified: Audit Hub, Create Audit modal, Mapping Wizard uploads for revenue/crm/pnl, confirm mappings, Compute → Dashboard w/ 6 metric cards, provenance popover, charts (MRR area, NRR line, cohort heatmap w/168 cells), Path to Plan, Diagnostics page (Missing Data + Anomaly Flags), and delete flow with confirmation. All requested data-testids present. One CRITICAL backend bug found: GET /api/audits/{demo_id} returns HTTP 500 for the two seeded demo audits due to non-JSON-compliant float (NaN/Inf) in stored payload — this breaks the top-nav tabs on any demo-audit page (audit fetch fails, Layout renders no tabs, so nav-tab-missing-data/-mapping-wizard/-growth-dashboard are invisible from a demo dashboard, though the /results-backed dashboard itself still renders).",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "GET /api/audits/{demo_id}",
+        "issue": "HTTP 500 'Out of range float values are not JSON compliant' for both seeded demo audits. Likely source: `audit_public()` returns the raw Mongo audit doc which includes `results` (from ge.compute_all) containing NaN/Inf floats — Starlette's default json.dumps rejects them. Fresh (non-demo) audits work because their `results` field is null before compute. Fix idea: sanitize the returned payload (replace NaN/Inf with None) OR use a JSON encoder allow_nan=False+ custom replace OR exclude `results` in `audit_public` projection (Dashboard uses /results endpoint separately). Note the same encoder is fine for /results — the results endpoint appears not to hit the same edge case suggesting the offending NaN is inside a numeric field the results endpoint would also serialize; recommend a global custom JSONResponse or a recursive sanitize helper.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Layout (top nav)",
+        "issue": "On demo audit pages, top-nav tabs (nav-tab-growth-dashboard / -mapping-wizard / -missing-data) are absent because `getAudit(id)` returns 500 → `audit` stays null → tabs suppressed. Root cause is the backend 500 above; UI does not surface an error toast either.",
+        "selector": "[data-testid='nav-tab-missing-data']",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Open demo audit → Dashboard",
+        "issue": "Dashboard body renders (uses /results), but any interaction that depends on the audit object failing to load (tabs, delete/data buttons on nested pages) is silently broken. No user-visible error is shown.",
+        "affected_selectors": ["[data-testid^='nav-tab-']"]
+      }
+    ],
+    "design_issues": [
+      {"screen": "AuditHub NewAudit dialog", "issues": ["React warning: 'Missing Description or aria-describedby' on Radix DialogContent (accessibility)"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Fix GET /api/audits/{id} 500 on demo audits: sanitize NaN/Inf before response (e.g., recursive replace with None in audit_public, or exclude `results` since Dashboard already uses /results). Verify by curl on both seeded demo audit ids.",
+    "Consider showing a UI error toast when getAudit fails so users are not left with a spinner or hidden tabs.",
+    "Add aria-describedby (or DialogDescription) to the New Audit DialogContent for a11y."
+  ],
+  "critical_code_review_comments": [
+    "server.py `audit_public()` returns the whole audit document including `results` which contains numeric metrics — any NaN/Inf produced by growth_engine breaks JSON serialization. Preferred fix: strip `results` in the projection (Dashboard uses /results anyway) or wrap the app with a NaN-safe JSONResponse.",
+    "df_to_records handles NaN/Inf per row, but this cleaning is bypassed for anything computed after seed (i.e., `results` dict returned by compute_all and stored via update_one). Add the same sanitization to compute output before persisting.",
+    "Layout hides all tabs when `audit` is null — consider still rendering tabs using the URL param `id` so navigation remains usable during transient fetch errors."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "89% (9/9 API contract tests pass; 1 critical runtime 500 on demo GET)", "frontend": "95% (all requested testids and flows work; only issue is transient tab hiding caused by backend 500)"},
+  "test_credentials": "N/A - Phase 1 has no auth",
+  "seed_data_creation": "None (used seeded demos + /app/sample_data CSVs). Created and cleaned up two TEST_ audits during UI flow.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend regression suite lives at /app/backend/tests/backend_test.py (pytest, 9 tests). After main agent fixes the JSON-NaN bug, retest by: (1) `curl -sS -o /dev/null -w '%{http_code}\\n' $BASE/api/audits/<demo_id>` returns 200 for both demos; (2) re-run pytest; (3) run the UI script opening a demo audit and asserting `[data-testid=nav-tab-missing-data]` is visible.",
+  "rca of the issue": "GET /api/audits/{demo_id} → 500 ValueError: Out of range float values are not JSON compliant. Traceback ends in starlette/responses.py json.dumps (default allow_nan=False). Reproduction: `curl $BASE/api/audits/$(curl -s $BASE/api/audits | jq -r '.[0].id')` → 500. Cause: audit_public() returns the whole audit doc including compute results, which contain NaN/Inf (e.g., ratios where denominator is 0, or cac_payback of an infinity). Mitigation options: (a) exclude `results` in audit_public projection (safe; Dashboard fetches results via /api/audits/{id}/results); (b) recursively replace NaN/Inf with None before returning; (c) subclass JSONResponse to use json.dumps(..., allow_nan=True) or a custom encoder that emits null for non-finite floats."
+}

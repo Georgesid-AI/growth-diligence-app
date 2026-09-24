@@ -172,6 +172,18 @@ class MappingPayload(BaseModel):
     billing_terms: dict = Field(default_factory=dict)
 
 
+def sanitize(obj):
+    """Recursively replace non-finite floats (NaN/Inf) with None for valid JSON."""
+    import math
+    if isinstance(obj, float):
+        return None if (math.isnan(obj) or math.isinf(obj)) else obj
+    if isinstance(obj, dict):
+        return {k: sanitize(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [sanitize(v) for v in obj]
+    return obj
+
+
 async def audit_public(a: dict) -> dict:
     a.pop("_id", None)
     ds = await db.datasets.find({"audit_id": a["id"]}, {"rows": 0, "_id": 0}).to_list(10)
@@ -179,7 +191,7 @@ async def audit_public(a: dict) -> dict:
         d["dtype"]: {k: d.get(k) for k in ("file", "sheet", "columns", "mapping", "fx", "billing_terms", "preview", "row_count")}
         for d in ds
     }
-    return a
+    return sanitize(a)
 
 
 # ---------------------------------------------------------------------------
@@ -300,7 +312,7 @@ async def compute_audit(audit_id: str):
         "billing_terms": ds["revenue"].get("billing_terms", {}), "default_l": 1,
     }
     sources = {t: {"file": ds[t]["file"], "sheet": ds[t]["sheet"]} for t in ds}
-    results = ge.compute_all(rev, crm, pnl, config, sources)
+    results = sanitize(ge.compute_all(rev, crm, pnl, config, sources))
     await db.audits.update_one(
         {"id": audit_id},
         {"$set": {"results": results, "status": "computed", "computed_at": datetime.now(timezone.utc).isoformat()}},
@@ -316,7 +328,7 @@ async def get_results(audit_id: str):
     if not a.get("results"):
         raise HTTPException(409, "Audit not computed yet")
     keys = ("id", "company_name", "reporting_currency", "target_arr", "target_date", "status", "computed_at")
-    return {"audit": {k: a.get(k) for k in keys}, "results": a["results"]}
+    return sanitize({"audit": {k: a.get(k) for k in keys}, "results": a["results"]})
 
 
 app.include_router(api)
@@ -331,8 +343,10 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def seed_demo():
-    if await db.audits.count_documents({"demo": True}) > 0:
+    if await db.audits.count_documents({"seed_version": 2}) > 0:
         return
+    await db.datasets.delete_many({"audit_id": {"$in": [a["id"] for a in await db.audits.find({"demo": True}, {"id": 1}).to_list(50)]}})
+    await db.audits.delete_many({"demo": True})
     for spec in demo_data.DEMO_AUDITS:
         datasets, meta = demo_data.build(spec)
         audit_id = str(uuid.uuid4())
@@ -357,7 +371,7 @@ async def seed_demo():
             "id": audit_id, "company_name": spec["company_name"], "reporting_currency": spec["reporting_currency"],
             "target_arr": spec["target_arr"], "target_date": spec["target_date"],
             "created_at": datetime.now(timezone.utc).isoformat(), "status": "computed",
-            "computed_at": datetime.now(timezone.utc).isoformat(), "results": results, "demo": True,
+            "computed_at": datetime.now(timezone.utc).isoformat(), "results": sanitize(results), "demo": True, "seed_version": 2,
         })
     logger.info("Seeded demo audits")
 

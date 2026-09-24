@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger,
 } from "@/components/ui/dialog";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -73,6 +73,9 @@ export default function AuditHub() {
           <DialogContent className="bg-[#111726] border-[#1E293B] text-slate-100">
             <DialogHeader>
               <DialogTitle className="font-heading">Create Growth Audit</DialogTitle>
+              <DialogDescription className="text-slate-400">
+                Set the company, reporting currency and plan target. You'll add data next.
+              </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-2">
               <div>
