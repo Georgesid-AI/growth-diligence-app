@@ -1,0 +1,15 @@
+{
+  "summary": "Re-verified Growth Diligence Phase 1 after main agent recomputed Testco. Backend regression 22/22 passed. Testco 1 results now include as_of_month='2026-06', mrr_series last='2026-06', win_rate {won:269, lost:667, excluded_invalid:2}, and CAC payback last quarter is 2026-Q2 (no trailing all-zero quarters). Both demo audits (Apex, OmniData) return 200 and their results carry as_of_month='2025-02'. Frontend Testco dashboard displays 'as of 2026-06', '2 invalid excluded' note on Win Rate card, and 'Export results' button.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/test_reports/pytest/iter5.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (22/22)", "frontend": "100% (spot-check)"},
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All Phase 1 checks confirmed. Testco audit 5ae07838 stored results include as_of_month, win-rate excluded_invalid, and truncated CAC quarters. Demos have as_of_month=2025-02.",
+  "rca of the issue": "N/A - previous iteration's minor issue (stale computed results) resolved after main agent triggered POST /api/audits/{id}/compute on Testco."
+}
