@@ -233,6 +233,137 @@ def test_mrr_spread_defaults_to_monthly_when_absent(session):
         session.delete(f"{API}/audits/{aid}", timeout=30)
 
 
+# --- ITEM 1: as-of month ---
+@pytest.fixture(scope="module")
+def asof_computed_audit(session):
+    """Audit with 3 CSVs uploaded and computed, for as-of tests."""
+    r = session.post(f"{API}/audits", json={"company_name": "TEST_AsOf", "reporting_currency": "EUR"}, timeout=30)
+    a = r.json()
+    aid = a["id"]
+    ups = {}
+    for dtype, path in SAMPLES.items():
+        with open(path, "rb") as f:
+            up = session.post(f"{API}/audits/{aid}/datasets/{dtype}/upload",
+                              files={"file": (os.path.basename(path), f, "text/csv")}, timeout=60).json()
+        ups[dtype] = up
+        session.put(f"{API}/audits/{aid}/datasets/{dtype}/mapping",
+                    json={"mapping": up["suggested_mapping"], "fx": {}, "billing_terms": {}}, timeout=30)
+    yield aid
+    session.delete(f"{API}/audits/{aid}", timeout=30)
+
+
+def test_asof_defaults_to_last_pnl_month(session, asof_computed_audit):
+    """When as_of_month is null it defaults to last P&L month (2024-02 from sample)."""
+    aid = asof_computed_audit
+    r = session.post(f"{API}/audits/{aid}/compute", timeout=60)
+    assert r.status_code == 200, r.text
+    res = r.json()
+    # sample pnl.csv last month is 2024-02
+    assert res.get("as_of_month") == "2024-02", f"expected default 2024-02, got {res.get('as_of_month')}"
+    assert res["arr"]["month"] == "2024-02"
+    assert res["mrr_series"]["months"][-1] == "2024-02"
+
+
+def test_asof_truncation_via_put_then_compute(session, asof_computed_audit):
+    """PUT as_of_month='2024-06' persists, but since data ends 2024-02, min(as_of, last_data_month) applies.
+    We test with a value INSIDE the data range: 2023-08."""
+    aid = asof_computed_audit
+    # PUT the audit with as_of_month=2023-08
+    pu = session.put(f"{API}/audits/{aid}", json={"as_of_month": "2023-08"}, timeout=30)
+    assert pu.status_code == 200, pu.text
+    got = session.get(f"{API}/audits/{aid}", timeout=30).json()
+    assert got.get("as_of_month") == "2023-08"
+    # Recompute
+    cr = session.post(f"{API}/audits/{aid}/compute", timeout=60)
+    assert cr.status_code == 200, cr.text
+    res = cr.json()
+    assert res.get("as_of_month") == "2023-08", f"results.as_of_month={res.get('as_of_month')}"
+    assert res["mrr_series"]["months"][-1] == "2023-08", f"last mrr month={res['mrr_series']['months'][-1]}"
+    assert res["arr"]["month"] == "2023-08", f"arr.month={res['arr']['month']}"
+
+
+# --- ITEM 2: win rate excludes invalid deals ---
+def test_win_rate_excludes_close_before_created(session):
+    """Win rate must exclude deals where close_date < created_date. Craft 3W/2L + 2 invalid = 60%."""
+    csv = (
+        "Deal ID,Created,Close Date,Stage,Amount\n"
+        "W1,2023-01-01,2023-03-01,won,1000\n"
+        "W2,2023-01-01,2023-04-01,won,1000\n"
+        "W3,2023-01-01,2023-05-01,won,1000\n"
+        "L1,2023-01-01,2023-03-01,lost,1000\n"
+        "L2,2023-01-01,2023-04-01,lost,1000\n"
+        "BAD1,2023-06-01,2023-01-01,won,1000\n"  # close < created - should be excluded
+        "BAD2,2023-06-01,2023-02-01,lost,1000\n"  # close < created - should be excluded
+    ).encode()
+    r = session.post(f"{API}/audits", json={"company_name": "TEST_WR", "reporting_currency": "EUR"}, timeout=30)
+    aid = r.json()["id"]
+    try:
+        # Minimal revenue so compute runs
+        rev = b"Customer,Invoice Date,Amount,Currency\nA,2023-01-01,100,EUR\n"
+        up_rev = session.post(f"{API}/audits/{aid}/datasets/revenue/upload",
+                              files={"file": ("r.csv", io.BytesIO(rev), "text/csv")}, timeout=30).json()
+        session.put(f"{API}/audits/{aid}/datasets/revenue/mapping",
+                    json={"mapping": up_rev["suggested_mapping"], "fx": {}, "billing_terms": {}}, timeout=30)
+        up = session.post(f"{API}/audits/{aid}/datasets/crm/upload",
+                          files={"file": ("crm.csv", io.BytesIO(csv), "text/csv")}, timeout=30).json()
+        session.put(f"{API}/audits/{aid}/datasets/crm/mapping",
+                    json={"mapping": up["suggested_mapping"], "fx": {}, "billing_terms": {}}, timeout=30)
+        cr = session.post(f"{API}/audits/{aid}/compute", timeout=60)
+        assert cr.status_code == 200, cr.text
+        res = cr.json()
+        wr = res["win_rate"]
+        assert wr["won"] == 3, f"won={wr['won']}"
+        assert wr["lost"] == 2, f"lost={wr['lost']}"
+        assert abs(wr["win_rate_pct"] - 60.0) < 0.01, f"win_rate_pct={wr['win_rate_pct']}"
+        assert wr.get("excluded_invalid") == 2, f"excluded_invalid={wr.get('excluded_invalid')}"
+    finally:
+        session.delete(f"{API}/audits/{aid}", timeout=30)
+
+
+# --- ITEM 5: export xlsx ---
+def test_export_returns_xlsx_with_sheets(session, asof_computed_audit):
+    aid = asof_computed_audit
+    # Ensure computed
+    session.post(f"{API}/audits/{aid}/compute", timeout=60)
+    r = session.get(f"{API}/audits/{aid}/export", timeout=60)
+    assert r.status_code == 200, r.text[:200]
+    ct = r.headers.get("content-type", "")
+    assert "spreadsheetml.sheet" in ct, f"content-type={ct}"
+    assert len(r.content) > 1000
+    # inspect sheets
+    from openpyxl import load_workbook
+    wb = load_workbook(io.BytesIO(r.content), read_only=True)
+    expected = {"Headline", "By Segment", "NRR by Cohort", "NRR Series",
+                "CAC by Quarter", "Path to Plan", "Anomalies", "Missing Data"}
+    got = set(wb.sheetnames)
+    assert expected.issubset(got), f"missing sheets: {expected - got} (got {got})"
+    # Headline includes as-of month
+    headline = wb["Headline"]
+    text = " ".join(str(c.value) for row in headline.iter_rows() for c in row if c.value is not None)
+    assert "as" in text.lower() and ("2024" in text or "2023" in text), f"headline text={text[:400]}"
+
+
+def test_export_409_when_not_computed(session):
+    r = session.post(f"{API}/audits", json={"company_name": "TEST_ExpNC", "reporting_currency": "EUR"}, timeout=30)
+    aid = r.json()["id"]
+    try:
+        rr = session.get(f"{API}/audits/{aid}/export", timeout=30)
+        assert rr.status_code == 409, f"expected 409 got {rr.status_code}"
+    finally:
+        session.delete(f"{API}/audits/{aid}", timeout=30)
+
+
+# --- Testco demo regression ---
+def test_testco_demo_opens_and_has_asof(session):
+    testco_id = "5ae07838-3c1f-452f-8fdf-4e290b3c89bd"
+    r = session.get(f"{API}/audits/{testco_id}", timeout=30)
+    assert r.status_code == 200, f"Testco GET failed: {r.status_code} {r.text[:200]}"
+    rr = session.get(f"{API}/audits/{testco_id}/results", timeout=30)
+    assert rr.status_code == 200
+    res = rr.json()["results"]
+    assert "as_of_month" in res, "results missing as_of_month"
+
+
 # --- Delete ---
 def test_delete_audit_cleans_datasets(session):
     r = session.post(f"{API}/audits", json={"company_name": "TEST_Del", "reporting_currency": "EUR"}, timeout=30)

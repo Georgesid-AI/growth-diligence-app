@@ -1,0 +1,40 @@
+{
+  "summary": "Verified Phase 1 five changes end-to-end. Backend: 21/22 pytest passing (added 5 new tests: as-of default==last P&L month, as-of PUT+recompute truncation of mrr_series/arr.month, win-rate 3W/2L=60% with 2 invalid excluded via excluded_invalid, export xlsx 8 sheets + Headline as-of, export 409 when uncomputed). Frontend: Audit Hub 'Testco 1' card shows €6.0B, header 'target €6.0B ARR' shows €6.0B; New Audit dialog has audit-asof-month-input; Mapping Wizard has asof-month-input; Dashboard has export-results-button linking to /api/audits/{id}/export; CAC Payback table renders NEW MRR and GM% columns and Testco 2026-Q2 shows €36.3K / 71.65% / L1=7.01mo matching spec exactly. Win rate note '{n} invalid excluded' logic is present in Dashboard.jsx (rendered when excluded_invalid>0). Regression: full create->upload(3 CSVs)->confirm mappings->compute->6 metric cards flow works.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/audits (seed)", "issue": "The three seeded demo audits (Apex, OmniData, Testco) still have as_of_month=null AND their stored computed results do NOT contain the as_of_month key. They were computed before this feature was added and were not re-computed on the versioned reseed. Consequence: their Dashboard subtitle omits 'as of {month}', and MRR chart on Testco extends to 2027-05 with no truncation. Fresh audits work correctly. Re-seed / recompute needed to backfill."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Demo dashboard as-of subtitle", "issue": "Testco/Apex/OmniData dashboards do not display 'as of {month}' because stored results.as_of_month is missing (seed staleness). This is not a frontend bug; the FE reads r.as_of_month which is null for these demos.", "affected_selectors": ["dashboard subtitle"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Recompute the three seeded demo audits so their persisted results include as_of_month (default = last P&L month). Alternatively, delete and re-seed them so the fresh compute pass writes as_of_month.",
+    "Optional: expose 'excluded_invalid' visibly on Testco by ensuring seeded CRM includes some close<created deals (already present in the raw CRM but the current stored result reports won=270 / lost=668 without an excluded_invalid annotation on the metric card, suggesting excluded_invalid is either 0 for Testco seed or the persisted result predates the field)."
+  ],
+  "critical_code_review_comments": [
+    "Dashboard.jsx as-of subtitle correctly uses r.as_of_month conditional; win-rate note renders only when excluded_invalid>0 (line 129). Solid.",
+    "CAC Payback table (Dashboard.jsx L285-318) now includes New MRR / GM% columns and a native title tooltip on L cells combining S&M used / New MRR / GM. Visual verification on Testco 2026-Q2 matches spec: €36.3K / 71.65% / L1=7.01.",
+    "format.js money() correctly branches on abs>=1e9 -> B; abs>=1e6 -> M with 2 decimals ('€40.00M'); no precision issues found.",
+    "MappingWizard.runCompute calls updateAudit(id,{as_of_month:asOf||null}) before computeAudit — correct persistence + recompute order.",
+    "Backend build_export_workbook returns 8 sheets and Headline includes as-of month (openpyxl inspection confirmed). GET /api/audits/{id}/export returns 409 for uncomputed audits — correct.",
+    "Seeded demo results appear to be pickled/persisted at seed time rather than recomputed on server start. Suggest making seed idempotent AND recomputing when engine schema fields (e.g. as_of_month, excluded_invalid) are absent from stored results."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "95% (21/22 pytest)", "frontend": "100% for implemented features; demo seed staleness affects one non-fresh flow only"},
+  "test_credentials": "N/A - no auth",
+  "seed_data_creation": "Ephemeral TEST_ audits created and deleted per test (as-of, win-rate CRM, export, negative export).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Full regression suite in /app/backend/tests/backend_test.py (22 tests, 21 pass). One failing test (test_testco_demo_opens_and_has_asof) is a seed-staleness issue, not an engine defect. Frontend selectors used: audit-asof-month-input, asof-month-input, export-results-button, audit-row-{id}. Sample data pnl.csv last month = 2024-02 (used as default as-of).",
+  "rca of the issue": "test_testco_demo_opens_and_has_asof failure RCA: (1) Seeded demo audits are created and their compute output is persisted at startup. (2) The as_of_month field was added to results schema after the initial seed. (3) The versioned reseed (per note in review request) updated IDs but did NOT force recompute, so the persisted `results` dict for Testco lacks the `as_of_month` key. Mitigation: on server start, either (a) always recompute seed audits, (b) run a migration filling missing keys, or (c) bump seed version to invalidate cached results whenever engine schema changes."
+}
