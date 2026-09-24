@@ -1,12 +1,12 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Upload, CheckCircle2, Loader2, FileSpreadsheet, Plus, X, Play } from "lucide-react";
+import { Upload, CheckCircle2, Loader2, FileSpreadsheet, Plus, X, Play, Search } from "lucide-react";
 import { Layout } from "@/components/Layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { getAudit, getFields, uploadDataset, saveMapping, computeAudit } from "@/lib/api";
+import { getAudit, getFields, uploadDataset, saveMapping, computeAudit, getRevenueCustomers } from "@/lib/api";
 
 const DTYPES = [
   { key: "revenue", label: "Revenue Lines", desc: "Recurring & one-off invoices — the basis for MRR/ARR, NRR and churn.", required: true },
@@ -76,10 +76,14 @@ function DatasetPanel({ audit, dtype, fields, onChange }) {
   const [columns, setColumns] = useState(existing?.columns || null);
   const [mapping, setMapping] = useState(existing?.mapping || {});
   const [fx, setFx] = useState(existing?.fx || {});
+  const [billingTerms, setBillingTerms] = useState(existing?.billing_terms || {});
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (existing) { setColumns(existing.columns); setMapping(existing.mapping || {}); setFx(existing.fx || {}); }
+    if (existing) {
+      setColumns(existing.columns); setMapping(existing.mapping || {});
+      setFx(existing.fx || {}); setBillingTerms(existing.billing_terms || {});
+    }
   }, [existing?.file]); // eslint-disable-line
 
   const onFile = async (e) => {
@@ -102,7 +106,7 @@ function DatasetPanel({ audit, dtype, fields, onChange }) {
   const save = async () => {
     setSaving(true);
     try {
-      await saveMapping(audit.id, dtype.key, { mapping, fx, billing_terms: {} });
+      await saveMapping(audit.id, dtype.key, { mapping, fx, billing_terms: billingTerms });
       toast.success("Mapping saved");
       onChange();
     } catch (err) {
@@ -169,6 +173,16 @@ function DatasetPanel({ audit, dtype, fields, onChange }) {
             <FxEditor fx={fx} setFx={setFx} baseCcy={audit.reporting_currency} />
           )}
 
+          {dtype.key === "revenue" && (
+            <BillingTerms
+              auditId={audit.id}
+              customerCol={mapping.customer_id}
+              hasServiceDates={!!mapping.service_start && !!mapping.service_end}
+              billingTerms={billingTerms}
+              setBillingTerms={setBillingTerms}
+            />
+          )}
+
           <div className="flex items-center justify-between mt-4">
             <div className="text-xs font-mono">
               {requiredUnmapped.length > 0
@@ -216,6 +230,103 @@ function FxEditor({ fx, setFx, baseCcy }) {
         <span className="text-slate-500 text-sm">{baseCcy}</span>
         <Button size="sm" variant="outline" onClick={add} className="bg-transparent border-[#334155] text-slate-200 gap-1"><Plus className="h-3.5 w-3.5" /> Add</Button>
       </div>
+    </div>
+  );
+}
+
+const TERMS = ["monthly", "quarterly", "annual"];
+
+function BillingTerms({ auditId, customerCol, hasServiceDates, billingTerms, setBillingTerms }) {
+  const [customers, setCustomers] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    if (hasServiceDates || !customerCol) { setCustomers(null); return; }
+    setLoading(true);
+    getRevenueCustomers(auditId, customerCol)
+      .then((d) => setCustomers(d.customers))
+      .catch(() => setCustomers([]))
+      .finally(() => setLoading(false));
+  }, [auditId, customerCol, hasServiceDates]);
+
+  if (hasServiceDates) {
+    return (
+      <div className="mt-5 pt-5 border-t border-[#1E293B]">
+        <div className="text-xs text-slate-300 mb-1">Billing terms</div>
+        <p className="text-[11px] text-slate-500">
+          Service start & end dates are mapped — MRR is spread across the exact service months, so per-customer billing terms aren't needed.
+        </p>
+      </div>
+    );
+  }
+
+  const setTerm = (cust, term) => {
+    const next = { ...billingTerms };
+    if (term === "monthly") delete next[cust]; else next[cust] = term;
+    setBillingTerms(next);
+  };
+  const applyAll = (term) => {
+    if (!customers) return;
+    const next = {};
+    if (term !== "monthly") customers.forEach((c) => { next[c] = term; });
+    setBillingTerms(next);
+  };
+
+  const filtered = (customers || []).filter((c) => c.toLowerCase().includes(query.toLowerCase()));
+  const overrideCount = Object.keys(billingTerms).length;
+
+  return (
+    <div className="mt-5 pt-5 border-t border-[#1E293B]" data-testid="billing-terms-section">
+      <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
+        <div className="text-xs text-slate-300">
+          Billing terms <span className="text-slate-500">(no service dates — each invoice is spread over its term. Default: monthly = 1 month.)</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-mono text-slate-500">apply to all:</span>
+          {TERMS.map((t) => (
+            <button key={t} data-testid={`billing-apply-all-${t}`} onClick={() => applyAll(t)}
+              className="text-[10px] font-mono px-2 py-1 rounded bg-[#1D2840] border border-[#334155] text-slate-300 hover:bg-[#22304E] capitalize">
+              {t}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center gap-2 text-slate-500 text-xs py-4"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading customers…</div>
+      ) : !customerCol ? (
+        <p className="text-[11px] text-amber-400">Map the customer ID column first to set billing terms.</p>
+      ) : (customers && customers.length === 0) ? (
+        <p className="text-[11px] text-slate-500">No customers found in the mapped column.</p>
+      ) : (
+        <>
+          <div className="relative mb-2">
+            <Search className="h-3.5 w-3.5 text-slate-500 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search customers…"
+              className="h-8 pl-8 bg-[#0B0F17] border-[#1E293B] text-xs" data-testid="billing-search-input" />
+          </div>
+          <div className="text-[10px] font-mono text-slate-500 mb-2">
+            {customers?.length} customers · {overrideCount} non-monthly override{overrideCount === 1 ? "" : "s"}
+          </div>
+          <div className="max-h-56 overflow-y-auto pr-1 space-y-1.5">
+            {filtered.slice(0, 200).map((cust) => (
+              <div key={cust} className="flex items-center justify-between gap-3" data-testid={`billing-row-${cust}`}>
+                <span className="text-xs font-mono text-slate-300 truncate">{cust}</span>
+                <Select value={billingTerms[cust] || "monthly"} onValueChange={(v) => setTerm(cust, v)}>
+                  <SelectTrigger data-testid={`billing-term-${cust}`} className="h-7 w-32 bg-[#0B0F17] border-[#1E293B] text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-[#111726] border-[#1E293B] text-slate-100">
+                    {TERMS.map((t) => <SelectItem key={t} value={t} className="capitalize">{t}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            ))}
+            {filtered.length > 200 && <div className="text-[10px] text-slate-600 py-1">Showing first 200 — use search to narrow.</div>}
+          </div>
+        </>
+      )}
     </div>
   );
 }

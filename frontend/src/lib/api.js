@@ -14,6 +14,9 @@ export const computeAudit = (id) => api.post(`/audits/${id}/compute`).then((r) =
 export const saveMapping = (id, dtype, payload) =>
   api.put(`/audits/${id}/datasets/${dtype}/mapping`, payload).then((r) => r.data);
 
+export const getRevenueCustomers = (id, customerCol) =>
+  api.get(`/audits/${id}/datasets/revenue/customers`, { params: customerCol ? { customer_col: customerCol } : {} }).then((r) => r.data);
+
 export const uploadDataset = (id, dtype, file) => {
   const fd = new FormData();
   fd.append("file", file);

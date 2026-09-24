@@ -123,6 +123,14 @@ def _annual():
     return 100.0, ge._round(dec_val)
 
 
+@case("Billing term 'annual' (no service dates): 1200 → 100/mo × 12 months")
+def _annual_full_year():
+    rows = [{"customer_id": "X", "invoice_date": month(0), "amount": 1200, "currency": "EUR", "_row": 1}]
+    mrr, _, _, _, _ = ge.build_mrr_matrix(rev_df(rows), {"X": "annual"}, {})
+    vals = [ge._round(v) for v in mrr.loc["X"].values]
+    return [100.0] * 12, vals
+
+
 @case("FX conversion USD→EUR (rate 0.9)")
 def _fx():
     rows = [{"customer_id": "U", "invoice_date": month(0), "amount": 1000, "currency": "USD", "_row": 1}]

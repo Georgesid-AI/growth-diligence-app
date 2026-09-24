@@ -276,6 +276,22 @@ async def get_fields():
     return {dt: {"required": list(v["required"]), "optional": list(v["optional"])} for dt, v in FIELD_DEFS.items()}
 
 
+@api.get("/audits/{audit_id}/datasets/revenue/customers")
+async def revenue_customers(audit_id: str, customer_col: Optional[str] = None):
+    ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"})
+    if not ds:
+        raise HTTPException(404, "Revenue dataset not uploaded")
+    col = customer_col or ds["mapping"].get("customer_id")
+    custs = set()
+    if col:
+        for row in ds["rows"]:
+            v = row.get(col)
+            if v is not None and str(v).strip():
+                custs.add(str(v).strip())
+    has_service = bool(ds["mapping"].get("service_start")) and bool(ds["mapping"].get("service_end"))
+    return {"customers": sorted(custs), "has_service_dates": has_service, "billing_terms": ds.get("billing_terms", {})}
+
+
 @api.put("/audits/{audit_id}/datasets/{dtype}/mapping")
 async def save_mapping(audit_id: str, dtype: str, payload: MappingPayload):
     ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype})
