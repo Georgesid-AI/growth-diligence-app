@@ -17,13 +17,35 @@ WON_ALIASES = {"won", "closed won", "closed-won", "closedwon", "win"}
 LOST_ALIASES = {"lost", "closed lost", "closed-lost", "closedlost"}
 TERM_MONTHS = {"monthly": 1, "quarterly": 3, "annual": 12, "annually": 12, "yearly": 12}
 
+# (key, display label, low ACV, high ACV exclusive) — ordered lowest to highest ACV.
+# Thresholds are annual (ACV = current MRR × 12) in the reporting currency:
+# <100, 100–1K, 1K–10K, 10K–100K, 100K+.
 ACV_BANDS = [
-    ("flies", 0, 100),
-    ("mice", 100, 1_000),
-    ("rabbits", 1_000, 10_000),
-    ("deer", 10_000, 100_000),
-    ("elephants", 100_000, float("inf")),
+    ("consumer_viral", "Consumer / Viral", 0, 100),
+    ("self_serve", "Self-serve", 100, 1_000),
+    ("sales_assisted", "Sales-assisted", 1_000, 10_000),
+    ("consultative_sales", "Consultative sales", 10_000, 100_000),
+    ("strategic_accounts", "Strategic accounts", 100_000, float("inf")),
 ]
+
+CCY_SYMBOLS = {"EUR": "€", "USD": "$", "GBP": "£", "JPY": "¥"}
+
+
+def _fmt_k(v: float) -> str:
+    if v >= 1_000_000:
+        return f"{v / 1_000_000:.0f}M" if v % 1_000_000 == 0 else f"{v / 1_000_000:.1f}M"
+    if v >= 1_000:
+        return f"{v / 1_000:.0f}K" if v % 1_000 == 0 else f"{v / 1_000:.1f}K"
+    return f"{v:.0f}"
+
+
+def _acv_range_label(lo: float, hi: float, ccy: str) -> str:
+    sym = CCY_SYMBOLS.get(ccy, f"{ccy} " if ccy else "")
+    if lo <= 0:
+        return f"<{sym}{_fmt_k(hi)}"
+    if hi == float("inf"):
+        return f"{sym}{_fmt_k(lo)}+"
+    return f"{sym}{_fmt_k(lo)}–{_fmt_k(hi)}"
 
 
 def _period_str(p: pd.Period) -> str:
@@ -394,7 +416,8 @@ def compute_win_rate(deals: pd.DataFrame, founder_available: bool):
     return out
 
 
-def compute_acv_path(mrr: pd.DataFrame, seg_map: dict, first_month: dict, target_arr: float, target_date: str):
+def compute_acv_path(mrr: pd.DataFrame, seg_map: dict, first_month: dict, target_arr: float, target_date: str,
+                      reporting_currency: str = "EUR"):
     if mrr.empty:
         return None
     cols = list(mrr.columns)
@@ -404,14 +427,26 @@ def compute_acv_path(mrr: pd.DataFrame, seg_map: dict, first_month: dict, target
     total_arr = sum(mrr.at[c, latest] for c in active) * 12
     acv = total_arr / n_cust if n_cust else None
 
-    # bands by annual revenue per customer
-    bands = {name: 0 for name, _, _ in ACV_BANDS}
+    # bands by annual revenue per customer — thresholds/counting logic unchanged from
+    # the original flies/mice/rabbits/deer/elephants bands, only labels/range added.
+    band_counts = {key: 0 for key, _, _, _ in ACV_BANDS}
     for c in active:
         annual = mrr.at[c, latest] * 12
-        for name, lo, hi in ACV_BANDS:
+        for key, _, lo, hi in ACV_BANDS:
             if lo <= annual < hi:
-                bands[name] += 1
+                band_counts[key] += 1
                 break
+    bands = [
+        {
+            "key": key,
+            "label": label,
+            "low": lo,
+            "high": None if hi == float("inf") else hi,
+            "range_label": _acv_range_label(lo, hi, reporting_currency),
+            "count": band_counts[key],
+        }
+        for key, label, lo, hi in ACV_BANDS
+    ]
 
     by_segment = {}
     if seg_map:
@@ -535,11 +570,19 @@ def compute_mrr_series(mrr: pd.DataFrame, seg_map: dict):
 
 
 def compute_cohort_retention(mrr: pd.DataFrame, first_month: dict):
-    """Rows = start cohort (quarter), cols = months since start, value = % starting MRR retained."""
+    """Rows = start cohort (quarter), cols = months since start, value = % starting MRR retained.
+
+    Age is measured per-customer from their OWN first month with recurring MRR > 0 (M0),
+    not from the cohort quarter's first calendar month — customers who ramp in later in the
+    quarter must not be counted as "not yet retained" against a base they never contributed to.
+    A cell Mk is only populated once every customer in the cohort has actually reached age k
+    as of the last available month, so no cell mixes fully- and partially-observed customers.
+    """
     if mrr.empty:
         return {"cohorts": [], "max_offset": 0, "data": []}
     cols = list(mrr.columns)
     col_idx = {m: i for i, m in enumerate(cols)}
+    n_cols = len(cols)
     cohorts = {}
     for c, fm in first_month.items():
         cohorts.setdefault(_quarter_str(fm.asfreq("Q")), []).append(c)
@@ -548,17 +591,16 @@ def compute_cohort_retention(mrr: pd.DataFrame, first_month: dict):
     max_offset = 0
     for q in sorted(cohorts):
         custs = cohorts[q]
-        first_idxs = [col_idx[first_month[c]] for c in custs]
-        base_idx = min(first_idxs)
-        start_mrr = sum(mrr.at[c, cols[base_idx]] for c in custs)
+        start_idx = {c: col_idx[first_month[c]] for c in custs}
+        start_mrr = sum(mrr.at[c, cols[start_idx[c]]] for c in custs)
         if start_mrr <= 0:
             continue
+        max_age_observed = min(n_cols - 1 - start_idx[c] for c in custs)
         row = {"cohort": q, "start_mrr": _round(start_mrr), "n": len(custs), "values": {}}
-        for off in range(0, len(cols) - base_idx):
-            m = cols[base_idx + off]
-            retained = sum(mrr.at[c, m] for c in custs)
-            row["values"][str(off)] = _round((retained / start_mrr) * 100)
-            max_offset = max(max_offset, off)
+        for k in range(0, max_age_observed + 1):
+            total_k = sum(mrr.at[c, cols[start_idx[c] + k]] for c in custs)
+            row["values"][str(k)] = _round((total_k / start_mrr) * 100)
+            max_offset = max(max_offset, k)
         data.append(row)
     return {"cohorts": [d["cohort"] for d in data], "max_offset": max_offset, "data": data}
 
@@ -731,7 +773,7 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
                 "file": crm_src.get("file"),
             })
 
-    acv = compute_acv_path(mrr, seg_map, first_month, target_arr, target_date)
+    acv = compute_acv_path(mrr, seg_map, first_month, target_arr, target_date, reporting_currency)
     if acv:
         acv["source"] = src(rev_src, contrib_rows, "ACV = ARR ÷ active customers; path compares required vs observed net-new")
     results["acv_path"] = acv

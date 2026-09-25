@@ -459,6 +459,16 @@ def build_export_workbook(meta: dict, r: dict) -> io.BytesIO:
         ]
         pd.DataFrame(path_rows, columns=["Metric", "Value"]).to_excel(xw, sheet_name="Path to Plan", index=False)
 
+        # ACV bands (hide empty bands, keep fixed low-to-high display order)
+        as_of = meta.get("as_of_month") or r.get("as_of_month") or ""
+        band_rows = [
+            {"Band": b["label"], "ACV range": b["range_label"], "Customers": b["count"]}
+            for b in (ap.get("bands") or []) if b.get("count")
+        ]
+        band_df = pd.DataFrame(band_rows) if band_rows else pd.DataFrame([{"Band": "(no active customers)"}])
+        band_df.to_excel(xw, sheet_name="ACV Bands", index=False, startrow=1)
+        xw.sheets["ACV Bands"]["A1"] = f"ACV Bands — active customers (as of {as_of})"
+
         # Anomalies
         an = r.get("anomalies") or {}
         an_rows = [

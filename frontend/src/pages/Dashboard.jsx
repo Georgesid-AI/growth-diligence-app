@@ -248,13 +248,15 @@ export default function Dashboard() {
         <Card className="lg:col-span-4" title="Sales Cycle by Segment">
           <SegTable rows={r.sales_cycle?.by_segment} render={(v) => `${v.median_days}d · n=${v.n}`} empty="Segment column not mapped" />
         </Card>
-        <Card className="lg:col-span-4" title="ACV Bands (annual)">
+        <Card className="lg:col-span-4" title={`ACV Bands — active customers (as of ${r.as_of_month ?? "—"})`}>
           {r.acv_path ? (
             <div className="space-y-1.5">
-              {Object.entries(r.acv_path.bands).map(([band, count]) => (
-                <div key={band} className="flex items-center justify-between text-sm">
-                  <span className="capitalize text-slate-300">{band}</span>
-                  <span className="font-mono text-slate-100">{count}</span>
+              {r.acv_path.bands.filter((b) => b.count > 0).map((b) => (
+                <div key={b.key} className="flex items-center justify-between text-sm">
+                  <span className="text-slate-300">
+                    {b.label} <span className="text-slate-500">({b.range_label})</span>
+                  </span>
+                  <span className="font-mono text-slate-100">{b.count}</span>
                 </div>
               ))}
             </div>

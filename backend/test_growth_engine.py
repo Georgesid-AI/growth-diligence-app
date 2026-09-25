@@ -7,6 +7,7 @@ assert. No LLM, no guessing — pure arithmetic checks.
 
 import pandas as pd
 
+import demo_data
 import growth_engine as ge
 
 BASE = pd.Timestamp("2023-01-01")
@@ -254,13 +255,40 @@ def _cac_bad_gm():
     return False, computable
 
 
-@case("ACV bands: 1 elephant, 1 mouse")
+@case("ACV bands: 1 strategic account, 1 self-serve")
 def _acv_bands():
-    rows = monthly_lines("BIG", {12: 20000})   # annual 240k → elephant
-    rows += monthly_lines("SMALL", {12: 50}, start_row=100)  # annual 600 → mouse
+    rows = monthly_lines("BIG", {12: 20000})   # annual 240k -> strategic accounts
+    rows += monthly_lines("SMALL", {12: 50}, start_row=100)  # annual 600 -> self-serve
     mrr, seg, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
     acv = ge.compute_acv_path(mrr, seg, fm, target_arr=10_000_000, target_date="2026-01-01")
-    ok = acv["bands"]["elephants"] == 1 and acv["bands"]["mice"] == 1
+    by_key = {b["key"]: b["count"] for b in acv["bands"]}
+    ok = by_key["strategic_accounts"] == 1 and by_key["self_serve"] == 1
+    return True, ok
+
+
+@case("ACV bands: renamed labels + range labels present, fixed low-to-high order")
+def _acv_band_labels():
+    rows = monthly_lines("BIG", {12: 20000})
+    rows += monthly_lines("SMALL", {12: 50}, start_row=100)
+    mrr, seg, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
+    acv = ge.compute_acv_path(mrr, seg, fm, target_arr=10_000_000, target_date="2026-01-01", reporting_currency="EUR")
+    expected_keys = ["consumer_viral", "self_serve", "sales_assisted", "consultative_sales", "strategic_accounts"]
+    expected_labels = ["Consumer / Viral", "Self-serve", "Sales-assisted", "Consultative sales", "Strategic accounts"]
+    keys = [b["key"] for b in acv["bands"]]
+    labels = [b["label"] for b in acv["bands"]]
+    range_ok = acv["bands"][2]["range_label"] == "€1K–10K"  # sales_assisted band
+    return (expected_keys, expected_labels, True), (keys, labels, range_ok)
+
+
+@case("ACV band counts sum to active customers (demo data, both companies)")
+def _acv_bands_sum_active():
+    ok = True
+    for idx in (0, 1):
+        mrr, seg, fm, fx, spec = _demo_engine_inputs(idx)
+        acv = ge.compute_acv_path(mrr, seg, fm, target_arr=spec["target_arr"], target_date=spec["target_date"],
+                                   reporting_currency=spec["reporting_currency"])
+        total_banded = sum(b["count"] for b in acv["bands"])
+        ok = ok and total_banded == acv["current_customers"]
     return True, ok
 
 
@@ -272,6 +300,82 @@ def _cohort_m6():
     mrr, _, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
     coh = ge.compute_cohort_retention(mrr, fm)
     return 130.0, coh["data"][0]["values"]["6"]
+
+
+@case("Cohort heatmap: ramping cohort no longer inflates past 100% (regression for M0 bug)")
+def _cohort_ramp_in_fix():
+    # Same quarter cohort, but customers ramp in on different calendar months: A starts
+    # month 0 (100 flat), B starts month 1 (200 flat), C starts month 2 (300 flat). Under
+    # the old "M0 = first calendar month of the quarter" bug, the base would be A's 100
+    # alone while later months sum in B and C too -> impossible readings (e.g. 600% at
+    # month 2). Aging each customer from their OWN start month keeps every cell near 100%.
+    rows = monthly_lines("A", {0: 100, 1: 100, 2: 100, 3: 100})
+    rows += monthly_lines("B", {1: 200, 2: 200, 3: 200}, start_row=100)
+    rows += monthly_lines("C", {2: 300, 3: 300}, start_row=200)
+    mrr, _, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
+    coh = ge.compute_cohort_retention(mrr, fm)
+    row = coh["data"][0]
+    # only ages 0 and 1 are fully observed for all three customers as of month 3
+    return ({"0": 100.0, "1": 100.0}, 1), (row["values"], max(int(k) for k in row["values"]))
+
+
+def _demo_engine_inputs(spec_idx):
+    """Build (mrr, seg_map, first_month, fx, spec) straight from revenue lines for a demo
+    company, bypassing the DB/API layer — same normalization server.py's `normalize()` does
+    for the revenue dataset, kept local so this file stays dependency-free."""
+    spec = demo_data.DEMO_AUDITS[spec_idx]
+    datasets, meta = demo_data.build(spec)
+    rev_raw, mapping = datasets["revenue"]
+    out = pd.DataFrame()
+    out["_row"] = range(2, len(rev_raw) + 2)
+    for field, col in mapping.items():
+        if col and col in rev_raw.columns:
+            out[field] = rev_raw[col].values
+    out["invoice_date"] = pd.to_datetime(out["invoice_date"], errors="coerce")
+    out["amount"] = pd.to_numeric(out["amount"], errors="coerce")
+    fx = {k.upper(): v for k, v in meta.get("fx", {}).items()}
+    fx[spec["reporting_currency"].upper()] = 1.0
+    mrr, seg_map, first_month, _, _ = ge.build_mrr_matrix(out, {}, fx)
+    return mrr, seg_map, first_month, fx, spec
+
+
+@case("Cohort heatmap: M0 column is always 100% (demo data, both companies)")
+def _cohort_m0_always_100_demo():
+    ok = True
+    for idx in (0, 1):
+        mrr, _, fm, _, _ = _demo_engine_inputs(idx)
+        coh = ge.compute_cohort_retention(mrr, fm)
+        ok = ok and all(row["values"].get("0") == 100.0 for row in coh["data"])
+    return True, ok
+
+
+@case("Cohort heatmap: values stay in a plausible range on demo data (no impossible %)")
+def _cohort_plausible_range_demo():
+    ok = True
+    for idx in (0, 1):
+        mrr, _, fm, _, _ = _demo_engine_inputs(idx)
+        coh = ge.compute_cohort_retention(mrr, fm)
+        for row in coh["data"]:
+            for v in row["values"].values():
+                if v is None or v < 0 or v > 250:
+                    ok = False
+    return True, ok
+
+
+@case("NRR by cohort is unchanged by the heatmap fix (demo data, Apex Cloud)")
+def _nrr_by_cohort_unchanged_demo():
+    mrr, seg, fm, _, _ = _demo_engine_inputs(0)
+    nrr = ge.compute_nrr(mrr, seg, fm)
+    expected = {
+        "2023-Q1": {"nrr_pct": 127.64, "n": 8},
+        "2023-Q2": {"nrr_pct": 90.14, "n": 11},
+        "2023-Q3": {"nrr_pct": 111.56, "n": 8},
+        "2023-Q4": {"nrr_pct": 127.63, "n": 7},
+        "2024-Q1": {"nrr_pct": 127.42, "n": 5},
+        "2024-Q2": {"nrr_pct": None, "n": 0},
+        "2024-Q3": {"nrr_pct": None, "n": 0},
+    }
+    return expected, nrr["by_cohort"]
 
 
 # --- CAC payback at L=0 / L=2 / zero-new-MRR --------------------------------
