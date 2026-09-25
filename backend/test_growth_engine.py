@@ -50,7 +50,7 @@ def _nrr():
     # Base customer A: 100 at m0, 110 at m12 (expansion). New customer B starts m3 (ignored in base).
     rows = monthly_lines("A", {i: (110 if i == 12 else 100) for i in range(13)})
     rows += monthly_lines("B", {i: 200 for i in range(3, 13)}, start_row=100)
-    mrr, seg, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {})
+    mrr, seg, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
     res = ge.compute_nrr(mrr, seg, fm)
     return 110.0, res["overall_pct"]
 
@@ -61,7 +61,7 @@ def _churn():
     rows += monthly_lines("B", {i: (60 if i == 12 else 100) for i in range(13)}, start_row=100)   # -40 contraction
     rows += monthly_lines("C", {i: 100 for i in range(12)}, start_row=200)          # churns at m12 (0)
     rows += monthly_lines("D", {i: (150 if i == 12 else 100) for i in range(13)}, start_row=300)  # expansion (not netted)
-    mrr, seg, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {})
+    mrr, _, _, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
     res = ge.compute_gross_churn(mrr)
     return 35.0, res["overall_pct"]
 
@@ -118,7 +118,7 @@ def _winrate_flag():
 @case("Annual prepayment → MRR spread = 100/mo")
 def _annual():
     rows = [{"customer_id": "X", "invoice_date": month(0), "amount": 1200, "currency": "EUR", "_row": 1}]
-    mrr, _, _, _, _ = ge.build_mrr_matrix(rev_df(rows), {"X": "annual"}, {})
+    mrr, _, _, _, _ = ge.build_mrr_matrix(rev_df(rows), {"X": "annual"}, {"EUR": 1.0})
     dec_val = mrr.at["X", pd.Period("2023-12", "M")]
     return 100.0, ge._round(dec_val)
 
@@ -126,7 +126,7 @@ def _annual():
 @case("Billing term 'annual' (no service dates): 1200 → 100/mo × 12 months")
 def _annual_full_year():
     rows = [{"customer_id": "X", "invoice_date": month(0), "amount": 1200, "currency": "EUR", "_row": 1}]
-    mrr, _, _, _, _ = ge.build_mrr_matrix(rev_df(rows), {"X": "annual"}, {})
+    mrr, _, _, _, _ = ge.build_mrr_matrix(rev_df(rows), {"X": "annual"}, {"EUR": 1.0})
     vals = [ge._round(v) for v in mrr.loc["X"].values]
     return [100.0] * 12, vals
 
@@ -138,10 +138,25 @@ def _fx():
     return 900.0, ge._round(mrr.at["U", pd.Period("2023-01", "M")])
 
 
+@case("Currency with no exchange rate is excluded, never guessed at 1.0")
+def _fx_missing_rate():
+    # GBP has no entry in fx — must NOT silently convert at 1.0. It should be
+    # excluded from MRR entirely and flagged, while the EUR row still computes.
+    rows = [
+        {"customer_id": "K", "invoice_date": month(0), "amount": 1000, "currency": "GBP", "_row": 1},
+        {"customer_id": "E", "invoice_date": month(0), "amount": 500, "currency": "EUR", "_row": 2},
+    ]
+    mrr, _, _, _, notes = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
+    excluded = "K" not in mrr.index
+    flagged = notes["rows_missing_fx"] == [1] and notes["missing_fx_currencies"] == ["GBP"]
+    eur_ok = ge._round(mrr.at["E", pd.Period("2023-01", "M")]) == 500.0
+    return True, (excluded and flagged and eur_ok)
+
+
 @case("Churn-and-return gap flagged")
 def _gap():
     rows = monthly_lines("G", {0: 100, 1: 100, 5: 100})  # gap months 2,3,4
-    mrr, _, fm, _, notes = ge.build_mrr_matrix(rev_df(rows), {}, {})
+    mrr, _, _, _, notes = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
     flags = ge.compute_anomalies(mrr, rev_df(rows), pd.DataFrame(), notes)
     return True, ("G" in flags["revenue_gap_then_resume"])
 
@@ -152,7 +167,7 @@ def _negative():
         {"customer_id": "R", "invoice_date": month(0), "amount": 500, "currency": "EUR", "_row": 1},
         {"customer_id": "R", "invoice_date": month(1), "amount": -500, "currency": "EUR", "_row": 2},
     ]
-    mrr, _, _, _, notes = ge.build_mrr_matrix(rev_df(rows), {}, {})
+    mrr, _, _, _, notes = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
     flags = ge.compute_anomalies(mrr, rev_df(rows), pd.DataFrame(), notes)
     return True, ("2023-02" in flags["negative_mrr_months"])
 
@@ -175,9 +190,23 @@ def _missing_id():
         {"customer_id": None, "invoice_date": month(0), "amount": 100, "currency": "EUR", "_row": 2},
         {"customer_id": "", "invoice_date": month(0), "amount": 100, "currency": "EUR", "_row": 3},
     ]
-    mrr, _, _, _, notes = ge.build_mrr_matrix(rev_df(rows), {}, {})
+    mrr, _, _, _, notes = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
     flags = ge.compute_anomalies(mrr, rev_df(rows), pd.DataFrame(), notes)
     return 2, flags["revenue_missing_customer_id"]["count"]
+
+
+@case("Blank revenue amount flagged, not treated as zero")
+def _missing_amount():
+    rows = [
+        {"customer_id": "A", "invoice_date": month(0), "amount": 100, "currency": "EUR", "_row": 1},
+        {"customer_id": "A", "invoice_date": month(0), "amount": None, "currency": "EUR", "_row": 2},
+        {"customer_id": "A", "invoice_date": month(0), "amount": float("nan"), "currency": "EUR", "_row": 3},
+    ]
+    mrr, _, _, _, notes = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
+    flags = ge.compute_anomalies(mrr, rev_df(rows), pd.DataFrame(), notes)
+    # blank rows excluded (not zero) -> only row 1's 100 counted, and both blanks flagged
+    still_100 = ge._round(mrr.at["A", pd.Period("2023-01", "M")]) == 100.0
+    return (2, True), (flags["revenue_missing_amount"]["count"], still_100)
 
 
 @case("One-off revenue excluded from MRR")
@@ -186,7 +215,7 @@ def _oneoff():
         {"customer_id": "A", "invoice_date": month(0), "amount": 100, "currency": "EUR", "revenue_type": "recurring", "_row": 1},
         {"customer_id": "A", "invoice_date": month(0), "amount": 999, "currency": "EUR", "revenue_type": "one-off", "_row": 2},
     ]
-    mrr, _, _, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {})
+    mrr, _, _, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
     return 100.0, ge._round(mrr.at["A", pd.Period("2023-01", "M")])
 
 
@@ -194,7 +223,7 @@ def _oneoff():
 def _cac():
     # New customer N first revenue in 2023-Q2 (Apr), MRR 1000/mo through Jun.
     rows = monthly_lines("N", {3: 1000, 4: 1000, 5: 1000})
-    mrr, _, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {})
+    mrr, _, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
     new_q = ge.compute_new_mrr_by_quarter(mrr, fm)
     # P&L: Q1 S&M = 4000; Q2 revenue 1000, cost 200 → GM 80%.
     pnl = pd.DataFrame([
@@ -212,7 +241,7 @@ def _cac():
 @case("CAC not computable when GM ≤ 0")
 def _cac_bad_gm():
     rows = monthly_lines("N", {3: 1000, 4: 1000, 5: 1000})
-    mrr, _, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {})
+    mrr, _, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
     new_q = ge.compute_new_mrr_by_quarter(mrr, fm)
     pnl = pd.DataFrame([
         {"month": month(0), "sm_expense": 4000, "revenue": 0, "cost_of_revenue": 0, "_row": 1},
@@ -229,7 +258,7 @@ def _cac_bad_gm():
 def _acv_bands():
     rows = monthly_lines("BIG", {12: 20000})   # annual 240k → elephant
     rows += monthly_lines("SMALL", {12: 50}, start_row=100)  # annual 600 → mouse
-    mrr, seg, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {})
+    mrr, seg, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
     acv = ge.compute_acv_path(mrr, seg, fm, target_arr=10_000_000, target_date="2026-01-01")
     ok = acv["bands"]["elephants"] == 1 and acv["bands"]["mice"] == 1
     return True, ok
@@ -240,7 +269,7 @@ def _cohort_m6():
     vals = {i: 100 for i in range(7)}
     vals[6] = 130  # month-6 MRR is 130% of the starting month
     rows = monthly_lines("A", vals)
-    mrr, _, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {})
+    mrr, _, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
     coh = ge.compute_cohort_retention(mrr, fm)
     return 130.0, coh["data"][0]["values"]["6"]
 
@@ -249,7 +278,7 @@ def _cohort_m6():
 def _cac_scenario():
     rows = monthly_lines("M", {i: 500 for i in range(0, 7)})   # Jan–Jul, Q1 cohort
     rows += monthly_lines("N", {i: 1000 for i in range(3, 6)}, start_row=100)  # Apr–Jun, Q2 cohort
-    mrr, _, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {})
+    mrr, _, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
     new_q = ge.compute_new_mrr_by_quarter(mrr, fm)
     pnl = pd.DataFrame([
         {"month": month(0), "sm_expense": 1500, "revenue": 0,   "cost_of_revenue": 0,  "_row": 2},
@@ -288,7 +317,7 @@ def _path_scenario():
         rows += monthly_lines(c, {i: 1000 for i in range(0, 25)}, start_row=r); r += 40
     for c in ("L1", "L2", "L3", "L4", "L5", "L6"):
         rows += monthly_lines(c, {i: 1000 for i in range(18, 25)}, start_row=r); r += 40
-    mrr, seg, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {})
+    mrr, seg, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
     return ge.compute_acv_path(mrr, seg, fm, target_arr=1_200_000, target_date="2027-01-01")
 
 
@@ -305,6 +334,20 @@ def _path_obs12():
 @case("Path to plan: observed net-new 24m = 3.0/yr")
 def _path_obs24():
     return 3.0, _path_scenario()["observed_net_new_per_year_24m"]
+
+
+@case("Path to plan: observed net-new not computable with < lookback months of history")
+def _path_obs_insufficient_history():
+    # Only 6 months of revenue history: neither the 12m nor 24m lookback has a
+    # reference month, so both must report "not computable" (None), never treat
+    # the missing starting count as 0 (which would overstate net-new customers).
+    rows = []
+    r = 1
+    for c in ("A", "B", "C"):
+        rows += monthly_lines(c, {i: 1000 for i in range(0, 6)}, start_row=r); r += 40
+    mrr, seg, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
+    acv = ge.compute_acv_path(mrr, seg, fm, target_arr=1_200_000, target_date="2027-01-01")
+    return (None, None), (acv["observed_net_new_per_year_12m"], acv["observed_net_new_per_year_24m"])
 
 
 @case("Path to plan: required net-new/yr matches date formula")
@@ -352,6 +395,21 @@ def _wr_without():
     return 24.44, ge.compute_win_rate(_founder_deals(), True)["by_founder"]["without_founder"]["win_rate_pct"]
 
 
+@case("CRM founder-involved value that isn't yes/no-like is flagged, not silently dropped")
+def _wr_founder_unrecognized():
+    rows = _founder_deals()
+    extra = pd.DataFrame([
+        {"deal_id": 9999, "stage": "won", "founder_involved": "maybe", "_row": 9999},
+        {"deal_id": 10000, "stage": "lost", "founder_involved": "TBD", "_row": 10000},
+        {"deal_id": 10001, "stage": "won", "founder_involved": None, "_row": 10001},  # blank stays silent
+    ])
+    deals = pd.concat([rows, extra], ignore_index=True)
+    wr = ge.compute_win_rate(deals, True)
+    fie = wr["founder_involved_excluded"]
+    ok = fie["count"] == 2 and set(fie["rows"]) == {9999, 10000} and fie["values"] == ["maybe", "tbd"]
+    return True, ok
+
+
 @case("Sales-cycle IQR = [50.0, 70.0]")
 def _cycle_iqr():
     created = pd.Timestamp("2024-01-01")
@@ -369,7 +427,7 @@ def _nrr_scenario():
     s = {i: 100 for i in range(3, 16)}; s[15] = 80
     rows = monthly_lines("E", e, segment="Ent")
     rows += monthly_lines("S", s, segment="SMB", start_row=100)
-    mrr, seg, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {})
+    mrr, seg, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
     return ge.compute_nrr(mrr, seg, fm), ge.compute_new_mrr_by_quarter(mrr, fm)
 
 
@@ -412,7 +470,7 @@ def _newmrr_q2():
 @case("Zero-revenue month total MRR = 0")
 def _zero_month():
     rows = monthly_lines("Z", {0: 100, 1: 100, 3: 100})  # month index 2 has no revenue
-    mrr, seg, _, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {})
+    mrr, seg, _, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
     series = ge.compute_mrr_series(mrr, seg)
     return 0.0, series["data"][2]["total"]
 
@@ -428,7 +486,7 @@ def _source_scenario():
     ])
     pnl.insert(0, "_row", range(2, len(pnl) + 2))
     config = {"reporting_currency": "EUR", "target_arr": 1_000_000, "target_date": "2027-01-01",
-              "fx": {}, "billing_terms": {}, "default_l": 1}
+              "fx": {"EUR": 1.0}, "billing_terms": {}, "default_l": 1}
     sources = {"revenue": {"file": "rev.xlsx", "sheet": "S1"}, "pnl": {"file": "pnl.xlsx", "sheet": "P1"}}
     return ge.compute_all(rev, pd.DataFrame(), pnl, config, sources)
 
@@ -463,7 +521,7 @@ def _missing_data():
     pnl = pd.DataFrame([{"month": month(i), "sm_expense": 1000, "revenue": 500, "cost_of_revenue": 100} for i in range(13)])
     pnl.insert(0, "_row", range(2, len(pnl) + 2))
     config = {"reporting_currency": "EUR", "target_arr": 1_000_000, "target_date": "2027-01-01",
-              "fx": {}, "billing_terms": {}, "default_l": 1}
+              "fx": {"EUR": 1.0}, "billing_terms": {}, "default_l": 1}
     sources = {"revenue": {"file": "r"}, "crm": {"file": "c"}, "pnl": {"file": "p"}}
     res = ge.compute_all(rev, crm, pnl, config, sources)
     metrics = {m["metric"] for m in res["missing_data"]}
@@ -476,7 +534,7 @@ def _missing_data():
 def _asof_current():
     rows = monthly_lines("A", {i: 100 + i for i in range(16)})  # rising MRR, months 0..15
     config = {"reporting_currency": "EUR", "target_arr": 0, "target_date": None,
-              "fx": {}, "billing_terms": {}, "default_l": 1, "as_of_month": str(month(12).to_period("M"))}
+              "fx": {"EUR": 1.0}, "billing_terms": {}, "default_l": 1, "as_of_month": str(month(12).to_period("M"))}
     res = ge.compute_all(rev_df([{**r, "invoice_date": r["invoice_date"]} for r in rows]), pd.DataFrame(), pd.DataFrame(), config, {})
     # as-of is index 12 -> MRR must be 112 (not 115 from the latest month)
     return 112.0, res["arr"]["mrr"]
@@ -486,7 +544,7 @@ def _asof_current():
 def _asof_series_end():
     rows = monthly_lines("A", {i: 100 for i in range(16)})
     config = {"reporting_currency": "EUR", "target_arr": 0, "target_date": None,
-              "fx": {}, "billing_terms": {}, "default_l": 1, "as_of_month": str(month(12).to_period("M"))}
+              "fx": {"EUR": 1.0}, "billing_terms": {}, "default_l": 1, "as_of_month": str(month(12).to_period("M"))}
     res = ge.compute_all(rev_df(rows), pd.DataFrame(), pd.DataFrame(), config, {})
     return ("2024-01", 13), (res["mrr_series"]["months"][-1], len(res["mrr_series"]["months"]))
 
@@ -497,7 +555,7 @@ def _asof_default_pnl():
     pnl = pd.DataFrame([{"month": month(i), "sm_expense": 100, "revenue": 100, "cost_of_revenue": 20, "_row": i + 2}
                         for i in range(10)])  # P&L only through index 9
     config = {"reporting_currency": "EUR", "target_arr": 0, "target_date": None,
-              "fx": {}, "billing_terms": {}, "default_l": 1, "as_of_month": None}
+              "fx": {"EUR": 1.0}, "billing_terms": {}, "default_l": 1, "as_of_month": None}
     res = ge.compute_all(rev_df(rows), pd.DataFrame(), pnl, config, {})
     return "2023-10", res["as_of_month"]  # index 9 = 2023-10
 

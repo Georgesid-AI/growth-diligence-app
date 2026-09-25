@@ -45,15 +45,16 @@ def build(spec):
         mrr = float(rng.uniform(lo, hi))
         first_i = int(rng.integers(0, n_months - 6))
         churned_at = None
-        currency = "EUR"
-        if spec["multi_ccy"] and rng.random() < 0.25:
+        currency = spec["reporting_currency"]
+        foreign_ccy = spec["multi_ccy"] and rng.random() < 0.25
+        if foreign_ccy:
             currency = "USD"
         for i in range(first_i, n_months):
             if churned_at is not None:
                 break
             m = months[i]
             amt = mrr
-            if currency == "USD":
+            if foreign_ccy:
                 amt = mrr / 0.92  # invoiced in USD, converts back near base
             rev_rows.append({"Customer": cust, "Invoice Date": m.to_timestamp().date().isoformat(),
                              "Amount": round(amt, 2), "Currency": currency, "Segment": seg_name,

@@ -86,7 +86,8 @@ def build_mrr_matrix(rev: pd.DataFrame, billing_terms: dict, fx: dict):
     rev columns expected (normalized): customer_id, invoice_date, amount, currency,
     optional: service_start, service_end, segment, revenue_type, _row.
     """
-    notes = {"rows_missing_customer": [], "excluded_one_off": 0}
+    notes = {"rows_missing_customer": [], "excluded_one_off": 0, "rows_missing_fx": [], "missing_fx_currencies": set(),
+              "rows_missing_amount": []}
     records = []
     seg_map: dict = {}
     contrib_rows: list = []
@@ -111,8 +112,16 @@ def build_mrr_matrix(rev: pd.DataFrame, billing_terms: dict, fx: dict):
 
         amount = row.get("amount")
         if amount is None or pd.isna(amount):
+            notes["rows_missing_amount"].append(rownum)
             continue
-        rate = fx.get(str(row.get("currency") or "").upper(), 1.0)
+        currency = str(row.get("currency") or "").strip().upper()
+        if currency not in fx:
+            # No exchange rate provided for this currency — do NOT guess a 1.0 rate.
+            # Exclude the row from MRR and flag it so it surfaces as missing/excluded data.
+            notes["rows_missing_fx"].append(rownum)
+            notes["missing_fx_currencies"].add(currency or "(blank)")
+            continue
+        rate = fx[currency]
         amount = float(amount) * float(rate)
 
         inv_m = _month_of(row.get("invoice_date"))
@@ -138,6 +147,8 @@ def build_mrr_matrix(rev: pd.DataFrame, billing_terms: dict, fx: dict):
             seg = row.get("segment")
             if seg is not None and not (isinstance(seg, float) and pd.isna(seg)) and str(seg).strip():
                 seg_map[cust] = str(seg).strip()
+
+    notes["missing_fx_currencies"] = sorted(notes["missing_fx_currencies"])
 
     if not records:
         return pd.DataFrame(), seg_map, {}, contrib_rows, notes
@@ -356,8 +367,12 @@ def compute_win_rate(deals: pd.DataFrame, founder_available: bool):
 
     if founder_available and "founder_involved" in d.columns:
         split = {}
+        blank = d["founder_involved"].isna()
         d["founder_l"] = d["founder_involved"].astype(str).str.lower().str.strip()
-        for key, matches in (("with_founder", {"yes", "true", "y", "1"}), ("without_founder", {"no", "false", "n", "0"})):
+        yes_like = {"yes", "true", "y", "1"}
+        no_like = {"no", "false", "n", "0"}
+        unrecognized = ~blank & ~d["founder_l"].isin(yes_like | no_like)
+        for key, matches in (("with_founder", yes_like), ("without_founder", no_like)):
             sub = d[d["founder_l"].isin(matches)]
             w = sub["stage_l"].isin(WON_ALIASES).sum()
             l = sub["stage_l"].isin(LOST_ALIASES).sum()
@@ -370,6 +385,12 @@ def compute_win_rate(deals: pd.DataFrame, founder_available: bool):
                 "small_sample": bool(t < 20),
             }
         out["by_founder"] = split
+        rows = d.loc[unrecognized, "_row"].tolist() if "_row" in d.columns else []
+        out["founder_involved_excluded"] = {
+            "count": int(unrecognized.sum()),
+            "rows": [int(r) for r in rows if r is not None and not pd.isna(r)][:200],
+            "values": sorted({str(v) for v in d.loc[unrecognized, "founder_l"]}),
+        }
     return out
 
 
@@ -410,13 +431,11 @@ def compute_acv_path(mrr: pd.DataFrame, seg_map: dict, first_month: dict, target
 
     def observed_net_new(months_back):
         if len(cols) <= months_back:
-            ref = None
-        else:
-            ref = cols[-1 - months_back]
-        active_now = n_cust
-        active_then = len([c for c in mrr.index if ref is not None and mrr.at[c, ref] > 0]) if ref is not None else 0
+            return None  # not enough history to know the starting customer count
+        ref = cols[-1 - months_back]
+        active_then = len([c for c in mrr.index if mrr.at[c, ref] > 0])
         span_years = months_back / 12
-        return (active_now - active_then) / span_years if span_years else None
+        return (n_cust - active_then) / span_years if span_years else None
 
     obs12 = observed_net_new(12)
     obs24 = observed_net_new(24)
@@ -462,6 +481,19 @@ def compute_anomalies(mrr: pd.DataFrame, rev: pd.DataFrame, deals: pd.DataFrame,
     flags["revenue_missing_customer_id"] = {
         "count": len(mrr_notes.get("rows_missing_customer", [])),
         "rows": [int(r) for r in mrr_notes.get("rows_missing_customer", []) if r is not None and not pd.isna(r)][:200],
+    }
+
+    # revenue rows whose currency has no exchange rate (excluded, never guessed at 1.0)
+    flags["revenue_missing_fx_rate"] = {
+        "count": len(mrr_notes.get("rows_missing_fx", [])),
+        "rows": [int(r) for r in mrr_notes.get("rows_missing_fx", []) if r is not None and not pd.isna(r)][:200],
+        "currencies": list(mrr_notes.get("missing_fx_currencies", [])),
+    }
+
+    # revenue rows with a blank amount (excluded, never treated as zero)
+    flags["revenue_missing_amount"] = {
+        "count": len(mrr_notes.get("rows_missing_amount", [])),
+        "rows": [int(r) for r in mrr_notes.get("rows_missing_amount", []) if r is not None and not pd.isna(r)][:200],
     }
 
     # deals with close before created (flag + exclude)
@@ -590,6 +622,23 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
     crm_src = sources.get("crm", {"file": "crm", "sheet": "Sheet1"})
     pnl_src = sources.get("pnl", {"file": "pnl", "sheet": "Sheet1"})
 
+    if mrr_notes.get("rows_missing_fx"):
+        missing_data.append({
+            "metric": "Revenue rows with unmapped currency",
+            "reason": f"{len(mrr_notes['rows_missing_fx'])} row(s) use currency(ies) "
+                      f"{', '.join(mrr_notes.get('missing_fx_currencies', []))} with no exchange rate provided — excluded, not guessed at 1.0",
+            "unlocked_by": "Provide an FX rate for each currency present in the revenue file",
+            "file": rev_src.get("file"),
+        })
+
+    if mrr_notes.get("rows_missing_amount"):
+        missing_data.append({
+            "metric": "Revenue rows with blank amount",
+            "reason": f"{len(mrr_notes['rows_missing_amount'])} row(s) have no amount value — excluded from MRR, not treated as zero",
+            "unlocked_by": "Fill in the amount for every revenue line, or remove the row",
+            "file": rev_src.get("file"),
+        })
+
     def src(base, rows, rule):
         s = SourceRef(base.get("file", "?"), base.get("sheet"))
         s.add_rows(rows)
@@ -672,6 +721,15 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
         if wr is not None and not founder_available:
             missing_data.append({"metric": "Win rate by founder involvement", "reason": "'Founder involved' column not mapped",
                                  "unlocked_by": "Map optional 'founder involved' column on CRM deals", "file": crm_src.get("file")})
+        if wr is not None and wr.get("founder_involved_excluded", {}).get("count"):
+            fie = wr["founder_involved_excluded"]
+            missing_data.append({
+                "metric": "CRM rows with unrecognized founder-involved value",
+                "reason": f"{fie['count']} row(s) have a founder-involved value that isn't yes/no-like "
+                          f"({', '.join(fie['values'])}) — excluded from the founder split, not guessed",
+                "unlocked_by": "Use a yes/no style value for founder involvement (yes/no, true/false, y/n, 1/0)",
+                "file": crm_src.get("file"),
+            })
 
     acv = compute_acv_path(mrr, seg_map, first_month, target_arr, target_date)
     if acv:
