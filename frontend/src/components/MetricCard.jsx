@@ -7,7 +7,7 @@ const STATUS = {
   neutral: "text-slate-100",
 };
 
-export function MetricCard({ id, label, value, source, sub, status = "neutral", note }) {
+export function MetricCard({ id, label, value, source, sub, status = "neutral", note, caption }) {
   return (
     <div
       data-testid={`metric-card-${id}`}
@@ -21,6 +21,8 @@ export function MetricCard({ id, label, value, source, sub, status = "neutral", 
       </div>
       {sub && <div className="text-xs text-slate-400 mt-2 font-mono">{sub}</div>}
       {note && <div className="text-[11px] text-slate-500 mt-1">{note}</div>}
+      {/* Static plain-language caption — always visible, never computed. */}
+      {caption && <div className="text-[11px] text-slate-500 mt-1.5 italic">{caption}</div>}
     </div>
   );
 }

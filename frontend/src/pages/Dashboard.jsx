@@ -8,8 +8,9 @@ import { Loader2, AlertTriangle, TrendingUp, Download } from "lucide-react";
 import { Layout } from "@/components/Layout";
 import { MetricCard } from "@/components/MetricCard";
 import { Provenance } from "@/components/Provenance";
+import { Gloss } from "@/components/Gloss";
 import { getAudit, getResults, exportUrl } from "@/lib/api";
-import { money, pct, num } from "@/lib/format";
+import { money, pct, num, monthEndDate } from "@/lib/format";
 
 const SEG_COLORS = ["#38BDF8", "#34D399", "#FBBF24", "#F472B6", "#94A3B8"];
 
@@ -74,6 +75,24 @@ export default function Dashboard() {
   const r = data.results;
   const ccy = r.reporting_currency;
 
+  // Plan of record — the same audit record the top-nav badge reads. `audit` carries
+  // the datasets (and so the FX rates); `data.audit` is the subset the results
+  // endpoint echoes back, and stands in until getAudit resolves.
+  const por = audit ?? data.audit;
+  // FX rates are entered per revenue dataset as {CCY: rate}. The reporting currency
+  // maps to itself at 1.0, so it is not a consolidated foreign entity. Only the
+  // getAudit payload carries datasets — until it lands, show nothing rather than
+  // assert single-currency for a company that may well consolidate a foreign entity.
+  const fxRates = Object.entries(audit?.datasets?.revenue?.fx ?? {}).filter(
+    ([c]) => c.toUpperCase() !== ccy.toUpperCase()
+  );
+  const fxDisplay = !audit?.datasets
+    ? "—"
+    : fxRates.length === 0
+    ? "N/A (single-currency reporting)"
+    : fxRates.map(([c, rate]) => `1 ${c} = ${rate} ${ccy}`).join(" · ");
+  const asOfFullDate = monthEndDate(r.as_of_month);
+
   // representative CAC (latest computable quarter at default L)
   let cac = { value: "n/c", sub: "", status: "neutral", note: "", source: r.cac_payback?.source };
   if (r.cac_payback) {
@@ -83,7 +102,8 @@ export default function Dashboard() {
     for (const q of qs) if (r.cac_payback.quarters[q][L].months != null) picked = q;
     if (picked) {
       const m = r.cac_payback.quarters[picked][L].months;
-      cac = { value: `${m} mo`, sub: `${picked} · ${L}`, note: "", source: r.cac_payback.source,
+      cac = { value: `${m} mo`, sub: <Gloss id="cac-quarter" text="Quarter of calculation">{picked}</Gloss>,
+        note: "", source: r.cac_payback.source,
         status: m > 18 ? "warning" : m <= 12 ? "growth_positive" : "neutral" };
     } else {
       const last = qs[qs.length - 1];
@@ -109,9 +129,14 @@ export default function Dashboard() {
       <div className="flex items-end justify-between mb-6 flex-wrap gap-3">
         <div>
           <h1 className="font-heading text-2xl sm:text-3xl font-bold tracking-tight text-white">{audit?.company_name}</h1>
+          <p data-testid="header-context-strip" className="text-slate-400 text-xs font-mono mt-1">
+            Target: <span className="text-slate-200">{money(por?.target_arr, por?.reporting_currency ?? ccy)} ARR</span>{" "}
+            by <span className="text-slate-200">{por?.target_date ?? "—"}</span> · FX: {fxDisplay}
+          </p>
           <p className="text-slate-500 text-xs font-mono mt-1">
-            {r.as_of_month ? <span className="text-sky-400">as of {r.as_of_month}</span> : null}
-            {r.as_of_month ? " · " : ""}Reporting currency {ccy} · computed {data.audit.computed_at?.slice(0, 10)} · hover any figure for source lineage
+            {asOfFullDate ? <>Figures reflect company data through <span className="text-sky-400">{asOfFullDate}</span>. </> : null}
+            Computed {data.audit.computed_at?.slice(0, 10)} — verify nothing material has changed since.
+            {" "}Reporting currency {ccy}. Hover any figure for source lineage.
           </p>
         </div>
         <a href={exportUrl(id)} data-testid="export-results-button"
@@ -123,20 +148,39 @@ export default function Dashboard() {
       {/* Metric strip */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4 mb-6">
         <MetricCard id="arr" label="Ending ARR" status="growth_positive" source={r.arr?.source}
-          value={r.arr ? money(r.arr.value, ccy) : "—"} sub={r.arr ? `MRR ${money(r.arr.mrr, ccy)} · ${r.arr.month}` : ""} />
+          value={r.arr ? money(r.arr.value, ccy) : "—"} sub={r.arr ? `MRR ${money(r.arr.mrr, ccy)}` : ""}
+          caption="Shows distance to target" />
         <MetricCard id="nrr" label="Net Revenue Retention" status={nrrStatus} source={r.nrr?.source}
-          value={r.nrr ? pct(r.nrr.overall_pct) : "n/c"} sub={r.nrr ? `${r.nrr.n} base customers · ${r.nrr.month}` : "needs 12m history"} />
+          value={r.nrr ? pct(r.nrr.overall_pct) : "n/c"} sub={r.nrr ? `${r.nrr.n} base customers` : "needs 12m history"}
+          caption="Growth from existing customers alone" />
         <MetricCard id="gross_churn" label="Gross Revenue Churn" status={churnStatus} source={r.gross_churn?.source}
-          value={r.gross_churn ? pct(r.gross_churn.overall_pct) : "n/c"} sub={r.gross_churn ? `12-month · ${r.gross_churn.month}` : "needs 12m history"} />
+          value={r.gross_churn ? pct(r.gross_churn.overall_pct) : "n/c"} sub={r.gross_churn ? "12-month" : "needs 12m history"}
+          caption="Shows revenue lost to churn" />
         <MetricCard id="cac_payback" label="CAC Payback" status={cac.status} source={cac.source}
-          value={cac.value} sub={cac.sub} note={cac.note} />
+          value={cac.value} sub={cac.sub} note={cac.note}
+          caption="Time to recoup acquisition cost" />
         <MetricCard id="sales_cycle" label="Median Sales Cycle" status="neutral" source={r.sales_cycle?.source}
           value={r.sales_cycle?.median_days != null ? `${r.sales_cycle.median_days} d` : "n/c"}
-          sub={r.sales_cycle ? `IQR ${r.sales_cycle.iqr?.[0]}–${r.sales_cycle.iqr?.[1]} · n=${r.sales_cycle.n}` : ""} />
+          sub={r.sales_cycle ? (
+            <>
+              <Gloss id="sales-cycle-iqr" text="Middle 50% range">
+                IQR {r.sales_cycle.iqr?.[0]}–{r.sales_cycle.iqr?.[1]}
+              </Gloss>{" · "}
+              <Gloss id="sales-cycle-n" text="Number of deals">n={r.sales_cycle.n}</Gloss>
+            </>
+          ) : ""}
+          caption="Speed of closing new deals" />
         <MetricCard id="win_rate" label="Win Rate" status="neutral" source={r.win_rate?.source}
           value={r.win_rate ? pct(r.win_rate.win_rate_pct) : "n/c"}
-          sub={r.win_rate ? `${r.win_rate.won}W / ${r.win_rate.lost}L` : ""}
-          note={r.win_rate?.excluded_invalid ? `${r.win_rate.excluded_invalid} invalid excluded` : ""} />
+          sub={r.win_rate ? (
+            <Gloss id="win-rate-wl" text="Won versus lost">{r.win_rate.won}W / {r.win_rate.lost}L</Gloss>
+          ) : ""}
+          note={r.win_rate?.excluded_invalid ? (
+            <Gloss id="win-rate-excluded" text="Excluded invalid entries">
+              {r.win_rate.excluded_invalid} invalid excluded
+            </Gloss>
+          ) : ""}
+          caption="Shows how repeatable sales are" />
       </div>
 
       {/* Charts */}
