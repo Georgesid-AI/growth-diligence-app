@@ -456,12 +456,14 @@ def compute_acv_path(mrr: pd.DataFrame, seg_map: dict, first_month: dict, target
             by_segment[s] = {"customers": len(custs), "acv": _round(arr_s / len(custs)) if custs else None, "arr": _round(arr_s)}
 
     customers_needed = target_arr / acv if acv else None
-    # years to target
+    # years to target — exact day count between the as-of month-end and the
+    # target date, divided by 365 (never a rounded ~1.5), so required net-new
+    # reflects the exact fraction of a year remaining.
     years = None
     if target_date:
         td = pd.Timestamp(target_date)
         now = latest.to_timestamp(how="end")
-        years = max((td - now).days / 365.25, 0.01)
+        years = max((td - now).days / 365, 0.01)
     required_per_year = ((customers_needed - n_cust) / years) if (customers_needed and years) else None
 
     def observed_net_new(months_back):

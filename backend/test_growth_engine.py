@@ -454,12 +454,12 @@ def _path_obs_insufficient_history():
     return (None, None), (acv["observed_net_new_per_year_12m"], acv["observed_net_new_per_year_24m"])
 
 
-@case("Path to plan: required net-new/yr matches date formula")
+@case("Path to plan: required net-new/yr matches exact-day-count formula")
 def _path_required():
     acv = _path_scenario()
     latest = pd.Period("2025-01", "M")
     now = latest.to_timestamp(how="end")
-    years = max((pd.Timestamp("2027-01-01") - now).days / 365.25, 0.01)
+    years = max((pd.Timestamp("2027-01-01") - now).days / 365, 0.01)  # exact days ÷ 365, never a rounded 1.5
     expected = round((100.0 - 10) / years, 1)
     return expected, acv["required_net_new_per_year"]
 
@@ -469,7 +469,7 @@ def _path_ratio():
     acv = _path_scenario()
     latest = pd.Period("2025-01", "M")
     now = latest.to_timestamp(how="end")
-    years = max((pd.Timestamp("2027-01-01") - now).days / 365.25, 0.01)
+    years = max((pd.Timestamp("2027-01-01") - now).days / 365, 0.01)
     raw_required = (100.0 - 10) / years  # unrounded, as the engine uses internally
     expected = round(raw_required / acv["observed_net_new_per_year_12m"], 2)
     return expected, acv["required_vs_observed_12m"]
