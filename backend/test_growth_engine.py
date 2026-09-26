@@ -475,6 +475,30 @@ def _path_ratio():
     return expected, acv["required_vs_observed_12m"]
 
 
+@case("Path to plan: target date before as-of is flagged, not silently computed")
+def _path_target_before_asof():
+    # Same customer setup as the main path scenario, but the target date is set
+    # to the as-of month itself (2025-01) — not after it. required_net_new_per_year
+    # must be None (never an absurd figure), and target_date_error must explain why.
+    rows = []
+    r = 1
+    for c in ("B1", "B2", "B3", "B4"):
+        rows += monthly_lines(c, {i: 1000 for i in range(0, 25)}, start_row=r); r += 40
+    mrr, seg, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
+    acv = ge.compute_acv_path(mrr, seg, fm, target_arr=1_200_000, target_date="2025-01-15")
+    ok = acv["required_net_new_per_year"] is None and acv["target_date_error"] is not None
+    return True, ok
+
+
+@case("Path to plan: target date with an implausible year (0027) is flagged")
+def _path_target_bad_year():
+    rows = monthly_lines("A", {i: 1000 for i in range(0, 13)})
+    mrr, seg, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
+    acv = ge.compute_acv_path(mrr, seg, fm, target_arr=1_200_000, target_date="0027-01-01")
+    ok = acv["required_net_new_per_year"] is None and acv["target_date_error"] is not None
+    return True, ok
+
+
 # --- Founder win-rate split + sales-cycle IQR -------------------------------
 def _founder_deals():
     rows, rid = [], 1

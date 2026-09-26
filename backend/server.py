@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import pandas as pd
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 import growth_engine as ge
 import demo_data
@@ -160,12 +160,28 @@ def normalize(rows: list, dtype: str, mapping: dict) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
+def _validate_target_date(v: Optional[str]) -> Optional[str]:
+    """Year must be a plausible 2000–2100; catches "0027"-style typos before they
+    ever reach the engine and produce an absurd Path-to-Plan calculation."""
+    if not v:
+        return v
+    try:
+        dt = datetime.strptime(v, "%Y-%m-%d")
+    except ValueError:
+        raise ValueError("target_date must be in YYYY-MM-DD format")
+    if not (2000 <= dt.year <= 2100):
+        raise ValueError(f"target_date year must be between 2000 and 2100, got {dt.year}")
+    return v
+
+
 class AuditCreate(BaseModel):
     company_name: str
     reporting_currency: str = "EUR"
     target_arr: float = 0
     target_date: Optional[str] = None
     as_of_month: Optional[str] = None
+
+    _check_target_date = field_validator("target_date")(_validate_target_date)
 
 
 class AuditUpdate(BaseModel):
@@ -174,6 +190,8 @@ class AuditUpdate(BaseModel):
     target_arr: Optional[float] = None
     target_date: Optional[str] = None
     as_of_month: Optional[str] = None
+
+    _check_target_date = field_validator("target_date")(_validate_target_date)
 
 
 class MappingPayload(BaseModel):

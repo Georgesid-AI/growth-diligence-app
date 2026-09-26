@@ -456,14 +456,28 @@ def compute_acv_path(mrr: pd.DataFrame, seg_map: dict, first_month: dict, target
             by_segment[s] = {"customers": len(custs), "acv": _round(arr_s / len(custs)) if custs else None, "arr": _round(arr_s)}
 
     customers_needed = target_arr / acv if acv else None
-    # years to target — exact day count between the as-of month-end and the
-    # target date, divided by 365 (never a rounded ~1.5), so required net-new
-    # reflects the exact fraction of a year remaining.
+    # Years to target — exact day count between the as-of month-end and the
+    # target date, divided by 365 (never a rounded ~1.5). A target date that
+    # isn't strictly after the as-of month (or has an implausible year) can't
+    # drive this calculation, so it's flagged via target_date_error instead of
+    # silently producing an absurd required-net-new figure.
     years = None
+    target_date_error = None
     if target_date:
-        td = pd.Timestamp(target_date)
-        now = latest.to_timestamp(how="end")
-        years = max((td - now).days / 365, 0.01)
+        try:
+            td = pd.Timestamp(target_date)
+        except (ValueError, TypeError):
+            td = None
+            target_date_error = f"Target date '{target_date}' is not a valid date"
+        if td is not None and not (2000 <= td.year <= 2100):
+            target_date_error = f"Target date year ({td.year}) must be between 2000 and 2100"
+            td = None
+        if td is not None:
+            now = latest.to_timestamp(how="end")
+            if td <= now:
+                target_date_error = f"Target date {td.date()} must be after the as-of month ({_period_str(latest)})"
+            else:
+                years = (td - now).days / 365
     required_per_year = ((customers_needed - n_cust) / years) if (customers_needed and years) else None
 
     def observed_net_new(months_back):
@@ -491,6 +505,7 @@ def compute_acv_path(mrr: pd.DataFrame, seg_map: dict, first_month: dict, target
         "observed_net_new_per_year_24m": _round(obs24, 1),
         "required_vs_observed_12m": _round(required_per_year / obs12, 2) if (required_per_year and obs12) else None,
         "required_vs_observed_24m": _round(required_per_year / obs24, 2) if (required_per_year and obs24) else None,
+        "target_date_error": target_date_error,
     }
 
 
@@ -778,6 +793,13 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
     acv = compute_acv_path(mrr, seg_map, first_month, target_arr, target_date, reporting_currency)
     if acv:
         acv["source"] = src(rev_src, contrib_rows, "ACV = ARR ÷ active customers; path compares required vs observed net-new")
+        if acv.get("target_date_error"):
+            missing_data.append({
+                "metric": "Path to Plan (required net-new)",
+                "reason": acv["target_date_error"],
+                "unlocked_by": "Set a target date with a year between 2000 and 2100, after the as-of month",
+                "file": rev_src.get("file"),
+            })
     results["acv_path"] = acv
 
     results["anomalies"] = compute_anomalies(mrr, rev, deals, mrr_notes)

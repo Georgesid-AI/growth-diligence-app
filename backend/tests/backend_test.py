@@ -379,6 +379,18 @@ def test_export_409_when_not_computed(session):
         session.delete(f"{API}/audits/{aid}", timeout=30)
 
 
+# --- Target date validation ---
+def test_create_audit_rejects_bad_target_date_year(session):
+    r = session.post(f"{API}/audits", json={"company_name": "TEST_BadDate", "target_date": "0027-01-01"}, timeout=30)
+    assert r.status_code == 422, r.text
+
+
+def test_create_audit_accepts_valid_target_date(session):
+    r = session.post(f"{API}/audits", json={"company_name": "TEST_GoodDate", "target_date": "2027-01-01"}, timeout=30)
+    assert r.status_code == 200, r.text
+    session.delete(f"{API}/audits/{r.json()['id']}", timeout=30)
+
+
 # --- Testco demo regression ---
 def test_testco_demo_opens_and_has_asof(session):
     testco_id = "5ae07838-3c1f-452f-8fdf-4e290b3c89bd"

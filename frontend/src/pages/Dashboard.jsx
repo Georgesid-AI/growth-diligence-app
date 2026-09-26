@@ -203,6 +203,12 @@ export default function Dashboard() {
         <Card className="lg:col-span-4" testid="path-to-plan-panel" title="Path to Plan" hint="required vs observed net-new customers / year">
           {r.acv_path ? (
             <>
+              {r.acv_path.target_date_error && (
+                <div data-testid="target-date-error" className="mb-3 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+                  <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
+                  {r.acv_path.target_date_error} — required net-new not computed.
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3 mb-4">
                 <Stat label="Current customers" value={num(r.acv_path.current_customers)} />
                 <Stat label="Current ARR" value={money(r.acv_path.current_arr, ccy)} />
