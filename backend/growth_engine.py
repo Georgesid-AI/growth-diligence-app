@@ -455,6 +455,16 @@ def compute_acv_path(mrr: pd.DataFrame, seg_map: dict, first_month: dict, target
             arr_s = sum(mrr.at[c, latest] for c in custs) * 12
             by_segment[s] = {"customers": len(custs), "acv": _round(arr_s / len(custs)) if custs else None, "arr": _round(arr_s)}
 
+    # Overall ACV band — same bucketing as the per-customer bands above, but for
+    # the portfolio's blended ACV, so the panel can show one summary line.
+    overall_band = None
+    if acv is not None:
+        for key, label, lo, hi in ACV_BANDS:
+            if lo <= acv < hi:
+                sym = CCY_SYMBOLS.get(reporting_currency, f"{reporting_currency} " if reporting_currency else "")
+                overall_band = {"key": key, "label": label, "value_label": f"{sym}{_fmt_k(acv)}"}
+                break
+
     customers_needed = target_arr / acv if acv else None
     # Years to target — exact day count between the as-of month-end and the
     # target date, divided by 365 (never a rounded ~1.5). A target date that
@@ -498,6 +508,7 @@ def compute_acv_path(mrr: pd.DataFrame, seg_map: dict, first_month: dict, target
         "target_arr": target_arr,
         "target_date": target_date,
         "bands": bands,
+        "overall_band": overall_band,
         "by_segment": by_segment,
         "customers_needed": _round(customers_needed, 1),
         "required_net_new_per_year": _round(required_per_year, 1),

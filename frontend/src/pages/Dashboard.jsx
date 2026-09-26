@@ -257,6 +257,12 @@ export default function Dashboard() {
         <Card className="lg:col-span-4" title={`ACV Bands — active customers (as of ${r.as_of_month ?? "—"})`}>
           {r.acv_path ? (
             <div className="space-y-1.5">
+              {r.acv_path.overall_band && (
+                <div data-testid="acv-overall-band" className="text-sm text-slate-200 pb-1.5 mb-1.5 border-b border-[#1E293B]">
+                  Overall: <span className="font-medium">{r.acv_path.overall_band.label}</span>{" "}
+                  <span className="font-mono text-slate-400">({r.acv_path.overall_band.value_label})</span>
+                </div>
+              )}
               {r.acv_path.bands.filter((b) => b.count > 0).map((b) => (
                 <div key={b.key} className="flex items-center justify-between text-sm">
                   <span className="text-slate-300">

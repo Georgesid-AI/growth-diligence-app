@@ -499,6 +499,21 @@ def _path_target_bad_year():
     return True, ok
 
 
+@case("Path to plan: overall ACV band matches the per-customer bucketing")
+def _path_overall_band():
+    # Blended ACV here is 120,000 ARR / 10 customers = 12,000 annual, landing in
+    # consultative_sales (10,000-100,000) — the same band every one of this
+    # scenario's customers individually falls in (all flat at 1000/mo).
+    acv = _path_scenario()
+    ok = (
+        acv["overall_band"] is not None
+        and acv["overall_band"]["key"] == "consultative_sales"
+        and acv["overall_band"]["label"] == "Consultative sales"
+        and acv["overall_band"]["value_label"] == "€12K"
+    )
+    return True, ok
+
+
 # --- Founder win-rate split + sales-cycle IQR -------------------------------
 def _founder_deals():
     rows, rid = [], 1

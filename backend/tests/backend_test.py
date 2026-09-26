@@ -391,6 +391,17 @@ def test_create_audit_accepts_valid_target_date(session):
     session.delete(f"{API}/audits/{r.json()['id']}", timeout=30)
 
 
+# --- Overall ACV band summary line ---
+def test_acv_path_has_overall_band(session, asof_computed_audit):
+    aid = asof_computed_audit
+    session.post(f"{API}/audits/{aid}/compute", timeout=60)
+    res = session.get(f"{API}/audits/{aid}/results", timeout=30).json()["results"]
+    assert res.get("acv_path"), "expected acv_path to be computable for this fixture"
+    assert "overall_band" in res["acv_path"]
+    ob = res["acv_path"]["overall_band"]
+    assert ob is None or {"key", "label", "value_label"} <= ob.keys()
+
+
 # --- Testco demo regression ---
 def test_testco_demo_opens_and_has_asof(session):
     testco_id = "5ae07838-3c1f-452f-8fdf-4e290b3c89bd"
