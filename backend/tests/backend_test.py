@@ -391,6 +391,33 @@ def test_create_audit_accepts_valid_target_date(session):
     session.delete(f"{API}/audits/{r.json()['id']}", timeout=30)
 
 
+# --- Stale metrics: setup changes must recompute automatically ---
+def test_fx_change_triggers_recompute(session):
+    """Adding an FX rate to an already-computed audit must refresh results —
+    the v1/v2 staleness this regression guards against."""
+    r = session.post(f"{API}/audits", json={"company_name": "TEST_Stale", "reporting_currency": "EUR"}, timeout=30)
+    aid = r.json()["id"]
+    try:
+        csv = b"Customer,Invoice Date,Amount,Currency\nA,2023-01-01,1000,EUR\nB,2023-01-01,500,USD\n"
+        up = session.post(f"{API}/audits/{aid}/datasets/revenue/upload",
+                          files={"file": ("r.csv", io.BytesIO(csv), "text/csv")}, timeout=30).json()
+        # v1: no FX rate for USD -> that row is excluded from MRR
+        session.put(f"{API}/audits/{aid}/datasets/revenue/mapping",
+                    json={"mapping": up["suggested_mapping"], "fx": {}, "billing_terms": {}}, timeout=30)
+        v1 = session.post(f"{API}/audits/{aid}/compute", timeout=30).json()
+        assert v1["arr"]["mrr"] == 1000.0, f"v1 mrr={v1['arr']['mrr']}"
+
+        # v2: add a USD rate via the SAME endpoint the FX editor calls — no explicit
+        # /compute call here. The stored results must refresh on their own.
+        session.put(f"{API}/audits/{aid}/datasets/revenue/mapping",
+                    json={"mapping": up["suggested_mapping"], "fx": {"USD": 0.9}, "billing_terms": {}}, timeout=30)
+        got = session.get(f"{API}/audits/{aid}/results", timeout=30).json()
+        assert got["audit"]["metrics_stale"] is False, "metrics_stale should clear after auto-recompute"
+        assert got["results"]["arr"]["mrr"] == 1450.0, f"v2 mrr should include the USD row: {got['results']['arr']['mrr']}"
+    finally:
+        session.delete(f"{API}/audits/{aid}", timeout=30)
+
+
 # --- Overall ACV band summary line ---
 def test_acv_path_has_overall_band(session, asof_computed_audit):
     aid = asof_computed_audit

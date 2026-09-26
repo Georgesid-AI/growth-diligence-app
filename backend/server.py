@@ -242,6 +242,7 @@ async def create_audit(payload: AuditCreate):
         "created_at": datetime.now(timezone.utc).isoformat(),
         "status": "draft",
         "results": None,
+        "metrics_stale": False,
     }
     await db.audits.insert_one(dict(audit))
     return audit
@@ -268,6 +269,8 @@ async def update_audit(audit_id: str, payload: AuditUpdate):
     updates = {k: v for k, v in payload.dict().items() if v is not None}
     if updates:
         await db.audits.update_one({"id": audit_id}, {"$set": updates})
+        if RECOMPUTE_TRIGGER_FIELDS & updates.keys():
+            await _mark_stale_and_maybe_recompute(audit_id)
     return await audit_public(await db.audits.find_one({"id": audit_id}))
 
 
@@ -304,6 +307,7 @@ async def upload_dataset(audit_id: str, dtype: str, file: UploadFile = File(...)
          "fx": {}, "billing_terms": {}, "preview": preview},
         upsert=True,
     )
+    await _mark_stale_and_maybe_recompute(audit_id)
     return {
         "dtype": dtype, "file": file.filename, "sheet": sheet, "columns": columns,
         "row_count": len(rows), "suggested_mapping": mapping, "preview": preview,
@@ -341,14 +345,20 @@ async def save_mapping(audit_id: str, dtype: str, payload: MappingPayload):
         {"audit_id": audit_id, "dtype": dtype},
         {"$set": {"mapping": payload.mapping, "fx": payload.fx, "billing_terms": payload.billing_terms}},
     )
+    await _mark_stale_and_maybe_recompute(audit_id)
     return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
 # Compute
 # ---------------------------------------------------------------------------
-@api.post("/audits/{audit_id}/compute")
-async def compute_audit(audit_id: str):
+# Setup inputs that change what a computed audit's metrics should be. A change
+# to any of these on an already-computed audit means the stored results are
+# stale until recomputed (see _mark_stale_and_maybe_recompute).
+RECOMPUTE_TRIGGER_FIELDS = {"reporting_currency", "target_arr", "target_date", "as_of_month"}
+
+
+async def _run_compute(audit_id: str) -> dict:
     a = await db.audits.find_one({"id": audit_id})
     if not a:
         raise HTTPException(404, "Audit not found")
@@ -372,9 +382,31 @@ async def compute_audit(audit_id: str):
     results = sanitize(ge.compute_all(rev, crm, pnl, config, sources))
     await db.audits.update_one(
         {"id": audit_id},
-        {"$set": {"results": results, "status": "computed", "computed_at": datetime.now(timezone.utc).isoformat()}},
+        {"$set": {"results": results, "status": "computed", "computed_at": datetime.now(timezone.utc).isoformat(),
+                  "metrics_stale": False}},
     )
     return results
+
+
+@api.post("/audits/{audit_id}/compute")
+async def compute_audit(audit_id: str):
+    return await _run_compute(audit_id)
+
+
+async def _mark_stale_and_maybe_recompute(audit_id: str):
+    """A setup input (mapping, FX rate, billing terms, target, as-of month, ...)
+    changed. If the audit was already computed, recompute it automatically so it
+    never silently shows stale results. If recompute isn't possible right now
+    (e.g. a required mapping was cleared), leave metrics_stale set so the UI can
+    show a warning instead of outdated numbers."""
+    a = await db.audits.find_one({"id": audit_id})
+    if not a or a.get("status") != "computed":
+        return
+    await db.audits.update_one({"id": audit_id}, {"$set": {"metrics_stale": True}})
+    try:
+        await _run_compute(audit_id)
+    except HTTPException:
+        pass
 
 
 @api.get("/audits/{audit_id}/results")
@@ -384,7 +416,8 @@ async def get_results(audit_id: str):
         raise HTTPException(404, "Audit not found")
     if not a.get("results"):
         raise HTTPException(409, "Audit not computed yet")
-    keys = ("id", "company_name", "reporting_currency", "target_arr", "target_date", "as_of_month", "status", "computed_at")
+    keys = ("id", "company_name", "reporting_currency", "target_arr", "target_date", "as_of_month", "status", "computed_at",
+            "metrics_stale")
     return sanitize({"audit": {k: a.get(k) for k in keys}, "results": a["results"]})
 
 
