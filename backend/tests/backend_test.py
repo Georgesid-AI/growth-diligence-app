@@ -1,10 +1,36 @@
-"""Backend API tests for Growth Diligence engine (Phase 1)."""
+"""Backend API tests for Growth Diligence engine (Phase 1).
+
+This is an integration suite: it needs a live backend to hit over HTTP, which
+only exists inside Emergent. Outside that (e.g. a Codespace), it skips cleanly
+at collection instead of crashing pytest.
+"""
 import os
 import io
 import pytest
 import requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL") or open("/app/frontend/.env").read().split("REACT_APP_BACKEND_URL=")[1].split("\n")[0].strip()
+
+def _resolve_backend_url():
+    url = os.environ.get("REACT_APP_BACKEND_URL")
+    if url:
+        return url
+    try:
+        with open("/app/frontend/.env") as f:
+            for line in f:
+                if line.startswith("REACT_APP_BACKEND_URL="):
+                    return line.split("=", 1)[1].strip()
+    except FileNotFoundError:
+        return None
+    return None
+
+
+BASE_URL = _resolve_backend_url()
+if not BASE_URL:
+    pytest.skip(
+        "REACT_APP_BACKEND_URL is not set and /app/frontend/.env is missing — "
+        "this integration suite needs a live Emergent backend; skipping outside Emergent.",
+        allow_module_level=True,
+    )
 BASE_URL = BASE_URL.rstrip("/")
 API = f"{BASE_URL}/api"
 
