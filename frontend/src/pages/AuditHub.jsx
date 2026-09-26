@@ -27,8 +27,22 @@ export default function AuditHub() {
   const load = () => listAudits().then(setAudits);
   useEffect(() => { load(); }, []);
 
+  const targetDateError = () => {
+    if (!form.target_date) return null;
+    const year = parseInt(form.target_date.slice(0, 4), 10);
+    if (!Number.isFinite(year) || year < 2000 || year > 2100) {
+      return "Target date year must be between 2000 and 2100";
+    }
+    if (form.as_of_month && form.target_date.slice(0, 7) <= form.as_of_month) {
+      return "Target date must be after the as-of month";
+    }
+    return null;
+  };
+
   const submit = async () => {
     if (!form.company_name.trim()) return toast.error("Company name is required");
+    const dateError = targetDateError();
+    if (dateError) return toast.error(dateError);
     setSaving(true);
     try {
       const a = await createAudit({
@@ -43,7 +57,9 @@ export default function AuditHub() {
       setForm({ company_name: "", reporting_currency: "EUR", target_arr: "", target_date: "", as_of_month: "" });
       nav(`/audit/${a.id}/mapping`);
     } catch (e) {
-      toast.error("Failed to create audit");
+      const detail = e.response?.data?.detail;
+      const msg = Array.isArray(detail) ? detail.map((d) => d.msg).join("; ") : detail;
+      toast.error(msg || "Failed to create audit");
     } finally {
       setSaving(false);
     }
@@ -120,6 +136,8 @@ export default function AuditHub() {
                 <Input
                   data-testid="audit-target-date-input"
                   type="date"
+                  min="2000-01-01"
+                  max="2100-12-31"
                   value={form.target_date}
                   onChange={(e) => setForm({ ...form, target_date: e.target.value })}
                   className="mt-1.5 bg-[#0B0F17] border-[#1E293B] font-mono"

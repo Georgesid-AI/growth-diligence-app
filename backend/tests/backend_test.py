@@ -1,10 +1,36 @@
-"""Backend API tests for Growth Diligence engine (Phase 1)."""
+"""Backend API tests for Growth Diligence engine (Phase 1).
+
+This is an integration suite: it needs a live backend to hit over HTTP, which
+only exists inside Emergent. Outside that (e.g. a Codespace), it skips cleanly
+at collection instead of crashing pytest.
+"""
 import os
 import io
 import pytest
 import requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL") or open("/app/frontend/.env").read().split("REACT_APP_BACKEND_URL=")[1].split("\n")[0].strip()
+
+def _resolve_backend_url():
+    url = os.environ.get("REACT_APP_BACKEND_URL")
+    if url:
+        return url
+    try:
+        with open("/app/frontend/.env") as f:
+            for line in f:
+                if line.startswith("REACT_APP_BACKEND_URL="):
+                    return line.split("=", 1)[1].strip()
+    except FileNotFoundError:
+        return None
+    return None
+
+
+BASE_URL = _resolve_backend_url()
+if not BASE_URL:
+    pytest.skip(
+        "REACT_APP_BACKEND_URL is not set and /app/frontend/.env is missing — "
+        "this integration suite needs a live Emergent backend; skipping outside Emergent.",
+        allow_module_level=True,
+    )
 BASE_URL = BASE_URL.rstrip("/")
 API = f"{BASE_URL}/api"
 
@@ -351,6 +377,56 @@ def test_export_409_when_not_computed(session):
         assert rr.status_code == 409, f"expected 409 got {rr.status_code}"
     finally:
         session.delete(f"{API}/audits/{aid}", timeout=30)
+
+
+# --- Target date validation ---
+def test_create_audit_rejects_bad_target_date_year(session):
+    r = session.post(f"{API}/audits", json={"company_name": "TEST_BadDate", "target_date": "0027-01-01"}, timeout=30)
+    assert r.status_code == 422, r.text
+
+
+def test_create_audit_accepts_valid_target_date(session):
+    r = session.post(f"{API}/audits", json={"company_name": "TEST_GoodDate", "target_date": "2027-01-01"}, timeout=30)
+    assert r.status_code == 200, r.text
+    session.delete(f"{API}/audits/{r.json()['id']}", timeout=30)
+
+
+# --- Stale metrics: setup changes must recompute automatically ---
+def test_fx_change_triggers_recompute(session):
+    """Adding an FX rate to an already-computed audit must refresh results —
+    the v1/v2 staleness this regression guards against."""
+    r = session.post(f"{API}/audits", json={"company_name": "TEST_Stale", "reporting_currency": "EUR"}, timeout=30)
+    aid = r.json()["id"]
+    try:
+        csv = b"Customer,Invoice Date,Amount,Currency\nA,2023-01-01,1000,EUR\nB,2023-01-01,500,USD\n"
+        up = session.post(f"{API}/audits/{aid}/datasets/revenue/upload",
+                          files={"file": ("r.csv", io.BytesIO(csv), "text/csv")}, timeout=30).json()
+        # v1: no FX rate for USD -> that row is excluded from MRR
+        session.put(f"{API}/audits/{aid}/datasets/revenue/mapping",
+                    json={"mapping": up["suggested_mapping"], "fx": {}, "billing_terms": {}}, timeout=30)
+        v1 = session.post(f"{API}/audits/{aid}/compute", timeout=30).json()
+        assert v1["arr"]["mrr"] == 1000.0, f"v1 mrr={v1['arr']['mrr']}"
+
+        # v2: add a USD rate via the SAME endpoint the FX editor calls — no explicit
+        # /compute call here. The stored results must refresh on their own.
+        session.put(f"{API}/audits/{aid}/datasets/revenue/mapping",
+                    json={"mapping": up["suggested_mapping"], "fx": {"USD": 0.9}, "billing_terms": {}}, timeout=30)
+        got = session.get(f"{API}/audits/{aid}/results", timeout=30).json()
+        assert got["audit"]["metrics_stale"] is False, "metrics_stale should clear after auto-recompute"
+        assert got["results"]["arr"]["mrr"] == 1450.0, f"v2 mrr should include the USD row: {got['results']['arr']['mrr']}"
+    finally:
+        session.delete(f"{API}/audits/{aid}", timeout=30)
+
+
+# --- Overall ACV band summary line ---
+def test_acv_path_has_overall_band(session, asof_computed_audit):
+    aid = asof_computed_audit
+    session.post(f"{API}/audits/{aid}/compute", timeout=60)
+    res = session.get(f"{API}/audits/{aid}/results", timeout=30).json()["results"]
+    assert res.get("acv_path"), "expected acv_path to be computable for this fixture"
+    assert "overall_band" in res["acv_path"]
+    ob = res["acv_path"]["overall_band"]
+    assert ob is None or {"key", "label", "value_label"} <= ob.keys()
 
 
 # --- Testco demo regression ---

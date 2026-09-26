@@ -96,6 +96,16 @@ export default function Dashboard() {
 
   return (
     <Layout audit={audit}>
+      {data.audit?.metrics_stale && (
+        <div data-testid="stale-metrics-banner"
+          className="mb-6 flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
+          <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+          Metrics are out of date — a setup input changed since this audit was last computed.
+          <button onClick={() => nav(`/audit/${id}/mapping`)} className="ml-auto underline hover:text-amber-200 whitespace-nowrap">
+            Recompute →
+          </button>
+        </div>
+      )}
       <div className="flex items-end justify-between mb-6 flex-wrap gap-3">
         <div>
           <h1 className="font-heading text-2xl sm:text-3xl font-bold tracking-tight text-white">{audit?.company_name}</h1>
@@ -203,6 +213,12 @@ export default function Dashboard() {
         <Card className="lg:col-span-4" testid="path-to-plan-panel" title="Path to Plan" hint="required vs observed net-new customers / year">
           {r.acv_path ? (
             <>
+              {r.acv_path.target_date_error && (
+                <div data-testid="target-date-error" className="mb-3 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+                  <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
+                  {r.acv_path.target_date_error} — required net-new not computed.
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3 mb-4">
                 <Stat label="Current customers" value={num(r.acv_path.current_customers)} />
                 <Stat label="Current ARR" value={money(r.acv_path.current_arr, ccy)} />
@@ -251,6 +267,12 @@ export default function Dashboard() {
         <Card className="lg:col-span-4" title={`ACV Bands — active customers (as of ${r.as_of_month ?? "—"})`}>
           {r.acv_path ? (
             <div className="space-y-1.5">
+              {r.acv_path.overall_band && (
+                <div data-testid="acv-overall-band" className="text-sm text-slate-200 pb-1.5 mb-1.5 border-b border-[#1E293B]">
+                  Overall: <span className="font-medium">{r.acv_path.overall_band.label}</span>{" "}
+                  <span className="font-mono text-slate-400">({r.acv_path.overall_band.value_label})</span>
+                </div>
+              )}
               {r.acv_path.bands.filter((b) => b.count > 0).map((b) => (
                 <div key={b.key} className="flex items-center justify-between text-sm">
                   <span className="text-slate-300">

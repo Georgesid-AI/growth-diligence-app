@@ -454,12 +454,12 @@ def _path_obs_insufficient_history():
     return (None, None), (acv["observed_net_new_per_year_12m"], acv["observed_net_new_per_year_24m"])
 
 
-@case("Path to plan: required net-new/yr matches date formula")
+@case("Path to plan: required net-new/yr matches exact-day-count formula")
 def _path_required():
     acv = _path_scenario()
     latest = pd.Period("2025-01", "M")
     now = latest.to_timestamp(how="end")
-    years = max((pd.Timestamp("2027-01-01") - now).days / 365.25, 0.01)
+    years = max((pd.Timestamp("2027-01-01") - now).days / 365, 0.01)  # exact days ÷ 365, never a rounded 1.5
     expected = round((100.0 - 10) / years, 1)
     return expected, acv["required_net_new_per_year"]
 
@@ -469,10 +469,49 @@ def _path_ratio():
     acv = _path_scenario()
     latest = pd.Period("2025-01", "M")
     now = latest.to_timestamp(how="end")
-    years = max((pd.Timestamp("2027-01-01") - now).days / 365.25, 0.01)
+    years = max((pd.Timestamp("2027-01-01") - now).days / 365, 0.01)
     raw_required = (100.0 - 10) / years  # unrounded, as the engine uses internally
     expected = round(raw_required / acv["observed_net_new_per_year_12m"], 2)
     return expected, acv["required_vs_observed_12m"]
+
+
+@case("Path to plan: target date before as-of is flagged, not silently computed")
+def _path_target_before_asof():
+    # Same customer setup as the main path scenario, but the target date is set
+    # to the as-of month itself (2025-01) — not after it. required_net_new_per_year
+    # must be None (never an absurd figure), and target_date_error must explain why.
+    rows = []
+    r = 1
+    for c in ("B1", "B2", "B3", "B4"):
+        rows += monthly_lines(c, {i: 1000 for i in range(0, 25)}, start_row=r); r += 40
+    mrr, seg, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
+    acv = ge.compute_acv_path(mrr, seg, fm, target_arr=1_200_000, target_date="2025-01-15")
+    ok = acv["required_net_new_per_year"] is None and acv["target_date_error"] is not None
+    return True, ok
+
+
+@case("Path to plan: target date with an implausible year (0027) is flagged")
+def _path_target_bad_year():
+    rows = monthly_lines("A", {i: 1000 for i in range(0, 13)})
+    mrr, seg, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
+    acv = ge.compute_acv_path(mrr, seg, fm, target_arr=1_200_000, target_date="0027-01-01")
+    ok = acv["required_net_new_per_year"] is None and acv["target_date_error"] is not None
+    return True, ok
+
+
+@case("Path to plan: overall ACV band matches the per-customer bucketing")
+def _path_overall_band():
+    # Blended ACV here is 120,000 ARR / 10 customers = 12,000 annual, landing in
+    # consultative_sales (10,000-100,000) — the same band every one of this
+    # scenario's customers individually falls in (all flat at 1000/mo).
+    acv = _path_scenario()
+    ok = (
+        acv["overall_band"] is not None
+        and acv["overall_band"]["key"] == "consultative_sales"
+        and acv["overall_band"]["label"] == "Consultative sales"
+        and acv["overall_band"]["value_label"] == "€12K"
+    )
+    return True, ok
 
 
 # --- Founder win-rate split + sales-cycle IQR -------------------------------
