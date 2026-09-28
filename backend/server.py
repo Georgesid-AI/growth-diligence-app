@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, field_validator
 
 import growth_engine as ge
 import demo_data
+from app.llm import gateway as llm_gateway
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -281,7 +282,10 @@ async def delete_audit(audit_id: str):
         raise HTTPException(404, "Audit not found")
     await db.audits.delete_one({"id": audit_id})
     await db.datasets.delete_many({"audit_id": audit_id})
-    return {"deleted": audit_id}
+    # Narratives, call log and pseudonym mapping are scoped to the run and must
+    # not outlive it.
+    purged = await llm_gateway.purge_run(db, audit_id)
+    return {"deleted": audit_id, "llm_purged": purged}
 
 
 # ---------------------------------------------------------------------------
@@ -553,6 +557,33 @@ async def export_audit(audit_id: str):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
+
+
+# ---------------------------------------------------------------------------
+# LLM narrative gateway (the only component that calls a model provider)
+# ---------------------------------------------------------------------------
+@api.post("/runs/{run_id}/narrative/{step}")
+async def generate_narrative(run_id: str, step: str):
+    """Generate or return a cached narrative.
+
+    Returns 200 with narrative_status="unavailable" on any LLM-side failure -
+    the computed metrics still come back, so the dashboard is never blocked.
+    """
+    try:
+        result = await llm_gateway.generate_narrative(db, run_id, step)
+    except llm_gateway.GatewayError as exc:
+        if exc.reason == "run_not_found":
+            raise HTTPException(404, "Run not found")
+        if exc.reason == "not_computed":
+            raise HTTPException(409, "Run not computed yet")
+        raise HTTPException(500, exc.reason)
+    return sanitize(result.model_dump())
+
+
+@api.get("/runs/{run_id}/llm-usage")
+async def llm_usage(run_id: str):
+    usage = await llm_gateway.usage_for_run(db, run_id)
+    return sanitize(usage.model_dump())
 
 
 app.include_router(api)
