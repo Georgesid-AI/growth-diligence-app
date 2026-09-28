@@ -22,7 +22,7 @@ import logging
 import os
 import re
 from datetime import datetime, timezone
-from typing import Any, Optional, Tuple
+from typing import Any, Iterable, List, NamedTuple, Optional, Tuple
 
 from . import cache, guards, prompt_store, redaction
 from .schemas import Narrative, NarrativeResponse, UsageResponse
@@ -54,6 +54,9 @@ MODELS_ACCEPTING_TEMPERATURE = {"claude-haiku-4-5"}
 STEP_CONFIG = {
     "growth_engine": {
         "prompt": "growth_engine",
+        # Window lengths this step legitimately talks about ("12-month NRR"),
+        # allowlisted so ordinary phrasing is not treated as a fabricated figure.
+        "windows": [12, 24],
         "model": DEFAULT_MODEL,
         "max_tokens": 4000,
         "temperature": 0.2,
@@ -61,6 +64,9 @@ STEP_CONFIG = {
     },
     "cohort_retention": {
         "prompt": "cohort_retention",
+        # Window lengths this step legitimately talks about ("12-month NRR"),
+        # allowlisted so ordinary phrasing is not treated as a fabricated figure.
+        "windows": [12, 24],
         "model": DEFAULT_MODEL,
         "max_tokens": 3000,
         "temperature": 0.2,
@@ -68,6 +74,9 @@ STEP_CONFIG = {
     },
     "cac_efficiency": {
         "prompt": "cac_efficiency",
+        # Window lengths this step legitimately talks about ("12-month NRR"),
+        # allowlisted so ordinary phrasing is not treated as a fabricated figure.
+        "windows": [4],
         "model": DEFAULT_MODEL,
         "max_tokens": 3000,
         "temperature": 0.2,
@@ -75,6 +84,9 @@ STEP_CONFIG = {
     },
     "path_to_plan": {
         "prompt": "path_to_plan",
+        # Window lengths this step legitimately talks about ("12-month NRR"),
+        # allowlisted so ordinary phrasing is not treated as a fabricated figure.
+        "windows": [12, 24],
         "model": DEFAULT_MODEL,
         "max_tokens": 3000,
         "temperature": 0.2,
@@ -252,32 +264,77 @@ def _classify_provider_error(exc: Exception) -> Exception:
 # ---------------------------------------------------------------------------
 # Output integrity
 # ---------------------------------------------------------------------------
-_NARRATIVE_TEXT_FIELDS = ("headline", "what_this_means")
+# Fields whose numbers are load-bearing: a wrong figure in the headline or a
+# table row is read as fact, so an unmatched number there kills the narrative.
+HARD_FIELDS = ("headline",)
+# Prose fields. An unmatched number here is usually rhetorical ("above 100") or
+# a window length, so the narrative is shown and the number reported instead.
+SOFT_FIELDS = ("what_this_means", "worth_flagging", "next_actions")
+
+# Structural numerals that carry no claim about this company's figures. 100 is
+# the retention baseline every NRR sentence refers to; per-step window lengths
+# come from STEP_CONFIG["windows"].
+GLOBAL_ALLOWED_NUMERALS = (100,)
 
 
-def numeric_guard(narrative: Narrative, payload: Any) -> Optional[str]:
-    """Every number the model wrote must already exist in the input payload.
+class NumericGuardResult(NamedTuple):
+    """Unmatched numbers, split by how much damage they could do."""
 
-    Numbers are the calc engine's job. If the model invented or arithmetically
-    derived a figure, the narrative is dropped rather than shown - a plausible
-    wrong number in a diligence report is worse than no narrative.
+    hard: List[str]   # headline / table rows - narrative is dropped
+    soft: List[str]   # prose - narrative is shown, flagged
 
-    Returns None when clean, or a human-readable reason when not.
+    @property
+    def all(self) -> List[str]:
+        return sorted(set(self.hard) | set(self.soft), key=_numeric_sort_key)
+
+
+def _numeric_sort_key(token: str):
+    try:
+        return (0, float(token))
+    except ValueError:
+        return (1, 0.0)
+
+
+def allowed_numerals(payload: Any, windows: Iterable[int] = ()) -> set:
+    """Every numeric token the model may legitimately use."""
+    return redaction.numbers_in(payload) | redaction.numbers_in(
+        list(GLOBAL_ALLOWED_NUMERALS) + list(windows)
+    )
+
+
+def numeric_guard(
+    narrative: Narrative, payload: Any, windows: Iterable[int] = ()
+) -> NumericGuardResult:
+    """Check every number the model wrote against the computed results.
+
+    Numbers are the calc engine's job. A figure the engine never produced is
+    either invented or derived, and both are wrong in a diligence report - but
+    where it appears decides the response. In the headline or a table row it is
+    read as fact and the narrative is dropped. In prose it is usually a turn of
+    phrase, so the narrative ships with narrative_status="flagged" and the
+    number is reported back for prompt tuning.
     """
-    allowed = redaction.numbers_in(payload)
-    produced: set = set()
-    for field in _NARRATIVE_TEXT_FIELDS:
-        produced |= redaction.numbers_in(getattr(narrative, field, "") or "")
-    for row in narrative.table_rows:
-        produced |= redaction.numbers_in(row.value)
-        produced |= redaction.numbers_in(row.label)
-    for item in list(narrative.worth_flagging) + list(narrative.next_actions):
-        produced |= redaction.numbers_in(item)
+    allowed = allowed_numerals(payload, windows)
 
-    invented = sorted(produced - allowed)
-    if invented:
-        return f"model produced number(s) absent from the computed results: {', '.join(invented[:8])}"
-    return None
+    hard: set = set()
+    for field in HARD_FIELDS:
+        hard |= redaction.numbers_in(getattr(narrative, field, "") or "")
+    for row in narrative.table_rows:
+        hard |= redaction.numbers_in(row.value)
+        hard |= redaction.numbers_in(row.label)
+
+    soft: set = set()
+    for field in SOFT_FIELDS:
+        value = getattr(narrative, field, None)
+        soft |= redaction.numbers_in(value if value is not None else "")
+
+    # A number that is unmatched in both tiers is reported once, as hard.
+    hard_unmatched = hard - allowed
+    soft_unmatched = (soft - allowed) - hard_unmatched
+    return NumericGuardResult(
+        hard=sorted(hard_unmatched, key=_numeric_sort_key),
+        soft=sorted(soft_unmatched, key=_numeric_sort_key),
+    )
 
 
 def source_key_guard(narrative: Narrative, payload: Any) -> Optional[str]:
@@ -336,12 +393,14 @@ def parse_strict(text: str) -> Narrative:
 async def log_call(
     db, *, run_id: str, step: str, prompt_version: str, model: str,
     input_tokens: int, output_tokens: int, estimated_cost_usd: float,
-    cache_hit: bool, status: str,
+    cache_hit: bool, status: str, unmatched_numbers: Optional[List[str]] = None,
 ) -> None:
     """Append to llm_calls.
 
     Deliberately records no prompt text and no payload contents - only the
-    metadata needed for cost control and audit.
+    metadata needed for cost control and audit. `unmatched_numbers` is the one
+    fragment of model output kept, and by construction it contains only numerals
+    the payload does NOT hold, so it cannot echo the computed figures back.
     """
     await db[CALLS_COLLECTION].insert_one({
         "run_id": run_id,
@@ -353,6 +412,7 @@ async def log_call(
         "estimated_cost_usd": round(float(estimated_cost_usd), 6),
         "cache_hit": bool(cache_hit),
         "status": status,
+        "unmatched_numbers": list(unmatched_numbers or []),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     })
 
@@ -418,16 +478,7 @@ async def generate_narrative(
 
     cached = await cache.get(db, key)
     if cached:
-        await log_call(
-            db, run_id=run_id, step=step, prompt_version=prompt.version, model=model,
-            input_tokens=0, output_tokens=0, estimated_cost_usd=0.0,
-            cache_hit=True, status="ok",
-        )
-        return NarrativeResponse(
-            run_id=run_id, step=step, narrative_status="ok",
-            narrative=Narrative.model_validate(cached), cache_hit=True,
-            prompt_version=prompt.version, model=model, metrics=metrics,
-        )
+        return await _from_cache(db, cached, run_id, step, prompt.version, model, metrics)
 
     # Circuit breaker: if another request for this run+step is mid-flight, wait
     # for it and serve its result rather than making a second call.
@@ -436,16 +487,7 @@ async def generate_narrative(
         await guards.wait_for_inflight(db, run_id, step)
         cached = await cache.get(db, key)
         if cached:
-            await log_call(
-                db, run_id=run_id, step=step, prompt_version=prompt.version, model=model,
-                input_tokens=0, output_tokens=0, estimated_cost_usd=0.0,
-                cache_hit=True, status="ok",
-            )
-            return NarrativeResponse(
-                run_id=run_id, step=step, narrative_status="ok",
-                narrative=Narrative.model_validate(cached), cache_hit=True,
-                prompt_version=prompt.version, model=model, metrics=metrics,
-            )
+            return await _from_cache(db, cached, run_id, step, prompt.version, model, metrics)
         return _unavailable(run_id, step, "another generation is in flight", metrics)
 
     try:
@@ -465,30 +507,58 @@ async def generate_narrative(
             adapter, config, prompt, outbound, sleep
         )
 
-        bad = numeric_guard(narrative, outbound) or source_key_guard(narrative, outbound)
+        guard = numeric_guard(narrative, outbound, config.get("windows", ()))
+        bad_keys = source_key_guard(narrative, outbound)
         cost = estimate_cost_usd(model, in_tok, out_tok)
-        if bad:
-            # The call still cost money, so it is logged and counted.
+
+        # Hard tier: a fabricated figure in the headline or a table row, or a
+        # row citing a source key that does not exist. Drop the narrative.
+        if guard.hard or bad_keys:
+            reason = bad_keys or (
+                "model produced number(s) absent from the computed results in "
+                f"headline/table rows: {', '.join(guard.hard[:8])}"
+            )
+            # The call still cost money, so it is logged and counted. Every
+            # unmatched number is recorded, both tiers, for prompt tuning.
             await log_call(
                 db, run_id=run_id, step=step, prompt_version=prompt.version, model=model,
                 input_tokens=in_tok, output_tokens=out_tok, estimated_cost_usd=cost,
                 cache_hit=False, status="numeric_guard_rejected",
+                unmatched_numbers=guard.all,
             )
-            logger.warning("narrative rejected for run %s step %s: %s", run_id, step, bad)
-            return _unavailable(run_id, step, bad, metrics)
+            logger.warning("narrative rejected for run %s step %s: %s", run_id, step, reason)
+            return NarrativeResponse(
+                run_id=run_id, step=step, narrative_status="unavailable",
+                reason=reason, metrics=metrics, unmatched_numbers=guard.all,
+            )
+
+        # Soft tier: prose carries a number the engine did not produce. Ship it,
+        # say so, and report the numbers.
+        status = "flagged" if guard.soft else "ok"
+        if guard.soft:
+            logger.info(
+                "narrative flagged for run %s step %s: unmatched prose number(s) %s",
+                run_id, step, ", ".join(guard.soft),
+            )
 
         restored = redaction.restore_deep(narrative.model_dump(), mapping)
         final = Narrative.model_validate(restored)
 
-        await cache.put(db, key, run_id, step, prompt.version, model, final.model_dump())
+        await cache.put(
+            db, key, run_id, step, prompt.version, model, final.model_dump(),
+            narrative_status=status, unmatched_numbers=guard.soft,
+        )
         await log_call(
             db, run_id=run_id, step=step, prompt_version=prompt.version, model=model,
             input_tokens=in_tok, output_tokens=out_tok, estimated_cost_usd=cost,
-            cache_hit=False, status="ok",
+            cache_hit=False, status=status, unmatched_numbers=guard.soft,
         )
+        stored = await cache.get(db, key)
         return NarrativeResponse(
-            run_id=run_id, step=step, narrative_status="ok", narrative=final,
-            cache_hit=False, prompt_version=prompt.version, model=model, metrics=metrics,
+            run_id=run_id, step=step, narrative_status=status, narrative=final,
+            cache_hit=False, prompt_version=prompt.version, model=model,
+            metrics=metrics, unmatched_numbers=guard.soft,
+            generated_at=(stored or {}).get("created_at"),
         )
 
     except GatewayError as exc:
@@ -559,10 +629,91 @@ async def _to_thread(fn, **kwargs):
     return await asyncio.to_thread(lambda: fn(**kwargs))
 
 
+async def _from_cache(
+    db, cached: dict, run_id: str, step: str, prompt_version: str,
+    model: str, metrics: dict,
+) -> NarrativeResponse:
+    """Serve a stored narrative with the status it was stored under.
+
+    A flagged narrative must come back flagged - otherwise the first viewer sees
+    the warning and everyone after them sees a clean "ok" for the same text.
+    """
+    status = cached.get("narrative_status", "ok")
+    unmatched = list(cached.get("unmatched_numbers", []))
+    generated_at = cached.get("created_at")
+    await log_call(
+        db, run_id=run_id, step=step, prompt_version=prompt_version, model=model,
+        input_tokens=0, output_tokens=0, estimated_cost_usd=0.0,
+        cache_hit=True, status=status, unmatched_numbers=unmatched,
+    )
+    return NarrativeResponse(
+        run_id=run_id, step=step, narrative_status=status,
+        narrative=Narrative.model_validate(cached["narrative"]), cache_hit=True,
+        prompt_version=prompt_version, model=model, metrics=metrics,
+        unmatched_numbers=unmatched, generated_at=generated_at,
+    )
+
+
 def _unavailable(run_id: str, step: str, reason: str, metrics: dict) -> NarrativeResponse:
     return NarrativeResponse(
         run_id=run_id, step=step, narrative_status="unavailable",
         reason=reason, metrics=metrics,
+    )
+
+
+async def read_cached_narrative(db, run_id: str, step: str) -> NarrativeResponse:
+    """Return an already-generated narrative, or nothing. Never calls a provider.
+
+    This is the path a dashboard load takes. There is deliberately no branch
+    here that reaches the adapter — opening an audit cannot spend money, no
+    matter what state the cache is in. Generating is a separate, explicit act.
+
+    A run whose results have changed produces a different cache key, so the old
+    narrative simply is not found and the reader is offered a fresh generation
+    rather than being shown a narrative about superseded numbers.
+    """
+    config = STEP_CONFIG.get(step)
+    if not config:
+        return NarrativeResponse(
+            run_id=run_id, step=step, narrative_status="not_generated",
+            reason=f"unknown step {step!r}", metrics={},
+        )
+
+    computed = await load_computed_results(db, run_id, step)
+    metrics = computed["metrics"]
+
+    try:
+        prompt = prompt_store.load(config["prompt"])
+    except (FileNotFoundError, ValueError):
+        # No prompt means nothing could have been generated under it.
+        return NarrativeResponse(
+            run_id=run_id, step=step, narrative_status="not_generated", metrics=metrics,
+        )
+
+    model = config["model"]
+    mapping = await redaction.get_or_create_map(db, run_id, computed)
+    outbound = redaction.redact(computed, mapping)
+    key = cache.cache_key(run_id, step, prompt.version, model, outbound)
+
+    cached = await cache.get(db, key)
+    if not cached:
+        # Nothing matches the current numbers. If something was written for an
+        # earlier version of this run, say so - the reader may remember it.
+        return NarrativeResponse(
+            run_id=run_id, step=step, narrative_status="not_generated",
+            metrics=metrics, superseded=await cache.has_any(db, run_id, step),
+        )
+
+    # A read is not a call: it is not written to llm_calls, so the usage figures
+    # keep counting generation attempts rather than page views.
+    return NarrativeResponse(
+        run_id=run_id, step=step,
+        narrative_status=cached.get("narrative_status", "ok"),
+        narrative=Narrative.model_validate(cached["narrative"]),
+        cache_hit=True, prompt_version=prompt.version, model=model,
+        metrics=metrics,
+        unmatched_numbers=list(cached.get("unmatched_numbers", [])),
+        generated_at=cached.get("created_at"),
     )
 
 

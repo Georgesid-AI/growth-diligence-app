@@ -5,6 +5,7 @@ a small in-memory stub and the provider by a fake adapter that counts calls. No
 test in this file can reach a real model provider.
 """
 import asyncio
+import copy
 import json
 import os
 import re
@@ -193,8 +194,14 @@ async def _noop_sleep(_seconds):
 
 
 def make_db():
+    """Fresh DB per test.
+
+    Deep-copied: `dict(RESULTS_DOC)` would share the nested `results` dict, so a
+    test that changes a figure to simulate a recompute would silently rewrite
+    the fixture for every test that ran after it.
+    """
     db = FakeDB()
-    db["audits"].docs.append(dict(RESULTS_DOC))
+    db["audits"].docs.append(copy.deepcopy(RESULTS_DOC))
     return db
 
 
@@ -348,12 +355,10 @@ def test_canonical_json_is_key_order_independent():
 # ---------------------------------------------------------------------------
 # Numeric guard
 # ---------------------------------------------------------------------------
-def test_numeric_guard_rejects_a_fabricated_figure():
-    """A number the engine never produced must sink the whole narrative."""
+def test_hard_tier_fabricated_figure_in_headline_sinks_the_narrative():
+    """A number the engine never produced, in the headline, is read as fact."""
     fabricated = dict(GOOD_NARRATIVE)
-    fabricated["what_this_means"] = (
-        "Retention above 100 means the base expands, implying 42.7 percent growth."
-    )
+    fabricated["headline"] = "ARR grew 42.7 percent year on year."
 
     async def run():
         db = make_db()
@@ -368,9 +373,123 @@ def test_numeric_guard_rejects_a_fabricated_figure():
     assert result.narrative_status == "unavailable"
     assert "42.7" in result.reason
     assert result.narrative is None
+    assert "42.7" in result.unmatched_numbers
     assert result.metrics, "metrics survive a rejected narrative"
     assert logged[0]["status"] == "numeric_guard_rejected"
+    assert "42.7" in logged[0]["unmatched_numbers"]
     assert logged[0]["estimated_cost_usd"] > 0, "a rejected call still cost money"
+
+
+def test_hard_tier_fabricated_figure_in_a_table_row_sinks_the_narrative():
+    fabricated = json.loads(json.dumps(GOOD_NARRATIVE))
+    fabricated["table_rows"][0]["value"] = "8675309"
+
+    async def run():
+        db = make_db()
+        return await gateway.generate_narrative(
+            db, RUN_ID, "growth_engine",
+            adapter=FakeAdapter(replies=[json.dumps(fabricated)]), sleep=_noop_sleep
+        )
+
+    result = asyncio.run(run())
+    assert result.narrative_status == "unavailable"
+    assert result.narrative is None
+    assert "8675309" in result.unmatched_numbers
+
+
+def test_soft_tier_fabricated_figure_in_prose_is_flagged_not_dropped():
+    """Prose numbers are usually rhetorical, so the narrative still ships."""
+    fabricated = dict(GOOD_NARRATIVE)
+    fabricated["what_this_means"] = "This implies 42.7 percent growth next year."
+
+    async def run():
+        db = make_db()
+        result = await gateway.generate_narrative(
+            db, RUN_ID, "growth_engine",
+            adapter=FakeAdapter(replies=[json.dumps(fabricated)]), sleep=_noop_sleep
+        )
+        logged = await db["llm_calls"].find({"run_id": RUN_ID}).to_list(10)
+        return result, logged
+
+    result, logged = asyncio.run(run())
+    assert result.narrative_status == "flagged"
+    assert result.narrative is not None, "a flagged narrative is still returned"
+    assert result.unmatched_numbers == ["42.7"]
+    assert logged[0]["status"] == "flagged"
+    assert logged[0]["unmatched_numbers"] == ["42.7"]
+
+
+def test_soft_tier_unmatched_numbers_in_lists_are_flagged():
+    fabricated = dict(GOOD_NARRATIVE)
+    fabricated["worth_flagging"] = ["Only 3 of the quarters are computable."]
+    fabricated["next_actions"] = ["Ask for the 7 missing invoices."]
+
+    async def run():
+        db = make_db()
+        return await gateway.generate_narrative(
+            db, RUN_ID, "growth_engine",
+            adapter=FakeAdapter(replies=[json.dumps(fabricated)]), sleep=_noop_sleep
+        )
+
+    result = asyncio.run(run())
+    assert result.narrative_status == "flagged"
+    assert result.unmatched_numbers == ["3", "7"]
+
+
+def test_flagged_status_survives_a_cache_hit():
+    """The second viewer must see the same warning as the first."""
+    fabricated = dict(GOOD_NARRATIVE)
+    fabricated["what_this_means"] = "This implies 42.7 percent growth next year."
+
+    async def run():
+        db = make_db()
+        first = await gateway.generate_narrative(
+            db, RUN_ID, "growth_engine",
+            adapter=FakeAdapter(replies=[json.dumps(fabricated)]), sleep=_noop_sleep
+        )
+        second_adapter = FakeAdapter()
+        second = await gateway.generate_narrative(
+            db, RUN_ID, "growth_engine", adapter=second_adapter, sleep=_noop_sleep
+        )
+        return first, second, second_adapter
+
+    first, second, second_adapter = asyncio.run(run())
+    assert first.narrative_status == "flagged"
+    assert second.narrative_status == "flagged", "cache hit must not upgrade to ok"
+    assert second.cache_hit is True
+    assert second.unmatched_numbers == ["42.7"]
+    assert second_adapter.calls == 0
+
+
+def test_allowlist_permits_100_and_configured_window_lengths():
+    """"Above 100" and "12-month" are structural, not fabricated figures."""
+    phrased = dict(GOOD_NARRATIVE)
+    phrased["what_this_means"] = (
+        "Retention above 100 means the base expands on a 12 month view."
+    )
+    phrased["worth_flagging"] = ["The 24 month comparison is also available."]
+
+    async def run():
+        db = make_db()
+        return await gateway.generate_narrative(
+            db, RUN_ID, "growth_engine",
+            adapter=FakeAdapter(replies=[json.dumps(phrased)]), sleep=_noop_sleep
+        )
+
+    result = asyncio.run(run())
+    assert result.narrative_status == "ok", result.unmatched_numbers
+    assert result.unmatched_numbers == []
+
+
+def test_allowlist_is_per_step():
+    """cac_efficiency allows 4 quarters; growth_engine does not."""
+    assert 4 in gateway.STEP_CONFIG["cac_efficiency"]["windows"]
+    assert 4 not in gateway.STEP_CONFIG["growth_engine"]["windows"]
+    payload = {"x": 1}
+    assert "4" in gateway.allowed_numerals(payload, gateway.STEP_CONFIG["cac_efficiency"]["windows"])
+    assert "4" not in gateway.allowed_numerals(payload, gateway.STEP_CONFIG["growth_engine"]["windows"])
+    # 100 is allowed everywhere.
+    assert "100" in gateway.allowed_numerals(payload, ())
 
 
 def test_numeric_guard_accepts_numbers_present_in_payload():
@@ -386,12 +505,30 @@ def test_numeric_guard_accepts_numbers_present_in_payload():
     assert result.narrative.headline
 
 
-def test_numeric_guard_unit():
+def test_numeric_guard_unit_splits_hard_from_soft():
     payload = {"arr": {"value": 3129600}, "nrr": {"overall_pct": 104.2}}
+
     clean = Narrative(headline="ARR is 3129600", what_this_means="NRR 104.2")
-    assert gateway.numeric_guard(clean, payload) is None
-    dirty = Narrative(headline="ARR grew 17.5 percent", what_this_means="")
-    assert "17.5" in gateway.numeric_guard(dirty, payload)
+    result = gateway.numeric_guard(clean, payload)
+    assert result.hard == [] and result.soft == []
+
+    hard = Narrative(headline="ARR grew 17.5 percent", what_this_means="")
+    assert gateway.numeric_guard(hard, payload).hard == ["17.5"]
+
+    soft = Narrative(headline="ARR is 3129600", what_this_means="Up 17.5 percent.")
+    result = gateway.numeric_guard(soft, payload)
+    assert result.hard == [] and result.soft == ["17.5"]
+
+    # A number unmatched in both tiers is reported once, as hard.
+    both = Narrative(headline="Grew 17.5 percent", what_this_means="Again, 17.5.")
+    result = gateway.numeric_guard(both, payload)
+    assert result.hard == ["17.5"] and result.soft == []
+    assert result.all == ["17.5"]
+
+    # Windows are allowlisted per step.
+    windowed = Narrative(headline="ARR is 3129600", what_this_means="On a 12 month view.")
+    assert gateway.numeric_guard(windowed, payload, windows=[12]).soft == []
+    assert gateway.numeric_guard(windowed, payload, windows=[]).soft == ["12"]
 
 
 def test_source_key_guard_rejects_unknown_key():
@@ -504,7 +641,8 @@ def test_llm_calls_log_holds_no_prompt_or_payload_text():
     row = rows[0]
     assert set(row) == {
         "run_id", "step", "prompt_version", "model", "input_tokens",
-        "output_tokens", "estimated_cost_usd", "cache_hit", "status", "timestamp",
+        "output_tokens", "estimated_cost_usd", "cache_hit", "status",
+        "unmatched_numbers", "timestamp",
     }
     blob = json.dumps(row)
     assert "You are writing" not in blob, "prompt text leaked into the call log"
@@ -569,7 +707,7 @@ def test_prompt_text_never_returned_in_a_response():
     prompt_body = prompt_store.load("growth_engine").text
     assert prompt_body[:60] not in blob
     assert "Absolute rules" not in blob
-    assert result.prompt_version == "v1", "the version is returned, the text is not"
+    assert result.prompt_version == "v2", "the version is returned, the text is not"
 
 
 def test_no_file_io_outside_prompt_store():
@@ -618,3 +756,165 @@ def test_only_growth_engine_has_a_prompt():
     for step in scaffolded:
         with pytest.raises(FileNotFoundError):
             prompt_store.load(gateway.STEP_CONFIG[step]["prompt"])
+
+
+# ---------------------------------------------------------------------------
+# Read-only path: opening an audit must never spend
+# ---------------------------------------------------------------------------
+def test_read_only_returns_not_generated_when_nothing_cached():
+    async def run():
+        db = make_db()
+        result = await gateway.read_cached_narrative(db, RUN_ID, "growth_engine")
+        logged = await db["llm_calls"].find({"run_id": RUN_ID}).to_list(10)
+        return result, logged
+
+    result, logged = asyncio.run(run())
+    assert result.narrative_status == "not_generated"
+    assert result.narrative is None
+    assert result.metrics, "metrics come back even with no narrative"
+    assert logged == [], "a read is not a call and must not be logged"
+
+
+def test_read_only_returns_the_cached_narrative_with_its_date():
+    async def run():
+        db = make_db()
+        generated = await gateway.generate_narrative(
+            db, RUN_ID, "growth_engine", adapter=FakeAdapter(), sleep=_noop_sleep
+        )
+        read = await gateway.read_cached_narrative(db, RUN_ID, "growth_engine")
+        return generated, read
+
+    generated, read = asyncio.run(run())
+    assert generated.narrative_status == "ok"
+    assert read.narrative_status == "ok"
+    assert read.cache_hit is True
+    assert read.narrative.headline == generated.narrative.headline
+    assert read.generated_at, "the UI needs the date the narrative was written"
+
+
+def test_read_only_preserves_flagged_status():
+    fabricated = dict(GOOD_NARRATIVE)
+    fabricated["what_this_means"] = "This implies 42.7 percent growth next year."
+
+    async def run():
+        db = make_db()
+        await gateway.generate_narrative(
+            db, RUN_ID, "growth_engine",
+            adapter=FakeAdapter(replies=[json.dumps(fabricated)]), sleep=_noop_sleep
+        )
+        return await gateway.read_cached_narrative(db, RUN_ID, "growth_engine")
+
+    read = asyncio.run(run())
+    assert read.narrative_status == "flagged"
+    assert read.unmatched_numbers == ["42.7"]
+
+
+def test_read_only_cannot_reach_a_provider():
+    """Structural: nothing on the read path can construct or call an adapter.
+
+    Checks the parsed code, not the text, so prose in the docstring explaining
+    that it must not reach the adapter does not trip the assertion.
+    """
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(gateway.read_cached_narrative))
+    fn = tree.body[0]
+    body = fn.body[1:] if ast.get_docstring(fn) else fn.body
+
+    names = set()
+    calls = set()
+    for node in body:
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Name):
+                names.add(sub.id)
+            elif isinstance(sub, ast.Attribute):
+                names.add(sub.attr)
+                calls.add(sub.attr)
+
+    offenders = {n for n in names if "adapter" in n.lower()}
+    assert offenders == set(), f"read path references an adapter: {offenders}"
+    assert "complete" not in calls, "read path invokes a provider completion"
+
+
+def test_read_only_misses_when_the_numbers_changed():
+    """Stale narratives must not resurface against recomputed results."""
+    async def run():
+        db = make_db()
+        await gateway.generate_narrative(
+            db, RUN_ID, "growth_engine", adapter=FakeAdapter(), sleep=_noop_sleep
+        )
+        # Recompute changes a figure, so the cache key changes too.
+        db["audits"].docs[0]["results"]["arr"]["value"] = 4000000
+        return await gateway.read_cached_narrative(db, RUN_ID, "growth_engine")
+
+    read = asyncio.run(run())
+    assert read.narrative_status == "not_generated", (
+        "a narrative written about superseded numbers must not be served"
+    )
+
+
+def test_superseded_is_false_when_nothing_was_ever_written():
+    async def run():
+        db = make_db()
+        return await gateway.read_cached_narrative(db, RUN_ID, "growth_engine")
+
+    result = asyncio.run(run())
+    assert result.narrative_status == "not_generated"
+    assert result.superseded is False
+
+
+def test_superseded_is_true_when_the_numbers_moved_on():
+    """A narrative exists for this run+step, but not for the current figures."""
+    async def run():
+        db = make_db()
+        await gateway.generate_narrative(
+            db, RUN_ID, "growth_engine", adapter=FakeAdapter(), sleep=_noop_sleep
+        )
+        db["audits"].docs[0]["results"]["arr"]["value"] = 4000000
+        return await gateway.read_cached_narrative(db, RUN_ID, "growth_engine")
+
+    result = asyncio.run(run())
+    assert result.narrative_status == "not_generated"
+    assert result.superseded is True
+    assert result.narrative is None, "the stale narrative must not be served"
+
+
+def test_superseded_is_scoped_to_the_step():
+    """A narrative for one step must not mark another step superseded."""
+    async def run():
+        db = make_db()
+        await gateway.generate_narrative(
+            db, RUN_ID, "growth_engine", adapter=FakeAdapter(), sleep=_noop_sleep
+        )
+        return await gateway.read_cached_narrative(db, RUN_ID, "path_to_plan")
+
+    result = asyncio.run(run())
+    assert result.superseded is False
+
+
+def test_superseded_clears_after_regenerating():
+    async def run():
+        db = make_db()
+        await gateway.generate_narrative(
+            db, RUN_ID, "growth_engine", adapter=FakeAdapter(), sleep=_noop_sleep
+        )
+        db["audits"].docs[0]["results"]["arr"]["value"] = 4000000
+        stale = await gateway.read_cached_narrative(db, RUN_ID, "growth_engine")
+        # The regenerated narrative must cite the NEW figure - one citing the
+        # old 3129600 would (correctly) be rejected by the hard numeric guard.
+        updated = json.loads(json.dumps(GOOD_NARRATIVE))
+        updated["headline"] = "Ending ARR is 4000000 EUR with NRR at 104.2 percent."
+        updated["table_rows"][0]["value"] = "4000000"
+        await gateway.generate_narrative(
+            db, RUN_ID, "growth_engine",
+            adapter=FakeAdapter(replies=[json.dumps(updated)]), sleep=_noop_sleep
+        )
+        fresh = await gateway.read_cached_narrative(db, RUN_ID, "growth_engine")
+        return stale, fresh
+
+    stale, fresh = asyncio.run(run())
+    assert stale.superseded is True
+    assert fresh.narrative_status == "ok"
+    assert fresh.superseded is False
+    assert fresh.narrative is not None

@@ -39,9 +39,21 @@ def cache_key(run_id: str, step: str, prompt_version: str, model: str, payload: 
 
 
 async def get(db, key: str) -> Optional[dict]:
-    """Return the stored narrative dict for `key`, or None."""
+    """Return the stored record for `key`, or None.
+
+    The record carries the narrative together with the status it was stored
+    under, so a narrative that was flagged for unmatched numbers comes back
+    flagged rather than being silently upgraded to "ok" on a cache hit.
+    """
     doc = await db[NARRATIVES_COLLECTION].find_one({"key": key}, {"_id": 0})
-    return doc["narrative"] if doc and doc.get("narrative") else None
+    if not doc or not doc.get("narrative"):
+        return None
+    return {
+        "narrative": doc["narrative"],
+        "narrative_status": doc.get("narrative_status", "ok"),
+        "unmatched_numbers": list(doc.get("unmatched_numbers", [])),
+        "created_at": doc.get("created_at"),
+    }
 
 
 async def put(
@@ -52,6 +64,8 @@ async def put(
     prompt_version: str,
     model: str,
     narrative: dict,
+    narrative_status: str = "ok",
+    unmatched_numbers: Optional[list] = None,
 ) -> None:
     """Store a narrative under `key`.
 
@@ -67,10 +81,26 @@ async def put(
             "prompt_version": prompt_version,
             "model": model,
             "narrative": narrative,
+            "narrative_status": narrative_status,
+            "unmatched_numbers": list(unmatched_numbers or []),
             "created_at": datetime.now(timezone.utc).isoformat(),
         }},
         upsert=True,
     )
+
+
+async def has_any(db, run_id: str, step: str) -> bool:
+    """True when some narrative exists for this run+step under any cache key.
+
+    Used to tell "nobody has written one" apart from "one was written, but for
+    numbers that have since changed" — the two need different wording, because
+    only the second is a warning that something the reader may remember seeing
+    no longer applies.
+    """
+    doc = await db[NARRATIVES_COLLECTION].find_one(
+        {"run_id": run_id, "step": step}, {"_id": 0, "key": 1}
+    )
+    return doc is not None
 
 
 async def delete_run(db, run_id: str) -> int:

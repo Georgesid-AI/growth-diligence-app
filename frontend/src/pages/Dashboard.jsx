@@ -9,7 +9,9 @@ import { Layout } from "@/components/Layout";
 import { MetricCard } from "@/components/MetricCard";
 import { Provenance } from "@/components/Provenance";
 import { Gloss } from "@/components/Gloss";
-import { getAudit, getResults, exportUrl } from "@/lib/api";
+import { Narrative } from "@/components/Narrative";
+import { NarrativeControl } from "@/components/NarrativeControl";
+import { getAudit, getResults, exportUrl, readNarrative, generateNarrative } from "@/lib/api";
 import { money, pct, num, monthEndDate } from "@/lib/format";
 
 const SEG_COLORS = ["#0284C7", "#059669", "#D97706", "#DB2777", "#475569"];
@@ -32,6 +34,8 @@ export default function Dashboard() {
   const [audit, setAudit] = useState(null);
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+  const [narrative, setNarrative] = useState(null);
+  const [generating, setGenerating] = useState(false);
 
   useEffect(() => {
     getAudit(id).then(setAudit).catch(() => {});
@@ -39,6 +43,30 @@ export default function Dashboard() {
       .then(setData)
       .catch((e) => setError(e.response?.status === 409 ? "not_computed" : "error"));
   }, [id]);
+
+  // Read-only on load: this returns a narrative someone already generated, or
+  // nothing. It cannot call the model provider, so opening an audit never
+  // spends. Generating is the button below, and only the button.
+  useEffect(() => {
+    if (!data) return;
+    let cancelled = false;
+    readNarrative(id, "growth_engine")
+      .then((res) => { if (!cancelled) setNarrative(res); })
+      .catch(() => { if (!cancelled) setNarrative({ narrative_status: "not_generated" }); });
+    return () => { cancelled = true; };
+  }, [id, data]);
+
+  // The only path that spends an AI request.
+  const onGenerate = () => {
+    setGenerating(true);
+    generateNarrative(id, "growth_engine")
+      .then(setNarrative)
+      .catch(() => setNarrative({
+        narrative_status: "unavailable",
+        reason: "The narrative service could not be reached.",
+      }))
+      .finally(() => setGenerating(false));
+  };
 
   if (error === "not_computed") {
     return (
@@ -145,6 +173,15 @@ export default function Dashboard() {
         </a>
       </div>
 
+      {/* Generating is explicit and costed — see NarrativeControl. */}
+      <NarrativeControl
+        status={narrative?.narrative_status}
+        generatedAt={narrative?.generated_at}
+        superseded={narrative?.superseded}
+        busy={generating}
+        onGenerate={onGenerate}
+      />
+
       {/* Metric strip */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4 mb-6">
         <MetricCard id="arr" label="Ending ARR" status="growth_positive" source={r.arr?.source}
@@ -182,6 +219,9 @@ export default function Dashboard() {
           ) : ""}
           caption="Shows how repeatable sales are" />
       </div>
+
+      {/* Narrative — status tells the reader which figures were verified */}
+      <Narrative state={generating ? { loading: true } : narrative} step="growth_engine" />
 
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6">

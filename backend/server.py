@@ -580,6 +580,24 @@ async def generate_narrative(run_id: str, step: str):
     return sanitize(result.model_dump())
 
 
+@api.get("/runs/{run_id}/narrative/{step}")
+async def read_narrative(run_id: str, step: str):
+    """Read-only: returns an existing narrative, or narrative_status="not_generated".
+
+    Never calls a provider, so a dashboard load can never spend. Generation is
+    the POST below, which is the only path that can.
+    """
+    try:
+        result = await llm_gateway.read_cached_narrative(db, run_id, step)
+    except llm_gateway.GatewayError as exc:
+        if exc.reason == "run_not_found":
+            raise HTTPException(404, "Run not found")
+        if exc.reason == "not_computed":
+            raise HTTPException(409, "Run not computed yet")
+        raise HTTPException(500, exc.reason)
+    return sanitize(result.model_dump())
+
+
 @api.get("/runs/{run_id}/llm-usage")
 async def llm_usage(run_id: str):
     usage = await llm_gateway.usage_for_run(db, run_id)

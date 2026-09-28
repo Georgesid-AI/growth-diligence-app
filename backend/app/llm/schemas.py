@@ -36,7 +36,12 @@ class Narrative(BaseModel):
     source_keys: List[str] = Field(default_factory=list)
 
 
-NarrativeStatus = Literal["ok", "unavailable"]
+# "flagged" means the narrative is shown but carries numbers the calc engine did
+# not produce, in prose fields only. Hard violations (headline, table rows) are
+# never shown - those become "unavailable".
+# "not_generated" means nobody has asked yet - distinct from "unavailable",
+# which means generation was attempted and failed.
+NarrativeStatus = Literal["ok", "flagged", "unavailable", "not_generated"]
 
 
 class NarrativeResponse(BaseModel):
@@ -52,6 +57,15 @@ class NarrativeResponse(BaseModel):
     prompt_version: Optional[str] = None
     model: Optional[str] = None
     metrics: dict = Field(default_factory=dict)
+    # Numbers the model produced that are absent from the computed results.
+    # Populated when narrative_status is "flagged"; also carries the hard
+    # violations that caused an "unavailable", so the prompt can be tuned.
+    unmatched_numbers: List[str] = Field(default_factory=list)
+    # When the stored narrative was written, so the UI can say "Written 28 Sep 2026".
+    generated_at: Optional[str] = None
+    # True when no narrative matches the current numbers but one exists for an
+    # earlier version of this run and step - i.e. the data moved on.
+    superseded: bool = False
 
 
 class UsageResponse(BaseModel):

@@ -26,3 +26,12 @@ export const uploadDataset = (id, dtype, file) => {
     .post(`/audits/${id}/datasets/${dtype}/upload`, fd, { headers: { "Content-Type": "multipart/form-data" } })
     .then((r) => r.data);
 };
+
+// Narrative gateway. GET is read-only — it returns an existing narrative or
+// narrative_status "not_generated", and can never call the model provider.
+// POST is the only path that spends an AI request.
+export const readNarrative = (id, step) =>
+  api.get(`/runs/${id}/narrative/${step}`).then((r) => r.data);
+export const generateNarrative = (id, step) =>
+  api.post(`/runs/${id}/narrative/${step}`).then((r) => r.data);
+export const getLlmUsage = (id) => api.get(`/runs/${id}/llm-usage`).then((r) => r.data);
