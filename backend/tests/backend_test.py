@@ -1,38 +1,105 @@
 """Backend API tests for Growth Diligence engine (Phase 1).
 
-This is an integration suite: it needs a live backend to hit over HTTP, which
-only exists inside Emergent. Outside that (e.g. a Codespace), it skips cleanly
-at collection instead of crashing pytest.
+This is an integration suite: it needs a live backend to hit over HTTP. Whether
+one is running is decided by actually connecting to it, not by inferring it from
+configuration — a `.env` file says where the backend would be, never that it is
+up. When the connection fails the whole module skips instead of erroring.
 """
 import os
 import io
+import time
 import pytest
 import requests
+
+# Where the backend would be, if it is running. Configuration only — reachability
+# is established by `require_live_backend` below.
+DEFAULT_BACKEND_URL = "http://localhost:8001"
+
+# The probe is deliberately short: a backend that is up answers a local health
+# check in milliseconds, so a full second already means "nothing is listening".
+PROBE_TIMEOUT_SECONDS = 1.0
+
+# CI sets REQUIRE_LIVE_BACKEND=1. There, a missing backend is a broken pipeline,
+# not a reason to pass green — so the module fails instead of skipping, and the
+# probe retries first to absorb a server that is still starting up.
+REQUIRE_LIVE_BACKEND_ENV = "REQUIRE_LIVE_BACKEND"
+STRICT_PROBE_DEADLINE_SECONDS = 15.0
+STRICT_PROBE_INTERVAL_SECONDS = 0.5
 
 
 def _resolve_backend_url():
     url = os.environ.get("REACT_APP_BACKEND_URL")
     if url:
-        return url
+        return url.strip()
     try:
         with open("/app/frontend/.env") as f:
             for line in f:
                 if line.startswith("REACT_APP_BACKEND_URL="):
-                    return line.split("=", 1)[1].strip()
-    except FileNotFoundError:
-        return None
-    return None
+                    value = line.split("=", 1)[1].strip()
+                    if value:
+                        return value
+    except OSError:
+        pass
+    return DEFAULT_BACKEND_URL
 
 
-BASE_URL = _resolve_backend_url()
-if not BASE_URL:
-    pytest.skip(
-        "REACT_APP_BACKEND_URL is not set and /app/frontend/.env is missing — "
-        "this integration suite needs a live Emergent backend; skipping outside Emergent.",
-        allow_module_level=True,
-    )
-BASE_URL = BASE_URL.rstrip("/")
+BASE_URL = _resolve_backend_url().rstrip("/")
 API = f"{BASE_URL}/api"
+
+
+def _strict_mode() -> bool:
+    """True when the caller insists a backend must be there (CI)."""
+    return os.environ.get(REQUIRE_LIVE_BACKEND_ENV, "").strip() == "1"
+
+
+def _probe_once(timeout: float):
+    """Return None when the backend answers, else the connection exception.
+
+    Any HTTP response means the server is up — a 404 or 500 is still a live
+    backend, and only a connection-level failure counts as "not running".
+    """
+    try:
+        requests.get(f"{API}/", timeout=timeout)
+        return None
+    except requests.exceptions.RequestException as exc:
+        return exc
+
+
+@pytest.fixture(scope="session", autouse=True)
+def require_live_backend():
+    """Gate this module on the backend actually answering.
+
+    Autouse and session-scoped, so the probe runs once for the whole file.
+
+    Default (local): one short probe, skip the module if nothing answers.
+    REQUIRE_LIVE_BACKEND=1 (CI): retry for up to 15s, then fail the module — a
+    pipeline whose backend never came up must go red, not green-with-skips.
+    """
+    if not _strict_mode():
+        exc = _probe_once(PROBE_TIMEOUT_SECONDS)
+        if exc is not None:
+            pytest.skip(
+                f"no backend answering at {BASE_URL} within {PROBE_TIMEOUT_SECONDS:g}s "
+                f"({type(exc).__name__}); this integration suite needs a running server. "
+                f"Set {REQUIRE_LIVE_BACKEND_ENV}=1 to make this a failure instead."
+            )
+        return
+
+    deadline = time.monotonic() + STRICT_PROBE_DEADLINE_SECONDS
+    attempts = 0
+    while True:
+        attempts += 1
+        exc = _probe_once(PROBE_TIMEOUT_SECONDS)
+        if exc is None:
+            return
+        if time.monotonic() >= deadline:
+            pytest.fail(
+                f"{REQUIRE_LIVE_BACKEND_ENV}=1 but no backend answered at {BASE_URL} "
+                f"after {STRICT_PROBE_DEADLINE_SECONDS:g}s ({attempts} attempts); "
+                f"last error {type(exc).__name__}: {exc}",
+                pytrace=False,
+            )
+        time.sleep(STRICT_PROBE_INTERVAL_SECONDS)
 
 SAMPLES = {
     "revenue": "/app/sample_data/revenue.csv",
