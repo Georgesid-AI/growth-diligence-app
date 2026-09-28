@@ -337,25 +337,49 @@ def numeric_guard(
     )
 
 
+def source_key_paths(node: Any) -> List[str]:
+    """Every dotted path into the payload, e.g. "metrics.acv_path.acv".
+
+    This is the canonical form: bare leaf names are ambiguous, since `label` and
+    `value` occur under both `overall_band` and each entry of `bands`, so a row
+    citing `label` cannot be traced to one figure. Lists are transparent - an
+    array of objects contributes its fields under the array's own path rather
+    than an index, because the model is describing a shape, not one element.
+    """
+    out: set = set()
+
+    def walk(n: Any, path: str) -> None:
+        if isinstance(n, dict):
+            for key, value in n.items():
+                child = f"{path}.{key}" if path else str(key)
+                out.add(child)
+                walk(value, child)
+        elif isinstance(n, list):
+            for item in n:
+                walk(item, path)
+
+    walk(node, "")
+    return sorted(out)
+
+
+def accepted_source_keys(payload: Any) -> set:
+    """Dotted paths plus their bare leaf names.
+
+    The dotted path is what the model is told to use. Bare names stay accepted
+    so a row citing `acv` is not thrown away over formatting - the point of the
+    guard is that the figure is traceable, not that it is spelled one way.
+    """
+    full = source_key_paths(payload)
+    return set(full) | {p.rsplit(".", 1)[-1] for p in full}
+
+
 def source_key_guard(narrative: Narrative, payload: Any) -> Optional[str]:
     """Each table row must cite a source key that exists in the payload."""
-    available = set(_all_keys(payload))
+    available = accepted_source_keys(payload)
     unknown = sorted({r.source_key for r in narrative.table_rows if r.source_key not in available})
     if unknown:
         return f"table row cites unknown source key(s): {', '.join(unknown[:8])}"
     return None
-
-
-def _all_keys(node: Any) -> set:
-    keys: set = set()
-    if isinstance(node, dict):
-        for k, v in node.items():
-            keys.add(k)
-            keys |= _all_keys(v)
-    elif isinstance(node, list):
-        for item in node:
-            keys |= _all_keys(item)
-    return keys
 
 
 _JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
@@ -584,7 +608,13 @@ async def _call_with_retries(adapter, config, prompt, outbound, sleep):
     """
     schema = narrative_output_schema()
     system = prompt.text
-    user_payload = cache.canonical_json(outbound)
+    # Hand the model the exact source keys it may cite, in the exact form the
+    # guard accepts. Derived from the payload, so the two can never drift; sent
+    # alongside the data rather than baked into the prompt, since it is
+    # per-payload. The cache key is still computed from `outbound` alone.
+    message = dict(outbound)
+    message["valid_source_keys"] = source_key_paths(outbound)
+    user_payload = cache.canonical_json(message)
     parse_attempts = 0
     network_attempts = 0
 

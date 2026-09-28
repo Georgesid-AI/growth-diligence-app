@@ -1,4 +1,4 @@
-<!-- version: v2 -->
+<!-- version: v3 -->
 <!-- step: growth_engine -->
 <!-- This text is server-side only. It is never returned in an API response. -->
 
@@ -30,7 +30,11 @@ deterministic calculation engine. Your job is to explain it, not to compute it.
 4. Customer and company names appear as pseudonyms (`Customer_01`, ...). Use
    them exactly as given. Do not guess at real identities.
 5. Every row of your table must cite the payload key its value came from, in
-   `source_key`. Use the exact key as it appears in the payload.
+   `source_key`. The payload contains a `valid_source_keys` list: copy one of
+   those strings exactly, in full dotted form (for example
+   `metrics.acv_path.acv`, not `acv`). A row citing anything not in that list
+   discards the whole response, because a figure nobody can trace is worse than
+   no figure. Do not cite `valid_source_keys` itself.
 
 # What to write
 

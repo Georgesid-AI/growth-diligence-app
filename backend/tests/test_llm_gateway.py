@@ -541,6 +541,93 @@ def test_source_key_guard_rejects_unknown_key():
 
 
 # ---------------------------------------------------------------------------
+# source_key form: the live 400 was dotted paths rejected against bare names
+# ---------------------------------------------------------------------------
+NESTED_PAYLOAD = {
+    "metrics": {
+        "acv_path": {
+            "acv": 28451,
+            "customers_needed": 211,
+            "required_vs_observed_24m": 15.67,
+            "overall_band": {"label": "Consultative sales"},
+            "bands": [{"label": "Mid", "count": 40}],
+        },
+        "arr": {"value": 3129600},
+    },
+}
+
+
+def _row(source_key):
+    return {"label": "x", "value": "1", "source_key": source_key}
+
+
+def test_guard_accepts_the_dotted_paths_the_model_actually_produces():
+    """Regression for the live failure: every key below is real and was rejected."""
+    rejected_live = [
+        "metrics.acv_path.acv",
+        "metrics.acv_path.customers_needed",
+        "metrics.acv_path.required_vs_observed_24m",
+        "metrics.acv_path.overall_band",
+    ]
+    n = Narrative(headline="h", what_this_means="w",
+                  table_rows=[_row(k) for k in rejected_live])
+    assert gateway.source_key_guard(n, NESTED_PAYLOAD) is None
+
+
+def test_guard_still_accepts_bare_leaf_names():
+    """Formatting must not cost a narrative when the figure is traceable."""
+    n = Narrative(headline="h", what_this_means="w", table_rows=[_row("acv")])
+    assert gateway.source_key_guard(n, NESTED_PAYLOAD) is None
+
+
+def test_guard_still_rejects_a_path_that_does_not_exist():
+    n = Narrative(headline="h", what_this_means="w",
+                  table_rows=[_row("metrics.acv_path.made_up")])
+    assert "metrics.acv_path.made_up" in gateway.source_key_guard(n, NESTED_PAYLOAD)
+
+
+def test_guard_rejects_a_real_leaf_under_the_wrong_parent():
+    """`acv` exists, but not at metrics.arr.acv - a wrong path is still wrong."""
+    n = Narrative(headline="h", what_this_means="w", table_rows=[_row("metrics.arr.acv")])
+    assert "metrics.arr.acv" in gateway.source_key_guard(n, NESTED_PAYLOAD)
+
+
+def test_source_key_paths_are_dotted_and_list_transparent():
+    paths = gateway.source_key_paths(NESTED_PAYLOAD)
+    assert "metrics.acv_path.acv" in paths
+    assert "metrics.acv_path.overall_band.label" in paths
+    # An array contributes its fields under the array's own path, not an index.
+    assert "metrics.acv_path.bands.label" in paths
+    assert not any("[" in p for p in paths)
+    assert paths == sorted(paths)
+
+
+def test_model_is_given_the_valid_key_list_in_the_exact_accepted_form():
+    """Whatever the model is told is citable must in fact be citable."""
+    captured = {}
+
+    class PayloadCapturingAdapter(FakeAdapter):
+        def complete(self, *, user_payload, **kwargs):
+            captured["payload"] = json.loads(user_payload)
+            return super().complete(user_payload=user_payload, **kwargs)
+
+    async def run():
+        db = make_db()
+        db["audits"].docs[0]["results"]["acv_path"] = {"acv": 28451, "customers_needed": 211}
+        return await gateway.generate_narrative(
+            db, RUN_ID, "growth_engine", adapter=PayloadCapturingAdapter(), sleep=_noop_sleep
+        )
+
+    asyncio.run(run())
+    listed = captured["payload"]["valid_source_keys"]
+    assert "metrics.acv_path.acv" in listed, listed
+    outbound = {k: v for k, v in captured["payload"].items() if k != "valid_source_keys"}
+    accepted = gateway.accepted_source_keys(outbound)
+    missing = [k for k in listed if k not in accepted]
+    assert missing == [], f"the model is offered keys the guard would reject: {missing}"
+
+
+# ---------------------------------------------------------------------------
 # Failure behaviour
 # ---------------------------------------------------------------------------
 def test_provider_failure_returns_metrics_with_status_unavailable():
@@ -707,7 +794,7 @@ def test_prompt_text_never_returned_in_a_response():
     prompt_body = prompt_store.load("growth_engine").text
     assert prompt_body[:60] not in blob
     assert "Absolute rules" not in blob
-    assert result.prompt_version == "v2", "the version is returned, the text is not"
+    assert result.prompt_version == "v3", "the version is returned, the text is not"
 
 
 def test_no_file_io_outside_prompt_store():
