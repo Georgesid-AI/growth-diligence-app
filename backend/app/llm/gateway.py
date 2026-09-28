@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable, List, NamedTuple, Optional, Tuple
 
 from . import cache, guards, prompt_store, redaction
-from .schemas import Narrative, NarrativeResponse, UsageResponse
+from .schemas import Narrative, NarrativeResponse, UsageResponse, narrative_output_schema
 
 logger = logging.getLogger("growth.llm")
 
@@ -582,7 +582,7 @@ async def _call_with_retries(adapter, config, prompt, outbound, sleep):
     Malformed body: one reask (MAX_PARSE_RETRIES), then fail. A reask is a fresh
     provider call and is billed, which is why it is capped at one.
     """
-    schema = Narrative.model_json_schema()
+    schema = narrative_output_schema()
     system = prompt.text
     user_payload = cache.canonical_json(outbound)
     parse_attempts = 0

@@ -5,7 +5,8 @@ strict: anything that does not validate is a parse failure, which the gateway
 retries once before giving up. Numbers in the narrative are the calc engine's,
 never the model's - see `gateway.numeric_guard`.
 """
-from typing import List, Literal, Optional
+import copy
+from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -42,6 +43,45 @@ class Narrative(BaseModel):
 # "not_generated" means nobody has asked yet - distinct from "unavailable",
 # which means generation was attempted and failed.
 NarrativeStatus = Literal["ok", "flagged", "unavailable", "not_generated"]
+
+
+def _seal_objects(node: Any) -> Any:
+    """Set `additionalProperties: false` on every object node, recursively.
+
+    Structured outputs reject a schema where any object omits it:
+
+        output_config.format.schema: For 'object' type,
+        'additionalProperties' must be explicitly set to false
+
+    Pydantic emits it for the root model (from `extra="forbid"`) but not for
+    nested models, so `TableRow` under `$defs` comes back without it and the
+    whole request 400s. Walking the tree covers `$defs`, array `items`, and any
+    `anyOf`/`oneOf` branch without having to enumerate them.
+
+    A node carrying `properties` is treated as an object even if `type` is
+    absent, since that is the same shape by another spelling. Note this seals
+    free-form mappings too - the Narrative contract has none, and if one is
+    added it will need an explicit carve-out rather than silently forbidding
+    every key.
+    """
+    if isinstance(node, dict):
+        if node.get("type") == "object" or "properties" in node:
+            node["additionalProperties"] = False
+        for value in node.values():
+            _seal_objects(value)
+    elif isinstance(node, list):
+        for item in node:
+            _seal_objects(item)
+    return node
+
+
+def narrative_output_schema() -> dict:
+    """The JSON schema to send as `output_config.format.schema`.
+
+    Deep-copied before sealing so the contract above is described once and this
+    transport detail never mutates what Pydantic hands back to other callers.
+    """
+    return _seal_objects(copy.deepcopy(Narrative.model_json_schema()))
 
 
 class NarrativeResponse(BaseModel):

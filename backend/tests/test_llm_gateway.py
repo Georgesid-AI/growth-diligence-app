@@ -918,3 +918,106 @@ def test_superseded_clears_after_regenerating():
     assert fresh.narrative_status == "ok"
     assert fresh.superseded is False
     assert fresh.narrative is not None
+
+
+# ---------------------------------------------------------------------------
+# Structured-output schema
+# ---------------------------------------------------------------------------
+def _object_nodes(node, path="$"):
+    """Yield (path, node) for every object node in a JSON schema."""
+    if isinstance(node, dict):
+        if node.get("type") == "object" or "properties" in node:
+            yield path, node
+        for key, value in node.items():
+            yield from _object_nodes(value, f"{path}.{key}")
+    elif isinstance(node, list):
+        for i, value in enumerate(node):
+            yield from _object_nodes(value, f"{path}[{i}]")
+
+
+def test_output_schema_seals_every_object_node():
+    """Structured outputs 400 unless EVERY object sets additionalProperties:false.
+
+    Pydantic emits it for the root only, so $defs.TableRow (the nested model
+    behind table_rows) arrives without it and the whole request is rejected.
+    """
+    from app.llm.schemas import narrative_output_schema
+
+    schema = narrative_output_schema()
+    nodes = dict(_object_nodes(schema))
+    assert nodes, "schema has no object nodes - the walker is looking at the wrong shape"
+
+    unsealed = [p for p, n in nodes.items() if n.get("additionalProperties") is not False]
+    assert unsealed == [], f"object node(s) missing additionalProperties:false: {unsealed}"
+
+    # The nested model is the one Pydantic misses, so assert it by name.
+    assert "$.$defs.TableRow" in nodes
+    assert schema["$defs"]["TableRow"]["additionalProperties"] is False
+
+
+def test_output_schema_does_not_mutate_the_pydantic_schema():
+    """Sealing is a transport concern; the model's own schema stays as Pydantic
+    generated it, so other callers are unaffected."""
+    from app.llm.schemas import narrative_output_schema
+
+    narrative_output_schema()
+    raw = Narrative.model_json_schema()
+    assert raw["$defs"]["TableRow"].get("additionalProperties") is None
+
+
+def test_output_schema_preserves_the_narrative_contract():
+    """Sealing must not change what the model is asked for."""
+    from app.llm.schemas import narrative_output_schema
+
+    sealed = narrative_output_schema()
+    raw = Narrative.model_json_schema()
+    assert set(sealed["properties"]) == set(raw["properties"])
+    assert sealed["properties"].keys() >= {
+        "headline", "what_this_means", "table_rows",
+        "worth_flagging", "next_actions", "source_keys",
+    }
+    assert set(sealed["$defs"]["TableRow"]["required"]) == {"label", "value", "source_key"}
+
+
+def test_seal_objects_handles_nesting_pydantic_does_not_produce():
+    """Arrays of objects, anyOf branches and deep $defs are all covered."""
+    from app.llm.schemas import _seal_objects
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "rows": {"type": "array", "items": {"type": "object", "properties": {"a": {"type": "string"}}}},
+            "choice": {"anyOf": [{"type": "object", "properties": {"b": {"type": "string"}}},
+                                 {"type": "string"}]},
+        },
+        "$defs": {"Deep": {"type": "object", "properties": {
+            "inner": {"type": "object", "properties": {"c": {"type": "string"}}}}}},
+    }
+    sealed = _seal_objects(schema)
+    unsealed = [p for p, n in _object_nodes(sealed) if n.get("additionalProperties") is not False]
+    assert unsealed == []
+    # A non-object branch is left alone.
+    assert sealed["properties"]["choice"]["anyOf"][1] == {"type": "string"}
+
+
+def test_gateway_sends_the_sealed_schema_to_the_provider():
+    """End to end: what the adapter receives is what the API will accept."""
+    captured = {}
+
+    class SchemaCapturingAdapter(FakeAdapter):
+        def complete(self, *, json_schema, **kwargs):
+            captured["schema"] = json_schema
+            return super().complete(json_schema=json_schema, **kwargs)
+
+    async def run():
+        db = make_db()
+        return await gateway.generate_narrative(
+            db, RUN_ID, "growth_engine",
+            adapter=SchemaCapturingAdapter(), sleep=_noop_sleep
+        )
+
+    result = asyncio.run(run())
+    assert result.narrative_status == "ok", result.reason
+    unsealed = [p for p, n in _object_nodes(captured["schema"])
+                if n.get("additionalProperties") is not False]
+    assert unsealed == [], f"gateway sent an unsealed schema: {unsealed}"
