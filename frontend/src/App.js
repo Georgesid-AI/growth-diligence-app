@@ -17,7 +17,7 @@ function App() {
           <Route path="/audit/:id/diagnostics" element={<Diagnostics />} />
         </Routes>
       </BrowserRouter>
-      <Toaster position="top-right" theme="dark" />
+      <Toaster position="top-right" theme="light" />
     </div>
   );
 }

@@ -20,11 +20,11 @@ export function Provenance({ source, children, id }) {
       <HoverCardContent
         data-testid={id ? `provenance-popover-${id}` : undefined}
         align="start"
-        className="w-80 border-[#38BDF8]/60 bg-[#0F172A] text-slate-200 shadow-xl"
+        className="w-80 border-[#38BDF8]/60 bg-white text-slate-800 shadow-xl"
       >
         <div className="flex items-center gap-2 mb-2">
-          <FileSpreadsheet className="h-4 w-4 text-sky-400" />
-          <span className="text-[11px] uppercase tracking-wider font-mono text-sky-400 font-semibold">
+          <FileSpreadsheet className="h-4 w-4 text-sky-700" />
+          <span className="text-[11px] uppercase tracking-wider font-mono text-sky-700 font-semibold">
             Source Lineage
           </span>
         </div>
@@ -33,9 +33,9 @@ export function Provenance({ source, children, id }) {
           <Row label="Sheet" value={source.sheet} mono />
           <Row label="Rows" value={source.rows} mono />
           {source.rule && (
-            <div className="pt-2 mt-2 border-t border-slate-700">
+            <div className="pt-2 mt-2 border-t border-slate-200">
               <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Deterministic rule</div>
-              <p className="text-[11px] leading-relaxed text-slate-300">{source.rule}</p>
+              <p className="text-[11px] leading-relaxed text-slate-700">{source.rule}</p>
             </div>
           )}
         </dl>
@@ -48,7 +48,7 @@ function Row({ label, value, mono }) {
   return (
     <div className="flex justify-between gap-4">
       <dt className="text-slate-500">{label}</dt>
-      <dd className={`text-slate-200 text-right ${mono ? "font-mono" : ""}`}>{value || "—"}</dd>
+      <dd className={`text-slate-800 text-right ${mono ? "font-mono" : ""}`}>{value || "—"}</dd>
     </div>
   );
 }

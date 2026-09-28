@@ -9,11 +9,18 @@
   --font-mono: "JetBrains Mono", Menlo, monospace;
 }
 
+html,
+body,
+#root {
+  background-color: #ffffff;
+  min-height: 100vh;
+}
+
 body {
   margin: 0;
   font-family: var(--font-body);
-  background-color: #0b0f17;
-  color: #f8fafc;
+  background-color: #ffffff;
+  color: #0f172a;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -22,33 +29,33 @@ body {
 .font-mono, .tabular { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: #0b0f17; }
-::-webkit-scrollbar-thumb { background: #22304e; border-radius: 6px; border: 2px solid #0b0f17; }
-::-webkit-scrollbar-thumb:hover { background: #334155; }
+::-webkit-scrollbar-track { background: #ffffff; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 6px; border: 2px solid #ffffff; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
 
 ::selection { background: #0284c7; color: #fff; }
 
 @layer base {
   :root {
-    --background: 222 47% 6%;
-    --foreground: 210 40% 98%;
-    --card: 222 40% 11%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222 47% 8%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 199 89% 48%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 217 33% 17%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217 33% 17%;
-    --muted-foreground: 215 20% 65%;
-    --accent: 217 33% 20%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 350 89% 60%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217 33% 20%;
-    --input: 217 33% 20%;
-    --ring: 199 89% 48%;
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 200 98% 33%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 204 94% 94%;
+    --accent-foreground: 222 47% 11%;
+    --destructive: 350 89% 40%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 200 98% 33%;
     --radius: 0.5rem;
   }
 }

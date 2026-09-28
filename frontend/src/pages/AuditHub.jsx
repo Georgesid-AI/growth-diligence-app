@@ -75,44 +75,44 @@ export default function AuditHub() {
     <Layout>
       <div className="flex items-end justify-between mb-8 gap-4 flex-wrap">
         <div>
-          <h1 className="font-heading text-3xl sm:text-4xl font-bold tracking-tight text-white">Audit Hub</h1>
-          <p className="text-slate-400 mt-2 text-sm max-w-2xl">
+          <h1 className="font-heading text-3xl sm:text-4xl font-bold tracking-tight text-slate-900">Audit Hub</h1>
+          <p className="text-slate-600 mt-2 text-sm max-w-2xl">
             Deterministic growth diligence. Every metric is computed in Python from your source rows —
             nothing is guessed, and every number traces back to its file, sheet and rows.
           </p>
         </div>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
-            <Button data-testid="create-audit-button" className="bg-sky-600 hover:bg-sky-500 text-white rounded-md gap-2">
+            <Button data-testid="create-audit-button" className="bg-sky-600 hover:bg-sky-500 text-slate-900 rounded-md gap-2">
               <Plus className="h-4 w-4" /> New Audit
             </Button>
           </DialogTrigger>
-          <DialogContent className="bg-[#111726] border-[#1E293B] text-slate-100">
+          <DialogContent className="bg-white border-[#E5E7EB] text-slate-900">
             <DialogHeader>
               <DialogTitle className="font-heading">Create Growth Audit</DialogTitle>
-              <DialogDescription className="text-slate-400">
+              <DialogDescription className="text-slate-600">
                 Set the company, reporting currency and plan target. You'll add data next.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-2">
               <div>
-                <Label className="text-slate-300">Company name</Label>
+                <Label className="text-slate-700">Company name</Label>
                 <Input
                   data-testid="audit-company-input"
                   value={form.company_name}
                   onChange={(e) => setForm({ ...form, company_name: e.target.value })}
                   placeholder="Acme SaaS Inc."
-                  className="mt-1.5 bg-[#0B0F17] border-[#1E293B]"
+                  className="mt-1.5 bg-white border-[#E5E7EB]"
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label className="text-slate-300">Reporting currency</Label>
+                  <Label className="text-slate-700">Reporting currency</Label>
                   <Select value={form.reporting_currency} onValueChange={(v) => setForm({ ...form, reporting_currency: v })}>
-                    <SelectTrigger data-testid="reporting-currency-select" className="mt-1.5 bg-[#0B0F17] border-[#1E293B]">
+                    <SelectTrigger data-testid="reporting-currency-select" className="mt-1.5 bg-white border-[#E5E7EB]">
                       <SelectValue />
                     </SelectTrigger>
-                    <SelectContent className="bg-[#111726] border-[#1E293B] text-slate-100">
+                    <SelectContent className="bg-white border-[#E5E7EB] text-slate-900">
                       {["EUR", "USD", "GBP", "JPY"].map((c) => (
                         <SelectItem key={c} value={c}>{c}</SelectItem>
                       ))}
@@ -120,19 +120,19 @@ export default function AuditHub() {
                   </Select>
                 </div>
                 <div>
-                  <Label className="text-slate-300">Target ARR</Label>
+                  <Label className="text-slate-700">Target ARR</Label>
                   <Input
                     data-testid="audit-target-arr-input"
                     type="number"
                     value={form.target_arr}
                     onChange={(e) => setForm({ ...form, target_arr: e.target.value })}
                     placeholder="40000000"
-                    className="mt-1.5 bg-[#0B0F17] border-[#1E293B] font-mono"
+                    className="mt-1.5 bg-white border-[#E5E7EB] font-mono"
                   />
                 </div>
               </div>
               <div>
-                <Label className="text-slate-300">Target date</Label>
+                <Label className="text-slate-700">Target date</Label>
                 <Input
                   data-testid="audit-target-date-input"
                   type="date"
@@ -140,17 +140,17 @@ export default function AuditHub() {
                   max="2100-12-31"
                   value={form.target_date}
                   onChange={(e) => setForm({ ...form, target_date: e.target.value })}
-                  className="mt-1.5 bg-[#0B0F17] border-[#1E293B] font-mono"
+                  className="mt-1.5 bg-white border-[#E5E7EB] font-mono"
                 />
               </div>
               <div>
-                <Label className="text-slate-300">As-of month <span className="text-slate-500 text-xs">(optional — defaults to last P&L month)</span></Label>
+                <Label className="text-slate-700">As-of month <span className="text-slate-500 text-xs">(optional — defaults to last P&L month)</span></Label>
                 <Input
                   data-testid="audit-asof-month-input"
                   type="month"
                   value={form.as_of_month}
                   onChange={(e) => setForm({ ...form, as_of_month: e.target.value })}
-                  className="mt-1.5 bg-[#0B0F17] border-[#1E293B] font-mono"
+                  className="mt-1.5 bg-white border-[#E5E7EB] font-mono"
                 />
               </div>
             </div>
@@ -168,9 +168,9 @@ export default function AuditHub() {
           <Loader2 className="h-6 w-6 animate-spin" />
         </div>
       ) : audits.length === 0 ? (
-        <div className="border border-dashed border-[#1E293B] rounded-xl py-24 text-center">
+        <div className="border border-dashed border-[#E5E7EB] rounded-xl py-24 text-center">
           <Building2 className="h-10 w-10 text-slate-600 mx-auto mb-4" />
-          <p className="text-slate-400">No audits yet. Create your first growth audit to begin.</p>
+          <p className="text-slate-600">No audits yet. Create your first growth audit to begin.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -178,16 +178,16 @@ export default function AuditHub() {
             <div
               key={a.id}
               data-testid={`audit-row-${a.id}`}
-              className="group bg-[#111726] border border-[#1E293B] rounded-lg p-5 hover:border-sky-500/40 transition-colors"
+              className="group bg-white border border-[#E5E7EB] rounded-lg p-5 hover:border-sky-500/40 transition-colors"
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <h3 className="font-heading font-semibold text-white truncate">{a.company_name}</h3>
+                  <h3 className="font-heading font-semibold text-slate-900 truncate">{a.company_name}</h3>
                   <div className="flex items-center gap-2 mt-1.5">
                     <span className={`text-[10px] font-mono uppercase px-1.5 py-0.5 rounded border ${
                       a.status === "computed"
-                        ? "text-emerald-400 border-emerald-500/40 bg-emerald-500/10"
-                        : "text-amber-400 border-amber-500/40 bg-amber-500/10"
+                        ? "text-emerald-700 border-emerald-500/40 bg-emerald-500/10"
+                        : "text-amber-700 border-amber-500/40 bg-amber-500/10"
                     }`}>
                       {a.status}
                     </span>
@@ -198,20 +198,20 @@ export default function AuditHub() {
                   <AlertDialogTrigger asChild>
                     <button
                       data-testid={`delete-audit-${a.id}`}
-                      className="text-slate-600 hover:text-rose-400 transition-colors p-1"
+                      className="text-slate-600 hover:text-rose-700 transition-colors p-1"
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
                   </AlertDialogTrigger>
-                  <AlertDialogContent className="bg-[#111726] border-[#1E293B] text-slate-100">
+                  <AlertDialogContent className="bg-white border-[#E5E7EB] text-slate-900">
                     <AlertDialogHeader>
                       <AlertDialogTitle>Delete this audit?</AlertDialogTitle>
-                      <AlertDialogDescription className="text-slate-400">
+                      <AlertDialogDescription className="text-slate-600">
                         This permanently removes the audit's files and computed results. This cannot be undone.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
-                      <AlertDialogCancel className="bg-transparent border-[#1E293B] text-slate-300">Cancel</AlertDialogCancel>
+                      <AlertDialogCancel className="bg-transparent border-[#E5E7EB] text-slate-700">Cancel</AlertDialogCancel>
                       <AlertDialogAction
                         data-testid={`confirm-delete-${a.id}`}
                         onClick={() => remove(a.id)}
@@ -224,10 +224,10 @@ export default function AuditHub() {
                 </AlertDialog>
               </div>
 
-              <div className="mt-4 pt-4 border-t border-[#1E293B] flex items-center justify-between">
+              <div className="mt-4 pt-4 border-t border-[#E5E7EB] flex items-center justify-between">
                 <div>
                   <div className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">Target ARR</div>
-                  <div className="text-lg font-mono font-semibold text-slate-100">{money(a.target_arr, a.reporting_currency)}</div>
+                  <div className="text-lg font-mono font-semibold text-slate-900">{money(a.target_arr, a.reporting_currency)}</div>
                   {a.target_date && <div className="text-[10px] font-mono text-slate-500 mt-0.5">by {a.target_date}</div>}
                 </div>
                 <div className="flex gap-2">
@@ -235,7 +235,7 @@ export default function AuditHub() {
                     variant="outline"
                     size="sm"
                     onClick={() => nav(`/audit/${a.id}/mapping`)}
-                    className="bg-transparent border-[#1E293B] text-slate-300 hover:bg-[#1D2840] hover:text-white"
+                    className="bg-transparent border-[#E5E7EB] text-slate-700 hover:bg-sky-50 hover:text-slate-900"
                   >
                     Data
                   </Button>

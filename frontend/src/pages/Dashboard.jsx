@@ -12,18 +12,18 @@ import { Gloss } from "@/components/Gloss";
 import { getAudit, getResults, exportUrl } from "@/lib/api";
 import { money, pct, num, monthEndDate } from "@/lib/format";
 
-const SEG_COLORS = ["#38BDF8", "#34D399", "#FBBF24", "#F472B6", "#94A3B8"];
+const SEG_COLORS = ["#0284C7", "#059669", "#D97706", "#DB2777", "#475569"];
 
 const chartAxis = { stroke: "#475569", fontSize: 11, fontFamily: "JetBrains Mono" };
-const tooltipStyle = { backgroundColor: "#0F172A", border: "1px solid #334155", borderRadius: 8, fontSize: 12 };
+const tooltipStyle = { backgroundColor: "#FFFFFF", border: "1px solid #E5E7EB", borderRadius: 8, fontSize: 12, color: "#0F172A" };
 
 function cohortTier(v) {
-  if (v === null || v === undefined) return "bg-slate-900/60 text-slate-600";
-  if (v >= 100) return "bg-emerald-600/90 text-white";
-  if (v >= 90) return "bg-emerald-700/70 text-slate-100";
-  if (v >= 80) return "bg-emerald-900/50 text-emerald-100";
-  if (v >= 70) return "bg-amber-900/50 text-amber-200";
-  return "bg-rose-950/70 text-rose-300";
+  if (v === null || v === undefined) return "bg-slate-50 text-slate-600";
+  if (v >= 100) return "bg-emerald-700 text-white";
+  if (v >= 90) return "bg-emerald-200 text-emerald-900";
+  if (v >= 80) return "bg-emerald-100 text-emerald-900";
+  if (v >= 70) return "bg-amber-100 text-amber-900";
+  return "bg-rose-100 text-rose-900";
 }
 
 export default function Dashboard() {
@@ -43,10 +43,10 @@ export default function Dashboard() {
   if (error === "not_computed") {
     return (
       <Layout audit={audit}>
-        <div className="border border-dashed border-[#1E293B] rounded-xl py-24 text-center">
+        <div className="border border-dashed border-[#E5E7EB] rounded-xl py-24 text-center">
           <AlertTriangle className="h-10 w-10 text-amber-500 mx-auto mb-4" />
-          <p className="text-slate-300 mb-4">This audit hasn't been computed yet.</p>
-          <button onClick={() => nav(`/audit/${id}/mapping`)} className="text-sky-400 hover:text-sky-300 underline">
+          <p className="text-slate-700 mb-4">This audit hasn't been computed yet.</p>
+          <button onClick={() => nav(`/audit/${id}/mapping`)} className="text-sky-700 hover:text-sky-800 underline">
             Go to Upload & Mapping →
           </button>
         </div>
@@ -56,10 +56,10 @@ export default function Dashboard() {
   if (error === "error") {
     return (
       <Layout audit={audit}>
-        <div className="border border-dashed border-[#1E293B] rounded-xl py-24 text-center">
+        <div className="border border-dashed border-[#E5E7EB] rounded-xl py-24 text-center">
           <AlertTriangle className="h-10 w-10 text-rose-500 mx-auto mb-4" />
-          <p className="text-slate-300 mb-4">Couldn't load this audit's results.</p>
-          <button onClick={() => nav("/")} className="text-sky-400 hover:text-sky-300 underline">Back to Audit Hub →</button>
+          <p className="text-slate-700 mb-4">Couldn't load this audit's results.</p>
+          <button onClick={() => nav("/")} className="text-sky-700 hover:text-sky-800 underline">Back to Audit Hub →</button>
         </div>
       </Layout>
     );
@@ -118,29 +118,29 @@ export default function Dashboard() {
     <Layout audit={audit}>
       {data.audit?.metrics_stale && (
         <div data-testid="stale-metrics-banner"
-          className="mb-6 flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
+          className="mb-6 flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-800">
           <AlertTriangle className="h-4 w-4 flex-shrink-0" />
           Metrics are out of date — a setup input changed since this audit was last computed.
-          <button onClick={() => nav(`/audit/${id}/mapping`)} className="ml-auto underline hover:text-amber-200 whitespace-nowrap">
+          <button onClick={() => nav(`/audit/${id}/mapping`)} className="ml-auto underline hover:text-amber-900 whitespace-nowrap">
             Recompute →
           </button>
         </div>
       )}
       <div className="flex items-end justify-between mb-6 flex-wrap gap-3">
         <div>
-          <h1 className="font-heading text-2xl sm:text-3xl font-bold tracking-tight text-white">{audit?.company_name}</h1>
-          <p data-testid="header-context-strip" className="text-slate-400 text-xs font-mono mt-1">
-            Target: <span className="text-slate-200">{money(por?.target_arr, por?.reporting_currency ?? ccy)} ARR</span>{" "}
-            by <span className="text-slate-200">{por?.target_date ?? "—"}</span> · FX: {fxDisplay}
+          <h1 className="font-heading text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">{audit?.company_name}</h1>
+          <p data-testid="header-context-strip" className="text-slate-600 text-xs font-mono mt-1">
+            Target: <span className="text-slate-800">{money(por?.target_arr, por?.reporting_currency ?? ccy)} ARR</span>{" "}
+            by <span className="text-slate-800">{por?.target_date ?? "—"}</span> · FX: {fxDisplay}
           </p>
           <p className="text-slate-500 text-xs font-mono mt-1">
-            {asOfFullDate ? <>Figures reflect company data through <span className="text-sky-400">{asOfFullDate}</span>. </> : null}
+            {asOfFullDate ? <>Figures reflect company data through <span className="text-sky-700">{asOfFullDate}</span>. </> : null}
             Computed {data.audit.computed_at?.slice(0, 10)} — verify nothing material has changed since.
             {" "}Reporting currency {ccy}. Hover any figure for source lineage.
           </p>
         </div>
         <a href={exportUrl(id)} data-testid="export-results-button"
-          className="inline-flex items-center gap-2 px-3.5 py-2 rounded-md bg-[#1D2840] border border-[#334155] text-sm text-slate-200 hover:bg-[#22304E] transition-colors">
+          className="inline-flex items-center gap-2 px-3.5 py-2 rounded-md bg-sky-50 border border-[#D1D5DB] text-sm text-slate-800 hover:bg-slate-100 transition-colors">
           <Download className="h-4 w-4" /> Export results
         </a>
       </div>
@@ -188,7 +188,7 @@ export default function Dashboard() {
         <Card className="lg:col-span-8" testid="mrr-by-segment-chart" title="Monthly MRR by Segment" hint={`${r.mrr_series.months.length} months · recurring only`}>
           <ResponsiveContainer width="100%" height={300}>
             <AreaChart data={r.mrr_series.data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1E293B" />
+              <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
               <XAxis dataKey="month" {...chartAxis} minTickGap={24} />
               <YAxis {...chartAxis} tickFormatter={(v) => money(v, ccy)} width={60} />
               <RTooltip contentStyle={tooltipStyle} formatter={(v, n) => [money(v, ccy), n]} />
@@ -205,7 +205,7 @@ export default function Dashboard() {
           {r.nrr?.series ? (
             <ResponsiveContainer width="100%" height={300}>
               <LineChart data={r.nrr.series} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1E293B" />
+                <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
                 <XAxis dataKey="month" {...chartAxis} minTickGap={30} />
                 <YAxis {...chartAxis} domain={["auto", "auto"]} tickFormatter={(v) => `${v}%`} width={44} />
                 <RTooltip contentStyle={tooltipStyle} formatter={(v) => [`${v}%`, "NRR"]} />
@@ -235,7 +235,7 @@ export default function Dashboard() {
               <tbody>
                 {r.cohort_retention.data.map((row) => (
                   <tr key={row.cohort}>
-                    <td className="text-xs font-mono text-slate-300 pr-3 whitespace-nowrap">
+                    <td className="text-xs font-mono text-slate-700 pr-3 whitespace-nowrap">
                       {row.cohort} <span className="text-slate-600">n={row.n}</span>
                     </td>
                     {Array.from({ length: r.cohort_retention.max_offset + 1 }).map((_, o) => {
@@ -258,7 +258,7 @@ export default function Dashboard() {
           {r.acv_path ? (
             <>
               {r.acv_path.target_date_error && (
-                <div data-testid="target-date-error" className="mb-3 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+                <div data-testid="target-date-error" className="mb-3 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800">
                   <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
                   {r.acv_path.target_date_error} — required net-new not computed.
                 </div>
@@ -278,7 +278,7 @@ export default function Dashboard() {
                   ];
                   return (
                     <BarChart data={bars}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1E293B" />
+                      <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
                       <XAxis dataKey="k" {...chartAxis} />
                       <YAxis {...chartAxis} width={40} />
                       <RTooltip contentStyle={tooltipStyle} />
@@ -289,9 +289,9 @@ export default function Dashboard() {
                   );
                 })()}
               </ResponsiveContainer>
-              <div className="mt-3 text-xs font-mono text-slate-400">
+              <div className="mt-3 text-xs font-mono text-slate-600">
                 Required ÷ observed (12m):{" "}
-                <span className={r.acv_path.required_vs_observed_12m > 1.2 ? "text-amber-400" : "text-emerald-400"}>
+                <span className={r.acv_path.required_vs_observed_12m > 1.2 ? "text-amber-700" : "text-emerald-700"}>
                   {r.acv_path.required_vs_observed_12m ?? "—"}×
                 </span>
               </div>
@@ -312,17 +312,17 @@ export default function Dashboard() {
           {r.acv_path ? (
             <div className="space-y-1.5">
               {r.acv_path.overall_band && (
-                <div data-testid="acv-overall-band" className="text-sm text-slate-200 pb-1.5 mb-1.5 border-b border-[#1E293B]">
+                <div data-testid="acv-overall-band" className="text-sm text-slate-800 pb-1.5 mb-1.5 border-b border-[#E5E7EB]">
                   Overall: <span className="font-medium">{r.acv_path.overall_band.label}</span>{" "}
-                  <span className="font-mono text-slate-400">({r.acv_path.overall_band.value_label})</span>
+                  <span className="font-mono text-slate-600">({r.acv_path.overall_band.value_label})</span>
                 </div>
               )}
               {r.acv_path.bands.filter((b) => b.count > 0).map((b) => (
                 <div key={b.key} className="flex items-center justify-between text-sm">
-                  <span className="text-slate-300">
+                  <span className="text-slate-700">
                     {b.label} <span className="text-slate-500">({b.range_label})</span>
                   </span>
-                  <span className="font-mono text-slate-100">{b.count}</span>
+                  <span className="font-mono text-slate-900">{b.count}</span>
                 </div>
               ))}
             </div>
@@ -338,12 +338,12 @@ export default function Dashboard() {
               {Object.entries(r.win_rate.by_founder).map(([k, v]) => (
                 <div key={k} className="flex items-center justify-between">
                   <div>
-                    <div className="text-sm text-slate-200 capitalize">{k.replace("_", " ")}</div>
+                    <div className="text-sm text-slate-800 capitalize">{k.replace("_", " ")}</div>
                     <div className="text-[10px] font-mono text-slate-500">
-                      n={v.n} {v.small_sample && <span className="text-amber-400">· small sample</span>}
+                      n={v.n} {v.small_sample && <span className="text-amber-700">· small sample</span>}
                     </div>
                   </div>
-                  <div className="font-mono text-lg text-slate-100">{pct(v.win_rate_pct)}</div>
+                  <div className="font-mono text-lg text-slate-900">{pct(v.win_rate_pct)}</div>
                 </div>
               ))}
             </div>
@@ -364,9 +364,9 @@ export default function Dashboard() {
                     <th className="py-1.5 pr-3">L2</th>
                   </tr>
                 </thead>
-                <tbody className="font-mono text-slate-200">
+                <tbody className="font-mono text-slate-800">
                   {Object.entries(r.cac_payback.quarters).map(([q, v]) => (
-                    <tr key={q} className="border-t border-[#1E293B]">
+                    <tr key={q} className="border-t border-[#E5E7EB]">
                       <td className="py-1.5 pr-3">{q}</td>
                       <td className="py-1.5 pr-3">{money(v.new_mrr, ccy)}</td>
                       <td className="py-1.5 pr-3">{v.gross_margin_pct != null ? `${v.gross_margin_pct}%` : "—"}</td>
@@ -400,18 +400,18 @@ export default function Dashboard() {
         </Card>
         <Card className="lg:col-span-6" title="Missing Data" hint={`${r.missing_data.length} items`}>
           {r.missing_data.length === 0 ? (
-            <div className="flex items-center gap-2 text-emerald-400 text-sm py-4">
+            <div className="flex items-center gap-2 text-emerald-700 text-sm py-4">
               <TrendingUp className="h-4 w-4" /> All metrics computed — no missing inputs.
             </div>
           ) : (
             <div className="space-y-2">
               {r.missing_data.slice(0, 5).map((m, i) => (
                 <div key={i} className="text-sm">
-                  <div className="text-slate-200">{m.metric}</div>
+                  <div className="text-slate-800">{m.metric}</div>
                   <div className="text-[11px] text-slate-500">{m.reason}</div>
                 </div>
               ))}
-              <button onClick={() => nav(`/audit/${id}/diagnostics`)} className="text-sky-400 hover:text-sky-300 text-xs underline mt-2">
+              <button onClick={() => nav(`/audit/${id}/diagnostics`)} className="text-sky-700 hover:text-sky-800 text-xs underline mt-2">
                 View full diagnostics →
               </button>
             </div>
@@ -424,9 +424,9 @@ export default function Dashboard() {
 
 function Card({ title, hint, className = "", testid, children }) {
   return (
-    <div data-testid={testid} className={`bg-[#111726] border border-[#1E293B] rounded-lg p-5 ${className}`}>
+    <div data-testid={testid} className={`bg-white border border-[#E5E7EB] rounded-lg p-5 ${className}`}>
       <div className="flex items-baseline justify-between mb-4">
-        <h3 className="font-heading font-semibold text-white text-sm">{title}</h3>
+        <h3 className="font-heading font-semibold text-slate-900 text-sm">{title}</h3>
         {hint && <span className="text-[10px] font-mono text-slate-500">{hint}</span>}
       </div>
       {children}
@@ -438,7 +438,7 @@ function Stat({ label, value }) {
   return (
     <div>
       <div className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">{label}</div>
-      <div className="font-mono text-slate-100 text-lg">{value}</div>
+      <div className="font-mono text-slate-900 text-lg">{value}</div>
     </div>
   );
 }
@@ -449,8 +449,8 @@ function SegTable({ rows, render, empty }) {
     <div className="space-y-2">
       {Object.entries(rows).map(([seg, v]) => (
         <div key={seg} className="flex items-center justify-between text-sm">
-          <span className="text-slate-300">{seg}</span>
-          <span className="font-mono text-slate-100">{render(v)}</span>
+          <span className="text-slate-700">{seg}</span>
+          <span className="font-mono text-slate-900">{render(v)}</span>
         </div>
       ))}
     </div>
@@ -462,10 +462,10 @@ function Flag({ label, value, detail }) {
   return (
     <div className="flex items-start justify-between gap-3">
       <div>
-        <div className="text-slate-300">{label}</div>
+        <div className="text-slate-700">{label}</div>
         {active && detail && <div className="text-[11px] font-mono text-slate-500 mt-0.5">{detail}</div>}
       </div>
-      <span className={`font-mono px-2 py-0.5 rounded text-xs ${active ? "bg-amber-500/15 text-amber-400" : "bg-slate-700/40 text-slate-500"}`}>
+      <span className={`font-mono px-2 py-0.5 rounded text-xs ${active ? "bg-amber-500/15 text-amber-700" : "bg-slate-100 text-slate-500"}`}>
         {value}
       </span>
     </div>
@@ -474,7 +474,7 @@ function Flag({ label, value, detail }) {
 
 function NotComputable({ label }) {
   return (
-    <div className="flex items-center gap-2 text-slate-500 text-xs py-6 justify-center border border-dashed border-[#1E293B] rounded-md">
+    <div className="flex items-center gap-2 text-slate-500 text-xs py-6 justify-center border border-dashed border-[#E5E7EB] rounded-md">
       <AlertTriangle className="h-3.5 w-3.5" /> {label}
     </div>
   );

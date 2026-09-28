@@ -25,7 +25,7 @@ export function Gloss({ text, id, children }) {
         </TooltipTrigger>
         <TooltipContent
           data-testid={id ? `gloss-tip-${id}` : undefined}
-          className="border border-[#334155] bg-[#1E293B] font-sans text-slate-200"
+          className="border border-[#D1D5DB] bg-white font-sans text-slate-800"
         >
           {text}
         </TooltipContent>
