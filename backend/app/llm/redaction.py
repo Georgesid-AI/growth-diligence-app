@@ -155,9 +155,16 @@ def iter_pseudonyms(mapping: Dict[str, str]) -> Iterable[str]:
     return mapping.values()
 
 
-# A hyphen only counts as a minus sign when it does not follow a digit or a
-# dot, so "2027-12-31" yields 2027, 12, 31 rather than 2027, -12, -31.
-_NUMBER_RE = re.compile(r"(?<![\d.])-?\d[\d,]*\.?\d*")
+# A hyphen is only a minus sign when nothing word-like precedes it. Inside a
+# word or a date it is a separator: "sub-1%" is 1, "non-12-month" is 12, and
+# "2027-12-31" is 2027, 12, 31 - not -1, -12 and -31. A genuine negative still
+# reads as one ("-5", "a drop of -5"), because a space or start-of-string is
+# not word-like.
+#
+# Two alternatives rather than an optional sign: the signed form carries the
+# stricter lookbehind, while the unsigned form only has to avoid starting in
+# the middle of a number, so digits after an underscore ("..._12m") still count.
+_NUMBER_RE = re.compile(r"(?<![\w.])-\d[\d,]*\.?\d*|(?<![\d.])\d[\d,]*\.?\d*")
 
 
 def numbers_in(node: Any) -> set:

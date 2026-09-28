@@ -1108,3 +1108,83 @@ def test_gateway_sends_the_sealed_schema_to_the_provider():
     unsealed = [p for p, n in _object_nodes(captured["schema"])
                 if n.get("additionalProperties") is not False]
     assert unsealed == [], f"gateway sent an unsealed schema: {unsealed}"
+
+
+# ---------------------------------------------------------------------------
+# Number extraction: a hyphen is only a minus sign outside a word
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("text,expected", [
+    # The live false positive: "sub-1%" was read as -1, so a narrative that
+    # said churn was under one percent got flagged for a number nobody wrote.
+    ("sub-1%", {"1"}),
+    ("non-12-month", {"12"}),
+    # A genuine negative must still read as negative.
+    ("-5", {"-5"}),
+    ("a drop of -5", {"-5"}),
+    # Dates are separators, not subtraction.
+    ("2027-12-31", {"2027", "12", "31"}),
+    # Digits after an underscore still count - this is how key names contribute.
+    ("observed_net_new_per_year_12m", {"12"}),
+    # Mixed prose.
+    ("churn was sub-1% against NRR of 104.2", {"1", "104.2"}),
+    # A range is two numbers, not one negative.
+    ("3.5-4.5", {"3.5", "4.5"}),
+    # Punctuation is not word-like, so the sign survives.
+    ("(-5)", {"-5"}),
+    ("margin -12.5 percent", {"-12.5"}),
+    # A hyphen straight after a letter is part of the word.
+    ("temperature-0.2", {"0.2"}),
+    ("year-3 cohort", {"3"}),
+])
+def test_number_extraction_hyphen_handling(text, expected):
+    assert redaction.numbers_in(text) == expected
+
+
+def test_sub_one_percent_no_longer_flags_a_narrative():
+    """End to end: the prose that caused the live false positive now passes.
+
+    "sub-1%" yields 1, and 1 is not in the payload - but it is not -1 either,
+    which is the invented figure the guard was reporting.
+    """
+    prose = dict(GOOD_NARRATIVE)
+    prose["what_this_means"] = "Gross churn is sub-1% on a 12 month view."
+    # The default fixture cites 6.1 here; the payload below sets churn to 1, so
+    # this line has to move with it or it becomes a genuine unmatched number.
+    prose["worth_flagging"] = ["Gross revenue churn stands at 1 percent."]
+
+    async def run():
+        db = make_db()
+        # 1 appears in the computed results, so the sentence is fully supported.
+        db["audits"].docs[0]["results"]["gross_churn"]["overall_pct"] = 1
+        return await gateway.generate_narrative(
+            db, RUN_ID, "growth_engine",
+            adapter=FakeAdapter(replies=[json.dumps(prose)]), sleep=_noop_sleep
+        )
+
+    result = asyncio.run(run())
+    assert result.narrative_status == "ok", result.unmatched_numbers
+    assert "-1" not in result.unmatched_numbers
+
+
+def test_a_real_negative_is_still_caught_when_unsupported():
+    """The fix must not blind the guard to genuine negative fabrications."""
+    prose = dict(GOOD_NARRATIVE)
+    prose["what_this_means"] = "Net new customers fell by -37 last quarter."
+
+    async def run():
+        db = make_db()
+        return await gateway.generate_narrative(
+            db, RUN_ID, "growth_engine",
+            adapter=FakeAdapter(replies=[json.dumps(prose)]), sleep=_noop_sleep
+        )
+
+    result = asyncio.run(run())
+    assert result.narrative_status == "flagged"
+    assert result.unmatched_numbers == ["-37"]
+
+
+def test_negative_values_in_the_payload_are_still_matchable():
+    """A negative the engine really produced must satisfy the guard."""
+    payload = {"metrics": {"net_new": -37}}
+    n = Narrative(headline="Net new was -37", what_this_means="")
+    assert gateway.numeric_guard(n, payload).hard == []
