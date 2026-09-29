@@ -141,6 +141,22 @@ async def load_computed_results(db, run_id: str, step: str) -> dict:
     }
 
 
+# Provenance row references: which spreadsheet rows fed a figure. Useful on the
+# dashboard and in the export, but the model can't use them (they are neither
+# figures to copy nor citations), and `row_numbers` runs to 500 integers per
+# metric. Removed from the outbound payload only - never from stored results.
+ROW_REFERENCE_KEYS = frozenset({"row_numbers", "rows"})
+
+
+def strip_row_references(node: Any) -> Any:
+    """Deep copy of `node` without row-reference keys. The input is not modified."""
+    if isinstance(node, dict):
+        return {k: strip_row_references(v) for k, v in node.items() if k not in ROW_REFERENCE_KEYS}
+    if isinstance(node, list):
+        return [strip_row_references(i) for i in node]
+    return node
+
+
 def build_outbound(computed: dict, mapping: dict) -> dict:
     """The payload the provider sees: display strings, then pseudonyms.
 
@@ -149,7 +165,7 @@ def build_outbound(computed: dict, mapping: dict) -> dict:
     Raw values stay untouched in `computed` and in Mongo.
     """
     try:
-        formatted = formatting.format_payload(computed)
+        formatted = formatting.format_payload(strip_row_references(computed))
     except formatting.FormattingError as exc:
         raise GatewayError("format_failed", str(exc))
     return redaction.redact(formatted, mapping)

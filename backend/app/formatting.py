@@ -183,6 +183,8 @@ KIND_BY_KEY = {
     "required_vs_observed_12m": RATIO, "required_vs_observed_24m": RATIO,
     # settings that are numbers but not measurements
     "default_l": PLAIN, "max_offset": PLAIN,
+    # source-row references (provenance): identifiers, not measurements
+    "row_numbers": PLAIN, "rows": PLAIN,
 }
 
 # Numeric fields inside a container whose own key decides the kind: cohort
