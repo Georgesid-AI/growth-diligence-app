@@ -1189,3 +1189,36 @@ def test_negative_values_in_the_payload_are_still_matchable():
     payload = {"metrics": {"net_new": -37}}
     n = Narrative(headline="Net new was -37", what_this_means="")
     assert gateway.numeric_guard(n, payload).hard == []
+
+
+# ---------------------------------------------------------------------------
+# Row references stay out of the model payload but not out of the data
+# ---------------------------------------------------------------------------
+SOURCE_BLOCK = {
+    "file": "revenue.csv", "sheet": "Sheet1", "rows": "rows 2–500 (499 rows)",
+    "row_numbers": [2, 3, 4], "rule": "ARR = current-month recurring MRR × 12",
+}
+
+
+def test_outbound_payload_drops_row_references_but_keeps_citation_fields():
+    computed = {
+        "reporting_currency": "EUR",
+        "metrics": {
+            "arr": {"value": 3129600, "source": dict(SOURCE_BLOCK)},
+            "win_rate": {"won": 3, "founder_involved_excluded": {"count": 1, "rows": [7]}},
+        },
+    }
+    out = gateway.build_outbound(computed, {})
+    src = out["metrics"]["arr"]["source"]
+    assert src == {"file": "revenue.csv", "sheet": "Sheet1", "rule": "ARR = current-month recurring MRR × 12"}
+    assert "rows" not in out["metrics"]["win_rate"]["founder_involved_excluded"]
+    assert out["metrics"]["win_rate"]["founder_involved_excluded"]["count"] == "1"
+    assert "row_numbers" not in cache.canonical_json(out)
+    assert not any(p.endswith(".row_numbers") for p in gateway.source_key_paths(out))
+
+
+def test_stripping_row_references_does_not_modify_the_stored_results():
+    computed = {"metrics": {"arr": {"value": 1, "source": dict(SOURCE_BLOCK)}}}
+    gateway.build_outbound(computed, {})
+    assert computed["metrics"]["arr"]["source"]["row_numbers"] == [2, 3, 4]
+    assert computed["metrics"]["arr"]["source"]["rows"] == "rows 2–500 (499 rows)"
