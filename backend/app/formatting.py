@@ -11,7 +11,7 @@ Rules (kind -> behaviour):
     count      observed count, rounds to nearest              100.0     -> "100"
     count_up   required / implied count, rounds UP            128.3     -> "129"
     days       rounds UP to the next whole day                42.1      -> "43"
-    months     a duration like days, rounds UP                (not in the brief; see MONTH_KINDS)
+    months     one decimal, nearest, "months" suffix          12.24     -> "12.2 months"
     pct        whole number, nearest, half away from zero     106.41    -> "106%"
     ratio      always two decimals, "x" suffix                1.28      -> "1.28x"
     plain      integer identifier / setting, no grouping      1         -> "1"
@@ -84,6 +84,14 @@ def fmt_days(value: Any) -> str:
     return PLACEHOLDER if d is None else _grouped(_up(d))
 
 
+def fmt_months(value: Any) -> str:
+    """CAC payback is a duration in months: one decimal, not rounded up."""
+    d = _dec(value)
+    if d is None:
+        return PLACEHOLDER
+    return f"{d.quantize(Decimal('0.1'), rounding=ROUND_HALF_UP)} months"
+
+
 def fmt_pct(value: Any) -> str:
     d = _dec(value)
     return PLACEHOLDER if d is None else f"{_nearest(d)}%"
@@ -109,8 +117,10 @@ def fmt(kind: str, value: Any, ccy: Optional[str] = None) -> str:
         return fmt_count(value)
     if kind == COUNT_UP:
         return fmt_count_up(value)
-    if kind in (DAYS, MONTHS):
+    if kind == DAYS:
         return fmt_days(value)
+    if kind == MONTHS:
+        return fmt_months(value)
     if kind == PCT:
         return fmt_pct(value)
     if kind == RATIO:
@@ -118,6 +128,31 @@ def fmt(kind: str, value: Any, ccy: Optional[str] = None) -> str:
     if kind == PLAIN:
         return fmt_plain(value)
     raise FormattingError(f"unknown display kind {kind!r}")
+
+
+# ---------------------------------------------------------------------------
+# Spreadsheet cells: numeric, with an Excel number format
+# ---------------------------------------------------------------------------
+# Analysts must be able to sum and sort, so the export keeps cells numeric and
+# lets the number format do the display. Excel formats can round but not round
+# UP, and "0%" scales by 100, so `xlsx_value` prepares the stored number so the
+# format then shows exactly what `fmt` would.
+XLSX_NUMBER_FORMAT = {
+    CURRENCY: "#,##0", COUNT: "#,##0", COUNT_UP: "#,##0", DAYS: "#,##0",
+    MONTHS: "0.0", PCT: "0%", RATIO: '0.00"x"', PLAIN: "0",
+}
+
+
+def xlsx_value(kind: str, value: Any) -> Optional[float]:
+    """The number to store in a cell that will carry XLSX_NUMBER_FORMAT[kind]."""
+    d = _dec(value)
+    if d is None:
+        return None
+    if kind in (COUNT_UP, DAYS):
+        return _up(d)              # the format cannot round up, so the cell holds the rounded-up value
+    if kind == PCT:
+        return float(d / 100)      # 106.41 -> 1.0641, shown by "0%" as 106%
+    return float(d)
 
 
 # ---------------------------------------------------------------------------

@@ -427,11 +427,36 @@ async def get_results(audit_id: str):
 
 
 def build_export_workbook(meta: dict, r: dict) -> io.BytesIO:
+    """Numeric cells with Excel number formats (see app/formatting.py), so the
+    display follows the formatting rules while analysts can still sum and sort."""
     ccy = r.get("reporting_currency", "")
+    money = f" ({ccy})" if ccy else ""
 
-    def F(kind, value):
-        # One formatter for every surface (see app/formatting.py); raw values stay in Mongo.
-        return fmt.fmt(kind, value, ccy)
+    def kv_sheet(xw, sheet, rows):
+        """rows: (label, kind, value); kind None means the value is text."""
+        df = pd.DataFrame(
+            [(label, v if kind is None else fmt.xlsx_value(kind, v)) for label, kind, v in rows],
+            columns=["Metric", "Value"],
+        )
+        df.to_excel(xw, sheet_name=sheet, index=False)
+        ws = xw.sheets[sheet]
+        for i, (_, kind, _) in enumerate(rows, start=2):
+            if kind is not None:
+                ws.cell(row=i, column=2).number_format = fmt.XLSX_NUMBER_FORMAT[kind]
+
+    def table_sheet(xw, sheet, df, kinds, startrow=0):
+        """kinds: {column: kind}; the rest of the columns are written as-is."""
+        df = df.copy()
+        for col, kind in kinds.items():
+            if col in df.columns:
+                df[col] = df[col].map(lambda v, k=kind: fmt.xlsx_value(k, v))
+        df.to_excel(xw, sheet_name=sheet, index=False, startrow=startrow)
+        ws = xw.sheets[sheet]
+        for col, kind in kinds.items():
+            if col in df.columns:
+                c = list(df.columns).index(col) + 1
+                for row in range(startrow + 2, startrow + 2 + len(df)):
+                    ws.cell(row=row, column=c).number_format = fmt.XLSX_NUMBER_FORMAT[kind]
 
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as xw:
@@ -442,94 +467,108 @@ def build_export_workbook(meta: dict, r: dict) -> io.BytesIO:
         sc = r.get("sales_cycle") or {}
         wr = r.get("win_rate") or {}
         cac = r.get("cac_payback") or {}
-        cac_display = None
+        cac_label, cac_value = "CAC payback, months (default L)", None
         if cac:
             L = f"L{cac.get('default_l', 1)}"
             for q in sorted(cac.get("quarters", {})):
                 if cac["quarters"][q][L]["months"] is not None:
-                    cac_display = f"{F(fmt.MONTHS, cac['quarters'][q][L]['months'])} mo ({q}, {L})"
-        headline = [
-            ("Company", meta.get("company_name")),
-            ("As-of month", meta.get("as_of_month") or r.get("as_of_month")),
-            ("Reporting currency", ccy),
-            ("Ending ARR", F(fmt.CURRENCY, arr.get("value"))),
-            ("Current MRR", F(fmt.CURRENCY, arr.get("mrr"))),
-            ("ARR month", arr.get("month")),
-            ("NRR overall", F(fmt.PCT, nrr.get("overall_pct"))),
-            ("Gross revenue churn", F(fmt.PCT, churn.get("overall_pct"))),
-            ("CAC payback (default L)", cac_display),
-            ("Median sales cycle (days)", F(fmt.DAYS, sc.get("median_days"))),
-            ("Win rate", F(fmt.PCT, wr.get("win_rate_pct"))),
-            ("Deals excluded (close<created)", F(fmt.COUNT, wr.get("excluded_invalid"))),
-        ]
-        pd.DataFrame(headline, columns=["Metric", "Value"]).to_excel(xw, sheet_name="Headline", index=False)
+                    cac_value = cac["quarters"][q][L]["months"]
+                    cac_label = f"CAC payback, months ({q}, {L})"
+        kv_sheet(xw, "Headline", [
+            ("Company", None, meta.get("company_name")),
+            ("As-of month", None, meta.get("as_of_month") or r.get("as_of_month")),
+            ("Reporting currency", None, ccy),
+            (f"Ending ARR{money}", fmt.CURRENCY, arr.get("value")),
+            (f"Current MRR{money}", fmt.CURRENCY, arr.get("mrr")),
+            ("ARR month", None, arr.get("month")),
+            ("NRR overall", fmt.PCT, nrr.get("overall_pct")),
+            ("Gross revenue churn", fmt.PCT, churn.get("overall_pct")),
+            (cac_label, fmt.MONTHS, cac_value),
+            ("Median sales cycle (days)", fmt.DAYS, sc.get("median_days")),
+            ("Win rate", fmt.PCT, wr.get("win_rate_pct")),
+            ("Deals excluded (close<created)", fmt.COUNT, wr.get("excluded_invalid")),
+        ])
 
         # By segment
         seg_rows = {}
         for seg, v in (nrr.get("by_segment") or {}).items():
-            seg_rows.setdefault(seg, {})["NRR"] = F(fmt.PCT, v.get("nrr_pct"))
-            seg_rows[seg]["NRR base n"] = F(fmt.COUNT, v.get("n"))
+            seg_rows.setdefault(seg, {})["NRR"] = v.get("nrr_pct")
+            seg_rows[seg]["NRR base n"] = v.get("n")
         for seg, v in (sc.get("by_segment") or {}).items():
-            seg_rows.setdefault(seg, {})["Sales cycle median (d)"] = F(fmt.DAYS, v.get("median_days"))
-            seg_rows[seg]["Sales cycle n"] = F(fmt.COUNT, v.get("n"))
+            seg_rows.setdefault(seg, {})["Sales cycle median (d)"] = v.get("median_days")
+            seg_rows[seg]["Sales cycle n"] = v.get("n")
         for seg, v in ((r.get("acv_path") or {}).get("by_segment") or {}).items():
-            seg_rows.setdefault(seg, {})["Customers"] = F(fmt.COUNT, v.get("customers"))
-            seg_rows[seg]["ACV"] = F(fmt.CURRENCY, v.get("acv"))
-            seg_rows[seg]["ARR"] = F(fmt.CURRENCY, v.get("arr"))
-        seg_df = pd.DataFrame([{"Segment": s, **vals} for s, vals in seg_rows.items()]) if seg_rows \
-            else pd.DataFrame([{"Segment": "(no segment column mapped)"}])
-        seg_df.to_excel(xw, sheet_name="By Segment", index=False)
+            seg_rows.setdefault(seg, {})["Customers"] = v.get("customers")
+            seg_rows[seg][f"ACV{money}"] = v.get("acv")
+            seg_rows[seg][f"ARR{money}"] = v.get("arr")
+        if seg_rows:
+            table_sheet(xw, "By Segment", pd.DataFrame([{"Segment": s, **vals} for s, vals in seg_rows.items()]), {
+                "NRR": fmt.PCT, "NRR base n": fmt.COUNT, "Sales cycle median (d)": fmt.DAYS,
+                "Sales cycle n": fmt.COUNT, "Customers": fmt.COUNT,
+                f"ACV{money}": fmt.CURRENCY, f"ARR{money}": fmt.CURRENCY,
+            })
+        else:
+            pd.DataFrame([{"Segment": "(no segment column mapped)"}]).to_excel(xw, sheet_name="By Segment", index=False)
 
         # NRR by cohort
-        cohort_df = pd.DataFrame(
-            [{"Cohort": k, "NRR": F(fmt.PCT, v.get("nrr_pct")), "n": F(fmt.COUNT, v.get("n"))} for k, v in (nrr.get("by_cohort") or {}).items()]
-        ) if nrr.get("by_cohort") else pd.DataFrame([{"Cohort": "(not computable)"}])
-        cohort_df.to_excel(xw, sheet_name="NRR by Cohort", index=False)
+        if nrr.get("by_cohort"):
+            table_sheet(xw, "NRR by Cohort", pd.DataFrame(
+                [{"Cohort": k, "NRR": v.get("nrr_pct"), "n": v.get("n")} for k, v in nrr["by_cohort"].items()]
+            ), {"NRR": fmt.PCT, "n": fmt.COUNT})
+        else:
+            pd.DataFrame([{"Cohort": "(not computable)"}]).to_excel(xw, sheet_name="NRR by Cohort", index=False)
 
         # NRR series
-        series_df = pd.DataFrame(
-            [{"month": p.get("month"), "nrr_pct": F(fmt.PCT, p.get("nrr_pct"))} for p in (nrr.get("series") or [])],
-            columns=["month", "nrr_pct"])
-        (series_df if not series_df.empty else pd.DataFrame([{"month": "(not computable)"}])).to_excel(
-            xw, sheet_name="NRR Series", index=False)
+        series_df = pd.DataFrame(nrr.get("series") or [], columns=["month", "nrr_pct"])
+        if series_df.empty:
+            pd.DataFrame([{"month": "(not computable)"}]).to_excel(xw, sheet_name="NRR Series", index=False)
+        else:
+            table_sheet(xw, "NRR Series", series_df, {"nrr_pct": fmt.PCT})
 
         # CAC by quarter
         cac_rows = []
         for q, v in (cac.get("quarters") or {}).items():
-            row = {"Quarter": q, "New MRR": F(fmt.CURRENCY, v.get("new_mrr")), "Gross margin": F(fmt.PCT, v.get("gross_margin_pct"))}
+            row = {"Quarter": q, f"New MRR{money}": v.get("new_mrr"), "Gross margin": v.get("gross_margin_pct")}
             for L in ("L0", "L1", "L2"):
-                row[f"{L} months"] = F(fmt.MONTHS, v[L].get("months"))
-                row[f"{L} S&M used"] = F(fmt.CURRENCY, v[L].get("sm_expense"))
+                row[f"{L} months"] = v[L].get("months")
+                row[f"{L} S&M used{money}"] = v[L].get("sm_expense")
                 row[f"{L} reason"] = v[L].get("reason")
             cac_rows.append(row)
-        (pd.DataFrame(cac_rows) if cac_rows else pd.DataFrame([{"Quarter": "(P&L not provided)"}])).to_excel(
-            xw, sheet_name="CAC by Quarter", index=False)
+        if cac_rows:
+            kinds = {f"New MRR{money}": fmt.CURRENCY, "Gross margin": fmt.PCT}
+            for L in ("L0", "L1", "L2"):
+                kinds[f"{L} months"] = fmt.MONTHS
+                kinds[f"{L} S&M used{money}"] = fmt.CURRENCY
+            table_sheet(xw, "CAC by Quarter", pd.DataFrame(cac_rows), kinds)
+        else:
+            pd.DataFrame([{"Quarter": "(P&L not provided)"}]).to_excel(xw, sheet_name="CAC by Quarter", index=False)
 
         # Path to plan
         ap = r.get("acv_path") or {}
-        path_rows = [
-            ("Current customers", F(fmt.COUNT, ap.get("current_customers"))),
-            ("Current ARR", F(fmt.CURRENCY, ap.get("current_arr"))),
-            ("ACV (average contract value)", F(fmt.CURRENCY, ap.get("acv"))),
-            ("Target ARR", F(fmt.CURRENCY, ap.get("target_arr"))),
-            ("Target date", ap.get("target_date")),
-            ("Customers needed", F(fmt.COUNT_UP, ap.get("customers_needed"))),
-            ("Required net-new / year", F(fmt.COUNT_UP, ap.get("required_net_new_per_year"))),
-            ("Observed net-new / year (12m)", F(fmt.COUNT, ap.get("observed_net_new_per_year_12m"))),
-            ("Observed net-new / year (24m)", F(fmt.COUNT, ap.get("observed_net_new_per_year_24m"))),
-            ("Required ÷ observed (12m)", F(fmt.RATIO, ap.get("required_vs_observed_12m"))),
-            ("Required ÷ observed (24m)", F(fmt.RATIO, ap.get("required_vs_observed_24m"))),
-        ]
-        pd.DataFrame(path_rows, columns=["Metric", "Value"]).to_excel(xw, sheet_name="Path to Plan", index=False)
+        kv_sheet(xw, "Path to Plan", [
+            ("Current customers", fmt.COUNT, ap.get("current_customers")),
+            (f"Current ARR{money}", fmt.CURRENCY, ap.get("current_arr")),
+            (f"ACV (average contract value){money}", fmt.CURRENCY, ap.get("acv")),
+            (f"Target ARR{money}", fmt.CURRENCY, ap.get("target_arr")),
+            ("Target date", None, ap.get("target_date")),
+            ("Customers needed", fmt.COUNT_UP, ap.get("customers_needed")),
+            ("Required net-new / year", fmt.COUNT_UP, ap.get("required_net_new_per_year")),
+            ("Observed net-new / year (12m)", fmt.COUNT, ap.get("observed_net_new_per_year_12m")),
+            ("Observed net-new / year (24m)", fmt.COUNT, ap.get("observed_net_new_per_year_24m")),
+            ("Required ÷ observed (12m)", fmt.RATIO, ap.get("required_vs_observed_12m")),
+            ("Required ÷ observed (24m)", fmt.RATIO, ap.get("required_vs_observed_24m")),
+        ])
 
         # ACV bands (hide empty bands, keep fixed low-to-high display order)
         as_of = meta.get("as_of_month") or r.get("as_of_month") or ""
         band_rows = [
-            {"Band": b["label"], "ACV range": fmt.band_range_label(b.get("low"), b.get("high"), ccy), "Customers": F(fmt.COUNT, b["count"])}
+            {"Band": b["label"], "ACV range": fmt.band_range_label(b.get("low"), b.get("high"), ccy), "Customers": b["count"]}
             for b in (ap.get("bands") or []) if b.get("count")
         ]
-        band_df = pd.DataFrame(band_rows) if band_rows else pd.DataFrame([{"Band": "(no active customers)"}])
-        band_df.to_excel(xw, sheet_name="ACV Bands", index=False, startrow=1)
+        if band_rows:
+            table_sheet(xw, "ACV Bands", pd.DataFrame(band_rows), {"Customers": fmt.COUNT}, startrow=1)
+        else:
+            pd.DataFrame([{"Band": "(no active customers)"}]).to_excel(xw, sheet_name="ACV Bands", index=False, startrow=1)
         xw.sheets["ACV Bands"]["A1"] = f"ACV Bands — active customers (as of {as_of})"
 
         # Anomalies

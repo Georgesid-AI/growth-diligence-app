@@ -24,7 +24,7 @@ RAW = {
         "nrr": {"overall_pct": 106.41, "n": 100.0, "series": [{"month": "2026-06", "nrr_pct": 8.38}]},
         "sales_cycle": {"median_days": 42.1, "iqr": [17.0, 58.5], "n": 12},
         "cac_payback": {"default_l": 1, "quarters": {"2026-Q1": {"new_mrr": 1000.4, "gross_margin_pct": 71.2,
-                        "L1": {"months": 12.2, "sm_expense": 9000.0, "reason": None}}}},
+                        "L1": {"months": 12.24, "sm_expense": 9000.0, "reason": None}}}},
         "acv_path": {
             "acv": 28451.2, "customers_needed": 128.3, "required_vs_observed_12m": 1.28,
             "bands": [{"key": "k", "label": "Self-serve", "low": 100, "high": 1000,
@@ -55,6 +55,7 @@ def test_format_payload_leaves_no_raw_numbers():
     assert m["nrr"]["overall_pct"] == "106%" and m["nrr"]["n"] == "100"
     assert m["sales_cycle"]["median_days"] == "43" and m["sales_cycle"]["iqr"] == ["17", "59"]
     assert m["acv_path"]["customers_needed"] == "129"
+    assert m["cac_payback"]["quarters"]["2026-Q1"]["L1"]["months"] == "12.2 months"
     assert m["acv_path"]["required_vs_observed_12m"] == "1.28x"
     assert m["acv_path"]["bands"][0]["range_label"] == "100–1,000 EUR"
     assert "value_label" not in m["acv_path"]["overall_band"]
@@ -82,3 +83,15 @@ def test_acv_defined_once_at_first_use():
     assert out[2] == "ACV again"
     assert f.define_acv_on_first_use(out) == out
     assert f.define_acv_on_first_use(["no term"]) == ["no term"]
+
+
+def test_xlsx_values_display_like_the_formatter():
+    # The cell holds a number; the Excel format shows what fmt() would.
+    assert f.xlsx_value(f.PCT, 106.41) == pytest.approx(1.0641)   # "0%" -> 106%
+    assert f.xlsx_value(f.COUNT_UP, 128.3) == 129                # formats cannot round up
+    assert f.xlsx_value(f.DAYS, 42.1) == 43
+    assert f.xlsx_value(f.MONTHS, 12.24) == 12.24                # "0.0" -> 12.2
+    assert f.xlsx_value(f.CURRENCY, 3129104.4) == 3129104.4      # "#,##0" -> 3,129,104
+    assert f.xlsx_value(f.RATIO, 1.28) == 1.28                   # 0.00"x"
+    assert f.xlsx_value(f.COUNT, None) is None
+    assert f.XLSX_NUMBER_FORMAT[f.RATIO] == '0.00"x"'

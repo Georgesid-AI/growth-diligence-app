@@ -131,7 +131,7 @@ export default function Dashboard() {
     for (const q of qs) if (r.cac_payback.quarters[q][L].months != null) picked = q;
     if (picked) {
       const m = r.cac_payback.quarters[picked][L].months;
-      cac = { value: `${fmtMonths(m)} mo`, sub: <Gloss id="cac-quarter" text="Quarter of calculation">{picked}</Gloss>,
+      cac = { value: fmtMonths(m), sub: <Gloss id="cac-quarter" text="Quarter of calculation">{picked}</Gloss>,
         note: "", source: r.cac_payback.source,
         status: m > 18 ? "warning" : m <= 12 ? "growth_positive" : "neutral" };
     } else {
