@@ -794,7 +794,7 @@ def test_prompt_text_never_returned_in_a_response():
     prompt_body = prompt_store.load("growth_engine").text
     assert prompt_body[:60] not in blob
     assert "Absolute rules" not in blob
-    assert result.prompt_version == "v3", "the version is returned, the text is not"
+    assert result.prompt_version == "v4", "the version is returned, the text is not"
 
 
 def test_no_file_io_outside_prompt_store():

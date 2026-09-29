@@ -12,7 +12,8 @@ import { Gloss } from "@/components/Gloss";
 import { Narrative } from "@/components/Narrative";
 import { NarrativeControl } from "@/components/NarrativeControl";
 import { getAudit, getResults, exportUrl, readNarrative, generateNarrative } from "@/lib/api";
-import { money, pct, num, monthEndDate } from "@/lib/format";
+import { GLOSSARY } from "@/lib/glossary";
+import { fmtCurrency, fmtCount, fmtCountUp, fmtDays, fmtMonths, fmtPct, fmtRatio, bandRangeLabel, monthEndDate } from "@/lib/format";
 
 const SEG_COLORS = ["#0284C7", "#059669", "#D97706", "#DB2777", "#475569"];
 
@@ -130,7 +131,7 @@ export default function Dashboard() {
     for (const q of qs) if (r.cac_payback.quarters[q][L].months != null) picked = q;
     if (picked) {
       const m = r.cac_payback.quarters[picked][L].months;
-      cac = { value: `${m} mo`, sub: <Gloss id="cac-quarter" text="Quarter of calculation">{picked}</Gloss>,
+      cac = { value: `${fmtMonths(m)} mo`, sub: <Gloss id="cac-quarter" text="Quarter of calculation">{picked}</Gloss>,
         note: "", source: r.cac_payback.source,
         status: m > 18 ? "warning" : m <= 12 ? "growth_positive" : "neutral" };
     } else {
@@ -158,7 +159,7 @@ export default function Dashboard() {
         <div>
           <h1 className="font-heading text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">{audit?.company_name}</h1>
           <p data-testid="header-context-strip" className="text-slate-600 text-xs font-mono mt-1">
-            Target: <span className="text-slate-800">{money(por?.target_arr, por?.reporting_currency ?? ccy)} ARR</span>{" "}
+            Target: <span className="text-slate-800">{fmtCurrency(por?.target_arr, por?.reporting_currency ?? ccy)} ARR</span>{" "}
             by <span className="text-slate-800">{por?.target_date ?? "—"}</span> · FX: {fxDisplay}
           </p>
           <p className="text-slate-500 text-xs font-mono mt-1">
@@ -185,32 +186,32 @@ export default function Dashboard() {
       {/* Metric strip */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4 mb-6">
         <MetricCard id="arr" label="Ending ARR" status="growth_positive" source={r.arr?.source}
-          value={r.arr ? money(r.arr.value, ccy) : "—"} sub={r.arr ? `MRR ${money(r.arr.mrr, ccy)}` : ""}
+          value={r.arr ? fmtCurrency(r.arr.value, ccy) : "—"} sub={r.arr ? `MRR ${fmtCurrency(r.arr.mrr, ccy)}` : ""}
           caption="Shows distance to target" />
         <MetricCard id="nrr" label="Net Revenue Retention" status={nrrStatus} source={r.nrr?.source}
-          value={r.nrr ? pct(r.nrr.overall_pct) : "n/c"} sub={r.nrr ? `${r.nrr.n} base customers` : "needs 12m history"}
+          value={r.nrr ? fmtPct(r.nrr.overall_pct) : "n/c"} sub={r.nrr ? `${fmtCount(r.nrr.n)} base customers` : "needs 12m history"}
           caption="Growth from existing customers alone" />
         <MetricCard id="gross_churn" label="Gross Revenue Churn" status={churnStatus} source={r.gross_churn?.source}
-          value={r.gross_churn ? pct(r.gross_churn.overall_pct) : "n/c"} sub={r.gross_churn ? "12-month" : "needs 12m history"}
+          value={r.gross_churn ? fmtPct(r.gross_churn.overall_pct) : "n/c"} sub={r.gross_churn ? "12-month" : "needs 12m history"}
           caption="Shows revenue lost to churn" />
         <MetricCard id="cac_payback" label="CAC Payback" status={cac.status} source={cac.source}
           value={cac.value} sub={cac.sub} note={cac.note}
           caption="Time to recoup acquisition cost" />
         <MetricCard id="sales_cycle" label="Median Sales Cycle" status="neutral" source={r.sales_cycle?.source}
-          value={r.sales_cycle?.median_days != null ? `${r.sales_cycle.median_days} d` : "n/c"}
+          value={r.sales_cycle?.median_days != null ? `${fmtDays(r.sales_cycle.median_days)} d` : "n/c"}
           sub={r.sales_cycle ? (
             <>
               <Gloss id="sales-cycle-iqr" text="Middle 50% range">
-                IQR {r.sales_cycle.iqr?.[0]}–{r.sales_cycle.iqr?.[1]}
+                IQR {fmtDays(r.sales_cycle.iqr?.[0])}–{fmtDays(r.sales_cycle.iqr?.[1])}
               </Gloss>{" · "}
-              <Gloss id="sales-cycle-n" text="Number of deals">n={r.sales_cycle.n}</Gloss>
+              <Gloss id="sales-cycle-n" text="Number of deals">n={fmtCount(r.sales_cycle.n)}</Gloss>
             </>
           ) : ""}
           caption="Speed of closing new deals" />
         <MetricCard id="win_rate" label="Win Rate" status="neutral" source={r.win_rate?.source}
-          value={r.win_rate ? pct(r.win_rate.win_rate_pct) : "n/c"}
+          value={r.win_rate ? fmtPct(r.win_rate.win_rate_pct) : "n/c"}
           sub={r.win_rate ? (
-            <Gloss id="win-rate-wl" text="Won versus lost">{r.win_rate.won}W / {r.win_rate.lost}L</Gloss>
+            <Gloss id="win-rate-wl" text="Won versus lost">{fmtCount(r.win_rate.won)}W / {fmtCount(r.win_rate.lost)}L</Gloss>
           ) : ""}
           note={r.win_rate?.excluded_invalid ? (
             <Gloss id="win-rate-excluded" text="Excluded invalid entries">
@@ -230,8 +231,8 @@ export default function Dashboard() {
             <AreaChart data={r.mrr_series.data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
               <XAxis dataKey="month" {...chartAxis} minTickGap={24} />
-              <YAxis {...chartAxis} tickFormatter={(v) => money(v, ccy)} width={60} />
-              <RTooltip contentStyle={tooltipStyle} formatter={(v, n) => [money(v, ccy), n]} />
+              <YAxis {...chartAxis} tickFormatter={(v) => fmtCurrency(v)} width={90} />
+              <RTooltip contentStyle={tooltipStyle} formatter={(v, n) => [fmtCurrency(v, ccy), n]} />
               <Legend wrapperStyle={{ fontSize: 11, fontFamily: "JetBrains Mono" }} />
               {r.mrr_series.segments.map((s, i) => (
                 <Area key={s} type="monotone" dataKey={s} stackId="1" isAnimationActive={false}
@@ -247,8 +248,8 @@ export default function Dashboard() {
               <LineChart data={r.nrr.series} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
                 <XAxis dataKey="month" {...chartAxis} minTickGap={30} />
-                <YAxis {...chartAxis} domain={["auto", "auto"]} tickFormatter={(v) => `${v}%`} width={44} />
-                <RTooltip contentStyle={tooltipStyle} formatter={(v) => [`${v}%`, "NRR"]} />
+                <YAxis {...chartAxis} domain={["auto", "auto"]} tickFormatter={fmtPct} width={52} />
+                <RTooltip contentStyle={tooltipStyle} formatter={(v) => [fmtPct(v), "NRR"]} />
                 <ReferenceLine y={100} stroke="#64748B" strokeDasharray="4 4" />
                 <Line type="monotone" dataKey="nrr_pct" stroke="#34D399" strokeWidth={2} dot={false} isAnimationActive={false} />
               </LineChart>
@@ -276,14 +277,14 @@ export default function Dashboard() {
                 {r.cohort_retention.data.map((row) => (
                   <tr key={row.cohort}>
                     <td className="text-xs font-mono text-slate-700 pr-3 whitespace-nowrap">
-                      {row.cohort} <span className="text-slate-600">n={row.n}</span>
+                      {row.cohort} <span className="text-slate-600">n={fmtCount(row.n)}</span>
                     </td>
                     {Array.from({ length: r.cohort_retention.max_offset + 1 }).map((_, o) => {
                       const v = row.values[String(o)];
                       return (
                         <td key={o} data-testid={`cohort-cell-${row.cohort}-${o}`}
                           className={`text-center text-[11px] font-mono rounded py-1.5 ${cohortTier(v)}`}>
-                          {v != null ? Math.round(v) : ""}
+                          {v != null ? fmtPct(v) : ""}
                         </td>
                       );
                     })}
@@ -304,10 +305,10 @@ export default function Dashboard() {
                 </div>
               )}
               <div className="grid grid-cols-2 gap-3 mb-4">
-                <Stat label="Current customers" value={num(r.acv_path.current_customers)} />
-                <Stat label="Current ARR" value={money(r.acv_path.current_arr, ccy)} />
-                <Stat label="ACV" value={money(r.acv_path.acv, ccy)} />
-                <Stat label="Customers needed" value={num(r.acv_path.customers_needed, 0)} />
+                <Stat label="Current customers" value={fmtCount(r.acv_path.current_customers)} />
+                <Stat label="Current ARR" value={fmtCurrency(r.acv_path.current_arr, ccy)} />
+                <Stat label="ACV (average contract value)" value={fmtCurrency(r.acv_path.acv, ccy)} />
+                <Stat label="Customers needed" value={fmtCountUp(r.acv_path.customers_needed)} />
               </div>
               <ResponsiveContainer width="100%" height={160}>
                 {(() => {
@@ -320,8 +321,9 @@ export default function Dashboard() {
                     <BarChart data={bars}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
                       <XAxis dataKey="k" {...chartAxis} />
-                      <YAxis {...chartAxis} width={40} />
-                      <RTooltip contentStyle={tooltipStyle} />
+                      <YAxis {...chartAxis} width={40} tickFormatter={fmtCount} />
+                      <RTooltip contentStyle={tooltipStyle}
+                        formatter={(v, _n, p) => [p.payload.k === "Required/yr" ? fmtCountUp(v) : fmtCount(v), p.payload.k]} />
                       <Bar dataKey="v" radius={[4, 4, 0, 0]} isAnimationActive={false}>
                         {bars.map((b, i) => <Cell key={i} fill={b.fill} />)}
                       </Bar>
@@ -332,7 +334,7 @@ export default function Dashboard() {
               <div className="mt-3 text-xs font-mono text-slate-600">
                 Required ÷ observed (12m):{" "}
                 <span className={r.acv_path.required_vs_observed_12m > 1.2 ? "text-amber-700" : "text-emerald-700"}>
-                  {r.acv_path.required_vs_observed_12m ?? "—"}×
+                  {fmtRatio(r.acv_path.required_vs_observed_12m)}
                 </span>
               </div>
             </>
@@ -343,10 +345,10 @@ export default function Dashboard() {
       {/* Segment tables + ACV bands */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6">
         <Card className="lg:col-span-4" title="NRR by Segment">
-          <SegTable rows={r.nrr?.by_segment} render={(v) => pct(v.nrr_pct)} empty="Segment column not mapped" />
+          <SegTable rows={r.nrr?.by_segment} render={(v) => fmtPct(v.nrr_pct)} empty="Segment column not mapped" />
         </Card>
         <Card className="lg:col-span-4" title="Sales Cycle by Segment">
-          <SegTable rows={r.sales_cycle?.by_segment} render={(v) => `${v.median_days}d · n=${v.n}`} empty="Segment column not mapped" />
+          <SegTable rows={r.sales_cycle?.by_segment} render={(v) => `${fmtDays(v.median_days)}d · n=${fmtCount(v.n)}`} empty="Segment column not mapped" />
         </Card>
         <Card className="lg:col-span-4" title={`ACV Bands — active customers (as of ${r.as_of_month ?? "—"})`}>
           {r.acv_path ? (
@@ -354,15 +356,15 @@ export default function Dashboard() {
               {r.acv_path.overall_band && (
                 <div data-testid="acv-overall-band" className="text-sm text-slate-800 pb-1.5 mb-1.5 border-b border-[#E5E7EB]">
                   Overall: <span className="font-medium">{r.acv_path.overall_band.label}</span>{" "}
-                  <span className="font-mono text-slate-600">({r.acv_path.overall_band.value_label})</span>
+                  <span className="font-mono text-slate-600">({fmtCurrency(r.acv_path.acv, ccy)})</span>
                 </div>
               )}
               {r.acv_path.bands.filter((b) => b.count > 0).map((b) => (
                 <div key={b.key} className="flex items-center justify-between text-sm">
                   <span className="text-slate-700">
-                    {b.label} <span className="text-slate-500">({b.range_label})</span>
+                    {b.label} <span className="text-slate-500">({bandRangeLabel(b.low, b.high, ccy)})</span>
                   </span>
-                  <span className="font-mono text-slate-900">{b.count}</span>
+                  <span className="font-mono text-slate-900">{fmtCount(b.count)}</span>
                 </div>
               ))}
             </div>
@@ -380,10 +382,10 @@ export default function Dashboard() {
                   <div>
                     <div className="text-sm text-slate-800 capitalize">{k.replace("_", " ")}</div>
                     <div className="text-[10px] font-mono text-slate-500">
-                      n={v.n} {v.small_sample && <span className="text-amber-700">· small sample</span>}
+                      n={fmtCount(v.n)} {v.small_sample && <span className="text-amber-700">· small sample</span>}
                     </div>
                   </div>
-                  <div className="font-mono text-lg text-slate-900">{pct(v.win_rate_pct)}</div>
+                  <div className="font-mono text-lg text-slate-900">{fmtPct(v.win_rate_pct)}</div>
                 </div>
               ))}
             </div>
@@ -408,12 +410,12 @@ export default function Dashboard() {
                   {Object.entries(r.cac_payback.quarters).map(([q, v]) => (
                     <tr key={q} className="border-t border-[#E5E7EB]">
                       <td className="py-1.5 pr-3">{q}</td>
-                      <td className="py-1.5 pr-3">{money(v.new_mrr, ccy)}</td>
-                      <td className="py-1.5 pr-3">{v.gross_margin_pct != null ? `${v.gross_margin_pct}%` : "—"}</td>
+                      <td className="py-1.5 pr-3">{fmtCurrency(v.new_mrr, ccy)}</td>
+                      <td className="py-1.5 pr-3">{fmtPct(v.gross_margin_pct)}</td>
                       {["L0", "L1", "L2"].map((L) => (
                         <td key={L} className="py-1.5 pr-3">
                           {v[L].months != null
-                            ? <span title={v[L].sm_expense != null ? `S&M used: ${money(v[L].sm_expense, ccy)} · New MRR: ${money(v.new_mrr, ccy)} · GM: ${v.gross_margin_pct}%` : ""}>{v[L].months}</span>
+                            ? <span title={v[L].sm_expense != null ? `S&M used: ${fmtCurrency(v[L].sm_expense, ccy)} · New MRR: ${fmtCurrency(v.new_mrr, ccy)} · GM: ${fmtPct(v.gross_margin_pct)}` : ""}>{fmtMonths(v[L].months)}</span>
                             : <span className="text-slate-600" title={v[L].reason}>n/c</span>}
                         </td>
                       ))}
@@ -430,15 +432,15 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <Card className="lg:col-span-6" title="Anomaly Flags" hint="detected, not interpreted">
           <div className="space-y-2 text-sm">
-            <Flag label="Months with negative MRR" value={r.anomalies.negative_mrr_months.length}
+            <Flag label="Months with negative MRR" value={fmtCount(r.anomalies.negative_mrr_months.length)}
               detail={r.anomalies.negative_mrr_months.join(", ")} />
-            <Flag label="Customers with gaps > 2 months then resume" value={r.anomalies.revenue_gap_then_resume.length}
+            <Flag label="Customers with gaps > 2 months then resume" value={fmtCount(r.anomalies.revenue_gap_then_resume.length)}
               detail={r.anomalies.revenue_gap_then_resume.slice(0, 8).join(", ")} />
-            <Flag label="Revenue lines missing customer ID" value={r.anomalies.revenue_missing_customer_id.count} />
-            <Flag label="Deals with close before created (excluded)" value={r.anomalies.deals_close_before_created.excluded_count} />
+            <Flag label="Revenue lines missing customer ID" value={fmtCount(r.anomalies.revenue_missing_customer_id.count)} />
+            <Flag label="Deals with close before created (excluded)" value={fmtCount(r.anomalies.deals_close_before_created.excluded_count)} />
           </div>
         </Card>
-        <Card className="lg:col-span-6" title="Missing Data" hint={`${r.missing_data.length} items`}>
+        <Card className="lg:col-span-6" title="Missing Data" hint={`${fmtCount(r.missing_data.length)} items`}>
           {r.missing_data.length === 0 ? (
             <div className="flex items-center gap-2 text-emerald-700 text-sm py-4">
               <TrendingUp className="h-4 w-4" /> All metrics computed — no missing inputs.
@@ -458,6 +460,17 @@ export default function Dashboard() {
           )}
         </Card>
       </div>
+
+      <Card className="mb-6" testid="glossary" title="Glossary" hint="terms used above">
+        <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 text-sm">
+          {Object.entries(GLOSSARY).map(([term, def]) => (
+            <div key={term} className="flex gap-2">
+              <dt className="font-mono text-slate-900">{term}</dt>
+              <dd className="text-slate-600">{def}</dd>
+            </div>
+          ))}
+        </dl>
+      </Card>
     </Layout>
   );
 }

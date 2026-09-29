@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { listAudits, createAudit, deleteAudit } from "@/lib/api";
-import { money } from "@/lib/format";
+import { fmtCurrency } from "@/lib/format";
 
 export default function AuditHub() {
   const nav = useNavigate();
@@ -227,7 +227,7 @@ export default function AuditHub() {
               <div className="mt-4 pt-4 border-t border-[#E5E7EB] flex items-center justify-between">
                 <div>
                   <div className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">Target ARR</div>
-                  <div className="text-lg font-mono font-semibold text-slate-900">{money(a.target_arr, a.reporting_currency)}</div>
+                  <div className="text-lg font-mono font-semibold text-slate-900">{fmtCurrency(a.target_arr, a.reporting_currency)}</div>
                   {a.target_date && <div className="text-[10px] font-mono text-slate-500 mt-0.5">by {a.target_date}</div>}
                 </div>
                 <div className="flex gap-2">

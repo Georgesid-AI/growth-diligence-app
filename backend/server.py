@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, field_validator
 
 import growth_engine as ge
 import demo_data
+from app import formatting as fmt
 from app.llm import gateway as llm_gateway
 
 ROOT_DIR = Path(__file__).parent
@@ -427,6 +428,11 @@ async def get_results(audit_id: str):
 
 def build_export_workbook(meta: dict, r: dict) -> io.BytesIO:
     ccy = r.get("reporting_currency", "")
+
+    def F(kind, value):
+        # One formatter for every surface (see app/formatting.py); raw values stay in Mongo.
+        return fmt.fmt(kind, value, ccy)
+
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as xw:
         # Headline
@@ -441,57 +447,59 @@ def build_export_workbook(meta: dict, r: dict) -> io.BytesIO:
             L = f"L{cac.get('default_l', 1)}"
             for q in sorted(cac.get("quarters", {})):
                 if cac["quarters"][q][L]["months"] is not None:
-                    cac_display = f"{cac['quarters'][q][L]['months']} mo ({q}, {L})"
+                    cac_display = f"{F(fmt.MONTHS, cac['quarters'][q][L]['months'])} mo ({q}, {L})"
         headline = [
             ("Company", meta.get("company_name")),
             ("As-of month", meta.get("as_of_month") or r.get("as_of_month")),
             ("Reporting currency", ccy),
-            ("Ending ARR", arr.get("value")),
-            ("Current MRR", arr.get("mrr")),
+            ("Ending ARR", F(fmt.CURRENCY, arr.get("value"))),
+            ("Current MRR", F(fmt.CURRENCY, arr.get("mrr"))),
             ("ARR month", arr.get("month")),
-            ("NRR overall %", nrr.get("overall_pct")),
-            ("Gross revenue churn %", churn.get("overall_pct")),
+            ("NRR overall", F(fmt.PCT, nrr.get("overall_pct"))),
+            ("Gross revenue churn", F(fmt.PCT, churn.get("overall_pct"))),
             ("CAC payback (default L)", cac_display),
-            ("Median sales cycle (days)", sc.get("median_days")),
-            ("Win rate %", wr.get("win_rate_pct")),
-            ("Deals excluded (close<created)", wr.get("excluded_invalid")),
+            ("Median sales cycle (days)", F(fmt.DAYS, sc.get("median_days"))),
+            ("Win rate", F(fmt.PCT, wr.get("win_rate_pct"))),
+            ("Deals excluded (close<created)", F(fmt.COUNT, wr.get("excluded_invalid"))),
         ]
         pd.DataFrame(headline, columns=["Metric", "Value"]).to_excel(xw, sheet_name="Headline", index=False)
 
         # By segment
         seg_rows = {}
         for seg, v in (nrr.get("by_segment") or {}).items():
-            seg_rows.setdefault(seg, {})["NRR %"] = v.get("nrr_pct")
-            seg_rows[seg]["NRR base n"] = v.get("n")
+            seg_rows.setdefault(seg, {})["NRR"] = F(fmt.PCT, v.get("nrr_pct"))
+            seg_rows[seg]["NRR base n"] = F(fmt.COUNT, v.get("n"))
         for seg, v in (sc.get("by_segment") or {}).items():
-            seg_rows.setdefault(seg, {})["Sales cycle median (d)"] = v.get("median_days")
-            seg_rows[seg]["Sales cycle n"] = v.get("n")
+            seg_rows.setdefault(seg, {})["Sales cycle median (d)"] = F(fmt.DAYS, v.get("median_days"))
+            seg_rows[seg]["Sales cycle n"] = F(fmt.COUNT, v.get("n"))
         for seg, v in ((r.get("acv_path") or {}).get("by_segment") or {}).items():
-            seg_rows.setdefault(seg, {})["Customers"] = v.get("customers")
-            seg_rows[seg]["ACV"] = v.get("acv")
-            seg_rows[seg]["ARR"] = v.get("arr")
+            seg_rows.setdefault(seg, {})["Customers"] = F(fmt.COUNT, v.get("customers"))
+            seg_rows[seg]["ACV"] = F(fmt.CURRENCY, v.get("acv"))
+            seg_rows[seg]["ARR"] = F(fmt.CURRENCY, v.get("arr"))
         seg_df = pd.DataFrame([{"Segment": s, **vals} for s, vals in seg_rows.items()]) if seg_rows \
             else pd.DataFrame([{"Segment": "(no segment column mapped)"}])
         seg_df.to_excel(xw, sheet_name="By Segment", index=False)
 
         # NRR by cohort
         cohort_df = pd.DataFrame(
-            [{"Cohort": k, "NRR %": v.get("nrr_pct"), "n": v.get("n")} for k, v in (nrr.get("by_cohort") or {}).items()]
+            [{"Cohort": k, "NRR": F(fmt.PCT, v.get("nrr_pct")), "n": F(fmt.COUNT, v.get("n"))} for k, v in (nrr.get("by_cohort") or {}).items()]
         ) if nrr.get("by_cohort") else pd.DataFrame([{"Cohort": "(not computable)"}])
         cohort_df.to_excel(xw, sheet_name="NRR by Cohort", index=False)
 
         # NRR series
-        series_df = pd.DataFrame(nrr.get("series") or [], columns=["month", "nrr_pct"])
+        series_df = pd.DataFrame(
+            [{"month": p.get("month"), "nrr_pct": F(fmt.PCT, p.get("nrr_pct"))} for p in (nrr.get("series") or [])],
+            columns=["month", "nrr_pct"])
         (series_df if not series_df.empty else pd.DataFrame([{"month": "(not computable)"}])).to_excel(
             xw, sheet_name="NRR Series", index=False)
 
         # CAC by quarter
         cac_rows = []
         for q, v in (cac.get("quarters") or {}).items():
-            row = {"Quarter": q, "New MRR": v.get("new_mrr"), "Gross margin %": v.get("gross_margin_pct")}
+            row = {"Quarter": q, "New MRR": F(fmt.CURRENCY, v.get("new_mrr")), "Gross margin": F(fmt.PCT, v.get("gross_margin_pct"))}
             for L in ("L0", "L1", "L2"):
-                row[f"{L} months"] = v[L].get("months")
-                row[f"{L} S&M used"] = v[L].get("sm_expense")
+                row[f"{L} months"] = F(fmt.MONTHS, v[L].get("months"))
+                row[f"{L} S&M used"] = F(fmt.CURRENCY, v[L].get("sm_expense"))
                 row[f"{L} reason"] = v[L].get("reason")
             cac_rows.append(row)
         (pd.DataFrame(cac_rows) if cac_rows else pd.DataFrame([{"Quarter": "(P&L not provided)"}])).to_excel(
@@ -500,24 +508,24 @@ def build_export_workbook(meta: dict, r: dict) -> io.BytesIO:
         # Path to plan
         ap = r.get("acv_path") or {}
         path_rows = [
-            ("Current customers", ap.get("current_customers")),
-            ("Current ARR", ap.get("current_arr")),
-            ("ACV", ap.get("acv")),
-            ("Target ARR", ap.get("target_arr")),
+            ("Current customers", F(fmt.COUNT, ap.get("current_customers"))),
+            ("Current ARR", F(fmt.CURRENCY, ap.get("current_arr"))),
+            ("ACV (average contract value)", F(fmt.CURRENCY, ap.get("acv"))),
+            ("Target ARR", F(fmt.CURRENCY, ap.get("target_arr"))),
             ("Target date", ap.get("target_date")),
-            ("Customers needed", ap.get("customers_needed")),
-            ("Required net-new / year", ap.get("required_net_new_per_year")),
-            ("Observed net-new / year (12m)", ap.get("observed_net_new_per_year_12m")),
-            ("Observed net-new / year (24m)", ap.get("observed_net_new_per_year_24m")),
-            ("Required ÷ observed (12m)", ap.get("required_vs_observed_12m")),
-            ("Required ÷ observed (24m)", ap.get("required_vs_observed_24m")),
+            ("Customers needed", F(fmt.COUNT_UP, ap.get("customers_needed"))),
+            ("Required net-new / year", F(fmt.COUNT_UP, ap.get("required_net_new_per_year"))),
+            ("Observed net-new / year (12m)", F(fmt.COUNT, ap.get("observed_net_new_per_year_12m"))),
+            ("Observed net-new / year (24m)", F(fmt.COUNT, ap.get("observed_net_new_per_year_24m"))),
+            ("Required ÷ observed (12m)", F(fmt.RATIO, ap.get("required_vs_observed_12m"))),
+            ("Required ÷ observed (24m)", F(fmt.RATIO, ap.get("required_vs_observed_24m"))),
         ]
         pd.DataFrame(path_rows, columns=["Metric", "Value"]).to_excel(xw, sheet_name="Path to Plan", index=False)
 
         # ACV bands (hide empty bands, keep fixed low-to-high display order)
         as_of = meta.get("as_of_month") or r.get("as_of_month") or ""
         band_rows = [
-            {"Band": b["label"], "ACV range": b["range_label"], "Customers": b["count"]}
+            {"Band": b["label"], "ACV range": fmt.band_range_label(b.get("low"), b.get("high"), ccy), "Customers": F(fmt.COUNT, b["count"])}
             for b in (ap.get("bands") or []) if b.get("count")
         ]
         band_df = pd.DataFrame(band_rows) if band_rows else pd.DataFrame([{"Band": "(no active customers)"}])
@@ -538,6 +546,8 @@ def build_export_workbook(meta: dict, r: dict) -> io.BytesIO:
         md = r.get("missing_data") or []
         (pd.DataFrame(md) if md else pd.DataFrame([{"metric": "(none — all computed)"}])).to_excel(
             xw, sheet_name="Missing Data", index=False)
+        pd.DataFrame(sorted(fmt.GLOSSARY.items()), columns=["Term", "Definition"]).to_excel(
+            xw, sheet_name="Glossary", index=False)
     buf.seek(0)
     return buf
 

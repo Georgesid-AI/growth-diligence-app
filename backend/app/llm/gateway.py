@@ -24,6 +24,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Iterable, List, NamedTuple, Optional, Tuple
 
+from .. import formatting
 from . import cache, guards, prompt_store, redaction
 from .schemas import Narrative, NarrativeResponse, UsageResponse, narrative_output_schema
 
@@ -138,6 +139,20 @@ async def load_computed_results(db, run_id: str, step: str) -> dict:
         "computed_at": doc.get("computed_at"),
         "metrics": slice_,
     }
+
+
+def build_outbound(computed: dict, mapping: dict) -> dict:
+    """The payload the provider sees: display strings, then pseudonyms.
+
+    Numbers are formatted here, from the raw computed values, so the model is
+    only ever handed strings it can copy - never a float it could reformat.
+    Raw values stay untouched in `computed` and in Mongo.
+    """
+    try:
+        formatted = formatting.format_payload(computed)
+    except formatting.FormattingError as exc:
+        raise GatewayError("format_failed", str(exc))
+    return redaction.redact(formatted, mapping)
 
 
 def _slice_for_step(results: dict, step: str) -> dict:
@@ -490,7 +505,10 @@ async def generate_narrative(
 
     model = config["model"]
     mapping = await redaction.get_or_create_map(db, run_id, computed)
-    outbound = redaction.redact(computed, mapping)
+    try:
+        outbound = build_outbound(computed, mapping)
+    except GatewayError as exc:
+        return _unavailable(run_id, step, str(exc), metrics)
 
     # Last-line assertion: nothing from pseudonym_map may appear outbound.
     leaks = redaction.find_leaks(outbound, mapping)
@@ -566,7 +584,7 @@ async def generate_narrative(
             )
 
         restored = redaction.restore_deep(narrative.model_dump(), mapping)
-        final = Narrative.model_validate(restored)
+        final = _define_acv(Narrative.model_validate(restored))
 
         await cache.put(
             db, key, run_id, step, prompt.version, model, final.model_dump(),
@@ -597,6 +615,21 @@ async def generate_narrative(
         return _unavailable(run_id, step, f"unexpected error: {type(exc).__name__}", metrics)
     finally:
         await guards.release(db, run_id, step, token)
+
+
+def _define_acv(n: Narrative) -> Narrative:
+    """Spell out "ACV (average contract value)" at its first use in reading order."""
+    fields = [n.headline, n.what_this_means] + [r.label for r in n.table_rows] \
+        + list(n.worth_flagging) + list(n.next_actions)
+    out = formatting.define_acv_on_first_use(fields)
+    it = iter(out)
+    return n.model_copy(update={
+        "headline": next(it),
+        "what_this_means": next(it),
+        "table_rows": [r.model_copy(update={"label": next(it)}) for r in n.table_rows],
+        "worth_flagging": [next(it) for _ in n.worth_flagging],
+        "next_actions": [next(it) for _ in n.next_actions],
+    })
 
 
 async def _call_with_retries(adapter, config, prompt, outbound, sleep):
@@ -722,7 +755,12 @@ async def read_cached_narrative(db, run_id: str, step: str) -> NarrativeResponse
 
     model = config["model"]
     mapping = await redaction.get_or_create_map(db, run_id, computed)
-    outbound = redaction.redact(computed, mapping)
+    try:
+        outbound = build_outbound(computed, mapping)
+    except GatewayError:
+        return NarrativeResponse(
+            run_id=run_id, step=step, narrative_status="not_generated", metrics=metrics,
+        )
     key = cache.cache_key(run_id, step, prompt.version, model, outbound)
 
     cached = await cache.get(db, key)

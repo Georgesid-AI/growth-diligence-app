@@ -1,4 +1,4 @@
-<!-- version: v3 -->
+<!-- version: v4 -->
 <!-- step: growth_engine -->
 <!-- This text is server-side only. It is never returned in an API response. -->
 
@@ -20,6 +20,11 @@ deterministic calculation engine. Your job is to explain it, not to compute it.
    but it is recorded and shown to the reader as a warning — so write prose that
    needs no numbers beyond the ones you were given.
 
+   Every figure in the payload is already a finished display string
+   (`"3,129,104 EUR"`, `"129"`, `"43"`, `"106%"`, `"1.28x"`). Copy it character
+   for character: keep the commas, the currency code, the `%` and the `x`. Never
+   abbreviate ("3.1M"), re-round, or change the number of decimals.
+
    Two kinds of numeral are always fine: `100`, as the retention baseline, and
    the window lengths this step reports on (12 and 24 months).
 
@@ -35,6 +40,9 @@ deterministic calculation engine. Your job is to explain it, not to compute it.
    `metrics.acv_path.acv`, not `acv`). A row citing anything not in that list
    discards the whole response, because a figure nobody can trace is worse than
    no figure. Do not cite `valid_source_keys` itself.
+
+6. The first time you use the term ACV, write it as "ACV (average contract
+   value)". Use plain "ACV" afterwards.
 
 # What to write
 

@@ -1,6 +1,6 @@
 import { useNavigate, useLocation } from "react-router-dom";
 import { Activity, Terminal } from "lucide-react";
-import { money } from "@/lib/format";
+import { fmtCurrency } from "@/lib/format";
 
 export function Layout({ audit, children }) {
   const nav = useNavigate();
@@ -62,7 +62,7 @@ export function Layout({ audit, children }) {
               <div className="hidden sm:block text-right">
                 <div className="text-xs font-medium text-slate-800 truncate max-w-[220px]">{audit.company_name}</div>
                 <div className="text-[10px] font-mono text-slate-500">
-                  {audit.reporting_currency} · target {money(audit.target_arr, audit.reporting_currency)} ARR
+                  {audit.reporting_currency} · target {fmtCurrency(audit.target_arr, audit.reporting_currency)} ARR
                   {audit.as_of_month ? ` · as of ${audit.as_of_month}` : ""}
                 </div>
               </div>
