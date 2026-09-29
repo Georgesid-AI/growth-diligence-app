@@ -159,13 +159,13 @@ RESULTS_DOC = {
 }
 
 GOOD_NARRATIVE = {
-    "headline": "Ending ARR is 3129600 EUR with NRR at 104.2 percent.",
-    "what_this_means": "Net revenue retention of 104.2 indicates the existing base expands.",
+    "headline": "Ending ARR is 3,129,600 EUR with NRR at 104%.",
+    "what_this_means": "Net revenue retention of 104% indicates the existing base expands.",
     "table_rows": [
-        {"label": "Ending ARR", "value": "3129600", "source_key": "arr"},
-        {"label": "NRR", "value": "104.2", "source_key": "nrr"},
+        {"label": "Ending ARR", "value": "3,129,600 EUR", "source_key": "arr"},
+        {"label": "NRR", "value": "104%", "source_key": "nrr"},
     ],
-    "worth_flagging": ["Gross revenue churn stands at 6.1 percent."],
+    "worth_flagging": ["Gross revenue churn stands at 6%."],
     "next_actions": ["Request the contract list behind Customer_01."],
     "source_keys": ["arr", "nrr", "gross_churn"],
 }
@@ -734,6 +734,7 @@ def test_llm_calls_log_holds_no_prompt_or_payload_text():
     blob = json.dumps(row)
     assert "You are writing" not in blob, "prompt text leaked into the call log"
     assert "3129600" not in blob, "payload contents leaked into the call log"
+    assert "3,129,600" not in blob, "formatted payload contents leaked into the call log"
 
 
 def test_usage_endpoint_totals():
@@ -989,10 +990,10 @@ def test_superseded_clears_after_regenerating():
         db["audits"].docs[0]["results"]["arr"]["value"] = 4000000
         stale = await gateway.read_cached_narrative(db, RUN_ID, "growth_engine")
         # The regenerated narrative must cite the NEW figure - one citing the
-        # old 3129600 would (correctly) be rejected by the hard numeric guard.
+        # old 3,129,600 EUR would (correctly) be rejected by the hard numeric guard.
         updated = json.loads(json.dumps(GOOD_NARRATIVE))
-        updated["headline"] = "Ending ARR is 4000000 EUR with NRR at 104.2 percent."
-        updated["table_rows"][0]["value"] = "4000000"
+        updated["headline"] = "Ending ARR is 4,000,000 EUR with NRR at 104%."
+        updated["table_rows"][0]["value"] = "4,000,000 EUR"
         await gateway.generate_narrative(
             db, RUN_ID, "growth_engine",
             adapter=FakeAdapter(replies=[json.dumps(updated)]), sleep=_noop_sleep
@@ -1148,7 +1149,7 @@ def test_sub_one_percent_no_longer_flags_a_narrative():
     """
     prose = dict(GOOD_NARRATIVE)
     prose["what_this_means"] = "Gross churn is sub-1% on a 12 month view."
-    # The default fixture cites 6.1 here; the payload below sets churn to 1, so
+    # The default fixture cites 6% here; the payload below sets churn to 1, so
     # this line has to move with it or it becomes a genuine unmatched number.
     prose["worth_flagging"] = ["Gross revenue churn stands at 1 percent."]
 
