@@ -1,0 +1,65 @@
+"""The xlsx export keeps cells numeric and formats them with Excel number formats."""
+import io
+import os
+
+import pytest
+
+pytest.importorskip("pandas")
+openpyxl = pytest.importorskip("openpyxl")
+pytest.importorskip("fastapi")
+pytest.importorskip("motor")
+
+os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
+os.environ.setdefault("DB_NAME", "export_test")
+
+import server  # noqa: E402
+
+RESULTS = {
+    "reporting_currency": "EUR",
+    "arr": {"value": 3129104.4, "mrr": 260758.7, "month": "2026-06"},
+    "nrr": {"overall_pct": 106.41, "n": 100, "by_segment": {}, "by_cohort": {}, "series": []},
+    "gross_churn": {"overall_pct": 8.38},
+    "sales_cycle": {"median_days": 42.1, "n": 12},
+    "win_rate": {"win_rate_pct": 50.0, "excluded_invalid": 0},
+    "cac_payback": {"default_l": 1, "quarters": {"2026-Q1": {
+        "new_mrr": 1000.4, "gross_margin_pct": 71.2,
+        "L0": {"months": None, "reason": "x"}, "L2": {"months": None, "reason": "x"},
+        "L1": {"months": 12.24, "sm_expense": 9000.0, "reason": None}}}},
+    "acv_path": {"current_customers": 24, "current_arr": 3129104.4, "acv": 130379.35,
+                 "target_arr": 5000000, "target_date": "2027-12-31", "customers_needed": 128.3,
+                 "required_net_new_per_year": 60.1, "observed_net_new_per_year_12m": 6.0,
+                 "observed_net_new_per_year_24m": 3.0, "required_vs_observed_12m": 1.28,
+                 "required_vs_observed_24m": 1.685, "bands": [], "by_segment": {}},
+    "anomalies": {}, "missing_data": [],
+}
+
+
+def _cell(ws, label):
+    for row in ws.iter_rows(min_row=2):
+        if row[0].value and str(row[0].value).startswith(label):
+            return row[1]
+    raise AssertionError(f"no row {label!r}")
+
+
+def test_cells_are_numeric_with_number_formats():
+    wb = openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, RESULTS))
+    head, path = wb["Headline"], wb["Path to Plan"]
+
+    arr = _cell(head, "Ending ARR")
+    assert arr.value == 3129104.4 and arr.number_format == "#,##0"
+    nrr = _cell(head, "NRR overall")
+    assert nrr.value == pytest.approx(1.0641) and nrr.number_format == "0%"
+    cac = _cell(head, "CAC payback")
+    assert cac.value == 12.24 and cac.number_format == "0.0"
+    days = _cell(head, "Median sales cycle")
+    assert days.value == 43 and days.number_format == "#,##0"
+
+    needed = _cell(path, "Customers needed")
+    assert needed.value == 129 and needed.number_format == "#,##0"
+    ratio = _cell(path, "Required ÷ observed (24m)")
+    assert ratio.value == 1.685 and ratio.number_format == '0.00"x"'
+
+    for ws in (head, path):  # no formatted strings in any value cell
+        for row in ws.iter_rows(min_row=2):
+            assert not (isinstance(row[1].value, str) and any(ch in row[1].value for ch in "%x,")
+                        and row[0].value not in ("Company", "Reporting currency")), row[0].value

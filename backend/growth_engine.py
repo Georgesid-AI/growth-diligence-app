@@ -68,6 +68,17 @@ def _round(x, n=2):
     return round(float(x), n)
 
 
+def _full(x):
+    """Full-precision float for storage (None for missing / non-finite).
+
+    Used where the display layer rounds (app/formatting.py) and needs the true
+    value - pre-rounding here would make a round-up rule act on a rounded number.
+    """
+    if x is None or (isinstance(x, float) and (np.isnan(x) or np.isinf(x))):
+        return None
+    return float(x)
+
+
 class SourceRef:
     """Accumulates the row references that fed a metric."""
 
@@ -355,7 +366,7 @@ def compute_sales_cycle(deals: pd.DataFrame):
 
     def stats(s):
         return {
-            "median_days": _round(s.median(), 1),
+            "median_days": _full(s.median()),
             "iqr": [_round(s.quantile(0.25), 1), _round(s.quantile(0.75), 1)],
             "n": int(s.count()),
         }
@@ -510,7 +521,7 @@ def compute_acv_path(mrr: pd.DataFrame, seg_map: dict, first_month: dict, target
         "bands": bands,
         "overall_band": overall_band,
         "by_segment": by_segment,
-        "customers_needed": _round(customers_needed, 1),
+        "customers_needed": _full(customers_needed),
         "required_net_new_per_year": _round(required_per_year, 1),
         "observed_net_new_per_year_12m": _round(obs12, 1),
         "observed_net_new_per_year_24m": _round(obs24, 1),

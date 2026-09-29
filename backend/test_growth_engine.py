@@ -430,6 +430,16 @@ def _path_needed():
     return 100.0, _path_scenario()["customers_needed"]
 
 
+@case("Path to plan: customers needed stored at full precision (not 1 decimal)")
+def _path_needed_full_precision():
+    rows = []
+    for i, c in enumerate(("B1", "B2", "B3", "B4")):
+        rows += monthly_lines(c, {m: 1000 for m in range(0, 25)}, start_row=1 + 40 * i)
+    mrr, seg, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
+    res = ge.compute_acv_path(mrr, seg, fm, target_arr=1_234_567, target_date="2027-01-01")
+    return 1_234_567 / 12_000, res["customers_needed"]
+
+
 @case("Path to plan: observed net-new 12m = 6.0/yr")
 def _path_obs12():
     return 6.0, _path_scenario()["observed_net_new_per_year_12m"]
