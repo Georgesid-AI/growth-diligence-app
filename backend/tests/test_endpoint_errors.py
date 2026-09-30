@@ -137,3 +137,64 @@ def test_installing_twice_is_harmless():
     logsafety.install_secret_redaction()
     logsafety.install_secret_redaction()
     logging.getLogger("growth").info("still works %s", 1)
+
+
+# --- the redaction layer must not break records other formatters rely on ---------------------
+
+def _access_record(path="/api/fields"):
+    return logging.getLogger("uvicorn.access").makeRecord(
+        "uvicorn.access", logging.INFO, "f", 1, '%s - "%s %s HTTP/%s" %d',
+        ("1.2.3.4:5", "GET", path, "1.1", 200), None)
+
+
+def _access_formatter():
+    from uvicorn.logging import AccessFormatter
+    return AccessFormatter('%(client_addr)s - "%(request_line)s" %(status_code)s')
+
+
+def test_an_access_log_record_keeps_its_arguments_and_formats_with_uvicorns_formatter():
+    record = _access_record()
+    assert record.args == ("1.2.3.4:5", "GET", "/api/fields", "1.1", 200)
+    assert _access_formatter().format(record) == '1.2.3.4:5 - "GET /api/fields HTTP/1.1" 200 OK'
+
+
+def test_a_secret_in_an_access_path_is_masked_and_the_record_still_formats(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-TESTKEY123456789")
+    record = _access_record("/api/x?api_key=sk-ant-TESTKEY123456789")
+    assert len(record.args) == 5 and record.args[4] == 200
+    line = _access_formatter().format(record)
+    assert "TESTKEY123456789" not in line
+    assert "[redacted]" in line and "200" in line
+
+
+def test_percent_placeholders_survive_a_masked_named_credential():
+    record = logging.getLogger("x").makeRecord("x", logging.INFO, "f", 1, "api_key=%s status=%d",
+                                              ("sk-ant-TESTKEY123456789", 7), None)
+    assert record.getMessage() == "api_key=[redacted] status=7"
+
+
+def test_a_normal_request_produces_no_logging_error(client, monkeypatch):
+    """A handler that records handleError() calls: any formatting failure fails the test."""
+    failures = []
+
+    class Capturing(logging.Handler):
+        def emit(self, record):
+            try:
+                self.format(record)
+            except Exception as exc:  # what logging would print as '--- Logging error ---'
+                failures.append((record.name, repr(exc)))
+
+    handler = Capturing()
+    handler.setFormatter(_access_formatter())
+    access = logging.getLogger("uvicorn.access")
+    access.addHandler(handler)
+    old_level = access.level
+    access.setLevel(logging.INFO)
+    try:
+        assert client.get("/api/fields").status_code == 200
+        # what uvicorn does after every response
+        access.info('%s - "%s %s HTTP/%s" %d', "testclient:1", "GET", "/api/fields", "1.1", 200)
+    finally:
+        access.removeHandler(handler)
+        access.setLevel(old_level)
+    assert failures == []
