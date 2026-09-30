@@ -200,11 +200,11 @@ def test_every_numeric_field_the_gateway_can_send_has_a_display_kind():
     ("metrics.gross_churn.overall_pct", "Gross churn"),
     ("metrics.arr.value", "Ending ARR"),
     ("metrics.acv_path.current_arr", "Ending ARR"),      # same figure, same name as the ARR tile
-    ("metrics.acv_path.acv", "ACV (average contract value)"),
+    ("metrics.acv_path.acv", "ACV"),
     ("metrics.cac_payback.quarters.2026-Q1.L1.months", "CAC payback"),
     ("metrics.nrr.by_segment.Enterprise.nrr_pct", "NRR"),
     ("metrics.cohort_retention.data.values.3", "Cohort MRR retained"),
-    ("acv", "ACV (average contract value)"),          # bare leaf, also an accepted citation
+    ("acv", "ACV"),          # bare leaf, also an accepted citation
     ("metrics.acv_path.overall_band", "Overall ACV band"),
 ])
 def test_label_for_cited_paths(path, label):
@@ -459,3 +459,64 @@ def test_no_shared_label_or_qualifier_wraps_a_comma_outside_a_bracket():
     for path in list(f.LABEL_BY_PATH) + list(f.QUALIFIER_BY_PATH):
         name = f.display_name(path)
         assert "," not in _re.sub(r"\([^)]*\)", "", name), name
+
+
+# ---------------------------------------------------------------------------
+# The label convention, held by the shared builder
+# ---------------------------------------------------------------------------
+import itertools as _it
+import re as _re2
+
+_GROUP = _re2.compile(r"\([^)]*\)")
+
+
+def test_builder_puts_everything_in_one_bracket_in_a_fixed_order():
+    assert f.label_with("Projected ARR", "at constant NRR", unit="EUR") == "Projected ARR (at constant NRR, EUR)"
+    assert f.label_with("Required blended landed ACV", "12-month window", unit="EUR") == "Required blended landed ACV (12-month window, EUR)"
+    assert f.label_with("Total mix moved", "12-month window", unit="percentage points") == "Total mix moved (12-month window, percentage points)"
+    assert f.label_with("NRR") == "NRR" and f.label_with("NRR", None, unit=None) == "NRR"
+    # qualifier, then window, then unit - whatever order the caller found them in
+    assert f.label_with("X", "a", "b", unit="u") == "X (a, b, u)"
+
+
+def test_a_bracket_already_in_the_base_label_is_merged_not_doubled():
+    assert f.label_with("ARR with no segment (excluded)", unit="EUR") == "ARR with no segment (excluded, EUR)"
+    assert f.label_with("Deals excluded (close before created)") == "Deals excluded (close before created)"
+    assert f.label_with("Starting ARR (all segments)", "latest month", unit="EUR") == "Starting ARR (all segments, latest month, EUR)"
+
+
+def test_no_combination_of_label_qualifier_and_unit_can_produce_two_brackets_or_a_stray_comma():
+    """The rule lives in the builder, so it holds for every label - including the ones that
+    carry no qualifier or currency today - whatever is added to them later."""
+    for label, qual, unit in _it.product(f.LABEL_BY_PATH.values(), (None, "at constant NRR", "12-month window"),
+                                         (None, "EUR", "months")):
+        out = f.label_with(label, qual, unit=unit)
+        assert len(_GROUP.findall(out)) <= 1, out
+        assert "," not in _GROUP.sub("", out), out
+        if unit:
+            assert out.endswith(f"{unit})"), f"the unit is last: {out}"
+    for path in list(f.LABEL_BY_PATH) + list(f.QUALIFIER_BY_PATH):
+        assert len(_GROUP.findall(f.display_name(path))) <= 1, f.display_name(path)
+
+
+def test_unit_type_notes_are_units_and_come_last():
+    assert f.display_name("metrics.cac_payback.default_l") == "S&M spend lag (quarters)"
+    assert f.display_name("metrics.cohort_retention.max_offset") == "Longest cohort age (months)"
+    assert f.display_name("metrics.segment_paths.landed.12.window_months") == "Landing window (months)"
+
+
+def test_the_acv_definition_is_not_part_of_any_label():
+    """Rule 4: the glossary is where ACV is defined; names just say ACV and what it is measured over."""
+    assert f.display_name("metrics.acv_path.acv") == "ACV (ARR ÷ active customers)"
+    everything = list(f.LABEL_BY_PATH.values()) + list(f.QUALIFIER_BY_PATH.values()) + [
+        f.display_name(p) for p in f.LABEL_BY_PATH]
+    assert [x for x in everything if "average contract value" in x] == []
+    assert f.GLOSSARY["ACV"] == "average contract value"
+    assert "Landed ACV" in f.GLOSSARY
+
+
+def test_frontend_glossary_matches_the_backend_glossary():
+    src = (Path(__file__).parents[2] / "frontend/src/lib/glossary.js").read_text("utf-8")
+    body = src[src.index("{", src.index("export const GLOSSARY")): src.rindex("}")]
+    pairs = dict(_re2.findall(r'"?([A-Za-z][A-Za-z ]*)"?:\s*"([^"]+)"', body))
+    assert pairs == f.GLOSSARY
