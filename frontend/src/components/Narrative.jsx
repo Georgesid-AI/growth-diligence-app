@@ -1,4 +1,6 @@
+import { useEffect, useState } from "react";
 import { AlertTriangle, Loader2, FileText } from "lucide-react";
+import { NARRATIVE_EXPECTED_SECONDS, NARRATIVE_TIMEOUT_MS } from "@/lib/api";
 
 /**
  * Renders a generated narrative and, more importantly, how much of it is
@@ -14,9 +16,7 @@ export function Narrative({ state }) {
   if (state?.loading) {
     return (
       <Card>
-        <div className="flex items-center gap-2 text-slate-500 text-sm py-6 justify-center">
-          <Loader2 className="h-4 w-4 animate-spin" /> Generating narrative…
-        </div>
+        <GeneratingProgress />
       </Card>
     );
   }
@@ -96,6 +96,31 @@ export function Narrative({ state }) {
       <Section title="Worth flagging" items={narrative.worth_flagging} />
       <Section title="Next actions" items={narrative.next_actions} />
     </Card>
+  );
+}
+
+/** Shown while a generation runs, so a call that takes half a minute reads as work, not a hang. */
+function GeneratingProgress() {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const started = Date.now();
+    const timer = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const giveUpAfter = Math.round(NARRATIVE_TIMEOUT_MS / 1000);
+  const slow = elapsed > NARRATIVE_EXPECTED_SECONDS * 2;
+  return (
+    <div data-testid="narrative-progress" role="status" aria-live="polite" className="py-6 text-center text-sm text-slate-600">
+      <div className="flex items-center justify-center gap-2">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        <span>Generating the narrative… <span className="font-mono" data-testid="narrative-elapsed">{elapsed}s</span></span>
+      </div>
+      <p className="mt-1 text-xs text-slate-500">
+        {slow
+          ? `Taking longer than usual. The server retries temporary provider errors, so this can still finish; the request gives up after ${giveUpAfter} seconds.`
+          : `This usually takes about ${NARRATIVE_EXPECTED_SECONDS} seconds. The figures below are already calculated.`}
+      </p>
+    </div>
   );
 }
 

@@ -1,5 +1,5 @@
 from fastapi import FastAPI, APIRouter, HTTPException, UploadFile, File
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -30,6 +30,9 @@ db = client[os.environ["DB_NAME"]]
 
 app = FastAPI(title="Growth Diligence Engine")
 api = APIRouter(prefix="/api")
+from app.logsafety import install_secret_redaction
+
+install_secret_redaction()      # no key can reach a log line, message or traceback
 logger = logging.getLogger("growth")
 logging.basicConfig(level=logging.INFO)
 
@@ -837,6 +840,28 @@ async def llm_usage(run_id: str):
 
 
 app.include_router(api)
+
+
+@app.middleware("http")
+async def log_unexpected_errors(request, call_next):
+    """Log any exception an endpoint does not handle, and answer with a readable 500.
+
+    Without this an unhandled exception is answered by the server's outermost error layer,
+    which sits outside CORS: the browser then sees a bare network failure with no status and
+    no text. Registered before the CORS middleware, so this response carries CORS headers and
+    the page can show the real status. Only the exception's class name is sent to the client;
+    the traceback goes to the server log (with credentials masked).
+    """
+    try:
+        return await call_next(request)
+    except Exception as exc:
+        logger.exception("unexpected error handling %s %s", request.method, request.url.path)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": f"Unexpected server error ({type(exc).__name__}); the details are in the server log"},
+        )
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
