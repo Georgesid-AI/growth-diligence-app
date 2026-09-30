@@ -187,3 +187,100 @@ def test_every_numeric_field_the_gateway_can_send_has_a_display_kind():
             }
             assert _unregistered(computed) == [], f"step {step}"
             gateway.build_outbound(computed, {})  # raises GatewayError(format_failed) otherwise
+
+
+# ---------------------------------------------------------------------------
+# Readable labels for cited paths (display only)
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("path,label", [
+    ("metrics.acv_path.customers_needed", "Customers needed"),
+    ("metrics.nrr.overall_pct", "NRR overall"),
+    ("metrics.gross_churn.overall_pct", "Gross churn"),
+    ("metrics.arr.value", "Ending ARR"),
+    ("metrics.acv_path.acv", "ACV (average contract value)"),
+    ("metrics.cac_payback.quarters.2026-Q1.L1.months", "CAC payback (months)"),
+    ("metrics.nrr.by_segment.Enterprise.nrr_pct", "NRR"),
+    ("metrics.cohort_retention.data.values.3", "Cohort MRR retained"),
+    ("acv", "ACV (average contract value)"),          # bare leaf, also an accepted citation
+    ("metrics.acv_path.overall_band", "Overall ACV band"),
+])
+def test_label_for_cited_paths(path, label):
+    assert f.label_for(path) == label
+
+
+def test_unmapped_path_degrades_to_a_readable_leaf_not_the_raw_path():
+    assert f.explicit_label("metrics.acv_path.brand_new_field") is None
+    assert f.label_for("metrics.acv_path.brand_new_field") == "Brand new field"
+
+
+def test_every_numeric_engine_field_the_gateway_can_send_has_an_explicit_label():
+    """Same engine runs as the display-kind coverage test: a new numeric field must get a
+    readable name, not silently fall back to a humanised leaf."""
+    pytest.importorskip("pandas")
+    pytest.importorskip("fastapi")
+    pytest.importorskip("motor")
+    import os
+    os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
+    os.environ.setdefault("DB_NAME", "format_coverage_test")
+    import pandas as pd
+    import demo_data
+    import growth_engine as ge
+    import server
+    from app.llm import gateway
+
+    def run(spec, drop=()):
+        datasets, meta = demo_data.build(spec)
+        norm = {t: server.normalize(server.df_to_records(df), t, m) for t, (df, m) in datasets.items()}
+        for t in drop:
+            norm[t] = norm[t].iloc[0:0] if isinstance(norm[t], pd.DataFrame) else pd.DataFrame()
+        fx = {k.upper(): v for k, v in meta.get("fx", {}).items()}
+        fx[spec["reporting_currency"].upper()] = 1.0
+        cfg = {"reporting_currency": spec["reporting_currency"], "target_arr": spec["target_arr"],
+               "target_date": spec["target_date"], "fx": fx, "billing_terms": {},
+               "default_l": 1, "as_of_month": None}
+        src = {t: {"file": meta[t]["file"], "sheet": meta[t]["sheet"]} for t in datasets}
+        return server.sanitize(ge.compute_all(norm["revenue"], norm["crm"], norm["pnl"], cfg, src))
+
+    def numeric_paths(node, path=""):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                yield from numeric_paths(v, f"{path}.{k}" if path else str(k))
+        elif isinstance(node, list):
+            for item in node:
+                yield from numeric_paths(item, path)
+        elif isinstance(node, (int, float)) and not isinstance(node, bool):
+            yield path
+
+    unlabelled = set()
+    for spec in demo_data.DEMO_AUDITS:
+        for results in (run(spec), run(spec, drop=("pnl",)), run(spec, drop=("crm",)),
+                        run({**spec, "months": 8}), run({**spec, "months": 14})):
+            for step in gateway.STEP_CONFIG:
+                metrics = gateway.strip_row_references(gateway._slice_for_step(results, step))
+                for path in numeric_paths({"metrics": metrics}):
+                    if f.explicit_label(path) is None:
+                        unlabelled.add(path)
+    assert sorted(unlabelled) == []
+
+
+def test_row_labels_are_added_to_the_response_and_not_to_the_model_contract():
+    from app.llm.schemas import Narrative, NarrativeResponse, TableRow, narrative_output_schema
+
+    n = Narrative(
+        headline="h", what_this_means="w",
+        table_rows=[
+            TableRow(label="metrics.acv_path.customers_needed", value="129",
+                     source_key="metrics.acv_path.customers_needed"),
+            TableRow(label="NRR", value="106%", source_key="metrics.nrr.overall_pct"),
+        ],
+    )
+    resp = NarrativeResponse(run_id="r", step="growth_engine", narrative_status="ok", narrative=n)
+    assert resp.row_labels == {
+        "metrics.acv_path.customers_needed": "Customers needed",
+        "metrics.nrr.overall_pct": "NRR overall",
+    }
+    # Citations are untouched, and the model is never asked for or sent labels.
+    assert [r.source_key for r in resp.narrative.table_rows] == [
+        "metrics.acv_path.customers_needed", "metrics.nrr.overall_pct"]
+    assert "row_labels" not in json.dumps(narrative_output_schema())
+    assert NarrativeResponse(run_id="r", step="s", narrative_status="unavailable").row_labels == {}

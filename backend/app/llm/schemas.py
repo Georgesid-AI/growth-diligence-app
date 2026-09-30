@@ -6,9 +6,11 @@ retries once before giving up. Numbers in the narrative are the calc engine's,
 never the model's - see `gateway.numeric_guard`.
 """
 import copy
-from typing import Any, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from .. import formatting
 
 
 class TableRow(BaseModel):
@@ -106,6 +108,19 @@ class NarrativeResponse(BaseModel):
     # True when no narrative matches the current numbers but one exists for an
     # earlier version of this run and step - i.e. the data moved on.
     superseded: bool = False
+    # Plain-English name for each table row, keyed by the row's source_key. Filled
+    # in from the narrative at response time and never sent to or read from the
+    # model, so the path stays the citation and this is only what is shown.
+    row_labels: Dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _fill_row_labels(self):
+        if self.narrative is not None and not self.row_labels:
+            self.row_labels = {
+                r.source_key: formatting.label_for(r.source_key, r.label)
+                for r in self.narrative.table_rows
+            }
+        return self
 
 
 class UsageResponse(BaseModel):

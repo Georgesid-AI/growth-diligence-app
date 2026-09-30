@@ -76,12 +76,17 @@ export function Narrative({ state, step = "growth_engine" }) {
           <tbody>
             {narrative.table_rows.map((row, i) => (
               <tr key={`${row.source_key}-${i}`} className="border-t border-[#E5E7EB]">
-                <td className="py-1.5 pr-3 text-slate-700">{row.label}</td>
-                <td className="py-1.5 pr-3 text-right font-mono text-slate-900">{row.value}</td>
-                {/* The engine key this figure came from, so any row can be traced back. */}
-                <td className="py-1.5 text-right font-mono text-[10px] text-slate-500">
-                  {row.source_key}
+                <td className="py-1.5 pr-3 text-slate-700">
+                  {/* Plain-English name from the server's label map; the model's own
+                      label only if the server sent none (e.g. an older response). */}
+                  <div data-testid="narrative-row-label">{state.row_labels?.[row.source_key] ?? row.label}</div>
+                  {/* The engine path this figure came from - the audit trail, kept
+                      underneath so any row can be traced back. */}
+                  <div data-testid="narrative-row-source" className="font-mono text-[10px] text-slate-500">
+                    {row.source_key}
+                  </div>
                 </td>
+                <td className="py-1.5 text-right font-mono text-slate-900">{row.value}</td>
               </tr>
             ))}
           </tbody>

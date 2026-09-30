@@ -270,3 +270,95 @@ def define_acv_on_first_use(fields: list) -> list:
             out[i] = text[: m.end()] + _DEFINED + text[m.end():]
         return out
     return out
+
+
+# ---------------------------------------------------------------------------
+# Readable names for cited engine fields
+# ---------------------------------------------------------------------------
+# The narrative table cites each figure by its dotted engine path
+# ("metrics.nrr.overall_pct"). That path is the audit trail and stays available,
+# but the primary text of a row is a plain-English name from this map. It is a
+# display concern only: the model is never sent these names and citations are
+# still matched on the path.
+#
+# Keyed by the last two path segments where the leaf alone is ambiguous
+# ("nrr.overall_pct" vs "gross_churn.overall_pct"), otherwise by the last one.
+# The longest match wins. Segment names, quarters and cohort ages that vary per
+# run ("by_segment.SMB", "quarters.2026-Q1") never need an entry of their own.
+LABEL_BY_PATH = {
+    # containers
+    "arr": "ARR", "nrr": "Net revenue retention", "gross_churn": "Gross revenue churn",
+    "cac_payback": "CAC payback", "sales_cycle": "Sales cycle", "win_rate": "Win rate",
+    "acv_path": "Path to plan", "cohort_retention": "Cohort retention",
+    "overall_band": "Overall ACV band", "bands": "ACV bands", "by_segment": "By segment",
+    "by_cohort": "By cohort", "by_founder": "By founder involvement",
+    "target_arr": "Target ARR", "target_date": "Target date", "as_of_month": "As-of month",
+    "month": "Month",
+    # ARR
+    "arr.value": "Ending ARR", "arr.mrr": "Current MRR", "arr.arr": "ARR",
+    # retention
+    "nrr.overall_pct": "NRR overall", "nrr.n": "NRR base customers", "nrr_pct": "NRR",
+    "gross_churn.overall_pct": "Gross churn", "churn_pct": "Gross churn",
+    "months_available": "Months of history available",
+    # CAC payback
+    "months": "CAC payback (months)", "default_l": "S&M spend lag (quarters)",
+    "new_mrr": "New MRR", "sm_expense": "S&M spend", "gross_margin_pct": "Gross margin",
+    # sales
+    "median_days": "Median sales cycle (days)", "iqr": "Sales cycle interquartile range (days)",
+    "sales_cycle.n": "Deals in sales-cycle sample", "win_rate_pct": "Win rate",
+    "won": "Deals won", "lost": "Deals lost",
+    "excluded_invalid": "Deals excluded (close before created)",
+    "founder_involved_excluded.count": "Deals with an unrecognised founder flag",
+    # path to plan
+    "current_customers": "Current customers", "current_arr": "Current ARR",
+    "acv": "ACV (average contract value)", "customers_needed": "Customers needed",
+    "required_net_new_per_year": "Required net-new customers per year",
+    "observed_net_new_per_year_12m": "Observed net-new customers per year (12 months)",
+    "observed_net_new_per_year_24m": "Observed net-new customers per year (24 months)",
+    "required_vs_observed_12m": "Required vs observed net-new (12 months)",
+    "required_vs_observed_24m": "Required vs observed net-new (24 months)",
+    "low": "ACV band lower bound", "high": "ACV band upper bound",
+    "customers": "Customers", "count": "Customers in band",
+    # cohort retention
+    "max_offset": "Longest cohort age (months)", "start_mrr": "Cohort starting MRR",
+    "values": "Cohort MRR retained",
+    # generic
+    "n": "Sample size", "total": "Total MRR",
+}
+
+
+def _label_segments(source_key: str) -> list:
+    segs = [s for s in str(source_key).split(".") if s]
+    if segs and segs[0] == "metrics":
+        segs = segs[1:]
+    # {"values": {"0": .., "3": ..}}: the age is data, the field is "values"
+    if len(segs) > 1 and segs[-1].isdigit() and segs[-2] == "values":
+        segs = segs[:-1]
+    return segs
+
+
+def explicit_label(source_key: str) -> Optional[str]:
+    """The mapped name for a cited path, or None if the path has no entry."""
+    segs = _label_segments(source_key)
+    for width in (2, 1):
+        if len(segs) >= width:
+            label = LABEL_BY_PATH.get(".".join(segs[-width:]))
+            if label:
+                return label
+    return None
+
+
+def label_for(source_key: str, fallback: Optional[str] = None) -> str:
+    """Plain-English name for a cited engine path.
+
+    An unmapped path gets a humanised leaf ("overall_band" -> "Overall band")
+    rather than the raw dotted path, so a new field degrades to something
+    readable until it is given a proper entry.
+    """
+    label = explicit_label(source_key)
+    if label:
+        return label
+    segs = _label_segments(source_key)
+    if segs:
+        return segs[-1].replace("_", " ").capitalize()
+    return fallback or str(source_key)
