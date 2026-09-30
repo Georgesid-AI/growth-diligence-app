@@ -547,7 +547,11 @@ def compute_acv_path(mrr: pd.DataFrame, seg_map: dict, first_month: dict, target
         "bands": bands,
         "overall_band": overall_band,
         "by_segment": by_segment,
-        "customers_needed": _full(customers_needed),
+        # The TOTAL number of customers at the target ARR (existing ones included) if every
+        # customer sits at today's blended ACV. Not the number still to acquire: that is
+        # `additional_customers_needed`. (Called `customers_needed` in results computed earlier.)
+        "total_customers_at_target": _full(customers_needed),
+        "additional_customers_needed": _full(max(customers_needed - n_cust, 0.0)) if customers_needed is not None else None,
         "required_net_new_per_year": _round(required_per_year, 1),
         "observed_net_new_per_year_12m": _round(obs12, 1),
         "observed_net_new_per_year_24m": _round(obs24, 1),

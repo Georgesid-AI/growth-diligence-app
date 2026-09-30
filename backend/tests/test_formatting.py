@@ -193,7 +193,9 @@ def test_every_numeric_field_the_gateway_can_send_has_a_display_kind():
 # Readable labels for cited paths (display only)
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("path,label", [
-    ("metrics.acv_path.customers_needed", "Customers needed"),
+    ("metrics.acv_path.total_customers_at_target", "Total customers at target ARR"),
+    ("metrics.acv_path.additional_customers_needed", "Additional customers needed"),
+    ("metrics.acv_path.customers_needed", "Total customers at target ARR"),   # legacy key, same wording
     ("metrics.nrr.overall_pct", "NRR"),
     ("metrics.gross_churn.overall_pct", "Gross churn"),
     ("metrics.arr.value", "Ending ARR"),
@@ -277,7 +279,7 @@ def test_row_labels_are_added_to_the_response_and_not_to_the_model_contract():
     )
     resp = NarrativeResponse(run_id="r", step="growth_engine", narrative_status="ok", narrative=n)
     assert resp.row_labels == {
-        "metrics.acv_path.customers_needed": "Customers needed (at current ACV)",
+        "metrics.acv_path.customers_needed": "Total customers at target ARR (at current ACV)",
         "metrics.nrr.overall_pct": "NRR (trailing 12 months)",
     }
     # Citations are untouched, and the model is never asked for or sent labels.
@@ -299,7 +301,9 @@ def test_row_labels_are_added_to_the_response_and_not_to_the_model_contract():
     ("metrics.cac_payback.months", "CAC payback (latest complete quarter)"),
     ("metrics.cac_payback.quarters.2026-Q1.L1.months", "CAC payback (2026-Q1)"),  # a named quarter says which
     ("metrics.acv_path.observed_net_new_per_year_12m", "Observed net-new customers per year (last 12 months)"),
-    ("metrics.acv_path.customers_needed", "Customers needed (at current ACV)"),
+    ("metrics.acv_path.total_customers_at_target", "Total customers at target ARR (at current ACV)"),
+    ("metrics.acv_path.additional_customers_needed", "Additional customers needed (at current ACV)"),
+    ("metrics.acv_path.customers_needed", "Total customers at target ARR (at current ACV)"),
 ])
 def test_display_name_puts_the_qualifier_in_brackets(path, name):
     assert f.display_name(path) == name
@@ -331,7 +335,7 @@ def test_frontend_metric_names_json_is_generated_from_the_backend_maps():
 TILE_PATHS = [
     "arr.value", "nrr.overall_pct", "gross_churn.overall_pct", "cac_payback.months",
     "sales_cycle.median_days", "win_rate.win_rate_pct",
-    "current_customers", "current_arr", "acv", "customers_needed",
+    "current_customers", "current_arr", "acv", "total_customers_at_target", "additional_customers_needed",
 ]
 
 
@@ -433,3 +437,16 @@ def test_every_name_the_segment_panel_looks_up_resolves_explicitly():
     assert [p for p in quals if f.qualifier_for(p) is None] == []
     # and the panel says it is not a forecast in its heading
     assert "Constant-NRR projection (not a forecast)" in src
+
+
+def test_total_and_additional_customers_are_named_apart_and_round_up():
+    out = f.format_payload({"metrics": {"acv_path": {
+        "current_customers": 58, "total_customers_at_target": 813.4191920515062,
+        "additional_customers_needed": 755.4191920515062}}}, "EUR")["metrics"]["acv_path"]
+    assert out["total_customers_at_target"] == "814" and out["additional_customers_needed"] == "756"
+    assert int(out["total_customers_at_target"]) - int(out["current_customers"]) == int(out["additional_customers_needed"]), (
+        "the rounded-up total minus today's count is the rounded-up additional count")
+    # the names say which is which, wherever they are shown
+    assert "Total" in f.display_name("metrics.acv_path.total_customers_at_target")
+    assert f.display_name("metrics.acv_path.additional_customers_needed").startswith("Additional")
+    assert "Additional" not in f.display_name("metrics.acv_path.customers_needed")

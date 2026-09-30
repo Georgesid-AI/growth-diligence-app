@@ -31,7 +31,7 @@ RESULTS = {
             "L0": {"months": None, "reason": "x"}, "L2": {"months": None, "reason": "x"},
             "L1": {"months": 30.0, "sm_expense": 9000.0, "reason": None}}}},
     "acv_path": {"current_customers": 24, "current_arr": 3129104.4, "acv": 130379.35,
-                 "target_arr": 5000000, "target_date": "2027-12-31", "customers_needed": 128.3,
+                 "target_arr": 5000000, "target_date": "2027-12-31", "total_customers_at_target": 128.3, "additional_customers_needed": 104.3,
                  "required_net_new_per_year": 60.1, "observed_net_new_per_year_12m": 6.0,
                  "observed_net_new_per_year_24m": 3.0, "required_vs_observed_12m": 1.28,
                  "required_vs_observed_24m": 1.685, "bands": [], "by_segment": {}},
@@ -59,8 +59,10 @@ def test_cells_are_numeric_with_number_formats():
     days = _cell(head, "Median sales cycle")
     assert days.value == 43 and days.number_format == "#,##0"
 
-    needed = _cell(path, "Customers needed")
-    assert needed.value == 129 and needed.number_format == "#,##0"
+    total = _cell(path, "Total customers at target ARR")
+    assert total.value == 129 and total.number_format == "#,##0"
+    added = _cell(path, "Additional customers needed")
+    assert added.value == 105 and added.number_format == "#,##0", "the gap is shown beside the total, rounded up"
     ratio = _cell(path, "Required ÷ observed (24m)")
     assert ratio.value == 1.685 and ratio.number_format == '0.00"x"'
 
@@ -164,3 +166,13 @@ def test_unavailable_segment_paths_name_what_would_resolve_them():
     wb = openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, {**RESULTS, "segment_paths": sp}))
     values = [c.value for row in wb["Segment Base"].iter_rows() for c in row]
     assert "segment" in " ".join(str(v) for v in values if v)
+
+
+def test_results_stored_before_the_rename_still_export_the_total_under_its_new_name():
+    legacy = {**RESULTS, "acv_path": {k: v for k, v in RESULTS["acv_path"].items()
+                                      if k not in ("total_customers_at_target", "additional_customers_needed")}}
+    legacy["acv_path"]["customers_needed"] = 128.3
+    wb = openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, legacy))
+    path = wb["Path to Plan"]
+    assert _cell(path, "Total customers at target ARR").value == 129
+    assert _cell(path, "Additional customers needed").value is None      # not derived, not invented

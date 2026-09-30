@@ -339,7 +339,14 @@ export default function Dashboard() {
                 <Stat path="current_customers" value={fmtCount(r.acv_path.current_customers)} />
                 <Stat path="current_arr" value={fmtCurrency(r.acv_path.current_arr, ccy)} />
                 <Stat path="acv" value={fmtCurrency(r.acv_path.acv, ccy)} />
-                <Stat path="customers_needed" value={fmtCountUp(r.acv_path.customers_needed)} />
+                {/* A TOTAL at the target ARR, existing customers included - not the gap. Results
+                    computed before the rename carry it as customers_needed. */}
+                <Stat path="total_customers_at_target"
+                  value={fmtCountUp(r.acv_path.total_customers_at_target ?? r.acv_path.customers_needed)} />
+                {/* The gap: shown only when the engine computed it, never derived here. */}
+                {r.acv_path.additional_customers_needed != null && (
+                  <Stat path="additional_customers_needed" value={fmtCountUp(r.acv_path.additional_customers_needed)} />
+                )}
               </div>
               <ResponsiveContainer width="100%" height={160}>
                 {(() => {

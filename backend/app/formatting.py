@@ -185,7 +185,9 @@ KIND_BY_KEY = {
     "months_available": COUNT,
     "observed_net_new_per_year_12m": COUNT, "observed_net_new_per_year_24m": COUNT,
     # counts the plan requires or implies - never round down
-    "customers_needed": COUNT_UP, "required_net_new_per_year": COUNT_UP,
+    "total_customers_at_target": COUNT_UP, "additional_customers_needed": COUNT_UP,
+    "customers_needed": COUNT_UP,   # legacy name of total_customers_at_target in stored results
+    "required_net_new_per_year": COUNT_UP,
     # durations
     "median_days": DAYS, "iqr": DAYS,
     "months": MONTHS,
@@ -346,7 +348,9 @@ LABEL_BY_PATH = {
     "founder_involved_excluded.count": "Deals with an unrecognised founder flag",
     # path to plan
     "current_customers": "Customers", "acv": "ACV (average contract value)",
-    "customers_needed": "Customers needed",
+    "total_customers_at_target": "Total customers at target ARR",
+    "additional_customers_needed": "Additional customers needed",
+    "customers_needed": "Total customers at target ARR",   # legacy name in stored results
     "required_net_new_per_year": "Required net-new customers per year",
     "observed_net_new_per_year_12m": "Observed net-new customers per year",
     "observed_net_new_per_year_24m": "Observed net-new customers per year",
@@ -394,6 +398,7 @@ QUALIFIER_BY_PATH = {
     "win_rate_pct": "closed deals",
     "current_customers": "active, latest month",
     "acv": "ARR ÷ active customers",
+    "total_customers_at_target": "at current ACV", "additional_customers_needed": "at current ACV",
     "customers_needed": "at current ACV",
     "required_net_new_per_year": "to reach target ARR",
     "projected_arr": "at constant NRR", "projected_base_arr": "at constant NRR",

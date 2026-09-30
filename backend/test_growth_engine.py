@@ -724,9 +724,32 @@ def _path_scenario():
     return ge.compute_acv_path(mrr, seg, fm, target_arr=1_200_000, target_date="2027-01-01")
 
 
-@case("Path to plan: customers needed = 100")
+@case("Path to plan: total customers at target ARR = 100")
 def _path_needed():
-    return 100.0, _path_scenario()["customers_needed"]
+    return 100.0, _path_scenario()["total_customers_at_target"]
+
+
+@case("Path to plan: additional customers needed = total at target - customers today (100 - 10 = 90)")
+def _path_additional():
+    ap = _path_scenario()
+    return (90.0, 10, 100.0), (ap["additional_customers_needed"], ap["current_customers"], ap["total_customers_at_target"])
+
+
+@case("Path to plan: the required net-new per year is the additional count spread over the years to target")
+def _path_additional_matches_rate():
+    ap = _path_scenario()
+    years = ge._years_to_target(pd.Period("2025-01", "M"), "2027-01-01")[0]   # scenario's last month is 2025-01
+    return ap["required_net_new_per_year"], ge._round(ap["additional_customers_needed"] / years, 1)
+
+
+@case("Path to plan: no additional customers are needed when today's count already covers the target")
+def _path_additional_floor():
+    rows = []
+    for i, c in enumerate(("X1", "X2", "X3", "X4")):
+        rows += monthly_lines(c, {m: 1000 for m in range(0, 13)}, start_row=1 + 40 * i)
+    mrr, seg, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
+    res = ge.compute_acv_path(mrr, seg, fm, target_arr=24_000, target_date="2027-01-01")   # below today's 48,000 ARR
+    return (0.0, 2.0), (res["additional_customers_needed"], res["total_customers_at_target"])
 
 
 @case("Path to plan: customers needed stored at full precision (not 1 decimal)")
@@ -736,7 +759,7 @@ def _path_needed_full_precision():
         rows += monthly_lines(c, {m: 1000 for m in range(0, 25)}, start_row=1 + 40 * i)
     mrr, seg, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
     res = ge.compute_acv_path(mrr, seg, fm, target_arr=1_234_567, target_date="2027-01-01")
-    return 1_234_567 / 12_000, res["customers_needed"]
+    return 1_234_567 / 12_000, res["total_customers_at_target"]
 
 
 @case("Path to plan: observed net-new 12m = 6.0/yr")
