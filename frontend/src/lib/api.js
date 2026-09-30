@@ -32,8 +32,13 @@ export const uploadDataset = (id, dtype, file) => {
 // POST is the only path that spends an AI request.
 export const readNarrative = (id, step) =>
   api.get(`/runs/${id}/narrative/${step}`).then((r) => r.data);
+// A generation takes about 33 seconds uncached. The client gives up at 150 s: well above that, and
+// above the server's own worst case for one retry (provider timeout 60 s plus backoff), so a slow
+// call is not cut short and a hung one is still reported rather than spinning forever.
+export const NARRATIVE_EXPECTED_SECONDS = 33;
+export const NARRATIVE_TIMEOUT_MS = 150_000;
 export const generateNarrative = (id, step) =>
-  api.post(`/runs/${id}/narrative/${step}`).then((r) => r.data);
+  api.post(`/runs/${id}/narrative/${step}`, null, { timeout: NARRATIVE_TIMEOUT_MS }).then((r) => r.data);
 export const getLlmUsage = (id) => api.get(`/runs/${id}/llm-usage`).then((r) => r.data);
 // AI-provenance block (model + generation time) for the foot of the analysis.
 // Read-only; the same text is written into the exports.

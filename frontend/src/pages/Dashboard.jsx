@@ -11,9 +11,10 @@ import { Provenance } from "@/components/Provenance";
 import { Gloss } from "@/components/Gloss";
 import { Narrative } from "@/components/Narrative";
 import { NarrativeControl } from "@/components/NarrativeControl";
-import { getAudit, getResults, exportUrl, readNarrative, generateNarrative, getDisclosure } from "@/lib/api";
+import { getAudit, getResults, exportUrl, readNarrative, generateNarrative, getDisclosure, NARRATIVE_TIMEOUT_MS } from "@/lib/api";
 import { GLOSSARY } from "@/lib/glossary";
 import { SegmentPaths } from "@/components/SegmentPaths";
+import { describeRequestError, logRequestFailure } from "@/lib/requestError";
 import { metricLabel, metricQualifier, bracketed } from "@/lib/metricNames";
 import { fmtCurrency, fmtCount, fmtCountUp, fmtDays, fmtDaysNumber, fmtMonths, fmtPct, fmtRatio, bandRangeLabel, monthEndDate } from "@/lib/format";
 
@@ -56,7 +57,13 @@ export default function Dashboard() {
     let cancelled = false;
     readNarrative(id, "growth_engine")
       .then((res) => { if (!cancelled) setNarrative(res); })
-      .catch(() => { if (!cancelled) setNarrative({ narrative_status: "not_generated" }); });
+      .catch((e) => {
+        if (cancelled) return;
+        // Say what failed instead of quietly offering "Generate" as if nothing were wrong.
+        const failure = describeRequestError(e);
+        logRequestFailure("read narrative", failure);
+        setNarrative({ narrative_status: "unavailable", reason: `Could not load the saved narrative: ${failure.message}` });
+      });
     return () => { cancelled = true; };
   }, [id, data]);
 
@@ -76,10 +83,11 @@ export default function Dashboard() {
     setGenerating(true);
     generateNarrative(id, "growth_engine")
       .then(setNarrative)
-      .catch(() => setNarrative({
-        narrative_status: "unavailable",
-        reason: "The narrative service could not be reached.",
-      }))
+      .catch((e) => {
+        const failure = describeRequestError(e, { timeoutMs: NARRATIVE_TIMEOUT_MS });
+        logRequestFailure("generate narrative", failure);
+        setNarrative({ narrative_status: "unavailable", reason: failure.message });
+      })
       .finally(() => setGenerating(false));
   };
 
