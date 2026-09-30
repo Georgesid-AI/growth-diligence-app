@@ -357,3 +357,79 @@ def test_days_carry_their_unit_and_the_unit_does_not_touch_the_rounding():
     # the number in the string is exactly what the bare rule gives
     for v in (0.2, 7.0, 42.1, 999.99, 1234.5):
         assert f.fmt(f.DAYS, v).split(" ")[0] == f.fmt_days_number(v)
+
+
+# ---------------------------------------------------------------------------
+# Segment paths: every field the engine can emit, on every branch, has a kind and a label
+# ---------------------------------------------------------------------------
+def test_every_segment_path_field_on_every_branch_has_a_display_kind_and_an_explicit_label():
+    """The demo audits only reach the 'unreachable' branch. This runs the engine on the
+    hand-built scenarios that reach the others (shift needed, no shift, target met by the
+    base, undetermined, unavailable), so a field that appears only there is still covered."""
+    import sys
+    from pathlib import Path as _P
+    sys.path.insert(0, str(_P(__file__).parents[1]))
+    pytest.importorskip("pandas")
+    import test_growth_engine as tge
+    from app.llm import gateway
+
+    _, years, base = tge._seg_paths(target_arr=1_000_000)
+    branches = {
+        "shift": tge._seg_paths(target_arr=base + 25_000 * 3 * years)[0],
+        "no_shift": tge._seg_paths(target_arr=base + 15_000 * 3 * years)[0],
+        "unreachable": tge._seg_paths(target_arr=base + 50_000 * 3 * years)[0],
+        "met_by_base": tge._seg_paths(target_arr=50_000)[0],
+        "undetermined": tge._seg_paths(target_arr=base + 10_000 * years, drop_b_landings=True)[0],
+        "no_nrr_for_a_segment": tge._seg_paths(target_arr=1_000_000, only_new_segment=True)[0],
+        "window_24_ok": tge._seg_paths(target_arr=base + 25_000 * 3 * years, n_months=26)[0],
+        "unavailable": tge._seg_paths(target_arr=1_000_000, no_segments=True)[0],
+    }
+    unlabelled, unregistered = set(), set()
+
+    def numeric_paths(node, path=""):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                yield from numeric_paths(v, f"{path}.{k}" if path else str(k))
+        elif isinstance(node, list):
+            for i in node:
+                yield from numeric_paths(i, path)
+        elif isinstance(node, (int, float)) and not isinstance(node, bool):
+            yield path
+
+    for name, sp in branches.items():
+        computed = {"reporting_currency": "EUR", "metrics": {"segment_paths": sp}}
+        unregistered |= set(_unregistered(computed))
+        unlabelled |= {p for p in numeric_paths({"metrics": {"segment_paths": sp}}) if f.explicit_label(p) is None}
+        gateway.build_outbound(computed, {})          # raises if any numeric field has no kind
+    assert sorted(unregistered) == []
+    assert sorted(unlabelled) == []
+
+
+def test_segment_path_figures_format_by_the_rules():
+    out = f.format_payload({"metrics": {"segment_paths": {
+        "horizon_months": 34.03, "gap_arr": 35112601.4, "landed": {"12": {"gross_new_per_year": 24.0}},
+        "reverse_solve": {"12": {"new_customers_by_target": 68.05, "required_new_per_year_at_current_mix": 319.41,
+                                 "required_vs_observed_gross": 13.31, "required_blended_landed_acv": 515946.03,
+                                 "by_segment": {"A": {"current_mix_pct": 29.3, "shift_pct_points": -12.4}}}},
+    }}}, "EUR")["metrics"]["segment_paths"]
+    assert out["horizon_months"] == "34.0 months"
+    assert out["gap_arr"] == "35,112,601 EUR"
+    rs = out["reverse_solve"]["12"]
+    assert rs["new_customers_by_target"] == "69"            # implied count rounds UP
+    assert rs["required_new_per_year_at_current_mix"] == "320"   # required count rounds UP
+    assert rs["required_vs_observed_gross"] == "13.31x"
+    assert rs["by_segment"]["A"]["shift_pct_points"] == "-12%"
+    assert out["landed"]["12"]["gross_new_per_year"] == "24"     # observed rate rounds normally
+
+
+def test_every_name_the_segment_panel_looks_up_resolves_explicitly():
+    """SegmentPaths.jsx takes its names from the shared map; none may fall through."""
+    import re as _re
+    src = (Path(__file__).parents[2] / "frontend/src/components/SegmentPaths.jsx").read_text("utf-8")
+    labels = set(_re.findall(r'\bL\("([a-z_.]+)"\)', src))
+    quals = set(_re.findall(r'\bQ\("([a-z_.]+)"\)', src))
+    assert labels and quals
+    assert [p for p in labels if f.explicit_label(p) is None] == []
+    assert [p for p in quals if f.qualifier_for(p) is None] == []
+    # and the panel says it is not a forecast in its heading
+    assert "Constant-NRR projection (not a forecast)" in src

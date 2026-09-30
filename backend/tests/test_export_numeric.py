@@ -109,3 +109,58 @@ def test_no_complete_quarter_is_stated_not_filled_with_a_partial_figure():
     wb = openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, results))
     rows = {str(r[0].value): r[1].value for r in wb["Headline"].iter_rows(min_row=2)}
     assert rows["CAC payback, months (no complete quarter)"] is None
+
+
+def _segment_results(**kw):
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parents[1]))
+    import test_growth_engine as tge
+    _, years, base = tge._seg_paths(target_arr=1_000_000)
+    sp = tge._seg_paths(target_arr=base + 25_000 * 3 * years, **kw)[0]
+    return {**RESULTS, "segment_paths": sp}, sp
+
+
+def test_segment_sheets_keep_cells_numeric_with_number_formats():
+    results, sp = _segment_results()
+    wb = openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, results))
+    ws = wb["Segment Base"]
+    assert "not a forecast" in ws["A1"].value, "the assumption heads the sheet"
+    header = [c.value for c in ws[2]]
+    row = {h: c for h, c in zip(header, ws[3])}            # first segment row (A)
+    assert row["Segment"].value == "A"
+    proj = row["Projected ARR (at constant NRR) (EUR)"]
+    assert proj.value == pytest.approx(sp["stage_one"]["segments"]["A"]["projected_arr"]) and proj.number_format == "#,##0"
+    nrr = row["NRR (trailing 12 months)"]
+    assert nrr.value == pytest.approx(1.25) and nrr.number_format == "0%"
+    erosion = {h: c for h, c in zip(header, ws[4])}["Change in ARR (at constant NRR) (EUR)"]
+    assert erosion.value < 0, "segment B's erosion is shown, not netted away"
+    for row_ in ws.iter_rows(min_row=3):
+        assert not any(isinstance(c.value, str) and "%" in c.value for c in row_)
+
+
+def test_segment_mix_sheet_states_the_verdict_and_stays_numeric():
+    results, sp = _segment_results()
+    wb = openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, results))
+    rows = {str(r[0].value): r[1] for r in wb["Segment Mix"].iter_rows(min_row=2)}
+    assert rows["Any segment mix reaches it (12-month window)"].value == "yes"
+    need = rows["Required blended landed ACV (12-month window) (EUR)"]
+    assert need.value == pytest.approx(25_000) and need.number_format == "#,##0"
+    # the 24-month window is said to be unavailable, not left out
+    assert "24-month" in "".join(rows) and "24 months" in str(rows["Reverse-solve, 24-month window"].value)
+    detail = wb["Segment Mix Detail"]
+    assert [c.value for c in detail[1]][:2] == ["Window (months)", "Segment"]
+    shifts = [r[6].value for r in detail.iter_rows(min_row=2)]
+    assert any(v and v > 0 for v in shifts) and any(v and v < 0 for v in shifts)
+    assert detail["G2"].number_format == "0%"
+
+
+def test_unavailable_segment_paths_name_what_would_resolve_them():
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parents[1]))
+    import test_growth_engine as tge
+    sp = tge._seg_paths(target_arr=1_000_000, no_segments=True)[0]
+    wb = openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, {**RESULTS, "segment_paths": sp}))
+    values = [c.value for row in wb["Segment Base"].iter_rows() for c in row]
+    assert "segment" in " ".join(str(v) for v in values if v)

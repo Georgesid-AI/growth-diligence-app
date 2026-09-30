@@ -1455,3 +1455,11 @@ def test_withholding_partial_quarters_does_not_touch_the_stored_results():
     computed = _cac_computed()
     gateway.build_outbound(computed, {})
     assert computed["metrics"]["cac_payback"]["quarters"]["2025-Q1"]["L1"]["months"] == 29.0
+
+
+def test_segment_paths_are_not_part_of_the_growth_engine_narrative_payload():
+    """The segment analysis is a dashboard and export feature; the live narrative step
+    must see exactly what it saw before."""
+    results = {"arr": {"value": 1.0}, "segment_paths": {"available": True, "gap_arr": 5.0}}
+    assert "segment_paths" not in gateway._slice_for_step(results, "growth_engine")
+    assert "segment_paths" in gateway._slice_for_step(results, "path_to_plan")
