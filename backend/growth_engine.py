@@ -906,6 +906,64 @@ def compute_segment_paths(mrr: pd.DataFrame, seg_map: dict, first_month: dict, n
     return out
 
 
+def _cac_input_gaps(cac: dict, pnl_src: dict) -> list:
+    """Missing-data entries for CAC payback quarters that could not be computed because an
+    INPUT is absent, as opposed to a genuine zero (no new customers).
+
+    Per-quarter reasons already say "no P&L for 2023-Q2" or "gross margin <= 0 or missing"
+    on each row; without this, the Missing Data panel read "all metrics computed" while the
+    quarterly table showed n/c.
+    """
+    lag_key = f"L{cac.get('default_l', 1)}"
+    revenue_quarters = set(cac["quarters"])
+    no_pnl, no_margin, affected = set(), set(), set()
+    for q, row in cac["quarters"].items():
+        for lag in ("L0", "L1", "L2"):
+            reason = (row.get(lag) or {}).get("reason") or ""
+            if reason.startswith("no P&L for "):
+                needed = reason[len("no P&L for "):]
+                # Only a quarter the company has revenue for can be "missing" a P&L. The quarters
+                # before the first revenue quarter (the first quarter's lag) predate the data,
+                # so listing them would put a false item on almost every audit.
+                if needed in revenue_quarters:
+                    no_pnl.add(needed)
+                    if lag == lag_key:
+                        affected.add(q)
+            elif reason.startswith("gross margin"):
+                no_margin.add(q)
+    out = []
+    if no_pnl:
+        out.append({
+            "metric": "CAC payback (quarters without P&L)",
+            "reason": (f"No P&L rows for {', '.join(sorted(no_pnl))}, which CAC payback needs to pair each quarter's new MRR "
+                       f"with S&M spend from earlier quarters (lags L0 to L2). At the default lag {lag_key} it cannot be "
+                       f"computed for {', '.join(sorted(affected)) or 'any quarter'}."),
+            "unlocked_by": f"Upload P&L months covering {', '.join(sorted(no_pnl))}",
+            "file": pnl_src.get("file"),
+        })
+    if no_margin:
+        out.append({
+            "metric": "CAC payback (quarters without a usable gross margin)",
+            "reason": f"Revenue and cost of revenue in the P&L give a gross margin of zero, below zero or none for {', '.join(sorted(no_margin))}",
+            "unlocked_by": "Provide revenue and cost of revenue for those quarters in the P&L",
+            "file": pnl_src.get("file"),
+        })
+    return out
+
+
+def _history_gaps(n_months: int, rev_src: dict) -> list:
+    """Observed net-new customer rates need history: 12 or 24 months before the as-of month."""
+    windows = [w for w in (12, 24) if n_months <= w]
+    if not windows:
+        return []
+    return [{
+        "metric": f"Observed net-new customers ({' and '.join(str(w) for w in windows)} months)",
+        "reason": f"Needs {max(windows) + 1}+ months of revenue history; have {n_months}",
+        "unlocked_by": f"Provide at least {max(windows) + 1} months of revenue lines",
+        "file": rev_src.get("file"),
+    }]
+
+
 def cut_deals_at_as_of(deals: pd.DataFrame, as_of):
     """Apply the as-of cut to CRM deals, like MRR and the P&L.
 
@@ -1030,6 +1088,8 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
             cac["source"] = src(pnl_src, pnl.get("_row", []).tolist() if "_row" in pnl.columns else [],
                                  "CAC payback = lagged S&M ÷ (new MRR × gross margin %)")
         results["cac_payback"] = cac
+        if cac:
+            missing_data.extend(_cac_input_gaps(cac, pnl_src))
 
     if deals.empty:
         results["sales_cycle"] = None
@@ -1079,6 +1139,8 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
                 "file": rev_src.get("file"),
             })
     results["acv_path"] = acv
+    if acv:
+        missing_data.extend(_history_gaps(len(mrr.columns), rev_src))
 
     results["segment_paths"] = compute_segment_paths(mrr, seg_map, first_month, nrr, acv, target_arr, target_date)
     sp = results["segment_paths"]

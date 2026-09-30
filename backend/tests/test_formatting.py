@@ -299,7 +299,7 @@ def test_row_labels_are_added_to_the_response_and_not_to_the_model_contract():
     ("metrics.win_rate.win_rate_pct", "Win rate (closed deals)"),
     ("metrics.arr.value", "Ending ARR (latest month MRR × 12)"),
     ("metrics.cac_payback.months", "CAC payback (latest complete quarter)"),
-    ("metrics.cac_payback.quarters.2026-Q1.L1.months", "CAC payback (2026-Q1)"),  # a named quarter says which
+    ("metrics.cac_payback.quarters.2026-Q1.L1.months", "CAC payback (2026-Q1, S&M lag L1)"),  # the row names its quarter and lag
     ("metrics.acv_path.observed_net_new_per_year_12m", "Observed net-new customers per year (last 12 months)"),
     ("metrics.acv_path.total_customers_at_target", "Total customers at target ARR (at current ACV)"),
     ("metrics.acv_path.additional_customers_needed", "Additional customers needed (at current ACV)"),
@@ -520,3 +520,80 @@ def test_frontend_glossary_matches_the_backend_glossary():
     body = src[src.index("{", src.index("export const GLOSSARY")): src.rindex("}")]
     pairs = dict(_re2.findall(r'"?([A-Za-z][A-Za-z ]*)"?:\s*"([^"]+)"', body))
     assert pairs == f.GLOSSARY
+
+
+# ---------------------------------------------------------------------------
+# A cited value's name says what it is about: segment, cohort, founder split, quarter and lag
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("path,name", [
+    ("metrics.nrr.overall_pct", "NRR (trailing 12 months)"),
+    ("metrics.nrr.by_segment.Enterprise.nrr_pct", "NRR (Enterprise, trailing 12 months)"),
+    ("metrics.nrr.by_segment.SMB.nrr_pct", "NRR (SMB, trailing 12 months)"),
+    ("metrics.nrr.by_cohort.2024-Q1.nrr_pct", "NRR (2024-Q1 cohort, trailing 12 months)"),
+    ("metrics.win_rate.win_rate_pct", "Win rate (closed deals)"),
+    ("metrics.win_rate.by_founder.with_founder.win_rate_pct", "Win rate (with founder involved, closed deals)"),
+    ("metrics.win_rate.by_founder.without_founder.win_rate_pct", "Win rate (without founder involved, closed deals)"),
+    ("metrics.sales_cycle.median_days", "Median sales cycle (all won deals)"),
+    ("metrics.sales_cycle.by_segment.SMB.median_days", "Median sales cycle (SMB, all won deals)"),
+    ("metrics.cac_payback.quarters.2026-Q1.L0.months", "CAC payback (2026-Q1, S&M lag L0)"),
+    ("metrics.cac_payback.quarters.2026-Q1.L2.months", "CAC payback (2026-Q1, S&M lag L2)"),
+    ("metrics.acv_path.by_segment.SMB.acv", "ACV (SMB, ARR ÷ active customers)"),
+    ("metrics.segment_paths.stage_one.segments.Enterprise.projected_arr", "Projected ARR (Enterprise, at constant NRR)"),
+    ("metrics.segment_paths.reverse_solve.12.by_segment.A.required_mix_pct", "Required mix (12-month window, A, share of new customers)"),
+])
+def test_the_name_carries_its_scope(path, name):
+    assert f.display_name(path) == name
+
+
+def test_the_ambiguous_n_is_named_by_what_it_counts():
+    assert f.display_name("metrics.nrr.n") == "NRR base customers"
+    assert f.display_name("metrics.nrr.by_segment.SMB.n") == "NRR base customers (SMB)"
+    assert f.display_name("metrics.nrr.by_cohort.2024-Q2.n") == "NRR base customers (2024-Q2 cohort)"
+    assert f.display_name("metrics.cohort_retention.data.n") == "Customers in cohort"
+    assert f.display_name("metrics.sales_cycle.n") == "Deals in sales-cycle sample"
+
+
+def test_a_windows_own_length_is_not_scoped_by_itself():
+    assert f.display_name("metrics.segment_paths.landed.12.window_months") == "Landing window (months)"
+
+
+def test_no_two_values_in_the_same_family_share_a_name_on_real_engine_output():
+    """Every numeric path of the real engine (demo audits, several variants) in a family is
+    told apart by its name, not only by its path."""
+    pytest.importorskip("pandas")
+    pytest.importorskip("fastapi")
+    pytest.importorskip("motor")
+    import os
+    os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
+    os.environ.setdefault("DB_NAME", "format_coverage_test")
+    import demo_data
+    import growth_engine as ge
+    import server
+    from app.llm import gateway
+
+    def numeric_paths(node, path=""):
+        if isinstance(node, dict):
+            for k, v in node.items():
+                yield from numeric_paths(v, f"{path}.{k}" if path else str(k))
+        elif isinstance(node, list):
+            for i in node:
+                yield from numeric_paths(i, path)
+        elif isinstance(node, (int, float)) and not isinstance(node, bool):
+            yield path
+
+    duplicates = {}
+    for spec in demo_data.DEMO_AUDITS:
+        datasets, meta = demo_data.build(spec)
+        norm = {t: server.normalize(server.df_to_records(df), t, m) for t, (df, m) in datasets.items()}
+        fx = {k.upper(): v for k, v in meta.get("fx", {}).items()}
+        fx[spec["reporting_currency"].upper()] = 1.0
+        cfg = {"reporting_currency": spec["reporting_currency"], "target_arr": spec["target_arr"],
+               "target_date": spec["target_date"], "fx": fx, "billing_terms": {}, "default_l": 1, "as_of_month": None}
+        src = {t: {"file": meta[t]["file"], "sheet": meta[t]["sheet"]} for t in datasets}
+        res = server.sanitize(ge.compute_all(norm["revenue"], norm["crm"], norm["pnl"], cfg, src))
+        for head in ("nrr", "gross_churn", "sales_cycle", "win_rate", "cac_payback", "acv_path"):
+            names = {}
+            for path in set(numeric_paths(gateway.strip_row_references(res.get(head)), head)):
+                names.setdefault(f.display_name(path), []).append(path)
+            duplicates.update({(head, n): sorted(p) for n, p in names.items() if len(p) > 1})
+    assert duplicates == {}

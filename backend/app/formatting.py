@@ -443,9 +443,22 @@ def _lookup(table: dict, segs: list) -> Optional[str]:
     return None
 
 
+# The leaf "n" means a different sample in each family, so the family decides its name.
+CONTEXT_LABELS = [
+    ("nrr", "n", "NRR base customers"),
+    ("sales_cycle", "n", "Deals in sales-cycle sample"),
+    ("win_rate", "n", "Closed deals in sample"),
+    ("cohort_retention", "n", "Customers in cohort"),
+]
+
+
 def explicit_label(source_key: str) -> Optional[str]:
     """The mapped base label for a cited path, or None if the path has no entry."""
-    return _lookup(LABEL_BY_PATH, _label_segments(source_key))
+    segs = _label_segments(source_key)
+    for family, leaf, label in CONTEXT_LABELS:
+        if segs and segs[0] == family and segs[-1] == leaf:
+            return label
+    return _lookup(LABEL_BY_PATH, segs)
 
 
 def label_for(source_key: str, fallback: Optional[str] = None) -> str:
@@ -468,11 +481,44 @@ def qualifier_for(source_key: str) -> Optional[str]:
     """The qualifier text (without brackets) for a cited path, if it needs one."""
     segs = _label_segments(source_key)
     qualifier = _lookup(QUALIFIER_BY_PATH, segs)
-    # A row citing one specific quarter says which, instead of "latest quarter".
-    quarter = next((s for s in segs if _QUARTER.match(s)), None)
-    if quarter and qualifier == "latest complete quarter":
-        return quarter
+    # A row citing one specific quarter says which quarter in its scope, so "latest
+    # complete quarter" no longer applies to it.
+    if qualifier == "latest complete quarter" and any(_QUARTER.match(x) for x in segs):
+        return None
     return qualifier
+
+
+_FOUNDER = {"with_founder": "with founder involved", "without_founder": "without founder involved"}
+_LAG = re.compile(r"^L[0-2]$")
+
+
+def scope_for(source_key: str) -> list:
+    """What a cited value is about, when the path names it: a segment, a cohort, a quarter
+    and lag, a founder split, a landing window. Without this, four NRR rows for four
+    scopes would all read "NRR" and only the path would tell them apart."""
+    segs = _label_segments(source_key)
+    scope, i = [], 0
+    while i < len(segs):
+        s, nxt = segs[i], (segs[i + 1] if i + 1 < len(segs) else None)
+        if s in ("by_segment", "segments") and nxt:
+            scope.append(nxt); i += 2; continue
+        if s == "by_cohort" and nxt:
+            scope.append(f"{nxt} cohort"); i += 2; continue
+        if s == "by_founder" and nxt:
+            scope.append(_FOUNDER.get(nxt, nxt)); i += 2; continue
+        if s == "quarters" and nxt and _QUARTER.match(nxt):
+            scope.append(nxt); i += 2
+            if i < len(segs) and _LAG.match(segs[i]):
+                scope.append(f"S&M lag {segs[i]}"); i += 1
+            continue
+        if s in ("landed", "reverse_solve") and nxt and nxt.isdigit():
+            if segs[-1] != "window_months":          # a window's own length needs no window scope
+                scope.append(f"{nxt}-month window")
+            i += 2; continue
+        if s == "series":
+            scope.append("monthly series")
+        i += 1
+    return scope
 
 
 def label_with(base: str, *qualifiers: Optional[str], unit: Optional[str] = None) -> str:
@@ -509,7 +555,8 @@ def unit_for(source_key: str) -> Optional[str]:
 
 def display_name(source_key: str, fallback: Optional[str] = None) -> str:
     """The full name shown for a cited path: base label, qualifier and unit in one bracket."""
-    return label_with(label_for(source_key, fallback), qualifier_for(source_key), unit=unit_for(source_key))
+    return label_with(label_for(source_key, fallback), *scope_for(source_key),
+                      qualifier_for(source_key), unit=unit_for(source_key))
 
 
 def metric_names_export() -> dict:

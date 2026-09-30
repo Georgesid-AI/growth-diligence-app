@@ -671,6 +671,80 @@ def _cac_complete_not_partial():
     return (False, 3), (cac["quarters"]["2023-Q2"]["partial"], cac["quarters"]["2023-Q2"]["months_in_quarter"])
 
 
+# --- Missing Data reflects inputs that are actually missing ------------------
+def _cac_gap_inputs(pnl_months):
+    # Revenue in 2023-Q1..Q3 (N from January, P from July); the P&L covers only `pnl_months`.
+    rows = monthly_lines("N", {i: 1000 for i in range(0, 9)})
+    rows += monthly_lines("P", {6: 1000, 7: 1000, 8: 1000}, start_row=100)
+    mrr, _, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
+    new_q = ge.compute_new_mrr_by_quarter(mrr, fm)
+    pnl = _pnl_rows({i: (1000, 1000, 200) for i in pnl_months})
+    cac = ge.compute_cac_payback(new_q, pnl, default_l=1)
+    return cac, ge._cac_input_gaps(cac, {"file": "pnl.csv"})
+
+
+@case("Missing data: quarters with no P&L are listed, and the quarters they block at the default lag")
+def _gap_no_pnl():
+    cac, gaps = _cac_gap_inputs(pnl_months=[6, 7, 8])         # P&L for Q3 only; Q1 and Q2 are absent
+    g = gaps[0]
+    return (1, "CAC payback (quarters without P&L)", True, True, True, "pnl.csv"), (
+        len(gaps), g["metric"], "No P&L rows for 2023-Q1, 2023-Q2" in g["reason"],
+        "cannot be computed for 2023-Q2, 2023-Q3" in g["reason"], "2023-Q1, 2023-Q2" in g["unlocked_by"], g["file"])
+
+
+@case("Missing data: the lag quarters before the first revenue quarter are not reported (they predate the data)")
+def _gap_predates_data():
+    _, gaps = _cac_gap_inputs(pnl_months=range(0, 9))
+    return [], gaps
+
+
+@case("Missing data: a complete P&L reports no CAC input gap")
+def _gap_none():
+    _, gaps = _cac_gap_inputs(pnl_months=range(0, 9))
+    return [], gaps
+
+
+@case("Missing data: a quarter whose P&L gives no usable gross margin is reported")
+def _gap_margin():
+    rows = monthly_lines("N", {3: 1000, 4: 1000, 5: 1000})
+    mrr, _, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
+    pnl = _pnl_rows({0: (4000, 0, 0), 3: (0, 100, 200), 4: (0, 100, 200), 5: (0, 100, 200)})
+    gaps = ge._cac_input_gaps(ge.compute_cac_payback(ge.compute_new_mrr_by_quarter(mrr, fm), pnl, default_l=1), {"file": "pnl.csv"})
+    return (1, "CAC payback (quarters without a usable gross margin)", True), (
+        len(gaps), gaps[0]["metric"], "2023-Q2" in gaps[0]["reason"])
+
+
+@case("Missing data: a genuine zero (no new customers) is not reported as a missing input")
+def _gap_zero_is_not_missing():
+    rows = monthly_lines("M", {i: 500 for i in range(0, 7)})
+    mrr, _, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
+    pnl = _pnl_rows({i: (1000, 1000, 200) for i in range(0, 7)})
+    cac = ge.compute_cac_payback(ge.compute_new_mrr_by_quarter(mrr, fm), pnl, default_l=1)
+    zero_reason = any(cac["quarters"][q]["L1"].get("reason") == "new MRR is zero" for q in cac["quarters"])
+    return (True, []), (zero_reason, ge._cac_input_gaps(cac, {}))
+
+
+@case("Missing data: observed net-new customer rates need 13 (12-month) and 25 (24-month) months of history")
+def _gap_history():
+    return ([1, "Observed net-new customers (12 and 24 months)", "Needs 25+ months of revenue history; have 10"],
+            [1, "Observed net-new customers (24 months)", "Needs 25+ months of revenue history; have 20"], []), (
+        [len(ge._history_gaps(10, {})), ge._history_gaps(10, {})[0]["metric"], ge._history_gaps(10, {})[0]["reason"]],
+        [len(ge._history_gaps(20, {})), ge._history_gaps(20, {})[0]["metric"], ge._history_gaps(20, {})[0]["reason"]],
+        ge._history_gaps(30, {}))
+
+
+@case("Missing data end to end: a P&L that starts late puts the CAC gap in the results the panel reads")
+def _gap_end_to_end():
+    rows = monthly_lines("N", {3: 1000, 4: 1000, 5: 1000, 6: 1000, 7: 1000, 8: 1000})
+    rows += monthly_lines("P", {6: 1000, 7: 1000, 8: 1000}, start_row=100)
+    cfg = {"reporting_currency": "EUR", "fx": {"EUR": 1.0}, "target_arr": 1_000_000, "target_date": "2027-01-01",
+           "default_l": 1, "billing_terms": {}}
+    res = ge.compute_all(rev_df(rows), pd.DataFrame(), _pnl_rows({6: (1000, 1000, 200), 7: (1000, 1000, 200), 8: (1000, 1000, 200)}),
+                         cfg, {"revenue": {"file": "r.csv"}, "crm": {"file": "c.csv"}, "pnl": {"file": "p.csv"}})
+    metrics = [m["metric"] for m in res["missing_data"]]
+    return True, "CAC payback (quarters without P&L)" in metrics
+
+
 # --- Deals follow the same as-of cut as MRR and the P&L ---------------------
 def _cut_deals():
     def deal(i, stage, created, closed):
