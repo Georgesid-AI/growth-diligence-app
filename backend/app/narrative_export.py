@@ -47,6 +47,8 @@ _BASE_LEAVES = {
     "start_arr", "customers", "nrr_pct", "nrr_base_customers", "projected_arr", "change_arr",
     "arr_change_per_nrr_point", "small_base", "start_arr_total", "projected_base_arr",
 }
+_RECONCILIATION_LEAVES = {"path_to_plan_ratio", "factor_compounded_base", "factor_landed_acv",
+                          "factor_gross_rate", "segment_ratio"}
 _DETAIL_LEAVES = {"landed_acv", "current_mix_pct", "required_mix_pct", "shift_pct_points", "new_customers"}
 
 
@@ -79,9 +81,9 @@ def data_sheet_for(source_key: str, results: Optional[dict] = None) -> str:
     if head == "nrr":
         if p[1] == "overall_pct":
             return HEADLINE
-        if p[1] == "by_segment" and leaf in ("nrr_pct", "n"):
+        if p[1] == "by_segment" and leaf in ("nrr_pct", "n", "nrr_base_customers"):
             return BY_SEGMENT
-        if p[1] == "by_cohort" and leaf in ("nrr_pct", "n"):
+        if p[1] == "by_cohort" and leaf in ("nrr_pct", "n", "nrr_base_customers", "reason"):
             return NRR_BY_COHORT
         if p[1] == "series" and leaf in ("nrr_pct", "month"):
             return NRR_SERIES
@@ -114,6 +116,8 @@ def data_sheet_for(source_key: str, results: Optional[dict] = None) -> str:
     if head == "segment_paths":
         if p[1] == "stage_one" and leaf in _BASE_LEAVES:
             return SEGMENT_BASE
+        if p[1] == "reconciliation" and leaf in _RECONCILIATION_LEAVES:
+            return SEGMENT_MIX
         if len(p) == 2 and leaf in _MIX_LEAVES:
             return SEGMENT_MIX
         if p[1] == "reverse_solve" and len(p) >= 4:

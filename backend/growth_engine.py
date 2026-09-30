@@ -205,7 +205,13 @@ def build_mrr_matrix(rev: pd.DataFrame, billing_terms: dict, fx: dict):
 # ---------------------------------------------------------------------------
 
 def compute_nrr(mrr: pd.DataFrame, seg_map: dict, first_month: dict):
-    """12-month NRR overall + by segment + by start cohort, plus a time series."""
+    """12-month NRR overall + by segment + by start cohort, plus a time series.
+
+    `nrr_base_customers` is the number of customers who had revenue 12 months before the
+    as-of month - the base NRR is measured on. It is 0 for a group that did not exist
+    yet, in which case `nrr_pct` is null and `reason` says why: a zero must never reach
+    a reader (or the narrative) unexplained. It is not the size of the cohort or segment.
+    """
     if mrr.empty:
         return None
     cols = list(mrr.columns)
@@ -224,15 +230,28 @@ def compute_nrr(mrr: pd.DataFrame, seg_map: dict, first_month: dict):
         return {"insufficient_history": True, "months_available": len(cols)}
 
     latest = len(cols) - 1
+    m0_latest = cols[latest - 12]
+
+    def entry(val, base_n, customers, noun):
+        row = {"nrr_pct": _round(val * 100) if val is not None else None, "nrr_base_customers": base_n}
+        if val is None:
+            younger = bool(customers) and all(first_month.get(c) is not None and first_month[c] > m0_latest for c in customers)
+            row["reason"] = (
+                f"{noun} younger than 12 months: none of its customers had revenue 12 months before the as-of month"
+                if younger else
+                f"no customer in this {noun} had revenue 12 months before the as-of month"
+            )
+        return row
+
     overall, n = nrr_for(latest, list(mrr.index))
 
     by_segment = {}
     if seg_map:
         segs = sorted(set(seg_map.values()))
-        for s in segs:
-            custs = [c for c in mrr.index if seg_map.get(c) == s]
+        for s_ in segs:
+            custs = [c for c in mrr.index if seg_map.get(c) == s_]
             val, cn = nrr_for(latest, custs)
-            by_segment[s] = {"nrr_pct": _round(val * 100) if val is not None else None, "n": cn}
+            by_segment[s_] = entry(val, cn, custs, "segment")
 
     by_cohort = {}
     cohorts = {}
@@ -240,21 +259,26 @@ def compute_nrr(mrr: pd.DataFrame, seg_map: dict, first_month: dict):
         cohorts.setdefault(_quarter_str(fm), []).append(c)
     for q in sorted(cohorts):
         val, cn = nrr_for(latest, cohorts[q])
-        by_cohort[q] = {"nrr_pct": _round(val * 100) if val is not None else None, "n": cn}
+        by_cohort[q] = entry(val, cn, cohorts[q], "cohort")
 
     series = []
     for i in range(12, len(cols)):
         v, cn = nrr_for(i, list(mrr.index))
         series.append({"month": _period_str(cols[i]), "nrr_pct": _round(v * 100) if v is not None else None})
 
-    return {
+    top = {
         "month": _period_str(cols[latest]),
+        # NRR is a trailing-12-month figure measured at `month`, never one month's movement.
+        "trailing_window_months": 12,
         "overall_pct": _round(overall * 100) if overall is not None else None,
-        "n": n,
+        "nrr_base_customers": n,
         "by_segment": by_segment,
         "by_cohort": by_cohort,
         "series": series,
     }
+    if overall is None:
+        top["reason"] = "no customer had revenue 12 months before the as-of month"
+    return top
 
 
 def compute_gross_churn(mrr: pd.DataFrame):
@@ -284,7 +308,10 @@ def compute_gross_churn(mrr: pd.DataFrame):
         for i in range(12, len(cols))
     ]
     v = churn_for(latest)
-    return {"month": _period_str(cols[latest]), "overall_pct": _round(v * 100) if v is not None else None, "series": series}
+    # A trailing-12-month figure measured at `month`: MRR lost (churn and contraction, expansion
+    # not netted) over the 12 months to that month, as a share of MRR 12 months earlier.
+    return {"month": _period_str(cols[latest]), "trailing_window_months": 12,
+            "overall_pct": _round(v * 100) if v is not None else None, "series": series}
 
 
 def compute_new_mrr_by_quarter(mrr: pd.DataFrame, first_month: dict):
@@ -828,6 +855,49 @@ def _reverse_solve(window: int, landed: dict, gap, years, active_by_seg: dict) -
     return out
 
 
+def _reconcile(window: int, acv_path: dict, sp: dict, years: float) -> dict:
+    """Bridge the simple view (Path to Plan) to the segment view on one axis.
+
+    Both answer "how does the rate needed to reach the target compare with the rate observed?"
+    (a ratio; 1.00x means the observed rate is exactly enough, below 1.00x it is more than enough).
+    They differ in three assumptions, and the segment ratio is the simple ratio times one factor each:
+
+        compounded base   gap after compounding each segment's NRR / gap with the base held flat
+        landed ACV        today's blended ACV / landed ACV at the current mix
+        gross rate        observed net-new per year / observed gross landings per year
+
+    Computed from full-precision values (not the rounded ones shown elsewhere) so the product
+    closes exactly. Unavailable, with the reason, whenever a piece is missing or the two views
+    do not start from the same ARR - it never fills in a figure.
+    """
+    base = {"window_months": window, "available": False, "reason": None}
+    rs = (sp.get("reverse_solve") or {}).get(str(window)) or {}
+    landed = (sp.get("landed") or {}).get(str(window)) or {}
+    if sp.get("unsegmented_customers"):
+        return {**base, "reason": "some active customers have no segment, so the two views start from different ARR"}
+    if not sp.get("available") or rs.get("target_met_by_base"):
+        return {**base, "reason": "the projected base is unavailable or already reaches the target"}
+    if rs.get("required_vs_observed_gross") is None or not landed.get("computable"):
+        return {**base, "reason": rs.get("reason") or "the segment view has no ratio for this window"}
+    net = acv_path.get(f"observed_net_new_per_year_{window}m")
+    gross = landed.get("gross_new_per_year")
+    total_needed, n_now, target = acv_path.get("total_customers_at_target"), acv_path.get("current_customers"), sp.get("target_arr")
+    if not net or net <= 0 or not gross or not total_needed or not n_now or not target:
+        return {**base, "reason": "there is no positive observed net-new rate for this window"}
+    acv_raw = target / total_needed                      # today's blended ACV, unrounded
+    gap_flat = target - n_now * acv_raw                  # the gap with the base held flat
+    if gap_flat <= 0:
+        return {**base, "reason": "today's customers already cover the target at today's ACV"}
+    path_ratio = ((total_needed - n_now) / years) / net
+    f_base = sp["gap_arr"] / gap_flat
+    f_acv = acv_raw / rs["current_mix_landed_acv"]
+    f_rate = net / gross
+    return {**base, "available": True,
+            "path_to_plan_ratio": path_ratio, "factor_compounded_base": f_base,
+            "factor_landed_acv": f_acv, "factor_gross_rate": f_rate,
+            "segment_ratio": rs["required_vs_observed_gross"]}
+
+
 def compute_segment_paths(mrr: pd.DataFrame, seg_map: dict, first_month: dict, nrr, acv_path,
                           target_arr: float, target_date):
     """Stage one (existing base), stage two (the gap) and the reverse-solve, by segment."""
@@ -861,9 +931,10 @@ def compute_segment_paths(mrr: pd.DataFrame, seg_map: dict, first_month: dict, n
         a = by_seg[s]
         n = (nrr.get("by_segment") or {}).get(s) or {}
         pct = n.get("nrr_pct")
+        base_n = n.get("nrr_base_customers", n.get("n"))
         row = {"start_arr": a["arr"], "customers": a["customers"],
-               "nrr_base_customers": n.get("n"), "nrr_pct": pct,
-               "small_base": bool(n.get("n") is not None and n.get("n") < SMALL_SEGMENT_N)}
+               "nrr_base_customers": base_n, "nrr_pct": pct,
+               "small_base": bool(base_n is not None and base_n < SMALL_SEGMENT_N)}
         if pct is None:
             unprojectable.append(s)
             row.update({"projected_arr": None, "change_arr": None, "arr_change_per_nrr_point": None,
@@ -903,7 +974,66 @@ def compute_segment_paths(mrr: pd.DataFrame, seg_map: dict, first_month: dict, n
         landed = _landed(mrr, seg_map, first_month, w, seg_names)
         out["landed"][str(w)] = landed
         out["reverse_solve"][str(w)] = _reverse_solve(w, landed, gap, years, active_by_seg)
+    out["reconciliation"] = {str(w): _reconcile(w, acv_path, out, years) for w in LANDED_WINDOWS}
     return out
+
+
+def _cac_input_gaps(cac: dict, pnl_src: dict) -> list:
+    """Missing-data entries for CAC payback quarters that could not be computed because an
+    INPUT is absent, as opposed to a genuine zero (no new customers).
+
+    Per-quarter reasons already say "no P&L for 2023-Q2" or "gross margin <= 0 or missing"
+    on each row; without this, the Missing Data panel read "all metrics computed" while the
+    quarterly table showed n/c.
+    """
+    lag_key = f"L{cac.get('default_l', 1)}"
+    revenue_quarters = set(cac["quarters"])
+    no_pnl, no_margin, affected = set(), set(), set()
+    for q, row in cac["quarters"].items():
+        for lag in ("L0", "L1", "L2"):
+            reason = (row.get(lag) or {}).get("reason") or ""
+            if reason.startswith("no P&L for "):
+                needed = reason[len("no P&L for "):]
+                # Only a quarter the company has revenue for can be "missing" a P&L. The quarters
+                # before the first revenue quarter (the first quarter's lag) predate the data,
+                # so listing them would put a false item on almost every audit.
+                if needed in revenue_quarters:
+                    no_pnl.add(needed)
+                    if lag == lag_key:
+                        affected.add(q)
+            elif reason.startswith("gross margin"):
+                no_margin.add(q)
+    out = []
+    if no_pnl:
+        out.append({
+            "metric": "CAC payback (quarters without P&L)",
+            "reason": (f"No P&L rows for {', '.join(sorted(no_pnl))}, which CAC payback needs to pair each quarter's new MRR "
+                       f"with S&M spend from earlier quarters (lags L0 to L2). At the default lag {lag_key} it cannot be "
+                       f"computed for {', '.join(sorted(affected)) or 'any quarter'}."),
+            "unlocked_by": f"Upload P&L months covering {', '.join(sorted(no_pnl))}",
+            "file": pnl_src.get("file"),
+        })
+    if no_margin:
+        out.append({
+            "metric": "CAC payback (quarters without a usable gross margin)",
+            "reason": f"Revenue and cost of revenue in the P&L give a gross margin of zero, below zero or none for {', '.join(sorted(no_margin))}",
+            "unlocked_by": "Provide revenue and cost of revenue for those quarters in the P&L",
+            "file": pnl_src.get("file"),
+        })
+    return out
+
+
+def _history_gaps(n_months: int, rev_src: dict) -> list:
+    """Observed net-new customer rates need history: 12 or 24 months before the as-of month."""
+    windows = [w for w in (12, 24) if n_months <= w]
+    if not windows:
+        return []
+    return [{
+        "metric": f"Observed net-new customers ({' and '.join(str(w) for w in windows)} months)",
+        "reason": f"Needs {max(windows) + 1}+ months of revenue history; have {n_months}",
+        "unlocked_by": f"Provide at least {max(windows) + 1} months of revenue lines",
+        "file": rev_src.get("file"),
+    }]
 
 
 def cut_deals_at_as_of(deals: pd.DataFrame, as_of):
@@ -1030,6 +1160,8 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
             cac["source"] = src(pnl_src, pnl.get("_row", []).tolist() if "_row" in pnl.columns else [],
                                  "CAC payback = lagged S&M ÷ (new MRR × gross margin %)")
         results["cac_payback"] = cac
+        if cac:
+            missing_data.extend(_cac_input_gaps(cac, pnl_src))
 
     if deals.empty:
         results["sales_cycle"] = None
@@ -1079,6 +1211,8 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
                 "file": rev_src.get("file"),
             })
     results["acv_path"] = acv
+    if acv:
+        missing_data.extend(_history_gaps(len(mrr.columns), rev_src))
 
     results["segment_paths"] = compute_segment_paths(mrr, seg_map, first_month, nrr, acv, target_arr, target_date)
     sp = results["segment_paths"]

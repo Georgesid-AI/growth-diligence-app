@@ -217,7 +217,7 @@ export default function Dashboard() {
           value={r.arr ? fmtCurrency(r.arr.value, ccy) : "—"} sub={r.arr ? `MRR ${fmtCurrency(r.arr.mrr, ccy)}` : ""}
           caption="Shows distance to target" />
         <MetricCard id="nrr" label={metricLabel("nrr.overall_pct")} qualifier={bracketed(metricQualifier("nrr.overall_pct"))} status={nrrStatus} source={r.nrr?.source}
-          value={r.nrr ? fmtPct(r.nrr.overall_pct) : "n/c"} sub={r.nrr ? `${fmtCount(r.nrr.n)} base customers` : "needs 12m history"}
+          value={r.nrr ? fmtPct(r.nrr.overall_pct) : "n/c"} sub={r.nrr ? `${fmtCount(r.nrr.nrr_base_customers ?? r.nrr.n)} base customers` : "needs 12m history"}
           caption="Growth from existing customers alone" />
         <MetricCard id="gross_churn" label={metricLabel("gross_churn.overall_pct")} qualifier={bracketed(metricQualifier("gross_churn.overall_pct"))} status={churnStatus} source={r.gross_churn?.source}
           value={r.gross_churn ? fmtPct(r.gross_churn.overall_pct) : "n/c"} sub={r.gross_churn ? "" : "needs 12m history"}
@@ -326,7 +326,7 @@ export default function Dashboard() {
           </div>
         </Card>
 
-        <Card className="lg:col-span-4" testid="path-to-plan-panel" title="Path to Plan" hint="required vs observed net-new customers / year">
+        <Card className="lg:col-span-4" testid="path-to-plan-panel" title="Path to Plan" hint="simple view · flat base · today's ACV · net-new customers / year">
           {r.acv_path ? (
             <>
               {r.acv_path.target_date_error && (
@@ -375,6 +375,12 @@ export default function Dashboard() {
                   {fmtRatio(r.acv_path.required_vs_observed_12m)}
                 </span>
               </div>
+              {r.segment_paths?.stage_one && (
+                <div data-testid="path-to-plan-view-note" className="mt-1 text-[11px] text-slate-500">
+                  The simple view: the base held flat, new customers at today's blended ACV, net-new customers. The segment
+                  view below asks the same question with different assumptions — see how the two relate there.
+                </div>
+              )}
             </>
           ) : <NotComputable label="No revenue data" />}
         </Card>

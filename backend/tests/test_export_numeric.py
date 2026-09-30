@@ -430,3 +430,48 @@ def test_the_glossary_sheet_is_in_every_export_and_defines_acv():
         assert terms["ACV"] == "average contract value", name
         assert "first-month ARR" in terms["Landed ACV"], name
         assert [c.value for c in wb["Glossary"][1]] == ["Term", "Definition"], name
+
+
+def test_the_segment_mix_sheet_carries_the_reconciliation_of_the_two_views():
+    results, sp = _segment_results()
+    wb = openpyxl.load_workbook(server.build_export_workbook(_META, results))
+    rows = {str(r[0].value): r[1] for r in wb["Segment Mix"].iter_rows(min_row=2)}
+    rc = sp["reconciliation"]["12"]
+    assert rc["available"] is True
+    labels = [k for k in rows if "12-month window" in k and ("simple view" in k or "segment view" in k or "Effect of" in k)]
+    assert len(labels) == 5, labels
+    simple = rows[next(k for k in labels if k.startswith("Required vs observed net-new customers"))]
+    assert simple.value == pytest.approx(rc["path_to_plan_ratio"]) and simple.number_format == '0.00"x"'
+    seg = rows[next(k for k in labels if k.startswith("Needed vs observed gross new customers"))]
+    assert seg.value == pytest.approx(rc["segment_ratio"])
+    factors = [rows[k].value for k in labels if k.startswith("Effect of")]
+    product = simple.value
+    for f_ in factors:
+        product *= f_
+    assert product == pytest.approx(seg.value), "the exported factors close the bridge"
+
+
+def test_an_unavailable_reconciliation_is_stated_in_the_workbook():
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parents[1]))
+    import test_growth_engine as tge
+    sp = tge._seg_paths(target_arr=50_000)[0]                       # target already met by the base
+    wb = openpyxl.load_workbook(server.build_export_workbook(_META, {**RESULTS, "segment_paths": sp}))
+    rows = {str(r[0].value): r[1].value for r in wb["Segment Mix"].iter_rows(min_row=2)}
+    assert "reaches the target" in rows["Reconciliation of the simple and segment views (12-month window)"]
+
+
+def test_the_cohort_sheet_explains_a_null_nrr_and_names_what_n_counts():
+    nrr = {"month": "2025-02", "trailing_window_months": 12, "overall_pct": 106.0, "nrr_base_customers": 39,
+           "by_segment": {}, "series": [],
+           "by_cohort": {"2024-Q1": {"nrr_pct": 127.4, "nrr_base_customers": 5},
+                         "2024-Q3": {"nrr_pct": None, "nrr_base_customers": 0,
+                                     "reason": "cohort younger than 12 months: none of its customers had revenue 12 months before the as-of month"}}}
+    wb = openpyxl.load_workbook(server.build_export_workbook(_META, {**RESULTS, "nrr": nrr}))
+    ws = wb["NRR by Cohort"]
+    assert [c.value for c in ws[1]] == ["Cohort", "NRR", "NRR base customers", "Note"]
+    young = {c.value for c in ws[3]}
+    assert None in young or "cohort younger than 12 months" in " ".join(str(v) for v in young if v)
+    assert ws["D3"].value.startswith("cohort younger than 12 months")
+    assert ws["C3"].value == 0

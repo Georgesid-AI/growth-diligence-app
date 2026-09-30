@@ -366,16 +366,14 @@ def _cohort_plausible_range_demo():
 def _nrr_by_cohort_unchanged_demo():
     mrr, seg, fm, _, _ = _demo_engine_inputs(0)
     nrr = ge.compute_nrr(mrr, seg, fm)
+    # The numbers are exactly the ones this case has always pinned; only the count's field name
+    # changed ("n" -> "nrr_base_customers"), and a null NRR now carries its reason.
     expected = {
-        "2023-Q1": {"nrr_pct": 127.64, "n": 8},
-        "2023-Q2": {"nrr_pct": 90.14, "n": 11},
-        "2023-Q3": {"nrr_pct": 111.56, "n": 8},
-        "2023-Q4": {"nrr_pct": 127.63, "n": 7},
-        "2024-Q1": {"nrr_pct": 127.42, "n": 5},
-        "2024-Q2": {"nrr_pct": None, "n": 0},
-        "2024-Q3": {"nrr_pct": None, "n": 0},
+        "2023-Q1": (127.64, 8), "2023-Q2": (90.14, 11), "2023-Q3": (111.56, 8),
+        "2023-Q4": (127.63, 7), "2024-Q1": (127.42, 5), "2024-Q2": (None, 0), "2024-Q3": (None, 0),
     }
-    return expected, nrr["by_cohort"]
+    actual = {q: (v["nrr_pct"], v["nrr_base_customers"]) for q, v in nrr["by_cohort"].items()}
+    return expected, actual
 
 
 # --- CAC payback at L=0 / L=2 / zero-new-MRR --------------------------------
@@ -669,6 +667,80 @@ def _cac_no_complete_quarter():
 def _cac_complete_not_partial():
     _, cac = _cac_with_partial_last_quarter()
     return (False, 3), (cac["quarters"]["2023-Q2"]["partial"], cac["quarters"]["2023-Q2"]["months_in_quarter"])
+
+
+# --- Missing Data reflects inputs that are actually missing ------------------
+def _cac_gap_inputs(pnl_months):
+    # Revenue in 2023-Q1..Q3 (N from January, P from July); the P&L covers only `pnl_months`.
+    rows = monthly_lines("N", {i: 1000 for i in range(0, 9)})
+    rows += monthly_lines("P", {6: 1000, 7: 1000, 8: 1000}, start_row=100)
+    mrr, _, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
+    new_q = ge.compute_new_mrr_by_quarter(mrr, fm)
+    pnl = _pnl_rows({i: (1000, 1000, 200) for i in pnl_months})
+    cac = ge.compute_cac_payback(new_q, pnl, default_l=1)
+    return cac, ge._cac_input_gaps(cac, {"file": "pnl.csv"})
+
+
+@case("Missing data: quarters with no P&L are listed, and the quarters they block at the default lag")
+def _gap_no_pnl():
+    cac, gaps = _cac_gap_inputs(pnl_months=[6, 7, 8])         # P&L for Q3 only; Q1 and Q2 are absent
+    g = gaps[0]
+    return (1, "CAC payback (quarters without P&L)", True, True, True, "pnl.csv"), (
+        len(gaps), g["metric"], "No P&L rows for 2023-Q1, 2023-Q2" in g["reason"],
+        "cannot be computed for 2023-Q2, 2023-Q3" in g["reason"], "2023-Q1, 2023-Q2" in g["unlocked_by"], g["file"])
+
+
+@case("Missing data: the lag quarters before the first revenue quarter are not reported (they predate the data)")
+def _gap_predates_data():
+    _, gaps = _cac_gap_inputs(pnl_months=range(0, 9))
+    return [], gaps
+
+
+@case("Missing data: a complete P&L reports no CAC input gap")
+def _gap_none():
+    _, gaps = _cac_gap_inputs(pnl_months=range(0, 9))
+    return [], gaps
+
+
+@case("Missing data: a quarter whose P&L gives no usable gross margin is reported")
+def _gap_margin():
+    rows = monthly_lines("N", {3: 1000, 4: 1000, 5: 1000})
+    mrr, _, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
+    pnl = _pnl_rows({0: (4000, 0, 0), 3: (0, 100, 200), 4: (0, 100, 200), 5: (0, 100, 200)})
+    gaps = ge._cac_input_gaps(ge.compute_cac_payback(ge.compute_new_mrr_by_quarter(mrr, fm), pnl, default_l=1), {"file": "pnl.csv"})
+    return (1, "CAC payback (quarters without a usable gross margin)", True), (
+        len(gaps), gaps[0]["metric"], "2023-Q2" in gaps[0]["reason"])
+
+
+@case("Missing data: a genuine zero (no new customers) is not reported as a missing input")
+def _gap_zero_is_not_missing():
+    rows = monthly_lines("M", {i: 500 for i in range(0, 7)})
+    mrr, _, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
+    pnl = _pnl_rows({i: (1000, 1000, 200) for i in range(0, 7)})
+    cac = ge.compute_cac_payback(ge.compute_new_mrr_by_quarter(mrr, fm), pnl, default_l=1)
+    zero_reason = any(cac["quarters"][q]["L1"].get("reason") == "new MRR is zero" for q in cac["quarters"])
+    return (True, []), (zero_reason, ge._cac_input_gaps(cac, {}))
+
+
+@case("Missing data: observed net-new customer rates need 13 (12-month) and 25 (24-month) months of history")
+def _gap_history():
+    return ([1, "Observed net-new customers (12 and 24 months)", "Needs 25+ months of revenue history; have 10"],
+            [1, "Observed net-new customers (24 months)", "Needs 25+ months of revenue history; have 20"], []), (
+        [len(ge._history_gaps(10, {})), ge._history_gaps(10, {})[0]["metric"], ge._history_gaps(10, {})[0]["reason"]],
+        [len(ge._history_gaps(20, {})), ge._history_gaps(20, {})[0]["metric"], ge._history_gaps(20, {})[0]["reason"]],
+        ge._history_gaps(30, {}))
+
+
+@case("Missing data end to end: a P&L that starts late puts the CAC gap in the results the panel reads")
+def _gap_end_to_end():
+    rows = monthly_lines("N", {3: 1000, 4: 1000, 5: 1000, 6: 1000, 7: 1000, 8: 1000})
+    rows += monthly_lines("P", {6: 1000, 7: 1000, 8: 1000}, start_row=100)
+    cfg = {"reporting_currency": "EUR", "fx": {"EUR": 1.0}, "target_arr": 1_000_000, "target_date": "2027-01-01",
+           "default_l": 1, "billing_terms": {}}
+    res = ge.compute_all(rev_df(rows), pd.DataFrame(), _pnl_rows({6: (1000, 1000, 200), 7: (1000, 1000, 200), 8: (1000, 1000, 200)}),
+                         cfg, {"revenue": {"file": "r.csv"}, "crm": {"file": "c.csv"}, "pnl": {"file": "p.csv"}})
+    metrics = [m["metric"] for m in res["missing_data"]]
+    return True, "CAC payback (quarters without P&L)" in metrics
 
 
 # --- Deals follow the same as-of cut as MRR and the P&L ---------------------
@@ -1056,6 +1128,85 @@ def _winrate_excl_invalid():
 # Runner + pytest hooks
 # ---------------------------------------------------------------------------
 
+# --- NRR fields say what they count, and a null NRR says why -----------------
+def _demo_segment_paths(idx):
+    mrr, seg, fm, _, spec = _demo_engine_inputs(idx)
+    nrr = ge.compute_nrr(mrr, seg, fm)
+    acv = ge.compute_acv_path(mrr, seg, fm, spec["target_arr"], spec["target_date"])
+    return ge.compute_segment_paths(mrr, seg, fm, nrr, acv, spec["target_arr"], spec["target_date"])
+
+
+@case("NRR: a cohort younger than 12 months has base 0, null NRR and a reason - never a bare zero")
+def _nrr_young_cohort_reason():
+    mrr, seg, fm, _, _ = _demo_engine_inputs(0)
+    row = ge.compute_nrr(mrr, seg, fm)["by_cohort"]["2024-Q3"]
+    return (None, 0, True, True), (row["nrr_pct"], row["nrr_base_customers"],
+                                   row["reason"].startswith("cohort younger than 12 months"), "n" not in row)
+
+
+@case("NRR: a cohort with a computable NRR carries no reason")
+def _nrr_no_reason_when_computed():
+    mrr, seg, fm, _, _ = _demo_engine_inputs(0)
+    return False, "reason" in ge.compute_nrr(mrr, seg, fm)["by_cohort"]["2023-Q1"]
+
+
+@case("NRR: every null nrr_pct in the payload has a reason (overall, segments and cohorts)")
+def _nrr_every_null_explained():
+    mrr, seg, fm, _, _ = _demo_engine_inputs(0)
+    nrr = ge.compute_nrr(mrr, seg, fm)
+    groups = list(nrr["by_cohort"].values()) + list(nrr["by_segment"].values()) + [nrr]
+    nulls = [g for g in groups if g.get("nrr_pct", g.get("overall_pct")) is None]
+    return (True, True), (len(nulls) > 0, all(g.get("reason") for g in nulls))
+
+
+@case("NRR and gross churn state their 12-month window, so neither reads as one month")
+def _windows_stated():
+    mrr, seg, fm, _, _ = _demo_engine_inputs(0)
+    return (12, 12), (ge.compute_nrr(mrr, seg, fm)["trailing_window_months"], ge.compute_gross_churn(mrr)["trailing_window_months"])
+
+
+@case("Reconciliation: the segment ratio is the simple ratio times the three factors, exactly")
+def _reconciliation_closes():
+    sp = _demo_segment_paths(0)
+    out = []
+    for w, rc in sp["reconciliation"].items():
+        if rc["available"]:
+            prod = rc["path_to_plan_ratio"] * rc["factor_compounded_base"] * rc["factor_landed_acv"] * rc["factor_gross_rate"]
+            out.append(abs(prod - rc["segment_ratio"]) < 1e-9 * rc["segment_ratio"])
+    return (True, True), (len(out) > 0, all(out))
+
+
+@case("Reconciliation: the simple ratio equals the Path to Plan ratio to its displayed precision")
+def _reconciliation_matches_path_to_plan():
+    mrr, seg, fm, _, _ = _demo_engine_inputs(0)
+    acv = ge.compute_acv_path(mrr, seg, fm, 40_000_000, "2027-12-31")
+    sp = _demo_segment_paths(0)
+    return round(acv["required_vs_observed_12m"], 2), round(sp["reconciliation"]["12"]["path_to_plan_ratio"], 2)
+
+
+@case("Reconciliation: each factor moves the ratio the right way (compounding and gross landings help; landed ACV hurts)")
+def _reconciliation_directions():
+    rc = _demo_segment_paths(0)["reconciliation"]["12"]
+    return (True, True, True), (rc["factor_compounded_base"] < 1, rc["factor_landed_acv"] > 1, rc["factor_gross_rate"] < 1)
+
+
+@case("Reconciliation: unavailable, with the reason, when active customers have no segment (the views differ in ARR)")
+def _reconciliation_unsegmented():
+    mrr, sm, fm = _seg_scenario()
+    sm = dict(sm); sm.pop("A2")                               # one active customer loses its segment
+    nrr = ge.compute_nrr(mrr, sm, fm)
+    acv = ge.compute_acv_path(mrr, sm, fm, 1_000_000, "2026-03-15")
+    rc = ge.compute_segment_paths(mrr, sm, fm, nrr, acv, 1_000_000, "2026-03-15")["reconciliation"]["12"]
+    return (False, True), (rc["available"], "no segment" in rc["reason"])
+
+
+@case("Reconciliation: unavailable when the target is already met by the base")
+def _reconciliation_met():
+    sp, _, _ = _seg_paths(target_arr=50_000)
+    rc = sp["reconciliation"]["12"]
+    return (False, True), (rc["available"], "reaches the target" in rc["reason"])
+
+
 def run_all():
     results = []
     for name, fn in CASES.items():
@@ -1085,3 +1236,4 @@ if __name__ == "__main__":
         print(f"{name.ljust(w)}{str(expected).ljust(28)}{str(actual).ljust(28)}{mark}")
     print("-" * (w + 64))
     print(f"{npass}/{len(rows)} passed\n")
+

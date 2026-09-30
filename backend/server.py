@@ -579,7 +579,7 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
         seg_rows = {}
         for seg, v in (nrr.get("by_segment") or {}).items():
             seg_rows.setdefault(seg, {})["NRR"] = v.get("nrr_pct")
-            seg_rows[seg]["NRR base n"] = v.get("n")
+            seg_rows[seg]["NRR base n"] = v.get("nrr_base_customers", v.get("n"))
         for seg, v in (sc.get("by_segment") or {}).items():
             seg_rows.setdefault(seg, {})[lab("Sales cycle median", unit="days")] = v.get("median_days")
             seg_rows[seg]["Sales cycle n"] = v.get("n")
@@ -599,8 +599,9 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
         # NRR by cohort
         if nrr.get("by_cohort"):
             table_sheet(xw, "NRR by Cohort", pd.DataFrame(
-                [{"Cohort": k, "NRR": v.get("nrr_pct"), "n": v.get("n")} for k, v in nrr["by_cohort"].items()]
-            ), {"NRR": fmt.PCT, "n": fmt.COUNT})
+                [{"Cohort": k, "NRR": v.get("nrr_pct"), "NRR base customers": v.get("nrr_base_customers", v.get("n")), "Note": v.get("reason")}
+                 for k, v in nrr["by_cohort"].items()]
+            ), {"NRR": fmt.PCT, "NRR base customers": fmt.COUNT})
         else:
             pd.DataFrame([{"Cohort": "(not computable)"}]).to_excel(xw, sheet_name="NRR by Cohort", index=False)
 
@@ -713,6 +714,14 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
                                    "Gross new customers": landed.get("new_customers"), lab("Landed ACV", unit=cur): v.get("landed_acv"),
                                    "Current mix": v.get("current_mix_pct"), "Required mix": v.get("required_mix_pct"),
                                    lab("Shift vs current mix", unit="percentage points"): v.get("shift_pct_points")})
+            for w, rc in (sp.get("reconciliation") or {}).items():
+                if not rc.get("available"):
+                    mix_rows.append((lab("Reconciliation of the simple and segment views", f"{w}-month window"), None,
+                                     rc.get("reason") or "not available"))
+                    continue
+                for leaf in ("path_to_plan_ratio", "factor_compounded_base", "factor_landed_acv",
+                             "factor_gross_rate", "segment_ratio"):
+                    mix_rows.append((fmt.display_name(f"segment_paths.reconciliation.{w}.{leaf}"), fmt.RATIO, rc[leaf]))
             kv_sheet(xw, "Segment Mix", mix_rows)
             if detail:
                 table_sheet(xw, "Segment Mix Detail", pd.DataFrame(detail), {
