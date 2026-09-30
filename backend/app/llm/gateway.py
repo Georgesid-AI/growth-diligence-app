@@ -24,7 +24,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Iterable, List, NamedTuple, Optional, Tuple
 
-from .. import formatting
+from .. import disclosure, formatting
 from . import cache, guards, prompt_store, redaction
 from .schemas import Narrative, NarrativeResponse, UsageResponse, narrative_output_schema
 
@@ -794,11 +794,26 @@ async def read_cached_narrative(db, run_id: str, step: str) -> NarrativeResponse
         run_id=run_id, step=step,
         narrative_status=cached.get("narrative_status", "ok"),
         narrative=Narrative.model_validate(cached["narrative"]),
-        cache_hit=True, prompt_version=prompt.version, model=model,
+        cache_hit=True, prompt_version=prompt.version, model=cached.get("model") or model,
         metrics=metrics,
         unmatched_numbers=list(cached.get("unmatched_numbers", [])),
         generated_at=cached.get("created_at"),
     )
+
+
+async def disclosure_for_run(db, run_id: str) -> Optional[dict]:
+    """The provenance block for every narrative that exists for this run.
+
+    Read-only - it reuses `read_cached_narrative`, so it can never call a provider.
+    """
+    sections = []
+    for step, config in STEP_CONFIG.items():
+        if not config.get("enabled"):
+            continue
+        result = await read_cached_narrative(db, run_id, step)
+        if result.narrative is not None and result.narrative_status in ("ok", "flagged"):
+            sections.append({"step": step, "model": result.model, "generated_at": result.generated_at})
+    return disclosure.build_disclosure(sections)
 
 
 # ---------------------------------------------------------------------------

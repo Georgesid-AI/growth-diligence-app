@@ -11,8 +11,9 @@ import { Provenance } from "@/components/Provenance";
 import { Gloss } from "@/components/Gloss";
 import { Narrative } from "@/components/Narrative";
 import { NarrativeControl } from "@/components/NarrativeControl";
-import { getAudit, getResults, exportUrl, readNarrative, generateNarrative } from "@/lib/api";
+import { getAudit, getResults, exportUrl, readNarrative, generateNarrative, getDisclosure } from "@/lib/api";
 import { GLOSSARY } from "@/lib/glossary";
+import { metricLabel, metricQualifier, bracketed } from "@/lib/metricNames";
 import { fmtCurrency, fmtCount, fmtCountUp, fmtDays, fmtMonths, fmtPct, fmtRatio, bandRangeLabel, monthEndDate } from "@/lib/format";
 
 const SEG_COLORS = ["#0284C7", "#059669", "#D97706", "#DB2777", "#475569"];
@@ -37,6 +38,7 @@ export default function Dashboard() {
   const [error, setError] = useState(null);
   const [narrative, setNarrative] = useState(null);
   const [generating, setGenerating] = useState(false);
+  const [disclosure, setDisclosure] = useState(null);
 
   useEffect(() => {
     getAudit(id).then(setAudit).catch(() => {});
@@ -56,6 +58,17 @@ export default function Dashboard() {
       .catch(() => { if (!cancelled) setNarrative({ narrative_status: "not_generated" }); });
     return () => { cancelled = true; };
   }, [id, data]);
+
+  // Provenance block for the foot of the page. Re-read whenever the narrative
+  // changes, so a regeneration updates the model and time shown.
+  useEffect(() => {
+    if (!data) return;
+    let cancelled = false;
+    getDisclosure(id)
+      .then((d) => { if (!cancelled) setDisclosure(d); })
+      .catch(() => { if (!cancelled) setDisclosure(null); });
+    return () => { cancelled = true; };
+  }, [id, data, narrative]);
 
   // The only path that spends an AI request.
   const onGenerate = () => {
@@ -185,19 +198,19 @@ export default function Dashboard() {
 
       {/* Metric strip */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4 mb-6">
-        <MetricCard id="arr" label="Ending ARR" status="growth_positive" source={r.arr?.source}
+        <MetricCard id="arr" label={metricLabel("arr.value")} qualifier={bracketed(metricQualifier("arr.value"))} status="growth_positive" source={r.arr?.source}
           value={r.arr ? fmtCurrency(r.arr.value, ccy) : "—"} sub={r.arr ? `MRR ${fmtCurrency(r.arr.mrr, ccy)}` : ""}
           caption="Shows distance to target" />
-        <MetricCard id="nrr" label="Net Revenue Retention" status={nrrStatus} source={r.nrr?.source}
+        <MetricCard id="nrr" label={metricLabel("nrr.overall_pct")} qualifier={bracketed(metricQualifier("nrr.overall_pct"))} status={nrrStatus} source={r.nrr?.source}
           value={r.nrr ? fmtPct(r.nrr.overall_pct) : "n/c"} sub={r.nrr ? `${fmtCount(r.nrr.n)} base customers` : "needs 12m history"}
           caption="Growth from existing customers alone" />
-        <MetricCard id="gross_churn" label="Gross Revenue Churn" status={churnStatus} source={r.gross_churn?.source}
-          value={r.gross_churn ? fmtPct(r.gross_churn.overall_pct) : "n/c"} sub={r.gross_churn ? "12-month" : "needs 12m history"}
+        <MetricCard id="gross_churn" label={metricLabel("gross_churn.overall_pct")} qualifier={bracketed(metricQualifier("gross_churn.overall_pct"))} status={churnStatus} source={r.gross_churn?.source}
+          value={r.gross_churn ? fmtPct(r.gross_churn.overall_pct) : "n/c"} sub={r.gross_churn ? "" : "needs 12m history"}
           caption="Shows revenue lost to churn" />
-        <MetricCard id="cac_payback" label="CAC Payback" status={cac.status} source={cac.source}
+        <MetricCard id="cac_payback" label={metricLabel("cac_payback.months")} qualifier={bracketed(metricQualifier("cac_payback.months"))} status={cac.status} source={cac.source}
           value={cac.value} sub={cac.sub} note={cac.note}
           caption="Time to recoup acquisition cost" />
-        <MetricCard id="sales_cycle" label="Median Sales Cycle" status="neutral" source={r.sales_cycle?.source}
+        <MetricCard id="sales_cycle" label={metricLabel("sales_cycle.median_days")} qualifier={bracketed(metricQualifier("sales_cycle.median_days"))} status="neutral" source={r.sales_cycle?.source}
           value={r.sales_cycle?.median_days != null ? `${fmtDays(r.sales_cycle.median_days)} d` : "n/c"}
           sub={r.sales_cycle ? (
             <>
@@ -208,7 +221,7 @@ export default function Dashboard() {
             </>
           ) : ""}
           caption="Speed of closing new deals" />
-        <MetricCard id="win_rate" label="Win Rate" status="neutral" source={r.win_rate?.source}
+        <MetricCard id="win_rate" label={metricLabel("win_rate.win_rate_pct")} qualifier={bracketed(metricQualifier("win_rate.win_rate_pct"))} status="neutral" source={r.win_rate?.source}
           value={r.win_rate ? fmtPct(r.win_rate.win_rate_pct) : "n/c"}
           sub={r.win_rate ? (
             <Gloss id="win-rate-wl" text="Won versus lost">{fmtCount(r.win_rate.won)}W / {fmtCount(r.win_rate.lost)}L</Gloss>
@@ -222,7 +235,7 @@ export default function Dashboard() {
       </div>
 
       {/* Narrative — status tells the reader which figures were verified */}
-      <Narrative state={generating ? { loading: true } : narrative} step="growth_engine" />
+      <Narrative state={generating ? { loading: true } : narrative} />
 
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6">
@@ -305,10 +318,10 @@ export default function Dashboard() {
                 </div>
               )}
               <div className="grid grid-cols-2 gap-3 mb-4">
-                <Stat label="Current customers" value={fmtCount(r.acv_path.current_customers)} />
-                <Stat label="Current ARR" value={fmtCurrency(r.acv_path.current_arr, ccy)} />
-                <Stat label="ACV (average contract value)" value={fmtCurrency(r.acv_path.acv, ccy)} />
-                <Stat label="Customers needed" value={fmtCountUp(r.acv_path.customers_needed)} />
+                <Stat path="current_customers" value={fmtCount(r.acv_path.current_customers)} />
+                <Stat path="current_arr" value={fmtCurrency(r.acv_path.current_arr, ccy)} />
+                <Stat path="acv" value={fmtCurrency(r.acv_path.acv, ccy)} />
+                <Stat path="customers_needed" value={fmtCountUp(r.acv_path.customers_needed)} />
               </div>
               <ResponsiveContainer width="100%" height={160}>
                 {(() => {
@@ -471,6 +484,14 @@ export default function Dashboard() {
           ))}
         </dl>
       </Card>
+
+      {/* One disclosure for the whole analysis: which model wrote the narrative and
+          when. Prompt version is deliberately not shown - it stays in the audit trail. */}
+      {disclosure?.text && (
+        <p data-testid="ai-disclosure" className="mb-6 border-t border-[#E5E7EB] pt-3 text-xs text-slate-500">
+          {disclosure.text}
+        </p>
+      )}
     </Layout>
   );
 }
@@ -487,11 +508,15 @@ function Card({ title, hint, className = "", testid, children }) {
   );
 }
 
-function Stat({ label, value }) {
+function Stat({ path, label, value }) {
+  const name = label ?? metricLabel(path);
+  const qualifier = bracketed(metricQualifier(path));
   return (
     <div>
-      <div className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">{label}</div>
+      <div className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">{name}</div>
       <div className="font-mono text-slate-900 text-lg">{value}</div>
+      {/* A stat is read on its own, so its qualifier sits beneath the value. */}
+      {qualifier && <div className="text-[10px] text-slate-500 font-mono">{qualifier}</div>}
     </div>
   );
 }

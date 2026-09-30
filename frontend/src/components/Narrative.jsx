@@ -10,7 +10,7 @@ import { AlertTriangle, Loader2, FileText } from "lucide-react";
  * "flagged" narrative is shown with the unverified figures named explicitly.
  * The reader should never have to guess which numbers were checked.
  */
-export function Narrative({ state, step = "growth_engine" }) {
+export function Narrative({ state }) {
   if (state?.loading) {
     return (
       <Card>
@@ -95,11 +95,6 @@ export function Narrative({ state, step = "growth_engine" }) {
 
       <Section title="Worth flagging" items={narrative.worth_flagging} />
       <Section title="Next actions" items={narrative.next_actions} />
-
-      <div className="mt-4 border-t border-[#E5E7EB] pt-2 font-mono text-[10px] text-slate-500">
-        {step} · prompt {state.prompt_version ?? "—"} · {state.model ?? "—"}
-        {state.cache_hit ? " · cached" : ""}
-      </div>
     </Card>
   );
 }

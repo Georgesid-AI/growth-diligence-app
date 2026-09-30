@@ -194,11 +194,12 @@ def test_every_numeric_field_the_gateway_can_send_has_a_display_kind():
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("path,label", [
     ("metrics.acv_path.customers_needed", "Customers needed"),
-    ("metrics.nrr.overall_pct", "NRR overall"),
+    ("metrics.nrr.overall_pct", "NRR"),
     ("metrics.gross_churn.overall_pct", "Gross churn"),
     ("metrics.arr.value", "Ending ARR"),
+    ("metrics.acv_path.current_arr", "Ending ARR"),      # same figure, same name as the ARR tile
     ("metrics.acv_path.acv", "ACV (average contract value)"),
-    ("metrics.cac_payback.quarters.2026-Q1.L1.months", "CAC payback (months)"),
+    ("metrics.cac_payback.quarters.2026-Q1.L1.months", "CAC payback"),
     ("metrics.nrr.by_segment.Enterprise.nrr_pct", "NRR"),
     ("metrics.cohort_retention.data.values.3", "Cohort MRR retained"),
     ("acv", "ACV (average contract value)"),          # bare leaf, also an accepted citation
@@ -276,11 +277,65 @@ def test_row_labels_are_added_to_the_response_and_not_to_the_model_contract():
     )
     resp = NarrativeResponse(run_id="r", step="growth_engine", narrative_status="ok", narrative=n)
     assert resp.row_labels == {
-        "metrics.acv_path.customers_needed": "Customers needed",
-        "metrics.nrr.overall_pct": "NRR overall",
+        "metrics.acv_path.customers_needed": "Customers needed (at current ACV)",
+        "metrics.nrr.overall_pct": "NRR (latest month)",
     }
     # Citations are untouched, and the model is never asked for or sent labels.
     assert [r.source_key for r in resp.narrative.table_rows] == [
         "metrics.acv_path.customers_needed", "metrics.nrr.overall_pct"]
     assert "row_labels" not in json.dumps(narrative_output_schema())
     assert NarrativeResponse(run_id="r", step="s", narrative_status="unavailable").row_labels == {}
+
+
+# ---------------------------------------------------------------------------
+# Qualifiers: uniform bracket format, one wording for tile and table
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("path,name", [
+    ("metrics.nrr.overall_pct", "NRR (latest month)"),
+    ("metrics.sales_cycle.median_days", "Median sales cycle (all won deals)"),
+    ("metrics.gross_churn.overall_pct", "Gross churn (latest month)"),
+    ("metrics.win_rate.win_rate_pct", "Win rate (closed deals)"),
+    ("metrics.arr.value", "Ending ARR (latest month MRR × 12)"),
+    ("metrics.cac_payback.months", "CAC payback (latest quarter)"),
+    ("metrics.cac_payback.quarters.2026-Q1.L1.months", "CAC payback (2026-Q1)"),  # a named quarter says which
+    ("metrics.acv_path.observed_net_new_per_year_12m", "Observed net-new customers per year (last 12 months)"),
+    ("metrics.acv_path.customers_needed", "Customers needed (at current ACV)"),
+])
+def test_display_name_puts_the_qualifier_in_brackets(path, name):
+    assert f.display_name(path) == name
+
+
+def test_no_display_name_has_a_comma_before_its_bracket():
+    for path in list(f.LABEL_BY_PATH) + list(f.QUALIFIER_BY_PATH):
+        name = f.display_name(path)
+        assert ", (" not in name and ",(" not in name, name
+        assert name.count("(") == name.count(")"), name
+
+
+def test_every_qualified_path_has_a_label():
+    assert set(f.QUALIFIER_BY_PATH) <= set(f.LABEL_BY_PATH)
+
+
+def test_frontend_metric_names_json_is_generated_from_the_backend_maps():
+    """The tiles read metric_names.json; the table reads these maps. They must not drift."""
+    path = Path(__file__).parents[2] / "frontend/src/lib/metric_names.json"
+    assert json.loads(path.read_text("utf-8")) == f.metric_names_export(), (
+        "frontend/src/lib/metric_names.json is stale - regenerate it with:\n"
+        "  python -c \"import json; from app import formatting as f; "
+        "open('../frontend/src/lib/metric_names.json','w').write("
+        "json.dumps(f.metric_names_export(), indent=2, ensure_ascii=False)+chr(10))\""
+    )
+
+
+# Every tile on the dashboard, by the path it is looked up under in Dashboard.jsx.
+TILE_PATHS = [
+    "arr.value", "nrr.overall_pct", "gross_churn.overall_pct", "cac_payback.months",
+    "sales_cycle.median_days", "win_rate.win_rate_pct",
+    "current_customers", "current_arr", "acv", "customers_needed",
+]
+
+
+@pytest.mark.parametrize("path", TILE_PATHS)
+def test_every_tile_has_a_label_and_a_qualifier(path):
+    assert f.explicit_label(path), path
+    assert f.qualifier_for(path), f"a tile is read on its own; {path} needs a qualifier"

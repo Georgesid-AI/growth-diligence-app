@@ -53,6 +53,8 @@ async def get(db, key: str) -> Optional[dict]:
         "narrative_status": doc.get("narrative_status", "ok"),
         "unmatched_numbers": list(doc.get("unmatched_numbers", [])),
         "created_at": doc.get("created_at"),
+        "model": doc.get("model"),
+        "prompt_version": doc.get("prompt_version"),
     }
 
 

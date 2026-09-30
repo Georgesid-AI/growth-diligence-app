@@ -426,7 +426,7 @@ async def get_results(audit_id: str):
     return sanitize({"audit": {k: a.get(k) for k in keys}, "results": a["results"]})
 
 
-def build_export_workbook(meta: dict, r: dict) -> io.BytesIO:
+def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = None) -> io.BytesIO:
     """Numeric cells with Excel number formats (see app/formatting.py), so the
     display follows the formatting rules while analysts can still sum and sort."""
     ccy = r.get("reporting_currency", "")
@@ -488,6 +488,11 @@ def build_export_workbook(meta: dict, r: dict) -> io.BytesIO:
             ("Win rate", fmt.PCT, wr.get("win_rate_pct")),
             ("Deals excluded (close<created)", fmt.COUNT, wr.get("excluded_invalid")),
         ])
+        if disclosure_text:
+            # Foot of the summary sheet: the same block the dashboard shows (app/disclosure.py).
+            ws = xw.sheets["Headline"]
+            ws.cell(row=ws.max_row + 2, column=1).value = "AI disclosure"
+            ws.cell(row=ws.max_row, column=2).value = disclosure_text
 
         # By segment
         seg_rows = {}
@@ -598,7 +603,11 @@ async def export_audit(audit_id: str):
         raise HTTPException(404, "Audit not found")
     if not a.get("results"):
         raise HTTPException(409, "Audit not computed yet")
-    buf = build_export_workbook(a, a["results"])
+    try:
+        block = await llm_gateway.disclosure_for_run(db, audit_id)
+    except Exception:  # the export never depends on the narrative service
+        block = None
+    buf = build_export_workbook(a, a["results"], block["text"] if block else None)
     safe = "".join(c for c in (a.get("company_name") or "audit") if c.isalnum() or c in " -_").strip().replace(" ", "_")
     fname = f"{safe or 'audit'}_growth_diligence.xlsx"
     return StreamingResponse(
@@ -645,6 +654,23 @@ async def read_narrative(run_id: str, step: str):
             raise HTTPException(409, "Run not computed yet")
         raise HTTPException(500, exc.reason)
     return sanitize(result.model_dump())
+
+
+@api.get("/runs/{run_id}/disclosure")
+async def narrative_disclosure(run_id: str):
+    """The AI-provenance block for this run (model and generation time), or null.
+
+    Read-only; shared by the dashboard, the xlsx export and any memo export.
+    """
+    try:
+        block = await llm_gateway.disclosure_for_run(db, run_id)
+    except llm_gateway.GatewayError as exc:
+        if exc.reason == "run_not_found":
+            raise HTTPException(404, "Run not found")
+        if exc.reason == "not_computed":
+            return {"disclosure": None}
+        raise HTTPException(500, exc.reason)
+    return {"disclosure": block}
 
 
 @api.get("/runs/{run_id}/llm-usage")

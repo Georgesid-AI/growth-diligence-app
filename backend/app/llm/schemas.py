@@ -117,7 +117,7 @@ class NarrativeResponse(BaseModel):
     def _fill_row_labels(self):
         if self.narrative is not None and not self.row_labels:
             self.row_labels = {
-                r.source_key: formatting.label_for(r.source_key, r.label)
+                r.source_key: formatting.display_name(r.source_key, r.label)
                 for r in self.narrative.table_rows
             }
         return self

@@ -277,9 +277,16 @@ def define_acv_on_first_use(fields: list) -> list:
 # ---------------------------------------------------------------------------
 # The narrative table cites each figure by its dotted engine path
 # ("metrics.nrr.overall_pct"). That path is the audit trail and stays available,
-# but the primary text of a row is a plain-English name from this map. It is a
+# but the primary text of a row is a plain-English name from this module. It is a
 # display concern only: the model is never sent these names and citations are
 # still matched on the path.
+#
+# A name is a base label plus, where the number cannot be read correctly without
+# it, a qualifier - always rendered in brackets with no comma before them:
+# "NRR (latest month)". Dashboard tiles and table rows use the same base label and
+# the same qualifier wording, taken from here; the tile shows the qualifier as
+# small text beneath its value. `frontend/src/lib/metric_names.json` is generated
+# from these two maps and a test fails if it is out of date.
 #
 # Keyed by the last two path segments where the leaf alone is ambiguous
 # ("nrr.overall_pct" vs "gross_churn.overall_pct"), otherwise by the last one.
@@ -294,29 +301,29 @@ LABEL_BY_PATH = {
     "by_cohort": "By cohort", "by_founder": "By founder involvement",
     "target_arr": "Target ARR", "target_date": "Target date", "as_of_month": "As-of month",
     "month": "Month",
-    # ARR
-    "arr.value": "Ending ARR", "arr.mrr": "Current MRR", "arr.arr": "ARR",
+    # ARR - the same figure under two paths, so one name
+    "arr.value": "Ending ARR", "current_arr": "Ending ARR", "arr.mrr": "MRR", "arr.arr": "ARR",
     # retention
-    "nrr.overall_pct": "NRR overall", "nrr.n": "NRR base customers", "nrr_pct": "NRR",
+    "nrr.overall_pct": "NRR", "nrr.n": "NRR base customers", "nrr_pct": "NRR",
     "gross_churn.overall_pct": "Gross churn", "churn_pct": "Gross churn",
     "months_available": "Months of history available",
     # CAC payback
-    "months": "CAC payback (months)", "default_l": "S&M spend lag (quarters)",
+    "months": "CAC payback", "default_l": "S&M spend lag (quarters)",
     "new_mrr": "New MRR", "sm_expense": "S&M spend", "gross_margin_pct": "Gross margin",
     # sales
-    "median_days": "Median sales cycle (days)", "iqr": "Sales cycle interquartile range (days)",
+    "median_days": "Median sales cycle", "iqr": "Sales cycle interquartile range",
     "sales_cycle.n": "Deals in sales-cycle sample", "win_rate_pct": "Win rate",
     "won": "Deals won", "lost": "Deals lost",
     "excluded_invalid": "Deals excluded (close before created)",
     "founder_involved_excluded.count": "Deals with an unrecognised founder flag",
     # path to plan
-    "current_customers": "Current customers", "current_arr": "Current ARR",
-    "acv": "ACV (average contract value)", "customers_needed": "Customers needed",
+    "current_customers": "Customers", "acv": "ACV (average contract value)",
+    "customers_needed": "Customers needed",
     "required_net_new_per_year": "Required net-new customers per year",
-    "observed_net_new_per_year_12m": "Observed net-new customers per year (12 months)",
-    "observed_net_new_per_year_24m": "Observed net-new customers per year (24 months)",
-    "required_vs_observed_12m": "Required vs observed net-new (12 months)",
-    "required_vs_observed_24m": "Required vs observed net-new (24 months)",
+    "observed_net_new_per_year_12m": "Observed net-new customers per year",
+    "observed_net_new_per_year_24m": "Observed net-new customers per year",
+    "required_vs_observed_12m": "Required vs observed net-new customers",
+    "required_vs_observed_24m": "Required vs observed net-new customers",
     "low": "ACV band lower bound", "high": "ACV band upper bound",
     "customers": "Customers", "count": "Customers in band",
     # cohort retention
@@ -325,6 +332,29 @@ LABEL_BY_PATH = {
     # generic
     "n": "Sample size", "total": "Total MRR",
 }
+
+# What a reader needs to know to read the number correctly, from the engine's own
+# rules (see the `source` rule strings in growth_engine.py). Only metrics whose
+# scope is not obvious from the name carry one.
+QUALIFIER_BY_PATH = {
+    "arr.value": "latest month MRR × 12", "current_arr": "latest month MRR × 12",
+    "arr.mrr": "latest month",
+    "nrr.overall_pct": "latest month",
+    "gross_churn.overall_pct": "latest month",
+    "months": "latest quarter",
+    "median_days": "all won deals", "iqr": "all won deals",
+    "win_rate_pct": "closed deals",
+    "current_customers": "active, latest month",
+    "acv": "ARR ÷ active customers",
+    "customers_needed": "at current ACV",
+    "required_net_new_per_year": "to reach target ARR",
+    "observed_net_new_per_year_12m": "last 12 months",
+    "observed_net_new_per_year_24m": "last 24 months",
+    "required_vs_observed_12m": "last 12 months",
+    "required_vs_observed_24m": "last 24 months",
+}
+
+_QUARTER = re.compile(r"^\d{4}-Q[1-4]$")
 
 
 def _label_segments(source_key: str) -> list:
@@ -337,19 +367,22 @@ def _label_segments(source_key: str) -> list:
     return segs
 
 
-def explicit_label(source_key: str) -> Optional[str]:
-    """The mapped name for a cited path, or None if the path has no entry."""
-    segs = _label_segments(source_key)
+def _lookup(table: dict, segs: list) -> Optional[str]:
     for width in (2, 1):
         if len(segs) >= width:
-            label = LABEL_BY_PATH.get(".".join(segs[-width:]))
-            if label:
-                return label
+            hit = table.get(".".join(segs[-width:]))
+            if hit:
+                return hit
     return None
 
 
+def explicit_label(source_key: str) -> Optional[str]:
+    """The mapped base label for a cited path, or None if the path has no entry."""
+    return _lookup(LABEL_BY_PATH, _label_segments(source_key))
+
+
 def label_for(source_key: str, fallback: Optional[str] = None) -> str:
-    """Plain-English name for a cited engine path.
+    """Plain-English base label for a cited engine path (no qualifier).
 
     An unmapped path gets a humanised leaf ("overall_band" -> "Overall band")
     rather than the raw dotted path, so a new field degrades to something
@@ -362,3 +395,29 @@ def label_for(source_key: str, fallback: Optional[str] = None) -> str:
     if segs:
         return segs[-1].replace("_", " ").capitalize()
     return fallback or str(source_key)
+
+
+def qualifier_for(source_key: str) -> Optional[str]:
+    """The qualifier text (without brackets) for a cited path, if it needs one."""
+    segs = _label_segments(source_key)
+    qualifier = _lookup(QUALIFIER_BY_PATH, segs)
+    # A row citing one specific quarter says which, instead of "latest quarter".
+    quarter = next((s for s in segs if _QUARTER.match(s)), None)
+    if quarter and qualifier == "latest quarter":
+        return quarter
+    return qualifier
+
+
+def with_qualifier(label: str, qualifier: Optional[str]) -> str:
+    """"NRR" + "latest month" -> "NRR (latest month)". One format, everywhere."""
+    return f"{label} ({qualifier})" if qualifier else label
+
+
+def display_name(source_key: str, fallback: Optional[str] = None) -> str:
+    """The full name shown for a cited path: base label plus qualifier."""
+    return with_qualifier(label_for(source_key, fallback), qualifier_for(source_key))
+
+
+def metric_names_export() -> dict:
+    """What `frontend/src/lib/metric_names.json` must contain."""
+    return {"labels": dict(LABEL_BY_PATH), "qualifiers": dict(QUALIFIER_BY_PATH)}
