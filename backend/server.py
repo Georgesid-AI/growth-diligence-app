@@ -17,6 +17,8 @@ from pydantic import BaseModel, Field, field_validator
 import growth_engine as ge
 import demo_data
 from app import formatting as fmt
+from app import disclosure as disclosure_mod
+from app import narrative_export
 from app.llm import gateway as llm_gateway
 
 ROOT_DIR = Path(__file__).parent
@@ -426,11 +428,14 @@ async def get_results(audit_id: str):
     return sanitize({"audit": {k: a.get(k) for k in keys}, "results": a["results"]})
 
 
-def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = None) -> io.BytesIO:
+def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = None,
+                          narratives: Optional[list] = None) -> io.BytesIO:
     """Numeric cells with Excel number formats (see app/formatting.py), so the
     display follows the formatting rules while analysts can still sum and sort."""
     ccy = r.get("reporting_currency", "")
-    money = f" ({ccy})" if ccy else ""
+    cur = ccy or None                  # the currency code is a unit: last in the label's one bracket
+    lab = fmt.label_with               # the shared label builder - one bracket, fixed order
+    qual = fmt.qualifier_for           # qualifiers come from the shared map, so tile, table and export agree
 
     def kv_sheet(xw, sheet, rows):
         """rows: (label, kind, value); kind None means the value is text."""
@@ -458,6 +463,73 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
                 for row in range(startrow + 2, startrow + 2 + len(df)):
                     ws.cell(row=row, column=c).number_format = fmt.XLSX_NUMBER_FORMAT[kind]
 
+    def write_narrative_sheet(xw, resp, meta, results):
+        """One sheet for one generated narrative: what it was written against, then six sections."""
+        from openpyxl.styles import Alignment, Font
+
+        narrative = resp.narrative
+        name = narrative_export.sheet_name(resp.step)
+        ws = xw.book.create_sheet(name)
+        bold, wrap = Font(bold=True), Alignment(wrap_text=True, vertical="top")
+        for col, width in zip("ABCD", (34, 90, 46, 24)):
+            ws.column_dimensions[col].width = width
+        row = [1]
+
+        def put(col, text, font=None):
+            cell = ws.cell(row=row[0], column=col)
+            cell.value = text
+            if isinstance(text, str) and text[:1] in ("=", "+", "-", "@"):
+                cell.data_type = "s"          # narrative text is never a formula
+            cell.alignment = wrap
+            if font:
+                cell.font = font
+            return cell
+
+        def line(label=None, text=None):
+            if label is not None:
+                put(1, label, bold)
+            if text is not None:
+                put(2, text)
+            row[0] += 1
+
+        put(1, f"{disclosure_mod.STEP_LABELS.get(resp.step, resp.step)} narrative", Font(bold=True, size=13))
+        row[0] += 1
+        for label, text in narrative_export.written_against(meta, results):
+            line(label, text)
+        row[0] += 1
+        if resp.narrative_status == "flagged" and resp.unmatched_numbers:
+            line("Unverified figures",
+                 f"Unverified figures in this text: {', '.join(resp.unmatched_numbers)}. Numbers in the headline and "
+                 "evidence table are verified against the calculation engine; these are not.")
+            row[0] += 1
+        line("Headline", narrative.headline)
+        line("What this means", narrative.what_this_means)
+        row[0] += 1
+        line("Evidence table")
+        for col, head in enumerate(("Metric", "Value", "Source key", "Where to find the number"), start=1):
+            put(col, head, bold)
+        row[0] += 1
+        for tr in narrative.table_rows:
+            put(1, (resp.row_labels or {}).get(tr.source_key) or fmt.display_name(tr.source_key, tr.label))
+            put(2, tr.value)
+            put(3, tr.source_key)
+            sheet = narrative_export.data_sheet_for(tr.source_key, results)
+            put(4, sheet)
+            row[0] += 1
+        if not narrative.table_rows:
+            line(None, "No evidence rows.")
+        row[0] += 1
+        for title, items in (("Worth flagging", narrative.worth_flagging),
+                             ("Next actions", narrative.next_actions),
+                             ("Source keys", narrative.source_keys)):
+            if not items:
+                line(title, "None")
+            for i, item in enumerate(items):
+                put(1, title if i == 0 else None, bold)
+                put(2, item if title == "Source keys" else f"{i + 1}. {item}")
+                row[0] += 1
+            row[0] += 1
+
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as xw:
         # Headline
@@ -469,7 +541,7 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
         cac = r.get("cac_payback") or {}
         # Headline is the latest COMPLETE quarter (a partial quarter overstates payback and is
         # never a headline); the quarter is named so an older figure is not read as current.
-        cac_label, cac_value = "CAC payback, months (no complete quarter)", None
+        cac_label, cac_value = lab("CAC payback", "no complete quarter", unit="months"), None
         if cac:
             L = f"L{cac.get('default_l', 1)}"
             hq = cac.get("headline_quarter")
@@ -479,21 +551,24 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
                 hq = done[-1] if done else None
             if hq:
                 cac_value = cac["quarters"][hq][L]["months"]
-                cac_label = f"CAC payback, months ({hq}, {L}, latest complete quarter)"
+                cac_label = lab("CAC payback", hq, qual("months"), unit="months")
         kv_sheet(xw, "Headline", [
             ("Company", None, meta.get("company_name")),
             ("As-of month", None, meta.get("as_of_month") or r.get("as_of_month")),
             ("Reporting currency", None, ccy),
-            (f"Ending ARR{money}", fmt.CURRENCY, arr.get("value")),
-            (f"Current MRR{money}", fmt.CURRENCY, arr.get("mrr")),
+            (lab("Ending ARR", unit=cur), fmt.CURRENCY, arr.get("value")),
+            (lab("Current MRR", unit=cur), fmt.CURRENCY, arr.get("mrr")),
             ("ARR month", None, arr.get("month")),
             ("NRR overall", fmt.PCT, nrr.get("overall_pct")),
             ("Gross revenue churn", fmt.PCT, churn.get("overall_pct")),
             (cac_label, fmt.MONTHS, cac_value),
-            ("Median sales cycle (days)", fmt.DAYS, sc.get("median_days")),
+            (lab("S&M spend lag used for CAC payback", unit="quarters"), fmt.PLAIN, cac.get("default_l") if cac else None),
+            (lab("Median sales cycle", unit="days"), fmt.DAYS, sc.get("median_days")),
             ("Win rate", fmt.PCT, wr.get("win_rate_pct")),
             ("Deals excluded (close<created)", fmt.COUNT, wr.get("excluded_invalid")),
         ])
+        for n in narratives or []:
+            write_narrative_sheet(xw, n, meta, r)
         if disclosure_text:
             # Foot of the summary sheet: the same block the dashboard shows (app/disclosure.py).
             ws = xw.sheets["Headline"]
@@ -506,17 +581,17 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
             seg_rows.setdefault(seg, {})["NRR"] = v.get("nrr_pct")
             seg_rows[seg]["NRR base n"] = v.get("n")
         for seg, v in (sc.get("by_segment") or {}).items():
-            seg_rows.setdefault(seg, {})["Sales cycle median (d)"] = v.get("median_days")
+            seg_rows.setdefault(seg, {})[lab("Sales cycle median", unit="days")] = v.get("median_days")
             seg_rows[seg]["Sales cycle n"] = v.get("n")
         for seg, v in ((r.get("acv_path") or {}).get("by_segment") or {}).items():
             seg_rows.setdefault(seg, {})["Customers"] = v.get("customers")
-            seg_rows[seg][f"ACV{money}"] = v.get("acv")
-            seg_rows[seg][f"ARR{money}"] = v.get("arr")
+            seg_rows[seg][lab("ACV", qual("acv"), unit=cur)] = v.get("acv")
+            seg_rows[seg][lab("ARR", unit=cur)] = v.get("arr")
         if seg_rows:
             table_sheet(xw, "By Segment", pd.DataFrame([{"Segment": s, **vals} for s, vals in seg_rows.items()]), {
-                "NRR": fmt.PCT, "NRR base n": fmt.COUNT, "Sales cycle median (d)": fmt.DAYS,
+                "NRR": fmt.PCT, "NRR base n": fmt.COUNT, lab("Sales cycle median", unit="days"): fmt.DAYS,
                 "Sales cycle n": fmt.COUNT, "Customers": fmt.COUNT,
-                f"ACV{money}": fmt.CURRENCY, f"ARR{money}": fmt.CURRENCY,
+                lab("ACV", qual("acv"), unit=cur): fmt.CURRENCY, lab("ARR", unit=cur): fmt.CURRENCY,
             })
         else:
             pd.DataFrame([{"Segment": "(no segment column mapped)"}]).to_excel(xw, sheet_name="By Segment", index=False)
@@ -541,17 +616,17 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
         for q, v in (cac.get("quarters") or {}).items():
             row = {"Quarter": q,
                    "Quarter status": (f"partial ({v.get('months_in_quarter')} of 3 months)" if v.get("partial") else "complete"),
-                   f"New MRR{money}": v.get("new_mrr"), "Gross margin": v.get("gross_margin_pct")}
+                   lab("New MRR", unit=cur): v.get("new_mrr"), "Gross margin": v.get("gross_margin_pct")}
             for L in ("L0", "L1", "L2"):
                 row[f"{L} months"] = v[L].get("months")
-                row[f"{L} S&M used{money}"] = v[L].get("sm_expense")
+                row[lab(f"{L} S&M used", unit=cur)] = v[L].get("sm_expense")
                 row[f"{L} reason"] = v[L].get("reason")
             cac_rows.append(row)
         if cac_rows:
-            kinds = {f"New MRR{money}": fmt.CURRENCY, "Gross margin": fmt.PCT}
+            kinds = {lab("New MRR", unit=cur): fmt.CURRENCY, "Gross margin": fmt.PCT}
             for L in ("L0", "L1", "L2"):
                 kinds[f"{L} months"] = fmt.MONTHS
-                kinds[f"{L} S&M used{money}"] = fmt.CURRENCY
+                kinds[lab(f"{L} S&M used", unit=cur)] = fmt.CURRENCY
             table_sheet(xw, "CAC by Quarter", pd.DataFrame(cac_rows), kinds)
         else:
             pd.DataFrame([{"Quarter": "(P&L not provided)"}]).to_excel(xw, sheet_name="CAC by Quarter", index=False)
@@ -560,18 +635,18 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
         ap = r.get("acv_path") or {}
         kv_sheet(xw, "Path to Plan", [
             ("Current customers", fmt.COUNT, ap.get("current_customers")),
-            (f"Current ARR{money}", fmt.CURRENCY, ap.get("current_arr")),
-            (f"ACV (average contract value){money}", fmt.CURRENCY, ap.get("acv")),
-            (f"Target ARR{money}", fmt.CURRENCY, ap.get("target_arr")),
+            (lab("Current ARR", unit=cur), fmt.CURRENCY, ap.get("current_arr")),
+            (lab("ACV", qual("acv"), unit=cur), fmt.CURRENCY, ap.get("acv")),
+            (lab("Target ARR", unit=cur), fmt.CURRENCY, ap.get("target_arr")),
             ("Target date", None, ap.get("target_date")),
-            ("Total customers at target ARR (at current ACV)", fmt.COUNT_UP,
+            (fmt.display_name("total_customers_at_target"), fmt.COUNT_UP,
              ap.get("total_customers_at_target", ap.get("customers_needed"))),
-            ("Additional customers needed (at current ACV)", fmt.COUNT_UP, ap.get("additional_customers_needed")),
+            (fmt.display_name("additional_customers_needed"), fmt.COUNT_UP, ap.get("additional_customers_needed")),
             ("Required net-new / year", fmt.COUNT_UP, ap.get("required_net_new_per_year")),
-            ("Observed net-new / year (12m)", fmt.COUNT, ap.get("observed_net_new_per_year_12m")),
-            ("Observed net-new / year (24m)", fmt.COUNT, ap.get("observed_net_new_per_year_24m")),
-            ("Required ÷ observed (12m)", fmt.RATIO, ap.get("required_vs_observed_12m")),
-            ("Required ÷ observed (24m)", fmt.RATIO, ap.get("required_vs_observed_24m")),
+            (lab("Observed net-new / year", "12m"), fmt.COUNT, ap.get("observed_net_new_per_year_12m")),
+            (lab("Observed net-new / year", "24m"), fmt.COUNT, ap.get("observed_net_new_per_year_24m")),
+            (lab("Required ÷ observed", "12m"), fmt.RATIO, ap.get("required_vs_observed_12m")),
+            (lab("Required ÷ observed", "24m"), fmt.RATIO, ap.get("required_vs_observed_24m")),
         ])
 
         # ACV bands (hide empty bands, keep fixed low-to-high display order)
@@ -590,59 +665,59 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
         sp = r.get("segment_paths") or {}
         if sp.get("stage_one"):
             so = sp["stage_one"]
-            rows_ = [{"Segment": seg, f"Starting ARR{money}": v["start_arr"], "Customers": v["customers"],
-                      "NRR (trailing 12 months)": v["nrr_pct"], "NRR base customers": v["nrr_base_customers"],
-                      f"Projected ARR (at constant NRR){money}": v["projected_arr"],
-                      f"Change in ARR (at constant NRR){money}": v["change_arr"],
-                      f"ARR change per NRR point{money}": v["arr_change_per_nrr_point"],
+            rows_ = [{"Segment": seg, lab("Starting ARR", unit=cur): v["start_arr"], "Customers": v["customers"],
+                      fmt.display_name("nrr.overall_pct"): v["nrr_pct"], "NRR base customers": v["nrr_base_customers"],
+                      lab("Projected ARR", qual("projected_arr"), unit=cur): v["projected_arr"],
+                      lab("Change in ARR", qual("change_arr"), unit=cur): v["change_arr"],
+                      lab("ARR change per NRR point", qual("arr_change_per_nrr_point"), unit=cur): v["arr_change_per_nrr_point"],
                       "Small base": "yes (fewer than 10)" if v["small_base"] else "no"}
                      for seg, v in so["segments"].items()]
-            rows_.append({"Segment": "All segments", f"Starting ARR{money}": so["start_arr_total"],
-                          f"Projected ARR (at constant NRR){money}": so.get("projected_base_arr"),
-                          f"Change in ARR (at constant NRR){money}": (
+            rows_.append({"Segment": "All segments", lab("Starting ARR", unit=cur): so["start_arr_total"],
+                          lab("Projected ARR", qual("projected_arr"), unit=cur): so.get("projected_base_arr"),
+                          lab("Change in ARR", qual("change_arr"), unit=cur): (
                               so["projected_base_arr"] - so["start_arr_total"] if so.get("projected_base_arr") is not None else None)})
             table_sheet(xw, "Segment Base", pd.DataFrame(rows_), {
-                f"Starting ARR{money}": fmt.CURRENCY, "Customers": fmt.COUNT, "NRR (trailing 12 months)": fmt.PCT,
-                "NRR base customers": fmt.COUNT, f"Projected ARR (at constant NRR){money}": fmt.CURRENCY,
-                f"Change in ARR (at constant NRR){money}": fmt.CURRENCY, f"ARR change per NRR point{money}": fmt.CURRENCY,
+                lab("Starting ARR", unit=cur): fmt.CURRENCY, "Customers": fmt.COUNT, fmt.display_name("nrr.overall_pct"): fmt.PCT,
+                "NRR base customers": fmt.COUNT, lab("Projected ARR", qual("projected_arr"), unit=cur): fmt.CURRENCY,
+                lab("Change in ARR", qual("change_arr"), unit=cur): fmt.CURRENCY, lab("ARR change per NRR point", qual("arr_change_per_nrr_point"), unit=cur): fmt.CURRENCY,
             }, startrow=1)
             xw.sheets["Segment Base"]["A1"] = sp["assumption"]
             mix_rows = [
                 ("Months to target date", fmt.MONTHS, sp.get("horizon_months")),
-                (f"Target ARR{money}", fmt.CURRENCY, sp.get("target_arr")),
-                (f"Gap to target ARR (to be supplied by new customers){money}", fmt.CURRENCY, sp.get("gap_arr")),
-                (f"ARR with no segment (excluded){money}", fmt.CURRENCY, sp.get("unsegmented_arr")),
+                (lab("Target ARR", unit=cur), fmt.CURRENCY, sp.get("target_arr")),
+                (lab("Gap to target ARR", qual("gap_arr"), unit=cur), fmt.CURRENCY, sp.get("gap_arr")),
+                (lab("ARR with no segment (excluded)", unit=cur), fmt.CURRENCY, sp.get("unsegmented_arr")),
                 ("Customers with no segment (excluded)", fmt.COUNT, sp.get("unsegmented_customers")),
             ]
             detail = []
             for w, rs in (sp.get("reverse_solve") or {}).items():
                 tag = f"{w}-month window"
                 if not rs.get("computable") or rs.get("target_met_by_base"):
-                    mix_rows.append((f"Reverse-solve, {tag}", None, rs.get("reason") or "not computable"))
+                    mix_rows.append((lab("Reverse-solve", tag), None, rs.get("reason") or "not computable"))
                     continue
                 verdict = {True: "yes", False: "no"}.get(rs.get("reachable"), f"undetermined: {rs.get('reason')}")
                 mix_rows += [
-                    (f"Gross new customers per year ({tag})", fmt.COUNT, rs.get("gross_new_per_year")),
-                    (f"Gross new customers by target date ({tag})", fmt.COUNT_UP, rs.get("new_customers_by_target")),
-                    (f"Required blended landed ACV ({tag}){money}", fmt.CURRENCY, rs.get("required_blended_landed_acv")),
-                    (f"Best segment landed ACV ({tag}){money}", fmt.CURRENCY, rs.get("best_segment_landed_acv")),
-                    (f"Any segment mix reaches it ({tag})", None, verdict),
-                    (f"Landed ACV at current mix ({tag}){money}", fmt.CURRENCY, rs.get("current_mix_landed_acv")),
-                    (f"Total mix moved, percentage points ({tag})", fmt.PCT, rs.get("moved_mix_pct")),
-                    (f"Gross new customers per year needed at current mix ({tag})", fmt.COUNT_UP, rs.get("required_new_per_year_at_current_mix")),
-                    (f"Needed vs observed gross new customers ({tag})", fmt.RATIO, rs.get("required_vs_observed_gross")),
+                    (lab("Gross new customers per year", tag), fmt.COUNT, rs.get("gross_new_per_year")),
+                    (lab("Gross new customers by target date", tag), fmt.COUNT_UP, rs.get("new_customers_by_target")),
+                    (lab("Required blended landed ACV", tag, unit=cur), fmt.CURRENCY, rs.get("required_blended_landed_acv")),
+                    (lab("Best segment landed ACV", tag, unit=cur), fmt.CURRENCY, rs.get("best_segment_landed_acv")),
+                    (lab("Any segment mix reaches it", tag), None, verdict),
+                    (lab("Landed ACV at current mix", tag, unit=cur), fmt.CURRENCY, rs.get("current_mix_landed_acv")),
+                    (lab("Total mix moved", tag, unit="percentage points"), fmt.PCT, rs.get("moved_mix_pct")),
+                    (lab("Gross new customers per year needed at current mix", tag), fmt.COUNT_UP, rs.get("required_new_per_year_at_current_mix")),
+                    (lab("Needed vs observed gross new customers", tag), fmt.RATIO, rs.get("required_vs_observed_gross")),
                 ]
                 for seg, v in (rs.get("by_segment") or {}).items():
                     landed = ((sp.get("landed") or {}).get(w) or {}).get("segments", {}).get(seg, {})
-                    detail.append({"Window (months)": int(w), "Segment": seg,
-                                   "Gross new customers": landed.get("new_customers"), f"Landed ACV{money}": v.get("landed_acv"),
+                    detail.append({lab("Window", unit="months"): int(w), "Segment": seg,
+                                   "Gross new customers": landed.get("new_customers"), lab("Landed ACV", unit=cur): v.get("landed_acv"),
                                    "Current mix": v.get("current_mix_pct"), "Required mix": v.get("required_mix_pct"),
-                                   "Shift vs current mix (percentage points)": v.get("shift_pct_points")})
+                                   lab("Shift vs current mix", unit="percentage points"): v.get("shift_pct_points")})
             kv_sheet(xw, "Segment Mix", mix_rows)
             if detail:
                 table_sheet(xw, "Segment Mix Detail", pd.DataFrame(detail), {
-                    "Gross new customers": fmt.COUNT, f"Landed ACV{money}": fmt.CURRENCY, "Current mix": fmt.PCT,
-                    "Required mix": fmt.PCT, "Shift vs current mix (percentage points)": fmt.PCT,
+                    "Gross new customers": fmt.COUNT, lab("Landed ACV", unit=cur): fmt.CURRENCY, "Current mix": fmt.PCT,
+                    "Required mix": fmt.PCT, lab("Shift vs current mix", unit="percentage points"): fmt.PCT,
                 })
         elif sp:
             pd.DataFrame([{"Segment paths": "not available", "Missing": m["input"], "What would resolve it": m["resolve"]}
@@ -676,10 +751,11 @@ async def export_audit(audit_id: str):
     if not a.get("results"):
         raise HTTPException(409, "Audit not computed yet")
     try:
-        block = await llm_gateway.disclosure_for_run(db, audit_id)
+        narratives = await llm_gateway.narratives_for_run(db, audit_id)
     except Exception:  # the export never depends on the narrative service
-        block = None
-    buf = build_export_workbook(a, a["results"], block["text"] if block else None)
+        narratives = []
+    block = llm_gateway.disclosure_from(narratives)
+    buf = build_export_workbook(a, a["results"], block["text"] if block else None, narratives)
     safe = "".join(c for c in (a.get("company_name") or "audit") if c.isalnum() or c in " -_").strip().replace(" ", "_")
     fname = f"{safe or 'audit'}_growth_diligence.xlsx"
     return StreamingResponse(

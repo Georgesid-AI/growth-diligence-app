@@ -270,6 +270,7 @@ def format_payload(node: Any, ccy: Optional[str] = None, _key: Optional[str] = N
 # ---------------------------------------------------------------------------
 GLOSSARY = {
     "ACV": "average contract value",
+    "Landed ACV": "first-month ARR of a customer who has just landed, with no expansion applied",
     "ARR": "annual recurring revenue",
     "MRR": "monthly recurring revenue",
     "NRR": "net revenue retention",
@@ -336,7 +337,7 @@ LABEL_BY_PATH = {
     "gross_churn.overall_pct": "Gross churn", "churn_pct": "Gross churn",
     "months_available": "Months of history available",
     # CAC payback
-    "months": "CAC payback", "default_l": "S&M spend lag (quarters)",
+    "months": "CAC payback", "default_l": "S&M spend lag",
     "months_in_quarter": "Months of data in the quarter",
     "new_mrr": "New MRR", "sm_expense": "S&M spend", "gross_margin_pct": "Gross margin",
     # sales
@@ -347,7 +348,7 @@ LABEL_BY_PATH = {
     "excluded_after_as_of": "Deals excluded (after as-of month)",
     "founder_involved_excluded.count": "Deals with an unrecognised founder flag",
     # path to plan
-    "current_customers": "Customers", "acv": "ACV (average contract value)",
+    "current_customers": "Customers", "acv": "ACV",
     "total_customers_at_target": "Total customers at target ARR",
     "additional_customers_needed": "Additional customers needed",
     "customers_needed": "Total customers at target ARR",   # legacy name in stored results
@@ -359,7 +360,7 @@ LABEL_BY_PATH = {
     "low": "ACV band lower bound", "high": "ACV band upper bound",
     "customers": "Customers", "count": "Customers in band",
     # cohort retention
-    "max_offset": "Longest cohort age (months)", "start_mrr": "Cohort starting MRR",
+    "max_offset": "Longest cohort age", "start_mrr": "Cohort starting MRR",
     "values": "Cohort MRR retained",
     # segment paths to target ARR
     "horizon_months": "Months to target date",
@@ -380,7 +381,7 @@ LABEL_BY_PATH = {
     "required_vs_observed_gross": "Needed vs observed gross new customers",
     "current_mix_pct": "Current mix", "required_mix_pct": "Required mix",
     "shift_pct_points": "Shift vs current mix", "moved_mix_pct": "Total mix moved",
-    "window_months": "Landing window (months)",
+    "window_months": "Landing window",
     # generic
     "n": "Sample size", "total": "Total MRR",
 }
@@ -415,6 +416,10 @@ QUALIFIER_BY_PATH = {
     "required_vs_observed_12m": "last 12 months",
     "required_vs_observed_24m": "last 24 months",
 }
+
+# Units a name carries as the last part of its bracket. Currency codes are units too, but
+# they come from the audit, so callers pass them to label_with(..., unit=ccy).
+UNIT_BY_PATH = {"default_l": "quarters", "max_offset": "months", "window_months": "months"}
 
 _QUARTER = re.compile(r"^\d{4}-Q[1-4]$")
 
@@ -470,16 +475,43 @@ def qualifier_for(source_key: str) -> Optional[str]:
     return qualifier
 
 
+def label_with(base: str, *qualifiers: Optional[str], unit: Optional[str] = None) -> str:
+    """The one place a label and its bracket are put together.
+
+    A name has at most ONE bracket group, never two, and never a comma outside it.
+    Inside, comma-separated and in a fixed order:
+        1. a note the base label already carries ("excluded", "all segments"),
+        2. what it is measured over - qualifier, then window,
+        3. the unit or currency, always last.
+    "Projected ARR" + "at constant NRR" + "EUR"  ->  "Projected ARR (at constant NRR, EUR)".
+    A base that already has a bracket is merged into the same group, so adding a
+    qualifier or currency later can never produce a second one. Term definitions
+    ("average contract value") are not labels' business: they live in the glossary.
+    """
+    match = _BASE_NOTE.match(base.strip())
+    name, note = (match.group("name"), match.group("note")) if match else (base.strip(), None)
+    parts = [p for p in (note, *qualifiers, unit) if p]
+    return f"{name} ({', '.join(parts)})" if parts else name
+
+
+_BASE_NOTE = re.compile(r"^(?P<name>[^()]*?)\s*\((?P<note>[^()]*)\)$")
+
+
 def with_qualifier(label: str, qualifier: Optional[str]) -> str:
-    """"NRR" + "latest month" -> "NRR (latest month)". One format, everywhere."""
-    return f"{label} ({qualifier})" if qualifier else label
+    """"NRR" + "latest month" -> "NRR (latest month)". Kept for callers with one qualifier."""
+    return label_with(label, qualifier)
+
+
+def unit_for(source_key: str) -> Optional[str]:
+    """The unit of a cited path when the name should carry it ("quarters", "months")."""
+    return _lookup(UNIT_BY_PATH, _label_segments(source_key))
 
 
 def display_name(source_key: str, fallback: Optional[str] = None) -> str:
-    """The full name shown for a cited path: base label plus qualifier."""
-    return with_qualifier(label_for(source_key, fallback), qualifier_for(source_key))
+    """The full name shown for a cited path: base label, qualifier and unit in one bracket."""
+    return label_with(label_for(source_key, fallback), qualifier_for(source_key), unit=unit_for(source_key))
 
 
 def metric_names_export() -> dict:
     """What `frontend/src/lib/metric_names.json` must contain."""
-    return {"labels": dict(LABEL_BY_PATH), "qualifiers": dict(QUALIFIER_BY_PATH)}
+    return {"labels": dict(LABEL_BY_PATH), "qualifiers": dict(QUALIFIER_BY_PATH), "units": dict(UNIT_BY_PATH)}

@@ -1463,3 +1463,30 @@ def test_segment_paths_are_not_part_of_the_growth_engine_narrative_payload():
     results = {"arr": {"value": 1.0}, "segment_paths": {"available": True, "gap_arr": 5.0}}
     assert "segment_paths" not in gateway._slice_for_step(results, "growth_engine")
     assert "segment_paths" in gateway._slice_for_step(results, "path_to_plan")
+
+
+def test_narratives_for_run_returns_the_served_narratives_and_never_calls_a_provider():
+    async def run():
+        db = make_db()
+        before = await gateway.narratives_for_run(db, RUN_ID)
+        await gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=FakeAdapter(), sleep=_noop_sleep)
+        calls = len(db["llm_calls"].docs)
+        after = await gateway.narratives_for_run(db, RUN_ID)
+        return before, after, calls, len(db["llm_calls"].docs), gateway.disclosure_from(after)
+
+    before, after, calls_before, calls_after, block = asyncio.run(run())
+    assert before == []
+    assert [n.step for n in after] == ["growth_engine"] and after[0].narrative is not None
+    assert after[0].row_labels, "the readable names travel with the narrative into the export"
+    assert calls_before == calls_after, "reading for the export never spends"
+    assert block["models"] == [gateway.DEFAULT_MODEL]
+
+
+def test_a_narrative_that_no_longer_matches_the_numbers_is_not_exported():
+    async def run():
+        db = make_db()
+        await gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=FakeAdapter(), sleep=_noop_sleep)
+        db["audits"].docs[0]["results"]["arr"]["value"] = 4000000
+        return await gateway.narratives_for_run(db, RUN_ID)
+
+    assert asyncio.run(run()) == []

@@ -28,7 +28,7 @@
     "churn_pct": "Gross churn",
     "months_available": "Months of history available",
     "months": "CAC payback",
-    "default_l": "S&M spend lag (quarters)",
+    "default_l": "S&M spend lag",
     "months_in_quarter": "Months of data in the quarter",
     "new_mrr": "New MRR",
     "sm_expense": "S&M spend",
@@ -43,7 +43,7 @@
     "excluded_after_as_of": "Deals excluded (after as-of month)",
     "founder_involved_excluded.count": "Deals with an unrecognised founder flag",
     "current_customers": "Customers",
-    "acv": "ACV (average contract value)",
+    "acv": "ACV",
     "total_customers_at_target": "Total customers at target ARR",
     "additional_customers_needed": "Additional customers needed",
     "customers_needed": "Total customers at target ARR",
@@ -56,7 +56,7 @@
     "high": "ACV band upper bound",
     "customers": "Customers",
     "count": "Customers in band",
-    "max_offset": "Longest cohort age (months)",
+    "max_offset": "Longest cohort age",
     "start_mrr": "Cohort starting MRR",
     "values": "Cohort MRR retained",
     "horizon_months": "Months to target date",
@@ -84,7 +84,7 @@
     "required_mix_pct": "Required mix",
     "shift_pct_points": "Shift vs current mix",
     "moved_mix_pct": "Total mix moved",
-    "window_months": "Landing window (months)",
+    "window_months": "Landing window",
     "n": "Sample size",
     "total": "Total MRR"
   },
@@ -122,5 +122,10 @@
     "observed_net_new_per_year_24m": "last 24 months",
     "required_vs_observed_12m": "last 12 months",
     "required_vs_observed_24m": "last 24 months"
+  },
+  "units": {
+    "default_l": "quarters",
+    "max_offset": "months",
+    "window_months": "months"
   }
 }
