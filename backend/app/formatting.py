@@ -195,7 +195,7 @@ KIND_BY_KEY = {
     # ratios
     "required_vs_observed_12m": RATIO, "required_vs_observed_24m": RATIO,
     # settings that are numbers but not measurements
-    "default_l": PLAIN, "max_offset": PLAIN,
+    "default_l": PLAIN, "max_offset": PLAIN, "months_in_quarter": PLAIN,
     # source-row references (provenance): identifiers, not measurements
     "row_numbers": PLAIN, "rows": PLAIN,
 }
@@ -322,6 +322,7 @@ LABEL_BY_PATH = {
     "months_available": "Months of history available",
     # CAC payback
     "months": "CAC payback", "default_l": "S&M spend lag (quarters)",
+    "months_in_quarter": "Months of data in the quarter",
     "new_mrr": "New MRR", "sm_expense": "S&M spend", "gross_margin_pct": "Gross margin",
     # sales
     "median_days": "Median sales cycle", "iqr": "Sales cycle interquartile range",
@@ -355,7 +356,7 @@ QUALIFIER_BY_PATH = {
     "arr.mrr": "latest month",
     "nrr.overall_pct": "trailing 12 months", "nrr_pct": "trailing 12 months",
     "gross_churn.overall_pct": "trailing 12 months", "churn_pct": "trailing 12 months",
-    "months": "latest computable quarter",
+    "months": "latest complete quarter",
     "median_days": "all won deals", "iqr": "all won deals",
     "win_rate_pct": "closed deals",
     "current_customers": "active, latest month",
@@ -417,7 +418,7 @@ def qualifier_for(source_key: str) -> Optional[str]:
     qualifier = _lookup(QUALIFIER_BY_PATH, segs)
     # A row citing one specific quarter says which, instead of "latest quarter".
     quarter = next((s for s in segs if _QUARTER.match(s)), None)
-    if quarter and qualifier == "latest computable quarter":
+    if quarter and qualifier == "latest complete quarter":
         return quarter
     return qualifier
 

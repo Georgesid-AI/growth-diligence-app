@@ -135,21 +135,34 @@ export default function Dashboard() {
     : fxRates.map(([c, rate]) => `1 ${c} = ${rate} ${ccy}`).join(" · ");
   const asOfFullDate = monthEndDate(r.as_of_month);
 
-  // representative CAC (latest computable quarter at default L)
-  let cac = { value: "n/c", sub: "", status: "neutral", note: "", source: r.cac_payback?.source };
+  // Headline CAC payback: the latest COMPLETE quarter only. A partial quarter pairs a
+  // full quarter of lagged S&M with part of a quarter's new MRR and overstates payback,
+  // so it never headlines (it stays in the quarterly table, labelled). The quarter is
+  // named beside the figure so an older quarter is never mistaken for the current one.
+  const cacQualifier = metricQualifier("cac_payback.months");
+  let cac = { value: "n/c", sub: "", status: "neutral", note: "", qualifier: bracketed(cacQualifier), source: r.cac_payback?.source };
   if (r.cac_payback) {
-    const L = `L${r.cac_payback.default_l}`;
-    const qs = Object.keys(r.cac_payback.quarters).sort();
-    let picked = null;
-    for (const q of qs) if (r.cac_payback.quarters[q][L].months != null) picked = q;
+    const cp = r.cac_payback;
+    const L = `L${cp.default_l}`;
+    const qs = Object.keys(cp.quarters).sort();
+    const computable = (q) => cp.quarters[q][L].months != null;
+    // Results computed before partial quarters were flagged carry no 'partial'; they read as complete.
+    const complete = (q) => cp.quarters[q].partial !== true && computable(q);
+    const picked = cp.headline_quarter !== undefined ? cp.headline_quarter : ([...qs].reverse().find(complete) ?? null);
+    const excluded = [...qs].reverse().find((q) => cp.quarters[q].partial === true && computable(q) && (!picked || q > picked));
+    const partialNote = excluded
+      ? `${excluded} not shown: partial (${cp.quarters[excluded].months_in_quarter} of 3 months)`
+      : "";
     if (picked) {
-      const m = r.cac_payback.quarters[picked][L].months;
-      cac = { value: fmtMonths(m), sub: <Gloss id="cac-quarter" text="Quarter of calculation">{picked}</Gloss>,
-        note: "", source: r.cac_payback.source,
+      const m = cp.quarters[picked][L].months;
+      cac = { value: fmtMonths(m), sub: "", note: partialNote, source: cp.source,
+        qualifier: bracketed(`${picked}, ${cacQualifier}`),
         status: m > 18 ? "warning" : m <= 12 ? "growth_positive" : "neutral" };
     } else {
       const last = qs[qs.length - 1];
-      cac.note = last ? r.cac_payback.quarters[last][L].reason : "";
+      cac.note = excluded
+        ? `No complete quarter yet. ${partialNote}.`
+        : (last ? cp.quarters[last][L].reason : "") || "No complete quarter with a computable payback";
     }
   }
 
@@ -208,7 +221,7 @@ export default function Dashboard() {
         <MetricCard id="gross_churn" label={metricLabel("gross_churn.overall_pct")} qualifier={bracketed(metricQualifier("gross_churn.overall_pct"))} status={churnStatus} source={r.gross_churn?.source}
           value={r.gross_churn ? fmtPct(r.gross_churn.overall_pct) : "n/c"} sub={r.gross_churn ? "" : "needs 12m history"}
           caption="Shows revenue lost to churn" />
-        <MetricCard id="cac_payback" label={metricLabel("cac_payback.months")} qualifier={bracketed(metricQualifier("cac_payback.months"))} status={cac.status} source={cac.source}
+        <MetricCard id="cac_payback" label={metricLabel("cac_payback.months")} qualifier={cac.qualifier} status={cac.status} source={cac.source}
           value={cac.value} sub={cac.sub} note={cac.note}
           caption="Time to recoup acquisition cost" />
         <MetricCard id="sales_cycle" label={metricLabel("sales_cycle.median_days")} qualifier={bracketed(metricQualifier("sales_cycle.median_days"))} status="neutral" source={r.sales_cycle?.source}
@@ -426,7 +439,14 @@ export default function Dashboard() {
                 <tbody className="font-mono text-slate-800">
                   {Object.entries(r.cac_payback.quarters).map(([q, v]) => (
                     <tr key={q} className="border-t border-[#E5E7EB]">
-                      <td className="py-1.5 pr-3">{q}</td>
+                      <td className="py-1.5 pr-3 whitespace-nowrap">
+                        {q}
+                        {v.partial && (
+                          <div data-testid={`cac-partial-${q}`} className="text-[10px] text-amber-700">
+                            partial ({v.months_in_quarter} of 3 months)
+                          </div>
+                        )}
+                      </td>
                       <td className="py-1.5 pr-3">{fmtCurrency(v.new_mrr, ccy)}</td>
                       <td className="py-1.5 pr-3">{fmtPct(v.gross_margin_pct)}</td>
                       {["L0", "L1", "L2"].map((L) => (

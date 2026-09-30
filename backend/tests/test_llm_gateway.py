@@ -1422,3 +1422,36 @@ def test_nothing_stored_means_no_superseded_reason():
 
     r = asyncio.run(run())
     assert r.superseded is False and r.superseded_reason is None
+
+
+# ---------------------------------------------------------------------------
+# Partial CAC quarters are shown on the dashboard but not given to the model
+# ---------------------------------------------------------------------------
+def _cac_computed():
+    L = lambda m: {"months": m, "sm_expense": 9000.0, "reason": None}
+    return {"reporting_currency": "EUR", "metrics": {"cac_payback": {
+        "default_l": 1, "headline_quarter": "2024-Q3", "partial_quarter_excluded": "2025-Q1",
+        "quarters": {
+            "2024-Q3": {"new_mrr": 1000.0, "gross_margin_pct": 75.0, "months_in_quarter": 3,
+                        "partial": False, "L0": L(9.0), "L1": L(18.8), "L2": L(9.7)},
+            "2025-Q1": {"new_mrr": 400.0, "gross_margin_pct": 77.0, "months_in_quarter": 2,
+                        "partial": True, "L0": L(20.0), "L1": L(29.0), "L2": L(11.0)},
+        }}}}
+
+
+def test_partial_quarter_figures_are_withheld_from_the_model_payload():
+    computed = _cac_computed()
+    out = gateway.build_outbound(computed, {})
+    q = out["metrics"]["cac_payback"]["quarters"]
+    assert q["2024-Q3"]["L1"]["months"] == "18.8 months", "complete quarters are sent as before"
+    assert q["2025-Q1"]["L1"] == {
+        "months": None, "reason": "partial quarter (2 of 3 months); not comparable"}
+    assert "29" not in json.dumps(q["2025-Q1"]) and "20.0" not in json.dumps(q["2025-Q1"])
+    assert out["metrics"]["cac_payback"]["headline_quarter"] == "2024-Q3"
+    assert q["2025-Q1"]["months_in_quarter"] == "2"
+
+
+def test_withholding_partial_quarters_does_not_touch_the_stored_results():
+    computed = _cac_computed()
+    gateway.build_outbound(computed, {})
+    assert computed["metrics"]["cac_payback"]["quarters"]["2025-Q1"]["L1"]["months"] == 29.0

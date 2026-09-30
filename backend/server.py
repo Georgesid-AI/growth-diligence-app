@@ -467,13 +467,19 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
         sc = r.get("sales_cycle") or {}
         wr = r.get("win_rate") or {}
         cac = r.get("cac_payback") or {}
-        cac_label, cac_value = "CAC payback, months (default L)", None
+        # Headline is the latest COMPLETE quarter (a partial quarter overstates payback and is
+        # never a headline); the quarter is named so an older figure is not read as current.
+        cac_label, cac_value = "CAC payback, months (no complete quarter)", None
         if cac:
             L = f"L{cac.get('default_l', 1)}"
-            for q in sorted(cac.get("quarters", {})):
-                if cac["quarters"][q][L]["months"] is not None:
-                    cac_value = cac["quarters"][q][L]["months"]
-                    cac_label = f"CAC payback, months ({q}, {L})"
+            hq = cac.get("headline_quarter")
+            if hq is None and "headline_quarter" not in cac:  # results computed before partial quarters were flagged
+                done = [q for q in sorted(cac.get("quarters", {}))
+                        if not cac["quarters"][q].get("partial") and cac["quarters"][q][L]["months"] is not None]
+                hq = done[-1] if done else None
+            if hq:
+                cac_value = cac["quarters"][hq][L]["months"]
+                cac_label = f"CAC payback, months ({hq}, {L}, latest complete quarter)"
         kv_sheet(xw, "Headline", [
             ("Company", None, meta.get("company_name")),
             ("As-of month", None, meta.get("as_of_month") or r.get("as_of_month")),
@@ -533,7 +539,9 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
         # CAC by quarter
         cac_rows = []
         for q, v in (cac.get("quarters") or {}).items():
-            row = {"Quarter": q, f"New MRR{money}": v.get("new_mrr"), "Gross margin": v.get("gross_margin_pct")}
+            row = {"Quarter": q,
+                   "Quarter status": (f"partial ({v.get('months_in_quarter')} of 3 months)" if v.get("partial") else "complete"),
+                   f"New MRR{money}": v.get("new_mrr"), "Gross margin": v.get("gross_margin_pct")}
             for L in ("L0", "L1", "L2"):
                 row[f"{L} months"] = v[L].get("months")
                 row[f"{L} S&M used{money}"] = v[L].get("sm_expense")

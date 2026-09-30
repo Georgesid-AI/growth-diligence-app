@@ -296,7 +296,7 @@ def test_row_labels_are_added_to_the_response_and_not_to_the_model_contract():
     ("metrics.gross_churn.overall_pct", "Gross churn (trailing 12 months)"),
     ("metrics.win_rate.win_rate_pct", "Win rate (closed deals)"),
     ("metrics.arr.value", "Ending ARR (latest month MRR × 12)"),
-    ("metrics.cac_payback.months", "CAC payback (latest computable quarter)"),
+    ("metrics.cac_payback.months", "CAC payback (latest complete quarter)"),
     ("metrics.cac_payback.quarters.2026-Q1.L1.months", "CAC payback (2026-Q1)"),  # a named quarter says which
     ("metrics.acv_path.observed_net_new_per_year_12m", "Observed net-new customers per year (last 12 months)"),
     ("metrics.acv_path.customers_needed", "Customers needed (at current ACV)"),

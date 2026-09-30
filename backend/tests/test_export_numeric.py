@@ -21,10 +21,15 @@ RESULTS = {
     "gross_churn": {"overall_pct": 8.38},
     "sales_cycle": {"median_days": 42.1, "n": 12},
     "win_rate": {"win_rate_pct": 50.0, "excluded_invalid": 0},
-    "cac_payback": {"default_l": 1, "quarters": {"2026-Q1": {
-        "new_mrr": 1000.4, "gross_margin_pct": 71.2,
-        "L0": {"months": None, "reason": "x"}, "L2": {"months": None, "reason": "x"},
-        "L1": {"months": 12.24, "sm_expense": 9000.0, "reason": None}}}},
+    "cac_payback": {"default_l": 1, "headline_quarter": "2026-Q1", "quarters": {
+        "2026-Q1": {
+            "new_mrr": 1000.4, "gross_margin_pct": 71.2, "months_in_quarter": 3, "partial": False,
+            "L0": {"months": None, "reason": "x"}, "L2": {"months": None, "reason": "x"},
+            "L1": {"months": 12.24, "sm_expense": 9000.0, "reason": None}},
+        "2026-Q2": {
+            "new_mrr": 400.0, "gross_margin_pct": 70.0, "months_in_quarter": 2, "partial": True,
+            "L0": {"months": None, "reason": "x"}, "L2": {"months": None, "reason": "x"},
+            "L1": {"months": 30.0, "sm_expense": 9000.0, "reason": None}}}},
     "acv_path": {"current_customers": 24, "current_arr": 3129104.4, "acv": 130379.35,
                  "target_arr": 5000000, "target_date": "2027-12-31", "customers_needed": 128.3,
                  "required_net_new_per_year": 60.1, "observed_net_new_per_year_12m": 6.0,
@@ -79,3 +84,28 @@ def test_disclosure_block_sits_at_the_foot_of_the_headline_sheet():
 def test_no_disclosure_row_when_no_narrative_exists():
     wb = openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, RESULTS))
     assert "AI disclosure" not in [c.value for c in wb["Headline"]["A"]]
+
+
+def test_headline_cac_is_the_latest_complete_quarter_and_names_it():
+    wb = openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, RESULTS))
+    cac = _cell(wb["Headline"], "CAC payback")
+    label = next(r[0].value for r in wb["Headline"].iter_rows(min_row=2) if str(r[0].value).startswith("CAC payback"))
+    assert cac.value == 12.24, "the partial 2026-Q2 figure (30.0) must not headline"
+    assert "2026-Q1" in label and "latest complete quarter" in label
+
+
+def test_quarterly_sheet_labels_the_partial_quarter():
+    wb = openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, RESULTS))
+    ws = wb["CAC by Quarter"]
+    status = {row[0].value: row[1].value for row in ws.iter_rows(min_row=2)}
+    assert status == {"2026-Q1": "complete", "2026-Q2": "partial (2 of 3 months)"}
+
+
+def test_no_complete_quarter_is_stated_not_filled_with_a_partial_figure():
+    results = {**RESULTS, "cac_payback": {"default_l": 1, "headline_quarter": None, "quarters": {
+        "2026-Q2": {"new_mrr": 400.0, "gross_margin_pct": 70.0, "months_in_quarter": 2, "partial": True,
+                    "L0": {"months": None, "reason": "x"}, "L2": {"months": None, "reason": "x"},
+                    "L1": {"months": 30.0, "sm_expense": 9000.0, "reason": None}}}}}
+    wb = openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, results))
+    rows = {str(r[0].value): r[1].value for r in wb["Headline"].iter_rows(min_row=2)}
+    assert rows["CAC payback, months (no complete quarter)"] is None

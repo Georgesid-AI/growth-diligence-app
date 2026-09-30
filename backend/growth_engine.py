@@ -299,7 +299,10 @@ def compute_new_mrr_by_quarter(mrr: pd.DataFrame, first_month: dict):
         last_m = max(months)
         new_custs = [c for c, fm in first_month.items() if fm.asfreq("Q") == q]
         val = sum(mrr.at[c, last_m] for c in new_custs)
-        out[_quarter_str(q)] = {"new_mrr": _round(val), "n_customers": len(new_custs), "month": _period_str(last_m)}
+        # A quarter with fewer than three months of data (the as-of month falls inside it,
+        # or the data starts inside it) is partial: its new MRR covers only those months.
+        out[_quarter_str(q)] = {"new_mrr": _round(val), "n_customers": len(new_custs), "month": _period_str(last_m),
+                                "months_in_quarter": len(months), "partial": len(months) < 3}
     return out
 
 
@@ -317,7 +320,8 @@ def compute_cac_payback(new_mrr_q: dict, pnl: pd.DataFrame, default_l: int = 1):
 
     results = {}
     for q, info in new_mrr_q.items():
-        row = {"new_mrr": info["new_mrr"]}
+        row = {"new_mrr": info["new_mrr"],
+               "months_in_quarter": info.get("months_in_quarter"), "partial": bool(info.get("partial", False))}
         # gross margin for quarter q
         if q in grp.index and grp.at[q, "revenue"]:
             rev = grp.at[q, "revenue"]
@@ -340,7 +344,18 @@ def compute_cac_payback(new_mrr_q: dict, pnl: pd.DataFrame, default_l: int = 1):
                 months = sm / (new_mrr * gm)
                 row[key] = {"months": _round(months), "sm_expense": _round(sm), "reason": None}
         results[q] = row
-    return {"default_l": default_l, "quarters": results}
+    # The headline is the latest COMPLETE quarter with a computable figure. A partial
+    # quarter pairs a full quarter of lagged S&M with only part of a quarter's new MRR,
+    # which overstates payback (no pro-rating is attempted), so it never headlines.
+    lag_key = f"L{default_l}"
+    complete = [q for q in sorted(results)
+                if not results[q]["partial"] and results[q].get(lag_key, {}).get("months") is not None]
+    partial_later = [q for q in sorted(results)
+                     if results[q]["partial"] and results[q].get(lag_key, {}).get("months") is not None
+                     and (not complete or q > complete[-1])]
+    return {"default_l": default_l, "quarters": results,
+            "headline_quarter": complete[-1] if complete else None,
+            "partial_quarter_excluded": partial_later[-1] if partial_later else None}
 
 
 def _shift_quarter(qstr: str, lag: int) -> str:

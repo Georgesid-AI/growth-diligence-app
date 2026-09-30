@@ -167,6 +167,28 @@ def strip_row_references(node: Any) -> Any:
     return node
 
 
+def withhold_partial_quarters(node: Any) -> Any:
+    """Replace the payback figures of partial quarters with a reason, in a copy.
+
+    A partial quarter's CAC payback pairs a full quarter of lagged S&M with part of a
+    quarter's new MRR and overstates. The dashboard shows it, labelled; the model is
+    not given the figure, so it cannot quote it as if it were comparable.
+    """
+    if not isinstance(node, dict):
+        return node
+    cac = (node.get("metrics") or {}).get("cac_payback")
+    if not isinstance(cac, dict) or not isinstance(cac.get("quarters"), dict):
+        return node
+    quarters = {}
+    for q, row in cac["quarters"].items():
+        if isinstance(row, dict) and row.get("partial"):
+            reason = f"partial quarter ({row.get('months_in_quarter')} of 3 months); not comparable"
+            row = {k: ({"months": None, "reason": reason} if k in ("L0", "L1", "L2") else v)
+                   for k, v in row.items()}
+        quarters[q] = row
+    return {**node, "metrics": {**node["metrics"], "cac_payback": {**cac, "quarters": quarters}}}
+
+
 def build_outbound(computed: dict, mapping: dict) -> dict:
     """The payload the provider sees: display strings, then pseudonyms.
 
@@ -175,7 +197,7 @@ def build_outbound(computed: dict, mapping: dict) -> dict:
     Raw values stay untouched in `computed` and in Mongo.
     """
     try:
-        formatted = formatting.format_payload(strip_row_references(computed))
+        formatted = formatting.format_payload(withhold_partial_quarters(strip_row_references(computed)))
     except formatting.FormattingError as exc:
         raise GatewayError("format_failed", str(exc))
     return redaction.redact(formatted, mapping)
