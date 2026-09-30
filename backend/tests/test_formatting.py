@@ -597,3 +597,19 @@ def test_no_two_values_in_the_same_family_share_a_name_on_real_engine_output():
                 names.setdefault(f.display_name(path), []).append(path)
             duplicates.update({(head, n): sorted(p) for n, p in names.items() if len(p) > 1})
     assert duplicates == {}
+
+
+def test_reconciliation_and_window_fields_have_kinds_and_names():
+    out = f.format_payload({"metrics": {"segment_paths": {"reconciliation": {"12": {
+        "window_months": 12, "path_to_plan_ratio": 1.28, "factor_compounded_base": 0.8,
+        "factor_landed_acv": 1.25, "factor_gross_rate": 0.8, "segment_ratio": 1.024}}}},
+        "gross_churn": {"trailing_window_months": 12}}, "EUR")
+    rc = out["metrics"]["segment_paths"]["reconciliation"]["12"]
+    assert (rc["path_to_plan_ratio"], rc["factor_compounded_base"], rc["segment_ratio"]) == ("1.28x", "0.80x", "1.02x")
+    assert out["gross_churn"]["trailing_window_months"] == "12"
+    assert f.display_name("metrics.gross_churn.trailing_window_months") == "Measurement window (months)"
+    assert f.display_name("metrics.segment_paths.reconciliation.12.factor_landed_acv") == (
+        "Effect of valuing new customers at landed ACV (12-month window, multiplier)")
+    assert f.display_name("metrics.segment_paths.reconciliation.12.path_to_plan_ratio").startswith(
+        "Required vs observed net-new customers (12-month window, simple view")
+    assert "segment view" in f.display_name("metrics.segment_paths.reconciliation.24.segment_ratio")

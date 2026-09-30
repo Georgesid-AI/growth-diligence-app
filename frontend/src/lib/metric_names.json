@@ -85,6 +85,12 @@
     "shift_pct_points": "Shift vs current mix",
     "moved_mix_pct": "Total mix moved",
     "window_months": "Landing window",
+    "trailing_window_months": "Measurement window",
+    "path_to_plan_ratio": "Required vs observed net-new customers",
+    "factor_compounded_base": "Effect of compounding the base at segment NRR",
+    "factor_landed_acv": "Effect of valuing new customers at landed ACV",
+    "factor_gross_rate": "Effect of counting gross landings instead of net-new",
+    "segment_ratio": "Needed vs observed gross new customers",
     "n": "Sample size",
     "total": "Total MRR"
   },
@@ -118,6 +124,11 @@
     "current_mix_pct": "share of active customers",
     "required_mix_pct": "share of new customers",
     "shift_pct_points": "percentage points",
+    "path_to_plan_ratio": "simple view: flat base, today's ACV, net-new",
+    "segment_ratio": "segment view: NRR-compounded base, landed ACV, gross landings",
+    "factor_compounded_base": "multiplier",
+    "factor_landed_acv": "multiplier",
+    "factor_gross_rate": "multiplier",
     "observed_net_new_per_year_12m": "last 12 months",
     "observed_net_new_per_year_24m": "last 24 months",
     "required_vs_observed_12m": "last 12 months",
@@ -126,6 +137,7 @@
   "units": {
     "default_l": "quarters",
     "max_offset": "months",
-    "window_months": "months"
+    "window_months": "months",
+    "trailing_window_months": "months"
   }
 }

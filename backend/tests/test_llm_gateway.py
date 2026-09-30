@@ -1457,12 +1457,12 @@ def test_withholding_partial_quarters_does_not_touch_the_stored_results():
     assert computed["metrics"]["cac_payback"]["quarters"]["2025-Q1"]["L1"]["months"] == 29.0
 
 
-def test_segment_paths_are_not_part_of_the_growth_engine_narrative_payload():
-    """The segment analysis is a dashboard and export feature; the live narrative step
-    must see exactly what it saw before."""
-    results = {"arr": {"value": 1.0}, "segment_paths": {"available": True, "gap_arr": 5.0}}
-    assert "segment_paths" not in gateway._slice_for_step(results, "growth_engine")
-    assert "segment_paths" in gateway._slice_for_step(results, "path_to_plan")
+def test_the_narrative_sees_the_segment_view_as_well_as_the_simple_view():
+    """The prose must not be able to state one view's conclusion while the panel shows the other:
+    both views are in the payload."""
+    results = {"arr": {"value": 1.0}, "acv_path": {"acv": 2.0}, "segment_paths": {"available": True, "gap_arr": 5.0}}
+    sliced = gateway._slice_for_step(results, "growth_engine")
+    assert "segment_paths" in sliced and "acv_path" in sliced
 
 
 def test_narratives_for_run_returns_the_served_narratives_and_never_calls_a_provider():
@@ -1490,3 +1490,109 @@ def test_a_narrative_that_no_longer_matches_the_numbers_is_not_exported():
         return await gateway.narratives_for_run(db, RUN_ID)
 
     assert asyncio.run(run()) == []
+
+
+# ---------------------------------------------------------------------------
+# NRR fields say what they count; windows are stated; the two views are shown together
+# ---------------------------------------------------------------------------
+def _walk(node, path=""):
+    if isinstance(node, dict):
+        yield path, node
+        for k, v in node.items():
+            yield from _walk(v, f"{path}.{k}" if path else str(k))
+    elif isinstance(node, list):
+        for i in node:
+            yield from _walk(i, path)
+
+
+def _results_with_nrr_detail():
+    return {
+        "nrr": {"month": "2025-02", "trailing_window_months": 12, "overall_pct": 116.69, "nrr_base_customers": 39,
+                "by_segment": {"SMB": {"nrr_pct": 95.08, "nrr_base_customers": 10}},
+                "by_cohort": {
+                    "2024-Q1": {"nrr_pct": 127.42, "nrr_base_customers": 5},
+                    "2024-Q3": {"nrr_pct": None, "nrr_base_customers": 0,
+                                "reason": "cohort younger than 12 months: none of its customers had revenue 12 months before the as-of month"}}},
+        "gross_churn": {"month": "2025-02", "trailing_window_months": 12, "overall_pct": 7.0},
+    }
+
+
+def test_the_model_never_sees_an_unexplained_zero_or_an_ambiguous_n():
+    computed = {"reporting_currency": "EUR", "metrics": _results_with_nrr_detail()}
+    out = gateway.build_outbound(computed, {})["metrics"]
+    cohort = out["nrr"]["by_cohort"]["2024-Q3"]
+    assert cohort["nrr_base_customers"] == "0" and cohort["nrr_pct"] is None
+    assert cohort["reason"].startswith("cohort younger than 12 months")
+    for path, node in _walk(out):
+        if "nrr_pct" in node and node["nrr_pct"] is None:
+            assert node.get("reason"), f"null NRR at {path} has no reason"
+        if path.split(".")[0] == "nrr":
+            assert "n" not in node, f"ambiguous n at {path}: NRR counts are named nrr_base_customers"
+
+
+def test_nrr_and_gross_churn_state_their_twelve_month_window_in_the_payload():
+    out = gateway.build_outbound({"reporting_currency": "EUR", "metrics": _results_with_nrr_detail()}, {})["metrics"]
+    assert out["nrr"]["trailing_window_months"] == "12" and out["gross_churn"]["trailing_window_months"] == "12"
+
+
+def _both_views_results():
+    return {
+        "acv_path": {"required_vs_observed_12m": 1.28},
+        "segment_paths": {"available": True, "reconciliation": {"12": {
+            "window_months": 12, "available": True, "path_to_plan_ratio": 1.28, "factor_compounded_base": 0.8,
+            "factor_landed_acv": 1.25, "factor_gross_rate": 0.8, "segment_ratio": 1.024}}},
+    }
+
+
+def _generate_with(rows, results=None, headline="The simple view needs 1.28x the observed rate and the segment view 1.02x."):
+    narrative = {
+        "headline": headline,
+        "what_this_means": "Both are shown.", "table_rows": rows, "worth_flagging": [], "next_actions": [], "source_keys": [],
+    }
+
+    async def run():
+        db = make_db()
+        db["audits"].docs[0]["results"].update(results or _both_views_results())
+        return await gateway.generate_narrative(
+            db, RUN_ID, "growth_engine", adapter=FakeAdapter(replies=[json.dumps(narrative)]), sleep=_noop_sleep)
+
+    return asyncio.run(run())
+
+
+SIMPLE_ROW = {"label": "Simple", "value": "1.28x", "source_key": "metrics.acv_path.required_vs_observed_12m"}
+SEGMENT_ROW = {"label": "Segment", "value": "1.02x", "source_key": "metrics.segment_paths.reconciliation.12.segment_ratio"}
+
+
+def test_a_table_citing_both_views_is_accepted():
+    assert _generate_with([SIMPLE_ROW, SEGMENT_ROW]).narrative_status == "ok"
+
+
+def test_a_table_citing_only_the_simple_view_is_rejected():
+    r = _generate_with([SIMPLE_ROW])
+    assert r.narrative_status == "unavailable" and "segment view" in r.reason and "without" in r.reason
+
+
+def test_a_table_citing_only_the_segment_view_is_rejected():
+    r = _generate_with([SEGMENT_ROW])
+    assert r.narrative_status == "unavailable" and "simple view" in r.reason
+
+
+def test_the_views_guard_applies_only_when_the_views_have_been_reconciled():
+    results = _both_views_results()
+    results["segment_paths"]["reconciliation"]["12"] = {"window_months": 12, "available": False,
+                                                          "reason": "some active customers have no segment"}
+    assert _generate_with([SIMPLE_ROW], results, headline="The simple view needs 1.28x the observed rate.").narrative_status == "ok"
+
+
+def test_a_rejected_one_sided_narrative_is_logged_as_such_and_counted():
+    async def run():
+        db = make_db()
+        db["audits"].docs[0]["results"].update(_both_views_results())
+        narrative = {"headline": "x 1.28x", "what_this_means": "", "table_rows": [SIMPLE_ROW],
+                     "worth_flagging": [], "next_actions": [], "source_keys": []}
+        await gateway.generate_narrative(db, RUN_ID, "growth_engine",
+                                         adapter=FakeAdapter(replies=[json.dumps(narrative)]), sleep=_noop_sleep)
+        return db["llm_calls"].docs
+
+    logged = asyncio.run(run())
+    assert [c["status"] for c in logged] == ["views_guard_rejected"]

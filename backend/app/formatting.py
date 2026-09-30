@@ -210,7 +210,10 @@ KIND_BY_KEY = {
     "new_customers_by_target": COUNT_UP, "required_new_per_year_at_current_mix": COUNT_UP,
     "required_vs_observed_gross": RATIO,
     "current_mix_pct": PCT, "required_mix_pct": PCT, "shift_pct_points": PCT, "moved_mix_pct": PCT,
-    "window_months": PLAIN,
+    "window_months": PLAIN, "trailing_window_months": PLAIN,
+    # reconciliation of the simple view (Path to Plan) with the segment view
+    "path_to_plan_ratio": RATIO, "factor_compounded_base": RATIO, "factor_landed_acv": RATIO,
+    "factor_gross_rate": RATIO, "segment_ratio": RATIO,
     # source-row references (provenance): identifiers, not measurements
     "row_numbers": PLAIN, "rows": PLAIN,
 }
@@ -382,6 +385,12 @@ LABEL_BY_PATH = {
     "current_mix_pct": "Current mix", "required_mix_pct": "Required mix",
     "shift_pct_points": "Shift vs current mix", "moved_mix_pct": "Total mix moved",
     "window_months": "Landing window",
+    "trailing_window_months": "Measurement window",
+    "path_to_plan_ratio": "Required vs observed net-new customers",
+    "factor_compounded_base": "Effect of compounding the base at segment NRR",
+    "factor_landed_acv": "Effect of valuing new customers at landed ACV",
+    "factor_gross_rate": "Effect of counting gross landings instead of net-new",
+    "segment_ratio": "Needed vs observed gross new customers",
     # generic
     "n": "Sample size", "total": "Total MRR",
 }
@@ -411,6 +420,9 @@ QUALIFIER_BY_PATH = {
     "required_vs_observed_gross": "at current mix",
     "current_mix_pct": "share of active customers", "required_mix_pct": "share of new customers",
     "shift_pct_points": "percentage points",
+    "path_to_plan_ratio": "simple view: flat base, today's ACV, net-new",
+    "segment_ratio": "segment view: NRR-compounded base, landed ACV, gross landings",
+    "factor_compounded_base": "multiplier", "factor_landed_acv": "multiplier", "factor_gross_rate": "multiplier",
     "observed_net_new_per_year_12m": "last 12 months",
     "observed_net_new_per_year_24m": "last 24 months",
     "required_vs_observed_12m": "last 12 months",
@@ -419,7 +431,8 @@ QUALIFIER_BY_PATH = {
 
 # Units a name carries as the last part of its bracket. Currency codes are units too, but
 # they come from the audit, so callers pass them to label_with(..., unit=ccy).
-UNIT_BY_PATH = {"default_l": "quarters", "max_offset": "months", "window_months": "months"}
+UNIT_BY_PATH = {"default_l": "quarters", "max_offset": "months", "window_months": "months",
+                "trailing_window_months": "months"}
 
 _QUARTER = re.compile(r"^\d{4}-Q[1-4]$")
 
@@ -511,7 +524,7 @@ def scope_for(source_key: str) -> list:
             if i < len(segs) and _LAG.match(segs[i]):
                 scope.append(f"S&M lag {segs[i]}"); i += 1
             continue
-        if s in ("landed", "reverse_solve") and nxt and nxt.isdigit():
+        if s in ("landed", "reverse_solve", "reconciliation") and nxt and nxt.isdigit():
             if segs[-1] != "window_months":          # a window's own length needs no window scope
                 scope.append(f"{nxt}-month window")
             i += 2; continue

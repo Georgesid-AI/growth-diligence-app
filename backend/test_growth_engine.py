@@ -366,16 +366,14 @@ def _cohort_plausible_range_demo():
 def _nrr_by_cohort_unchanged_demo():
     mrr, seg, fm, _, _ = _demo_engine_inputs(0)
     nrr = ge.compute_nrr(mrr, seg, fm)
+    # The numbers are exactly the ones this case has always pinned; only the count's field name
+    # changed ("n" -> "nrr_base_customers"), and a null NRR now carries its reason.
     expected = {
-        "2023-Q1": {"nrr_pct": 127.64, "n": 8},
-        "2023-Q2": {"nrr_pct": 90.14, "n": 11},
-        "2023-Q3": {"nrr_pct": 111.56, "n": 8},
-        "2023-Q4": {"nrr_pct": 127.63, "n": 7},
-        "2024-Q1": {"nrr_pct": 127.42, "n": 5},
-        "2024-Q2": {"nrr_pct": None, "n": 0},
-        "2024-Q3": {"nrr_pct": None, "n": 0},
+        "2023-Q1": (127.64, 8), "2023-Q2": (90.14, 11), "2023-Q3": (111.56, 8),
+        "2023-Q4": (127.63, 7), "2024-Q1": (127.42, 5), "2024-Q2": (None, 0), "2024-Q3": (None, 0),
     }
-    return expected, nrr["by_cohort"]
+    actual = {q: (v["nrr_pct"], v["nrr_base_customers"]) for q, v in nrr["by_cohort"].items()}
+    return expected, actual
 
 
 # --- CAC payback at L=0 / L=2 / zero-new-MRR --------------------------------
@@ -1130,6 +1128,85 @@ def _winrate_excl_invalid():
 # Runner + pytest hooks
 # ---------------------------------------------------------------------------
 
+# --- NRR fields say what they count, and a null NRR says why -----------------
+def _demo_segment_paths(idx):
+    mrr, seg, fm, _, spec = _demo_engine_inputs(idx)
+    nrr = ge.compute_nrr(mrr, seg, fm)
+    acv = ge.compute_acv_path(mrr, seg, fm, spec["target_arr"], spec["target_date"])
+    return ge.compute_segment_paths(mrr, seg, fm, nrr, acv, spec["target_arr"], spec["target_date"])
+
+
+@case("NRR: a cohort younger than 12 months has base 0, null NRR and a reason - never a bare zero")
+def _nrr_young_cohort_reason():
+    mrr, seg, fm, _, _ = _demo_engine_inputs(0)
+    row = ge.compute_nrr(mrr, seg, fm)["by_cohort"]["2024-Q3"]
+    return (None, 0, True, True), (row["nrr_pct"], row["nrr_base_customers"],
+                                   row["reason"].startswith("cohort younger than 12 months"), "n" not in row)
+
+
+@case("NRR: a cohort with a computable NRR carries no reason")
+def _nrr_no_reason_when_computed():
+    mrr, seg, fm, _, _ = _demo_engine_inputs(0)
+    return False, "reason" in ge.compute_nrr(mrr, seg, fm)["by_cohort"]["2023-Q1"]
+
+
+@case("NRR: every null nrr_pct in the payload has a reason (overall, segments and cohorts)")
+def _nrr_every_null_explained():
+    mrr, seg, fm, _, _ = _demo_engine_inputs(0)
+    nrr = ge.compute_nrr(mrr, seg, fm)
+    groups = list(nrr["by_cohort"].values()) + list(nrr["by_segment"].values()) + [nrr]
+    nulls = [g for g in groups if g.get("nrr_pct", g.get("overall_pct")) is None]
+    return (True, True), (len(nulls) > 0, all(g.get("reason") for g in nulls))
+
+
+@case("NRR and gross churn state their 12-month window, so neither reads as one month")
+def _windows_stated():
+    mrr, seg, fm, _, _ = _demo_engine_inputs(0)
+    return (12, 12), (ge.compute_nrr(mrr, seg, fm)["trailing_window_months"], ge.compute_gross_churn(mrr)["trailing_window_months"])
+
+
+@case("Reconciliation: the segment ratio is the simple ratio times the three factors, exactly")
+def _reconciliation_closes():
+    sp = _demo_segment_paths(0)
+    out = []
+    for w, rc in sp["reconciliation"].items():
+        if rc["available"]:
+            prod = rc["path_to_plan_ratio"] * rc["factor_compounded_base"] * rc["factor_landed_acv"] * rc["factor_gross_rate"]
+            out.append(abs(prod - rc["segment_ratio"]) < 1e-9 * rc["segment_ratio"])
+    return (True, True), (len(out) > 0, all(out))
+
+
+@case("Reconciliation: the simple ratio equals the Path to Plan ratio to its displayed precision")
+def _reconciliation_matches_path_to_plan():
+    mrr, seg, fm, _, _ = _demo_engine_inputs(0)
+    acv = ge.compute_acv_path(mrr, seg, fm, 40_000_000, "2027-12-31")
+    sp = _demo_segment_paths(0)
+    return round(acv["required_vs_observed_12m"], 2), round(sp["reconciliation"]["12"]["path_to_plan_ratio"], 2)
+
+
+@case("Reconciliation: each factor moves the ratio the right way (compounding and gross landings help; landed ACV hurts)")
+def _reconciliation_directions():
+    rc = _demo_segment_paths(0)["reconciliation"]["12"]
+    return (True, True, True), (rc["factor_compounded_base"] < 1, rc["factor_landed_acv"] > 1, rc["factor_gross_rate"] < 1)
+
+
+@case("Reconciliation: unavailable, with the reason, when active customers have no segment (the views differ in ARR)")
+def _reconciliation_unsegmented():
+    mrr, sm, fm = _seg_scenario()
+    sm = dict(sm); sm.pop("A2")                               # one active customer loses its segment
+    nrr = ge.compute_nrr(mrr, sm, fm)
+    acv = ge.compute_acv_path(mrr, sm, fm, 1_000_000, "2026-03-15")
+    rc = ge.compute_segment_paths(mrr, sm, fm, nrr, acv, 1_000_000, "2026-03-15")["reconciliation"]["12"]
+    return (False, True), (rc["available"], "no segment" in rc["reason"])
+
+
+@case("Reconciliation: unavailable when the target is already met by the base")
+def _reconciliation_met():
+    sp, _, _ = _seg_paths(target_arr=50_000)
+    rc = sp["reconciliation"]["12"]
+    return (False, True), (rc["available"], "reaches the target" in rc["reason"])
+
+
 def run_all():
     results = []
     for name, fn in CASES.items():
@@ -1159,3 +1236,4 @@ if __name__ == "__main__":
         print(f"{name.ljust(w)}{str(expected).ljust(28)}{str(actual).ljust(28)}{mark}")
     print("-" * (w + 64))
     print(f"{npass}/{len(rows)} passed\n")
+

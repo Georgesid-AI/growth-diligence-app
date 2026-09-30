@@ -208,7 +208,7 @@ def _slice_for_step(results: dict, step: str) -> dict:
     wanted = {
         "growth_engine": [
             "arr", "nrr", "gross_churn", "cac_payback", "sales_cycle",
-            "win_rate", "acv_path", "as_of_month", "reporting_currency",
+            "win_rate", "acv_path", "segment_paths", "as_of_month", "reporting_currency",
         ],
         "cohort_retention": ["cohort_retention", "as_of_month"],
         "cac_efficiency": ["cac_payback", "as_of_month"],
@@ -445,6 +445,31 @@ def source_key_guard(narrative: Narrative, payload: Any) -> Optional[str]:
     return None
 
 
+# The simple view (Path to Plan) and the segment view answer one question under different
+# assumptions. Each has a ratio of "rate needed / rate observed".
+SIMPLE_VIEW_RATIOS = {"required_vs_observed_12m", "required_vs_observed_24m", "path_to_plan_ratio"}
+SEGMENT_VIEW_RATIOS = {"required_vs_observed_gross", "segment_ratio"}
+
+
+def views_guard(narrative: Narrative, payload: Any) -> Optional[str]:
+    """Evidence must not state one view's conclusion without the other's.
+
+    When the payload holds a reconciliation of the two views, a table that cites the ratio of
+    only one of them would show a reader one verdict while the page's panel shows the other.
+    Checked on the evidence table (the cited, verified figures), like the source-key guard.
+    """
+    reconciliation = ((payload.get("metrics") or {}).get("segment_paths") or {}).get("reconciliation") or {}
+    if not any(isinstance(v, dict) and v.get("available") is True for v in reconciliation.values()):
+        return None
+    cited = {row.source_key.split(".")[-1] for row in narrative.table_rows}
+    simple, segment = cited & SIMPLE_VIEW_RATIOS, cited & SEGMENT_VIEW_RATIOS
+    if bool(simple) != bool(segment):
+        only, missing = ("simple view (Path to Plan)", "segment view") if simple else ("segment view", "simple view (Path to Plan)")
+        return (f"evidence table cites the {only} ratio without the {missing} ratio; "
+                "both views must be shown together")
+    return None
+
+
 _JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
 
 
@@ -603,12 +628,13 @@ async def generate_narrative(
 
         guard = numeric_guard(narrative, outbound, config.get("windows", ()))
         bad_keys = source_key_guard(narrative, outbound)
+        one_sided = views_guard(narrative, outbound)
         cost = estimate_cost_usd(model, in_tok, out_tok)
 
         # Hard tier: a fabricated figure in the headline or a table row, or a
         # row citing a source key that does not exist. Drop the narrative.
-        if guard.hard or bad_keys:
-            reason = bad_keys or (
+        if guard.hard or bad_keys or one_sided:
+            reason = bad_keys or one_sided or (
                 "model produced number(s) absent from the computed results in "
                 f"headline/table rows: {', '.join(guard.hard[:8])}"
             )
@@ -617,7 +643,8 @@ async def generate_narrative(
             await log_call(
                 db, run_id=run_id, step=step, prompt_version=prompt.version, model=model,
                 input_tokens=in_tok, output_tokens=out_tok, estimated_cost_usd=cost,
-                cache_hit=False, status="numeric_guard_rejected",
+                cache_hit=False,
+                status="views_guard_rejected" if one_sided and not (guard.hard or bad_keys) else "numeric_guard_rejected",
                 unmatched_numbers=guard.all,
             )
             logger.warning("narrative rejected for run %s step %s: %s", run_id, step, reason)
