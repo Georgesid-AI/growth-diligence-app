@@ -17,6 +17,8 @@ from pydantic import BaseModel, Field, field_validator
 import growth_engine as ge
 import demo_data
 from app import formatting as fmt
+from app import disclosure as disclosure_mod
+from app import narrative_export
 from app.llm import gateway as llm_gateway
 
 ROOT_DIR = Path(__file__).parent
@@ -426,7 +428,8 @@ async def get_results(audit_id: str):
     return sanitize({"audit": {k: a.get(k) for k in keys}, "results": a["results"]})
 
 
-def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = None) -> io.BytesIO:
+def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = None,
+                          narratives: Optional[list] = None) -> io.BytesIO:
     """Numeric cells with Excel number formats (see app/formatting.py), so the
     display follows the formatting rules while analysts can still sum and sort."""
     ccy = r.get("reporting_currency", "")
@@ -457,6 +460,73 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
                 c = list(df.columns).index(col) + 1
                 for row in range(startrow + 2, startrow + 2 + len(df)):
                     ws.cell(row=row, column=c).number_format = fmt.XLSX_NUMBER_FORMAT[kind]
+
+    def write_narrative_sheet(xw, resp, meta, results):
+        """One sheet for one generated narrative: what it was written against, then six sections."""
+        from openpyxl.styles import Alignment, Font
+
+        narrative = resp.narrative
+        name = narrative_export.sheet_name(resp.step)
+        ws = xw.book.create_sheet(name)
+        bold, wrap = Font(bold=True), Alignment(wrap_text=True, vertical="top")
+        for col, width in zip("ABCD", (34, 90, 46, 24)):
+            ws.column_dimensions[col].width = width
+        row = [1]
+
+        def put(col, text, font=None):
+            cell = ws.cell(row=row[0], column=col)
+            cell.value = text
+            if isinstance(text, str) and text[:1] in ("=", "+", "-", "@"):
+                cell.data_type = "s"          # narrative text is never a formula
+            cell.alignment = wrap
+            if font:
+                cell.font = font
+            return cell
+
+        def line(label=None, text=None):
+            if label is not None:
+                put(1, label, bold)
+            if text is not None:
+                put(2, text)
+            row[0] += 1
+
+        put(1, f"{disclosure_mod.STEP_LABELS.get(resp.step, resp.step)} narrative", Font(bold=True, size=13))
+        row[0] += 1
+        for label, text in narrative_export.written_against(meta, results):
+            line(label, text)
+        row[0] += 1
+        if resp.narrative_status == "flagged" and resp.unmatched_numbers:
+            line("Unverified figures",
+                 f"Unverified figures in this text: {', '.join(resp.unmatched_numbers)}. Numbers in the headline and "
+                 "evidence table are verified against the calculation engine; these are not.")
+            row[0] += 1
+        line("Headline", narrative.headline)
+        line("What this means", narrative.what_this_means)
+        row[0] += 1
+        line("Evidence table")
+        for col, head in enumerate(("Metric", "Value", "Source key", "Where to find the number"), start=1):
+            put(col, head, bold)
+        row[0] += 1
+        for tr in narrative.table_rows:
+            put(1, (resp.row_labels or {}).get(tr.source_key) or fmt.display_name(tr.source_key, tr.label))
+            put(2, tr.value)
+            put(3, tr.source_key)
+            sheet = narrative_export.data_sheet_for(tr.source_key, results)
+            put(4, sheet)
+            row[0] += 1
+        if not narrative.table_rows:
+            line(None, "No evidence rows.")
+        row[0] += 1
+        for title, items in (("Worth flagging", narrative.worth_flagging),
+                             ("Next actions", narrative.next_actions),
+                             ("Source keys", narrative.source_keys)):
+            if not items:
+                line(title, "None")
+            for i, item in enumerate(items):
+                put(1, title if i == 0 else None, bold)
+                put(2, item if title == "Source keys" else f"{i + 1}. {item}")
+                row[0] += 1
+            row[0] += 1
 
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as xw:
@@ -495,6 +565,8 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
             ("Win rate", fmt.PCT, wr.get("win_rate_pct")),
             ("Deals excluded (close<created)", fmt.COUNT, wr.get("excluded_invalid")),
         ])
+        for n in narratives or []:
+            write_narrative_sheet(xw, n, meta, r)
         if disclosure_text:
             # Foot of the summary sheet: the same block the dashboard shows (app/disclosure.py).
             ws = xw.sheets["Headline"]
@@ -677,10 +749,11 @@ async def export_audit(audit_id: str):
     if not a.get("results"):
         raise HTTPException(409, "Audit not computed yet")
     try:
-        block = await llm_gateway.disclosure_for_run(db, audit_id)
+        narratives = await llm_gateway.narratives_for_run(db, audit_id)
     except Exception:  # the export never depends on the narrative service
-        block = None
-    buf = build_export_workbook(a, a["results"], block["text"] if block else None)
+        narratives = []
+    block = llm_gateway.disclosure_from(narratives)
+    buf = build_export_workbook(a, a["results"], block["text"] if block else None, narratives)
     safe = "".join(c for c in (a.get("company_name") or "audit") if c.isalnum() or c in " -_").strip().replace(" ", "_")
     fname = f"{safe or 'audit'}_growth_diligence.xlsx"
     return StreamingResponse(

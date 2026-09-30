@@ -866,19 +866,33 @@ async def supersession(db, run_id: str, step: str, outbound: Any, model: str) ->
     return reason
 
 
-async def disclosure_for_run(db, run_id: str) -> Optional[dict]:
-    """The provenance block for every narrative that exists for this run.
+async def narratives_for_run(db, run_id: str) -> list:
+    """Every generated narrative for this run that is currently served, in step order.
 
-    Read-only - it reuses `read_cached_narrative`, so it can never call a provider.
+    Read-only - it reuses `read_cached_narrative`, so it can never call a provider. A
+    narrative is served only while its numbers still match, so what comes back describes
+    the run as it stands now.
     """
-    sections = []
+    found = []
     for step, config in STEP_CONFIG.items():
         if not config.get("enabled"):
             continue
         result = await read_cached_narrative(db, run_id, step)
         if result.narrative is not None and result.narrative_status in ("ok", "flagged"):
-            sections.append({"step": step, "model": result.model, "generated_at": result.generated_at})
-    return disclosure.build_disclosure(sections)
+            found.append(result)
+    return found
+
+
+def disclosure_from(narratives: list) -> Optional[dict]:
+    """The provenance block for narratives already loaded."""
+    return disclosure.build_disclosure([
+        {"step": n.step, "model": n.model, "generated_at": n.generated_at} for n in narratives
+    ])
+
+
+async def disclosure_for_run(db, run_id: str) -> Optional[dict]:
+    """The provenance block for every narrative that exists for this run."""
+    return disclosure_from(await narratives_for_run(db, run_id))
 
 
 # ---------------------------------------------------------------------------

@@ -233,3 +233,137 @@ def test_headline_cac_label_and_its_lag_row():
     assert rows["CAC payback in months (2026-Q1, latest complete quarter)"].value == 12.24
     lag = rows["S&M spend lag used for CAC payback (quarters)"]
     assert lag.value == 1 and lag.number_format == "0", "the lag left the label but is still shown"
+
+
+# ---------------------------------------------------------------------------
+# Narrative sheets: one per generated narrative, with its period and where the numbers are
+# ---------------------------------------------------------------------------
+def _narrative(step="growth_engine", **over):
+    from app.llm.schemas import Narrative, NarrativeResponse, TableRow
+    n = Narrative(
+        headline="Ending ARR is 3,129,104 EUR and NRR is 106%.",
+        what_this_means="Net revenue retention above 100% means the existing base is growing.",
+        table_rows=[
+            TableRow(label="Ending ARR", value="3,129,104 EUR", source_key="metrics.arr.value"),
+            TableRow(label="NRR", value="106%", source_key="metrics.nrr.overall_pct"),
+            TableRow(label="Additional", value="756", source_key="metrics.acv_path.additional_customers_needed"),
+            TableRow(label="Cohort", value="96%", source_key="metrics.cohort_retention.data.values.3"),
+        ],
+        worth_flagging=["Enterprise NRR rests on 8 customers."],
+        next_actions=["Ask for the contract list.", "Confirm the segment mapping."],
+        source_keys=["metrics.arr.value", "metrics.nrr.overall_pct"],
+        **over,
+    )
+    return NarrativeResponse(run_id="r", step=step, narrative_status="ok", narrative=n,
+                             model="claude-opus-5", generated_at="2026-09-30T14:07:45+00:00")
+
+
+_META = {"company_name": "Acme", "as_of_month": "2026-06", "target_arr": 5_000_000, "target_date": "2027-12-31"}
+
+
+def _sheet_rows(ws):
+    return [[c.value for c in row] for row in ws.iter_rows()]
+
+
+def test_a_narrative_sheet_is_written_after_the_headline_sheet_for_each_generated_step():
+    wb = openpyxl.load_workbook(server.build_export_workbook(
+        _META, RESULTS, None, [_narrative("growth_engine"), _narrative("path_to_plan")]))
+    assert wb.sheetnames[:3] == ["Headline", "Narrative - Growth engine", "Narrative - Path to plan"]
+
+
+def test_no_narrative_no_narrative_sheet():
+    wb = openpyxl.load_workbook(server.build_export_workbook(_META, RESULTS))
+    assert not [n for n in wb.sheetnames if n.startswith("Narrative")]
+
+
+def test_the_sheet_states_the_period_and_target_it_was_written_against():
+    ws = openpyxl.load_workbook(server.build_export_workbook(_META, RESULTS, None, [_narrative()]))["Narrative - Growth engine"]
+    rows = {r[0]: r[1] for r in _sheet_rows(ws) if r[0]}
+    assert rows["As-of month"] == "2026-06 (data through 2026-06-30)"
+    assert rows["Target ARR and date"] == "5,000,000 EUR by 2027-12-31"
+    top = [r[0] for r in _sheet_rows(ws)[:5]]
+    assert top[:1] == ["Growth engine narrative"] and "As-of month" in top, "the period is at the top, not buried"
+
+
+def test_the_six_sections_are_each_their_own_section():
+    ws = openpyxl.load_workbook(server.build_export_workbook(_META, RESULTS, None, [_narrative()]))["Narrative - Growth engine"]
+    values = _sheet_rows(ws)
+    sections = [r[0] for r in values if r[0] in (
+        "Headline", "What this means", "Evidence table", "Worth flagging", "Next actions", "Source keys")]
+    assert sections == ["Headline", "What this means", "Evidence table", "Worth flagging", "Next actions", "Source keys"]
+    by = {r[0]: r[1] for r in values if r[0]}
+    assert by["Headline"] == "Ending ARR is 3,129,104 EUR and NRR is 106%."
+    assert by["What this means"].startswith("Net revenue retention above 100%")
+    assert by["Worth flagging"] == "1. Enterprise NRR rests on 8 customers."
+    flat = [c for r in values for c in r if c]
+    assert "1. Ask for the contract list." in flat and "2. Confirm the segment mapping." in flat
+    assert "metrics.arr.value" in flat
+
+
+def test_evidence_rows_use_readable_names_keep_the_path_and_name_the_sheet_holding_the_number():
+    ws = openpyxl.load_workbook(server.build_export_workbook(_META, RESULTS, None, [_narrative()]))["Narrative - Growth engine"]
+    values = _sheet_rows(ws)
+    head = next(i for i, r in enumerate(values) if r[:4] == ["Metric", "Value", "Source key", "Where to find the number"])
+    rows = {r[2]: r for r in values[head + 1: head + 5]}
+    assert rows["metrics.arr.value"] == ["Ending ARR (latest month MRR × 12)", "3,129,104 EUR", "metrics.arr.value", "Headline"]
+    assert rows["metrics.nrr.overall_pct"][0] == "NRR (trailing 12 months)" and rows["metrics.nrr.overall_pct"][3] == "Headline"
+    assert rows["metrics.acv_path.additional_customers_needed"][3] == "Path to Plan"
+    # The cohort grid is not written to any sheet, so the row says so instead of pointing at a neighbour.
+    assert rows["metrics.cohort_retention.data.values.3"][3] == "not on a data sheet"
+
+
+def test_a_flagged_narrative_carries_its_warning_onto_the_sheet():
+    n = _narrative()
+    n.narrative_status, n.unmatched_numbers = "flagged", ["42.7"]
+    ws = openpyxl.load_workbook(server.build_export_workbook(_META, RESULTS, None, [n]))["Narrative - Growth engine"]
+    text = " ".join(str(c) for r in _sheet_rows(ws) for c in r if c)
+    assert "Unverified figures in this text: 42.7" in text
+
+
+def test_narrative_text_beginning_with_an_equals_sign_is_text_not_a_formula():
+    n = _narrative()
+    n.narrative = n.narrative.model_copy(update={"headline": "=HYPERLINK(\"http://example.com\",\"click\")"})
+    ws = openpyxl.load_workbook(server.build_export_workbook(_META, RESULTS, None, [n]))["Narrative - Growth engine"]
+    cell = next(c for row in ws.iter_rows() for c in row if c.value and "HYPERLINK" in str(c.value))
+    assert cell.data_type == "s"
+
+
+def test_prompt_version_never_appears_on_a_narrative_sheet():
+    ws = openpyxl.load_workbook(server.build_export_workbook(_META, RESULTS, None, [_narrative()]))["Narrative - Growth engine"]
+    text = " ".join(str(c).lower() for r in _sheet_rows(ws) for c in r if c)
+    assert "prompt" not in text and " v4" not in text
+
+
+def test_every_sheet_a_source_key_can_point_to_exists_in_a_full_export():
+    """data_sheet_for can only name a sheet the workbook really has."""
+    from app import narrative_export as ne
+    results, _ = _segment_results()
+    names = set(openpyxl.load_workbook(server.build_export_workbook(
+        _META, {**results, "anomalies": {"negative_mrr_months": []}, "missing_data": []},
+        "x", [_narrative()])).sheetnames)
+    assert set(ne.DATA_SHEETS) <= names, sorted(set(ne.DATA_SHEETS) - names)
+
+
+def test_data_sheet_for_names_the_sheet_that_carries_each_kind_of_value():
+    from app import narrative_export as ne
+    cases = {
+        "metrics.arr.value": "Headline",
+        "metrics.gross_churn.overall_pct": "Headline",
+        "metrics.nrr.by_segment.SMB.nrr_pct": "By Segment",
+        "metrics.sales_cycle.by_segment.SMB.median_days": "By Segment",
+        "metrics.acv_path.by_segment.SMB.acv": "By Segment",
+        "metrics.nrr.by_cohort.2025-Q1.nrr_pct": "NRR by Cohort",
+        "metrics.nrr.series.nrr_pct": "NRR Series",
+        "metrics.cac_payback.quarters.2026-Q1.L1.months": "CAC by Quarter",
+        "metrics.acv_path.total_customers_at_target": "Path to Plan",
+        "metrics.acv_path.bands.count": "ACV Bands",
+        "metrics.segment_paths.stage_one.segments.A.projected_arr": "Segment Base",
+        "metrics.segment_paths.gap_arr": "Segment Mix",
+        "metrics.segment_paths.reverse_solve.12.required_blended_landed_acv": "Segment Mix",
+        "metrics.segment_paths.reverse_solve.12.by_segment.A.required_mix_pct": "Segment Mix Detail",
+        "acv": "Path to Plan",                                     # a bare leaf the guard also accepts
+        "metrics.sales_cycle.iqr": "not on a data sheet",            # the export has the median only
+        "metrics.win_rate.won": "not on a data sheet",
+        "metrics.cohort_retention.data.values.3": "not on a data sheet",
+    }
+    assert {k: ne.data_sheet_for(k, {}) for k in cases} == cases
