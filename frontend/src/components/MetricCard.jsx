@@ -7,7 +7,7 @@ const STATUS = {
   neutral: "text-slate-900",
 };
 
-export function MetricCard({ id, label, value, source, sub, status = "neutral", note, caption }) {
+export function MetricCard({ id, label, value, source, sub, qualifier, status = "neutral", note, caption }) {
   return (
     <div
       data-testid={`metric-card-${id}`}
@@ -19,6 +19,11 @@ export function MetricCard({ id, label, value, source, sub, status = "neutral", 
           {value}
         </Provenance>
       </div>
+      {/* What the number means (e.g. "(latest month)"): a tile is read on its own, so
+          the qualifier sits directly beneath the value rather than in the label. */}
+      {qualifier && (
+        <div data-testid={`metric-qualifier-${id}`} className="text-[11px] text-slate-500 mt-1 font-mono">{qualifier}</div>
+      )}
       {sub && <div className="text-xs text-slate-600 mt-2 font-mono">{sub}</div>}
       {note && <div className="text-[11px] text-slate-500 mt-1">{note}</div>}
       {/* Static plain-language caption — always visible, never computed. */}

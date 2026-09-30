@@ -8,7 +8,7 @@
  *   currency  whole number, comma thousands, code   3129104.4 -> "3,129,104 EUR"
  *   count     observed count, nearest               100.0 -> "100"
  *   countUp   required / implied count, rounds up   128.3 -> "129"
- *   days      rounds up                             42.1  -> "43"
+ *   days      rounds up, "days" suffix              42.1  -> "43 days"
  *   months    one decimal, nearest                  12.24 -> "12.2 months"
  *   pct       whole number, nearest                 106.41 -> "106%"
  *   ratio     always two decimals, "x"              1.28  -> "1.28x"
@@ -44,7 +44,14 @@ export function fmtCurrency(value, ccy) {
 }
 export const fmtCount = (v) => (missing(v) ? PLACEHOLDER : group(roundHalfUp(v)));
 export const fmtCountUp = (v) => (missing(v) ? PLACEHOLDER : group(ceilUp(v)));
-export const fmtDays = (v) => (missing(v) ? PLACEHOLDER : group(ceilUp(v)));
+// Days round up; the unit is a suffix and does not change the number. Use
+// fmtDaysNumber to compose a range ("17–59 days").
+export const fmtDaysNumber = (v) => (missing(v) ? PLACEHOLDER : group(ceilUp(v)));
+export const fmtDays = (v) => {
+  if (missing(v)) return PLACEHOLDER;
+  const n = ceilUp(v);
+  return `${group(n)} ${n === 1 ? "day" : "days"}`;
+};
 // CAC payback is a duration in months: one decimal, nearest - not rounded up.
 export const fmtMonths = (v) => (missing(v) ? PLACEHOLDER : `${roundHalfUp(v, 1).toFixed(1)} months`);
 export const fmtPct = (v) => (missing(v) ? PLACEHOLDER : `${group(roundHalfUp(v))}%`);

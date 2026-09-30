@@ -35,3 +35,6 @@ export const readNarrative = (id, step) =>
 export const generateNarrative = (id, step) =>
   api.post(`/runs/${id}/narrative/${step}`).then((r) => r.data);
 export const getLlmUsage = (id) => api.get(`/runs/${id}/llm-usage`).then((r) => r.data);
+// AI-provenance block (model + generation time) for the foot of the analysis.
+// Read-only; the same text is written into the exports.
+export const getDisclosure = (id) => api.get(`/runs/${id}/disclosure`).then((r) => r.data.disclosure);

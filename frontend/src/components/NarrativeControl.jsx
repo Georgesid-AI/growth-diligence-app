@@ -7,7 +7,7 @@ import { Loader2, Sparkles, RefreshCw } from "lucide-react";
  * already written (no AI request); this button is the only thing that costs one,
  * and the helper text says so before the reader commits to it rather than after.
  */
-export function NarrativeControl({ status, generatedAt, superseded, busy, onGenerate }) {
+export function NarrativeControl({ status, generatedAt, superseded, supersededReason, busy, onGenerate }) {
   const hasNarrative = status === "ok" || status === "flagged";
 
   if (hasNarrative) {
@@ -45,12 +45,10 @@ export function NarrativeControl({ status, generatedAt, superseded, busy, onGene
       </button>
       <p data-testid="narrative-helper" className="mt-1.5 max-w-2xl text-xs text-slate-500">
         {superseded ? (
-          // One was written, but for numbers that have since changed. Say so:
-          // the reader may remember reading it and wonder where it went.
-          <>
-            The data changed since the last summary was written, so it no longer
-            applies. Generate a new one when you're ready.
-          </>
+          // One was written but is no longer shown. Say why: the reader may remember
+          // reading it and wonder where it went, and "the data changed" is only true
+          // for one of the three reasons.
+          <SupersededMessage reason={supersededReason} />
         ) : (
           <>
             Writes a short summary of the numbers below, in plain English. The numbers
@@ -61,6 +59,20 @@ export function NarrativeControl({ status, generatedAt, superseded, busy, onGene
       </p>
     </div>
   );
+}
+
+const SUPERSEDED_MESSAGES = {
+  // The numbers moved on since the summary was written.
+  data_changed: "The data changed since the last summary was written, so it no longer applies. Generate a new one when you're ready.",
+  // The numbers are the same; the instructions that write the summary were updated.
+  prompt_release_changed: "The summary prompt was updated since the last summary was written, so that summary is no longer shown. Your data has not changed. Generate a new one when you're ready.",
+  // The numbers are the same; a different AI model is now used for summaries.
+  model_changed: "The AI model used for summaries changed since the last summary was written, so that summary is no longer shown. Your data has not changed. Generate a new one when you're ready.",
+};
+
+function SupersededMessage({ reason }) {
+  // An older API response has no reason; "data changed" was the only thing it meant.
+  return <span data-testid="superseded-message" data-reason={reason ?? "data_changed"}>{SUPERSEDED_MESSAGES[reason] ?? SUPERSEDED_MESSAGES.data_changed}</span>;
 }
 
 /**

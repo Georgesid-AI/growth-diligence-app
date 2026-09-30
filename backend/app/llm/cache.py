@@ -53,6 +53,8 @@ async def get(db, key: str) -> Optional[dict]:
         "narrative_status": doc.get("narrative_status", "ok"),
         "unmatched_numbers": list(doc.get("unmatched_numbers", [])),
         "created_at": doc.get("created_at"),
+        "model": doc.get("model"),
+        "prompt_version": doc.get("prompt_version"),
     }
 
 
@@ -66,6 +68,7 @@ async def put(
     narrative: dict,
     narrative_status: str = "ok",
     unmatched_numbers: Optional[list] = None,
+    prompt_release: Optional[str] = None,
 ) -> None:
     """Store a narrative under `key`.
 
@@ -79,6 +82,7 @@ async def put(
             "run_id": run_id,
             "step": step,
             "prompt_version": prompt_version,
+            "prompt_release": prompt_release,
             "model": model,
             "narrative": narrative,
             "narrative_status": narrative_status,
@@ -101,6 +105,19 @@ async def has_any(db, run_id: str, step: str) -> bool:
         {"run_id": run_id, "step": step}, {"_id": 0, "key": 1}
     )
     return doc is not None
+
+
+async def records_for(db, run_id: str, step: str) -> list:
+    """Every stored narrative for a run+step, whatever key it was written under.
+
+    Used only to explain why the current key found nothing (see gateway.supersession);
+    it never serves one of them.
+    """
+    cursor = db[NARRATIVES_COLLECTION].find(
+        {"run_id": run_id, "step": step},
+        {"_id": 0, "key": 1, "prompt_version": 1, "prompt_release": 1, "model": 1, "created_at": 1},
+    )
+    return await cursor.to_list(1000)
 
 
 async def delete_run(db, run_id: str) -> int:

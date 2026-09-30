@@ -24,7 +24,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Iterable, List, NamedTuple, Optional, Tuple
 
-from .. import formatting
+from .. import disclosure, formatting
 from . import cache, guards, prompt_store, redaction
 from .schemas import Narrative, NarrativeResponse, UsageResponse, narrative_output_schema
 
@@ -50,6 +50,20 @@ DEFAULT_MODEL = "claude-opus-5"
 # `temperature` to those models is a 400. Only models listed here get it.
 MODELS_ACCEPTING_TEMPERATURE = {"claude-haiku-4-5"}
 
+def run_model() -> str:
+    """The one model every step in a run uses.
+
+    A run-level setting (LLM_MODEL, default DEFAULT_MODEL) rather than a per-step
+    one, so sections of the same analysis can never be written by different models.
+    Steps have no model of their own. An unknown model is refused: it would have no
+    price, so the spend caps could not count it.
+    """
+    chosen = os.environ.get("LLM_MODEL", "").strip() or DEFAULT_MODEL
+    if chosen not in MODEL_PRICING_USD:
+        raise GatewayError("model_not_configured", f"LLM_MODEL {chosen!r} has no price entry")
+    return chosen
+
+
 # Per-step configuration. Only `growth_engine` has a prompt; the rest are
 # scaffolded so wiring and guards are already in place when their prompts land.
 STEP_CONFIG = {
@@ -58,7 +72,6 @@ STEP_CONFIG = {
         # Window lengths this step legitimately talks about ("12-month NRR"),
         # allowlisted so ordinary phrasing is not treated as a fabricated figure.
         "windows": [12, 24],
-        "model": DEFAULT_MODEL,
         "max_tokens": 4000,
         "temperature": 0.2,
         "enabled": True,
@@ -68,7 +81,6 @@ STEP_CONFIG = {
         # Window lengths this step legitimately talks about ("12-month NRR"),
         # allowlisted so ordinary phrasing is not treated as a fabricated figure.
         "windows": [12, 24],
-        "model": DEFAULT_MODEL,
         "max_tokens": 3000,
         "temperature": 0.2,
         "enabled": False,
@@ -78,7 +90,6 @@ STEP_CONFIG = {
         # Window lengths this step legitimately talks about ("12-month NRR"),
         # allowlisted so ordinary phrasing is not treated as a fabricated figure.
         "windows": [4],
-        "model": DEFAULT_MODEL,
         "max_tokens": 3000,
         "temperature": 0.2,
         "enabled": False,
@@ -88,7 +99,6 @@ STEP_CONFIG = {
         # Window lengths this step legitimately talks about ("12-month NRR"),
         # allowlisted so ordinary phrasing is not treated as a fabricated figure.
         "windows": [12, 24],
-        "model": DEFAULT_MODEL,
         "max_tokens": 3000,
         "temperature": 0.2,
         "enabled": False,
@@ -157,6 +167,28 @@ def strip_row_references(node: Any) -> Any:
     return node
 
 
+def withhold_partial_quarters(node: Any) -> Any:
+    """Replace the payback figures of partial quarters with a reason, in a copy.
+
+    A partial quarter's CAC payback pairs a full quarter of lagged S&M with part of a
+    quarter's new MRR and overstates. The dashboard shows it, labelled; the model is
+    not given the figure, so it cannot quote it as if it were comparable.
+    """
+    if not isinstance(node, dict):
+        return node
+    cac = (node.get("metrics") or {}).get("cac_payback")
+    if not isinstance(cac, dict) or not isinstance(cac.get("quarters"), dict):
+        return node
+    quarters = {}
+    for q, row in cac["quarters"].items():
+        if isinstance(row, dict) and row.get("partial"):
+            reason = f"partial quarter ({row.get('months_in_quarter')} of 3 months); not comparable"
+            row = {k: ({"months": None, "reason": reason} if k in ("L0", "L1", "L2") else v)
+                   for k, v in row.items()}
+        quarters[q] = row
+    return {**node, "metrics": {**node["metrics"], "cac_payback": {**cac, "quarters": quarters}}}
+
+
 def build_outbound(computed: dict, mapping: dict) -> dict:
     """The payload the provider sees: display strings, then pseudonyms.
 
@@ -165,7 +197,7 @@ def build_outbound(computed: dict, mapping: dict) -> dict:
     Raw values stay untouched in `computed` and in Mongo.
     """
     try:
-        formatted = formatting.format_payload(strip_row_references(computed))
+        formatted = formatting.format_payload(withhold_partial_quarters(strip_row_references(computed)))
     except formatting.FormattingError as exc:
         raise GatewayError("format_failed", str(exc))
     return redaction.redact(formatted, mapping)
@@ -519,7 +551,11 @@ async def generate_narrative(
     except (FileNotFoundError, ValueError) as exc:
         return _unavailable(run_id, step, f"prompt unavailable: {exc}", metrics)
 
-    model = config["model"]
+    try:
+        model = run_model()
+    except GatewayError as exc:
+        return _unavailable(run_id, step, str(exc), metrics)
+    config = {**config, "model": model}
     mapping = await redaction.get_or_create_map(db, run_id, computed)
     try:
         outbound = build_outbound(computed, mapping)
@@ -532,7 +568,7 @@ async def generate_narrative(
         logger.error("redaction leak for run %s: %d identifier(s)", run_id, len(leaks))
         return _unavailable(run_id, step, "redaction check failed", metrics)
 
-    key = cache.cache_key(run_id, step, prompt.version, model, outbound)
+    key = cache.cache_key(run_id, step, prompt_store.cache_tag(prompt), model, outbound)
 
     cached = await cache.get(db, key)
     if cached:
@@ -605,6 +641,7 @@ async def generate_narrative(
         await cache.put(
             db, key, run_id, step, prompt.version, model, final.model_dump(),
             narrative_status=status, unmatched_numbers=guard.soft,
+            prompt_release=prompt_store.release(),
         )
         await log_call(
             db, run_id=run_id, step=step, prompt_version=prompt.version, model=model,
@@ -769,7 +806,12 @@ async def read_cached_narrative(db, run_id: str, step: str) -> NarrativeResponse
             run_id=run_id, step=step, narrative_status="not_generated", metrics=metrics,
         )
 
-    model = config["model"]
+    try:
+        model = run_model()
+    except GatewayError:
+        return NarrativeResponse(
+            run_id=run_id, step=step, narrative_status="not_generated", metrics=metrics,
+        )
     mapping = await redaction.get_or_create_map(db, run_id, computed)
     try:
         outbound = build_outbound(computed, mapping)
@@ -777,15 +819,16 @@ async def read_cached_narrative(db, run_id: str, step: str) -> NarrativeResponse
         return NarrativeResponse(
             run_id=run_id, step=step, narrative_status="not_generated", metrics=metrics,
         )
-    key = cache.cache_key(run_id, step, prompt.version, model, outbound)
+    key = cache.cache_key(run_id, step, prompt_store.cache_tag(prompt), model, outbound)
 
     cached = await cache.get(db, key)
     if not cached:
-        # Nothing matches the current numbers. If something was written for an
-        # earlier version of this run, say so - the reader may remember it.
+        # Nothing matches the current key. If something was written for an earlier
+        # version of this run, say so - the reader may remember it - and say why.
+        reason = await supersession(db, run_id, step, outbound, model)
         return NarrativeResponse(
             run_id=run_id, step=step, narrative_status="not_generated",
-            metrics=metrics, superseded=await cache.has_any(db, run_id, step),
+            metrics=metrics, superseded=reason is not None, superseded_reason=reason,
         )
 
     # A read is not a call: it is not written to llm_calls, so the usage figures
@@ -794,11 +837,48 @@ async def read_cached_narrative(db, run_id: str, step: str) -> NarrativeResponse
         run_id=run_id, step=step,
         narrative_status=cached.get("narrative_status", "ok"),
         narrative=Narrative.model_validate(cached["narrative"]),
-        cache_hit=True, prompt_version=prompt.version, model=model,
+        cache_hit=True, prompt_version=prompt.version, model=cached.get("model") or model,
         metrics=metrics,
         unmatched_numbers=list(cached.get("unmatched_numbers", [])),
         generated_at=cached.get("created_at"),
     )
+
+
+async def supersession(db, run_id: str, step: str, outbound: Any, model: str) -> Optional[str]:
+    """Why an earlier narrative for this run+step is no longer served, or None if none exists.
+
+    The stored key is recomputed under the settings the narrative was written with,
+    against the current numbers. If it still matches, the numbers did not move and the
+    narrative is unreachable only because the prompt release or the model changed.
+    Only if no stored narrative matches under its own settings did the data change.
+    Records from before releases were stamped count as the baseline release.
+    """
+    records = await cache.records_for(db, run_id, step)
+    if not records:
+        return None
+    reason = "data_changed"
+    for rec in sorted(records, key=lambda r: r.get("created_at") or ""):  # newest match wins
+        rec_release = rec.get("prompt_release") or prompt_store.BASELINE_RELEASE
+        rec_model = rec.get("model") or model
+        tag = prompt_store.tag_for(rec_release, rec.get("prompt_version") or "")
+        if cache.cache_key(run_id, step, tag, rec_model, outbound) == rec.get("key"):
+            reason = "model_changed" if rec_model != model else "prompt_release_changed"
+    return reason
+
+
+async def disclosure_for_run(db, run_id: str) -> Optional[dict]:
+    """The provenance block for every narrative that exists for this run.
+
+    Read-only - it reuses `read_cached_narrative`, so it can never call a provider.
+    """
+    sections = []
+    for step, config in STEP_CONFIG.items():
+        if not config.get("enabled"):
+            continue
+        result = await read_cached_narrative(db, run_id, step)
+        if result.narrative is not None and result.narrative_status in ("ok", "flagged"):
+            sections.append({"step": step, "model": result.model, "generated_at": result.generated_at})
+    return disclosure.build_disclosure(sections)
 
 
 # ---------------------------------------------------------------------------

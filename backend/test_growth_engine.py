@@ -413,6 +413,101 @@ def _cac_zero_newmrr():
     return "new MRR is zero", (q["reason"] if q["months"] is None else "computable")
 
 
+# --- CAC payback: a partial quarter never headlines -------------------------
+def _pnl_rows(spec):
+    return pd.DataFrame([
+        {"month": month(i), "sm_expense": sm, "revenue": rev, "cost_of_revenue": cost, "_row": i + 1}
+        for i, (sm, rev, cost) in spec.items()
+    ])
+
+
+def _cac_with_partial_last_quarter():
+    # N starts in Q2 (Apr-Jun, complete). P starts in Jul: Q3 has one month of data (partial).
+    rows = monthly_lines("N", {3: 1000, 4: 1000, 5: 1000, 6: 1000})
+    rows += monthly_lines("P", {6: 1000}, start_row=100)
+    mrr, _, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
+    new_q = ge.compute_new_mrr_by_quarter(mrr, fm)
+    pnl = _pnl_rows({0: (1500, 0, 0), 1: (1500, 0, 0), 2: (1000, 0, 0),
+                     3: (700, 400, 80), 4: (700, 300, 60), 5: (600, 300, 60), 6: (1000, 1000, 200)})
+    return new_q, ge.compute_cac_payback(new_q, pnl, default_l=1)
+
+
+@case("New MRR by quarter flags a quarter with fewer than 3 months of data as partial")
+def _partial_flags():
+    new_q, _ = _cac_with_partial_last_quarter()
+    return ((3, False), (1, True)), (
+        (new_q["2023-Q2"]["months_in_quarter"], new_q["2023-Q2"]["partial"]),
+        (new_q["2023-Q3"]["months_in_quarter"], new_q["2023-Q3"]["partial"]),
+    )
+
+
+@case("CAC payback: headline is the last complete quarter; the partial one is excluded but still computed")
+def _cac_headline_skips_partial():
+    _, cac = _cac_with_partial_last_quarter()
+    q3 = cac["quarters"]["2023-Q3"]
+    return ("2023-Q2", "2023-Q3", True, True), (
+        cac["headline_quarter"], cac["partial_quarter_excluded"],
+        q3["partial"], q3["L1"]["months"] is not None,   # calculation unchanged, no pro-rating
+    )
+
+
+@case("CAC payback: with no complete quarter there is no headline, and the partial quarter is named")
+def _cac_no_complete_quarter():
+    rows = monthly_lines("P", {6: 1000})
+    mrr, _, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
+    new_q = ge.compute_new_mrr_by_quarter(mrr, fm)
+    pnl = _pnl_rows({3: (700, 400, 80), 4: (700, 300, 60), 5: (600, 300, 60), 6: (1000, 1000, 200)})
+    cac = ge.compute_cac_payback(new_q, pnl, default_l=1)
+    return (None, "2023-Q3"), (cac["headline_quarter"], cac["partial_quarter_excluded"])
+
+
+@case("CAC payback: a complete quarter is never flagged partial")
+def _cac_complete_not_partial():
+    _, cac = _cac_with_partial_last_quarter()
+    return (False, 3), (cac["quarters"]["2023-Q2"]["partial"], cac["quarters"]["2023-Q2"]["months_in_quarter"])
+
+
+# --- Deals follow the same as-of cut as MRR and the P&L ---------------------
+def _cut_deals():
+    def deal(i, stage, created, closed):
+        return {"deal_id": i, "stage": stage, "created_date": pd.Timestamp(created),
+                "close_date": pd.Timestamp(closed) if closed else pd.NaT, "_row": i}
+    return pd.DataFrame([
+        deal(1, "won", "2024-01-05", "2024-02-10"),    # closed inside the period
+        deal(2, "lost", "2024-01-06", "2024-03-31"),   # closed on the last day of the as-of month: kept
+        deal(3, "won", "2024-02-01", "2024-04-01"),    # closed the day after: excluded
+        deal(4, "lost", "2024-02-15", "2024-05-20"),   # excluded
+        deal(5, "open", "2024-05-02", None),           # created after the as-of month: excluded
+        deal(6, "open", "2024-03-02", None),           # still open at the as-of date: kept, not a closed deal
+        deal(7, "won", "2024-03-02", None),            # won with no close date: cannot be placed, kept
+    ])
+
+
+@case("Deals cut at as-of: closed or created after the as-of month are dropped (3 of 7)")
+def _deals_cut_count():
+    kept, dropped = ge.cut_deals_at_as_of(_cut_deals(), pd.Period("2024-03", "M"))
+    return (4, 3), (len(kept), dropped)
+
+
+@case("Deals cut at as-of: last day of the as-of month is kept, the next day is not")
+def _deals_cut_boundary():
+    kept, _ = ge.cut_deals_at_as_of(_cut_deals(), pd.Period("2024-03", "M"))
+    return [1, 2, 6, 7], sorted(kept["deal_id"].tolist())
+
+
+@case("Deals cut at as-of: win rate counts only deals closed by the as-of month")
+def _deals_cut_win_rate():
+    kept, _ = ge.cut_deals_at_as_of(_cut_deals(), pd.Period("2024-03", "M"))
+    wr = ge.compute_win_rate(kept, founder_available=False)
+    return (2, 1), (wr["won"], wr["lost"])
+
+
+@case("Deals cut at as-of: no as-of month leaves the deals untouched")
+def _deals_cut_none():
+    kept, dropped = ge.cut_deals_at_as_of(_cut_deals(), None)
+    return (7, 0), (len(kept), dropped)
+
+
 # --- Path to plan -----------------------------------------------------------
 def _path_scenario():
     rows = []

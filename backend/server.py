@@ -426,7 +426,7 @@ async def get_results(audit_id: str):
     return sanitize({"audit": {k: a.get(k) for k in keys}, "results": a["results"]})
 
 
-def build_export_workbook(meta: dict, r: dict) -> io.BytesIO:
+def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = None) -> io.BytesIO:
     """Numeric cells with Excel number formats (see app/formatting.py), so the
     display follows the formatting rules while analysts can still sum and sort."""
     ccy = r.get("reporting_currency", "")
@@ -467,13 +467,19 @@ def build_export_workbook(meta: dict, r: dict) -> io.BytesIO:
         sc = r.get("sales_cycle") or {}
         wr = r.get("win_rate") or {}
         cac = r.get("cac_payback") or {}
-        cac_label, cac_value = "CAC payback, months (default L)", None
+        # Headline is the latest COMPLETE quarter (a partial quarter overstates payback and is
+        # never a headline); the quarter is named so an older figure is not read as current.
+        cac_label, cac_value = "CAC payback, months (no complete quarter)", None
         if cac:
             L = f"L{cac.get('default_l', 1)}"
-            for q in sorted(cac.get("quarters", {})):
-                if cac["quarters"][q][L]["months"] is not None:
-                    cac_value = cac["quarters"][q][L]["months"]
-                    cac_label = f"CAC payback, months ({q}, {L})"
+            hq = cac.get("headline_quarter")
+            if hq is None and "headline_quarter" not in cac:  # results computed before partial quarters were flagged
+                done = [q for q in sorted(cac.get("quarters", {}))
+                        if not cac["quarters"][q].get("partial") and cac["quarters"][q][L]["months"] is not None]
+                hq = done[-1] if done else None
+            if hq:
+                cac_value = cac["quarters"][hq][L]["months"]
+                cac_label = f"CAC payback, months ({hq}, {L}, latest complete quarter)"
         kv_sheet(xw, "Headline", [
             ("Company", None, meta.get("company_name")),
             ("As-of month", None, meta.get("as_of_month") or r.get("as_of_month")),
@@ -488,6 +494,11 @@ def build_export_workbook(meta: dict, r: dict) -> io.BytesIO:
             ("Win rate", fmt.PCT, wr.get("win_rate_pct")),
             ("Deals excluded (close<created)", fmt.COUNT, wr.get("excluded_invalid")),
         ])
+        if disclosure_text:
+            # Foot of the summary sheet: the same block the dashboard shows (app/disclosure.py).
+            ws = xw.sheets["Headline"]
+            ws.cell(row=ws.max_row + 2, column=1).value = "AI disclosure"
+            ws.cell(row=ws.max_row, column=2).value = disclosure_text
 
         # By segment
         seg_rows = {}
@@ -528,7 +539,9 @@ def build_export_workbook(meta: dict, r: dict) -> io.BytesIO:
         # CAC by quarter
         cac_rows = []
         for q, v in (cac.get("quarters") or {}).items():
-            row = {"Quarter": q, f"New MRR{money}": v.get("new_mrr"), "Gross margin": v.get("gross_margin_pct")}
+            row = {"Quarter": q,
+                   "Quarter status": (f"partial ({v.get('months_in_quarter')} of 3 months)" if v.get("partial") else "complete"),
+                   f"New MRR{money}": v.get("new_mrr"), "Gross margin": v.get("gross_margin_pct")}
             for L in ("L0", "L1", "L2"):
                 row[f"{L} months"] = v[L].get("months")
                 row[f"{L} S&M used{money}"] = v[L].get("sm_expense")
@@ -598,7 +611,11 @@ async def export_audit(audit_id: str):
         raise HTTPException(404, "Audit not found")
     if not a.get("results"):
         raise HTTPException(409, "Audit not computed yet")
-    buf = build_export_workbook(a, a["results"])
+    try:
+        block = await llm_gateway.disclosure_for_run(db, audit_id)
+    except Exception:  # the export never depends on the narrative service
+        block = None
+    buf = build_export_workbook(a, a["results"], block["text"] if block else None)
     safe = "".join(c for c in (a.get("company_name") or "audit") if c.isalnum() or c in " -_").strip().replace(" ", "_")
     fname = f"{safe or 'audit'}_growth_diligence.xlsx"
     return StreamingResponse(
@@ -645,6 +662,23 @@ async def read_narrative(run_id: str, step: str):
             raise HTTPException(409, "Run not computed yet")
         raise HTTPException(500, exc.reason)
     return sanitize(result.model_dump())
+
+
+@api.get("/runs/{run_id}/disclosure")
+async def narrative_disclosure(run_id: str):
+    """The AI-provenance block for this run (model and generation time), or null.
+
+    Read-only; shared by the dashboard, the xlsx export and any memo export.
+    """
+    try:
+        block = await llm_gateway.disclosure_for_run(db, run_id)
+    except llm_gateway.GatewayError as exc:
+        if exc.reason == "run_not_found":
+            raise HTTPException(404, "Run not found")
+        if exc.reason == "not_computed":
+            return {"disclosure": None}
+        raise HTTPException(500, exc.reason)
+    return {"disclosure": block}
 
 
 @api.get("/runs/{run_id}/llm-usage")
