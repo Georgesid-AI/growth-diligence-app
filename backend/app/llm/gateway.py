@@ -50,6 +50,20 @@ DEFAULT_MODEL = "claude-opus-5"
 # `temperature` to those models is a 400. Only models listed here get it.
 MODELS_ACCEPTING_TEMPERATURE = {"claude-haiku-4-5"}
 
+def run_model() -> str:
+    """The one model every step in a run uses.
+
+    A run-level setting (LLM_MODEL, default DEFAULT_MODEL) rather than a per-step
+    one, so sections of the same analysis can never be written by different models.
+    Steps have no model of their own. An unknown model is refused: it would have no
+    price, so the spend caps could not count it.
+    """
+    chosen = os.environ.get("LLM_MODEL", "").strip() or DEFAULT_MODEL
+    if chosen not in MODEL_PRICING_USD:
+        raise GatewayError("model_not_configured", f"LLM_MODEL {chosen!r} has no price entry")
+    return chosen
+
+
 # Per-step configuration. Only `growth_engine` has a prompt; the rest are
 # scaffolded so wiring and guards are already in place when their prompts land.
 STEP_CONFIG = {
@@ -58,7 +72,6 @@ STEP_CONFIG = {
         # Window lengths this step legitimately talks about ("12-month NRR"),
         # allowlisted so ordinary phrasing is not treated as a fabricated figure.
         "windows": [12, 24],
-        "model": DEFAULT_MODEL,
         "max_tokens": 4000,
         "temperature": 0.2,
         "enabled": True,
@@ -68,7 +81,6 @@ STEP_CONFIG = {
         # Window lengths this step legitimately talks about ("12-month NRR"),
         # allowlisted so ordinary phrasing is not treated as a fabricated figure.
         "windows": [12, 24],
-        "model": DEFAULT_MODEL,
         "max_tokens": 3000,
         "temperature": 0.2,
         "enabled": False,
@@ -78,7 +90,6 @@ STEP_CONFIG = {
         # Window lengths this step legitimately talks about ("12-month NRR"),
         # allowlisted so ordinary phrasing is not treated as a fabricated figure.
         "windows": [4],
-        "model": DEFAULT_MODEL,
         "max_tokens": 3000,
         "temperature": 0.2,
         "enabled": False,
@@ -88,7 +99,6 @@ STEP_CONFIG = {
         # Window lengths this step legitimately talks about ("12-month NRR"),
         # allowlisted so ordinary phrasing is not treated as a fabricated figure.
         "windows": [12, 24],
-        "model": DEFAULT_MODEL,
         "max_tokens": 3000,
         "temperature": 0.2,
         "enabled": False,
@@ -519,7 +529,11 @@ async def generate_narrative(
     except (FileNotFoundError, ValueError) as exc:
         return _unavailable(run_id, step, f"prompt unavailable: {exc}", metrics)
 
-    model = config["model"]
+    try:
+        model = run_model()
+    except GatewayError as exc:
+        return _unavailable(run_id, step, str(exc), metrics)
+    config = {**config, "model": model}
     mapping = await redaction.get_or_create_map(db, run_id, computed)
     try:
         outbound = build_outbound(computed, mapping)
@@ -532,7 +546,7 @@ async def generate_narrative(
         logger.error("redaction leak for run %s: %d identifier(s)", run_id, len(leaks))
         return _unavailable(run_id, step, "redaction check failed", metrics)
 
-    key = cache.cache_key(run_id, step, prompt.version, model, outbound)
+    key = cache.cache_key(run_id, step, prompt_store.cache_tag(prompt), model, outbound)
 
     cached = await cache.get(db, key)
     if cached:
@@ -605,6 +619,7 @@ async def generate_narrative(
         await cache.put(
             db, key, run_id, step, prompt.version, model, final.model_dump(),
             narrative_status=status, unmatched_numbers=guard.soft,
+            prompt_release=prompt_store.release(),
         )
         await log_call(
             db, run_id=run_id, step=step, prompt_version=prompt.version, model=model,
@@ -769,7 +784,12 @@ async def read_cached_narrative(db, run_id: str, step: str) -> NarrativeResponse
             run_id=run_id, step=step, narrative_status="not_generated", metrics=metrics,
         )
 
-    model = config["model"]
+    try:
+        model = run_model()
+    except GatewayError:
+        return NarrativeResponse(
+            run_id=run_id, step=step, narrative_status="not_generated", metrics=metrics,
+        )
     mapping = await redaction.get_or_create_map(db, run_id, computed)
     try:
         outbound = build_outbound(computed, mapping)
@@ -777,7 +797,7 @@ async def read_cached_narrative(db, run_id: str, step: str) -> NarrativeResponse
         return NarrativeResponse(
             run_id=run_id, step=step, narrative_status="not_generated", metrics=metrics,
         )
-    key = cache.cache_key(run_id, step, prompt.version, model, outbound)
+    key = cache.cache_key(run_id, step, prompt_store.cache_tag(prompt), model, outbound)
 
     cached = await cache.get(db, key)
     if not cached:

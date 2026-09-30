@@ -10,7 +10,7 @@ Rules (kind -> behaviour):
     currency   whole number, comma thousands, currency code   3129104.4 -> "3,129,104 EUR"
     count      observed count, rounds to nearest              100.0     -> "100"
     count_up   required / implied count, rounds UP            128.3     -> "129"
-    days       rounds UP to the next whole day                42.1      -> "43"
+    days       rounds UP to the next whole day, unit suffix   42.1      -> "43 days"
     months     one decimal, nearest, "months" suffix          12.24     -> "12.2 months"
     pct        whole number, nearest, half away from zero     106.41    -> "106%"
     ratio      always two decimals, "x" suffix                1.28      -> "1.28x"
@@ -79,9 +79,22 @@ def fmt_count_up(value: Any) -> str:
     return PLACEHOLDER if d is None else _grouped(_up(d))
 
 
-def fmt_days(value: Any) -> str:
+def fmt_days_number(value: Any) -> str:
+    """The rounded-up day count on its own, for composing ranges ("17–59 days")."""
     d = _dec(value)
     return PLACEHOLDER if d is None else _grouped(_up(d))
+
+
+def fmt_days(value: Any) -> str:
+    """Whole days, rounded up, with the unit as a suffix: 42.1 -> "43 days".
+
+    The rounding rule governs the number only; the unit does not change it.
+    """
+    d = _dec(value)
+    if d is None:
+        return PLACEHOLDER
+    n = _up(d)
+    return f"{_grouped(n)} {'day' if n == 1 else 'days'}"
 
 
 def fmt_months(value: Any) -> str:
@@ -339,9 +352,9 @@ LABEL_BY_PATH = {
 QUALIFIER_BY_PATH = {
     "arr.value": "latest month MRR × 12", "current_arr": "latest month MRR × 12",
     "arr.mrr": "latest month",
-    "nrr.overall_pct": "latest month",
-    "gross_churn.overall_pct": "latest month",
-    "months": "latest quarter",
+    "nrr.overall_pct": "trailing 12 months", "nrr_pct": "trailing 12 months",
+    "gross_churn.overall_pct": "trailing 12 months", "churn_pct": "trailing 12 months",
+    "months": "latest computable quarter",
     "median_days": "all won deals", "iqr": "all won deals",
     "win_rate_pct": "closed deals",
     "current_customers": "active, latest month",
@@ -403,7 +416,7 @@ def qualifier_for(source_key: str) -> Optional[str]:
     qualifier = _lookup(QUALIFIER_BY_PATH, segs)
     # A row citing one specific quarter says which, instead of "latest quarter".
     quarter = next((s for s in segs if _QUARTER.match(s)), None)
-    if quarter and qualifier == "latest quarter":
+    if quarter and qualifier == "latest computable quarter":
         return quarter
     return qualifier
 

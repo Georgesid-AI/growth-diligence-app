@@ -68,6 +68,7 @@ async def put(
     narrative: dict,
     narrative_status: str = "ok",
     unmatched_numbers: Optional[list] = None,
+    prompt_release: Optional[str] = None,
 ) -> None:
     """Store a narrative under `key`.
 
@@ -81,6 +82,7 @@ async def put(
             "run_id": run_id,
             "step": step,
             "prompt_version": prompt_version,
+            "prompt_release": prompt_release,
             "model": model,
             "narrative": narrative,
             "narrative_status": narrative_status,

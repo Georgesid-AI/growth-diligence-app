@@ -53,7 +53,7 @@ def test_format_payload_leaves_no_raw_numbers():
     assert out["target_arr"] == "5,000,000 EUR"
     assert m["arr"]["value"] == "3,129,104 EUR"
     assert m["nrr"]["overall_pct"] == "106%" and m["nrr"]["n"] == "100"
-    assert m["sales_cycle"]["median_days"] == "43" and m["sales_cycle"]["iqr"] == ["17", "59"]
+    assert m["sales_cycle"]["median_days"] == "43 days" and m["sales_cycle"]["iqr"] == ["17 days", "59 days"]
     assert m["acv_path"]["customers_needed"] == "129"
     assert m["cac_payback"]["quarters"]["2026-Q1"]["L1"]["months"] == "12.2 months"
     assert m["acv_path"]["required_vs_observed_12m"] == "1.28x"
@@ -278,7 +278,7 @@ def test_row_labels_are_added_to_the_response_and_not_to_the_model_contract():
     resp = NarrativeResponse(run_id="r", step="growth_engine", narrative_status="ok", narrative=n)
     assert resp.row_labels == {
         "metrics.acv_path.customers_needed": "Customers needed (at current ACV)",
-        "metrics.nrr.overall_pct": "NRR (latest month)",
+        "metrics.nrr.overall_pct": "NRR (trailing 12 months)",
     }
     # Citations are untouched, and the model is never asked for or sent labels.
     assert [r.source_key for r in resp.narrative.table_rows] == [
@@ -291,12 +291,12 @@ def test_row_labels_are_added_to_the_response_and_not_to_the_model_contract():
 # Qualifiers: uniform bracket format, one wording for tile and table
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("path,name", [
-    ("metrics.nrr.overall_pct", "NRR (latest month)"),
+    ("metrics.nrr.overall_pct", "NRR (trailing 12 months)"),
     ("metrics.sales_cycle.median_days", "Median sales cycle (all won deals)"),
-    ("metrics.gross_churn.overall_pct", "Gross churn (latest month)"),
+    ("metrics.gross_churn.overall_pct", "Gross churn (trailing 12 months)"),
     ("metrics.win_rate.win_rate_pct", "Win rate (closed deals)"),
     ("metrics.arr.value", "Ending ARR (latest month MRR × 12)"),
-    ("metrics.cac_payback.months", "CAC payback (latest quarter)"),
+    ("metrics.cac_payback.months", "CAC payback (latest computable quarter)"),
     ("metrics.cac_payback.quarters.2026-Q1.L1.months", "CAC payback (2026-Q1)"),  # a named quarter says which
     ("metrics.acv_path.observed_net_new_per_year_12m", "Observed net-new customers per year (last 12 months)"),
     ("metrics.acv_path.customers_needed", "Customers needed (at current ACV)"),
@@ -339,3 +339,21 @@ TILE_PATHS = [
 def test_every_tile_has_a_label_and_a_qualifier(path):
     assert f.explicit_label(path), path
     assert f.qualifier_for(path), f"a tile is read on its own; {path} needs a qualifier"
+
+
+def test_nrr_and_churn_series_and_segments_carry_the_same_window():
+    for path in ("metrics.nrr.by_segment.SMB.nrr_pct", "metrics.nrr.by_cohort.2025-Q1.nrr_pct",
+                 "metrics.nrr.series.nrr_pct", "metrics.gross_churn.series.churn_pct"):
+        assert f.qualifier_for(path) == "trailing 12 months", path
+
+
+def test_days_carry_their_unit_and_the_unit_does_not_touch_the_rounding():
+    assert f.fmt(f.DAYS, 42.1) == "43 days"
+    assert f.fmt(f.DAYS, 42.0) == "42 days"
+    assert f.fmt(f.DAYS, 0.4) == "1 day"          # rounds up first, then picks the unit
+    assert f.fmt(f.DAYS, 1.0) == "1 day"
+    assert f.fmt(f.DAYS, 1.01) == "2 days"
+    assert f.fmt_days_number(42.1) == "43"        # bare number, for ranges
+    # the number in the string is exactly what the bare rule gives
+    for v in (0.2, 7.0, 42.1, 999.99, 1234.5):
+        assert f.fmt(f.DAYS, v).split(" ")[0] == f.fmt_days_number(v)

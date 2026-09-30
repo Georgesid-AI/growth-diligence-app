@@ -14,7 +14,7 @@ import { NarrativeControl } from "@/components/NarrativeControl";
 import { getAudit, getResults, exportUrl, readNarrative, generateNarrative, getDisclosure } from "@/lib/api";
 import { GLOSSARY } from "@/lib/glossary";
 import { metricLabel, metricQualifier, bracketed } from "@/lib/metricNames";
-import { fmtCurrency, fmtCount, fmtCountUp, fmtDays, fmtMonths, fmtPct, fmtRatio, bandRangeLabel, monthEndDate } from "@/lib/format";
+import { fmtCurrency, fmtCount, fmtCountUp, fmtDays, fmtDaysNumber, fmtMonths, fmtPct, fmtRatio, bandRangeLabel, monthEndDate } from "@/lib/format";
 
 const SEG_COLORS = ["#0284C7", "#059669", "#D97706", "#DB2777", "#475569"];
 
@@ -211,11 +211,11 @@ export default function Dashboard() {
           value={cac.value} sub={cac.sub} note={cac.note}
           caption="Time to recoup acquisition cost" />
         <MetricCard id="sales_cycle" label={metricLabel("sales_cycle.median_days")} qualifier={bracketed(metricQualifier("sales_cycle.median_days"))} status="neutral" source={r.sales_cycle?.source}
-          value={r.sales_cycle?.median_days != null ? `${fmtDays(r.sales_cycle.median_days)} d` : "n/c"}
+          value={r.sales_cycle?.median_days != null ? fmtDays(r.sales_cycle.median_days) : "n/c"}
           sub={r.sales_cycle ? (
             <>
               <Gloss id="sales-cycle-iqr" text="Middle 50% range">
-                IQR {fmtDays(r.sales_cycle.iqr?.[0])}–{fmtDays(r.sales_cycle.iqr?.[1])}
+                IQR {fmtDaysNumber(r.sales_cycle.iqr?.[0])}–{fmtDaysNumber(r.sales_cycle.iqr?.[1])} days
               </Gloss>{" · "}
               <Gloss id="sales-cycle-n" text="Number of deals">n={fmtCount(r.sales_cycle.n)}</Gloss>
             </>
@@ -361,7 +361,7 @@ export default function Dashboard() {
           <SegTable rows={r.nrr?.by_segment} render={(v) => fmtPct(v.nrr_pct)} empty="Segment column not mapped" />
         </Card>
         <Card className="lg:col-span-4" title="Sales Cycle by Segment">
-          <SegTable rows={r.sales_cycle?.by_segment} render={(v) => `${fmtDays(v.median_days)}d · n=${fmtCount(v.n)}`} empty="Segment column not mapped" />
+          <SegTable rows={r.sales_cycle?.by_segment} render={(v) => `${fmtDays(v.median_days)} · n=${fmtCount(v.n)}`} empty="Segment column not mapped" />
         </Card>
         <Card className="lg:col-span-4" title={`ACV Bands — active customers (as of ${r.as_of_month ?? "—"})`}>
           {r.acv_path ? (
