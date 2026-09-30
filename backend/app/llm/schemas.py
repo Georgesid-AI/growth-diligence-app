@@ -44,6 +44,8 @@ class Narrative(BaseModel):
 # never shown - those become "unavailable".
 # "not_generated" means nobody has asked yet - distinct from "unavailable",
 # which means generation was attempted and failed.
+SupersededReason = Literal["data_changed", "prompt_release_changed", "model_changed"]
+
 NarrativeStatus = Literal["ok", "flagged", "unavailable", "not_generated"]
 
 
@@ -108,6 +110,10 @@ class NarrativeResponse(BaseModel):
     # True when no narrative matches the current numbers but one exists for an
     # earlier version of this run and step - i.e. the data moved on.
     superseded: bool = False
+    # Why a stored narrative is not being served, when one exists: the numbers moved on,
+    # the prompt release changed, or the model changed. The reader needs to know which,
+    # since "the data changed" would be false for the last two.
+    superseded_reason: Optional[SupersededReason] = None
     # Plain-English name for each table row, keyed by the row's source_key. Filled
     # in from the narrative at response time and never sent to or read from the
     # model, so the path stays the citation and this is only what is shown.

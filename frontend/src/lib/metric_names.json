@@ -39,6 +39,7 @@
     "won": "Deals won",
     "lost": "Deals lost",
     "excluded_invalid": "Deals excluded (close before created)",
+    "excluded_after_as_of": "Deals excluded (after as-of month)",
     "founder_involved_excluded.count": "Deals with an unrecognised founder flag",
     "current_customers": "Customers",
     "acv": "ACV (average contract value)",

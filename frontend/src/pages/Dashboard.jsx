@@ -192,6 +192,7 @@ export default function Dashboard() {
         status={narrative?.narrative_status}
         generatedAt={narrative?.generated_at}
         superseded={narrative?.superseded}
+        supersededReason={narrative?.superseded_reason}
         busy={generating}
         onGenerate={onGenerate}
       />
@@ -226,9 +227,12 @@ export default function Dashboard() {
           sub={r.win_rate ? (
             <Gloss id="win-rate-wl" text="Won versus lost">{fmtCount(r.win_rate.won)}W / {fmtCount(r.win_rate.lost)}L</Gloss>
           ) : ""}
-          note={r.win_rate?.excluded_invalid ? (
-            <Gloss id="win-rate-excluded" text="Excluded invalid entries">
-              {r.win_rate.excluded_invalid} invalid excluded
+          note={(r.win_rate?.excluded_invalid || r.win_rate?.excluded_after_as_of) ? (
+            <Gloss id="win-rate-excluded" text="Excluded: invalid entries, and deals created or closed after the as-of month">
+              {[
+                r.win_rate.excluded_invalid ? `${fmtCount(r.win_rate.excluded_invalid)} invalid` : null,
+                r.win_rate.excluded_after_as_of ? `${fmtCount(r.win_rate.excluded_after_as_of)} after as-of month` : null,
+              ].filter(Boolean).join(" · ")} excluded
             </Gloss>
           ) : ""}
           caption="Shows how repeatable sales are" />

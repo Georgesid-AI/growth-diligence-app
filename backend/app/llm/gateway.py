@@ -801,11 +801,12 @@ async def read_cached_narrative(db, run_id: str, step: str) -> NarrativeResponse
 
     cached = await cache.get(db, key)
     if not cached:
-        # Nothing matches the current numbers. If something was written for an
-        # earlier version of this run, say so - the reader may remember it.
+        # Nothing matches the current key. If something was written for an earlier
+        # version of this run, say so - the reader may remember it - and say why.
+        reason = await supersession(db, run_id, step, outbound, model)
         return NarrativeResponse(
             run_id=run_id, step=step, narrative_status="not_generated",
-            metrics=metrics, superseded=await cache.has_any(db, run_id, step),
+            metrics=metrics, superseded=reason is not None, superseded_reason=reason,
         )
 
     # A read is not a call: it is not written to llm_calls, so the usage figures
@@ -819,6 +820,28 @@ async def read_cached_narrative(db, run_id: str, step: str) -> NarrativeResponse
         unmatched_numbers=list(cached.get("unmatched_numbers", [])),
         generated_at=cached.get("created_at"),
     )
+
+
+async def supersession(db, run_id: str, step: str, outbound: Any, model: str) -> Optional[str]:
+    """Why an earlier narrative for this run+step is no longer served, or None if none exists.
+
+    The stored key is recomputed under the settings the narrative was written with,
+    against the current numbers. If it still matches, the numbers did not move and the
+    narrative is unreachable only because the prompt release or the model changed.
+    Only if no stored narrative matches under its own settings did the data change.
+    Records from before releases were stamped count as the baseline release.
+    """
+    records = await cache.records_for(db, run_id, step)
+    if not records:
+        return None
+    reason = "data_changed"
+    for rec in sorted(records, key=lambda r: r.get("created_at") or ""):  # newest match wins
+        rec_release = rec.get("prompt_release") or prompt_store.BASELINE_RELEASE
+        rec_model = rec.get("model") or model
+        tag = prompt_store.tag_for(rec_release, rec.get("prompt_version") or "")
+        if cache.cache_key(run_id, step, tag, rec_model, outbound) == rec.get("key"):
+            reason = "model_changed" if rec_model != model else "prompt_release_changed"
+    return reason
 
 
 async def disclosure_for_run(db, run_id: str) -> Optional[dict]:

@@ -181,7 +181,7 @@ KIND_BY_KEY = {
     "low": CURRENCY, "high": CURRENCY,
     # counts of things that were observed
     "n": COUNT, "n_customers": COUNT, "customers": COUNT, "current_customers": COUNT,
-    "count": COUNT, "won": COUNT, "lost": COUNT, "excluded_invalid": COUNT,
+    "count": COUNT, "won": COUNT, "lost": COUNT, "excluded_invalid": COUNT, "excluded_after_as_of": COUNT,
     "months_available": COUNT,
     "observed_net_new_per_year_12m": COUNT, "observed_net_new_per_year_24m": COUNT,
     # counts the plan requires or implies - never round down
@@ -328,6 +328,7 @@ LABEL_BY_PATH = {
     "sales_cycle.n": "Deals in sales-cycle sample", "win_rate_pct": "Win rate",
     "won": "Deals won", "lost": "Deals lost",
     "excluded_invalid": "Deals excluded (close before created)",
+    "excluded_after_as_of": "Deals excluded (after as-of month)",
     "founder_involved_excluded.count": "Deals with an unrecognised founder flag",
     # path to plan
     "current_customers": "Customers", "acv": "ACV (average contract value)",

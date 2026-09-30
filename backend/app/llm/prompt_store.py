@@ -24,7 +24,7 @@ _RELEASE_MARKER = "release:"
 # is edited without the stamp being bumped.
 RELEASE_FILE = "RELEASE"
 # The first release. Its cache tag is the plain prompt version, exactly what the
-# cache keys were before releases existed, so adopting releases invalidates nothing.
+# cache keys were before releases existed, so adopting releases invalidated nothing.
 BASELINE_RELEASE = "r1"
 
 
@@ -91,27 +91,19 @@ def file_hash(name: str) -> str:
     return hashlib.sha256(_resolve(name).read_bytes()).hexdigest()
 
 
-def release_in_cache_key() -> bool:
-    """Whether the release stamp is part of the cache key.
+def tag_for(release_stamp: str, version: str) -> str:
+    """The prompt identity used in a cache key for a given release and file version.
 
-    Off by default: turning it on makes a release bump invalidate every step's
-    cached narrative together. Set LLM_PROMPT_RELEASE_IN_CACHE_KEY=1 to enable.
+    The baseline release keeps the plain version - exactly what keys were before
+    releases existed - so adopting the stamp invalidated nothing. Any later release
+    yields "rN:version": bumping the release moves every step's key at once.
     """
-    import os
-    return os.environ.get("LLM_PROMPT_RELEASE_IN_CACHE_KEY", "").strip() == "1"
+    return version if release_stamp == BASELINE_RELEASE else f"{release_stamp}:{version}"
 
 
 def cache_tag(prompt: Prompt) -> str:
-    """The prompt identity used in the cache key.
-
-    The plain version until the release stamp is enabled in the key; with it
-    enabled, the baseline release still yields the plain version (so nothing is
-    invalidated by enabling it) and any later release yields "rN:version".
-    """
-    if not release_in_cache_key():
-        return prompt.version
-    stamp = release()
-    return prompt.version if stamp == BASELINE_RELEASE else f"{stamp}:{prompt.version}"
+    """The prompt identity for the cache key under the current release."""
+    return tag_for(release(), prompt.version)
 
 
 def version_of(name: str) -> str:

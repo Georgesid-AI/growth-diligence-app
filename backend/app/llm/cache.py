@@ -107,6 +107,19 @@ async def has_any(db, run_id: str, step: str) -> bool:
     return doc is not None
 
 
+async def records_for(db, run_id: str, step: str) -> list:
+    """Every stored narrative for a run+step, whatever key it was written under.
+
+    Used only to explain why the current key found nothing (see gateway.supersession);
+    it never serves one of them.
+    """
+    cursor = db[NARRATIVES_COLLECTION].find(
+        {"run_id": run_id, "step": step},
+        {"_id": 0, "key": 1, "prompt_version": 1, "prompt_release": 1, "model": 1, "created_at": 1},
+    )
+    return await cursor.to_list(1000)
+
+
 async def delete_run(db, run_id: str) -> int:
     """Drop every cached narrative for a run. Used by the delete-audit cleanup."""
     result = await db[NARRATIVES_COLLECTION].delete_many({"run_id": run_id})

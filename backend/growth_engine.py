@@ -674,6 +674,25 @@ def _resolve_as_of(as_of_str, pnl: pd.DataFrame, mrr: pd.DataFrame):
     return None
 
 
+def cut_deals_at_as_of(deals: pd.DataFrame, as_of):
+    """Apply the as-of cut to CRM deals, like MRR and the P&L.
+
+    A deal created or closed after the as-of month did not exist, or was still open,
+    at that date, so it belongs to no closed-deal figure for the period. Deals with no
+    date to place them are kept (they cannot be shown to fall outside the period).
+    Returns (deals, number dropped).
+    """
+    if deals is None or deals.empty or as_of is None:
+        return deals, 0
+    def months(col):
+        if col not in deals.columns:
+            return pd.Series(pd.NaT, index=deals.index)
+        return pd.to_datetime(deals[col], errors="coerce").dt.to_period("M")
+    created, closed = months("created_date"), months("close_date")
+    after = (closed.notna() & (closed > as_of)) | (created.notna() & (created > as_of))
+    return deals[~after].copy(), int(after.sum())
+
+
 def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, config: dict, sources: dict):
     """Run the full engine. `sources` maps dataset -> {file, sheet}."""
     billing_terms = config.get("billing_terms", {})
@@ -697,6 +716,8 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
         first_month = _first_months(mrr)
     if not pnl.empty and as_of is not None and "month" in pnl.columns:
         pnl = pnl[[(_month_of(x) is not None and _month_of(x) <= as_of) for x in pnl["month"]]]
+    deals_loaded = len(deals)
+    deals, deals_after_as_of = cut_deals_at_as_of(deals, as_of)
 
     missing_data = []
     rev_src = sources.get("revenue", {"file": "revenue", "sheet": "Sheet1"})
@@ -781,13 +802,15 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
     if deals.empty:
         results["sales_cycle"] = None
         results["win_rate"] = None
-        missing_data.append({"metric": "Sales cycle & win rate", "reason": "CRM deals not provided",
+        missing_data.append({"metric": "Sales cycle & win rate",
+                             "reason": ("CRM deals not provided" if not deals_loaded else
+                                        f"All {deals_loaded} CRM deals were created or closed after the as-of month"),
                              "unlocked_by": "Upload CRM deals with deal ID, created date, close date, stage, amount", "file": crm_src.get("file")})
     else:
         sc = compute_sales_cycle(deals)
         if sc is not None:
             sc["source"] = src(crm_src, deals.get("_row", []).tolist() if "_row" in deals.columns else [],
-                               "Median days from created to close, won deals only")
+                               "Median days from created to close, won deals closed by the as-of month")
         results["sales_cycle"] = sc
         if sc is not None and "segment" not in deals.columns:
             missing_data.append({"metric": "Sales cycle by segment", "reason": "Segment column not mapped on CRM deals",
@@ -796,8 +819,9 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
         founder_available = "founder_involved" in deals.columns and deals["founder_involved"].notna().any()
         wr = compute_win_rate(deals, founder_available)
         if wr is not None:
+            wr["excluded_after_as_of"] = deals_after_as_of
             wr["source"] = src(crm_src, deals.get("_row", []).tolist() if "_row" in deals.columns else [],
-                               "Win rate = won ÷ (won + lost); open excluded")
+                               "Win rate = won ÷ (won + lost), deals closed by the as-of month; open excluded")
         results["win_rate"] = wr
         if wr is not None and not founder_available:
             missing_data.append({"metric": "Win rate by founder involvement", "reason": "'Founder involved' column not mapped",

@@ -413,6 +413,47 @@ def _cac_zero_newmrr():
     return "new MRR is zero", (q["reason"] if q["months"] is None else "computable")
 
 
+# --- Deals follow the same as-of cut as MRR and the P&L ---------------------
+def _cut_deals():
+    def deal(i, stage, created, closed):
+        return {"deal_id": i, "stage": stage, "created_date": pd.Timestamp(created),
+                "close_date": pd.Timestamp(closed) if closed else pd.NaT, "_row": i}
+    return pd.DataFrame([
+        deal(1, "won", "2024-01-05", "2024-02-10"),    # closed inside the period
+        deal(2, "lost", "2024-01-06", "2024-03-31"),   # closed on the last day of the as-of month: kept
+        deal(3, "won", "2024-02-01", "2024-04-01"),    # closed the day after: excluded
+        deal(4, "lost", "2024-02-15", "2024-05-20"),   # excluded
+        deal(5, "open", "2024-05-02", None),           # created after the as-of month: excluded
+        deal(6, "open", "2024-03-02", None),           # still open at the as-of date: kept, not a closed deal
+        deal(7, "won", "2024-03-02", None),            # won with no close date: cannot be placed, kept
+    ])
+
+
+@case("Deals cut at as-of: closed or created after the as-of month are dropped (3 of 7)")
+def _deals_cut_count():
+    kept, dropped = ge.cut_deals_at_as_of(_cut_deals(), pd.Period("2024-03", "M"))
+    return (4, 3), (len(kept), dropped)
+
+
+@case("Deals cut at as-of: last day of the as-of month is kept, the next day is not")
+def _deals_cut_boundary():
+    kept, _ = ge.cut_deals_at_as_of(_cut_deals(), pd.Period("2024-03", "M"))
+    return [1, 2, 6, 7], sorted(kept["deal_id"].tolist())
+
+
+@case("Deals cut at as-of: win rate counts only deals closed by the as-of month")
+def _deals_cut_win_rate():
+    kept, _ = ge.cut_deals_at_as_of(_cut_deals(), pd.Period("2024-03", "M"))
+    wr = ge.compute_win_rate(kept, founder_available=False)
+    return (2, 1), (wr["won"], wr["lost"])
+
+
+@case("Deals cut at as-of: no as-of month leaves the deals untouched")
+def _deals_cut_none():
+    kept, dropped = ge.cut_deals_at_as_of(_cut_deals(), None)
+    return (7, 0), (len(kept), dropped)
+
+
 # --- Path to plan -----------------------------------------------------------
 def _path_scenario():
     rows = []
