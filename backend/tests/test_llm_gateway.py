@@ -1657,3 +1657,62 @@ def test_every_field_the_prompt_names_exists_in_a_real_payload():
                    "reconciliation", "path_to_plan_ratio", "factor_compounded_base", "factor_landed_acv",
                    "factor_gross_rate", "segment_ratio"):
         assert needle in keys, needle
+
+
+# ---------------------------------------------------------------------------
+# The price table: verified entries, and no fallback
+# ---------------------------------------------------------------------------
+def test_price_table_has_exactly_the_verified_entries():
+    assert gateway.MODEL_PRICING_USD == {
+        "claude-opus-5-5": {"input": 4.00, "output": 20.00},
+        "claude-opus-5": {"input": 5.00, "output": 25.00},
+        "claude-sonnet-5-5": {"input": 2.00, "output": 10.00},
+        "claude-sonnet-5": {"input": 2.00, "output": 10.00},
+        "claude-haiku-4-5": {"input": 1.00, "output": 5.00},
+    }
+
+
+def test_the_pre_existing_entries_are_unchanged():
+    p = gateway.MODEL_PRICING_USD
+    assert p["claude-opus-5"] == {"input": 5.00, "output": 25.00}
+    assert p["claude-sonnet-5"] == {"input": 2.00, "output": 10.00}
+    assert p["claude-haiku-4-5"] == {"input": 1.00, "output": 5.00}
+
+
+def test_the_new_models_can_be_selected_and_are_costed_at_their_own_price(monkeypatch):
+    for model, expected in (("claude-sonnet-5-5", 2.00 + 10.00), ("claude-opus-5-5", 4.00 + 20.00)):
+        monkeypatch.setenv("LLM_MODEL", model)
+        assert gateway.run_model() == model
+        # one million tokens in and one million out
+        assert gateway.estimate_cost_usd(model, 1_000_000, 1_000_000) == pytest.approx(expected)
+
+
+def test_a_narrative_generated_on_a_newly_priced_model_is_logged_with_its_cost(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "claude-sonnet-5-5")
+
+    async def run():
+        db = make_db()
+        await gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=FakeAdapter(), sleep=_noop_sleep)
+        return db["llm_calls"].docs, db["llm_narratives"].docs
+
+    calls, stored = asyncio.run(run())
+    assert calls[0]["model"] == "claude-sonnet-5-5" and stored[0]["model"] == "claude-sonnet-5-5"
+    assert calls[0]["status"] in ("ok", "flagged")
+
+
+def test_an_unpriced_model_is_still_refused_even_if_it_looks_like_a_priced_one(monkeypatch):
+    for bad in ("claude-sonnet-5-6", "claude-opus-5-5-20260401", "Claude-Sonnet-5-5", "claude-sonnet-5-5 ", "sonnet"):
+        monkeypatch.setenv("LLM_MODEL", bad)
+        if bad.strip() == "claude-sonnet-5-5":       # surrounding whitespace is trimmed, the string is the same
+            assert gateway.run_model() == "claude-sonnet-5-5"
+            continue
+        with pytest.raises(gateway.GatewayError) as exc:
+            gateway.run_model()
+        assert exc.value.reason == "model_not_configured", bad
+
+
+def test_there_is_no_default_price_in_the_code():
+    """A .get(model, <default>) or a price-table fallback would let an unpriced model through."""
+    source = (BACKEND / "app" / "llm" / "gateway.py").read_text()
+    assert "MODEL_PRICING_USD.get(model, " not in source
+    assert "DEFAULT_PRICE" not in source and "FALLBACK_PRICE" not in source

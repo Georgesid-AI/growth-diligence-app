@@ -39,8 +39,14 @@ MAX_PARSE_RETRIES = 1             # one reask on a malformed body, then fail
 
 # Per-1M-token list prices, used only to estimate spend for the cap and the
 # usage endpoint. Not authoritative billing.
+# Prices verified against Anthropic's pricing page on 2026-09-30. Re-check before relying on
+# them for a spend decision: they go stale when Anthropic changes them or releases a model.
+# There is deliberately no default price: a model missing from this table is refused by
+# run_model(), so the spend caps can never be bypassed by an unpriced model.
 MODEL_PRICING_USD = {
+    "claude-opus-5-5": {"input": 4.00, "output": 20.00},
     "claude-opus-5": {"input": 5.00, "output": 25.00},
+    "claude-sonnet-5-5": {"input": 2.00, "output": 10.00},
     "claude-sonnet-5": {"input": 2.00, "output": 10.00},
     "claude-haiku-4-5": {"input": 1.00, "output": 5.00},
 }
