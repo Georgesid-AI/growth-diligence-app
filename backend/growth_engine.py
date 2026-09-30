@@ -442,6 +442,33 @@ def compute_win_rate(deals: pd.DataFrame, founder_available: bool):
     return out
 
 
+def _years_to_target(latest: pd.Period, target_date):
+    """(years, error): exact day count from the as-of month-end to the target date, / 365.
+
+    A target date that isn't strictly after the as-of month, or has an implausible year,
+    can't drive a projection, so it comes back as an error message instead of a number.
+    Shared by the path-to-plan and segment-path calculations so both use one horizon.
+    """
+    years = None
+    error = None
+    if target_date:
+        try:
+            td = pd.Timestamp(target_date)
+        except (ValueError, TypeError):
+            td = None
+            error = f"Target date '{target_date}' is not a valid date"
+        if td is not None and not (2000 <= td.year <= 2100):
+            error = f"Target date year ({td.year}) must be between 2000 and 2100"
+            td = None
+        if td is not None:
+            now = latest.to_timestamp(how="end")
+            if td <= now:
+                error = f"Target date {td.date()} must be after the as-of month ({_period_str(latest)})"
+            else:
+                years = (td - now).days / 365
+    return years, error
+
+
 def compute_acv_path(mrr: pd.DataFrame, seg_map: dict, first_month: dict, target_arr: float, target_date: str,
                       reporting_currency: str = "EUR"):
     if mrr.empty:
@@ -497,23 +524,7 @@ def compute_acv_path(mrr: pd.DataFrame, seg_map: dict, first_month: dict, target
     # isn't strictly after the as-of month (or has an implausible year) can't
     # drive this calculation, so it's flagged via target_date_error instead of
     # silently producing an absurd required-net-new figure.
-    years = None
-    target_date_error = None
-    if target_date:
-        try:
-            td = pd.Timestamp(target_date)
-        except (ValueError, TypeError):
-            td = None
-            target_date_error = f"Target date '{target_date}' is not a valid date"
-        if td is not None and not (2000 <= td.year <= 2100):
-            target_date_error = f"Target date year ({td.year}) must be between 2000 and 2100"
-            td = None
-        if td is not None:
-            now = latest.to_timestamp(how="end")
-            if td <= now:
-                target_date_error = f"Target date {td.date()} must be after the as-of month ({_period_str(latest)})"
-            else:
-                years = (td - now).days / 365
+    years, target_date_error = _years_to_target(latest, target_date)
     required_per_year = ((customers_needed - n_cust) / years) if (customers_needed and years) else None
 
     def observed_net_new(months_back):
@@ -536,7 +547,11 @@ def compute_acv_path(mrr: pd.DataFrame, seg_map: dict, first_month: dict, target
         "bands": bands,
         "overall_band": overall_band,
         "by_segment": by_segment,
-        "customers_needed": _full(customers_needed),
+        # The TOTAL number of customers at the target ARR (existing ones included) if every
+        # customer sits at today's blended ACV. Not the number still to acquire: that is
+        # `additional_customers_needed`. (Called `customers_needed` in results computed earlier.)
+        "total_customers_at_target": _full(customers_needed),
+        "additional_customers_needed": _full(max(customers_needed - n_cust, 0.0)) if customers_needed is not None else None,
         "required_net_new_per_year": _round(required_per_year, 1),
         "observed_net_new_per_year_12m": _round(obs12, 1),
         "observed_net_new_per_year_24m": _round(obs24, 1),
@@ -687,6 +702,208 @@ def _resolve_as_of(as_of_str, pnl: pd.DataFrame, mrr: pd.DataFrame):
     if mrr is not None and not mrr.empty:
         return mrr.columns[-1]
     return None
+
+
+# ---------------------------------------------------------------------------
+# Segment mix paths to target ARR
+# ---------------------------------------------------------------------------
+# Runs on SEGMENTS only (the customer-size cut). ACV bands are the monetary cut and
+# are not touched here. Two stages:
+#   1. existing base: each segment's ARR compounded to the target date at that
+#      segment's own trailing-12-month NRR, held flat (an arithmetic projection, not a
+#      forecast); erosion in a segment with NRR < 100 shows as a negative change.
+#   2. the gap: target ARR - projected base ARR is what new customers must supply.
+# New customers count at LANDED ACV (first-month ARR) with no expansion applied.
+# Nothing is ever estimated from another figure: a missing input is named, not filled.
+SMALL_SEGMENT_N = 10          # base or landing samples below this are flagged
+LANDED_WINDOWS = (12, 24)     # months; 12 is primary, 24 secondary where computable
+CONSTANT_NRR_ASSUMPTION = (
+    "Constant-NRR projection, not a forecast: each segment's trailing-12-month NRR is "
+    "held flat from the as-of month to the target date."
+)
+
+
+def _landed(mrr: pd.DataFrame, seg_map: dict, first_month: dict, window: int, segments: list) -> dict:
+    """Gross landings in the last `window` months, per segment, at landed (first-month) ARR."""
+    cols = list(mrr.columns)
+    if len(cols) <= window:
+        return {"window_months": window, "computable": False,
+                "reason": f"needs more than {window} months of revenue history; have {len(cols)}",
+                "segments": {}}
+    latest = cols[-1]
+    per_seg = {s: [] for s in segments}
+    unsegmented = 0
+    for c, fm in first_month.items():
+        if not (fm > latest - window and fm <= latest):
+            continue
+        seg = seg_map.get(c)
+        if not seg:
+            unsegmented += 1
+        elif seg in per_seg:
+            per_seg[seg].append(float(mrr.at[c, fm]) * 12)
+        else:
+            per_seg[seg] = [float(mrr.at[c, fm]) * 12]
+    segs = {}
+    for s, vals in sorted(per_seg.items()):
+        segs[s] = {"new_customers": len(vals),
+                   "landed_acv": (sum(vals) / len(vals)) if vals else None,
+                   "small_sample": len(vals) < SMALL_SEGMENT_N}
+    total = sum(v["new_customers"] for v in segs.values())
+    return {"window_months": window, "computable": True, "reason": None,
+            "gross_new_per_year": total / (window / 12),
+            "unsegmented_new_customers": unsegmented,
+            "segments": segs}
+
+
+def _reverse_solve(window: int, landed: dict, gap, years, active_by_seg: dict) -> dict:
+    """Hold the observed GROSS landing rate fixed and solve for the mix needed."""
+    base = {"window_months": window, "computable": False, "reason": None, "reachable": None}
+    if gap is None:
+        return {**base, "reason": "the projected base is not available, so there is no gap to solve for"}
+    if not landed.get("computable"):
+        return {**base, "reason": landed.get("reason")}
+    if gap <= 0:
+        return {**base, "computable": True, "reachable": True, "target_met_by_base": True,
+                "reason": "the projected base alone reaches the target"}
+    rate = landed["gross_new_per_year"]
+    new_by_target = rate * years
+    out = {**base, "computable": True, "target_met_by_base": False,
+           "gross_new_per_year": rate, "new_customers_by_target": new_by_target}
+    out["required_blended_landed_acv"] = (gap / new_by_target) if new_by_target > 0 else None
+
+    segs = landed["segments"]
+    missing = sorted(s for s in active_by_seg if segs.get(s, {}).get("landed_acv") is None)
+    if missing or not active_by_seg:
+        out["reason"] = (
+            "no landed ACV for " + ", ".join(missing) +
+            f" (no customers landed in that segment in the last {window} months)"
+        ) if missing else "no active customers by segment"
+        return out
+
+    total_active = sum(active_by_seg.values())
+    weights = {s: n / total_active for s, n in active_by_seg.items()}
+    acv = {s: segs[s]["landed_acv"] for s in active_by_seg}
+    current_blended = sum(weights[s] * acv[s] for s in weights)
+    best = max(acv, key=acv.get)
+    out["best_segment"] = best
+    out["best_segment_landed_acv"] = acv[best]
+    out["current_mix_landed_acv"] = current_blended
+    # Rate needed if the mix stays as it is today.
+    need_rate = gap / (current_blended * years) if current_blended > 0 else None
+    out["required_new_per_year_at_current_mix"] = need_rate
+    out["required_vs_observed_gross"] = (need_rate / rate) if (need_rate is not None and rate > 0) else None
+
+    required = out["required_blended_landed_acv"]
+    if required is None:                      # no landings at all: nothing can be delivered
+        out["reachable"] = False
+        out["computable"] = True
+        return out
+
+    new_w = dict(weights)
+    if current_blended >= required:
+        out["reachable"] = True
+    elif required <= acv[best]:
+        out["reachable"] = True
+        need = required - current_blended
+        for s in sorted(weights, key=lambda k: acv[k]):          # cheapest first: fewest points moved
+            if s == best or acv[best] <= acv[s]:
+                continue
+            step = min(new_w[s], need / (acv[best] - acv[s]))
+            new_w[s] -= step
+            new_w[best] += step
+            need -= step * (acv[best] - acv[s])
+            if need <= 1e-9:
+                break
+    else:
+        out["reachable"] = False
+    if out["reachable"]:
+        out["moved_mix_pct"] = sum(abs(new_w[s] - weights[s]) for s in weights) / 2 * 100
+    out["by_segment"] = {
+        s: {"landed_acv": acv[s],
+            "current_mix_pct": weights[s] * 100,
+            **({"required_mix_pct": new_w[s] * 100,
+                "shift_pct_points": (new_w[s] - weights[s]) * 100} if out["reachable"] else {})}
+        for s in sorted(weights)
+    }
+    return out
+
+
+def compute_segment_paths(mrr: pd.DataFrame, seg_map: dict, first_month: dict, nrr, acv_path,
+                          target_arr: float, target_date):
+    """Stage one (existing base), stage two (the gap) and the reverse-solve, by segment."""
+    missing = []
+    out = {"available": False, "assumption": CONSTANT_NRR_ASSUMPTION, "missing_inputs": missing}
+    if mrr.empty or acv_path is None:
+        missing.append({"input": "recurring revenue lines",
+                        "resolve": "Upload revenue lines with customer ID, invoice date, amount, currency"})
+        return out
+    if not seg_map:
+        missing.append({"input": "customer segments",
+                        "resolve": "Map the optional 'segment' column on revenue lines"})
+        return out
+    latest = mrr.columns[-1]
+    years, date_error = _years_to_target(latest, target_date)
+    if years is None:
+        missing.append({"input": "a valid target date after the as-of month",
+                        "resolve": date_error or "Set a target date after the as-of month"})
+        return out
+    if not nrr or not target_arr:
+        missing.append({"input": "12-month NRR by segment" if not nrr else "a target ARR",
+                        "resolve": "Provide at least 13 months of revenue lines" if not nrr else "Set a target ARR"})
+        return out
+
+    by_seg = acv_path.get("by_segment") or {}
+    out.update({"horizon_months": years * 12, "target_arr": float(target_arr), "target_date": target_date})
+
+    # ---- stage one: existing base, each segment at its own NRR ----
+    segments, unprojectable = {}, []
+    for s in sorted(by_seg):
+        a = by_seg[s]
+        n = (nrr.get("by_segment") or {}).get(s) or {}
+        pct = n.get("nrr_pct")
+        row = {"start_arr": a["arr"], "customers": a["customers"],
+               "nrr_base_customers": n.get("n"), "nrr_pct": pct,
+               "small_base": bool(n.get("n") is not None and n.get("n") < SMALL_SEGMENT_N)}
+        if pct is None:
+            unprojectable.append(s)
+            row.update({"projected_arr": None, "change_arr": None, "arr_change_per_nrr_point": None,
+                        "reason": "no customers with revenue 12 months ago in this segment, so no NRR"})
+        else:
+            factor = pct / 100
+            projected = a["arr"] * factor ** years
+            row.update({"projected_arr": projected, "change_arr": projected - a["arr"],
+                        # ARR at the target date moved by one NRR point, all else equal
+                        "arr_change_per_nrr_point": a["arr"] * years * factor ** (years - 1) / 100})
+        segments[s] = row
+    total_start = sum(v["start_arr"] for v in segments.values())
+    stage_one = {"segments": segments, "start_arr_total": total_start}
+    active_customers = [c for c in mrr.index if mrr.at[c, latest] > 0]
+    unseg = [c for c in active_customers if not seg_map.get(c)]
+    out["unsegmented_customers"] = len(unseg)
+    out["unsegmented_arr"] = float(sum(mrr.at[c, latest] for c in unseg) * 12)
+
+    gap = None
+    if unprojectable:
+        missing.append({"input": "12-month NRR for " + ", ".join(unprojectable),
+                        "resolve": "Needs customers in that segment with revenue 12 months before the as-of month"})
+    else:
+        projected_base = sum(v["projected_arr"] for v in segments.values())
+        stage_one["projected_base_arr"] = projected_base
+        gap = float(target_arr) - projected_base
+        out["gap_arr"] = max(gap, 0.0)
+        out["target_met_by_base"] = gap <= 0
+    out["stage_one"] = stage_one
+    out["available"] = not unprojectable
+
+    # ---- stage two: what new customers must supply, at landed ACV ----
+    active_by_seg = {s: v["customers"] for s, v in segments.items()}
+    seg_names = sorted(by_seg)
+    out["landed"], out["reverse_solve"] = {}, {}
+    for w in LANDED_WINDOWS:
+        landed = _landed(mrr, seg_map, first_month, w, seg_names)
+        out["landed"][str(w)] = landed
+        out["reverse_solve"][str(w)] = _reverse_solve(w, landed, gap, years, active_by_seg)
+    return out
 
 
 def cut_deals_at_as_of(deals: pd.DataFrame, as_of):
@@ -862,6 +1079,16 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
                 "file": rev_src.get("file"),
             })
     results["acv_path"] = acv
+
+    results["segment_paths"] = compute_segment_paths(mrr, seg_map, first_month, nrr, acv, target_arr, target_date)
+    sp = results["segment_paths"]
+    if not sp["available"]:
+        missing_data.append({
+            "metric": "Segment paths to target ARR",
+            "reason": "; ".join(m["input"] for m in sp["missing_inputs"]) + " not available",
+            "unlocked_by": "; ".join(m["resolve"] for m in sp["missing_inputs"]),
+            "file": rev_src.get("file"),
+        })
 
     results["anomalies"] = compute_anomalies(mrr, rev, deals, mrr_notes)
     results["mrr_series"] = compute_mrr_series(mrr, seg_map)

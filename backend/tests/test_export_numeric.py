@@ -31,7 +31,7 @@ RESULTS = {
             "L0": {"months": None, "reason": "x"}, "L2": {"months": None, "reason": "x"},
             "L1": {"months": 30.0, "sm_expense": 9000.0, "reason": None}}}},
     "acv_path": {"current_customers": 24, "current_arr": 3129104.4, "acv": 130379.35,
-                 "target_arr": 5000000, "target_date": "2027-12-31", "customers_needed": 128.3,
+                 "target_arr": 5000000, "target_date": "2027-12-31", "total_customers_at_target": 128.3, "additional_customers_needed": 104.3,
                  "required_net_new_per_year": 60.1, "observed_net_new_per_year_12m": 6.0,
                  "observed_net_new_per_year_24m": 3.0, "required_vs_observed_12m": 1.28,
                  "required_vs_observed_24m": 1.685, "bands": [], "by_segment": {}},
@@ -59,8 +59,10 @@ def test_cells_are_numeric_with_number_formats():
     days = _cell(head, "Median sales cycle")
     assert days.value == 43 and days.number_format == "#,##0"
 
-    needed = _cell(path, "Customers needed")
-    assert needed.value == 129 and needed.number_format == "#,##0"
+    total = _cell(path, "Total customers at target ARR")
+    assert total.value == 129 and total.number_format == "#,##0"
+    added = _cell(path, "Additional customers needed")
+    assert added.value == 105 and added.number_format == "#,##0", "the gap is shown beside the total, rounded up"
     ratio = _cell(path, "Required ÷ observed (24m)")
     assert ratio.value == 1.685 and ratio.number_format == '0.00"x"'
 
@@ -109,3 +111,68 @@ def test_no_complete_quarter_is_stated_not_filled_with_a_partial_figure():
     wb = openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, results))
     rows = {str(r[0].value): r[1].value for r in wb["Headline"].iter_rows(min_row=2)}
     assert rows["CAC payback, months (no complete quarter)"] is None
+
+
+def _segment_results(**kw):
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parents[1]))
+    import test_growth_engine as tge
+    _, years, base = tge._seg_paths(target_arr=1_000_000)
+    sp = tge._seg_paths(target_arr=base + 25_000 * 3 * years, **kw)[0]
+    return {**RESULTS, "segment_paths": sp}, sp
+
+
+def test_segment_sheets_keep_cells_numeric_with_number_formats():
+    results, sp = _segment_results()
+    wb = openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, results))
+    ws = wb["Segment Base"]
+    assert "not a forecast" in ws["A1"].value, "the assumption heads the sheet"
+    header = [c.value for c in ws[2]]
+    row = {h: c for h, c in zip(header, ws[3])}            # first segment row (A)
+    assert row["Segment"].value == "A"
+    proj = row["Projected ARR (at constant NRR) (EUR)"]
+    assert proj.value == pytest.approx(sp["stage_one"]["segments"]["A"]["projected_arr"]) and proj.number_format == "#,##0"
+    nrr = row["NRR (trailing 12 months)"]
+    assert nrr.value == pytest.approx(1.25) and nrr.number_format == "0%"
+    erosion = {h: c for h, c in zip(header, ws[4])}["Change in ARR (at constant NRR) (EUR)"]
+    assert erosion.value < 0, "segment B's erosion is shown, not netted away"
+    for row_ in ws.iter_rows(min_row=3):
+        assert not any(isinstance(c.value, str) and "%" in c.value for c in row_)
+
+
+def test_segment_mix_sheet_states_the_verdict_and_stays_numeric():
+    results, sp = _segment_results()
+    wb = openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, results))
+    rows = {str(r[0].value): r[1] for r in wb["Segment Mix"].iter_rows(min_row=2)}
+    assert rows["Any segment mix reaches it (12-month window)"].value == "yes"
+    need = rows["Required blended landed ACV (12-month window) (EUR)"]
+    assert need.value == pytest.approx(25_000) and need.number_format == "#,##0"
+    # the 24-month window is said to be unavailable, not left out
+    assert "24-month" in "".join(rows) and "24 months" in str(rows["Reverse-solve, 24-month window"].value)
+    detail = wb["Segment Mix Detail"]
+    assert [c.value for c in detail[1]][:2] == ["Window (months)", "Segment"]
+    shifts = [r[6].value for r in detail.iter_rows(min_row=2)]
+    assert any(v and v > 0 for v in shifts) and any(v and v < 0 for v in shifts)
+    assert detail["G2"].number_format == "0%"
+
+
+def test_unavailable_segment_paths_name_what_would_resolve_them():
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parents[1]))
+    import test_growth_engine as tge
+    sp = tge._seg_paths(target_arr=1_000_000, no_segments=True)[0]
+    wb = openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, {**RESULTS, "segment_paths": sp}))
+    values = [c.value for row in wb["Segment Base"].iter_rows() for c in row]
+    assert "segment" in " ".join(str(v) for v in values if v)
+
+
+def test_results_stored_before_the_rename_still_export_the_total_under_its_new_name():
+    legacy = {**RESULTS, "acv_path": {k: v for k, v in RESULTS["acv_path"].items()
+                                      if k not in ("total_customers_at_target", "additional_customers_needed")}}
+    legacy["acv_path"]["customers_needed"] = 128.3
+    wb = openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, legacy))
+    path = wb["Path to Plan"]
+    assert _cell(path, "Total customers at target ARR").value == 129
+    assert _cell(path, "Additional customers needed").value is None      # not derived, not invented

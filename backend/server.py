@@ -564,7 +564,9 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
             (f"ACV (average contract value){money}", fmt.CURRENCY, ap.get("acv")),
             (f"Target ARR{money}", fmt.CURRENCY, ap.get("target_arr")),
             ("Target date", None, ap.get("target_date")),
-            ("Customers needed", fmt.COUNT_UP, ap.get("customers_needed")),
+            ("Total customers at target ARR (at current ACV)", fmt.COUNT_UP,
+             ap.get("total_customers_at_target", ap.get("customers_needed"))),
+            ("Additional customers needed (at current ACV)", fmt.COUNT_UP, ap.get("additional_customers_needed")),
             ("Required net-new / year", fmt.COUNT_UP, ap.get("required_net_new_per_year")),
             ("Observed net-new / year (12m)", fmt.COUNT, ap.get("observed_net_new_per_year_12m")),
             ("Observed net-new / year (24m)", fmt.COUNT, ap.get("observed_net_new_per_year_24m")),
@@ -583,6 +585,68 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
         else:
             pd.DataFrame([{"Band": "(no active customers)"}]).to_excel(xw, sheet_name="ACV Bands", index=False, startrow=1)
         xw.sheets["ACV Bands"]["A1"] = f"ACV Bands — active customers (as of {as_of})"
+
+        # Segment mix paths to target ARR (segments only; ACV bands are a separate cut).
+        sp = r.get("segment_paths") or {}
+        if sp.get("stage_one"):
+            so = sp["stage_one"]
+            rows_ = [{"Segment": seg, f"Starting ARR{money}": v["start_arr"], "Customers": v["customers"],
+                      "NRR (trailing 12 months)": v["nrr_pct"], "NRR base customers": v["nrr_base_customers"],
+                      f"Projected ARR (at constant NRR){money}": v["projected_arr"],
+                      f"Change in ARR (at constant NRR){money}": v["change_arr"],
+                      f"ARR change per NRR point{money}": v["arr_change_per_nrr_point"],
+                      "Small base": "yes (fewer than 10)" if v["small_base"] else "no"}
+                     for seg, v in so["segments"].items()]
+            rows_.append({"Segment": "All segments", f"Starting ARR{money}": so["start_arr_total"],
+                          f"Projected ARR (at constant NRR){money}": so.get("projected_base_arr"),
+                          f"Change in ARR (at constant NRR){money}": (
+                              so["projected_base_arr"] - so["start_arr_total"] if so.get("projected_base_arr") is not None else None)})
+            table_sheet(xw, "Segment Base", pd.DataFrame(rows_), {
+                f"Starting ARR{money}": fmt.CURRENCY, "Customers": fmt.COUNT, "NRR (trailing 12 months)": fmt.PCT,
+                "NRR base customers": fmt.COUNT, f"Projected ARR (at constant NRR){money}": fmt.CURRENCY,
+                f"Change in ARR (at constant NRR){money}": fmt.CURRENCY, f"ARR change per NRR point{money}": fmt.CURRENCY,
+            }, startrow=1)
+            xw.sheets["Segment Base"]["A1"] = sp["assumption"]
+            mix_rows = [
+                ("Months to target date", fmt.MONTHS, sp.get("horizon_months")),
+                (f"Target ARR{money}", fmt.CURRENCY, sp.get("target_arr")),
+                (f"Gap to target ARR (to be supplied by new customers){money}", fmt.CURRENCY, sp.get("gap_arr")),
+                (f"ARR with no segment (excluded){money}", fmt.CURRENCY, sp.get("unsegmented_arr")),
+                ("Customers with no segment (excluded)", fmt.COUNT, sp.get("unsegmented_customers")),
+            ]
+            detail = []
+            for w, rs in (sp.get("reverse_solve") or {}).items():
+                tag = f"{w}-month window"
+                if not rs.get("computable") or rs.get("target_met_by_base"):
+                    mix_rows.append((f"Reverse-solve, {tag}", None, rs.get("reason") or "not computable"))
+                    continue
+                verdict = {True: "yes", False: "no"}.get(rs.get("reachable"), f"undetermined: {rs.get('reason')}")
+                mix_rows += [
+                    (f"Gross new customers per year ({tag})", fmt.COUNT, rs.get("gross_new_per_year")),
+                    (f"Gross new customers by target date ({tag})", fmt.COUNT_UP, rs.get("new_customers_by_target")),
+                    (f"Required blended landed ACV ({tag}){money}", fmt.CURRENCY, rs.get("required_blended_landed_acv")),
+                    (f"Best segment landed ACV ({tag}){money}", fmt.CURRENCY, rs.get("best_segment_landed_acv")),
+                    (f"Any segment mix reaches it ({tag})", None, verdict),
+                    (f"Landed ACV at current mix ({tag}){money}", fmt.CURRENCY, rs.get("current_mix_landed_acv")),
+                    (f"Total mix moved, percentage points ({tag})", fmt.PCT, rs.get("moved_mix_pct")),
+                    (f"Gross new customers per year needed at current mix ({tag})", fmt.COUNT_UP, rs.get("required_new_per_year_at_current_mix")),
+                    (f"Needed vs observed gross new customers ({tag})", fmt.RATIO, rs.get("required_vs_observed_gross")),
+                ]
+                for seg, v in (rs.get("by_segment") or {}).items():
+                    landed = ((sp.get("landed") or {}).get(w) or {}).get("segments", {}).get(seg, {})
+                    detail.append({"Window (months)": int(w), "Segment": seg,
+                                   "Gross new customers": landed.get("new_customers"), f"Landed ACV{money}": v.get("landed_acv"),
+                                   "Current mix": v.get("current_mix_pct"), "Required mix": v.get("required_mix_pct"),
+                                   "Shift vs current mix (percentage points)": v.get("shift_pct_points")})
+            kv_sheet(xw, "Segment Mix", mix_rows)
+            if detail:
+                table_sheet(xw, "Segment Mix Detail", pd.DataFrame(detail), {
+                    "Gross new customers": fmt.COUNT, f"Landed ACV{money}": fmt.CURRENCY, "Current mix": fmt.PCT,
+                    "Required mix": fmt.PCT, "Shift vs current mix (percentage points)": fmt.PCT,
+                })
+        elif sp:
+            pd.DataFrame([{"Segment paths": "not available", "Missing": m["input"], "What would resolve it": m["resolve"]}
+                          for m in sp.get("missing_inputs", [])]).to_excel(xw, sheet_name="Segment Base", index=False)
 
         # Anomalies
         an = r.get("anomalies") or {}

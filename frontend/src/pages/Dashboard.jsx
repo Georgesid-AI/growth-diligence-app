@@ -13,6 +13,7 @@ import { Narrative } from "@/components/Narrative";
 import { NarrativeControl } from "@/components/NarrativeControl";
 import { getAudit, getResults, exportUrl, readNarrative, generateNarrative, getDisclosure } from "@/lib/api";
 import { GLOSSARY } from "@/lib/glossary";
+import { SegmentPaths } from "@/components/SegmentPaths";
 import { metricLabel, metricQualifier, bracketed } from "@/lib/metricNames";
 import { fmtCurrency, fmtCount, fmtCountUp, fmtDays, fmtDaysNumber, fmtMonths, fmtPct, fmtRatio, bandRangeLabel, monthEndDate } from "@/lib/format";
 
@@ -338,14 +339,21 @@ export default function Dashboard() {
                 <Stat path="current_customers" value={fmtCount(r.acv_path.current_customers)} />
                 <Stat path="current_arr" value={fmtCurrency(r.acv_path.current_arr, ccy)} />
                 <Stat path="acv" value={fmtCurrency(r.acv_path.acv, ccy)} />
-                <Stat path="customers_needed" value={fmtCountUp(r.acv_path.customers_needed)} />
+                {/* A TOTAL at the target ARR, existing customers included - not the gap. Results
+                    computed before the rename carry it as customers_needed. */}
+                <Stat path="total_customers_at_target"
+                  value={fmtCountUp(r.acv_path.total_customers_at_target ?? r.acv_path.customers_needed)} />
+                {/* The gap: shown only when the engine computed it, never derived here. */}
+                {r.acv_path.additional_customers_needed != null && (
+                  <Stat path="additional_customers_needed" value={fmtCountUp(r.acv_path.additional_customers_needed)} />
+                )}
               </div>
               <ResponsiveContainer width="100%" height={160}>
                 {(() => {
                   const bars = [
                     { k: "Required/yr", v: r.acv_path.required_net_new_per_year, fill: "#FBBF24" },
-                    { k: "Observed 12m", v: r.acv_path.observed_net_new_per_year_12m, fill: "#38BDF8" },
-                    { k: "Observed 24m", v: r.acv_path.observed_net_new_per_year_24m, fill: "#34D399" },
+                    { k: "Observed net 12m", v: r.acv_path.observed_net_new_per_year_12m, fill: "#38BDF8" },
+                    { k: "Observed net 24m", v: r.acv_path.observed_net_new_per_year_24m, fill: "#34D399" },
                   ];
                   return (
                     <BarChart data={bars}>
@@ -464,6 +472,9 @@ export default function Dashboard() {
           ) : <NotComputable label="P&L not provided" />}
         </Card>
       </div>
+
+      {/* Segment mix paths to target ARR - hidden for results computed before it existed */}
+      {r.segment_paths && <SegmentPaths sp={r.segment_paths} ccy={ccy} />}
 
       {/* Missing data + anomalies summary */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

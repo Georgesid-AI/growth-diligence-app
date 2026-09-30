@@ -185,7 +185,9 @@ KIND_BY_KEY = {
     "months_available": COUNT,
     "observed_net_new_per_year_12m": COUNT, "observed_net_new_per_year_24m": COUNT,
     # counts the plan requires or implies - never round down
-    "customers_needed": COUNT_UP, "required_net_new_per_year": COUNT_UP,
+    "total_customers_at_target": COUNT_UP, "additional_customers_needed": COUNT_UP,
+    "customers_needed": COUNT_UP,   # legacy name of total_customers_at_target in stored results
+    "required_net_new_per_year": COUNT_UP,
     # durations
     "median_days": DAYS, "iqr": DAYS,
     "months": MONTHS,
@@ -196,6 +198,19 @@ KIND_BY_KEY = {
     "required_vs_observed_12m": RATIO, "required_vs_observed_24m": RATIO,
     # settings that are numbers but not measurements
     "default_l": PLAIN, "max_offset": PLAIN, "months_in_quarter": PLAIN,
+    # segment paths to target ARR (segments only; landed ACV = first-month ARR, no expansion)
+    "horizon_months": MONTHS,
+    "start_arr": CURRENCY, "start_arr_total": CURRENCY, "projected_arr": CURRENCY,
+    "projected_base_arr": CURRENCY, "change_arr": CURRENCY, "arr_change_per_nrr_point": CURRENCY,
+    "gap_arr": CURRENCY, "unsegmented_arr": CURRENCY, "landed_acv": CURRENCY,
+    "required_blended_landed_acv": CURRENCY, "best_segment_landed_acv": CURRENCY,
+    "current_mix_landed_acv": CURRENCY,
+    "nrr_base_customers": COUNT, "unsegmented_customers": COUNT, "unsegmented_new_customers": COUNT,
+    "new_customers": COUNT, "gross_new_per_year": COUNT,
+    "new_customers_by_target": COUNT_UP, "required_new_per_year_at_current_mix": COUNT_UP,
+    "required_vs_observed_gross": RATIO,
+    "current_mix_pct": PCT, "required_mix_pct": PCT, "shift_pct_points": PCT, "moved_mix_pct": PCT,
+    "window_months": PLAIN,
     # source-row references (provenance): identifiers, not measurements
     "row_numbers": PLAIN, "rows": PLAIN,
 }
@@ -333,7 +348,9 @@ LABEL_BY_PATH = {
     "founder_involved_excluded.count": "Deals with an unrecognised founder flag",
     # path to plan
     "current_customers": "Customers", "acv": "ACV (average contract value)",
-    "customers_needed": "Customers needed",
+    "total_customers_at_target": "Total customers at target ARR",
+    "additional_customers_needed": "Additional customers needed",
+    "customers_needed": "Total customers at target ARR",   # legacy name in stored results
     "required_net_new_per_year": "Required net-new customers per year",
     "observed_net_new_per_year_12m": "Observed net-new customers per year",
     "observed_net_new_per_year_24m": "Observed net-new customers per year",
@@ -344,6 +361,26 @@ LABEL_BY_PATH = {
     # cohort retention
     "max_offset": "Longest cohort age (months)", "start_mrr": "Cohort starting MRR",
     "values": "Cohort MRR retained",
+    # segment paths to target ARR
+    "horizon_months": "Months to target date",
+    "start_arr": "Starting ARR", "start_arr_total": "Starting ARR (all segments)",
+    "projected_arr": "Projected ARR", "projected_base_arr": "Projected base ARR",
+    "change_arr": "Change in ARR", "arr_change_per_nrr_point": "ARR change per NRR point",
+    "gap_arr": "Gap to target ARR",
+    "unsegmented_arr": "ARR with no segment (excluded)",
+    "unsegmented_customers": "Customers with no segment (excluded)",
+    "unsegmented_new_customers": "Gross new customers with no segment (excluded)",
+    "nrr_base_customers": "NRR base customers",
+    "new_customers": "Gross new customers", "gross_new_per_year": "Gross new customers per year",
+    "new_customers_by_target": "Gross new customers by target date",
+    "landed_acv": "Landed ACV", "required_blended_landed_acv": "Required blended landed ACV",
+    "best_segment_landed_acv": "Best segment landed ACV",
+    "current_mix_landed_acv": "Landed ACV at current mix",
+    "required_new_per_year_at_current_mix": "Gross new customers per year needed",
+    "required_vs_observed_gross": "Needed vs observed gross new customers",
+    "current_mix_pct": "Current mix", "required_mix_pct": "Required mix",
+    "shift_pct_points": "Shift vs current mix", "moved_mix_pct": "Total mix moved",
+    "window_months": "Landing window (months)",
     # generic
     "n": "Sample size", "total": "Total MRR",
 }
@@ -361,8 +398,18 @@ QUALIFIER_BY_PATH = {
     "win_rate_pct": "closed deals",
     "current_customers": "active, latest month",
     "acv": "ARR ÷ active customers",
+    "total_customers_at_target": "at current ACV", "additional_customers_needed": "at current ACV",
     "customers_needed": "at current ACV",
     "required_net_new_per_year": "to reach target ARR",
+    "projected_arr": "at constant NRR", "projected_base_arr": "at constant NRR",
+    "change_arr": "at constant NRR", "arr_change_per_nrr_point": "at target date",
+    "gap_arr": "to be supplied by new customers",
+    "landed_acv": "first-month ARR, no expansion",
+    "new_customers_by_target": "at the observed gross rate",
+    "required_new_per_year_at_current_mix": "at current mix",
+    "required_vs_observed_gross": "at current mix",
+    "current_mix_pct": "share of active customers", "required_mix_pct": "share of new customers",
+    "shift_pct_points": "percentage points",
     "observed_net_new_per_year_12m": "last 12 months",
     "observed_net_new_per_year_24m": "last 24 months",
     "required_vs_observed_12m": "last 12 months",

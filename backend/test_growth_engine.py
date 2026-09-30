@@ -413,6 +413,210 @@ def _cac_zero_newmrr():
     return "new MRR is zero", (q["reason"] if q["months"] is None else "computable")
 
 
+# --- Segment mix paths to target ARR ---------------------------------------
+#   Segment A: A1 1000/mo flat; A2 1000 then 1500 in the latest month; A3 lands 8 months
+#              before the latest month at 3000/mo and grows to 4000 by the latest month.
+#   Segment B: B1 100/mo flat; B2 100 then 50 in the latest month (erosion); B3 lands 5
+#              months back at 200; B4 lands 4 months back at 400.
+#   Latest-month MRR: A = 1000+1500+4000 = 6500 (ARR 78,000, 3 customers)
+#                     B = 100+50+200+400 = 750  (ARR 9,000, 4 customers)
+#   NRR (base = active 12 months earlier, so A3/B3/B4 are excluded): A 2500/2000 = 125%,
+#   B 150/200 = 75%.  Landed ACV: A3 3000*12 = 36,000 (NOT its grown 48,000); B3 2,400, B4 4,800.
+def _seg_scenario(n_months=14, drop_b_landings=False, only_new_segment=False, no_segments=False):
+    last = n_months - 1
+    seg = (lambda name: None) if no_segments else (lambda name: name)
+    rows = []
+    rows += monthly_lines("A1", {i: 1000 for i in range(n_months)}, segment=seg("A"), start_row=1)
+    rows += monthly_lines("A2", {i: (1500 if i == last else 1000) for i in range(n_months)}, segment=seg("A"), start_row=100)
+    rows += monthly_lines("A3", {i: (4000 if i == last else 3000) for i in range(last - 8, n_months)}, segment=seg("A"), start_row=200)
+    rows += monthly_lines("B1", {i: 100 for i in range(n_months)}, segment=seg("B"), start_row=300)
+    rows += monthly_lines("B2", {i: (50 if i == last else 100) for i in range(n_months)}, segment=seg("B"), start_row=400)
+    b3_start, b4_start = (0, 0) if drop_b_landings else (last - 5, last - 4)
+    rows += monthly_lines("B3", {i: 200 for i in range(b3_start, n_months)}, segment=seg("B"), start_row=500)
+    rows += monthly_lines("B4", {i: 400 for i in range(b4_start, n_months)}, segment=seg("B"), start_row=600)
+    if only_new_segment:   # segment C exists only among customers who landed inside the last 12 months
+        rows += monthly_lines("C1", {i: 500 for i in range(last - 3, n_months)}, segment="C", start_row=700)
+    mrr, sm, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
+    return mrr, sm, fm
+
+
+def _seg_paths(target_arr=None, target_date="2026-03-15", **kw):
+    mrr, sm, fm = _seg_scenario(**kw)
+    nrr = ge.compute_nrr(mrr, sm, fm) if len(mrr.columns) >= 13 else None
+    if nrr and nrr.get("insufficient_history"):
+        nrr = None
+    acv = ge.compute_acv_path(mrr, sm, fm, target_arr or 1.0, target_date)
+    years, _ = ge._years_to_target(mrr.columns[-1], target_date)
+    base = 78000 * 1.25 ** years + 9000 * 0.75 ** years if years else None
+    return ge.compute_segment_paths(mrr, sm, fm, nrr, acv, target_arr or 1.0, target_date), years, base
+
+
+def _r(x, n=4):
+    return None if x is None else round(x, n)
+
+
+@case("Segment paths stage one: each segment compounds at its own NRR over the exact horizon")
+def _sp_stage_one():
+    sp, years, base = _seg_paths(target_arr=1_000_000)
+    a, b = sp["stage_one"]["segments"]["A"], sp["stage_one"]["segments"]["B"]
+    return (_r(78000 * 1.25 ** years), _r(9000 * 0.75 ** years), _r(base), _r(years * 12)), (
+        _r(a["projected_arr"]), _r(b["projected_arr"]), _r(sp["stage_one"]["projected_base_arr"]), _r(sp["horizon_months"]))
+
+
+@case("Segment paths: a segment with NRR < 100 shows its erosion, negative, in stage one")
+def _sp_erosion():
+    sp, years, _ = _seg_paths(target_arr=1_000_000)
+    b = sp["stage_one"]["segments"]["B"]
+    return (True, _r(9000 * 0.75 ** years - 9000)), (b["change_arr"] < 0, _r(b["change_arr"]))
+
+
+@case("Segment paths: NRR inputs are the segment's own (125% and 75%), small bases flagged")
+def _sp_nrr_inputs():
+    sp, _, _ = _seg_paths(target_arr=1_000_000)
+    a, b = sp["stage_one"]["segments"]["A"], sp["stage_one"]["segments"]["B"]
+    return (125.0, 75.0, 2, 2, True, True), (a["nrr_pct"], b["nrr_pct"], a["nrr_base_customers"], b["nrr_base_customers"], a["small_base"], b["small_base"])
+
+
+@case("Segment paths: per-point sensitivity is the derivative of ARR * (NRR/100)^years")
+def _sp_sensitivity():
+    sp, years, _ = _seg_paths(target_arr=1_000_000)
+    a = sp["stage_one"]["segments"]["A"]
+    bump = 78000 * (1.26 ** years - 1.25 ** years)     # one whole point, finite difference
+    return True, abs(a["arr_change_per_nrr_point"] - bump) / bump < 0.02
+
+
+@case("Segment paths stage two: the gap is target minus projected base")
+def _sp_gap():
+    sp, _, base = _seg_paths(target_arr=1_000_000)
+    return (_r(1_000_000 - base), False), (_r(sp["gap_arr"]), sp["target_met_by_base"])
+
+
+@case("Segment paths: target already met by the base -> zero gap, said so")
+def _sp_met():
+    sp, _, _ = _seg_paths(target_arr=50_000)
+    return (0.0, True, True), (sp["gap_arr"], sp["target_met_by_base"], sp["reverse_solve"]["12"]["target_met_by_base"])
+
+
+@case("Landed ACV is first-month ARR with no expansion (A3 = 36,000, not its grown 48,000)")
+def _sp_landed():
+    sp, _, _ = _seg_paths(target_arr=1_000_000)
+    seg = sp["landed"]["12"]["segments"]
+    return (36000.0, 1, 3600.0, 2, 3.0), (seg["A"]["landed_acv"], seg["A"]["new_customers"], seg["B"]["landed_acv"], seg["B"]["new_customers"], sp["landed"]["12"]["gross_new_per_year"])
+
+
+@case("Landings are gross: churned or shrunk customers still count as landed")
+def _sp_gross():
+    sp, _, _ = _seg_paths(target_arr=1_000_000)
+    # net-new (active-count change) would ignore a customer who landed and left; gross counts all three
+    return 3, sum(v["new_customers"] for v in sp["landed"]["12"]["segments"].values())
+
+
+@case("Reverse-solve, mix must shift: required blended ACV 25,000 -> A share 66.05%, +23.19 pts")
+def _sp_shift():
+    _, years, base = _seg_paths(target_arr=1_000_000)
+    target = base + 25_000 * 3 * years                      # 3 gross landings a year at the observed rate
+    sp, _, _ = _seg_paths(target_arr=target)
+    r = sp["reverse_solve"]["12"]
+    a = r["by_segment"]["A"]
+    return (True, 25000.0, round(21400 / 32400 * 100, 3), round(21400 / 32400 * 100 - 300 / 7, 3), _r(300 / 7, 3)), (
+        r["reachable"], _r(r["required_blended_landed_acv"], 2), _r(a["required_mix_pct"], 3), _r(a["shift_pct_points"], 3), _r(a["current_mix_pct"], 3))
+
+
+@case("Reverse-solve: the shift comes out of the segment with the lowest landed ACV")
+def _sp_shift_source():
+    _, years, base = _seg_paths(target_arr=1_000_000)
+    sp, _, _ = _seg_paths(target_arr=base + 25_000 * 3 * years)
+    r = sp["reverse_solve"]["12"]["by_segment"]
+    return (True, True, r["A"]["shift_pct_points"] + r["B"]["shift_pct_points"] == 0 or abs(r["A"]["shift_pct_points"] + r["B"]["shift_pct_points"]) < 1e-9), (
+        r["A"]["shift_pct_points"] > 0, r["B"]["shift_pct_points"] < 0,
+        r["A"]["shift_pct_points"] == 0 or abs(r["A"]["shift_pct_points"] + r["B"]["shift_pct_points"]) < 1e-9)
+
+
+@case("Reverse-solve: current mix already reaches the target -> no shift")
+def _sp_no_shift():
+    _, years, base = _seg_paths(target_arr=1_000_000)
+    sp, _, _ = _seg_paths(target_arr=base + 15_000 * 3 * years)
+    r = sp["reverse_solve"]["12"]
+    return (True, 0.0), (r["reachable"], _r(r["moved_mix_pct"]))
+
+
+@case("Reverse-solve: no mix reaches the target -> unreachable, and the rate needed at the current mix is stated")
+def _sp_unreachable():
+    _, years, base = _seg_paths(target_arr=1_000_000)
+    gap = 50_000 * 3 * years                                # needs a blended 50,000 > best segment's 36,000
+    sp, _, _ = _seg_paths(target_arr=base + gap)
+    r = sp["reverse_solve"]["12"]
+    cur = 3 / 7 * 36000 + 4 / 7 * 3600                      # landed ACV at the current customer mix
+    need = gap / (cur * years)
+    return (False, _r(cur, 2), _r(need, 4), _r(need / 3, 4), "required_mix_pct" in r["by_segment"]["A"]), (
+        r["reachable"], _r(r["current_mix_landed_acv"], 2), _r(r["required_new_per_year_at_current_mix"], 4),
+        _r(r["required_vs_observed_gross"], 4), "required_mix_pct" in r["by_segment"]["A"])
+
+
+@case("Reverse-solve: current mix comes from the distribution of active customers (3 of 7 in A)")
+def _sp_current_mix():
+    _, years, base = _seg_paths(target_arr=1_000_000)
+    sp, _, _ = _seg_paths(target_arr=base + 25_000 * 3 * years)
+    r = sp["reverse_solve"]["12"]["by_segment"]
+    return (_r(300 / 7, 3), _r(400 / 7, 3)), (_r(r["A"]["current_mix_pct"], 3), _r(r["B"]["current_mix_pct"], 3))
+
+
+@case("24-month window not computable on 14 months of history: stated, not omitted")
+def _sp_24_missing():
+    sp, _, _ = _seg_paths(target_arr=1_000_000)
+    l, r = sp["landed"]["24"], sp["reverse_solve"]["24"]
+    return (False, True, False, True), (l["computable"], "24 months" in l["reason"], r["computable"], "24 months" in r["reason"])
+
+
+@case("24-month window computable on 26 months of history: gross rate is 3 landings / 2 years")
+def _sp_24_ok():
+    sp, _, _ = _seg_paths(target_arr=1_000_000, n_months=26)
+    return (True, 1.5, 3.0), (sp["landed"]["24"]["computable"], sp["landed"]["24"]["gross_new_per_year"], sp["landed"]["12"]["gross_new_per_year"])
+
+
+@case("A segment with no landings in the window: reachability is undetermined and the segment is named")
+def _sp_missing_landed():
+    _, years, base = _seg_paths(target_arr=1_000_000, drop_b_landings=True)
+    sp, _, _ = _seg_paths(target_arr=base + 10_000 * 1 * years, drop_b_landings=True)
+    r = sp["reverse_solve"]["12"]
+    return (None, True, False), (r["reachable"], "B" in r["reason"], "required_new_per_year_at_current_mix" in r)
+
+
+@case("A segment with no NRR: no projection, no blended stand-in, and what would resolve it is named")
+def _sp_no_nrr():
+    sp, _, _ = _seg_paths(target_arr=1_000_000, only_new_segment=True)
+    c = sp["stage_one"]["segments"]["C"]
+    return (False, None, False, True, True), (
+        sp["available"], c["projected_arr"], "projected_base_arr" in sp["stage_one"], "C" in sp["missing_inputs"][0]["input"],
+        "gap_arr" not in sp)
+
+
+@case("No segment column mapped: unavailable, resolution named, nothing invented")
+def _sp_no_segments():
+    sp, _, _ = _seg_paths(target_arr=1_000_000, no_segments=True)
+    return (False, True, False), (sp["available"], "segment" in sp["missing_inputs"][0]["resolve"], "stage_one" in sp)
+
+
+@case("Under 13 months of history: no segment NRR, so unavailable with the resolution named")
+def _sp_short_history():
+    sp, _, _ = _seg_paths(target_arr=1_000_000, n_months=10)
+    return (False, True), (sp["available"], "13 months" in sp["missing_inputs"][0]["resolve"])
+
+
+@case("An invalid target date makes the projection unavailable instead of guessing a horizon")
+def _sp_bad_date():
+    sp, _, _ = _seg_paths(target_arr=1_000_000, target_date="2020-01-01")
+    return (False, True), (sp["available"], "target date" in sp["missing_inputs"][0]["input"])
+
+
+@case("Segment paths run on segments only: ACV bands are untouched")
+def _sp_bands_untouched():
+    mrr, sm, fm = _seg_scenario()
+    acv = ge.compute_acv_path(mrr, sm, fm, 1_000_000, "2026-03-15")
+    keys = sorted(b["key"] for b in acv["bands"])
+    return (sorted(k for k, *_ in ge.ACV_BANDS), 5), (keys, len(acv["bands"]))
+
+
 # --- CAC payback: a partial quarter never headlines -------------------------
 def _pnl_rows(spec):
     return pd.DataFrame([
@@ -520,9 +724,32 @@ def _path_scenario():
     return ge.compute_acv_path(mrr, seg, fm, target_arr=1_200_000, target_date="2027-01-01")
 
 
-@case("Path to plan: customers needed = 100")
+@case("Path to plan: total customers at target ARR = 100")
 def _path_needed():
-    return 100.0, _path_scenario()["customers_needed"]
+    return 100.0, _path_scenario()["total_customers_at_target"]
+
+
+@case("Path to plan: additional customers needed = total at target - customers today (100 - 10 = 90)")
+def _path_additional():
+    ap = _path_scenario()
+    return (90.0, 10, 100.0), (ap["additional_customers_needed"], ap["current_customers"], ap["total_customers_at_target"])
+
+
+@case("Path to plan: the required net-new per year is the additional count spread over the years to target")
+def _path_additional_matches_rate():
+    ap = _path_scenario()
+    years = ge._years_to_target(pd.Period("2025-01", "M"), "2027-01-01")[0]   # scenario's last month is 2025-01
+    return ap["required_net_new_per_year"], ge._round(ap["additional_customers_needed"] / years, 1)
+
+
+@case("Path to plan: no additional customers are needed when today's count already covers the target")
+def _path_additional_floor():
+    rows = []
+    for i, c in enumerate(("X1", "X2", "X3", "X4")):
+        rows += monthly_lines(c, {m: 1000 for m in range(0, 13)}, start_row=1 + 40 * i)
+    mrr, seg, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
+    res = ge.compute_acv_path(mrr, seg, fm, target_arr=24_000, target_date="2027-01-01")   # below today's 48,000 ARR
+    return (0.0, 2.0), (res["additional_customers_needed"], res["total_customers_at_target"])
 
 
 @case("Path to plan: customers needed stored at full precision (not 1 decimal)")
@@ -532,7 +759,7 @@ def _path_needed_full_precision():
         rows += monthly_lines(c, {m: 1000 for m in range(0, 25)}, start_row=1 + 40 * i)
     mrr, seg, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
     res = ge.compute_acv_path(mrr, seg, fm, target_arr=1_234_567, target_date="2027-01-01")
-    return 1_234_567 / 12_000, res["customers_needed"]
+    return 1_234_567 / 12_000, res["total_customers_at_target"]
 
 
 @case("Path to plan: observed net-new 12m = 6.0/yr")

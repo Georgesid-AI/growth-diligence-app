@@ -212,7 +212,7 @@ def _slice_for_step(results: dict, step: str) -> dict:
         ],
         "cohort_retention": ["cohort_retention", "as_of_month"],
         "cac_efficiency": ["cac_payback", "as_of_month"],
-        "path_to_plan": ["acv_path", "as_of_month"],
+        "path_to_plan": ["acv_path", "segment_paths", "as_of_month"],
     }.get(step, [])
     return {k: results.get(k) for k in wanted if results.get(k) is not None}
 
