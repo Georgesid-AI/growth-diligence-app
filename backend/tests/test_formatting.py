@@ -450,3 +450,12 @@ def test_total_and_additional_customers_are_named_apart_and_round_up():
     assert "Total" in f.display_name("metrics.acv_path.total_customers_at_target")
     assert f.display_name("metrics.acv_path.additional_customers_needed").startswith("Additional")
     assert "Additional" not in f.display_name("metrics.acv_path.customers_needed")
+
+
+def test_no_shared_label_or_qualifier_wraps_a_comma_outside_a_bracket():
+    import re as _re
+    for label in list(f.LABEL_BY_PATH.values()):
+        assert "," not in _re.sub(r"\([^)]*\)", "", label), label
+    for path in list(f.LABEL_BY_PATH) + list(f.QUALIFIER_BY_PATH):
+        name = f.display_name(path)
+        assert "," not in _re.sub(r"\([^)]*\)", "", name), name

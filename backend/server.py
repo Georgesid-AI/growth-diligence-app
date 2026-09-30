@@ -469,7 +469,7 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
         cac = r.get("cac_payback") or {}
         # Headline is the latest COMPLETE quarter (a partial quarter overstates payback and is
         # never a headline); the quarter is named so an older figure is not read as current.
-        cac_label, cac_value = "CAC payback, months (no complete quarter)", None
+        cac_label, cac_value = "CAC payback in months (no complete quarter)", None
         if cac:
             L = f"L{cac.get('default_l', 1)}"
             hq = cac.get("headline_quarter")
@@ -479,7 +479,7 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
                 hq = done[-1] if done else None
             if hq:
                 cac_value = cac["quarters"][hq][L]["months"]
-                cac_label = f"CAC payback, months ({hq}, {L}, latest complete quarter)"
+                cac_label = f"CAC payback in months ({hq}, latest complete quarter)"
         kv_sheet(xw, "Headline", [
             ("Company", None, meta.get("company_name")),
             ("As-of month", None, meta.get("as_of_month") or r.get("as_of_month")),
@@ -490,6 +490,7 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
             ("NRR overall", fmt.PCT, nrr.get("overall_pct")),
             ("Gross revenue churn", fmt.PCT, churn.get("overall_pct")),
             (cac_label, fmt.MONTHS, cac_value),
+            ("S&M spend lag used for CAC payback (quarters)", fmt.PLAIN, cac.get("default_l") if cac else None),
             ("Median sales cycle (days)", fmt.DAYS, sc.get("median_days")),
             ("Win rate", fmt.PCT, wr.get("win_rate_pct")),
             ("Deals excluded (close<created)", fmt.COUNT, wr.get("excluded_invalid")),
@@ -618,7 +619,7 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
             for w, rs in (sp.get("reverse_solve") or {}).items():
                 tag = f"{w}-month window"
                 if not rs.get("computable") or rs.get("target_met_by_base"):
-                    mix_rows.append((f"Reverse-solve, {tag}", None, rs.get("reason") or "not computable"))
+                    mix_rows.append((f"Reverse-solve ({tag})", None, rs.get("reason") or "not computable"))
                     continue
                 verdict = {True: "yes", False: "no"}.get(rs.get("reachable"), f"undetermined: {rs.get('reason')}")
                 mix_rows += [
@@ -628,7 +629,7 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
                     (f"Best segment landed ACV ({tag}){money}", fmt.CURRENCY, rs.get("best_segment_landed_acv")),
                     (f"Any segment mix reaches it ({tag})", None, verdict),
                     (f"Landed ACV at current mix ({tag}){money}", fmt.CURRENCY, rs.get("current_mix_landed_acv")),
-                    (f"Total mix moved, percentage points ({tag})", fmt.PCT, rs.get("moved_mix_pct")),
+                    (f"Total mix moved (percentage points, {tag})", fmt.PCT, rs.get("moved_mix_pct")),
                     (f"Gross new customers per year needed at current mix ({tag})", fmt.COUNT_UP, rs.get("required_new_per_year_at_current_mix")),
                     (f"Needed vs observed gross new customers ({tag})", fmt.RATIO, rs.get("required_vs_observed_gross")),
                 ]
