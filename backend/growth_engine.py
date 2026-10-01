@@ -1048,15 +1048,195 @@ def cut_deals_at_as_of(deals: pd.DataFrame, as_of):
         return deals, 0
     def months(col):
         if col not in deals.columns:
-            return pd.Series(pd.NaT, index=deals.index)
+            return pd.Series(pd.NaT, index=deals.index, dtype="period[M]")
         return pd.to_datetime(deals[col], errors="coerce").dt.to_period("M")
     created, closed = months("created_date"), months("close_date")
     after = (closed.notna() & (closed > as_of)) | (created.notna() & (created > as_of))
     return deals[~after].copy(), int(after.sum())
 
 
-def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, config: dict, sources: dict):
-    """Run the full engine. `sources` maps dataset -> {file, sheet}."""
+# ---------------------------------------------------------------------------
+# Compute before Missing (V6). Before an item stays in missing_data, every uploaded
+# file is tested for the columns the analysis needs - not only the file it normally
+# comes from. If one can answer it, the figure is computed from that file and
+# management is asked to explain it rather than to supply it.
+# ---------------------------------------------------------------------------
+COMPUTED_STATUS = "Computed – explanation requested"
+MISSING_STATUS = "Missing"
+DATASET_ORDER = ("revenue", "crm", "pnl")
+
+# What each analysis needs, read as which dataset type.
+ANALYSIS_NEEDS = {
+    "sales_cycle": {"label": "Sales cycle", "as": "crm",
+                    "fields": ("created_date", "close_date", "stage")},
+    "win_rate": {"label": "Win rate", "as": "crm", "fields": ("stage",)},
+    "founder_win_rate": {"label": "Win rate by founder involvement", "as": "crm",
+                         "fields": ("stage", "founder_involved")},
+    "nrr": {"label": "NRR (12-month)", "as": "revenue",
+            "fields": ("customer_id", "invoice_date", "amount", "currency")},
+    "gross_churn": {"label": "Gross revenue churn", "as": "revenue",
+                    "fields": ("customer_id", "invoice_date", "amount", "currency")},
+    "cac_payback": {"label": "CAC payback", "as": "pnl",
+                    "fields": ("month", "sm_expense", "revenue", "cost_of_revenue")},
+}
+
+# missing_data metric -> the analyses it stands for
+MISSING_ANALYSES = {
+    "Sales cycle & win rate": ("sales_cycle", "win_rate"),
+    "Sales cycle": ("sales_cycle",),
+    "Win rate by founder involvement": ("founder_win_rate",),
+    "NRR (12-month)": ("nrr",),
+    "Gross revenue churn": ("gross_churn",),
+    "CAC payback": ("cac_payback",),
+}
+
+_RULES = {
+    "sales_cycle": "Median days from created to close, won deals closed by the as-of month",
+    "win_rate": "Win rate = won ÷ (won + lost), deals closed by the as-of month; open excluded",
+    "founder_win_rate": "Win rate split by founder involvement, deals closed by the as-of month",
+    "nrr": "NRR = base-cohort MRR now ÷ MRR 12 months ago",
+    "gross_churn": "Gross churn = (churned + contracted MRR) ÷ MRR 12 months ago",
+    "cac_payback": "CAC payback = lagged S&M ÷ (new MRR × gross margin %)",
+}
+
+
+def _run_analysis(analysis: str, frame: pd.DataFrame, ctx: dict):
+    """Run one analysis on a candidate frame. Returns the result, or None if the rows
+    cannot answer it (columns present but no usable values)."""
+    as_of = ctx.get("as_of")
+    if ANALYSIS_NEEDS[analysis]["as"] == "crm":
+        deals, _ = cut_deals_at_as_of(frame, as_of)
+        if deals is None or deals.empty:
+            return None
+        if analysis == "sales_cycle":
+            out = compute_sales_cycle(deals)
+            return out if out and out.get("n") else None
+        out = compute_win_rate(deals, analysis == "founder_win_rate")
+        if out is None:
+            return None
+        if analysis == "win_rate":
+            return out if out["won"] + out["lost"] else None
+        return out if any(s["n"] for s in out.get("by_founder", {}).values()) else None
+    if analysis in ("nrr", "gross_churn"):
+        mrr, seg_map, first_month, _, _ = build_mrr_matrix(frame, {}, ctx.get("fx") or {})
+        if not mrr.empty and as_of is not None:
+            mrr = mrr.loc[:, [c for c in mrr.columns if c <= as_of]]
+        if mrr.empty:
+            return None
+        out = (compute_nrr(mrr, seg_map, _first_months(mrr)) if analysis == "nrr" else compute_gross_churn(mrr))
+        return out if out and not out.get("insufficient_history") else None
+    if analysis == "cac_payback":
+        p = frame
+        if as_of is not None and "month" in p.columns:
+            p = p[[(_month_of(x) is not None and _month_of(x) <= as_of) for x in p["month"]]]
+        out = compute_cac_payback(ctx.get("new_mrr_q") or {}, p, default_l=int(ctx.get("default_l", 1)))
+        return out if out and out.get("quarters") else None
+    return None
+
+
+def can_compute(analysis: str, files: dict, expected: str | None = None, **ctx) -> dict:
+    """Test whether any uploaded file can answer `analysis`.
+
+    `files` maps dataset type -> {"file", "sheet", "views"}, where views[as_type] holds
+    the file read as that type: its own type through the current mapping, the other
+    types through the column aliases ({"mapping": {field: column}, "frame": DataFrame}).
+    Every file is checked - the expected one first. A file answers the question only if
+    it has every needed field and its rows yield a result, so the test is the
+    calculation itself.
+
+    Returns {"computable", "analysis", "dataset", "file", "sheet", "columns", "result",
+    "absent_fields"}; absent_fields maps each file that cannot answer to the fields it
+    lacks (an empty list: the columns are there but no row is usable).
+    """
+    need = ANALYSIS_NEEDS[analysis]
+    order = ([expected] if expected in files else []) + [t for t in DATASET_ORDER if t in files and t != expected]
+    order += [t for t in files if t not in order]
+    absent = {}
+    for dtype in order:
+        view = (files[dtype].get("views") or {}).get(need["as"]) or {}
+        mapping, frame = view.get("mapping") or {}, view.get("frame")
+        lacking = [f for f in need["fields"]
+                   if not mapping.get(f) or frame is None or f not in frame.columns or frame[f].notna().sum() == 0]
+        if lacking:
+            absent[dtype] = lacking
+            continue
+        result = _run_analysis(analysis, frame, ctx)
+        if result is None:
+            absent[dtype] = []
+            continue
+        return {"computable": True, "analysis": analysis, "dataset": dtype,
+                "file": files[dtype].get("file"), "sheet": files[dtype].get("sheet"),
+                "columns": {f: mapping[f] for f in need["fields"]}, "result": result, "absent_fields": absent}
+    return {"computable": False, "analysis": analysis, "dataset": None, "file": None, "sheet": None,
+            "columns": {}, "result": None, "absent_fields": absent}
+
+
+def resolve_missing(missing_data: list, results: dict, files: dict | None, **ctx) -> tuple[list, list]:
+    """Apply compute-before-Missing to missing_data.
+
+    Each item that stands for an analysis is tested with can_compute. A computable
+    analysis is stored in results under its own key (with its source citation and
+    status) and moves to the questions-for-management list; anything else stays
+    Missing with the fields each file lacks. Results the engine already produced
+    from the expected file are never replaced.
+    Returns (missing_data, questions_for_management).
+    """
+    files = files or {}
+    missing, questions = [], []
+    for item in missing_data:
+        analyses = MISSING_ANALYSES.get(item.get("metric"))
+        if not analyses:
+            missing.append({**item, "status": MISSING_STATUS})
+            continue
+        still_missing, absent, answered = [], {}, 0
+        for analysis in analyses:
+            if results.get(analysis) is not None:
+                answered += 1  # the engine already has it from the expected file
+                continue
+            verdict = can_compute(analysis, files, expected=ANALYSIS_NEEDS[analysis]["as"], **ctx)
+            if not verdict["computable"]:
+                still_missing.append(analysis)
+                for dtype, fields in verdict["absent_fields"].items():
+                    absent.setdefault(dtype, [])
+                    absent[dtype] += [f for f in fields if f not in absent[dtype]]
+                continue
+            result = verdict["result"]
+            s = SourceRef(verdict["file"] or verdict["dataset"], verdict["sheet"])
+            frame = files[verdict["dataset"]]["views"][ANALYSIS_NEEDS[analysis]["as"]]["frame"]
+            s.add_rows(frame["_row"].tolist() if "_row" in frame.columns else [])
+            result["source"] = {**s.to_dict(_RULES[analysis]), "dataset": verdict["dataset"],
+                                "columns": verdict["columns"]}
+            result["status"] = COMPUTED_STATUS
+            results[analysis] = result
+            label = ANALYSIS_NEEDS[analysis]["label"]
+            cols = ", ".join(f"{f} = '{c}'" for f, c in verdict["columns"].items())
+            questions.append({
+                "metric": label,
+                "status": COMPUTED_STATUS,
+                "result_key": analysis,
+                "dataset": verdict["dataset"],
+                "file": verdict["file"],
+                "columns": verdict["columns"],
+                "replaces_missing": item.get("metric"),
+                "question": (f"{label} was computed from the {verdict['dataset']} upload ({cols}) because "
+                             f"it was not available from the {ANALYSIS_NEEDS[analysis]['as']} upload "
+                             f"({item.get('reason')}). Please explain the result and confirm these "
+                             f"columns are the right basis for it."),
+            })
+        if answered == len(analyses):
+            missing.append({**item, "status": MISSING_STATUS})
+        elif still_missing:
+            entry = {**item, "status": MISSING_STATUS, "absent_fields": absent}
+            if len(still_missing) < len(analyses):
+                entry["metric"] = " & ".join(ANALYSIS_NEEDS[a]["label"] for a in still_missing)
+            missing.append(entry)
+    return missing, questions
+
+
+def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, config: dict, sources: dict,
+                files: dict | None = None):
+    """Run the full engine. `sources` maps dataset -> {file, sheet}; `files` is every
+    upload read as each dataset type (see can_compute), for compute-before-Missing."""
     billing_terms = config.get("billing_terms", {})
     fx = config.get("fx", {})
     reporting_currency = config.get("reporting_currency", "EUR")
@@ -1171,7 +1351,14 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
                                         f"All {deals_loaded} CRM deals were created or closed after the as-of month"),
                              "unlocked_by": "Upload CRM deals with deal ID, created date, close date, stage, amount", "file": crm_src.get("file")})
     else:
-        sc = compute_sales_cycle(deals)
+        absent_dates = [f for f in ("created_date", "close_date")
+                        if f not in deals.columns or deals[f].notna().sum() == 0]
+        sc = None if absent_dates else compute_sales_cycle(deals)
+        if absent_dates:
+            missing_data.append({"metric": "Sales cycle",
+                                 "reason": f"CRM deals have no {' or '.join(f.replace('_', ' ') for f in absent_dates)}",
+                                 "unlocked_by": "Map the created date and close date columns on CRM deals",
+                                 "file": crm_src.get("file")})
         if sc is not None:
             sc["source"] = src(crm_src, deals.get("_row", []).tolist() if "_row" in deals.columns else [],
                                "Median days from created to close, won deals closed by the as-of month")
@@ -1227,5 +1414,7 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
     results["anomalies"] = compute_anomalies(mrr, rev, deals, mrr_notes)
     results["mrr_series"] = compute_mrr_series(mrr, seg_map)
     results["cohort_retention"] = compute_cohort_retention(mrr, first_month)
-    results["missing_data"] = missing_data
+    results["missing_data"], results["questions_for_management"] = resolve_missing(
+        missing_data, results, files, as_of=as_of, fx=fx, new_mrr_q=new_mrr_q,
+        default_l=config.get("default_l", 1))
     return results

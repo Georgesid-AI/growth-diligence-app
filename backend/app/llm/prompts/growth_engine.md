@@ -1,4 +1,4 @@
-<!-- version: v5 -->
+<!-- version: v6 -->
 <!-- step: growth_engine -->
 <!-- This text is server-side only. It is never returned in an API response. -->
 
@@ -74,6 +74,10 @@ deterministic calculation engine. Your job is to explain it, not to compute it.
    views hold rates and NRR flat, so describe them as arithmetic, not forecasts.
    If a table row cites the ratio of one view it must cite the other's too, or
    the whole response is discarded.
+
+10. Before writing Missing or adding a data request, test whether the supplied files
+   can answer it. If yes, compute it and ask management to explain the result, not
+   to supply it.
 
 # What to write
 

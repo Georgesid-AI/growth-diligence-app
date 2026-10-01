@@ -214,13 +214,28 @@ def _slice_for_step(results: dict, step: str) -> dict:
     wanted = {
         "growth_engine": [
             "arr", "nrr", "gross_churn", "cac_payback", "sales_cycle",
-            "win_rate", "acv_path", "segment_paths", "as_of_month", "reporting_currency",
+            "win_rate", "founder_win_rate", "acv_path", "segment_paths", "as_of_month", "reporting_currency",
         ],
         "cohort_retention": ["cohort_retention", "as_of_month"],
         "cac_efficiency": ["cac_payback", "as_of_month"],
         "path_to_plan": ["acv_path", "segment_paths", "as_of_month"],
     }.get(step, [])
-    return {k: results.get(k) for k in wanted if results.get(k) is not None}
+    out = {k: results.get(k) for k in wanted if results.get(k) is not None}
+    if step == "growth_engine":
+        # What could not be computed, and what was computed from another upload and
+        # needs management's explanation. Stored results only - never file names,
+        # raw rows or parsed text.
+        for key, fields in _GAP_FIELDS.items():
+            if results.get(key) is not None:
+                out[key] = [{f: item[f] for f in fields if item.get(f) is not None}
+                            for item in results[key] if isinstance(item, dict)]
+    return out
+
+
+_GAP_FIELDS = {
+    "missing_data": ("metric", "status", "reason", "absent_fields"),
+    "questions_for_management": ("metric", "status", "result_key", "dataset", "question"),
+}
 
 
 # ---------------------------------------------------------------------------
