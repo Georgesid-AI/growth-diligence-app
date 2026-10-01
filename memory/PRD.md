@@ -45,3 +45,37 @@ a short narrative from computed results.
 - P1: per-customer billing-term UI on the mapping screen (engine already supports it).
 - P1: CSV/PDF export of the dashboard.
 - P2: multi-sheet xlsx selection.
+
+## Session log
+
+### 2026-10-01 — V6: compute-before-Missing rule
+- Rule: before an item stays in `results["missing_data"]`, every upload (revenue, CRM,
+  P&L — still one file per type, no schema change) is tested for the columns the analysis
+  needs. A file's own type is read through its current mapping; the other types through
+  the FIELD_DEFS column aliases (`server.candidate_views`).
+- Engine (`growth_engine.py`): `ANALYSIS_NEEDS`, `can_compute(analysis, files)`,
+  `resolve_missing(...)`, run as a post-pass at the end of `compute_all` (new optional
+  `files=` argument). Covered analyses: sales cycle, win rate, win rate by founder
+  involvement, NRR, gross churn, CAC payback. A file counts only if it has every field
+  and its rows yield a result.
+  - Computable → result stored under its own key with a source citation (file, sheet,
+    rows, rule, dataset, columns) and `status: "Computed – explanation requested"`; an
+    entry is added to `results["questions_for_management"]`; the item leaves missing_data.
+  - Not computable → stays in missing_data with `status: "Missing"` and `absent_fields`
+    per dataset type (empty list = columns present but no usable rows).
+  - Results the engine already produced from the expected file are never replaced.
+- New Missing item "Sales cycle" when CRM deals are uploaded without a created/close date
+  (previously a silent `n: 0`). Fixed `cut_deals_at_as_of` crashing when a CRM date column
+  is absent.
+- Gateway: the growth_engine slice now carries `missing_data` and
+  `questions_for_management` (metric, status, reason/absent_fields or result_key,
+  dataset, question — no raw rows or parsed text) and `founder_win_rate`. Missing data was
+  not in the payload before.
+- Prompt: `growth_engine.md` v6, new rule 10 (rule 8 unchanged); release r3, hash
+  re-recorded. All stored narratives become superseded (`prompt_release_changed`); none
+  are regenerated in bulk — each regenerates only through the gateway POST (circuit
+  breaker, call/spend caps) when a user generates it on an opened audit.
+- Not built (out of scope, do not exist yet): data inventory, "Analyses it blocks",
+  gap/request lists. Export: `absent_fields` is flattened to text in the Missing Data sheet.
+- Stored audits pick up the new fields on their next recompute; nothing is recomputed in bulk.
+- Tests: `tests/test_compute_before_missing.py` (7). Suite: 297 passed, 26 skipped.

@@ -164,6 +164,23 @@ def normalize(rows: list, dtype: str, mapping: dict) -> pd.DataFrame:
     return out
 
 
+def candidate_views(datasets: dict) -> dict:
+    """Every upload read as every dataset type, for the engine's can_compute.
+
+    A file's own type is read through its current mapping; the other types through the
+    column aliases in FIELD_DEFS. `datasets` maps dtype -> {file, sheet, columns, rows, mapping}.
+    """
+    files = {}
+    for dtype, d in datasets.items():
+        views = {}
+        for as_type in FIELD_DEFS:
+            mapping = (d.get("mapping") or {}) if as_type == dtype else suggest_mapping(as_type, d.get("columns") or [])
+            mapping = {f: c for f, c in mapping.items() if c}
+            views[as_type] = {"mapping": mapping, "frame": normalize(d.get("rows") or [], as_type, mapping)}
+        files[dtype] = {"file": d.get("file"), "sheet": d.get("sheet"), "views": views}
+    return files
+
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -389,7 +406,7 @@ async def _run_compute(audit_id: str) -> dict:
         "as_of_month": a.get("as_of_month"),
     }
     sources = {t: {"file": ds[t]["file"], "sheet": ds[t]["sheet"]} for t in ds}
-    results = sanitize(ge.compute_all(rev, crm, pnl, config, sources))
+    results = sanitize(ge.compute_all(rev, crm, pnl, config, sources, files=candidate_views(ds)))
     await db.audits.update_one(
         {"id": audit_id},
         {"$set": {"results": results, "status": "computed", "computed_at": datetime.now(timezone.utc).isoformat(),
@@ -746,7 +763,8 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
         pd.DataFrame(an_rows, columns=["Flag", "Count", "Detail"]).to_excel(xw, sheet_name="Anomalies", index=False)
 
         # Missing data
-        md = r.get("missing_data") or []
+        md = [{k: ("; ".join(f"{t}: {', '.join(f) or 'no usable rows'}" for t, f in v.items())
+                   if k == "absent_fields" else v) for k, v in m.items()} for m in (r.get("missing_data") or [])]
         (pd.DataFrame(md) if md else pd.DataFrame([{"metric": "(none — all computed)"}])).to_excel(
             xw, sheet_name="Missing Data", index=False)
         pd.DataFrame(sorted(fmt.GLOSSARY.items()), columns=["Term", "Definition"]).to_excel(
@@ -880,7 +898,7 @@ async def seed_demo():
     for spec in demo_data.DEMO_AUDITS:
         datasets, meta = demo_data.build(spec)
         audit_id = str(uuid.uuid4())
-        norm = {}
+        norm, uploads = {}, {}
         for dtype, (df, mapping) in datasets.items():
             recs = df_to_records(df)
             await db.datasets.replace_one(
@@ -891,13 +909,16 @@ async def seed_demo():
                 upsert=True,
             )
             norm[dtype] = normalize(recs, dtype, mapping)
+            uploads[dtype] = {"file": meta[dtype]["file"], "sheet": meta[dtype]["sheet"], "columns": list(df.columns),
+                              "rows": recs, "mapping": mapping}
         fx = {k.upper(): v for k, v in meta.get("fx", {}).items()}
         fx[spec["reporting_currency"].upper()] = 1.0
         config = {"reporting_currency": spec["reporting_currency"], "target_arr": spec["target_arr"],
                   "target_date": spec["target_date"], "fx": fx, "billing_terms": {}, "default_l": 1,
                   "as_of_month": None}
         sources = {t: {"file": meta[t]["file"], "sheet": meta[t]["sheet"]} for t in datasets}
-        results = ge.compute_all(norm["revenue"], norm["crm"], norm["pnl"], config, sources)
+        results = ge.compute_all(norm["revenue"], norm["crm"], norm["pnl"], config, sources,
+                                 files=candidate_views(uploads))
         await db.audits.insert_one({
             "id": audit_id, "company_name": spec["company_name"], "reporting_currency": spec["reporting_currency"],
             "target_arr": spec["target_arr"], "target_date": spec["target_date"],
