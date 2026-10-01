@@ -4,7 +4,7 @@ import {
   AreaChart, Area, LineChart, Line, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid,
   Tooltip as RTooltip, ResponsiveContainer, ReferenceLine, Legend,
 } from "recharts";
-import { Loader2, AlertTriangle, TrendingUp, Download } from "lucide-react";
+import { Loader2, AlertTriangle, Download } from "lucide-react";
 import { Layout } from "@/components/Layout";
 import { MetricCard } from "@/components/MetricCard";
 import { Provenance } from "@/components/Provenance";
@@ -16,6 +16,7 @@ import { GLOSSARY } from "@/lib/glossary";
 import { SegmentPaths } from "@/components/SegmentPaths";
 import { describeRequestError, logRequestFailure } from "@/lib/requestError";
 import { metricLabel, metricQualifier, bracketed } from "@/lib/metricNames";
+import { NONE, missingRows, questionRows } from "@/lib/gapLists";
 import { fmtCurrency, fmtCount, fmtCountUp, fmtDays, fmtDaysNumber, fmtMonths, fmtPct, fmtRatio, bandRangeLabel, monthEndDate } from "@/lib/format";
 
 const SEG_COLORS = ["#0284C7", "#059669", "#D97706", "#DB2777", "#475569"];
@@ -143,6 +144,8 @@ export default function Dashboard() {
     ? "N/A (single-currency reporting)"
     : fxRates.map(([c, rate]) => `1 ${c} = ${rate} ${ccy}`).join(" · ");
   const asOfFullDate = monthEndDate(r.as_of_month);
+  const missing = missingRows(r);
+  const questions = questionRows(r);
 
   // Headline CAC payback: the latest COMPLETE quarter only. A partial quarter pairs a
   // full quarter of lagged S&M with part of a quarter's new MRR and overstates payback,
@@ -492,7 +495,7 @@ export default function Dashboard() {
 
       {/* Missing data + anomalies summary */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <Card className="lg:col-span-6" title="Anomaly Flags" hint="detected, not interpreted">
+        <Card className="lg:col-span-4" title="Anomaly Flags" hint="detected, not interpreted">
           <div className="space-y-2 text-sm">
             <Flag label="Months with negative MRR" value={fmtCount(r.anomalies.negative_mrr_months.length)}
               detail={r.anomalies.negative_mrr_months.join(", ")} />
@@ -502,22 +505,42 @@ export default function Dashboard() {
             <Flag label="Deals with close before created (excluded)" value={fmtCount(r.anomalies.deals_close_before_created.excluded_count)} />
           </div>
         </Card>
-        <Card className="lg:col-span-6" title="Missing Data" hint={`${fmtCount(r.missing_data.length)} items`}>
-          {r.missing_data.length === 0 ? (
-            <div className="flex items-center gap-2 text-emerald-700 text-sm py-4">
-              <TrendingUp className="h-4 w-4" /> All metrics computed — no missing inputs.
-            </div>
+        <Card className="lg:col-span-4" testid="missing-data" title="Missing Data" hint={`${fmtCount(missing.length)} items`}>
+          {missing.length === 0 ? (
+            <p data-testid="missing-data-none" className="text-sm text-slate-600">{NONE}</p>
           ) : (
             <div className="space-y-2">
-              {r.missing_data.slice(0, 5).map((m, i) => (
-                <div key={i} className="text-sm">
+              {missing.slice(0, 5).map((m, i) => (
+                <div key={i} data-testid={`missing-data-item-${i}`} className="text-sm">
                   <div className="text-slate-800">{m.metric}</div>
                   <div className="text-[11px] text-slate-500">{m.reason}</div>
+                  {m.absent && <div className="text-[11px] text-slate-600 mt-0.5">Absent fields — {m.absent}</div>}
                 </div>
               ))}
               <button onClick={() => nav(`/audit/${id}/diagnostics`)} className="text-sky-700 hover:text-sky-800 text-xs underline mt-2">
                 View full diagnostics →
               </button>
+            </div>
+          )}
+        </Card>
+        <Card className="lg:col-span-4" testid="management-questions" title="Questions for management"
+          hint={`${fmtCount(questions.length)} items`}>
+          {questions.length === 0 ? (
+            <p data-testid="management-questions-none" className="text-sm text-slate-600">{NONE}</p>
+          ) : (
+            <div className="space-y-3">
+              {questions.map((q, i) => (
+                <div key={i} data-testid={`management-question-${i}`} className="text-sm">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="text-slate-800">{q.metric}</span>
+                    <Provenance source={q.source} id={`management-question-${i}`}>
+                      <span className="font-mono text-slate-900">{q.value}</span>
+                    </Provenance>
+                  </div>
+                  <div className="text-[10px] font-mono text-slate-500 mt-0.5">{q.sourceText}</div>
+                  <div className="text-[11px] text-amber-700 mt-0.5">{q.status}</div>
+                </div>
+              ))}
             </div>
           )}
         </Card>

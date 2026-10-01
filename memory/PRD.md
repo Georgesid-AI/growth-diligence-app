@@ -79,3 +79,12 @@ a short narrative from computed results.
   gap/request lists. Export: `absent_fields` is flattened to text in the Missing Data sheet.
 - Stored audits pick up the new fields on their next recompute; nothing is recomputed in bulk.
 - Tests: `tests/test_compute_before_missing.py` (7). Suite: 297 passed, 26 skipped.
+
+### 2026-10-01 — V6: show management questions (frontend only)
+- Dashboard: "Questions for management" card next to "Missing Data" (Anomaly Flags,
+  Missing Data and Questions now share the row, 4 columns each). Each question shows the
+  metric, its computed value (format.js rules, source hover), source as file · sheet ·
+  rows, and the status "Computed – explanation requested". Missing items show
+  `absent_fields` as plain text per upload type. An empty list shows "None".
+- Pure helpers in `src/lib/gapLists.js`; test `src/lib/gapLists.test.js` (6 tests). Run
+  under a Node jest shim here — the npm registry is blocked, so `craco test` / build not run.
