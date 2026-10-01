@@ -1,5 +1,6 @@
 import {
-  COMPUTED_STATUS, NONE, absentFieldsText, computedValue, missingRows, questionRows, sourceText,
+  COMPUTED_STATUS, NONE, RECOMPUTE_TO_CHECK, absentFieldsText, computedValue, missingRows, questionRows,
+  questionsEmptyText, sourceText,
 } from "./gapLists";
 
 // Shaped like stored results after the V6 engine pass: the sales cycle was computed
@@ -46,6 +47,17 @@ describe("questions for management", () => {
     expect(questionRows({ questions_for_management: [] })).toEqual([]);
     expect(questionRows({})).toEqual([]);
     expect(NONE).toBe("None");
+  });
+
+  test("results computed after V6 with an empty list say None", () => {
+    expect(questionsEmptyText({ questions_for_management: [] })).toBe("None");
+  });
+
+  test("results computed before V6 (no field at all) say Recompute to check", () => {
+    const preV6 = { ...results };
+    delete preV6.questions_for_management;
+    expect(questionsEmptyText(preV6)).toBe("Recompute to check");
+    expect(RECOMPUTE_TO_CHECK).toBe("Recompute to check");
   });
 
   test("a missing source reads as the placeholder", () => {

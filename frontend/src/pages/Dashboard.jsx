@@ -16,7 +16,7 @@ import { GLOSSARY } from "@/lib/glossary";
 import { SegmentPaths } from "@/components/SegmentPaths";
 import { describeRequestError, logRequestFailure } from "@/lib/requestError";
 import { metricLabel, metricQualifier, bracketed } from "@/lib/metricNames";
-import { NONE, missingRows, questionRows } from "@/lib/gapLists";
+import { NONE, missingRows, questionRows, questionsEmptyText } from "@/lib/gapLists";
 import { fmtCurrency, fmtCount, fmtCountUp, fmtDays, fmtDaysNumber, fmtMonths, fmtPct, fmtRatio, bandRangeLabel, monthEndDate } from "@/lib/format";
 
 const SEG_COLORS = ["#0284C7", "#059669", "#D97706", "#DB2777", "#475569"];
@@ -526,7 +526,7 @@ export default function Dashboard() {
         <Card className="lg:col-span-4" testid="management-questions" title="Questions for management"
           hint={`${fmtCount(questions.length)} items`}>
           {questions.length === 0 ? (
-            <p data-testid="management-questions-none" className="text-sm text-slate-600">{NONE}</p>
+            <p data-testid="management-questions-none" className="text-sm text-slate-600">{questionsEmptyText(r)}</p>
           ) : (
             <div className="space-y-3">
               {questions.map((q, i) => (

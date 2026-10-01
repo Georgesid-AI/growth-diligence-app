@@ -7,6 +7,7 @@ import { PLACEHOLDER, fmtDays, fmtMonths, fmtPct } from "./format";
 
 export const COMPUTED_STATUS = "Computed – explanation requested";
 export const NONE = "None";
+export const RECOMPUTE_TO_CHECK = "Recompute to check";
 
 // Same names the Upload & Mapping screen uses for each upload type.
 export const UPLOAD_LABELS = { revenue: "Revenue Lines", crm: "CRM Deals", pnl: "P&L (monthly)" };
@@ -60,6 +61,12 @@ export function questionRows(results) {
     status: q.status || COMPUTED_STATUS,
     question: q.question,
   }));
+}
+
+/** What the questions card says when it has no rows. Results computed before V6 have
+ *  no questions_for_management field at all: nothing was checked, so not "None". */
+export function questionsEmptyText(results) {
+  return Array.isArray(results?.questions_for_management) ? NONE : RECOMPUTE_TO_CHECK;
 }
 
 export function missingRows(results) {
