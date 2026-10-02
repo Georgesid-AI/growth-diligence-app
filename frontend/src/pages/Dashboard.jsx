@@ -503,6 +503,8 @@ export default function Dashboard() {
               detail={r.anomalies.revenue_gap_then_resume.slice(0, 8).join(", ")} />
             <Flag label="Revenue lines missing customer ID" value={fmtCount(r.anomalies.revenue_missing_customer_id.count)} />
             <Flag label="Deals with close before created (excluded)" value={fmtCount(r.anomalies.deals_close_before_created.excluded_count)} />
+            <Flag label="Date columns with day/month order set from the data" value={fmtCount((r.anomalies.date_order_from_data ?? []).length)}
+              detail={(r.anomalies.date_order_from_data ?? []).map((n) => `${n.field} (${n.dataset}): ${n.order}, ${fmtCount(n.rows)} rows`).join("; ")} />
           </div>
         </Card>
         <Card className="lg:col-span-4" testid="missing-data" title="Missing Data" hint={`${fmtCount(missing.length)} items`}>

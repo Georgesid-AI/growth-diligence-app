@@ -1269,6 +1269,9 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
     rev = rev if rev is not None else pd.DataFrame()
     deals = deals if deals is not None else pd.DataFrame()
     pnl = pnl if pnl is not None else pd.DataFrame()
+    # day/month order per date column, found when the upload was read (server.normalize)
+    date_formats = {name: frame.attrs.get("date_formats", {})
+                    for name, frame in (("revenue", rev), ("crm", deals), ("pnl", pnl))}
 
     mrr, seg_map, first_month, contrib_rows, mrr_notes = build_mrr_matrix(rev, billing_terms, fx)
 
@@ -1314,6 +1317,22 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
             "unlocked_by": "Give every revenue line a valid invoice date (or service start and end dates)",
             "file": rev_src.get("file"),
         })
+
+    date_order_notes = []
+    for name, fields in date_formats.items():
+        file = sources.get(name, {}).get("file", name)
+        for field, finding in fields.items():
+            if finding["order"]:
+                date_order_notes.append({"dataset": name, "field": field, "order": finding["order"],
+                                         "rows": finding["rows"]})
+                continue
+            missing_data.append({
+                "metric": f"Date format of {field} ({name})",
+                "reason": f"{finding['rows']} row(s) have dates where day and month can't be told apart "
+                          f"(the column {finding['reason']}) — not read, not guessed",
+                "unlocked_by": f"Management to confirm the date format of {field}: DD/MM/YYYY or MM/DD/YYYY",
+                "file": file,
+            })
 
     def src(base, rows, rule):
         s = SourceRef(base.get("file", "?"), base.get("sheet"))
@@ -1456,6 +1475,7 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
         })
 
     results["anomalies"] = compute_anomalies(mrr, rev, deals, mrr_notes)
+    results["anomalies"]["date_order_from_data"] = date_order_notes
     results["mrr_series"] = compute_mrr_series(mrr, seg_map)
     results["cohort_retention"] = compute_cohort_retention(mrr, first_month)
     results["missing_data"], results["questions_for_management"] = resolve_missing(
