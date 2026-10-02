@@ -5,6 +5,7 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import io
+import re
 import logging
 import uuid
 from pathlib import Path
@@ -155,13 +156,52 @@ def normalize(rows: list, dtype: str, mapping: dict) -> pd.DataFrame:
     for field, col in mapping.items():
         if col and col in raw.columns:
             out[field] = raw[col].values
+    date_formats = {}
     for f in defs["dates"]:
         if f in out.columns:
-            out[f] = pd.to_datetime(out[f], errors="coerce")
+            out[f], date_formats[f] = parse_date_column(out[f])
+            if date_formats[f] and date_formats[f]["order"] is None:
+                date_formats[f]["row_ids"] = out.loc[date_formats[f].pop("index"), "_row"].tolist()
     for f in defs["numeric"]:
         if f in out.columns:
             out[f] = pd.to_numeric(out[f], errors="coerce")
+    out.attrs["date_formats"] = {f: v for f, v in date_formats.items() if v}
     return out
+
+
+# 03/04/2024, 3.4.24, 03-04-2024 (+ optional time): day and month in either order.
+_DM_DATE = re.compile(r"^\s*(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4}|\d{2})(?:[ T].*)?$")
+
+
+def parse_date_column(col: pd.Series):
+    """(dates, finding) for one mapped date column.
+
+    Never guesses day/month order. A value whose first part is above 12 proves
+    day-first for the whole column; a second part above 12 proves month-first. With
+    no such value the order is unknown: those rows stay unread (NaT) and the finding
+    asks for the format. ISO and other unambiguous values parse as before.
+    finding is None, {"order": "DD/MM/YYYY"|"MM/DD/YYYY", "rows": n} or
+    {"order": None, "rows": n, "reason": ..., "index": [unread row index, ...]}.
+    """
+    parts = {i: m.groups() for i, v in col.items() if isinstance(v, str) and (m := _DM_DATE.match(v))}
+    rest = col.drop(index=list(parts))
+    out = pd.Series(pd.NaT, index=col.index, dtype="datetime64[ns]")
+    if len(rest):
+        out.loc[rest.index] = pd.to_datetime(rest, errors="coerce")
+    if not parts:
+        return out, None
+    day_first = any(int(a) > 12 for a, _, _ in parts.values())
+    month_first = any(int(b) > 12 for _, b, _ in parts.values())
+    if day_first == month_first:
+        why = "mixes day-first and month-first dates" if day_first else "has no day above 12"
+        return out, {"order": None, "rows": len(parts), "reason": why, "index": list(parts)}
+    for i, (a, b, y) in parts.items():
+        d, m = (a, b) if day_first else (b, a)
+        try:
+            out.loc[i] = pd.Timestamp(int(y) + (2000 if len(y) == 2 else 0), int(m), int(d))
+        except ValueError:
+            pass  # e.g. 31/02/2024: unreadable, stays NaT
+    return out, {"order": "DD/MM/YYYY" if day_first else "MM/DD/YYYY", "rows": len(parts)}
 
 
 def candidate_views(datasets: dict) -> dict:
@@ -192,10 +232,27 @@ def _validate_target_date(v: Optional[str]) -> Optional[str]:
     try:
         dt = datetime.strptime(v, "%Y-%m-%d")
     except ValueError:
+        dt = None
+    if dt is None or dt.strftime("%Y-%m-%d") != v:  # strptime alone takes 2027-1-5
         raise ValueError("target_date must be in YYYY-MM-DD format")
     if not (2000 <= dt.year <= 2100):
         raise ValueError(f"target_date year must be between 2000 and 2100, got {dt.year}")
     return v
+
+
+def _validate_as_of_month(v: Optional[str]) -> Optional[str]:
+    """ISO only: YYYY-MM-DD from the date picker, or YYYY-MM as older audits stored it.
+    "30/06/2026" or "06/07/2026" is refused, never guessed: day/month order depends on locale."""
+    if not v:
+        return v
+    for f in ("%Y-%m-%d", "%Y-%m"):
+        try:
+            dt = datetime.strptime(v, f)
+        except ValueError:
+            continue
+        if dt.strftime(f) == v and 2000 <= dt.year <= 2100:
+            return v
+    raise ValueError("as_of_month must be an ISO date (YYYY-MM-DD) with a year between 2000 and 2100")
 
 
 class AuditCreate(BaseModel):
@@ -206,6 +263,7 @@ class AuditCreate(BaseModel):
     as_of_month: Optional[str] = None
 
     _check_target_date = field_validator("target_date")(_validate_target_date)
+    _check_as_of_month = field_validator("as_of_month")(_validate_as_of_month)
 
 
 class AuditUpdate(BaseModel):
@@ -216,6 +274,7 @@ class AuditUpdate(BaseModel):
     as_of_month: Optional[str] = None
 
     _check_target_date = field_validator("target_date")(_validate_target_date)
+    _check_as_of_month = field_validator("as_of_month")(_validate_as_of_month)
 
 
 class MappingPayload(BaseModel):
@@ -777,6 +836,8 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
             ("Customers with gaps > 2 months then resume", len(an.get("revenue_gap_then_resume", [])), ", ".join(an.get("revenue_gap_then_resume", [])[:50])),
             ("Revenue lines missing customer ID", an.get("revenue_missing_customer_id", {}).get("count"), ""),
             ("Deals close-before-created (excluded)", an.get("deals_close_before_created", {}).get("excluded_count"), ""),
+            ("Date columns with day/month order set from the data", len(an.get("date_order_from_data", [])),
+             "; ".join(f"{n['field']} ({n['dataset']}): {n['order']}, {n['rows']} rows" for n in an.get("date_order_from_data", []))),
         ]
         pd.DataFrame(an_rows, columns=["Flag", "Count", "Detail"]).to_excel(xw, sheet_name="Anomalies", index=False)
 

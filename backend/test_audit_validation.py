@@ -42,3 +42,22 @@ def test_update_audit_rejects_bad_target_date_year(bad_date):
 def test_update_audit_accepts_valid_target_date():
     u = server.AuditUpdate(target_date="2028-06-30")
     assert u.target_date == "2028-06-30"
+
+
+# Create Growth Audit: both dates travel as ISO, whatever the browser displays.
+def test_create_audit_accepts_iso_as_of_date():
+    a = server.AuditCreate(company_name="Acme", target_date="2027-12-31", as_of_month="2026-06-30")
+    assert (a.target_date, a.as_of_month) == ("2027-12-31", "2026-06-30")
+
+
+@pytest.mark.parametrize("good", ["2026-06-30", "2026-06", None])
+def test_as_of_month_accepts_iso(good):
+    assert server.AuditUpdate(as_of_month=good).as_of_month == good
+
+
+@pytest.mark.parametrize("bad", ["30/06/2026", "06/30/2026", "06/2026", "June 2026", "2026-6", "2026-02-30"])
+def test_as_of_month_rejects_non_iso(bad):
+    with pytest.raises(ValidationError):
+        server.AuditCreate(company_name="Acme", as_of_month=bad)
+    with pytest.raises(ValidationError):
+        server.AuditUpdate(as_of_month=bad)
