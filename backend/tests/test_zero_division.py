@@ -234,3 +234,51 @@ def test_the_export_shows_the_anomaly_calculation_error_not_zero_counts():
     wb = openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, {"anomalies": None}))
     rows = [tuple(c.value for c in r) for r in wb["Anomalies"].iter_rows(min_row=2)]
     assert rows == [("Anomaly flags", "calculation error", "Not computed; see Missing Data")]
+
+
+# ---------------------------------------------------------------------------
+# Reported audit, by shape: no as-of month set, no P&L, prepaid annual contracts
+# ---------------------------------------------------------------------------
+def _prepaid_annual_revenue():
+    """Monthly SMB customers invoiced through 2026-06; Enterprise prepays annually, so its
+    service periods run to 2027-05. The last MRR month (2027-05) is 11 months after the last
+    invoice, and the Enterprise customer billed a year earlier has no MRR then: NRR 0%."""
+    rows = []
+    for c in ("S1", "S2", "S3"):
+        for m in pd.period_range("2025-01", "2026-06", freq="M"):
+            rows.append((c, m.to_timestamp(), 300, "EUR", m.to_timestamp(), m.to_timestamp(how="end").normalize(), "SMB"))
+    for c, start in (("E1", "2025-06"), ("E2", "2026-06")):
+        p = pd.Period(start, "M")
+        rows.append((c, p.to_timestamp(), 120_000, "EUR", p.to_timestamp(), (p + 11).to_timestamp(how="end").normalize(),
+                     "Enterprise"))
+    rev = pd.DataFrame(rows, columns=["customer_id", "invoice_date", "amount", "currency",
+                                      "service_start", "service_end", "segment"])
+    rev["_row"] = range(2, len(rev) + 2)
+    return rev
+
+
+def _reported_settings(as_of):
+    cfg = {"reporting_currency": "EUR", "target_arr": 6_000_000, "target_date": "2027-12-31", "fx": {"EUR": 1.0},
+           "billing_terms": {}, "default_l": 1, "as_of_month": as_of}
+    return ge.compute_all(_prepaid_annual_revenue(), None, None, cfg,
+                          {"revenue": {"file": "revenue.xlsx", "sheet": "Invoices"}})
+
+
+def test_unset_as_of_past_the_last_invoice_computes_and_is_flagged():
+    """Reproduced on main: as-of defaults to 2027-05, Enterprise NRR 0%, 0.58 years to target ->
+    '0.0 cannot be raised to a negative power'."""
+    results = _reported_settings(None)
+    assert results["as_of_month"] == "2027-05"
+    row = results["segment_paths"]["stage_one"]["segments"]["Enterprise"]
+    assert row["nrr_pct"] == 0 and row["projected_arr"] is None
+    item = _missing(results, "As-of month")
+    assert item, "a defaulted as-of month past the last invoice must be named in Missing Data"
+    assert "defaulted to the last month of service periods (2027-05), 11 month(s) after the last invoice (2026-06)" \
+        in item[0]["reason"]
+    assert "2026-06" in item[0]["unlocked_by"]
+
+
+def test_a_set_as_of_month_is_not_flagged():
+    results = _reported_settings("2026-06-30")
+    assert results["as_of_month"] == "2026-06"
+    assert not _missing(results, "As-of month")

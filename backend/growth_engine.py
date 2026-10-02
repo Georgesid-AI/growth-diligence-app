@@ -1353,6 +1353,24 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
             "file": rev_src.get("file"),
         })
 
+    # No as-of month set and no P&L months: the as-of month defaults to the last MRR month,
+    # which prepaid service periods can push past the last invoice. Those months hold only
+    # deferred revenue, so "current" figures there are not the run-rate.
+    invoice_months = ([m for m in map(_month_of, rev["invoice_date"]) if m is not None]
+                      if "invoice_date" in rev.columns else [])
+    last_invoice_month = max(invoice_months) if invoice_months else None
+    if (not config.get("as_of_month") and as_of is not None and as_of == last_revenue_month
+            and last_invoice_month is not None and as_of > last_invoice_month):
+        missing_data.append({
+            "metric": "As-of month",
+            "reason": f"No as-of month was set and no P&L months were provided, so it defaulted to the last month of "
+                      f"service periods ({_period_str(as_of)}), {(as_of - last_invoice_month).n} month(s) after the "
+                      f"last invoice ({_period_str(last_invoice_month)}). Those months hold only deferred revenue from "
+                      f"prepaid contracts; current figures there are not the run-rate",
+            "unlocked_by": f"Set the as-of month on the audit (e.g. {_period_str(last_invoice_month)}), or upload the P&L",
+            "file": rev_src.get("file"),
+        })
+
     date_order_notes = []
     for name, fields in date_formats.items():
         file = sources.get(name, {}).get("file", name)
