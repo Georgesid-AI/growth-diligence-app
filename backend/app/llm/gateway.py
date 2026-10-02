@@ -255,12 +255,6 @@ _PERIOD_KEY = re.compile(r"^(\d{4}-(Q[1-4]|\d{2})|\d{1,3})$")   # 2024-Q3, 2024-
 PERIOD_KEYED = frozenset({"by_cohort", "quarters", "landed", "reverse_solve", "reconciliation", "values"})
 DATASET_KEYED = {"absent_fields": frozenset({"revenue", "crm", "pnl"})}
 
-# Raw cell values the engine also quotes inside a sentence (a missing-data
-# `reason`). Dropping the field is not enough; the copy in the text is scrubbed.
-_RAW_VALUE_LISTS = {("founder_involved_excluded", "values")}
-REDACTED = "[redacted]"
-
-
 def allowlist_payload(node: Any, key: Optional[str] = None) -> Any:
     """Deep copy of `node` keeping only allowlisted fields. The input is not modified.
 
@@ -285,24 +279,6 @@ def allowlist_payload(node: Any, key: Optional[str] = None) -> Any:
     return {k: allowlist_payload(v, k) for k, v in node.items() if k in allowed}
 
 
-def raw_cell_values(node: Any) -> List[str]:
-    """Raw cell values held in `node`, to scrub from any engine-written sentence."""
-    found: set = set()
-
-    def walk(n: Any, key: Optional[str] = None) -> None:
-        if isinstance(n, dict):
-            for k, v in n.items():
-                if (key, k) in _RAW_VALUE_LISTS and isinstance(v, list):
-                    found.update(str(c) for c in v)
-                walk(v, k)
-        elif isinstance(n, list):
-            for i in n:
-                walk(i, key)
-
-    walk(node)
-    return sorted(c for c in found if c.strip())
-
-
 def build_outbound(computed: dict, mapping: dict) -> dict:
     """The payload the provider sees: display strings, allowlisted, then pseudonyms.
 
@@ -314,11 +290,7 @@ def build_outbound(computed: dict, mapping: dict) -> dict:
         formatted = formatting.format_payload(withhold_partial_quarters(strip_row_references(computed)))
     except formatting.FormattingError as exc:
         raise GatewayError("format_failed", str(exc))
-    allowed = allowlist_payload(formatted)
-    scrub = {v: REDACTED for v in raw_cell_values(computed)}
-    if scrub:
-        allowed = redaction.redact(allowed, scrub)
-    return redaction.redact(allowed, mapping)
+    return redaction.redact(allowlist_payload(formatted), mapping)
 
 
 def _slice_for_step(results: dict, step: str) -> dict:
@@ -339,10 +311,31 @@ def _slice_for_step(results: dict, step: str) -> dict:
         # raw rows or parsed text.
         for key, fields in _GAP_FIELDS.items():
             if results.get(key) is not None:
-                out[key] = [{f: (_neutral_question(item) if f == "question" else item[f])
-                             for f in fields if item.get(f) is not None}
+                out[key] = [{f: _outbound_gap_value(f, item) for f in fields if item.get(f) is not None}
                             for item in results[key] if isinstance(item, dict)]
     return out
+
+
+# Missing-data sentences that quote raw cell values (currency codes, founder-involved
+# entries). The model gets the same statement without them; Mongo keeps the original.
+_NEUTRAL_REASONS = {
+    "Revenue rows with unmapped currency":
+        "{count} row(s) use a currency with no exchange rate provided — excluded, not guessed at 1.0",
+    "CRM rows with unrecognized founder-involved value":
+        "{count} row(s) have a founder_involved value that isn't yes/no-like — excluded from the founder "
+        "split, not guessed",
+}
+_LEADING_COUNT = re.compile(r"^\d+")
+
+
+def _outbound_gap_value(field: str, item: dict) -> Any:
+    """A missing-data or question field as the model may see it."""
+    if field == "question":
+        return _neutral_question(item)
+    if field == "reason" and item.get("metric") in _NEUTRAL_REASONS:
+        count = _LEADING_COUNT.match(str(item["reason"]))
+        return _NEUTRAL_REASONS[item["metric"]].format(count=count.group(0) if count else "Some")
+    return item[field]
 
 
 def _neutral_question(item: dict) -> str:

@@ -8,8 +8,11 @@ in-memory Mongo stub and the fake adapter - no test can reach a real provider.
 import asyncio
 import copy
 import json
+import os
 import sys
 from pathlib import Path
+
+import pytest
 
 BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
@@ -110,7 +113,8 @@ def test_outbound_payload_has_no_file_sheet_header_or_raw_cell_value():
     assert sent["metrics"]["win_rate"]["founder_involved_excluded"]["count"] == "1"
     question = sent["metrics"]["questions_for_management"][0]["question"]
     assert "close_date, created_date" in question and "revenue upload" in question
-    assert "[redacted]" in sent["metrics"]["missing_data"][0]["reason"]
+    assert sent["metrics"]["missing_data"][0]["reason"] == (
+        "1 row(s) have a founder_involved value that isn't yes/no-like — excluded from the founder split, not guessed")
 
 
 def test_full_versions_stay_in_mongo_for_the_dashboard():
@@ -184,3 +188,56 @@ def test_numeric_guard_allowed_set_is_unchanged_by_redaction():
     assert redacted != plain, "segments were relabelled"
     assert gateway.allowed_numerals(redacted, windows) == gateway.allowed_numerals(plain, windows)
     assert gateway.allowed_numerals(redaction.redact(plain, mapping), windows) == gateway.allowed_numerals(plain, windows)
+
+
+def test_demo_upload_leaks_no_file_sheet_header_or_cell_value():
+    """A real engine run over the demo upload, renamed to carry identifying strings."""
+    pytest.importorskip("pandas")
+    pytest.importorskip("fastapi")
+    pytest.importorskip("motor")
+    os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
+    os.environ.setdefault("DB_NAME", "data_boundary_test")
+    import demo_data
+    import growth_engine as ge
+    import server
+
+    file, sheet, header, cell = "Acme_Revenue.xlsx", "Acme Data", "Acme Segment", "Jane Doe (CEO)"
+    spec = demo_data.DEMO_AUDITS[0]
+    datasets, meta = demo_data.build(spec)
+    uploads = {}
+    for dtype, (df, mapping) in datasets.items():
+        rows, mapping = server.df_to_records(df), dict(mapping)
+        if dtype == "revenue":
+            for r in rows:
+                r[header] = r.pop(mapping["segment"])
+            mapping["segment"] = header
+            rows[0][mapping["currency"]] = cell            # a currency cell the engine quotes in a reason
+        if dtype == "crm":
+            rows[0][mapping["founder_involved"]] = cell    # a founder cell the engine quotes in a reason
+        name, tab = (file, sheet) if dtype == "revenue" else (meta[dtype]["file"], meta[dtype]["sheet"])
+        uploads[dtype] = {"file": name, "sheet": tab, "columns": list(rows[0]), "rows": rows, "mapping": mapping}
+
+    norm = {d: server.normalize(u["rows"], d, u["mapping"]) for d, u in uploads.items()}
+    fx = {k.upper(): v for k, v in meta.get("fx", {}).items()}
+    fx[spec["reporting_currency"].upper()] = 1.0
+    cfg = {"reporting_currency": spec["reporting_currency"], "target_arr": spec["target_arr"],
+           "target_date": spec["target_date"], "fx": fx, "billing_terms": {}, "default_l": 1, "as_of_month": None}
+    sources = {d: {"file": u["file"], "sheet": u["sheet"]} for d, u in uploads.items()}
+    results = server.sanitize(ge.compute_all(norm["revenue"], norm["crm"], norm["pnl"], cfg, sources,
+                                             files=server.candidate_views(uploads)))
+
+    stored = json.dumps(results, ensure_ascii=False).lower()
+    # The header is stored only when a management question cites it; that path is covered above.
+    for needle in (file, sheet, cell):
+        assert needle.lower() in stored, f"fixture did not exercise {needle!r}"
+
+    db = t.FakeDB()
+    db["audits"].docs.append({"id": RUN_ID, "results": results, "reporting_currency": spec["reporting_currency"],
+                              "target_arr": spec["target_arr"], "target_date": spec["target_date"]})
+    adapter = t.FakeAdapter()
+    asyncio.run(gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=adapter, sleep=t._noop_sleep))
+    assert adapter.calls == 1
+    sent = adapter.payloads[0].lower()
+    for needle in (file, sheet, header, cell, "jane doe", "acme"):
+        assert needle.lower() not in sent, f"{needle!r} reached the provider"
+    assert json.dumps(db["audits"].docs[0]["results"], ensure_ascii=False).lower() == stored, "Mongo keeps the full text"
