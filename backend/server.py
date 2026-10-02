@@ -198,6 +198,21 @@ def _validate_target_date(v: Optional[str]) -> Optional[str]:
     return v
 
 
+def _validate_as_of_month(v: Optional[str]) -> Optional[str]:
+    """ISO only: YYYY-MM-DD from the date picker, or YYYY-MM as older audits stored it.
+    "30/06/2026" or "06/07/2026" is refused, never guessed: day/month order depends on locale."""
+    if not v:
+        return v
+    for f in ("%Y-%m-%d", "%Y-%m"):
+        try:
+            dt = datetime.strptime(v, f)
+        except ValueError:
+            continue
+        if dt.strftime(f) == v and 2000 <= dt.year <= 2100:
+            return v
+    raise ValueError("as_of_month must be an ISO date (YYYY-MM-DD) with a year between 2000 and 2100")
+
+
 class AuditCreate(BaseModel):
     company_name: str
     reporting_currency: str = "EUR"
@@ -206,6 +221,7 @@ class AuditCreate(BaseModel):
     as_of_month: Optional[str] = None
 
     _check_target_date = field_validator("target_date")(_validate_target_date)
+    _check_as_of_month = field_validator("as_of_month")(_validate_as_of_month)
 
 
 class AuditUpdate(BaseModel):
@@ -216,6 +232,7 @@ class AuditUpdate(BaseModel):
     as_of_month: Optional[str] = None
 
     _check_target_date = field_validator("target_date")(_validate_target_date)
+    _check_as_of_month = field_validator("as_of_month")(_validate_as_of_month)
 
 
 class MappingPayload(BaseModel):

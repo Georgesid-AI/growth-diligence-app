@@ -16,6 +16,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { listAudits, createAudit, deleteAudit } from "@/lib/api";
 import { fmtCurrency } from "@/lib/format";
+import { targetDateError, plainNumber, groupThousands } from "@/lib/auditForm";
 
 export default function AuditHub() {
   const nav = useNavigate();
@@ -27,21 +28,9 @@ export default function AuditHub() {
   const load = () => listAudits().then(setAudits);
   useEffect(() => { load(); }, []);
 
-  const targetDateError = () => {
-    if (!form.target_date) return null;
-    const year = parseInt(form.target_date.slice(0, 4), 10);
-    if (!Number.isFinite(year) || year < 2000 || year > 2100) {
-      return "Target date year must be between 2000 and 2100";
-    }
-    if (form.as_of_month && form.target_date.slice(0, 7) <= form.as_of_month) {
-      return "Target date must be after the as-of month";
-    }
-    return null;
-  };
-
   const submit = async () => {
     if (!form.company_name.trim()) return toast.error("Company name is required");
-    const dateError = targetDateError();
+    const dateError = targetDateError(form.target_date, form.as_of_month);
     if (dateError) return toast.error(dateError);
     setSaving(true);
     try {
@@ -123,10 +112,11 @@ export default function AuditHub() {
                   <Label className="text-slate-700">Target ARR</Label>
                   <Input
                     data-testid="audit-target-arr-input"
-                    type="number"
-                    value={form.target_arr}
-                    onChange={(e) => setForm({ ...form, target_arr: e.target.value })}
-                    placeholder="40000000"
+                    type="text"
+                    inputMode="decimal"
+                    value={groupThousands(form.target_arr)}
+                    onChange={(e) => setForm({ ...form, target_arr: plainNumber(e.target.value) })}
+                    placeholder="40,000,000"
                     className="mt-1.5 bg-white border-[#E5E7EB] font-mono"
                   />
                 </div>
@@ -147,7 +137,9 @@ export default function AuditHub() {
                 <Label className="text-slate-700">As-of month <span className="text-slate-500 text-xs">(optional — defaults to last P&L month)</span></Label>
                 <Input
                   data-testid="audit-asof-month-input"
-                  type="month"
+                  type="date"
+                  min="2000-01-01"
+                  max="2100-12-31"
                   value={form.as_of_month}
                   onChange={(e) => setForm({ ...form, as_of_month: e.target.value })}
                   className="mt-1.5 bg-white border-[#E5E7EB] font-mono"

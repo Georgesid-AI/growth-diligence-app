@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getAudit, getFields, uploadDataset, saveMapping, computeAudit, getRevenueCustomers, updateAudit } from "@/lib/api";
+import { asOfInputValue } from "@/lib/auditForm";
 
 const DTYPES = [
   { key: "revenue", label: "Revenue Lines", desc: "Recurring & one-off invoices — the basis for MRR/ARR, NRR and churn.", required: true },
@@ -23,7 +24,7 @@ export default function MappingWizard() {
   const [computing, setComputing] = useState(false);
   const [asOf, setAsOf] = useState("");
 
-  const load = useCallback(() => getAudit(id).then((a) => { setAudit(a); setAsOf(a.as_of_month || ""); }), [id]);
+  const load = useCallback(() => getAudit(id).then((a) => { setAudit(a); setAsOf(asOfInputValue(a.as_of_month)); }), [id]);
   useEffect(() => { load(); getFields().then(setFields); }, [load]);
 
   const runCompute = async () => {
@@ -62,7 +63,7 @@ export default function MappingWizard() {
             <label className="text-[11px] font-mono uppercase tracking-wider text-slate-600 block mb-1">As-of month</label>
             <Input
               data-testid="asof-month-input"
-              type="month"
+              type="date"
               value={asOf}
               onChange={(e) => setAsOf(e.target.value)}
               className="h-9 w-40 bg-white border-[#E5E7EB] font-mono"
