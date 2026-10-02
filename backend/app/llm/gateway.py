@@ -51,7 +51,7 @@ MODEL_PRICING_USD = {
     "claude-sonnet-5": {"input": 2.00, "output": 10.00},
     "claude-haiku-4-5": {"input": 1.00, "output": 5.00},
 }
-DEFAULT_MODEL = "claude-opus-5"
+DEFAULT_MODEL = "claude-sonnet-5-5"
 
 # Sampling parameters were removed on the current Opus/Sonnet generation: sending
 # `temperature` to those models is a 400. Only models listed here get it.
@@ -60,14 +60,14 @@ MODELS_ACCEPTING_TEMPERATURE = {"claude-haiku-4-5"}
 def run_model() -> str:
     """The one model every step in a run uses.
 
-    A run-level setting (LLM_MODEL, default DEFAULT_MODEL) rather than a per-step
+    A run-level setting (NARRATIVE_MODEL in backend/.env, default DEFAULT_MODEL) rather than a per-step
     one, so sections of the same analysis can never be written by different models.
     Steps have no model of their own. An unknown model is refused: it would have no
     price, so the spend caps could not count it.
     """
-    chosen = os.environ.get("LLM_MODEL", "").strip() or DEFAULT_MODEL
+    chosen = os.environ.get("NARRATIVE_MODEL", "").strip() or DEFAULT_MODEL
     if chosen not in MODEL_PRICING_USD:
-        raise GatewayError("model_not_configured", f"LLM_MODEL {chosen!r} has no price entry")
+        raise GatewayError("model_not_configured", f"NARRATIVE_MODEL {chosen!r} has no price entry")
     return chosen
 
 
@@ -498,10 +498,16 @@ def _numeric_sort_key(token: str):
 
 
 def allowed_numerals(payload: Any, windows: Iterable[int] = ()) -> set:
-    """Every numeric token the model may legitimately use."""
-    return redaction.numbers_in(payload) | redaction.numbers_in(
+    """Every numeric token the model may legitimately use.
+
+    A negative engine figure may also be written as its magnitude with the sign in
+    words: change_arr "-77,949 EUR" -> "ARR falls by 77,949 EUR". Only negatives get
+    this; a positive figure never allows its negative.
+    """
+    allowed = redaction.numbers_in(payload) | redaction.numbers_in(
         list(GLOBAL_ALLOWED_NUMERALS) + list(windows)
     )
+    return allowed | {t[1:] for t in allowed if t.startswith("-")}
 
 
 def numeric_guard(
