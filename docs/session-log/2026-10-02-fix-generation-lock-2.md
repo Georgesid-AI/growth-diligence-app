@@ -1,0 +1,5 @@
+- Date: 2026-10-02
+- Deleted: all llm_locks documents at startup (transient state), so old duplicates cannot block the unique index.
+- Optimized: index failure now logs the error type only and refuses startup; stub create_index enforces uniqueness like Mongo.
+- Slow/unclear: wiping locks at startup also clears live locks held by other workers during a rolling restart.
+- Process change: state the deploy topology (single vs multiple workers) in lock-related tasks.
