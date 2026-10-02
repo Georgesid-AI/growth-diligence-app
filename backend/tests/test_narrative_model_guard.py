@@ -62,7 +62,13 @@ def test_a_dropped_minus_sign_passes_with_decline_wording(text):
 
 
 @pytest.mark.parametrize("text", ["ARR grows by 77,949 EUR.", "ARR changes by 77,949 EUR.",
-                                  "ARR falls, then rises by 77,949 EUR."])
+                                  "ARR falls, then rises by 77,949 EUR.",
+                                  "Segment B adds 77,949 in new contracts.",
+                                  "ARR contracts by 77,949 EUR.",
+                                  "ARR falls but the segment wins 77,949 EUR.",
+                                  "ARR drops while bookings expand by 77,949 EUR.",
+                                  "Margin improves as ARR declines by 77,949 EUR.",
+                                  "Growth accelerates; ARR is lower by 77,949 EUR."])
 def test_a_dropped_minus_sign_without_decline_wording_is_flagged(text):
     payload = gateway.build_outbound(COMPUTED, {})
     assert gateway.numeric_guard(_narrative(text), payload).soft == ["77949"]
