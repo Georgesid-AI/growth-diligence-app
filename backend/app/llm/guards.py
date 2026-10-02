@@ -11,12 +11,15 @@ The lock is the circuit breaker against save-triggered regeneration loops: a UI
 that re-requests a narrative on every autosave gets the in-flight answer back.
 """
 import asyncio
+import logging
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from pymongo.errors import DuplicateKeyError
+
+logger = logging.getLogger("growth.llm")
 
 CALLS_COLLECTION = "llm_calls"
 LOCKS_COLLECTION = "llm_locks"
@@ -124,8 +127,18 @@ async def acquire(db, run_id: str, step: str) -> Optional[str]:
 
 
 async def ensure_indexes(db) -> None:
-    """One lock document per run+step, so concurrent upserts cannot both insert."""
-    await db[LOCKS_COLLECTION].create_index([("run_id", 1), ("step", 1)], unique=True)
+    """One lock document per run+step, so concurrent upserts cannot both insert.
+
+    Lock documents are transient, so they are cleared first: duplicates left by
+    the old insert race would otherwise block the unique index. If the index
+    still cannot be created, refuse to start rather than run without it.
+    """
+    await db[LOCKS_COLLECTION].delete_many({})
+    try:
+        await db[LOCKS_COLLECTION].create_index([("run_id", 1), ("step", 1)], unique=True)
+    except Exception as exc:
+        logger.error("llm_locks unique index failed: %s", type(exc).__name__)
+        raise RuntimeError("llm_locks unique index could not be created; refusing to start") from None
 
 
 async def holds(db, run_id: str, step: str, token: str) -> bool:

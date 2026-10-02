@@ -78,7 +78,13 @@ class FakeCollection:
         self.indexes = []
 
     async def create_index(self, keys, unique=False):
-        self.indexes.append({"keys": list(keys), "unique": unique})
+        keys = list(keys)
+        if unique:
+            seen = [tuple(d.get(k) for k, _ in keys) for d in self.docs]
+            if len(seen) != len(set(seen)):
+                from pymongo.errors import DuplicateKeyError
+                raise DuplicateKeyError("E11000 duplicate key error")
+        self.indexes.append({"keys": keys, "unique": unique})
 
     async def find_one(self, flt, projection=None):
         for d in self.docs:

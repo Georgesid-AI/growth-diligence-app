@@ -74,7 +74,8 @@ def test_lock_ttl_covers_the_worst_case_call():
     assert guards.LOCK_TTL_SECONDS > attempts * gateway.REQUEST_TIMEOUT_SECONDS
 
 
-def test_unique_lock_index_exists_after_startup(monkeypatch):
+def _start_app(monkeypatch, db):
+    """Run the real startup handlers against the stub DB."""
     pytest.importorskip("fastapi")
     pytest.importorskip("motor")
     pytest.importorskip("pandas")
@@ -84,10 +85,27 @@ def test_unique_lock_index_exists_after_startup(monkeypatch):
     from fastapi.testclient import TestClient
     import server
 
-    db = t.make_db()
     db["audits"].docs.append({"id": "seeded", "seed_version": 3})  # skip demo seeding
     monkeypatch.setattr(server, "db", db)
     monkeypatch.setattr(server, "client", type("Client", (), {"close": lambda self: None})())
-    with TestClient(server.app):
-        pass
-    assert {"keys": [("run_id", 1), ("step", 1)], "unique": True} in db[guards.LOCKS_COLLECTION].indexes
+    with TestClient(server.app) as client:
+        return client.get("/api/").status_code
+
+
+LOCK_INDEX = {"keys": [("run_id", 1), ("step", 1)], "unique": True}
+
+
+def test_unique_lock_index_exists_after_startup(monkeypatch):
+    db = t.make_db()
+    _start_app(monkeypatch, db)
+    assert LOCK_INDEX in db[guards.LOCKS_COLLECTION].indexes
+
+
+def test_startup_clears_duplicate_locks_then_creates_the_index(monkeypatch):
+    db = t.make_db()
+    dup = {"run_id": t.RUN_ID, "step": STEP, "held": True, "token": None, "acquired_at": "2026-01-01"}
+    db[guards.LOCKS_COLLECTION].docs.extend([dict(dup), dict(dup)])
+    status = _start_app(monkeypatch, db)
+    assert LOCK_INDEX in db[guards.LOCKS_COLLECTION].indexes
+    assert db[guards.LOCKS_COLLECTION].docs == []
+    assert status < 500, "the app must start and serve requests"
