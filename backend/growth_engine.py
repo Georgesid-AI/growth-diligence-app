@@ -120,7 +120,7 @@ def build_mrr_matrix(rev: pd.DataFrame, billing_terms: dict, fx: dict):
     optional: service_start, service_end, segment, revenue_type, _row.
     """
     notes = {"rows_missing_customer": [], "excluded_one_off": 0, "rows_missing_fx": [], "missing_fx_currencies": set(),
-              "rows_missing_amount": []}
+              "rows_missing_amount": [], "rows_missing_date": 0}
     records = []
     seg_map: dict = {}
     contrib_rows: list = []
@@ -166,6 +166,7 @@ def build_mrr_matrix(rev: pd.DataFrame, billing_terms: dict, fx: dict):
                 months = pd.period_range(sm, em, freq="M")
         if months is None:
             if inv_m is None:
+                notes["rows_missing_date"] += 1
                 continue
             term = str(billing_terms.get(cust, "monthly")).lower()
             n = TERM_MONTHS.get(term, 1)
@@ -393,10 +394,10 @@ def _shift_quarter(qstr: str, lag: int) -> str:
 
 def compute_sales_cycle(deals: pd.DataFrame):
     """Median sales cycle (days) for won deals; report median, IQR, n; by segment."""
-    if deals.empty:
+    if deals.empty or "stage" not in deals.columns:
         return None
     d = deals.copy()
-    d["stage_l"] = d.get("stage", "").astype(str).str.lower().str.strip()
+    d["stage_l"] = d["stage"].astype(str).str.lower().str.strip()
     won = d[d["stage_l"].isin(WON_ALIASES)].copy()
     won["created"] = pd.to_datetime(won.get("created_date"), errors="coerce")
     won["closed"] = pd.to_datetime(won.get("close_date"), errors="coerce")
@@ -422,7 +423,7 @@ def compute_sales_cycle(deals: pd.DataFrame):
 
 
 def compute_win_rate(deals: pd.DataFrame, founder_available: bool):
-    if deals.empty:
+    if deals.empty or "stage" not in deals.columns:
         return None
     d = deals.copy()
     # Exclude deals whose close date precedes their created date (per approved amendment) —
@@ -432,7 +433,7 @@ def compute_win_rate(deals: pd.DataFrame, founder_available: bool):
     invalid = created.notna() & closed.notna() & (closed < created)
     excluded = int(invalid.sum())
     d = d[~invalid].copy()
-    d["stage_l"] = d.get("stage", "").astype(str).str.lower().str.strip()
+    d["stage_l"] = d["stage"].astype(str).str.lower().str.strip()
     won = d["stage_l"].isin(WON_ALIASES).sum()
     lost = d["stage_l"].isin(LOST_ALIASES).sum()
     total = won + lost
@@ -564,6 +565,8 @@ def compute_acv_path(mrr: pd.DataFrame, seg_map: dict, first_month: dict, target
 
     obs12 = observed_net_new(12)
     obs24 = observed_net_new(24)
+    ratio12, reason12 = _required_vs_observed(required_per_year, obs12, 12)
+    ratio24, reason24 = _required_vs_observed(required_per_year, obs24, 24)
 
     return {
         "current_customers": n_cust,
@@ -582,10 +585,30 @@ def compute_acv_path(mrr: pd.DataFrame, seg_map: dict, first_month: dict, target
         "required_net_new_per_year": _round(required_per_year, 1),
         "observed_net_new_per_year_12m": _round(obs12, 1),
         "observed_net_new_per_year_24m": _round(obs24, 1),
-        "required_vs_observed_12m": _round(required_per_year / obs12, 2) if (required_per_year and obs12) else None,
-        "required_vs_observed_24m": _round(required_per_year / obs24, 2) if (required_per_year and obs24) else None,
+        "required_vs_observed_12m": ratio12,
+        "required_vs_observed_12m_reason": reason12,
+        "required_vs_observed_24m": ratio24,
+        "required_vs_observed_24m_reason": reason24,
         "target_date_error": target_date_error,
     }
+
+
+def _required_vs_observed(required, observed, months):
+    """Required ÷ observed net-new customers a year, or (None, reason).
+
+    A ratio is only meaningful when both rates are positive: a shrinking base or a
+    target already covered would give a zero or negative ratio, which must never
+    reach the reader as a figure.
+    """
+    if required is None:
+        return None, "the required net-new rate could not be computed"
+    if observed is None:
+        return None, f"less than {months} months of revenue history"
+    if required <= 0:
+        return None, "today's customers already cover the target at today's ACV; ratio not meaningful"
+    if observed <= 0:
+        return None, "customer base shrinking or flat; ratio not meaningful"
+    return _round(required / observed, 2), None
 
 
 def compute_anomalies(mrr: pd.DataFrame, rev: pd.DataFrame, deals: pd.DataFrame, mrr_notes: dict):
@@ -1283,6 +1306,15 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
             "file": rev_src.get("file"),
         })
 
+    if mrr_notes.get("rows_missing_date"):
+        missing_data.append({
+            "metric": "Revenue rows with no usable invoice date",
+            "reason": f"{mrr_notes['rows_missing_date']} row(s) have a blank or unreadable invoice date and no service "
+                      f"period — excluded from MRR, not guessed",
+            "unlocked_by": "Give every revenue line a valid invoice date (or service start and end dates)",
+            "file": rev_src.get("file"),
+        })
+
     def src(base, rows, rule):
         s = SourceRef(base.get("file", "?"), base.get("sheet"))
         s.add_rows(rows)
@@ -1367,6 +1399,9 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
             missing_data.append({"metric": "Sales cycle by segment", "reason": "Segment column not mapped on CRM deals",
                                  "unlocked_by": "Map optional 'segment' column on CRM deals", "file": crm_src.get("file")})
 
+        if "stage" not in deals.columns:
+            missing_data.append({"metric": "Sales cycle & win rate", "reason": "Stage column not mapped on CRM deals",
+                                 "unlocked_by": "Map the stage column on CRM deals", "file": crm_src.get("file")})
         founder_available = "founder_involved" in deals.columns and deals["founder_involved"].notna().any()
         wr = compute_win_rate(deals, founder_available)
         if wr is not None:
@@ -1397,6 +1432,15 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
                 "unlocked_by": "Set a target date with a year between 2000 and 2100, after the as-of month",
                 "file": rev_src.get("file"),
             })
+        for window in (12, 24):
+            reason = acv.get(f"required_vs_observed_{window}m_reason")
+            if reason and not acv.get("target_date_error"):
+                missing_data.append({
+                    "metric": f"Required vs observed net-new customers ({window}m)",
+                    "reason": reason,
+                    "unlocked_by": "Not computable from the supplied data; reported as Missing",
+                    "file": rev_src.get("file"),
+                })
     results["acv_path"] = acv
     if acv:
         missing_data.extend(_history_gaps(len(mrr.columns), rev_src))

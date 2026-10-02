@@ -434,6 +434,10 @@ async def _mark_stale_and_maybe_recompute(audit_id: str):
         await _run_compute(audit_id)
     except HTTPException:
         pass
+    except Exception:
+        # An engine error must not fail the upload or setup change that triggered
+        # the recompute. metrics_stale stays set, so the UI warns instead.
+        logger.exception("auto-recompute failed for audit %s; results left marked stale", audit_id)
 
 
 @api.get("/audits/{audit_id}/results")
