@@ -946,6 +946,11 @@ async def seed_demo():
     logger.info("Seeded demo audits")
 
 
+@app.on_event("startup")
+async def ensure_llm_indexes():
+    await llm_gateway.guards.ensure_indexes(db)
+
+
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()

@@ -16,6 +16,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from pymongo.errors import DuplicateKeyError
+
 CALLS_COLLECTION = "llm_calls"
 LOCKS_COLLECTION = "llm_locks"
 
@@ -23,8 +25,9 @@ MAX_CALLS_PER_RUN = 15
 DEFAULT_DAILY_SPEND_CAP_USD = 5.00
 
 # How long a lock may be held before it is treated as abandoned, so a worker
-# that died mid-call cannot wedge the step forever.
-LOCK_TTL_SECONDS = 120
+# that died mid-call cannot wedge the step forever. Must exceed the worst live
+# call: 3 network attempts plus 1 reask at the 60 s request timeout = 240 s.
+LOCK_TTL_SECONDS = 300
 LOCK_POLL_SECONDS = 0.25
 
 
@@ -106,15 +109,31 @@ async def acquire(db, run_id: str, step: str) -> Optional[str]:
     )
     if getattr(result, "modified_count", 0) == 1:
         return token
-    # No document yet - create one. A duplicate-key race here means another
-    # worker won, which is the same outcome as not getting the lock.
+    # Held by someone else, or no document yet. Only an upsert that actually
+    # inserts grants the lock; an existing document means another worker holds
+    # it. A duplicate-key race on the unique index means another worker won.
     try:
-        await db[LOCKS_COLLECTION].insert_one(
-            {**key, "held": True, "token": token, "acquired_at": now.isoformat()}
+        result = await db[LOCKS_COLLECTION].update_one(
+            key,
+            {"$setOnInsert": {"held": True, "token": token, "acquired_at": now.isoformat()}},
+            upsert=True,
         )
-        return token
-    except Exception:
+    except DuplicateKeyError:
         return None
+    return token if getattr(result, "upserted_id", None) is not None else None
+
+
+async def ensure_indexes(db) -> None:
+    """One lock document per run+step, so concurrent upserts cannot both insert."""
+    await db[LOCKS_COLLECTION].create_index([("run_id", 1), ("step", 1)], unique=True)
+
+
+async def holds(db, run_id: str, step: str, token: str) -> bool:
+    """True while `token` still owns the lock - False once it expired and was taken over."""
+    doc = await db[LOCKS_COLLECTION].find_one(
+        {"run_id": run_id, "step": step, "token": token, "held": True}, {"_id": 0, "token": 1}
+    )
+    return doc is not None
 
 
 async def release(db, run_id: str, step: str, token: str) -> None:
