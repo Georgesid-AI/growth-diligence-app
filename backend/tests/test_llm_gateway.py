@@ -58,9 +58,10 @@ def _project(doc, projection):
 
 
 class FakeResult:
-    def __init__(self, modified_count=0, deleted_count=0):
+    def __init__(self, modified_count=0, deleted_count=0, upserted_id=None):
         self.modified_count = modified_count
         self.deleted_count = deleted_count
+        self.upserted_id = upserted_id
 
 
 class FakeCursor:
@@ -74,6 +75,16 @@ class FakeCursor:
 class FakeCollection:
     def __init__(self):
         self.docs = []
+        self.indexes = []
+
+    async def create_index(self, keys, unique=False):
+        keys = list(keys)
+        if unique:
+            seen = [tuple(d.get(k) for k, _ in keys) for d in self.docs]
+            if len(seen) != len(set(seen)):
+                from pymongo.errors import DuplicateKeyError
+                raise DuplicateKeyError("E11000 duplicate key error")
+        self.indexes.append({"keys": keys, "unique": unique})
 
     async def find_one(self, flt, projection=None):
         for d in self.docs:
@@ -94,8 +105,13 @@ class FakeCollection:
                 d.update(update.get("$set", {}))
                 return FakeResult(modified_count=1)
         if upsert:
-            new = dict(update.get("$set", {}))
+            # Like Mongo: an upsert seeds the new document from the filter's
+            # equality fields, then applies $setOnInsert and $set.
+            new = {k: v for k, v in flt.items() if not k.startswith("$") and not isinstance(v, dict)}
+            new.update(update.get("$setOnInsert", {}))
+            new.update(update.get("$set", {}))
             self.docs.append(new)
+            return FakeResult(modified_count=0, upserted_id=len(self.docs))
         return FakeResult(modified_count=0)
 
     async def delete_many(self, flt):

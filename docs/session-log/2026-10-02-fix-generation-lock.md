@@ -1,0 +1,5 @@
+- Date: 2026-10-02
+- Deleted: the insert_one fallback in guards.acquire (a second lock doc could be inserted in a race).
+- Optimized: lock granted only via upsert+upserted_id; unique (run_id, step) index at startup; TTL 300 s; expired holder's result discarded before cache write.
+- Slow/unclear: the session's default branch differed from the one requested; the env lacked pytest/pandas until requirements were installed.
+- Process change: add a dev requirements file (pytest, pytest-xdist) so the suite runs straight after clone.

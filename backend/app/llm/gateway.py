@@ -804,6 +804,20 @@ async def generate_narrative(
         restored = redaction.restore_deep(narrative.model_dump(), mapping)
         final = _define_acv(Narrative.model_validate(restored))
 
+        # Our lock expired mid-call and another worker took over: its result is
+        # the newer one. Discard ours (still logged, it was billed) and serve theirs.
+        if not await guards.holds(db, run_id, step, token):
+            await log_call(
+                db, run_id=run_id, step=step, prompt_version=prompt.version, model=model,
+                input_tokens=in_tok, output_tokens=out_tok, estimated_cost_usd=cost,
+                cache_hit=False, status="lock_lost", unmatched_numbers=guard.soft,
+            )
+            logger.warning("lock lost for run %s step %s; result discarded", run_id, step)
+            newer = await cache.get(db, key)
+            if newer:
+                return await _from_cache(db, newer, run_id, step, prompt.version, model, metrics)
+            return _unavailable(run_id, step, "lock expired before the result was stored", metrics)
+
         await cache.put(
             db, key, run_id, step, prompt.version, model, final.model_dump(),
             narrative_status=status, unmatched_numbers=guard.soft,
