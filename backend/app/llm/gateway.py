@@ -10,8 +10,9 @@ touches Mongo for audit data, and no module in this package except
 
 Order of operations for a generation request:
 
-    step config -> load computed results -> build payload -> pseudonymise
-    -> cache lookup -> advisory lock -> guards -> provider -> strict parse
+    step config -> load computed results -> build payload -> allowlist
+    -> pseudonymise segments + identifiers -> cache lookup -> advisory lock
+    -> guards -> provider -> strict parse
     -> numeric guard -> re-identify -> cache -> log
 
 Any failure downgrades to `narrative_status="unavailable"` and still returns the
@@ -195,8 +196,91 @@ def withhold_partial_quarters(node: Any) -> Any:
     return {**node, "metrics": {**node["metrics"], "cac_payback": {**cac, "quarters": quarters}}}
 
 
+# ---------------------------------------------------------------------------
+# Outbound allowlist
+# ---------------------------------------------------------------------------
+# The only field names the provider may receive. Everything else is dropped,
+# so a field the engine adds later stays server-side until it is listed here.
+# What may pass: metric names, figures, units, periods, rule/formula text,
+# engine-written reasons and pseudonymised segment labels. Never file or sheet
+# names, column headers or raw cell values (`source.file`, `source.sheet`,
+# `source.columns`, `founder_involved_excluded.values`).
+OUTBOUND_TOP_LEVEL = frozenset({"reporting_currency", "target_arr", "target_date", "as_of_month", "metrics"})
+
+OUTBOUND_FIELDS = frozenset({
+    # metric blocks (the step slice)
+    "arr", "nrr", "gross_churn", "cac_payback", "sales_cycle", "win_rate", "founder_win_rate",
+    "acv_path", "segment_paths", "cohort_retention", "as_of_month", "reporting_currency",
+    "missing_data", "questions_for_management",
+    # shared
+    "value", "mrr", "month", "series", "n", "status", "reason", "computable", "available",
+    "source", "rule",
+    # nrr / gross churn
+    "overall_pct", "nrr_pct", "churn_pct", "trailing_window_months", "nrr_base_customers",
+    "by_segment", "by_cohort", "months_available", "insufficient_history",
+    # cac payback
+    "default_l", "quarters", "headline_quarter", "partial_quarter_excluded", "new_mrr", "n_customers",
+    "months_in_quarter", "partial", "gross_margin_pct", "L0", "L1", "L2", "months", "sm_expense",
+    # sales cycle / win rate
+    "median_days", "iqr", "won", "lost", "win_rate_pct", "excluded_invalid", "excluded_after_as_of",
+    "by_founder", "with_founder", "without_founder", "small_sample", "founder_involved_excluded", "count",
+    # acv path
+    "current_customers", "current_arr", "acv", "target_arr", "target_date", "bands", "overall_band",
+    "key", "label", "low", "high", "range_label", "customers", "total_customers_at_target",
+    "customers_needed", "additional_customers_needed", "required_net_new_per_year",
+    "observed_net_new_per_year_12m", "observed_net_new_per_year_24m",
+    "required_vs_observed_12m", "required_vs_observed_24m", "target_date_error",
+    # segment paths
+    "assumption", "missing_inputs", "input", "resolve", "horizon_months", "stage_one", "segments",
+    "start_arr", "small_base", "projected_arr", "change_arr", "arr_change_per_nrr_point",
+    "start_arr_total", "projected_base_arr", "unsegmented_customers", "unsegmented_arr", "gap_arr",
+    "target_met_by_base", "landed", "reverse_solve", "reconciliation", "window_months",
+    "gross_new_per_year", "unsegmented_new_customers", "new_customers", "landed_acv", "reachable",
+    "new_customers_by_target", "required_blended_landed_acv", "best_segment", "best_segment_landed_acv",
+    "current_mix_landed_acv", "required_new_per_year_at_current_mix", "required_vs_observed_gross",
+    "moved_mix_pct", "current_mix_pct", "required_mix_pct", "shift_pct_points",
+    "path_to_plan_ratio", "factor_compounded_base", "factor_landed_acv", "factor_gross_rate", "segment_ratio",
+    # missing data / questions for management
+    "metric", "absent_fields", "result_key", "dataset", "question",
+    # cohort retention
+    "cohorts", "max_offset", "data", "cohort", "start_mrr",
+})
+
+# Field names allowed only under one parent: a cohort row's `values` are
+# retention percentages, while `founder_involved_excluded.values` are raw cells.
+OUTBOUND_FIELDS_BY_PARENT = {"data": frozenset({"values"})}
+
+# Containers whose keys are data, not field names, and what those keys may be.
+_PERIOD_KEY = re.compile(r"^(\d{4}-(Q[1-4]|\d{2})|\d{1,3})$")   # 2024-Q3, 2024-06, 12, 0
+PERIOD_KEYED = frozenset({"by_cohort", "quarters", "landed", "reverse_solve", "reconciliation", "values"})
+DATASET_KEYED = {"absent_fields": frozenset({"revenue", "crm", "pnl"})}
+
+def allowlist_payload(node: Any, key: Optional[str] = None) -> Any:
+    """Deep copy of `node` keeping only allowlisted fields. The input is not modified.
+
+    Segment-container keys (`by_segment`, `segments`) are kept as they are, to
+    be relabelled by `redaction.redact`; period-keyed containers keep only keys
+    that look like a period or a window length.
+    """
+    if isinstance(node, list):
+        return [allowlist_payload(i, key) for i in node]
+    if not isinstance(node, dict):
+        return node
+    if key is None:
+        return {k: allowlist_payload(v, k) for k, v in node.items() if k in OUTBOUND_TOP_LEVEL}
+    if key in redaction.SEGMENT_CONTAINERS:
+        return {k: allowlist_payload(v, "_segment") for k, v in node.items() if isinstance(k, str)}
+    if key in PERIOD_KEYED:
+        return {k: allowlist_payload(v, "_period") for k, v in node.items()
+                if isinstance(k, str) and _PERIOD_KEY.match(k)}
+    if key in DATASET_KEYED:
+        return {k: allowlist_payload(v, k) for k, v in node.items() if k in DATASET_KEYED[key]}
+    allowed = OUTBOUND_FIELDS | OUTBOUND_FIELDS_BY_PARENT.get(key, frozenset())
+    return {k: allowlist_payload(v, k) for k, v in node.items() if k in allowed}
+
+
 def build_outbound(computed: dict, mapping: dict) -> dict:
-    """The payload the provider sees: display strings, then pseudonyms.
+    """The payload the provider sees: display strings, allowlisted, then pseudonyms.
 
     Numbers are formatted here, from the raw computed values, so the model is
     only ever handed strings it can copy - never a float it could reformat.
@@ -206,7 +290,7 @@ def build_outbound(computed: dict, mapping: dict) -> dict:
         formatted = formatting.format_payload(withhold_partial_quarters(strip_row_references(computed)))
     except formatting.FormattingError as exc:
         raise GatewayError("format_failed", str(exc))
-    return redaction.redact(formatted, mapping)
+    return redaction.redact(allowlist_payload(formatted), mapping)
 
 
 def _slice_for_step(results: dict, step: str) -> dict:
@@ -227,9 +311,43 @@ def _slice_for_step(results: dict, step: str) -> dict:
         # raw rows or parsed text.
         for key, fields in _GAP_FIELDS.items():
             if results.get(key) is not None:
-                out[key] = [{f: item[f] for f in fields if item.get(f) is not None}
+                out[key] = [{f: _outbound_gap_value(f, item) for f in fields if item.get(f) is not None}
                             for item in results[key] if isinstance(item, dict)]
     return out
+
+
+# Missing-data sentences that quote raw cell values (currency codes, founder-involved
+# entries). The model gets the same statement without them; Mongo keeps the original.
+_NEUTRAL_REASONS = {
+    "Revenue rows with unmapped currency":
+        "{count} row(s) use a currency with no exchange rate provided — excluded, not guessed at 1.0",
+    "CRM rows with unrecognized founder-involved value":
+        "{count} row(s) have a founder_involved value that isn't yes/no-like — excluded from the founder "
+        "split, not guessed",
+}
+_LEADING_COUNT = re.compile(r"^\d+")
+
+
+def _outbound_gap_value(field: str, item: dict) -> Any:
+    """A missing-data or question field as the model may see it."""
+    if field == "question":
+        return _neutral_question(item)
+    if field == "reason" and item.get("metric") in _NEUTRAL_REASONS:
+        count = _LEADING_COUNT.match(str(item["reason"]))
+        return _NEUTRAL_REASONS[item["metric"]].format(count=count.group(0) if count else "Some")
+    return item[field]
+
+
+def _neutral_question(item: dict) -> str:
+    """The management question without the upload's file name or column headers.
+
+    The stored question names the columns the figure was computed from; the
+    dashboard shows that version. The model gets engine field names only.
+    """
+    fields = ", ".join(sorted(item.get("columns") or {})) or "the mapped"
+    return (f"{item.get('metric')} was computed from the {item.get('dataset')} upload because it was "
+            f"not available from the expected upload. Please explain the result and confirm that the "
+            f"{fields} fields are the right basis for it.")
 
 
 _GAP_FIELDS = {
