@@ -166,7 +166,7 @@ GOOD_NARRATIVE = {
         {"label": "NRR", "value": "104%", "source_key": "nrr"},
     ],
     "worth_flagging": ["Gross revenue churn stands at 6%."],
-    "next_actions": ["Request the contract list behind Customer_01."],
+    "next_actions": ["Request the contract list behind the Enterprise segment."],
     "source_keys": ["arr", "nrr", "gross_churn"],
 }
 
@@ -1200,7 +1200,7 @@ SOURCE_BLOCK = {
 }
 
 
-def test_outbound_payload_drops_row_references_but_keeps_citation_fields():
+def test_outbound_payload_drops_row_references_and_file_names_but_keeps_the_rule():
     computed = {
         "reporting_currency": "EUR",
         "metrics": {
@@ -1210,7 +1210,7 @@ def test_outbound_payload_drops_row_references_but_keeps_citation_fields():
     }
     out = gateway.build_outbound(computed, {})
     src = out["metrics"]["arr"]["source"]
-    assert src == {"file": "revenue.csv", "sheet": "Sheet1", "rule": "ARR = current-month recurring MRR × 12"}
+    assert src == {"rule": "ARR = current-month recurring MRR × 12"}
     assert "rows" not in out["metrics"]["win_rate"]["founder_involved_excluded"]
     assert out["metrics"]["win_rate"]["founder_involved_excluded"]["count"] == "1"
     assert "row_numbers" not in cache.canonical_json(out)

@@ -1,9 +1,15 @@
-"""Pseudonymisation of customer / company identifiers.
+"""Pseudonymisation of customer / company identifiers and segment names.
 
 Nothing that identifies a real customer may reach the provider. Before a payload
 leaves the server every identifier is swapped for a stable per-run pseudonym
-(`Customer_01`, `Customer_02`, ...). The mapping lives in Mongo (`pseudonym_map`,
+(`Customer_01`, `Customer_02`, ...) and every segment name for a stable label
+(`Segment A`, `Segment B`, ...). The mapping lives in Mongo (`pseudonym_map`,
 keyed by run_id) and is never included in an outbound payload.
+
+Matching is whole-token: an identifier is replaced only where it stands as its
+own word, never inside a longer word, a date or a number ("12" leaves "2026-12"
+alone). Engine field-name keys are never rewritten; the only dict keys that are
+data, the children of a segment container, are relabelled by exact match.
 
 The model's returned text is re-substituted server-side before it is stored or
 shown, so the dashboard still reads in real names.
@@ -20,9 +26,71 @@ IDENTIFIER_KEYS = {
     "account", "account_name", "client", "name",
 }
 
+# Containers whose dict keys are segment names rather than field names.
+SEGMENT_CONTAINERS = {"by_segment", "segments"}
+
+_CUSTOMER_PREFIX = "Customer_"
+_SEGMENT_PREFIX = "Segment "
+
 
 def _pseudonym(index: int) -> str:
-    return f"Customer_{index:02d}"
+    return f"{_CUSTOMER_PREFIX}{index:02d}"
+
+
+def _segment_label(index: int) -> str:
+    """1 -> "Segment A", 26 -> "Segment Z", 27 -> "Segment AA"."""
+    letters = ""
+    while index > 0:
+        index, rem = divmod(index - 1, 26)
+        letters = chr(ord("A") + rem) + letters
+    return f"{_SEGMENT_PREFIX}{letters}"
+
+
+# Dates, numbers, percentages and ranges. Never rewritten, whatever the mapping says.
+_NUMERIC_LIKE = re.compile(r"[\d\s.,:/%+\-]+")
+
+
+def _is_numeric_like(text: str) -> bool:
+    return bool(_NUMERIC_LIKE.fullmatch(text))
+
+
+def _token_pattern(tokens: Iterable[str]) -> "re.Pattern | None":
+    """One regex matching any token as a whole word, longest first.
+
+    A token is not matched inside a longer word, nor where it would be glued to a
+    neighbouring number by a date or range separator ("2026-12", "1.12", "12-3").
+    """
+    usable = sorted({t for t in tokens if t and not _is_numeric_like(t)}, key=len, reverse=True)
+    if not usable:
+        return None
+    body = "|".join(re.escape(t) for t in usable)
+    return re.compile(rf"(?<!\w)(?<!\d[-./:,])(?:{body})(?!\w)(?![-./:,]\d)")
+
+
+def substitute(text: str, replacements: Dict[str, str]) -> str:
+    """Replace whole-token occurrences of each key of `replacements` in `text`."""
+    pattern = _token_pattern(replacements)
+    if pattern is None:
+        return text
+    return pattern.sub(lambda m: replacements[m.group(0)], text)
+
+
+def collect_segment_names(payload: Any) -> List[str]:
+    """Every dict key under a segment container, in a stable order."""
+    found = set()
+
+    def walk(node: Any, key: str | None = None) -> None:
+        if isinstance(node, dict):
+            if key in SEGMENT_CONTAINERS:
+                found.update(k for k in node if isinstance(k, str) and k.strip())
+            for k, v in node.items():
+                walk(v, k)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item, key)
+
+    walk(payload)
+    return sorted(found)
 
 
 def collect_identifiers(payload: Any) -> List[str]:
@@ -56,12 +124,15 @@ async def get_or_create_map(db, run_id: str, payload: Any) -> Dict[str, str]:
     doc = await db[PSEUDONYM_COLLECTION].find_one({"run_id": run_id}, {"_id": 0})
     mapping: Dict[str, str] = dict(doc["mapping"]) if doc else {}
 
-    identifiers = collect_identifiers(payload)
-    new = [i for i in identifiers if i not in mapping]
-    if new:
-        start = len(mapping) + 1
-        for offset, real in enumerate(new):
-            mapping[real] = _pseudonym(start + offset)
+    new = [i for i in collect_identifiers(payload) if i not in mapping]
+    new_segments = [s for s in collect_segment_names(payload) if s not in mapping and s not in new]
+    if new or new_segments:
+        customers = sum(1 for v in mapping.values() if v.startswith(_CUSTOMER_PREFIX))
+        for offset, real in enumerate(new, start=customers + 1):
+            mapping[real] = _pseudonym(offset)
+        segments = sum(1 for v in mapping.values() if v.startswith(_SEGMENT_PREFIX))
+        for offset, real in enumerate(new_segments, start=segments + 1):
+            mapping[real] = _segment_label(offset)
         await db[PSEUDONYM_COLLECTION].update_one(
             {"run_id": run_id},
             {"$set": {"run_id": run_id, "mapping": mapping}},
@@ -73,25 +144,25 @@ async def get_or_create_map(db, run_id: str, payload: Any) -> Dict[str, str]:
 def redact(payload: Any, mapping: Dict[str, str]) -> Any:
     """Deep-copy `payload` with every real identifier replaced by its pseudonym.
 
-    Replacement is applied to whole strings and to substrings, so an identifier
-    embedded in a sentence ("Acme Corp churned") is caught too.
+    String values are matched whole-token, so an identifier embedded in a
+    sentence ("Acme Corp churned") is caught, but one inside a longer word, a
+    date or a number is not. Dict keys are field names and are left alone,
+    except the children of a segment container, which are relabelled by exact
+    match.
     """
     if not mapping:
         return payload
-    # Longest first, so "Acme Corporation" is not half-replaced by "Acme".
-    ordered = sorted(mapping.items(), key=lambda kv: len(kv[0]), reverse=True)
+    pattern = _token_pattern(mapping)
 
     def scrub(text: str) -> str:
-        for real, pseudo in ordered:
-            if real in text:
-                text = text.replace(real, pseudo)
-        return text
+        return pattern.sub(lambda m: mapping[m.group(0)], text) if pattern else text
 
-    def walk(node: Any) -> Any:
+    def walk(node: Any, key: str | None = None) -> Any:
         if isinstance(node, dict):
-            return {scrub(k) if isinstance(k, str) else k: walk(v) for k, v in node.items()}
+            relabel = key in SEGMENT_CONTAINERS
+            return {(mapping.get(k, k) if relabel else k): walk(v, k) for k, v in node.items()}
         if isinstance(node, list):
-            return [walk(item) for item in node]
+            return [walk(item, key) for item in node]
         if isinstance(node, str):
             return scrub(node)
         return node
@@ -103,10 +174,7 @@ def restore(text: str, mapping: Dict[str, str]) -> str:
     """Put real identifiers back into model output, server-side."""
     if not mapping:
         return text
-    reverse = sorted(((v, k) for k, v in mapping.items()), key=lambda kv: len(kv[0]), reverse=True)
-    for pseudo, real in reverse:
-        text = text.replace(pseudo, real)
-    return text
+    return substitute(text, {v: k for k, v in mapping.items()})
 
 
 def restore_deep(node: Any, mapping: Dict[str, str]) -> Any:
@@ -123,11 +191,15 @@ def find_leaks(outbound: Any, mapping: Dict[str, str]) -> List[str]:
     """Return any real identifier still present in an outbound payload.
 
     Used as a last-line assertion before the provider call, and by the leak test.
+    Matched the same way `redact` replaces, so anything `redact` would have
+    caught is reported. A numeric-like identifier is never rewritten and is not
+    checked: it cannot be told apart from a figure.
     """
     if not mapping:
         return []
     blob = _flatten(outbound)
-    return [real for real in mapping if real and real in blob]
+    return [real for real in mapping
+            if real and (p := _token_pattern([real])) is not None and p.search(blob)]
 
 
 def _flatten(node: Any) -> str:
