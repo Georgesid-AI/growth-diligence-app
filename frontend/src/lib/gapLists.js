@@ -3,7 +3,7 @@
  * lists. Pure functions over the stored results - every figure goes through
  * format.js, so the lists follow the same number rules as the rest of the page.
  */
-import { PLACEHOLDER, fmtDays, fmtMonths, fmtPct } from "./format";
+import { PLACEHOLDER, fmtCount, fmtDays, fmtMonths, fmtPct } from "./format";
 
 export const COMPUTED_STATUS = "Computed – explanation requested";
 export const NONE = "None";
@@ -75,4 +75,23 @@ export function missingRows(results) {
     reason: m.reason,
     absent: absentFieldsText(m.absent_fields),
   }));
+}
+
+export const ANOMALIES_NOT_COMPUTED = "Not computed: calculation error. See Missing Data.";
+
+/** The dashboard's anomaly flags as { label, count, detail } rows, or null when the engine
+ *  could not compute them (results.anomalies is null): a failure never reads as 0 anomalies. */
+export function anomalyFlags(results) {
+  const a = results?.anomalies;
+  if (!a) return null;
+  const dates = a.date_order_from_data ?? [];
+  return [
+    { label: "Months with negative MRR", count: a.negative_mrr_months.length, detail: a.negative_mrr_months.join(", ") },
+    { label: "Customers with gaps > 2 months then resume", count: a.revenue_gap_then_resume.length,
+      detail: a.revenue_gap_then_resume.slice(0, 8).join(", ") },
+    { label: "Revenue lines missing customer ID", count: a.revenue_missing_customer_id.count },
+    { label: "Deals with close before created (excluded)", count: a.deals_close_before_created.excluded_count },
+    { label: "Date columns with day/month order set from the data", count: dates.length,
+      detail: dates.map((n) => `${n.field} (${n.dataset}): ${n.order}, ${fmtCount(n.rows)} rows`).join("; ") },
+  ];
 }

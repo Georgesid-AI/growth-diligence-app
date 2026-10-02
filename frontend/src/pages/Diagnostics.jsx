@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { Loader2, ShieldAlert, CheckCircle2, ArrowRight } from "lucide-react";
 import { Layout } from "@/components/Layout";
 import { getAudit, getResults } from "@/lib/api";
+import { ANOMALIES_NOT_COMPUTED } from "@/lib/gapLists";
 
 export default function Diagnostics() {
   const { id } = useParams();
@@ -19,7 +20,7 @@ export default function Diagnostics() {
   if (data === false) return <Layout audit={audit}><div className="py-24 text-center text-slate-600">Not computed yet.</div></Layout>;
 
   const r = data.results;
-  const anomalies = [
+  const anomalies = r.anomalies && [
     { label: "Months with negative MRR", items: r.anomalies.negative_mrr_months, note: "Refunds/credits pushed a month's total MRR below zero." },
     { label: "Customers with revenue gaps > 2 months that later resume", items: r.anomalies.revenue_gap_then_resume, note: "May indicate a churn-and-return or a billing gap." },
   ];
@@ -64,6 +65,7 @@ export default function Diagnostics() {
         <div className="lg:col-span-5 space-y-6">
           <div className="bg-white border border-[#E5E7EB] rounded-lg p-5">
             <h3 className="font-heading font-semibold text-slate-900 text-sm mb-4">Anomaly Flags</h3>
+            {!anomalies ? <div className="text-sm text-slate-600">{ANOMALIES_NOT_COMPUTED}</div> : (
             <div className="space-y-4">
               {anomalies.map((a) => (
                 <div key={a.label}>
@@ -86,6 +88,7 @@ export default function Diagnostics() {
                 </div>
               </div>
             </div>
+            )}
           </div>
         </div>
       </div>

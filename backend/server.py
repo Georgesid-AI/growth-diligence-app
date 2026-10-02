@@ -465,7 +465,8 @@ async def _run_compute(audit_id: str) -> dict:
         "as_of_month": a.get("as_of_month"),
     }
     sources = {t: {"file": ds[t]["file"], "sheet": ds[t]["sheet"]} for t in ds}
-    results = sanitize(ge.compute_all(rev, crm, pnl, config, sources, files=candidate_views(ds)))
+    results = sanitize(ge.compute_all(rev, crm, pnl, config, sources, files=candidate_views(ds),
+                                      on_error=lambda exc: _log_metric_error(exc, audit_id)))
     await db.audits.update_one(
         {"id": audit_id},
         {"$set": {"results": results, "status": "computed", "computed_at": datetime.now(timezone.utc).isoformat(),
@@ -502,13 +503,21 @@ async def _mark_stale_and_maybe_recompute(audit_id: str):
                      type(exc).__name__, audit_id, _engine_step(exc))
 
 
+def _log_metric_error(exc: BaseException, run_id: str) -> None:
+    """One metric failed and is reported as Missing; the rest of the run went on. Error type,
+    run id and engine step only: the message and traceback can quote uploaded cell values."""
+    logger.error("metric failed: error=%s run_id=%s step=%s; reported as Missing",
+                 type(exc).__name__, run_id, _engine_step(exc))
+
+
 def _engine_step(exc: BaseException) -> str:
     """The deepest growth_engine function the error passed through (a code name, never data)."""
     step = "_run_compute"
     tb = exc.__traceback__
     while tb is not None:
-        if Path(tb.tb_frame.f_code.co_filename).name == "growth_engine.py":
-            step = tb.tb_frame.f_code.co_name
+        code = tb.tb_frame.f_code
+        if Path(code.co_filename).name == "growth_engine.py" and not code.co_name.startswith("<"):  # not <dictcomp>
+            step = code.co_name
         tb = tb.tb_next
     return step
 
@@ -830,8 +839,8 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
                           for m in sp.get("missing_inputs", [])]).to_excel(xw, sheet_name="Segment Base", index=False)
 
         # Anomalies
-        an = r.get("anomalies") or {}
-        an_rows = [
+        an = r.get("anomalies")
+        an_rows = [("Anomaly flags", "calculation error", "Not computed; see Missing Data")] if an is None else [
             ("Months with negative MRR", len(an.get("negative_mrr_months", [])), ", ".join(an.get("negative_mrr_months", []))),
             ("Customers with gaps > 2 months then resume", len(an.get("revenue_gap_then_resume", [])), ", ".join(an.get("revenue_gap_then_resume", [])[:50])),
             ("Revenue lines missing customer ID", an.get("revenue_missing_customer_id", {}).get("count"), ""),
@@ -997,7 +1006,8 @@ async def seed_demo():
                   "as_of_month": None}
         sources = {t: {"file": meta[t]["file"], "sheet": meta[t]["sheet"]} for t in datasets}
         results = ge.compute_all(norm["revenue"], norm["crm"], norm["pnl"], config, sources,
-                                 files=candidate_views(uploads))
+                                 files=candidate_views(uploads),
+                                 on_error=lambda exc: _log_metric_error(exc, audit_id))
         await db.audits.insert_one({
             "id": audit_id, "company_name": spec["company_name"], "reporting_currency": spec["reporting_currency"],
             "target_arr": spec["target_arr"], "target_date": spec["target_date"],
