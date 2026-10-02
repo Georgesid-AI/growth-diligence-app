@@ -160,6 +160,8 @@ def normalize(rows: list, dtype: str, mapping: dict) -> pd.DataFrame:
     for f in defs["dates"]:
         if f in out.columns:
             out[f], date_formats[f] = parse_date_column(out[f])
+            if date_formats[f] and date_formats[f]["order"] is None:
+                date_formats[f]["row_ids"] = out.loc[date_formats[f].pop("index"), "_row"].tolist()
     for f in defs["numeric"]:
         if f in out.columns:
             out[f] = pd.to_numeric(out[f], errors="coerce")
@@ -179,7 +181,7 @@ def parse_date_column(col: pd.Series):
     no such value the order is unknown: those rows stay unread (NaT) and the finding
     asks for the format. ISO and other unambiguous values parse as before.
     finding is None, {"order": "DD/MM/YYYY"|"MM/DD/YYYY", "rows": n} or
-    {"order": None, "rows": n, "reason": ...}.
+    {"order": None, "rows": n, "reason": ..., "index": [unread row index, ...]}.
     """
     parts = {i: m.groups() for i, v in col.items() if isinstance(v, str) and (m := _DM_DATE.match(v))}
     rest = col.drop(index=list(parts))
@@ -192,7 +194,7 @@ def parse_date_column(col: pd.Series):
     month_first = any(int(b) > 12 for _, b, _ in parts.values())
     if day_first == month_first:
         why = "mixes day-first and month-first dates" if day_first else "has no day above 12"
-        return out, {"order": None, "rows": len(parts), "reason": why}
+        return out, {"order": None, "rows": len(parts), "reason": why, "index": list(parts)}
     for i, (a, b, y) in parts.items():
         d, m = (a, b) if day_first else (b, a)
         try:

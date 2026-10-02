@@ -126,6 +126,8 @@ def build_mrr_matrix(rev: pd.DataFrame, billing_terms: dict, fx: dict):
     contrib_rows: list = []
 
     has_service = "service_start" in rev.columns and "service_end" in rev.columns
+    # rows whose invoice date was left unread as ambiguous day/month: reported once, as such
+    ambiguous = set((rev.attrs.get("date_formats", {}).get("invoice_date") or {}).get("row_ids", []))
     has_rtype = "revenue_type" in rev.columns
     has_seg = "segment" in rev.columns
 
@@ -166,7 +168,8 @@ def build_mrr_matrix(rev: pd.DataFrame, billing_terms: dict, fx: dict):
                 months = pd.period_range(sm, em, freq="M")
         if months is None:
             if inv_m is None:
-                notes["rows_missing_date"] += 1
+                if rownum not in ambiguous:
+                    notes["rows_missing_date"] += 1
                 continue
             term = str(billing_terms.get(cust, "monthly")).lower()
             n = TERM_MONTHS.get(term, 1)
