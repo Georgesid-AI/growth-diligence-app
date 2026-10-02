@@ -24,3 +24,4 @@
    (YYYY-MM-DD-<branch>-2.md, ...). Then commit and push the log. Pushing the log
    itself does not count as a finished task. Never log the log.
 8. Never write client names or data into the log.
+10. Log only in docs/session-log/. Never write to, edit or delete memory/PRD.md.
