@@ -93,7 +93,28 @@ def test_an_engine_error_in_the_auto_recompute_is_logged_and_does_not_fail_the_c
     with caplog.at_level(logging.ERROR, logger="growth"):
         asyncio.run(server._mark_stale_and_maybe_recompute("aud-1"))
     assert audit["metrics_stale"] is True, "results stay marked stale, not shown as current"
-    assert "auto-recompute failed for audit aud-1" in caplog.text
+    assert "error=KeyError run_id=aud-1 step=_run_compute" in caplog.text
+
+
+def test_the_auto_recompute_log_never_carries_upload_content(monkeypatch, caplog):
+    """The engine error's message quotes an uploaded cell; only type, run id and step are logged."""
+    db = t.make_db()
+    db["audits"].docs.append({"id": "aud-2", "status": "computed"})
+    monkeypatch.setattr(server, "db", db)
+
+    def engine_error(*args, **kwargs):
+        raise ValueError("cannot parse cell 'Jane Doe (CEO)'")
+
+    async def compute(audit_id):
+        ge.compute_sales_cycle(pd.DataFrame({"stage": ["Won"]}))
+
+    monkeypatch.setattr(ge.pd, "to_datetime", engine_error)
+    monkeypatch.setattr(server, "_run_compute", compute)
+    with caplog.at_level(logging.DEBUG):
+        asyncio.run(server._mark_stale_and_maybe_recompute("aud-2"))
+    assert "error=ValueError run_id=aud-2 step=compute_sales_cycle" in caplog.text
+    assert "Jane Doe (CEO)" not in caplog.text
+    assert all(r.exc_info is None for r in caplog.records), "no traceback text in the log"
 
 
 def test_the_prompt_reports_a_missing_ratio_as_missing_and_names_the_segment_labels():
