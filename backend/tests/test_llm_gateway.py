@@ -1287,14 +1287,14 @@ def test_steps_have_no_model_of_their_own():
 
 
 def test_run_model_defaults_and_is_overridable(monkeypatch):
-    monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.delenv("NARRATIVE_MODEL", raising=False)
     assert gateway.run_model() == gateway.DEFAULT_MODEL
-    monkeypatch.setenv("LLM_MODEL", "claude-sonnet-5")
+    monkeypatch.setenv("NARRATIVE_MODEL", "claude-sonnet-5")
     assert gateway.run_model() == "claude-sonnet-5"
 
 
 def test_unpriced_model_is_refused_so_the_spend_cap_cannot_be_bypassed(monkeypatch):
-    monkeypatch.setenv("LLM_MODEL", "claude-typo-9")
+    monkeypatch.setenv("NARRATIVE_MODEL", "claude-typo-9")
     with pytest.raises(gateway.GatewayError) as exc:
         gateway.run_model()
     assert exc.value.reason == "model_not_configured"
@@ -1310,7 +1310,7 @@ def test_unpriced_model_is_refused_so_the_spend_cap_cannot_be_bypassed(monkeypat
 
 
 def test_every_step_in_a_run_is_generated_by_the_same_model(monkeypatch):
-    monkeypatch.setenv("LLM_MODEL", "claude-sonnet-5")
+    monkeypatch.setenv("NARRATIVE_MODEL", "claude-sonnet-5")
 
     async def run():
         db = make_db()
@@ -1400,7 +1400,7 @@ def test_model_change_is_reported_as_model_changed_not_data_changed(monkeypatch)
     async def run():
         db = make_db()
         await gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=FakeAdapter(), sleep=_noop_sleep)
-        monkeypatch.setenv("LLM_MODEL", "claude-sonnet-5")
+        monkeypatch.setenv("NARRATIVE_MODEL", "claude-sonnet-5")
         return await gateway.read_cached_narrative(db, RUN_ID, "growth_engine")
 
     r = asyncio.run(run())
@@ -1697,14 +1697,14 @@ def test_the_pre_existing_entries_are_unchanged():
 
 def test_the_new_models_can_be_selected_and_are_costed_at_their_own_price(monkeypatch):
     for model, expected in (("claude-sonnet-5-5", 2.00 + 10.00), ("claude-opus-5-5", 4.00 + 20.00)):
-        monkeypatch.setenv("LLM_MODEL", model)
+        monkeypatch.setenv("NARRATIVE_MODEL", model)
         assert gateway.run_model() == model
         # one million tokens in and one million out
         assert gateway.estimate_cost_usd(model, 1_000_000, 1_000_000) == pytest.approx(expected)
 
 
 def test_a_narrative_generated_on_a_newly_priced_model_is_logged_with_its_cost(monkeypatch):
-    monkeypatch.setenv("LLM_MODEL", "claude-sonnet-5-5")
+    monkeypatch.setenv("NARRATIVE_MODEL", "claude-sonnet-5-5")
 
     async def run():
         db = make_db()
@@ -1718,7 +1718,7 @@ def test_a_narrative_generated_on_a_newly_priced_model_is_logged_with_its_cost(m
 
 def test_an_unpriced_model_is_still_refused_even_if_it_looks_like_a_priced_one(monkeypatch):
     for bad in ("claude-sonnet-5-6", "claude-opus-5-5-20260401", "Claude-Sonnet-5-5", "claude-sonnet-5-5 ", "sonnet"):
-        monkeypatch.setenv("LLM_MODEL", bad)
+        monkeypatch.setenv("NARRATIVE_MODEL", bad)
         if bad.strip() == "claude-sonnet-5-5":       # surrounding whitespace is trimmed, the string is the same
             assert gateway.run_model() == "claude-sonnet-5-5"
             continue
