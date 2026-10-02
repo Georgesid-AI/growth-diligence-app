@@ -52,3 +52,37 @@ def test_the_guard_is_not_widened_beyond_the_sign():
     assert gateway.numeric_guard(_narrative("ARR falls by 77,950 EUR."), payload).all == ["77950"]
     # a positive engine figure never licenses its negative
     assert gateway.numeric_guard(_narrative("NRR moved -76% on -65 customers."), payload).all == ["-76", "-65"]
+
+
+@pytest.mark.parametrize("text", ["ARR falls by 77,949 EUR.", "ARR declines 77,949 EUR.", "ARR is down 77,949 EUR.",
+                                  "A loss of 77,949 EUR of ARR."])
+def test_a_dropped_minus_sign_passes_with_decline_wording(text):
+    payload = gateway.build_outbound(COMPUTED, {})
+    assert gateway.numeric_guard(_narrative(text), payload).all == []
+
+
+@pytest.mark.parametrize("text", ["ARR grows by 77,949 EUR.", "ARR changes by 77,949 EUR.",
+                                  "ARR falls, then rises by 77,949 EUR."])
+def test_a_dropped_minus_sign_without_decline_wording_is_flagged(text):
+    payload = gateway.build_outbound(COMPUTED, {})
+    assert gateway.numeric_guard(_narrative(text), payload).soft == ["77949"]
+
+
+def test_decline_wording_counts_only_in_its_own_sentence():
+    payload = gateway.build_outbound(COMPUTED, {})
+    text = "SMB ARR falls at 76% NRR. The projection changes by 77,949 EUR."
+    assert gateway.numeric_guard(_narrative(text), payload).all == ["77949"]
+
+
+def test_a_dropped_minus_sign_in_the_headline_still_needs_decline_wording():
+    payload = gateway.build_outbound(COMPUTED, {})
+    flagged = Narrative(headline="SMB ARR grows by 77,949 EUR", what_this_means="")
+    assert gateway.numeric_guard(flagged, payload).hard == ["77949"]
+    assert gateway.numeric_guard(Narrative(headline="SMB ARR drops 77,949 EUR", what_this_means=""), payload).all == []
+
+
+@pytest.mark.parametrize("text", ["NRR grows to 76% on 65 base customers.", "SMB had 89 new customers.",
+                                  "NRR falls to 76% on 65 base customers, with 89 new customers."])
+def test_positive_figures_are_unaffected_by_direction_words(text):
+    payload = gateway.build_outbound(COMPUTED, {})
+    assert gateway.numeric_guard(_narrative(text), payload).all == []

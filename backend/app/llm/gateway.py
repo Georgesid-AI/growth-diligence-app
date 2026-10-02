@@ -498,16 +498,33 @@ def _numeric_sort_key(token: str):
 
 
 def allowed_numerals(payload: Any, windows: Iterable[int] = ()) -> set:
-    """Every numeric token the model may legitimately use.
-
-    A negative engine figure may also be written as its magnitude with the sign in
-    words: change_arr "-77,949 EUR" -> "ARR falls by 77,949 EUR". Only negatives get
-    this; a positive figure never allows its negative.
-    """
-    allowed = redaction.numbers_in(payload) | redaction.numbers_in(
+    """Every numeric token the model may legitimately use, exactly as the engine holds it."""
+    return redaction.numbers_in(payload) | redaction.numbers_in(
         list(GLOBAL_ALLOWED_NUMERALS) + list(windows)
     )
-    return allowed | {t[1:] for t in allowed if t.startswith("-")}
+
+
+# A negative engine figure may be written as its magnitude with the sign in words
+# (change_arr "-77,949" -> "ARR falls by 77,949 EUR"), but only in a sentence that
+# says it went down. Growth wording, or no direction at all, leaves it unverified.
+_DECLINE = re.compile(r"\b(?:fall(?:s|ing|en)?|fell|declin(?:e|es|ed|ing)|drop(?:s|ped|ping)?|"
+                      r"decreas(?:e|es|ed|ing)|shr(?:ink|inks|inking|ank|unk)|contract(?:s|ed|ing)?|"
+                      r"down|lower|loss of)\b", re.IGNORECASE)
+_GROWTH = re.compile(r"\b(?:grow(?:s|ing|n)?|grew|ris(?:e|es|ing|en)|rose|increas(?:e|es|ed|ing)|"
+                     r"up|higher|gain(?:s|ed|ing)?)\b", re.IGNORECASE)
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+
+
+def _unmatched(text: str, allowed: set) -> set:
+    """Numbers in `text` the engine did not produce, judged sentence by sentence."""
+    out = set()
+    for sentence in _SENTENCE_END.split(text or ""):
+        says_decline = bool(_DECLINE.search(sentence)) and not _GROWTH.search(sentence)
+        for token in redaction.numbers_in(sentence):
+            if token in allowed or (says_decline and f"-{token}" in allowed):
+                continue
+            out.add(token)
+    return out
 
 
 def numeric_guard(
@@ -526,22 +543,21 @@ def numeric_guard(
 
     hard: set = set()
     for field in HARD_FIELDS:
-        hard |= redaction.numbers_in(getattr(narrative, field, "") or "")
+        hard |= _unmatched(getattr(narrative, field, "") or "", allowed)
     for row in narrative.table_rows:
-        hard |= redaction.numbers_in(row.value)
-        hard |= redaction.numbers_in(row.label)
+        hard |= _unmatched(f"{row.label}: {row.value}", allowed)  # the label carries the direction
 
     soft: set = set()
     for field in SOFT_FIELDS:
         value = getattr(narrative, field, None)
-        soft |= redaction.numbers_in(value if value is not None else "")
+        for text in (value if isinstance(value, list) else [value or ""]):
+            soft |= _unmatched(text, allowed)
 
     # A number that is unmatched in both tiers is reported once, as hard.
-    hard_unmatched = hard - allowed
-    soft_unmatched = (soft - allowed) - hard_unmatched
+    soft -= hard
     return NumericGuardResult(
-        hard=sorted(hard_unmatched, key=_numeric_sort_key),
-        soft=sorted(soft_unmatched, key=_numeric_sort_key),
+        hard=sorted(hard, key=_numeric_sort_key),
+        soft=sorted(soft, key=_numeric_sort_key),
     )
 
 
