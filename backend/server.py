@@ -434,6 +434,24 @@ async def _mark_stale_and_maybe_recompute(audit_id: str):
         await _run_compute(audit_id)
     except HTTPException:
         pass
+    except Exception as exc:
+        # An engine error must not fail the upload or setup change that triggered
+        # the recompute. metrics_stale stays set, so the UI warns instead. The log
+        # carries the error type, run id and engine step only: the exception message
+        # and traceback can quote uploaded cell values.
+        logger.error("auto-recompute failed: error=%s run_id=%s step=%s; results left marked stale",
+                     type(exc).__name__, audit_id, _engine_step(exc))
+
+
+def _engine_step(exc: BaseException) -> str:
+    """The deepest growth_engine function the error passed through (a code name, never data)."""
+    step = "_run_compute"
+    tb = exc.__traceback__
+    while tb is not None:
+        if Path(tb.tb_frame.f_code.co_filename).name == "growth_engine.py":
+            step = tb.tb_frame.f_code.co_name
+        tb = tb.tb_next
+    return step
 
 
 @api.get("/audits/{audit_id}/results")
