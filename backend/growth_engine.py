@@ -495,6 +495,9 @@ def _years_to_target(latest: pd.Period, target_date):
             now = latest.to_timestamp(how="end")
             if td <= now:
                 error = f"Target date {td.date()} must be after the as-of month ({_period_str(latest)})"
+            elif (td - now).days < 1:
+                # 0 years would divide every per-year rate by zero
+                error = f"Target date {td.date()} is less than a full day after the as-of month ({_period_str(latest)})"
             else:
                 years = (td - now).days / 365
     return years, error
@@ -818,6 +821,8 @@ def _reverse_solve(window: int, landed: dict, gap, years, active_by_seg: dict) -
     if gap <= 0:
         return {**base, "computable": True, "reachable": True, "target_met_by_base": True,
                 "reason": "the projected base alone reaches the target"}
+    if not years or years <= 0:
+        return {**base, "reason": "no time between the as-of month and the target date to land new customers"}
     rate = landed["gross_new_per_year"]
     new_by_target = rate * years
     out = {**base, "computable": True, "target_met_by_base": False,
@@ -910,6 +915,8 @@ def _reconcile(window: int, acv_path: dict, sp: dict, years: float) -> dict:
     total_needed, n_now, target = acv_path.get("total_customers_at_target"), acv_path.get("current_customers"), sp.get("target_arr")
     if not net or net <= 0 or not gross or not total_needed or not n_now or not target:
         return {**base, "reason": "there is no positive observed net-new rate for this window"}
+    if not years or years <= 0 or not rs.get("current_mix_landed_acv"):
+        return {**base, "reason": "no time to the target date, or no landed ACV at the current mix"}
     acv_raw = target / total_needed                      # today's blended ACV, unrounded
     gap_flat = target - n_now * acv_raw                  # the gap with the base held flat
     if gap_flat <= 0:
@@ -968,9 +975,16 @@ def compute_segment_paths(mrr: pd.DataFrame, seg_map: dict, first_month: dict, n
         else:
             factor = pct / 100
             projected = a["arr"] * factor ** years
-            row.update({"projected_arr": projected, "change_arr": projected - a["arr"],
-                        # ARR at the target date moved by one NRR point, all else equal
-                        "arr_change_per_nrr_point": a["arr"] * years * factor ** (years - 1) / 100})
+            row.update({"projected_arr": projected, "change_arr": projected - a["arr"]})
+            if factor == 0 and years < 1:
+                # 0 ** (years - 1) is a division by zero: the slope at NRR 0% has no finite value
+                row["arr_change_per_nrr_point"] = None
+                row["arr_change_per_nrr_point_reason"] = (
+                    "NRR is 0% and the target date is less than a year away, so the effect of one "
+                    "NRR point has no finite value")
+            else:
+                # ARR at the target date moved by one NRR point, all else equal
+                row["arr_change_per_nrr_point"] = a["arr"] * years * factor ** (years - 1) / 100
         segments[s] = row
     total_start = sum(v["start_arr"] for v in segments.values())
     stage_one = {"segments": segments, "start_arr_total": total_start}
@@ -1260,9 +1274,11 @@ def resolve_missing(missing_data: list, results: dict, files: dict | None, **ctx
 
 
 def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, config: dict, sources: dict,
-                files: dict | None = None):
+                files: dict | None = None, on_error=None):
     """Run the full engine. `sources` maps dataset -> {file, sheet}; `files` is every
-    upload read as each dataset type (see can_compute), for compute-before-Missing."""
+    upload read as each dataset type (see can_compute), for compute-before-Missing.
+    A metric whose calculation raises is reported as Missing and the rest still compute;
+    `on_error(exc)`, if given, receives each such exception (the server logs it)."""
     billing_terms = config.get("billing_terms", {})
     fx = config.get("fx", {})
     reporting_currency = config.get("reporting_currency", "EUR")
@@ -1337,6 +1353,22 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
                 "file": file,
             })
 
+    def guarded(label, file, empty, fn, *args):
+        """One metric's calculation; an unexpected error makes it Missing, never the whole run."""
+        try:
+            return fn(*args)
+        except Exception as exc:
+            if on_error:
+                on_error(exc)
+            missing_data.append({
+                "metric": f"{label} (calculation error)",
+                "reason": f"The calculation stopped on an unexpected {type(exc).__name__}; "
+                          f"reported as Missing, not estimated. The other metrics are unaffected",
+                "unlocked_by": "Not computable from the data as supplied; the server log has the run id",
+                "file": file,
+            })
+            return empty
+
     def src(base, rows, rule):
         s = SourceRef(base.get("file", "?"), base.get("sheet"))
         s.add_rows(rows)
@@ -1360,7 +1392,7 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
                              "unlocked_by": "Upload revenue lines with customer ID, invoice date, amount, currency",
                              "file": rev_src.get("file")})
 
-    nrr = compute_nrr(mrr, seg_map, first_month)
+    nrr = guarded("NRR (12-month)", rev_src.get("file"), None, compute_nrr, mrr, seg_map, first_month)
     if nrr and nrr.get("insufficient_history"):
         missing_data.append({"metric": "NRR (12-month)", "reason": f"Needs 12+ months of history; have {nrr['months_available']}",
                              "unlocked_by": "Provide at least 13 months of revenue lines", "file": rev_src.get("file")})
@@ -1372,7 +1404,7 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
         missing_data.append({"metric": "NRR by segment", "reason": "Segment column not mapped on revenue lines",
                              "unlocked_by": "Map the optional 'segment' column on revenue lines", "file": rev_src.get("file")})
 
-    churn = compute_gross_churn(mrr)
+    churn = guarded("Gross revenue churn", rev_src.get("file"), None, compute_gross_churn, mrr)
     if churn and churn.get("insufficient_history"):
         missing_data.append({"metric": "Gross revenue churn", "reason": f"Needs 12+ months; have {churn['months_available']}",
                              "unlocked_by": "Provide at least 13 months of revenue lines", "file": rev_src.get("file")})
@@ -1381,7 +1413,7 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
         churn["source"] = src(rev_src, contrib_rows, "Gross churn = (churned + contracted MRR) ÷ MRR 12 months ago")
     results["gross_churn"] = churn
 
-    new_mrr_q = compute_new_mrr_by_quarter(mrr, first_month)
+    new_mrr_q = guarded("New MRR by quarter", rev_src.get("file"), {}, compute_new_mrr_by_quarter, mrr, first_month)
     results["new_mrr_by_quarter"] = new_mrr_q
 
     if pnl.empty:
@@ -1389,7 +1421,8 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
         missing_data.append({"metric": "CAC payback", "reason": "P&L not provided",
                              "unlocked_by": "Upload P&L with month, S&M expense, revenue, cost of revenue", "file": pnl_src.get("file")})
     else:
-        cac = compute_cac_payback(new_mrr_q, pnl, default_l=int(config.get("default_l", 1)))
+        cac = guarded("CAC payback", pnl_src.get("file"), None, compute_cac_payback, new_mrr_q, pnl,
+                      int(config.get("default_l", 1)))
         if cac:
             cac["source"] = src(pnl_src, pnl.get("_row", []).tolist() if "_row" in pnl.columns else [],
                                  "CAC payback = lagged S&M ÷ (new MRR × gross margin %)")
@@ -1407,7 +1440,7 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
     else:
         absent_dates = [f for f in ("created_date", "close_date")
                         if f not in deals.columns or deals[f].notna().sum() == 0]
-        sc = None if absent_dates else compute_sales_cycle(deals)
+        sc = None if absent_dates else guarded("Sales cycle", crm_src.get("file"), None, compute_sales_cycle, deals)
         if absent_dates:
             missing_data.append({"metric": "Sales cycle",
                                  "reason": f"CRM deals have no {' or '.join(f.replace('_', ' ') for f in absent_dates)}",
@@ -1425,7 +1458,7 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
             missing_data.append({"metric": "Sales cycle & win rate", "reason": "Stage column not mapped on CRM deals",
                                  "unlocked_by": "Map the stage column on CRM deals", "file": crm_src.get("file")})
         founder_available = "founder_involved" in deals.columns and deals["founder_involved"].notna().any()
-        wr = compute_win_rate(deals, founder_available)
+        wr = guarded("Win rate", crm_src.get("file"), None, compute_win_rate, deals, founder_available)
         if wr is not None:
             wr["excluded_after_as_of"] = deals_after_as_of
             wr["source"] = src(crm_src, deals.get("_row", []).tolist() if "_row" in deals.columns else [],
@@ -1444,7 +1477,8 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
                 "file": crm_src.get("file"),
             })
 
-    acv = compute_acv_path(mrr, seg_map, first_month, target_arr, target_date, reporting_currency)
+    acv = guarded("Path to Plan", rev_src.get("file"), None, compute_acv_path, mrr, seg_map, first_month, target_arr, target_date,
+                  reporting_currency)
     if acv:
         acv["source"] = src(rev_src, contrib_rows, "ACV = ARR ÷ active customers; path compares required vs observed net-new")
         if acv.get("target_date_error"):
@@ -1467,9 +1501,18 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
     if acv:
         missing_data.extend(_history_gaps(len(mrr.columns), rev_src))
 
-    results["segment_paths"] = compute_segment_paths(mrr, seg_map, first_month, nrr, acv, target_arr, target_date)
+    results["segment_paths"] = guarded(
+        "Segment paths to target ARR", rev_src.get("file"),
+        {"available": False, "assumption": CONSTANT_NRR_ASSUMPTION, "missing_inputs": []},
+        compute_segment_paths, mrr, seg_map, first_month, nrr, acv, target_arr, target_date)
     sp = results["segment_paths"]
-    if not sp["available"]:
+    for s, row in (sp.get("stage_one") or {}).get("segments", {}).items():
+        if row.get("arr_change_per_nrr_point_reason"):
+            missing_data.append({"metric": f"ARR change per NRR point ({s})",
+                                 "reason": row["arr_change_per_nrr_point_reason"],
+                                 "unlocked_by": "Set a target date at least a year after the as-of month",
+                                 "file": rev_src.get("file")})
+    if not sp["available"] and sp["missing_inputs"]:
         missing_data.append({
             "metric": "Segment paths to target ARR",
             "reason": "; ".join(m["input"] for m in sp["missing_inputs"]) + " not available",
@@ -1479,8 +1522,10 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
 
     results["anomalies"] = compute_anomalies(mrr, rev, deals, mrr_notes)
     results["anomalies"]["date_order_from_data"] = date_order_notes
-    results["mrr_series"] = compute_mrr_series(mrr, seg_map)
-    results["cohort_retention"] = compute_cohort_retention(mrr, first_month)
+    results["mrr_series"] = guarded("MRR by segment", rev_src.get("file"), {"months": [], "segments": [], "data": []},
+                                    compute_mrr_series, mrr, seg_map)
+    results["cohort_retention"] = guarded("Cohort retention", rev_src.get("file"), {"cohorts": [], "max_offset": 0, "data": []},
+                                          compute_cohort_retention, mrr, first_month)
     results["missing_data"], results["questions_for_management"] = resolve_missing(
         missing_data, results, files, as_of=as_of, fx=fx, new_mrr_q=new_mrr_q,
         default_l=config.get("default_l", 1))
