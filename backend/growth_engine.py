@@ -959,7 +959,7 @@ def compute_segment_paths(mrr: pd.DataFrame, seg_map: dict, first_month: dict, n
     out.update({"horizon_months": years * 12, "target_arr": float(target_arr), "target_date": target_date})
 
     # ---- stage one: existing base, each segment at its own NRR ----
-    segments, unprojectable = {}, []
+    segments, unprojectable, not_positive = {}, [], []
     for s in sorted(by_seg):
         a = by_seg[s]
         n = (nrr.get("by_segment") or {}).get(s) or {}
@@ -972,19 +972,18 @@ def compute_segment_paths(mrr: pd.DataFrame, seg_map: dict, first_month: dict, n
             unprojectable.append(s)
             row.update({"projected_arr": None, "change_arr": None, "arr_change_per_nrr_point": None,
                         "reason": "no customers with revenue 12 months ago in this segment, so no NRR"})
+        elif pct <= 0:
+            # 0 ** (years - 1) divides by zero for years < 1, and a negative NRR raised to a
+            # fractional power is a complex number: neither is a projection
+            not_positive.append(f"{s} ({pct:g}%)")
+            row.update({"projected_arr": None, "change_arr": None, "arr_change_per_nrr_point": None,
+                        "reason": f"NRR is {pct:g}%, so a constant-NRR projection is not meaningful"})
         else:
             factor = pct / 100
             projected = a["arr"] * factor ** years
-            row.update({"projected_arr": projected, "change_arr": projected - a["arr"]})
-            if factor == 0 and years < 1:
-                # 0 ** (years - 1) is a division by zero: the slope at NRR 0% has no finite value
-                row["arr_change_per_nrr_point"] = None
-                row["arr_change_per_nrr_point_reason"] = (
-                    "NRR is 0% and the target date is less than a year away, so the effect of one "
-                    "NRR point has no finite value")
-            else:
-                # ARR at the target date moved by one NRR point, all else equal
-                row["arr_change_per_nrr_point"] = a["arr"] * years * factor ** (years - 1) / 100
+            row.update({"projected_arr": projected, "change_arr": projected - a["arr"],
+                        # ARR at the target date moved by one NRR point, all else equal
+                        "arr_change_per_nrr_point": a["arr"] * years * factor ** (years - 1) / 100})
         segments[s] = row
     total_start = sum(v["start_arr"] for v in segments.values())
     stage_one = {"segments": segments, "start_arr_total": total_start}
@@ -997,7 +996,11 @@ def compute_segment_paths(mrr: pd.DataFrame, seg_map: dict, first_month: dict, n
     if unprojectable:
         missing.append({"input": "12-month NRR for " + ", ".join(unprojectable),
                         "resolve": "Needs customers in that segment with revenue 12 months before the as-of month"})
-    else:
+    if not_positive:
+        missing.append({"input": "a positive 12-month NRR for " + ", ".join(not_positive),
+                        "resolve": "A constant-NRR projection needs NRR above 0%; not projected, not estimated"})
+    unprojectable += not_positive
+    if not unprojectable:
         projected_base = sum(v["projected_arr"] for v in segments.values())
         stage_one["projected_base_arr"] = projected_base
         gap = float(target_arr) - projected_base
@@ -1297,6 +1300,7 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
     # As-of month: truncate all "current"/time-series views to <= as_of. MRR after the
     # as-of month is deferred revenue and must not appear in current figures.
     as_of = _resolve_as_of(config.get("as_of_month"), pnl, mrr)
+    last_revenue_month = mrr.columns[-1] if not mrr.empty else None
     if not mrr.empty and as_of is not None:
         keep = [c for c in mrr.columns if c <= as_of]
         mrr = mrr.loc[:, keep] if keep else mrr.iloc[:, :0]
@@ -1334,6 +1338,18 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
             "reason": f"{mrr_notes['rows_missing_date']} row(s) have a blank or unreadable invoice date and no service "
                       f"period — excluded from MRR, not guessed",
             "unlocked_by": "Give every revenue line a valid invoice date (or service start and end dates)",
+            "file": rev_src.get("file"),
+        })
+
+    if last_revenue_month is not None and as_of is not None and as_of > last_revenue_month:
+        gap_months = (as_of - last_revenue_month).n
+        missing_data.append({
+            "metric": "Revenue up to the as-of month",
+            "reason": f"Revenue lines end {_period_str(last_revenue_month)}, {gap_months} month(s) before the as-of "
+                      f"month ({_period_str(as_of)}). Current figures are measured at "
+                      f"{_period_str(last_revenue_month)}; the months after it are not filled, not guessed",
+            "unlocked_by": f"Upload revenue lines through {_period_str(as_of)}, or set the as-of month to "
+                           f"{_period_str(last_revenue_month)}",
             "file": rev_src.get("file"),
         })
 
@@ -1506,12 +1522,6 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
         {"available": False, "assumption": CONSTANT_NRR_ASSUMPTION, "missing_inputs": []},
         compute_segment_paths, mrr, seg_map, first_month, nrr, acv, target_arr, target_date)
     sp = results["segment_paths"]
-    for s, row in (sp.get("stage_one") or {}).get("segments", {}).items():
-        if row.get("arr_change_per_nrr_point_reason"):
-            missing_data.append({"metric": f"ARR change per NRR point ({s})",
-                                 "reason": row["arr_change_per_nrr_point_reason"],
-                                 "unlocked_by": "Set a target date at least a year after the as-of month",
-                                 "file": rev_src.get("file")})
     if not sp["available"] and sp["missing_inputs"]:
         missing_data.append({
             "metric": "Segment paths to target ARR",
@@ -1520,8 +1530,11 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
             "file": rev_src.get("file"),
         })
 
-    results["anomalies"] = compute_anomalies(mrr, rev, deals, mrr_notes)
-    results["anomalies"]["date_order_from_data"] = date_order_notes
+    # None after a failure, never zero counts: the dashboard shows the calculation error instead
+    results["anomalies"] = guarded("Anomaly flags", rev_src.get("file"), None,
+                                   compute_anomalies, mrr, rev, deals, mrr_notes)
+    if results["anomalies"] is not None:
+        results["anomalies"]["date_order_from_data"] = date_order_notes
     results["mrr_series"] = guarded("MRR by segment", rev_src.get("file"), {"months": [], "segments": [], "data": []},
                                     compute_mrr_series, mrr, seg_map)
     results["cohort_retention"] = guarded("Cohort retention", rev_src.get("file"), {"cohorts": [], "max_offset": 0, "data": []},

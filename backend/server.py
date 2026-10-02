@@ -839,8 +839,8 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
                           for m in sp.get("missing_inputs", [])]).to_excel(xw, sheet_name="Segment Base", index=False)
 
         # Anomalies
-        an = r.get("anomalies") or {}
-        an_rows = [
+        an = r.get("anomalies")
+        an_rows = [("Anomaly flags", "calculation error", "Not computed; see Missing Data")] if an is None else [
             ("Months with negative MRR", len(an.get("negative_mrr_months", [])), ", ".join(an.get("negative_mrr_months", []))),
             ("Customers with gaps > 2 months then resume", len(an.get("revenue_gap_then_resume", [])), ", ".join(an.get("revenue_gap_then_resume", [])[:50])),
             ("Revenue lines missing customer ID", an.get("revenue_missing_customer_id", {}).get("count"), ""),

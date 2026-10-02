@@ -16,7 +16,7 @@ import { GLOSSARY } from "@/lib/glossary";
 import { SegmentPaths } from "@/components/SegmentPaths";
 import { describeRequestError, logRequestFailure } from "@/lib/requestError";
 import { metricLabel, metricQualifier, bracketed } from "@/lib/metricNames";
-import { NONE, missingRows, questionRows, questionsEmptyText } from "@/lib/gapLists";
+import { ANOMALIES_NOT_COMPUTED, NONE, anomalyFlags, missingRows, questionRows, questionsEmptyText } from "@/lib/gapLists";
 import { fmtCurrency, fmtCount, fmtCountUp, fmtDays, fmtDaysNumber, fmtMonths, fmtPct, fmtRatio, bandRangeLabel, monthEndDate } from "@/lib/format";
 
 const SEG_COLORS = ["#0284C7", "#059669", "#D97706", "#DB2777", "#475569"];
@@ -146,6 +146,7 @@ export default function Dashboard() {
   const asOfFullDate = monthEndDate(r.as_of_month);
   const missing = missingRows(r);
   const questions = questionRows(r);
+  const flags = anomalyFlags(r);
 
   // Headline CAC payback: the latest COMPLETE quarter only. A partial quarter pairs a
   // full quarter of lagged S&M with part of a quarter's new MRR and overstates payback,
@@ -497,14 +498,9 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <Card className="lg:col-span-4" title="Anomaly Flags" hint="detected, not interpreted">
           <div className="space-y-2 text-sm">
-            <Flag label="Months with negative MRR" value={fmtCount(r.anomalies.negative_mrr_months.length)}
-              detail={r.anomalies.negative_mrr_months.join(", ")} />
-            <Flag label="Customers with gaps > 2 months then resume" value={fmtCount(r.anomalies.revenue_gap_then_resume.length)}
-              detail={r.anomalies.revenue_gap_then_resume.slice(0, 8).join(", ")} />
-            <Flag label="Revenue lines missing customer ID" value={fmtCount(r.anomalies.revenue_missing_customer_id.count)} />
-            <Flag label="Deals with close before created (excluded)" value={fmtCount(r.anomalies.deals_close_before_created.excluded_count)} />
-            <Flag label="Date columns with day/month order set from the data" value={fmtCount((r.anomalies.date_order_from_data ?? []).length)}
-              detail={(r.anomalies.date_order_from_data ?? []).map((n) => `${n.field} (${n.dataset}): ${n.order}, ${fmtCount(n.rows)} rows`).join("; ")} />
+            {flags
+              ? flags.map((f) => <Flag key={f.label} label={f.label} value={fmtCount(f.count)} detail={f.detail} />)
+              : <div className="text-slate-600" data-testid="anomalies-not-computed">{ANOMALIES_NOT_COMPUTED}</div>}
           </div>
         </Card>
         <Card className="lg:col-span-4" testid="missing-data" title="Missing Data" hint={`${fmtCount(missing.length)} items`}>
