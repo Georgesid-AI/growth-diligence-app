@@ -48,7 +48,7 @@ hired, launches; of two overlapping keywords the longer one counts):
 - Retention: NRR, churn, retention, customer life
 - Sales: sales cycle, win rate, pipeline, ACV, CAC, payback, LTV, (customer) lifetime value,
   acquisition, conversion, leads
-- Customers: customers, clients, paying users, accounts
+- Customers: customers, clients, paying users, accounts, companies, agencies, subscribers
 - Users: users
 - Gross margin: margin, margins
 - People: hires, headcount, team, recruitment, attrition
@@ -81,10 +81,11 @@ Dropped, never listed:
   (founder, CEO, chief, former, previously, employee, exec team) or the industry and the world
   (industry, global, worldwide, economy). This also drops other companies' figures quoted in
   founder bios.
-Not built: a bare number (no words of its own) borrowing only from its own text box, table
-header or a label right next to it. Measured on the test set it lowered recall to 90.3%
-(5 chart data labels whose only label is the chart's axis title, among others), below the 95%
-mark, so bare numbers still borrow by position and from the slide title.
+Tried and rejected: a bare number (no words of its own) borrowing only from its own text box,
+table header or a label right next to it. On the test set it lowered recall to 93.2% when
+first tried and to 90.3% on top of the other plan-claim rules (chart data labels whose only
+label is the chart's axis title, among others), below the 95% mark. Bare numbers still borrow
+by position and from the slide title.
 
 ## 3. Recall test
 - Test set: 10 public decks (6 pdf, 2 pptx, 2 docx) in tests/fixtures/decks/decks/.
