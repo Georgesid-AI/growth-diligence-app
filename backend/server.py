@@ -509,16 +509,35 @@ async def upload_deck(audit_id: str, file: UploadFile = File(...)):
 
 @api.get("/audits/{audit_id}/decks")
 async def list_deck_candidates(audit_id: str):
-    """The audit's decks (no parsed text) and their candidates, in deck and reading order."""
+    """The audit's decks (no parsed text), most recently uploaded first, and their candidates:
+    grouped by deck in that order; within a deck the ones to review first, then by slide or page."""
     if not await db.audits.find_one({"id": audit_id}, {"id": 1}):
         raise HTTPException(404, "Audit not found")
     deck_fields = {"_id": 0, "deck_id": 1, "file": 1, "format": 1, "page_unit": 1, "pages": 1, "uploaded_at": 1}
     found = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, deck_fields).to_list(100)
-    found.sort(key=lambda d: d.get("uploaded_at") or "")
+    found.sort(key=lambda d: d.get("uploaded_at") or "", reverse=True)
     rank = {d["deck_id"]: i for i, d in enumerate(found)}
     candidates = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0}).to_list(10000)
-    candidates.sort(key=lambda c: (rank.get(c.get("deck_id"), len(rank)), c.get("order", 0)))
+    candidates.sort(key=lambda c: (rank.get(c.get("deck_id"), len(rank)), c.get("status") != "pending",
+                                   _first_page(c), c.get("order", 0)))
     return sanitize({"decks": found, "candidates": candidates})
+
+
+def _first_page(candidate: dict) -> int:
+    pages = [s.get("slide", s.get("page")) for s in candidate.get("sources") or []]
+    return min((p for p in pages if isinstance(p, int)), default=0)
+
+
+@api.delete("/audits/{audit_id}/decks/{deck_id}")
+async def remove_deck(audit_id: str, deck_id: str):
+    """Remove one deck: its parsed text and all its candidates, reviewed ones included."""
+    deck = await db[decks.TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id}, {"_id": 0, "file": 1})
+    if not deck:
+        raise HTTPException(404, "Deck not found")
+    text = await db[decks.TEXT_COLLECTION].delete_many({"audit_id": audit_id, "deck_id": deck_id})
+    candidates = await db[decks.CANDIDATES_COLLECTION].delete_many(
+        {"audit_id": audit_id, "$or": [{"deck_id": deck_id}, {"file": deck["file"]}]})
+    return {"removed": deck_id, "deck_text": text.deleted_count, "deck_candidates": candidates.deleted_count}
 
 
 @api.put("/audits/{audit_id}/decks/candidates/{candidate_id}")

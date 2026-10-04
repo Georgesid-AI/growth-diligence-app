@@ -67,6 +67,29 @@ export function claimValue(c) {
   return c.currency ? `${n} ${c.currency}` : n;
 }
 
+// Deck selector above the claims table: "All" plus one tab per deck.
+export const ALL_DECKS = "all";
+export const REMOVE_DECK_CONFIRM = "This deletes the deck and all its claims, including reviewed ones.";
+
+/** The most recently uploaded deck's id, or ALL_DECKS when there is no deck. */
+export function defaultDeck(decks) {
+  if (!decks?.length) return ALL_DECKS;
+  return [...decks].sort((a, b) => String(b.uploaded_at || "").localeCompare(String(a.uploaded_at || "")))[0].deck_id;
+}
+
+/** [{id, label, count}]: "All" first, then each deck (most recent first) with its claim count. */
+export function deckTabs(decks, candidates) {
+  const count = (id) => (candidates || []).filter((c) => c.deck_id === id).length;
+  const ordered = [...(decks || [])].sort((a, b) => String(b.uploaded_at || "").localeCompare(String(a.uploaded_at || "")));
+  return [{ id: ALL_DECKS, label: "All", count: (candidates || []).length },
+    ...ordered.map((d) => ({ id: d.deck_id, label: d.file, count: count(d.deck_id) }))];
+}
+
+/** The claims shown under a tab, in the order the server sent them (to review first, then slide or page). */
+export function claimsForDeck(candidates, deckId) {
+  return deckId === ALL_DECKS ? candidates || [] : (candidates || []).filter((c) => c.deck_id === deckId);
+}
+
 /** Counts per status, for the list header. */
 export function statusCounts(candidates) {
   const out = { pending: 0, approved: 0, rejected: 0, edited: 0 };

@@ -611,3 +611,49 @@ def test_a_re_upload_keeps_approved_edited_and_rejected_claims(api):
 ])
 def test_of_two_overlapping_keywords_the_longer_one_counts(text, families):
     assert [k["family"] for k in claims._keywords(text)] == families
+
+
+# ---------------------------------------------------------------------------
+# Several decks per audit: removal and order
+# ---------------------------------------------------------------------------
+def _page(c):
+    return min(s.get("slide", s.get("page")) for s in c["sources"])
+
+
+def test_decks_list_newest_first_and_within_a_deck_to_review_first_then_by_slide(api):
+    client, db = api
+    old = _upload(client, "audit-1", "03-buffer.pptx", (DECKS / "03-buffer.pptx").read_bytes()).json()
+    new = _upload(client, "audit-1", "09-genesisai-2024.pdf", (DECKS / "09-genesisai-2024.pdf").read_bytes()).json()
+    old_claims = [c for c in db[decks.CANDIDATES_COLLECTION].docs if c["deck_id"] == old["deck_id"]]
+    late = max(old_claims, key=_page)
+    client.put(f"/api/audits/audit-1/decks/candidates/{late['id']}", json={"status": "approved"})
+
+    listed = client.get("/api/audits/audit-1/decks").json()
+    assert [d["deck_id"] for d in listed["decks"]] == [new["deck_id"], old["deck_id"]], "most recent deck first"
+    order = [c["deck_id"] for c in listed["candidates"]]
+    assert order == sorted(order, key=lambda d: d != new["deck_id"]), "grouped by deck, most recent first"
+    in_old = [c for c in listed["candidates"] if c["deck_id"] == old["deck_id"]]
+    keys = [(c["status"] != "pending", _page(c)) for c in in_old]
+    assert keys == sorted(keys), "to review first, then by slide"
+    assert in_old[-1]["id"] == late["id"], "the reviewed claim moves below the ones to review"
+
+
+def test_remove_deck_deletes_its_text_and_all_its_claims_including_reviewed(api):
+    client, db = api
+    keep = _upload(client, "audit-1", "09-genesisai-2024.pdf", (DECKS / "09-genesisai-2024.pdf").read_bytes()).json()
+    gone = _upload(client, "audit-1", "03-buffer.pptx", (DECKS / "03-buffer.pptx").read_bytes()).json()
+    other = _upload(client, "audit-2", "03-buffer.pptx", (DECKS / "03-buffer.pptx").read_bytes()).json()
+    mine = [c for c in db[decks.CANDIDATES_COLLECTION].docs if c["deck_id"] == gone["deck_id"]]
+    url = "/api/audits/audit-1/decks/candidates/{}"
+    client.put(url.format(mine[0]["id"]), json={"status": "approved"})
+    client.put(url.format(mine[1]["id"]), json={"value": 1})
+    client.put(url.format(mine[2]["id"]), json={"status": "rejected"})
+
+    r = client.delete(f"/api/audits/audit-1/decks/{gone['deck_id']}")
+    assert r.status_code == 200 and r.json() == {"removed": gone["deck_id"], "deck_text": 1,
+                                                 "deck_candidates": gone["candidates"]}
+    assert {d["deck_id"] for d in db[decks.TEXT_COLLECTION].docs} == {keep["deck_id"], other["deck_id"]}
+    assert {c["deck_id"] for c in db[decks.CANDIDATES_COLLECTION].docs} == {keep["deck_id"], other["deck_id"]}
+    assert all(c["deck_id"] != gone["deck_id"] for c in client.get("/api/audits/audit-1/claims").json()["claims"])
+    assert client.delete(f"/api/audits/audit-1/decks/{gone['deck_id']}").status_code == 404
+    assert client.delete(f"/api/audits/audit-2/decks/{keep['deck_id']}").status_code == 404, "a deck of another audit"
