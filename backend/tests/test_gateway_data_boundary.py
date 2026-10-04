@@ -573,3 +573,130 @@ def test_the_outermost_500_handler_and_the_gateway_failure_log_type_run_id_and_s
     for text in (caplog.text, *[r.getMessage() for r in caplog.records]):
         assert "Jane Doe" not in text and "Traceback" not in text
     assert all(r.exc_info is None for r in caplog.records), "no traceback in the log"
+
+
+# ---------------------------------------------------------------------------
+# Deck text never reaches the model (docs/specs/deck-parser.md section 4). The deck parser has
+# no path to the gateway, and the gateway reads no parsed text, no snippet and no source
+# reference. If it ever reads claim candidates, it projects decks.GATEWAY_READABLE_FIELDS only.
+# ---------------------------------------------------------------------------
+import subprocess  # noqa: E402
+
+from app import decks  # noqa: E402
+
+DECK_SENTINEL = "DECKTEXT Jane Doe"            # in the parsed text and the snippet
+DECK_FILE = "Acme_Board_Q3.pptx"               # in the source references
+
+
+def _imports(tree):
+    """(module, name) for every import at any depth, plus importlib / __import__ calls."""
+    out = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            out += [(a.name, a.name) for a in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            out += [("." * node.level + (node.module or ""), a.name) for a in node.names]
+        elif isinstance(node, ast.Call) and ast.unparse(node.func).endswith(("import_module", "__import__")):
+            out.append((ast.unparse(node), "<dynamic>"))
+    return out
+
+
+def test_the_deck_parser_never_imports_or_calls_the_gateway():
+    offenders = []
+    for path in sorted((BACKEND / "app" / "decks").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for module, name in _imports(tree):
+            parts = set(re.split(r"[.\s\"'()]+", module)) | {name}
+            if parts & {"llm", "gateway", "anthropic", "<dynamic>"}:
+                offenders.append(f"{path.name}: {module} -> {name}")
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and node.id in ("gateway", "llm_gateway") or \
+                    isinstance(node, ast.Attribute) and node.attr in ("gateway", "llm_gateway", "generate_narrative"):
+                offenders.append(f"{path.name}:{node.lineno}: {ast.unparse(node)}")
+    assert not offenders, "the deck parser reaches for the gateway:\n  " + "\n  ".join(offenders)
+    # Transitively too: importing the parser loads neither the gateway nor a provider SDK.
+    code = ("import sys, app.decks.parser, app.decks.claims; "
+            "print(sorted(m for m in sys.modules if m.startswith('app.llm') or m.split('.')[0] == 'anthropic'))")
+    out = subprocess.run([sys.executable, "-c", code], cwd=BACKEND, capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == "[]", out.stdout
+
+
+def test_the_gateway_names_no_deck_text_snippet_or_source_field():
+    """Static: no gateway module imports the deck package, or names the parsed-text collection
+    or the parsed-text, snippet or source-reference fields."""
+    forbidden = {decks.TEXT_COLLECTION, "blocks", "snippet", "sources"}
+    offenders = []
+    for path in sorted((BACKEND / "app" / "llm").glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        offenders += [f"{path.name}: {module} -> {name}" for module, name in _imports(tree)
+                      if "decks" in re.split(r"[.\s\"'()]+", module) or name == "decks"]
+        offenders += [f"{path.name}:{node.lineno}: {node.value!r}" for node in ast.walk(tree)
+                      if isinstance(node, ast.Constant) and node.value in forbidden]
+    assert not offenders, "the gateway names deck text:\n  " + "\n  ".join(offenders)
+
+
+def _recording_db():
+    """The usual stub plus a stored deck, recording every read the gateway makes."""
+    reads = []
+
+    class Collection(t.FakeCollection):
+        def __init__(self, name):
+            super().__init__()
+            self.name = name
+
+        async def find_one(self, flt, projection=None):
+            doc = await super().find_one(flt, projection)
+            reads.append((self.name, projection, doc))
+            return doc
+
+        def find(self, flt, projection=None):
+            cursor = super().find(flt, projection)
+            reads.append((self.name, projection, cursor._docs))
+            return cursor
+
+        def aggregate(self, pipeline):
+            cursor = super().aggregate(pipeline)
+            reads.append((self.name, None, cursor._docs))
+            return cursor
+
+    class DB(t.FakeDB):
+        def __getitem__(self, name):
+            return self._cols.setdefault(name, Collection(name))
+
+    db = DB()
+    doc = copy.deepcopy(t.RESULTS_DOC)
+    doc["results"] = copy.deepcopy(RESULTS)
+    db["audits"].docs.append(doc)
+    db[decks.TEXT_COLLECTION].docs.append({"audit_id": RUN_ID, "file": DECK_FILE, "format": "pptx",
+                                           "blocks": [{"slide": 3, "kind": "text", "text": DECK_SENTINEL}]})
+    db[decks.CANDIDATES_COLLECTION].docs.append({
+        "audit_id": RUN_ID, "id": "c1", "claim_type": "revenue", "value": 3600000, "unit": None, "currency": "USD",
+        "target_date": "2024", "status": "approved", "file": DECK_FILE, "snippet": DECK_SENTINEL,
+        "sources": [{"file": DECK_FILE, "slide": 3, "kind": "text"}]})
+    return db, reads
+
+
+def test_the_gateway_reads_no_deck_text_snippet_or_source():
+    """Dynamic: every gateway path runs over a database holding a parsed deck. Nothing the gateway
+    reads, and nothing it sends, carries the deck's text, snippet or file name."""
+    # Spec section 4: type, value, high value (of a range), unit, date, status - nothing else.
+    assert decks.GATEWAY_READABLE_FIELDS == {"claim_type", "value", "value_high", "unit", "target_date", "status"}
+    db, reads = _recording_db()
+    adapter = t.FakeAdapter(replies=[json.dumps(NARRATIVE)])
+    asyncio.run(gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=adapter, sleep=t._noop_sleep))
+    asyncio.run(gateway.read_cached_narrative(db, RUN_ID, "growth_engine"))
+    asyncio.run(gateway.narratives_for_run(db, RUN_ID))
+    asyncio.run(gateway.disclosure_for_run(db, RUN_ID))
+    asyncio.run(gateway.usage_for_run(db, RUN_ID))
+    assert adapter.calls == 1 and reads, "fixture: the gateway ran and read Mongo"
+
+    assert not [r for r in reads if r[0] == decks.TEXT_COLLECTION], "the gateway read the parsed-text collection"
+    for name, projection, _ in reads:
+        if name == decks.CANDIDATES_COLLECTION:
+            fields = {k for k, v in (projection or {}).items() if v and k != "_id"}
+            assert fields and fields <= decks.GATEWAY_READABLE_FIELDS, f"candidate projection {projection!r}"
+    returned = json.dumps([doc for _, _, doc in reads], ensure_ascii=False, default=str)
+    sent = adapter.payloads[0]
+    for needle in (DECK_SENTINEL, DECK_FILE):
+        assert needle not in returned, f"{needle!r} was read by the gateway"
+        assert needle not in sent, f"{needle!r} reached the provider"

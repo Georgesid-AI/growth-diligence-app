@@ -2,14 +2,14 @@
   "verified_on": "2026-10-04",
   "deck_count": 10,
   "company_count": 9,
-  "method": "Downloaded PDF page counts and native PDF text extraction; visual checks of claim-bearing table/chart examples. No OCR-created replacement PDFs.",
+  "method": "Downloaded PDF page counts and native PDF text extraction; visual checks of claim-bearing table/chart examples. No OCR-created replacement PDFs. Four decks (01, 03, 04, 07) were later converted from these PDFs to PPTX or DOCX; for them, sha256 and native_text_characters_per_page describe the original PDF, not the converted file.",
   "decks": [
     {
       "id": "01",
       "deck": "Front Series B (public redacted version, published 2018)",
       "company": "Front",
-      "file": "decks/01-front-b.pdf",
-      "format": "pdf",
+      "file": "decks/01-front-b.pptx",
+      "format": "pptx",
       "pages": 24,
       "source_url": "https://biznesfunding.com/static/pdf-pitch/Front.pdf",
       "publication_evidence_url": "https://front.com/blog/front-series-b-deck",
@@ -48,7 +48,9 @@
         109,
         165,
         6
-      ]
+      ],
+      "converted_from": "pdf",
+      "sha256_of": "original PDF"
     },
     {
       "id": "02",
@@ -112,8 +114,8 @@
       "id": "03",
       "deck": "Buffer seed deck (2011; published 2013)",
       "company": "Buffer",
-      "file": "decks/03-buffer.pdf",
-      "format": "pdf",
+      "file": "decks/03-buffer.pptx",
+      "format": "pptx",
       "pages": 13,
       "source_url": "https://media.genppt.com/pitch-decks/buffer/buffer-pitch-deck-2011.pdf",
       "publication_evidence_url": "https://buffer.com/resources/the-slide-deck-we-used-to-raise-half-a-million-dollars/",
@@ -140,14 +142,16 @@
         301,
         350,
         22
-      ]
+      ],
+      "converted_from": "pdf",
+      "sha256_of": "original PDF"
     },
     {
       "id": "04",
       "deck": "SaaStr Europa 2019 seed pitch",
       "company": "clevergig",
-      "file": "decks/04-clevergig.pdf",
-      "format": "pdf",
+      "file": "decks/04-clevergig.docx",
+      "format": "docx",
       "pages": 13,
       "source_url": "https://cdn2.hubspot.net/hubfs/1794004/clevergig%20-%20Pitch%20deck%20SaaStr%20Europa%202019%20-%20short.pdf",
       "publication_evidence_url": null,
@@ -174,7 +178,9 @@
         536,
         126,
         99
-      ]
+      ],
+      "converted_from": "pdf",
+      "sha256_of": "original PDF"
     },
     {
       "id": "05",
@@ -268,8 +274,8 @@
       "id": "07",
       "deck": "Equals seed pitch \u2014 control",
       "company": "Equals",
-      "file": "decks/07-equals-seed.pdf",
-      "format": "pdf",
+      "file": "decks/07-equals-seed.docx",
+      "format": "docx",
       "pages": 11,
       "source_url": "https://equals-marketing-resources.s3.us-west-2.amazonaws.com/equals-seed.pdf",
       "publication_evidence_url": "https://wrap-text.equals.com/p/equals-seed-deck",
@@ -292,7 +298,9 @@
         506,
         345,
         0
-      ]
+      ],
+      "converted_from": "pdf",
+      "sha256_of": "original PDF"
     },
     {
       "id": "08",

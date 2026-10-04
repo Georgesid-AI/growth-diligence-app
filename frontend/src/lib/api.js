@@ -27,6 +27,19 @@ export const uploadDataset = (id, dtype, file) => {
     .then((r) => r.data);
 };
 
+// Board decks: upload parses the file and lists candidate claims; the analyst approves,
+// rejects or edits each one.
+export const uploadDeck = (id, file) => {
+  const fd = new FormData();
+  fd.append("file", file);
+  return api
+    .post(`/audits/${id}/decks/upload`, fd, { headers: { "Content-Type": "multipart/form-data" } })
+    .then((r) => r.data);
+};
+export const getDecks = (id) => api.get(`/audits/${id}/decks`).then((r) => r.data);
+export const updateCandidate = (id, candidateId, payload) =>
+  api.put(`/audits/${id}/decks/candidates/${candidateId}`, payload).then((r) => r.data);
+
 // Narrative gateway. GET is read-only — it returns an existing narrative or
 // narrative_status "not_generated", and can never call the model provider.
 // POST is the only path that spends an AI request.
