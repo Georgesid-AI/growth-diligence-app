@@ -7,8 +7,9 @@ a percentage). A listed range needs both ends; a single listed figure is also fo
 end of a candidate range ("from 40-100": 40 today, 100 in two years). A claim listed without a
 value is found by its target date. Claims marked "not a company claim" never count toward recall.
 
-Precision - the share of candidates that are a listed company claim - is reported, never
-asserted. To see the report: pytest tests/test_deck_recall.py -rP
+Recall must reach PASS_MARK. Precision - the share of candidates that are a listed company
+claim - is reported and must not drop below PRECISION_FLOOR. To see the report:
+pytest tests/test_deck_recall.py -rP
 """
 import json
 import math
@@ -29,8 +30,8 @@ from app.decks import claims, parser  # noqa: E402
 
 FIXTURES = BACKEND.parent / "tests" / "fixtures" / "decks"
 COMPANY = "company claim"
-# Set once expected_claims.json has been reviewed (spec: at least 90% of listed claims).
-PASS_MARK = None
+PASS_MARK = 0.95          # spec section 3, set after the answer file was reviewed
+PRECISION_FLOOR = 0.30
 
 
 def _expected():
@@ -103,5 +104,5 @@ def test_recall(runs):
     print(f"TOTAL recall {found_total}/{listed_total} = {recall:.0%}   precision {true_total}/{cand_total} = "
           f"{precision:.0%}   distractor candidates {distractor_hits}")
     print("Missed:\n  " + "\n  ".join(misses))
-    if PASS_MARK is not None:
-        assert recall >= PASS_MARK, f"recall {recall:.0%} is below the pass mark {PASS_MARK:.0%}"
+    assert recall >= PASS_MARK, f"recall {recall:.1%} is below the pass mark {PASS_MARK:.0%}"
+    assert precision >= PRECISION_FLOOR, f"precision {precision:.1%} is below the floor {PRECISION_FLOOR:.0%}"

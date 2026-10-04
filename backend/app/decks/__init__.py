@@ -10,4 +10,4 @@ TEXT_COLLECTION = "deck_text"
 CANDIDATES_COLLECTION = "deck_candidates"
 
 # The only candidate fields the gateway may ever read (spec section 4).
-GATEWAY_READABLE_FIELDS = frozenset({"claim_type", "value", "unit", "target_date", "status"})
+GATEWAY_READABLE_FIELDS = frozenset({"claim_type", "value", "value_high", "unit", "target_date", "status"})

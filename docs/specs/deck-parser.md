@@ -56,14 +56,14 @@ Duplicates across slides are merged and keep all source references.
 ## 3. Recall test
 - Test set: 10 public decks (6 pdf, 2 pptx, 2 docx) in tests/fixtures/decks/decks/.
 - A hand-checked answer file lists the claims in each deck.
-- Pass mark: the parser finds at least 90% of listed claims.
-- Precision (false candidates) is reported but does not fail the test.
+- Pass mark: the parser finds at least 95% of listed claims.
+- Precision (false candidates) is reported; the test fails if it drops below 30%.
 - Runs as a normal automated test.
 
 ## 4. No deck text reaching the model
 - The deck parser has no import of, or call to, the LLM gateway.
 - The gateway never reads raw files, parsed text or claim snippets.
-- The gateway may read only structured claim fields (type, value, unit, date, status).
+- The gateway may read only structured claim fields (type, value, high value of a range, unit, date, status).
 - An automated test fails the build if the parser imports the gateway, or the gateway reads the parsed-text or snippet fields.
 
 ## 5. Storage and deletion
@@ -72,7 +72,7 @@ Duplicates across slides are merged and keep all source references.
 
 ## Done when
 - All three formats parse with correct slide/page references.
-- Recall test passes at 90%+.
+- Recall test passes at 95%+ with precision at 30%+.
 - Isolation test passes.
 - Approval list in the frontend shows candidates with their source reference.
 - Upload screen shows the scope message.

@@ -679,6 +679,8 @@ def _recording_db():
 def test_the_gateway_reads_no_deck_text_snippet_or_source():
     """Dynamic: every gateway path runs over a database holding a parsed deck. Nothing the gateway
     reads, and nothing it sends, carries the deck's text, snippet or file name."""
+    # Spec section 4: type, value, high value (of a range), unit, date, status - nothing else.
+    assert decks.GATEWAY_READABLE_FIELDS == {"claim_type", "value", "value_high", "unit", "target_date", "status"}
     db, reads = _recording_db()
     adapter = t.FakeAdapter(replies=[json.dumps(NARRATIVE)])
     asyncio.run(gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=adapter, sleep=t._noop_sleep))
