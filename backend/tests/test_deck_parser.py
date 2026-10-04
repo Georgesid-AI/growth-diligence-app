@@ -602,3 +602,12 @@ def test_a_re_upload_keeps_approved_edited_and_rejected_claims(api):
     assert stored[two["id"]]["value"] == 900 and stored[two["id"]]["parsed"]["value"] == two["value"]
     assert len(db[decks.CANDIDATES_COLLECTION].docs) == first["candidates"]
     assert {c["deck_id"] for c in db[decks.CANDIDATES_COLLECTION].docs} == {again["deck_id"]}
+
+
+@pytest.mark.parametrize("text, families", [
+    ("800 Paying Users", ["customers"]),
+    ("Avg. Customer Lifetime Value", ["sales"]),
+    ("Implied Customer Life", ["retention"]),
+])
+def test_of_two_overlapping_keywords_the_longer_one_counts(text, families):
+    assert [k["family"] for k in claims._keywords(text)] == families
