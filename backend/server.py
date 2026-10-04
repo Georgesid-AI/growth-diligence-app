@@ -1076,7 +1076,9 @@ app.add_middleware(
 async def seed_demo():
     if await db.audits.count_documents({"seed_version": 3}) > 0:
         return
-    await db.datasets.delete_many({"audit_id": {"$in": [a["id"] for a in await db.audits.find({"demo": True}, {"id": 1}).to_list(50)]}})
+    demo_ids = {"audit_id": {"$in": [a["id"] for a in await db.audits.find({"demo": True}, {"id": 1}).to_list(50)]}}
+    for name in ("datasets", decks.TEXT_COLLECTION, decks.CANDIDATES_COLLECTION):
+        await db[name].delete_many(demo_ids)
     await db.audits.delete_many({"demo": True})
     for spec in demo_data.DEMO_AUDITS:
         datasets, meta = demo_data.build(spec)

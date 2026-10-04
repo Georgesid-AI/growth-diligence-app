@@ -329,3 +329,16 @@ def test_delete_audit_removes_its_parsed_text_and_candidates_only(api):
     assert r.json()["decks_purged"]["deck_text"] == 1 and r.json()["decks_purged"]["deck_candidates"] > 0
     for name in (decks.TEXT_COLLECTION, decks.CANDIDATES_COLLECTION):
         assert {d["audit_id"] for d in db[name].docs} == {"audit-2"}
+
+
+def test_reseeding_the_demo_audits_removes_their_parsed_text_and_candidates(api):
+    """The startup re-seed deletes the old demo audits; their deck text goes with them."""
+    import asyncio
+    import server
+    client, db = api
+    db["audits"].docs.append({"id": "old-demo", "demo": True, "seed_version": 2, "results": None})
+    for audit in ("old-demo", "audit-1"):
+        assert _upload(client, audit, "03-buffer.pptx", (DECKS / "03-buffer.pptx").read_bytes()).status_code == 200
+    asyncio.run(server.seed_demo())
+    for name in (decks.TEXT_COLLECTION, decks.CANDIDATES_COLLECTION):
+        assert {d["audit_id"] for d in db[name].docs} == {"audit-1"}
