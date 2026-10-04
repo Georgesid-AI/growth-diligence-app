@@ -10,16 +10,20 @@ import logging
 import uuid
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Literal, Optional
 
 import pandas as pd
 from pydantic import BaseModel, Field, field_validator
+from starlette.concurrency import run_in_threadpool
 
 import growth_engine as ge
 import demo_data
 from app import formatting as fmt
 from app import disclosure as disclosure_mod
 from app import narrative_export
+from app import decks
+from app.decks import claims as deck_claims
+from app.decks import parser as deck_parser
 from app.llm import gateway as llm_gateway
 
 ROOT_DIR = Path(__file__).parent
@@ -364,10 +368,14 @@ async def delete_audit(audit_id: str):
         raise HTTPException(404, "Audit not found")
     await db.audits.delete_one({"id": audit_id})
     await db.datasets.delete_many({"audit_id": audit_id})
+    # Parsed deck text and claim candidates belong to the audit and go with it.
+    deck_text = await db[decks.TEXT_COLLECTION].delete_many({"audit_id": audit_id})
+    deck_candidates = await db[decks.CANDIDATES_COLLECTION].delete_many({"audit_id": audit_id})
     # Narratives, call log and pseudonym mapping are scoped to the run and must
     # not outlive it.
     purged = await llm_gateway.purge_run(db, audit_id)
-    return {"deleted": audit_id, "llm_purged": purged}
+    return {"deleted": audit_id, "llm_purged": purged,
+            "decks_purged": {"deck_text": deck_text.deleted_count, "deck_candidates": deck_candidates.deleted_count}}
 
 
 # ---------------------------------------------------------------------------
@@ -433,6 +441,92 @@ async def save_mapping(audit_id: str, dtype: str, payload: MappingPayload):
     )
     await _mark_stale_and_maybe_recompute(audit_id)
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Board decks and growth plans: parsed text and candidate claims (docs/specs/deck-parser.md)
+# ---------------------------------------------------------------------------
+CLAIM_TYPES = ("revenue", "retention", "sales", "people", "product", "market")
+CLAIM_UNITS = ("%", "x", "months", "years", "weeks", "days", "hours")
+_TARGET_DATE = re.compile(r"^\d{4}(-(0[1-9]|1[0-2])|-Q[1-4])?$")
+
+
+class CandidateUpdate(BaseModel):
+    """Approve or reject a candidate, or edit its structured fields (an edit marks it "edited").
+    The snippet and source references are evidence and cannot be edited."""
+    status: Optional[Literal["pending", "approved", "rejected"]] = None
+    claim_type: Optional[Literal[CLAIM_TYPES]] = None
+    value: Optional[float] = None
+    unit: Optional[Literal[CLAIM_UNITS]] = None
+    currency: Optional[str] = Field(default=None, pattern=r"^[A-Z]{3}$")
+    target_date: Optional[str] = Field(default=None, pattern=_TARGET_DATE.pattern)
+
+
+_EDITABLE = ("claim_type", "value", "unit", "currency", "target_date")
+
+
+@api.post("/audits/{audit_id}/decks/upload")
+async def upload_deck(audit_id: str, file: UploadFile = File(...)):
+    if not await db.audits.find_one({"id": audit_id}, {"id": 1}):
+        raise HTTPException(404, "Audit not found")
+    content = await file.read(deck_parser.MAX_BYTES + 1)
+    try:
+        deck = await run_in_threadpool(deck_parser.parse_deck, content, file.filename or "")
+    except deck_parser.DeckError as exc:
+        raise HTTPException(400, exc.message)
+    candidates = deck_claims.detect_candidates(deck["blocks"], deck["file"])
+    deck_id = str(uuid.uuid4())
+    # A file uploaded again replaces its earlier parse and candidates.
+    for name in (decks.TEXT_COLLECTION, decks.CANDIDATES_COLLECTION):
+        await db[name].delete_many({"audit_id": audit_id, "file": deck["file"]})
+    await db[decks.TEXT_COLLECTION].insert_one({
+        "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"], "format": deck["format"],
+        "page_unit": deck["page_unit"], "pages": deck["pages"], "blocks": deck["blocks"],
+        "uploaded_at": datetime.now(timezone.utc).isoformat()})
+    for order, c in enumerate(candidates):
+        await db[decks.CANDIDATES_COLLECTION].insert_one(
+            {**c, "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"], "id": str(uuid.uuid4()),
+             "order": order, "status": "pending"})
+    return {"deck_id": deck_id, "file": deck["file"], "format": deck["format"], "page_unit": deck["page_unit"],
+            "pages": deck["pages"], "candidates": len(candidates)}
+
+
+@api.get("/audits/{audit_id}/decks")
+async def list_deck_candidates(audit_id: str):
+    """The audit's decks (no parsed text) and their candidates, in deck and reading order."""
+    if not await db.audits.find_one({"id": audit_id}, {"id": 1}):
+        raise HTTPException(404, "Audit not found")
+    deck_fields = {"_id": 0, "deck_id": 1, "file": 1, "format": 1, "page_unit": 1, "pages": 1, "uploaded_at": 1}
+    found = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, deck_fields).to_list(100)
+    found.sort(key=lambda d: d.get("uploaded_at") or "")
+    rank = {d["deck_id"]: i for i, d in enumerate(found)}
+    candidates = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0}).to_list(10000)
+    candidates.sort(key=lambda c: (rank.get(c.get("deck_id"), len(rank)), c.get("order", 0)))
+    return sanitize({"decks": found, "candidates": candidates})
+
+
+@api.put("/audits/{audit_id}/decks/candidates/{candidate_id}")
+async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateUpdate):
+    where = {"audit_id": audit_id, "id": candidate_id}
+    current = await db[decks.CANDIDATES_COLLECTION].find_one(where, {"_id": 0})
+    if not current:
+        raise HTTPException(404, "Candidate not found")
+    sent = payload.model_fields_set
+    edits = {k: getattr(payload, k) for k in _EDITABLE if k in sent}
+    if not edits and "status" not in sent:
+        raise HTTPException(400, "Nothing to change")
+    if edits and "status" in sent:
+        raise HTTPException(400, "Edit the fields or change the status, not both at once")
+    if edits:
+        changes = {**edits, "status": "edited"}
+        if "parsed" not in current:       # what the parser found stays next to the analyst's edit
+            changes["parsed"] = {k: current.get(k) for k in _EDITABLE}
+    else:
+        if payload.status is None:
+            raise HTTPException(400, "status cannot be empty")
+        changes = {"status": payload.status}
+    await db[decks.CANDIDATES_COLLECTION].update_one(where, {"$set": changes})
+    return sanitize(await db[decks.CANDIDATES_COLLECTION].find_one(where, {"_id": 0}))
 
 
 # ---------------------------------------------------------------------------

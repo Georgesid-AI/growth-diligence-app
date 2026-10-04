@@ -119,6 +119,13 @@ class FakeCollection:
         self.docs = [d for d in self.docs if not _matches(d, flt)]
         return FakeResult(deleted_count=before - len(self.docs))
 
+    async def delete_one(self, flt):
+        for i, d in enumerate(self.docs):
+            if _matches(d, flt):
+                del self.docs[i]
+                return FakeResult(deleted_count=1)
+        return FakeResult(deleted_count=0)
+
     async def count_documents(self, flt):
         return sum(1 for d in self.docs if _matches(d, flt))
 

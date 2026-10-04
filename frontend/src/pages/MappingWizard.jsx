@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { Upload, CheckCircle2, Loader2, FileSpreadsheet, Plus, X, Play, Search } from "lucide-react";
 import { Layout } from "@/components/Layout";
+import DeckPanel from "@/components/DeckPanel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -81,6 +82,7 @@ export default function MappingWizard() {
         {DTYPES.map((dt) => (
           <DatasetPanel key={dt.key} audit={audit} dtype={dt} fields={fields[dt.key]} onChange={load} />
         ))}
+        <DeckPanel auditId={audit.id} />
       </div>
     </Layout>
   );

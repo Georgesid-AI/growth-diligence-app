@@ -22,6 +22,7 @@
     or server log line). Missing or not reproducing: stop and ask. Never fix a suspected cause.
 14. What may reach the model or the logs is enforced in backend/tests/test_gateway_data_boundary.py.
     A PR that adds a results key, a reason string, a log line or a guard word extends that file.
+15. Never commit client decks or client data to the repo, including as test files.
 
 ## Finishing a task
 7. A task is finished when the change is committed and pushed. Then create
