@@ -2,7 +2,7 @@
   "about": "Hand-checked answer file for the deck parser recall test (docs/specs/deck-parser.md section 3). Drafted from the decks, starting from README.md; awaiting review before the pass mark is set.",
   "page": "Slide number for pptx, page number for pdf and docx, one-based.",
   "status": "'company claim' counts toward recall. 'not a company claim' marks a README distractor: it is listed so a reviewer can see it was considered, and never counts toward recall.",
-  "values": "value is the figure as a plain number: percentages as 15 (unit '%'), money scaled to units (€15K -> 15000, $3.6M -> 3600000). value null means the claim is a date (target_date) without a figure.",
+  "values": "value is the figure as a plain number: percentages as 15 (unit '%'), money scaled to units (€15K -> 15000, $3.6M -> 3600000). A range has value (low) and value_high. value null means the claim is a date (target_date) without a figure.",
   "target_date": "YYYY, YYYY-MM or YYYY-Qn.",
   "decks": [
     {
@@ -42,7 +42,7 @@
         {"page": 2, "status": "company claim", "claim_type": "product", "value": null, "unit": null, "currency": null, "target_date": "2007-02", "text": "SEOmoz launches its first subscription software product, “PRO” for $39/month (Feb. 2007)"},
         {"page": 2, "status": "company claim", "claim_type": "product", "value": null, "unit": null, "currency": null, "target_date": "2008-10", "text": "Linkscape, SEOmoz's web index and link graph, launches (Oct. 2008)"},
         {"page": 17, "status": "company claim", "claim_type": "market", "value": 5, "unit": "%", "currency": null, "target_date": null, "text": "We believe we've captured ~5% of this market as paying customers", "note": "market share"},
-        {"page": 20, "status": "company claim", "claim_type": "revenue", "value": 12000000, "unit": null, "currency": "USD", "target_date": "2011", "text": "2011 Estimated Revenue $12 - $13 million", "note": "range; low end listed"},
+        {"page": 20, "status": "company claim", "claim_type": "revenue", "value": 12000000, "value_high": 13000000, "unit": null, "currency": "USD", "target_date": "2011", "text": "2011 Estimated Revenue $12 - $13 million", "note": "range"},
         {"page": 20, "status": "company claim", "claim_type": "revenue", "value": 10800000, "unit": null, "currency": "USD", "target_date": null, "text": "Current Revenue Run Rate (June) ~$10.8 million"},
         {"page": 20, "status": "company claim", "claim_type": "sales", "value": 900, "unit": null, "currency": "USD", "target_date": null, "text": "Avg. Customer Lifetime Value ~$900"},
         {"page": 20, "status": "company claim", "claim_type": "retention", "value": 9, "unit": "months", "currency": null, "target_date": null, "text": "Implied Customer Life ~9 Months"},
@@ -55,7 +55,7 @@
         {"page": 35, "status": "company claim", "claim_type": "revenue", "value": 2, "unit": "x", "currency": null, "target_date": null, "text": "#3: Proven record of 2X+ growth for 4 years"},
         {"page": 2, "status": "not a company claim", "claim_type": "revenue", "value": 1100000, "unit": null, "currency": "USD", "target_date": null, "text": "SEOmoz takes an investment of $1.1M from Ignition Partners & Curious Office", "note": "funds raised"},
         {"page": 3, "status": "not a company claim", "claim_type": "revenue", "value": 1100000, "unit": null, "currency": "USD", "target_date": null, "text": "We took one round of financing in 2007; $1.1MM from Ignition + Curious Office", "note": "funds raised"},
-        {"page": 23, "status": "not a company claim", "claim_type": "revenue", "value": 20000000, "unit": null, "currency": "USD", "target_date": null, "text": "Raising: $20-$25 Million", "note": "funds raised"}
+        {"page": 23, "status": "not a company claim", "claim_type": "revenue", "value": 20000000, "value_high": 25000000, "unit": null, "currency": "USD", "target_date": null, "text": "Raising: $20-$25 Million", "note": "funds raised"}
       ]
     },
     {

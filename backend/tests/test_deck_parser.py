@@ -59,6 +59,11 @@ def _pdf(pages: int) -> bytes:
     return buf.getvalue()
 
 
+def _has(blocks, **fields):
+    """A block with these fields (it may also carry layout fields: box, bbox, title)."""
+    return any(all(b.get(k) == v for k, v in fields.items()) for b in blocks)
+
+
 def _by_value(candidates, value):
     return [c for c in candidates if c["value"] == value]
 
@@ -75,9 +80,9 @@ def test_pptx_text_boxes_groups_tables_and_notes_keep_their_slide():
     )
     deck = parser.parse_deck(content, "board.pptx")
     assert (deck["format"], deck["page_unit"], deck["pages"]) == ("pptx", "slide", 3)
-    assert {"slide": 1, "kind": "text", "text": "Churn is 5%"} in deck["blocks"], "text inside a group shape"
-    assert {"slide": 2, "kind": "notes", "text": "Team grows to 40 hires in 2025"} in deck["blocks"]
-    assert {"slide": 2, "kind": "table", "table": 1, "row": 2, "col": 3, "text": "$2.5M"} in deck["blocks"]
+    assert _has(deck["blocks"], slide=1, kind="text", text="Churn is 5%"), "text inside a group shape"
+    assert _has(deck["blocks"], slide=2, kind="notes", text="Team grows to 40 hires in 2025")
+    assert _has(deck["blocks"], slide=2, kind="table", table=1, row=2, col=3, text="$2.5M")
 
     found = claims.detect_candidates(deck["blocks"], "board.pptx")
     arr, = _by_value(found, 3600000)
@@ -88,7 +93,7 @@ def test_pptx_text_boxes_groups_tables_and_notes_keep_their_slide():
     assert (churn["claim_type"], churn["unit"]) == ("retention", "%")
     revenue, = _by_value(found, 2500000)
     assert revenue["sources"] == [{"file": "board.pptx", "slide": 2, "kind": "table", "table": 1, "row": 2, "col": 3}]
-    assert revenue["snippet"] == "Revenue | $1.2M | $2.5M"
+    assert revenue["snippet"] == "Revenue | $1.2M | $2.5M … 2024" and revenue["target_date"] == "2024", "column header date"
     hires, = _by_value(found, 40)
     assert hires["claim_type"] == "people" and hires["target_date"] == "2025"
     assert hires["sources"] == [{"file": "board.pptx", "slide": 2, "kind": "notes"}]
@@ -111,9 +116,9 @@ def test_docx_pages_follow_page_breaks_and_new_page_sections():
 
     deck = parser.parse_deck(buf.getvalue(), "plan.docx")
     assert deck["pages"] == 3
-    assert {"page": 2, "kind": "text", "text": "Revenue was €2M in 2023"} in deck["blocks"]
-    assert {"page": 3, "kind": "table", "table": 1, "row": 2, "col": 2, "text": "4%"} in deck["blocks"]
-    assert {"page": 3, "kind": "text", "text": "Headcount 25 by March 2026"} in deck["blocks"]
+    assert _has(deck["blocks"], page=2, kind="text", text="Revenue was €2M in 2023")
+    assert _has(deck["blocks"], page=3, kind="table", table=1, row=2, col=2, text="4%")
+    assert _has(deck["blocks"], page=3, kind="text", text="Headcount 25 by March 2026")
     found = claims.detect_candidates(deck["blocks"], "plan.docx")
     churn, = _by_value(found, 4)
     assert churn["sources"] == [{"file": "plan.docx", "page": 3, "kind": "table", "table": 1, "row": 2, "col": 2}]
@@ -276,7 +281,7 @@ def test_upload_stores_parsed_text_and_candidates_linked_to_the_audit(api):
     assert r.json()["pages"] == 13 and r.json()["candidates"] > 0
     stored, = db[decks.TEXT_COLLECTION].docs
     assert stored["audit_id"] == "audit-1"
-    assert {"slide": 5, "kind": "text", "text": "$150,000 annual revenue run rate"} in stored["blocks"]
+    assert _has(stored["blocks"], slide=5, kind="text", text="$150,000 annual revenue run rate")
     assert all(c["audit_id"] == "audit-1" and c["status"] == "pending" for c in db[decks.CANDIDATES_COLLECTION].docs)
 
     listed = client.get("/api/audits/audit-1/decks").json()
@@ -307,11 +312,13 @@ def test_approve_reject_and_edit_a_candidate(api):
     assert client.put(url.format(first["id"]), json={"status": "approved"}).json()["status"] == "approved"
     assert client.put(url.format(first["id"]), json={"status": "rejected"}).json()["status"] == "rejected"
 
-    before = {k: second[k] for k in ("claim_type", "value", "unit", "currency", "target_date")}
+    before = {k: second[k] for k in ("claim_type", "value", "value_high", "unit", "currency", "target_date")}
     edited = client.put(url.format(second["id"]), json={"claim_type": "sales", "value": 42, "unit": None}).json()
     assert edited["status"] == "edited" and (edited["claim_type"], edited["value"], edited["unit"]) == ("sales", 42, None)
     assert edited["parsed"] == before, "what the parser found is kept next to the edit"
     assert edited["snippet"] == second["snippet"] and edited["sources"] == second["sources"]
+    ranged = client.put(url.format(second["id"]), json={"value": 12000000, "value_high": 13000000}).json()
+    assert (ranged["value"], ranged["value_high"], ranged["parsed"]) == (12000000, 13000000, before)
 
     assert client.put(url.format(second["id"]), json={"snippet": "typed"}).status_code == 400, "evidence is not editable"
     assert client.put(url.format(second["id"]), json={"status": "approved", "value": 1}).status_code == 400
@@ -342,3 +349,157 @@ def test_reseeding_the_demo_audits_removes_their_parsed_text_and_candidates(api)
     asyncio.run(server.seed_demo())
     for name in (decks.TEXT_COLLECTION, decks.CANDIDATES_COLLECTION):
         assert {d["audit_id"] for d in db[name].docs} == {"audit-1"}
+
+
+# ---------------------------------------------------------------------------
+# Borrowing a keyword and a date from nearby text (spec section 2)
+# ---------------------------------------------------------------------------
+def _slide(boxes, title=None, table=None) -> bytes:
+    """One slide. boxes: [(text, left_in, top_in)]; table: (rows, left_in, top_in)."""
+    from pptx.util import Inches
+    prs = pptx.Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[5 if title else 6])
+    if title:
+        slide.shapes.title.text = title
+    for text, left, top in boxes:
+        slide.shapes.add_textbox(Inches(left), Inches(top), Inches(2), Inches(0.5)).text_frame.text = text
+    if table:
+        rows, left, top = table
+        grid = slide.shapes.add_table(len(rows), len(rows[0]), Inches(left), Inches(top), Inches(4), Inches(1)).table
+        for r, row in enumerate(rows):
+            for c, text in enumerate(row):
+                grid.cell(r, c).text = text
+    buf = io.BytesIO()
+    prs.save(buf)
+    return buf.getvalue()
+
+
+def _found(content, name="deck.pptx"):
+    deck = parser.parse_deck(content, name)
+    return claims.detect_candidates(deck["blocks"], name)
+
+
+def test_a_figure_borrows_its_label_from_the_same_text_box():
+    found = _found(_slide([("Gross churn\n4.5%", 1, 2)]))
+    churn, = _by_value(found, 4.5)
+    assert churn["claim_type"] == "retention" and churn["snippet"] == "Gross churn … 4.5%"
+    assert churn["sources"] == [{"file": "deck.pptx", "slide": 1, "kind": "text"}], "the figure's own line is cited"
+
+
+def test_a_figure_borrows_its_label_and_date_from_the_table_column_header():
+    found = _found(_slide([], table=([["Year", "ARR"], ["2024", "$3M"], ["2025", "$5M"]], 1, 2)))
+    arr, = _by_value(found, 5000000)
+    assert (arr["claim_type"], arr["target_date"]) == ("revenue", "2025")
+    found = _found(_slide([], table=([["Metric", "2024", "2025"], ["Pipeline", "$1M", "$2M"]], 1, 2)))
+    assert [(c["value"], c["claim_type"], c["target_date"]) for c in found if c["value"]] == \
+        [(1000000, "sales", "2024"), (2000000, "sales", "2025")]
+
+
+def test_a_figure_borrows_by_position_from_the_same_row_or_above_never_below():
+    beside = _found(_slide([("Gross churn", 1, 3), ("6%", 3.5, 3)]))
+    assert [(c["value"], c["claim_type"]) for c in beside] == [(6, "retention")]
+    above = _found(_slide([("Gross churn", 1, 3), ("6%", 1, 3.6)]))
+    assert [(c["value"], c["claim_type"]) for c in above] == [(6, "retention")]
+    below = _found(_slide([("6%", 1, 3), ("Gross churn", 1, 3.6)]))
+    assert below == []
+    too_far = _found(_slide([("Gross churn", 0.2, 0.2), ("6%", 8, 6.5)]))
+    assert too_far == [], f"beyond REACH ({claims.REACH} of the slide)"
+
+
+def test_a_figure_borrows_the_slide_title_last():
+    found = _found(_slide([("$4.2M", 8, 6.5)], title="Pipeline coverage"))
+    pipeline, = _by_value(found, 4200000)
+    assert pipeline["claim_type"] == "sales" and pipeline["snippet"] == "Pipeline coverage … $4.2M"
+    nearer = _found(_slide([("Win rate", 7, 6.5), ("31%", 8.5, 6.5)], title="Pipeline coverage"))
+    assert [c["claim_type"] for c in _by_value(nearer, 31)] == ["sales"]
+    assert "Win rate" in _by_value(nearer, 31)[0]["snippet"], "the nearest label wins over the title"
+
+
+def test_a_product_line_without_a_figure_takes_a_nearby_date():
+    found = _found(_slide([("Launch the API\nOctober 2026", 1, 2)]))
+    api, = found
+    assert (api["claim_type"], api["value"], api["target_date"]) == ("product", None, "2026-10")
+    assert api["snippet"] == "Launch the API … October 2026"
+    assert _found(_slide([("Hire a CFO\nOctober 2026", 1, 2)])) == [
+        {**api, "snippet": "October 2026"}], "a line without a figure counts only when it is a product line"
+
+
+def test_a_roadmap_bullet_takes_the_quarter_beside_it():
+    file = "10-tea.pdf"
+    found = claims.detect_candidates(parser.parse_deck((DECKS / file).read_bytes(), file)["blocks"], file)
+    gluon = [c for c in found if "Gluon wallet … 2021 Q2" in c["snippet"]]
+    assert [(c["claim_type"], c["value"], c["target_date"]) for c in gluon] == [("product", None, "2021-Q2")]
+    assert [s["page"] for s in gluon[0]["sources"]] == [11]
+
+
+def test_a_pdf_value_borrows_the_label_on_its_row():
+    file = "02-moz.pdf"
+    found = claims.detect_candidates(parser.parse_deck((DECKS / file).read_bytes(), file)["blocks"], file)
+    cac, = [c for c in _by_value(found, 100) if c["currency"] == "USD"]
+    assert cac["claim_type"] == "sales" and cac["snippet"].startswith("Avg. Cost of Paid Acquisition … ~$100")
+
+
+@pytest.mark.parametrize("text, family", [
+    ("Turnover £49,284", "revenue"), ("Avg. Customer Lifetime Value ~$900", "sales"), ("LTV $240", "sales"),
+    ("Implied Customer Life ~9 Months", "retention"), ("% of Free Trials Converting to Paid ~57%", "sales"),
+    ("30% of our leads come via referrals", "sales"), ("This covers 50% of entire US market", "market"),
+    ("Recruit 3 engineers", "people"), ("Low attrition: 0", "people"), ("Ship v2 to 40 customers", "product"),
+    ("Milestone 3 reached", "product"),
+])
+def test_added_keywords(text, family):
+    assert _line(text)[0]["claim_type"] == family
+
+
+@pytest.mark.parametrize("text", ["Marketing spend is 20% of budget", "30% of marketplace transactions"])
+def test_market_is_a_whole_word(text):
+    assert _line(text) == []
+
+
+@pytest.mark.parametrize("text, low, high, unit, currency", [
+    ("2011 Estimated Revenue $12 - $13 million", 12000000, 13000000, None, "USD"),
+    ("Churn of 5-10%", 5, 10, "%", None),
+    ("Team grows from 40 to 100", 40, 100, None, None),
+])
+def test_a_range_is_one_candidate_with_low_and_high(text, low, high, unit, currency):
+    c, = _line(text)
+    assert (c["value"], c["value_high"], c["unit"], c["currency"]) == (low, high, unit, currency)
+
+
+# ---------------------------------------------------------------------------
+# Unpack cap for zip-based formats (spec section 1)
+# ---------------------------------------------------------------------------
+def _zip(parts=1, unpacked=0) -> bytes:
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as z:
+        for i in range(parts):
+            z.writestr(f"ppt/part{i}.xml", b"")
+        if unpacked:
+            with z.open("ppt/big.xml", "w", force_zip64=True) as f:
+                chunk = b"\0" * (1 << 20)
+                for _ in range(unpacked // len(chunk)):
+                    f.write(chunk)
+    return buf.getvalue()
+
+
+@pytest.mark.parametrize("name", ["deck.pptx", "plan.docx"])
+def test_a_zip_that_unpacks_too_far_is_refused_before_it_is_opened(name):
+    assert parser.MAX_UNPACKED_BYTES == 250 * 1024 * 1024 and parser.MAX_PARTS == 5000
+    big = _zip(unpacked=251 * 1024 * 1024)
+    assert len(big) < 2 * 1024 * 1024, "small on disk, large unpacked"
+    with pytest.raises(parser.DeckError) as err:
+        parser.parse_deck(big, name)
+    assert err.value.message == ("This file unpacks to more than 250 MB. We read files that unpack to 250 MB or less. "
+                                 "Please save a copy with fewer or smaller pictures and upload it again.")
+    with pytest.raises(parser.DeckError) as err:
+        parser.parse_deck(_zip(parts=5001), name)
+    assert err.value.message == ("This file holds more than 5,000 parts. We read files with up to 5,000 parts. "
+                                 "Please save a simpler copy and upload it again.")
+
+
+def test_a_zip_at_the_limits_is_opened():
+    """5,000 parts and 250 MB pass the cap; this zip then fails as not a real deck."""
+    for content in (_zip(parts=5000), _zip(unpacked=250 * 1024 * 1024)):
+        with pytest.raises(parser.DeckError) as err:
+            parser.parse_deck(content, "deck.pptx")
+        assert err.value.message == parser.UNREADABLE.format(kind="PowerPoint")

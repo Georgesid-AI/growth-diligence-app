@@ -32,10 +32,14 @@ export function sourceRef(ref) {
   return parts.join(" · ");
 }
 
-/** "3,600,000 USD", "15%", "4.9x", "24 months", "2.5"; "—" for a date-only claim. */
+const figure = (v) => Number(v).toLocaleString("en-US", { maximumFractionDigits: 2 });
+const present = (v) => v !== null && v !== undefined && Number.isFinite(Number(v));
+
+/** "3,600,000 USD", "15%", "4.9x", "24 months", "2.5", "12,000,000–13,000,000 USD" for a range;
+ *  "—" for a date-only claim. */
 export function claimValue(c) {
-  if (c?.value === null || c?.value === undefined || !Number.isFinite(Number(c.value))) return PLACEHOLDER;
-  const n = Number(c.value).toLocaleString("en-US", { maximumFractionDigits: 2 });
+  if (!present(c?.value)) return PLACEHOLDER;
+  const n = present(c.value_high) ? `${figure(c.value)}–${figure(c.value_high)}` : figure(c.value);
   if (c.unit === "%") return `${n}%`;
   if (c.unit === "x") return `${n}x`;
   if (c.unit) return `${n} ${c.unit}`;

@@ -3,8 +3,9 @@
 Ten public decks in tests/fixtures/decks/decks/ and a hand-checked answer file,
 tests/fixtures/decks/expected_claims.json. A listed company claim is found when a candidate
 from the same deck cites its slide or page and has the same value (a percentage matches only
-a percentage); a claim listed without a value is found by its target date. Claims marked
-"not a company claim" never count toward recall.
+a percentage). A listed range needs both ends; a single listed figure is also found at either
+end of a candidate range ("from 40-100": 40 today, 100 in two years). A claim listed without a
+value is found by its target date. Claims marked "not a company claim" never count toward recall.
 
 Precision - the share of candidates that are a listed company claim - is reported, never
 asserted. To see the report: pytest tests/test_deck_recall.py -rP
@@ -45,8 +46,12 @@ def matches(candidate, claim) -> bool:
         return False
     if claim["value"] is None:
         return candidate["target_date"] == claim["target_date"]
-    return (candidate["value"] is not None and math.isclose(candidate["value"], claim["value"], rel_tol=1e-9)
-            and (candidate["unit"] == "%") == (claim["unit"] == "%"))
+    if (candidate["unit"] == "%") != (claim["unit"] == "%"):
+        return False
+    same = lambda a, b: a is not None and b is not None and math.isclose(a, b, rel_tol=1e-9)  # noqa: E731
+    if claim.get("value_high") is not None:
+        return same(candidate["value"], claim["value"]) and same(candidate.get("value_high"), claim["value_high"])
+    return same(candidate["value"], claim["value"]) or same(candidate.get("value_high"), claim["value"])
 
 
 @pytest.fixture(scope="module")
@@ -63,6 +68,8 @@ def test_the_test_set_is_the_ten_listed_decks_under_25_mb():
     listed = [d["file"] for d in _expected()]
     assert on_disk == set(listed) and len(listed) == 10
     assert Counter(d["format"] for d in _expected()) == {"pdf": 6, "pptx": 2, "docx": 2}
+    manifest = json.loads((FIXTURES / "manifest.json").read_text(encoding="utf-8"))["decks"]
+    assert {(d["file"], d["format"]) for d in manifest} == {(f"decks/{d['file']}", d["format"]) for d in _expected()}
     assert sum(p.stat().st_size for p in FIXTURES.rglob("*") if p.is_file()) < 25 * 1024 * 1024
 
 
@@ -71,6 +78,7 @@ def test_answer_file_is_well_formed():
         for claim in deck["claims"]:
             assert claim["status"] in (COMPANY, "not a company claim"), claim
             assert claim["value"] is not None or claim["target_date"], f"{deck['file']}: nothing to match on: {claim}"
+            assert claim.get("value_high") is None or claim["value_high"] > claim["value"], claim
             assert claim["claim_type"] in ("revenue", "retention", "sales", "people", "product", "market"), claim
 
 

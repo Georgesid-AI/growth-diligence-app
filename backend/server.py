@@ -457,12 +457,13 @@ class CandidateUpdate(BaseModel):
     status: Optional[Literal["pending", "approved", "rejected"]] = None
     claim_type: Optional[Literal[CLAIM_TYPES]] = None
     value: Optional[float] = None
+    value_high: Optional[float] = None          # the high end of a range
     unit: Optional[Literal[CLAIM_UNITS]] = None
     currency: Optional[str] = Field(default=None, pattern=r"^[A-Z]{3}$")
     target_date: Optional[str] = Field(default=None, pattern=_TARGET_DATE.pattern)
 
 
-_EDITABLE = ("claim_type", "value", "unit", "currency", "target_date")
+_EDITABLE = ("claim_type", "value", "value_high", "unit", "currency", "target_date")
 
 
 @api.post("/audits/{audit_id}/decks/upload")

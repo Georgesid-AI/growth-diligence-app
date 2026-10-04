@@ -18,6 +18,8 @@ describe("claim value", () => {
     expect(claimValue({ value: 24, unit: "months" })).toBe("24 months");
     expect(claimValue({ value: 2.5 })).toBe("2.5");
     expect(claimValue({ value: null, target_date: "2021-Q3" })).toBe("—");
+    expect(claimValue({ value: 12000000, value_high: 13000000, currency: "USD" })).toBe("12,000,000–13,000,000 USD");
+    expect(claimValue({ value: 5, value_high: 10, unit: "%" })).toBe("5–10%");
   });
 });
 

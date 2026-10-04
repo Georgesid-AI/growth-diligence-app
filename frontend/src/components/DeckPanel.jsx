@@ -117,12 +117,13 @@ export default function DeckPanel({ auditId }) {
 function CandidateRow({ candidate: c, onSave }) {
   const [draft, setDraft] = useState(null);
   const startEdit = () => setDraft({
-    claim_type: c.claim_type, value: c.value ?? "", unit: c.unit ?? "", currency: c.currency ?? "", target_date: c.target_date ?? "",
+    claim_type: c.claim_type, value: c.value ?? "", value_high: c.value_high ?? "", unit: c.unit ?? "", currency: c.currency ?? "", target_date: c.target_date ?? "",
   });
   const saveEdit = async () => {
     const payload = {
       claim_type: draft.claim_type,
       value: draft.value === "" ? null : Number(draft.value),
+      value_high: draft.value_high === "" ? null : Number(draft.value_high),
       unit: draft.unit || null,
       currency: draft.currency.trim() ? draft.currency.trim().toUpperCase() : null,
       target_date: draft.target_date.trim() || null,
@@ -143,6 +144,7 @@ function CandidateRow({ candidate: c, onSave }) {
           <td className="py-2 pr-3">
             <div className="flex gap-1">
               <Input value={draft.value} onChange={set("value")} type="number" className="h-8 w-28 text-xs font-mono" data-testid="edit-value" />
+              <Input value={draft.value_high} onChange={set("value_high")} type="number" placeholder="to (range)" className="h-8 w-28 text-xs font-mono" data-testid="edit-value-high" />
               <select value={draft.unit} onChange={set("unit")} className={selectClass} data-testid="edit-unit">
                 <option value="">no unit</option>
                 {CLAIM_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}

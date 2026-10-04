@@ -25,16 +25,32 @@ If a file has no readable text, show: "No readable text found in this file. It m
 - pptx: read text boxes, tables and speaker notes. Mark notes as "notes".
 - Tables: keep row and column so the source can be cited.
 - Limits: max 50 MB per file, max 200 slides/pages. Reject larger files with a clear message.
+- Unpack cap (.pptx, .docx are zip files): reject a file that unpacks to more than 250 MB or
+  holds more than 5,000 parts, with a clear message, before it is opened.
+- Layout kept for section 2: each line keeps its text box (pptx, docx text boxes; a stack of
+  lines in a pdf), its position on the slide or page (pptx, pdf) and whether it is the slide
+  title (pptx) or the topmost text of the page (pdf).
 
-## 2. Candidate claim detection (Python only, no LLM)
-A text line is a candidate if it holds a number AND a claim keyword:
-- Growth and revenue: ARR, MRR, revenue, growth, CAGR, bookings
-- Retention: NRR, churn, retention
-- Sales: sales cycle, win rate, pipeline, ACV, CAC, payback
-- People: hires, headcount, team
-- Product: launch, release, roadmap, Q1–Q4, month names
-- Market: TAM, SAM, SOM, market size
-Each candidate stores: claim type, value, unit, currency, target date (if any), source reference, short snippet (max 300 characters).
+## 2. Candidate claim detection (Python only, no LLM, rule-based)
+A figure (a number, or a date) is a candidate if it has a claim keyword: in its own text line,
+or borrowed from nearby text when its line has none.
+Keywords (a keyword also matches its plural and verb forms: revenues, growing, hired, launches):
+- Growth and revenue: ARR, MRR, revenue, growth, CAGR, bookings, turnover
+- Retention: NRR, churn, retention, customer life
+- Sales: sales cycle, win rate, pipeline, ACV, CAC, payback, LTV, lifetime value, acquisition,
+  conversion, leads
+- People: hires, headcount, team, recruitment, attrition
+- Product: launch, release, roadmap, ship, milestone, Q1–Q4, month names
+- Market: TAM, SAM, SOM, market (whole word, which includes market size)
+Borrowing: a figure without a keyword or a date in its own line takes them from nearby text,
+first match wins: the table column header, the other lines of its text box (nearest first),
+the text on the same row or above it, never below, within a quarter of the slide or page
+(nearest first), the slide title. The borrowed text is shown in the snippet. A month or
+quarter is preferred over a bare year.
+A line with no figure becomes a candidate only if it is a product line (launch, release, ship,
+roadmap or milestone, its own or borrowed) and it can borrow a date: a roadmap bullet.
+Each candidate stores: claim type, value (low and high for a range), unit, currency, target
+date (if any), source reference, short snippet (max 300 characters).
 Duplicates across slides are merged and keep all source references.
 
 ## 3. Recall test
