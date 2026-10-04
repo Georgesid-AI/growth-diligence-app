@@ -3,15 +3,24 @@
 Each figure becomes one candidate:
 
     {"claim_type": "revenue", "value": 3600000, "value_high": None, "unit": None, "currency": "USD",
-     "target_date": "2013-01", "snippet": "...", "sources": [{"file": ..., "slide": 6, "kind": "text"}]}
+     "target_date": "2013-01", "snippet": "<the figure's own line>", "label_from": None, "date_from": None,
+     "sources": [{"file": ..., "slide": 6, "kind": "text"}]}
+
+The type is the family of the nearest keyword in the figure's own line. A growth word gives a
+rate (% or x) its type from the noun on the same line: revenue -> revenue_growth, users ->
+user_growth, none or another noun -> growth. Beside a growth word, an amount or a count takes
+the noun's own type ("ARR grew to $3.6M" is revenue). A count ("1.5 million updates") whose line has no keyword is usage,
+with the counted noun as its unit; a count of a keyword noun keeps it ("800 paying users").
 
 A line is a parser text line; a table row is one line, and each figure keeps the row and
 column of its own cell. A range ("$12 - $13 million") is one figure with a low and a high value.
 
-A figure takes the keyword and the date of its own line. When its line has none, it borrows
-them from nearby text, first match wins: the table column header, the other lines of its text
-box (nearest first), the boxes on the same row or above it within REACH (nearest first), the
-slide or page title. The borrowed text goes into the snippet, so the analyst sees the label.
+A figure takes the keyword and the date of its own line. A line with its own keyword never
+borrows a label. When it has none, the figure borrows one from nearby text, first match wins:
+the table column header, the other lines of its text box (nearest first), the boxes on the same
+row or above it within REACH (nearest first), the slide or page title. A missing date is
+borrowed the same way. The snippet stays the figure's own line; the borrowed text is kept in
+"label_from" and "date_from", so the analyst sees where the type and the date came from.
 
 A line whose only figures are dates gives one candidate per date (value None): a launch month,
 a roadmap quarter. A line with no figure at all gives one when it is a product line (its own
@@ -26,18 +35,23 @@ from typing import Dict, Iterable, List, Optional, Tuple
 SNIPPET_MAX = 300
 # How far a figure looks for a label or a date by position, as a share of the slide or page.
 REACH = 0.25
-_LABEL_MAX = 100
+_LABEL_MAX = SNIPPET_MAX
 
 # Keyword families (spec section 2). A keyword matches its plural and verb forms: "revenues",
 # "growing", "hired", "launches". Acronyms match in capitals only, so "Sam" or "arr" do not count.
 # "market" is a whole word: "marketing" and "marketplace" do not count.
+# Where two keywords overlap, the longer one counts: "paying users" is customers, not users;
+# "customer lifetime value" is sales, not customers.
 _FAMILIES = [
-    ("revenue", r"\b(?:ARR|MRR|CAGR)\b|(?i:\brevenues?\b|\bgrowth\b|\bgr(?:ow|ows|owing|own|ew)\b|\bbookings?\b"
-                r"|\bturnover\b)"),
+    ("growth", r"\bCAGR\b|(?i:\bgrowth\b|\bgr(?:ow|ows|owing|own|ew)\b)"),
+    ("revenue", r"\b(?:ARR|MRR)\b|(?i:\brevenues?\b|\bbookings?\b|\bturnover\b)"),
     ("retention", r"\bNRR\b|(?i:\bchurn(?:s|ed|ing)?\b|\bretention\b|\bretain(?:s|ed|ing)?\b|\bcustomer life\b)"),
     ("sales", r"\b(?:ACV|CAC|LTV)s?\b|(?i:\bsales cycles?\b|\bwin rates?\b|\bpipelines?\b|\bpayback\b"
-              r"|\blifetime value\b|\bacqui(?:re|res|red|ring|sition)\b|\bconver(?:t|ts|ted|ting|sion|sions)\b"
+              r"|\b(?:customer )?lifetime value\b|\bacqui(?:re|res|red|ring|sition)\b|\bconver(?:t|ts|ted|ting|sion|sions)\b"
               r"|\bleads\b)"),
+    ("customers", r"(?i:\bcustomers?\b|\bclients?\b|\bpaying users?\b|\baccounts?\b)"),
+    ("users", r"(?i:\busers?\b)"),
+    ("gross_margin", r"(?i:\bmargins?\b)"),
     ("people", r"(?i:\bhir(?:e|es|ed|ing)\b|\bheadcounts?\b|\bteams?\b|\brecruit(?:s|ed|ing|ment)?\b"
                r"|\battrition\b)"),
     ("product", r"(?i:\blaunch(?:es|ed|ing)?\b|\breleas(?:e|es|ed|ing)\b|\broadmaps?\b|\bship(?:s|ped|ping)?\b"
@@ -45,6 +59,14 @@ _FAMILIES = [
     ("market", r"\b(?:TAM|SAM|SOM)\b|(?i:\bmarkets?\b)"),
 ]
 _KEYWORDS = [(family, re.compile(rx)) for family, rx in _FAMILIES]
+_NOUN_KEYWORDS = [(family, rx) for family, rx in _KEYWORDS if family in ("customers", "users")]
+_GROWTH_OF = {"revenue": "revenue_growth", "users": "user_growth"}
+CLAIM_TYPES = ("revenue", "revenue_growth", "growth", "retention", "sales", "customers", "users", "user_growth",
+               "gross_margin", "usage", "people", "product", "market")
+# Words after a number that are not the thing counted: "20 of them", "5 per month".
+_NOT_NOUNS = frozenset("""a an and are as at be by each for from has have in into is it its more of on or our
+over per than that the this to under up was we were with""".split())
+_COUNTED = re.compile(r"\s+(?P<noun>[A-Za-z][A-Za-z'’-]*)")
 
 # Date words (Q1-Q4 and month names) are product keywords and also give the target date.
 _MONTHS = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6, "jul": 7, "aug": 8, "sep": 9,
@@ -122,12 +144,16 @@ def find_numbers(line: str, dates: List[Dict]) -> List[Dict]:
             if suffix:
                 cur, end = suffix.group("cur"), suffix.end()
         unit = "%" if g["pct"] else "x" if g["x"] else None
+        count = False
         if unit is None:
             time = _TIME_UNIT.match(line, end)
             if time:
                 unit = time.group("unit").lower().rstrip("s") + "s"
+        if unit is None and not cur:
+            unit, count = _counted(line, end)
         out.append({"start": m.start(), "pos": num_start, "end": end, "num": float(g["num"].replace(",", "")),
-                    "mult": mult, "currency": _CURRENCY.get(cur.strip()) if cur else None, "unit": unit})
+                    "mult": mult, "currency": _CURRENCY.get(cur.strip()) if cur else None, "unit": unit,
+                    "count": count})
     for n in out:
         n["value"], n["value_high"] = _scaled(n["num"], n["mult"]), None
     # A range is one figure: "$12 - $13 million", "5-10%", "from 40 to 100". The low end takes
@@ -139,11 +165,24 @@ def find_numbers(line: str, dates: List[Dict]) -> List[Dict]:
             low["value"] = _scaled(low["num"], low["mult"] or n["mult"])
             low["value_high"] = n["value"]
             low["unit"] = low["unit"] or n["unit"]
+            low["count"] = low["count"] or n["count"]
             low["currency"] = low["currency"] or n["currency"]
             low["end"] = n["end"]
         else:
             ranged.append(n)
     return ranged
+
+
+def _counted(line: str, end: int) -> Tuple[Optional[str], bool]:
+    """(noun, True) when the figure counts something: "800 paying users", "1.5 million updates"."""
+    m = _COUNTED.match(line, end)
+    if not m or m.group("noun").lower() in _NOT_NOUNS:
+        return None, False
+    for _, rx in _NOUN_KEYWORDS:
+        k = rx.match(line, m.start("noun"))
+        if k:
+            return k.group(0).lower(), True
+    return m.group("noun").lower(), True
 
 
 def _scaled(num: float, mult: Optional[str]):
@@ -152,9 +191,26 @@ def _scaled(num: float, mult: Optional[str]):
 
 
 def _keywords(line: str) -> List[Dict]:
-    """Claim keywords, not counting the date words (Q1-Q4, month names)."""
-    return [{"start": m.start(), "end": m.end(), "family": family}
-            for family, rx in _KEYWORDS for m in rx.finditer(line)]
+    """Claim keywords, not counting the date words (Q1-Q4, month names). Of two overlapping
+    keywords the longer one stays."""
+    found = sorted(({"start": m.start(), "end": m.end(), "family": family}
+                    for family, rx in _KEYWORDS for m in rx.finditer(line)), key=lambda k: k["start"] - k["end"])
+    kept = []
+    for k in found:
+        if not any(k["start"] < o["end"] and o["start"] < k["end"] for o in kept):
+            kept.append(k)
+    return sorted(kept, key=lambda k: k["start"])
+
+
+def _type(keyword: Dict, keywords: List[Dict], unit: Optional[str] = "%") -> str:
+    """A keyword's claim type. A growth word types a rate by the nearest revenue, users or
+    customers noun; an amount or a count beside it takes that noun's own type."""
+    if keyword["family"] != "growth":
+        return keyword["family"]
+    noun = _nearest([k for k in keywords if k["family"] in ("revenue", "users", "customers")], keyword)
+    if unit in ("%", "x"):
+        return _GROWTH_OF.get(noun["family"], "growth") if noun else "growth"
+    return noun["family"] if noun else "growth"
 
 
 def _distance(a: Dict, b: Dict) -> int:
@@ -181,7 +237,7 @@ def _borrow_keyword(texts: Iterable[str]) -> Optional[Tuple[str, str]]:
     for text in texts:
         found = _keywords(text)
         if found:
-            return min(found, key=lambda k: k["start"])["family"], text
+            return _type(found[0], found), text
     return None
 
 
@@ -209,20 +265,21 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
     def ref_at(pos: int) -> Dict:
         return next((r for s, e, r in refs if s <= pos < e), refs[0][2])
 
-    def claim(pos, family, value=None, high=None, unit=None, currency=None, date=None, before=None, after=None):
-        text = " … ".join(t for t in (before and _label(before), line, after and _label(after)) if t)
-        offset = len(_label(before)) + 3 if before else 0
+    def claim(pos, family, value=None, high=None, unit=None, currency=None, date=None, label=None, date_from=None):
         return {"claim_type": family, "value": value, "value_high": high, "unit": unit, "currency": currency,
-                "target_date": date, "snippet": _snippet(text, pos + offset), "sources": [ref_at(pos)]}
+                "target_date": date, "snippet": _snippet(line, pos), "label_from": label and _label(label),
+                "date_from": date_from and date_from != label and _label(date_from) or None, "sources": [ref_at(pos)]}
 
     out = []
     for n in numbers:
         own = _nearest(keywords, n)
         header = headers.get(ref_at(n["pos"]).get("col"))
         nearby = [header] if header else []
-        borrowed = None if own else _borrow_keyword(nearby + context)
+        borrowed = None if own or n["count"] else _borrow_keyword(nearby + context)
         if own:
-            family = own["family"]
+            family = _type(own, keywords, n["unit"])
+        elif n["count"]:
+            family = "usage"
         elif borrowed:
             family = borrowed[0]
         elif date_words:
@@ -233,7 +290,7 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
         date = None if own_date else _borrow_date(nearby + context)
         out.append(claim(n["pos"], family, n["value"], n["value_high"], n["unit"], n["currency"],
                          own_date["date"] if own_date else date and date[0],
-                         before=borrowed and borrowed[1], after=date and date[1] != (borrowed or [None, None])[1] and date[1]))
+                         label=borrowed and borrowed[1], date_from=date and date[1]))
     if numbers:
         return out
     if dates:
@@ -243,7 +300,7 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
             borrowed = _borrow_keyword(context)
             if not borrowed or all(d["kind"] == "year" for d in dates):
                 return []
-        return [claim(d["start"], (_nearest(keywords, d) or {"family": "product"})["family"], date=d["date"])
+        return [claim(d["start"], _type(_nearest(keywords, d), keywords) if keywords else "product", date=d["date"])
                 for d in dates if d["kind"] != "year" or keywords]
     # No figure at all: a product line ("Launch the API", a roadmap bullet) takes a nearby date.
     own = _nearest(keywords, {"start": 0, "end": len(line)})
@@ -253,8 +310,7 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
     date = _borrow_date(context)
     if not date:
         return []
-    return [claim(0, "product", date=date[0], before=borrowed and borrowed[1],
-                  after=date[1] != (borrowed or [None, None])[1] and date[1])]
+    return [claim(0, "product", date=date[0], label=borrowed and borrowed[1], date_from=date[1])]
 
 
 # ---------------------------------------------------------------------------

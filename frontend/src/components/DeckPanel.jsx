@@ -5,8 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { getDecks, updateCandidate, uploadDeck } from "@/lib/api";
 import {
-  CLAIM_TYPES, CLAIM_UNITS, DECK_ACCEPT, DECK_SCOPE_CANNOT, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, PLACEHOLDER,
-  STATUS_LABELS, claimValue, sourceRef, statusCounts,
+  CLAIM_TYPES, CLAIM_UNITS, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
+  DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, PLACEHOLDER, STATUS_LABELS, claimValue, sourceRef, statusCounts, typeLabel,
 } from "@/lib/deckClaims";
 
 const STATUS_STYLE = {
@@ -90,17 +90,21 @@ export default function DeckPanel({ auditId }) {
 
       {data.candidates.length > 0 && (
         <div className="mt-5 pt-5 border-t border-[#E5E7EB]" data-testid="deck-candidates">
-          <div className="text-xs text-slate-700 mb-3">
-            Candidate claims <span className="text-slate-500 font-mono">· {counts.pending} to review · {counts.approved} approved ·
-            {" "}{counts.edited} edited · {counts.rejected} rejected</span>
+          <div className="text-xs text-slate-700 mb-3 max-w-3xl space-y-1" data-testid="claims-instructions">
+            <h4 className="font-heading font-semibold text-sm text-slate-900">{CLAIMS_HEADING}</h4>
+            <p>{CLAIMS_INTRO}</p>
+            {CLAIMS_CHOICES.map(([choice, text]) => (
+              <p key={choice}><span className="font-semibold">{choice}</span> {text}</p>
+            ))}
+          </div>
+          <div className="text-[11px] text-slate-500 font-mono mb-2">
+            {counts.pending} to review · {counts.approved} approved · {counts.edited} edited · {counts.rejected} rejected
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-left text-[10px] font-mono uppercase tracking-wider text-slate-500 border-b border-[#E5E7EB]">
-                  <th className="py-2 pr-3">Type</th><th className="py-2 pr-3">Value</th><th className="py-2 pr-3">Date</th>
-                  <th className="py-2 pr-3">From the deck</th><th className="py-2 pr-3">Source</th><th className="py-2 pr-3">Status</th>
-                  <th className="py-2" />
+                  {COLUMNS.map((name) => <th key={name} className="py-2 pr-3">{name}</th>)}
                 </tr>
               </thead>
               <tbody>
@@ -138,17 +142,15 @@ function CandidateRow({ candidate: c, onSave }) {
         <>
           <td className="py-2 pr-3">
             <select value={draft.claim_type} onChange={set("claim_type")} className={selectClass} data-testid="edit-claim-type">
-              {CLAIM_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+              {CLAIM_TYPES.map((t) => <option key={t} value={t}>{typeLabel(t)}</option>)}
             </select>
           </td>
           <td className="py-2 pr-3">
             <div className="flex gap-1">
               <Input value={draft.value} onChange={set("value")} type="number" className="h-8 w-28 text-xs font-mono" data-testid="edit-value" />
               <Input value={draft.value_high} onChange={set("value_high")} type="number" placeholder="to (range)" className="h-8 w-28 text-xs font-mono" data-testid="edit-value-high" />
-              <select value={draft.unit} onChange={set("unit")} className={selectClass} data-testid="edit-unit">
-                <option value="">no unit</option>
-                {CLAIM_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
-              </select>
+              <Input value={draft.unit} onChange={set("unit")} list="claim-units" placeholder="unit" className="h-8 w-28 text-xs font-mono" data-testid="edit-unit" />
+              <datalist id="claim-units">{CLAIM_UNITS.map((u) => <option key={u} value={u} />)}</datalist>
               <Input value={draft.currency} onChange={set("currency")} placeholder="EUR" className="h-8 w-16 text-xs font-mono uppercase" data-testid="edit-currency" />
             </div>
           </td>
@@ -158,12 +160,16 @@ function CandidateRow({ candidate: c, onSave }) {
         </>
       ) : (
         <>
-          <td className="py-2 pr-3 capitalize text-slate-800">{c.claim_type}</td>
+          <td className="py-2 pr-3 text-slate-800 whitespace-nowrap">{typeLabel(c.claim_type)}</td>
           <td className="py-2 pr-3 font-mono text-slate-900 whitespace-nowrap">{claimValue(c)}</td>
           <td className="py-2 pr-3 font-mono text-slate-700 whitespace-nowrap">{c.target_date || PLACEHOLDER}</td>
         </>
       )}
-      <td className="py-2 pr-3 text-slate-700 max-w-md">{c.snippet}</td>
+      <td className="py-2 pr-3 text-slate-700 max-w-md">
+        <div>{c.snippet}</div>
+        {c.label_from && <div className="text-slate-400 mt-0.5" data-testid="candidate-label">Label from: {c.label_from}</div>}
+        {c.date_from && <div className="text-slate-400 mt-0.5" data-testid="candidate-date-from">Date from: {c.date_from}</div>}
+      </td>
       <td className="py-2 pr-3 font-mono text-[11px] text-slate-600" data-testid="candidate-source">
         {c.sources.map((s, i) => <div key={i}>{sourceRef(s)}</div>)}
       </td>
@@ -175,7 +181,7 @@ function CandidateRow({ candidate: c, onSave }) {
       <td className="py-2 whitespace-nowrap">
         {draft ? (
           <div className="flex gap-1">
-            <Button size="sm" onClick={saveEdit} className="h-7 bg-sky-600 hover:bg-sky-500" data-testid="edit-save">Save</Button>
+            <Button size="sm" onClick={saveEdit} className="h-7 bg-sky-600 hover:bg-sky-500" data-testid="edit-save">Save and approve</Button>
             <Button size="sm" variant="outline" onClick={() => setDraft(null)} className="h-7">Cancel</Button>
           </div>
         ) : (

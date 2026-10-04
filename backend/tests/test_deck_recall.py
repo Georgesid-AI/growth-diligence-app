@@ -80,7 +80,7 @@ def test_answer_file_is_well_formed():
             assert claim["status"] in (COMPANY, "not a company claim"), claim
             assert claim["value"] is not None or claim["target_date"], f"{deck['file']}: nothing to match on: {claim}"
             assert claim.get("value_high") is None or claim["value_high"] > claim["value"], claim
-            assert claim["claim_type"] in ("revenue", "retention", "sales", "people", "product", "market"), claim
+            assert claim["claim_type"] in claims.CLAIM_TYPES, claim
 
 
 def test_recall(runs):

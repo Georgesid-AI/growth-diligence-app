@@ -93,7 +93,7 @@ def test_pptx_text_boxes_groups_tables_and_notes_keep_their_slide():
     assert (churn["claim_type"], churn["unit"]) == ("retention", "%")
     revenue, = _by_value(found, 2500000)
     assert revenue["sources"] == [{"file": "board.pptx", "slide": 2, "kind": "table", "table": 1, "row": 2, "col": 3}]
-    assert revenue["snippet"] == "Revenue | $1.2M | $2.5M … 2024" and revenue["target_date"] == "2024", "column header date"
+    assert (revenue["snippet"], revenue["date_from"], revenue["target_date"]) == ("Revenue | $1.2M | $2.5M", "2024", "2024")
     hires, = _by_value(found, 40)
     assert hires["claim_type"] == "people" and hires["target_date"] == "2025"
     assert hires["sources"] == [{"file": "board.pptx", "slide": 2, "kind": "notes"}]
@@ -149,7 +149,7 @@ def test_zero2hero_table_figures_cite_row_and_column():
     deck = parser.parse_deck((DECKS / file).read_bytes(), file)
     found = claims.detect_candidates(deck["blocks"], file)
     cells = [(c["sources"][0]["row"], c["sources"][0]["col"], c["value"], c["currency"])
-             for c in found if c["sources"][0] == {**c["sources"][0], "page": 19, "kind": "table"}]
+             for c in found if c["sources"][0] == {**c["sources"][0], "page": 19, "kind": "table", "row": 4}]
     assert cells == [(4, 2, 130550, "GBP"), (4, 3, 150000, "GBP"), (4, 4, 250000, "GBP"),
                      (4, 5, 1000000, "GBP"), (4, 6, 2500000, "GBP")]
 
@@ -206,7 +206,7 @@ def _line(text):
 
 def test_a_line_needs_a_number_and_a_keyword():
     assert _line("We grew fast and churn is low") == []          # keyword, no number
-    assert _line("800 Paying Users") == []                       # number, no keyword
+    assert _line("Section 111, Row 15") == []                    # numbers, no keyword, nothing counted
     assert [c["value"] for c in _line("800 paying users, ARR $1.2M")] == [800, 1200000]
 
 
@@ -323,7 +323,7 @@ def test_approve_reject_and_edit_a_candidate(api):
     assert client.put(url.format(second["id"]), json={"snippet": "typed"}).status_code == 400, "evidence is not editable"
     assert client.put(url.format(second["id"]), json={"status": "approved", "value": 1}).status_code == 400
     assert client.put(url.format(second["id"]), json={"target_date": "June"}).status_code == 422
-    assert client.put(url.format(second["id"]), json={"unit": "parsecs"}).status_code == 422
+    assert client.put(url.format(second["id"]), json={"unit": "x" * 41}).status_code == 422
     assert client.put("/api/audits/audit-2/decks/candidates/" + second["id"], json={"status": "approved"}).status_code == 404
 
 
@@ -382,7 +382,7 @@ def _found(content, name="deck.pptx"):
 def test_a_figure_borrows_its_label_from_the_same_text_box():
     found = _found(_slide([("Gross churn\n4.5%", 1, 2)]))
     churn, = _by_value(found, 4.5)
-    assert churn["claim_type"] == "retention" and churn["snippet"] == "Gross churn … 4.5%"
+    assert (churn["claim_type"], churn["snippet"], churn["label_from"]) == ("retention", "4.5%", "Gross churn")
     assert churn["sources"] == [{"file": "deck.pptx", "slide": 1, "kind": "text"}], "the figure's own line is cited"
 
 
@@ -409,41 +409,41 @@ def test_a_figure_borrows_by_position_from_the_same_row_or_above_never_below():
 def test_a_figure_borrows_the_slide_title_last():
     found = _found(_slide([("$4.2M", 8, 6.5)], title="Pipeline coverage"))
     pipeline, = _by_value(found, 4200000)
-    assert pipeline["claim_type"] == "sales" and pipeline["snippet"] == "Pipeline coverage … $4.2M"
+    assert (pipeline["claim_type"], pipeline["snippet"], pipeline["label_from"]) == ("sales", "$4.2M", "Pipeline coverage")
     nearer = _found(_slide([("Win rate", 7, 6.5), ("31%", 8.5, 6.5)], title="Pipeline coverage"))
     assert [c["claim_type"] for c in _by_value(nearer, 31)] == ["sales"]
-    assert "Win rate" in _by_value(nearer, 31)[0]["snippet"], "the nearest label wins over the title"
+    assert _by_value(nearer, 31)[0]["label_from"] == "Win rate", "the nearest label wins over the title"
 
 
 def test_a_product_line_without_a_figure_takes_a_nearby_date():
     found = _found(_slide([("Launch the API\nOctober 2026", 1, 2)]))
     api, = found
     assert (api["claim_type"], api["value"], api["target_date"]) == ("product", None, "2026-10")
-    assert api["snippet"] == "Launch the API … October 2026"
-    assert _found(_slide([("Hire a CFO\nOctober 2026", 1, 2)])) == [
-        {**api, "snippet": "October 2026"}], "a line without a figure counts only when it is a product line"
+    assert (api["snippet"], api["label_from"], api["date_from"]) == ("Launch the API", None, "October 2026")
+    hire = _found(_slide([("Hire a CFO\nOctober 2026", 1, 2)]))
+    assert [c["snippet"] for c in hire] == ["October 2026"], "a line without a figure counts only when it is a product line"
 
 
 def test_a_roadmap_bullet_takes_the_quarter_beside_it():
     file = "10-tea.pdf"
     found = claims.detect_candidates(parser.parse_deck((DECKS / file).read_bytes(), file)["blocks"], file)
-    gluon = [c for c in found if "Gluon wallet … 2021 Q2" in c["snippet"]]
+    gluon = [c for c in found if c["snippet"] == "Gluon wallet"]
     assert [(c["claim_type"], c["value"], c["target_date"]) for c in gluon] == [("product", None, "2021-Q2")]
-    assert [s["page"] for s in gluon[0]["sources"]] == [11]
+    assert [s["page"] for s in gluon[0]["sources"]] == [11] and gluon[0]["date_from"] == "2021 Q2"
 
 
 def test_a_pdf_value_borrows_the_label_on_its_row():
     file = "02-moz.pdf"
     found = claims.detect_candidates(parser.parse_deck((DECKS / file).read_bytes(), file)["blocks"], file)
     cac, = [c for c in _by_value(found, 100) if c["currency"] == "USD"]
-    assert cac["claim_type"] == "sales" and cac["snippet"].startswith("Avg. Cost of Paid Acquisition … ~$100")
+    assert (cac["claim_type"], cac["snippet"], cac["label_from"]) == ("sales", "~$100", "Avg. Cost of Paid Acquisition")
 
 
 @pytest.mark.parametrize("text, family", [
     ("Turnover £49,284", "revenue"), ("Avg. Customer Lifetime Value ~$900", "sales"), ("LTV $240", "sales"),
     ("Implied Customer Life ~9 Months", "retention"), ("% of Free Trials Converting to Paid ~57%", "sales"),
     ("30% of our leads come via referrals", "sales"), ("This covers 50% of entire US market", "market"),
-    ("Recruit 3 engineers", "people"), ("Low attrition: 0", "people"), ("Ship v2 to 40 customers", "product"),
+    ("Recruit 3 engineers", "people"), ("Low attrition: 0", "people"), ("Ship v2 in 40 days", "product"),
     ("Milestone 3 reached", "product"),
 ])
 def test_added_keywords(text, family):
@@ -503,3 +503,102 @@ def test_a_zip_at_the_limits_is_opened():
         with pytest.raises(parser.DeckError) as err:
             parser.parse_deck(content, "deck.pptx")
         assert err.value.message == parser.UNREADABLE.format(kind="PowerPoint")
+
+
+# ---------------------------------------------------------------------------
+# Claim types (customers, users, gross margin, usage, growth by noun)
+# ---------------------------------------------------------------------------
+def test_buffer_slide_5_types_and_units():
+    """The browser test that found the wrong types: each line keeps its own keyword."""
+    file = "03-buffer.pptx"
+    found = claims.detect_candidates(parser.parse_deck((DECKS / file).read_bytes(), file)["blocks"], file)
+    slide5 = [(c["claim_type"], c["value"], c["unit"], c["currency"], c["snippet"], c["label_from"])
+              for c in found if c["sources"][0]["slide"] == 5]
+    assert slide5 == [
+        ("customers", 800, "paying users", None, "800 Paying Users", None),
+        ("revenue", 150000, None, "USD", "$150,000 annual revenue run rate", None),
+        ("gross_margin", 97, "%", None, "97% margins", None),
+        ("users", 55000, "users", None, "55,000 users, growing 40% per month", None),
+        ("user_growth", 40, "%", None, "55,000 users, growing 40% per month", None),
+        ("usage", 1500000, "updates", None, "1.5 million updates Buffered", None),
+    ]
+
+
+@pytest.mark.parametrize("text, family", [
+    ("Revenues stand at €15K MRR and are growing 15% MoM", "revenue_growth"),
+    ("55,000 users, growing 40% per month", "user_growth"),
+    ("Proven record of 2X+ growth for 4 years", "growth"),
+    ("ARR grew 3x", "revenue_growth"),
+    ("A CAGR of 17.2% from 2021 to 2026", "growth"),
+])
+def test_growth_takes_its_type_from_the_noun_on_its_line(text, family):
+    assert [c["claim_type"] for c in _line(text) if c["unit"] in ("%", "x")] == [family]
+
+
+def test_an_amount_beside_a_growth_word_takes_the_noun_type():
+    assert [c["claim_type"] for c in _line("ARR grew to $3.6M")] == ["revenue"]
+    assert [c["claim_type"] for c in _line("Users grew to 55,000")] == ["users"]
+
+
+@pytest.mark.parametrize("text, family, unit", [
+    ("800 Paying Users", "customers", "paying users"),
+    ("or some 1,500 clients", "customers", "clients"),
+    ("12 enterprise accounts", "customers", None),
+    ("2,600+ users", "users", "users"),
+    ("Gross Margins ~82%", "gross_margin", "%"),
+    ("1.5 million updates Buffered", "usage", "updates"),
+    ("Avg. Customer Lifetime Value ~$900", "sales", None),
+])
+def test_customers_users_margin_and_usage(text, family, unit):
+    c = _line(text)[0]
+    assert c["claim_type"] == family and (unit is None or c["unit"] == unit)
+
+
+def test_a_line_with_its_own_keyword_never_borrows_a_label():
+    found = _found(_slide([("Revenue\n800 Paying Users\n97% margins", 1, 2)], title="ARR"))
+    assert [(c["claim_type"], c["label_from"]) for c in found] == [("customers", None), ("gross_margin", None)]
+    usage = _found(_slide([("Revenue\n1.5 million updates", 1, 2)]))
+    assert [(c["claim_type"], c["label_from"]) for c in usage] == [("usage", None)], "a count is usage, not a borrowed type"
+
+
+# ---------------------------------------------------------------------------
+# What approve, edit and reject do (the instruction text above the approval list)
+# ---------------------------------------------------------------------------
+def test_approved_and_edited_claims_make_the_register_rejected_stay_on_record(api):
+    client, db = api
+    _upload(client, "audit-1", "03-buffer.pptx", (DECKS / "03-buffer.pptx").read_bytes())
+    one, two, three = (dict(c) for c in db[decks.CANDIDATES_COLLECTION].docs[:3])
+    url = "/api/audits/audit-1/decks/candidates/{}"
+    client.put(url.format(one["id"]), json={"status": "approved"})
+    edited = client.put(url.format(two["id"]), json={"value": 900}).json()
+    assert edited["status"] == "edited" and edited["parsed"]["value"] == two["value"]
+    again = client.put(url.format(two["id"]), json={"status": "approved"}).json()
+    assert again["status"] == "edited" and again["parsed"]["value"] == two["value"], "approving an edit keeps it edited"
+    client.put(url.format(three["id"]), json={"status": "rejected"})
+
+    register = client.get("/api/audits/audit-1/claims").json()["claims"]
+    assert [(c["id"], c["status"]) for c in register] == [(one["id"], "approved"), (two["id"], "edited")]
+    assert register[1]["value"] == 900 and register[1]["parsed"]["value"] == two["value"], "original kept beside the edit"
+    listed = client.get("/api/audits/audit-1/decks").json()["candidates"]
+    assert next(c for c in listed if c["id"] == three["id"])["status"] == "rejected", "rejected stays on record"
+    assert client.get("/api/audits/no-such-audit/claims").status_code == 404
+
+
+def test_a_re_upload_keeps_approved_edited_and_rejected_claims(api):
+    client, db = api
+    content = (DECKS / "03-buffer.pptx").read_bytes()
+    first = _upload(client, "audit-1", "03-buffer.pptx", content).json()
+    one, two, three = (dict(c) for c in db[decks.CANDIDATES_COLLECTION].docs[:3])
+    url = "/api/audits/audit-1/decks/candidates/{}"
+    client.put(url.format(one["id"]), json={"status": "approved"})
+    client.put(url.format(two["id"]), json={"value": 900})
+    client.put(url.format(three["id"]), json={"status": "rejected"})
+
+    again = _upload(client, "audit-1", "03-buffer.pptx", content).json()
+    assert again["kept_reviewed"] == 3 and again["candidates"] == first["candidates"] - 3, "no duplicate of a reviewed claim"
+    stored = {c["id"]: c for c in db[decks.CANDIDATES_COLLECTION].docs}
+    assert (stored[one["id"]]["status"], stored[two["id"]]["status"], stored[three["id"]]["status"]) == \
+        ("approved", "edited", "rejected")
+    assert stored[two["id"]]["value"] == 900 and stored[two["id"]]["parsed"]["value"] == two["value"]
+    assert len(db[decks.CANDIDATES_COLLECTION].docs) == first["candidates"]
+    assert {c["deck_id"] for c in db[decks.CANDIDATES_COLLECTION].docs} == {again["deck_id"]}

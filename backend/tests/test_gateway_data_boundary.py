@@ -623,8 +623,8 @@ def test_the_deck_parser_never_imports_or_calls_the_gateway():
 
 def test_the_gateway_names_no_deck_text_snippet_or_source_field():
     """Static: no gateway module imports the deck package, or names the parsed-text collection
-    or the parsed-text, snippet or source-reference fields."""
-    forbidden = {decks.TEXT_COLLECTION, "blocks", "snippet", "sources"}
+    or the parsed-text, snippet, borrowed-label or source-reference fields."""
+    forbidden = {decks.TEXT_COLLECTION, "blocks", "snippet", "label_from", "date_from", "sources"}
     offenders = []
     for path in sorted((BACKEND / "app" / "llm").glob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -672,6 +672,7 @@ def _recording_db():
     db[decks.CANDIDATES_COLLECTION].docs.append({
         "audit_id": RUN_ID, "id": "c1", "claim_type": "revenue", "value": 3600000, "unit": None, "currency": "USD",
         "target_date": "2024", "status": "approved", "file": DECK_FILE, "snippet": DECK_SENTINEL,
+        "label_from": DECK_SENTINEL, "date_from": DECK_SENTINEL, "parsed": {"value": 3600000},
         "sources": [{"file": DECK_FILE, "slide": 3, "kind": "text"}]})
     return db, reads
 

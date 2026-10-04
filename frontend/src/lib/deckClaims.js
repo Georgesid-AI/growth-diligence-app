@@ -17,8 +17,29 @@ export const DECK_SCOPE_CANNOT = [
 ];
 export const DECK_SCOPE_OUTRO = "If a number you need sits in a picture, add it as text or send the source spreadsheet.";
 
-export const CLAIM_TYPES = ["revenue", "retention", "sales", "people", "product", "market"];
-export const CLAIM_UNITS = ["%", "x", "months", "years", "weeks", "days", "hours"];
+// Shown above the approval list, word for word.
+export const CLAIMS_HEADING = "Claims found in the deck";
+export const CLAIMS_INTRO = "These figures may inform the growth plan. They were identified automatically and may contain errors. Check each claim against its source slide, then choose:";
+export const CLAIMS_CHOICES = [
+  ["✓ Approve:", "Confirm this is a claim the company makes. It will be added to the claim register and tested against the data."],
+  ["✎ Edit:", "Correct the figure, type, unit or date, then approve the claim. It will be added to the claim register and tested against the data."],
+  ["✕ Reject:", "Exclude items that are not company claims, such as another company's figures, funds raised or chart axis labels. Rejected items remain in the record but are not used."],
+];
+
+// Same order and names as backend app/decks/claims.py CLAIM_TYPES.
+export const TYPE_LABELS = {
+  revenue: "Revenue", revenue_growth: "Revenue growth", growth: "Growth", retention: "Retention", sales: "Sales",
+  customers: "Customers", users: "Users", user_growth: "User growth", gross_margin: "Gross margin", usage: "Usage",
+  people: "People", product: "Product", market: "Market",
+};
+export const CLAIM_TYPES = Object.keys(TYPE_LABELS);
+// Suggestions for the unit field; a count's unit is the noun it counts ("paying users").
+export const CLAIM_UNITS = ["%", "x", "months", "years", "weeks", "days", "hours", "customers", "users"];
+
+// One header per column of the approval list, in column order.
+export const COLUMNS = ["Type", "Value", "Date", "Claim in the deck", "Source", "Status", "Action"];
+
+export const typeLabel = (t) => TYPE_LABELS[t] || t;
 
 export const STATUS_LABELS = { pending: "To review", approved: "Approved", rejected: "Rejected", edited: "Edited" };
 

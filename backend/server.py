@@ -446,24 +446,31 @@ async def save_mapping(audit_id: str, dtype: str, payload: MappingPayload):
 # ---------------------------------------------------------------------------
 # Board decks and growth plans: parsed text and candidate claims (docs/specs/deck-parser.md)
 # ---------------------------------------------------------------------------
-CLAIM_TYPES = ("revenue", "retention", "sales", "people", "product", "market")
-CLAIM_UNITS = ("%", "x", "months", "years", "weeks", "days", "hours")
 _TARGET_DATE = re.compile(r"^\d{4}(-(0[1-9]|1[0-2])|-Q[1-4])?$")
 
 
 class CandidateUpdate(BaseModel):
-    """Approve or reject a candidate, or edit its structured fields (an edit marks it "edited").
-    The snippet and source references are evidence and cannot be edited."""
+    """Approve or reject a candidate, or edit its structured fields. An edit approves the claim
+    with the analyst's corrections: status "edited", the parser's values kept under "parsed".
+    The snippet, the borrowed label and the source references are evidence and cannot be edited."""
     status: Optional[Literal["pending", "approved", "rejected"]] = None
-    claim_type: Optional[Literal[CLAIM_TYPES]] = None
+    claim_type: Optional[Literal[deck_claims.CLAIM_TYPES]] = None
     value: Optional[float] = None
     value_high: Optional[float] = None          # the high end of a range
-    unit: Optional[Literal[CLAIM_UNITS]] = None
+    unit: Optional[str] = Field(default=None, min_length=1, max_length=40)   # "%", "months", "paying users"
     currency: Optional[str] = Field(default=None, pattern=r"^[A-Z]{3}$")
     target_date: Optional[str] = Field(default=None, pattern=_TARGET_DATE.pattern)
 
 
 _EDITABLE = ("claim_type", "value", "value_high", "unit", "currency", "target_date")
+# Approved and edited claims make up the claim register; rejected ones stay on record, unused.
+REGISTER_STATUSES = ("approved", "edited")
+
+
+def _claim_key(c: dict) -> tuple:
+    """What the parser found, so a re-upload can tell an already reviewed claim."""
+    found = c.get("parsed") or c
+    return tuple(found.get(k) for k in _EDITABLE)
 
 
 @api.post("/audits/{audit_id}/decks/upload")
@@ -477,9 +484,17 @@ async def upload_deck(audit_id: str, file: UploadFile = File(...)):
         raise HTTPException(400, exc.message)
     candidates = deck_claims.detect_candidates(deck["blocks"], deck["file"])
     deck_id = str(uuid.uuid4())
-    # A file uploaded again replaces its earlier parse and candidates.
-    for name in (decks.TEXT_COLLECTION, decks.CANDIDATES_COLLECTION):
-        await db[name].delete_many({"audit_id": audit_id, "file": deck["file"]})
+    # A file uploaded again replaces its earlier parse and its unreviewed candidates. Approved,
+    # edited and rejected candidates stay on record; the same claim found again is not re-added.
+    where = {"audit_id": audit_id, "file": deck["file"]}
+    await db[decks.TEXT_COLLECTION].delete_many(where)
+    await db[decks.CANDIDATES_COLLECTION].delete_many({**where, "status": "pending"})
+    reviewed = await db[decks.CANDIDATES_COLLECTION].find(where, {"_id": 0}).to_list(10000)
+    for c in reviewed:
+        await db[decks.CANDIDATES_COLLECTION].update_one({"audit_id": audit_id, "id": c["id"]},
+                                                       {"$set": {"deck_id": deck_id}})
+    known = {_claim_key(c) for c in reviewed}
+    candidates = [c for c in candidates if _claim_key(c) not in known]
     await db[decks.TEXT_COLLECTION].insert_one({
         "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"], "format": deck["format"],
         "page_unit": deck["page_unit"], "pages": deck["pages"], "blocks": deck["blocks"],
@@ -487,9 +502,9 @@ async def upload_deck(audit_id: str, file: UploadFile = File(...)):
     for order, c in enumerate(candidates):
         await db[decks.CANDIDATES_COLLECTION].insert_one(
             {**c, "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"], "id": str(uuid.uuid4()),
-             "order": order, "status": "pending"})
+             "order": len(reviewed) + order, "status": "pending"})
     return {"deck_id": deck_id, "file": deck["file"], "format": deck["format"], "page_unit": deck["page_unit"],
-            "pages": deck["pages"], "candidates": len(candidates)}
+            "pages": deck["pages"], "candidates": len(candidates), "kept_reviewed": len(reviewed)}
 
 
 @api.get("/audits/{audit_id}/decks")
@@ -525,9 +540,23 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
     else:
         if payload.status is None:
             raise HTTPException(400, "status cannot be empty")
-        changes = {"status": payload.status}
+        # Approving an edited claim keeps it "edited": it is approved with the analyst's corrections.
+        status = "edited" if payload.status == "approved" and "parsed" in current else payload.status
+        changes = {"status": status}
     await db[decks.CANDIDATES_COLLECTION].update_one(where, {"$set": changes})
     return sanitize(await db[decks.CANDIDATES_COLLECTION].find_one(where, {"_id": 0}))
+
+
+@api.get("/audits/{audit_id}/claims")
+async def claim_register(audit_id: str):
+    """The claim register: approved and edited claims, with what the parser found next to each
+    edit. Rejected and unreviewed candidates are not in it (they stay on record in the deck list)."""
+    if not await db.audits.find_one({"id": audit_id}, {"id": 1}):
+        raise HTTPException(404, "Audit not found")
+    claims = await db[decks.CANDIDATES_COLLECTION].find(
+        {"audit_id": audit_id, "status": {"$in": list(REGISTER_STATUSES)}}, {"_id": 0}).to_list(10000)
+    claims.sort(key=lambda c: (c.get("file") or "", c.get("order", 0)))
+    return sanitize({"claims": claims})
 
 
 # ---------------------------------------------------------------------------
