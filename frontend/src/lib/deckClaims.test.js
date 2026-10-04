@@ -1,5 +1,5 @@
 import {
-  ALL_DECKS, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, sourceRef, statusCounts, typeLabel,
+  ALL_DECKS, CLAIM_TYPES, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, sourceRef, statusCounts, typeLabel,
   DECK_SCOPE_CANNOT, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO,
 } from "./deckClaims";
 
@@ -95,4 +95,10 @@ describe("deck selector", () => {
   test("remove confirmation text", () => {
     expect(REMOVE_DECK_CONFIRM).toBe("This deletes the deck and all its claims, including reviewed ones.");
   });
+});
+
+test("the analyst chooses among plan claim types only; old usage claims keep their label", () => {
+  expect(CLAIM_TYPES).toEqual(["revenue", "revenue_growth", "growth", "retention", "sales", "customers", "users",
+    "user_growth", "gross_margin", "people", "product", "market"]);
+  expect(typeLabel("usage")).toBe("Usage");
 });

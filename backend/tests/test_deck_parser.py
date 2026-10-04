@@ -135,7 +135,7 @@ def test_docx_pages_follow_page_breaks_and_new_page_sections():
     ("04-clevergig.docx", 6, 260, "text"),            # €260 MRR per client
     ("04-clevergig.docx", 9, 200000000, "text"),      # TAM of €200M
     ("04-clevergig.docx", 11, 20, "text"),            # teams to a total of 20 end of 2020
-    ("07-equals-seed.docx", 9, 180000000, "text"),    # Intercom's ARR (a distractor, but its page is still cited)
+    ("07-equals-seed.docx", 10, 24, "text"),          # To fund an initial team for 24 months
 ])
 def test_public_decks_cite_the_right_slide_or_page(file, page, value, kind):
     content = (DECKS / file).read_bytes()
@@ -442,7 +442,7 @@ def test_a_pdf_value_borrows_the_label_on_its_row():
 @pytest.mark.parametrize("text, family", [
     ("Turnover £49,284", "revenue"), ("Avg. Customer Lifetime Value ~$900", "sales"), ("LTV $240", "sales"),
     ("Implied Customer Life ~9 Months", "retention"), ("% of Free Trials Converting to Paid ~57%", "sales"),
-    ("30% of our leads come via referrals", "sales"), ("This covers 50% of entire US market", "market"),
+    ("30% of our leads come via referrals", "sales"),
     ("Recruit 3 engineers", "people"), ("Low attrition: 0", "people"), ("Ship v2 in 40 days", "product"),
     ("Milestone 3 reached", "product"),
 ])
@@ -520,7 +520,8 @@ def test_buffer_slide_5_types_and_units():
         ("gross_margin", 97, "%", None, "97% margins", None),
         ("users", 55000, "users", None, "55,000 users, growing 40% per month", None),
         ("user_growth", 40, "%", None, "55,000 users, growing 40% per month", None),
-        ("usage", 1500000, "updates", None, "1.5 million updates Buffered", None),
+        # No plan keyword of its own: it borrows the nearest label in its text box, shown to the analyst.
+        ("users", 1500000, "updates", None, "1.5 million updates Buffered", "55,000 users, growing 40% per month"),
     ]
 
 
@@ -546,19 +547,23 @@ def test_an_amount_beside_a_growth_word_takes_the_noun_type():
     ("12 enterprise accounts", "customers", None),
     ("2,600+ users", "users", "users"),
     ("Gross Margins ~82%", "gross_margin", "%"),
-    ("1.5 million updates Buffered", "usage", "updates"),
     ("Avg. Customer Lifetime Value ~$900", "sales", None),
 ])
-def test_customers_users_margin_and_usage(text, family, unit):
+def test_customers_users_and_margin(text, family, unit):
     c = _line(text)[0]
     assert c["claim_type"] == family and (unit is None or c["unit"] == unit)
+
+
+def test_there_is_no_usage_type_a_count_without_a_label_is_not_a_candidate():
+    assert "usage" not in claims.CLAIM_TYPES
+    assert _line("1.5 million updates Buffered") == []
 
 
 def test_a_line_with_its_own_keyword_never_borrows_a_label():
     found = _found(_slide([("Revenue\n800 Paying Users\n97% margins", 1, 2)], title="ARR"))
     assert [(c["claim_type"], c["label_from"]) for c in found] == [("customers", None), ("gross_margin", None)]
-    usage = _found(_slide([("Revenue\n1.5 million updates", 1, 2)]))
-    assert [(c["claim_type"], c["label_from"]) for c in usage] == [("usage", None)], "a count is usage, not a borrowed type"
+    count = _found(_slide([("Revenue\n1.5 million updates", 1, 2)]))
+    assert [(c["claim_type"], c["label_from"]) for c in count] == [("revenue", "Revenue")], "a count without a keyword borrows"
 
 
 # ---------------------------------------------------------------------------
@@ -639,7 +644,10 @@ def test_decks_list_newest_first_and_within_a_deck_to_review_first_then_by_slide
     keys = [(c["status"] != "pending", _page(c)) for c in in_old]
     assert keys == sorted(keys), "to review first, then by slide"
     assert in_old[-1]["id"] == late["id"], "the reviewed claim moves below the ones to review"
-    assert in_old[-2]["id"] == last_pending["id"], "the slide, not the parse order, places a claim"
+    at = next(i for i, c in enumerate(in_old) if c["id"] == last_pending["id"])
+    assert all(_page(c) <= _page(last_pending) for c in in_old[:at] if c["status"] == "pending")
+    assert all(_page(c) >= _page(last_pending) for c in in_old[at + 1:] if c["status"] == "pending"), \
+        "the slide, not the parse order, places a claim"
 
 
 def test_remove_deck_deletes_its_text_and_all_its_claims_including_reviewed(api):
@@ -661,3 +669,70 @@ def test_remove_deck_deletes_its_text_and_all_its_claims_including_reviewed(api)
     assert all(c["deck_id"] != gone["deck_id"] for c in client.get("/api/audits/audit-1/claims").json()["claims"])
     assert client.delete(f"/api/audits/audit-1/decks/{gone['deck_id']}").status_code == 404
     assert client.delete(f"/api/audits/audit-2/decks/{keep['deck_id']}").status_code == 404, "a deck of another audit"
+
+
+# ---------------------------------------------------------------------------
+# Plan claims only (spec section 2): whole numbers, axis ticks, labelled market, drops
+# ---------------------------------------------------------------------------
+def test_pdf_axis_labels_are_read_as_whole_numbers():
+    """zero2hero page 4: the axis labels 100 ... 800 came out as single digits when rows were
+    sorted by position alone."""
+    file = "05-zero2hero.pdf"
+    texts = [b["text"] for b in parser.parse_deck((DECKS / file).read_bytes(), file)["blocks"] if b["page"] == 4]
+    assert {"100", "200", "300", "400", "500", "600", "700", "800"} <= set(texts)
+    assert not {"5", "6", "7", "8"} & set(texts)
+
+
+def test_evenly_spaced_numbers_in_a_row_or_column_are_axis_ticks():
+    row = _found(_slide([("Gross churn", 0.5, 1)] + [(f"{v}%", 1 + i, 2) for i, v in enumerate((0, 10, 20, 30))]))
+    assert row == []
+    column = _found(_slide([("ARR", 0.5, 1), ("$100K\n$200K\n$300K", 1, 1.5)]))
+    assert column == []
+    uneven = _found(_slide([("Gross churn", 0.5, 2)] + [(f"{v}%", 1 + i, 2) for i, v in enumerate((18, 18, 19))]))
+    assert sorted(c["value"] for c in uneven) == [18, 19], "uneven figures are data, not ticks"
+
+
+def test_table_row_numbers_and_evenly_spaced_headers_are_ticks():
+    rows = [["#", "Metric", "Value"], ["1", "Revenue", "$1.2M"], ["2", "Revenue next year", "$2.0M"], ["3", "ARR", "$3.1M"]]
+    found = _found(_slide([], table=(rows, 1, 2)))
+    assert sorted(c["value"] for c in found) == [1200000, 2000000, 3100000]
+
+
+@pytest.mark.parametrize("text, kept", [
+    ("A TAM of €200M", True), ("Serviceable addressable market of $1B", True), ("Market size $2B", True),
+    ("SAM $400M", True), ("This covers 50% of entire US market", False), ("Overall Market: $4.2B annually", False),
+])
+def test_market_counts_only_when_labelled(text, kept):
+    found = [c for c in _line(text) if c["claim_type"] == "market"]
+    assert bool(found) == kept
+
+
+@pytest.mark.parametrize("title", ["The Problem", "Why Now?", "Macroeconomic Trends", "Social Media Landscape",
+                                   "TEA Token Allocation"])
+def test_figures_on_background_slides_are_dropped(title):
+    assert _found(_slide([("ARR $1.2M, 40% growth", 1, 2)], title=title)) == []
+
+
+def test_figures_on_a_page_that_cites_outside_research_are_dropped():
+    assert _found(_slide([("Market size $230B", 1, 2), ("Source: Transparency Market Research", 1, 6)])) == []
+    footnotes = _found(_slide([("Market size $374.3 billion", 1, 2), ("1. https://example.org/report", 1, 6),
+                               ("2. Research at MIT", 1, 6.5)]))
+    assert footnotes == []
+    not_footnotes = _found(_slide([("3.9x more ARR per user", 1, 2), ("4.9x more MRR per user", 1, 3)]))
+    assert sorted(c["value"] for c in not_footnotes) == [3.9, 4.9], "a decimal is not a footnote number"
+
+
+@pytest.mark.parametrize("text", [
+    "We raised $2M in our seed round", "Raising: $20-$25 Million", "Seed to Series A $3.1m ARR",
+    "Team and Community: 5% vesting per month", "100 million total supply",
+    "As a member of the exec team, scaled Intercom from $1M ARR to $180M+ ARR",
+    "Co-Founder, took the idea to revenue in 7 weeks", "Growing to a $3.5B industry by 2010",
+])
+def test_lines_about_funds_tokens_careers_or_the_industry_are_dropped(text):
+    assert _found(_slide([(text, 1, 2)])) == []
+
+
+def test_plan_lines_that_mention_funds_or_a_team_are_kept():
+    found = _found(_slide([("Funds will be used to grow the team to 20 by end of 2020", 1, 2),
+                           ("To fund an initial team for 24 months.", 1, 3)]))
+    assert sorted(c["value"] for c in found) == [20, 24]

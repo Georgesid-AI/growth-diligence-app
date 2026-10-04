@@ -77,10 +77,12 @@ def test_the_test_set_is_the_ten_listed_decks_under_25_mb():
 def test_answer_file_is_well_formed():
     for deck in _expected():
         for claim in deck["claims"]:
-            assert claim["status"] in (COMPANY, "not a company claim"), claim
+            assert claim["status"] in (COMPANY, "not a plan claim", "not a company claim"), claim
             assert claim["value"] is not None or claim["target_date"], f"{deck['file']}: nothing to match on: {claim}"
             assert claim.get("value_high") is None or claim["value_high"] > claim["value"], claim
-            assert claim["claim_type"] in claims.CLAIM_TYPES, claim
+            # Entries left out as "not a plan claim" may keep a type the parser no longer gives ("usage").
+            assert claim["claim_type"] in claims.CLAIM_TYPES + ("usage",), claim
+            assert claim["status"] != COMPANY or claim["claim_type"] in claims.CLAIM_TYPES, claim
 
 
 def test_recall(runs):

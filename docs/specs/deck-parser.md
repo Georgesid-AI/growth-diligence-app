@@ -27,11 +27,15 @@ If a file has no readable text, show: "No readable text found in this file. It m
 - Limits: max 50 MB per file, max 200 slides/pages. Reject larger files with a clear message.
 - Unpack cap (.pptx, .docx are zip files): reject a file that unpacks to more than 250 MB or
   holds more than 5,000 parts, with a clear message, before it is opened.
+- pdf: characters are read in the order the file writes them, so a number stays whole
+  (axis labels 500, 600 are not split into single digits).
 - Layout kept for section 2: each line keeps its text box (pptx, docx text boxes; a stack of
   lines in a pdf), its position on the slide or page (pptx, pdf) and whether it is the slide
   title (pptx) or the topmost text of the page (pdf).
 
 ## 2. Candidate claim detection (Python only, no LLM, rule-based)
+Only plan claims are listed: the company's own revenue, customers, users, retention, margins,
+sales metrics, hiring and launch dates, plus targets and forecasts.
 A figure (a number, or a date) is a candidate if it has a claim keyword: in its own text line,
 or borrowed from nearby text when its line has none.
 Keywords and claim types (a keyword also matches its plural and verb forms: revenues, growing,
@@ -47,12 +51,11 @@ hired, launches; of two overlapping keywords the longer one counts):
 - Customers: customers, clients, paying users, accounts
 - Users: users
 - Gross margin: margin, margins
-- Usage: the fallback for other counts. A number followed by the noun it counts ("1.5 million
-  updates") whose line has no keyword is a Usage candidate; the noun is its unit.
 - People: hires, headcount, team, recruitment, attrition
 - Product: launch, release, roadmap, ship, milestone, Q1–Q4, month names
-- Market: TAM, SAM, SOM, market (whole word, which includes market size)
-The unit of a count is the noun it counts: "800 paying users", "1,500,000 updates".
+- Market: TAM, SAM, SOM, addressable market, market size. The bare word "market" does not count.
+The unit of a count is the noun it counts: "800 paying users". There is no Usage type: a count
+whose line has no keyword borrows a label like any other figure, or is not a candidate.
 A line with its own keyword never borrows a label from other lines.
 Borrowing: a figure without a keyword or a date in its own line takes them from nearby text,
 first match wins: the table column header, the other lines of its text box (nearest first),
@@ -66,6 +69,22 @@ Each candidate stores: claim type, value (low and high for a range), unit, curre
 date (if any), source reference, short snippet (max 300 characters), and the text a label or
 date was borrowed from.
 Duplicates across slides are merged and keep all source references.
+Dropped, never listed:
+- Chart axis ticks: 3 or more numbers, evenly spaced in value, in one line, in one column or
+  row of lines that hold only a number, or in one table column or row (row numbers 1, 2, 3).
+- Every figure on a slide or page titled Problem, Why now, Trends, Landscape, Background,
+  Token or Allocation (pptx titles and the topmost text of a pdf page; docx has no titles).
+- Every figure on a slide or page that cites outside research: a "Source:" or "Via <link>"
+  line, or two or more footnote lines ("1. …", a bare link).
+- Figures in a line about funds raised (raise, funding, investment, investors, valuation, seed
+  round, Series A–D), tokens (token, allocation, vesting, total supply, lockup), people's careers
+  (founder, CEO, chief, former, previously, employee, exec team) or the industry and the world
+  (industry, global, worldwide, economy). This also drops other companies' figures quoted in
+  founder bios.
+Not built: a bare number (no words of its own) borrowing only from its own text box, table
+header or a label right next to it. Measured on the test set it lowered recall to 90.3%
+(5 chart data labels whose only label is the chart's axis title, among others), below the 95%
+mark, so bare numbers still borrow by position and from the slide title.
 
 ## 3. Recall test
 - Test set: 10 public decks (6 pdf, 2 pptx, 2 docx) in tests/fixtures/decks/decks/.
