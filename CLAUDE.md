@@ -33,5 +33,6 @@
 8. Never write client names or data into the log.
 10. Log only in docs/session-log/. Never write to, edit or delete memory/PRD.md.
 11. Before reporting, fix any leftover risk you find that is inside the task's
-    scope, with a test. Report only what needs my decision. If a fix goes beyond
-    the task, list it under "Decisions for you" and do not build it.
+    scope, with a test. A new test counts only after it has failed on a deliberate
+    violation. Report only what needs my decision. If a fix goes beyond the task,
+    list it under "Decisions for you" and do not build it.

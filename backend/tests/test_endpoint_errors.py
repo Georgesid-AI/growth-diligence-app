@@ -51,7 +51,7 @@ def test_an_unexpected_error_in_generation_is_a_readable_500_with_cors_headers(c
     assert KEY not in r.text and "exploded" not in r.text, "only the exception's class name goes to the client"
 
 
-def test_the_failure_is_logged_with_its_traceback_and_without_the_key(client, monkeypatch, caplog):
+def test_the_failure_is_logged_by_type_only_without_traceback_or_message(client, monkeypatch, caplog):
     monkeypatch.setattr(server.llm_gateway, "generate_narrative", _aboom)
     with caplog.at_level(logging.ERROR, logger="growth"):
         client.post("/api/runs/run-abc/narrative/growth_engine", headers=ORIGIN)
@@ -59,9 +59,10 @@ def test_the_failure_is_logged_with_its_traceback_and_without_the_key(client, mo
     assert records, "the unexpected error must be logged"
     text = caplog.text
     assert "POST /api/runs/run-abc/narrative/growth_engine" in text
-    assert "RuntimeError" in text and "Traceback" in text
+    assert "error=RuntimeError" in text
+    assert "Traceback" not in text and "exploded" not in text, "type only: the message can quote uploaded cells"
+    assert all(r.exc_info is None for r in records)
     assert KEY not in text and "ABCDEFGHIJKLMNOP" not in text
-    assert "[redacted]" in text
 
 
 def test_every_endpoint_gets_the_same_treatment(client, monkeypatch):

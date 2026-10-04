@@ -267,12 +267,9 @@ SERVER_ONLY_FIELDS = frozenset({
     "required_vs_observed_12m_reason", "required_vs_observed_24m_reason",   # acv_path: not yet allowlisted
 })
 
-# Log calls that may carry a traceback. Everything else logs error type, run id
-# and engine step only: an exception message or traceback can quote uploaded cells.
-TRACEBACK_ALLOWED = frozenset({
-    ("server.py", "log_unexpected_errors"),         # outermost 500 handler; credentials masked by logsafety
-    ("app/llm/gateway.py", "generate_narrative"),   # gateway failure; the payload there is already pseudonymised
-})
+# (file, function) of log calls that may carry a traceback. Empty: every log call carries error
+# type, run id and engine step only, since an exception message or traceback can quote uploaded cells.
+TRACEBACK_ALLOWED = frozenset()
 
 
 def _engine_results(spec, inject: bool) -> dict:
@@ -449,7 +446,7 @@ def test_no_log_call_formats_an_exception_message_or_traceback():
     """A log call may use an exception only through SAFE_EXCEPTION_READERS, whether it sits in an
     `except` block or in a helper that takes the exception as a parameter. The message and the
     traceback can quote uploaded cell values (log 2026-10-02 fix-calc-correctness-2). The two sites
-    in TRACEBACK_ALLOWED are the known exceptions; a new one is a decision, not a default."""
+    TRACEBACK_ALLOWED is empty; a new entry is a decision, not a default."""
     calls = _log_calls()
     assert len(calls) >= 8, "the scan found fewer log calls than the codebase is known to have"
     violations = [f"{file}:{line} in {func}(): {text}  <- {'; '.join(problems)}"
@@ -478,8 +475,8 @@ def _alternatives(pattern: re.Pattern) -> list:
 # One false friend per direction word: the word in another sense, or the confusable form that
 # sits next to it, with the verdict the strict reading gives. "passes" means the dropped minus
 # sign on change_arr -77,949 is accepted; "flagged" means 77949 stays unverified.
-# A realistic false friend that passes is a hole in the list, as "contracts" was (log 2026-10-02
-# narrative-model-and-guard-3): mark it xfail here and decide on the word, never assert the hole.
+# A realistic false friend that passes is a hole in the list: "contracts", "down" and "lower" were
+# removed for that (test_removed_direction_words_no_longer_accept_a_dropped_sign).
 FALSE_FRIENDS = {
     # decline words
     "fall": ("The fall in ARR, 77,949 EUR, is in Segment B.", "passes"),
@@ -488,8 +485,6 @@ FALSE_FRIENDS = {
     "drop": ("The drop-off is 77,949 EUR.", "passes"),
     "decrease": ("The decrease is 77,949 EUR.", "passes"),
     "shrink": ("The shrink in Segment B is 77,949 EUR.", "passes"),
-    "down": ("A 77,949 EUR down payment was booked.", "flagged"),
-    "lower": ("The lower band is 77,949 EUR.", "flagged"),
     "loss of": ("A loss of 77,949 EUR of ARR.", "passes"),
     # growth words: a growth word in a decline sentence keeps the figure unverified (a reask, never a wrong figure)
     "grows": ("Segment B grows while ARR falls by 77,949 EUR.", "flagged"),
@@ -507,9 +502,6 @@ FALSE_FRIENDS = {
     "wins": ("ARR declines by 77,949 EUR after two wins.", "flagged"),
     "won": ("Won deals fell; ARR dropped 77,949 EUR.", "flagged"),
 }
-# Known holes, pending a decision on the word (see the PR): a realistic non-direction sense
-# that the regex still reads as a decline, so the dropped sign passes.
-KNOWN_HOLES = {"down", "lower"}
 
 
 def test_every_direction_word_has_a_false_friend_case():
@@ -527,15 +519,57 @@ def test_every_direction_word_has_a_false_friend_case():
     for key, (text, _) in FALSE_FRIENDS.items():
         assert matched.get(key) == 1, f"{key!r} is not exactly one direction word"
         assert re.search(rf"\b{re.escape(key)}\b", text, re.IGNORECASE), f"{key!r}: its case does not contain the word"
-    assert KNOWN_HOLES <= set(FALSE_FRIENDS)
 
 
 @pytest.mark.parametrize("word", sorted(FALSE_FRIENDS))
-def test_false_friend_verdict(word, request):
+def test_false_friend_verdict(word):
     text, expected = FALSE_FRIENDS[word]
-    if word in KNOWN_HOLES:
-        request.applymarker(pytest.mark.xfail(strict=True, reason=f"{word!r} has a realistic non-direction sense; decision pending"))
     payload = gateway.build_outbound(guard_t.COMPUTED, {})
     assert "-77,949" in str(payload), "fixture: the engine figure is signed"
     flagged = gateway.numeric_guard(guard_t._narrative(text), payload).all
     assert flagged == ([] if expected == "passes" else ["77949"]), f"{word!r}: {text!r} -> {flagged}"
+
+
+@pytest.mark.parametrize("text", ["A 77,949 EUR down payment was booked.", "The lower band is 77,949 EUR.",
+                                  "ARR is down 77,949 EUR.", "ARR is lower by 77,949 EUR."])
+def test_removed_direction_words_no_longer_accept_a_dropped_sign(text):
+    """"down" and "lower" read as a decline in a down payment or the lower band, so the words were
+    dropped; the figure stays unverified until the sentence uses a decline verb."""
+    payload = gateway.build_outbound(guard_t.COMPUTED, {})
+    assert gateway.numeric_guard(guard_t._narrative(text), payload).all == ["77949"]
+    for word in ("down", "lower"):
+        assert not gateway._DECLINE.search(word)
+
+
+def test_the_outermost_500_handler_and_the_gateway_failure_log_type_run_id_and_step_only(monkeypatch, caplog):
+    """An error whose message quotes a cell reaches both catch-all handlers: the log carries the
+    error type and the request or run, never the message or a traceback."""
+    pytest.importorskip("fastapi")
+    import logging
+    from fastapi.testclient import TestClient
+    import server
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("cannot parse cell 'Jane Doe (CEO)'")
+
+    async def aboom(*args, **kwargs):
+        boom()
+
+    generate = gateway.generate_narrative            # server.llm_gateway is this module; keep the real one
+    monkeypatch.setattr(server, "db", t.make_db())
+    monkeypatch.setattr(server.llm_gateway, "generate_narrative", aboom)
+    client = TestClient(server.app, raise_server_exceptions=False)
+    with caplog.at_level(logging.DEBUG):
+        assert client.post("/api/runs/run-abc/narrative/growth_engine").status_code == 500
+    assert "unexpected error handling POST /api/runs/run-abc/narrative/growth_engine: error=RuntimeError" in caplog.text
+    caplog.clear()
+
+    db = _db()
+    monkeypatch.setattr(gateway.guards, "check_call_cap", aboom)
+    with caplog.at_level(logging.DEBUG):
+        result = asyncio.run(generate(db, RUN_ID, "growth_engine", adapter=t.FakeAdapter(), sleep=t._noop_sleep))
+    assert result.narrative_status != "ok"
+    assert f"unexpected gateway failure for run {RUN_ID} step growth_engine: error=RuntimeError" in caplog.text
+    for text in (caplog.text, *[r.getMessage() for r in caplog.records]):
+        assert "Jane Doe" not in text and "Traceback" not in text
+    assert all(r.exc_info is None for r in caplog.records), "no traceback in the log"
