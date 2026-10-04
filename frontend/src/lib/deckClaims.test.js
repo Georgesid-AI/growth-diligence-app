@@ -1,4 +1,7 @@
-import { claimValue, sourceRef, statusCounts, DECK_SCOPE_CANNOT, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO } from "./deckClaims";
+import {
+  CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, sourceRef, statusCounts, typeLabel,
+  DECK_SCOPE_CANNOT, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO,
+} from "./deckClaims";
 
 describe("source reference", () => {
   test("slide, page, notes and table cell", () => {
@@ -20,6 +23,11 @@ describe("claim value", () => {
     expect(claimValue({ value: null, target_date: "2021-Q3" })).toBe("—");
     expect(claimValue({ value: 12000000, value_high: 13000000, currency: "USD" })).toBe("12,000,000–13,000,000 USD");
     expect(claimValue({ value: 5, value_high: 10, unit: "%" })).toBe("5–10%");
+    // The counted noun is the unit: Buffer slide 5.
+    expect(claimValue({ value: 800, unit: "paying users" })).toBe("800 paying users");
+    expect(claimValue({ value: 97, unit: "%" })).toBe("97%");
+    expect(claimValue({ value: 150000, currency: "USD" })).toBe("150,000 USD");
+    expect(claimValue({ value: 1500000, unit: "updates" })).toBe("1,500,000 updates");
   });
 });
 
@@ -35,5 +43,26 @@ test("scope message is the spec text", () => {
     "- Scanned PDFs, images or charts saved as pictures. There is no text in them to read, only pixels.\n" +
     "- Keynote files or Google Slides links. Please export them as PowerPoint or PDF first.\n" +
     "If a number you need sits in a picture, add it as text or send the source spreadsheet.",
+  );
+});
+
+test("type labels", () => {
+  expect(typeLabel("user_growth")).toBe("User growth");
+  expect(typeLabel("gross_margin")).toBe("Gross margin");
+  expect(typeLabel("customers")).toBe("Customers");
+  expect(typeLabel("usage")).toBe("Usage");
+});
+
+test("every column has a header", () => {
+  expect(COLUMNS).toEqual(["Type", "Value", "Date", "Claim in the deck", "Source", "Status", "Action"]);
+});
+
+test("instruction text is word for word", () => {
+  expect([CLAIMS_HEADING, CLAIMS_INTRO, ...CLAIMS_CHOICES.map(([a, b]) => `${a} ${b}`)].join("\n")).toBe(
+    "Claims found in the deck\n" +
+    "These figures may inform the growth plan. They were identified automatically and may contain errors. Check each claim against its source slide, then choose:\n" +
+    "✓ Approve: Confirm this is a claim the company makes. It will be added to the claim register and tested against the data.\n" +
+    "✎ Edit: Correct the figure, type, unit or date, then approve the claim. It will be added to the claim register and tested against the data.\n" +
+    "✕ Reject: Exclude items that are not company claims, such as another company's figures, funds raised or chart axis labels. Rejected items remain in the record but are not used.",
   );
 });
