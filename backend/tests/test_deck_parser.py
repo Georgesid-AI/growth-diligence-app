@@ -627,6 +627,9 @@ def test_decks_list_newest_first_and_within_a_deck_to_review_first_then_by_slide
     old_claims = [c for c in db[decks.CANDIDATES_COLLECTION].docs if c["deck_id"] == old["deck_id"]]
     late = max(old_claims, key=_page)
     client.put(f"/api/audits/audit-1/decks/candidates/{late['id']}", json={"status": "approved"})
+    # A kept or merged claim can carry an early "order"; the slide still decides its place.
+    last_pending = max((c for c in old_claims if c["id"] != late["id"]), key=_page)
+    last_pending["order"] = -1
 
     listed = client.get("/api/audits/audit-1/decks").json()
     assert [d["deck_id"] for d in listed["decks"]] == [new["deck_id"], old["deck_id"]], "most recent deck first"
@@ -636,6 +639,7 @@ def test_decks_list_newest_first_and_within_a_deck_to_review_first_then_by_slide
     keys = [(c["status"] != "pending", _page(c)) for c in in_old]
     assert keys == sorted(keys), "to review first, then by slide"
     assert in_old[-1]["id"] == late["id"], "the reviewed claim moves below the ones to review"
+    assert in_old[-2]["id"] == last_pending["id"], "the slide, not the parse order, places a claim"
 
 
 def test_remove_deck_deletes_its_text_and_all_its_claims_including_reviewed(api):
