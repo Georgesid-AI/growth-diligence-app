@@ -34,23 +34,37 @@ If a file has no readable text, show: "No readable text found in this file. It m
 ## 2. Candidate claim detection (Python only, no LLM, rule-based)
 A figure (a number, or a date) is a candidate if it has a claim keyword: in its own text line,
 or borrowed from nearby text when its line has none.
-Keywords (a keyword also matches its plural and verb forms: revenues, growing, hired, launches):
-- Growth and revenue: ARR, MRR, revenue, growth, CAGR, bookings, turnover
+Keywords and claim types (a keyword also matches its plural and verb forms: revenues, growing,
+hired, launches; of two overlapping keywords the longer one counts):
+- Revenue: ARR, MRR, revenue, bookings, turnover
+- Growth: growth, grow, CAGR. A growth word gives a rate (% or x) its type from the noun on the
+  same line: revenue → Revenue growth, users → User growth, otherwise Growth; never Revenue by
+  default. An amount or a count beside a growth word takes the noun's own type ("ARR grew to
+  $3.6M" is Revenue).
 - Retention: NRR, churn, retention, customer life
-- Sales: sales cycle, win rate, pipeline, ACV, CAC, payback, LTV, lifetime value, acquisition,
-  conversion, leads
+- Sales: sales cycle, win rate, pipeline, ACV, CAC, payback, LTV, (customer) lifetime value,
+  acquisition, conversion, leads
+- Customers: customers, clients, paying users, accounts
+- Users: users
+- Gross margin: margin, margins
+- Usage: the fallback for other counts. A number followed by the noun it counts ("1.5 million
+  updates") whose line has no keyword is a Usage candidate; the noun is its unit.
 - People: hires, headcount, team, recruitment, attrition
 - Product: launch, release, roadmap, ship, milestone, Q1–Q4, month names
 - Market: TAM, SAM, SOM, market (whole word, which includes market size)
+The unit of a count is the noun it counts: "800 paying users", "1,500,000 updates".
+A line with its own keyword never borrows a label from other lines.
 Borrowing: a figure without a keyword or a date in its own line takes them from nearby text,
 first match wins: the table column header, the other lines of its text box (nearest first),
 the text on the same row or above it, never below, within a quarter of the slide or page
-(nearest first), the slide title. The borrowed text is shown in the snippet. A month or
-quarter is preferred over a bare year.
+(nearest first), the slide title. A month or quarter is preferred over a bare year.
+The snippet is the figure's own line. A borrowed label is kept apart and shown below the
+snippet as "Label from: <text>"; a borrowed date as "Date from: <text>".
 A line with no figure becomes a candidate only if it is a product line (launch, release, ship,
 roadmap or milestone, its own or borrowed) and it can borrow a date: a roadmap bullet.
 Each candidate stores: claim type, value (low and high for a range), unit, currency, target
-date (if any), source reference, short snippet (max 300 characters).
+date (if any), source reference, short snippet (max 300 characters), and the text a label or
+date was borrowed from.
 Duplicates across slides are merged and keep all source references.
 
 ## 3. Recall test
@@ -69,6 +83,24 @@ Duplicates across slides are merged and keep all source references.
 ## 5. Storage and deletion
 - Parsed text and candidates are stored in MongoDB, linked to the audit.
 - The "delete audit" button also removes parsed text and candidates.
+
+## 6. Approval
+Shown above the approval list, word for word:
+"Claims found in the deck
+These figures may inform the growth plan. They were identified automatically and may contain errors. Check each claim against its source slide, then choose:
+✓ Approve: Confirm this is a claim the company makes. It will be added to the claim register and tested against the data.
+✎ Edit: Correct the figure, type, unit or date, then approve the claim. It will be added to the claim register and tested against the data.
+✕ Reject: Exclude items that are not company claims, such as another company's figures, funds raised or chart axis labels. Rejected items remain in the record but are not used."
+- Approve: status "approved".
+- Edit: corrects type, value (low and high), unit, currency or date and approves the claim:
+  status "edited", the parser's original values kept next to the edit. Approving an edited
+  claim keeps it "edited". The snippet, borrowed label and sources cannot be edited.
+- Reject: status "rejected". The record is kept, never deleted; it is not in the register.
+- Claim register: the approved and edited claims of an audit (GET /api/audits/{id}/claims).
+- Not built yet: testing register claims against the uploaded data. It needs its own spec.
+- Uploading the same file again replaces its parsed text and its unreviewed candidates only;
+  approved, edited and rejected claims stay, and the same claim is not added twice.
+- Every column of the approval list has a header; the value shows its unit or currency.
 
 ## Done when
 - All three formats parse with correct slide/page references.
