@@ -17,6 +17,11 @@
 6. Keep changes small. No new features unless asked.
 12. If docs/specs/<feature>.md exists for the task, it is the agreed scope. Do not
     add to it. If it is unclear or conflicts with the code, stop and ask.
+13. A bug task starts with a failing test built from the supplied artefact (run id, stored
+    as-of month and whether it was defaulted, target date, P&L present, anonymised upload
+    or server log line). Missing or not reproducing: stop and ask. Never fix a suspected cause.
+14. What may reach the model or the logs is enforced in backend/tests/test_gateway_data_boundary.py.
+    A PR that adds a results key, a reason string, a log line or a guard word extends that file.
 
 ## Finishing a task
 7. A task is finished when the change is committed and pushed. Then create
