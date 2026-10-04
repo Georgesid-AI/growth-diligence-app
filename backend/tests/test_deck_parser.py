@@ -688,8 +688,9 @@ def test_evenly_spaced_numbers_in_a_row_or_column_are_axis_ticks():
     assert row == []
     column = _found(_slide([("ARR", 0.5, 1), ("$100K\n$200K\n$300K", 1, 1.5)]))
     assert column == []
-    uneven = _found(_slide([("Gross churn", 0.5, 2)] + [(f"{v}%", 1 + i, 2) for i, v in enumerate((18, 18, 19))]))
-    assert sorted(c["value"] for c in uneven) == [18, 19], "uneven figures are data, not ticks"
+    uneven = _found(_slide([("Gross churn", 0.5, 2)] + [(f"{v}%", 1 + i, 2) for i, v in enumerate((12, 18, 31))]))
+    assert sorted(c["value"] for c in uneven) == [12, 18, 31], "uneven figures are data, not ticks"
+    assert claims._evenly_spaced([0, 25, 50, 75, 100]) and not claims._evenly_spaced([49284, 181193, 278085])
 
 
 def test_table_row_numbers_and_evenly_spaced_headers_are_ticks():
