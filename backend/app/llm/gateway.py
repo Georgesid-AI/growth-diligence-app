@@ -507,10 +507,11 @@ def allowed_numerals(payload: Any, windows: Iterable[int] = ()) -> set:
 # A negative engine figure may be written as its magnitude with the sign in words
 # (change_arr "-77,949" -> "ARR falls by 77,949 EUR"), but only in a sentence that
 # says it went down. Growth wording (even beside a decline word), or no direction at
-# all, leaves it unverified. "contracts" is not a decline word: it is usually the noun.
+# all, leaves it unverified. "contracts", "down" and "lower" are not decline words: they are
+# usually the noun, a down payment or the lower band, and would let a dropped sign pass.
 _DECLINE = re.compile(r"\b(?:fall(?:s|ing|en)?|fell|declin(?:e|es|ed|ing)|drop(?:s|ped|ping)?|"
                       r"decreas(?:e|es|ed|ing)|shr(?:ink|inks|inking|ank|unk)|"
-                      r"down|lower|loss of)\b", re.IGNORECASE)
+                      r"loss of)\b", re.IGNORECASE)
 _GROWTH = re.compile(r"\b(?:grow(?:s|ing|n)?|grew|ris(?:e|es|ing|en)|rose|increas(?:e|es|ed|ing)|"
                      r"up|higher|gain(?:s|ed|ing)?|add(?:s|ed|ing)?|expand(?:s|ed|ing)?|improv(?:e|es|ed|ing)|"
                      r"accelerat(?:e|es|ed|ing)|win(?:s|ning)?|won)\b", re.IGNORECASE)
@@ -868,7 +869,8 @@ async def generate_narrative(
         )
         return _unavailable(run_id, step, str(exc), metrics)
     except Exception as exc:  # never let the gateway block the dashboard
-        logger.exception("unexpected gateway failure for run %s step %s", run_id, step)
+        # Error type only: the message and traceback can quote results text.
+        logger.error("unexpected gateway failure for run %s step %s: error=%s", run_id, step, type(exc).__name__)
         return _unavailable(run_id, step, f"unexpected error: {type(exc).__name__}", metrics)
     finally:
         await guards.release(db, run_id, step, token)

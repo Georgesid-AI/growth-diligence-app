@@ -241,3 +241,335 @@ def test_demo_upload_leaks_no_file_sheet_header_or_cell_value():
     for needle in (file, sheet, header, cell, "jane doe", "acme"):
         assert needle.lower() not in sent, f"{needle!r} reached the provider"
     assert json.dumps(db["audits"].docs[0]["results"], ensure_ascii=False).lower() == stored, "Mongo keeps the full text"
+
+
+# ---------------------------------------------------------------------------
+# Boundary invariants (CLAUDE.md rule 14). What may reach the model or the logs
+# is enforced here, not in review. A PR that adds a results key, a reason string,
+# a log line or a guard word extends the lists in this section.
+# ---------------------------------------------------------------------------
+import ast  # noqa: E402
+import re  # noqa: E402
+
+import test_narrative_model_guard as guard_t  # noqa: E402
+
+SENTINEL = "JANEDOE"            # written into one cell of every mapped column
+HEADER_SENTINEL = "Jane Doe"    # every mapped column header is renamed to carry it
+
+# Results keys the engine writes that never leave the server. A key that is in
+# neither this set nor gateway.OUTBOUND_FIELDS fails test_every_results_key_is_
+# allowlisted_or_declared_server_only: decide where it belongs when you add it.
+SERVER_ONLY_TOP_LEVEL = frozenset({"anomalies", "mrr_series", "new_mrr_by_quarter"})
+SERVER_ONLY_FIELDS = frozenset({
+    "file", "sheet", "columns", "rows", "row_numbers", "unlocked_by",
+    "values",                       # founder_involved_excluded.values are raw cells (cohort `data.values` is allowed by parent)
+    "value_label",                  # acv_path.overall_band: display string, dashboard only
+    "required_vs_observed_12m_reason", "required_vs_observed_24m_reason",   # acv_path: not yet allowlisted
+})
+
+# (file, function) of log calls that may carry a traceback. Empty: every log call carries error
+# type, run id and engine step only, since an exception message or traceback can quote uploaded cells.
+TRACEBACK_ALLOWED = frozenset()
+
+
+def _engine_results(spec, inject: bool) -> dict:
+    """A real engine run over a demo upload. With `inject`, one cell per mapped column and
+    every mapped header carry a sentinel, so any reason or metric name that quotes upload
+    content shows it."""
+    import demo_data
+    import growth_engine as ge
+    import server
+
+    datasets, meta = demo_data.build(spec)
+    uploads = {}
+    for dtype, (df, mapping) in datasets.items():
+        rows, mapping = server.df_to_records(df), dict(mapping)
+        if inject:
+            for i, col in enumerate(c for c in mapping.values() if c):
+                rows[i][col] = f"{SENTINEL} {col}"                # row i, column i: the other cells stay valid
+            for field, col in list(mapping.items()):
+                if col:
+                    mapping[field] = f"{HEADER_SENTINEL} {field}"
+                    for r in rows:
+                        r[mapping[field]] = r.pop(col)
+        uploads[dtype] = {"file": meta[dtype]["file"], "sheet": meta[dtype]["sheet"],
+                          "columns": list(rows[0]), "rows": rows, "mapping": mapping}
+    norm = {d: server.normalize(u["rows"], d, u["mapping"]) for d, u in uploads.items()}
+    fx = {k.upper(): v for k, v in meta.get("fx", {}).items()}
+    fx[spec["reporting_currency"].upper()] = 1.0
+    cfg = {"reporting_currency": spec["reporting_currency"], "target_arr": spec["target_arr"],
+           "target_date": spec["target_date"], "fx": fx, "billing_terms": {}, "default_l": 1, "as_of_month": None}
+    sources = {d: {"file": u["file"], "sheet": u["sheet"]} for d, u in uploads.items()}
+    return server.sanitize(ge.compute_all(norm["revenue"], norm["crm"], norm["pnl"], cfg, sources,
+                                          files=server.candidate_views(uploads)))
+
+
+@pytest.fixture(scope="module")
+def engine_runs():
+    pytest.importorskip("pandas")
+    pytest.importorskip("fastapi")
+    pytest.importorskip("motor")
+    os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
+    os.environ.setdefault("DB_NAME", "data_boundary_test")
+    import demo_data
+    return [(spec, inject, _engine_results(spec, inject)) for spec in demo_data.DEMO_AUDITS for inject in (False, True)]
+
+
+def _field_keys(node, parent, path, out):
+    """Every (parent, key, path) in `node` whose key is a field name, not data."""
+    if isinstance(node, list):
+        for item in node:
+            _field_keys(item, parent, path, out)
+    elif isinstance(node, dict):
+        for k, v in node.items():
+            if parent in redaction.SEGMENT_CONTAINERS or parent in gateway.PERIOD_KEYED:
+                _field_keys(v, "_data", f"{path}/{k}", out)       # segment names, periods, window lengths
+            elif parent in gateway.DATASET_KEYED:
+                assert k in gateway.DATASET_KEYED[parent], f"{path}/{k}: unknown dataset"
+                _field_keys(v, k, f"{path}/{k}", out)
+            else:
+                out.append((parent, k, f"{path}/{k}"))
+                _field_keys(v, k, f"{path}/{k}", out)
+
+
+def test_every_results_key_is_allowlisted_or_declared_server_only(engine_runs):
+    """A results key the engine writes is in OUTBOUND_FIELDS (the model sees it) or declared
+    server-only here. An unknown key fails: a field added without a decision is otherwise
+    dropped silently and the model never sees it (log 2026-10-02 gateway-data-boundary)."""
+    assert not (SERVER_ONLY_FIELDS & gateway.OUTBOUND_FIELDS), "a key cannot be both"
+    model_facing_top = set()
+    for step in gateway.STEP_CONFIG:
+        model_facing_top |= set(gateway._slice_for_step({k: [] for k in gateway.OUTBOUND_FIELDS}, step))
+    model_facing_top |= set(gateway._GAP_FIELDS)
+    allowed_by_parent = set().union(*gateway.OUTBOUND_FIELDS_BY_PARENT.values())
+    unknown = []
+    for spec, inject, results in engine_runs:
+        for top, value in results.items():
+            if top in SERVER_ONLY_TOP_LEVEL:
+                continue
+            if top not in model_facing_top:
+                unknown.append(f"/{top} (top-level: not in any step slice and not in SERVER_ONLY_TOP_LEVEL)")
+                continue
+            found = []
+            _field_keys(value, top, f"/{top}", found)
+            for parent, key, path in found:
+                if key not in gateway.OUTBOUND_FIELDS and key not in SERVER_ONLY_FIELDS \
+                        and not (key in allowed_by_parent and key in gateway.OUTBOUND_FIELDS_BY_PARENT.get(parent, ())):
+                    unknown.append(path)
+    assert not unknown, "results keys that are neither allowlisted nor declared server-only:\n  " + "\n  ".join(sorted(set(unknown)))
+
+
+def test_no_reason_or_metric_name_reaches_the_model_with_upload_content(engine_runs):
+    """Every Missing Data reason and metric name the engine can write, with a sentinel in one cell
+    of every mapped column and in every header: the model's version carries none of it. A reason
+    that quotes a cell value needs a _NEUTRAL_REASONS entry (log 2026-10-02 gateway-data-boundary-2)."""
+    injected = [(spec, results) for spec, inject, results in engine_runs if inject]
+    stored_all = json.dumps([r for _, r in injected], ensure_ascii=False).lower()
+    assert SENTINEL.lower() in stored_all, "fixture did not exercise the cell sentinel"
+    # Headers reach results only through a management question (covered by the fixture test above).
+    quoting = [item["metric"] for _, r in injected for item in r["missing_data"] if SENTINEL.lower() in item["reason"].lower()]
+    assert quoting, "fixture: at least one stored reason quotes a cell value, so the neutral path is exercised"
+
+    for spec, results in injected:
+        db = t.FakeDB()
+        db["audits"].docs.append({"id": RUN_ID, "results": results, "reporting_currency": spec["reporting_currency"],
+                                  "target_arr": spec["target_arr"], "target_date": spec["target_date"]})
+        computed = asyncio.run(gateway.load_computed_results(db, RUN_ID, "growth_engine"))
+        mapping = asyncio.run(redaction.get_or_create_map(db, RUN_ID, computed))
+        for item in results["missing_data"]:
+            assert SENTINEL.lower() not in item["metric"].lower(), f"metric name quotes a cell: {item['metric']!r}"
+            assert HEADER_SENTINEL.lower() not in item["metric"].lower(), f"metric name quotes a header: {item['metric']!r}"
+            reason = redaction.substitute(gateway._outbound_gap_value("reason", item), mapping)
+            assert SENTINEL.lower() not in reason.lower(), (
+                f"{item['metric']!r} quotes a cell value in its reason; add a _NEUTRAL_REASONS entry: {reason!r}")
+            assert HEADER_SENTINEL.lower() not in reason.lower(), f"{item['metric']!r} quotes a header: {reason!r}"
+        adapter = t.FakeAdapter()
+        asyncio.run(gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=adapter, sleep=t._noop_sleep))
+        assert adapter.calls == 1
+        sent = adapter.payloads[0].lower()
+        for needle in (SENTINEL, HEADER_SENTINEL):
+            assert needle.lower() not in sent, f"{needle!r} reached the provider"
+
+
+_LOG_LEVELS = frozenset({"debug", "info", "warning", "warn", "error", "critical", "exception", "log"})
+# The only calls that may take the exception object: they return a class name or a code name, never its text.
+SAFE_EXCEPTION_READERS = frozenset({"type", "_engine_step"})
+# A parameter with one of these names, or typed as an exception, is treated as the exception object.
+_EXCEPTION_PARAM_NAMES = frozenset({"exc", "e", "err", "error", "exception"})
+
+
+def _log_calls():
+    """(file, function, lineno, call text, problems) for every log call in the backend."""
+    out = []
+    files = [BACKEND / "server.py", BACKEND / "growth_engine.py", BACKEND / "demo_data.py",
+             *sorted((BACKEND / "app").rglob("*.py"))]
+    for path in files:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in _LOG_LEVELS and isinstance(node.func.value, ast.Name)
+                    and "log" in node.func.value.id.lower()):
+                continue
+            # Names bound to an exception where this call sits: `except X as name` around it, and
+            # parameters of the enclosing functions that are typed or named as an exception.
+            bound, function, up = set(), "<module>", node
+            while up in parents:
+                up = parents[up]
+                if isinstance(up, ast.ExceptHandler) and up.name:
+                    bound.add(up.name)
+                if isinstance(up, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    function = up.name if function == "<module>" else function
+                    for a in [*up.args.posonlyargs, *up.args.args, *up.args.kwonlyargs]:
+                        annotation = ast.unparse(a.annotation) if a.annotation else ""
+                        if a.arg in _EXCEPTION_PARAM_NAMES or annotation.endswith(("Exception", "Error")):
+                            bound.add(a.arg)
+            problems = []
+            if node.func.attr == "exception":
+                problems.append("logger.exception appends the traceback")
+            for kw in node.keywords:
+                if kw.arg in ("exc_info", "stack_info"):
+                    problems.append(f"{kw.arg}= appends the traceback")
+            for arg in [*node.args, *(kw.value for kw in node.keywords)]:
+                for sub in ast.walk(arg):
+                    if isinstance(sub, ast.Call) and ast.unparse(sub.func).endswith(("format_exc", "format_exception")):
+                        problems.append("traceback text is formatted into the message")
+                    if isinstance(sub, ast.Name) and sub.id in bound:
+                        owner = parents.get(sub)
+                        if not (isinstance(owner, ast.Call) and ast.unparse(owner.func) in SAFE_EXCEPTION_READERS):
+                            problems.append(f"the exception {sub.id!r} is formatted into the message")
+            out.append((str(path.relative_to(BACKEND)), function, node.lineno, ast.unparse(node), problems))
+    return out
+
+
+def test_no_log_call_formats_an_exception_message_or_traceback():
+    """A log call may use an exception only through SAFE_EXCEPTION_READERS, whether it sits in an
+    `except` block or in a helper that takes the exception as a parameter. The message and the
+    traceback can quote uploaded cell values (log 2026-10-02 fix-calc-correctness-2). The two sites
+    TRACEBACK_ALLOWED is empty; a new entry is a decision, not a default."""
+    calls = _log_calls()
+    assert len(calls) >= 8, "the scan found fewer log calls than the codebase is known to have"
+    violations = [f"{file}:{line} in {func}(): {text}  <- {'; '.join(problems)}"
+                  for file, func, line, text, problems in calls
+                  if problems and (file, func) not in TRACEBACK_ALLOWED]
+    assert not violations, "log calls that can carry upload content:\n  " + "\n  ".join(violations)
+    allowed_in_use = {(file, func) for file, func, _, _, problems in calls if problems}
+    assert allowed_in_use == set(TRACEBACK_ALLOWED), "TRACEBACK_ALLOWED lists a site that no longer exists; remove it"
+
+
+def _alternatives(pattern: re.Pattern) -> list:
+    """The top-level words of a `\\b(?:a|b(?:s|es)|c)\\b` direction regex."""
+    body = pattern.pattern
+    assert body.startswith(r"\b(?:") and body.endswith(r")\b"), "direction regex shape changed; update _alternatives"
+    body, out, depth, cur = body[5:-3], [], 0, ""
+    for ch in body:
+        depth += (ch == "(") - (ch == ")")
+        if ch == "|" and depth == 0:
+            out.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    return out + [cur]
+
+
+# One false friend per direction word: the word in another sense, or the confusable form that
+# sits next to it, with the verdict the strict reading gives. "passes" means the dropped minus
+# sign on change_arr -77,949 is accepted; "flagged" means 77949 stays unverified.
+# A realistic false friend that passes is a hole in the list: "contracts", "down" and "lower" were
+# removed for that (test_removed_direction_words_no_longer_accept_a_dropped_sign).
+FALSE_FRIENDS = {
+    # decline words
+    "fall": ("The fall in ARR, 77,949 EUR, is in Segment B.", "passes"),
+    "fell": ("Costs rose, ARR fell 77,949 EUR.", "flagged"),
+    "decline": ("The decline of 77,949 EUR is in Segment B.", "passes"),
+    "drop": ("The drop-off is 77,949 EUR.", "passes"),
+    "decrease": ("The decrease is 77,949 EUR.", "passes"),
+    "shrink": ("The shrink in Segment B is 77,949 EUR.", "passes"),
+    "loss of": ("A loss of 77,949 EUR of ARR.", "passes"),
+    # growth words: a growth word in a decline sentence keeps the figure unverified (a reask, never a wrong figure)
+    "grows": ("Segment B grows while ARR falls by 77,949 EUR.", "flagged"),
+    "grew": ("Costs grew; ARR fell by 77,949 EUR.", "flagged"),
+    "rise": ("The rise in churn cut ARR by 77,949 EUR.", "flagged"),
+    "rose": ("Churn rose, so ARR fell by 77,949 EUR.", "flagged"),
+    "increase": ("The increase in churn cut ARR by 77,949 EUR.", "flagged"),
+    "up": ("ARR falls by up to 77,949 EUR.", "flagged"),
+    "higher": ("Higher churn cut ARR by 77,949 EUR.", "flagged"),
+    "gains": ("Gains of 77,949 EUR offset the decline.", "flagged"),
+    "adds": ("Segment B adds 77,949 in new contracts.", "flagged"),
+    "expands": ("ARR declines by 77,949 EUR as the base expands.", "flagged"),
+    "improves": ("Margin improves as ARR declines by 77,949 EUR.", "flagged"),
+    "accelerates": ("Churn accelerates; ARR falls by 77,949 EUR.", "flagged"),
+    "wins": ("ARR declines by 77,949 EUR after two wins.", "flagged"),
+    "won": ("Won deals fell; ARR dropped 77,949 EUR.", "flagged"),
+}
+
+
+def test_every_direction_word_has_a_false_friend_case():
+    """A word added to _DECLINE or _GROWTH without its own entry in FALSE_FRIENDS fails here.
+    Keys are the form of the word its case uses; each key must match exactly one direction word."""
+    uncovered, matched = [], {}
+    for name, rx in (("_DECLINE", gateway._DECLINE), ("_GROWTH", gateway._GROWTH)):
+        for alt in _alternatives(rx):
+            keys = [k for k in FALSE_FRIENDS if re.fullmatch(alt, k, re.IGNORECASE)]
+            if not keys:
+                uncovered.append(f"{name}: {alt}")
+            for k in keys:
+                matched[k] = matched.get(k, 0) + 1
+    assert not uncovered, "direction words without their own case in FALSE_FRIENDS:\n  " + "\n  ".join(uncovered)
+    for key, (text, _) in FALSE_FRIENDS.items():
+        assert matched.get(key) == 1, f"{key!r} is not exactly one direction word"
+        assert re.search(rf"\b{re.escape(key)}\b", text, re.IGNORECASE), f"{key!r}: its case does not contain the word"
+
+
+@pytest.mark.parametrize("word", sorted(FALSE_FRIENDS))
+def test_false_friend_verdict(word):
+    text, expected = FALSE_FRIENDS[word]
+    payload = gateway.build_outbound(guard_t.COMPUTED, {})
+    assert "-77,949" in str(payload), "fixture: the engine figure is signed"
+    flagged = gateway.numeric_guard(guard_t._narrative(text), payload).all
+    assert flagged == ([] if expected == "passes" else ["77949"]), f"{word!r}: {text!r} -> {flagged}"
+
+
+@pytest.mark.parametrize("text", ["A 77,949 EUR down payment was booked.", "The lower band is 77,949 EUR.",
+                                  "ARR is down 77,949 EUR.", "ARR is lower by 77,949 EUR."])
+def test_removed_direction_words_no_longer_accept_a_dropped_sign(text):
+    """"down" and "lower" read as a decline in a down payment or the lower band, so the words were
+    dropped; the figure stays unverified until the sentence uses a decline verb."""
+    payload = gateway.build_outbound(guard_t.COMPUTED, {})
+    assert gateway.numeric_guard(guard_t._narrative(text), payload).all == ["77949"]
+    for word in ("down", "lower"):
+        assert not gateway._DECLINE.search(word)
+
+
+def test_the_outermost_500_handler_and_the_gateway_failure_log_type_run_id_and_step_only(monkeypatch, caplog):
+    """An error whose message quotes a cell reaches both catch-all handlers: the log carries the
+    error type and the request or run, never the message or a traceback."""
+    pytest.importorskip("fastapi")
+    import logging
+    from fastapi.testclient import TestClient
+    import server
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("cannot parse cell 'Jane Doe (CEO)'")
+
+    async def aboom(*args, **kwargs):
+        boom()
+
+    generate = gateway.generate_narrative            # server.llm_gateway is this module; keep the real one
+    monkeypatch.setattr(server, "db", t.make_db())
+    monkeypatch.setattr(server.llm_gateway, "generate_narrative", aboom)
+    client = TestClient(server.app, raise_server_exceptions=False)
+    with caplog.at_level(logging.DEBUG):
+        assert client.post("/api/runs/run-abc/narrative/growth_engine").status_code == 500
+    assert "unexpected error handling POST /api/runs/run-abc/narrative/growth_engine: error=RuntimeError" in caplog.text
+    caplog.clear()
+
+    db = _db()
+    monkeypatch.setattr(gateway.guards, "check_call_cap", aboom)
+    with caplog.at_level(logging.DEBUG):
+        result = asyncio.run(generate(db, RUN_ID, "growth_engine", adapter=t.FakeAdapter(), sleep=t._noop_sleep))
+    assert result.narrative_status != "ok"
+    assert f"unexpected gateway failure for run {RUN_ID} step growth_engine: error=RuntimeError" in caplog.text
+    for text in (caplog.text, *[r.getMessage() for r in caplog.records]):
+        assert "Jane Doe" not in text and "Traceback" not in text
+    assert all(r.exc_info is None for r in caplog.records), "no traceback in the log"

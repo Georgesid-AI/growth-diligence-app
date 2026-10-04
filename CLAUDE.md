@@ -17,6 +17,11 @@
 6. Keep changes small. No new features unless asked.
 12. If docs/specs/<feature>.md exists for the task, it is the agreed scope. Do not
     add to it. If it is unclear or conflicts with the code, stop and ask.
+13. A bug task starts with a failing test built from the supplied artefact (run id, stored
+    as-of month and whether it was defaulted, target date, P&L present, anonymised upload
+    or server log line). Missing or not reproducing: stop and ask. Never fix a suspected cause.
+14. What may reach the model or the logs is enforced in backend/tests/test_gateway_data_boundary.py.
+    A PR that adds a results key, a reason string, a log line or a guard word extends that file.
 
 ## Finishing a task
 7. A task is finished when the change is committed and pushed. Then create
@@ -28,5 +33,6 @@
 8. Never write client names or data into the log.
 10. Log only in docs/session-log/. Never write to, edit or delete memory/PRD.md.
 11. Before reporting, fix any leftover risk you find that is inside the task's
-    scope, with a test. Report only what needs my decision. If a fix goes beyond
-    the task, list it under "Decisions for you" and do not build it.
+    scope, with a test. A new test counts only after it has failed on a deliberate
+    violation. Report only what needs my decision. If a fix goes beyond the task,
+    list it under "Decisions for you" and do not build it.

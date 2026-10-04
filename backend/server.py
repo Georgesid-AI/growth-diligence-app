@@ -955,13 +955,14 @@ async def log_unexpected_errors(request, call_next):
     Without this an unhandled exception is answered by the server's outermost error layer,
     which sits outside CORS: the browser then sees a bare network failure with no status and
     no text. Registered before the CORS middleware, so this response carries CORS headers and
-    the page can show the real status. Only the exception's class name is sent to the client;
-    the traceback goes to the server log (with credentials masked).
+    the page can show the real status. Only the exception's class name is sent to the client
+    and to the log: the message and traceback can quote uploaded cell values.
     """
     try:
         return await call_next(request)
     except Exception as exc:
-        logger.exception("unexpected error handling %s %s", request.method, request.url.path)
+        logger.error("unexpected error handling %s %s: error=%s", request.method, request.url.path,
+                     type(exc).__name__)
         return JSONResponse(
             status_code=500,
             content={"detail": f"Unexpected server error ({type(exc).__name__}); the details are in the server log"},

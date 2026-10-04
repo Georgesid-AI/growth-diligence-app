@@ -54,7 +54,7 @@ def test_the_guard_is_not_widened_beyond_the_sign():
     assert gateway.numeric_guard(_narrative("NRR moved -76% on -65 customers."), payload).all == ["-76", "-65"]
 
 
-@pytest.mark.parametrize("text", ["ARR falls by 77,949 EUR.", "ARR declines 77,949 EUR.", "ARR is down 77,949 EUR.",
+@pytest.mark.parametrize("text", ["ARR falls by 77,949 EUR.", "ARR declines 77,949 EUR.",
                                   "A loss of 77,949 EUR of ARR."])
 def test_a_dropped_minus_sign_passes_with_decline_wording(text):
     payload = gateway.build_outbound(COMPUTED, {})
@@ -68,7 +68,8 @@ def test_a_dropped_minus_sign_passes_with_decline_wording(text):
                                   "ARR falls but the segment wins 77,949 EUR.",
                                   "ARR drops while bookings expand by 77,949 EUR.",
                                   "Margin improves as ARR declines by 77,949 EUR.",
-                                  "Growth accelerates; ARR is lower by 77,949 EUR."])
+                                  "Growth accelerates; ARR is lower by 77,949 EUR.",
+                                  "ARR is down 77,949 EUR.", "ARR is lower by 77,949 EUR."])
 def test_a_dropped_minus_sign_without_decline_wording_is_flagged(text):
     payload = gateway.build_outbound(COMPUTED, {})
     assert gateway.numeric_guard(_narrative(text), payload).soft == ["77949"]
