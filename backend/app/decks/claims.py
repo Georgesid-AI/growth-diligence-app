@@ -9,8 +9,10 @@ Each figure becomes one candidate:
 The type is the family of the nearest keyword in the figure's own line. A growth word gives a
 rate (% or x) its type from the noun on the same line: revenue -> revenue_growth, users ->
 user_growth, none or another noun -> growth. Beside a growth word, an amount or a count takes
-the noun's own type ("ARR grew to $3.6M" is revenue). A count ("1.5 million updates") whose line has no keyword is usage,
-with the counted noun as its unit; a count of a keyword noun keeps it ("800 paying users").
+the noun's own type ("ARR grew to $3.6M" is revenue). A count keeps the counted noun as its unit
+("800 paying users"); a count whose line has no keyword borrows a label like any other figure.
+Only plan claims are kept: axis ticks, background and cited-research pages, and lines about
+funds raised, tokens, careers or the industry are dropped (see _axis_ticks and _not_plan).
 
 A line is a parser text line; a table row is one line, and each figure keeps the row and
 column of its own cell. A range ("$12 - $13 million") is one figure with a low and a high value.
@@ -49,24 +51,28 @@ _FAMILIES = [
     ("sales", r"\b(?:ACV|CAC|LTV)s?\b|(?i:\bsales cycles?\b|\bwin rates?\b|\bpipelines?\b|\bpayback\b"
               r"|\b(?:customer )?lifetime value\b|\bacqui(?:re|res|red|ring|sition)\b|\bconver(?:t|ts|ted|ting|sion|sions)\b"
               r"|\bleads\b)"),
-    ("customers", r"(?i:\bcustomers?\b|\bclients?\b|\bpaying users?\b|\baccounts?\b)"),
+    ("customers", r"(?i:\bcustomers?\b|\bclients?\b|\bpaying users?\b|\baccounts?\b"
+                  r"|\bcompan(?:y|ies)\b|\bagenc(?:y|ies)\b|\bsubscribers?\b)"),
     ("users", r"(?i:\busers?\b)"),
     ("gross_margin", r"(?i:\bmargins?\b)"),
     ("people", r"(?i:\bhir(?:e|es|ed|ing)\b|\bheadcounts?\b|\bteams?\b|\brecruit(?:s|ed|ing|ment)?\b"
                r"|\battrition\b)"),
     ("product", r"(?i:\blaunch(?:es|ed|ing)?\b|\breleas(?:e|es|ed|ing)\b|\broadmaps?\b|\bship(?:s|ped|ping)?\b"
                 r"|\bmilestones?\b)"),
-    ("market", r"\b(?:TAM|SAM|SOM)\b|(?i:\bmarkets?\b)"),
+    ("market", r"\b(?:TAM|SAM|SOM)\b|(?i:\baddressable markets?\b|\bmarket[ -]sizes?\b)"),
 ]
 _KEYWORDS = [(family, re.compile(rx)) for family, rx in _FAMILIES]
 _NOUN_KEYWORDS = [(family, rx) for family, rx in _KEYWORDS if family in ("customers", "users")]
 _GROWTH_OF = {"revenue": "revenue_growth", "users": "user_growth"}
+# Plan claims only: the company's own figures the growth plan depends on.
 CLAIM_TYPES = ("revenue", "revenue_growth", "growth", "retention", "sales", "customers", "users", "user_growth",
-               "gross_margin", "usage", "people", "product", "market")
+               "gross_margin", "people", "product", "market")
 # Words after a number that are not the thing counted: "20 of them", "5 per month".
 _NOT_NOUNS = frozenset("""a an and are as at be by each for from has have in into is it its more of on or our
 over per than that the this to under up was we were with""".split())
 _COUNTED = re.compile(r"\s+(?P<noun>[A-Za-z][A-Za-z'’-]*)")
+_UNIT_WORD = re.compile(r"[^\sA-Za-z]*(?P<word>\S*)")
+UNIT_REACH = 4  # words after the number searched for a keyword noun
 
 # Date words (Q1-Q4 and month names) are product keywords and also give the target date.
 _MONTHS = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6, "jul": 7, "aug": 8, "sep": 9,
@@ -174,14 +180,24 @@ def find_numbers(line: str, dates: List[Dict]) -> List[Dict]:
 
 
 def _counted(line: str, end: int) -> Tuple[Optional[str], bool]:
-    """(noun, True) when the figure counts something: "800 paying users", "1.5 million updates"."""
+    """(noun, True) when the figure counts something: "800 paying users", "1.5 million updates".
+    The noun is a keyword noun within the next UNIT_REACH words, up to the next figure
+    ("50 Dutch work agencies"), else the word right after the number."""
     m = _COUNTED.match(line, end)
     if not m or m.group("noun").lower() in _NOT_NOUNS:
         return None, False
-    for _, rx in _NOUN_KEYWORDS:
-        k = rx.match(line, m.start("noun"))
-        if k:
-            return k.group(0).lower(), True
+    pos = m.start("noun")
+    for _ in range(UNIT_REACH):
+        w = _UNIT_WORD.match(line, pos)
+        if any(ch.isdigit() for ch in w.group(0)):
+            break
+        for _, rx in _NOUN_KEYWORDS:
+            k = rx.match(line, w.start("word"))
+            if k:
+                return k.group(0).lower(), True
+        pos = w.end()
+        while pos < len(line) and line[pos].isspace():
+            pos += 1
     return m.group("noun").lower(), True
 
 
@@ -275,11 +291,9 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
         own = _nearest(keywords, n)
         header = headers.get(ref_at(n["pos"]).get("col"))
         nearby = [header] if header else []
-        borrowed = None if own or n["count"] else _borrow_keyword(nearby + context)
+        borrowed = None if own else _borrow_keyword(nearby + context)
         if own:
             family = _type(own, keywords, n["unit"])
-        elif n["count"]:
-            family = "usage"
         elif borrowed:
             family = borrowed[0]
         elif date_words:
@@ -396,13 +410,110 @@ def _contexts(units: List[Dict]) -> Dict[int, List[str]]:
     return out
 
 
+_WORD = re.compile(r"[A-Za-z]{2,}")
+
+# Not plan claims (spec section 2): whole slides or pages of background or cited research, and
+# lines about funds raised, tokens, people's careers or the industry and the world at large.
+_BACKGROUND_TITLE = re.compile(r"(?i)\b(?:problems?|why now|trends?|landscape|background|tokens?|allocation)\b")
+_CITED = re.compile(r"(?i)^\s*(?:sources?\s*:|via\s+https?://)|^\s*\d+\.\s*(?:https?://|\S.*\bresearch\b)")
+# "1.", "2. Research at MIT", a bare URL; not "3.9x more messages" (a decimal)
+_FOOTNOTE = re.compile(r"(?i)^\s*(?:\d+\.(?!\d)|https?://)")
+_NOT_PLAN_LINE = re.compile(
+    r"(?i)\b(?:rais(?:e|es|ed|ing)|funding|investments?|investors?|valuation|seed round|series [a-d]|pre-seed|"
+    r"post-seed|tokens?|allocation|vesting|total supply|lock-?up|co-?founders?|founders?|founded|ceo|cto|cfo|coo|"
+    r"chief|former(?:ly)?|previously|employee|exec(?:utive)? team|industry|industries|global|worldwide|economy)\b")
+
+
+def _not_plan(units: List[Dict]) -> set:
+    """id() of the lines that are not plan claims: every line of a slide titled Problem, Why now and
+    the like or of a page that cites outside research, and lines about funds, tokens, careers or
+    the industry."""
+    pages = {}
+    for u in units:
+        pages.setdefault(u["page"], []).append(u)
+    out = set()
+    for members in pages.values():
+        title = " ".join(m["text"] for m in members if m["title"])
+        cited = any(_CITED.search(m["text"]) for m in members) or \
+            sum(1 for m in members if _FOOTNOTE.search(m["text"])) >= 2
+        if _BACKGROUND_TITLE.search(title) or cited:
+            out.update(id(m) for m in members)
+        out.update(id(m) for m in members if _NOT_PLAN_LINE.search(m["text"]))
+    return out
+
+
+def _bare_values(text: str) -> List[float]:
+    """The figures of a line that holds nothing but numbers ("800,000", "40%", "$5.5T"); else []."""
+    if _WORD.search(text):
+        return []
+    return [n["value"] for n in find_numbers(text, find_dates(text))]
+
+
+def _evenly_spaced(values: List[float]) -> bool:
+    distinct = sorted(set(values))
+    if len(distinct) < 3:
+        return False
+    steps = [b - a for a, b in zip(distinct, distinct[1:])]
+    return all(abs(step - steps[0]) <= 1e-6 * max(1.0, abs(steps[0])) for step in steps)
+
+
+def _axis_ticks(units: List[Dict]) -> set:
+    """id() of the lines that are chart axis ticks: 3 or more numbers, evenly spaced in value, in
+    one line, or one bare number per line stacked in a column or lined up in a row."""
+    ticks = set()
+    pages = {}
+    for u in units:
+        if u.get("table_row"):
+            continue
+        values = _bare_values(u["text"])
+        if len(values) >= 3 and _evenly_spaced(values):
+            ticks.add(id(u))
+        elif len(values) == 1 and u["bbox"]:
+            pages.setdefault(u["page"], []).append((u, values[0]))
+    for found in pages.values():
+        for axis in (0, 1):           # 0: a column (overlapping x), 1: a row (overlapping y)
+            lo, hi = (0, 2) if axis == 0 else (1, 3)
+            for u, _ in found:
+                group = [(v, w) for w, v in found if min(u["bbox"][hi], w["bbox"][hi]) > max(u["bbox"][lo], w["bbox"][lo])]
+                if len(group) >= 3 and _evenly_spaced([v for v, _ in group]):
+                    ticks.update(id(w) for _, w in group)
+    return ticks
+
+
+def _tick_cells(blocks: List[Dict]) -> set:
+    """(page, table, row, col) of table cells that are row numbers or axis-like headers: one bare
+    number per cell, 3 or more evenly spaced down a column or along a row ("1 2 3", "Y/E 22 23 24")."""
+    cells = {}
+    for b in blocks:
+        if b["kind"] == "table":
+            values = _bare_values(b["text"])
+            if len(values) == 1:
+                cells[(b.get("slide") or b.get("page"), b["table"], b["row"], b["col"])] = values[0]
+    out = set()
+    for axis in (2, 3):                 # same column, then same row
+        groups = {}
+        for key, value in cells.items():
+            groups.setdefault(key[:2] + (key[axis],), []).append((key, value))
+        for members in groups.values():
+            if len(members) >= 3 and _evenly_spaced([v for _, v in members]):
+                out.update(k for k, _ in members)
+    return out
+
+
 def detect_candidates(blocks: List[Dict], file: str) -> List[Dict]:
     """Every candidate in a parsed deck, duplicates merged in order of first appearance."""
     units = _units(blocks, file)
     contexts = _contexts(units)
+    skipped = _axis_ticks(units) | _not_plan(units)
+    tick_cells = _tick_cells(blocks)
     merged = {}
     for u in units:
+        if id(u) in skipped:
+            continue
         for c in line_candidates(u["text"], u["spans"], contexts[id(u)], u["headers"]):
+            s = c["sources"][0]
+            if s["kind"] == "table" and (s.get("slide") or s.get("page"), s["table"], s["row"], s["col"]) in tick_cells:
+                continue
             key = (c["claim_type"], c["value"], c["value_high"], c["unit"], c["currency"], c["target_date"])
             if key not in merged:
                 merged[key] = c

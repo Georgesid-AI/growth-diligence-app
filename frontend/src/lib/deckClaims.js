@@ -26,13 +26,14 @@ export const CLAIMS_CHOICES = [
   ["✕ Reject:", "Exclude items that are not company claims, such as another company's figures, funds raised or chart axis labels. Rejected items remain in the record but are not used."],
 ];
 
-// Same order and names as backend app/decks/claims.py CLAIM_TYPES.
+// Labels for every type a stored claim may carry; "usage" only on claims parsed before it was dropped.
 export const TYPE_LABELS = {
   revenue: "Revenue", revenue_growth: "Revenue growth", growth: "Growth", retention: "Retention", sales: "Sales",
   customers: "Customers", users: "Users", user_growth: "User growth", gross_margin: "Gross margin", usage: "Usage",
   people: "People", product: "Product", market: "Market",
 };
-export const CLAIM_TYPES = Object.keys(TYPE_LABELS);
+// The types an analyst can choose: same order and names as backend app/decks/claims.py CLAIM_TYPES.
+export const CLAIM_TYPES = Object.keys(TYPE_LABELS).filter((t) => t !== "usage");
 // Suggestions for the unit field; a count's unit is the noun it counts ("paying users").
 export const CLAIM_UNITS = ["%", "x", "months", "years", "weeks", "days", "hours", "customers", "users"];
 

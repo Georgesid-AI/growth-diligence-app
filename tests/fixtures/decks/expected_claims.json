@@ -1,7 +1,7 @@
 {
   "about": "Hand-checked answer file for the deck parser recall test (docs/specs/deck-parser.md section 3). Drafted from the decks, starting from README.md; awaiting review before the pass mark is set.",
   "page": "Slide number for pptx, page number for pdf and docx, one-based.",
-  "status": "'company claim' counts toward recall. 'not a company claim' marks a README distractor: it is listed so a reviewer can see it was considered, and never counts toward recall.",
+  "status": "'company claim' counts toward recall: a figure the growth plan depends on. 'not a plan claim' is the company's own figure in a category the parser leaves out (usage, unlabelled market figures, cited research, background, bios). 'not a company claim' marks a README distractor. Neither counts toward recall.",
   "values": "value is the figure as a plain number: percentages as 15 (unit '%'), money scaled to units (€15K -> 15000, $3.6M -> 3600000). A range has value (low) and value_high. value null means the claim is a date (target_date) without a figure.",
   "target_date": "YYYY, YYYY-MM or YYYY-Qn.",
   "decks": [
@@ -22,17 +22,17 @@
         {"page": 13, "status": "company claim", "claim_type": "sales", "value": 15, "unit": "months", "currency": null, "target_date": null, "text": "ACV doubled in 15 months", "note": "the figure in the text is the period; the claim is a doubling of ACV"},
         {"page": 13, "status": "company claim", "claim_type": "retention", "value": 120, "unit": "%", "currency": null, "target_date": null, "text": "120% net retention rate at 6 months"},
         {"page": 13, "status": "company claim", "claim_type": "retention", "value": 150, "unit": "%", "currency": null, "target_date": null, "text": "150% net retention rate at 1 year"},
-        {"page": 13, "status": "company claim", "claim_type": "usage", "value": 3.9, "unit": "x", "currency": null, "target_date": null, "text": "3.9x more messages sent per user after 1 year", "note": "usage per user; was a distractor before the usage type existed"},
-        {"page": 13, "status": "company claim", "claim_type": "usage", "value": 4.9, "unit": "x", "currency": null, "target_date": null, "text": "4.9x more comments written per user after 1 year", "note": "usage per user; was a distractor before the usage type existed"},
         {"page": 14, "status": "company claim", "claim_type": "people", "value": 0, "unit": null, "currency": null, "target_date": null, "text": "0 voluntary departures among employed for more than 3 months", "note": "attrition"},
         {"page": 15, "status": "company claim", "claim_type": "revenue", "value": 5, "unit": "%", "currency": null, "target_date": null, "text": "† assuming no hiring and 5% monthly growth", "note": "growth assumption behind 'Profitable in 10 months'"},
         {"page": 16, "status": "company claim", "claim_type": "revenue", "value": null, "unit": null, "currency": null, "target_date": "2018", "text": "Aiming for $xx ARR by end of 2018", "note": "value redacted; dated target"},
-        {"page": 18, "status": "company claim", "claim_type": "usage", "value": 2.5, "unit": "hours", "currency": null, "target_date": null, "text": "2.5 hours per user per day"},
-        {"page": 18, "status": "company claim", "claim_type": "usage", "value": 64, "unit": "%", "currency": null, "target_date": null, "text": "64% DAU / MAU ratio"},
         {"page": 20, "status": "company claim", "claim_type": "product", "value": null, "unit": null, "currency": null, "target_date": "2018", "text": "Ship our new Extension API (focus for 2018)", "note": "year is in the slide title"},
         {"page": 20, "status": "company claim", "claim_type": "product", "value": null, "unit": null, "currency": null, "target_date": "2018", "text": "Launch an app-store, host 3rd party apps (focus for 2018)", "note": "year is in the slide title"},
+        {"page": 13, "status": "not a plan claim", "claim_type": "usage", "value": 3.9, "unit": "x", "currency": null, "target_date": null, "text": "3.9x more messages sent per user after 1 year", "note": "usage: the Usage fallback type is dropped"},
+        {"page": 13, "status": "not a plan claim", "claim_type": "usage", "value": 4.9, "unit": "x", "currency": null, "target_date": null, "text": "4.9x more comments written per user after 1 year", "note": "usage: the Usage fallback type is dropped"},
         {"page": 15, "status": "not a company claim", "claim_type": "revenue", "value": 3100000, "unit": null, "currency": "USD", "target_date": null, "text": "Seed to Series A: $3.1m raised", "note": "funds raised"},
-        {"page": 15, "status": "not a company claim", "claim_type": "revenue", "value": 10000000, "unit": null, "currency": "USD", "target_date": null, "text": "Series A to date: $10m raised", "note": "funds raised"}
+        {"page": 15, "status": "not a company claim", "claim_type": "revenue", "value": 10000000, "unit": null, "currency": "USD", "target_date": null, "text": "Series A to date: $10m raised", "note": "funds raised"},
+        {"page": 18, "status": "not a plan claim", "claim_type": "usage", "value": 2.5, "unit": "hours", "currency": null, "target_date": null, "text": "2.5 hours per user per day", "note": "usage: the Usage fallback type is dropped"},
+        {"page": 18, "status": "not a plan claim", "claim_type": "usage", "value": 64, "unit": "%", "currency": null, "target_date": null, "text": "64% DAU / MAU ratio", "note": "usage: the Usage fallback type is dropped"}
       ]
     },
     {
@@ -45,10 +45,7 @@
         {"page": 2, "status": "company claim", "claim_type": "product", "value": null, "unit": null, "currency": null, "target_date": "2007-02", "text": "SEOmoz launches its first subscription software product, “PRO” for $39/month (Feb. 2007)"},
         {"page": 2, "status": "company claim", "claim_type": "product", "value": null, "unit": null, "currency": null, "target_date": "2008-10", "text": "Linkscape, SEOmoz's web index and link graph, launches (Oct. 2008)"},
         {"page": 3, "status": "company claim", "claim_type": "gross_margin", "value": 83, "unit": "%", "currency": null, "target_date": null, "text": "we maintain margins of 83%+"},
-        {"page": 3, "status": "company claim", "claim_type": "usage", "value": 1200000, "unit": "visits", "currency": null, "target_date": "2011-04", "text": "April of 2011, we hit 1.2+MM visits/month"},
         {"page": 3, "status": "company claim", "claim_type": "customers", "value": 10000, "unit": "subscribers", "currency": null, "target_date": "2011-04", "text": "and 10K+ subscribers"},
-        {"page": 17, "status": "company claim", "claim_type": "market", "value": 5, "unit": "%", "currency": null, "target_date": null, "text": "We believe we've captured ~5% of this market as paying customers", "note": "market share"},
-        {"page": 17, "status": "company claim", "claim_type": "users", "value": 15, "unit": "%", "currency": null, "target_date": null, "text": "~15% as registered members", "note": "share of the market"},
         {"page": 20, "status": "company claim", "claim_type": "revenue", "value": 12000000, "value_high": 13000000, "unit": null, "currency": "USD", "target_date": "2011", "text": "2011 Estimated Revenue $12 - $13 million", "note": "range"},
         {"page": 20, "status": "company claim", "claim_type": "revenue", "value": 10800000, "unit": null, "currency": "USD", "target_date": null, "text": "Current Revenue Run Rate (June) ~$10.8 million"},
         {"page": 20, "status": "company claim", "claim_type": "sales", "value": 900, "unit": null, "currency": "USD", "target_date": null, "text": "Avg. Customer Lifetime Value ~$900"},
@@ -56,19 +53,22 @@
         {"page": 20, "status": "company claim", "claim_type": "sales", "value": 100, "unit": null, "currency": "USD", "target_date": null, "text": "Avg. Cost of Paid Acquisition ~$100"},
         {"page": 20, "status": "company claim", "claim_type": "revenue", "value": 93, "unit": null, "currency": "USD", "target_date": null, "text": "Avg. Monthly Revenue / Subscriber ~$93"},
         {"page": 20, "status": "company claim", "claim_type": "customers", "value": 13500, "unit": null, "currency": null, "target_date": null, "text": "Number of PRO Subscribers ~13,500"},
-        {"page": 20, "status": "company claim", "claim_type": "usage", "value": 100, "unit": null, "currency": null, "target_date": null, "text": "# of New Free Trials / Day ~100"},
         {"page": 21, "status": "company claim", "claim_type": "sales", "value": 57, "unit": "%", "currency": null, "target_date": null, "text": "% of Free Trials Converting to Paid ~57%"},
         {"page": 21, "status": "company claim", "claim_type": "retention", "value": 25, "unit": "%", "currency": null, "target_date": null, "text": "Churn Rate in 1st 2 Paid Months ~25%"},
-        {"page": 21, "status": "company claim", "claim_type": "usage", "value": 1250000, "unit": null, "currency": null, "target_date": null, "text": "Monthly Visits to Moz + OSE ~1.25 million"},
-        {"page": 21, "status": "company claim", "claim_type": "users", "value": 300000, "unit": null, "currency": null, "target_date": null, "text": "Email Subscribers ~300K"},
         {"page": 21, "status": "company claim", "claim_type": "gross_margin", "value": 82, "unit": "%", "currency": null, "target_date": null, "text": "Gross Margins ~82%"},
         {"page": 31, "status": "company claim", "claim_type": "people", "value": 40, "unit": null, "currency": null, "target_date": null, "text": "2 Year Team Roadmap from 40-100 Mozzers (today)"},
         {"page": 31, "status": "company claim", "claim_type": "people", "value": 100, "unit": null, "currency": null, "target_date": null, "text": "2 Year Team Roadmap from 40-100 Mozzers (in two years)"},
         {"page": 35, "status": "company claim", "claim_type": "revenue", "value": 2, "unit": "x", "currency": null, "target_date": null, "text": "#3: Proven record of 2X+ growth for 4 years"},
-        {"page": 35, "status": "company claim", "claim_type": "users", "value": 300000, "unit": "marketers", "currency": null, "target_date": null, "text": "Passionate community of 300K+ marketers"},
         {"page": 2, "status": "not a company claim", "claim_type": "revenue", "value": 1100000, "unit": null, "currency": "USD", "target_date": null, "text": "SEOmoz takes an investment of $1.1M from Ignition Partners & Curious Office", "note": "funds raised"},
+        {"page": 3, "status": "not a plan claim", "claim_type": "usage", "value": 1200000, "unit": "visits", "currency": null, "target_date": "2011-04", "text": "April of 2011, we hit 1.2+MM visits/month", "note": "usage: the Usage fallback type is dropped"},
         {"page": 3, "status": "not a company claim", "claim_type": "revenue", "value": 1100000, "unit": null, "currency": "USD", "target_date": null, "text": "We took one round of financing in 2007; $1.1MM from Ignition + Curious Office", "note": "funds raised"},
-        {"page": 23, "status": "not a company claim", "claim_type": "revenue", "value": 20000000, "value_high": 25000000, "unit": null, "currency": "USD", "target_date": null, "text": "Raising: $20-$25 Million", "note": "funds raised"}
+        {"page": 17, "status": "not a plan claim", "claim_type": "market", "value": 5, "unit": "%", "currency": null, "target_date": null, "text": "We believe we've captured ~5% of this market as paying customers", "note": "market figure not labelled TAM, SAM, SOM, addressable market or market size"},
+        {"page": 17, "status": "not a plan claim", "claim_type": "users", "value": 15, "unit": "%", "currency": null, "target_date": null, "text": "~15% as registered members", "note": "market figure not labelled TAM, SAM, SOM, addressable market or market size"},
+        {"page": 20, "status": "not a plan claim", "claim_type": "usage", "value": 100, "unit": null, "currency": null, "target_date": null, "text": "# of New Free Trials / Day ~100", "note": "usage: the Usage fallback type is dropped"},
+        {"page": 21, "status": "not a plan claim", "claim_type": "usage", "value": 1250000, "unit": null, "currency": null, "target_date": null, "text": "Monthly Visits to Moz + OSE ~1.25 million", "note": "usage: the Usage fallback type is dropped"},
+        {"page": 21, "status": "not a plan claim", "claim_type": "users", "value": 300000, "unit": null, "currency": null, "target_date": null, "text": "Email Subscribers ~300K", "note": "email list, marketing reach rather than users"},
+        {"page": 23, "status": "not a company claim", "claim_type": "revenue", "value": 20000000, "value_high": 25000000, "unit": null, "currency": "USD", "target_date": null, "text": "Raising: $20-$25 Million", "note": "funds raised"},
+        {"page": 35, "status": "not a plan claim", "claim_type": "users", "value": 300000, "unit": "marketers", "currency": null, "target_date": null, "text": "Passionate community of 300K+ marketers", "note": "community size, marketing reach rather than users"}
       ]
     },
     {
@@ -83,7 +83,6 @@
         {"page": 5, "status": "company claim", "claim_type": "customers", "value": 800, "unit": "paying users", "currency": null, "target_date": null, "text": "800 Paying Users"},
         {"page": 5, "status": "company claim", "claim_type": "gross_margin", "value": 97, "unit": "%", "currency": null, "target_date": null, "text": "97% margins"},
         {"page": 5, "status": "company claim", "claim_type": "users", "value": 55000, "unit": "users", "currency": null, "target_date": null, "text": "55,000 users, growing 40% per month"},
-        {"page": 5, "status": "company claim", "claim_type": "usage", "value": 1500000, "unit": "updates", "currency": null, "target_date": null, "text": "1.5 million updates Buffered"},
         {"page": 6, "status": "company claim", "claim_type": "product", "value": null, "unit": null, "currency": null, "target_date": "2011-01", "text": "Launched web app — January 2011"},
         {"page": 6, "status": "company claim", "claim_type": "revenue", "value": 150000, "unit": null, "currency": "USD", "target_date": "2011-10", "text": "55,000 users ($150K revenue) — October 2011"},
         {"page": 6, "status": "company claim", "claim_type": "product", "value": null, "unit": null, "currency": null, "target_date": "2011-10", "text": "Launch the API — October 2011"},
@@ -99,11 +98,12 @@
         {"page": 7, "status": "company claim", "claim_type": "sales", "value": 5, "unit": null, "currency": "USD", "target_date": null, "text": "allows us to pay up to $5 to acquire a free user", "note": "acquisition ceiling for a free user, not paid-customer CAC"},
         {"page": 7, "status": "company claim", "claim_type": "revenue", "value": 3600000, "unit": null, "currency": "USD", "target_date": null, "text": "At 1M users, our projected revenue is $3.6M", "note": "forecast"},
         {"page": 7, "status": "company claim", "claim_type": "users", "value": 1000000, "unit": "users", "currency": null, "target_date": null, "text": "At 1M users, our projected revenue is $3.6M", "note": "forecast assumption"},
-        {"page": 10, "status": "company claim", "claim_type": "usage", "value": 6, "unit": "integrations", "currency": null, "target_date": null, "text": "6 integrations so far"},
-        {"page": 12, "status": "company claim", "claim_type": "revenue", "value": 7, "unit": "weeks", "currency": null, "target_date": null, "text": "took the idea to revenue in 7 weeks"},
-        {"page": 12, "status": "company claim", "claim_type": "user_growth", "value": 55000, "unit": null, "currency": null, "target_date": null, "text": "took Buffer from 200 to 55,000 users", "note": "from 200 to 55,000 users; was a distractor before the type existed"},
+        {"page": 5, "status": "not a plan claim", "claim_type": "usage", "value": 1500000, "unit": "updates", "currency": null, "target_date": null, "text": "1.5 million updates Buffered", "note": "usage: the Usage fallback type is dropped"},
         {"page": 8, "status": "not a company claim", "claim_type": "market", "value": 55, "unit": "%", "currency": null, "target_date": null, "text": "Of 200M daily Tweets, 55% contain links", "note": "other companies' figures"},
-        {"page": 8, "status": "not a company claim", "claim_type": "market", "value": 4000000000, "unit": null, "currency": null, "target_date": null, "text": "4 billion items shared on Facebook per day", "note": "other companies' figures"}
+        {"page": 8, "status": "not a company claim", "claim_type": "market", "value": 4000000000, "unit": null, "currency": null, "target_date": null, "text": "4 billion items shared on Facebook per day", "note": "other companies' figures"},
+        {"page": 10, "status": "not a plan claim", "claim_type": "usage", "value": 6, "unit": "integrations", "currency": null, "target_date": null, "text": "6 integrations so far", "note": "usage: the Usage fallback type is dropped"},
+        {"page": 12, "status": "not a plan claim", "claim_type": "revenue", "value": 7, "unit": "weeks", "currency": null, "target_date": null, "text": "took the idea to revenue in 7 weeks", "note": "founder bio, not a plan figure"},
+        {"page": 12, "status": "not a plan claim", "claim_type": "user_growth", "value": 55000, "unit": null, "currency": null, "target_date": null, "text": "took Buffer from 200 to 55,000 users", "note": "founder bio, not a plan figure (55,000 users stays on slides 5 and 6)"}
       ]
     },
     {
@@ -116,24 +116,24 @@
         {"page": 2, "status": "company claim", "claim_type": "revenue", "value": 15000, "unit": null, "currency": "EUR", "target_date": null, "text": "Revenues stand at €15K MRR"},
         {"page": 2, "status": "company claim", "claim_type": "revenue", "value": 15, "unit": "%", "currency": null, "target_date": null, "text": "and are growing 15% MoM"},
         {"page": 2, "status": "company claim", "claim_type": "customers", "value": 50, "unit": "agencies", "currency": null, "target_date": null, "text": ">50 Dutch temporary work agencies"},
-        {"page": 2, "status": "company claim", "claim_type": "usage", "value": 4000, "unit": "workers", "currency": null, "target_date": null, "text": "match 4K workers"},
-        {"page": 2, "status": "company claim", "claim_type": "usage", "value": 10000, "unit": "shifts", "currency": null, "target_date": null, "text": "with 10K shifts each month"},
         {"page": 6, "status": "company claim", "claim_type": "revenue", "value": 15000, "unit": null, "currency": "EUR", "target_date": null, "text": "€15K in MRR"},
         {"page": 6, "status": "company claim", "claim_type": "revenue", "value": 15, "unit": "%", "currency": null, "target_date": null, "text": "15% MoM growth over last 15 months"},
         {"page": 6, "status": "company claim", "claim_type": "revenue", "value": 260, "unit": null, "currency": "EUR", "target_date": null, "text": "€260 MRR per client"},
         {"page": 6, "status": "company claim", "claim_type": "retention", "value": 50, "unit": "%", "currency": null, "target_date": null, "text": "MRR expands by 50%, after year 1", "note": "customer MRR expansion, not stated as NRR"},
         {"page": 6, "status": "company claim", "claim_type": "sales", "value": 30, "unit": "%", "currency": null, "target_date": null, "text": "30% of our leads come via worker referrals"},
         {"page": 6, "status": "company claim", "claim_type": "customers", "value": 55, "unit": "agencies", "currency": null, "target_date": null, "text": "55 agencies now scheduling >10K shifts each month"},
-        {"page": 6, "status": "company claim", "claim_type": "usage", "value": 10000, "unit": "shifts", "currency": null, "target_date": null, "text": "now scheduling >10K shifts each month"},
-        {"page": 6, "status": "company claim", "claim_type": "usage", "value": 70000, "unit": "hours", "currency": null, "target_date": null, "text": "Representing 70K hours of work"},
-        {"page": 6, "status": "company claim", "claim_type": "usage", "value": 4000, "unit": "workers", "currency": null, "target_date": null, "text": "via 4K workers"},
         {"page": 7, "status": "company claim", "claim_type": "retention", "value": 50, "unit": "%", "currency": null, "target_date": null, "text": "MRR grows with higher usage of the product, on average by 50% in the 2nd year of usage"},
         {"page": 9, "status": "company claim", "claim_type": "market", "value": 200000000, "unit": null, "currency": "EUR", "target_date": null, "text": "Over 50K agencies represent a TAM of €200M in ARR"},
-        {"page": 9, "status": "company claim", "claim_type": "market", "value": 50000, "unit": null, "currency": null, "target_date": null, "text": "Over 50K agencies", "note": "count behind the TAM"},
         {"page": 11, "status": "company claim", "claim_type": "revenue", "value": 5000000, "unit": null, "currency": "EUR", "target_date": "2024", "text": "Our BHAG is €5M ARR by end of 2024"},
         {"page": 11, "status": "company claim", "claim_type": "people", "value": 20, "unit": null, "currency": null, "target_date": "2020", "text": "grow the Product and Growth teams to a total of 20 end of 2020"},
         {"page": 11, "status": "company claim", "claim_type": "customers", "value": 1500, "unit": "clients", "currency": null, "target_date": "2024", "text": "or some 1,500 clients", "note": "target"},
+        {"page": 2, "status": "not a plan claim", "claim_type": "usage", "value": 4000, "unit": "workers", "currency": null, "target_date": null, "text": "match 4K workers", "note": "usage: the Usage fallback type is dropped"},
+        {"page": 2, "status": "not a plan claim", "claim_type": "usage", "value": 10000, "unit": "shifts", "currency": null, "target_date": null, "text": "with 10K shifts each month", "note": "usage: the Usage fallback type is dropped"},
         {"page": 2, "status": "not a company claim", "claim_type": "revenue", "value": 1000000, "unit": null, "currency": "EUR", "target_date": "2019", "text": "raising a €1M Seed round in the 2nd half of 2019", "note": "funds raised"},
+        {"page": 6, "status": "not a plan claim", "claim_type": "usage", "value": 10000, "unit": "shifts", "currency": null, "target_date": null, "text": "now scheduling >10K shifts each month", "note": "usage: the Usage fallback type is dropped"},
+        {"page": 6, "status": "not a plan claim", "claim_type": "usage", "value": 70000, "unit": "hours", "currency": null, "target_date": null, "text": "Representing 70K hours of work", "note": "usage: the Usage fallback type is dropped"},
+        {"page": 6, "status": "not a plan claim", "claim_type": "usage", "value": 4000, "unit": "workers", "currency": null, "target_date": null, "text": "via 4K workers", "note": "usage: the Usage fallback type is dropped"},
+        {"page": 9, "status": "not a plan claim", "claim_type": "market", "value": 50000, "unit": null, "currency": null, "target_date": null, "text": "Over 50K agencies", "note": "background statistic about the industry (the TAM itself stays)"},
         {"page": 10, "status": "not a company claim", "claim_type": "revenue", "value": 1000000, "unit": null, "currency": "EUR", "target_date": "2019", "text": "We are raising a €1M Seed round in the 2nd half of 2019", "note": "funds raised"}
       ]
     },
@@ -144,12 +144,6 @@
       "page_unit": "page",
       "notes": "Page 17 turnover values are chart data labels; the years are the x-axis. Page 19 is a table; years are column headers (Y/E = year end). Market figures on page 7 are in $ billions per the chart title. Page 22 also lists three commercial hires without a figure (Marketing Lead, Content Creator, Community Lead); not listed as numeric claims.",
       "claims": [
-        {"page": 7, "status": "company claim", "claim_type": "market", "value": 374300000000, "unit": null, "currency": "USD", "target_date": "2026", "text": "The e-learning market was projected to reach $374.3 billion by 2026"},
-        {"page": 7, "status": "company claim", "claim_type": "market", "value": 52050000000, "unit": null, "currency": "USD", "target_date": "2027", "text": "AR/VR projected market volume of US$52.05bn by 2027"},
-        {"page": 7, "status": "company claim", "claim_type": "market", "value": 570030000000, "unit": null, "currency": "USD", "target_date": "2028", "text": "The global metaverse market is estimated to surpass around $ 570.03 by 2028", "note": "billions per the chart title"},
-        {"page": 11, "status": "company claim", "claim_type": "market", "value": 52000000000, "unit": null, "currency": "USD", "target_date": "2028", "text": "AR/VR ($52 B)", "note": "'Global market cap estimation by 2028'"},
-        {"page": 11, "status": "company claim", "claim_type": "market", "value": 570000000000, "unit": null, "currency": "USD", "target_date": "2028", "text": "Metaverse Market ($570 B)"},
-        {"page": 11, "status": "company claim", "claim_type": "market", "value": 374000000000, "unit": null, "currency": "USD", "target_date": "2028", "text": "E-Learning Market ($374B)"},
         {"page": 17, "status": "company claim", "claim_type": "revenue", "value": 49284, "unit": null, "currency": "GBP", "target_date": "2019", "text": "Turnover (£/year), 2019: 49,284", "note": "chart data label"},
         {"page": 17, "status": "company claim", "claim_type": "revenue", "value": 181193, "unit": null, "currency": "GBP", "target_date": "2020", "text": "Turnover (£/year), 2020: 181,193", "note": "chart data label"},
         {"page": 17, "status": "company claim", "claim_type": "revenue", "value": 278085, "unit": null, "currency": "GBP", "target_date": "2021", "text": "Turnover (£/year), 2021: 278,085", "note": "chart data label"},
@@ -172,9 +166,15 @@
         {"page": 22, "status": "company claim", "claim_type": "people", "value": 1, "unit": null, "currency": null, "target_date": null, "text": "Recruitment plan: 1 environment artist and game developer"},
         {"page": 22, "status": "company claim", "claim_type": "people", "value": 1, "unit": null, "currency": null, "target_date": null, "text": "Recruitment plan: 1 Fullstack developer"},
         {"page": 22, "status": "company claim", "claim_type": "people", "value": 1, "unit": null, "currency": null, "target_date": null, "text": "Recruitment plan: 1 blockchain developer"},
+        {"page": 7, "status": "not a plan claim", "claim_type": "market", "value": 374300000000, "unit": null, "currency": "USD", "target_date": "2026", "text": "The e-learning market was projected to reach $374.3 billion by 2026", "note": "cited from outside research (footnote or Source:)"},
+        {"page": 7, "status": "not a plan claim", "claim_type": "market", "value": 52050000000, "unit": null, "currency": "USD", "target_date": "2027", "text": "AR/VR projected market volume of US$52.05bn by 2027", "note": "cited from outside research (footnote or Source:)"},
+        {"page": 7, "status": "not a plan claim", "claim_type": "market", "value": 570030000000, "unit": null, "currency": "USD", "target_date": "2028", "text": "The global metaverse market is estimated to surpass around $ 570.03 by 2028", "note": "cited from outside research (footnote or Source:)"},
         {"page": 7, "status": "not a company claim", "claim_type": "revenue", "value": 17.2, "unit": "%", "currency": null, "target_date": null, "text": "growing at a CAGR of 17.2% from 2021 to 2026", "note": "market CAGR, not company growth"},
         {"page": 7, "status": "not a company claim", "claim_type": "revenue", "value": 13.72, "unit": "%", "currency": null, "target_date": null, "text": "annual growth rate (CAGR 2023-2027) of 13.72%", "note": "market CAGR, not company growth"},
         {"page": 7, "status": "not a company claim", "claim_type": "revenue", "value": 44.5, "unit": "%", "currency": null, "target_date": null, "text": "with a registered CAGR of 44.5% during the forecast period 2022 to 2030", "note": "market CAGR, not company growth"},
+        {"page": 11, "status": "not a plan claim", "claim_type": "market", "value": 52000000000, "unit": null, "currency": "USD", "target_date": "2028", "text": "AR/VR ($52 B)", "note": "market figure not labelled TAM, SAM, SOM, addressable market or market size"},
+        {"page": 11, "status": "not a plan claim", "claim_type": "market", "value": 570000000000, "unit": null, "currency": "USD", "target_date": "2028", "text": "Metaverse Market ($570 B)", "note": "market figure not labelled TAM, SAM, SOM, addressable market or market size"},
+        {"page": 11, "status": "not a plan claim", "claim_type": "market", "value": 374000000000, "unit": null, "currency": "USD", "target_date": "2028", "text": "E-Learning Market ($374B)", "note": "market figure not labelled TAM, SAM, SOM, addressable market or market size"},
         {"page": 22, "status": "not a company claim", "claim_type": "revenue", "value": 250000, "unit": null, "currency": "GBP", "target_date": null, "text": "Use of Funds £250K", "note": "funds raised"}
       ]
     },
@@ -185,16 +185,16 @@
       "page_unit": "page",
       "notes": "Page 25 'Raise a few million, small-office + GM in SF' is a hire without a figure; not listed as a numeric claim.",
       "claims": [
-        {"page": 17, "status": "company claim", "claim_type": "market", "value": 4200000000, "unit": null, "currency": "USD", "target_date": null, "text": "Overall Market: $4.2B annually and growing"},
-        {"page": 19, "status": "company claim", "claim_type": "market", "value": 50, "unit": "%", "currency": null, "target_date": null, "text": "This covers 50% of entire US market"},
         {"page": 20, "status": "company claim", "claim_type": "revenue", "value": 1000000000, "unit": null, "currency": "USD", "target_date": null, "text": "Best-Case Scenario: Becomes market leader, $1B+ in yearly revenue", "note": "hypothetical scenario"},
-        {"page": 20, "status": "company claim", "claim_type": "market", "value": 5, "unit": "%", "currency": null, "target_date": null, "text": "Realistic Success Scenario: Gets 5% of the top 5 US Cities", "note": "hypothetical scenario"},
         {"page": 20, "status": "company claim", "claim_type": "customers", "value": 100, "unit": "clients", "currency": null, "target_date": null, "text": "Worst-Case Scenario: Remains a 10 car, 100 client service in SF", "note": "hypothetical scenario"},
-        {"page": 24, "status": "company claim", "claim_type": "market", "value": 3500000000, "unit": null, "currency": "USD", "target_date": "2010", "text": "Location-Based Service: Growing to a $3.5B industry by 2010"},
         {"page": 25, "status": "company claim", "claim_type": "product", "value": null, "unit": null, "currency": null, "target_date": "2008-11", "text": "Iphone dev license applied for Nov28,08"},
         {"page": 25, "status": "company claim", "claim_type": "customers", "value": 15, "unit": "clients", "currency": null, "target_date": null, "text": "5 advisors & 15 clients now recruited"},
         {"page": 3, "status": "not a company claim", "claim_type": "revenue", "value": 500000, "unit": null, "currency": "USD", "target_date": null, "text": "Medallions cost ~$500k", "note": "industry cost, not company revenue"},
-        {"page": 17, "status": "not a company claim", "claim_type": "revenue", "value": 22, "unit": "%", "currency": null, "target_date": null, "text": "Top 4 players combined only 22% of revenues", "note": "other companies' figures"}
+        {"page": 17, "status": "not a plan claim", "claim_type": "market", "value": 4200000000, "unit": null, "currency": "USD", "target_date": null, "text": "Overall Market: $4.2B annually and growing", "note": "market figure not labelled TAM, SAM, SOM, addressable market or market size"},
+        {"page": 17, "status": "not a company claim", "claim_type": "revenue", "value": 22, "unit": "%", "currency": null, "target_date": null, "text": "Top 4 players combined only 22% of revenues", "note": "other companies' figures"},
+        {"page": 19, "status": "not a plan claim", "claim_type": "market", "value": 50, "unit": "%", "currency": null, "target_date": null, "text": "This covers 50% of entire US market", "note": "market figure not labelled TAM, SAM, SOM, addressable market or market size"},
+        {"page": 20, "status": "not a plan claim", "claim_type": "market", "value": 5, "unit": "%", "currency": null, "target_date": null, "text": "Realistic Success Scenario: Gets 5% of the top 5 US Cities", "note": "market figure not labelled TAM, SAM, SOM, addressable market or market size"},
+        {"page": 24, "status": "not a plan claim", "claim_type": "market", "value": 3500000000, "unit": null, "currency": "USD", "target_date": "2010", "text": "Location-Based Service: Growing to a $3.5B industry by 2010", "note": "background statistic about the industry"}
       ]
     },
     {
@@ -219,11 +219,11 @@
       "page_unit": "page",
       "notes": "Page 11 puts 'Market', 'Size', the years and the two values on separate lines.",
       "claims": [
-        {"page": 11, "status": "company claim", "claim_type": "market", "value": 230000000000, "unit": null, "currency": "USD", "target_date": "2017", "text": "Market Size 2017: $230B"},
-        {"page": 11, "status": "company claim", "claim_type": "market", "value": 5500000000000, "unit": null, "currency": "USD", "target_date": "2027", "text": "Market Size 2027: $5.5T"},
-        {"page": 13, "status": "company claim", "claim_type": "usage", "value": 25, "unit": "partnerships", "currency": null, "target_date": null, "text": "Over 25 partnerships!"},
         {"page": 8, "status": "not a company claim", "claim_type": "revenue", "value": 300, "unit": "%", "currency": null, "target_date": null, "text": "Increasing the quality of AI products and services by ~300%", "note": "product performance, not revenue growth"},
+        {"page": 11, "status": "not a plan claim", "claim_type": "market", "value": 230000000000, "unit": null, "currency": "USD", "target_date": "2017", "text": "Market Size 2017: $230B", "note": "cited from outside research (footnote or Source:)"},
+        {"page": 11, "status": "not a plan claim", "claim_type": "market", "value": 5500000000000, "unit": null, "currency": "USD", "target_date": "2027", "text": "Market Size 2027: $5.5T", "note": "cited from outside research (footnote or Source:)"},
         {"page": 12, "status": "not a company claim", "claim_type": "revenue", "value": 30, "unit": "%", "currency": null, "target_date": null, "text": "30% of marketplace transactions", "note": "commission rate, not realised revenue"},
+        {"page": 13, "status": "not a plan claim", "claim_type": "usage", "value": 25, "unit": "partnerships", "currency": null, "target_date": null, "text": "Over 25 partnerships!", "note": "usage: the Usage fallback type is dropped"},
         {"page": 13, "status": "not a company claim", "claim_type": "revenue", "value": 2300000, "unit": null, "currency": "USD", "target_date": null, "text": "Raised ~$2.3M", "note": "funds raised"},
         {"page": 14, "status": "not a company claim", "claim_type": "revenue", "value": 30, "unit": "%", "currency": null, "target_date": null, "text": "30% commission", "note": "commission rate, not realised revenue"}
       ]
@@ -235,10 +235,10 @@
       "page_unit": "page",
       "notes": "Page 4 puts 'Market', 'Size', the years and the two values on separate lines.",
       "claims": [
-        {"page": 4, "status": "company claim", "claim_type": "market", "value": 210000000000, "unit": null, "currency": "USD", "target_date": "2020", "text": "Market Size 2020: $210B"},
-        {"page": 4, "status": "company claim", "claim_type": "market", "value": 2800000000000, "unit": null, "currency": "USD", "target_date": "2030", "text": "Market Size 2030: $2.8T"},
         {"page": 5, "status": "company claim", "claim_type": "revenue", "value": 8000, "unit": null, "currency": "USD", "target_date": "2022", "text": "$8,000 revenue in 2022"},
         {"page": 5, "status": "company claim", "claim_type": "users", "value": 2600, "unit": null, "currency": null, "target_date": null, "text": "2,600+ users", "note": "user count; was a distractor before the users type existed"},
+        {"page": 4, "status": "not a plan claim", "claim_type": "market", "value": 210000000000, "unit": null, "currency": "USD", "target_date": "2020", "text": "Market Size 2020: $210B", "note": "cited from outside research (footnote or Source:)"},
+        {"page": 4, "status": "not a plan claim", "claim_type": "market", "value": 2800000000000, "unit": null, "currency": "USD", "target_date": "2030", "text": "Market Size 2030: $2.8T", "note": "cited from outside research (footnote or Source:)"},
         {"page": 5, "status": "not a company claim", "claim_type": "revenue", "value": 5500000, "unit": null, "currency": "USD", "target_date": null, "text": "Raised ~$5.5M", "note": "funds raised"},
         {"page": 12, "status": "not a company claim", "claim_type": "revenue", "value": 70, "unit": "%", "currency": null, "target_date": null, "text": "we can increase the quality of AI products by up to 70%", "note": "product performance, not revenue growth"},
         {"page": 13, "status": "not a company claim", "claim_type": "revenue", "value": 30, "unit": "%", "currency": null, "target_date": null, "text": "30% OF MARKETPLACE TRANSACTIONS", "note": "commission rate, not realised revenue"}

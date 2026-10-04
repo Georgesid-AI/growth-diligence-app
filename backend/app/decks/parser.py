@@ -207,7 +207,9 @@ def _stack(blocks: List[Dict], boxes) -> None:
 def _pdf_blocks(content: bytes):
     """Text is read in segments: words on one line with no wide gap between them. A wide gap
     starts a new segment, so side-by-side columns stay apart (a label and its value, two
-    roadmap columns) and keep their own position."""
+    roadmap columns) and keep their own position. Characters are taken in the order the file
+    writes them, so a number stays whole even when text at other heights sits between its rows
+    (axis labels 500, 600 ... were read as single digits when sorted by position alone)."""
     import pdfplumber
 
     blocks = []
@@ -233,10 +235,10 @@ def _pdf_blocks(content: bytes):
             rest = page
             for bbox, _, _ in grids:
                 rest = rest.outside_bbox(bbox)
+            words = rest.extract_words(keep_blank_chars=True, x_tolerance_ratio=0.5, y_tolerance=3, use_text_flow=True)
             lines = [{"page": n, "kind": "text", "text": _clean(w["text"]),
                       "bbox": frac(w["x0"], w["top"], w["x1"], w["bottom"])}
-                     for w in rest.extract_words(keep_blank_chars=True, x_tolerance_ratio=0.5, y_tolerance=3)
-                     if _clean(w["text"])]
+                     for w in words if _clean(w["text"])]
             _stack(lines, boxes)
             if lines:
                 first = min(lines, key=lambda b: b["bbox"][1])
