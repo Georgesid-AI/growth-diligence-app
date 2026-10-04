@@ -81,8 +81,12 @@ Duplicates across slides are merged and keep all source references.
 - An automated test fails the build if the parser imports the gateway, or the gateway reads the parsed-text or snippet fields.
 
 ## 5. Storage and deletion
-- Parsed text and candidates are stored in MongoDB, linked to the audit.
+- Parsed text and candidates are stored in MongoDB, linked to the audit. An audit can hold
+  several decks (needed later for the forecast track record).
 - The "delete audit" button also removes parsed text and candidates.
+- A "Remove deck" button per deck, after the confirm step "This deletes the deck and all its
+  claims, including reviewed ones.", deletes that deck's parsed text and all its candidates,
+  reviewed ones included (DELETE /api/audits/{id}/decks/{deck_id}).
 
 ## 6. Approval
 Shown above the approval list, word for word:
@@ -101,6 +105,10 @@ These figures may inform the growth plan. They were identified automatically and
 - Uploading the same file again replaces its parsed text and its unreviewed candidates only;
   approved, edited and rejected claims stay, and the same claim is not added twice.
 - Every column of the approval list has a header; the value shows its unit or currency.
+- A deck selector sits above the claims table: one tab per deck, plus "All". Each tab shows the
+  deck name and its claim count. It opens on the most recently uploaded deck.
+- Within a deck, claims to review come first, then the rest, each by slide or page. The order
+  is set when the list loads, so a row does not move while it is being reviewed.
 
 ## Done when
 - All three formats parse with correct slide/page references.

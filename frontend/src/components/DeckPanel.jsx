@@ -3,9 +3,9 @@ import { toast } from "sonner";
 import { Check, FileText, Loader2, Pencil, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { getDecks, updateCandidate, uploadDeck } from "@/lib/api";
+import { getDecks, removeDeck, updateCandidate, uploadDeck } from "@/lib/api";
 import {
-  CLAIM_TYPES, CLAIM_UNITS, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
+  ALL_DECKS, CLAIM_TYPES, CLAIM_UNITS, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
   DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, PLACEHOLDER, STATUS_LABELS, claimValue, sourceRef, statusCounts, typeLabel,
 } from "@/lib/deckClaims";
 
@@ -22,8 +22,17 @@ export default function DeckPanel({ auditId }) {
   const [data, setData] = useState({ decks: [], candidates: [] });
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState(null);
+  const [tab, setTab] = useState(null);            // deck id or ALL_DECKS; null until the first load
+  const [confirming, setConfirming] = useState(null);
 
-  const load = useCallback(() => getDecks(auditId).then(setData).catch(() => toast.error("Could not load deck claims")), [auditId]);
+  // After a load, keep the chosen tab if its deck still exists; otherwise show the most recent deck.
+  const load = useCallback((select) => getDecks(auditId).then((d) => {
+    setData(d);
+    setTab((current) => {
+      const wanted = select || current;
+      return wanted && (wanted === ALL_DECKS || d.decks.some((x) => x.deck_id === wanted)) ? wanted : defaultDeck(d.decks);
+    });
+  }).catch(() => toast.error("Could not load deck claims")), [auditId]);
   useEffect(() => { load(); }, [load]);
 
   const onFile = async (e) => {
@@ -35,7 +44,7 @@ export default function DeckPanel({ auditId }) {
     try {
       const res = await uploadDeck(auditId, file);
       toast.success(`${res.file}: ${res.pages} ${res.page_unit}s read · ${res.candidates} candidate claims`);
-      await load();
+      await load(res.deck_id);
     } catch (err) {
       setError(err.response?.data?.detail || "Upload failed");
     } finally {
@@ -54,7 +63,20 @@ export default function DeckPanel({ auditId }) {
     }
   };
 
-  const counts = statusCounts(data.candidates);
+  const remove = async (deckId) => {
+    try {
+      await removeDeck(auditId, deckId);
+      setConfirming(null);
+      toast.success("Deck removed");
+      await load(defaultDeck(data.decks.filter((d) => d.deck_id !== deckId)));
+    } catch (err) {
+      toast.error("Could not remove the deck");
+    }
+  };
+
+  const shown = claimsForDeck(data.candidates, tab);
+  const counts = statusCounts(shown);
+  const selectedDeck = data.decks.find((d) => d.deck_id === tab);
 
   return (
     <div className="bg-white border border-[#E5E7EB] rounded-lg p-5" data-testid="deck-panel">
@@ -73,9 +95,6 @@ export default function DeckPanel({ auditId }) {
               </ul>
               <p>{DECK_SCOPE_OUTRO}</p>
             </div>
-            {data.decks.map((d) => (
-              <p key={d.deck_id} className="text-[11px] font-mono text-slate-600 mt-1">{d.file} · {d.pages} {d.page_unit}s</p>
-            ))}
           </div>
         </div>
         <label className="cursor-pointer">
@@ -88,7 +107,7 @@ export default function DeckPanel({ auditId }) {
 
       {error && <p className="mt-3 text-sm text-rose-700" role="alert" data-testid="deck-upload-error">{error}</p>}
 
-      {data.candidates.length > 0 && (
+      {data.decks.length > 0 && (
         <div className="mt-5 pt-5 border-t border-[#E5E7EB]" data-testid="deck-candidates">
           <div className="text-xs text-slate-700 mb-3 max-w-3xl space-y-1" data-testid="claims-instructions">
             <h4 className="font-heading font-semibold text-sm text-slate-900">{CLAIMS_HEADING}</h4>
@@ -97,6 +116,29 @@ export default function DeckPanel({ auditId }) {
               <p key={choice}><span className="font-semibold">{choice}</span> {text}</p>
             ))}
           </div>
+          <div className="flex flex-wrap gap-1 border-b border-[#E5E7EB] mb-3" role="tablist" data-testid="deck-tabs">
+            {deckTabs(data.decks, data.candidates).map((t) => (
+              <button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => { setTab(t.id); setConfirming(null); }}
+                className={`px-3 py-1.5 text-xs -mb-px border-b-2 ${tab === t.id ? "border-sky-600 text-slate-900 font-semibold" : "border-transparent text-slate-500 hover:text-slate-800"}`}
+                data-testid={`deck-tab-${t.id}`}>
+                {t.label} <span className="font-mono text-slate-400">({t.count})</span>
+              </button>
+            ))}
+          </div>
+          {selectedDeck && (
+            <div className="flex items-center gap-3 flex-wrap text-[11px] mb-2" data-testid="deck-actions">
+              <span className="font-mono text-slate-600">{selectedDeck.file} · {selectedDeck.pages} {selectedDeck.page_unit}s</span>
+              {confirming === selectedDeck.deck_id ? (
+                <span className="flex items-center gap-2" data-testid="remove-deck-confirm">
+                  <span className="text-rose-700">{REMOVE_DECK_CONFIRM}</span>
+                  <Button size="sm" onClick={() => remove(selectedDeck.deck_id)} className="h-7 bg-rose-600 hover:bg-rose-500" data-testid="remove-deck-yes">Remove</Button>
+                  <Button size="sm" variant="outline" onClick={() => setConfirming(null)} className="h-7">Cancel</Button>
+                </span>
+              ) : (
+                <Button size="sm" variant="outline" onClick={() => setConfirming(selectedDeck.deck_id)} className="h-7" data-testid="remove-deck">Remove deck</Button>
+              )}
+            </div>
+          )}
           <div className="text-[11px] text-slate-500 font-mono mb-2">
             {counts.pending} to review · {counts.approved} approved · {counts.edited} edited · {counts.rejected} rejected
           </div>
@@ -108,7 +150,7 @@ export default function DeckPanel({ auditId }) {
                 </tr>
               </thead>
               <tbody>
-                {data.candidates.map((c) => <CandidateRow key={c.id} candidate={c} onSave={save} />)}
+                {shown.map((c) => <CandidateRow key={c.id} candidate={c} onSave={save} />)}
               </tbody>
             </table>
           </div>

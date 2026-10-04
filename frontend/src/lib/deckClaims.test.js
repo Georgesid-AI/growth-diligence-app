@@ -1,5 +1,5 @@
 import {
-  CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, sourceRef, statusCounts, typeLabel,
+  ALL_DECKS, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, sourceRef, statusCounts, typeLabel,
   DECK_SCOPE_CANNOT, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO,
 } from "./deckClaims";
 
@@ -65,4 +65,34 @@ test("instruction text is word for word", () => {
     "✎ Edit: Correct the figure, type, unit or date, then approve the claim. It will be added to the claim register and tested against the data.\n" +
     "✕ Reject: Exclude items that are not company claims, such as another company's figures, funds raised or chart axis labels. Rejected items remain in the record but are not used.",
   );
+});
+
+describe("deck selector", () => {
+  const decks = [
+    { deck_id: "a", file: "older.pdf", uploaded_at: "2026-10-04T10:00:00.000001+00:00" },
+    { deck_id: "b", file: "newer.pptx", uploaded_at: "2026-10-04T11:00:00.000001+00:00" },
+  ];
+  const candidates = [{ id: 1, deck_id: "b" }, { id: 2, deck_id: "a" }, { id: 3, deck_id: "a" }];
+
+  test("defaults to the most recently uploaded deck", () => {
+    expect(defaultDeck(decks)).toBe("b");
+    expect(defaultDeck([])).toBe(ALL_DECKS);
+  });
+
+  test("one tab per deck plus All, each with its claim count, most recent deck first", () => {
+    expect(deckTabs(decks, candidates)).toEqual([
+      { id: ALL_DECKS, label: "All", count: 3 },
+      { id: "b", label: "newer.pptx", count: 1 },
+      { id: "a", label: "older.pdf", count: 2 },
+    ]);
+  });
+
+  test("a tab shows its deck's claims in server order; All shows every claim", () => {
+    expect(claimsForDeck(candidates, "a").map((c) => c.id)).toEqual([2, 3]);
+    expect(claimsForDeck(candidates, ALL_DECKS).map((c) => c.id)).toEqual([1, 2, 3]);
+  });
+
+  test("remove confirmation text", () => {
+    expect(REMOVE_DECK_CONFIRM).toBe("This deletes the deck and all its claims, including reviewed ones.");
+  });
 });
