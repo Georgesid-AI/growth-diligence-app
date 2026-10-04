@@ -557,6 +557,21 @@ def test_customers_users_and_margin(text, family, unit):
     assert c["claim_type"] == family and (unit is None or c["unit"] == unit)
 
 
+@pytest.mark.parametrize("text, unit", [
+    (">50 Dutch temporary work agencies", "agencies"),
+    ("12 enterprise accounts", "accounts"),
+    ("40 new mid-market paying customers", "customers"),
+    ("300 big US enterprise brand customers", "big"),
+])
+def test_the_unit_is_a_keyword_noun_within_four_words_else_the_next_word(text, unit):
+    assert _line(text)[0]["unit"] == unit
+
+
+def test_the_unit_search_stops_at_the_next_figure():
+    units = {c["value"]: c["unit"] for c in _line("5 advisors & 15 clients now signed")}
+    assert units == {5: "advisors", 15: "clients"}
+
+
 def test_there_is_no_usage_type_a_count_without_a_label_is_not_a_candidate():
     assert "usage" not in claims.CLAIM_TYPES
     assert _line("1.5 million updates Buffered") == []

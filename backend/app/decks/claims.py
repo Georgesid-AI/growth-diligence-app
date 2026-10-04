@@ -71,6 +71,8 @@ CLAIM_TYPES = ("revenue", "revenue_growth", "growth", "retention", "sales", "cus
 _NOT_NOUNS = frozenset("""a an and are as at be by each for from has have in into is it its more of on or our
 over per than that the this to under up was we were with""".split())
 _COUNTED = re.compile(r"\s+(?P<noun>[A-Za-z][A-Za-z'’-]*)")
+_UNIT_WORD = re.compile(r"[^\sA-Za-z]*(?P<word>\S*)")
+UNIT_REACH = 4  # words after the number searched for a keyword noun
 
 # Date words (Q1-Q4 and month names) are product keywords and also give the target date.
 _MONTHS = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6, "jul": 7, "aug": 8, "sep": 9,
@@ -178,14 +180,24 @@ def find_numbers(line: str, dates: List[Dict]) -> List[Dict]:
 
 
 def _counted(line: str, end: int) -> Tuple[Optional[str], bool]:
-    """(noun, True) when the figure counts something: "800 paying users", "1.5 million updates"."""
+    """(noun, True) when the figure counts something: "800 paying users", "1.5 million updates".
+    The noun is a keyword noun within the next UNIT_REACH words, up to the next figure
+    ("50 Dutch work agencies"), else the word right after the number."""
     m = _COUNTED.match(line, end)
     if not m or m.group("noun").lower() in _NOT_NOUNS:
         return None, False
-    for _, rx in _NOUN_KEYWORDS:
-        k = rx.match(line, m.start("noun"))
-        if k:
-            return k.group(0).lower(), True
+    pos = m.start("noun")
+    for _ in range(UNIT_REACH):
+        w = _UNIT_WORD.match(line, pos)
+        if any(ch.isdigit() for ch in w.group(0)):
+            break
+        for _, rx in _NOUN_KEYWORDS:
+            k = rx.match(line, w.start("word"))
+            if k:
+                return k.group(0).lower(), True
+        pos = w.end()
+        while pos < len(line) and line[pos].isspace():
+            pos += 1
     return m.group("noun").lower(), True
 
 

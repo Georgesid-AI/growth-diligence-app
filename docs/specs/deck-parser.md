@@ -54,8 +54,11 @@ hired, launches; of two overlapping keywords the longer one counts):
 - People: hires, headcount, team, recruitment, attrition
 - Product: launch, release, roadmap, ship, milestone, Q1–Q4, month names
 - Market: TAM, SAM, SOM, addressable market, market size. The bare word "market" does not count.
-The unit of a count is the noun it counts: "800 paying users". There is no Usage type: a count
-whose line has no keyword borrows a label like any other figure, or is not a candidate.
+The unit of a count is the noun it counts: "800 paying users". If a Customers or Users keyword
+appears within the next 4 words after the number, and before the next figure, it is the unit
+(">50 Dutch temporary work agencies" → agencies); otherwise the word right after the number.
+There is no Usage type: a count whose line has no keyword borrows a label like any other
+figure, or is not a candidate.
 A line with its own keyword never borrows a label from other lines.
 Borrowing: a figure without a keyword or a date in its own line takes them from nearby text,
 first match wins: the table column header, the other lines of its text box (nearest first),
