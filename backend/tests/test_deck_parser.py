@@ -314,6 +314,7 @@ def test_approve_reject_and_edit_a_candidate(api):
     assert edited["snippet"] == second["snippet"] and edited["sources"] == second["sources"]
 
     assert client.put(url.format(second["id"]), json={"snippet": "typed"}).status_code == 400, "evidence is not editable"
+    assert client.put(url.format(second["id"]), json={"status": "approved", "value": 1}).status_code == 400
     assert client.put(url.format(second["id"]), json={"target_date": "June"}).status_code == 422
     assert client.put(url.format(second["id"]), json={"unit": "parsecs"}).status_code == 422
     assert client.put("/api/audits/audit-2/decks/candidates/" + second["id"], json={"status": "approved"}).status_code == 404
