@@ -44,8 +44,9 @@ analyst confirms it. Results show in the existing approval list (deck-parser.md 
   capitalised words starting with a name from a bundled first-name list.
 
 Customer names in spreadsheet samples (columns whose header matches the FIELD_DEFS customer aliases) are
-pseudonymised (Customer_001, Customer_002…) before sending. The mapping stays server-side and is removed by Delete
-audit. The target company's own name is never redacted. The gateway runs redaction again and refuses the call if
+pseudonymised (Customer_01, Customer_02…) before sending, through the narrative path's existing per-audit mapping
+(`pseudonym_map`), so a customer has the same pseudonym on both paths. The mapping stays server-side and is removed by
+Delete audit. The target company's own name is never redacted. The gateway runs redaction again and refuses the call if
 anything changes.
 
 **4. Consent.** `structure_reading_consent` is one checkbox per audit, unticked by default. It covers decks and
@@ -110,6 +111,6 @@ so agreement measures the model. Target: ≥95% agreement.
 - New: `backend/app/structures/{__init__,redact,verify}.py`, `backend/app/llm/prompts/structure_reading.md`,
   `backend/tests/test_structure_{redaction,verifier,reading}.py`, `backend/tests/fixtures/structure_replies/`,
   `scripts/consistency_run.py`.
-- Changed: `backend/app/decks/parser.py` (deck-parser.md §7), `backend/app/llm/{gateway,schemas,cache,guards,prompt_store}.py`,
+- Changed: `backend/app/decks/parser.py` (deck-parser.md §7), `backend/app/llm/{gateway,schemas,cache,guards,prompt_store,redaction}.py`,
   `backend/app/llm/prompts/RELEASE.md`, `backend/app/decks/__init__.py`, `backend/server.py`, `backend/tests/test_gateway_data_boundary.py`,
   `frontend/src/components/DeckPanel.jsx`, `frontend/src/pages/MappingWizard.jsx`.
