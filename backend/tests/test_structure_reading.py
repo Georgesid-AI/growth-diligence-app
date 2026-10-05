@@ -511,6 +511,9 @@ def test_a_deck_waits_for_the_mapped_revenue_file_and_is_read_once_it_is(monkeyp
     deck = _deck(client)["decks"][0]
     assert deck["ai_status"] == "read" and deck["sent_pages"] == [11, 17, 19, 22]
     assert deck["ai_cost_usd"] == pytest.approx(upload["structures"] * gateway.estimate_cost_usd("claude-sonnet-5-5", 1200, 300))
+    usage = client.get(f"/api/runs/{AUDIT}/llm-usage").json()
+    assert usage["by_deck"][upload["deck_id"]]["calls"] == upload["structures"] and usage["calls"] == 0
+    assert usage["structure_calls"] == upload["structures"] + calls_for_mapping
 
 
 def test_results_show_in_the_approval_list_labelled_and_citing_their_cell(monkeypatch):
