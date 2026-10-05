@@ -1153,7 +1153,7 @@ STRUCTURE_STEP = guards.STRUCTURE_STEP
 STRUCTURE_MAX_TOKENS = 4000
 STRUCTURE_INPUT_CAP = 3000          # input tokens per structure, by the provider's token counter
 STRUCTURE_CELL_MAX = 200            # a longer cell is prose
-STRUCTURES_COLLECTION = "llm_structures"
+STRUCTURES_COLLECTION = cache.STRUCTURES_COLLECTION
 NOT_READ = "Not read by AI"
 TOO_LARGE = "Too large for AI reading"
 # A file name in the text means it was built from the wrong thing: refused.
@@ -1359,7 +1359,7 @@ async def read_structure(
     base = {"key": key, "prompt_version": prompt.version, "model": STRUCTURE_MODEL}
 
     if use_cache:
-        hit = await _cached_structure(db, audit_id, key)
+        hit = await cache.get_structure(db, audit_id, key)
         if hit:
             await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version,
                            model=STRUCTURE_MODEL, input_tokens=0, output_tokens=0, estimated_cost_usd=0.0,
@@ -1434,41 +1434,24 @@ async def read_structure(
         await guards.release(db, audit_id, STRUCTURE_STEP, token)
 
 
-async def _cached_structure(db, audit_id: str, key: str) -> Optional[dict]:
-    """The stored reading for this audit and key, or None. Looked up by (audit id, key), so no audit
-    is served another audit's result."""
-    return await db[STRUCTURES_COLLECTION].find_one(
-        {"audit_id": audit_id, "key": key},
-        {"_id": 0, "output": 1, "model_type": 1, "type": 1})
-
-
 async def _store_structure(db, *, audit_id, key, digest, structure_type, model_type, output, prompt_version,
                            input_tokens, output_tokens, cost, deck_id, page) -> None:
     """Store the model's JSON output with its metadata (spec section 9). The text sent is never stored."""
-    await db[STRUCTURES_COLLECTION].update_one(
-        {"audit_id": audit_id, "key": key},
-        {"$set": {"audit_id": audit_id, "key": key, "content_hash": digest, "type": structure_type,
-                  "model_type": model_type, "output": output, "prompt_version": prompt_version,
-                  "prompt_release": prompt_store.release(), "model": STRUCTURE_MODEL,
-                  "input_tokens": int(input_tokens), "output_tokens": int(output_tokens),
-                  "estimated_cost_usd": round(float(cost), 6), "deck_id": deck_id, "page": page,
-                  "created_at": datetime.now(timezone.utc).isoformat()}},
-        upsert=True,
-    )
+    await cache.put_structure(db, audit_id, key, {
+        "content_hash": digest, "type": structure_type, "model_type": model_type, "output": output,
+        "prompt_version": prompt_version, "prompt_release": prompt_store.release(), "model": STRUCTURE_MODEL,
+        "input_tokens": int(input_tokens), "output_tokens": int(output_tokens),
+        "estimated_cost_usd": round(float(cost), 6), "deck_id": deck_id, "page": page})
 
 
 async def stored_structure(db, audit_id: str, key: str) -> Optional[dict]:
     """The stored model output for this audit and key (values with cell references), or None."""
-    return await db[STRUCTURES_COLLECTION].find_one({"audit_id": audit_id, "key": key}, {"_id": 0, "output": 1})
+    return await cache.get_structure(db, audit_id, key)
 
 
 async def record_verification(db, audit_id: str, key: str, statuses: List[str], dropped: int = 0) -> None:
     """Store the verifier status of each item next to the model output it checks (spec section 9)."""
-    await db[STRUCTURES_COLLECTION].update_one(
-        {"audit_id": audit_id, "key": key},
-        {"$set": {"statuses": list(statuses), "dropped": int(dropped),
-                  "verified_at": datetime.now(timezone.utc).isoformat()}},
-    )
+    await cache.set_structure_statuses(db, audit_id, key, statuses, dropped)
 
 
 # ---------------------------------------------------------------------------
@@ -1516,11 +1499,11 @@ async def purge_run(db, run_id: str) -> dict:
     calls = await db[CALLS_COLLECTION].delete_many({"run_id": run_id})
     pseudonyms = await db[redaction.PSEUDONYM_COLLECTION].delete_many({"run_id": run_id})
     locks = await db[guards.LOCKS_COLLECTION].delete_many({"run_id": run_id})
-    structures = await db[STRUCTURES_COLLECTION].delete_many({"audit_id": run_id})
+    structures = await cache.delete_structures(db, run_id)
     return {
         "llm_narratives": narratives,
         "llm_calls": getattr(calls, "deleted_count", 0),
         "pseudonym_map": getattr(pseudonyms, "deleted_count", 0),
         "llm_locks": getattr(locks, "deleted_count", 0),
-        "llm_structures": getattr(structures, "deleted_count", 0),
+        "llm_structures": structures,
     }
