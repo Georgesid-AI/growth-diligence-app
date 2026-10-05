@@ -23,6 +23,13 @@ comes from its own line, then its column header, then a period line at the top o
 then the borrowing below. Candidates that give the same type and stated period different values
 carry that period in "inconsistent_dates" (see _flag_inconsistencies).
 
+Every value keeps its period three ways: "target_date" ("2025", "2025-Q3", "2025-H1", "2025-03"),
+"period_text" (the date as the deck states it, "FY25", for display) and "period_start" and
+"period_end" (ISO dates). A fiscal year ("FY25", "Y/E 25", "FY2024/25") is named by the calendar
+year in which it ends, so its target_date is that year and its range follows the audit's fiscal
+year-end: with a March year-end FY25 runs 2024-04-01 to 2025-03-31; with December it is 2025.
+Every other period is a calendar period. remap_periods re-runs the ranges for a new year-end.
+
 A figure takes the keyword and the date of its own line. A line with its own keyword never
 borrows a label. When it has none, the figure borrows one from nearby text, first match wins:
 the table column header, the other lines of its text box (nearest first), the boxes on the same
@@ -36,7 +43,9 @@ keyword, or the one it borrows, is a product keyword) and it can borrow a date: 
 bullet. Candidates with the same type, value, unit, currency and date are merged, keeping
 every source reference.
 """
+import calendar
 import re
+from datetime import date
 from math import hypot
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -98,24 +107,29 @@ _MONTH = (r"(?<![A-Za-z])(?P<month>(?i:january|february|march|april|june|july|au
           r"JAN|FEB|MAR|APR|JUN|JUL|AUG|SEP|SEPT|OCT|NOV|DEC))(?![A-Za-z])")
 _DATE_WORD = re.compile(_MONTH + r"|\bQ[1-4]\b")
 _YY = r"(?P<year>(?:19|20)\d{2}|\d{2})"
+# (kind, pattern, fiscal). A fiscal year (FY, Y/E) is named by the year it ends in; every other
+# period is a calendar period.
 _DATES = [
     # Q3 2021, Q1 17, Q1-Q2 2023
-    ("quarter", re.compile(r"\bQ(?P<q>[1-4])(?:\s*[-–]\s*Q[1-4])?\s*['’]?\s*" + _YY + r"\b")),
+    ("quarter", re.compile(r"\bQ(?P<q>[1-4])(?:\s*[-–]\s*Q[1-4])?\s*['’]?\s*" + _YY + r"\b"), False),
     # 2021 Q3, 2021-Q3
-    ("quarter", re.compile(r"(?<![\d.,])(?P<year>(?:19|20)\d{2})\s*[-/]?\s*Q(?P<q>[1-4])\b")),
+    ("quarter", re.compile(r"(?<![\d.,])(?P<year>(?:19|20)\d{2})\s*[-/]?\s*Q(?P<q>[1-4])\b"), False),
     # 3Q25, 3Q 2025
-    ("quarter", re.compile(r"(?<![\w.,])(?P<q>[1-4])Q\s*['’]?" + _YY + r"\b")),
-    # Periods (spec section 2): H1 24, 1H 2024, then Y/E 22, 23 Y/E, FY23, 2023E
-    ("half", re.compile(r"\bH(?P<h>[12])\s*['’]?\s*" + _YY + r"\b")),
-    ("half", re.compile(r"(?<![\w.,])(?P<h>[12])H\s*['’]?" + _YY + r"\b")),
-    ("year", re.compile(r"\b(?:Y/?E|FY)\s*['’]?" + _YY + r"\b")),
-    ("year", re.compile(r"(?<![\w$€£.,])" + _YY + r"\s*Y/?E\b")),
-    ("year", re.compile(r"(?<![\w$€£.,'’])(?P<year>(?:19|20)\d{2})[EAFBP]\b")),
+    ("quarter", re.compile(r"(?<![\w.,])(?P<q>[1-4])Q\s*['’]?" + _YY + r"\b"), False),
+    # Periods (spec section 2): H1 24, 1H 2024, then FY2024/25, Y/E 22, 23 Y/E, FY23, 2023E
+    ("half", re.compile(r"\bH(?P<h>[12])\s*['’]?\s*" + _YY + r"\b"), False),
+    ("half", re.compile(r"(?<![\w.,])(?P<h>[12])H\s*['’]?" + _YY + r"\b"), False),
+    # FY2024/25, FY24/25: the fiscal year that ends in the second year
+    ("year", re.compile(r"\bFY\s*['’]?(?:(?:19|20)\d{2}|\d{2})\s*/\s*(?P<year>(?:19|20)\d{2}|\d{2})\b"), True),
+    ("year", re.compile(r"\b(?:Y/?E|FY)\s*['’]?" + _YY + r"\b"), True),
+    ("year", re.compile(r"(?<![\w$€£.,])" + _YY + r"\s*Y/?E\b"), True),
+    ("year", re.compile(r"(?<![\w$€£.,'’])(?P<year>(?:19|20)\d{2})[EAFBP]\b"), False),
     # January 2011, Feb. 2007, April of 2011, May, 2021, Nov28,08, Aug2008, Mar '15
     ("month", re.compile(_MONTH + r"\.?,?\s*(?:(?:\d{1,2})(?:st|nd|rd|th)?,\s*(?P<y2>\d{2})\b|"
-                         r"(?:\d{1,2}(?:st|nd|rd|th)?,?\s+)?(?:of\s+)?(?P<year>(?:19|20)\d{2})\b|['’](?P<y3>\d{2})\b)")),
+                         r"(?:\d{1,2}(?:st|nd|rd|th)?,?\s+)?(?:of\s+)?(?P<year>(?:19|20)\d{2})\b|['’](?P<y3>\d{2})\b)"),
+     False),
     # a bare year: 2024, by end of 2020
-    ("year", re.compile(r"(?<![\w$€£.,'’])(?P<year>(?:19|20)\d{2})(?![\d%]|\.\d|,\d)")),
+    ("year", re.compile(r"(?<![\w$€£.,'’])(?P<year>(?:19|20)\d{2})(?![\d%]|\.\d|,\d)"), False),
 ]
 
 _NUMBER = re.compile(
@@ -137,9 +151,9 @@ def _year(text: str) -> int:
 
 
 def find_dates(line: str) -> List[Dict]:
-    """[{"start", "end", "date", "kind"}], longest forms first, no overlaps."""
+    """[{"start", "end", "date", "kind", "text", "fiscal"}], longest forms first, no overlaps."""
     found = []
-    for kind, rx in _DATES:
+    for kind, rx, fiscal in _DATES:
         for m in rx.finditer(line):
             if any(m.start() < d["end"] and d["start"] < m.end() for d in found):
                 continue
@@ -153,8 +167,65 @@ def find_dates(line: str) -> List[Dict]:
                 date = f"{_year(year)}-{_MONTHS[g['month'][:3].lower()]:02d}"
             else:
                 date = str(_year(g["year"]))
-            found.append({"start": m.start(), "end": m.end(), "date": date, "kind": kind})
+            found.append({"start": m.start(), "end": m.end(), "date": date, "kind": kind, "text": m.group(0),
+                          "fiscal": fiscal})
     return sorted(found, key=lambda d: d["start"])
+
+
+def period_range(label: Optional[str], fiscal_year_end: int = 12, fiscal: bool = False) -> Optional[Tuple[str, str]]:
+    """(start, end) as ISO dates for a period label, or None when it is not one.
+
+    "2025", "2025-Q3", "2025-H1", "2025-03" are calendar periods, unless `fiscal` says the year is a
+    fiscal year. "FY2025" and "FY2024/25" are fiscal years, named by the year they end in. A fiscal
+    year ends on the last day of `fiscal_year_end` (1-12); with December it is the calendar year.
+    """
+    m = re.fullmatch(r"FY(?:\d{4}/)?(?P<y>\d{2}|\d{4})", label or "")
+    if m:
+        y = m.group("y")
+        label, fiscal = str(_year(y) if len(y) == 2 else int(y)), True
+        if "/" in m.group(0) and len(y) == 2:      # FY2024/25: the second year in the century of the first
+            label = m.group(0)[2:4] + y
+    m = re.fullmatch(r"(?P<y>\d{4})(?:-(?P<part>Q[1-4]|H[12]|0[1-9]|1[0-2]))?", label or "")
+    if not m:
+        return None
+    year, part = int(m.group("y")), m.group("part")
+    if part is None:
+        if fiscal and fiscal_year_end != 12:
+            first, last = (year - 1, fiscal_year_end + 1), (year, fiscal_year_end)
+        else:
+            first, last = (year, 1), (year, 12)
+    elif part[0] == "Q":
+        q = int(part[1])
+        first, last = (year, 3 * q - 2), (year, 3 * q)
+    elif part[0] == "H":
+        h = int(part[1])
+        first, last = (year, 6 * h - 5), (year, 6 * h)
+    else:
+        first = last = (year, int(part))
+    end = date(last[0], last[1], calendar.monthrange(*last)[1])
+    return date(first[0], first[1], 1).isoformat(), end.isoformat()
+
+
+def is_fiscal(text: Optional[str]) -> bool:
+    """True when the stated period is a fiscal year ("FY25", "Y/E 22", "FY2024/25")."""
+    return any(d["fiscal"] for d in find_dates(text or ""))
+
+
+def resolve_period(value: Dict, fiscal_year_end: int = 12) -> Dict:
+    """Set "period_start" and "period_end" on a value from its target_date and its stated text."""
+    found = period_range(value.get("target_date"), fiscal_year_end, is_fiscal(value.get("period_text")))
+    value["period_start"], value["period_end"] = found or (None, None)
+    return value
+
+
+def remap_periods(candidates: List[Dict], fiscal_year_end: int = 12) -> List[Dict]:
+    """Re-run the date range of every value for a fiscal year-end (spec section 2). The stated text and
+    the target date stay; only the ranges move."""
+    for c in candidates:
+        resolve_period(c, fiscal_year_end)
+        for item in c.get("by_period") or ():
+            resolve_period(item, fiscal_year_end)
+    return candidates
 
 
 def find_numbers(line: str, dates: List[Dict]) -> List[Dict]:
@@ -284,14 +355,14 @@ def _borrow_keyword(texts: Iterable[str]) -> Optional[Tuple[str, str]]:
     return None
 
 
-def _borrow_date(texts: Iterable[str]) -> Optional[Tuple[str, str]]:
-    """(date, text): the first month or quarter in the texts, else the first year."""
+def _borrow_date(texts: Iterable[str]) -> Optional[Tuple[str, str, str]]:
+    """(date, text, the date as stated): the first month or quarter in the texts, else the first year."""
     texts = list(texts)
     for wanted in (("quarter", "half", "month"), ("year",)):
         for text in texts:
             found = [d for d in find_dates(text) if d["kind"] in wanted]
             if found:
-                return found[0]["date"], text
+                return found[0]["date"], text, found[0]["text"]
     return None
 
 
@@ -311,11 +382,12 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
         return next((r for s, e, r in refs if s <= pos < e), refs[0][2])
 
     def claim(pos, family, value=None, high=None, unit=None, currency=None, date=None, label=None, date_from=None,
-              stated=False):
+              stated=False, period_text=None):
         # "_stated": the date is the figure's own, its column header's or its box's period, not one
         # borrowed by position; only stated periods are compared for a deck inconsistency.
         return {"claim_type": family, "value": value, "value_high": high, "unit": unit, "currency": currency,
-                "target_date": date, "snippet": _snippet(line, pos), "label_from": label and _label(label),
+                "target_date": date, "period_text": period_text if date else None, "snippet": _snippet(line, pos),
+                "label_from": label and _label(label),
                 "date_from": date_from and date_from != label and _label(date_from) or None, "sources": [ref_at(pos)],
                 "_stated": stated}
 
@@ -344,7 +416,8 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
         date = date or (None if own_date else _borrow_date(context))
         out.append(claim(n["pos"], family, n["value"], n["value_high"], n["unit"], n["currency"],
                          own_date["date"] if own_date else date and date[0],
-                         label=borrowed and borrowed[1], date_from=date and date[1], stated=stated))
+                         label=borrowed and borrowed[1], date_from=date and date[1], stated=stated,
+                         period_text=own_date["text"] if own_date else date and date[2]))
     if numbers:
         return out
     if dates:
@@ -357,7 +430,7 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
         # A bare date under a milestone ("Positive EBITDA" / "Q2 2024") takes the milestone's type.
         family = "ebitda" if not keywords and (borrowed or [None])[0] == "ebitda" else "product"
         return [claim(d["start"], _type(_nearest(keywords, d), keywords) if keywords else family, date=d["date"],
-                      label=family != "product" and borrowed[1] or None, stated=True)
+                      label=family != "product" and borrowed[1] or None, stated=True, period_text=d["text"])
                 for d in dates if d["kind"] != "year" or keywords]
     # No figure at all: a product line ("Launch the API", a roadmap bullet) or a break-even
     # milestone ("Positive EBITDA") takes a nearby date.
@@ -369,7 +442,7 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
     date = _borrow_date(context)
     if not date:
         return []
-    return [claim(0, family, date=date[0], label=borrowed and borrowed[1], date_from=date[1])]
+    return [claim(0, family, date=date[0], label=borrowed and borrowed[1], date_from=date[1], period_text=date[2])]
 
 
 # ---------------------------------------------------------------------------
@@ -577,8 +650,9 @@ def _period_header(text: str) -> bool:
     return bool(dates) and not find_numbers(text, dates)
 
 
-def detect_candidates(blocks: List[Dict], file: str) -> List[Dict]:
-    """Every candidate in a parsed deck, duplicates merged in order of first appearance."""
+def detect_candidates(blocks: List[Dict], file: str, fiscal_year_end: int = 12) -> List[Dict]:
+    """Every candidate in a parsed deck, duplicates merged in order of first appearance. Each value's
+    period resolves to a date range under the audit's fiscal year-end (1-12, default December)."""
     units = _units(blocks, file)
     contexts = _contexts(units)
     skipped = _axis_ticks(units) | _not_plan(units)
@@ -594,12 +668,14 @@ def detect_candidates(blocks: List[Dict], file: str) -> List[Dict]:
             s = c["sources"][0]
             if s["kind"] == "table" and (s.get("slide") or s.get("page"), s["table"], s["row"], s["col"]) in tick_cells:
                 continue
-            found.append(c)
+            found.append(resolve_period(c, fiscal_year_end))
         if u.get("table_row"):
             found = _row_series(found, u["headers"])
         for c in found:
             key = (c["claim_type"], c["value"], c["value_high"], c["unit"], c["currency"], c["target_date"],
-                   tuple((i["value"], i["value_high"], i["target_date"]) for i in c.get("by_period") or ()))
+                   c["period_start"], c["period_end"],
+                   tuple((i["value"], i["value_high"], i["target_date"], i["period_start"], i["period_end"])
+                         for i in c.get("by_period") or ()))
             if key not in merged:
                 merged[key] = c
             else:
@@ -623,9 +699,10 @@ def _flag_inconsistencies(candidates: List[Dict]) -> None:
     for i, c in enumerate(candidates):
         for v in claim_values(c):
             if v["value"] is not None and v["target_date"] and v["_stated"]:
-                key = (c["claim_type"], v["target_date"], c["currency"], c["unit"] if c["unit"] in ("%", "x") else None)
+                key = (c["claim_type"], v["target_date"], (v["period_start"], v["period_end"]), c["currency"],
+                       c["unit"] if c["unit"] in ("%", "x") else None)
                 seen.setdefault(key, []).append((i, (v["value"], v["value_high"])))
-    for (_, date, _, _), found in seen.items():
+    for (_, date, _, _, _), found in seen.items():
         if len({value for _, value in found}) > 1:
             for i, _ in found:
                 dates = candidates[i].setdefault("inconsistent_dates", [])
@@ -659,18 +736,23 @@ def _row_series(found: List[Dict], headers: Dict) -> List[Dict]:
                 header = headers.get(item["sources"][0].get("col"))
                 return header if header and find_dates(header) else item["date_from"]
             out.append({**c, "value": None, "value_high": None, "target_date": None, "date_from": None,
+                        "period_text": None, "period_start": None, "period_end": None,
                         "label_from": next((i["label_from"] for i in group if i["label_from"]), None),
                         "sources": [i["sources"][0] for i in group],
                         "by_period": [{"value": i["value"], "value_high": i["value_high"], "target_date": i["target_date"],
-                                       "period": period(i), "source": i["sources"][0], "_stated": i["_stated"]}
+                                       "period": period(i), "period_text": i["period_text"],
+                                       "period_start": i["period_start"], "period_end": i["period_end"],
+                                       "source": i["sources"][0], "_stated": i["_stated"]}
                                       for i in group]})
     return out
 
 
 def claim_values(candidate: Dict) -> List[Dict]:
-    """Each value a candidate states, as {value, value_high, target_date, sources}: the values of a
-    table row by period, or the candidate itself."""
+    """Each value a candidate states, as {value, value_high, target_date, period_start, period_end,
+    sources}: the values of a table row by period, or the candidate itself."""
     if candidate.get("by_period"):
         return [{"value": i["value"], "value_high": i["value_high"], "target_date": i["target_date"],
+                 "period_start": i.get("period_start"), "period_end": i.get("period_end"),
                  "sources": [i["source"]], "_stated": i.get("_stated")} for i in candidate["by_period"]]
-    return [{k: candidate.get(k) for k in ("value", "value_high", "target_date", "sources", "_stated")}]
+    return [{k: candidate.get(k) for k in ("value", "value_high", "target_date", "period_start", "period_end",
+                                           "sources", "_stated")}]

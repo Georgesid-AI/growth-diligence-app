@@ -16,14 +16,16 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { listAudits, createAudit, deleteAudit } from "@/lib/api";
 import { fmtCurrency } from "@/lib/format";
-import { targetDateError, plainNumber, groupThousands } from "@/lib/auditForm";
+import { targetDateError, plainNumber, groupThousands, MONTHS, DEFAULT_FISCAL_YEAR_END } from "@/lib/auditForm";
 
 export default function AuditHub() {
   const nav = useNavigate();
   const [audits, setAudits] = useState(null);
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ company_name: "", reporting_currency: "EUR", target_arr: "", target_date: "", as_of_month: "" });
+  const blank = { company_name: "", reporting_currency: "EUR", target_arr: "", target_date: "", as_of_month: "",
+    fiscal_year_end: DEFAULT_FISCAL_YEAR_END };
+  const [form, setForm] = useState(blank);
 
   const load = () => listAudits().then(setAudits);
   useEffect(() => { load(); }, []);
@@ -40,10 +42,11 @@ export default function AuditHub() {
         target_arr: parseFloat(form.target_arr) || 0,
         target_date: form.target_date || null,
         as_of_month: form.as_of_month || null,
+        fiscal_year_end: form.fiscal_year_end,
       });
       toast.success("Audit created");
       setOpen(false);
-      setForm({ company_name: "", reporting_currency: "EUR", target_arr: "", target_date: "", as_of_month: "" });
+      setForm(blank);
       nav(`/audit/${a.id}/mapping`);
     } catch (e) {
       const detail = e.response?.data?.detail;
@@ -144,6 +147,17 @@ export default function AuditHub() {
                   onChange={(e) => setForm({ ...form, as_of_month: e.target.value })}
                   className="mt-1.5 bg-white border-[#E5E7EB] font-mono"
                 />
+              </div>
+              <div>
+                <Label className="text-slate-700">Fiscal year-end <span className="text-slate-500 text-xs">(FY25 is the fiscal year that ends in 2025)</span></Label>
+                <Select value={String(form.fiscal_year_end)} onValueChange={(v) => setForm({ ...form, fiscal_year_end: Number(v) })}>
+                  <SelectTrigger data-testid="audit-fiscal-year-end-select" className="mt-1.5 bg-white border-[#E5E7EB]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-white border-[#E5E7EB] text-slate-900">
+                    {MONTHS.map((m, i) => <SelectItem key={m} value={String(i + 1)}>{m}</SelectItem>)}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
             <DialogFooter>

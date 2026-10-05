@@ -77,11 +77,13 @@ export function claimValue(c) {
   return amount(c || {}, c?.value, c?.value_high);
 }
 
-/** The Date column: a table row's first to last period, else the claim's target date. */
+/** The Date column: a table row's first to last period, else the claim's date, each as the deck
+ *  states it ("FY25", "Y/E 22") when it does; the date range behind it stays server-side. */
 export function claimDate(c) {
-  const dates = (c?.by_period || []).map((i) => i.target_date).filter(Boolean);
+  const shown = (v) => v?.period_text || v?.target_date;
+  const dates = (c?.by_period || []).map(shown).filter(Boolean);
   if (dates.length) return dates.length > 1 ? `${dates[0]}–${dates[dates.length - 1]}` : dates[0];
-  return c?.target_date || PLACEHOLDER;
+  return shown(c) || PLACEHOLDER;
 }
 
 /** The edit sent for a table row: one value per period, in the row's order; dates stay. */

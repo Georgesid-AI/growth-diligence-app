@@ -122,6 +122,10 @@ describe("a table row is one claim with its values by period (zero2hero page 19)
     expect(claimDate(row)).toBe("2022–2024");
     expect(claimDate({ target_date: "2024-Q2" })).toBe("2024-Q2");
     expect(claimDate({ target_date: null })).toBe("—");
+    // A fiscal year shows as the deck states it, not as its end year.
+    expect(claimDate({ target_date: "2025", period_text: "FY25" })).toBe("FY25");
+    expect(claimDate({ by_period: [{ target_date: "2022", period_text: "Y/E 22" }, { target_date: "2023", period_text: "Y/E 23" }] }))
+      .toBe("Y/E 22–Y/E 23");
   });
 
   test("editing one value sends every period, the others unchanged", () => {

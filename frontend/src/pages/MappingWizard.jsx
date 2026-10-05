@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getAudit, getFields, uploadDataset, saveMapping, computeAudit, getRevenueCustomers, updateAudit } from "@/lib/api";
-import { asOfInputValue } from "@/lib/auditForm";
+import { asOfInputValue, MONTHS, DEFAULT_FISCAL_YEAR_END } from "@/lib/auditForm";
 
 const DTYPES = [
   { key: "revenue", label: "Revenue Lines", desc: "Recurring & one-off invoices — the basis for MRR/ARR, NRR and churn.", required: true },
@@ -27,6 +27,16 @@ export default function MappingWizard() {
 
   const load = useCallback(() => getAudit(id).then((a) => { setAudit(a); setAsOf(asOfInputValue(a.as_of_month)); }), [id]);
   useEffect(() => { load(); getFields().then(setFields); }, [load]);
+
+  // The fiscal year-end stays editable after creation; saving it re-runs period mapping on the server.
+  const saveYearEnd = async (month) => {
+    try {
+      setAudit(await updateAudit(id, { fiscal_year_end: Number(month) }));
+      toast.success("Fiscal year-end saved; claim periods re-mapped");
+    } catch (e) {
+      toast.error("Could not save the fiscal year-end");
+    }
+  };
 
   const runCompute = async () => {
     setComputing(true);
@@ -60,6 +70,17 @@ export default function MappingWizard() {
           </p>
         </div>
         <div className="flex items-end gap-3">
+          <div>
+            <label className="text-[11px] font-mono uppercase tracking-wider text-slate-600 block mb-1">Fiscal year-end</label>
+            <Select value={String(audit.fiscal_year_end || DEFAULT_FISCAL_YEAR_END)} onValueChange={saveYearEnd}>
+              <SelectTrigger data-testid="fiscal-year-end-select" className="h-9 w-36 bg-white border-[#E5E7EB]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-white border-[#E5E7EB] text-slate-900">
+                {MONTHS.map((m, i) => <SelectItem key={m} value={String(i + 1)}>{m}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
           <div>
             <label className="text-[11px] font-mono uppercase tracking-wider text-slate-600 block mb-1">As-of month</label>
             <Input

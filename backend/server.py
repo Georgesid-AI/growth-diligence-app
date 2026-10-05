@@ -265,6 +265,9 @@ class AuditCreate(BaseModel):
     target_arr: float = 0
     target_date: Optional[str] = None
     as_of_month: Optional[str] = None
+    # The month the company's fiscal year ends in (deck-parser.md section 2). FY25 is the fiscal year
+    # that ends in 2025; with December it is the calendar year.
+    fiscal_year_end: int = Field(default=12, ge=1, le=12)
 
     _check_target_date = field_validator("target_date")(_validate_target_date)
     _check_as_of_month = field_validator("as_of_month")(_validate_as_of_month)
@@ -276,6 +279,7 @@ class AuditUpdate(BaseModel):
     target_arr: Optional[float] = None
     target_date: Optional[str] = None
     as_of_month: Optional[str] = None
+    fiscal_year_end: Optional[int] = Field(default=None, ge=1, le=12)
 
     _check_target_date = field_validator("target_date")(_validate_target_date)
     _check_as_of_month = field_validator("as_of_month")(_validate_as_of_month)
@@ -326,6 +330,7 @@ async def create_audit(payload: AuditCreate):
         "target_arr": payload.target_arr,
         "target_date": payload.target_date,
         "as_of_month": payload.as_of_month,
+        "fiscal_year_end": payload.fiscal_year_end,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "status": "draft",
         "results": None,
@@ -358,7 +363,23 @@ async def update_audit(audit_id: str, payload: AuditUpdate):
         await db.audits.update_one({"id": audit_id}, {"$set": updates})
         if RECOMPUTE_TRIGGER_FIELDS & updates.keys():
             await _mark_stale_and_maybe_recompute(audit_id)
+        if "fiscal_year_end" in updates and updates["fiscal_year_end"] != _fiscal_year_end(a):
+            await _remap_periods(audit_id, updates["fiscal_year_end"])
     return await audit_public(await db.audits.find_one({"id": audit_id}))
+
+
+def _fiscal_year_end(audit: Optional[dict]) -> int:
+    """The audit's fiscal year-end month; audits created before the field existed end in December."""
+    return int((audit or {}).get("fiscal_year_end") or 12)
+
+
+async def _remap_periods(audit_id: str, fiscal_year_end: int) -> None:
+    """A new fiscal year-end re-runs period mapping: every stored claim's date range moves, its stated
+    period and target date stay (deck-parser.md section 2)."""
+    found = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0}).to_list(10000)
+    for c in deck_claims.remap_periods(found, fiscal_year_end):
+        changes = {k: c.get(k) for k in ("period_start", "period_end", "by_period") if k in c}
+        await db[decks.CANDIDATES_COLLECTION].update_one({"audit_id": audit_id, "id": c["id"]}, {"$set": changes})
 
 
 @api.delete("/audits/{audit_id}")
@@ -485,14 +506,15 @@ def _claim_key(c: dict) -> tuple:
 
 @api.post("/audits/{audit_id}/decks/upload")
 async def upload_deck(audit_id: str, file: UploadFile = File(...)):
-    if not await db.audits.find_one({"id": audit_id}, {"id": 1}):
+    audit = await db.audits.find_one({"id": audit_id}, {"id": 1, "fiscal_year_end": 1})
+    if not audit:
         raise HTTPException(404, "Audit not found")
     content = await file.read(deck_parser.MAX_BYTES + 1)
     try:
         deck = await run_in_threadpool(deck_parser.parse_deck, content, file.filename or "")
     except deck_parser.DeckError as exc:
         raise HTTPException(400, exc.message)
-    candidates = deck_claims.detect_candidates(deck["blocks"], deck["file"])
+    candidates = deck_claims.detect_candidates(deck["blocks"], deck["file"], _fiscal_year_end(audit))
     deck_id = str(uuid.uuid4())
     # A file uploaded again replaces its earlier parse and its unreviewed candidates. Approved,
     # edited and rejected candidates stay on record; the same claim found again is not re-added.
@@ -533,6 +555,20 @@ async def list_deck_candidates(audit_id: str):
     return sanitize({"decks": found, "candidates": candidates})
 
 
+def _edited_period(value: dict, before: dict, fiscal_year_end: int) -> dict:
+    """A value after an edit, its date range re-run. A date the analyst typed is a calendar period
+    ("2025", "2025-Q3"), so the deck's stated text goes once the date changes."""
+    if value.get("target_date") != before.get("target_date"):
+        value["period_text"] = None
+    else:
+        value["period_text"] = before.get("period_text")
+    return deck_claims.resolve_period(value, fiscal_year_end)
+
+
+def _period_fields(value: dict) -> dict:
+    return {k: value.get(k) for k in ("period_text", "period_start", "period_end")}
+
+
 def _first_page(candidate: dict) -> int:
     pages = [s.get("slide", s.get("page")) for s in candidate.get("sources") or []]
     return min((p for p in pages if isinstance(p, int)), default=0)
@@ -563,13 +599,17 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
     if edits and "status" in sent:
         raise HTTPException(400, "Edit the fields or change the status, not both at once")
     rows = current.get("by_period") or []
+    year_end = _fiscal_year_end(await db.audits.find_one({"id": audit_id}, {"fiscal_year_end": 1}))
     if "by_period" in edits:
         # One value of a row can be corrected; the row keeps its periods and cells.
         if not rows or edits["by_period"] is None or len(edits["by_period"]) != len(rows):
             raise HTTPException(400, "Send one value per period of the row")
-        edits["by_period"] = [{**old, **new.model_dump()} for old, new in zip(rows, edits["by_period"])]
+        edits["by_period"] = [_edited_period({**old, **new.model_dump()}, old, year_end)
+                              for old, new in zip(rows, edits["by_period"])]
     if rows and set(edits) & set(_ROW_FIELDS):
         raise HTTPException(400, "Edit the row's values by period")
+    if "target_date" in edits:
+        edits.update(_period_fields(_edited_period({"target_date": edits["target_date"]}, current, year_end)))
     if edits:
         changes = {**edits, "status": "edited"}
         if "parsed" not in current:       # what the parser found stays next to the analyst's edit

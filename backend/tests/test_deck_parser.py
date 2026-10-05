@@ -97,8 +97,10 @@ def test_pptx_text_boxes_groups_tables_and_notes_keep_their_slide():
     assert revenue["sources"] == [{**cell, "col": 2}, {**cell, "col": 3}], "one candidate for the row"
     assert (revenue["snippet"], revenue["value"], revenue["target_date"]) == ("Revenue | $1.2M | $2.5M", None, None)
     assert revenue["by_period"] == [
-        {"value": 1200000, "value_high": None, "target_date": "2023", "period": "2023", "source": {**cell, "col": 2}},
-        {"value": 2500000, "value_high": None, "target_date": "2024", "period": "2024", "source": {**cell, "col": 3}}]
+        {"value": 1200000, "value_high": None, "target_date": "2023", "period": "2023", "period_text": "2023",
+         "period_start": "2023-01-01", "period_end": "2023-12-31", "source": {**cell, "col": 2}},
+        {"value": 2500000, "value_high": None, "target_date": "2024", "period": "2024", "period_text": "2024",
+         "period_start": "2024-01-01", "period_end": "2024-12-31", "source": {**cell, "col": 3}}]
     hires, = _by_value(found, 40)
     assert hires["claim_type"] == "people" and hires["target_date"] == "2025"
     assert hires["sources"] == [{"file": "board.pptx", "slide": 2, "kind": "notes"}]
@@ -964,3 +966,30 @@ def test_changing_the_year_end_re_maps_the_stored_periods():
     claims.remap_periods(found, 3)
     assert _periods(found)["FY25"] == ("2025", "2024-04-01", "2025-03-31")
     assert _periods(found)["Q3 25"] == ("2025-Q3", "2025-07-01", "2025-09-30")
+
+
+def test_the_audit_year_end_is_used_at_upload_and_a_change_re_maps_the_stored_claims(api):
+    client, db = api
+    assert client.put("/api/audits/audit-1", json={"fiscal_year_end": 3}).status_code == 200
+    assert _upload(client, "audit-1", "fy.pptx", _slide([("FY25 ARR $3M", 1, 2), ("Revenue Q3 25 $2M", 1, 4)])).status_code == 200
+    stored = {c["period_text"]: c for c in db[decks.CANDIDATES_COLLECTION].docs}
+    assert (stored["FY25"]["target_date"], stored["FY25"]["period_start"], stored["FY25"]["period_end"]) == \
+        ("2025", "2024-04-01", "2025-03-31")
+    assert client.put("/api/audits/audit-1", json={"fiscal_year_end": 12}).status_code == 200
+    stored = {c["period_text"]: c for c in db[decks.CANDIDATES_COLLECTION].docs}
+    assert (stored["FY25"]["period_start"], stored["FY25"]["period_end"]) == ("2025-01-01", "2025-12-31")
+    assert (stored["Q3 25"]["period_start"], stored["Q3 25"]["period_end"]) == ("2025-07-01", "2025-09-30")
+    for bad in (0, 13):
+        assert client.put("/api/audits/audit-1", json={"fiscal_year_end": bad}).status_code == 422
+
+
+def test_an_edited_date_is_a_calendar_period_and_drops_the_stated_text(api):
+    client, db = api
+    client.put("/api/audits/audit-1", json={"fiscal_year_end": 3})
+    _upload(client, "audit-1", "fy.pptx", _slide([("FY25 ARR $3M", 1, 2)]))
+    arr, = db[decks.CANDIDATES_COLLECTION].docs
+    url = f"/api/audits/audit-1/decks/candidates/{arr['id']}"
+    kept = client.put(url, json={"value": 3100000, "target_date": "2025"}).json()
+    assert (kept["period_text"], kept["period_start"]) == ("FY25", "2024-04-01"), "same date: the stated period stays"
+    moved = client.put(url, json={"target_date": "2026-Q1"}).json()
+    assert (moved["period_text"], moved["period_start"], moved["period_end"]) == (None, "2026-01-01", "2026-03-31")

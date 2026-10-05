@@ -49,3 +49,9 @@ export function groupThousands(plain) {
   const grouped = int.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   return dec === undefined ? grouped : `${grouped}.${dec}`;
 }
+
+// Fiscal year-end: the month the company's fiscal year ends in (1-12), December unless set.
+// FY25 is the fiscal year that ends in 2025 (docs/specs/deck-parser.md section 2).
+export const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September",
+  "October", "November", "December"];
+export const DEFAULT_FISCAL_YEAR_END = 12;

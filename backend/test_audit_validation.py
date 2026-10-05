@@ -61,3 +61,19 @@ def test_as_of_month_rejects_non_iso(bad):
         server.AuditCreate(company_name="Acme", as_of_month=bad)
     with pytest.raises(ValidationError):
         server.AuditUpdate(as_of_month=bad)
+
+
+# Fiscal year-end: a month, December unless set (deck-parser.md section 2).
+def test_fiscal_year_end_defaults_to_december_and_takes_a_month():
+    assert server.AuditCreate(company_name="Acme").fiscal_year_end == 12
+    assert server.AuditCreate(company_name="Acme", fiscal_year_end=3).fiscal_year_end == 3
+    assert server.AuditUpdate(fiscal_year_end=6).fiscal_year_end == 6
+    assert server.AuditUpdate().fiscal_year_end is None
+
+
+@pytest.mark.parametrize("bad", [0, 13, -1])
+def test_fiscal_year_end_outside_1_to_12_is_refused(bad):
+    with pytest.raises(ValidationError):
+        server.AuditCreate(company_name="Acme", fiscal_year_end=bad)
+    with pytest.raises(ValidationError):
+        server.AuditUpdate(fiscal_year_end=bad)
