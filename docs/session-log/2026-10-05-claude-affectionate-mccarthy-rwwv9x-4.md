@@ -1,0 +1,5 @@
+2026-10-05, claude/affectionate-mccarthy-rwwv9x, third round of decisions on PR #37 (period correction).
+Deleted: nothing; a matched value with a wrong model period is no longer left as an unverified suggestion.
+Optimized: when the value matches and the cited cells rebuild a period, Python's period replaces the model's and the item is Verified; the stored reading keeps the model's period, llm_structures stores the count, and the deck's run log and scripts/consistency_run.py report "period corrected" cases; a new year-end re-counts; a deliberate violation showed the first test missed a period replaced on a value that did not match, so the test now checks it; 799 backend tests pass, recorded replies and the 10 decks unchanged.
+Slow/unclear: a relative column longer than a month ("Year 1" from a start date) names no period label, so it corrects nothing and stays as before.
+Process change: when a decision adds a count, name where it must stay current (here: a year-end change), so the re-count path is in scope from the start.
