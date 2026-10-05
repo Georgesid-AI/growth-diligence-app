@@ -1433,6 +1433,11 @@ async def _store_structure(db, *, audit_id, key, digest, structure_type, model_t
     )
 
 
+async def stored_structure(db, audit_id: str, key: str) -> Optional[dict]:
+    """The stored model output for this audit and key (values with cell references), or None."""
+    return await db[STRUCTURES_COLLECTION].find_one({"audit_id": audit_id, "key": key}, {"_id": 0, "output": 1})
+
+
 async def record_verification(db, audit_id: str, key: str, statuses: List[str], dropped: int = 0) -> None:
     """Store the verifier status of each item next to the model output it checks (spec section 9)."""
     await db[STRUCTURES_COLLECTION].update_one(

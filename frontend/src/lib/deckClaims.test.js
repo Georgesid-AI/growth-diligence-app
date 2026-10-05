@@ -1,5 +1,5 @@
 import {
-  ALL_DECKS, CLAIM_TYPES, INCONSISTENCY_LABEL, REMOVE_DECK_CONFIRM, claimDate, claimsForDeck, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, sourceRef, statusCounts, typeLabel,
+  ALL_DECKS, AI_SUGGESTION_LABEL, CLAIM_TYPES, INCONSISTENCY_LABEL, VERIFIED_LABEL, deckRunLog, REMOVE_DECK_CONFIRM, claimDate, claimsForDeck, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, sourceRef, statusCounts, typeLabel,
   DECK_SCOPE_CANNOT, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO,
 } from "./deckClaims";
 
@@ -138,5 +138,30 @@ describe("a table row is one claim with its values by period (zero2hero page 19)
 
   test("inconsistency label", () => {
     expect(INCONSISTENCY_LABEL).toBe("Deck inconsistency");
+  });
+});
+
+describe("model readings in the approval list (docs/specs/llm-structure-reading.md)", () => {
+  test("a reading cites its structure and cell", () => {
+    expect(sourceRef({ file: "plan.pdf", page: 19, kind: "structure", structure: "table", table: 1, cell: "r4c3" }))
+      .toBe("plan.pdf · page 19 · table 1, cell r4c3");
+    expect(sourceRef({ file: "plan.pdf", page: 19, kind: "structure", structure: "kpi_panel", cell: "r2c1" }))
+      .toBe("plan.pdf · page 19 · KPI panel, cell r2c1");
+  });
+
+  test("every row is labelled Verified or AI suggestion, not verified", () => {
+    expect(VERIFIED_LABEL).toBe("Verified");
+    expect(AI_SUGGESTION_LABEL).toBe("AI suggestion, not verified");
+    expect(typeLabel("use_of_funds")).toBe("Use of funds");
+    expect(CLAIM_TYPES).not.toContain("use_of_funds");
+  });
+
+  test("the deck panel shows the status, the slides sent and the cost", () => {
+    expect(deckRunLog({ ai_status: "waiting" })).toEqual(["AI reading: waiting for revenue file"]);
+    expect(deckRunLog({ ai_status: "read", page_unit: "slide", sent_pages: [4, 7, 12], ai_cost_usd: 0.0123 }))
+      .toEqual(["AI reading: read", "Sent to the model: slides 4, 7, 12", "Cost: $0.0123"]);
+    expect(deckRunLog({ ai_status: "stopped", ai_message: "AI reading stopped: this audit reached its 200,000-token limit. The remaining structures were read by Python only." }))
+      .toEqual(["AI reading: not read", "AI reading stopped: this audit reached its 200,000-token limit. The remaining structures were read by Python only."]);
+    expect(deckRunLog({})).toEqual([]);
   });
 });

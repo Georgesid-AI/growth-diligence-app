@@ -147,3 +147,205 @@ def proposed_mapping(items: List[Dict], columns: List[str], fields: List[str]) -
             out[item["metric"]] = columns[col - 1]
             used.add(columns[col - 1])
     return out
+
+
+# ---------------------------------------------------------------------------
+# Decks: queue, read, verify, and results in the existing approval list (spec sections 2-4, 9)
+# ---------------------------------------------------------------------------
+from datetime import datetime, timezone  # noqa: E402
+import uuid  # noqa: E402
+
+from ..decks import TEXT_COLLECTION, CANDIDATES_COLLECTION  # noqa: E402
+from ..decks import claims  # noqa: E402
+from ..llm import gateway  # noqa: E402
+from ..llm import redaction as llm_redaction  # noqa: E402
+from . import verify  # noqa: E402
+
+# A deck's AI reading status, as the deck panel shows it.
+WAITING = "waiting"                 # "waiting for revenue file"
+READ, NOT_READ, STOPPED, PYTHON_ONLY = "read", "not_read", "stopped", "python_only"
+WAITING_TEXT = "waiting for revenue file"
+_UNITS = {"%", "x", "days", "months", "years"}
+
+
+def revenue_mapped(dataset: Optional[Dict]) -> bool:
+    """True once the revenue file is uploaded and the analyst confirmed its columns, customer included."""
+    return bool(dataset and dataset.get("mapped_at") and (dataset.get("mapping") or {}).get("customer_id"))
+
+
+async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None) -> str:
+    """Read one deck's structures with the model, or queue them; returns the deck's AI status.
+
+    Unticked consent: the Python-only path, no call. Ticked but the revenue file not yet mapped: the
+    deck waits ("waiting for revenue file"), so no customer name goes out unmapped. Otherwise each
+    structure is redacted, sent through gateway.read_structure, verified against its source cells,
+    and every item becomes a row of the approval list labelled Verified or "AI suggestion, not
+    verified". A deck already read is not sent again (a re-read is served from the cache).
+    """
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "id": 1, "company_name": 1, "fiscal_year_end": 1,
+                                                       "structure_reading_consent": 1})
+    deck = await db[TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id},
+                                              {"_id": 0, "structures": 1, "file": 1, "page_unit": 1})
+    if not audit or not deck:
+        return NOT_READ
+    found = deck.get("structures") or []
+    if audit.get("structure_reading_consent") is not True:
+        return await _deck_status(db, audit_id, deck_id, PYTHON_ONLY)
+    if not revenue_mapped(await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"},
+                                                     {"_id": 0, "mapping": 1, "mapped_at": 1})):
+        return await _deck_status(db, audit_id, deck_id, WAITING, WAITING_TEXT)
+    mapping = await llm_redaction.get_map(db, audit_id)
+    year_end = int(audit.get("fiscal_year_end") or 12)
+    mode = verify.unmatched_mode()
+    reviewed = await db[CANDIDATES_COLLECTION].find({"audit_id": audit_id, "file": deck["file"]}, {"_id": 0}).to_list(100000)
+    known = _python_cells(reviewed)
+    order = len(reviewed)
+    stopped_message, statuses, sent = None, [], []
+    for i, structure in enumerate(found):
+        page = structure.get("slide") or structure.get("page")
+        if stopped_message:
+            statuses.append({"status": STOPPED, "reason": stopped_message})
+            continue
+        cells, _ = redact.redact_structure(structure["cells"], audit.get("company_name"), mapping)
+        result = await gateway.read_structure(db, audit_id, redact.structure_text(cells), structure["type"],
+                                              deck_id=deck_id, page=page, adapter=adapter, sleep=sleep)
+        entry = {"status": result.status, "reason": result.reason, "key": result.key, "model_type": result.model_type,
+                 "cache_hit": result.cache_hit}
+        if result.status == "stopped":
+            stopped_message = result.reason
+        if result.status == "read":
+            if not result.cache_hit:
+                sent.append({"page": page, "type": structure["type"], "at": datetime.now(timezone.utc).isoformat()})
+            checked = verify.verify(structure, result.items, year_end, mode)
+            await gateway.record_verification(db, audit_id, result.key, [x["status"] for x in checked["items"]],
+                                              checked["dropped"])
+            entry["dropped"] = checked["dropped"]
+            for item in checked["items"]:
+                candidate = candidate_from_item(item, structure, deck, result.model_type, year_end)
+                if _cell_key(candidate) in known:
+                    continue                    # Python already found this value in this cell
+                order += 1
+                await db[CANDIDATES_COLLECTION].insert_one(
+                    {**candidate, "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"],
+                     "id": str(uuid.uuid4()), "order": order, "status": "pending", "structure_key": result.key})
+        statuses.append(entry)
+    overall = STOPPED if stopped_message else READ if any(s["status"] == "read" for s in statuses) else NOT_READ
+    previous = await db[TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id}, {"_id": 0, "sent": 1})
+    await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id}, {"$set": {
+        "structures": [{**structure, "ai": status} for structure, status in zip(found, statuses)],
+        "sent": list((previous or {}).get("sent") or []) + sent}})
+    return await _deck_status(db, audit_id, deck_id, overall, stopped_message)
+
+
+async def _deck_status(db, audit_id: str, deck_id: str, status: str, message: Optional[str] = None) -> str:
+    await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id},
+                                         {"$set": {"ai_status": status, "ai_message": message}})
+    return status
+
+
+async def process_waiting_decks(db, audit_id: str, adapter=None, sleep=None) -> List[str]:
+    """Read every deck that waited for the revenue file, once it is mapped. Returns their deck ids."""
+    waiting = await db[TEXT_COLLECTION].find({"audit_id": audit_id, "ai_status": WAITING},
+                                             {"_id": 0, "deck_id": 1}).to_list(1000)
+    for d in waiting:
+        await process_deck(db, audit_id, d["deck_id"], adapter=adapter, sleep=sleep)
+    return [d["deck_id"] for d in waiting]
+
+
+def _where(structure: Dict) -> Dict:
+    return {k: structure[k] for k in ("slide", "page") if k in structure}
+
+
+def _source_key(source: Dict, value):
+    """A value and the cell it sits in: a table cell for Python and for a table structure, else the
+    structure cell an earlier AI reading cited."""
+    page = source.get("slide") or source.get("page")
+    if source.get("table") is not None:
+        return (page, "table", source["table"], source.get("row"), source.get("col"), value)
+    if source.get("cell"):
+        return (page, "structure", source.get("structure"), source["cell"], value)
+    return None
+
+
+def _cell_key(candidate: Dict):
+    return _source_key(candidate["sources"][0], candidate.get("value"))
+
+
+def _python_cells(candidates: List[Dict]) -> set:
+    """The cell of every value already listed for the deck: Python's, and reviewed AI rows kept from an
+    earlier upload of the same file, so a re-read adds no row twice."""
+    out = set()
+    for c in candidates:
+        for v in claims.claim_values(c):
+            for s in v.get("sources") or ():
+                key = _source_key(s, v.get("value"))
+                if key:
+                    out.add(key)
+    return out
+
+
+def candidate_from_item(item: Dict, structure: Dict, deck: Dict, model_type: Optional[str], fiscal_year_end: int) -> Dict:
+    """One approval-list row for a verified or suggested item, citing its source cell. The snippet is
+    the value cell's own text (as the deck states it); the period keeps the text of its period cell."""
+    by_id = {f"r{c['row']}c{c['col']}": c for c in structure["cells"]}
+    cell = by_id.get(item["value_cell"]) or {}
+    period_cells = [by_id[c]["text"] for c in item.get("period_cells") or () if c in by_id]
+    label = next((h["text"] for h in verify.header_cells(structure, cell) if h["row"] == cell.get("row")), None) \
+        if cell else None
+    unit = item.get("unit")
+    target, stated = _target_date(item.get("period")), (" ".join(period_cells) or item.get("period"))
+    source = {"file": deck["file"], **_where(structure), "kind": "structure", "structure": model_type or structure["type"],
+              "cell": item["value_cell"]}
+    if structure.get("table") is not None:
+        source.update(table=structure["table"], row=cell.get("row"), col=cell.get("col"))
+    candidate = {
+        "claim_type": item["metric"], "value": item.get("value"), "value_high": None,
+        "unit": unit if unit in _UNITS else None, "currency": unit if unit and len(unit) == 3 and unit.isupper() else None,
+        "target_date": target, "period_text": stated if target else None,
+        "snippet": (cell.get("text") or "")[:claims.SNIPPET_MAX], "label_from": label if label != cell.get("text") else None,
+        "date_from": stated if target and stated != cell.get("text") else None, "sources": [source],
+        "inconsistent_dates": [], "origin": "ai", "cell": item["value_cell"], "ai_status": item["status"],
+        "ai_label": verify.label(item["status"]),
+        "ai_checks": item.get("checks"), "period_cells": list(item.get("period_cells") or []),
+        "actual_or_forecast": item.get("actual_or_forecast"),
+        "proposed_flags": list(item.get("proposed_flags") or []) if item["status"] == verify.VERIFIED else [],
+    }
+    found = claims.period_range(item.get("period"), fiscal_year_end) if item.get("period") else None
+    candidate["period_start"], candidate["period_end"] = found or (None, None)
+    return candidate
+
+
+def _target_date(period: Optional[str]) -> Optional[str]:
+    """The approval list's date for a model period: a fiscal year by the year it ends in."""
+    if not period:
+        return None
+    m = re.fullmatch(r"FY(?:(\d{2})\d{2}/)?(\d{2}|\d{4})", period)
+    if m:
+        year = m.group(2)
+        return (m.group(1) or "20") + year if len(year) == 2 else year
+    return period
+
+
+async def reverify_audit(db, audit_id: str, fiscal_year_end: int) -> int:
+    """A new fiscal year-end re-runs period mapping on the model's readings too: every stored item is
+    verified again under it and the open approval rows take the new label. Returns the rows changed."""
+    changed = 0
+    decks = await db[TEXT_COLLECTION].find({"audit_id": audit_id}, {"_id": 0, "deck_id": 1, "structures": 1}).to_list(1000)
+    mode = verify.unmatched_mode()
+    for deck in decks:
+        for structure in deck.get("structures") or []:
+            key = (structure.get("ai") or {}).get("key")
+            stored = await gateway.stored_structure(db, audit_id, key) if key else None
+            if not stored:
+                continue
+            checked = verify.verify(structure, stored["output"]["items"], fiscal_year_end, mode)
+            await gateway.record_verification(db, audit_id, key, [x["status"] for x in checked["items"]],
+                                              checked["dropped"])
+            for item in checked["items"]:
+                result = await db[CANDIDATES_COLLECTION].update_one(
+                    {"audit_id": audit_id, "deck_id": deck["deck_id"], "structure_key": key, "status": "pending",
+                     "cell": item["value_cell"], "claim_type": item["metric"], "value": item.get("value")},
+                    {"$set": {"ai_status": item["status"], "ai_label": verify.label(item["status"]),
+                              "ai_checks": item.get("checks")}})
+                changed += getattr(result, "modified_count", 0)
+    return changed

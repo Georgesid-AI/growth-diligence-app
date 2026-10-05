@@ -2,6 +2,7 @@
  "file": "05-zero2hero.pdf",
  "page": 19,
  "type": "kpi_panel",
+ "match": "r2c1: Gross Profit \u00a3150K",
  "note": "Hand-written in the model's output format for the public test deck; no live call was made.",
  "reply": {
   "type": "kpi_panel",

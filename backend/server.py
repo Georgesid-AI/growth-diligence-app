@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, UploadFile, File
+from fastapi import BackgroundTasks, FastAPI, APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse, StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -419,6 +419,8 @@ async def _remap_periods(audit_id: str, fiscal_year_end: int) -> None:
     for c in deck_claims.remap_periods(found, fiscal_year_end):
         changes = {k: c.get(k) for k in ("period_start", "period_end", "by_period") if k in c}
         await db[decks.CANDIDATES_COLLECTION].update_one({"audit_id": audit_id, "id": c["id"]}, {"$set": changes})
+    # The model's readings are verified again: a fiscal year matches a calendar one only in December.
+    await structures.reverify_audit(db, audit_id, fiscal_year_end)
 
 
 @api.delete("/audits/{audit_id}")
@@ -524,7 +526,7 @@ async def revenue_customers(audit_id: str, customer_col: Optional[str] = None):
 
 
 @api.put("/audits/{audit_id}/datasets/{dtype}/mapping")
-async def save_mapping(audit_id: str, dtype: str, payload: MappingPayload):
+async def save_mapping(audit_id: str, dtype: str, payload: MappingPayload, background: BackgroundTasks):
     ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype})
     if not ds:
         raise HTTPException(404, "Dataset not uploaded")
@@ -543,6 +545,9 @@ async def save_mapping(audit_id: str, dtype: str, payload: MappingPayload):
     )
     await _add_customers(audit_id, {**ds, "mapping": payload.mapping})
     await _mark_stale_and_maybe_recompute(audit_id)
+    if dtype == "revenue":
+        # Decks that waited for the revenue file are read now that its customers are in the mapping.
+        background.add_task(structures.process_waiting_decks, db, audit_id)
     return {"ok": True}
 
 
@@ -610,7 +615,7 @@ def _claim_key(c: dict) -> tuple:
 
 
 @api.post("/audits/{audit_id}/decks/upload")
-async def upload_deck(audit_id: str, file: UploadFile = File(...)):
+async def upload_deck(audit_id: str, background: BackgroundTasks, file: UploadFile = File(...)):
     audit = await db.audits.find_one({"id": audit_id}, {"id": 1, "fiscal_year_end": 1})
     if not audit:
         raise HTTPException(404, "Audit not found")
@@ -635,13 +640,17 @@ async def upload_deck(audit_id: str, file: UploadFile = File(...)):
     await db[decks.TEXT_COLLECTION].insert_one({
         "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"], "format": deck["format"],
         "page_unit": deck["page_unit"], "pages": deck["pages"], "blocks": deck["blocks"],
-        "structures": deck["structures"], "uploaded_at": datetime.now(timezone.utc).isoformat()})
+        "structures": deck["structures"], "ai_status": "reading", "uploaded_at": datetime.now(timezone.utc).isoformat()})
     for order, c in enumerate(candidates):
         await db[decks.CANDIDATES_COLLECTION].insert_one(
             {**c, "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"], "id": str(uuid.uuid4()),
              "order": len(reviewed) + order, "status": "pending"})
+    # Its structures are read by the model after the response, or wait for the revenue file
+    # (llm-structure-reading.md section 3); with consent unticked, Python's candidates stand alone.
+    background.add_task(structures.process_deck, db, audit_id, deck_id)
     return {"deck_id": deck_id, "file": deck["file"], "format": deck["format"], "page_unit": deck["page_unit"],
-            "pages": deck["pages"], "candidates": len(candidates), "kept_reviewed": len(reviewed)}
+            "pages": deck["pages"], "candidates": len(candidates), "kept_reviewed": len(reviewed),
+            "structures": len(deck["structures"])}
 
 
 @api.get("/audits/{audit_id}/decks")
@@ -650,9 +659,16 @@ async def list_deck_candidates(audit_id: str):
     grouped by deck in that order; within a deck the ones to review first, then by slide or page."""
     if not await db.audits.find_one({"id": audit_id}, {"id": 1}):
         raise HTTPException(404, "Audit not found")
-    deck_fields = {"_id": 0, "deck_id": 1, "file": 1, "format": 1, "page_unit": 1, "pages": 1, "uploaded_at": 1}
+    deck_fields = {"_id": 0, "deck_id": 1, "file": 1, "format": 1, "page_unit": 1, "pages": 1, "uploaded_at": 1,
+                   "ai_status": 1, "ai_message": 1, "sent": 1}
     found = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, deck_fields).to_list(100)
     found.sort(key=lambda d: d.get("uploaded_at") or "", reverse=True)
+    by_deck = (await llm_gateway.usage_for_run(db, audit_id)).by_deck
+    for d in found:
+        # The deck panel's run log: status, the pages sent to the model (no text) and the cost.
+        d["sent_pages"] = sorted({s["page"] for s in d.pop("sent", None) or [] if s.get("page") is not None})
+        usage = by_deck.get(d["deck_id"])
+        d["ai_cost_usd"] = usage.estimated_cost_usd if usage else 0.0
     rank = {d["deck_id"]: i for i, d in enumerate(found)}
     candidates = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0}).to_list(10000)
     candidates.sort(key=lambda c: (rank.get(c.get("deck_id"), len(rank)), c.get("status") != "pending",

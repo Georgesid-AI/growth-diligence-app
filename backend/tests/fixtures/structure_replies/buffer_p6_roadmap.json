@@ -2,6 +2,7 @@
  "file": "03-buffer.pptx",
  "page": 6,
  "type": "roadmap",
+ "match": "r1c1: Launched web app",
  "note": "Hand-written in the model's output format for the public test deck; no live call was made. Timeline dates sit below their lines, so no period is a header: every item stays a suggestion.",
  "reply": {
   "type": "roadmap",

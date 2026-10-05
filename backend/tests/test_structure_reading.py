@@ -449,3 +449,166 @@ def test_an_audit_created_before_consent_stays_unticked_until_it_has_an_engageme
     assert client.put("/api/audits/old", json={"structure_reading_consent": True}).status_code == 400
     assert client.put("/api/audits/old", json={"structure_reading_consent": True,
                                               "engagement_reference": "ENG-9"}).status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Orchestration: decks wait for the mapped revenue file, then are read, verified and listed
+# ---------------------------------------------------------------------------
+class RecordedAdapter(t.FakeAdapter):
+    """Replays the recorded reply whose structure the request carries; an empty reading otherwise."""
+
+    def __init__(self):
+        super().__init__()
+        self.fixtures = _fixtures()
+
+    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema):
+        sent = json.loads(user_payload)
+        reply = next((f["reply"] for f in self.fixtures if f["type"] == sent["type"] and f["match"] in sent["text"]),
+                     {"type": sent["type"], "items": []})
+        self._replies = [json.dumps(reply)]
+        self.calls_before = self.calls
+        return super().complete(model=model, system=system, user_payload=user_payload, max_tokens=max_tokens,
+                                temperature=temperature, json_schema=json_schema)
+
+
+REVENUE = "Customer,Invoice Date,Amount,Currency\nAcme Retail,2025-01-31,100,EUR\nBeta Stores,2025-02-28,200,EUR\n"
+REVENUE_MAPPING = {"customer_id": "Customer", "invoice_date": "Invoice Date", "amount": "Amount", "currency": "Currency"}
+
+
+def _deck_api(monkeypatch, consent=True):
+    pytest.importorskip("pdfplumber")
+    client, db, _ = _api(monkeypatch, [], consent=consent)
+    adapter = RecordedAdapter()
+    monkeypatch.setattr(gateway, "AnthropicAdapter", lambda *a, **k: adapter)
+    return client, db, adapter
+
+
+def _upload_deck(client, name="05-zero2hero.pdf"):
+    r = client.post(f"/api/audits/{AUDIT}/decks/upload", files={"file": (name, (DECKS / name).read_bytes())})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _map_revenue(client):
+    client.post(f"/api/audits/{AUDIT}/datasets/revenue/upload", files={"file": ("rev.csv", REVENUE)})
+    assert client.put(f"/api/audits/{AUDIT}/datasets/revenue/mapping", json={"mapping": REVENUE_MAPPING}).status_code == 200
+
+
+def _deck(client):
+    return client.get(f"/api/audits/{AUDIT}/decks").json()
+
+
+def test_a_deck_waits_for_the_mapped_revenue_file_and_is_read_once_it_is(monkeypatch):
+    client, db, adapter = _deck_api(monkeypatch)
+    upload = _upload_deck(client)
+    listed = _deck(client)
+    assert listed["decks"][0]["ai_status"] == "waiting" and listed["decks"][0]["ai_message"] == "waiting for revenue file"
+    assert adapter.calls == 0, "nothing is sent before the customers are in the mapping"
+    assert not [c for c in listed["candidates"] if c.get("origin") == "ai"]
+    _map_revenue(client)
+    calls_for_mapping = 1                    # the revenue upload's column-mapping call is not queued
+    assert adapter.calls == calls_for_mapping + upload["structures"], "every structure read once"
+    deck = _deck(client)["decks"][0]
+    assert deck["ai_status"] == "read" and deck["sent_pages"] == [11, 17, 19, 22]
+    assert deck["ai_cost_usd"] == pytest.approx(upload["structures"] * gateway.estimate_cost_usd("claude-sonnet-5-5", 1200, 300))
+
+
+def test_results_show_in_the_approval_list_labelled_and_citing_their_cell(monkeypatch):
+    client, db, adapter = _deck_api(monkeypatch)
+    _map_revenue(client)
+    _upload_deck(client)
+    ai = [c for c in _deck(client)["candidates"] if c.get("origin") == "ai"]
+    panel = [c for c in ai if c["sources"][0]["structure"] == "kpi_panel" and c["sources"][0]["page"] == 19]
+    assert sorted((c["claim_type"], c["value"], c["ai_label"], c["sources"][0]["cell"]) for c in panel) == [
+        ("gross_profit", 150000, "Verified", "r2c1"), ("users", 5000, "Verified", "r3c1")]
+    assert panel[0]["period_text"] == "23 Y/E" and panel[0]["target_date"] == "2023"
+    table = [c for c in ai if c["sources"][0]["structure"] == "table"]
+    assert [(c["value"], c["ai_label"], c["sources"][0]["cell"]) for c in table] == [(20000, "AI suggestion, not verified", "r4c4")], \
+        "the 14 table values Python already lists in the same cells are not listed twice; the slip stays, unverified"
+    assert all(c["status"] == "pending" for c in ai)
+
+
+def test_unticked_consent_is_the_python_only_path(monkeypatch):
+    client, db, adapter = _deck_api(monkeypatch, consent=False)
+    _map_revenue(client)
+    _upload_deck(client)
+    listed = _deck(client)
+    assert adapter.calls == 0 and listed["decks"][0]["ai_status"] == "python_only"
+    assert listed["candidates"] and not [c for c in listed["candidates"] if c.get("origin") == "ai"]
+
+
+def test_a_deck_already_read_is_not_sent_again_when_the_crm_file_is_mapped_later(monkeypatch):
+    client, db, adapter = _deck_api(monkeypatch)
+    _map_revenue(client)
+    _upload_deck(client)
+    before = adapter.calls
+    crm = "Deal ID,Account,Created,Close Date,Stage,Amount\nD1,Zeta,2025-01-01,2025-02-01,won,10\n"
+    client.post(f"/api/audits/{AUDIT}/datasets/crm/upload", files={"file": ("crm.csv", crm)})
+    client.put(f"/api/audits/{AUDIT}/datasets/crm/mapping", json={"mapping": {"deal_id": "Deal ID"}})
+    assert adapter.calls == before + 1, "only the CRM file's own column-mapping call"
+
+
+def test_uploading_the_same_deck_again_is_served_from_the_cache_and_lists_no_row_twice(monkeypatch):
+    client, db, adapter = _deck_api(monkeypatch)
+    _map_revenue(client)
+    _upload_deck(client)
+    first = [c for c in _deck(client)["candidates"] if c.get("origin") == "ai"]
+    approved = first[0]
+    client.put(f"/api/audits/{AUDIT}/decks/candidates/{approved['id']}", json={"status": "approved"})
+    before = adapter.calls
+    _upload_deck(client)
+    again = [c for c in _deck(client)["candidates"] if c.get("origin") == "ai"]
+    assert adapter.calls == before, "every structure is a cache hit"
+    assert len(again) == len(first), "the approved row is kept and not added again"
+    assert any(c["id"] == approved["id"] and c["status"] == "approved" for c in again)
+
+
+def test_the_token_cap_stops_the_remaining_structures_and_the_deck_says_so(monkeypatch):
+    client, db, adapter = _deck_api(monkeypatch)
+    _map_revenue(client)
+    db["llm_calls"].docs.append({"run_id": AUDIT, "step": "structures", "cache_hit": False, "input_tokens": 194000,
+                                 "output_tokens": 0, "estimated_cost_usd": 0.0, "timestamp": "2026-10-05T00:00:00"})
+    before = adapter.calls
+    _upload_deck(client)
+    deck = _deck(client)["decks"][0]
+    assert adapter.calls == before and deck["ai_status"] == "stopped"
+    assert deck["ai_message"] == ("AI reading stopped: this audit reached its 200,000-token limit. The remaining "
+                                  "structures were read by Python only.")
+    stored = db["deck_text"].docs[0]["structures"]
+    assert {s["ai"]["status"] for s in stored} == {"stopped"}
+
+
+def test_a_new_fiscal_year_end_re_verifies_the_model_readings(monkeypatch):
+    client, db, adapter = _deck_api(monkeypatch)
+    _map_revenue(client)
+    _upload_deck(client)
+    panel = [c for c in db["deck_candidates"].docs if c.get("origin") == "ai" and c["claim_type"] == "gross_profit"
+             and c["sources"][0]["structure"] == "kpi_panel"]
+    assert panel[0]["ai_label"] == "Verified"
+    client.put(f"/api/audits/{AUDIT}/decks/candidates/{panel[0]['id']}", json={"status": "pending"})
+    # The recorded reading cites "23 Y/E" as FY2023: it stays verified under any year-end.
+    client.put(f"/api/audits/{AUDIT}", json={"fiscal_year_end": 3})
+    after = next(c for c in db["deck_candidates"].docs if c["id"] == panel[0]["id"])
+    assert after["ai_label"] == "Verified" and (after["period_start"], after["period_end"]) == ("2022-04-01", "2023-03-31")
+    # A reading that called the same header the calendar year 2023 holds only with December.
+    stored = next(d for d in db[gateway.STRUCTURES_COLLECTION].docs if d["type"] == "kpi_panel"
+                  and any(i["value"] == 150000 for i in d["output"]["items"]))
+    for item in stored["output"]["items"]:
+        item["period"] = "2023"
+    client.put(f"/api/audits/{AUDIT}", json={"fiscal_year_end": 12})
+    assert next(c for c in db["deck_candidates"].docs if c["id"] == panel[0]["id"])["ai_label"] == "Verified"
+    client.put(f"/api/audits/{AUDIT}", json={"fiscal_year_end": 3})
+    assert next(c for c in db["deck_candidates"].docs if c["id"] == panel[0]["id"])["ai_label"] == \
+        "AI suggestion, not verified"
+
+
+def test_delete_audit_removes_model_outputs_cache_and_mapping(monkeypatch):
+    client, db, adapter = _deck_api(monkeypatch)
+    _map_revenue(client)
+    _upload_deck(client)
+    assert db[gateway.STRUCTURES_COLLECTION].docs and db["pseudonym_map"].docs and db["column_mappings"].docs
+    purged = client.delete(f"/api/audits/{AUDIT}").json()
+    assert purged["llm_purged"]["llm_structures"] > 0
+    for name in (gateway.STRUCTURES_COLLECTION, "pseudonym_map", "column_mappings", "llm_calls", "deck_candidates",
+                 "deck_text"):
+        assert db[name].docs == [], name

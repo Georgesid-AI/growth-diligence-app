@@ -2,6 +2,7 @@
  "file": "02-moz.pdf",
  "page": 20,
  "type": "kpi_panel",
+ "match": "r2c1: ~$10.8 million",
  "note": "Hand-written in the model's output format for the public test deck; no live call was made. A range cell holds two figures, so it never matches one value.",
  "reply": {
   "type": "kpi_panel",

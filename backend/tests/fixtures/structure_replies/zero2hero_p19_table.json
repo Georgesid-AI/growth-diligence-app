@@ -2,6 +2,7 @@
  "file": "05-zero2hero.pdf",
  "page": 19,
  "type": "table",
+ "match": "r4c1: Revenue",
  "note": "Hand-written in the model's output format for the public test deck; no live call was made.",
  "reply": {
   "type": "table",
