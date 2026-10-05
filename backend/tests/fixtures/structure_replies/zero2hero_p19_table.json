@@ -1,0 +1,196 @@
+{
+ "file": "05-zero2hero.pdf",
+ "page": 19,
+ "type": "table",
+ "match": "r4c1: Revenue",
+ "note": "Hand-written in the model's output format for the public test deck; no live call was made.",
+ "reply": {
+  "type": "table",
+  "items": [
+   {
+    "metric": "revenue",
+    "period": "FY2022",
+    "value": 130550,
+    "unit": "GBP",
+    "actual_or_forecast": "actual",
+    "value_cell": "r4c2",
+    "period_cells": [
+     "r1c2"
+    ],
+    "proposed_flags": []
+   },
+   {
+    "metric": "revenue",
+    "period": "FY2023",
+    "value": 150000,
+    "unit": "GBP",
+    "actual_or_forecast": "forecast",
+    "value_cell": "r4c3",
+    "period_cells": [
+     "r1c3"
+    ],
+    "proposed_flags": []
+   },
+   {
+    "metric": "revenue",
+    "period": "FY2024",
+    "value": 250000,
+    "unit": "GBP",
+    "actual_or_forecast": "forecast",
+    "value_cell": "r4c4",
+    "period_cells": [
+     "r1c4"
+    ],
+    "proposed_flags": []
+   },
+   {
+    "metric": "revenue",
+    "period": "FY2025",
+    "value": 1000000,
+    "unit": "GBP",
+    "actual_or_forecast": "forecast",
+    "value_cell": "r4c5",
+    "period_cells": [
+     "r1c5"
+    ],
+    "proposed_flags": []
+   },
+   {
+    "metric": "revenue",
+    "period": "FY2026",
+    "value": 2500000,
+    "unit": "GBP",
+    "actual_or_forecast": "forecast",
+    "value_cell": "r4c6",
+    "period_cells": [
+     "r1c6"
+    ],
+    "proposed_flags": []
+   },
+   {
+    "metric": "gross_profit",
+    "period": "FY2022",
+    "value": 42638,
+    "unit": "GBP",
+    "actual_or_forecast": "forecast",
+    "value_cell": "r6c2",
+    "period_cells": [
+     "r1c2"
+    ],
+    "proposed_flags": []
+   },
+   {
+    "metric": "gross_profit",
+    "period": "FY2023",
+    "value": 50000,
+    "unit": "GBP",
+    "actual_or_forecast": "forecast",
+    "value_cell": "r6c3",
+    "period_cells": [
+     "r1c3"
+    ],
+    "proposed_flags": []
+   },
+   {
+    "metric": "gross_profit",
+    "period": "FY2024",
+    "value": 100000,
+    "unit": "GBP",
+    "actual_or_forecast": "forecast",
+    "value_cell": "r6c4",
+    "period_cells": [
+     "r1c4"
+    ],
+    "proposed_flags": []
+   },
+   {
+    "metric": "gross_profit",
+    "period": "FY2025",
+    "value": 500000,
+    "unit": "GBP",
+    "actual_or_forecast": "forecast",
+    "value_cell": "r6c5",
+    "period_cells": [
+     "r1c5"
+    ],
+    "proposed_flags": []
+   },
+   {
+    "metric": "gross_profit",
+    "period": "FY2026",
+    "value": 1500000,
+    "unit": "GBP",
+    "actual_or_forecast": "forecast",
+    "value_cell": "r6c6",
+    "period_cells": [
+     "r1c6"
+    ],
+    "proposed_flags": []
+   },
+   {
+    "metric": "users",
+    "period": "FY2022",
+    "value": 200,
+    "unit": "count",
+    "actual_or_forecast": "forecast",
+    "value_cell": "r2c2",
+    "period_cells": [
+     "r1c2"
+    ],
+    "proposed_flags": []
+   },
+   {
+    "metric": "users",
+    "period": "FY2023",
+    "value": 5000,
+    "unit": "count",
+    "actual_or_forecast": "forecast",
+    "value_cell": "r2c3",
+    "period_cells": [
+     "r1c3"
+    ],
+    "proposed_flags": []
+   },
+   {
+    "metric": "users",
+    "period": "FY2024",
+    "value": 20000,
+    "unit": "count",
+    "actual_or_forecast": "forecast",
+    "value_cell": "r4c4",
+    "period_cells": [
+     "r1c4"
+    ],
+    "proposed_flags": []
+   },
+   {
+    "metric": "users",
+    "period": "FY2025",
+    "value": 30000,
+    "unit": "count",
+    "actual_or_forecast": "forecast",
+    "value_cell": "r2c5",
+    "period_cells": [
+     "r1c5"
+    ],
+    "proposed_flags": []
+   },
+   {
+    "metric": "users",
+    "period": "FY2026",
+    "value": 50000,
+    "unit": "count",
+    "actual_or_forecast": "forecast",
+    "value_cell": "r2c6",
+    "period_cells": [
+     "r1c6"
+    ],
+    "proposed_flags": []
+   }
+  ]
+ },
+ "expected": {
+  "verified": 14,
+  "suggestion": 1
+ }
+}

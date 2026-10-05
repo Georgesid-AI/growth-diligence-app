@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, UploadFile, File
+from fastapi import BackgroundTasks, FastAPI, APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse, StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -22,9 +22,11 @@ from app import formatting as fmt
 from app import disclosure as disclosure_mod
 from app import narrative_export
 from app import decks
+from app import structures
 from app.decks import claims as deck_claims
 from app.decks import parser as deck_parser
 from app.llm import gateway as llm_gateway
+from app.llm import redaction as llm_redaction
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -259,15 +261,34 @@ def _validate_as_of_month(v: Optional[str]) -> Optional[str]:
     raise ValueError("as_of_month must be an ISO date (YYYY-MM-DD) with a year between 2000 and 2100")
 
 
+def _required_text(v: Optional[str]) -> Optional[str]:
+    """A required name or reference: trimmed, and never blank."""
+    if v is None:
+        return v
+    v = v.strip()
+    if not v:
+        raise ValueError("must not be empty")
+    return v
+
+
 class AuditCreate(BaseModel):
-    company_name: str
+    company_name: str                       # the target company
     reporting_currency: str = "EUR"
     target_arr: float = 0
     target_date: Optional[str] = None
     as_of_month: Optional[str] = None
+    # The month the company's fiscal year ends in (deck-parser.md section 2). FY25 is the fiscal year
+    # that ends in 2025; with December it is the calendar year.
+    fiscal_year_end: int = Field(default=12, ge=1, le=12)
+    # The investor commissioning the audit, and the engagement whose terms are the basis for sending
+    # structures to the model (llm-structure-reading.md section 4). Neither ever reaches the model.
+    client_name: str
+    engagement_reference: str
+    structure_reading_consent: bool = True
 
     _check_target_date = field_validator("target_date")(_validate_target_date)
     _check_as_of_month = field_validator("as_of_month")(_validate_as_of_month)
+    _check_required = field_validator("client_name", "engagement_reference")(_required_text)
 
 
 class AuditUpdate(BaseModel):
@@ -276,9 +297,19 @@ class AuditUpdate(BaseModel):
     target_arr: Optional[float] = None
     target_date: Optional[str] = None
     as_of_month: Optional[str] = None
+    fiscal_year_end: Optional[int] = Field(default=None, ge=1, le=12)
+    client_name: Optional[str] = None
+    engagement_reference: Optional[str] = None
+    structure_reading_consent: Optional[bool] = None
 
     _check_target_date = field_validator("target_date")(_validate_target_date)
     _check_as_of_month = field_validator("as_of_month")(_validate_as_of_month)
+    _check_required = field_validator("client_name", "engagement_reference")(_required_text)
+
+
+def _consent_entry(value: bool) -> dict:
+    """One change of the consent checkbox, with its time. The user is added when accounts exist."""
+    return {"value": bool(value), "at": datetime.now(timezone.utc).isoformat()}
 
 
 class MappingPayload(BaseModel):
@@ -303,7 +334,8 @@ async def audit_public(a: dict) -> dict:
     a.pop("_id", None)
     ds = await db.datasets.find({"audit_id": a["id"]}, {"rows": 0, "_id": 0}).to_list(10)
     a["datasets"] = {
-        d["dtype"]: {k: d.get(k) for k in ("file", "sheet", "columns", "mapping", "fx", "billing_terms", "preview", "row_count")}
+        d["dtype"]: {k: d.get(k) for k in ("file", "sheet", "columns", "mapping", "fx", "billing_terms", "preview", "row_count",
+                                           "mapping_source", "ai_reading")}
         for d in ds
     }
     return sanitize(a)
@@ -326,6 +358,11 @@ async def create_audit(payload: AuditCreate):
         "target_arr": payload.target_arr,
         "target_date": payload.target_date,
         "as_of_month": payload.as_of_month,
+        "fiscal_year_end": payload.fiscal_year_end,
+        "client_name": payload.client_name,
+        "engagement_reference": payload.engagement_reference,
+        "structure_reading_consent": payload.structure_reading_consent,
+        "consent_log": [_consent_entry(payload.structure_reading_consent)],
         "created_at": datetime.now(timezone.utc).isoformat(),
         "status": "draft",
         "results": None,
@@ -353,12 +390,38 @@ async def update_audit(audit_id: str, payload: AuditUpdate):
     a = await db.audits.find_one({"id": audit_id})
     if not a:
         raise HTTPException(404, "Audit not found")
-    updates = {k: v for k, v in payload.dict().items() if v is not None}
+    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+    consent = updates.get("structure_reading_consent")
+    if consent is True and not (updates.get("engagement_reference") or a.get("engagement_reference")):
+        # The basis for sending is the engagement terms: no reference, no AI-assisted reading.
+        raise HTTPException(400, "An engagement reference is required before AI-assisted reading can be enabled")
+    if consent is not None and consent != (a.get("structure_reading_consent") is True):
+        await db.audits.update_one({"id": audit_id},
+                                   {"$set": {"consent_log": list(a.get("consent_log") or []) + [_consent_entry(consent)]}})
     if updates:
         await db.audits.update_one({"id": audit_id}, {"$set": updates})
         if RECOMPUTE_TRIGGER_FIELDS & updates.keys():
             await _mark_stale_and_maybe_recompute(audit_id)
+        if "fiscal_year_end" in updates and updates["fiscal_year_end"] != _fiscal_year_end(a):
+            await _remap_periods(audit_id, updates["fiscal_year_end"])
     return await audit_public(await db.audits.find_one({"id": audit_id}))
+
+
+def _fiscal_year_end(audit: Optional[dict]) -> int:
+    """The audit's fiscal year-end month; audits created before the field existed end in December."""
+    return int((audit or {}).get("fiscal_year_end") or 12)
+
+
+async def _remap_periods(audit_id: str, fiscal_year_end: int) -> None:
+    """A new fiscal year-end re-runs period mapping: every stored claim's date range moves, its stated
+    period and target date stay (deck-parser.md section 2)."""
+    found = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0}).to_list(10000)
+    for c in deck_claims.remap_periods(found, fiscal_year_end):
+        changes = {k: c.get(k) for k in ("period_start", "period_end", "by_period") if k in c}
+        await db[decks.CANDIDATES_COLLECTION].update_one({"audit_id": audit_id, "id": c["id"]}, {"$set": changes})
+    # The model's readings are verified again: a period counted from a stated start date ("Year 1"
+    # from "Start: Jan 2025") matches a year label only under the year-end it falls in.
+    await structures.reverify_audit(db, audit_id, fiscal_year_end)
 
 
 @api.delete("/audits/{audit_id}")
@@ -374,6 +437,8 @@ async def delete_audit(audit_id: str):
     # Narratives, call log and pseudonym mapping are scoped to the run and must
     # not outlive it.
     purged = await llm_gateway.purge_run(db, audit_id)
+    corrections = await db[structures.COLUMN_MAPPINGS_COLLECTION].delete_many({"audit_id": audit_id})
+    purged["column_mappings"] = corrections.deleted_count
     return {"deleted": audit_id, "llm_purged": purged,
             "decks_purged": {"deck_text": deck_text.deleted_count, "deck_candidates": deck_candidates.deleted_count}}
 
@@ -392,21 +457,53 @@ async def upload_dataset(audit_id: str, dtype: str, file: UploadFile = File(...)
     df, sheet = parse_file(content, file.filename)
     columns = list(df.columns)
     rows = df_to_records(df)
-    mapping = suggest_mapping(dtype, columns)
+    mapping, source, ai_reading = await _prefill_mapping(a, dtype, columns, rows)
     preview = rows[:8]
     await db.datasets.replace_one(
         {"audit_id": audit_id, "dtype": dtype},
         {"audit_id": audit_id, "dtype": dtype, "file": file.filename, "sheet": sheet,
          "columns": columns, "rows": rows, "row_count": len(rows), "mapping": mapping,
-         "fx": {}, "billing_terms": {}, "preview": preview},
+         "fx": {}, "billing_terms": {}, "preview": preview, "mapping_source": source, "ai_reading": ai_reading},
         upsert=True,
     )
     await _mark_stale_and_maybe_recompute(audit_id)
     return {
         "dtype": dtype, "file": file.filename, "sheet": sheet, "columns": columns,
         "row_count": len(rows), "suggested_mapping": mapping, "preview": preview,
+        "mapping_source": source, "ai_reading": ai_reading,
         "fields": {"required": list(FIELD_DEFS[dtype]["required"]), "optional": list(FIELD_DEFS[dtype]["optional"])},
     }
+
+
+async def _prefill_mapping(audit: dict, dtype: str, columns: list, rows: list):
+    """(mapping, source per field, AI reading) to pre-fill the mapping screen; the analyst confirms it.
+
+    A mapping the analyst confirmed for the same header set is reused and no model is asked. Otherwise
+    the column aliases map what they can and, with consent, the model proposes the rest from the
+    header stack, samples and profiles (llm-structure-reading.md section 1): those fields are marked
+    "ai" and shown as "AI suggestion, not verified". Column-mapping calls are not queued.
+    """
+    fields = list(FIELD_DEFS[dtype]["required"]) + list(FIELD_DEFS[dtype]["optional"])
+    mapping = suggest_mapping(dtype, columns)
+    stored = await db[structures.COLUMN_MAPPINGS_COLLECTION].find_one(
+        {"audit_id": audit["id"], "dtype": dtype, "header_key": structures.header_key(dtype, columns)}, {"_id": 0})
+    if stored:
+        kept = {f: c for f, c in (stored.get("mapping") or {}).items() if f in mapping and c in columns}
+        return {f: kept.get(f) for f in mapping}, {f: "stored" for f, c in kept.items() if c}, {"status": "stored"}
+    source = {f: "rules" for f, c in mapping.items() if c}
+    customers = tuple(c for c in [suggest_mapping("revenue", columns).get("customer_id")] if c)
+    text = structures.column_mapping_text(columns, rows, audit.get("company_name"),
+                                          await llm_redaction.get_map(db, audit["id"]), customers,
+                                          structures.redact.withheld_values(audit))
+    read = await llm_gateway.read_structure(db, audit["id"], text, "column_mapping")
+    if read.status == "read":
+        await llm_gateway.record_verification(db, audit["id"], read.key, ["suggestion"] * len(read.items))
+        used = {c for c in mapping.values() if c}
+        for field, col in structures.proposed_mapping(read.items, columns, fields).items():
+            if mapping.get(field) is None and col not in used:
+                mapping[field], source[field] = col, "ai"
+                used.add(col)
+    return mapping, source, {"status": read.status, "reason": read.reason}
 
 
 @api.get("/fields")
@@ -431,22 +528,59 @@ async def revenue_customers(audit_id: str, customer_col: Optional[str] = None):
 
 
 @api.put("/audits/{audit_id}/datasets/{dtype}/mapping")
-async def save_mapping(audit_id: str, dtype: str, payload: MappingPayload):
+async def save_mapping(audit_id: str, dtype: str, payload: MappingPayload, background: BackgroundTasks):
     ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype})
     if not ds:
         raise HTTPException(404, "Dataset not uploaded")
     await db.datasets.update_one(
         {"audit_id": audit_id, "dtype": dtype},
-        {"$set": {"mapping": payload.mapping, "fx": payload.fx, "billing_terms": payload.billing_terms}},
+        {"$set": {"mapping": payload.mapping, "fx": payload.fx, "billing_terms": payload.billing_terms,
+                  "mapped_at": datetime.now(timezone.utc).isoformat(), "mapping_source": {}}},
     )
+    # The analyst's confirmed mapping is kept for this header set and reused on the next upload.
+    await db[structures.COLUMN_MAPPINGS_COLLECTION].update_one(
+        {"audit_id": audit_id, "dtype": dtype, "header_key": structures.header_key(dtype, ds.get("columns") or [])},
+        {"$set": {"audit_id": audit_id, "dtype": dtype,
+                  "header_key": structures.header_key(dtype, ds.get("columns") or []),
+                  "mapping": payload.mapping, "saved_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    await _add_customers(audit_id, {**ds, "mapping": payload.mapping})
     await _mark_stale_and_maybe_recompute(audit_id)
+    if dtype == "revenue":
+        # Decks that waited for the revenue file are read now that its customers are in the mapping.
+        background.add_task(structures.process_waiting_decks_safely, db, audit_id)
     return {"ok": True}
+
+
+def customer_column(dataset: dict) -> Optional[str]:
+    """The column whose cells are customer names: the revenue file's mapped customer column; for the
+    CRM file, which has no customer field of its own, the column the FIELD_DEFS customer aliases find."""
+    if dataset.get("dtype") == "revenue":
+        return (dataset.get("mapping") or {}).get("customer_id")
+    return suggest_mapping("revenue", dataset.get("columns") or []).get("customer_id")
+
+
+async def _add_customers(audit_id: str, dataset: dict) -> None:
+    """Every customer name of a mapped revenue or CRM file joins the audit's pseudonym mapping, shared
+    by the narrative and structure paths (llm-structure-reading.md section 3)."""
+    if dataset.get("dtype") not in ("revenue", "crm"):
+        return
+    col = customer_column(dataset)
+    if not col:
+        return
+    rows = dataset.get("rows")
+    if rows is None:
+        full = await db.datasets.find_one({"audit_id": audit_id, "dtype": dataset["dtype"]}, {"rows": 1})
+        rows = (full or {}).get("rows") or []
+    await llm_redaction.add_customers(db, audit_id, (r.get(col) for r in rows))
 
 
 # ---------------------------------------------------------------------------
 # Board decks and growth plans: parsed text and candidate claims (docs/specs/deck-parser.md)
 # ---------------------------------------------------------------------------
-_TARGET_DATE = re.compile(r"^\d{4}(-(0[1-9]|1[0-2])|-Q[1-4]|-H[12])?$")
+# "FY2025-04": the April inside year 2025, a month under a year header (deck-parser.md section 2).
+_TARGET_DATE = re.compile(r"^(\d{4}(-(0[1-9]|1[0-2])|-Q[1-4]|-H[12])?|FY\d{4}-(0[1-9]|1[0-2]))$")
 
 
 class PeriodValue(BaseModel):
@@ -484,15 +618,16 @@ def _claim_key(c: dict) -> tuple:
 
 
 @api.post("/audits/{audit_id}/decks/upload")
-async def upload_deck(audit_id: str, file: UploadFile = File(...)):
-    if not await db.audits.find_one({"id": audit_id}, {"id": 1}):
+async def upload_deck(audit_id: str, background: BackgroundTasks, file: UploadFile = File(...)):
+    audit = await db.audits.find_one({"id": audit_id}, {"id": 1, "fiscal_year_end": 1})
+    if not audit:
         raise HTTPException(404, "Audit not found")
     content = await file.read(deck_parser.MAX_BYTES + 1)
     try:
         deck = await run_in_threadpool(deck_parser.parse_deck, content, file.filename or "")
     except deck_parser.DeckError as exc:
         raise HTTPException(400, exc.message)
-    candidates = deck_claims.detect_candidates(deck["blocks"], deck["file"])
+    candidates = deck_claims.detect_candidates(deck["blocks"], deck["file"], _fiscal_year_end(audit))
     deck_id = str(uuid.uuid4())
     # A file uploaded again replaces its earlier parse and its unreviewed candidates. Approved,
     # edited and rejected candidates stay on record; the same claim found again is not re-added.
@@ -508,29 +643,59 @@ async def upload_deck(audit_id: str, file: UploadFile = File(...)):
     await db[decks.TEXT_COLLECTION].insert_one({
         "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"], "format": deck["format"],
         "page_unit": deck["page_unit"], "pages": deck["pages"], "blocks": deck["blocks"],
-        "uploaded_at": datetime.now(timezone.utc).isoformat()})
+        "structures": deck["structures"], "ai_status": "reading", "uploaded_at": datetime.now(timezone.utc).isoformat()})
     for order, c in enumerate(candidates):
         await db[decks.CANDIDATES_COLLECTION].insert_one(
             {**c, "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"], "id": str(uuid.uuid4()),
              "order": len(reviewed) + order, "status": "pending"})
+    # Its structures are read by the model after the response, or wait for the revenue file
+    # (llm-structure-reading.md section 3); with consent unticked, Python's candidates stand alone.
+    background.add_task(structures.process_deck_safely, db, audit_id, deck_id)
     return {"deck_id": deck_id, "file": deck["file"], "format": deck["format"], "page_unit": deck["page_unit"],
-            "pages": deck["pages"], "candidates": len(candidates), "kept_reviewed": len(reviewed)}
+            "pages": deck["pages"], "candidates": len(candidates), "kept_reviewed": len(reviewed),
+            "structures": len(deck["structures"])}
 
 
 @api.get("/audits/{audit_id}/decks")
 async def list_deck_candidates(audit_id: str):
     """The audit's decks (no parsed text), most recently uploaded first, and their candidates:
     grouped by deck in that order; within a deck the ones to review first, then by slide or page."""
-    if not await db.audits.find_one({"id": audit_id}, {"id": 1}):
+    audit = await db.audits.find_one({"id": audit_id}, {"id": 1, "structure_reading_consent": 1})
+    if not audit:
         raise HTTPException(404, "Audit not found")
-    deck_fields = {"_id": 0, "deck_id": 1, "file": 1, "format": 1, "page_unit": 1, "pages": 1, "uploaded_at": 1}
+    deck_fields = {"_id": 0, "deck_id": 1, "file": 1, "format": 1, "page_unit": 1, "pages": 1, "uploaded_at": 1,
+                   "ai_status": 1, "ai_message": 1, "sent": 1, "periods_corrected": 1}
     found = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, deck_fields).to_list(100)
     found.sort(key=lambda d: d.get("uploaded_at") or "", reverse=True)
+    by_deck = (await llm_gateway.usage_for_run(db, audit_id)).by_deck
+    for d in found:
+        # The deck panel's run log: status, the pages sent to the model (no text) and the cost.
+        d["sent_pages"] = sorted({s["page"] for s in d.pop("sent", None) or [] if s.get("page") is not None})
+        usage = by_deck.get(d["deck_id"])
+        d["ai_cost_usd"] = usage.estimated_cost_usd if usage else 0.0
+        # Uploaded while AI reading was off (or before it existed) and not read since: re-upload to read.
+        d["uploaded_before_consent"] = audit.get("structure_reading_consent") is True and \
+            d.get("ai_status") in (None, structures.PYTHON_ONLY)
     rank = {d["deck_id"]: i for i, d in enumerate(found)}
     candidates = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0}).to_list(10000)
     candidates.sort(key=lambda c: (rank.get(c.get("deck_id"), len(rank)), c.get("status") != "pending",
                                    _first_page(c), c.get("order", 0)))
     return sanitize({"decks": found, "candidates": candidates})
+
+
+def _edited_period(value: dict, before: dict, fiscal_year_end: int) -> dict:
+    """A value after an edit, its date range re-run. A date the analyst typed follows the same rules as
+    a stated one: a year, quarter or half follows the audit's year-end, a month is a calendar month.
+    The deck's stated text goes once the date changes."""
+    if value.get("target_date") != before.get("target_date"):
+        value["period_text"] = None
+    else:
+        value["period_text"] = before.get("period_text")
+    return deck_claims.resolve_period(value, fiscal_year_end)
+
+
+def _period_fields(value: dict) -> dict:
+    return {k: value.get(k) for k in ("period_text", "period_start", "period_end")}
 
 
 def _first_page(candidate: dict) -> int:
@@ -563,17 +728,26 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
     if edits and "status" in sent:
         raise HTTPException(400, "Edit the fields or change the status, not both at once")
     rows = current.get("by_period") or []
+    year_end = _fiscal_year_end(await db.audits.find_one({"id": audit_id}, {"fiscal_year_end": 1}))
     if "by_period" in edits:
         # One value of a row can be corrected; the row keeps its periods and cells.
         if not rows or edits["by_period"] is None or len(edits["by_period"]) != len(rows):
             raise HTTPException(400, "Send one value per period of the row")
-        edits["by_period"] = [{**old, **new.model_dump()} for old, new in zip(rows, edits["by_period"])]
+        edits["by_period"] = [_edited_period({**old, **new.model_dump()}, old, year_end)
+                              for old, new in zip(rows, edits["by_period"])]
     if rows and set(edits) & set(_ROW_FIELDS):
         raise HTTPException(400, "Edit the row's values by period")
+    if "target_date" in edits:
+        edits.update(_period_fields(_edited_period({"target_date": edits["target_date"]}, current, year_end)))
     if edits:
         changes = {**edits, "status": "edited"}
         if "parsed" not in current:       # what the parser found stays next to the analyst's edit
             changes["parsed"] = {k: current.get(k) for k in _EDITABLE if k != "by_period" or rows}
+            if current.get("origin") == "ai":
+                # The Verified or suggestion label described the model's reading, now kept under "parsed";
+                # it never stands next to a value the analyst typed.
+                changes["parsed"].update(ai_status=current.get("ai_status"), ai_label=current.get("ai_label"))
+                changes.update(ai_status=None, ai_label=None)
     else:
         if payload.status is None:
             raise HTTPException(400, "status cannot be empty")
@@ -1139,13 +1313,19 @@ app.add_middleware(
 )
 
 
+# 4: demo audits carry a client name, an engagement reference, consent and a fiscal year-end.
+SEED_VERSION = 4
+
+
 @app.on_event("startup")
 async def seed_demo():
-    if await db.audits.count_documents({"seed_version": 3}) > 0:
+    if await db.audits.count_documents({"seed_version": SEED_VERSION}) > 0:
         return
     demo_ids = {"audit_id": {"$in": [a["id"] for a in await db.audits.find({"demo": True}, {"id": 1}).to_list(50)]}}
     for name in ("datasets", decks.TEXT_COLLECTION, decks.CANDIDATES_COLLECTION):
         await db[name].delete_many(demo_ids)
+    for audit in demo_ids["audit_id"]["$in"]:
+        await llm_gateway.purge_run(db, audit)
     await db.audits.delete_many({"demo": True})
     for spec in demo_data.DEMO_AUDITS:
         datasets, meta = demo_data.build(spec)
@@ -1157,9 +1337,11 @@ async def seed_demo():
                 {"audit_id": audit_id, "dtype": dtype},
                 {"audit_id": audit_id, "dtype": dtype, "file": meta[dtype]["file"], "sheet": meta[dtype]["sheet"],
                  "columns": list(df.columns), "rows": recs, "row_count": len(recs),
-                 "mapping": mapping, "fx": meta.get("fx", {}), "billing_terms": {}, "preview": recs[:8]},
+                 "mapping": mapping, "fx": meta.get("fx", {}), "billing_terms": {}, "preview": recs[:8],
+                 "mapped_at": datetime.now(timezone.utc).isoformat()},
                 upsert=True,
             )
+            await _add_customers(audit_id, {"dtype": dtype, "columns": list(df.columns), "rows": recs, "mapping": mapping})
             norm[dtype] = normalize(recs, dtype, mapping)
             uploads[dtype] = {"file": meta[dtype]["file"], "sheet": meta[dtype]["sheet"], "columns": list(df.columns),
                               "rows": recs, "mapping": mapping}
@@ -1175,8 +1357,12 @@ async def seed_demo():
         await db.audits.insert_one({
             "id": audit_id, "company_name": spec["company_name"], "reporting_currency": spec["reporting_currency"],
             "target_arr": spec["target_arr"], "target_date": spec["target_date"],
+            "fiscal_year_end": spec["fiscal_year_end"], "client_name": spec["client_name"],
+            "engagement_reference": spec["engagement_reference"], "structure_reading_consent": True,
+            "consent_log": [_consent_entry(True)],
             "created_at": datetime.now(timezone.utc).isoformat(), "status": "computed",
-            "computed_at": datetime.now(timezone.utc).isoformat(), "results": sanitize(results), "demo": True, "seed_version": 3,
+            "computed_at": datetime.now(timezone.utc).isoformat(), "results": sanitize(results), "demo": True,
+            "seed_version": SEED_VERSION,
         })
     logger.info("Seeded demo audits")
 

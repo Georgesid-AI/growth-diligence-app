@@ -71,11 +71,11 @@ Periods are dates, never values: "Y/E 22", "22 Y/E", "FY23", "2023E" (also A, F,
 "H1 24", "1H24", "Q3 25", "3Q25". A half year is stored as "2024-H1".
 Period rules (apply to tables, structure text and the verifier):
 - Header stack: extracted structure text includes every header row above the data; a merged range is written with its span, e.g. "FY2025 (r1c3:r1c14)". The model receives the full header stack, not only the row directly above the values. On the column-mapping path the stack is capped at 3 header rows, the 3 nearest the data, and carries no text cell values.
-- A period may be built from two cells: the month or quarter cell and the year cell above it in the same column range. "Mar" + "2025" → 2025-03; "Q3" + "2025" → 2025-Q3.
+- A period may be built from two cells: the month or quarter cell and the year cell above it in the same column range. "Mar" + "2025" → 2025-03; "Q3" + "2025" → 2025-Q3. With a year-end other than December, a month under any year header (plain or FY) is shifted by the year-end: months after the year-end month belong to the previous calendar year, months up to and including it to the named year (March year-end: "Apr" + "FY2025" → 2024-04, "Mar" + "FY2025" → 2025-03).
 - Month names are matched in English, German and Bulgarian, short and long forms, any case.
 - A month or quarter header with no year cell above it in the same column range → period null. Never infer the year from the deck date, the file name or neighbouring columns.
 - `fiscal_year_end` is a month field on the audit creation screen, default December, and stays editable after creation through PUT /audits/{id} in the existing MappingWizard settings (no new screen). Changing it re-runs period mapping.
-- Fiscal years are named by the calendar year in which they end: with a March year-end, FY25 = 2024-04-01 to 2025-03-31; with December, FY25 = 2025.
+- Fiscal years are named by the calendar year in which they end: with a March year-end, FY25 = 2024-04-01 to 2025-03-31; with December, FY25 = 2025. With a year-end other than December, every year, quarter and half label is fiscal ("2025E", "Q1 25", "H1 25"): with a March year-end, Q1 25 = 2024-04-01 to 2024-06-30. Months stay calendar months. With December nothing changes.
 - Every period resolves internally to a start date and an end date; a December year-end gives the calendar year. Forecast dates, value at stake (defined in docs/specs/forecast-claims.md, to be written) and comparisons with the revenue file use the range end and the months inside the range. Display keeps the text as stated.
 - Relative columns ("M1…M24", "Year 1") → null unless the sheet states the start date in a cell.
 Borrowing: a figure without a keyword or a date in its own line takes them from nearby text,
@@ -188,6 +188,22 @@ cited. Structures are stored with the deck's parsed text and deleted with it (§
 Python assigns the type. The model may confirm or correct it in its type field, and Python logs any change.
 The keyword lists, the label length and how many dates make a timeline are fixed on the 10 test decks at build time
 and written into this section.
+Fixed on the 10 test decks (2026-10-05):
+- Table type: keywords in the header rows, the first column and the caption (the line right above the table, within
+  a tenth of the page). Use of funds: use of funds, use of proceeds, funds, proceeds. Unit economics: CAC, LTV, ARPU,
+  ARPA, ACV, payback, unit economics, contribution margin. Hiring: hire, hiring, headcount, recruit, recruitment,
+  role, position, FTE (and plurals). The first match in that order wins.
+- KPI panel: a text box of at most 4 lines, each at most 30 characters, holding a figure that is not a date and a
+  word, and not one sentence wrapped over its lines (a line ends on, or the next starts with, a word such as "of",
+  "and", "the", or a line ends with a comma). The KPI boxes of a page form one panel.
+- Roadmap or timeline: at least 3 date labels on the page (a line that is a date with at most two other words), once
+  chart axes are left out (3 or more distinct dates, evenly spaced, in one line, row or column), and a product
+  keyword (§2) on the page. It holds every box on the page whose lines are at most 60 characters.
+- A structure holds at least one figure (a number or a date; list and row numbers do not count). A cell over 200
+  characters is prose and is left out. A page whose figures §2 drops (background, cited research) holds no structure.
+- Text boxes become a grid: boxes that overlap in height form a band, each box a column of its band, each line a row.
+- On the test decks: 22 KPI panels, 3 timelines (moz p2, buffer p6, tea p11), 1 table, 1 hiring table. Neither pptx
+  deck holds a native chart; chart reading is tested on built decks.
 
 ## Done when
 - All three formats parse with correct slide/page references.

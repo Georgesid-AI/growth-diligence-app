@@ -1,0 +1,5 @@
+2026-10-05, claude/affectionate-mccarthy-rwwv9x.
+Deleted: structure calls from the 15-call cap (the 200,000-token audit cap governs them); no other code removed.
+Optimized: llm-structure-reading.md and deck-parser.md §2/§7 built in 14 commits (fiscal year-end test first; detection fixed on the 10 decks: 22 KPI panels, 3 timelines, 2 tables; candidates and recall 118/121 unchanged; 755 backend tests pass); leftover risks closed with tests: a background failure left a deck "reading", short engagement references, file-name false positives, a metric of the wrong kind, the Verified label next to an analyst's edit, undeclared refusal codes.
+Slow/unclear: frontend packages would not install (proxy resets, esbuild refused by policy), so the JS tests ran in a node shim and JSX was checked with the TypeScript parser only; the recorded replies are hand-written, so the 95% agreement target stays untested until scripts/consistency_run.py is run.
+Process change: let sessions install the frontend packages (or vendor jest), so UI changes run under the project's own test runner.

@@ -11,6 +11,10 @@ import time
 import pytest
 import requests
 
+# Every audit names its client and engagement (llm-structure-reading.md section 4). Consent is off so an
+# integration run never sends anything to a model provider.
+ENGAGEMENT = {"client_name": "TEST_Client", "engagement_reference": "TEST-ENG", "structure_reading_consent": False}
+
 # Where the backend would be, if it is running. Configuration only — reachability
 # is established by `require_live_backend` below.
 DEFAULT_BACKEND_URL = "http://localhost:8001"
@@ -150,7 +154,7 @@ def test_demo_audit_get_returns_200_with_datasets(session):
 # --- CRUD ---
 @pytest.fixture(scope="module")
 def new_audit(session):
-    payload = {"company_name": "TEST_Acme", "reporting_currency": "EUR",
+    payload = {**ENGAGEMENT, "company_name": "TEST_Acme", "reporting_currency": "EUR",
                "target_arr": 500000, "target_date": "2025-12-31"}
     r = session.post(f"{API}/audits", json=payload, timeout=30)
     assert r.status_code == 200, r.text
@@ -251,7 +255,7 @@ def test_save_mapping_and_compute(session, new_audit, uploaded):
 # --- Billing terms (NEW feature) ---
 @pytest.fixture(scope="module")
 def bt_audit(session):
-    r = session.post(f"{API}/audits", json={"company_name": "TEST_BT", "reporting_currency": "EUR"}, timeout=30)
+    r = session.post(f"{API}/audits", json={**ENGAGEMENT, "company_name": "TEST_BT", "reporting_currency": "EUR"}, timeout=30)
     a = r.json()
     # Upload sample revenue (no service_start/end columns)
     with open(SAMPLES["revenue"], "rb") as f:
@@ -291,7 +295,7 @@ def _single_row_revenue_csv():
 ])
 def test_mrr_spread_by_billing_term(session, term, expected_months, expected_per_month):
     """Core rule: 1200 with billing term should spread evenly."""
-    r = session.post(f"{API}/audits", json={"company_name": f"TEST_SPREAD_{term}", "reporting_currency": "EUR"}, timeout=30)
+    r = session.post(f"{API}/audits", json={**ENGAGEMENT, "company_name": f"TEST_SPREAD_{term}", "reporting_currency": "EUR"}, timeout=30)
     aid = r.json()["id"]
     try:
         files = {"file": ("rev.csv", io.BytesIO(_single_row_revenue_csv()), "text/csv")}
@@ -311,7 +315,7 @@ def test_mrr_spread_by_billing_term(session, term, expected_months, expected_per
 
 
 def test_mrr_spread_defaults_to_monthly_when_absent(session):
-    r = session.post(f"{API}/audits", json={"company_name": "TEST_SPREAD_default", "reporting_currency": "EUR"}, timeout=30)
+    r = session.post(f"{API}/audits", json={**ENGAGEMENT, "company_name": "TEST_SPREAD_default", "reporting_currency": "EUR"}, timeout=30)
     aid = r.json()["id"]
     try:
         files = {"file": ("rev.csv", io.BytesIO(_single_row_revenue_csv()), "text/csv")}
@@ -330,7 +334,7 @@ def test_mrr_spread_defaults_to_monthly_when_absent(session):
 @pytest.fixture(scope="module")
 def asof_computed_audit(session):
     """Audit with 3 CSVs uploaded and computed, for as-of tests."""
-    r = session.post(f"{API}/audits", json={"company_name": "TEST_AsOf", "reporting_currency": "EUR"}, timeout=30)
+    r = session.post(f"{API}/audits", json={**ENGAGEMENT, "company_name": "TEST_AsOf", "reporting_currency": "EUR"}, timeout=30)
     a = r.json()
     aid = a["id"]
     ups = {}
@@ -388,7 +392,7 @@ def test_win_rate_excludes_close_before_created(session):
         "BAD1,2023-06-01,2023-01-01,won,1000\n"  # close < created - should be excluded
         "BAD2,2023-06-01,2023-02-01,lost,1000\n"  # close < created - should be excluded
     ).encode()
-    r = session.post(f"{API}/audits", json={"company_name": "TEST_WR", "reporting_currency": "EUR"}, timeout=30)
+    r = session.post(f"{API}/audits", json={**ENGAGEMENT, "company_name": "TEST_WR", "reporting_currency": "EUR"}, timeout=30)
     aid = r.json()["id"]
     try:
         # Minimal revenue so compute runs
@@ -437,7 +441,7 @@ def test_export_returns_xlsx_with_sheets(session, asof_computed_audit):
 
 
 def test_export_409_when_not_computed(session):
-    r = session.post(f"{API}/audits", json={"company_name": "TEST_ExpNC", "reporting_currency": "EUR"}, timeout=30)
+    r = session.post(f"{API}/audits", json={**ENGAGEMENT, "company_name": "TEST_ExpNC", "reporting_currency": "EUR"}, timeout=30)
     aid = r.json()["id"]
     try:
         rr = session.get(f"{API}/audits/{aid}/export", timeout=30)
@@ -448,12 +452,12 @@ def test_export_409_when_not_computed(session):
 
 # --- Target date validation ---
 def test_create_audit_rejects_bad_target_date_year(session):
-    r = session.post(f"{API}/audits", json={"company_name": "TEST_BadDate", "target_date": "0027-01-01"}, timeout=30)
+    r = session.post(f"{API}/audits", json={**ENGAGEMENT, "company_name": "TEST_BadDate", "target_date": "0027-01-01"}, timeout=30)
     assert r.status_code == 422, r.text
 
 
 def test_create_audit_accepts_valid_target_date(session):
-    r = session.post(f"{API}/audits", json={"company_name": "TEST_GoodDate", "target_date": "2027-01-01"}, timeout=30)
+    r = session.post(f"{API}/audits", json={**ENGAGEMENT, "company_name": "TEST_GoodDate", "target_date": "2027-01-01"}, timeout=30)
     assert r.status_code == 200, r.text
     session.delete(f"{API}/audits/{r.json()['id']}", timeout=30)
 
@@ -462,7 +466,7 @@ def test_create_audit_accepts_valid_target_date(session):
 def test_fx_change_triggers_recompute(session):
     """Adding an FX rate to an already-computed audit must refresh results —
     the v1/v2 staleness this regression guards against."""
-    r = session.post(f"{API}/audits", json={"company_name": "TEST_Stale", "reporting_currency": "EUR"}, timeout=30)
+    r = session.post(f"{API}/audits", json={**ENGAGEMENT, "company_name": "TEST_Stale", "reporting_currency": "EUR"}, timeout=30)
     aid = r.json()["id"]
     try:
         csv = b"Customer,Invoice Date,Amount,Currency\nA,2023-01-01,1000,EUR\nB,2023-01-01,500,USD\n"
@@ -509,7 +513,7 @@ def test_testco_demo_opens_and_has_asof(session):
 
 # --- Delete ---
 def test_delete_audit_cleans_datasets(session):
-    r = session.post(f"{API}/audits", json={"company_name": "TEST_Del", "reporting_currency": "EUR"}, timeout=30)
+    r = session.post(f"{API}/audits", json={**ENGAGEMENT, "company_name": "TEST_Del", "reporting_currency": "EUR"}, timeout=30)
     aid = r.json()["id"]
     with open(SAMPLES["revenue"], "rb") as f:
         session.post(f"{API}/audits/{aid}/datasets/revenue/upload",

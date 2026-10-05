@@ -9,6 +9,14 @@ Prompt text never leaves the server. The gateway surfaces the version string
 only; `load()` returns the body for internal use and callers must not put it in
 an API response. `tests/test_llm_gateway.py::test_prompt_text_never_returned`
 guards that.
+
+The prompts serve the two paths of CLAUDE.md rules 16-18: `growth_engine` writes from computed
+results; `structure_reading` reads redacted deck structures and spreadsheet header rows (at most 3,
+with up to 3 samples per numeric or date column or a profile per text column), sent only with the
+audit's consent as extracted text with cell positions. It asks for structured JSON with no free
+text, so a reply cannot carry deck prose into a log (rule 17), and every value it returns is
+matched to its source cell by Python before it can be Verified (rule 18). A prompt's version is
+part of every cache key and of the stored model output.
 """
 from pathlib import Path
 from typing import NamedTuple

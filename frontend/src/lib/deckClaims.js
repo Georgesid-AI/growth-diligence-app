@@ -31,10 +31,11 @@ export const TYPE_LABELS = {
   revenue: "Revenue", revenue_growth: "Revenue growth", growth: "Growth", retention: "Retention", sales: "Sales",
   customers: "Customers", users: "Users", user_growth: "User growth", gross_margin: "Gross margin",
   gross_profit: "Gross profit", costs: "Costs", ebitda: "EBITDA", net_profit: "Net profit", usage: "Usage",
-  people: "People", product: "Product", market: "Market",
+  people: "People", product: "Product", market: "Market", use_of_funds: "Use of funds",
 };
 // The types an analyst can choose: same order and names as backend app/decks/claims.py CLAIM_TYPES.
-export const CLAIM_TYPES = Object.keys(TYPE_LABELS).filter((t) => t !== "usage");
+// "Use of funds" is a type the model may read from a structure, not one the parser gives.
+export const CLAIM_TYPES = Object.keys(TYPE_LABELS).filter((t) => t !== "usage" && t !== "use_of_funds");
 // Suggestions for the unit field; a count's unit is the noun it counts ("paying users").
 export const CLAIM_UNITS = ["%", "x", "months", "years", "weeks", "days", "hours", "customers", "users"];
 
@@ -45,13 +46,24 @@ export const typeLabel = (t) => TYPE_LABELS[t] || t;
 
 export const STATUS_LABELS = { pending: "To review", approved: "Approved", rejected: "Rejected", edited: "Edited" };
 
-/** "board.pptx · slide 5 · notes", "plan.pdf · page 19 · table 1, row 4, col 2". */
+// The structure a model reading cites, by its type (docs/specs/deck-parser.md section 7).
+export const STRUCTURE_NAMES = {
+  table: "table", chart: "chart", kpi_panel: "KPI panel", roadmap: "roadmap", hiring_table: "hiring table",
+  unit_economics: "unit-economics table", use_of_funds: "use-of-funds table",
+};
+
+/** "board.pptx · slide 5 · notes", "plan.pdf · page 19 · table 1, row 4, col 2", and for a model reading
+ *  its cell: "plan.pdf · page 19 · table 1, cell r4c3", "plan.pdf · page 19 · KPI panel, cell r2c1". */
 export function sourceRef(ref) {
   if (!ref) return PLACEHOLDER;
   const where = ref.slide != null ? `slide ${ref.slide}` : `page ${ref.page}`;
   const parts = [ref.file, where];
   if (ref.kind === "notes") parts.push("notes");
   if (ref.kind === "table") parts.push(`table ${ref.table}, row ${ref.row}, col ${ref.col}`);
+  if (ref.kind === "structure") {
+    const name = STRUCTURE_NAMES[ref.structure] || ref.structure;
+    parts.push(`${name}${ref.table != null ? ` ${ref.table}` : ""}, cell ${ref.cell}`);
+  }
   return parts.join(" · ");
 }
 
@@ -77,11 +89,13 @@ export function claimValue(c) {
   return amount(c || {}, c?.value, c?.value_high);
 }
 
-/** The Date column: a table row's first to last period, else the claim's target date. */
+/** The Date column: a table row's first to last period, else the claim's date, each as the deck
+ *  states it ("FY25", "Y/E 22") when it does; the date range behind it stays server-side. */
 export function claimDate(c) {
-  const dates = (c?.by_period || []).map((i) => i.target_date).filter(Boolean);
+  const shown = (v) => v?.period_text || v?.target_date;
+  const dates = (c?.by_period || []).map(shown).filter(Boolean);
   if (dates.length) return dates.length > 1 ? `${dates[0]}–${dates[dates.length - 1]}` : dates[0];
-  return c?.target_date || PLACEHOLDER;
+  return shown(c) || PLACEHOLDER;
 }
 
 /** The edit sent for a table row: one value per period, in the row's order; dates stay. */
@@ -95,6 +109,36 @@ export function rowEdit(row, values) {
 
 // Shown on both claims when one deck gives the same type and period different values.
 export const INCONSISTENCY_LABEL = "Deck inconsistency";
+
+// Model reading (docs/specs/llm-structure-reading.md): every row the model read carries one of these,
+// and so does every mapping field it proposed. Python checked a Verified value against its source cell.
+export const VERIFIED_LABEL = "Verified";
+export const AI_SUGGESTION_LABEL = "AI suggestion, not verified";
+export const STORED_MAPPING_LABEL = "Your confirmed mapping for these headers";
+
+// The deck panel's run log (docs/specs/llm-structure-reading.md sections 3, 4 and 9).
+export const DECK_AI_STATUS = {
+  reading: "reading", waiting: "waiting for revenue file", read: "read", not_read: "not read", stopped: "not read",
+  python_only: "not read (AI-assisted reading is off for this audit)",
+};
+
+// A deck uploaded while AI reading was off is not read when reading is switched on: it is uploaded again.
+export const UPLOADED_BEFORE_CONSENT = "Uploaded before AI reading was enabled; re-upload to read.";
+
+/** ["AI reading: read", "Sent to the model: slides 4, 7, 12", "Cost: $0.0123"] for one deck; the stop
+ *  message when the audit reached its token limit; how many of the model's periods Python replaced
+ *  with the one its header cells give; the re-upload line for a deck uploaded while AI reading was
+ *  off, once it is on. */
+export function deckRunLog(deck) {
+  if (deck?.uploaded_before_consent) return [`AI reading: ${DECK_AI_STATUS.not_read}`, UPLOADED_BEFORE_CONSENT];
+  if (!deck?.ai_status) return [];
+  const lines = [`AI reading: ${DECK_AI_STATUS[deck.ai_status] || deck.ai_status}`];
+  if (deck.ai_status === "stopped" && deck.ai_message) lines.push(deck.ai_message);
+  if (deck.sent_pages?.length) lines.push(`Sent to the model: ${deck.page_unit || "slide"}s ${deck.sent_pages.join(", ")}`);
+  if (deck.periods_corrected) lines.push(`Periods corrected from the header cells: ${deck.periods_corrected}`);
+  if (deck.ai_cost_usd) lines.push(`Cost: $${Number(deck.ai_cost_usd).toFixed(4)}`);
+  return lines;
+}
 
 // Deck selector above the claims table: "All" plus one tab per deck.
 export const ALL_DECKS = "all";

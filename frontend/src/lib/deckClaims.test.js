@@ -1,5 +1,5 @@
 import {
-  ALL_DECKS, CLAIM_TYPES, INCONSISTENCY_LABEL, REMOVE_DECK_CONFIRM, claimDate, claimsForDeck, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, sourceRef, statusCounts, typeLabel,
+  ALL_DECKS, AI_SUGGESTION_LABEL, CLAIM_TYPES, INCONSISTENCY_LABEL, UPLOADED_BEFORE_CONSENT, VERIFIED_LABEL, deckRunLog, REMOVE_DECK_CONFIRM, claimDate, claimsForDeck, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, sourceRef, statusCounts, typeLabel,
   DECK_SCOPE_CANNOT, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO,
 } from "./deckClaims";
 
@@ -122,6 +122,10 @@ describe("a table row is one claim with its values by period (zero2hero page 19)
     expect(claimDate(row)).toBe("2022–2024");
     expect(claimDate({ target_date: "2024-Q2" })).toBe("2024-Q2");
     expect(claimDate({ target_date: null })).toBe("—");
+    // A fiscal year shows as the deck states it, not as its end year.
+    expect(claimDate({ target_date: "2025", period_text: "FY25" })).toBe("FY25");
+    expect(claimDate({ by_period: [{ target_date: "2022", period_text: "Y/E 22" }, { target_date: "2023", period_text: "Y/E 23" }] }))
+      .toBe("Y/E 22–Y/E 23");
   });
 
   test("editing one value sends every period, the others unchanged", () => {
@@ -134,5 +138,45 @@ describe("a table row is one claim with its values by period (zero2hero page 19)
 
   test("inconsistency label", () => {
     expect(INCONSISTENCY_LABEL).toBe("Deck inconsistency");
+  });
+});
+
+describe("model readings in the approval list (docs/specs/llm-structure-reading.md)", () => {
+  test("a reading cites its structure and cell", () => {
+    expect(sourceRef({ file: "plan.pdf", page: 19, kind: "structure", structure: "table", table: 1, cell: "r4c3" }))
+      .toBe("plan.pdf · page 19 · table 1, cell r4c3");
+    expect(sourceRef({ file: "plan.pdf", page: 19, kind: "structure", structure: "kpi_panel", cell: "r2c1" }))
+      .toBe("plan.pdf · page 19 · KPI panel, cell r2c1");
+  });
+
+  test("every row is labelled Verified or AI suggestion, not verified", () => {
+    expect(VERIFIED_LABEL).toBe("Verified");
+    expect(AI_SUGGESTION_LABEL).toBe("AI suggestion, not verified");
+    expect(typeLabel("use_of_funds")).toBe("Use of funds");
+    expect(CLAIM_TYPES).not.toContain("use_of_funds");
+  });
+
+  test("the deck panel shows the status, the slides sent and the cost", () => {
+    expect(deckRunLog({ ai_status: "waiting" })).toEqual(["AI reading: waiting for revenue file"]);
+    expect(deckRunLog({ ai_status: "read", page_unit: "slide", sent_pages: [4, 7, 12], ai_cost_usd: 0.0123 }))
+      .toEqual(["AI reading: read", "Sent to the model: slides 4, 7, 12", "Cost: $0.0123"]);
+    expect(deckRunLog({ ai_status: "stopped", ai_message: "AI reading stopped: this audit reached its 200,000-token limit. The remaining structures were read by Python only." }))
+      .toEqual(["AI reading: not read", "AI reading stopped: this audit reached its 200,000-token limit. The remaining structures were read by Python only."]);
+    expect(deckRunLog({})).toEqual([]);
+  });
+
+  test("the run log counts the periods Python corrected from the header cells", () => {
+    expect(deckRunLog({ ai_status: "read", periods_corrected: 2 }))
+      .toEqual(["AI reading: read", "Periods corrected from the header cells: 2"]);
+    expect(deckRunLog({ ai_status: "read", periods_corrected: 0 })).toEqual(["AI reading: read"]);
+  });
+
+  test("a deck uploaded while AI reading was off says to re-upload it once reading is on", () => {
+    const line = "Uploaded before AI reading was enabled; re-upload to read.";
+    expect(UPLOADED_BEFORE_CONSENT).toBe(line);
+    expect(deckRunLog({ ai_status: "python_only", uploaded_before_consent: true })).toEqual(["AI reading: not read", line]);
+    expect(deckRunLog({ uploaded_before_consent: true })).toEqual(["AI reading: not read", line]);
+    expect(deckRunLog({ ai_status: "python_only", uploaded_before_consent: false }))
+      .toEqual(["AI reading: not read (AI-assisted reading is off for this audit)"]);
   });
 });

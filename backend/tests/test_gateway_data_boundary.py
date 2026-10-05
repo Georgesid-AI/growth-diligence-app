@@ -704,3 +704,206 @@ def test_the_gateway_reads_no_deck_text_snippet_or_source():
     for needle in (DECK_SENTINEL, DECK_FILE):
         assert needle not in returned, f"{needle!r} was read by the gateway"
         assert needle not in sent, f"{needle!r} reached the provider"
+
+
+# ---------------------------------------------------------------------------
+# The structure path (CLAUDE.md rules 16-18, docs/specs/llm-structure-reading.md section 10).
+# Redacted deck structure cells and column-mapping texts (at most 3 header rows, at most 3 samples per
+# numeric or date column, a profile per text column) may reach the provider, with the audit's consent,
+# as extracted text with cell positions. Nothing else does, and no sent text is stored or logged.
+# ---------------------------------------------------------------------------
+from app.structures import redact as structure_redact  # noqa: E402
+from app import structures  # noqa: E402
+
+STRUCTURE_AUDIT = {"id": "audit-boundary", "company_name": "Target Co", "client_name": "Northbridge Capital",
+                   "engagement_reference": "ENG-2026-041", "structure_reading_consent": True, "results": None}
+GOOD_STRUCTURE = "r1c2: FY2025\nr1c3: FY2026\nr2c1: Revenue\nr2c2: £1,200,000\nr2c3: £1,500,000"
+GOOD_MAPPING = ("r1c1: Customer\nr1c2: Invoice Date\nr1c3: Amount\nc2 sample: 2025-01-31\nc2 sample: 2025-02-28\n"
+                "c2 sample: 2025-03-31\nc3 sample: 1200.50\nc1 profile: distinct 42, typical length 12, shape Aa Aa")
+STRUCTURE_REPLY = json.dumps({"type": "table", "items": [
+    {"metric": "revenue", "period": "FY2025", "value": 1200000, "unit": "GBP", "actual_or_forecast": "forecast",
+     "value_cell": "r2c2", "period_cells": ["r1c2"], "proposed_flags": []}]})
+MAPPING_REPLY = json.dumps({"type": "column_mapping", "items": [
+    {"metric": "customer_id", "period": None, "value": None, "unit": None, "actual_or_forecast": "unknown",
+     "value_cell": "r1c1", "period_cells": [], "proposed_flags": []}]})
+# Every reason a structure text is refused: codes, never text from the structure.
+STRUCTURE_REFUSALS = frozenset({"not_text", "empty", "raw_bytes", "file_name", "client_name", "engagement_reference",
+                                "not_cells", "cell_too_long", "redaction_changed", "too_many_header_rows",
+                                "too_many_samples", "text_value"})
+
+
+def _structure_db(mapping=None, **audit):
+    db = t.FakeDB()
+    db["audits"].docs.append({**STRUCTURE_AUDIT, **audit})
+    if mapping:
+        db["pseudonym_map"].docs.append({"run_id": STRUCTURE_AUDIT["id"], "mapping": mapping})
+    return db
+
+
+def _send(db, text, kind="table", reply=STRUCTURE_REPLY):
+    adapter = t.FakeAdapter(replies=[reply])
+    result = asyncio.run(gateway.read_structure(db, STRUCTURE_AUDIT["id"], text, kind, adapter=adapter,
+                                                sleep=t._noop_sleep))
+    return result, adapter
+
+
+def test_redacted_structure_cells_reach_the_provider_as_cell_lines_only():
+    cells = [{"row": 1, "col": 1, "text": "Contact"}, {"row": 2, "col": 1, "text": "jane.doe@northwind.com"},
+             {"row": 3, "col": 1, "text": "Northwind Trading renewed"}, {"row": 4, "col": 1, "text": "Michael Smith"},
+             {"row": 5, "col": 1, "text": "+44 20 7946 0958"}, {"row": 6, "col": 1, "text": "£1,200,000"}]
+    mapping = {"Northwind Trading": "Customer_01"}
+    redacted, _ = structure_redact.redact_structure(cells, "Target Co", mapping)
+    text = structure_redact.structure_text(redacted)
+    result, adapter = _send(_structure_db(mapping), text, reply=json.dumps({"type": "table", "items": []}))
+    assert result.status == "read" and adapter.calls == 1, result.reason
+    sent = json.loads(adapter.payloads[0])
+    assert set(sent) == {"type", "text"} and sent["text"] == text
+    for needle in ("jane.doe@northwind.com", "Northwind Trading", "Michael Smith", "+44 20 7946 0958"):
+        assert needle not in sent["text"], f"{needle!r} reached the provider"
+    assert all(re.match(r"^r\d+c\d+: ", line) for line in sent["text"].splitlines())
+
+
+def test_the_client_name_and_engagement_reference_reach_the_provider_only_as_redacted():
+    cells = [{"row": 1, "col": 1, "text": "Prepared for Northbridge Capital"}, {"row": 1, "col": 2, "text": "FY2025"},
+             {"row": 2, "col": 1, "text": "Revenue, ref ENG-2026-041"}, {"row": 2, "col": 2, "text": "£1,200,000"}]
+    redacted, counts = structure_redact.redact_structure(cells, "Target Co", {},
+                                                         structure_redact.withheld_values(STRUCTURE_AUDIT))
+    text = structure_redact.structure_text(redacted)
+    result, adapter = _send(_structure_db(), text)
+    assert result.status == "read" and adapter.calls == 1 and counts["withheld"] == 2, result.reason
+    sent = json.loads(adapter.payloads[0])["text"]
+    assert sent == "r1c1: Prepared for [redacted]\nr1c2: FY2025\nr2c1: Revenue, ref [redacted]\nr2c2: £1,200,000"
+    for needle in ("Northbridge", "ENG-2026-041"):
+        assert needle.lower() not in sent.lower(), f"{needle!r} reached the provider"
+
+
+def test_a_longer_word_holding_the_client_name_or_engagement_reference_is_not_refused():
+    for text in ("r1c1: ENG-2026-0412\nr1c2: £1M", "r1c1: Northbridge Capitalists\nr1c2: £1M"):
+        result, adapter = _send(_structure_db(), text, reply=json.dumps({"type": "table", "items": []}))
+        assert (result.status, adapter.calls) == ("read", 1), text
+
+
+def test_a_column_mapping_text_within_the_caps_reaches_the_provider():
+    result, adapter = _send(_structure_db(), GOOD_MAPPING, "column_mapping", MAPPING_REPLY)
+    assert result.status == "read" and adapter.calls == 1, result.reason
+    sent = json.loads(adapter.payloads[0])["text"]
+    parsed = structure_redact.parse_column_text(sent)
+    assert len({c["row"] for c in parsed["headers"]}) <= 3 and all(len(v) <= 3 for v in parsed["samples"].values())
+    assert set(parsed["profiles"]) == {1}, "the text column sends a profile"
+
+
+def test_a_sheet_built_by_the_app_sends_no_text_cell_value():
+    columns = ["Customer", "Invoice Date", "Amount", "Note"]
+    rows = [{"Customer": f"JANEDOE Retail {i}", "Invoice Date": "2025-01-31T00:00:00", "Amount": 100 + i,
+             "Note": "JANEDOE called"} for i in range(6)]
+    text = structures.column_mapping_text(columns, rows, "Target Co", {}, ("Customer",))
+    assert SENTINEL not in text and structure_redact.column_text_problem(text) is None
+    result, adapter = _send(_structure_db(), text, "column_mapping", MAPPING_REPLY)
+    assert adapter.calls == 1 and SENTINEL not in adapter.payloads[0]
+
+
+@pytest.mark.parametrize("name, text, kind, reason", [
+    ("raw bytes", b"PK\x03\x04 r1c1: x", "table", "not_text"),
+    ("control bytes", "r1c1: x\x00\x01", "table", "raw_bytes"),
+    ("a full page", "Our mission\nWe grew revenue strongly in 2025 and plan to triple it.\nTeam\nOur founders met at...",
+     "table", "not_cells"),
+    ("a prose snippet", "Revenue grew from £1.2m to £1.5m between FY2025 and FY2026.", "table", "not_cells"),
+    ("a cell over 200 characters", "r1c1: " + "x" * 201, "table", "cell_too_long"),
+    ("a file name", "r1c1: See Acme_Board_Q3.pptx", "table", "file_name"),
+    ("an unredacted email", "r1c1: jane.doe@northwind.com", "table", "redaction_changed"),
+    ("an unredacted phone number", "r1c1: +44 20 7946 0958", "table", "redaction_changed"),
+    ("an unredacted name", "r1c1: Michael Smith", "table", "redaction_changed"),
+    ("an unredacted customer name", "r1c1: Northwind Trading renewed", "table", "redaction_changed"),
+    # Sent as written (not through redaction), the client name or engagement reference is refused as a
+    # whole word, with the boundaries redaction uses.
+    ("the client name", "r1c1: Prepared for Northbridge Capital", "table", "client_name"),
+    ("the client name in any case", "r1c1: NORTHBRIDGE CAPITAL", "table", "client_name"),
+    ("the engagement reference", "r1c1: ENG-2026-041", "table", "engagement_reference"),
+    ("the engagement reference after a change of case", "r1c1: refENG-2026-041", "table", "engagement_reference"),
+    ("the client name in a column-mapping header", GOOD_MAPPING + "\nr1c4: Northbridge Capital share", "column_mapping",
+     "client_name"),
+    ("more than 3 samples", GOOD_MAPPING + "\nc3 sample: 1\nc3 sample: 2\nc3 sample: 3", "column_mapping",
+     "too_many_samples"),
+    ("more than 3 header rows", GOOD_MAPPING + "\nr4c1: Customer name", "column_mapping", "too_many_header_rows"),
+    ("a text cell value on the column-mapping path", GOOD_MAPPING + "\nr1c4: Note\nc4 sample: Northwind Trading",
+     "column_mapping", "text_value"),
+    ("a text value as a profile and a sample", GOOD_MAPPING + "\nc1 sample: 12", "column_mapping", "text_value"),
+])
+def test_the_structure_path_refuses_what_rule_16_does_not_allow(name, text, kind, reason):
+    assert reason in STRUCTURE_REFUSALS
+    db = _structure_db({"Northwind Trading": "Customer_01"})
+    result, adapter = _send(db, text, kind)
+    assert adapter.calls == 0 and getattr(adapter, "counted", 0) == 0, f"{name} reached the provider"
+    assert (result.status, result.reason) == ("refused", f"refused: {reason}"), name
+
+
+def test_no_call_is_made_without_consent():
+    for audit in ({"structure_reading_consent": False}, {"structure_reading_consent": None}):
+        result, adapter = _send(_structure_db(**audit), GOOD_STRUCTURE)
+        assert result.status == "no_consent" and adapter.calls == 0
+        result, adapter = _send(_structure_db(**audit), GOOD_MAPPING, "column_mapping", MAPPING_REPLY)
+        assert result.status == "no_consent" and adapter.calls == 0
+
+
+def test_no_sent_text_in_a_log_llm_calls_or_llm_structures(caplog):
+    import logging
+    db = _structure_db()
+    with caplog.at_level(logging.DEBUG):
+        _send(db, GOOD_STRUCTURE)
+        _send(db, GOOD_STRUCTURE.replace("FY2025", "FY2027"),
+              reply=json.dumps({"type": "table", "items": [{"bad": 1}]}))           # rejected twice: not read
+        _send(db, "r1c1: jane.doe@northwind.com")                                   # refused
+    stored = json.dumps(db[gateway.STRUCTURES_COLLECTION].docs + db["llm_calls"].docs, ensure_ascii=False, default=str)
+    logs = caplog.text + "".join(r.getMessage() for r in caplog.records)
+    for needle in ("Revenue", "£1,200,000", "1,500,000", "jane.doe", GOOD_STRUCTURE):
+        assert needle not in stored, f"{needle!r} was stored"
+        assert needle not in logs, f"{needle!r} was logged"
+    assert "structure read: run_id=audit-boundary step=structures hash=" in caplog.text
+    assert "structure refused: run_id=audit-boundary step=structures reason=redaction_changed" in caplog.text
+    assert "[redacted]" not in logs, "the placeholder count is not logged either"
+    assert all(r.exc_info is None for r in caplog.records)
+
+
+def test_a_corrected_period_stores_a_count_and_never_the_cell_text_or_the_rebuilt_period():
+    """Rule 17: llm_structures keeps the model's output as it came (its own period) and the number of periods
+    Python corrected; the header text the correction came from is not stored there."""
+    db = _structure_db()
+    text = "r1c2: FY2025\nr2c2: Apr\nr3c1: Revenue\nr3c2: $5M"
+    reply = json.dumps({"type": "table", "items": [
+        {"metric": "revenue", "period": "2025-04", "value": 5000000, "unit": "USD", "actual_or_forecast": "forecast",
+         "value_cell": "r3c2", "period_cells": ["r2c2", "r1c2"], "proposed_flags": []}]})
+    result, _ = _send(db, text, reply=reply)
+    structure = {"type": "table", "header_rows": 2, "cells": structure_redact.parse_structure_text(text)}
+    checked = structures.verify.verify(structure, result.items, 3)
+    asyncio.run(gateway.record_verification(db, STRUCTURE_AUDIT["id"], result.key,
+                                            [i["status"] for i in checked["items"]], checked["dropped"],
+                                            checked["periods_corrected"]))
+    stored, = db[gateway.STRUCTURES_COLLECTION].docs
+    assert stored["output"]["items"][0]["period"] == "2025-04" and stored["periods_corrected"] == 1
+    flat = json.dumps(stored, default=str)
+    for needle in ("FY2025-04", "Apr", "Revenue", "$5M"):
+        assert needle not in flat, f"{needle!r} was stored"
+
+
+def test_the_structure_path_never_reads_parsed_deck_text():
+    """read_structure is handed the text; it reads consent and names from the audit, the pseudonym map,
+    its own cache and the call log, never the parsed-text or candidate collections."""
+    db, reads = _recording_db()
+    db["audits"].docs[0].update({"company_name": "Target Co", "client_name": "Northbridge Capital",
+                                 "engagement_reference": "ENG-2026-041", "structure_reading_consent": True})
+    adapter = t.FakeAdapter(replies=[STRUCTURE_REPLY])
+    asyncio.run(gateway.read_structure(db, RUN_ID, GOOD_STRUCTURE, "table", adapter=adapter, sleep=t._noop_sleep))
+    assert adapter.calls == 1
+    touched = {name for name, _, _ in reads}
+    assert not touched & {decks.TEXT_COLLECTION, decks.CANDIDATES_COLLECTION}, touched
+    audit_reads = [projection for name, projection, _ in reads if name == "audits"]
+    assert audit_reads and all(set(p) - {"_id"} <= {"id", "company_name", "client_name", "engagement_reference",
+                                                       "structure_reading_consent"} for p in audit_reads)
+    assert DECK_SENTINEL not in adapter.payloads[0] and DECK_FILE not in adapter.payloads[0]
+
+
+def test_the_deck_parser_still_has_no_link_to_the_structure_path_or_the_gateway():
+    """app.structures may read deck structures and call the gateway; the deck package imports neither."""
+    for path in sorted((BACKEND / "app" / "decks").rglob("*.py")):
+        for module, name in _imports(ast.parse(path.read_text(encoding="utf-8"))):
+            assert "structures" not in re.split(r"[.\s\"'()]+", module), f"{path.name} imports {module}"

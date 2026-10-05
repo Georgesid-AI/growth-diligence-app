@@ -16,20 +16,27 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { listAudits, createAudit, deleteAudit } from "@/lib/api";
 import { fmtCurrency } from "@/lib/format";
-import { targetDateError, plainNumber, groupThousands } from "@/lib/auditForm";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  targetDateError, plainNumber, groupThousands, MONTHS, DEFAULT_FISCAL_YEAR_END, CONSENT_EXPLAINER, CONSENT_LABEL,
+  requiredFieldError,
+} from "@/lib/auditForm";
 
 export default function AuditHub() {
   const nav = useNavigate();
   const [audits, setAudits] = useState(null);
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ company_name: "", reporting_currency: "EUR", target_arr: "", target_date: "", as_of_month: "" });
+  const blank = { company_name: "", reporting_currency: "EUR", target_arr: "", target_date: "", as_of_month: "",
+    fiscal_year_end: DEFAULT_FISCAL_YEAR_END, client_name: "", engagement_reference: "", structure_reading_consent: true };
+  const [form, setForm] = useState(blank);
 
   const load = () => listAudits().then(setAudits);
   useEffect(() => { load(); }, []);
 
   const submit = async () => {
-    if (!form.company_name.trim()) return toast.error("Company name is required");
+    const missing = requiredFieldError(form);
+    if (missing) return toast.error(missing);
     const dateError = targetDateError(form.target_date, form.as_of_month);
     if (dateError) return toast.error(dateError);
     setSaving(true);
@@ -40,10 +47,14 @@ export default function AuditHub() {
         target_arr: parseFloat(form.target_arr) || 0,
         target_date: form.target_date || null,
         as_of_month: form.as_of_month || null,
+        fiscal_year_end: form.fiscal_year_end,
+        client_name: form.client_name.trim(),
+        engagement_reference: form.engagement_reference.trim(),
+        structure_reading_consent: form.structure_reading_consent,
       });
       toast.success("Audit created");
       setOpen(false);
-      setForm({ company_name: "", reporting_currency: "EUR", target_arr: "", target_date: "", as_of_month: "" });
+      setForm(blank);
       nav(`/audit/${a.id}/mapping`);
     } catch (e) {
       const detail = e.response?.data?.detail;
@@ -91,6 +102,15 @@ export default function AuditHub() {
                   value={form.company_name}
                   onChange={(e) => setForm({ ...form, company_name: e.target.value })}
                   placeholder="Acme SaaS Inc."
+                  className="mt-1.5 bg-white border-[#E5E7EB]"
+                />
+              </div>
+              <div>
+                <Label className="text-slate-700">Client name <span className="text-slate-500 text-xs">(the investor commissioning the audit)</span></Label>
+                <Input
+                  data-testid="audit-client-input"
+                  value={form.client_name}
+                  onChange={(e) => setForm({ ...form, client_name: e.target.value })}
                   className="mt-1.5 bg-white border-[#E5E7EB]"
                 />
               </div>
@@ -144,6 +164,38 @@ export default function AuditHub() {
                   onChange={(e) => setForm({ ...form, as_of_month: e.target.value })}
                   className="mt-1.5 bg-white border-[#E5E7EB] font-mono"
                 />
+              </div>
+              <div>
+                <Label className="text-slate-700">Fiscal year-end <span className="text-slate-500 text-xs">(FY25 is the fiscal year that ends in 2025)</span></Label>
+                <Select value={String(form.fiscal_year_end)} onValueChange={(v) => setForm({ ...form, fiscal_year_end: Number(v) })}>
+                  <SelectTrigger data-testid="audit-fiscal-year-end-select" className="mt-1.5 bg-white border-[#E5E7EB]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-white border-[#E5E7EB] text-slate-900">
+                    {MONTHS.map((m, i) => <SelectItem key={m} value={String(i + 1)}>{m}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-slate-700">Engagement reference</Label>
+                <Input
+                  data-testid="audit-engagement-input"
+                  value={form.engagement_reference}
+                  onChange={(e) => setForm({ ...form, engagement_reference: e.target.value })}
+                  className="mt-1.5 bg-white border-[#E5E7EB] font-mono"
+                />
+              </div>
+              <div className="rounded-md border border-[#E5E7EB] bg-slate-50 p-3 space-y-2" data-testid="audit-consent">
+                <p className="text-xs text-slate-600">{CONSENT_EXPLAINER}</p>
+                <label className="flex items-start gap-2 text-xs text-slate-800 cursor-pointer">
+                  <Checkbox
+                    data-testid="audit-consent-checkbox"
+                    checked={form.structure_reading_consent}
+                    onCheckedChange={(v) => setForm({ ...form, structure_reading_consent: v === true })}
+                    className="mt-0.5"
+                  />
+                  <span>{CONSENT_LABEL}</span>
+                </label>
               </div>
             </div>
             <DialogFooter>

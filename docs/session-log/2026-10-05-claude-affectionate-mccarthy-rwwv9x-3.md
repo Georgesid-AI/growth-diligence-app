@@ -1,0 +1,5 @@
+2026-10-05, claude/affectionate-mccarthy-rwwv9x, second round of decisions on PR #37.
+Deleted: the fiscal flag on dates; the refusal of a month under a fiscal-year header; the gateway's substring check for the client name and engagement reference.
+Optimized: a month under any year header follows the year-end (stored as FY2025-04, so a year-end change only moves ranges; "Apr FY25" reads the same way); the verifier requires the lowest period header; the gateway matches the client name and engagement reference as whole words; risks the new label brought, closed with tests: a relative column started from "Start: Apr FY25" would crash the verifier, and a table row with such months would fail validation on save; 796 backend tests pass, the 10 public decks give the same candidates as before.
+Slow/unclear: the model is not told the year-end, so it reads a month after the year-end under a year header literally, and that reading stays an unverified suggestion (left for a decision).
+Process change: before choosing how a period is stored, check every edit and round-trip path that sends it back, not only display and verification.

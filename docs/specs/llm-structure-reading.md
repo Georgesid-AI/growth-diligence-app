@@ -34,9 +34,13 @@ normalisation:
 - a unit or scale in a neighbouring or header cell (`£m`, `'000`, `%`) is applied.
 
 The match is exact, so a rounded number does not match. The period is matched against its `period_cells` only:
-they must be header cells of the value cell (its row header or the header stack above its column), and Python rebuilds
-the period from them under the deck-parser.md §2 period rules; if it cannot, or gets a period with a different start or
-end date, the period is unmatched. A null period matches only when `period_cells` is empty and neither header holds a period. An unmatched value or period makes the item unmatched. Every proposed flag is
+they must be header cells of the value cell (its row header or the header stack above its column), the first must be
+the value cell's lowest period header (a quarterly or monthly value cited against its year header alone is unmatched; a
+year header alone verifies only a yearly value), and Python rebuilds the period from them under the deck-parser.md §2
+period rules; if it cannot, or gets a period with a different start or
+end date, the period is unmatched. When the value matches and Python rebuilds a period from the `period_cells`, the
+rebuilt period replaces the model's and the item is Verified (the model is not sent the year-end); a model period that
+differed is a "period corrected" case, kept in the stored reading and counted. A null period matches only when `period_cells` is empty and neither header holds a period. An unmatched value or period makes the item unmatched. Every proposed flag is
 recomputed from the matched values; a flag Python cannot reproduce counts as unmatched. Matched items are `Verified`. For unmatched ones, the switch
 `STRUCTURE_UNMATCHED` decides: `"suggest"` (the default) shows "AI suggestion, not verified", and `"drop"` removes them
 and keeps a count. An item with no value is never Verified. A column mapping only pre-fills the mapping screen, where the
@@ -55,8 +59,9 @@ Customer names are pseudonymised (Customer_01, Customer_02…) through the narra
 - The mapping holds every name in the revenue file's mapped customer column and in the CRM file's customer column. The
   CRM file has no customer field of its own, so that column is found by the FIELD_DEFS customer aliases, as are the
   customer cells of spreadsheet samples sent before a file is mapped.
-- Every name in the mapping is replaced wherever it appears as a substring, case-insensitive, in any text cell sent to
-  the model. Only deck structures send text cells: the column-mapping path sends none, CRM deal names included. Names
+- Every name in the mapping is replaced wherever it appears as a whole word, case-insensitive, in any text cell sent to
+  the model. Word boundaries include punctuation, hyphens and case changes: "AcmeCorp" and "ACME-led" hold Acme;
+  "Acmes" does not, and "customers" does not hold Cust. Only deck structures send text cells: the column-mapping path sends none, CRM deal names included. Names
   under 4 characters are skipped, and so are names that are numbers or
   dates, as in the narrative path. The target company's own name and existing pseudonyms are never rewritten, so a
   second pass changes nothing.
@@ -67,6 +72,10 @@ Customer names are pseudonymised (Customer_01, Customer_02…) through the narra
   its columns are mapped. Decks uploaded before that are queued, and the run log shows "waiting for revenue file".
   Once the revenue file is mapped, queued decks are processed. Column-mapping calls are not queued. A deck already
   read is not re-sent when a CRM file is mapped later.
+
+The client name and the engagement reference are replaced with "[redacted]" wherever they appear as a whole word,
+case-insensitive, in any text cell sent to the model, and the structure is still read. The gateway refuses a text in
+which either still stands as a whole word, with the same boundaries.
 
 The mapping stays server-side and is removed by Delete audit. The gateway runs redaction again and refuses the call if
 anything changes.
@@ -98,8 +107,9 @@ Consistency relies on the cache, the verifier and the 95% agreement target (§11
 
 **7. Caps.** 200,000 tokens per audit, counting billed input and output. A call goes out only if tokens used + its
 input + its `max_tokens` fit under the cap. Otherwise the analyst sees: "AI reading stopped: this audit reached its
-200,000-token limit. The remaining structures were read by Python only." Each structure may use at most 3,000 input
-tokens, measured with the provider's token counter. A larger one is not sent and is marked "Too large for AI reading".
+200,000-token limit. The remaining structures were read by Python only." Each structure may use at most 3,000 tokens,
+measured with the provider's token counter on the structure text alone (the prompt and schema are not counted). A
+larger one is not sent and is marked "Too large for AI reading". The 200,000-token cap counts the whole call's input.
 The token cap governs structure calls. The 15-call cap per run (`MAX_CALLS_PER_RUN`) counts narrative calls only.
 The existing circuit breaker applies: per-audit lock (step `structures`), daily spend cap, retry policy.
 
@@ -107,11 +117,12 @@ The existing circuit breaker applies: per-audit lock (step `structures`), daily 
 looked up by (audit id, key), so no audit is served another audit's result. A hit makes no API call. Delete audit
 removes the stored results (`purge_run`).
 
-**9. Logging (rule 17).** `llm_structures` stores the model JSON output, the verifier status of each item, prompt
-version, model, content hash, tokens, cost, deck and page. It also stores Python's type and, when the two differ,
+**9. Logging (rule 17).** `llm_structures` stores the model JSON output (with the model's own periods), the verifier
+status of each item, the number of periods corrected, prompt version, model, content hash, tokens, cost, deck and page. It also stores Python's type and, when the two differ,
 the model's type. `llm_calls` adds the content hash and deck id. The server log line carries run id, step, hash,
 tokens, cost and any type change. Sent text is never stored. `GET /api/runs/{id}/llm-usage` gains `by_deck`, and
-the run log on the deck panel shows each deck's status ("waiting for revenue file", read, not read) and cost.
+the run log on the deck panel shows each deck's status ("waiting for revenue file", read, not read), its periods
+corrected and cost. `scripts/consistency_run.py` reports the periods corrected too.
 
 **10. Boundary test and docstrings.** `test_gateway_data_boundary.py` keeps every existing assertion.
 - It must pass when redacted structure cells reach the provider, and when a column-mapping text does: a header stack of at
@@ -126,8 +137,8 @@ The docstrings in `gateway.py`, `decks/__init__.py` and `prompt_store.py` restat
 live API. They cover:
 - the verifier: each normalisation case, value matched against `value_cell` only, period matched against `period_cells`
   only (two-cell periods, fiscal years), flags, the switch;
-- redaction: each rule with a false friend (amounts, years, "Head of Sales"); customer names as substrings, any case,
-  in deck structures; names under 4 characters, numeric names, the target's name and
+- redaction: each rule with a false friend (amounts, years, "Head of Sales"); customer names as whole words (boundaries
+  at punctuation, hyphens and case changes), any case, in deck structures; names under 4 characters, numeric names, the target's name and
   pseudonyms left alone;
 - column mapping: a header stack of at most 3 rows (the 3 nearest the data when a sheet has more), up to 3 samples for numeric and date columns, a profile only for
   text columns;

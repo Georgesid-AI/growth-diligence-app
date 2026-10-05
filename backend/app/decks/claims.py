@@ -23,6 +23,18 @@ comes from its own line, then its column header, then a period line at the top o
 then the borrowing below. Candidates that give the same type and stated period different values
 carry that period in "inconsistent_dates" (see _flag_inconsistencies).
 
+Every value keeps its period three ways: "target_date" ("2025", "2025-Q3", "2025-H1", "2025-03"),
+"period_text" (the date as the deck states it, "FY25", for display) and "period_start" and
+"period_end" (ISO dates). A fiscal year ("FY25", "Y/E 25", "FY2024/25") is named by the calendar
+year in which it ends, so its target_date is that year. The ranges follow the audit's fiscal
+year-end: with December every period is the calendar one; with any other month every year,
+quarter and half label is fiscal ("2025E", "Q1 25", "H1 25" as much as "FY25"), so with a March
+year-end 2025 and FY25 run 2024-04-01 to 2025-03-31 and Q1 25 runs 2024-04-01 to 2024-06-30.
+Months stay calendar months, but a month under a year header ("Apr" under "FY2025" or "2025",
+target_date "FY2025-04") or stated with one ("Apr FY25") falls inside that year: up to the year-end
+month it is in the named year, after it in the calendar year before (with a March year-end April
+of FY2025 is April 2024). remap_periods re-runs the ranges for a new year-end.
+
 A figure takes the keyword and the date of its own line. A line with its own keyword never
 borrows a label. When it has none, the figure borrows one from nearby text, first match wins:
 the table column header, the other lines of its text box (nearest first), the boxes on the same
@@ -36,7 +48,9 @@ keyword, or the one it borrows, is a product keyword) and it can borrow a date: 
 bullet. Candidates with the same type, value, unit, currency and date are merged, keeping
 every source reference.
 """
+import calendar
 import re
+from datetime import date
 from math import hypot
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -97,17 +111,49 @@ _MONTH = (r"(?<![A-Za-z])(?P<month>(?i:january|february|march|april|june|july|au
           r"november|december)|May|MAY|(?:Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec|"
           r"JAN|FEB|MAR|APR|JUN|JUL|AUG|SEP|SEPT|OCT|NOV|DEC))(?![A-Za-z])")
 _DATE_WORD = re.compile(_MONTH + r"|\bQ[1-4]\b")
+# Tables, structure text and the verifier match month names in English, German and Bulgarian,
+# short and long forms, any case (spec section 2, period rules). Prose lines keep _MONTH above.
+MONTH_NAMES = {
+    1: ("january", "jan", "januar", "jän", "януари", "яну"),
+    2: ("february", "feb", "februar", "февруари", "фев"),
+    3: ("march", "mar", "märz", "maerz", "mär", "mrz", "март", "мар"),
+    4: ("april", "apr", "април", "апр"),
+    5: ("may", "mai", "май"),
+    6: ("june", "jun", "juni", "юни"),
+    7: ("july", "jul", "juli", "юли"),
+    8: ("august", "aug", "август", "авг"),
+    9: ("september", "sept", "sep", "септември", "сеп"),
+    10: ("october", "oct", "oktober", "okt", "октомври", "окт"),
+    11: ("november", "nov", "ноември", "ное"),
+    12: ("december", "dec", "dezember", "dez", "декември", "дек"),
+}
+_MONTH_NUMBER = {name: n for n, names in MONTH_NAMES.items() for name in names}
+_MONTH_ANY = (r"(?<![^\W\d_])(?P<month>(?i:" + "|".join(sorted(map(re.escape, _MONTH_NUMBER), key=len, reverse=True))
+              + r"))(?![^\W\d_])")
 _YY = r"(?P<year>(?:19|20)\d{2}|\d{2})"
+_FY = r"(?P<fy>FY)\s*['’]?(?:(?:(?:19|20)\d{2}|\d{2})\s*/\s*)?" + _YY    # FY25, FY2024/25: named by the end year
+# (kind, pattern). A fiscal year (FY, Y/E) is named by the year it ends in. Whether a range is fiscal is
+# decided by the year-end alone (period_range).
 _DATES = [
+    # Apr FY25, FY2025 Apr: a month of a fiscal year ("FY2025-04")
+    ("month", re.compile(_MONTH + r"\.?\s*[-/]?\s*" + _FY + r"\b")),
+    ("month", re.compile(r"\b" + _FY + r"\s*[-/]?\s*" + _MONTH)),
+    # Q1 FY25, FY25 Q1, H1 FY2024/25, FY25-H2: a quarter or half of a fiscal year
+    ("quarter", re.compile(r"\bQ(?P<q>[1-4])\s*[-/]?\s*" + _FY + r"\b")),
+    ("quarter", re.compile(r"\b" + _FY + r"\s*[-/]?\s*Q(?P<q>[1-4])\b")),
+    ("half", re.compile(r"\bH(?P<h>[12])\s*[-/]?\s*" + _FY + r"\b")),
+    ("half", re.compile(r"\b" + _FY + r"\s*[-/]?\s*H(?P<h>[12])\b")),
     # Q3 2021, Q1 17, Q1-Q2 2023
     ("quarter", re.compile(r"\bQ(?P<q>[1-4])(?:\s*[-–]\s*Q[1-4])?\s*['’]?\s*" + _YY + r"\b")),
     # 2021 Q3, 2021-Q3
     ("quarter", re.compile(r"(?<![\d.,])(?P<year>(?:19|20)\d{2})\s*[-/]?\s*Q(?P<q>[1-4])\b")),
     # 3Q25, 3Q 2025
     ("quarter", re.compile(r"(?<![\w.,])(?P<q>[1-4])Q\s*['’]?" + _YY + r"\b")),
-    # Periods (spec section 2): H1 24, 1H 2024, then Y/E 22, 23 Y/E, FY23, 2023E
+    # Periods (spec section 2): H1 24, 1H 2024, then FY2024/25, Y/E 22, 23 Y/E, FY23, 2023E
     ("half", re.compile(r"\bH(?P<h>[12])\s*['’]?\s*" + _YY + r"\b")),
     ("half", re.compile(r"(?<![\w.,])(?P<h>[12])H\s*['’]?" + _YY + r"\b")),
+    # FY2024/25, FY24/25: the fiscal year that ends in the second year
+    ("year", re.compile(r"\bFY\s*['’]?(?:(?:19|20)\d{2}|\d{2})\s*/\s*(?P<year>(?:19|20)\d{2}|\d{2})\b")),
     ("year", re.compile(r"\b(?:Y/?E|FY)\s*['’]?" + _YY + r"\b")),
     ("year", re.compile(r"(?<![\w$€£.,])" + _YY + r"\s*Y/?E\b")),
     ("year", re.compile(r"(?<![\w$€£.,'’])(?P<year>(?:19|20)\d{2})[EAFBP]\b")),
@@ -117,6 +163,22 @@ _DATES = [
     # a bare year: 2024, by end of 2020
     ("year", re.compile(r"(?<![\w$€£.,'’])(?P<year>(?:19|20)\d{2})(?![\d%]|\.\d|,\d)")),
 ]
+
+
+def _table_dates() -> list:
+    """_DATES with month names in every language and case, and ISO months (2025-03) just before the
+    plain month form, for tables."""
+    out = []
+    for kind, rx in _DATES:
+        if kind == "month":
+            if "fy" not in rx.groupindex:
+                out.append(("month", re.compile(r"(?<![\d.,/-])(?P<year>(?:19|20)\d{2})-(?P<mnum>0[1-9]|1[0-2])(?![\d-])")))
+            rx = re.compile(rx.pattern.replace(_MONTH, _MONTH_ANY))
+        out.append((kind, rx))
+    return out
+
+
+_TABLE_DATES = _table_dates()
 
 _NUMBER = re.compile(
     r"(?<![\w.,])(?P<cur>US\$|\$|€|£|(?:USD|EUR|GBP)(?=\s?\d))?\s?~?"
@@ -136,10 +198,11 @@ def _year(text: str) -> int:
     return int(text) if len(text) == 4 else 2000 + int(text)
 
 
-def find_dates(line: str) -> List[Dict]:
-    """[{"start", "end", "date", "kind"}], longest forms first, no overlaps."""
+def find_dates(line: str, table: bool = False) -> List[Dict]:
+    """[{"start", "end", "date", "kind", "text"}], longest forms first, no overlaps. In a table cell
+    (`table`) month names are matched in English, German and Bulgarian, any case."""
     found = []
-    for kind, rx in _DATES:
+    for kind, rx in (_TABLE_DATES if table else _DATES):
         for m in rx.finditer(line):
             if any(m.start() < d["end"] and d["start"] < m.end() for d in found):
                 continue
@@ -150,11 +213,116 @@ def find_dates(line: str) -> List[Dict]:
                 date = f"{_year(g['year'])}-H{g['h']}"
             elif kind == "month":
                 year = g.get("year") or g.get("y2") or g.get("y3")
-                date = f"{_year(year)}-{_MONTHS[g['month'][:3].lower()]:02d}"
+                month = int(g["mnum"]) if g.get("mnum") else _month_number(g["month"])
+                date = f"{'FY' if g.get('fy') else ''}{_year(year)}-{month:02d}"
             else:
                 date = str(_year(g["year"]))
-            found.append({"start": m.start(), "end": m.end(), "date": date, "kind": kind})
+            found.append({"start": m.start(), "end": m.end(), "date": date, "kind": kind, "text": m.group(0)})
     return sorted(found, key=lambda d: d["start"])
+
+
+def _month_number(name: str) -> int:
+    name = name.lower().rstrip(".")
+    return _MONTH_NUMBER.get(name) or _MONTHS[name[:3]]
+
+
+# A header that counts periods from a start the sheet does not give: M1...M24, Month 3, Year 1.
+_RELATIVE = re.compile(r"(?i)^\s*(?:M|Month|Monat|Y|Year|Jahr|Q|Quarter)\s*-?\s*(?P<n>\d{1,3})\s*$")
+_PART = re.compile(r"(?i)^\s*(?:Q(?P<q>[1-4])|H(?P<h>[12])|" + _MONTH_ANY + r")\.?\s*$")
+
+
+def period_cell(text: str) -> Optional[Dict]:
+    """What one header cell says about a period (spec section 2, period rules):
+
+        {"label": "2025-Q3", "text": "Q3 2025", "kind": "quarter"}  a full period
+        {"part": "Q3"} / {"part": "03"} / {"part": "H1"}              a quarter, month or half with no year
+        {"relative": 3}                                               M3, Month 3, Year 3: no start date
+        None                                                          no period
+
+    A full period is a cell with exactly one date. A bare year is a full period and can also stand
+    above a part ("Mar" under "2025" is FY2025-03, see combine_period). "Q3" with no year is a part,
+    never a period: the year is never inferred from the deck date, the file name or neighbouring
+    columns. Month names are matched in English, German and Bulgarian, any case."""
+    text = (text or "").strip()
+    if not text:
+        return None
+    m = _PART.match(text)
+    if m:
+        if m.group("q"):
+            return {"part": f"Q{m.group('q')}"}
+        if m.group("h"):
+            return {"part": f"H{m.group('h')}"}
+        return {"part": f"{_month_number(m.group('month')):02d}"}
+    if _RELATIVE.match(text) and not find_dates(text, table=True):
+        return {"relative": int(_RELATIVE.match(text).group("n"))}
+    dates = find_dates(text, table=True)
+    if len(dates) != 1:
+        return None
+    d = dates[0]
+    return {"label": d["date"], "text": d["text"], "kind": d["kind"]}
+
+
+def combine_period(part_cell: Optional[Dict], year_cell: Optional[Dict]) -> Optional[Dict]:
+    """A period built from two cells: a month, quarter or half and the year cell above it ("Q3" + "2025"
+    or "FY2025" -> 2025-Q3; "Mar" + "2025" or "FY2025" -> FY2025-03, the March inside that year). Both
+    follow the year-end (period_range). None when the upper cell is not a year."""
+    if not part_cell or "part" not in part_cell or not year_cell or year_cell.get("kind") != "year" \
+            or not re.fullmatch(r"\d{4}", year_cell.get("label") or ""):
+        return None
+    part = part_cell["part"]
+    label = f"{year_cell['label']}-{part}" if part[0] in "QH" else f"FY{year_cell['label']}-{part}"
+    return {"label": label, "kind": "two_cell"}
+
+
+def period_range(label: Optional[str], fiscal_year_end: int = 12) -> Optional[Tuple[str, str]]:
+    """(start, end) as ISO dates for a period label, or None when it is not one.
+
+    "2025-03" is a calendar month. "2025", "2025-Q3", "2025-H1", "FY2025" and "FY2024/25" follow the
+    year-end: fiscal year 2025 ends on the last day of `fiscal_year_end` (1-12) in 2025 and starts 12
+    months earlier, and its quarters and halves count from that start. "FY2025-04" is the April inside
+    year 2025: up to the year-end month in 2025, after it in 2024. With December every period is the
+    calendar one.
+    """
+    m = re.fullmatch(r"FY(?P<y>\d{4})-(?P<m>0[1-9]|1[0-2])", label or "")
+    if m:
+        year, month = int(m.group("y")), int(m.group("m"))
+        label = f"{year - 1 if month > fiscal_year_end else year}-{month:02d}"
+    m = re.fullmatch(r"FY(?:(?P<c>\d{2})\d{2}/)?(?P<y>\d{2}|\d{4})", label or "")
+    if m:                                           # FY2024/25: the second year in the century of the first
+        y = m.group("y")
+        label = (m.group("c") or "20") + y if len(y) == 2 else y
+    m = re.fullmatch(r"(?P<y>\d{4})(?:-(?P<part>Q[1-4]|H[12]|0[1-9]|1[0-2]))?", label or "")
+    if not m:
+        return None
+    year, part = int(m.group("y")), m.group("part")
+    start = year * 12 + fiscal_year_end - 12        # months since year 0 to the fiscal year's first month
+    if part is None:
+        first, length = start, 12
+    elif part[0] == "Q":
+        first, length = start + 3 * (int(part[1]) - 1), 3
+    elif part[0] == "H":
+        first, length = start + 6 * (int(part[1]) - 1), 6
+    else:
+        first, length = year * 12 + int(part) - 1, 1
+    (y0, m0), (y1, m1) = divmod(first, 12), divmod(first + length - 1, 12)
+    return date(y0, m0 + 1, 1).isoformat(), date(y1, m1 + 1, calendar.monthrange(y1, m1 + 1)[1]).isoformat()
+
+
+def resolve_period(value: Dict, fiscal_year_end: int = 12) -> Dict:
+    """Set "period_start" and "period_end" on a value from its target_date."""
+    found = period_range(value.get("target_date"), fiscal_year_end)
+    value["period_start"], value["period_end"] = found or (None, None)
+    return value
+
+
+def remap_periods(candidates: List[Dict], fiscal_year_end: int = 12) -> List[Dict]:
+    """Re-run the date range of every value for a fiscal year-end (spec section 2). The stated text and
+    the target date stay; only the ranges move."""
+    for c in candidates:
+        resolve_period(c, fiscal_year_end)
+        for item in c.get("by_period") or ():
+            resolve_period(item, fiscal_year_end)
+    return candidates
 
 
 def find_numbers(line: str, dates: List[Dict]) -> List[Dict]:
@@ -284,38 +452,42 @@ def _borrow_keyword(texts: Iterable[str]) -> Optional[Tuple[str, str]]:
     return None
 
 
-def _borrow_date(texts: Iterable[str]) -> Optional[Tuple[str, str]]:
-    """(date, text): the first month or quarter in the texts, else the first year."""
+def _borrow_date(texts: Iterable[str]) -> Optional[Tuple[str, str, str]]:
+    """(date, text, the date as stated): the first month or quarter in the texts, else the first year."""
     texts = list(texts)
     for wanted in (("quarter", "half", "month"), ("year",)):
         for text in texts:
             found = [d for d in find_dates(text) if d["kind"] in wanted]
             if found:
-                return found[0]["date"], text
+                return found[0]["date"], text, found[0]["text"]
     return None
 
 
 def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), headers: Optional[Dict] = None,
-                    box_period: Optional[str] = None) -> List[Dict]:
+                    box_period: Optional[str] = None, column_periods: Optional[Dict] = None) -> List[Dict]:
     """Candidates in one line. `refs` gives each figure's source reference: a list of
     (start, end, ref) spans, so a table row cites the cell a figure sits in. `context` is the
     nearby text to borrow from, most relevant first; `headers` maps a table column to its header;
-    `box_period` is the period line at the top of the line's text box ("23 Y/E")."""
-    refs, context, headers = list(refs), list(context), headers or {}
+    `box_period` is the period line at the top of the line's text box ("23 Y/E"). `column_periods`
+    maps a table column to the period its header stack states, or NO_PERIOD (see column_periods);
+    a table row is read with the table period rules."""
+    refs, context, headers, column_periods = list(refs), list(context), headers or {}, column_periods
+    table = column_periods is not None
     keywords = _keywords(line)
     date_words = [{"start": m.start(), "end": m.end()} for m in _DATE_WORD.finditer(line)]
-    dates = find_dates(line)
+    dates = find_dates(line, table=table)
     numbers = find_numbers(line, dates)
 
     def ref_at(pos: int) -> Dict:
         return next((r for s, e, r in refs if s <= pos < e), refs[0][2])
 
     def claim(pos, family, value=None, high=None, unit=None, currency=None, date=None, label=None, date_from=None,
-              stated=False):
+              stated=False, period_text=None):
         # "_stated": the date is the figure's own, its column header's or its box's period, not one
         # borrowed by position; only stated periods are compared for a deck inconsistency.
         return {"claim_type": family, "value": value, "value_high": high, "unit": unit, "currency": currency,
-                "target_date": date, "snippet": _snippet(line, pos), "label_from": label and _label(label),
+                "target_date": date, "period_text": period_text if date else None, "snippet": _snippet(line, pos),
+                "label_from": label and _label(label),
                 "date_from": date_from and date_from != label and _label(date_from) or None, "sources": [ref_at(pos)],
                 "_stated": stated}
 
@@ -339,12 +511,20 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
             n = {**n, "value": -(n["value_high"] if n["value_high"] is not None else n["value"]),
                  "value_high": -n["value"] if n["value_high"] is not None else None}
         own_date = _nearest(dates, n)
-        date = None if own_date else _borrow_date(nearby) or _borrow_date([box_period] if box_period else [])
-        stated = bool(own_date or date)
-        date = date or (None if own_date else _borrow_date(context))
+        stacked = (column_periods or {}).get(ref_at(n["pos"]).get("col"))
+        if own_date or stacked is None:
+            date = None if own_date else _borrow_date(nearby) or _borrow_date([box_period] if box_period else [])
+            stated = bool(own_date or date)
+            date = date or (None if own_date else _borrow_date(context))
+        else:
+            # The header stack states the column's period, or says it has none (a month or quarter
+            # with no year above it, a relative column): never borrowed from anywhere else.
+            date = None if stacked is NO_PERIOD else (stacked["label"], stacked["text"], stacked["text"])
+            stated = date is not None
         out.append(claim(n["pos"], family, n["value"], n["value_high"], n["unit"], n["currency"],
                          own_date["date"] if own_date else date and date[0],
-                         label=borrowed and borrowed[1], date_from=date and date[1], stated=stated))
+                         label=borrowed and borrowed[1], date_from=date and date[1], stated=stated,
+                         period_text=own_date["text"] if own_date else date and date[2]))
     if numbers:
         return out
     if dates:
@@ -357,7 +537,7 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
         # A bare date under a milestone ("Positive EBITDA" / "Q2 2024") takes the milestone's type.
         family = "ebitda" if not keywords and (borrowed or [None])[0] == "ebitda" else "product"
         return [claim(d["start"], _type(_nearest(keywords, d), keywords) if keywords else family, date=d["date"],
-                      label=family != "product" and borrowed[1] or None, stated=True)
+                      label=family != "product" and borrowed[1] or None, stated=True, period_text=d["text"])
                 for d in dates if d["kind"] != "year" or keywords]
     # No figure at all: a product line ("Launch the API", a roadmap bullet) or a break-even
     # milestone ("Positive EBITDA") takes a nearby date.
@@ -369,7 +549,7 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
     date = _borrow_date(context)
     if not date:
         return []
-    return [claim(0, family, date=date[0], label=borrowed and borrowed[1], date_from=date[1])]
+    return [claim(0, family, date=date[0], label=borrowed and borrowed[1], date_from=date[1], period_text=date[2])]
 
 
 # ---------------------------------------------------------------------------
@@ -391,6 +571,7 @@ def _units(blocks: List[Dict], file: str) -> List[Dict]:
     for (page, table), rows in tables.items():
         first = min(rows)
         header = {cell["col"]: cell["text"] for cell in rows[first]}
+        periods = column_periods(rows)
         for r, cells in rows.items():
             text, spans = "", []
             for cell in cells:
@@ -405,8 +586,56 @@ def _units(blocks: List[Dict], file: str) -> List[Dict]:
                     max(b[3] for b in boxes)] if boxes else None
             units.append({"text": text, "spans": spans, "page": page, "box": ("table", page, table), "bbox": bbox,
                           "title": False, "headers": header if r != first else {}, "table_row": True,
-                          "header_row": r == first})
+                          "header_row": r == first, "column_periods": periods})
     return units
+
+
+# A table column whose header stack says it has no period: a month or quarter with no year cell
+# above it, or a relative column ("M1", "Year 1"). Its figures borrow no date from elsewhere.
+NO_PERIOD = {"label": None}
+
+
+def column_periods(rows: Dict[int, List[Dict]]) -> Dict[int, Dict]:
+    """col -> the period a table's header stack gives that column (spec section 2, period rules).
+
+    The header stack is the rows above the first row that holds a figure other than a date. For
+    each column, the lowest header cell covering it that is a period decides: a full period
+    ("Y/E 22", "Q3 2025", "Mär 2025"), a month, quarter or half combined with the year cell
+    above it in the same column range ("Q3" under "2025" spanning the quarters), or NO_PERIOD for
+    a part with no year above it or a relative column. A column no period cell covers is absent,
+    and its figures borrow a date as before."""
+    order = sorted(rows)
+    stack = []
+    for r in order:
+        if not _header_like(rows[r]):
+            break
+        stack.append(r)
+    if not stack or len(stack) == len(order):
+        return {}
+
+    def covers(cell, col):
+        return cell["col"] <= col < cell["col"] + cell.get("col_span", 1)
+
+    out = {}
+    columns = {c["col"] for r in order[len(stack):] for c in rows[r]}
+    for col in sorted(columns):
+        for i in range(len(stack) - 1, -1, -1):
+            cell = next((c for c in rows[stack[i]] if covers(c, col)), None)
+            found = period_cell(cell["text"]) if cell else None
+            if not found:
+                continue
+            if "label" in found:
+                out[col] = {"label": found["label"], "text": found["text"]}
+            elif "part" in found:
+                span = range(cell["col"], cell["col"] + cell.get("col_span", 1))
+                above = [c for j in range(i - 1, -1, -1) for c in rows[stack[j]]
+                         if all(covers(c, k) for k in span) and period_cell(c["text"])]
+                joined = combine_period(found, period_cell(above[0]["text"])) if above else None
+                out[col] = {"label": joined["label"], "text": f"{cell['text']} {above[0]['text']}"} if joined else NO_PERIOD
+            else:
+                out[col] = NO_PERIOD
+            break
+    return out
 
 
 def _period_only(text: str) -> bool:
@@ -500,13 +729,42 @@ def _not_plan(units: List[Dict]) -> set:
         pages.setdefault(u["page"], []).append(u)
     out = set()
     for members in pages.values():
-        title = " ".join(m["text"] for m in members if m["title"])
-        cited = any(_CITED.search(m["text"]) for m in members) or \
-            sum(1 for m in members if _FOOTNOTE.search(m["text"])) >= 2
-        if _BACKGROUND_TITLE.search(title) or cited:
+        if _page_excluded(members):
             out.update(id(m) for m in members)
         out.update(id(m) for m in members if _NOT_PLAN_LINE.search(m["text"]))
     return out
+
+
+def _page_excluded(members: List[Dict]) -> bool:
+    """A slide titled Problem, Why now and the like, or a page that cites outside research."""
+    title = " ".join(m["text"] for m in members if m["title"])
+    cited = any(_CITED.search(m["text"]) for m in members) or \
+        sum(1 for m in members if _FOOTNOTE.search(m["text"])) >= 2
+    return bool(_BACKGROUND_TITLE.search(title) or cited)
+
+
+def excluded_pages(blocks: List[Dict]) -> set:
+    """(slide, page) keys of the pages whose every figure is dropped as background or cited research
+    (spec section 2). The structure detector skips them too (spec section 7)."""
+    pages = {}
+    for u in _units(blocks, ""):
+        pages.setdefault(u["page"], []).append(u)
+    return {page for page, members in pages.items() if _page_excluded(members)}
+
+
+def figures(text: str) -> List[Dict]:
+    """The figures of a text that are not dates (a period is a date, never a value)."""
+    return find_numbers(text, find_dates(text))
+
+
+def has_product_keyword(text: str) -> bool:
+    """True when a text holds a product keyword: launch, release, roadmap, ship, milestone."""
+    return any(k["family"] == "product" for k in _keywords(text or ""))
+
+
+def tick_cells(blocks: List[Dict]) -> set:
+    """(page, table, row, col) of the table cells that are row numbers (see _tick_cells)."""
+    return _tick_cells(blocks)
 
 
 def _bare_values(text: str) -> List[float]:
@@ -572,13 +830,16 @@ def _tick_cells(blocks: List[Dict]) -> set:
 
 
 def _period_header(text: str) -> bool:
-    """A table header row of periods ("Y/E 22 | Y/E 23", "Q1 24 | Q2 24"): labels, not claims."""
-    dates = find_dates(text)
-    return bool(dates) and not find_numbers(text, dates)
+    """A table header row of periods ("Y/E 22 | Y/E 23", "Q1 24 | Q2 24", "Q1 | Q2 | Q3"): labels, not claims."""
+    dates = find_dates(text, table=True)
+    cells = [c for c in text.split(" | ") if c.strip()]
+    parts = cells and all(period_cell(c) and "label" not in period_cell(c) for c in cells[1:] or cells)
+    return (bool(dates) or bool(parts)) and _header_like([{"text": c} for c in cells])
 
 
-def detect_candidates(blocks: List[Dict], file: str) -> List[Dict]:
-    """Every candidate in a parsed deck, duplicates merged in order of first appearance."""
+def detect_candidates(blocks: List[Dict], file: str, fiscal_year_end: int = 12) -> List[Dict]:
+    """Every candidate in a parsed deck, duplicates merged in order of first appearance. Each value's
+    period resolves to a date range under the audit's fiscal year-end (1-12, default December)."""
     units = _units(blocks, file)
     contexts = _contexts(units)
     skipped = _axis_ticks(units) | _not_plan(units)
@@ -586,20 +847,23 @@ def detect_candidates(blocks: List[Dict], file: str) -> List[Dict]:
     periods = _box_periods(units)
     merged = {}
     for u in units:
-        if id(u) in skipped or u.get("header_row") and _period_header(u["text"]) or \
-                id(u) in periods and periods[id(u)] is None:
+        if id(u) in skipped or (u.get("header_row") or u.get("table_row") and _in_stack(u)) and _period_header(u["text"]) \
+                or id(u) in periods and periods[id(u)] is None:
             continue
         found = []
-        for c in line_candidates(u["text"], u["spans"], contexts[id(u)], u["headers"], periods.get(id(u))):
+        for c in line_candidates(u["text"], u["spans"], contexts[id(u)], u["headers"], periods.get(id(u)),
+                                 u.get("column_periods") if u.get("table_row") else None):
             s = c["sources"][0]
             if s["kind"] == "table" and (s.get("slide") or s.get("page"), s["table"], s["row"], s["col"]) in tick_cells:
                 continue
-            found.append(c)
+            found.append(resolve_period(c, fiscal_year_end))
         if u.get("table_row"):
             found = _row_series(found, u["headers"])
         for c in found:
             key = (c["claim_type"], c["value"], c["value_high"], c["unit"], c["currency"], c["target_date"],
-                   tuple((i["value"], i["value_high"], i["target_date"]) for i in c.get("by_period") or ()))
+                   c["period_start"], c["period_end"],
+                   tuple((i["value"], i["value_high"], i["target_date"], i["period_start"], i["period_end"])
+                         for i in c.get("by_period") or ()))
             if key not in merged:
                 merged[key] = c
             else:
@@ -613,6 +877,18 @@ def detect_candidates(blocks: List[Dict], file: str) -> List[Dict]:
     return found
 
 
+def _header_like(cells: List[Dict]) -> bool:
+    """A table row of labels and periods: no cell holds a figure other than a date, a month or quarter
+    without its year, or a relative column ("Year 1", "M3")."""
+    return not any(find_numbers(c["text"], find_dates(c["text"], table=True)) and not period_cell(c["text"])
+                   for c in cells)
+
+
+def _in_stack(unit: Dict) -> bool:
+    """True for a table row in its header stack."""
+    return _header_like([{"text": t} for t in unit["text"].split(" | ")])
+
+
 def _flag_inconsistencies(candidates: List[Dict]) -> None:
     """Deck inconsistency: one deck gives the same type and period different values ("Gross Profit
     £150K" for Y/E 23 on a panel, £ 50,000 in the table). Every candidate holding one of them gets
@@ -623,14 +899,15 @@ def _flag_inconsistencies(candidates: List[Dict]) -> None:
     for i, c in enumerate(candidates):
         for v in claim_values(c):
             if v["value"] is not None and v["target_date"] and v["_stated"]:
-                key = (c["claim_type"], v["target_date"], c["currency"], c["unit"] if c["unit"] in ("%", "x") else None)
+                key = (c["claim_type"], v["target_date"], (v["period_start"], v["period_end"]), c["currency"],
+                       c["unit"] if c["unit"] in ("%", "x") else None)
                 seen.setdefault(key, []).append((i, (v["value"], v["value_high"])))
-    for (_, date, _, _), found in seen.items():
+    for (_, stated, _, _, _), found in seen.items():
         if len({value for _, value in found}) > 1:
             for i, _ in found:
                 dates = candidates[i].setdefault("inconsistent_dates", [])
-                if date not in dates:
-                    dates.append(date)
+                if stated not in dates:
+                    dates.append(stated)
     for c in candidates:
         c.setdefault("inconsistent_dates", [])
         c["inconsistent_dates"].sort()
@@ -657,20 +934,27 @@ def _row_series(found: List[Dict], headers: Dict) -> List[Dict]:
         elif c is group[0]:
             def period(item):
                 header = headers.get(item["sources"][0].get("col"))
+                if item["period_text"] and item["date_from"] == item["period_text"]:
+                    return item["period_text"]          # the header stack's period ("Q3 2025")
                 return header if header and find_dates(header) else item["date_from"]
             out.append({**c, "value": None, "value_high": None, "target_date": None, "date_from": None,
+                        "period_text": None, "period_start": None, "period_end": None,
                         "label_from": next((i["label_from"] for i in group if i["label_from"]), None),
                         "sources": [i["sources"][0] for i in group],
                         "by_period": [{"value": i["value"], "value_high": i["value_high"], "target_date": i["target_date"],
-                                       "period": period(i), "source": i["sources"][0], "_stated": i["_stated"]}
+                                       "period": period(i), "period_text": i["period_text"],
+                                       "period_start": i["period_start"], "period_end": i["period_end"],
+                                       "source": i["sources"][0], "_stated": i["_stated"]}
                                       for i in group]})
     return out
 
 
 def claim_values(candidate: Dict) -> List[Dict]:
-    """Each value a candidate states, as {value, value_high, target_date, sources}: the values of a
-    table row by period, or the candidate itself."""
+    """Each value a candidate states, as {value, value_high, target_date, period_start, period_end,
+    sources}: the values of a table row by period, or the candidate itself."""
     if candidate.get("by_period"):
         return [{"value": i["value"], "value_high": i["value_high"], "target_date": i["target_date"],
+                 "period_start": i.get("period_start"), "period_end": i.get("period_end"),
                  "sources": [i["source"]], "_stated": i.get("_stated")} for i in candidate["by_period"]]
-    return [{k: candidate.get(k) for k in ("value", "value_high", "target_date", "sources", "_stated")}]
+    return [{k: candidate.get(k) for k in ("value", "value_high", "target_date", "period_start", "period_end",
+                                           "sources", "_stated")}]

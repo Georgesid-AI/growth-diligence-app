@@ -1,11 +1,31 @@
 """The LLM gateway - the only component permitted to call a model provider.
 
-Data boundary
--------------
-`load_computed_results` is the gateway's ONLY data accessor. It projects the
-calc engine's output field and nothing else, so uploaded rows, raw file bytes
-and parsed deck text are never fetched, let alone sent. No other function here
-touches Mongo for audit data, and no module in this package except
+Data boundary (CLAUDE.md rules 16-18, docs/specs/deck-parser.md section 4)
+--------------------------------------------------------------------------
+Two paths reach the provider, each with its own fields.
+
+Narrative path: `load_computed_results` projects the calc engine's output field and nothing else,
+so uploaded rows, raw file bytes and parsed deck text are never fetched, let alone sent.
+
+Structure path (rule 16, read_structure): selected deck structures (tables, charts with data
+labels, KPI panels, roadmaps and timelines, hiring, unit-economics and use-of-funds tables) and
+spreadsheet header rows (at most 3) with, per column, up to 3 sample values (numeric and date
+columns only) or a profile (distinct count, typical length, shape pattern) for text columns. Only
+after redaction, only with the audit's consent, only as extracted text with cell positions; never
+raw files, full pages or prose slides. The caller hands the text in; the gateway reads no parsed
+deck text, runs redaction again and refuses the call if anything changes. `load_structure_context`
+reads the audit's consent and the names to protect, and nothing else. The deck parser has no link
+to the gateway.
+
+Logs and Mongo (rule 17) store model JSON output (values with cell references), the prompt
+version, the model version, the content hash, token counts and cost; never deck text sent to the
+model. Delete audit removes the model outputs (purge_run).
+
+Verification (rule 18): model output never becomes Verified on its own. app/structures/verify.py
+matches every value to its source cell; unmatched values are shown as "AI suggestion, not
+verified" or dropped.
+
+No other function here touches Mongo for audit data, and no module in this package except
 `prompt_store` performs file I/O.
 
 Order of operations for a generation request:
@@ -23,11 +43,13 @@ import logging
 import os
 import re
 from datetime import datetime, timezone
-from typing import Any, Iterable, List, NamedTuple, Optional, Tuple
+from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Tuple
 
 from .. import disclosure, formatting
+from ..structures import redact as structure_redact
 from . import cache, guards, prompt_store, redaction
-from .schemas import Narrative, NarrativeResponse, UsageResponse, narrative_output_schema
+from .schemas import (CLAIM_METRICS, MAPPING_FIELDS, STRUCTURE_TYPES, DeckUsage, Narrative, NarrativeResponse,
+                      StructureRead, StructureReply, UsageResponse, narrative_output_schema, structure_output_schema)
 
 logger = logging.getLogger("growth.llm")
 
@@ -429,6 +451,9 @@ class AnthropicAdapter:
             response = client.messages.create(**kwargs)
         except Exception as exc:
             raise _classify_provider_error(exc)
+        if getattr(response, "stop_reason", None) == "refusal":
+            # A declined request is not retried: the same request would be declined again.
+            raise GatewayError("model_refused", "the model declined the request")
 
         text = next((b.text for b in response.content if getattr(b, "type", None) == "text"), "")
         usage = getattr(response, "usage", None)
@@ -437,6 +462,24 @@ class AnthropicAdapter:
             int(getattr(usage, "input_tokens", 0) or 0),
             int(getattr(usage, "output_tokens", 0) or 0),
         )
+
+
+    def count_tokens(self, *, model: str, system: Optional[str], user_payload: str,
+                     json_schema: Optional[dict]) -> int:
+        """The input tokens a call would bill, from the provider's token counter (no call is made).
+        With no system prompt and no schema it counts `user_payload` alone."""
+        client = self._ensure_client()
+        extra = {}
+        if system is not None:
+            extra["system"] = system
+        if json_schema is not None:
+            extra["output_config"] = {"format": {"type": "json_schema", "schema": json_schema}}
+        try:
+            response = client.messages.count_tokens(
+                model=model, messages=[{"role": "user", "content": user_payload}], **extra)
+        except Exception as exc:
+            raise _classify_provider_error(exc)
+        return int(getattr(response, "input_tokens", 0) or 0)
 
 
 class RetryableProviderError(Exception):
@@ -670,15 +713,19 @@ async def log_call(
     db, *, run_id: str, step: str, prompt_version: str, model: str,
     input_tokens: int, output_tokens: int, estimated_cost_usd: float,
     cache_hit: bool, status: str, unmatched_numbers: Optional[List[str]] = None,
+    content_hash: Optional[str] = None, deck_id: Optional[str] = None,
 ) -> None:
     """Append to llm_calls.
 
     Deliberately records no prompt text and no payload contents - only the
     metadata needed for cost control and audit. `unmatched_numbers` is the one
     fragment of model output kept, and by construction it contains only numerals
-    the payload does NOT hold, so it cannot echo the computed figures back.
+    the payload does NOT hold, so it cannot echo the computed figures back. A
+    structure reading call adds the content hash of the text sent (never the
+    text) and the deck it came from (CLAUDE.md rule 17).
     """
-    await db[CALLS_COLLECTION].insert_one({
+    extra = {k: v for k, v in (("content_hash", content_hash), ("deck_id", deck_id)) if v is not None}
+    await db[CALLS_COLLECTION].insert_one({**extra,
         "run_id": run_id,
         "step": step,
         "prompt_version": prompt_version,
@@ -1102,20 +1149,354 @@ async def disclosure_for_run(db, run_id: str) -> Optional[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Structure reading (docs/specs/llm-structure-reading.md; CLAUDE.md rules 16-18)
+# ---------------------------------------------------------------------------
+# A constant, separate from NARRATIVE_MODEL: the structure path is pinned to one model. Changing it
+# moves every structure cache key. Temperature stays at the model default and is never sent.
+STRUCTURE_MODEL = "claude-sonnet-5-5"
+STRUCTURE_PROMPT = "structure_reading"
+STRUCTURE_STEP = guards.STRUCTURE_STEP
+STRUCTURE_MAX_TOKENS = 4000
+STRUCTURE_INPUT_CAP = 3000          # tokens of structure text alone, by the provider's token counter
+STRUCTURE_CELL_MAX = 200            # a longer cell is prose
+STRUCTURES_COLLECTION = cache.STRUCTURES_COLLECTION
+NOT_READ = "Not read by AI"
+TOO_LARGE = "Too large for AI reading"
+# A file name in the text means it was built from the wrong thing: refused.
+_FILE_NAME = re.compile(r"(?i)\b[\w\-. ]{1,80}\.(?:pptx?|pdf|docx?|xlsx?|xlsm|xls|csv)\b")
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
+
+async def load_structure_context(db, audit_id: str) -> dict:
+    """The audit's consent and the names the structure path must protect, and nothing else.
+
+    `company_name` is the target, never rewritten by redaction; `client_name` and
+    `engagement_reference` must never reach the provider. Uploaded rows, parsed deck text and
+    candidates are not read here: the text to read is handed in by the caller.
+    """
+    doc = await db[RESULTS_COLLECTION].find_one(
+        {"id": audit_id},
+        {"_id": 0, "id": 1, "company_name": 1, "client_name": 1, "engagement_reference": 1,
+         "structure_reading_consent": 1},
+    )
+    if not doc:
+        raise GatewayError("run_not_found", f"no run {audit_id}")
+    return doc
+
+
+def structure_key(text: str, structure_type: str, prompt_tag: str, model: str) -> str:
+    """sha256 of the text, its type, the prompt cache tag and the model (spec section 8)."""
+    return cache.cache_key(STRUCTURE_STEP, structure_type, prompt_tag, model, text)
+
+
+def content_hash(text: str) -> str:
+    import hashlib
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def structure_text_problem(text: Any, structure_type: str, context: dict, mapping: Dict[str, str]) -> Optional[str]:
+    """Why a text may not reach the provider, or None (CLAUDE.md rule 16, spec sections 1 and 3).
+
+    Only extracted text with cell positions passes: one `r<row>c<col>: <text>` line per cell (and, on
+    the column-mapping path, sample and profile lines). Raw bytes, prose, a file name and a cell over
+    200 characters are refused. The client name and the engagement reference reach the provider only
+    as "[redacted]": the caller replaces them (redact.withheld_values), and one still standing in the
+    text as a whole word (any case; a word ends at a space, punctuation, a hyphen or a change of
+    case, as in redaction) is refused. Redaction is run again and the text must come back unchanged. On the
+    column-mapping path at most 3 header rows and 3 samples per column pass, and no text cell value.
+    """
+    if not isinstance(text, str):
+        return "not_text"
+    if not text.strip():
+        return "empty"
+    if _CONTROL.search(text):
+        return "raw_bytes"
+    if _FILE_NAME.search(text):
+        return "file_name"
+    for field in ("client_name", "engagement_reference"):
+        if structure_redact.has_word(text, str(context.get(field) or "").strip()):
+            return field
+    company = context.get("company_name")
+    if structure_type == "column_mapping":
+        problem = structure_redact.column_text_problem(text)
+        if problem:
+            return problem
+        cells = structure_redact.parse_column_text(text)["headers"]
+    else:
+        cells = structure_redact.parse_structure_text(text)
+        if not cells:
+            return "not_cells"
+    if any(len(c["text"]) > STRUCTURE_CELL_MAX for c in cells):
+        return "cell_too_long"
+    redacted, _ = structure_redact.redact_structure(cells, company, mapping, structure_redact.withheld_values(context))
+    if redacted != cells:
+        return "redaction_changed"
+    return None
+
+
+def _cited_cells(text: str, structure_type: str) -> set:
+    """The cell ids a reply may cite: every cell of a deck structure, the header cells of a sheet."""
+    if structure_type == "column_mapping":
+        cells = (structure_redact.parse_column_text(text) or {}).get("headers") or []
+    else:
+        cells = structure_redact.parse_structure_text(text) or []
+    return {structure_redact.cell_id(c) for c in cells}
+
+
+def parse_structure_reply(reply: str, structure_type: str, text: str) -> StructureReply:
+    """Validate a reply against the schema (extra fields forbidden), the type rule and the cells, or
+    raise GatewayError("parse_failed"). The type may be corrected within the deck types only; a
+    column mapping stays one. Every cited cell must exist in the text that was sent."""
+    try:
+        data = json.loads((reply or "").strip())
+        parsed = StructureReply.model_validate(data)
+    except Exception as exc:
+        raise GatewayError("parse_failed", f"reply did not match the schema: {type(exc).__name__}")
+    if (structure_type == "column_mapping") != (parsed.type == "column_mapping"):
+        raise GatewayError("parse_failed", "type changed between a deck structure and a column mapping")
+    allowed = MAPPING_FIELDS if structure_type == "column_mapping" else CLAIM_METRICS + ("use_of_funds",)
+    if any(item.metric not in allowed for item in parsed.items):
+        raise GatewayError("parse_failed", "a metric that does not belong to this kind of structure")
+    known = _cited_cells(text, structure_type)
+    for item in parsed.items:
+        if item.value_cell not in known or any(c not in known for c in item.period_cells):
+            raise GatewayError("parse_failed", "reply cites a cell that is not in the structure")
+    return parsed
+
+
+async def _count_tokens(adapter, sleep, **kwargs) -> int:
+    """The provider's token count, with the gateway's network retry policy."""
+    attempts = 0
+    while True:
+        try:
+            try:
+                return int(await _to_thread(adapter.count_tokens, **kwargs))
+            except (RetryableProviderError, GatewayError):
+                raise
+            except Exception as raw:
+                raise _classify_provider_error(raw)
+        except RetryableProviderError as exc:
+            attempts += 1
+            if attempts > MAX_PROVIDER_RETRIES:
+                raise GatewayError("provider_unreachable", str(exc))
+            await sleep(2 ** attempts * 0.5)
+
+
+async def _structure_call(adapter, prompt, user_payload, structure_type, text, sleep):
+    """(reply, input tokens, output tokens) summed over every billed attempt. Network or 5xx: up to
+    MAX_PROVIDER_RETRIES with backoff. A reply that fails validation: one reask, then GatewayError."""
+    schema = structure_output_schema()
+    parse_attempts = network_attempts = 0
+    billed_in = billed_out = 0
+    while True:
+        try:
+            try:
+                reply, in_tok, out_tok = await _to_thread(
+                    adapter.complete, model=STRUCTURE_MODEL, system=prompt.text, user_payload=user_payload,
+                    max_tokens=STRUCTURE_MAX_TOKENS, temperature=None, json_schema=schema)
+            except (RetryableProviderError, GatewayError):
+                raise
+            except Exception as raw:
+                raise _classify_provider_error(raw)
+        except RetryableProviderError as exc:
+            network_attempts += 1
+            if network_attempts > MAX_PROVIDER_RETRIES:
+                exc_out = GatewayError("provider_unreachable", str(exc))
+                exc_out.billed = (billed_in, billed_out)
+                raise exc_out
+            await sleep(2 ** network_attempts * 0.5)
+            continue
+        except GatewayError as exc:
+            exc.billed = (billed_in, billed_out)
+            raise
+        billed_in, billed_out = billed_in + in_tok, billed_out + out_tok
+        try:
+            return parse_structure_reply(reply, structure_type, text), billed_in, billed_out
+        except GatewayError as exc:
+            parse_attempts += 1
+            if parse_attempts > MAX_PARSE_RETRIES:
+                exc.billed = (billed_in, billed_out)
+                raise
+
+
+def _structure_result(status, structure_type, reason=None, **fields) -> StructureRead:
+    return StructureRead(status=status, type=structure_type, reason=reason, **fields)
+
+
+async def read_structure(
+    db, audit_id: str, text: str, structure_type: str, *, deck_id: Optional[str] = None,
+    page: Optional[int] = None, adapter=None, sleep=None, use_cache: bool = True,
+) -> StructureRead:
+    """Read one structure or one sheet's headers with the model (CLAUDE.md rules 16-18).
+
+    `text` is the redacted structure text the caller built (one `r<row>c<col>: <text>` line per
+    cell; for `column_mapping`, header cells, samples and profiles). It is checked again here and
+    never stored: only the model's JSON output (values with cell references), the prompt version,
+    the model, the content hash, the tokens and the cost are. Order of operations:
+
+        consent -> boundary and redaction check -> cache (audit, key) -> token count of the text
+        alone (3,000 cap) -> token count of the whole call -> lock (step "structures") -> spend cap
+        -> token cap (200,000 per audit, with the whole call's input) -> provider
+        -> schema, type and cell check (one reask) -> store -> log
+
+    Never raises for a model-side problem: the structure is then "Not read by AI" and Python's result
+    stands. The output is not Verified here: the caller matches every value to its source cell.
+    """
+    import asyncio
+    sleep = sleep or asyncio.sleep
+    if structure_type not in STRUCTURE_TYPES:
+        return _structure_result("not_read", structure_type, f"unknown structure type {structure_type!r}")
+    context = await load_structure_context(db, audit_id)
+    if context.get("structure_reading_consent") is not True:
+        return _structure_result("no_consent", structure_type, "AI-assisted reading is off for this audit")
+    mapping = await redaction.get_map(db, audit_id)
+    problem = structure_text_problem(text, structure_type, context, mapping)
+    if problem:
+        logger.warning("structure refused: run_id=%s step=%s reason=%s", audit_id, STRUCTURE_STEP, problem)
+        return _structure_result("refused", structure_type, f"refused: {problem}")
+    try:
+        prompt = prompt_store.load(STRUCTURE_PROMPT)
+    except (FileNotFoundError, ValueError):
+        return _structure_result("not_read", structure_type, NOT_READ)
+    if STRUCTURE_MODEL not in MODEL_PRICING_USD:
+        return _structure_result("not_read", structure_type, NOT_READ)
+    key = structure_key(text, structure_type, prompt_store.cache_tag(prompt), STRUCTURE_MODEL)
+    digest = content_hash(text)
+    base = {"key": key, "prompt_version": prompt.version, "model": STRUCTURE_MODEL}
+
+    if use_cache:
+        hit = await cache.get_structure(db, audit_id, key)
+        if hit:
+            await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version,
+                           model=STRUCTURE_MODEL, input_tokens=0, output_tokens=0, estimated_cost_usd=0.0,
+                           cache_hit=True, status="cache_hit", content_hash=digest, deck_id=deck_id)
+            return _structure_result("read", structure_type, model_type=hit.get("model_type"),
+                                     items=hit["output"]["items"], cache_hit=True, **base)
+
+    user_payload = cache.canonical_json({"type": structure_type, "text": text})
+    adapter = adapter or AnthropicAdapter()
+    try:
+        # The 3,000-token cap is on the structure text alone; the 200,000 cap counts the whole call.
+        text_tokens = await _count_tokens(adapter, sleep, model=STRUCTURE_MODEL, system=None, user_payload=text,
+                                          json_schema=None)
+        if text_tokens > STRUCTURE_INPUT_CAP:
+            return _structure_result("too_large", structure_type, TOO_LARGE, input_tokens=0, **base)
+        counted = await _count_tokens(adapter, sleep, model=STRUCTURE_MODEL, system=prompt.text,
+                                      user_payload=user_payload, json_schema=structure_output_schema())
+    except GatewayError as exc:
+        code = exc.reason           # a reason code; the exception's message never reaches the log
+        logger.warning("structure not read: run_id=%s step=%s hash=%s reason=%s", audit_id, STRUCTURE_STEP,
+                       digest, code)
+        return _structure_result("not_read", structure_type, NOT_READ, **base)
+
+    token = await guards.acquire(db, audit_id, STRUCTURE_STEP)
+    if token is None:
+        # One structure call per audit at a time: wait for the one in flight, then take the lock.
+        await guards.wait_for_inflight(db, audit_id, STRUCTURE_STEP)
+        token = await guards.acquire(db, audit_id, STRUCTURE_STEP)
+        if token is None:
+            return _structure_result("not_read", structure_type, NOT_READ, **base)
+    billed = (0, 0)
+    try:
+        try:
+            await guards.check_spend_cap(db)
+            await guards.check_structure_token_cap(db, audit_id, counted, STRUCTURE_MAX_TOKENS)
+        except guards.GuardRefusal as refusal:
+            await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version,
+                           model=STRUCTURE_MODEL, input_tokens=0, output_tokens=0, estimated_cost_usd=0.0,
+                           cache_hit=False, status=refusal.reason, content_hash=digest, deck_id=deck_id)
+            stopped = refusal.reason == "structure_token_cap_reached"
+            return _structure_result("stopped" if stopped else "not_read", structure_type,
+                                     refusal.detail if stopped else NOT_READ, **base)
+        try:
+            parsed, in_tok, out_tok = await _structure_call(adapter, prompt, user_payload, structure_type, text, sleep)
+        except GatewayError as exc:
+            billed, code = getattr(exc, "billed", (0, 0)), exc.reason    # a reason code, never the message
+            cost = estimate_cost_usd(STRUCTURE_MODEL, *billed)
+            await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version,
+                           model=STRUCTURE_MODEL, input_tokens=billed[0], output_tokens=billed[1],
+                           estimated_cost_usd=cost, cache_hit=False, status=code, content_hash=digest,
+                           deck_id=deck_id)
+            logger.warning("structure not read: run_id=%s step=%s hash=%s tokens=%d/%d cost=%.6f reason=%s",
+                           audit_id, STRUCTURE_STEP, digest, billed[0], billed[1], cost, code)
+            return _structure_result("not_read", structure_type, NOT_READ, input_tokens=billed[0],
+                                     output_tokens=billed[1], estimated_cost_usd=cost, **base)
+        cost = estimate_cost_usd(STRUCTURE_MODEL, in_tok, out_tok)
+        model_type = parsed.type if parsed.type != structure_type else None
+        output = parsed.model_dump()
+        await _store_structure(db, audit_id=audit_id, key=key, digest=digest, structure_type=structure_type,
+                               model_type=model_type, output=output, prompt_version=prompt.version,
+                               input_tokens=in_tok, output_tokens=out_tok, cost=cost, deck_id=deck_id, page=page)
+        await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version, model=STRUCTURE_MODEL,
+                       input_tokens=in_tok, output_tokens=out_tok, estimated_cost_usd=cost, cache_hit=False,
+                       status="ok", content_hash=digest, deck_id=deck_id)
+        logger.info("structure read: run_id=%s step=%s hash=%s tokens=%d/%d cost=%.6f type_change=%s",
+                    audit_id, STRUCTURE_STEP, digest, in_tok, out_tok, cost,
+                    f"{structure_type}->{model_type}" if model_type else "none")
+        return _structure_result("read", structure_type, model_type=model_type, items=output["items"],
+                                 input_tokens=in_tok, output_tokens=out_tok, estimated_cost_usd=cost, **base)
+    except Exception as exc:  # never let structure reading block an upload
+        logger.error("unexpected structure failure: run_id=%s step=%s error=%s", audit_id, STRUCTURE_STEP,
+                     type(exc).__name__)
+        return _structure_result("not_read", structure_type, NOT_READ, **base)
+    finally:
+        await guards.release(db, audit_id, STRUCTURE_STEP, token)
+
+
+async def _store_structure(db, *, audit_id, key, digest, structure_type, model_type, output, prompt_version,
+                           input_tokens, output_tokens, cost, deck_id, page) -> None:
+    """Store the model's JSON output with its metadata (spec section 9). The text sent is never stored."""
+    await cache.put_structure(db, audit_id, key, {
+        "content_hash": digest, "type": structure_type, "model_type": model_type, "output": output,
+        "prompt_version": prompt_version, "prompt_release": prompt_store.release(), "model": STRUCTURE_MODEL,
+        "input_tokens": int(input_tokens), "output_tokens": int(output_tokens),
+        "estimated_cost_usd": round(float(cost), 6), "deck_id": deck_id, "page": page})
+
+
+async def stored_structure(db, audit_id: str, key: str) -> Optional[dict]:
+    """The stored model output for this audit and key (values with cell references), or None."""
+    return await cache.get_structure(db, audit_id, key)
+
+
+async def record_verification(db, audit_id: str, key: str, statuses: List[str], dropped: int = 0,
+                              periods_corrected: int = 0) -> None:
+    """Store the verifier status of each item next to the model output it checks, and the number of
+    periods Python corrected (spec section 9). The output itself keeps the model's periods."""
+    await cache.set_structure_statuses(db, audit_id, key, statuses, dropped, periods_corrected)
+
+
+# ---------------------------------------------------------------------------
 # Usage + cleanup
 # ---------------------------------------------------------------------------
 async def usage_for_run(db, run_id: str) -> UsageResponse:
+    """Calls, tokens and cost for a run. `calls` counts billed narrative calls (what the call cap
+    counts); structure reading calls are counted apart, against the token cap, and per deck."""
     cursor = db[CALLS_COLLECTION].find({"run_id": run_id}, {"_id": 0})
-    rows = await cursor.to_list(1000)
-    billed = [r for r in rows if not r.get("cache_hit")]
+    rows = await cursor.to_list(100000)
+    structures = [r for r in rows if r.get("step") == STRUCTURE_STEP]
+    narratives = [r for r in rows if r.get("step") != STRUCTURE_STEP]
+    by_deck: Dict[str, DeckUsage] = {}
+    for r in structures:
+        if not r.get("deck_id"):
+            continue
+        deck = by_deck.setdefault(r["deck_id"], DeckUsage())
+        deck.calls += 0 if r.get("cache_hit") else 1
+        deck.cache_hits += 1 if r.get("cache_hit") else 0
+        deck.input_tokens += int(r.get("input_tokens", 0))
+        deck.output_tokens += int(r.get("output_tokens", 0))
+        deck.estimated_cost_usd = round(deck.estimated_cost_usd + float(r.get("estimated_cost_usd", 0.0)), 6)
     return UsageResponse(
         run_id=run_id,
-        calls=len(billed),
+        calls=sum(1 for r in narratives if not r.get("cache_hit")),
         input_tokens=sum(int(r.get("input_tokens", 0)) for r in rows),
         output_tokens=sum(int(r.get("output_tokens", 0)) for r in rows),
         estimated_cost_usd=round(sum(float(r.get("estimated_cost_usd", 0.0)) for r in rows), 6),
         cache_hits=sum(1 for r in rows if r.get("cache_hit")),
         call_cap=guards.MAX_CALLS_PER_RUN,
+        structure_calls=sum(1 for r in structures if not r.get("cache_hit")),
+        structure_tokens=sum(int(r.get("input_tokens", 0)) + int(r.get("output_tokens", 0)) for r in structures),
+        structure_token_cap=guards.STRUCTURE_TOKEN_CAP,
+        by_deck=by_deck,
     )
 
 
@@ -1129,9 +1510,11 @@ async def purge_run(db, run_id: str) -> dict:
     calls = await db[CALLS_COLLECTION].delete_many({"run_id": run_id})
     pseudonyms = await db[redaction.PSEUDONYM_COLLECTION].delete_many({"run_id": run_id})
     locks = await db[guards.LOCKS_COLLECTION].delete_many({"run_id": run_id})
+    structures = await cache.delete_structures(db, run_id)
     return {
         "llm_narratives": narratives,
         "llm_calls": getattr(calls, "deleted_count", 0),
         "pseudonym_map": getattr(pseudonyms, "deleted_count", 0),
         "llm_locks": getattr(locks, "deleted_count", 0),
+        "llm_structures": structures,
     }

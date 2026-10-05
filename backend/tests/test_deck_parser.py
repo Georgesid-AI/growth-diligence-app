@@ -97,8 +97,10 @@ def test_pptx_text_boxes_groups_tables_and_notes_keep_their_slide():
     assert revenue["sources"] == [{**cell, "col": 2}, {**cell, "col": 3}], "one candidate for the row"
     assert (revenue["snippet"], revenue["value"], revenue["target_date"]) == ("Revenue | $1.2M | $2.5M", None, None)
     assert revenue["by_period"] == [
-        {"value": 1200000, "value_high": None, "target_date": "2023", "period": "2023", "source": {**cell, "col": 2}},
-        {"value": 2500000, "value_high": None, "target_date": "2024", "period": "2024", "source": {**cell, "col": 3}}]
+        {"value": 1200000, "value_high": None, "target_date": "2023", "period": "2023", "period_text": "2023",
+         "period_start": "2023-01-01", "period_end": "2023-12-31", "source": {**cell, "col": 2}},
+        {"value": 2500000, "value_high": None, "target_date": "2024", "period": "2024", "period_text": "2024",
+         "period_start": "2024-01-01", "period_end": "2024-12-31", "source": {**cell, "col": 3}}]
     hires, = _by_value(found, 40)
     assert hires["claim_type"] == "people" and hires["target_date"] == "2025"
     assert hires["sources"] == [{"file": "board.pptx", "slide": 2, "kind": "notes"}]
@@ -901,3 +903,349 @@ def test_a_merged_claim_is_compared_when_any_of_its_sources_states_the_period():
     found = claims.detect_candidates(blocks, "deck.pptx")
     assert sorted((c["value"], len(c["sources"]), c["inconsistent_dates"]) for c in found) == \
         [(1000000, 2, ["2023"]), (2000000, 1, ["2023"])]
+
+
+# ---------------------------------------------------------------------------
+# Fiscal year-end (spec section 2, period rules): fiscal years are named by the calendar year in
+# which they end, and every period resolves to a start and an end date. Display keeps the text.
+# With a year-end other than December every year, quarter and half label is fiscal ("2025E",
+# "Q1 25", "H1 25"); months stay calendar months, but a month under a year header falls inside that
+# year: after the year-end month it is in the previous calendar year. With December nothing moves.
+# ---------------------------------------------------------------------------
+_FISCAL_BLOCKS = [
+    {"slide": 1, "kind": "text", "text": "FY25 ARR $3M", "box": 1},
+    {"slide": 2, "kind": "text", "text": "Y/E 22 revenue £1M", "box": 2},
+    {"slide": 3, "kind": "text", "text": "FY2025/26 revenue £4M", "box": 3},
+    {"slide": 4, "kind": "text", "text": "Revenue Q3 25 $2M", "box": 4},
+    {"slide": 5, "kind": "text", "text": "Revenue H1 24 $5M", "box": 5},
+    {"slide": 6, "kind": "text", "text": "Launch in March 2025", "box": 6},
+    {"slide": 7, "kind": "text", "text": "Revenue in 2024 $6M", "box": 7},
+    {"slide": 8, "kind": "table", "table": 1, "row": 1, "col": 1, "text": "Metric"},
+    {"slide": 8, "kind": "table", "table": 1, "row": 1, "col": 2, "text": "FY23"},
+    {"slide": 8, "kind": "table", "table": 1, "row": 1, "col": 3, "text": "FY24"},
+    {"slide": 8, "kind": "table", "table": 1, "row": 2, "col": 1, "text": "Users"},
+    {"slide": 8, "kind": "table", "table": 1, "row": 2, "col": 2, "text": "200"},
+    {"slide": 8, "kind": "table", "table": 1, "row": 2, "col": 3, "text": "5,000"},
+    {"slide": 9, "kind": "text", "text": "Revenue 2025E $7M", "box": 9},
+    {"slide": 10, "kind": "text", "text": "Revenue Q1 FY25 $8M", "box": 10},
+    {"slide": 11, "kind": "text", "text": "FY26 H2 revenue $9M", "box": 11},
+    {"slide": 12, "kind": "table", "table": 2, "row": 1, "col": 1, "text": "Metric"},
+    {"slide": 12, "kind": "table", "table": 2, "row": 1, "col": 2, "text": "FY2025", "col_span": 2},
+    {"slide": 12, "kind": "table", "table": 2, "row": 2, "col": 2, "text": "Q3"},
+    {"slide": 12, "kind": "table", "table": 2, "row": 2, "col": 3, "text": "Q4"},
+    {"slide": 12, "kind": "table", "table": 2, "row": 3, "col": 1, "text": "Customers"},
+    {"slide": 12, "kind": "table", "table": 2, "row": 3, "col": 2, "text": "30"},
+    {"slide": 12, "kind": "table", "table": 2, "row": 3, "col": 3, "text": "40"},
+    {"slide": 13, "kind": "table", "table": 3, "row": 1, "col": 1, "text": "Metric"},
+    {"slide": 13, "kind": "table", "table": 3, "row": 1, "col": 2, "text": "FY2025", "col_span": 3},
+    {"slide": 13, "kind": "table", "table": 3, "row": 1, "col": 5, "text": "2025"},
+    {"slide": 13, "kind": "table", "table": 3, "row": 2, "col": 2, "text": "Mar"},
+    {"slide": 13, "kind": "table", "table": 3, "row": 2, "col": 3, "text": "Apr"},
+    {"slide": 13, "kind": "table", "table": 3, "row": 2, "col": 4, "text": "Dec"},
+    {"slide": 13, "kind": "table", "table": 3, "row": 2, "col": 5, "text": "Jul"},
+    {"slide": 13, "kind": "table", "table": 3, "row": 3, "col": 1, "text": "Users"},
+    {"slide": 13, "kind": "table", "table": 3, "row": 3, "col": 2, "text": "10"},
+    {"slide": 13, "kind": "table", "table": 3, "row": 3, "col": 3, "text": "20"},
+    {"slide": 13, "kind": "table", "table": 3, "row": 3, "col": 4, "text": "30"},
+    {"slide": 13, "kind": "table", "table": 3, "row": 3, "col": 5, "text": "50"},
+    {"slide": 14, "kind": "text", "text": "Revenue Apr FY25 $10M", "box": 14},
+]
+
+
+def _periods(found):
+    """{stated text: (target_date, start, end)} over every value of every candidate."""
+    out = {}
+    for c in found:
+        for v in c.get("by_period") or [c]:
+            out[v["period_text"]] = (v["target_date"], v["period_start"], v["period_end"])
+    return out
+
+
+@pytest.mark.parametrize("year_end, expected", [
+    (12, {"FY25": ("2025", "2025-01-01", "2025-12-31"), "Y/E 22": ("2022", "2022-01-01", "2022-12-31"),
+          "FY2025/26": ("2026", "2026-01-01", "2026-12-31"), "FY23": ("2023", "2023-01-01", "2023-12-31"),
+          "FY24": ("2024", "2024-01-01", "2024-12-31"), "2024": ("2024", "2024-01-01", "2024-12-31"),
+          "2025E": ("2025", "2025-01-01", "2025-12-31"), "Q3 25": ("2025-Q3", "2025-07-01", "2025-09-30"),
+          "H1 24": ("2024-H1", "2024-01-01", "2024-06-30"), "Q1 FY25": ("2025-Q1", "2025-01-01", "2025-03-31"),
+          "FY26 H2": ("2026-H2", "2026-07-01", "2026-12-31"), "Q3 FY2025": ("2025-Q3", "2025-07-01", "2025-09-30"),
+          "Q4 FY2025": ("2025-Q4", "2025-10-01", "2025-12-31"),
+          "March 2025": ("2025-03", "2025-03-01", "2025-03-31"),
+          "Mar FY2025": ("FY2025-03", "2025-03-01", "2025-03-31"), "Apr FY2025": ("FY2025-04", "2025-04-01", "2025-04-30"),
+          "Dec FY2025": ("FY2025-12", "2025-12-01", "2025-12-31"), "Jul 2025": ("FY2025-07", "2025-07-01", "2025-07-31"),
+          "Apr FY25": ("FY2025-04", "2025-04-01", "2025-04-30")}),
+    (3, {"FY25": ("2025", "2024-04-01", "2025-03-31"), "Y/E 22": ("2022", "2021-04-01", "2022-03-31"),
+         "FY2025/26": ("2026", "2025-04-01", "2026-03-31"), "FY23": ("2023", "2022-04-01", "2023-03-31"),
+         "FY24": ("2024", "2023-04-01", "2024-03-31"), "2024": ("2024", "2023-04-01", "2024-03-31"),
+         "2025E": ("2025", "2024-04-01", "2025-03-31"), "Q3 25": ("2025-Q3", "2024-10-01", "2024-12-31"),
+         "H1 24": ("2024-H1", "2023-04-01", "2023-09-30"), "Q1 FY25": ("2025-Q1", "2024-04-01", "2024-06-30"),
+         "FY26 H2": ("2026-H2", "2025-10-01", "2026-03-31"), "Q3 FY2025": ("2025-Q3", "2024-10-01", "2024-12-31"),
+         "Q4 FY2025": ("2025-Q4", "2025-01-01", "2025-03-31"),
+         "March 2025": ("2025-03", "2025-03-01", "2025-03-31"),
+         # A month under a year header: up to the year-end month in the named year, after it the year before.
+         "Mar FY2025": ("FY2025-03", "2025-03-01", "2025-03-31"), "Apr FY2025": ("FY2025-04", "2024-04-01", "2024-04-30"),
+         "Dec FY2025": ("FY2025-12", "2024-12-01", "2024-12-31"), "Jul 2025": ("FY2025-07", "2024-07-01", "2024-07-31"),
+         "Apr FY25": ("FY2025-04", "2024-04-01", "2024-04-30")}),
+    (6, {"FY25": ("2025", "2024-07-01", "2025-06-30"), "Q3 25": ("2025-Q3", "2025-01-01", "2025-03-31"),
+         "H1 24": ("2024-H1", "2023-07-01", "2023-12-31"), "March 2025": ("2025-03", "2025-03-01", "2025-03-31"),
+         "Mar FY2025": ("FY2025-03", "2025-03-01", "2025-03-31"), "Apr FY2025": ("FY2025-04", "2025-04-01", "2025-04-30"),
+         "Dec FY2025": ("FY2025-12", "2024-12-01", "2024-12-31"), "Jul 2025": ("FY2025-07", "2024-07-01", "2024-07-31"),
+         "Apr FY25": ("FY2025-04", "2025-04-01", "2025-04-30")}),
+])
+def test_every_year_quarter_and_half_follows_the_year_end_and_months_stay_calendar(year_end, expected):
+    periods = _periods(claims.detect_candidates(_FISCAL_BLOCKS, "deck.pptx", fiscal_year_end=year_end))
+    assert {k: periods.get(k) for k in expected} == expected
+
+
+def test_every_period_resolves_to_a_start_and_an_end_and_the_default_year_end_is_december():
+    found = claims.detect_candidates(_FISCAL_BLOCKS, "deck.pptx")
+    assert _periods(found)["FY25"] == ("2025", "2025-01-01", "2025-12-31")
+    for year_end in (12, 3):
+        values = [v for c in claims.detect_candidates(_FISCAL_BLOCKS, "deck.pptx", fiscal_year_end=year_end)
+                  for v in (c.get("by_period") or [c])]
+        assert values and all(v["period_start"] and v["period_end"] and v["period_start"] <= v["period_end"]
+                              for v in values if v["target_date"]), year_end
+
+
+def test_changing_the_year_end_re_maps_the_stored_periods():
+    found = claims.detect_candidates(_FISCAL_BLOCKS, "deck.pptx", fiscal_year_end=12)
+    claims.remap_periods(found, 3)
+    assert _periods(found)["FY25"] == ("2025", "2024-04-01", "2025-03-31")
+    assert _periods(found)["Q3 25"] == ("2025-Q3", "2024-10-01", "2024-12-31")
+    assert _periods(found)["March 2025"] == ("2025-03", "2025-03-01", "2025-03-31")
+    claims.remap_periods(found, 12)
+    assert _periods(found)["Q3 25"] == ("2025-Q3", "2025-07-01", "2025-09-30")
+
+
+def test_the_audit_year_end_is_used_at_upload_and_a_change_re_maps_the_stored_claims(api):
+    client, db = api
+    assert client.put("/api/audits/audit-1", json={"fiscal_year_end": 3}).status_code == 200
+    assert _upload(client, "audit-1", "fy.pptx", _slide([("FY25 ARR $3M", 1, 2), ("Revenue Q3 25 $2M", 1, 4)])).status_code == 200
+    stored = {c["period_text"]: c for c in db[decks.CANDIDATES_COLLECTION].docs}
+    assert (stored["FY25"]["target_date"], stored["FY25"]["period_start"], stored["FY25"]["period_end"]) == \
+        ("2025", "2024-04-01", "2025-03-31")
+    assert (stored["Q3 25"]["period_start"], stored["Q3 25"]["period_end"]) == ("2024-10-01", "2024-12-31")
+    assert client.put("/api/audits/audit-1", json={"fiscal_year_end": 12}).status_code == 200
+    stored = {c["period_text"]: c for c in db[decks.CANDIDATES_COLLECTION].docs}
+    assert (stored["FY25"]["period_start"], stored["FY25"]["period_end"]) == ("2025-01-01", "2025-12-31")
+    assert (stored["Q3 25"]["period_start"], stored["Q3 25"]["period_end"]) == ("2025-07-01", "2025-09-30")
+    for bad in (0, 13):
+        assert client.put("/api/audits/audit-1", json={"fiscal_year_end": bad}).status_code == 422
+
+
+def test_an_edited_date_follows_the_year_end_and_drops_the_stated_text(api):
+    client, db = api
+    client.put("/api/audits/audit-1", json={"fiscal_year_end": 3})
+    _upload(client, "audit-1", "fy.pptx", _slide([("FY25 ARR $3M", 1, 2)]))
+    arr, = db[decks.CANDIDATES_COLLECTION].docs
+    url = f"/api/audits/audit-1/decks/candidates/{arr['id']}"
+    kept = client.put(url, json={"value": 3100000, "target_date": "2025"}).json()
+    assert (kept["period_text"], kept["period_start"]) == ("FY25", "2024-04-01"), "same date: the stated period stays"
+    moved = client.put(url, json={"target_date": "2026-Q1"}).json()
+    assert (moved["period_text"], moved["period_start"], moved["period_end"]) == (None, "2025-04-01", "2025-06-30")
+    month = client.put(url, json={"target_date": "2026-02"}).json()
+    assert (month["period_start"], month["period_end"]) == ("2026-02-01", "2026-02-28"), "a month stays calendar"
+    in_year = client.put(url, json={"target_date": "FY2026-04"}).json()
+    assert (in_year["period_start"], in_year["period_end"]) == ("2025-04-01", "2025-04-30"), "April of FY2026"
+
+
+def test_a_table_row_with_months_under_a_year_header_can_be_edited(api):
+    client, db = api
+    client.put("/api/audits/audit-1", json={"fiscal_year_end": 3})
+    blocks = [b for b in _FISCAL_BLOCKS if b.get("slide") == 13]
+    db[decks.CANDIDATES_COLLECTION].docs.extend(
+        {**c, "id": f"c{i}", "audit_id": "audit-1", "deck_id": "d1", "status": "pending"}
+        for i, c in enumerate(claims.detect_candidates(blocks, "deck.pptx", fiscal_year_end=3)))
+    row = next(c for c in db[decks.CANDIDATES_COLLECTION].docs if c.get("by_period"))
+    edit = [{"value": i["value"] + 1, "value_high": None, "target_date": i["target_date"]} for i in row["by_period"]]
+    r = client.put(f"/api/audits/audit-1/decks/candidates/{row['id']}", json={"by_period": edit})
+    assert r.status_code == 200, r.text
+    assert [(i["target_date"], i["period_start"]) for i in r.json()["by_period"]][:2] == \
+        [("FY2025-03", "2025-03-01"), ("FY2025-04", "2024-04-01")]
+
+
+# ---------------------------------------------------------------------------
+# Structure detection (spec section 7): tables, charts, KPI panels, roadmaps and timelines, and the
+# hiring, unit-economics and use-of-funds tables. The thresholds were fixed on the 10 test decks.
+# ---------------------------------------------------------------------------
+from app.structures import redact as structure_redact  # noqa: E402
+
+DECK_STRUCTURES = {
+    "01-front-b.pptx": [(11, "kpi_panel"), (12, "kpi_panel"), (14, "kpi_panel"), (15, "kpi_panel"), (16, "kpi_panel"),
+                        (18, "kpi_panel")],
+    "02-moz.pdf": [(2, "roadmap"), (13, "kpi_panel"), (20, "kpi_panel"), (21, "kpi_panel"), (23, "kpi_panel"),
+                   (32, "kpi_panel")],
+    "03-buffer.pptx": [(6, "roadmap")],
+    "04-clevergig.docx": [(7, "kpi_panel")],
+    "05-zero2hero.pdf": [(11, "kpi_panel"), (17, "kpi_panel"), (19, "table"), (19, "kpi_panel"), (22, "hiring_table")],
+    "06-uber.pdf": [],
+    "07-equals-seed.docx": [],
+    "08-genesisai-2021.pdf": [(13, "kpi_panel"), (14, "kpi_panel")],
+    "09-genesisai-2024.pdf": [(5, "kpi_panel"), (13, "kpi_panel"), (14, "kpi_panel")],
+    "10-tea.pdf": [(6, "kpi_panel"), (9, "kpi_panel"), (11, "roadmap")],
+}
+
+
+@pytest.mark.parametrize("file", sorted(DECK_STRUCTURES))
+def test_the_structures_found_on_the_test_decks(file):
+    deck = parser.parse_deck((DECKS / file).read_bytes(), file)
+    assert [(s.get("slide") or s.get("page"), s["type"]) for s in deck["structures"]] == DECK_STRUCTURES[file]
+    for s in deck["structures"]:
+        assert s["type"] in parser.STRUCTURE_TYPES and s["cells"]
+        assert all(len(c["text"]) <= parser.CELL_MAX for c in s["cells"])
+        assert len({(c["row"], c["col"]) for c in s["cells"]}) == len(s["cells"]), "one cell per position"
+
+
+def test_chart_axes_drawn_as_text_are_not_a_timeline_and_a_timeline_needs_a_product_word():
+    # front-b slides 10-13: quarter labels under charts drawn as text boxes, evenly spaced.
+    deck = parser.parse_deck((DECKS / "01-front-b.pptx").read_bytes(), "01-front-b.pptx")
+    assert not [s for s in deck["structures"] if s["type"] == "roadmap"]
+    dated = _slide([("Q1 2024", 1, 1), ("Q3 2024", 3, 1), ("Q2 2025", 5, 1), ("Launch the API", 1, 2)])
+    assert [s["type"] for s in parser.parse_deck(dated, "d.pptx")["structures"]] == ["roadmap"]
+    plain = _slide([("Q1 2024", 1, 1), ("Q3 2024", 3, 1), ("Q2 2025", 5, 1), ("Hired a VP", 1, 2)])
+    assert not [s for s in parser.parse_deck(plain, "d.pptx")["structures"] if s["type"] == "roadmap"]
+    axis = _slide([("Q1 2024", 1, 1), ("Q2 2024", 3, 1), ("Q3 2024", 5, 1), ("Launch the API", 1, 2)])
+    assert not [s for s in parser.parse_deck(axis, "d.pptx")["structures"] if s["type"] == "roadmap"], \
+        "evenly spaced, distinct dates in a row are an axis"
+
+
+def test_the_timeline_grid_keeps_each_box_as_a_column_of_its_band():
+    deck = parser.parse_deck((DECKS / "10-tea.pdf").read_bytes(), "10-tea.pdf")
+    roadmap, = [s for s in deck["structures"] if s["type"] == "roadmap"]
+    cells = {(c["row"], c["col"]): c for c in roadmap["cells"]}
+    assert (cells[(1, 1)]["text"], cells[(2, 1)]["text"], cells[(2, 2)]["text"]) == ("2021", "Q2", "Gluon wallet")
+    assert cells[(1, 1)]["box"] == cells[(2, 1)]["box"] != cells[(2, 2)]["box"]
+
+
+def test_a_kpi_box_is_short_lines_with_a_figure_and_a_label_never_a_wrapped_sentence():
+    found = parser.parse_deck(_slide([("2.5 hours\nper user per day", 1, 1), ("64%\nDAU / MAU ratio", 4, 1),
+                                      ("We raised revenue of\n$1.1M from customers", 1, 3), ("40%", 4, 3)]), "d.pptx")
+    panel, = found["structures"]
+    assert panel["type"] == "kpi_panel"
+    assert [c["text"] for c in sorted(panel["cells"], key=lambda c: (c["row"], c["col"]))] == \
+        ["2.5 hours", "64%", "per user per day", "DAU / MAU ratio"], "the wrapped sentence and the bare 40% stay out"
+
+
+def test_a_table_without_a_figure_is_prose_and_row_numbers_are_not_figures():
+    deck = parser.parse_deck((DECKS / "07-equals-seed.docx").read_bytes(), "07-equals-seed.docx")
+    assert deck["structures"] == [], "numbered text tables are prose"
+    swot = parser.parse_deck((DECKS / "05-zero2hero.pdf").read_bytes(), "05-zero2hero.pdf")
+    assert not [s for s in swot["structures"] if s.get("page") == 14], "a SWOT table numbered 1-12 is prose"
+
+
+@pytest.mark.parametrize("header, caption, kind", [
+    (["Role", "Start", "Salary"], None, "hiring_table"),
+    (["Metric", "Value"], None, "table"),
+    (["", "2024"], "Recruitment plan", "hiring_table"),
+    (["Use of funds", "%"], None, "use_of_funds"),
+    (["Metric", "2025"], "Unit economics", "unit_economics"),
+    (["", "Value"], None, "unit_economics"),         # CAC in the first column
+])
+def test_a_table_takes_its_type_from_its_header_keywords_and_caption(header, caption, kind):
+    rows = [header, ["CAC" if kind == "unit_economics" and caption is None else "Engineer", "£50,000"]]
+    boxes = [(caption, 1, 1.4)] if caption else []
+    deck = parser.parse_deck(_slide(boxes, table=(rows, 1, 2)), "d.pptx")
+    assert [s["type"] for s in deck["structures"] if s.get("table")] == [kind]
+
+
+def test_a_pptx_chart_is_read_from_its_xml_with_title_axis_titles_series_and_values():
+    from pptx.chart.data import CategoryChartData
+    from pptx.enum.chart import XL_CHART_TYPE
+    from pptx.util import Inches
+    prs = pptx.Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    data = CategoryChartData()
+    data.categories = ["FY23", "FY24", "FY25"]
+    data.add_series("ARR", (1.2, 2.5, 4.0))
+    data.add_series("Customers", (40, 75, 120))
+    chart = slide.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(1), Inches(1), Inches(6), Inches(4), data).chart
+    chart.has_title = True
+    chart.chart_title.text_frame.text = "Growth plan"
+    chart.value_axis.has_title = True
+    chart.value_axis.axis_title.text_frame.text = "£m"
+    buf = io.BytesIO()
+    prs.save(buf)
+    deck = parser.parse_deck(buf.getvalue(), "chart.pptx")
+    found, = deck["structures"]
+    assert (found["type"], found["slide"], found["header_rows"]) == ("chart", 1, 3)
+    text = structure_redact.structure_text(found["cells"])
+    assert text.splitlines()[:5] == ["r1c1: Growth plan (r1c1:r1c3)", "r2c2: £m (r2c2:r2c3)", "r3c2: ARR",
+                                     "r3c3: Customers", "r4c1: FY23"]
+    assert "r6c2: 4" in text and "r6c3: 120" in text
+
+
+def _merged_table_slide(rows, merges):
+    """A slide with one table; merges: [(row, col, rows, cols)], zero-based."""
+    from pptx.util import Inches
+    prs = pptx.Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    grid = slide.shapes.add_table(len(rows), len(rows[0]), Inches(1), Inches(2), Inches(6), Inches(2)).table
+    for r, row in enumerate(rows):
+        for c, text in enumerate(row):
+            if text:
+                grid.cell(r, c).text = text
+    for r, c, nr, nc in merges:
+        grid.cell(r, c).merge(grid.cell(r + nr - 1, c + nc - 1))
+    buf = io.BytesIO()
+    prs.save(buf)
+    return buf.getvalue()
+
+
+def test_a_merged_header_keeps_its_span_in_the_header_stack_and_the_structure_text():
+    rows = [["", "2025", "", "", ""], ["", "Q1", "Q2", "Q3", "Q4"], ["Revenue", "$1M", "$2M", "$3M", "$4M"]]
+    deck = parser.parse_deck(_merged_table_slide(rows, [(0, 1, 1, 4)]), "m.pptx")
+    assert _has(deck["blocks"], slide=1, kind="table", row=1, col=2, text="2025", col_span=4)
+    table, = deck["structures"]
+    assert table["header_rows"] == 2
+    text = structure_redact.structure_text(table["cells"])
+    assert text.splitlines()[:2] == ["r1c2: 2025 (r1c2:r1c5)", "r2c2: Q1"]
+
+
+def test_a_quarter_under_its_year_is_a_two_cell_period_and_with_no_year_it_has_none():
+    rows = [["", "2025", "", "", ""], ["", "Q1", "Q2", "Q3", "Q4"], ["Revenue", "$1M", "$2M", "$3M", "$4M"]]
+    row, = claims.detect_candidates(parser.parse_deck(_merged_table_slide(rows, [(0, 1, 1, 4)]), "m.pptx")["blocks"], "m.pptx")
+    assert [(i["value"], i["target_date"], i["period"]) for i in row["by_period"]] == [
+        (1000000, "2025-Q1", "Q1 2025"), (2000000, "2025-Q2", "Q2 2025"), (3000000, "2025-Q3", "Q3 2025"),
+        (4000000, "2025-Q4", "Q4 2025")]
+    no_year = _slide([("Plan 2024", 1, 1)], table=([["", "Q1", "Q2"], ["Revenue", "$1M", "$2M"]], 1, 2))
+    row, = claims.detect_candidates(parser.parse_deck(no_year, "n.pptx")["blocks"], "n.pptx")
+    assert [i["target_date"] for i in row["by_period"]] == [None, None], "never inferred from the slide title"
+    relative = _slide([("Plan 2024", 1, 1)], table=([["", "Year 1", "Year 2"], ["Revenue", "$1M", "$2M"]], 1, 2))
+    row, = claims.detect_candidates(parser.parse_deck(relative, "r.pptx")["blocks"], "r.pptx")
+    assert [i["target_date"] for i in row["by_period"]] == [None, None], "relative columns have no period"
+
+
+@pytest.mark.parametrize("months, expected", [
+    (["Mär 2025", "Okt 2025"], ["2025-03", "2025-10"]),
+    (["март 2025", "ДЕКЕМВРИ 2025"], ["2025-03", "2025-12"]),
+    (["january 2025", "SEPT 2025"], ["2025-01", "2025-09"]),
+])
+def test_month_names_in_a_table_header_are_english_german_or_bulgarian_in_any_case(months, expected):
+    row, = _found(_slide([], table=([[""] + months, ["Revenue", "€1M", "€2M"]], 1, 2)))
+    assert [i["target_date"] for i in row["by_period"]] == expected
+
+
+def test_a_docx_merged_cell_starts_in_its_grid_column_and_keeps_its_span():
+    document = docx.Document()
+    table = document.add_table(rows=2, cols=3)
+    merged = table.cell(0, 0).merge(table.cell(0, 1))
+    merged.text = "Plan"
+    table.cell(0, 2).text = "FY2025"
+    for c, text in enumerate(["Revenue", "€1M", "€2M"]):
+        table.cell(1, c).text = text
+    buf = io.BytesIO()
+    document.save(buf)
+    deck = parser.parse_deck(buf.getvalue(), "t.docx")
+    assert _has(deck["blocks"], kind="table", row=1, col=1, text="Plan", col_span=2)
+    assert _has(deck["blocks"], kind="table", row=1, col=3, text="FY2025"), "the cell after a merge starts in grid column 3"
+    assert _has(deck["blocks"], kind="table", row=2, col=3, text="€2M")
+
+
+def test_structures_are_stored_with_the_parsed_text_and_never_listed(api):
+    client, db = api
+    _upload(client, "audit-1", "05-zero2hero.pdf", (DECKS / "05-zero2hero.pdf").read_bytes())
+    stored, = db[decks.TEXT_COLLECTION].docs
+    assert [s["type"] for s in stored["structures"]] == [t for _, t in DECK_STRUCTURES["05-zero2hero.pdf"]]
+    listed = client.get("/api/audits/audit-1/decks").json()["decks"][0]
+    assert "structures" not in listed and "blocks" not in listed, "cells are deck text: never in a listing"
+    client.delete(f"/api/audits/audit-1/decks/{stored['deck_id']}")
+    assert db[decks.TEXT_COLLECTION].docs == [], "removed with the deck"

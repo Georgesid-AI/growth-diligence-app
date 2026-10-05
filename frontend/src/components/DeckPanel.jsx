@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Check, FileText, Loader2, Pencil, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -6,8 +6,8 @@ import { Input } from "@/components/ui/input";
 import { getDecks, removeDeck, updateCandidate, uploadDeck } from "@/lib/api";
 import {
   ALL_DECKS, CLAIM_TYPES, CLAIM_UNITS, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
-  DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, INCONSISTENCY_LABEL, PLACEHOLDER, STATUS_LABELS, claimDate, claimValue, rowEdit, sourceRef,
-  statusCounts, typeLabel,
+  DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, INCONSISTENCY_LABEL, PLACEHOLDER, STATUS_LABELS, VERIFIED_LABEL, claimDate, claimValue, deckRunLog,
+  rowEdit, sourceRef, statusCounts, typeLabel,
 } from "@/lib/deckClaims";
 
 const STATUS_STYLE = {
@@ -35,6 +35,14 @@ export default function DeckPanel({ auditId }) {
     });
   }).catch(() => toast.error("Could not load deck claims")), [auditId]);
   useEffect(() => { load(); }, [load]);
+
+  // A deck's structures are read after its upload returns: check back while one is still being read.
+  const polls = useRef(0);
+  useEffect(() => {
+    if (!data.decks.some((d) => d.ai_status === "reading") || polls.current >= 24) return undefined;
+    const timer = setTimeout(() => { polls.current += 1; load(); }, 5000);
+    return () => clearTimeout(timer);
+  }, [data, load]);
 
   const onFile = async (e) => {
     const file = e.target.files?.[0];
@@ -140,6 +148,11 @@ export default function DeckPanel({ auditId }) {
               )}
             </div>
           )}
+          {selectedDeck && deckRunLog(selectedDeck).length > 0 && (
+            <div className="text-[11px] font-mono text-slate-600 mb-2 space-y-0.5" data-testid="deck-run-log">
+              {deckRunLog(selectedDeck).map((line) => <div key={line}>{line}</div>)}
+            </div>
+          )}
           <div className="text-[11px] text-slate-500 font-mono mb-2">
             {counts.pending} to review · {counts.approved} approved · {counts.edited} edited · {counts.rejected} rejected
           </div>
@@ -237,6 +250,13 @@ function CandidateRow({ candidate: c, onSave }) {
         <span className={`text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-nowrap ${STATUS_STYLE[c.status] || ""}`}>
           {STATUS_LABELS[c.status] || c.status}
         </span>
+        {c.ai_label && (
+          <div className={`mt-1 text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-nowrap ${c.ai_label === VERIFIED_LABEL
+            ? "text-emerald-800 border-emerald-500/50 bg-emerald-50" : "text-amber-800 border-amber-500/50 bg-amber-50"}`}
+            data-testid="candidate-ai-label">
+            {c.ai_label}
+          </div>
+        )}
         {c.inconsistent_dates?.length > 0 && (
           <div className="mt-1 text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-nowrap text-amber-800 border-amber-500/50 bg-amber-50"
             title={`This deck gives another value for the same type and period: ${c.inconsistent_dates.join(", ")}`}

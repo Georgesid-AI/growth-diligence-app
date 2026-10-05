@@ -42,6 +42,8 @@ def _matches(doc, flt):
                     return False
                 if op == "$in" and value not in operand:
                     return False
+                if op == "$ne" and value == operand:
+                    return False
         else:
             if doc.get(key) != cond:
                 return False
@@ -212,13 +214,26 @@ class FakeAdapter:
         self._replies = list(replies or [json.dumps(GOOD_NARRATIVE)])
         self._raise_with = raise_with
 
+    input_tokens = 1200           # what count_tokens reports for a whole call and complete bills
+    text_tokens = None            # what count_tokens reports for the structure text alone (None: input_tokens)
+
     def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema):
         self.calls += 1
         self.payloads.append(user_payload)
+        self.requests = getattr(self, "requests", []) + [
+            {"model": model, "max_tokens": max_tokens, "temperature": temperature, "json_schema": json_schema}]
         if self._raise_with is not None:
             raise self._raise_with
         reply = self._replies[min(self.calls - 1, len(self._replies) - 1)]
-        return reply, 1200, 300
+        return reply, self.input_tokens, 300
+
+    def count_tokens(self, *, model, system, user_payload, json_schema):
+        self.counted = getattr(self, "counted", 0) + 1
+        self.count_requests = getattr(self, "count_requests", []) + [
+            {"system": system, "user_payload": user_payload, "json_schema": json_schema}]
+        if system is None and self.text_tokens is not None:
+            return self.text_tokens
+        return self.input_tokens
 
 
 async def _noop_sleep(_seconds):
