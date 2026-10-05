@@ -742,14 +742,26 @@ def test_delete_audit_removes_model_outputs_cache_and_mapping(monkeypatch):
         assert db[name].docs == [], name
 
 
-def test_the_consistency_script_reports_agreement_match_rate_cost_and_cache_hits_without_a_live_call():
-    """scripts/consistency_run.py is manual (live API, costs money); --fake checks its arithmetic."""
-    pytest.importorskip("pdfplumber")
+def _consistency_script():
     import importlib.util
     spec = importlib.util.spec_from_file_location("consistency_run", BACKEND.parent / "scripts" / "consistency_run.py")
     script = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(script)
+    return script
+
+
+def test_the_consistency_script_reports_agreement_match_rate_cost_and_cache_hits_without_a_live_call(
+        monkeypatch, tmp_path):
+    """scripts/consistency_run.py is manual (live API, costs money); --fake checks its arithmetic."""
+    pytest.importorskip("pdfplumber")
+    import tempfile
+    script = _consistency_script()
+    monkeypatch.setattr(script, "REPORTS", tmp_path / "docs" / "test-runs")
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "temp"))
+    (tmp_path / "temp").mkdir()
     report = script.main(["--fake", "--deck", "05-zero2hero.pdf"])
+    assert [p.name.split("_")[0] for p in (tmp_path / "temp").iterdir()] == ["consistency"]
+    assert not script.REPORTS.exists(), "a fake run's report never lands in docs/test-runs"
     assert report["agreement_pct"]["table"] == 100.0 and report["agreement_pct"]["kpi_panel"] == 100.0
     assert report["verifier_match_rate_pct"] == pytest.approx(100.0 * 16 / 17, abs=0.1), "14 + 2 verified of 17 per pass"
     assert report["cache_hit_rate_pct"] == {"pass_2": 100.0, "pass_3": 100.0}
@@ -772,6 +784,86 @@ def test_the_consistency_script_reports_agreement_match_rate_cost_and_cache_hits
     os.environ.pop("ANTHROPIC_API_KEY", None)
     with pytest.raises(SystemExit, match="ANTHROPIC_API_KEY"):
         script.main(["--yes", "--deck", "05-zero2hero.pdf"])
+
+
+def _motor_without_a_server(monkeypatch, names, drop_fails=False):
+    """Real motor: it binds a client to the event loop of the client's first call and runs every later call
+    on that loop. Only the blocking pymongo call is answered here, so no MongoDB server is needed."""
+    import motor.frameworks.asyncio as framework
+    from pymongo.errors import AutoReconnect
+    real, dropped = framework.run_on_executor, []
+
+    def answer(sync_method, delegate, *args, **kwargs):
+        if sync_method.__name__ == "list_database_names":
+            return list(names)
+        if sync_method.__name__ == "drop_database":
+            if drop_fails:
+                raise AutoReconnect("connection lost")
+            dropped.append(args[0])
+            return None
+        raise AssertionError(f"unexpected server call {sync_method.__name__}")
+    monkeypatch.setattr(framework, "run_on_executor", lambda loop, fn, *a, **k: real(loop, answer, fn, *a, **k))
+    return dropped
+
+
+def test_the_live_run_drops_its_scratch_database_in_the_event_loop_it_ran_in(monkeypatch, tmp_path, capsys):
+    """`consistency_run.py --yes` crashed with "RuntimeError: Event loop is closed" at drop_database and wrote
+    no report: motor had bound the client to the run's loop, which asyncio.run had closed."""
+    pytest.importorskip("pdfplumber")
+    import datetime
+    script = _consistency_script()
+    dropped = _motor_without_a_server(monkeypatch, ["consistency_run", "consistency_run_old", "growth_diligence"])
+    run = script.run
+
+    async def live_run(decks, passes, db, adapter=None):
+        await db.client.list_database_names()            # a motor call binds the client to this loop, as an insert does
+        return await run(decks, passes, script.MemoryDB(), script.FakeAdapter())     # no MongoDB, no live API
+    monkeypatch.setattr(script, "run", live_run)
+    monkeypatch.setattr(script, "REPORTS", tmp_path / "docs" / "test-runs")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "not-used")
+    report = script.main(["--yes", "--deck", "05-zero2hero.pdf"])
+    assert report["per_deck"]["05-zero2hero.pdf"]["structures"] == 5
+    assert dropped == ["consistency_run", "consistency_run_old", "consistency_run"], \
+        "leftovers of earlier runs at start, by name pattern; this run's own at the end; never another database"
+    day = datetime.date.today().isoformat()
+    path = tmp_path / "docs" / "test-runs" / f"consistency_{day}.md"
+    out = capsys.readouterr().out.splitlines()
+    assert out[:2] == ["Dropped scratch database consistency_run left by an earlier run",
+                       "Dropped scratch database consistency_run_old left by an earlier run"]
+    assert [line.split(":")[0] for line in out[2:5]] == [f"[1/1] 05-zero2hero.pdf pass {n}/3" for n in (1, 2, 3)]
+    assert all("5 of 5 structures read" in line for line in out[2:5]), "one progress line per deck and pass"
+    assert out[5:] == [f"Report: {path}", script.summary(report)], "the report path and a summary line, last"
+    assert out[6].startswith("Agreement 100.0% (target 95.0%: met); verified 94.1%")
+    text = path.read_text(encoding="utf-8")
+    assert text.startswith(f"# Consistency run {day}\n\nLive API. Decks: 1. Passes: 3. Model: {gateway.STRUCTURE_MODEL}.")
+    for line in ("| table | 100.0% |", "| kpi_panel | 100.0% |", "- Match rate: 94.1%", "| 2 | 100.0% |", "| 3 | 100.0% |",
+                 "| 05-zero2hero.pdf | 5 | 15,000 | 300 |"):
+        assert line in text, line
+    script.main(["--yes", "--deck", "05-zero2hero.pdf"])
+    assert path.read_text(encoding="utf-8") == text, "a later run the same day never overwrites a report"
+    assert (path.parent / f"consistency_{day}-2.md").exists()
+    del dropped[:]
+    with pytest.raises(SystemExit, match="--db must be consistency_run"):
+        script.main(["--yes", "--db", "growth_diligence"])
+    assert dropped == [], "the run drops only a database it may clean up at the next start"
+
+
+def test_a_failed_drop_keeps_the_paid_report(monkeypatch, tmp_path):
+    """The report is written before the scratch database is dropped; the next run drops what is left."""
+    pytest.importorskip("pdfplumber")
+    from pymongo.errors import AutoReconnect
+    script = _consistency_script()
+    _motor_without_a_server(monkeypatch, [], drop_fails=True)
+    run = script.run
+
+    async def live_run(decks, passes, db, adapter=None):
+        return await run(decks, passes, script.MemoryDB(), script.FakeAdapter())
+    monkeypatch.setattr(script, "run", live_run)
+    monkeypatch.setattr(script, "REPORTS", tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "not-used")
+    with pytest.raises(AutoReconnect):
+        script.main(["--yes", "--deck", "05-zero2hero.pdf"])
+    assert [p.name.split("_")[0] for p in tmp_path.iterdir()] == ["consistency"]
 
 
 # ---------------------------------------------------------------------------

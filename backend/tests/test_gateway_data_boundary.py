@@ -907,3 +907,28 @@ def test_the_deck_parser_still_has_no_link_to_the_structure_path_or_the_gateway(
     for path in sorted((BACKEND / "app" / "decks").rglob("*.py")):
         for module, name in _imports(ast.parse(path.read_text(encoding="utf-8"))):
             assert "structures" not in re.split(r"[.\s\"'()]+", module), f"{path.name} imports {module}"
+
+
+def test_the_consistency_run_prints_and_reports_no_text_sent_to_the_model(monkeypatch, tmp_path, capsys):
+    """Rule 17 for scripts/consistency_run.py: its progress lines and its report (kept in docs/test-runs) carry
+    deck file names, counts, rates, tokens and cost, never the text of a structure."""
+    pytest.importorskip("pdfplumber")
+    import importlib.util
+    import tempfile
+    from app.decks import parser
+    from app.structures import redact
+    spec = importlib.util.spec_from_file_location("consistency_run", BACKEND.parent / "scripts" / "consistency_run.py")
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    names = ["05-zero2hero.pdf", "02-moz.pdf"]
+    script.main(["--fake", "--deck", names[0], "--deck", names[1]])
+    written = capsys.readouterr().out + "".join(p.read_text(encoding="utf-8") for p in tmp_path.glob("consistency_*"))
+    sent = set()
+    for name in names:
+        for structure in parser.parse_deck((script.DECKS / name).read_bytes(), name)["structures"]:
+            cells, _ = redact.redact_structure(structure["cells"], Path(name).stem, {}, set())
+            sent |= {line.split(": ", 1)[1] for line in redact.structure_text(cells).splitlines()}
+    words = {text for text in sent if len(text) >= 4 and any(c.isalpha() for c in text)}
+    assert len(words) > 50 and "Gross Profit" in words, "the check sees the decks' cell text"
+    assert not sorted(text for text in words if text in written)

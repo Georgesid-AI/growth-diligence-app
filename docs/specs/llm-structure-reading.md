@@ -152,6 +152,8 @@ live API and costs money. It runs the 10 decks in `tests/fixtures/decks/decks/` 
 - tokens and cost per deck;
 - cache hit rate on passes 2 and 3.
 
+The consistency report is written to `docs/test-runs/consistency_<date>.md`, with -2, -3 suffixes for same-day runs.
+
 Passes 2 and 3 read the cache first to get the hit rate (expected 100%), then call the model with the cache bypassed,
 so agreement measures the model. Target: ≥95% agreement.
 
