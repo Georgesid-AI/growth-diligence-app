@@ -153,6 +153,7 @@ def proposed_mapping(items: List[Dict], columns: List[str], fields: List[str]) -
 # Decks: queue, read, verify, and results in the existing approval list (spec sections 2-4, 9)
 # ---------------------------------------------------------------------------
 from datetime import datetime, timezone  # noqa: E402
+import logging  # noqa: E402
 import uuid  # noqa: E402
 
 from ..decks import TEXT_COLLECTION, CANDIDATES_COLLECTION  # noqa: E402
@@ -165,6 +166,7 @@ from . import verify  # noqa: E402
 WAITING = "waiting"                 # "waiting for revenue file"
 READ, NOT_READ, STOPPED, PYTHON_ONLY = "read", "not_read", "stopped", "python_only"
 WAITING_TEXT = "waiting for revenue file"
+logger = logging.getLogger("growth.structures")
 _UNITS = {"%", "x", "days", "months", "years"}
 
 
@@ -235,6 +237,28 @@ async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None
         "structures": [{**structure, "ai": status} for structure, status in zip(found, statuses)],
         "sent": list((previous or {}).get("sent") or []) + sent}})
     return await _deck_status(db, audit_id, deck_id, overall, stopped_message)
+
+
+async def process_deck_safely(db, audit_id: str, deck_id: str) -> str:
+    """process_deck as a background task: a failure marks the deck not read and logs the error type,
+    run id and deck only (an exception message can quote a cell). The upload already returned."""
+    try:
+        return await process_deck(db, audit_id, deck_id)
+    except Exception as exc:
+        logger.error("structure reading failed: run_id=%s deck_id=%s error=%s", audit_id, deck_id, type(exc).__name__)
+        try:
+            return await _deck_status(db, audit_id, deck_id, NOT_READ)
+        except Exception:
+            return NOT_READ
+
+
+async def process_waiting_decks_safely(db, audit_id: str) -> List[str]:
+    """process_waiting_decks as a background task, with the same failure handling."""
+    try:
+        return await process_waiting_decks(db, audit_id)
+    except Exception as exc:
+        logger.error("structure reading failed: run_id=%s error=%s", audit_id, type(exc).__name__)
+        return []
 
 
 async def _deck_status(db, audit_id: str, deck_id: str, status: str, message: Optional[str] = None) -> str:

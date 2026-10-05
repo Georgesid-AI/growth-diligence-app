@@ -547,7 +547,7 @@ async def save_mapping(audit_id: str, dtype: str, payload: MappingPayload, backg
     await _mark_stale_and_maybe_recompute(audit_id)
     if dtype == "revenue":
         # Decks that waited for the revenue file are read now that its customers are in the mapping.
-        background.add_task(structures.process_waiting_decks, db, audit_id)
+        background.add_task(structures.process_waiting_decks_safely, db, audit_id)
     return {"ok": True}
 
 
@@ -647,7 +647,7 @@ async def upload_deck(audit_id: str, background: BackgroundTasks, file: UploadFi
              "order": len(reviewed) + order, "status": "pending"})
     # Its structures are read by the model after the response, or wait for the revenue file
     # (llm-structure-reading.md section 3); with consent unticked, Python's candidates stand alone.
-    background.add_task(structures.process_deck, db, audit_id, deck_id)
+    background.add_task(structures.process_deck_safely, db, audit_id, deck_id)
     return {"deck_id": deck_id, "file": deck["file"], "format": deck["format"], "page_unit": deck["page_unit"],
             "pages": deck["pages"], "candidates": len(candidates), "kept_reviewed": len(reviewed),
             "structures": len(deck["structures"])}
@@ -735,6 +735,11 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
         changes = {**edits, "status": "edited"}
         if "parsed" not in current:       # what the parser found stays next to the analyst's edit
             changes["parsed"] = {k: current.get(k) for k in _EDITABLE if k != "by_period" or rows}
+            if current.get("origin") == "ai":
+                # The Verified or suggestion label described the model's reading, now kept under "parsed";
+                # it never stands next to a value the analyst typed.
+                changes["parsed"].update(ai_status=current.get("ai_status"), ai_label=current.get("ai_label"))
+                changes.update(ai_status=None, ai_label=None)
     else:
         if payload.status is None:
             raise HTTPException(400, "status cannot be empty")

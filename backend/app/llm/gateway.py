@@ -48,8 +48,8 @@ from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Tuple
 from .. import disclosure, formatting
 from ..structures import redact as structure_redact
 from . import cache, guards, prompt_store, redaction
-from .schemas import (DECK_TYPES, STRUCTURE_TYPES, DeckUsage, Narrative, NarrativeResponse, StructureRead,
-                      StructureReply, UsageResponse, narrative_output_schema, structure_output_schema)
+from .schemas import (CLAIM_METRICS, MAPPING_FIELDS, STRUCTURE_TYPES, DeckUsage, Narrative, NarrativeResponse,
+                      StructureRead, StructureReply, UsageResponse, narrative_output_schema, structure_output_schema)
 
 logger = logging.getLogger("growth.llm")
 
@@ -1157,7 +1157,7 @@ STRUCTURES_COLLECTION = "llm_structures"
 NOT_READ = "Not read by AI"
 TOO_LARGE = "Too large for AI reading"
 # A file name in the text means it was built from the wrong thing: refused.
-_FILE_NAME = re.compile(r"(?i)\b[\w\-. ]{1,80}\.(?:pptx?|pdf|docx?|xlsx?|xlsm|csv|key|numbers)\b")
+_FILE_NAME = re.compile(r"(?i)\b[\w\-. ]{1,80}\.(?:pptx?|pdf|docx?|xlsx?|xlsm|xls|csv)\b")
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
 
@@ -1208,7 +1208,8 @@ def structure_text_problem(text: Any, structure_type: str, context: dict, mappin
     lowered = text.lower()
     for field in ("client_name", "engagement_reference"):
         value = str(context.get(field) or "").strip().lower()
-        if len(value) >= 3 and value in lowered:
+        # Anywhere in the text; a value under 3 characters only as a word of its own.
+        if value and (value in lowered if len(value) >= 3 else re.search(rf"(?<!\w){re.escape(value)}(?!\w)", lowered)):
             return field
     company = context.get("company_name")
     if structure_type == "column_mapping":
@@ -1248,6 +1249,9 @@ def parse_structure_reply(reply: str, structure_type: str, text: str) -> Structu
         raise GatewayError("parse_failed", f"reply did not match the schema: {type(exc).__name__}")
     if (structure_type == "column_mapping") != (parsed.type == "column_mapping"):
         raise GatewayError("parse_failed", "type changed between a deck structure and a column mapping")
+    allowed = MAPPING_FIELDS if structure_type == "column_mapping" else CLAIM_METRICS + ("use_of_funds",)
+    if any(item.metric not in allowed for item in parsed.items):
+        raise GatewayError("parse_failed", "a metric that does not belong to this kind of structure")
     known = _cited_cells(text, structure_type)
     for item in parsed.items:
         if item.value_cell not in known or any(c not in known for c in item.period_cells):

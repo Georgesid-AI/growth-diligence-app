@@ -633,3 +633,72 @@ def test_the_consistency_script_reports_agreement_match_rate_cost_and_cache_hits
     os.environ.pop("ANTHROPIC_API_KEY", None)
     with pytest.raises(SystemExit, match="ANTHROPIC_API_KEY"):
         script.main(["--yes", "--deck", "05-zero2hero.pdf"])
+
+
+# ---------------------------------------------------------------------------
+# Leftover risks closed in this change
+# ---------------------------------------------------------------------------
+def test_a_background_failure_marks_the_deck_not_read_and_logs_the_error_type_only(monkeypatch, caplog):
+    import logging
+    client, db, adapter = _deck_api(monkeypatch)
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("cannot read cell 'Jane Doe (CEO)'")
+    monkeypatch.setattr(structures, "process_deck", boom)
+    with caplog.at_level(logging.INFO):
+        _upload_deck(client)
+    assert _deck(client)["decks"][0]["ai_status"] == "not_read", "never left 'reading'"
+    assert "structure reading failed: run_id=audit-s" in caplog.text and "error=RuntimeError" in caplog.text
+    assert "Jane Doe" not in caplog.text
+
+
+def test_a_short_engagement_reference_is_refused_as_a_word_and_never_inside_one():
+    db = _db(engagement_reference="E7")
+    result, adapter = _read(db, "r1c1: Plan E7\nr1c2: £1M")
+    assert result.status == "refused" and adapter.calls == 0
+    result, adapter = _read(db, "r1c1: Plan E70\nr1c2: £1M", replies=[{"type": "table", "items": []}])
+    assert result.status == "read", "E70 is not the reference"
+
+
+def test_ordinary_text_with_a_dot_is_not_taken_for_a_file_name():
+    result, _ = _read(_db(), "r1c1: 2.key metrics\nr1c2: £1M", replies=[{"type": "table", "items": []}])
+    assert result.status == "read"
+    result, adapter = _read(_db(), "r1c1: See plan_v2.xlsx\nr1c2: £1M")
+    assert result.status == "refused" and adapter.calls == 0
+
+
+def test_a_metric_must_belong_to_the_kind_of_structure_read():
+    deck_reply = {"type": "table", "items": [{**REPLY["items"][0], "metric": "invoice_date"}]}
+    result, adapter = _read(_db(), replies=[deck_reply, deck_reply])
+    assert result.status == "not_read" and adapter.calls == 2, "a spreadsheet field is not a deck claim"
+    mapping_reply = {"type": "column_mapping", "items": [{**MAPPING_REPLY["items"][0], "metric": "revenue_growth"}]}
+    result, adapter = _read(_db(), "r1c1: Customer\nr1c2: Amount\nc2 sample: 1200", "column_mapping",
+                            replies=[mapping_reply, mapping_reply])
+    assert result.status == "not_read" and adapter.calls == 2, "a claim type is not a spreadsheet field"
+    both = {"type": "column_mapping", "items": [{**MAPPING_REPLY["items"][0], "metric": "revenue", "value_cell": "r1c2"}]}
+    result, _ = _read(_db(), "r1c1: Customer\nr1c2: Revenue\nc2 sample: 1200", "column_mapping", replies=[both])
+    assert result.status == "read", "revenue is a P&L field and a claim type"
+
+
+def test_an_edited_ai_row_keeps_the_label_under_parsed_never_next_to_the_analysts_value(monkeypatch):
+    client, db, adapter = _deck_api(monkeypatch)
+    _map_revenue(client)
+    _upload_deck(client)
+    row = next(c for c in _deck(client)["candidates"] if c.get("ai_label") == "Verified")
+    edited = client.put(f"/api/audits/{AUDIT}/decks/candidates/{row['id']}", json={"value": 1}).json()
+    assert edited["status"] == "edited" and edited["ai_label"] is None
+    assert edited["parsed"]["ai_label"] == "Verified" and edited["parsed"]["value"] == row["value"]
+
+
+def test_every_structure_refusal_reason_in_the_code_is_declared_in_the_boundary_test():
+    import ast as _ast
+    import test_gateway_data_boundary as boundary
+    found = set()
+    for path, function in ((BACKEND / "app" / "llm" / "gateway.py", "structure_text_problem"),
+                           (BACKEND / "app" / "structures" / "redact.py", "column_text_problem")):
+        tree = _ast.parse(path.read_text(encoding="utf-8"))
+        body = next(n for n in _ast.walk(tree) if isinstance(n, _ast.FunctionDef) and n.name == function)
+        found |= {n.value.value for n in _ast.walk(body) if isinstance(n, _ast.Return)
+                  and isinstance(n.value, _ast.Constant) and isinstance(n.value.value, str)}
+        found |= {"client_name", "engagement_reference"} if function == "structure_text_problem" else set()
+    assert found == boundary.STRUCTURE_REFUSALS, "a new refusal reason is declared in test_gateway_data_boundary.py"
