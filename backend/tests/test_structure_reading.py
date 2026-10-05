@@ -89,6 +89,135 @@ def test_the_call_is_pinned_to_one_model_with_no_temperature_no_tools_and_the_st
 
 
 # ---------------------------------------------------------------------------
+# The item list (docs/specs/structure-labelling.md sections 1 and 3): Python lists every figure in every
+# redacted cell, with its cell, position, raw text, value(s) and header cells; the model only labels them
+# ---------------------------------------------------------------------------
+import test_structure_verifier as v  # noqa: E402
+from app.structures import items as structure_items  # noqa: E402
+
+
+def _listed(rows, header_rows=1, kind="table", spans=None):
+    return structure_items.list_items(v._struct(rows, header_rows, kind, spans))["items"]
+
+
+def _brief(listed):
+    """(id, cell, position, raw text, values with the default first, header cells) per item."""
+    return [(i["id"], i["cell"], i["position"], i["raw"], [x["value"] for x in i["values"]], i["headers"])
+            for i in listed]
+
+
+SOCIAL = [["", "Members"], ["Web", "12"], ["Social", "Discord(150) Telegram(30K)"]]
+
+
+def test_a_cell_with_several_figures_gives_one_item_each_with_its_position_in_reading_order():
+    assert _brief(_listed(SOCIAL)) == [
+        ("i1", "r2c2", 1, "12", [12], ["r2c1", "r1c2"]),
+        ("i2", "r3c2", 1, "(150)", [150, -150], ["r3c1", "r1c2"]),
+        ("i3", "r3c2", 2, "(30K)", [30000, -30000], ["r3c1", "r1c2"])]
+
+
+def test_the_item_list_comes_below_the_structure_text_one_line_per_item():
+    structure = v._struct(SOCIAL)
+    text = structure_items.text(structure, structure_items.list_items(structure))
+    assert text == ("r1c2: Members\nr2c1: Web\nr2c2: 12\nr3c1: Social\nr3c2: Discord(150) Telegram(30K)\n"
+                    "items:\n"
+                    'i1 r2c2 "12" 12 h r2c1 r1c2\n'
+                    'i2 r3c2#1 "(150)" 150 or -150 h r3c1 r1c2\n'
+                    'i3 r3c2#2 "(30K)" 30000 or -30000 h r3c1 r1c2'), "the spec's line format"
+    assert structure_items.text(v._struct([["Plan"]], header_rows=0), {"items": [], "dates": [], "lines": []}) == \
+        "r1c1: Plan\nitems:", "a structure with no figure still sends the items line"
+
+
+def test_dates_are_periods_and_are_left_out():
+    listed = _listed([["", "FY2025", "Q3", "M1", "Year 2"], ["Revenue in 2024", "£1.2m in 2025", "", "", ""],
+                      ["Users", "Mar 2025: 5K", "", "", ""]])
+    assert [(i["cell"], i["raw"], i["values"][0]["value"]) for i in listed] == \
+        [("r2c2", "1.2m", 1200000), ("r3c2", "5K", 5000)]
+
+
+def test_values_are_in_full_units_under_todays_normalisation():
+    assert [i["values"][0]["value"] for i in _listed([["£m", "2025", "2026 (€'000)"],
+                                                      ["Revenue", "1.2", "4.5"], ["EBITDA", "(0.3)", "1,234"]])] \
+        == [1200000, 4500, -300000, 1234000], "a scale in the corner or a header, never an item of its own; brackets"
+    assert [i["values"][0]["value"] for i in _listed([["", "Plan"], ["Revenue", "€1.234,5"]])] == [1234.5], \
+        "the structure writes a decimal comma"
+    assert [i["values"][0]["value"] for i in _listed([["", "Plan"], ["Revenue", "$3.6m"], ["ARR", "2bn"],
+                                                      ["Margin", "62%"], ["Loss", "-$1,200"]])] == \
+        [3600000, 2000000000, 62, -1200]
+
+
+def test_a_range_is_two_figures_and_its_low_end_takes_the_high_ends_scale():
+    """moz p20: "$12 -$13 million" is twelve to thirteen million, not 12 and minus thirteen million."""
+    assert [i["values"] for i in _listed([["", "Plan"], ["Revenue", "$12 -$13 million"], ["Margin", "5 – 10%"]])] \
+        == [[{"value": 12000000, "dot_reading": None, "bracket_reading": None}],
+            [{"value": 13000000, "dot_reading": None, "bracket_reading": None}],
+            [{"value": 5, "dot_reading": None, "bracket_reading": None}],
+            [{"value": 10, "dot_reading": None, "bracket_reading": None}]]
+
+
+def _readings(text):
+    item, = _listed([["", "Plan"], ["Hours", text]])
+    return [(x["value"], x["dot_reading"], x["bracket_reading"]) for x in item["values"]]
+
+
+@pytest.mark.parametrize("text, readings", [
+    ("Approx. 2.500 hours", [(2500, "thousands", None), (2.5, "decimal", None)]),
+    ("12.500", [(12500, "thousands", None), (12.5, "decimal", None)]),
+    ("1.250M", [(1250000, "decimal", None), (1250000000, "thousands", None)]),       # a suffix: decimal
+    ("$2.500bn", [(2500000000, "decimal", None), (2500000000000, "thousands", None)]),
+    ("0.500", [(0.5, None, None)]),                                                     # not ambiguous
+    ("2.50", [(2.5, None, None)]),
+])
+def test_a_dot_before_three_digits_carries_both_values_thousands_first_unless_a_suffix(text, readings):
+    assert _readings(text) == readings
+
+
+def test_with_a_decimal_comma_a_dot_before_three_digits_is_a_thousands_separator_only():
+    listed = _listed([["", "Plan", ""], ["Revenue", "2.500", "1.234,5"]])
+    assert [x["value"] for x in listed[0]["values"]] == [2500]
+
+
+@pytest.mark.parametrize("text, readings", [
+    ("Telegram(30K)", [(30000, None, "positive"), (-30000, None, "negative")]),
+    ("Discord (150)", [(150, None, "positive"), (-150, None, "negative")]),
+    ("Net loss (1,200)", [(-1200, None, "negative"), (1200, None, "positive")]),
+    ("LOSSES (7)", [(-7, None, "negative"), (7, None, "positive")]),
+    ("Deficit(5)", [(-5, None, "negative"), (5, None, "positive")]),
+    ("Negative cash flow (2)", [(-2, None, "negative"), (2, None, "positive")]),
+    ("Revenue decline (3%)", [(-3, None, "negative"), (3, None, "positive")]),
+    ("(1,200)", [(-1200, None, None)]),                              # wholly bracketed: one reading
+    ("£(1,200)", [(-1200, None, None)]),
+    ("Net loss -1,200", [(-1200, None, None)]),
+    ("Net loss (2.500)", [(-2500, "thousands", "negative"), (2500, "thousands", "positive"),
+                          (-2.5, "decimal", "negative"), (2.5, "decimal", "positive")]),
+])
+def test_a_bracketed_number_after_text_carries_both_signs_negative_first_after_a_loss_word(text, readings):
+    assert _readings(text) == readings
+
+
+def test_a_loss_word_counts_only_in_the_text_before_the_figure():
+    first, second = _listed([["", "Plan"], ["P&L", "Gross (5) then net loss (3)"]])
+    assert [x["bracket_reading"] for x in first["values"]] == ["positive", "negative"]
+    assert [x["bracket_reading"] for x in second["values"]] == ["negative", "positive"]
+
+
+def test_the_same_structure_always_gives_the_same_list():
+    structure = v._struct([["", "2024", "2025"], ["Revenue", "£1M", "£2M"], ["Users", "5K / 7K", "9K"]])
+    shuffled = {**structure, "cells": list(reversed(structure["cells"]))}
+    first = structure_items.list_items(structure)
+    assert first == structure_items.list_items(structure) == structure_items.list_items(shuffled)
+    assert [(i["id"], i["cell"], i["position"]) for i in first["items"]] == [
+        ("i1", "r2c2", 1), ("i2", "r2c3", 1), ("i3", "r3c2", 1), ("i4", "r3c2", 2), ("i5", "r3c3", 1)]
+
+
+def test_the_item_list_is_built_from_the_redacted_cells():
+    cells = [{"row": 1, "col": 1, "text": "Call +44 20 7946 0958"}, {"row": 1, "col": 2, "text": "£1M"}]
+    redacted, _ = redact.redact_structure(cells, "Zero2Hero", {})
+    listed = structure_items.list_items({"type": "table", "header_rows": 0, "cells": redacted})
+    assert [(i["cell"], i["raw"]) for i in listed["items"]] == [("r1c2", "1M")], "no figure of the phone number"
+
+
+# ---------------------------------------------------------------------------
 # Units: 20 listed currencies; any other ISO currency is "other", with its code in unit_other
 # ---------------------------------------------------------------------------
 LISTED_CURRENCIES = ("EUR", "USD", "GBP", "CHF", "BGN", "RON", "PLN", "CZK", "HUF", "SEK", "NOK", "DKK", "TRY", "UAH",
@@ -330,29 +459,40 @@ def test_the_cache_key_covers_text_type_prompt_and_model():
     assert key != gateway.structure_key(TEXT, "table", "r4:v1", "claude-opus-5-5")
 
 
-def test_a_structure_over_3000_tokens_of_text_is_not_sent():
+LISTED = structure_items.text(v._struct([["", "FY2025", "FY2026"], ["Revenue", "£1,200,000", "£1,500,000"]]),
+                              structure_items.list_items(v._struct([["", "FY2025", "FY2026"],
+                                                                    ["Revenue", "£1,200,000", "£1,500,000"]])))
+
+
+def test_a_structure_over_4000_tokens_of_text_and_item_list_is_not_sent():
+    """Spec section 5: the cap is 4,000 tokens per structure, counted on the structure text plus the item list."""
+    assert gateway.STRUCTURE_INPUT_CAP == 4000 and "\nitems:\ni1 r2c2 " in LISTED
     adapter = t.FakeAdapter(replies=[json.dumps(REPLY)])
-    adapter.text_tokens, adapter.input_tokens = 3001, 3500
-    result, _ = _read(_db(), adapter=adapter)
+    adapter.text_tokens, adapter.input_tokens = 4001, 4500
+    result, _ = _read(_db(), LISTED, adapter=adapter)
     assert (result.status, result.reason, adapter.calls) == ("too_large", "Too large for AI reading", 0)
-    assert adapter.count_requests == [{"system": None, "user_payload": TEXT, "json_schema": None}], \
-        "the structure text alone is counted, and nothing more once it is over"
+    assert adapter.count_requests == [{"system": None, "user_payload": LISTED, "json_schema": None}], \
+        "the structure text with its item list is counted, and nothing more once it is over"
+    adapter = t.FakeAdapter(replies=[json.dumps(REPLY)])
+    adapter.text_tokens, adapter.input_tokens = 4000, 4500
+    result, _ = _read(_db(), LISTED, adapter=adapter)
+    assert result.status != "too_large" and adapter.calls == 1, "exactly at the cap: sent"
 
 
-def test_the_3000_cap_is_on_the_structure_text_alone_not_the_prompt_and_schema():
+def test_the_4000_cap_is_on_the_text_and_item_list_not_the_prompt_and_schema():
     db = _db()
     adapter = t.FakeAdapter(replies=[json.dumps(REPLY)])
-    adapter.text_tokens, adapter.input_tokens = 2900, 4000
+    adapter.text_tokens, adapter.input_tokens = 3900, 5000
     result, _ = _read(db, adapter=adapter)
     assert (result.status, adapter.calls) == ("read", 1)
     whole = adapter.count_requests[1]
     assert whole["system"] and whole["json_schema"] and json.loads(whole["user_payload"])["text"] == TEXT
-    # The 400,000 cap counts the whole call: 392,300 used + 4,000 input + 4,000 max_tokens is over
-    # (with the text's 2,900 it would fit).
-    db["llm_calls"].docs.append({"run_id": AUDIT, "step": "structures", "cache_hit": False, "input_tokens": 387000,
+    # The 400,000 cap counts the whole call: 391,300 used + 5,000 input + 4,000 max_tokens is over
+    # (with the text's 3,900 it would fit).
+    db["llm_calls"].docs.append({"run_id": AUDIT, "step": "structures", "cache_hit": False, "input_tokens": 385000,
                                  "output_tokens": 1000, "estimated_cost_usd": 0.0, "timestamp": "2026-10-05T00:00:00"})
     adapter = t.FakeAdapter(replies=[json.dumps(REPLY)])
-    adapter.text_tokens, adapter.input_tokens = 2900, 4000
+    adapter.text_tokens, adapter.input_tokens = 3900, 5000
     result, _ = _read(db, adapter=adapter, use_cache=False)
     assert result.status == "stopped" and adapter.calls == 0
 

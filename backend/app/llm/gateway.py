@@ -1209,7 +1209,7 @@ STRUCTURE_MODEL = "claude-sonnet-5-5"
 STRUCTURE_PROMPT = "structure_reading"
 STRUCTURE_STEP = guards.STRUCTURE_STEP
 STRUCTURE_MAX_TOKENS = 4000
-STRUCTURE_INPUT_CAP = 3000          # tokens of structure text alone, by the provider's token counter
+STRUCTURE_INPUT_CAP = 4000          # tokens of structure text plus item list, by the provider's token counter
 STRUCTURE_CELL_MAX = 200            # a longer cell is prose
 STRUCTURES_COLLECTION = cache.STRUCTURES_COLLECTION
 NOT_READ = "Not read by AI"
@@ -1283,9 +1283,12 @@ def structure_text_problem(text: Any, structure_type: str, context: dict, mappin
             return problem
         cells = structure_redact.parse_column_text(text)["headers"]
     else:
-        cells = structure_redact.parse_structure_text(text)
+        cell_text, listed = structure_redact.split_items(text)
+        cells = structure_redact.parse_structure_text(cell_text)
         if not cells:
             return "not_cells"
+        if listed is not None and not structure_redact.items_in_format(listed, cells, structure_type == "roadmap"):
+            return "bad_item_line"
     if any(len(c["text"]) > STRUCTURE_CELL_MAX for c in cells):
         return "cell_too_long"
     redacted, _ = structure_redact.redact_structure(cells, company, mapping, structure_redact.withheld_values(context))
@@ -1299,7 +1302,7 @@ def _cited_cells(text: str, structure_type: str) -> set:
     if structure_type == "column_mapping":
         cells = (structure_redact.parse_column_text(text) or {}).get("headers") or []
     else:
-        cells = structure_redact.parse_structure_text(text) or []
+        cells = structure_redact.parse_structure_text(structure_redact.split_items(text)[0]) or []
     return {structure_redact.cell_id(c) for c in cells}
 
 
@@ -1394,8 +1397,8 @@ async def read_structure(
     never stored: only the model's JSON output (values with cell references), the prompt version,
     the model, the content hash, the tokens and the cost are. Order of operations:
 
-        consent -> boundary and redaction check -> cache (audit, key) -> token count of the text
-        alone (3,000 cap) -> token count of the whole call -> lock (step "structures") -> spend cap
+        consent -> boundary and redaction check -> cache (audit, key) -> token count of the text and
+        its item list (4,000 cap) -> token count of the whole call -> lock (step "structures") -> spend cap
         -> token cap (400,000 per audit, with the whole call's input) -> provider
         -> schema, type and cell check (one reask) -> store -> log
 
@@ -1436,7 +1439,7 @@ async def read_structure(
     user_payload = cache.canonical_json({"type": structure_type, "text": text})
     adapter = adapter or AnthropicAdapter()
     try:
-        # The 3,000-token cap is on the structure text alone; the 400,000 cap counts the whole call.
+        # The 4,000-token cap is on the structure text plus its item list; the 400,000 cap counts the whole call.
         text_tokens = await _count_tokens(adapter, sleep, model=STRUCTURE_MODEL, system=None, user_payload=text,
                                           json_schema=None)
         if text_tokens > STRUCTURE_INPUT_CAP:

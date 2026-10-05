@@ -729,7 +729,11 @@ MAPPING_REPLY = json.dumps({"type": "column_mapping", "items": [
 # Every reason a structure text is refused: codes, never text from the structure.
 STRUCTURE_REFUSALS = frozenset({"not_text", "empty", "raw_bytes", "file_name", "client_name", "engagement_reference",
                                 "not_cells", "cell_too_long", "redaction_changed", "too_many_header_rows",
-                                "too_many_samples", "text_value"})
+                                "too_many_samples", "text_value", "bad_item_line"})
+# A deck structure's item list (docs/specs/structure-labelling.md section 3): one line per figure Python listed, its
+# raw text a figure cut from its cell; a roadmap adds its date cells and text lines. Nothing else passes.
+GOOD_ITEMS = GOOD_STRUCTURE + ('\nitems:\ni1 r2c2 "1,200,000" 1200000 h r2c1 r1c2\n'
+                               'i2 r2c3 "1,500,000" 1500000 h r2c1 r1c3')
 
 
 def _structure_db(mapping=None, **audit):
@@ -828,6 +832,21 @@ def test_a_sheet_built_by_the_app_sends_no_text_cell_value():
     ("a text cell value on the column-mapping path", GOOD_MAPPING + "\nr1c4: Note\nc4 sample: Northwind Trading",
      "column_mapping", "text_value"),
     ("a text value as a profile and a sample", GOOD_MAPPING + "\nc1 sample: 12", "column_mapping", "text_value"),
+    # An item line passes only in format, its raw text a figure inside its cell.
+    ("an item line out of format", GOOD_STRUCTURE + "\nitems:\ni1 r2c2 Revenue grew strongly 1200000", "table",
+     "bad_item_line"),
+    ("prose after an item line", GOOD_ITEMS + "\nRevenue grew strongly in 2025", "table", "bad_item_line"),
+    ("raw text that is not in its cell", GOOD_STRUCTURE + '\nitems:\ni1 r2c2 "9,999" 9999', "table", "bad_item_line"),
+    ("raw text that is not a figure", GOOD_STRUCTURE + '\nitems:\ni1 r2c1 "Revenue" 1', "table", "bad_item_line"),
+    ("raw text holding more than a figure", "r1c1: Revenue grew 12% in 2025\nitems:\n"
+     'i1 r1c1 "Revenue grew 12%" 12', "table", "bad_item_line"),
+    ("an item citing a cell not sent", GOOD_STRUCTURE + '\nitems:\ni1 r9c9 "5" 5', "table", "bad_item_line"),
+    ("a header cell not sent", GOOD_STRUCTURE + '\nitems:\ni1 r2c2 "1,200,000" 1200000 h r9c9', "table",
+     "bad_item_line"),
+    ("item ids out of order", GOOD_STRUCTURE + '\nitems:\ni2 r2c2 "1,200,000" 1200000', "table", "bad_item_line"),
+    ("a date line on a structure not sent as a roadmap", GOOD_ITEMS + "\nd1 r1c2", "table", "bad_item_line"),
+    ("a date line citing a cell not sent", "r1c1: Launch the API\nr2c1: Q3 2025\nitems:\nd1 r9c1", "roadmap",
+     "bad_item_line"),
 ])
 def test_the_structure_path_refuses_what_rule_16_does_not_allow(name, text, kind, reason):
     assert reason in STRUCTURE_REFUSALS
@@ -835,6 +854,15 @@ def test_the_structure_path_refuses_what_rule_16_does_not_allow(name, text, kind
     result, adapter = _send(db, text, kind)
     assert adapter.calls == 0 and getattr(adapter, "counted", 0) == 0, f"{name} reached the provider"
     assert (result.status, result.reason) == ("refused", f"refused: {reason}"), name
+
+
+def test_an_item_list_in_format_reaches_the_provider():
+    result, adapter = _send(_structure_db(), GOOD_ITEMS)
+    assert result.status != "refused" and adapter.calls == 1, result.reason
+    assert json.loads(adapter.payloads[0])["text"] == GOOD_ITEMS
+    roadmap = 'r1c1: Launch the API\nr2c1: Q3 2025\nr3c1: 5K users\nitems:\ni1 r3c1 "5K" 5000\nd1 r2c1\nt1 r1c1\nt2 r3c1'
+    result, adapter = _send(_structure_db(), roadmap, "roadmap")
+    assert result.status != "refused" and adapter.calls > 0, result.reason
 
 
 def test_no_call_is_made_without_consent():

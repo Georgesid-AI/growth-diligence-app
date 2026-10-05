@@ -43,6 +43,7 @@ import re
 from typing import Dict, List, Optional, Tuple
 
 from ..decks import claims
+from . import redact
 
 VERIFIED = "verified"
 SUGGESTION = "suggestion"
@@ -65,22 +66,12 @@ def unmatched_mode() -> str:
 # ---------------------------------------------------------------------------
 # Numbers
 # ---------------------------------------------------------------------------
-_CURRENCY = re.compile(r"US\$|[£$€¥₹]|\b(?:USD|EUR|GBP|CHF|JPY|BGN|PLN|SEK|NOK|DKK|CAD|AUD)\b")
-_DECIMAL_COMMA = re.compile(r"\d{1,3}(?:\.\d{3})+,\d+")
 _DOT_THOUSANDS = re.compile(r"[1-9]\d{0,2}\.\d{3}")     # "2.500": 2,500 written with a dot, or 2.5
+_DECIMAL_COMMA = re.compile(r"\d{1,3}(?:\.\d{3})+,\d+")
 _LETTER = re.compile(r"[^\W\d_]")
 _SCALE_WORD = {"k": 1e3, "thousand": 1e3, "thousands": 1e3, "tsd": 1e3, "хил": 1e3,
                "m": 1e6, "mn": 1e6, "mm": 1e6, "million": 1e6, "millions": 1e6, "mio": 1e6, "млн": 1e6,
                "b": 1e9, "bn": 1e9, "billion": 1e9, "billions": 1e9, "mrd": 1e9, "млрд": 1e9}
-_SUFFIX = r"(?:\s?(?P<suffix>k|K|mn|MM|m|M|bn|B|thousand|million|billion|Mio|Mrd|Tsd|млн|млрд|хил)(?![^\W\d_]))?"
-_NUMBER = {
-    False: re.compile(r"(?P<open>\()?\s*(?:(?<![\w.])(?P<sign>[-−–]))?\s*(?<![\d.,])"
-                      r"(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?![\d]|[.,]\d)"
-                      + _SUFFIX + r"\s*(?P<pct>%)?\s*(?P<close>\))?"),
-    True: re.compile(r"(?P<open>\()?\s*(?:(?<![\w.])(?P<sign>[-−–]))?\s*(?<![\d.,])"
-                     r"(?P<num>\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d+(?:,\d+)?)(?![\d]|[.,]\d)"
-                     + _SUFFIX + r"\s*(?P<pct>%)?\s*(?P<close>\))?"),
-}
 # A scale given in a cell of its own or in a header: "£m", "(£000)", "'000", "in millions", "€ Mio".
 _SCALE_MARK = re.compile(
     r"(?i)(?:(?<![^\W\d_])(?P<word>thousands?|millions?|billions?|tsd|mio|mrd|млн|млрд|хил)(?![^\W\d_])"
@@ -108,28 +99,58 @@ def _cell_figure(text: str, comma: bool = False) -> Optional[Tuple[List[Reading]
     decimal comma ("2.500") reads as 2.5 ("decimal") or 2500 ("thousands"). Brackets around the whole
     figure ("(1,200)") make a negative; a bracketed number after text ("Net loss (1,200)",
     "Telegram(30K)") reads as either sign ("positive" or "negative"). Otherwise a reading is None."""
-    blanked = text
-    for d in reversed(claims.find_dates(text, table=True)):
-        blanked = blanked[:d["start"]] + " " + blanked[d["end"]:]
-    blanked = _CURRENCY.sub(" ", blanked)
-    found = [m for m in _NUMBER[comma].finditer(blanked) if m.group("num")]
+    found = figures(text, comma)
     if len(found) != 1:
         return None
-    m = found[0]
-    raw = m.group("num")
-    dots = [(float(raw.replace(",", "")), "decimal"), (float(raw.replace(".", "")), "thousands")] \
-        if not comma and _DOT_THOUSANDS.fullmatch(raw) else \
-        [(float(raw.replace(".", "").replace(",", ".") if comma else raw.replace(",", "")), None)]
-    suffix = (m.group("suffix") or "").lower()
-    scale = _SCALE_WORD[suffix] if suffix else 1.0
-    if m.group("sign"):
-        signs = [(-1.0, None)]
-    elif m.group("open") and m.group("close"):
-        signs = [(1.0, "positive"), (-1.0, "negative")] if _LETTER.search(blanked[:m.start()]) else [(-1.0, None)]
-    else:
-        signs = [(1.0, None)]
-    return ([(sign * value * scale, dot, bracket) for value, dot in dots for sign, bracket in signs],
-            bool(suffix or m.group("pct")))
+    return found[0]["readings"], found[0]["own_scale"]
+
+
+def _blank(text: str, spans) -> str:
+    for start, end in sorted(spans, reverse=True):
+        text = text[:start] + " " * (end - start) + text[end:]
+    return text
+
+
+def figures(text: str, comma: bool = False) -> List[Dict]:
+    """Every figure in a cell's text, in order: [{"start", "end", "readings", "own_scale", "suffix"}]. start and
+    end cut the figure from the text as written; "readings" are (number, dot reading, bracket reading) as for
+    _cell_figure, before any scale from another cell; "own_scale" is True when the figure carries a k/m/bn
+    suffix or %. Dates are periods, never values, and a scale mark ("'000") is no figure: both are left out
+    first. A range ("$12 -$13 million", "5 – 10%") is two figures: the dash is no sign, and the low end takes
+    the high end's suffix or % when it has none (deck-parser.md section 2)."""
+    marks = [m.span() for m in _SCALE_MARK.finditer(text) if m.group("mark") and "000" in m.group("mark")]
+    blanked = redact.blank_currency(_blank(text, [(d["start"], d["end"]) for d in claims.find_dates(text, table=True)]
+                                           + marks))
+    out = []
+    for m in redact.NUMBER[comma].finditer(blanked):
+        if not m.group("num"):
+            continue
+        raw = m.group("num")
+        dots = [(float(raw.replace(",", "")), "decimal"), (float(raw.replace(".", "")), "thousands")] \
+            if not comma and _DOT_THOUSANDS.fullmatch(raw) else \
+            [(float(raw.replace(".", "").replace(",", ".") if comma else raw.replace(",", "")), None)]
+        sign = m.group("sign")
+        if sign and out and not blanked[out[-1]["end"]:m.start("sign")].strip():
+            sign = None                                         # a range: "12 - 13"
+            low = out[-1]
+            if not low["suffix"] and not low["pct"]:
+                low.update(suffix=(m.group("suffix") or "").lower(), pct=bool(m.group("pct")))
+        if sign:
+            signs = [(-1.0, None)]
+        elif m.group("open") and m.group("close"):
+            signs = [(1.0, "positive"), (-1.0, "negative")] if _LETTER.search(blanked[:m.start()]) else [(-1.0, None)]
+        else:
+            signs = [(1.0, None)]
+        seg = blanked[m.start():m.end()]                         # a leading currency symbol is left out too
+        out.append({"start": m.start() + len(seg) - len(seg.lstrip()), "end": m.end() - len(seg) + len(seg.rstrip()),
+                    "dots": dots, "signs": signs, "suffix": (m.group("suffix") or "").lower(),
+                    "pct": bool(m.group("pct"))})
+    for f in out:
+        scale = _SCALE_WORD[f["suffix"]] if f["suffix"] else 1.0
+        dots, signs = f.pop("dots"), f.pop("signs")
+        f["readings"] = [(sign * value * scale, dot, bracket) for value, dot in dots for sign, bracket in signs]
+        f["own_scale"] = bool(f["suffix"] or f.pop("pct"))
+    return out
 
 
 def scale_of(text: str) -> Optional[float]:
@@ -190,6 +211,19 @@ def _corner(structure: Dict) -> List[Dict]:
     rows = sorted({c["row"] for c in cells})[:structure.get("header_rows") or 0]
     first = min(c["col"] for c in cells)
     return [c for c in cells if c["row"] in rows and c["col"] == first]
+
+
+def scale_factor(structure: Dict, cell: Dict) -> float:
+    """The scale a figure with no suffix or % of its own takes: the first stated in a neighbouring cell of its
+    row, one of its header cells or the table's corner cell ("£m" -> 1e6, "'000" -> 1e3), else 1."""
+    cells, comma = structure["cells"], decimal_comma(structure["cells"])
+    neighbours = [c for c in cells if c["row"] == cell["row"] and abs(c["col"] - cell["col"]) == 1
+                  and not _is_value(c, comma)]
+    for c in neighbours + header_cells(structure, cell) + _corner(structure):
+        scale = scale_of(c["text"])
+        if scale:
+            return scale
+    return 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -330,15 +364,7 @@ def match_value(structure: Dict, item: Dict, value_cell: Optional[Dict]) \
     if found is None:
         return False, None, None
     readings, own_scale = found
-    factor = 1.0
-    if not own_scale:
-        neighbours = [c for c in cells if c["row"] == value_cell["row"] and abs(c["col"] - value_cell["col"]) == 1
-                      and not _is_value(c, comma)]
-        for c in neighbours + header_cells(structure, value_cell) + _corner(structure):
-            scale = scale_of(c["text"])
-            if scale:
-                factor = scale
-                break
+    factor = 1.0 if own_scale else scale_factor(structure, value_cell)
     wanted = float(item["value"])
     for number, dot, bracket in readings:
         if same_number(number * factor, wanted):
