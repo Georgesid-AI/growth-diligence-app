@@ -720,9 +720,11 @@ STRUCTURE_AUDIT = {"id": "audit-boundary", "company_name": "Target Co", "client_
 GOOD_STRUCTURE = "r1c2: FY2025\nr1c3: FY2026\nr2c1: Revenue\nr2c2: £1,200,000\nr2c3: £1,500,000"
 GOOD_MAPPING = ("r1c1: Customer\nr1c2: Invoice Date\nr1c3: Amount\nc2 sample: 2025-01-31\nc2 sample: 2025-02-28\n"
                 "c2 sample: 2025-03-31\nc3 sample: 1200.50\nc1 profile: distinct 42, typical length 12, shape Aa Aa")
-STRUCTURE_REPLY = json.dumps({"type": "table", "items": [
-    {"metric": "revenue", "period": "FY2025", "value": 1200000, "unit": "GBP", "actual_or_forecast": "forecast",
-     "unit_other": None, "value_cell": "r2c2", "period_cells": ["r1c2"], "proposed_flags": []}]})
+# The labelling reply to GOOD_ITEMS: one label per listed item, no value, cell or flag.
+STRUCTURE_REPLY = json.dumps({"type": "table", "pairs": [], "labels": [
+    {"item": f"i{n}", "metric": "revenue", "period": period, "unit": "GBP", "unit_other": None,
+     "actual_or_forecast": "forecast"} for n, period in ((1, "FY2025"), (2, "FY2026"))]})
+NO_LABELS = json.dumps({"type": "table", "labels": [], "pairs": []})       # the reply to a text with no item
 MAPPING_REPLY = json.dumps({"type": "column_mapping", "items": [
     {"metric": "customer_id", "period": None, "value": None, "unit": None, "actual_or_forecast": "unknown",
      "unit_other": None, "value_cell": "r1c1", "period_cells": [], "proposed_flags": []}]})
@@ -758,7 +760,7 @@ def test_redacted_structure_cells_reach_the_provider_as_cell_lines_only():
     mapping = {"Northwind Trading": "Customer_01"}
     redacted, _ = structure_redact.redact_structure(cells, "Target Co", mapping)
     text = structure_redact.structure_text(redacted)
-    result, adapter = _send(_structure_db(mapping), text, reply=json.dumps({"type": "table", "items": []}))
+    result, adapter = _send(_structure_db(mapping), text, reply=NO_LABELS)
     assert result.status == "read" and adapter.calls == 1, result.reason
     sent = json.loads(adapter.payloads[0])
     assert set(sent) == {"type", "text"} and sent["text"] == text
@@ -773,7 +775,7 @@ def test_the_client_name_and_engagement_reference_reach_the_provider_only_as_red
     redacted, counts = structure_redact.redact_structure(cells, "Target Co", {},
                                                          structure_redact.withheld_values(STRUCTURE_AUDIT))
     text = structure_redact.structure_text(redacted)
-    result, adapter = _send(_structure_db(), text)
+    result, adapter = _send(_structure_db(), text, reply=NO_LABELS)
     assert result.status == "read" and adapter.calls == 1 and counts["withheld"] == 2, result.reason
     sent = json.loads(adapter.payloads[0])["text"]
     assert sent == "r1c1: Prepared for [redacted]\nr1c2: FY2025\nr2c1: Revenue, ref [redacted]\nr2c2: £1,200,000"
@@ -783,7 +785,7 @@ def test_the_client_name_and_engagement_reference_reach_the_provider_only_as_red
 
 def test_a_longer_word_holding_the_client_name_or_engagement_reference_is_not_refused():
     for text in ("r1c1: ENG-2026-0412\nr1c2: £1M", "r1c1: Northbridge Capitalists\nr1c2: £1M"):
-        result, adapter = _send(_structure_db(), text, reply=json.dumps({"type": "table", "items": []}))
+        result, adapter = _send(_structure_db(), text, reply=NO_LABELS)
         assert (result.status, adapter.calls) == ("read", 1), text
 
 
@@ -877,13 +879,13 @@ def test_no_sent_text_in_a_log_llm_calls_or_llm_structures(caplog):
     import logging
     db = _structure_db()
     with caplog.at_level(logging.DEBUG):
-        _send(db, GOOD_STRUCTURE)
-        _send(db, GOOD_STRUCTURE.replace("FY2025", "FY2027"),
+        _send(db, GOOD_ITEMS)
+        _send(db, GOOD_ITEMS.replace("FY2025", "FY2027"),
               reply=json.dumps({"type": "table", "items": [{"bad": 1}]}))           # rejected twice: not read
         _send(db, "r1c1: jane.doe@northwind.com")                                   # refused
     stored = json.dumps(db[gateway.STRUCTURES_COLLECTION].docs + db["llm_calls"].docs, ensure_ascii=False, default=str)
     logs = caplog.text + "".join(r.getMessage() for r in caplog.records)
-    for needle in ("Revenue", "£1,200,000", "1,500,000", "jane.doe", GOOD_STRUCTURE):
+    for needle in ("Revenue", "£1,200,000", "1,500,000", "jane.doe", GOOD_STRUCTURE, GOOD_ITEMS):
         assert needle not in stored, f"{needle!r} was stored"
         assert needle not in logs, f"{needle!r} was logged"
     assert "structure read: run_id=audit-boundary step=structures hash=" in caplog.text
@@ -897,19 +899,22 @@ def test_unit_other_carries_an_iso_code_only_so_no_cell_text_is_stored_or_logged
     listed 20, beside unit "other". A reply that writes cell text there is rejected (one reask, then not read) and
     the text reaches neither llm_structures, llm_calls nor a log."""
     import logging
-    item = {**json.loads(STRUCTURE_REPLY)["items"][0], "unit": "other", "unit_other": "Revenue £1,200,000"}
+    first, second = json.loads(STRUCTURE_REPLY)["labels"]
+    item = {**first, "unit": "other", "unit_other": "Revenue £1,200,000"}
     db = _structure_db()
     with caplog.at_level(logging.DEBUG):
-        result, adapter = _send(db, GOOD_STRUCTURE, reply=json.dumps({"type": "table", "items": [item]}))
+        result, adapter = _send(db, GOOD_ITEMS, reply=json.dumps({"type": "table", "labels": [item, second],
+                                                                  "pairs": []}))
     assert (result.status, adapter.calls) == ("not_read", 2)
     stored = json.dumps(db[gateway.STRUCTURES_COLLECTION].docs + db["llm_calls"].docs, ensure_ascii=False, default=str)
     logs = caplog.text + "".join(r.getMessage() for r in caplog.records)
     for needle in ("Revenue", "£1,200,000"):
         assert needle not in stored and needle not in logs, needle
     db = _structure_db()
-    result, _ = _send(db, GOOD_STRUCTURE, reply=json.dumps({"type": "table", "items": [{**item, "unit_other": "ZAR"}]}))
+    result, _ = _send(db, GOOD_ITEMS, reply=json.dumps({"type": "table", "labels": [{**item, "unit_other": "ZAR"}, second],
+                                                         "pairs": []}))
     stored, = db[gateway.STRUCTURES_COLLECTION].docs
-    assert result.status == "read" and stored["output"]["items"][0]["unit_other"] == "ZAR"
+    assert result.status == "read" and stored["output"]["labels"][0]["unit_other"] == "ZAR"
 
 
 # Every key an llm_calls record may carry (rule 17): metadata, never text sent to or received from the provider.
@@ -943,10 +948,10 @@ def test_a_provider_error_reaches_llm_calls_and_the_log_as_a_status_and_a_type_c
 
     db, narrative_db = _structure_db(), t.make_db()
     with caplog.at_level(logging.DEBUG):
-        _send(db, GOOD_STRUCTURE)                                                    # read: the ok record's keys
+        _send(db, GOOD_ITEMS)                                                        # read: the ok record's keys
         for raised, on_count in ((error(400, "invalid_request_error"), False), (error(403, "permission_error"), True),
                                  (error(400, "Jane Doe (CEO) may not"), False), (error(529, "overloaded_error"), False)):
-            asyncio.run(gateway.read_structure(db, STRUCTURE_AUDIT["id"], GOOD_STRUCTURE.replace("FY2025", "FY2027"),
+            asyncio.run(gateway.read_structure(db, STRUCTURE_AUDIT["id"], GOOD_ITEMS.replace("FY2025", "FY2027"),
                                                "table", adapter=Failing(raised, on_count), sleep=t._noop_sleep))
         asyncio.run(gateway.generate_narrative(narrative_db, RUN_ID, "growth_engine",
                                                adapter=Failing(error(400, "invalid_request_error")),
@@ -978,12 +983,12 @@ def test_a_cap_refusal_logs_a_closed_reason_and_no_text(monkeypatch, caplog):
                                  "input_tokens": 398000, "output_tokens": 0, "estimated_cost_usd": 0.0,
                                  "timestamp": "2026-10-05T00:00:00"})
     with caplog.at_level(logging.DEBUG):
-        _send(db, GOOD_STRUCTURE)
+        _send(db, GOOD_ITEMS)
         monkeypatch.setenv("LLM_DAILY_SPEND_CAP_USD", "0.01")
         spent = _structure_db()
         spent["llm_calls"].docs.append({"run_id": "elsewhere", "cache_hit": False, "estimated_cost_usd": 1.0,
                                         "timestamp": datetime.now(timezone.utc).isoformat()})
-        _send(spent, GOOD_STRUCTURE)
+        _send(spent, GOOD_ITEMS)
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
     assert [line.split("reason=")[1] for line in lines] == ["token_cap status=- type=-", "spend_cap status=- type=-"]
     for needle in ("Revenue", "£1,200,000", "400,000-token", "spent today", "$"):
@@ -1043,7 +1048,7 @@ def test_the_structure_path_never_reads_parsed_deck_text():
     db["audits"].docs[0].update({"company_name": "Target Co", "client_name": "Northbridge Capital",
                                  "engagement_reference": "ENG-2026-041", "structure_reading_consent": True})
     adapter = t.FakeAdapter(replies=[STRUCTURE_REPLY])
-    asyncio.run(gateway.read_structure(db, RUN_ID, GOOD_STRUCTURE, "table", adapter=adapter, sleep=t._noop_sleep))
+    asyncio.run(gateway.read_structure(db, RUN_ID, GOOD_ITEMS, "table", adapter=adapter, sleep=t._noop_sleep))
     assert adapter.calls == 1
     touched = {name for name, _, _ in reads}
     assert not touched & {decks.TEXT_COLLECTION, decks.CANDIDATES_COLLECTION}, touched

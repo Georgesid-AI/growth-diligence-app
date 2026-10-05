@@ -47,9 +47,9 @@ from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Tuple
 
 from .. import disclosure, formatting
 from ..structures import redact as structure_redact
-from . import cache, guards, prompt_store, redaction
-from .schemas import (CLAIM_METRICS, MAPPING_FIELDS, STRUCTURE_TYPES, DeckUsage, Narrative, NarrativeResponse,
-                      StructureRead, StructureReply, UsageResponse, narrative_output_schema, structure_output_schema)
+from . import cache, guards, prompt_store, redaction, schemas
+from .schemas import (MAPPING_FIELDS, STRUCTURE_TYPES, DeckUsage, LabellingReply, Narrative, NarrativeResponse,
+                      StructureRead, StructureReply, UsageResponse, narrative_output_schema)
 
 logger = logging.getLogger("growth.llm")
 
@@ -1239,14 +1239,16 @@ async def load_structure_context(db, audit_id: str) -> dict:
 
 
 def structure_key(text: str, structure_type: str, prompt_tag: str, model: str) -> str:
-    """sha256 of the text, its type, the prompt cache tag, the model and the output schema's hash (spec section 8):
-    a reading stored under another schema is never served."""
-    return cache.cache_key(STRUCTURE_STEP, structure_type, f"{prompt_tag}:{schema_hash()}", model, text)
+    """sha256 of the text (with its item list), its type, the prompt cache tag, the model and the hash of the
+    output schema its type is sent (structure-labelling.md section 3): a reading stored under another schema is
+    never served."""
+    return cache.cache_key(STRUCTURE_STEP, structure_type, f"{prompt_tag}:{schema_hash(structure_type)}", model, text)
 
 
-def schema_hash() -> str:
-    """sha256 of the structure output schema as sent."""
-    return content_hash(cache.canonical_json(structure_output_schema()))
+def schema_hash(structure_type: str) -> str:
+    """sha256 of the output schema a structure of this type is sent: the labelling schema for a deck structure,
+    its own for a column mapping."""
+    return content_hash(cache.canonical_json(schemas.output_schema(structure_type)))
 
 
 def content_hash(text: str) -> str:
@@ -1306,24 +1308,51 @@ def _cited_cells(text: str, structure_type: str) -> set:
     return {structure_redact.cell_id(c) for c in cells}
 
 
-def parse_structure_reply(reply: str, structure_type: str, text: str) -> StructureReply:
-    """Validate a reply against the schema (extra fields forbidden), the type rule and the cells, or
-    raise GatewayError("parse_failed"). The type may be corrected within the deck types only; a
-    column mapping stays one. Every cited cell must exist in the text that was sent."""
+def parse_structure_reply(reply: str, structure_type: str, text: str):
+    """The validated reply for the type Python sent, or raise GatewayError("parse_failed"): a labelling reply for
+    a deck structure (parse_labelling_reply), the column-mapping reply for a column mapping."""
+    if structure_type != "column_mapping":
+        return parse_labelling_reply(reply, structure_type, text)
     try:
         data = json.loads((reply or "").strip())
         parsed = StructureReply.model_validate(data)
     except Exception as exc:
         raise GatewayError("parse_failed", f"reply did not match the schema: {type(exc).__name__}")
-    if (structure_type == "column_mapping") != (parsed.type == "column_mapping"):
+    if parsed.type != "column_mapping":
         raise GatewayError("parse_failed", "type changed between a deck structure and a column mapping")
-    allowed = MAPPING_FIELDS if structure_type == "column_mapping" else CLAIM_METRICS + ("use_of_funds",)
-    if any(item.metric not in allowed for item in parsed.items):
+    if any(item.metric not in MAPPING_FIELDS for item in parsed.items):
         raise GatewayError("parse_failed", "a metric that does not belong to this kind of structure")
     known = _cited_cells(text, structure_type)
     for item in parsed.items:
         if item.value_cell not in known or any(c not in known for c in item.period_cells):
             raise GatewayError("parse_failed", "reply cites a cell that is not in the structure")
+    return parsed
+
+
+def parse_labelling_reply(reply: str, structure_type: str, text: str) -> LabellingReply:
+    """Validate a deck structure's reply (structure-labelling.md section 3), or raise GatewayError("parse_failed"):
+    the schema (extra fields forbidden; the type may be corrected within the deck types, and is only logged),
+    then every listed item id labelled exactly once (no unknown, duplicate or missing id), and every pair one
+    listed text line and one listed date, a line paired at most once, on a structure sent as a roadmap only."""
+    try:
+        data = json.loads((reply or "").strip())
+        parsed = LabellingReply.model_validate(data)
+    except Exception as exc:
+        raise GatewayError("parse_failed", f"reply did not match the schema: {type(exc).__name__}")
+    listed = structure_redact.parse_item_lines(structure_redact.split_items(text)[1] or []) or \
+        {"items": [], "dates": [], "lines": []}
+    labelled = [label.item for label in parsed.labels]
+    if len(set(labelled)) != len(labelled):
+        raise GatewayError("parse_failed", "an item is labelled twice")
+    if set(labelled) != {item["id"] for item in listed["items"]}:
+        raise GatewayError("parse_failed", "the labels name an item that was not listed or leave one out")
+    if parsed.pairs and structure_type != "roadmap":
+        raise GatewayError("parse_failed", "pairs on a structure not sent as a roadmap")
+    lines, dates = {t["id"] for t in listed["lines"]}, {d["id"] for d in listed["dates"]}
+    if any(pair.line not in lines or pair.date not in dates for pair in parsed.pairs):
+        raise GatewayError("parse_failed", "a pair that is not one listed line and one listed date")
+    if len({pair.line for pair in parsed.pairs}) != len(parsed.pairs):
+        raise GatewayError("parse_failed", "a line paired twice")
     return parsed
 
 
@@ -1348,7 +1377,7 @@ async def _count_tokens(adapter, sleep, **kwargs) -> int:
 async def _structure_call(adapter, prompt, user_payload, structure_type, text, sleep):
     """(reply, input tokens, output tokens) summed over every billed attempt. Network or 5xx: up to
     MAX_PROVIDER_RETRIES with backoff. A reply that fails validation: one reask, then GatewayError."""
-    schema = structure_output_schema()
+    schema = schemas.output_schema(structure_type)
     parse_attempts = network_attempts = 0
     billed_in = billed_out = 0
     while True:
@@ -1384,6 +1413,13 @@ async def _structure_call(adapter, prompt, user_payload, structure_type, text, s
 
 def _structure_result(status, structure_type, reason=None, **fields) -> StructureRead:
     return StructureRead(status=status, type=structure_type, reason=reason, **fields)
+
+
+def _reading(output: dict) -> dict:
+    """The fields of a stored or new reply: a deck structure's labels and pairs, a column mapping's items."""
+    if "labels" in output:
+        return {"labels": output["labels"], "pairs": output.get("pairs") or []}
+    return {"items": output.get("items") or []}
 
 
 async def read_structure(
@@ -1433,8 +1469,8 @@ async def read_structure(
             await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version,
                            model=STRUCTURE_MODEL, input_tokens=0, output_tokens=0, estimated_cost_usd=0.0,
                            cache_hit=True, status="cache_hit", content_hash=digest, deck_id=deck_id)
-            return _structure_result("read", structure_type, model_type=hit.get("model_type"),
-                                     items=hit["output"]["items"], cache_hit=True, **base)
+            return _structure_result("read", structure_type, model_type=hit.get("model_type"), cache_hit=True,
+                                     **_reading(hit["output"]), **base)
 
     user_payload = cache.canonical_json({"type": structure_type, "text": text})
     adapter = adapter or AnthropicAdapter()
@@ -1445,7 +1481,7 @@ async def read_structure(
         if text_tokens > STRUCTURE_INPUT_CAP:
             return _structure_result("too_large", structure_type, TOO_LARGE, input_tokens=0, **base)
         counted = await _count_tokens(adapter, sleep, model=STRUCTURE_MODEL, system=prompt.text,
-                                      user_payload=user_payload, json_schema=structure_output_schema())
+                                      user_payload=user_payload, json_schema=schemas.output_schema(structure_type))
     except GatewayError as exc:
         # Codes only: the reason, the HTTP status and the provider's error type; never the exception's message.
         code, status, kind = exc.reason, exc.status, exc.error_type
@@ -1505,7 +1541,7 @@ async def read_structure(
         logger.info("structure read: run_id=%s step=%s hash=%s tokens=%d/%d cost=%.6f type_change=%s",
                     audit_id, STRUCTURE_STEP, digest, in_tok, out_tok, cost,
                     f"{structure_type}->{model_type}" if model_type else "none")
-        return _structure_result("read", structure_type, model_type=model_type, items=output["items"],
+        return _structure_result("read", structure_type, model_type=model_type, **_reading(output),
                                  input_tokens=in_tok, output_tokens=out_tok, estimated_cost_usd=cost, **base)
     except Exception as exc:  # never let structure reading block an upload
         logger.error("unexpected structure failure: run_id=%s step=%s error=%s", audit_id, STRUCTURE_STEP,

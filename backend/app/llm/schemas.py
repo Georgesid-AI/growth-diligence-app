@@ -146,9 +146,10 @@ class UsageResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Structure reading (docs/specs/llm-structure-reading.md section 1). One schema for every type.
-# No field is free text, so a reply cannot carry deck prose into a log: the one string an item fills
-# itself, unit_other, must be an ISO currency code.
+# Structure reading. Deck structures are labelled (docs/specs/structure-labelling.md section 3): Python lists
+# every figure, the model labels each listed item and pairs a roadmap's lines with its dates. A column mapping
+# keeps its own schema (llm-structure-reading.md section 1). No field is free text, so a reply cannot carry
+# deck prose into a log: the one string a reply fills itself, unit_other, must be an ISO currency code.
 # ---------------------------------------------------------------------------
 DECK_TYPES = ("table", "chart", "kpi_panel", "roadmap", "hiring_table", "unit_economics", "use_of_funds")
 STRUCTURE_TYPES = DECK_TYPES + ("column_mapping",)
@@ -174,12 +175,34 @@ SCHEMA_CURRENCIES = ("EUR", "USD", "GBP", "CHF", "BGN", "RON", "PLN", "CZK", "HU
 OTHER_UNIT = "other"
 STRUCTURE_UNITS = SCHEMA_CURRENCIES + (OTHER_UNIT, "%", "x", "count", "days", "months", "years")
 STRUCTURE_FLAGS = ("total_mismatch", "growth_mismatch")
+# A label's metric: a claim type, use of funds, "other" for a company figure that is none of them (listed as type
+# Other), or "not_a_metric" for page numbers, years and footnote marks (dropped and counted).
+LABEL_METRICS = CLAIM_METRICS + ("use_of_funds", "other", "not_a_metric")
+ROADMAP_CATEGORIES = ("launch", "feature", "expansion", "partnership", "hiring", "break_even", "funding",
+                      "certification", "other")
 _CELL_ID = re.compile(r"^r[1-9]\d*c[1-9]\d*$")
 _PERIOD = re.compile(r"^(?:\d{4}(?:-(?:Q[1-4]|H[12]|0[1-9]|1[0-2]))?|FY\d{4}(?:/\d{2})?)$")
 
 
+def _period_format(v):
+    if v is not None and not _PERIOD.match(v):
+        raise ValueError("period must be YYYY, YYYY-Qn, YYYY-Hn, YYYY-MM, FY2025 or FY2025/26")
+    return v
+
+
+def _other_currency(unit, unit_other):
+    """unit_other is an ISO currency code outside the listed 20, beside unit "other", and null otherwise: never
+    free text."""
+    if unit == OTHER_UNIT:
+        if unit_other not in ISO_CURRENCIES or unit_other in SCHEMA_CURRENCIES:
+            raise ValueError("unit other needs the ISO code of a currency that is not listed")
+    elif unit_other is not None:
+        raise ValueError("unit_other is set only when unit is other")
+
+
 class StructureItem(BaseModel):
-    """One figure the model read, with the cells it cites. Exactly these fields."""
+    """One column a column-mapping reply maps, citing its header cell (llm-structure-reading.md section 1).
+    Exactly these fields."""
 
     model_config = {"extra": "forbid"}
 
@@ -195,10 +218,8 @@ class StructureItem(BaseModel):
 
     @field_validator("period")
     @classmethod
-    def _period_format(cls, v):
-        if v is not None and not _PERIOD.match(v):
-            raise ValueError("period must be YYYY, YYYY-Qn, YYYY-Hn, YYYY-MM, FY2025 or FY2025/26")
-        return v
+    def _period(cls, v):
+        return _period_format(v)
 
     @field_validator("value_cell")
     @classmethod
@@ -222,19 +243,13 @@ class StructureItem(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def _other_currency(self):
-        """unit_other is an ISO currency code outside the listed 20, beside unit "other", and null otherwise:
-        never free text."""
-        if self.unit == OTHER_UNIT:
-            if self.unit_other not in ISO_CURRENCIES or self.unit_other in SCHEMA_CURRENCIES:
-                raise ValueError("unit other needs the ISO code of a currency that is not listed")
-        elif self.unit_other is not None:
-            raise ValueError("unit_other is set only when unit is other")
+    def _unit_other(self):
+        _other_currency(self.unit, self.unit_other)
         return self
 
 
 class StructureReply(BaseModel):
-    """What the model must return for one structure. No extra keys are accepted."""
+    """What the model must return for a column mapping. No extra keys are accepted."""
 
     model_config = {"extra": "forbid"}
 
@@ -242,12 +257,101 @@ class StructureReply(BaseModel):
     items: List[StructureItem]
 
 
+class StructureLabel(BaseModel):
+    """What one listed item measures. Exactly these fields: no value, cell id or flag (the values and cells are
+    Python's, the flags Python's to compute). `item` must be a listed id: the gateway checks it."""
+
+    model_config = {"extra": "forbid"}
+
+    item: str
+    metric: Literal[LABEL_METRICS]
+    period: Optional[str]
+    unit: Optional[Literal[STRUCTURE_UNITS]]
+    unit_other: Optional[str]
+    actual_or_forecast: Literal["actual", "forecast", "unknown"]
+
+    @field_validator("period")
+    @classmethod
+    def _period(cls, v):
+        return _period_format(v)
+
+    @model_validator(mode="after")
+    def _unit_other(self):
+        _other_currency(self.unit, self.unit_other)
+        return self
+
+
+class RoadmapPair(BaseModel):
+    """A roadmap text line paired with its date cell (ids the gateway checks against the list it sent), and the
+    milestone's category."""
+
+    model_config = {"extra": "forbid"}
+
+    line: str
+    date: str
+    category: Literal[ROADMAP_CATEGORIES]
+
+
+class LabellingReply(BaseModel):
+    """What the model must return for a deck structure. No extra keys are accepted. The gateway also checks the
+    ids against the item list it sent (gateway.parse_labelling_reply)."""
+
+    model_config = {"extra": "forbid"}
+
+    type: Literal[DECK_TYPES]
+    labels: List[StructureLabel]
+    pairs: List[RoadmapPair]
+
+
+def _nullable(schema: dict) -> dict:
+    return {"anyOf": [schema, {"type": "null"}]}
+
+
+def labelling_output_schema() -> dict:
+    """The JSON schema a deck structure's call sends as `output_config.format.schema`. Written by hand, as
+    structure_output_schema is: the id formats and unit_other are checked by LabellingReply after the reply
+    arrives, and the ids against the item list by the gateway."""
+    label = {
+        "type": "object",
+        "properties": {
+            "item": {"type": "string"},
+            "metric": {"type": "string", "enum": list(LABEL_METRICS)},
+            "period": _nullable({"type": "string"}),
+            "unit": _nullable({"type": "string", "enum": list(STRUCTURE_UNITS)}),
+            "unit_other": _nullable({"type": "string"}),
+            "actual_or_forecast": {"type": "string", "enum": ["actual", "forecast", "unknown"]},
+        },
+        "required": ["item", "metric", "period", "unit", "unit_other", "actual_or_forecast"],
+        "additionalProperties": False,
+    }
+    pair = {
+        "type": "object",
+        "properties": {"line": {"type": "string"}, "date": {"type": "string"},
+                       "category": {"type": "string", "enum": list(ROADMAP_CATEGORIES)}},
+        "required": ["line", "date", "category"],
+        "additionalProperties": False,
+    }
+    return {
+        "type": "object",
+        "properties": {"type": {"type": "string", "enum": list(DECK_TYPES)},
+                       "labels": {"type": "array", "items": label},
+                       "pairs": {"type": "array", "items": pair}},
+        "required": ["type", "labels", "pairs"],
+        "additionalProperties": False,
+    }
+
+
+def output_schema(structure_type: str) -> dict:
+    """The schema a call sends for its type: a column mapping keeps its own, every deck type is labelled."""
+    return structure_output_schema() if structure_type == "column_mapping" else labelling_output_schema()
+
+
 def structure_output_schema() -> dict:
-    """The JSON schema sent as `output_config.format.schema`. Written by hand: structured outputs take
-    no array or string constraints, so the item limits (two period cells, the cell id and period
-    formats, unit_other an ISO code beside unit "other") are checked by StructureReply after the reply
-    arrives."""
-    nullable = lambda schema: {"anyOf": [schema, {"type": "null"}]}  # noqa: E731
+    """The column-mapping JSON schema sent as `output_config.format.schema`. Written by hand: structured
+    outputs take no array or string constraints, so the item limits (two period cells, the cell id and
+    period formats, unit_other an ISO code beside unit "other") are checked by StructureReply after the
+    reply arrives."""
+    nullable = _nullable
     item = {
         "type": "object",
         "properties": {
@@ -278,14 +382,17 @@ StructureStatus = Literal["read", "not_read", "too_large", "stopped", "no_consen
 
 
 class StructureRead(BaseModel):
-    """What read_structure returns. `items` is the validated model output (values with cell
-    references), never the text that was sent."""
+    """What read_structure returns: the validated model output, never the text that was sent. A deck
+    structure's `labels` (one per listed item id) and `pairs` (a roadmap's lines and dates); a column
+    mapping's `items` (fields with the header cells they cite)."""
 
     status: StructureStatus
     reason: Optional[str] = None
     type: str
     model_type: Optional[str] = None
     items: List[dict] = Field(default_factory=list)
+    labels: List[dict] = Field(default_factory=list)
+    pairs: List[dict] = Field(default_factory=list)
     key: Optional[str] = None
     cache_hit: bool = False
     input_tokens: int = 0

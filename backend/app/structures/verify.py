@@ -51,6 +51,11 @@ SUGGESTION_LABEL = "AI suggestion, not verified"
 VERIFIED_LABEL = "Verified"
 UNMATCHED_MODES = ("suggest", "drop")
 BOX_TYPES = ("kpi_panel", "roadmap")
+OTHER, NOT_A_METRIC = "other", "not_a_metric"
+# A roadmap milestone's claim type, by the category the model gives its pair (structure-labelling.md section 2).
+MILESTONE_TYPES = {"launch": "product", "feature": "product", "expansion": "product", "partnership": "product",
+                   "hiring": "people", "break_even": "ebitda", "funding": OTHER, "certification": "product",
+                   "other": "product"}
 GROWTH_BASE = {"revenue_growth": "revenue", "user_growth": "users"}
 TOTAL_TOLERANCE = 0.005         # a total and the sum of its parts differ by more than 0.5% of the total...
 GROWTH_TOLERANCE = 0.5          # ...a stated growth rate and the one the values give by more than 0.5 points

@@ -28,10 +28,25 @@ AUDIT = "audit-s"
 AUDIT_DOC = {"id": AUDIT, "company_name": "Zero2Hero", "client_name": "Northbridge Capital",
              "engagement_reference": "ENG-2026-041", "structure_reading_consent": True, "fiscal_year_end": 12,
              "results": None}
-TEXT = "r1c2: FY2025\nr1c3: FY2026\nr2c1: Revenue\nr2c2: £1,200,000\nr2c3: £1,500,000"
-REPLY = {"type": "table", "items": [
-    {"metric": "revenue", "period": "FY2025", "value": 1200000, "unit": "GBP", "actual_or_forecast": "forecast",
-     "unit_other": None, "value_cell": "r2c2", "period_cells": ["r1c2"], "proposed_flags": []}]}
+# A structure as the model reads it: its cells, then the items Python listed (docs/specs/structure-labelling.md).
+TEXT = ('r1c2: FY2025\nr1c3: FY2026\nr2c1: Revenue\nr2c2: £1,200,000\nr2c3: £1,500,000\nitems:\n'
+        'i1 r2c2 "1,200,000" 1200000 h r2c1 r1c2\ni2 r2c3 "1,500,000" 1500000 h r2c1 r1c3')
+
+
+def _label(item, metric="revenue", period=None, unit=None, unit_other=None, actual_or_forecast="forecast"):
+    """One label of the labelling reply: exactly these fields, no value, cell or flag."""
+    return {"item": item, "metric": metric, "period": period, "unit": unit, "unit_other": unit_other,
+            "actual_or_forecast": actual_or_forecast}
+
+
+REPLY = {"type": "table", "labels": [_label("i1", period="FY2025", unit="GBP"), _label("i2", period="FY2026", unit="GBP")],
+         "pairs": []}
+NOTHING = {"type": "table", "labels": [], "pairs": []}          # the reply to a structure with no item
+ROADMAP_TEXT = ('r1c1: Launch the API\nr2c1: Q3 2025\nr3c1: Hire 5 engineers\nr4c1: Q4 2025\nitems:\n'
+                'i1 r3c1 "5" 5 h r1c1\nd1 r2c1\nd2 r4c1\nt1 r1c1\nt2 r3c1')
+ROADMAP_REPLY = {"type": "roadmap", "labels": [_label("i1", "people", unit="count")],
+                 "pairs": [{"line": "t1", "date": "d1", "category": "launch"},
+                           {"line": "t2", "date": "d2", "category": "hiring"}]}
 
 
 def _db(**audit):
@@ -84,7 +99,7 @@ def test_the_call_is_pinned_to_one_model_with_no_temperature_no_tools_and_the_st
     request, = adapter.requests
     assert request["model"] == "claude-sonnet-5-5" and request["temperature"] is None
     assert request["max_tokens"] == gateway.STRUCTURE_MAX_TOKENS
-    assert set(request["json_schema"]["properties"]) == {"type", "items"}
+    assert set(request["json_schema"]["properties"]) == {"type", "labels", "pairs"}, "a deck structure is labelled"
     assert "claude-sonnet-5-5" in gateway.MODEL_PRICING_USD, "the pinned model has a price entry"
 
 
@@ -256,43 +271,89 @@ LISTED_CURRENCIES = ("EUR", "USD", "GBP", "CHF", "BGN", "RON", "PLN", "CZK", "HU
                      "RSD", "JPY", "CNY", "INR", "AUD", "CAD")
 
 
-def test_a_change_to_the_output_schema_moves_every_structure_cache_key(monkeypatch):
-    """Spec section 8: the key holds a hash of the output schema, so a reading stored under another schema is never
-    served: the next read of the same structure misses the cache and calls the model."""
+def test_deck_structures_use_the_labelling_schema_and_a_column_mapping_keeps_its_own():
+    """Spec section 3: one labelling schema for every deck type, {"type", "labels", "pairs"}; a label holds exactly
+    item, metric, period, unit, unit_other and actual_or_forecast: no value, cell id or flag. Column mapping keeps
+    its own schema, and the gateway picks the schema by type."""
+    from app.llm import schemas
+    schema = schemas.labelling_output_schema()
+    assert list(schema["properties"]) == ["type", "labels", "pairs"] == schema["required"]
+    assert schema["additionalProperties"] is False and schema["properties"]["type"]["enum"] == list(schemas.DECK_TYPES)
+    label = schema["properties"]["labels"]["items"]
+    assert list(label["properties"]) == ["item", "metric", "period", "unit", "unit_other", "actual_or_forecast"]
+    assert label["required"] == list(label["properties"]) and label["additionalProperties"] is False
+    assert label["properties"]["metric"]["enum"] == [*schemas.CLAIM_METRICS, "use_of_funds", "other", "not_a_metric"]
+    pair = schema["properties"]["pairs"]["items"]
+    assert pair["properties"] == {"line": {"type": "string"}, "date": {"type": "string"}, "category": {
+        "type": "string", "enum": ["launch", "feature", "expansion", "partnership", "hiring", "break_even", "funding",
+                                   "certification", "other"]}}
+    assert pair["required"] == ["line", "date", "category"] and pair["additionalProperties"] is False
+    assert all(schemas.output_schema(kind) == schema for kind in schemas.DECK_TYPES)
+    assert schemas.output_schema("column_mapping") == schemas.structure_output_schema()
+    assert set(schemas.output_schema("column_mapping")["properties"]) == {"type", "items"}
+    result, adapter = _read(_db(), MAPPING_TEXT, "column_mapping", replies=[ONE_MAPPING])
+    assert (result.status, result.items, result.labels) == ("read", ONE_MAPPING["items"], [])
+    assert set(adapter.requests[0]["json_schema"]["properties"]) == {"type", "items"}
+    assert set(adapter.count_requests[-1]["json_schema"]["properties"]) == {"type", "items"}
+
+
+def test_each_schemas_hash_enters_the_cache_key_of_its_own_type(monkeypatch):
+    """Spec section 3: each schema's hash enters the cache key, so a reading stored under another schema is never
+    served: the next read misses the cache and calls the model. A change to one schema moves only its own keys."""
+    from app.llm import schemas
     db = _db()
     first, _ = _read(db)
+    mapping, _ = _read(db, MAPPING_TEXT, "column_mapping", replies=[ONE_MAPPING])
     again, adapter = _read(db)
     assert (again.cache_hit, adapter.calls, again.key) == (True, 0, first.key)
-    schema = gateway.structure_output_schema()
-    monkeypatch.setattr(gateway, "structure_output_schema", lambda: {**schema, "required": ["items", "type"]})
+    labelling = schemas.labelling_output_schema()
+    monkeypatch.setattr(schemas, "labelling_output_schema", lambda: {**labelling, "required": ["labels", "type", "pairs"]})
     changed, adapter = _read(db)
     assert (changed.status, changed.cache_hit, adapter.calls) == ("read", False, 1) and changed.key != first.key
+    kept, adapter = _read(db, MAPPING_TEXT, "column_mapping", replies=[ONE_MAPPING])
+    assert (kept.cache_hit, kept.key, adapter.calls) == (True, mapping.key, 0), "the column-mapping key stays"
+    old = schemas.structure_output_schema()
+    monkeypatch.setattr(schemas, "structure_output_schema", lambda: {**old, "required": ["items", "type"]})
+    moved, adapter = _read(db, MAPPING_TEXT, "column_mapping", replies=[ONE_MAPPING])
+    assert (moved.cache_hit, adapter.calls) == (False, 1) and moved.key != mapping.key
 
 
-def test_the_prompt_names_every_output_field_and_the_other_unit():
-    """The prompt lists exactly the schema's item fields: a unit is one of the 20 listed currency codes, or "other"
-    with the currency's ISO code in unit_other."""
+def test_the_prompt_is_v3_and_names_every_label_field_metric_category_and_tie_break():
+    """The prompt lists exactly the label fields, every metric (other and not_a_metric too), the roadmap categories
+    and the tie-breaks; a unit is one of the 20 listed currency codes, or "other" with its ISO code in unit_other.
+    The column-mapping section keeps its own item fields."""
     import re
     from app.llm import prompt_store, schemas
-    text = prompt_store.load(gateway.STRUCTURE_PROMPT).text
-    fields = text.split("Each item has exactly these fields:")[1].split("List the company")[0]
+    prompt = prompt_store.load(gateway.STRUCTURE_PROMPT)
+    assert prompt.version == "v3"
+    text = prompt.text
+    fields = text.split("Each label has exactly these fields:")[1].split("\n\n")[1]
     named = re.findall(r"^- `(\w+)`:", fields, re.M)
-    assert sorted(named) == sorted(schemas.structure_output_schema()["properties"]["items"]["items"]["properties"])
+    assert named == list(schemas.labelling_output_schema()["properties"]["labels"]["items"]["properties"])
     unit, unit_other = (re.search(rf"^- `{f}`:(.*?)(?=^- `)", fields, re.M | re.S).group(1)
                         for f in ("unit", "unit_other"))
     assert "20 currency codes" in unit and "`other`" in unit
     assert "`other`" in unit_other and "ISO code" in unit_other and "null" in unit_other
+    for word in [*schemas.LABEL_METRICS, *schemas.ROADMAP_CATEGORIES]:
+        assert f"`{word}`" in text, word
+    ties = text.split("Tie-breaks:")[1].split("\n\n")[0]
+    assert "time figures are `product`, unless a user count is named" in ties
+    assert '"% of marketplace" and market share are `market`' in ties
+    assert "commission and take rate are `sales`" in ties
+    mapping = text.split("# Column mapping")[1].split("Each item has exactly these fields:")[1]
+    heads = [line.split(":")[0] for line in mapping.splitlines() if line.startswith("- `")]
+    named = [name for head in heads for name in re.findall(r"`(\w+)`", head)]
+    assert sorted(named) == sorted(schemas.structure_output_schema()["properties"]["items"]["items"]["properties"])
 
 
-def test_the_output_schema_lists_20_currencies_and_other_with_the_code_in_unit_other():
+def test_the_labelling_schema_lists_20_currencies_and_other_with_the_code_in_unit_other():
     from app.llm import schemas
-    schema = schemas.structure_output_schema()
-    item = schema["properties"]["items"]["items"]
-    assert item["properties"]["unit"] == {"anyOf": [
+    schema = schemas.labelling_output_schema()
+    label = schema["properties"]["labels"]["items"]
+    assert label["properties"]["unit"] == {"anyOf": [
         {"type": "string", "enum": [*LISTED_CURRENCIES, "other", "%", "x", "count", "days", "months", "years"]},
         {"type": "null"}]}
-    assert item["properties"]["unit_other"] == {"anyOf": [{"type": "string"}, {"type": "null"}]}
-    assert item["required"] == list(item["properties"]) and item["additionalProperties"] is False
+    assert label["properties"]["unit_other"] == {"anyOf": [{"type": "string"}, {"type": "null"}]}
     assert set(LISTED_CURRENCIES) < set(schemas.ISO_CURRENCIES), "listed codes are ISO 4217 codes"
     assert not [code for code in schemas.ISO_CURRENCIES if code not in LISTED_CURRENCIES and code in json.dumps(schema)]
 
@@ -316,13 +377,13 @@ ABSENT = object()
     ("GBP", ABSENT, False),                 # exactly the schema's fields: unit_other is always written
 ])
 def test_unit_other_holds_an_unlisted_iso_code_and_stands_only_beside_other(unit, unit_other, valid):
-    item = {**REPLY["items"][0], "unit": unit, "unit_other": unit_other}
+    label = {**REPLY["labels"][0], "unit": unit, "unit_other": unit_other}
     if unit_other is ABSENT:
-        del item["unit_other"]
-    reply = json.dumps({"type": "table", "items": [item]})
+        del label["unit_other"]
+    reply = json.dumps({**REPLY, "labels": [label, REPLY["labels"][1]]})
     if valid:
         parsed = gateway.parse_structure_reply(reply, "table", TEXT)
-        assert (parsed.items[0].unit, parsed.items[0].unit_other) == (unit, unit_other)
+        assert (parsed.labels[0].unit, parsed.labels[0].unit_other) == (unit, unit_other)
     else:
         with pytest.raises(gateway.GatewayError, match="did not match the schema"):
             gateway.parse_structure_reply(reply, "table", TEXT)
@@ -408,15 +469,24 @@ def test_a_refusal_is_not_retried_and_the_structure_is_not_read():
 
 
 # ---------------------------------------------------------------------------
-# Schema validation, cited cells, the type
+# Schema violations (spec section 3): one reask, then "Not read by AI"; the type
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("bad", [
     {**REPLY, "comment": "extra field"},
-    {"type": "table", "items": [{**REPLY["items"][0], "note": "Revenue grew strongly"}]},
-    {"type": "table", "items": [{**REPLY["items"][0], "value_cell": "r9c9"}]},          # no such cell
-    {"type": "table", "items": [{**REPLY["items"][0], "period_cells": ["r1c2", "r1c3", "r2c1"]}]},
-    {"type": "table", "items": [{**REPLY["items"][0], "period": "next year"}]},
-    {"type": "column_mapping", "items": []},                                             # a deck structure is never one
+    {**REPLY, "labels": [{**REPLY["labels"][0], "value": 1200000}, REPLY["labels"][1]]},          # no value
+    {**REPLY, "labels": [{**REPLY["labels"][0], "value_cell": "r2c2"}, REPLY["labels"][1]]},      # no cell id
+    {**REPLY, "labels": [{**REPLY["labels"][0], "proposed_flags": []}, REPLY["labels"][1]]},      # no flag
+    {**REPLY, "labels": [{**REPLY["labels"][0], "note": "Revenue grew strongly"}, REPLY["labels"][1]]},
+    {**REPLY, "labels": [{**REPLY["labels"][0], "period": "next year"}, REPLY["labels"][1]]},
+    {**REPLY, "labels": REPLY["labels"] + [{**REPLY["labels"][1], "item": "i9"}]},                # an unknown id
+    {**REPLY, "labels": REPLY["labels"] + [REPLY["labels"][0]]},                                   # a duplicate id
+    {**REPLY, "labels": [REPLY["labels"][0]]},                                                     # a missing id
+    {**REPLY, "labels": REPLY["labels"] + [{**REPLY["labels"][1], "item": "r2c3"}]},              # a cell, not an id
+    {**REPLY, "labels": [REPLY["labels"][0], {**REPLY["labels"][1], "metric": "invoice_date"}]},  # a sheet field
+    {**REPLY, "pairs": [{"line": "t1", "date": "d1", "category": "launch"}]},     # pairs, not sent as a roadmap
+    {**REPLY, "type": "roadmap", "pairs": [{"line": "t1", "date": "d1", "category": "launch"}]},
+    {"type": "column_mapping", "items": []},                                       # a deck structure is never one
+    {"type": "table", "items": []},                                                # the old reply
     "not json",
 ])
 def test_a_reply_that_fails_validation_is_asked_again_once_then_not_read(bad):
@@ -429,17 +499,67 @@ def test_a_reply_that_fails_validation_is_asked_again_once_then_not_read(bad):
     assert (result.status, adapter.calls) == ("read", 2), "the one reask recovers"
 
 
-def test_the_type_may_be_corrected_within_the_deck_types_and_the_change_is_logged(caplog):
+def _pair(line, date, category="launch"):
+    return {"line": line, "date": date, "category": category}
+
+
+@pytest.mark.parametrize("pairs", [
+    [_pair("t9", "d1")],                                  # a line that was not listed
+    [_pair("t1", "d9")],                                  # a date that was not listed
+    [_pair("d1", "d2")],                                  # a date is not a line
+    [_pair("t1", "t2")],                                  # a line is not a date
+    [_pair("i1", "d1")],                                  # an item is not a line
+    [_pair("t1", "d1"), _pair("t1", "d2", "hiring")],     # a line has at most one pair
+    [_pair("t1", "d1", "ipo")],                           # not a category
+    [{**_pair("t1", "d1"), "period": "2025-Q3"}],         # exactly line, date and category
+])
+def test_a_roadmap_pair_must_be_one_listed_line_and_one_listed_date_with_a_category(pairs):
+    bad = json.dumps({**ROADMAP_REPLY, "pairs": pairs})
+    result, adapter = _read(_db(), ROADMAP_TEXT, "roadmap", adapter=t.FakeAdapter(replies=[bad, bad]))
+    assert (result.status, result.reason, adapter.calls) == ("not_read", "Not read by AI", 2)
+
+
+def test_pairs_stand_only_on_a_structure_python_sent_as_a_roadmap_whatever_type_the_reply_gives():
+    """The reply follows the type Python sent: pairs of listed lines and dates are a violation on any other type,
+    even when the reply corrects the type to roadmap."""
+    for reply_type in ("table", "roadmap"):
+        reply = json.dumps({**ROADMAP_REPLY, "type": reply_type})
+        with pytest.raises(gateway.GatewayError, match="pairs on a structure not sent as a roadmap"):
+            gateway.parse_labelling_reply(reply, "table", ROADMAP_TEXT)
+    assert gateway.parse_labelling_reply(json.dumps({**ROADMAP_REPLY, "type": "table"}), "roadmap", ROADMAP_TEXT).pairs
+
+
+def test_a_roadmap_reply_pairs_lines_with_dates_and_a_date_may_serve_several_lines():
+    result, _ = _read(_db(), ROADMAP_TEXT, "roadmap", replies=[ROADMAP_REPLY])
+    assert result.status == "read", result.reason
+    assert (result.labels, result.pairs) == (ROADMAP_REPLY["labels"], ROADMAP_REPLY["pairs"])
+    shared = {**ROADMAP_REPLY, "pairs": [_pair("t1", "d1"), _pair("t2", "d1", "hiring")]}
+    result, _ = _read(_db(), ROADMAP_TEXT, "roadmap", replies=[shared])
+    assert result.status == "read" and len(result.pairs) == 2
+    result, _ = _read(_db(), ROADMAP_TEXT, "roadmap", replies=[{**ROADMAP_REPLY, "pairs": []}])
+    assert result.status == "read", "a line may stay unpaired"
+
+
+def test_each_roadmap_category_maps_to_a_claim_type():
+    """Spec section 2: hiring -> people, break_even -> ebitda, funding -> other (type Other), the rest -> product."""
+    from app.llm import schemas
+    assert verify.MILESTONE_TYPES == {"launch": "product", "feature": "product", "expansion": "product",
+                                      "partnership": "product", "hiring": "people", "break_even": "ebitda",
+                                      "funding": "other", "certification": "product", "other": "product"}
+    assert tuple(verify.MILESTONE_TYPES) == schemas.ROADMAP_CATEGORIES
+
+
+def test_the_reply_follows_the_type_python_sent_and_a_corrected_type_is_only_logged(caplog):
     import logging
     db = _db()
     with caplog.at_level(logging.INFO):
         result, _ = _read(db, replies=[{**REPLY, "type": "unit_economics"}])
     assert (result.status, result.type, result.model_type) == ("read", "table", "unit_economics")
+    assert result.labels == REPLY["labels"]
     stored, = db[gateway.STRUCTURES_COLLECTION].docs
     assert (stored["type"], stored["model_type"]) == ("table", "unit_economics")
     assert "type_change=table->unit_economics" in caplog.text
-    mapping_text = "r1c1: Customer\nr1c2: Amount\nc2 sample: 1200"
-    result, adapter = _read(_db(), mapping_text, "column_mapping", replies=[REPLY, REPLY])
+    result, adapter = _read(_db(), MAPPING_TEXT, "column_mapping", replies=[REPLY, REPLY])
     assert result.status == "not_read" and adapter.calls == 2, "a column mapping stays a column mapping"
 
 
@@ -453,6 +573,7 @@ def test_the_schema_lists_match_the_claim_types_and_the_mapping_fields():
     assert schemas.CLAIM_METRICS == claims.CLAIM_TYPES
     assert set(schemas.MAPPING_FIELDS) == fields
     assert set(schemas.STRUCTURE_METRICS) == set(claims.CLAIM_TYPES) | {"use_of_funds"} | fields
+    assert schemas.LABEL_METRICS == claims.CLAIM_TYPES + ("use_of_funds", "other", "not_a_metric")
     assert StructureReply.model_json_schema()["additionalProperties"] is False
 
 
@@ -474,7 +595,7 @@ def test_a_cache_hit_makes_no_call_and_no_audit_is_served_another_audits_result(
     first, adapter = _read(db)
     again, cached = _read(db)
     assert first.status == again.status == "read" and again.cache_hit and cached.calls == 0
-    assert again.items == first.items and again.key == first.key
+    assert (again.labels, again.pairs) == (first.labels, first.pairs) and again.key == first.key
     db["audits"].docs.append({**AUDIT_DOC, "id": "audit-other"})
     other = t.FakeAdapter(replies=[json.dumps(REPLY)])
     asyncio.run(gateway.read_structure(db, "audit-other", TEXT, "table", adapter=other, sleep=t._noop_sleep))
@@ -554,7 +675,7 @@ def test_an_audit_of_8_decks_of_5_structures_fits_the_token_cap():
         def complete(self, **kwargs):
             reply, tokens_in, _ = super().complete(**kwargs)
             return reply, tokens_in, 300
-    db, adapter = _db(), Read(replies=[json.dumps({"type": "table", "items": []})])
+    db, adapter = _db(), Read(replies=[json.dumps({"type": "table", "labels": [], "pairs": []})])
     statuses = [_read(db, f"r1c1: Revenue\nr1c2: {n}", adapter=adapter)[0].status for n in range(89)]
     assert statuses == ["read"] * 88 + ["stopped"]
     assert asyncio.run(guards.structure_tokens_used(db, AUDIT)) == 88 * 4456
@@ -653,6 +774,7 @@ def test_purge_run_removes_the_stored_structure_readings():
 import app.structures as structures  # noqa: E402
 
 SECRET = "Jane Doe Holdings"           # a text cell value: never on the column-mapping path
+MAPPING_TEXT = "r1c1: Customer\nr1c2: Amount\nc2 sample: 1200"
 
 
 def _sheet():
@@ -706,6 +828,9 @@ MAPPING_REPLY = {"type": "column_mapping", "items": [
      "unit_other": None, "period_cells": [], "proposed_flags": []}
     for f, cell in (("customer_id", "r1c1"), ("invoice_date", "r1c2"), ("amount", "r1c3"), ("currency", "r1c4"),
                     ("deal_id", "r1c1"))]}
+
+
+ONE_MAPPING = {"type": "column_mapping", "items": [MAPPING_REPLY["items"][0]]}     # fits MAPPING_TEXT
 
 
 def test_the_model_proposes_what_the_aliases_miss_and_the_screen_marks_it_as_a_suggestion(monkeypatch):
@@ -1705,21 +1830,21 @@ def test_a_short_engagement_reference_is_withheld_as_a_word_and_never_inside_one
     assert (result.reason, adapter.calls) == ("refused: engagement_reference", 0), "sent as written, it is refused"
     cells, _ = redact.redact_structure([{"row": 1, "col": 1, "text": "Plan E7"}, {"row": 1, "col": 2, "text": "£1M"}],
                                        "Zero2Hero", {}, redact.withheld_values(db["audits"].docs[0]))
-    result, adapter = _read(db, redact.structure_text(cells), replies=[{"type": "table", "items": []}])
+    result, adapter = _read(db, redact.structure_text(cells), replies=[NOTHING])
     assert result.status == "read" and json.loads(adapter.payloads[0])["text"] == "r1c1: Plan [redacted]\nr1c2: £1M"
-    result, adapter = _read(db, "r1c1: Plan E70\nr1c2: £1M", replies=[{"type": "table", "items": []}])
+    result, adapter = _read(db, "r1c1: Plan E70\nr1c2: £1M", replies=[NOTHING])
     assert result.status == "read", "E70 is not the reference"
 
 
 def test_ordinary_text_with_a_dot_is_not_taken_for_a_file_name():
-    result, _ = _read(_db(), "r1c1: 2.key metrics\nr1c2: £1M", replies=[{"type": "table", "items": []}])
+    result, _ = _read(_db(), "r1c1: 2.key metrics\nr1c2: £1M", replies=[NOTHING])
     assert result.status == "read"
     result, adapter = _read(_db(), "r1c1: See plan_v2.xlsx\nr1c2: £1M")
     assert result.status == "refused" and adapter.calls == 0
 
 
 def test_a_metric_must_belong_to_the_kind_of_structure_read():
-    deck_reply = {"type": "table", "items": [{**REPLY["items"][0], "metric": "invoice_date"}]}
+    deck_reply = {**REPLY, "labels": [{**REPLY["labels"][0], "metric": "invoice_date"}, REPLY["labels"][1]]}
     result, adapter = _read(_db(), replies=[deck_reply, deck_reply])
     assert result.status == "not_read" and adapter.calls == 2, "a spreadsheet field is not a deck claim"
     mapping_reply = {"type": "column_mapping", "items": [{**MAPPING_REPLY["items"][0], "metric": "revenue_growth"}]}
