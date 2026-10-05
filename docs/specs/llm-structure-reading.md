@@ -6,23 +6,26 @@ carries. There is one prompt (`prompts/structure_reading.md`) and one schema, an
 `table`, `chart`, `kpi_panel`, `roadmap`, `hiring_table`, `unit_economics`, `use_of_funds`, `column_mapping`.
 Python finds the structures and assigns their type (deck-parser.md §7). It builds `text` as one line per cell,
 `r<row>c<col>: <cell text>`, with no file name, slide number or prose. For `column_mapping` the text holds the header
-row, up to 3 sample values for each numeric or date column, and for each text column a profile instead of values:
+stack (at most 3 header rows, the 3 nearest the data; deck-parser.md §2), up to 3 sample values for each numeric or date column, and for each text column a profile instead of values:
 distinct count, typical length and a shape pattern (e.g. `Aa aa`, `A-0000`). No text cell value leaves the server on
 the column-mapping path. Adding the prompt file records its hash in
 `RELEASE.md` without a release bump; later edits bump it as today. The output is `{"type": ..., "items": [...]}`.
 `type` confirms or corrects Python's type, within the deck types (a column mapping stays one), and Python logs any
 change (§9). Each item has exactly these fields:
 - `metric`: a deck-parser.md §2 claim type, `Use of funds`, or a FIELD_DEFS field;
-- `period`: `YYYY`, `YYYY-Qn`, `YYYY-Hn`, `YYYY-MM` or null;
+- `period`: `YYYY`, `YYYY-Qn`, `YYYY-Hn`, `YYYY-MM`, a fiscal year stored as stated (`FY2025` or `FY2025/26`) or null;
 - `value`: a number, null only for a roadmap milestone or a column mapping;
 - `unit`: an ISO currency, `%`, `x`, `count`, `days`, `months`, `years` or null;
 - `actual_or_forecast`: `actual`, `forecast` or `unknown`;
-- `source_cells`: input cell ids, at least one;
+- `value_cell`: one input cell id: the cell that holds the value, or the milestone or column header cell when `value` is
+  null;
+- `period_cells`: one or two input cell ids: the period cell and, for a period built from two cells, the year cell above
+  it (deck-parser.md §2); empty when `period` is null;
 - `proposed_flags`: `total_mismatch` or `growth_mismatch`.
 
 No field is free text, so model output cannot carry deck prose into a log.
 
-**2. Verifier (Python, pure).** A value matches when one of its `source_cells` exists and holds the same number after
+**2. Verifier (Python, pure).** A value is matched against its `value_cell` only: it matches when that cell exists and holds the same number after
 normalisation:
 - currency symbols and thousands separators are removed;
 - a decimal comma is read only if the structure writes numbers like `1.234,5`;
@@ -30,9 +33,10 @@ normalisation:
 - `k`/`m`/`bn` suffixes are applied;
 - a unit or scale in a neighbouring or header cell (`£m`, `'000`, `%`) is applied.
 
-The match is exact, so a rounded number does not match. The period must match too: the row or column header of
-the matched cell must read as that period under the deck-parser.md §2 period rules. A null period matches only when
-neither header holds a period. An unmatched value or period makes the item unmatched. Every proposed flag is
+The match is exact, so a rounded number does not match. The period is matched against its `period_cells` only:
+they must be header cells of the value cell (its row header or the header stack above its column), and Python rebuilds
+the period from them under the deck-parser.md §2 period rules; if it cannot, or gets a period with a different start or
+end date, the period is unmatched. A null period matches only when `period_cells` is empty and neither header holds a period. An unmatched value or period makes the item unmatched. Every proposed flag is
 recomputed from the matched values; a flag Python cannot reproduce counts as unmatched. Matched items are `Verified`. For unmatched ones, the switch
 `STRUCTURE_UNMATCHED` decides: `"suggest"` (the default) shows "AI suggestion, not verified", and `"drop"` removes them
 and keeps a count. An item with no value is never Verified. A column mapping only pre-fills the mapping screen, where the
@@ -85,7 +89,7 @@ checkbox (CLAUDE.md rule 16).
 
 **5. Prompt-injection defence.** No tools. Structured outputs (`output_config.format`). The prompt says cell text is
 data, never instructions. Python validates every reply against the schema (extra fields forbidden) and checks that
-every source cell exists. A failing reply is rejected. After the existing one reask, the structure is marked
+every cited cell (`value_cell`, `period_cells`) exists. A failing reply is rejected. After the existing one reask, the structure is marked
 "Not read by AI" and Python's result stands.
 
 **6. Model.** `STRUCTURE_MODEL = "claude-sonnet-5-5"`, a constant in gateway.py separate from `NARRATIVE_MODEL`. It
@@ -110,21 +114,23 @@ tokens, cost and any type change. Sent text is never stored. `GET /api/runs/{id}
 the run log on the deck panel shows each deck's status ("waiting for revenue file", read, not read) and cost.
 
 **10. Boundary test and docstrings.** `test_gateway_data_boundary.py` keeps every existing assertion.
-- It must pass when redacted structure cells reach the provider, and when a column-mapping text does: a header row, at
-  most 3 samples per numeric or date column, and a profile per text column.
-- It must fail on raw bytes, a full page, a prose snippet, a cell over 200 characters, more than 3 samples, any text
-  cell value on the column-mapping path, a file name, an unredacted email, phone number, name or customer name, the
+- It must pass when redacted structure cells reach the provider, and when a column-mapping text does: a header stack of at
+  most 3 rows, at most 3 samples per numeric or date column, and a profile per text column.
+- It must fail on raw bytes, a full page, a prose snippet, a cell over 200 characters, more than 3 samples, more than 3
+  header rows or any text cell value on the column-mapping path, a file name, an unredacted email, phone number, name or customer name, the
   client name or engagement reference, any call without consent, and sent text in a log or in `llm_structures`.
 
 The docstrings in `gateway.py`, `decks/__init__.py` and `prompt_store.py` restate rules 16–18.
 
 **11. Tests.** Automated tests replay recorded replies (public test decks only) through the fake adapter, with no
 live API. They cover:
-- the verifier: each normalisation case, period matching, flags, the switch;
+- the verifier: each normalisation case, value matched against `value_cell` only, period matched against `period_cells`
+  only (two-cell periods, fiscal years), flags, the switch;
 - redaction: each rule with a false friend (amounts, years, "Head of Sales"); customer names as substrings, any case,
   in deck structures; names under 4 characters, numeric names, the target's name and
   pseudonyms left alone;
-- column mapping: up to 3 samples for numeric and date columns, a profile only for text columns;
+- column mapping: a header stack of at most 3 rows (the 3 nearest the data when a sheet has more), up to 3 samples for numeric and date columns, a profile only for
+  text columns;
 - orchestration: decks queued until the revenue file is mapped, then processed; schema rejection, caps (including the
   narrative-only call cap), cache, consent, type-change logging, Delete audit.
 
@@ -149,3 +155,8 @@ so agreement measures the model. Target: ≥95% agreement.
   `frontend/src/pages/AuditHub.jsx` (creation screen),
   `frontend/src/components/DeckPanel.jsx`, `frontend/src/pages/MappingWizard.jsx`, and the tests and demo seeds that create
   audits (`backend/test_audit_validation.py`, `backend/tests/backend_test.py`, `backend/tests/test_date_order.py`, `backend/demo_data.py`).
+- Fiscal year-end (deck-parser.md §2): a `claims.py` test covering December and March year-ends is written first and
+  shown failing; then `fiscal_year_end` on the audit model (`AuditCreate` and `AuditUpdate` in `backend/server.py`, so
+  PUT /audits/{id} accepts it), a month field on the creation screen (`frontend/src/pages/AuditHub.jsx`) and in the
+  existing MappingWizard settings (`frontend/src/pages/MappingWizard.jsx`), and `backend/app/decks/claims.py` resolves
+  every period to a start and an end date with it, keeping the stated text for display.

@@ -69,6 +69,15 @@ figure, or is not a candidate.
 A line with its own keyword never borrows a label from other lines.
 Periods are dates, never values: "Y/E 22", "22 Y/E", "FY23", "2023E" (also A, F, B, P),
 "H1 24", "1H24", "Q3 25", "3Q25". A half year is stored as "2024-H1".
+Period rules (apply to tables, structure text and the verifier):
+- Header stack: extracted structure text includes every header row above the data; a merged range is written with its span, e.g. "FY2025 (r1c3:r1c14)". The model receives the full header stack, not only the row directly above the values. On the column-mapping path the stack is capped at 3 header rows, the 3 nearest the data, and carries no text cell values.
+- A period may be built from two cells: the month or quarter cell and the year cell above it in the same column range. "Mar" + "2025" → 2025-03; "Q3" + "2025" → 2025-Q3.
+- Month names are matched in English, German and Bulgarian, short and long forms, any case.
+- A month or quarter header with no year cell above it in the same column range → period null. Never infer the year from the deck date, the file name or neighbouring columns.
+- `fiscal_year_end` is a month field on the audit creation screen, default December, and stays editable after creation through PUT /audits/{id} in the existing MappingWizard settings (no new screen). Changing it re-runs period mapping.
+- Fiscal years are named by the calendar year in which they end: with a March year-end, FY25 = 2024-04-01 to 2025-03-31; with December, FY25 = 2025.
+- Every period resolves internally to a start date and an end date; a December year-end gives the calendar year. Forecast dates, value at stake (defined in docs/specs/forecast-claims.md, to be written) and comparisons with the revenue file use the range end and the months inside the range. Display keeps the text as stated.
+- Relative columns ("M1…M24", "Year 1") → null unless the sheet states the start date in a cell.
 Borrowing: a figure without a keyword or a date in its own line takes them from nearby text,
 first match wins: the table column header, the other lines of its text box (nearest first),
 the text on the same row or above it, never below, within a quarter of the slide or page
@@ -128,7 +137,7 @@ by position and from the slide title.
 - The deck parser has no import of, or call to, the LLM gateway.
 - Two paths reach the gateway, and each has its own fields:
   a) Narrative path: computed results from MongoDB and the structured claim fields (type, value, high value of a range, unit, date, status).
-  b) Structure path (rule 16): redacted deck structures and spreadsheet header rows with, per column, either up to 3 sample values (numeric and date columns only) or a profile (distinct count, typical length, shape pattern) for text columns, as extracted text with cell positions, only with per-audit consent. Table cells, including a row's values by period, travel this path and no other.
+  b) Structure path (rule 16): redacted deck structures and spreadsheet header rows (at most 3) with, per column, either up to 3 sample values (numeric and date columns only) or a profile (distinct count, typical length, shape pattern) for text columns, as extracted text with cell positions, only with per-audit consent. Table cells, including a row's values by period, travel this path and no other.
 - An automated test fails the build if the parser imports the gateway, if the gateway reads parsed-text, snippet or source-reference fields, or if the structure path sends anything other than redacted structure text and spreadsheet headers with their samples or profiles. The narrative path is unchanged.
 - Logs and MongoDB store model JSON output (values with cell references), prompt version, model version, content hash, token counts and cost. Never deck text sent to the model. Delete audit removes model outputs.
 - Model output never becomes Verified on its own. Python must match every value to a source cell. Unmatched values are shown as 'AI suggestion, not verified' or dropped.
