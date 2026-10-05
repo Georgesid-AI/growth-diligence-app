@@ -38,7 +38,9 @@ they must be header cells of the value cell (its row header or the header stack 
 the value cell's lowest period header (a quarterly or monthly value cited against its year header alone is unmatched; a
 year header alone verifies only a yearly value), and Python rebuilds the period from them under the deck-parser.md §2
 period rules; if it cannot, or gets a period with a different start or
-end date, the period is unmatched. A null period matches only when `period_cells` is empty and neither header holds a period. An unmatched value or period makes the item unmatched. Every proposed flag is
+end date, the period is unmatched. When the value matches and Python rebuilds a period from the `period_cells`, the
+rebuilt period replaces the model's and the item is Verified (the model is not sent the year-end); a model period that
+differed is a "period corrected" case, kept in the stored reading and counted. A null period matches only when `period_cells` is empty and neither header holds a period. An unmatched value or period makes the item unmatched. Every proposed flag is
 recomputed from the matched values; a flag Python cannot reproduce counts as unmatched. Matched items are `Verified`. For unmatched ones, the switch
 `STRUCTURE_UNMATCHED` decides: `"suggest"` (the default) shows "AI suggestion, not verified", and `"drop"` removes them
 and keeps a count. An item with no value is never Verified. A column mapping only pre-fills the mapping screen, where the
@@ -115,11 +117,12 @@ The existing circuit breaker applies: per-audit lock (step `structures`), daily 
 looked up by (audit id, key), so no audit is served another audit's result. A hit makes no API call. Delete audit
 removes the stored results (`purge_run`).
 
-**9. Logging (rule 17).** `llm_structures` stores the model JSON output, the verifier status of each item, prompt
-version, model, content hash, tokens, cost, deck and page. It also stores Python's type and, when the two differ,
+**9. Logging (rule 17).** `llm_structures` stores the model JSON output (with the model's own periods), the verifier
+status of each item, the number of periods corrected, prompt version, model, content hash, tokens, cost, deck and page. It also stores Python's type and, when the two differ,
 the model's type. `llm_calls` adds the content hash and deck id. The server log line carries run id, step, hash,
 tokens, cost and any type change. Sent text is never stored. `GET /api/runs/{id}/llm-usage` gains `by_deck`, and
-the run log on the deck panel shows each deck's status ("waiting for revenue file", read, not read) and cost.
+the run log on the deck panel shows each deck's status ("waiting for revenue file", read, not read), its periods
+corrected and cost. `scripts/consistency_run.py` reports the periods corrected too.
 
 **10. Boundary test and docstrings.** `test_gateway_data_boundary.py` keeps every existing assertion.
 - It must pass when redacted structure cells reach the provider, and when a column-mapping text does: a header stack of at

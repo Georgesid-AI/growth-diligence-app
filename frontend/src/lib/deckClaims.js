@@ -126,14 +126,16 @@ export const DECK_AI_STATUS = {
 export const UPLOADED_BEFORE_CONSENT = "Uploaded before AI reading was enabled; re-upload to read.";
 
 /** ["AI reading: read", "Sent to the model: slides 4, 7, 12", "Cost: $0.0123"] for one deck; the stop
- *  message when the audit reached its token limit; the re-upload line for a deck uploaded while AI
- *  reading was off, once it is on. */
+ *  message when the audit reached its token limit; how many of the model's periods Python replaced
+ *  with the one its header cells give; the re-upload line for a deck uploaded while AI reading was
+ *  off, once it is on. */
 export function deckRunLog(deck) {
   if (deck?.uploaded_before_consent) return [`AI reading: ${DECK_AI_STATUS.not_read}`, UPLOADED_BEFORE_CONSENT];
   if (!deck?.ai_status) return [];
   const lines = [`AI reading: ${DECK_AI_STATUS[deck.ai_status] || deck.ai_status}`];
   if (deck.ai_status === "stopped" && deck.ai_message) lines.push(deck.ai_message);
   if (deck.sent_pages?.length) lines.push(`Sent to the model: ${deck.page_unit || "slide"}s ${deck.sent_pages.join(", ")}`);
+  if (deck.periods_corrected) lines.push(`Periods corrected from the header cells: ${deck.periods_corrected}`);
   if (deck.ai_cost_usd) lines.push(`Cost: $${Number(deck.ai_cost_usd).toFixed(4)}`);
   return lines;
 }

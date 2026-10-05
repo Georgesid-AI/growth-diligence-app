@@ -3,7 +3,8 @@
 MANUAL. It calls the live API and costs money; it is not part of the test suite. It runs the 10 decks
 in tests/fixtures/decks/decks/ three times and reports:
 - agreement % per structure type (items identical in all passes / distinct items);
-- the verifier's match rate and unverified rate;
+- the verifier's match rate and unverified rate, and how many periods it corrected (a matched value whose
+  model period differed from the one Python rebuilds from its cells; the item counts as verified);
 - tokens and cost per deck;
 - the cache hit rate on passes 2 and 3.
 Passes 2 and 3 read the cache first to get the hit rate (expected 100%), then call the model with the
@@ -133,7 +134,7 @@ async def run(decks, passes, db, adapter=None):
 
     readings = defaultdict(list)          # (deck, index) -> [set of item keys per pass]
     types = {}
-    stats = {"items": 0, "verified": 0, "unverified": 0, "not_read": 0, "model_reads": 0}
+    stats = {"items": 0, "verified": 0, "unverified": 0, "not_read": 0, "model_reads": 0, "period_corrected": 0}
     per_deck = {}
     hits = {p: [0, 0] for p in range(2, passes + 1)}     # pass -> [cache hits, lookups]
     for file in decks:
@@ -167,6 +168,7 @@ async def run(decks, passes, db, adapter=None):
                     continue
                 readings[(file, i)].append({_item_key(item) for item in result.items})
                 checked = verify.verify(structure, result.items)
+                stats["period_corrected"] += checked["periods_corrected"]
                 for item in checked["items"]:
                     stats["items"] += 1
                     stats["verified" if item["status"] == verify.VERIFIED else "unverified"] += 1
@@ -186,6 +188,7 @@ async def run(decks, passes, db, adapter=None):
         "unverified_rate_pct": round(100.0 * stats["unverified"] / stats["items"], 1) if stats["items"] else None,
         "not_read": stats["not_read"],
         "model_reads": stats["model_reads"],
+        "period_corrected": stats["period_corrected"],
         "per_deck": per_deck,
         "cache_hit_rate_pct": {f"pass_{p}": round(100.0 * h / n, 1) if n else None for p, (h, n) in hits.items()},
         "target_agreement_pct": 95.0,

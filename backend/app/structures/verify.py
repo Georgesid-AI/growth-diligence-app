@@ -22,6 +22,12 @@ An item is matched when
   "Year 1") has no period unless its second period cell states the start date ("Start: Jan 2025");
 - every proposed flag is reproduced from the matched values (see _flag_reproduced).
 
+When the value matches and Python rebuilds a period from the cited period cells, the rebuilt period
+replaces the model's and the period counts as matched: the model is not told the year-end, so it
+reads "Apr" under "FY2025" as 2025-04. A model period that differed is a "period corrected" case: it
+stays in the stored reading, is counted per structure and per deck, and rides on the item as
+"model_period".
+
 Matched items are "verified". The others are "suggestion" (shown as "AI suggestion, not verified")
 or, with the switch at "drop", removed and counted.
 """
@@ -206,6 +212,19 @@ def rebuild_period(structure: Dict, value_cell: Dict, period_ids: List[str], fis
     monthly value cited against its year header alone is unmatched, so a year header verifies a
     yearly value only. A value with period headers both above it and left of it in its row has a
     period the rules do not build, so it is never matched with one."""
+    found = _rebuild(structure, value_cell, period_ids, fiscal_year_end)
+    return found[1] if found else None
+
+
+def rebuilt_label(structure: Dict, value_cell: Dict, period_ids: List[str], fiscal_year_end: int = 12) -> Optional[str]:
+    """The period label the cited cells give ("2025", "2025-Q3", "FY2025-04"; "2025-02" for a relative
+    column one month long), or None when they give no period or a span no label names."""
+    found = _rebuild(structure, value_cell, period_ids, fiscal_year_end)
+    return found[0] if found else None
+
+
+def _rebuild(structure: Dict, value_cell: Dict, period_ids: List[str], fiscal_year_end: int):
+    """(label or None, (start, end)) for rebuild_period and rebuilt_label."""
     by_id = {_id(c): c for c in structure["cells"]}
     cited = [by_id.get(i) for i in period_ids]
     if not cited or None in cited or len(cited) > 2:
@@ -218,13 +237,17 @@ def rebuild_period(structure: Dict, value_cell: Dict, period_ids: List[str], fis
     if not found:
         return None
     if len(cited) == 1:
-        return _range(found.get("label"), fiscal_year_end) if "label" in found else None
-    second = cited[1]
-    if "relative" in found:
-        return _relative_range(found, first["text"], second, fiscal_year_end)
-    above = second["row"] < first["row"] and all(k in _cols(second) for k in _cols(first))
-    joined = claims.combine_period(found, claims.period_cell(second["text"])) if above else None
-    return _range(joined["label"], fiscal_year_end) if joined else None
+        label = found.get("label")
+    else:
+        second = cited[1]
+        if "relative" in found:
+            span = _relative_range(found, first["text"], second, fiscal_year_end)
+            return (span[0][:7] if span[0][:7] == span[1][:7] else None, span) if span else None
+        above = second["row"] < first["row"] and all(k in _cols(second) for k in _cols(first))
+        joined = claims.combine_period(found, claims.period_cell(second["text"])) if above else None
+        label = joined["label"] if joined else None
+    span = _range(label, fiscal_year_end)
+    return (label, span) if span else None
 
 
 def headers_hold_a_period(structure: Dict, value_cell: Dict) -> bool:
@@ -357,22 +380,34 @@ def _months(span: Tuple[str, str]) -> int:
 # One reply
 # ---------------------------------------------------------------------------
 def verify(structure: Dict, items: List[Dict], fiscal_year_end: int = 12, mode: str = "suggest") -> Dict:
-    """{"items": [item + "status" + "checks"], "dropped": n} for one structure's validated reply items.
+    """{"items": [item + "status" + "checks"], "dropped": n, "periods_corrected": n} for one structure's
+    validated reply items.
 
     `structure` is {"type", "cells", "header_rows"} as the deck parser found it (the cells before
     redaction: redaction never changes a number or a period, and the citation is to the source).
-    Every item gets "status" ("verified" or "suggestion") and "checks" ({"value", "period", "flags"}:
-    booleans). With mode "drop" the unmatched items are removed and counted.
+    Every item gets "status" ("verified" or "suggestion") and "checks" ({"value", "period",
+    "period_corrected", "flags"}: booleans). When the value matches and its period cells rebuild a
+    period, that period replaces the model's; if the model's differed, the item carries it as
+    "model_period" and counts as a correction. With mode "drop" the unmatched items are removed and
+    counted.
     """
     by_id = {_id(c): c for c in structure["cells"]}
     checked = []
     for item in items:
         cell = by_id.get(item.get("value_cell"))
-        checked.append((item, value_matches(structure, item, cell),
-                        period_matches(structure, item, cell, fiscal_year_end)))
-    matched = [item for item, v, p in checked if v and p]
+        v = value_matches(structure, item, cell)
+        p = period_matches(structure, item, cell, fiscal_year_end)
+        # A matched value takes the period Python rebuilds from its cited cells; when the model's own
+        # period differs (it does not know the year-end), that is a correction, and the model's is kept.
+        label = rebuilt_label(structure, cell, item["period_cells"], fiscal_year_end) \
+            if v and item.get("period_cells") else None
+        corrected = bool(label) and not p
+        if label:
+            item = {**item, "period": label, **({"model_period": item.get("period")} if corrected else {})}
+        checked.append((item, v, p or corrected, corrected))
+    matched = [item for item, v, p, _ in checked if v and p]
     out, dropped = [], 0
-    for item, v, p in checked:
+    for item, v, p, corrected in checked:
         flags = all(_flag_reproduced(f, item, matched, structure, fiscal_year_end)
                     for f in item.get("proposed_flags") or ()) if v and p else not item.get("proposed_flags")
         ok = v and p and flags
@@ -380,8 +415,8 @@ def verify(structure: Dict, items: List[Dict], fiscal_year_end: int = 12, mode: 
             dropped += 1
             continue
         out.append({**item, "status": VERIFIED if ok else SUGGESTION,
-                    "checks": {"value": v, "period": p, "flags": flags}})
-    return {"items": out, "dropped": dropped}
+                    "checks": {"value": v, "period": p, "period_corrected": corrected, "flags": flags}})
+    return {"items": out, "dropped": dropped, "periods_corrected": sum(1 for *_, c in checked if c)}
 
 
 def label(status: str) -> str:

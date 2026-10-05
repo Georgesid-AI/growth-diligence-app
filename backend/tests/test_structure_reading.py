@@ -560,6 +560,38 @@ def test_a_client_name_in_a_spreadsheet_header_goes_out_as_redacted(monkeypatch)
     assert "r1c3: Betrag [redacted]" in sent and "Northbridge" not in sent
 
 
+def test_a_corrected_period_is_verified_counted_on_the_deck_and_the_models_period_stays_stored(monkeypatch):
+    from app import structures
+    from app.decks import TEXT_COLLECTION, CANDIDATES_COLLECTION
+    literal = {"type": "table", "items": [
+        {"metric": "revenue", "period": "2025-04", "value": 5000000, "unit": "USD", "actual_or_forecast": "forecast",
+         "value_cell": "r3c2", "period_cells": ["r2c2", "r1c2"], "proposed_flags": []}]}
+    client, db, adapter = _api(monkeypatch, [literal])
+    db["audits"].docs[0]["fiscal_year_end"] = 3
+    db["datasets"].docs.append({"audit_id": AUDIT, "dtype": "revenue", "mapping": REVENUE_MAPPING,
+                                "mapped_at": "2026-10-05T00:00:00"})
+    cells = [{"row": 1, "col": 2, "text": "FY2025"}, {"row": 2, "col": 2, "text": "Apr"},
+             {"row": 3, "col": 1, "text": "Revenue"}, {"row": 3, "col": 2, "text": "$5M"}]
+    db[TEXT_COLLECTION].docs.append({"audit_id": AUDIT, "deck_id": "d1", "file": "plan.pptx", "page_unit": "slide",
+                                     "uploaded_at": "2026-10-05T00:00:00",
+                                     "structures": [{"type": "table", "slide": 2, "header_rows": 2, "cells": cells}]})
+    asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
+    row, = [c for c in db[CANDIDATES_COLLECTION].docs if c.get("origin") == "ai"]
+    assert (row["ai_label"], row["target_date"], row["period_start"], row["period_end"]) == \
+        ("Verified", "FY2025-04", "2024-04-01", "2024-04-30")
+    stored, = db[gateway.STRUCTURES_COLLECTION].docs
+    assert stored["output"]["items"][0]["period"] == "2025-04", "the stored reading keeps the model's period"
+    assert stored["periods_corrected"] == 1
+    deck, = client.get(f"/api/audits/{AUDIT}/decks").json()["decks"]
+    assert deck["periods_corrected"] == 1
+    # December: the model's reading holds, so nothing is corrected; the row keeps Python's label.
+    client.put(f"/api/audits/{AUDIT}", json={"fiscal_year_end": 12})
+    deck, = client.get(f"/api/audits/{AUDIT}/decks").json()["decks"]
+    row = next(c for c in db[CANDIDATES_COLLECTION].docs if c.get("origin") == "ai")
+    assert deck["periods_corrected"] == 0 and db[gateway.STRUCTURES_COLLECTION].docs[0]["periods_corrected"] == 0
+    assert (row["ai_label"], row["target_date"], row["period_start"]) == ("Verified", "FY2025-04", "2025-04-01")
+
+
 def test_a_deck_uploaded_while_consent_was_off_is_flagged_once_consent_is_on_and_is_not_read(monkeypatch):
     from app.decks import TEXT_COLLECTION
     client, db, adapter = _deck_api(monkeypatch, consent=False)
@@ -723,6 +755,20 @@ def test_the_consistency_script_reports_agreement_match_rate_cost_and_cache_hits
     assert report["cache_hit_rate_pct"] == {"pass_2": 100.0, "pass_3": 100.0}
     assert report["per_deck"]["05-zero2hero.pdf"]["structures"] == 5
     assert report["model_reads"] == 5 * 3, "passes 2 and 3 bypass the cache after counting its hits"
+    assert report["period_corrected"] == 0
+
+    class WrongYear(script.FakeAdapter):
+        """Replays the recorded replies with one revenue period a year off: its value still matches its cell."""
+        def complete(self, **kwargs):
+            reply, tokens_in, tokens_out = super().complete(**kwargs)
+            body = json.loads(reply)
+            for item in body["items"]:
+                if (item["metric"], item["value"], item["period"]) == ("revenue", 150000, "FY2023"):
+                    item["period"] = "FY2021"
+            return json.dumps(body), tokens_in, tokens_out
+    report = asyncio.run(script.run(["05-zero2hero.pdf"], 3, script.MemoryDB(), WrongYear()))
+    assert report["period_corrected"] == 3, "one per pass"
+    assert report["verifier_match_rate_pct"] == pytest.approx(100.0 * 16 / 17, abs=0.1), "a corrected item is verified"
     os.environ.pop("ANTHROPIC_API_KEY", None)
     with pytest.raises(SystemExit, match="ANTHROPIC_API_KEY"):
         script.main(["--yes", "--deck", "05-zero2hero.pdf"])

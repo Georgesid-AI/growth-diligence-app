@@ -864,6 +864,27 @@ def test_no_sent_text_in_a_log_llm_calls_or_llm_structures(caplog):
     assert all(r.exc_info is None for r in caplog.records)
 
 
+def test_a_corrected_period_stores_a_count_and_never_the_cell_text_or_the_rebuilt_period():
+    """Rule 17: llm_structures keeps the model's output as it came (its own period) and the number of periods
+    Python corrected; the header text the correction came from is not stored there."""
+    db = _structure_db()
+    text = "r1c2: FY2025\nr2c2: Apr\nr3c1: Revenue\nr3c2: $5M"
+    reply = json.dumps({"type": "table", "items": [
+        {"metric": "revenue", "period": "2025-04", "value": 5000000, "unit": "USD", "actual_or_forecast": "forecast",
+         "value_cell": "r3c2", "period_cells": ["r2c2", "r1c2"], "proposed_flags": []}]})
+    result, _ = _send(db, text, reply=reply)
+    structure = {"type": "table", "header_rows": 2, "cells": structure_redact.parse_structure_text(text)}
+    checked = structures.verify.verify(structure, result.items, 3)
+    asyncio.run(gateway.record_verification(db, STRUCTURE_AUDIT["id"], result.key,
+                                            [i["status"] for i in checked["items"]], checked["dropped"],
+                                            checked["periods_corrected"]))
+    stored, = db[gateway.STRUCTURES_COLLECTION].docs
+    assert stored["output"]["items"][0]["period"] == "2025-04" and stored["periods_corrected"] == 1
+    flat = json.dumps(stored, default=str)
+    for needle in ("FY2025-04", "Apr", "Revenue", "$5M"):
+        assert needle not in flat, f"{needle!r} was stored"
+
+
 def test_the_structure_path_never_reads_parsed_deck_text():
     """read_structure is handed the text; it reads consent and names from the audit, the pseudonym map,
     its own cache and the call log, never the parsed-text or candidate collections."""

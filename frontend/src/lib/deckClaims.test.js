@@ -165,6 +165,12 @@ describe("model readings in the approval list (docs/specs/llm-structure-reading.
     expect(deckRunLog({})).toEqual([]);
   });
 
+  test("the run log counts the periods Python corrected from the header cells", () => {
+    expect(deckRunLog({ ai_status: "read", periods_corrected: 2 }))
+      .toEqual(["AI reading: read", "Periods corrected from the header cells: 2"]);
+    expect(deckRunLog({ ai_status: "read", periods_corrected: 0 })).toEqual(["AI reading: read"]);
+  });
+
   test("a deck uploaded while AI reading was off says to re-upload it once reading is on", () => {
     const line = "Uploaded before AI reading was enabled; re-upload to read.";
     expect(UPLOADED_BEFORE_CONSENT).toBe(line);

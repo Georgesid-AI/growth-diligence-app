@@ -664,7 +664,7 @@ async def list_deck_candidates(audit_id: str):
     if not audit:
         raise HTTPException(404, "Audit not found")
     deck_fields = {"_id": 0, "deck_id": 1, "file": 1, "format": 1, "page_unit": 1, "pages": 1, "uploaded_at": 1,
-                   "ai_status": 1, "ai_message": 1, "sent": 1}
+                   "ai_status": 1, "ai_message": 1, "sent": 1, "periods_corrected": 1}
     found = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, deck_fields).to_list(100)
     found.sort(key=lambda d: d.get("uploaded_at") or "", reverse=True)
     by_deck = (await llm_gateway.usage_for_run(db, audit_id)).by_deck

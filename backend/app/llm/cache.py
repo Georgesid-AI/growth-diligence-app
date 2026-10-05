@@ -153,11 +153,13 @@ async def put_structure(db, audit_id: str, key: str, record: dict) -> None:
     )
 
 
-async def set_structure_statuses(db, audit_id: str, key: str, statuses: list, dropped: int = 0) -> None:
-    """The verifier status of each item, next to the output it checks."""
+async def set_structure_statuses(db, audit_id: str, key: str, statuses: list, dropped: int = 0,
+                                 periods_corrected: int = 0) -> None:
+    """The verifier status of each item, next to the output it checks, and how many of its periods
+    Python corrected (the output keeps the model's own periods)."""
     await db[STRUCTURES_COLLECTION].update_one(
         {"audit_id": audit_id, "key": key},
-        {"$set": {"statuses": list(statuses), "dropped": int(dropped),
+        {"$set": {"statuses": list(statuses), "dropped": int(dropped), "periods_corrected": int(periods_corrected),
                   "verified_at": datetime.now(timezone.utc).isoformat()}},
     )
 

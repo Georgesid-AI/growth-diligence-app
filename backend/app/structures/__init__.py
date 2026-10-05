@@ -223,8 +223,8 @@ async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None
                 sent.append({"page": page, "type": structure["type"], "at": datetime.now(timezone.utc).isoformat()})
             checked = verify.verify(structure, result.items, year_end, mode)
             await gateway.record_verification(db, audit_id, result.key, [x["status"] for x in checked["items"]],
-                                              checked["dropped"])
-            entry["dropped"] = checked["dropped"]
+                                              checked["dropped"], checked["periods_corrected"])
+            entry["dropped"], entry["periods_corrected"] = checked["dropped"], checked["periods_corrected"]
             for item in checked["items"]:
                 candidate = candidate_from_item(item, structure, deck, result.model_type, year_end)
                 if _cell_key(candidate) in known:
@@ -238,6 +238,7 @@ async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None
     previous = await db[TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id}, {"_id": 0, "sent": 1})
     await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id}, {"$set": {
         "structures": [{**structure, "ai": status} for structure, status in zip(found, statuses)],
+        "periods_corrected": sum(s.get("periods_corrected", 0) for s in statuses),
         "sent": list((previous or {}).get("sent") or []) + sent}})
     return await _deck_status(db, audit_id, deck_id, overall, stopped_message)
 
@@ -360,14 +361,17 @@ async def reverify_audit(db, audit_id: str, fiscal_year_end: int) -> int:
     decks = await db[TEXT_COLLECTION].find({"audit_id": audit_id}, {"_id": 0, "deck_id": 1, "structures": 1}).to_list(1000)
     mode = verify.unmatched_mode()
     for deck in decks:
-        for structure in deck.get("structures") or []:
+        # The model's periods are corrected again under the new year-end; the counts follow.
+        found = deck.get("structures") or []
+        for structure in found:
             key = (structure.get("ai") or {}).get("key")
             stored = await gateway.stored_structure(db, audit_id, key) if key else None
             if not stored:
                 continue
             checked = verify.verify(structure, stored["output"]["items"], fiscal_year_end, mode)
             await gateway.record_verification(db, audit_id, key, [x["status"] for x in checked["items"]],
-                                              checked["dropped"])
+                                              checked["dropped"], checked["periods_corrected"])
+            structure["ai"] = {**structure["ai"], "periods_corrected": checked["periods_corrected"]}
             for item in checked["items"]:
                 result = await db[CANDIDATES_COLLECTION].update_one(
                     {"audit_id": audit_id, "deck_id": deck["deck_id"], "structure_key": key, "status": "pending",
@@ -375,4 +379,8 @@ async def reverify_audit(db, audit_id: str, fiscal_year_end: int) -> int:
                     {"$set": {"ai_status": item["status"], "ai_label": verify.label(item["status"]),
                               "ai_checks": item.get("checks")}})
                 changed += getattr(result, "modified_count", 0)
+        if found:
+            await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck["deck_id"]}, {"$set": {
+                "structures": found,
+                "periods_corrected": sum((s.get("ai") or {}).get("periods_corrected", 0) for s in found)}})
     return changed

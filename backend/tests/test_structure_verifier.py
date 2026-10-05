@@ -32,9 +32,16 @@ def _item(value, value_cell, period=None, period_cells=(), metric="revenue", uni
             "value_cell": value_cell, "period_cells": list(period_cells), "proposed_flags": list(flags)}
 
 
+CORRECTED = "verified, period corrected"
+
+
 def _status(structure, item, year_end=12, mode="suggest"):
+    """The item's status, or CORRECTED when it is verified with the period Python rebuilt in place of the model's."""
     out = verify.verify(structure, [item], year_end, mode)
-    return out["items"][0]["status"] if out["items"] else "dropped"
+    if not out["items"]:
+        return "dropped"
+    got = out["items"][0]
+    return CORRECTED if got["status"] == verify.VERIFIED and got["checks"].get("period_corrected") else got["status"]
 
 
 PLAN = _struct([["", "FY2025", "FY2026"], ["Revenue", "£1,200,000", "£1,500,000"]])
@@ -92,7 +99,8 @@ def test_the_period_is_matched_against_its_period_cells_only():
     assert _status(PLAN, _item(1200000, "r2c2", "FY2025", ["r1c2"])) == verify.VERIFIED
     assert _status(PLAN, _item(1200000, "r2c2", "FY2025", [])) == verify.SUGGESTION, "the right header, not cited"
     assert _status(PLAN, _item(1200000, "r2c2", "FY2026", ["r1c3"])) == verify.SUGGESTION, "not a header of the value"
-    assert _status(PLAN, _item(1200000, "r2c2", "FY2026", ["r1c2"])) == verify.SUGGESTION, "another period"
+    assert _status(PLAN, _item(1200000, "r2c2", "FY2026", ["r1c2"])) == CORRECTED, \
+        "another period: the value matches, so the period its cell gives replaces it"
 
 
 def test_a_two_cell_period_is_a_quarter_and_the_year_above_it_in_the_same_column_range():
@@ -119,14 +127,14 @@ def test_month_names_are_english_german_or_bulgarian_in_any_case(month, period):
     ("FY2025", "2025", 12, verify.VERIFIED),          # December: FY2025 is the calendar year
     ("FY2025", "2025", 3, verify.VERIFIED),           # March: both run 2024-04-01 to 2025-03-31
     ("2025E", "FY2025", 3, verify.VERIFIED),          # every year label is fiscal unless December
-    ("FY2025", "2024", 3, verify.SUGGESTION),
+    ("FY2025", "2024", 3, CORRECTED),                 # the value matches: FY2025 replaces 2024
     ("Q3 25", "2025-Q3", 3, verify.VERIFIED),
     ("Q1 FY25", "2025-Q1", 3, verify.VERIFIED),
-    ("Q1 FY25", "FY2025", 3, verify.SUGGESTION),      # a quarter is not its fiscal year
+    ("Q1 FY25", "FY2025", 3, CORRECTED),              # a quarter is not its fiscal year: 2025-Q1 replaces it
     ("Mar 2025", "2025-03", 3, verify.VERIFIED),      # a month stays a calendar month
     ("FY2024/25", "FY2024/25", 3, verify.VERIFIED),
     ("FY2024/25", "FY2025", 3, verify.VERIFIED),      # named by the year it ends in
-    ("FY2024/25", "FY2024", 3, verify.SUGGESTION),
+    ("FY2024/25", "FY2024", 3, CORRECTED),
     ("Y/E 25", "FY2025", 6, verify.VERIFIED),
 ])
 def test_fiscal_years_follow_the_audit_year_end(header, period, year_end, status):
@@ -143,9 +151,9 @@ def test_a_quarter_under_a_fiscal_year_is_that_fiscal_quarter():
 @pytest.mark.parametrize("header, month, year_end, period, status", [
     ("FY2025", "Mar", 3, "2025-03", verify.VERIFIED),       # up to the year-end month: the named year
     ("FY2025", "Apr", 3, "2024-04", verify.VERIFIED),       # after it: the calendar year before
-    ("FY2025", "Apr", 3, "2025-04", verify.SUGGESTION),
+    ("FY2025", "Apr", 3, "2025-04", CORRECTED),          # read literally: Python's April 2024 replaces it
     ("2025", "Jul", 6, "2024-07", verify.VERIFIED),         # a plain year header too
-    ("2025", "Jul", 6, "2025-07", verify.SUGGESTION),
+    ("2025", "Jul", 6, "2025-07", CORRECTED),
     ("2025", "Jun", 6, "2025-06", verify.VERIFIED),
     ("FY2025", "Apr", 12, "2025-04", verify.VERIFIED),      # December: unchanged
     ("2025", "Jul", 12, "2025-07", verify.VERIFIED),
@@ -174,6 +182,33 @@ def test_the_period_comes_from_the_lowest_period_header():
     assert _status(relative, _item(1000000, "r3c2", "2025", ["r1c2"])) == verify.SUGGESTION
     years_by_row = _struct([["", "Revenue"], ["FY2025", "£1M"]])
     assert _status(years_by_row, _item(1000000, "r2c2", "FY2025", ["r2c1"])) == verify.VERIFIED
+
+
+def test_a_matched_value_takes_the_period_python_rebuilds_from_its_cells():
+    grid = _struct([["", "FY2025"], ["", "Apr"], ["Revenue", "$5M"]], header_rows=2)
+    literal = _item(5000000, "r3c2", "2025-04", ["r2c2", "r1c2"])      # the model does not know the year-end
+    out = verify.verify(grid, [literal], 3)
+    item, = out["items"]
+    assert (item["status"], item["period"], item["model_period"], out["periods_corrected"]) == \
+        (verify.VERIFIED, "FY2025-04", "2025-04", 1)
+    assert item["checks"] == {"value": True, "period": True, "period_corrected": True, "flags": True}
+    out = verify.verify(grid, [literal], 12)
+    item, = out["items"]
+    assert (item["status"], item["period"], out["periods_corrected"]) == (verify.VERIFIED, "FY2025-04", 0), \
+        "December: the model's reading holds, nothing is counted"
+    assert "model_period" not in item and item["checks"]["period_corrected"] is False
+    # No correction without the value, without cited cells, or from cells that are not the lowest period header.
+    out = verify.verify(grid, [_item(4000000, "r3c2", "2025-04", ["r2c2", "r1c2"])], 3)
+    assert (out["items"][0]["status"], out["items"][0]["period"], out["periods_corrected"]) == \
+        (verify.SUGGESTION, "2025-04", 0), "a value that does not match keeps the model's period and counts nothing"
+    assert _status(grid, _item(5000000, "r3c2", "2025-04", []), 3) == verify.SUGGESTION
+    assert _status(grid, _item(5000000, "r3c2", "2025", ["r1c2"]), 3) == verify.SUGGESTION
+    # A relative column: one month names a period; a longer span names none, so nothing replaces the model's.
+    month = _struct([["Start: Jan 2025", "M2"], ["Revenue", "£1M"]])
+    out = verify.verify(month, [_item(1000000, "r2c2", "2025-03", ["r1c2", "r1c1"])])
+    assert (out["items"][0]["period"], out["periods_corrected"]) == ("2025-02", 1)
+    year = _struct([["Start: Jan 2025", "Year 1"], ["Revenue", "£1M"]])
+    assert _status(year, _item(1000000, "r2c2", "2026", ["r1c2", "r1c1"])) == verify.SUGGESTION
 
 
 def test_a_null_period_matches_only_when_no_header_holds_a_period():
