@@ -1,0 +1,5 @@
+2026-10-05, claude/epic-goldberg-lbauww, PR #39 decisions applied: roadmap items reported as "roadmap items: N, date rebuilt from cell: M" and left out of the verified/unverified rate and its reasons; target stays on the new agreement figure; spec section 11 updated.
+Deleted: roadmap rows from the unverified-reasons table and item list (their reasons no longer explain the rate).
+Optimized: a roadmap item is one of a structure Python typed roadmap, the type the rest of the report uses; M counts only dated items whose period matches the one rebuilt from their cells; each new test failed on a deliberate violation; 796 backend tests pass.
+Slow/unclear: "roadmap items" could also have meant items with no value only; the structure type was taken. On the test decks Buffer's dates sit below their milestone lines, so its M is 0. test_audit_validation.py still needs MONGO_URL.
+Process change: when a decision names a group of items, the PR states which items the code counts in it, so the reader can correct the definition before the next live run.

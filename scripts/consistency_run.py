@@ -2,10 +2,16 @@
 
 MANUAL. It calls the live API and costs money; it is not part of the test suite. It runs the 10 decks
 in tests/fixtures/decks/decks/ three times and reports:
-- agreement % per structure type (items identical in all passes / distinct items);
-- the verifier's match rate and unverified rate, and how many periods it corrected (a matched value whose
-  model period differed from the one Python rebuilds from its cells; the item counts as verified);
-- tokens and cost per deck;
+- agreement % per structure type (items identical in all passes / distinct items), an item compared on its
+  metric, period, value and value cell after the verifier's normalisation; beside it the old figure, every
+  field compared as the model wrote it;
+- for every structure whose passes disagree, the fields that differ, with a count per structure type;
+- the verifier's match rate and unverified rate over the items outside roadmaps, and how many periods it
+  corrected (a matched value whose model period differed from the one Python rebuilds from its cells; the item
+  counts as verified);
+- for every unverified item outside a roadmap, the reason, with a count per structure type;
+- roadmap items apart: how many, and how many of their dates Python rebuilt from the cited cells;
+- tokens and cost per deck, the fixed prompt's tokens and the average structure-text tokens;
 - the cache hit rate on passes 2 and 3.
 Passes 2 and 3 read the cache first to get the hit rate (expected 100%), then call the model with the
 cache bypassed, so agreement measures the model. Target: at least 95% agreement.
@@ -120,7 +126,8 @@ class FakeAdapter:
         self.fixtures = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(folder.glob("*.json"))]
 
     def count_tokens(self, *, model, system, user_payload, json_schema):
-        return 1000
+        """A stand-in for the provider's counter: one token per 4 characters of what would be sent."""
+        return (len(system or "") + len(user_payload) + (len(json.dumps(json_schema)) if json_schema else 0)) // 4
 
     def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema):
         sent = json.loads(user_payload)
@@ -129,10 +136,146 @@ class FakeAdapter:
         return json.dumps(reply), 1000, 20
 
 
+FIELDS = ("metric", "period", "value", "unit", "cell", "other", "items")
+REASONS = ("value not in cell", "period not rebuilt", "lowest-header rule", "metric invalid", "other")
+
+
 def _item_key(item):
-    """An item as a comparable tuple: every field the model returns."""
+    """The old agreement key: every field the model returns, as it wrote it."""
     return (item["metric"], item.get("period"), item.get("value"), item.get("unit"), item.get("actual_or_forecast"),
             item["value_cell"], tuple(item.get("period_cells") or ()), tuple(item.get("proposed_flags") or ()))
+
+
+def _normalised_key(item, fiscal_year_end=12):
+    """The agreement key: metric, period, value and value cell of an item the verifier has checked. The period is
+    the one the verifier keeps (Python's rebuilt period replaces the model's when the value matches), compared as
+    its start and end dates, so "FY2023" and "2023" are one period under a December year-end; the value is
+    compared as a number. Unit, actual or forecast, period cells and flags are left out."""
+    from app.decks import claims
+    period, value = item.get("period"), item.get("value")
+    return (item["metric"], (claims.period_range(period, fiscal_year_end) or period) if period else None,
+            None if value is None else float(value), item["value_cell"])
+
+
+_COMPARED = {
+    "metric": lambda i: i["metric"],
+    "period": lambda i: i.get("period"),
+    "value": lambda i: None if i.get("value") is None else float(i["value"]),
+    "unit": lambda i: i.get("unit"),
+    "other": lambda i: (i.get("actual_or_forecast"), tuple(i.get("period_cells") or ()),
+                        tuple(i.get("proposed_flags") or ())),
+}
+
+
+def differing_fields(passes):
+    """The FIELDS in which the passes' readings of one structure differ, as the model wrote them. Items are lined
+    up by value cell: "cell" when a cell is cited in some passes only, "items" when the passes list a different
+    number of items; at a cell every pass cites, each of metric, period, value, unit and "other" (actual or
+    forecast, period cells, flags) whose values there differ."""
+    found = set()
+    if len({len(items) for items in passes}) > 1:
+        found.add("items")
+    cited = [{item["value_cell"] for item in items} for items in passes]
+    if any(cells != cited[0] for cells in cited[1:]):
+        found.add("cell")
+    for cell in set.intersection(*cited):
+        for name, get in _COMPARED.items():
+            seen = [sorted(repr(get(i)) for i in items if i["value_cell"] == cell) for items in passes]
+            if any(s != seen[0] for s in seen[1:]):
+                found.add(name)
+    return [f for f in FIELDS if f in found]
+
+
+def unverified_reason(structure, item):
+    """(reason, detail) for an item the verifier left unverified: the first that applies.
+    - "metric invalid": not a metric the gateway accepts for a deck structure. The gateway rejects such a reply
+      whole (one reask, then "Not read by AI"), so a live run counts it under not read, not here.
+    - "other", "no value": an item with no value is never verified.
+    - "value not in cell": the value is not the number its value cell holds after normalisation.
+    - "lowest-header rule": the first period cell is a period header of the value cell but not its lowest one
+      (a quarterly value cited against its year header), or the value has period headers above and beside it.
+    - "period not rebuilt": any other period miss: the period cells give no period or one with other dates, or
+      the period and its cells disagree on whether there is one.
+    - "other", "flag not reproduced": value and period match, a proposed flag does not."""
+    from app.decks import claims
+    from app.llm import schemas
+    from app.structures import redact, verify
+    if item["metric"] not in schemas.CLAIM_METRICS + ("use_of_funds",):
+        return "metric invalid", None
+    if item.get("value") is None:
+        return "other", "no value"
+    if not item["checks"]["value"]:
+        return "value not in cell", None
+    if not item["checks"]["period"]:
+        cited = item.get("period_cells") or []
+        cell = next(c for c in structure["cells"] if redact.cell_id(c) == item["value_cell"])
+        headers = {redact.cell_id(h) for h in verify.header_cells(structure, cell) if claims.period_cell(h["text"])}
+        lowest = [redact.cell_id(h) for h in verify.lowest_period_headers(structure, cell)]
+        if cited and cited[0] in headers and lowest != cited[:1]:
+            return "lowest-header rule", None
+        return "period not rebuilt", None
+    return "other", "flag not reproduced"
+
+
+async def _count(counter, **kwargs):
+    """The provider's token count (no call is billed), or None: a failed count never stops a paid run."""
+    from app.llm import gateway
+    try:
+        return int(await asyncio.to_thread(counter.count_tokens, model=gateway.STRUCTURE_MODEL, **kwargs))
+    except Exception:
+        return None
+
+
+async def fixed_tokens(counter):
+    """The tokens of a structure call with an empty structure text, and of its parts: the system prompt and the
+    output schema, each counted with the empty message and less the empty message alone."""
+    from app.llm import cache, gateway, prompt_store, schemas
+    system, schema = prompt_store.load(gateway.STRUCTURE_PROMPT).text, schemas.structure_output_schema()
+    payload = cache.canonical_json({"type": "table", "text": ""})      # as read_structure builds it, text empty
+    empty = await _count(counter, system=None, user_payload=payload, json_schema=None)
+    prompt = await _count(counter, system=system, user_payload=payload, json_schema=None)
+    output = await _count(counter, system=None, user_payload=payload, json_schema=schema)
+    fixed = await _count(counter, system=system, user_payload=payload, json_schema=schema)
+    less = lambda n: None if n is None or empty is None else n - empty  # noqa: E731
+    return {"fixed_prompt": fixed, "system_prompt": less(prompt), "output_schema": less(output), "empty_message": empty}
+
+
+def _rate(part, whole):
+    return round(100.0 * part / whole, 1) if whole else None
+
+
+def _agreement(readings, types, key):
+    """(% per type, % over all) of items identical in all passes / distinct items, items compared by `key`
+    ("raw" or "norm"); a structure not read in some pass is left out."""
+    agreement = defaultdict(lambda: [0, 0])                # type -> [identical in all passes, distinct]
+    for where, passes_read in readings.items():
+        if any(r is None for r in passes_read):
+            continue
+        keys = [r[key] for r in passes_read]
+        agreement[types[where]][0] += len(set.intersection(*keys)) if keys else 0
+        agreement[types[where]][1] += len(set().union(*keys))
+    return ({t: _rate(a, d) for t, (a, d) in sorted(agreement.items())},
+            _rate(sum(a for a, _ in agreement.values()), sum(d for _, d in agreement.values())))
+
+
+def _disagreements(readings, types, pages):
+    """The structures read in every pass whose passes differ (every field, as written), with the fields that
+    differ, and per structure type the number of such structures and of each field."""
+    rows, by_type = [], {}
+    for where, passes_read in readings.items():
+        if any(r is None for r in passes_read):
+            continue
+        count = by_type.setdefault(types[where], dict.fromkeys(("structures", "disagreeing") + FIELDS, 0))
+        count["structures"] += 1
+        if all(r["raw"] == passes_read[0]["raw"] for r in passes_read):
+            continue
+        fields = differing_fields([r["items"] for r in passes_read])
+        count["disagreeing"] += 1
+        for field in fields:
+            count[field] += 1
+        rows.append({"deck": where[0], "page": pages[where], "type": types[where], "fields": fields,
+                     "same_after_normalisation": all(r["norm"] == passes_read[0]["norm"] for r in passes_read)})
+    return rows, dict(sorted(by_type.items()))
 
 
 async def run(decks, passes, db, adapter=None):
@@ -140,9 +283,15 @@ async def run(decks, passes, db, adapter=None):
     from app.llm import gateway
     from app.structures import redact, verify
 
-    readings = defaultdict(list)          # (deck, index) -> [set of item keys per pass]
-    types = {}
-    stats = {"items": 0, "verified": 0, "unverified": 0, "not_read": 0, "model_reads": 0, "period_corrected": 0}
+    counter = adapter or gateway.AnthropicAdapter()       # token counts only; read_structure gets `adapter`
+    tokens = await fixed_tokens(counter)
+    text_tokens = []                                       # per structure sent, the gateway's 3,000-token measure
+    readings = defaultdict(list)          # (deck, index) -> per pass None (not read) or {"raw", "norm", "items"}
+    types, pages = {}, {}
+    stats = {"items": 0, "verified": 0, "unverified": 0, "not_read": 0, "model_reads": 0, "period_corrected": 0,
+             "roadmap_items": 0, "roadmap_dates_rebuilt": 0}
+    reasons = {}                                           # type -> {reason: unverified items over all passes}
+    unverified = {}                                        # (deck, index, cell, reason, detail) -> {passes}
     per_deck = {}
     hits = {p: [0, 0] for p in range(2, passes + 1)}     # pass -> [cache hits, lookups]
     for d, file in enumerate(decks, 1):
@@ -156,8 +305,10 @@ async def run(decks, passes, db, adapter=None):
         sent = []                                          # (index, structure, redacted text, page)
         for i, structure in enumerate(deck["structures"]):
             types[(file, i)] = structure["type"]
+            pages[(file, i)] = structure.get("slide") or structure.get("page")
             cells, _ = redact.redact_structure(structure["cells"], Path(file).stem, {}, redact.withheld_values(audit))
-            sent.append((i, structure, redact.structure_text(cells), structure.get("slide") or structure.get("page")))
+            sent.append((i, structure, redact.structure_text(cells), pages[(file, i)]))
+            text_tokens.append(await _count(counter, system=None, user_payload=sent[-1][2], json_schema=None))
         for n in range(1, passes + 1):
             read, tokens_before, cost_before = 0, usage["input_tokens"] + usage["output_tokens"], usage["cost_usd"]
             for i, structure, text, page in sent:
@@ -177,32 +328,55 @@ async def run(decks, passes, db, adapter=None):
                     readings[(file, i)].append(None)
                     continue
                 read += 1
-                readings[(file, i)].append({_item_key(item) for item in result.items})
                 checked = verify.verify(structure, result.items)
+                readings[(file, i)].append({"raw": {_item_key(item) for item in result.items},
+                                            "norm": {_normalised_key(item) for item in checked["items"]},
+                                            "items": result.items})
                 stats["period_corrected"] += checked["periods_corrected"]
                 for item in checked["items"]:
+                    if structure["type"] == "roadmap":          # apart from the rates: a milestone has no value
+                        stats["roadmap_items"] += 1
+                        stats["roadmap_dates_rebuilt"] += int(item.get("period") is not None
+                                                              and item["checks"]["period"])
+                        continue
                     stats["items"] += 1
-                    stats["verified" if item["status"] == verify.VERIFIED else "unverified"] += 1
-            tokens = usage["input_tokens"] + usage["output_tokens"] - tokens_before
+                    if item["status"] == verify.VERIFIED:
+                        stats["verified"] += 1
+                        continue
+                    stats["unverified"] += 1
+                    reason, detail = unverified_reason(structure, item)
+                    reasons.setdefault(structure["type"], dict.fromkeys(REASONS, 0))[reason] += 1
+                    unverified.setdefault((file, i, item["value_cell"], reason, detail), set()).add(n)
+            spent = usage["input_tokens"] + usage["output_tokens"] - tokens_before
             print(f"[{d}/{len(decks)}] {file} pass {n}/{passes}: {read} of {len(sent)} structures read, "
-                  f"{tokens:,} tokens, ${usage['cost_usd'] - cost_before:.4f}", flush=True)
-    agreement = defaultdict(lambda: [0, 0])                # type -> [identical in all passes, distinct]
-    for key, passes_read in readings.items():
-        if any(r is None for r in passes_read):
-            continue
-        distinct = set().union(*passes_read)
-        same = set.intersection(*passes_read) if passes_read else set()
-        agreement[types[key]][0] += len(same)
-        agreement[types[key]][1] += len(distinct)
+                  f"{spent:,} tokens, ${usage['cost_usd'] - cost_before:.4f}", flush=True)
+    agreement, agreement_all = _agreement(readings, types, "norm")
+    agreement_old, agreement_all_old = _agreement(readings, types, "raw")
+    disagreements, disagreement_fields = _disagreements(readings, types, pages)
+    counted = [t for t in text_tokens if t is not None]
+    tokens["structure_text_avg"] = round(sum(counted) / len(counted), 1) if counted else None
+    tokens["structures_counted"] = len(counted)
+    tokens["billed_input_per_model_read"] = (round(sum(u["input_tokens"] for u in per_deck.values())
+                                                   / stats["model_reads"], 1) if stats["model_reads"] else None)
     return {
-        "agreement_pct": {t: round(100.0 * a / d, 1) if d else None for t, (a, d) in sorted(agreement.items())},
-        "agreement_pct_all": (round(100.0 * sum(a for a, _ in agreement.values()) / sum(d for _, d in agreement.values()), 1)
-                              if sum(d for _, d in agreement.values()) else None),
-        "verifier_match_rate_pct": round(100.0 * stats["verified"] / stats["items"], 1) if stats["items"] else None,
-        "unverified_rate_pct": round(100.0 * stats["unverified"] / stats["items"], 1) if stats["items"] else None,
+        "agreement_pct": agreement,
+        "agreement_pct_all": agreement_all,
+        "agreement_pct_old": agreement_old,
+        "agreement_pct_all_old": agreement_all_old,
+        "disagreements": disagreements,
+        "disagreement_fields": disagreement_fields,
+        "verifier_match_rate_pct": _rate(stats["verified"], stats["items"]),
+        "unverified_rate_pct": _rate(stats["unverified"], stats["items"]),
+        "unverified_reasons": dict(sorted(reasons.items())),
+        "unverified_items": [{"deck": f, "page": pages[(f, i)], "type": types[(f, i)], "value_cell": cell,
+                              "reason": reason, "detail": detail, "passes": len(seen)}
+                             for (f, i, cell, reason, detail), seen in unverified.items()],
+        "roadmap_items": stats["roadmap_items"],
+        "roadmap_dates_rebuilt": stats["roadmap_dates_rebuilt"],
         "not_read": stats["not_read"],
         "model_reads": stats["model_reads"],
         "period_corrected": stats["period_corrected"],
+        "tokens": tokens,
         "per_deck": per_deck,
         "cache_hit_rate_pct": {f"pass_{p}": round(100.0 * h / n, 1) if n else None for p, (h, n) in hits.items()},
         "target_agreement_pct": 95.0,
@@ -217,15 +391,63 @@ def _pct(value):
     return "n/a" if value is None else f"{value:.1f}%"
 
 
+def _tokens(value):
+    return "n/a" if value is None else f"{value:,}"
+
+
+def _disagreement_lines(report):
+    rows, by_type = report["disagreements"], report["disagreement_fields"]
+    return [
+        "## Where passes disagree", "",
+        "Structures read in every pass whose readings differ in any field, as the model wrote it (the old method). "
+        "Items are lined up by value cell: cell = a cell cited in some passes only; items = the passes list a "
+        "different number of items; other = actual or forecast, period cells or flags. Each count is a number of "
+        "structures.", "",
+        "| Type | Structures | Disagreeing | " + " | ".join(FIELDS) + " |", "|---|" + "---:|" * (len(FIELDS) + 2),
+        *(f"| {t} | {c['structures']} | {c['disagreeing']} | " + " | ".join(str(c[f]) for f in FIELDS) + " |"
+          for t, c in by_type.items()), "",
+        *(["| Deck | Page | Type | Fields that differ | Same after normalisation |", "|---|---:|---|---|---|",
+           *(f"| {r['deck']} | {r['page']} | {r['type']} | {', '.join(r['fields'])} | "
+             f"{'yes' if r['same_after_normalisation'] else 'no'} |" for r in rows)]
+          if rows else ["Every structure read in every pass was read the same way in each."]), "",
+    ]
+
+
+def _reason(row):
+    return f"{row['reason']} ({row['detail']})" if row["detail"] else row["reason"]
+
+
+def _reason_lines(report):
+    by_type, rows = report["unverified_reasons"], report["unverified_items"]
+    total = {r: sum(c[r] for c in by_type.values()) for r in REASONS}
+    return [
+        "## Unverified items: reasons", "",
+        "One reason per unverified item outside a roadmap, the first that applies: metric invalid, other (no value), "
+        "value not in cell, lowest-header rule, period not rebuilt, other (flag not reproduced). Counts are over all "
+        "passes. "
+        "Metric invalid stays 0 on a live run: the gateway rejects a reply with such a metric whole, and the "
+        "structure counts as not read.", "",
+        "| Type | " + " | ".join(REASONS) + " | Unverified |", "|---|" + "---:|" * (len(REASONS) + 1),
+        *(f"| {t} | " + " | ".join(str(c[r]) for r in REASONS) + f" | {sum(c.values())} |" for t, c in by_type.items()),
+        "| all | " + " | ".join(str(total[r]) for r in REASONS) + f" | {sum(total.values())} |", "",
+        *(["| Deck | Page | Type | Cell | Reason | Passes |", "|---|---:|---|---|---|---:|",
+           *(f"| {r['deck']} | {r['page']} | {r['type']} | {r['value_cell']} | {_reason(r)} | {r['passes']} |"
+             for r in rows)]
+          if rows else ["No unverified item."]), "",
+    ]
+
+
 def summary(report):
-    """One line: the agreement against its target, then the verifier, cache and cost figures."""
+    """One line: the agreement against its target and the old figure, then the verifier, cache and cost figures."""
     agreement, target = report["agreement_pct_all"], report["target_agreement_pct"]
     verdict = "not measured" if agreement is None else "met" if agreement >= target else "missed"
     hits = ", ".join(f"{p.replace('_', ' ')} {_pct(r)}" for p, r in report["cache_hit_rate_pct"].items())
     cost = sum(d["cost_usd"] for d in report["per_deck"].values())
-    return (f"Agreement {_pct(agreement)} (target {_pct(target)}: {verdict}); "
+    return (f"Agreement {_pct(agreement)} (target {_pct(target)}: {verdict}; "
+            f"old method {_pct(report['agreement_pct_all_old'])}); "
             f"verified {_pct(report['verifier_match_rate_pct'])}, "
-            f"unverified {_pct(report['unverified_rate_pct'])}, {report['not_read']} not read, "
+            f"unverified {_pct(report['unverified_rate_pct'])}, {report['not_read']} not read; "
+            f"roadmap items: {report['roadmap_items']}, date rebuilt from cell: {report['roadmap_dates_rebuilt']}; "
             f"{report['period_corrected']} periods corrected; cache hits {hits or 'n/a'}; cost ${cost:.4f}.")
 
 
@@ -238,7 +460,7 @@ def write_report(report, folder, passes, fake=False):
     while path.exists():
         n += 1
         path = folder / f"consistency_{day}-{n}.md"
-    decks = report["per_deck"]
+    decks, tokens = report["per_deck"], report["tokens"]
     total = {k: sum(d[k] for d in decks.values()) for k in ("structures", "input_tokens", "output_tokens", "cost_usd")}
     lines = [
         f"# Consistency run {day}", "",
@@ -247,14 +469,24 @@ def write_report(report, folder, passes, fake=False):
         f"Prompt: {gateway.STRUCTURE_PROMPT} {prompt_store.load(gateway.STRUCTURE_PROMPT).version}. "
         "Method: docs/specs/llm-structure-reading.md section 11.", "",
         summary(report), "",
-        "## Agreement per structure type", "", "| Type | Agreement |", "|---|---:|",
-        *(f"| {t} | {_pct(a)} |" for t, a in report["agreement_pct"].items()),
-        f"| all | {_pct(report['agreement_pct_all'])} |", "",
+        "## Agreement per structure type", "",
+        "Items identical in all passes / distinct items. Agreement compares an item's metric, period, value and "
+        "value cell after the verifier's normalisation: the period the verifier keeps, as its start and end dates, "
+        "and the value as a number. The old method compares every field as the model wrote it.", "",
+        "| Type | Agreement | Old method |", "|---|---:|---:|",
+        *(f"| {t} | {_pct(a)} | {_pct(report['agreement_pct_old'].get(t))} |"
+          for t, a in report["agreement_pct"].items()),
+        f"| all | {_pct(report['agreement_pct_all'])} | {_pct(report['agreement_pct_all_old'])} |", "",
+        *_disagreement_lines(report),
         "## Verifier", "",
+        "Rates over the items outside roadmaps. A roadmap item's date is rebuilt from cell when Python rebuilds "
+        "its period from the cited period cells and it matches.", "",
         f"- Match rate: {_pct(report['verifier_match_rate_pct'])}",
         f"- Unverified rate: {_pct(report['unverified_rate_pct'])}",
         f"- Periods corrected: {report['period_corrected']}",
+        f"- Roadmap items: {report['roadmap_items']}, date rebuilt from cell: {report['roadmap_dates_rebuilt']}",
         f"- Not read: {report['not_read']}; model reads: {report['model_reads']}", "",
+        *_reason_lines(report),
         "## Cache hit rate", "", "| Pass | Hit rate |", "|---|---:|",
         *(f"| {p.split('_')[1]} | {_pct(r)} |" for p, r in report["cache_hit_rate_pct"].items()), "",
         "## Tokens and cost per deck", "", "| Deck | Structures | Input tokens | Output tokens | Cost USD |",
@@ -262,7 +494,15 @@ def write_report(report, folder, passes, fake=False):
         *(f"| {f} | {d['structures']} | {d['input_tokens']:,} | {d['output_tokens']:,} | {d['cost_usd']:.4f} |"
           for f, d in decks.items()),
         f"| all | {total['structures']} | {total['input_tokens']:,} | {total['output_tokens']:,} | "
-        f"{total['cost_usd']:.4f} |",
+        f"{total['cost_usd']:.4f} |", "",
+        "## Tokens per call", "",
+        "By the provider's token counter, which bills nothing. The fixed prompt is a call with an empty structure "
+        "text; its parts are each counted with the empty message, less the empty message alone.", "",
+        f"- Fixed prompt: {_tokens(tokens['fixed_prompt'])} (system prompt {_tokens(tokens['system_prompt'])}, "
+        f"output schema {_tokens(tokens['output_schema'])}, empty message {_tokens(tokens['empty_message'])})",
+        f"- Structure text, average of {tokens['structures_counted']} structures: "
+        f"{_tokens(tokens['structure_text_avg'])} (the gateway's 3,000-token measure: the text alone)",
+        f"- Billed input per model read: {_tokens(tokens['billed_input_per_model_read'])}",
     ]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path

@@ -147,9 +147,15 @@ live API. They cover:
 
 Each new test is first shown failing on a deliberate violation. `scripts/consistency_run.py` is manual: it uses the
 live API and costs money. It runs the 10 decks in `tests/fixtures/decks/decks/` 3 times and reports:
-- agreement % per structure type (items identical in all 3 passes ÷ distinct items);
-- verifier match rate and unverified rate;
-- tokens and cost per deck;
+- agreement % per structure type (items identical in all 3 passes ÷ distinct items), an item compared on metric,
+  period, value and `value_cell` after the verifier's normalisation, with the old all-field figure beside it;
+- for each structure whose passes disagree, the fields that differ (metric, period, value, unit, cell), with a count
+  per type;
+- verifier match rate and unverified rate over the items outside roadmaps, and for each of their unverified items the
+  reason (value not in cell, period not rebuilt, lowest-header rule, metric invalid, other), with a count per type;
+- roadmap items apart, as "roadmap items: N, date rebuilt from cell: M": N items of roadmap structures, M of them
+  with a period that matches the one Python rebuilds from their period cells;
+- tokens and cost per deck, the fixed prompt's tokens and the average structure-text tokens;
 - cache hit rate on passes 2 and 3.
 
 The consistency report is written to `docs/test-runs/consistency_<date>.md`, with -2, -3 suffixes for same-day runs.
