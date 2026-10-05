@@ -10,7 +10,7 @@ import logging
 import uuid
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 
 import pandas as pd
 from pydantic import BaseModel, Field, field_validator
@@ -446,7 +446,14 @@ async def save_mapping(audit_id: str, dtype: str, payload: MappingPayload):
 # ---------------------------------------------------------------------------
 # Board decks and growth plans: parsed text and candidate claims (docs/specs/deck-parser.md)
 # ---------------------------------------------------------------------------
-_TARGET_DATE = re.compile(r"^\d{4}(-(0[1-9]|1[0-2])|-Q[1-4])?$")
+_TARGET_DATE = re.compile(r"^\d{4}(-(0[1-9]|1[0-2])|-Q[1-4]|-H[12])?$")
+
+
+class PeriodValue(BaseModel):
+    """One value of a table row candidate, as the analyst corrects it; its period and its cell stay."""
+    value: Optional[float] = None
+    value_high: Optional[float] = None
+    target_date: Optional[str] = Field(default=None, pattern=_TARGET_DATE.pattern)
 
 
 class CandidateUpdate(BaseModel):
@@ -460,9 +467,11 @@ class CandidateUpdate(BaseModel):
     unit: Optional[str] = Field(default=None, min_length=1, max_length=40)   # "%", "months", "paying users"
     currency: Optional[str] = Field(default=None, pattern=r"^[A-Z]{3}$")
     target_date: Optional[str] = Field(default=None, pattern=_TARGET_DATE.pattern)
+    by_period: Optional[List[PeriodValue]] = None   # a table row: every value, in the row's order
 
 
-_EDITABLE = ("claim_type", "value", "value_high", "unit", "currency", "target_date")
+_EDITABLE = ("claim_type", "value", "value_high", "unit", "currency", "target_date", "by_period")
+_ROW_FIELDS = ("value", "value_high", "target_date")     # held per period on a table row candidate
 # Approved and edited claims make up the claim register; rejected ones stay on record, unused.
 REGISTER_STATUSES = ("approved", "edited")
 
@@ -470,7 +479,8 @@ REGISTER_STATUSES = ("approved", "edited")
 def _claim_key(c: dict) -> tuple:
     """What the parser found, so a re-upload can tell an already reviewed claim."""
     found = c.get("parsed") or c
-    return tuple(found.get(k) for k in _EDITABLE)
+    return tuple(tuple(tuple(i.get(f) for f in _ROW_FIELDS) for i in found.get(k) or ()) if k == "by_period"
+                 else found.get(k) for k in _EDITABLE)
 
 
 @api.post("/audits/{audit_id}/decks/upload")
@@ -552,10 +562,18 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
         raise HTTPException(400, "Nothing to change")
     if edits and "status" in sent:
         raise HTTPException(400, "Edit the fields or change the status, not both at once")
+    rows = current.get("by_period") or []
+    if "by_period" in edits:
+        # One value of a row can be corrected; the row keeps its periods and cells.
+        if not rows or edits["by_period"] is None or len(edits["by_period"]) != len(rows):
+            raise HTTPException(400, "Send one value per period of the row")
+        edits["by_period"] = [{**old, **new.model_dump()} for old, new in zip(rows, edits["by_period"])]
+    if rows and set(edits) & set(_ROW_FIELDS):
+        raise HTTPException(400, "Edit the row's values by period")
     if edits:
         changes = {**edits, "status": "edited"}
         if "parsed" not in current:       # what the parser found stays next to the analyst's edit
-            changes["parsed"] = {k: current.get(k) for k in _EDITABLE}
+            changes["parsed"] = {k: current.get(k) for k in _EDITABLE if k != "by_period" or rows}
     else:
         if payload.status is None:
             raise HTTPException(400, "status cannot be empty")

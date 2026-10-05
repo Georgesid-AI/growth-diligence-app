@@ -1,5 +1,5 @@
 import {
-  ALL_DECKS, CLAIM_TYPES, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, sourceRef, statusCounts, typeLabel,
+  ALL_DECKS, CLAIM_TYPES, INCONSISTENCY_LABEL, REMOVE_DECK_CONFIRM, claimDate, claimsForDeck, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, sourceRef, statusCounts, typeLabel,
   DECK_SCOPE_CANNOT, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO,
 } from "./deckClaims";
 
@@ -99,6 +99,40 @@ describe("deck selector", () => {
 
 test("the analyst chooses among plan claim types only; old usage claims keep their label", () => {
   expect(CLAIM_TYPES).toEqual(["revenue", "revenue_growth", "growth", "retention", "sales", "customers", "users",
-    "user_growth", "gross_margin", "people", "product", "market"]);
+    "user_growth", "gross_margin", "gross_profit", "costs", "ebitda", "net_profit", "people", "product", "market"]);
+  expect([typeLabel("gross_profit"), typeLabel("costs"), typeLabel("ebitda"), typeLabel("net_profit")])
+    .toEqual(["Gross profit", "Costs", "EBITDA", "Net profit"]);
   expect(typeLabel("usage")).toBe("Usage");
+});
+
+describe("a table row is one claim with its values by period (zero2hero page 19)", () => {
+  const row = {
+    claim_type: "users", value: null, target_date: null,
+    by_period: [
+      { value: 200, value_high: null, target_date: "2022", period: "Y/E 22" },
+      { value: 5000, value_high: null, target_date: "2023", period: "Y/E 23" },
+      { value: 20000, value_high: null, target_date: "2024", period: "Y/E 24" },
+    ],
+  };
+
+  test("value and date columns", () => {
+    expect(claimValue(row)).toBe("200 (Y/E 22) · 5,000 (Y/E 23) · 20,000 (Y/E 24)");
+    expect(claimValue({ currency: "GBP", by_period: [{ value: 42638, period: "Y/E 22" }, { value: 50000, period: "Y/E 23" }] }))
+      .toBe("42,638 GBP (Y/E 22) · 50,000 GBP (Y/E 23)");
+    expect(claimDate(row)).toBe("2022–2024");
+    expect(claimDate({ target_date: "2024-Q2" })).toBe("2024-Q2");
+    expect(claimDate({ target_date: null })).toBe("—");
+  });
+
+  test("editing one value sends every period, the others unchanged", () => {
+    expect(rowEdit(row, ["200", "6000", "20000"])).toEqual([
+      { value: 200, value_high: null, target_date: "2022" },
+      { value: 6000, value_high: null, target_date: "2023" },
+      { value: 20000, value_high: null, target_date: "2024" },
+    ]);
+  });
+
+  test("inconsistency label", () => {
+    expect(INCONSISTENCY_LABEL).toBe("Deck inconsistency");
+  });
 });

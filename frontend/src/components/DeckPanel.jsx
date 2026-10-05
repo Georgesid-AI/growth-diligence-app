@@ -6,7 +6,8 @@ import { Input } from "@/components/ui/input";
 import { getDecks, removeDeck, updateCandidate, uploadDeck } from "@/lib/api";
 import {
   ALL_DECKS, CLAIM_TYPES, CLAIM_UNITS, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
-  DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, PLACEHOLDER, STATUS_LABELS, claimValue, sourceRef, statusCounts, typeLabel,
+  DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, INCONSISTENCY_LABEL, PLACEHOLDER, STATUS_LABELS, claimDate, claimValue, rowEdit, sourceRef,
+  statusCounts, typeLabel,
 } from "@/lib/deckClaims";
 
 const STATUS_STYLE = {
@@ -162,21 +163,27 @@ export default function DeckPanel({ auditId }) {
 
 function CandidateRow({ candidate: c, onSave }) {
   const [draft, setDraft] = useState(null);
+  const isRow = Boolean(c.by_period?.length);      // a table row: its values by period
   const startEdit = () => setDraft({
     claim_type: c.claim_type, value: c.value ?? "", value_high: c.value_high ?? "", unit: c.unit ?? "", currency: c.currency ?? "", target_date: c.target_date ?? "",
+    values: (c.by_period || []).map((i) => i.value ?? ""),
   });
   const saveEdit = async () => {
-    const payload = {
+    const common = {
       claim_type: draft.claim_type,
-      value: draft.value === "" ? null : Number(draft.value),
-      value_high: draft.value_high === "" ? null : Number(draft.value_high),
       unit: draft.unit || null,
       currency: draft.currency.trim() ? draft.currency.trim().toUpperCase() : null,
+    };
+    const payload = isRow ? { ...common, by_period: rowEdit(c, draft.values) } : {
+      ...common,
+      value: draft.value === "" ? null : Number(draft.value),
+      value_high: draft.value_high === "" ? null : Number(draft.value_high),
       target_date: draft.target_date.trim() || null,
     };
     if (await onSave(c, payload)) setDraft(null);
   };
   const set = (k) => (e) => setDraft((d) => ({ ...d, [k]: e.target.value }));
+  const setValue = (k) => (e) => setDraft((d) => ({ ...d, values: d.values.map((v, i) => (i === k ? e.target.value : v)) }));
 
   return (
     <tr className="border-b border-[#F1F5F9] align-top" data-testid={`candidate-row-${c.id}`}>
@@ -188,23 +195,34 @@ function CandidateRow({ candidate: c, onSave }) {
             </select>
           </td>
           <td className="py-2 pr-3">
-            <div className="flex gap-1">
-              <Input value={draft.value} onChange={set("value")} type="number" className="h-8 w-28 text-xs font-mono" data-testid="edit-value" />
-              <Input value={draft.value_high} onChange={set("value_high")} type="number" placeholder="to (range)" className="h-8 w-28 text-xs font-mono" data-testid="edit-value-high" />
+            <div className="flex gap-1 flex-wrap">
+              {isRow ? c.by_period.map((i, k) => (
+                <label key={k} className="flex flex-col text-[10px] font-mono text-slate-500">
+                  {i.period || i.target_date || PLACEHOLDER}
+                  <Input value={draft.values[k]} onChange={setValue(k)} type="number" className="h-8 w-24 text-xs font-mono" data-testid={`edit-period-value-${k}`} />
+                </label>
+              )) : (
+                <>
+                  <Input value={draft.value} onChange={set("value")} type="number" className="h-8 w-28 text-xs font-mono" data-testid="edit-value" />
+                  <Input value={draft.value_high} onChange={set("value_high")} type="number" placeholder="to (range)" className="h-8 w-28 text-xs font-mono" data-testid="edit-value-high" />
+                </>
+              )}
               <Input value={draft.unit} onChange={set("unit")} list="claim-units" placeholder="unit" className="h-8 w-28 text-xs font-mono" data-testid="edit-unit" />
               <datalist id="claim-units">{CLAIM_UNITS.map((u) => <option key={u} value={u} />)}</datalist>
               <Input value={draft.currency} onChange={set("currency")} placeholder="EUR" className="h-8 w-16 text-xs font-mono uppercase" data-testid="edit-currency" />
             </div>
           </td>
           <td className="py-2 pr-3">
-            <Input value={draft.target_date} onChange={set("target_date")} placeholder="2025-Q4" className="h-8 w-24 text-xs font-mono" data-testid="edit-target-date" />
+            {isRow ? <span className="font-mono text-slate-700 whitespace-nowrap">{claimDate(c)}</span> : (
+              <Input value={draft.target_date} onChange={set("target_date")} placeholder="2025-Q4" className="h-8 w-24 text-xs font-mono" data-testid="edit-target-date" />
+            )}
           </td>
         </>
       ) : (
         <>
           <td className="py-2 pr-3 text-slate-800 whitespace-nowrap">{typeLabel(c.claim_type)}</td>
-          <td className="py-2 pr-3 font-mono text-slate-900 whitespace-nowrap">{claimValue(c)}</td>
-          <td className="py-2 pr-3 font-mono text-slate-700 whitespace-nowrap">{c.target_date || PLACEHOLDER}</td>
+          <td className={`py-2 pr-3 font-mono text-slate-900 ${isRow ? "" : "whitespace-nowrap"}`}>{claimValue(c)}</td>
+          <td className="py-2 pr-3 font-mono text-slate-700 whitespace-nowrap">{claimDate(c)}</td>
         </>
       )}
       <td className="py-2 pr-3 text-slate-700 max-w-md">
@@ -219,6 +237,13 @@ function CandidateRow({ candidate: c, onSave }) {
         <span className={`text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-nowrap ${STATUS_STYLE[c.status] || ""}`}>
           {STATUS_LABELS[c.status] || c.status}
         </span>
+        {c.inconsistent_dates?.length > 0 && (
+          <div className="mt-1 text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-nowrap text-amber-800 border-amber-500/50 bg-amber-50"
+            title={`This deck gives another value for the same type and period: ${c.inconsistent_dates.join(", ")}`}
+            data-testid="candidate-inconsistency">
+            {INCONSISTENCY_LABEL}
+          </div>
+        )}
       </td>
       <td className="py-2 whitespace-nowrap">
         {draft ? (
