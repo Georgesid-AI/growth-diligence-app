@@ -29,7 +29,8 @@ export const CLAIMS_CHOICES = [
 // Labels for every type a stored claim may carry; "usage" only on claims parsed before it was dropped.
 export const TYPE_LABELS = {
   revenue: "Revenue", revenue_growth: "Revenue growth", growth: "Growth", retention: "Retention", sales: "Sales",
-  customers: "Customers", users: "Users", user_growth: "User growth", gross_margin: "Gross margin", usage: "Usage",
+  customers: "Customers", users: "Users", user_growth: "User growth", gross_margin: "Gross margin",
+  gross_profit: "Gross profit", costs: "Costs", ebitda: "EBITDA", usage: "Usage",
   people: "People", product: "Product", market: "Market",
 };
 // The types an analyst can choose: same order and names as backend app/decks/claims.py CLAIM_TYPES.
@@ -57,16 +58,43 @@ export function sourceRef(ref) {
 const figure = (v) => Number(v).toLocaleString("en-US", { maximumFractionDigits: 2 });
 const present = (v) => v !== null && v !== undefined && Number.isFinite(Number(v));
 
-/** "3,600,000 USD", "15%", "4.9x", "24 months", "2.5", "12,000,000–13,000,000 USD" for a range;
- *  "—" for a date-only claim. */
-export function claimValue(c) {
-  if (!present(c?.value)) return PLACEHOLDER;
-  const n = present(c.value_high) ? `${figure(c.value)}–${figure(c.value_high)}` : figure(c.value);
+function amount(c, value, high) {
+  if (!present(value)) return PLACEHOLDER;
+  const n = present(high) ? `${figure(value)}–${figure(high)}` : figure(value);
   if (c.unit === "%") return `${n}%`;
   if (c.unit === "x") return `${n}x`;
   if (c.unit) return `${n} ${c.unit}`;
   return c.currency ? `${n} ${c.currency}` : n;
 }
+
+/** "3,600,000 USD", "15%", "4.9x", "24 months", "2.5", "12,000,000–13,000,000 USD" for a range;
+ *  "—" for a date-only claim. A table row lists its values by period:
+ *  "200 (Y/E 22) · 5,000 (Y/E 23) · …". */
+export function claimValue(c) {
+  if (c?.by_period?.length) {
+    return c.by_period.map((i) => `${amount(c, i.value, i.value_high)} (${i.period || i.target_date || PLACEHOLDER})`).join(" · ");
+  }
+  return amount(c || {}, c?.value, c?.value_high);
+}
+
+/** The Date column: a table row's first to last period, else the claim's target date. */
+export function claimDate(c) {
+  const dates = (c?.by_period || []).map((i) => i.target_date).filter(Boolean);
+  if (dates.length) return dates.length > 1 ? `${dates[0]}–${dates[dates.length - 1]}` : dates[0];
+  return c?.target_date || PLACEHOLDER;
+}
+
+/** The edit sent for a table row: one value per period, in the row's order; dates stay. */
+export function rowEdit(row, values) {
+  return row.by_period.map((i, k) => ({
+    value: values[k] === "" || values[k] === undefined ? null : Number(values[k]),
+    value_high: i.value_high ?? null,
+    target_date: i.target_date ?? null,
+  }));
+}
+
+// Shown on both claims when one deck gives the same type and period different values.
+export const INCONSISTENCY_LABEL = "Deck inconsistency";
 
 // Deck selector above the claims table: "All" plus one tab per deck.
 export const ALL_DECKS = "all";

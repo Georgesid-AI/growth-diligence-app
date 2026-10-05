@@ -65,7 +65,8 @@ def _has(blocks, **fields):
 
 
 def _by_value(candidates, value):
-    return [c for c in candidates if c["value"] == value]
+    """The candidates stating the value, a table row candidate among its values by period."""
+    return [c for c in candidates if any(v["value"] == value for v in claims.claim_values(c))]
 
 
 # ---------------------------------------------------------------------------
@@ -92,8 +93,12 @@ def test_pptx_text_boxes_groups_tables_and_notes_keep_their_slide():
     churn, = _by_value(found, 5)
     assert (churn["claim_type"], churn["unit"]) == ("retention", "%")
     revenue, = _by_value(found, 2500000)
-    assert revenue["sources"] == [{"file": "board.pptx", "slide": 2, "kind": "table", "table": 1, "row": 2, "col": 3}]
-    assert (revenue["snippet"], revenue["date_from"], revenue["target_date"]) == ("Revenue | $1.2M | $2.5M", "2024", "2024")
+    cell = {"file": "board.pptx", "slide": 2, "kind": "table", "table": 1, "row": 2}
+    assert revenue["sources"] == [{**cell, "col": 2}, {**cell, "col": 3}], "one candidate for the row"
+    assert (revenue["snippet"], revenue["value"], revenue["target_date"]) == ("Revenue | $1.2M | $2.5M", None, None)
+    assert revenue["by_period"] == [
+        {"value": 1200000, "value_high": None, "target_date": "2023", "period": "2023", "source": {**cell, "col": 2}},
+        {"value": 2500000, "value_high": None, "target_date": "2024", "period": "2024", "source": {**cell, "col": 3}}]
     hires, = _by_value(found, 40)
     assert hires["claim_type"] == "people" and hires["target_date"] == "2025"
     assert hires["sources"] == [{"file": "board.pptx", "slide": 2, "kind": "notes"}]
@@ -148,10 +153,11 @@ def test_zero2hero_table_figures_cite_row_and_column():
     file = "05-zero2hero.pdf"
     deck = parser.parse_deck((DECKS / file).read_bytes(), file)
     found = claims.detect_candidates(deck["blocks"], file)
-    cells = [(c["sources"][0]["row"], c["sources"][0]["col"], c["value"], c["currency"])
-             for c in found if c["sources"][0] == {**c["sources"][0], "page": 19, "kind": "table", "row": 4}]
-    assert cells == [(4, 2, 130550, "GBP"), (4, 3, 150000, "GBP"), (4, 4, 250000, "GBP"),
-                     (4, 5, 1000000, "GBP"), (4, 6, 2500000, "GBP")]
+    row, = [c for c in found if c["sources"][0] == {**c["sources"][0], "page": 19, "kind": "table", "row": 4}]
+    assert (row["claim_type"], row["currency"]) == ("revenue", "GBP")
+    assert [(i["source"]["row"], i["source"]["col"], i["value"], i["period"], i["target_date"]) for i in row["by_period"]] == [
+        (4, 2, 130550, "Y/E 22", "2022"), (4, 3, 150000, "Y/E 23", "2023"), (4, 4, 250000, "Y/E 24", "2024"),
+        (4, 5, 1000000, "Y/E 25", "2025"), (4, 6, 2500000, "Y/E 26", "2026")]
 
 
 # ---------------------------------------------------------------------------
@@ -391,7 +397,8 @@ def test_a_figure_borrows_its_label_and_date_from_the_table_column_header():
     arr, = _by_value(found, 5000000)
     assert (arr["claim_type"], arr["target_date"]) == ("revenue", "2025")
     found = _found(_slide([], table=([["Metric", "2024", "2025"], ["Pipeline", "$1M", "$2M"]], 1, 2)))
-    assert [(c["value"], c["claim_type"], c["target_date"]) for c in found if c["value"]] == \
+    row, = found
+    assert [(i["value"], row["claim_type"], i["target_date"]) for i in row["by_period"]] == \
         [(1000000, "sales", "2024"), (2000000, "sales", "2025")]
 
 
@@ -631,6 +638,7 @@ def test_a_re_upload_keeps_approved_edited_and_rejected_claims(api):
     ("800 Paying Users", ["customers"]),
     ("Avg. Customer Lifetime Value", ["sales"]),
     ("Implied Customer Life", ["retention"]),
+    ("Avg. Cost of Paid Acquisition", ["sales"]),
 ])
 def test_of_two_overlapping_keywords_the_longer_one_counts(text, families):
     assert [k["family"] for k in claims._keywords(text)] == families
@@ -711,7 +719,7 @@ def test_evenly_spaced_numbers_in_a_row_or_column_are_axis_ticks():
     assert claims._evenly_spaced([0, 25, 50, 75, 100]) and not claims._evenly_spaced([49284, 181193, 278085])
 
 
-def test_table_row_numbers_and_evenly_spaced_headers_are_ticks():
+def test_table_row_numbers_are_ticks():
     rows = [["#", "Metric", "Value"], ["1", "Revenue", "$1.2M"], ["2", "Revenue next year", "$2.0M"], ["3", "ARR", "$3.1M"]]
     found = _found(_slide([], table=(rows, 1, 2)))
     assert sorted(c["value"] for c in found) == [1200000, 2000000, 3100000]
@@ -755,3 +763,134 @@ def test_plan_lines_that_mention_funds_or_a_team_are_kept():
     found = _found(_slide([("Funds will be used to grow the team to 20 by end of 2020", 1, 2),
                            ("To fund an initial team for 24 months.", 1, 3)]))
     assert sorted(c["value"] for c in found) == [20, 24]
+
+
+# ---------------------------------------------------------------------------
+# Tables by period, periods, finance types and deck inconsistencies (browser test, zero2hero p19)
+# ---------------------------------------------------------------------------
+def test_zero2hero_page_19_reads_as_one_candidate_per_row_and_flags_the_panel():
+    """The deck's key financial slide: a projections table under "Y/E 22" ... "Y/E 26" and a panel
+    headed "23 Y/E" that gives Gross Profit £150K where the table gives £ 50,000."""
+    file = "05-zero2hero.pdf"
+    deck = parser.parse_deck((DECKS / file).read_bytes(), file)
+    page = [c for c in claims.detect_candidates(deck["blocks"], file) if _page(c) == 19]
+    rows = {c["snippet"].split(" | ")[0]: c for c in page if c.get("by_period")}
+    assert {k: (c["claim_type"], [i["value"] for i in c["by_period"]]) for k, c in rows.items()} == {
+        "Registered Users": ("users", [200, 5000, 20000, 30000, 50000]),
+        "Registered Institutions": ("customers", [1, 2, 25, 50]),
+        "Revenue": ("revenue", [130550, 150000, 250000, 1000000, 2500000]),
+        "Direct Costs": ("costs", [83403, 100000, 150000, 500000, 1000000]),
+        "Gross Profit": ("gross_profit", [42638, 50000, 100000, 500000, 1500000])}
+    assert [(i["period"], i["target_date"]) for i in rows["Revenue"]["by_period"]] == \
+        [("Y/E 22", "2022"), ("Y/E 23", "2023"), ("Y/E 24", "2024"), ("Y/E 25", "2025"), ("Y/E 26", "2026")]
+    panel = sorted((c["claim_type"], c["value"], c["target_date"], c["inconsistent_dates"]) for c in page
+                   if not c.get("by_period"))
+    assert panel == [("ebitda", None, "2024-Q2", []), ("gross_profit", 150000, "2023", ["2023"]),
+                     ("users", 5000, "2023", [])], "23 Y/E is a period, never a value"
+    assert rows["Gross Profit"]["inconsistent_dates"] == ["2023"]
+    assert all(not c["inconsistent_dates"] for k, c in rows.items() if k != "Gross Profit")
+
+
+@pytest.mark.parametrize("text, date", [
+    ("Y/E 22", "2022"), ("23 Y/E", "2023"), ("YE 2021", "2021"), ("FY23", "2023"), ("FY 2024", "2024"),
+    ("2023E", "2023"), ("2025F", "2025"), ("H1 24", "2024-H1"), ("1H2025", "2025-H1"), ("H2'24", "2024-H2"),
+    ("Q3 25", "2025-Q3"), ("3Q25", "2025-Q3"),
+])
+def test_periods_are_read_as_dates_never_as_values(text, date):
+    assert [d["date"] for d in claims.find_dates(text)] == [date]
+    assert claims.find_numbers(text, claims.find_dates(text)) == []
+
+
+def test_a_column_header_period_beats_a_date_nearby():
+    rows = [["", "Y/E 22", "Y/E 23"], ["Revenue", "£ 130,550", "£ 150,000"]]
+    row, = [c for c in _found(_slide([("Q2 2024", 1, 1.6)], table=(rows, 1, 2))) if c.get("by_period")]
+    assert [i["target_date"] for i in row["by_period"]] == ["2022", "2023"]
+
+
+def test_a_period_header_row_is_never_ticks_or_a_claim_and_a_row_is_never_ticks():
+    rows = [["", "Q1 24", "Q2 24", "Q3 24"], ["Revenue", "$1M", "$2M", "$3M"]]
+    found = _found(_slide([], table=(rows, 1, 2)))
+    assert [(c["claim_type"], [(i["value"], i["target_date"]) for i in c["by_period"]]) for c in found] == \
+        [("revenue", [(1000000, "2024-Q1"), (2000000, "2024-Q2"), (3000000, "2024-Q3")])]
+
+
+def test_a_lone_figure_or_figures_of_different_types_in_a_row_stay_separate():
+    lone = _found(_slide([], table=([["", "2024"], ["Revenue", "$3M"]], 1, 2)))
+    assert [(c["value"], c["target_date"], c.get("by_period")) for c in lone] == [(3000000, "2024", None)]
+    mixed = _found(_slide([], table=([["", "ARR", "Customers"], ["2024", "$3M", "40"]], 1, 2)))
+    assert sorted((c["claim_type"], c["value"]) for c in mixed) == [("customers", 40), ("revenue", 3000000)]
+
+
+def test_a_period_at_the_top_of_a_text_box_dates_every_figure_in_it():
+    found = _found(_slide([("23 Y/E\nGross Profit £150K\n5K Users", 1, 2)]))
+    assert sorted((c["claim_type"], c["value"], c["target_date"]) for c in found) == \
+        [("gross_profit", 150000, "2023"), ("users", 5000, "2023")]
+    found = _found(_slide([("FY24\nARR $3M\nBeta launch in Q1 2023", 1, 2)]))
+    arr, = _by_value(found, 3000000)
+    assert (arr["target_date"], arr["date_from"]) == ("2024", "FY24"), "the box period beats a quarter lower down"
+
+
+@pytest.mark.parametrize("text, family", [
+    ("Gross Profit £150K", "gross_profit"), ("Gross margin £1.2M", "gross_profit"), ("Gross margin 82%", "gross_margin"),
+    ("Direct costs £83,403", "costs"), ("Opex of $2M", "costs"), ("Costs $500K", "costs"),
+    ("EBITDA of $1.5M", "ebitda"), ("40 institutions", "customers"),
+])
+def test_gross_profit_costs_ebitda_and_institutions(text, family):
+    assert [c["claim_type"] for c in _line(text)] == [family]
+
+
+def test_a_break_even_milestone_takes_its_date():
+    assert [(c["claim_type"], c["target_date"]) for c in _line("Break-even by Q3 2025")] == [("ebitda", "2025-Q3")]
+    assert [(c["claim_type"], c["target_date"]) for c in _line("Profitability in H2 2026")] == [("ebitda", "2026-H2")]
+    found = _found(_slide([("Positive EBITDA\nQ2 2024", 1, 2)]))
+    assert [(c["claim_type"], c["value"], c["target_date"]) for c in found] == [("ebitda", None, "2024-Q2")]
+    titled = _found(_slide([("Break-even", 1, 2)], title="Targets Q3 2025"))
+    assert ("ebitda", "2025-Q3") in [(c["claim_type"], c["target_date"]) for c in titled]
+
+
+def test_only_stated_periods_with_different_values_are_a_deck_inconsistency():
+    rows = [["", "Y/E 22", "Y/E 23"], ["Gross Profit", "£ 42,638", "£ 50,000"], ["Users", "200", "5,000"]]
+    found = _found(_slide([("23 Y/E\nGross Profit £150K\n5K Users", 1, 1)], table=(rows, 4, 1)))
+    flagged = sorted((c["claim_type"], bool(c.get("by_period"))) for c in found if c["inconsistent_dates"] == ["2023"])
+    assert flagged == [("gross_profit", False), ("gross_profit", True)], "the same users figure is consistent"
+    # Two figures that borrow the same year from the title state no period of their own.
+    borrowed = _found(_slide([("Revenue $10M", 0.5, 2), ("Revenue run rate $8M", 6, 6)], title="Plan 2011"))
+    assert sorted((c["value"], c["target_date"], c["inconsistent_dates"]) for c in borrowed) == \
+        [(8000000, "2011", []), (10000000, "2011", [])]
+
+
+def test_one_value_of_a_row_can_be_edited_and_the_row_approved_once(api):
+    client, db = api
+    _upload(client, "audit-1", "05-zero2hero.pdf", (DECKS / "05-zero2hero.pdf").read_bytes())
+    row = next(c for c in db[decks.CANDIDATES_COLLECTION].docs if c.get("by_period") and c["claim_type"] == "revenue")
+    url = f"/api/audits/audit-1/decks/candidates/{row['id']}"
+    values = [{"value": i["value"], "value_high": None, "target_date": i["target_date"]} for i in row["by_period"]]
+    values[1] = {**values[1], "value": 160000}
+    edited = client.put(url, json={"by_period": values}).json()
+    assert edited["status"] == "edited" and [i["value"] for i in edited["by_period"]][:2] == [130550, 160000]
+    assert [i["period"] for i in edited["by_period"]] == [i["period"] for i in row["by_period"]], "periods stay"
+    assert edited["by_period"][1]["source"] == row["by_period"][1]["source"], "cells stay"
+    assert edited["parsed"]["by_period"][1]["value"] == 150000, "the parser's row kept beside the edit"
+    assert client.put(url, json={"by_period": values[:2]}).status_code == 400, "one value per period"
+    assert client.put(url, json={"value": 1}).status_code == 400, "a row is edited by period"
+    other = next(c for c in db[decks.CANDIDATES_COLLECTION].docs if c.get("by_period") and c["claim_type"] == "users")
+    assert client.put(f"/api/audits/audit-1/decks/candidates/{other['id']}", json={"status": "approved"}).json()["status"] \
+        == "approved", "the analyst approves the row once"
+    register = client.get("/api/audits/audit-1/claims").json()["claims"]
+    assert sorted(c["claim_type"] for c in register) == ["revenue", "users"]
+    again = _upload(client, "audit-1", "05-zero2hero.pdf", (DECKS / "05-zero2hero.pdf").read_bytes()).json()
+    assert again["kept_reviewed"] == 2
+    assert len([c for c in db[decks.CANDIDATES_COLLECTION].docs if c["claim_type"] == "revenue" and c.get("by_period")]) == 1
+    half = client.put(f"/api/audits/audit-1/decks/candidates/{other['id']}", json={"by_period": [
+        {"value": i["value"], "target_date": "2024-H1"} for i in other["by_period"]]})
+    assert half.status_code == 200, "a half year is a target date"
+
+
+def test_a_merged_claim_is_compared_when_any_of_its_sources_states_the_period():
+    blocks = [{"slide": 1, "kind": "text", "text": "Plan 2023", "box": 1, "title": True},
+              {"slide": 1, "kind": "text", "text": "Revenue £1M", "box": 2},
+              {"slide": 2, "kind": "text", "text": "Revenue 2023: £1M", "box": 3},
+              {"slide": 3, "kind": "text", "text": "Revenue 2023: £2M", "box": 4}]
+    found = claims.detect_candidates(blocks, "deck.pptx")
+    assert sorted((c["value"], len(c["sources"]), c["inconsistent_dates"]) for c in found) == \
+        [(1000000, 2, ["2023"]), (2000000, 1, ["2023"])]

@@ -3,9 +3,11 @@
 Ten public decks in tests/fixtures/decks/decks/ and a hand-checked answer file,
 tests/fixtures/decks/expected_claims.json. A listed company claim is found when a candidate
 from the same deck cites its slide or page and has the same value (a percentage matches only
-a percentage). A listed range needs both ends; a single listed figure is also found at either
-end of a candidate range ("from 40-100": 40 today, 100 in two years). A claim listed without a
-value is found by its target date. Claims marked "not a company claim" never count toward recall.
+a percentage). A table row candidate is matched value by value, each value citing its cell, so
+recall stays per value; as a candidate it counts once. A listed range needs both ends; a single
+listed figure is also found at either end of a candidate range ("from 40-100": 40 today, 100 in
+two years). A claim listed without a value is found by its target date. Claims marked "not a
+company claim" never count toward recall.
 
 Recall must reach PASS_MARK. Precision - the share of candidates that are a listed company
 claim - is reported and must not drop below PRECISION_FLOOR. To see the report:
@@ -43,16 +45,21 @@ def _pages(candidate):
 
 
 def matches(candidate, claim) -> bool:
-    if claim["page"] not in _pages(candidate):
+    """A table row candidate states several values; it matches when one of them does."""
+    if claim["value"] is not None and (candidate["unit"] == "%") != (claim["unit"] == "%"):
+        return False
+    return any(_value_matches(v, claim) for v in claims.claim_values(candidate))
+
+
+def _value_matches(found, claim) -> bool:
+    if claim["page"] not in _pages(found):
         return False
     if claim["value"] is None:
-        return candidate["target_date"] == claim["target_date"]
-    if (candidate["unit"] == "%") != (claim["unit"] == "%"):
-        return False
+        return found["target_date"] == claim["target_date"]
     same = lambda a, b: a is not None and b is not None and math.isclose(a, b, rel_tol=1e-9)  # noqa: E731
     if claim.get("value_high") is not None:
-        return same(candidate["value"], claim["value"]) and same(candidate.get("value_high"), claim["value_high"])
-    return same(candidate["value"], claim["value"]) or same(candidate.get("value_high"), claim["value"])
+        return same(found["value"], claim["value"]) and same(found.get("value_high"), claim["value_high"])
+    return same(found["value"], claim["value"]) or same(found.get("value_high"), claim["value"])
 
 
 @pytest.fixture(scope="module")

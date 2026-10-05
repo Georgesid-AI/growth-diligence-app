@@ -35,7 +35,7 @@ If a file has no readable text, show: "No readable text found in this file. It m
 
 ## 2. Candidate claim detection (Python only, no LLM, rule-based)
 Only plan claims are listed: the company's own revenue, customers, users, retention, margins,
-sales metrics, hiring and launch dates, plus targets and forecasts.
+gross profit, costs, EBITDA, sales metrics, hiring and launch dates, plus targets and forecasts.
 A figure (a number, or a date) is a candidate if it has a claim keyword: in its own text line,
 or borrowed from nearby text when its line has none.
 Keywords and claim types (a keyword also matches its plural and verb forms: revenues, growing,
@@ -47,10 +47,14 @@ hired, launches; of two overlapping keywords the longer one counts):
   $3.6M" is Revenue).
 - Retention: NRR, churn, retention, customer life
 - Sales: sales cycle, win rate, pipeline, ACV, CAC, payback, LTV, (customer) lifetime value,
-  acquisition, conversion, leads
-- Customers: customers, clients, paying users, accounts, companies, agencies, subscribers
+  acquisition, conversion, leads, cost of (paid) acquisition, acquisition cost
+- Customers: customers, clients, paying users, accounts, companies, agencies, subscribers,
+  institutions
 - Users: users
 - Gross margin: margin, margins
+- Gross profit: gross profit; also a gross margin given as an amount ("Gross margin £1.2M")
+- Costs: direct costs, costs, opex
+- EBITDA: EBITDA, profitability, break-even
 - People: hires, headcount, team, recruitment, attrition
 - Product: launch, release, roadmap, ship, milestone, Q1–Q4, month names
 - Market: TAM, SAM, SOM, addressable market, market size. The bare word "market" does not count.
@@ -61,21 +65,34 @@ figure: a keyword after it belongs to that figure ("5 advisors & 15 clients" →
 There is no Usage type: a count whose line has no keyword borrows a label like any other
 figure, or is not a candidate.
 A line with its own keyword never borrows a label from other lines.
+Periods are dates, never values: "Y/E 22", "22 Y/E", "FY23", "2023E" (also A, F, B, P),
+"H1 24", "1H24", "Q3 25", "3Q25". A half year is stored as "2024-H1".
 Borrowing: a figure without a keyword or a date in its own line takes them from nearby text,
 first match wins: the table column header, the other lines of its text box (nearest first),
 the text on the same row or above it, never below, within a quarter of the slide or page
 (nearest first), the slide title. A month or quarter is preferred over a bare year.
+A date is taken first from the figure's column header, then from a period line at the top of
+its text box ("23 Y/E" over "Gross Profit £150K" and "5K Users"), then as above. The box period
+dates figures only; the period line itself is never a candidate.
 The snippet is the figure's own line. A borrowed label is kept apart and shown below the
 snippet as "Label from: <text>"; a borrowed date as "Date from: <text>".
 A line with no figure becomes a candidate only if it is a product line (launch, release, ship,
-roadmap or milestone, its own or borrowed) and it can borrow a date: a roadmap bullet.
+roadmap or milestone, its own or borrowed) or an EBITDA line ("Positive EBITDA") and it can
+borrow a date: a roadmap bullet, a break-even milestone. A bare date under an EBITDA line
+("Q2 2024") takes the EBITDA type.
+Tables: one candidate per table row. The row's figures of one type become a single candidate
+that holds its values by period, each with the date and the text of its column header
+("Registered Users: 200 (Y/E 22) · 5,000 (Y/E 23) · …"). A lone figure, or figures of different
+types in one row, stay separate candidates. A header row of periods is never a candidate.
 Each candidate stores: claim type, value (low and high for a range), unit, currency, target
 date (if any), source reference, short snippet (max 300 characters), and the text a label or
-date was borrowed from.
+date was borrowed from. A table row stores its values by period instead of one value and date:
+value (low and high), target date, the column header text and the cell of each.
 Duplicates across slides are merged and keep all source references.
 Dropped, never listed:
 - Chart axis ticks: 3 or more numbers, evenly spaced in value, in one line, in one column or
-  row of lines that hold only a number, or in one table column or row (row numbers 1, 2, 3).
+  row of lines that hold only a number, or in one table column (row numbers 1, 2, 3). A table
+  row is a series of values and the header row holds labels: neither is ever ticks.
 - Every figure on a slide or page titled Problem, Why now, Trends, Landscape, Background,
   Token or Allocation (pptx titles and the topmost text of a pdf page; docx has no titles).
 - Every figure on a slide or page that cites outside research: a "Source:" or "Via <link>"
@@ -85,6 +102,12 @@ Dropped, never listed:
   (founder, CEO, chief, former, previously, employee, exec team) or the industry and the world
   (industry, global, worldwide, economy). This also drops other companies' figures quoted in
   founder bios.
+Deck inconsistency: when one deck gives the same type and period different values (the page 19
+panel's Gross Profit £150K for Y/E 23, the table's £ 50,000), every candidate holding one of them
+is marked "Deck inconsistency" with that period. Only stated periods are compared: the figure's
+own date, its column header's or its box's period. A date borrowed by position or from the
+title is not, and neither are amounts in different currencies, or a rate and an amount. The
+mark describes the deck and is set when it is read; an edit does not clear it.
 Tried and rejected: a bare number (no words of its own) borrowing only from its own text box,
 table header or a label right next to it. On the test set it lowered recall to 93.2% when
 first tried and to 90.3% on top of the other plan-claim rules (chart data labels whose only
@@ -93,7 +116,8 @@ by position and from the slide title.
 
 ## 3. Recall test
 - Test set: 10 public decks (6 pdf, 2 pptx, 2 docx) in tests/fixtures/decks/decks/.
-- A hand-checked answer file lists the claims in each deck.
+- A hand-checked answer file lists the claims in each deck, one entry per value. A table row
+  candidate is matched value by value, so recall stays per value; it counts once as a candidate.
 - Pass mark: the parser finds at least 95% of listed claims.
 - Precision (false candidates) is reported; the test fails if it drops below 30%.
 - Runs as a normal automated test.
@@ -102,6 +126,7 @@ by position and from the slide title.
 - The deck parser has no import of, or call to, the LLM gateway.
 - The gateway never reads raw files, parsed text or claim snippets.
 - The gateway may read only structured claim fields (type, value, high value of a range, unit, date, status).
+  A table row's values by period are not among them: each keeps its column header text and cell.
 - An automated test fails the build if the parser imports the gateway, or the gateway reads the parsed-text or snippet fields.
 
 ## 5. Storage and deletion
@@ -123,6 +148,9 @@ These figures may inform the growth plan. They were identified automatically and
 - Edit: corrects type, value (low and high), unit, currency or date and approves the claim:
   status "edited", the parser's original values kept next to the edit. Approving an edited
   claim keeps it "edited". The snippet, borrowed label and sources cannot be edited.
+- A table row is approved, edited or rejected once. Editing it corrects one or more of its
+  values by period; the periods and cells stay.
+- A claim marked "Deck inconsistency" shows the label in its status cell.
 - Reject: status "rejected". The record is kept, never deleted; it is not in the register.
 - Claim register: the approved and edited claims of an audit (GET /api/audits/{id}/claims).
 - Not built yet: testing register claims against the uploaded data. It needs its own spec.
