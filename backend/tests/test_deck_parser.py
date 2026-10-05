@@ -993,3 +993,191 @@ def test_an_edited_date_is_a_calendar_period_and_drops_the_stated_text(api):
     assert (kept["period_text"], kept["period_start"]) == ("FY25", "2024-04-01"), "same date: the stated period stays"
     moved = client.put(url, json={"target_date": "2026-Q1"}).json()
     assert (moved["period_text"], moved["period_start"], moved["period_end"]) == (None, "2026-01-01", "2026-03-31")
+
+
+# ---------------------------------------------------------------------------
+# Structure detection (spec section 7): tables, charts, KPI panels, roadmaps and timelines, and the
+# hiring, unit-economics and use-of-funds tables. The thresholds were fixed on the 10 test decks.
+# ---------------------------------------------------------------------------
+from app.structures import redact as structure_redact  # noqa: E402
+
+DECK_STRUCTURES = {
+    "01-front-b.pptx": [(11, "kpi_panel"), (12, "kpi_panel"), (14, "kpi_panel"), (15, "kpi_panel"), (16, "kpi_panel"),
+                        (18, "kpi_panel")],
+    "02-moz.pdf": [(2, "roadmap"), (13, "kpi_panel"), (20, "kpi_panel"), (21, "kpi_panel"), (23, "kpi_panel"),
+                   (32, "kpi_panel")],
+    "03-buffer.pptx": [(6, "roadmap")],
+    "04-clevergig.docx": [(7, "kpi_panel")],
+    "05-zero2hero.pdf": [(11, "kpi_panel"), (17, "kpi_panel"), (19, "table"), (19, "kpi_panel"), (22, "hiring_table")],
+    "06-uber.pdf": [],
+    "07-equals-seed.docx": [],
+    "08-genesisai-2021.pdf": [(13, "kpi_panel"), (14, "kpi_panel")],
+    "09-genesisai-2024.pdf": [(5, "kpi_panel"), (13, "kpi_panel"), (14, "kpi_panel")],
+    "10-tea.pdf": [(6, "kpi_panel"), (9, "kpi_panel"), (11, "roadmap")],
+}
+
+
+@pytest.mark.parametrize("file", sorted(DECK_STRUCTURES))
+def test_the_structures_found_on_the_test_decks(file):
+    deck = parser.parse_deck((DECKS / file).read_bytes(), file)
+    assert [(s.get("slide") or s.get("page"), s["type"]) for s in deck["structures"]] == DECK_STRUCTURES[file]
+    for s in deck["structures"]:
+        assert s["type"] in parser.STRUCTURE_TYPES and s["cells"]
+        assert all(len(c["text"]) <= parser.CELL_MAX for c in s["cells"])
+        assert len({(c["row"], c["col"]) for c in s["cells"]}) == len(s["cells"]), "one cell per position"
+
+
+def test_chart_axes_drawn_as_text_are_not_a_timeline_and_a_timeline_needs_a_product_word():
+    # front-b slides 10-13: quarter labels under charts drawn as text boxes, evenly spaced.
+    deck = parser.parse_deck((DECKS / "01-front-b.pptx").read_bytes(), "01-front-b.pptx")
+    assert not [s for s in deck["structures"] if s["type"] == "roadmap"]
+    dated = _slide([("Q1 2024", 1, 1), ("Q3 2024", 3, 1), ("Q2 2025", 5, 1), ("Launch the API", 1, 2)])
+    assert [s["type"] for s in parser.parse_deck(dated, "d.pptx")["structures"]] == ["roadmap"]
+    plain = _slide([("Q1 2024", 1, 1), ("Q3 2024", 3, 1), ("Q2 2025", 5, 1), ("Hired a VP", 1, 2)])
+    assert not [s for s in parser.parse_deck(plain, "d.pptx")["structures"] if s["type"] == "roadmap"]
+    axis = _slide([("Q1 2024", 1, 1), ("Q2 2024", 3, 1), ("Q3 2024", 5, 1), ("Launch the API", 1, 2)])
+    assert not [s for s in parser.parse_deck(axis, "d.pptx")["structures"] if s["type"] == "roadmap"], \
+        "evenly spaced, distinct dates in a row are an axis"
+
+
+def test_the_timeline_grid_keeps_each_box_as_a_column_of_its_band():
+    deck = parser.parse_deck((DECKS / "10-tea.pdf").read_bytes(), "10-tea.pdf")
+    roadmap, = [s for s in deck["structures"] if s["type"] == "roadmap"]
+    cells = {(c["row"], c["col"]): c for c in roadmap["cells"]}
+    assert (cells[(1, 1)]["text"], cells[(2, 1)]["text"], cells[(2, 2)]["text"]) == ("2021", "Q2", "Gluon wallet")
+    assert cells[(1, 1)]["box"] == cells[(2, 1)]["box"] != cells[(2, 2)]["box"]
+
+
+def test_a_kpi_box_is_short_lines_with_a_figure_and_a_label_never_a_wrapped_sentence():
+    found = parser.parse_deck(_slide([("2.5 hours\nper user per day", 1, 1), ("64%\nDAU / MAU ratio", 4, 1),
+                                      ("We raised revenue of\n$1.1M from customers", 1, 3), ("40%", 4, 3)]), "d.pptx")
+    panel, = found["structures"]
+    assert panel["type"] == "kpi_panel"
+    assert [c["text"] for c in sorted(panel["cells"], key=lambda c: (c["row"], c["col"]))] == \
+        ["2.5 hours", "64%", "per user per day", "DAU / MAU ratio"], "the wrapped sentence and the bare 40% stay out"
+
+
+def test_a_table_without_a_figure_is_prose_and_row_numbers_are_not_figures():
+    deck = parser.parse_deck((DECKS / "07-equals-seed.docx").read_bytes(), "07-equals-seed.docx")
+    assert deck["structures"] == [], "numbered text tables are prose"
+    swot = parser.parse_deck((DECKS / "05-zero2hero.pdf").read_bytes(), "05-zero2hero.pdf")
+    assert not [s for s in swot["structures"] if s.get("page") == 14], "a SWOT table numbered 1-12 is prose"
+
+
+@pytest.mark.parametrize("header, caption, kind", [
+    (["Role", "Start", "Salary"], None, "hiring_table"),
+    (["Metric", "Value"], None, "table"),
+    (["", "2024"], "Recruitment plan", "hiring_table"),
+    (["Use of funds", "%"], None, "use_of_funds"),
+    (["Metric", "2025"], "Unit economics", "unit_economics"),
+    (["", "Value"], None, "unit_economics"),         # CAC in the first column
+])
+def test_a_table_takes_its_type_from_its_header_keywords_and_caption(header, caption, kind):
+    rows = [header, ["CAC" if kind == "unit_economics" and caption is None else "Engineer", "£50,000"]]
+    boxes = [(caption, 1, 1.4)] if caption else []
+    deck = parser.parse_deck(_slide(boxes, table=(rows, 1, 2)), "d.pptx")
+    assert [s["type"] for s in deck["structures"] if s.get("table")] == [kind]
+
+
+def test_a_pptx_chart_is_read_from_its_xml_with_title_axis_titles_series_and_values():
+    from pptx.chart.data import CategoryChartData
+    from pptx.enum.chart import XL_CHART_TYPE
+    from pptx.util import Inches
+    prs = pptx.Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    data = CategoryChartData()
+    data.categories = ["FY23", "FY24", "FY25"]
+    data.add_series("ARR", (1.2, 2.5, 4.0))
+    data.add_series("Customers", (40, 75, 120))
+    chart = slide.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(1), Inches(1), Inches(6), Inches(4), data).chart
+    chart.has_title = True
+    chart.chart_title.text_frame.text = "Growth plan"
+    chart.value_axis.has_title = True
+    chart.value_axis.axis_title.text_frame.text = "£m"
+    buf = io.BytesIO()
+    prs.save(buf)
+    deck = parser.parse_deck(buf.getvalue(), "chart.pptx")
+    found, = deck["structures"]
+    assert (found["type"], found["slide"], found["header_rows"]) == ("chart", 1, 3)
+    text = structure_redact.structure_text(found["cells"])
+    assert text.splitlines()[:5] == ["r1c1: Growth plan (r1c1:r1c3)", "r2c2: £m (r2c2:r2c3)", "r3c2: ARR",
+                                     "r3c3: Customers", "r4c1: FY23"]
+    assert "r6c2: 4" in text and "r6c3: 120" in text
+
+
+def _merged_table_slide(rows, merges):
+    """A slide with one table; merges: [(row, col, rows, cols)], zero-based."""
+    from pptx.util import Inches
+    prs = pptx.Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    grid = slide.shapes.add_table(len(rows), len(rows[0]), Inches(1), Inches(2), Inches(6), Inches(2)).table
+    for r, row in enumerate(rows):
+        for c, text in enumerate(row):
+            if text:
+                grid.cell(r, c).text = text
+    for r, c, nr, nc in merges:
+        grid.cell(r, c).merge(grid.cell(r + nr - 1, c + nc - 1))
+    buf = io.BytesIO()
+    prs.save(buf)
+    return buf.getvalue()
+
+
+def test_a_merged_header_keeps_its_span_in_the_header_stack_and_the_structure_text():
+    rows = [["", "2025", "", "", ""], ["", "Q1", "Q2", "Q3", "Q4"], ["Revenue", "$1M", "$2M", "$3M", "$4M"]]
+    deck = parser.parse_deck(_merged_table_slide(rows, [(0, 1, 1, 4)]), "m.pptx")
+    assert _has(deck["blocks"], slide=1, kind="table", row=1, col=2, text="2025", col_span=4)
+    table, = deck["structures"]
+    assert table["header_rows"] == 2
+    text = structure_redact.structure_text(table["cells"])
+    assert text.splitlines()[:2] == ["r1c2: 2025 (r1c2:r1c5)", "r2c2: Q1"]
+
+
+def test_a_quarter_under_its_year_is_a_two_cell_period_and_with_no_year_it_has_none():
+    rows = [["", "2025", "", "", ""], ["", "Q1", "Q2", "Q3", "Q4"], ["Revenue", "$1M", "$2M", "$3M", "$4M"]]
+    row, = claims.detect_candidates(parser.parse_deck(_merged_table_slide(rows, [(0, 1, 1, 4)]), "m.pptx")["blocks"], "m.pptx")
+    assert [(i["value"], i["target_date"], i["period"]) for i in row["by_period"]] == [
+        (1000000, "2025-Q1", "Q1 2025"), (2000000, "2025-Q2", "Q2 2025"), (3000000, "2025-Q3", "Q3 2025"),
+        (4000000, "2025-Q4", "Q4 2025")]
+    no_year = _slide([("Plan 2024", 1, 1)], table=([["", "Q1", "Q2"], ["Revenue", "$1M", "$2M"]], 1, 2))
+    row, = claims.detect_candidates(parser.parse_deck(no_year, "n.pptx")["blocks"], "n.pptx")
+    assert [i["target_date"] for i in row["by_period"]] == [None, None], "never inferred from the slide title"
+    relative = _slide([("Plan 2024", 1, 1)], table=([["", "Year 1", "Year 2"], ["Revenue", "$1M", "$2M"]], 1, 2))
+    row, = claims.detect_candidates(parser.parse_deck(relative, "r.pptx")["blocks"], "r.pptx")
+    assert [i["target_date"] for i in row["by_period"]] == [None, None], "relative columns have no period"
+
+
+@pytest.mark.parametrize("months, expected", [
+    (["Mär 2025", "Okt 2025"], ["2025-03", "2025-10"]),
+    (["март 2025", "ДЕКЕМВРИ 2025"], ["2025-03", "2025-12"]),
+    (["january 2025", "SEPT 2025"], ["2025-01", "2025-09"]),
+])
+def test_month_names_in_a_table_header_are_english_german_or_bulgarian_in_any_case(months, expected):
+    row, = _found(_slide([], table=([[""] + months, ["Revenue", "€1M", "€2M"]], 1, 2)))
+    assert [i["target_date"] for i in row["by_period"]] == expected
+
+
+def test_a_docx_merged_cell_starts_in_its_grid_column_and_keeps_its_span():
+    document = docx.Document()
+    table = document.add_table(rows=2, cols=3)
+    merged = table.cell(0, 0).merge(table.cell(0, 1))
+    merged.text = "Plan"
+    table.cell(0, 2).text = "FY2025"
+    for c, text in enumerate(["Revenue", "€1M", "€2M"]):
+        table.cell(1, c).text = text
+    buf = io.BytesIO()
+    document.save(buf)
+    deck = parser.parse_deck(buf.getvalue(), "t.docx")
+    assert _has(deck["blocks"], kind="table", row=1, col=1, text="Plan", col_span=2)
+    assert _has(deck["blocks"], kind="table", row=1, col=3, text="FY2025"), "the cell after a merge starts in grid column 3"
+    assert _has(deck["blocks"], kind="table", row=2, col=3, text="€2M")
+
+
+def test_structures_are_stored_with_the_parsed_text_and_never_listed(api):
+    client, db = api
+    _upload(client, "audit-1", "05-zero2hero.pdf", (DECKS / "05-zero2hero.pdf").read_bytes())
+    stored, = db[decks.TEXT_COLLECTION].docs
+    assert [s["type"] for s in stored["structures"]] == [t for _, t in DECK_STRUCTURES["05-zero2hero.pdf"]]
+    listed = client.get("/api/audits/audit-1/decks").json()["decks"][0]
+    assert "structures" not in listed and "blocks" not in listed, "cells are deck text: never in a listing"
+    client.delete(f"/api/audits/audit-1/decks/{stored['deck_id']}")
+    assert db[decks.TEXT_COLLECTION].docs == [], "removed with the deck"

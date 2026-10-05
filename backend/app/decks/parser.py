@@ -11,8 +11,15 @@ them: "box" groups the lines of one text box (pptx, docx) or of one stack of lin
 height is its share of its text box); "title" marks the slide title (pptx) or the topmost
 text of a page (pdf).
 
+A merged table cell keeps its span: "col_span" and "row_span" are set when they are above 1, and
+"col" is the grid column the cell starts in.
+
 Text only. Pictures, charts saved as pictures and scanned pages hold pixels, not text, so
 they are not read; a file with no readable text is refused, never guessed.
+
+parse_deck also lists the deck's structures (spec section 7, see detect_structures): tables,
+charts read from the chart XML (pptx), KPI panels and roadmaps or timelines, each with its type,
+its source reference and every cell with its row and column, so a value read from it can be cited.
 """
 import io
 import itertools
@@ -62,15 +69,19 @@ def deck_format(filename: str) -> str:
 
 
 def parse_deck(content: bytes, filename: str) -> Dict:
-    """{"file", "format", "page_unit", "pages", "blocks"} or DeckError."""
+    """{"file", "format", "page_unit", "pages", "blocks", "structures"} or DeckError."""
     fmt = deck_format(filename)
     if len(content) > MAX_BYTES:
         raise DeckError(TOO_LARGE)
     if fmt in ("pptx", "docx"):
         _check_unpacked(content, fmt)
     reader = {"pptx": _pptx_blocks, "pdf": _pdf_blocks, "docx": _docx_blocks}[fmt]
+    charts = []
     try:
-        pages, blocks = reader(content)
+        if fmt == "pptx":
+            pages, blocks, charts = reader(content)
+        else:
+            pages, blocks = reader(content)
     except DeckError:
         raise
     except Exception:
@@ -79,9 +90,10 @@ def parse_deck(content: bytes, filename: str) -> Dict:
     unit = "slide" if fmt == "pptx" else "page"
     if pages > MAX_PAGES:
         raise DeckError(TOO_MANY_PAGES.format(n=pages, unit=unit))
-    if not any(re.search(r"\w", b["text"]) for b in blocks):
+    if not any(re.search(r"\w", b["text"]) for b in blocks) and not charts:     # chart XML is text too
         raise DeckError(NO_TEXT)
-    return {"file": filename, "format": fmt, "page_unit": unit, "pages": pages, "blocks": blocks}
+    return {"file": filename, "format": fmt, "page_unit": unit, "pages": pages, "blocks": blocks,
+            "structures": detect_structures(blocks, charts)}
 
 
 def _check_unpacked(content: bytes, fmt: str) -> None:
@@ -116,7 +128,7 @@ def _pptx_blocks(content: bytes):
     prs = Presentation(io.BytesIO(content))
     slides = list(prs.slides)
     if len(slides) > MAX_PAGES:
-        return len(slides), []
+        return len(slides), [], []
     width, height = prs.slide_width or 1, prs.slide_height or 1
     titles = (PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE)
     boxes = itertools.count(1)
@@ -131,10 +143,14 @@ def _pptx_blocks(content: bytes):
     def frac(x0, y0, x1, y1):
         return [round(x0 / width, 4), round(y0 / height, 4), round(x1 / width, 4), round(y1 / height, 4)]
 
-    blocks = []
+    blocks, charts = [], []
     for n, slide in enumerate(slides, 1):
         tables = 0
         for shape, grouped in shapes(slide.shapes):
+            if getattr(shape, "has_chart", False) and shape.has_chart:
+                chart = _pptx_chart(shape.chart)
+                if chart:
+                    charts.append({"slide": n, **chart})
             # A grouped shape's position is in its group's own coordinates, so it has none here.
             geo = None if grouped else (shape.left, shape.top, shape.width, shape.height)
             if geo and None in geo:
@@ -159,9 +175,11 @@ def _pptx_blocks(content: bytes):
                 heights = [row.height for row in table.rows]
                 for r, row in enumerate(table.rows, 1):
                     for c, cell in enumerate(row.cells, 1):
-                        if not _clean(cell.text):
+                        if not _clean(cell.text) or cell.is_spanned:
                             continue
                         block = {"slide": n, "kind": "table", "table": tables, "row": r, "col": c, "text": _clean(cell.text)}
+                        if cell.is_merge_origin:
+                            block.update(_spans(cell.span_height, cell.span_width))
                         if geo and sum(widths) and sum(heights):
                             left, top, w, h = geo
                             sx, sy = w / sum(widths), h / sum(heights)
@@ -172,7 +190,54 @@ def _pptx_blocks(content: bytes):
             box = next(boxes)
             for para in slide.notes_slide.notes_text_frame.paragraphs:
                 blocks += [{"slide": n, "kind": "notes", "text": line, "box": box} for line in _lines(para.text)]
-    return len(slides), blocks
+    return len(slides), blocks, charts
+
+
+def _spans(rows: int, cols: int) -> Dict:
+    """The span keys of a merged cell; none for a single cell."""
+    out = {}
+    if rows and rows > 1:
+        out["row_span"] = rows
+    if cols and cols > 1:
+        out["col_span"] = cols
+    return out
+
+
+def _chart_number(value) -> str:
+    """A chart value as text: 1200.0 -> "1200", 0.25 -> "0.25"."""
+    if value is None:
+        return ""
+    return str(int(value)) if float(value).is_integer() else repr(float(value))
+
+
+def _pptx_chart(chart):
+    """A pptx chart from its XML: title, axis titles, series names, categories and the values the data
+    labels show. None for a chart that cannot be read (no category plot)."""
+    def title(owner):
+        try:
+            if owner.has_title and owner.chart_title.has_text_frame:
+                return _clean(owner.chart_title.text_frame.text)
+        except Exception:
+            return ""
+        return ""
+
+    def axis_title(axis_name):
+        try:
+            axis = getattr(chart, axis_name)
+            return _clean(axis.axis_title.text_frame.text) if axis.has_title else ""
+        except Exception:
+            return ""
+
+    try:
+        plot = chart.plots[0]
+        categories = [_clean(str(c)) for c in plot.categories]
+        series = [(_clean(s.name or ""), [_chart_number(v) for v in s.values]) for s in plot.series]
+    except Exception:
+        return None
+    if not series or not categories:
+        return None
+    return {"title": title(chart), "category_title": axis_title("category_axis"),
+            "value_title": axis_title("value_axis"), "categories": categories, "series": series}
 
 
 # ---------------------------------------------------------------------------
@@ -253,6 +318,9 @@ def _pdf_blocks(content: bytes):
                     for c, cell in enumerate(row, 1):
                         if _clean(cell):
                             block = {"page": n, "kind": "table", "table": t, "row": r, "col": c, "text": _clean(cell)}
+                            # pdfplumber writes None for the grid cells a merged cell covers
+                            covered = next((k for k, v in enumerate(row[c:]) if v is not None), len(row) - c)
+                            block.update(_spans(1, 1 + covered))
                             if c - 1 < len(cells) and cells[c - 1]:
                                 block["bbox"] = frac(*cells[c - 1])
                             blocks.append(block)
@@ -264,6 +332,49 @@ def _pdf_blocks(content: bytes):
 # ---------------------------------------------------------------------------
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 _MC_FALLBACK = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback"
+
+
+def _docx_cell_span(tc) -> int:
+    """How many grid columns a w:tc covers (w:gridSpan)."""
+    pr = tc.find(_W + "tcPr")
+    span = pr.find(_W + "gridSpan") if pr is not None else None
+    try:
+        return max(1, int(span.get(_W + "val"))) if span is not None else 1
+    except (TypeError, ValueError):
+        return 1
+
+
+def _docx_grid_col(tr, tc) -> int:
+    """The grid column a w:tc starts in: the spans of the cells before it, plus one."""
+    col = 1
+    for cell in tr:
+        if cell is tc:
+            return col
+        if cell.tag == _W + "tc":
+            col += _docx_cell_span(cell)
+    return col
+
+
+def _docx_vmerge(tc):
+    """None, "restart" (a vertical merge starts here) or "continue" (the cell above covers this one)."""
+    pr = tc.find(_W + "tcPr")
+    merge = pr.find(_W + "vMerge") if pr is not None else None
+    if merge is None:
+        return None
+    return "restart" if merge.get(_W + "val") == "restart" else "continue"
+
+
+def _docx_row_span(rows, index: int, col: int, tc) -> int:
+    """How many rows a w:tc covers: itself and the "continue" cells below it in its grid column."""
+    if _docx_vmerge(tc) != "restart":
+        return 1
+    span = 1
+    for tr in rows[index + 1:]:
+        below = next((c for c in tr if c.tag == _W + "tc" and _docx_grid_col(tr, c) == col), None)
+        if below is None or _docx_vmerge(below) != "continue":
+            break
+        span += 1
+    return span
 
 
 def _docx_blocks(content: bytes):
@@ -309,9 +420,11 @@ def _docx_blocks(content: bytes):
                 row = owner.getparent()
                 table = row.getparent()
                 numbers = tables_on_page.setdefault(state["page"], {})
+                rows = [c for c in table if c.tag == _W + "tr"]
+                col = _docx_grid_col(row, owner)
                 seg.update(kind="table", table=numbers.setdefault(table, len(numbers) + 1),
-                           row=[c for c in table if c.tag == _W + "tr"].index(row) + 1,
-                           col=[c for c in row if c.tag == _W + "tc"].index(owner) + 1)
+                           row=rows.index(row) + 1, col=col,
+                           spans=_spans(_docx_row_span(rows, rows.index(row), col, owner), _docx_cell_span(owner)))
             else:
                 seg["kind"] = "text"
                 frame = next((a for a in owner.iterancestors() if a.tag == _W + "txbxContent"), None)
@@ -361,8 +474,274 @@ def _docx_blocks(content: bytes):
         if seg["kind"] == "table":
             if _clean(text):
                 blocks.append({"page": seg["page"], "kind": "table", "table": seg["table"], "row": seg["row"],
-                               "col": seg["col"], "text": _clean(text)})
+                               "col": seg["col"], "text": _clean(text), **seg["spans"]})
         else:
             box = {"box": seg["box"]} if "box" in seg else {}
             blocks += [{"page": seg["page"], "kind": "text", "text": line, **box} for line in _lines(text)]
     return state["page"], blocks
+
+
+# ---------------------------------------------------------------------------
+# Structures (spec section 7): what CLAUDE.md rule 16 lets the gateway read. Python finds them and
+# assigns their type; nothing here calls or imports the gateway.
+# ---------------------------------------------------------------------------
+STRUCTURE_TYPES = ("table", "chart", "kpi_panel", "roadmap", "hiring_table", "unit_economics", "use_of_funds")
+# Fixed on the 10 test decks and written into deck-parser.md section 7. A table's type comes from
+# the keywords of its header rows, its first column and its caption (the line right above it);
+# when several match, the first type in this order wins.
+TABLE_KEYWORDS = (
+    ("use_of_funds", re.compile(r"(?i)\b(?:use of (?:funds|proceeds)|funds|proceeds)\b")),
+    ("unit_economics", re.compile(r"\b(?:CAC|LTV|ARPU|ARPA|ACV)s?\b|(?i:\bpayback\b|\bunit economics\b|\bcontribution margin\b)")),
+    ("hiring_table", re.compile(r"(?i)\b(?:hir(?:e|es|ing)|headcount|recruit(?:s|ed|ing|ment)?|roles?|positions?|FTEs?)\b")),
+)
+CAPTION_REACH = 0.1         # how far above a table its caption may sit, as a share of the page
+KPI_LABEL_MAX = 30          # a KPI box: every line at most this many characters...
+KPI_MAX_LINES = 4           # ...at most this many lines, a figure and a word, and not a wrapped sentence
+TIMELINE_MIN_DATES = 3      # date labels on a page (chart axes left out) that make it a roadmap, with a
+TIMELINE_LINE_MAX = 60      # product keyword on the page; every line of a timeline box at most this long
+CELL_MAX = 200              # a longer cell is prose and is left out of its structure
+_WORD = re.compile(r"[^\W\d_]{2,}")
+# A sentence wrapped over the lines of a box: a line that ends on one of these words or a comma, or
+# a line after the first that starts with one ("We took one round of / financing in 2007").
+_WRAP_WORDS = frozenset("""a an and are as at be by for from has have in into is it its of on or our than that the
+their this to was we were which with""".split())
+_LIST_NUMBER = re.compile(r"^\s*\d+\.\s+(?=\D)")     # "1. Data": a list number, not a figure
+
+
+def detect_structures(blocks: List[Dict], charts: List[Dict] = ()) -> List[Dict]:
+    """The deck's structures, in page order. Each is
+
+        {"type": "table", "slide": 4 (or "page"), "header_rows": 1,
+         "cells": [{"row": 1, "col": 2, "text": "FY2025", "col_span": 12}, ...]}
+
+    with "table" (a table's number on its page), "chart" (a chart's) or, for a KPI panel or a
+    roadmap, a "box" on every cell: the text box the line comes from. header_rows counts the rows
+    above the first row that holds a figure. A structure holds at least one figure (a number or a
+    date); text that is none of these structures is prose and is never one. Pages whose figures
+    section 2 drops as background or cited research hold no structure.
+    """
+    from . import claims        # the period and figure rules are section 2's, shared with the claims
+
+    excluded = claims.excluded_pages(blocks)
+    found = _table_structures(blocks, excluded, claims) + _chart_structures(charts) + \
+        _box_structures(blocks, excluded, claims)
+    found.sort(key=lambda s: (s.get("slide") or s.get("page") or 0, STRUCTURE_ORDER.get(s["type"], 9)))
+    return found
+
+
+STRUCTURE_ORDER = {"table": 0, "hiring_table": 0, "unit_economics": 0, "use_of_funds": 0, "chart": 1,
+                   "kpi_panel": 2, "roadmap": 2}
+
+
+def _where(block: Dict) -> Dict:
+    return {k: block[k] for k in ("slide", "page") if k in block}
+
+
+def _page_key(block: Dict):
+    return (block.get("slide"), block.get("page"))
+
+
+def _cell(block: Dict) -> Dict:
+    return {"row": block["row"], "col": block["col"], "text": block["text"],
+            **{k: block[k] for k in ("row_span", "col_span") if k in block}}
+
+
+def _figures(text: str, claims) -> List[Dict]:
+    return claims.figures(_LIST_NUMBER.sub("", text))
+
+
+def _has_figure(text: str, claims) -> bool:
+    return bool(_figures(text, claims) or claims.find_dates(text))
+
+
+def _header_rows(cells: List[Dict], claims) -> int:
+    """Rows from the top until the first that holds a figure other than a date."""
+    count = 0
+    for r in sorted({c["row"] for c in cells}):
+        if any(_figures(c["text"], claims) for c in cells if c["row"] == r):
+            break
+        count += 1
+    return count
+
+
+def _wrapped(box: List[Dict]) -> bool:
+    """True when the lines of a box are one sentence wrapped, not separate labels."""
+    words = [re.findall(r"[^\W\d_]+|,", line["text"].lower()) for line in box]
+    return any(w and (w[-1] in _WRAP_WORDS or w[-1] == ",") for w in words[:-1]) or \
+        any(w and w[0] in _WRAP_WORDS for w in words[1:])
+
+
+def _caption(blocks: List[Dict], page, cells: List[Dict]) -> str:
+    """The text line right above a table, when the layout says where the table is."""
+    boxes = [c["bbox"] for c in cells if c.get("bbox")]
+    if not boxes:
+        return ""
+    x0, top, x1 = min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes)
+    above = [b for b in blocks if b["kind"] == "text" and _page_key(b) == page and b.get("bbox")
+             and b["bbox"][3] <= top + 1e-6 and top - b["bbox"][3] <= CAPTION_REACH
+             and min(x1, b["bbox"][2]) > max(x0, b["bbox"][0])]
+    return max(above, key=lambda b: b["bbox"][3])["text"] if above else ""
+
+
+def table_type(text: str) -> str:
+    for kind, rx in TABLE_KEYWORDS:
+        if rx.search(text):
+            return kind
+    return "table"
+
+
+def _table_structures(blocks: List[Dict], excluded: set, claims) -> List[Dict]:
+    tables = {}
+    for b in blocks:
+        if b["kind"] == "table":
+            tables.setdefault((_page_key(b), b["table"]), []).append(b)
+    ticks = claims.tick_cells(blocks)
+    out = []
+    for (page, number), members in tables.items():
+        if page in excluded:
+            continue
+        cells = [b for b in members if len(b["text"]) <= CELL_MAX]
+        where = page[0] or page[1]
+        if not any(_has_figure(c["text"], claims) for c in cells if (where, number, c["row"], c["col"]) not in ticks):
+            continue
+        header_rows = _header_rows(cells, claims)
+        first_row, first_col = min(c["row"] for c in cells), min(c["col"] for c in cells)
+        heads = [c["text"] for c in cells if c["row"] < first_row + max(header_rows, 1) or c["col"] == first_col]
+        out.append({"type": table_type(" ".join(heads + [_caption(blocks, page, members)])), **_where(members[0]),
+                    "table": number, "header_rows": header_rows, "cells": [_cell(c) for c in cells]})
+    return out
+
+
+def _chart_structures(charts: List[Dict]) -> List[Dict]:
+    """A chart as a grid: its title, the value axis title over the series, the series names, then one
+    row per category with the value of each series."""
+    out = []
+    per_slide = {}
+    for chart in charts:
+        n = len(chart["series"])
+        rows, cells = 0, []
+        if chart["title"]:
+            rows += 1
+            cells.append({"row": rows, "col": 1, "text": chart["title"], **_spans(1, n + 1)})
+        if chart["value_title"]:
+            rows += 1
+            cells.append({"row": rows, "col": 2, "text": chart["value_title"], **_spans(1, n)})
+        rows += 1
+        if chart["category_title"]:
+            cells.append({"row": rows, "col": 1, "text": chart["category_title"]})
+        cells += [{"row": rows, "col": k + 2, "text": name} for k, (name, _) in enumerate(chart["series"]) if name]
+        header_rows = rows
+        for i, category in enumerate(chart["categories"]):
+            rows += 1
+            if category:
+                cells.append({"row": rows, "col": 1, "text": category})
+            for k, (_, values) in enumerate(chart["series"]):
+                if i < len(values) and values[i]:
+                    cells.append({"row": rows, "col": k + 2, "text": values[i]})
+        cells = [c for c in cells if c["text"] and len(c["text"]) <= CELL_MAX]
+        per_slide[chart["slide"]] = per_slide.get(chart["slide"], 0) + 1
+        out.append({"type": "chart", "slide": chart["slide"], "chart": per_slide[chart["slide"]],
+                    "header_rows": header_rows, "cells": cells})
+    return out
+
+
+def _date_labels(text: str, claims) -> List[Dict]:
+    """The dates of a line that is a date label: dates and at most two other words ("Nov. 2007",
+    "Q1 17 Q2 17", "Launch Q3 2024"); [] for a sentence that holds a date."""
+    dates = claims.find_dates(text)
+    rest = text
+    for d in reversed(dates):
+        rest = rest[:d["start"]] + " " + rest[d["end"]:]
+    return dates if dates and len(_WORD.findall(rest)) <= 2 else []
+
+
+def _month_index(date_label: str, claims) -> int:
+    start = claims.period_range(date_label)[0]
+    return int(start[:4]) * 12 + int(start[5:7])
+
+
+def _axis(labels: List[Dict], claims) -> bool:
+    """Three or more distinct dates, evenly spaced, none repeated: the axis of a chart drawn as text."""
+    months = [_month_index(d["date"], claims) for d in labels]
+    if len(months) < 3 or len(set(months)) != len(months):
+        return False
+    months.sort()
+    steps = {b - a for a, b in zip(months, months[1:])}
+    return len(steps) == 1
+
+
+def _axis_lines(lines: List[Dict], claims) -> set:
+    """id() of the date-label lines that are chart axis ticks: a line of three or more evenly spaced
+    dates, or such dates one per line in a row or a column."""
+    labelled = [(line, _date_labels(line["text"], claims)) for line in lines]
+    labelled = [(line, dates) for line, dates in labelled if dates]
+    out = {id(line) for line, dates in labelled if _axis(dates, claims)}
+    placed = [(line, dates) for line, dates in labelled if line.get("bbox")]
+    for lo, hi in ((0, 2), (1, 3)):            # a column (overlapping x), then a row (overlapping y)
+        for line, _ in placed:
+            group = [(other, dates) for other, dates in placed
+                     if min(line["bbox"][hi], other["bbox"][hi]) > max(line["bbox"][lo], other["bbox"][lo])]
+            if len(group) > 1 and _axis([d for _, dates in group for d in dates], claims):
+                out.update(id(other) for other, _ in group)
+    return out
+
+
+def _band_cells(boxes: List[List[Dict]]) -> List[Dict]:
+    """Text boxes as a grid: boxes that overlap in height form a band of rows, each box a column of
+    its band in left-to-right order, each line a row. Every cell keeps its box."""
+    def extent(lines):
+        placed = [l["bbox"] for l in lines if l.get("bbox")]
+        return (min(b[1] for b in placed), max(b[3] for b in placed), min(b[0] for b in placed)) if placed else None
+
+    placed = sorted((b for b in boxes if extent(b)), key=lambda b: (extent(b)[0], extent(b)[2]))
+    bands = []
+    for box in placed:
+        top, bottom, _ = extent(box)
+        if bands and top < bands[-1]["bottom"] and bottom > bands[-1]["top"]:
+            bands[-1]["boxes"].append(box)
+            bands[-1]["bottom"] = max(bands[-1]["bottom"], bottom)
+        else:
+            bands.append({"top": top, "bottom": bottom, "boxes": [box]})
+    bands += [{"boxes": [box]} for box in boxes if not extent(box)]       # no layout: one box per band
+    cells, row, number = [], 0, 0
+    for band in bands:
+        members = sorted(band["boxes"], key=lambda b: extent(b)[2] if extent(b) else 0)
+        for col, box in enumerate(members, 1):
+            number += 1
+            cells += [{"row": row + i + 1, "col": col, "text": line["text"], "box": number}
+                      for i, line in enumerate(box)]
+        row += max(len(box) for box in members)
+    return cells
+
+
+def _box_structures(blocks: List[Dict], excluded: set, claims) -> List[Dict]:
+    """Per page: a roadmap or timeline when TIMELINE_MIN_DATES date labels remain once chart axes are
+    left out, holding every box that is not prose; otherwise a KPI panel of its KPI boxes."""
+    pages = {}
+    for b in blocks:
+        if b["kind"] == "text" and not b.get("title") and _page_key(b) not in excluded:
+            key = b.get("box") if b.get("box") is not None else ("line", len(pages.get(_page_key(b), {})))
+            pages.setdefault(_page_key(b), {}).setdefault(key, []).append(b)
+    out = []
+    for page, boxes in pages.items():
+        lines = [line for box in boxes.values() for line in box]
+        axis = _axis_lines(lines, claims)
+        labels = [line for line in lines if id(line) not in axis and _date_labels(line["text"], claims)]
+        titled = [b["text"] for b in blocks if b["kind"] == "text" and b.get("title") and _page_key(b) == page]
+        if len(labels) >= TIMELINE_MIN_DATES and any(claims.has_product_keyword(t) for t in titled + [l["text"] for l in lines]):
+            kind = "roadmap"
+            kept = [box for box in boxes.values()
+                    if all(len(l["text"]) <= TIMELINE_LINE_MAX for l in box)
+                    and not all(id(l) in axis for l in box)]
+        else:
+            kind = "kpi_panel"
+            kept = [box for box in boxes.values()
+                    if len(box) <= KPI_MAX_LINES and all(len(l["text"]) <= KPI_LABEL_MAX for l in box)
+                    and any(_figures(l["text"], claims) for l in box) and any(_WORD.search(l["text"]) for l in box)
+                    and not _wrapped(box)]
+        kept = [box for box in kept if any(_has_figure(l["text"], claims) for l in box) or kind == "roadmap"]
+        if not kept or not any(_has_figure(l["text"], claims) for box in kept for l in box):
+            continue
+        first = kept[0][0]
+        out.append({"type": kind, **_where(first), "header_rows": 0, "cells": _band_cells(kept)})
+    return out

@@ -188,6 +188,22 @@ cited. Structures are stored with the deck's parsed text and deleted with it (§
 Python assigns the type. The model may confirm or correct it in its type field, and Python logs any change.
 The keyword lists, the label length and how many dates make a timeline are fixed on the 10 test decks at build time
 and written into this section.
+Fixed on the 10 test decks (2026-10-05):
+- Table type: keywords in the header rows, the first column and the caption (the line right above the table, within
+  a tenth of the page). Use of funds: use of funds, use of proceeds, funds, proceeds. Unit economics: CAC, LTV, ARPU,
+  ARPA, ACV, payback, unit economics, contribution margin. Hiring: hire, hiring, headcount, recruit, recruitment,
+  role, position, FTE (and plurals). The first match in that order wins.
+- KPI panel: a text box of at most 4 lines, each at most 30 characters, holding a figure that is not a date and a
+  word, and not one sentence wrapped over its lines (a line ends on, or the next starts with, a word such as "of",
+  "and", "the", or a line ends with a comma). The KPI boxes of a page form one panel.
+- Roadmap or timeline: at least 3 date labels on the page (a line that is a date with at most two other words), once
+  chart axes are left out (3 or more distinct dates, evenly spaced, in one line, row or column), and a product
+  keyword (§2) on the page. It holds every box on the page whose lines are at most 60 characters.
+- A structure holds at least one figure (a number or a date; list and row numbers do not count). A cell over 200
+  characters is prose and is left out. A page whose figures §2 drops (background, cited research) holds no structure.
+- Text boxes become a grid: boxes that overlap in height form a band, each box a column of its band, each line a row.
+- On the test decks: 22 KPI panels, 3 timelines (moz p2, buffer p6, tea p11), 1 table, 1 hiring table. Neither pptx
+  deck holds a native chart; chart reading is tested on built decks.
 
 ## Done when
 - All three formats parse with correct slide/page references.

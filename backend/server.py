@@ -530,7 +530,7 @@ async def upload_deck(audit_id: str, file: UploadFile = File(...)):
     await db[decks.TEXT_COLLECTION].insert_one({
         "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"], "format": deck["format"],
         "page_unit": deck["page_unit"], "pages": deck["pages"], "blocks": deck["blocks"],
-        "uploaded_at": datetime.now(timezone.utc).isoformat()})
+        "structures": deck["structures"], "uploaded_at": datetime.now(timezone.utc).isoformat()})
     for order, c in enumerate(candidates):
         await db[decks.CANDIDATES_COLLECTION].insert_one(
             {**c, "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"], "id": str(uuid.uuid4()),
