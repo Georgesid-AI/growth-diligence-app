@@ -12,22 +12,30 @@ cache bypassed, so agreement measures the model. Target: at least 95% agreement.
 
 Usage (from the repository root, with ANTHROPIC_API_KEY set and a MongoDB to keep the cache in):
     python scripts/consistency_run.py --yes [--passes 3] [--deck 05-zero2hero.pdf ...] [--out report.json]
-Each deck is read in its own throwaway audit (consent ticked) in the database --db (default
-"consistency_run"), dropped at the end unless --keep-db. The audits stay within the 200,000-token cap;
+It prints one line per deck and pass, writes the report to docs/test-runs/consistency_<date>.md (-2, -3, ...
+for a later run that day) and ends with the report path and a summary line; --out also writes it as JSON.
+Each deck is read in its own throwaway audit (consent ticked) in the scratch database --db (default
+"consistency_run"; any name must start with it), dropped at the end unless --keep-db. At start the run drops
+every scratch database an earlier run left, crashed or kept. The audits stay within the 200,000-token cap;
 raise LLM_DAILY_SPEND_CAP_USD if the run would pass the daily spend cap.
---fake replays empty readings with no network and no MongoDB, to check the script itself.
+--fake replays empty readings with no network and no MongoDB, to check the script itself; its report goes to
+the system temp folder, never to docs/test-runs.
 """
 import argparse
 import asyncio
+import datetime
 import json
 import os
 import sys
+import tempfile
 from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
 DECKS = ROOT / "tests" / "fixtures" / "decks" / "decks"
+REPORTS = ROOT / "docs" / "test-runs"
+SCRATCH = "consistency_run"          # a scratch database is named this or starts with it and "_"
 sys.path.insert(0, str(BACKEND))
 
 
@@ -137,7 +145,7 @@ async def run(decks, passes, db, adapter=None):
     stats = {"items": 0, "verified": 0, "unverified": 0, "not_read": 0, "model_reads": 0, "period_corrected": 0}
     per_deck = {}
     hits = {p: [0, 0] for p in range(2, passes + 1)}     # pass -> [cache hits, lookups]
-    for file in decks:
+    for d, file in enumerate(decks, 1):
         deck = parser.parse_deck((DECKS / file).read_bytes(), file)
         audit_id = f"consistency-{Path(file).stem}"
         audit = {"id": audit_id, "company_name": Path(file).stem, "client_name": "Consistency run",
@@ -145,12 +153,14 @@ async def run(decks, passes, db, adapter=None):
         await db["audits"].insert_one(dict(audit))
         usage = per_deck.setdefault(file, {"structures": len(deck["structures"]), "input_tokens": 0, "output_tokens": 0,
                                            "cost_usd": 0.0})
+        sent = []                                          # (index, structure, redacted text, page)
         for i, structure in enumerate(deck["structures"]):
             types[(file, i)] = structure["type"]
             cells, _ = redact.redact_structure(structure["cells"], Path(file).stem, {}, redact.withheld_values(audit))
-            text = redact.structure_text(cells)
-            page = structure.get("slide") or structure.get("page")
-            for n in range(1, passes + 1):
+            sent.append((i, structure, redact.structure_text(cells), structure.get("slide") or structure.get("page")))
+        for n in range(1, passes + 1):
+            read, tokens_before, cost_before = 0, usage["input_tokens"] + usage["output_tokens"], usage["cost_usd"]
+            for i, structure, text, page in sent:
                 if n > 1:
                     cached = await gateway.read_structure(db, audit_id, text, structure["type"], deck_id=file, page=page,
                                                           adapter=adapter)
@@ -166,12 +176,16 @@ async def run(decks, passes, db, adapter=None):
                     stats["not_read"] += 1
                     readings[(file, i)].append(None)
                     continue
+                read += 1
                 readings[(file, i)].append({_item_key(item) for item in result.items})
                 checked = verify.verify(structure, result.items)
                 stats["period_corrected"] += checked["periods_corrected"]
                 for item in checked["items"]:
                     stats["items"] += 1
                     stats["verified" if item["status"] == verify.VERIFIED else "unverified"] += 1
+            tokens = usage["input_tokens"] + usage["output_tokens"] - tokens_before
+            print(f"[{d}/{len(decks)}] {file} pass {n}/{passes}: {read} of {len(sent)} structures read, "
+                  f"{tokens:,} tokens, ${usage['cost_usd'] - cost_before:.4f}", flush=True)
     agreement = defaultdict(lambda: [0, 0])                # type -> [identical in all passes, distinct]
     for key, passes_read in readings.items():
         if any(r is None for r in passes_read):
@@ -195,36 +209,111 @@ async def run(decks, passes, db, adapter=None):
     }
 
 
+def _scratch(name):
+    return name == SCRATCH or name.startswith(SCRATCH + "_")
+
+
+def _pct(value):
+    return "n/a" if value is None else f"{value:.1f}%"
+
+
+def summary(report):
+    """One line: the agreement against its target, then the verifier, cache and cost figures."""
+    agreement, target = report["agreement_pct_all"], report["target_agreement_pct"]
+    verdict = "not measured" if agreement is None else "met" if agreement >= target else "missed"
+    hits = ", ".join(f"{p.replace('_', ' ')} {_pct(r)}" for p, r in report["cache_hit_rate_pct"].items())
+    cost = sum(d["cost_usd"] for d in report["per_deck"].values())
+    return (f"Agreement {_pct(agreement)} (target {_pct(target)}: {verdict}); "
+            f"verified {_pct(report['verifier_match_rate_pct'])}, "
+            f"unverified {_pct(report['unverified_rate_pct'])}, {report['not_read']} not read, "
+            f"{report['period_corrected']} periods corrected; cache hits {hits or 'n/a'}; cost ${cost:.4f}.")
+
+
+def write_report(report, folder, passes, fake=False):
+    """folder/consistency_<date>.md; a later run that day gets -2, -3, ... so a paid report is never overwritten."""
+    from app.llm import gateway, prompt_store
+    day = datetime.date.today().isoformat()
+    folder.mkdir(parents=True, exist_ok=True)
+    path, n = folder / f"consistency_{day}.md", 1
+    while path.exists():
+        n += 1
+        path = folder / f"consistency_{day}-{n}.md"
+    decks = report["per_deck"]
+    total = {k: sum(d[k] for d in decks.values()) for k in ("structures", "input_tokens", "output_tokens", "cost_usd")}
+    lines = [
+        f"# Consistency run {day}", "",
+        f"{'Fake run: recorded replies, no live API.' if fake else 'Live API.'} Decks: {len(decks)}. "
+        f"Passes: {passes}. Model: {gateway.STRUCTURE_MODEL}. "
+        f"Prompt: {gateway.STRUCTURE_PROMPT} {prompt_store.load(gateway.STRUCTURE_PROMPT).version}. "
+        "Method: docs/specs/llm-structure-reading.md section 11.", "",
+        summary(report), "",
+        "## Agreement per structure type", "", "| Type | Agreement |", "|---|---:|",
+        *(f"| {t} | {_pct(a)} |" for t, a in report["agreement_pct"].items()),
+        f"| all | {_pct(report['agreement_pct_all'])} |", "",
+        "## Verifier", "",
+        f"- Match rate: {_pct(report['verifier_match_rate_pct'])}",
+        f"- Unverified rate: {_pct(report['unverified_rate_pct'])}",
+        f"- Periods corrected: {report['period_corrected']}",
+        f"- Not read: {report['not_read']}; model reads: {report['model_reads']}", "",
+        "## Cache hit rate", "", "| Pass | Hit rate |", "|---|---:|",
+        *(f"| {p.split('_')[1]} | {_pct(r)} |" for p, r in report["cache_hit_rate_pct"].items()), "",
+        "## Tokens and cost per deck", "", "| Deck | Structures | Input tokens | Output tokens | Cost USD |",
+        "|---|---:|---:|---:|---:|",
+        *(f"| {f} | {d['structures']} | {d['input_tokens']:,} | {d['output_tokens']:,} | {d['cost_usd']:.4f} |"
+          for f, d in decks.items()),
+        f"| all | {total['structures']} | {total['input_tokens']:,} | {total['output_tokens']:,} | "
+        f"{total['cost_usd']:.4f} |",
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+async def live(args, decks):
+    """The whole live run in one event loop. Motor binds a client to the loop of its first call, so a drop in a
+    second asyncio.run found that loop closed ("Event loop is closed") and the report was never written."""
+    from motor.motor_asyncio import AsyncIOMotorClient
+    client = AsyncIOMotorClient(os.environ.get("MONGO_URL", "mongodb://localhost:27017"))
+    try:
+        for name in await client.list_database_names():
+            if _scratch(name):
+                await client.drop_database(name)
+                print(f"Dropped scratch database {name} left by an earlier run", flush=True)
+        try:
+            report = await run(decks, args.passes, client[args.db])
+            return report, write_report(report, REPORTS, args.passes)     # before the drop: a failed drop keeps it
+        finally:
+            if not args.keep_db:
+                await client.drop_database(args.db)
+    finally:
+        client.close()
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--passes", type=int, default=3)
     ap.add_argument("--deck", action="append", help="a deck file name in tests/fixtures/decks/decks/ (default: all 10)")
-    ap.add_argument("--db", default="consistency_run")
-    ap.add_argument("--keep-db", action="store_true")
-    ap.add_argument("--out", help="write the report as JSON to this file")
+    ap.add_argument("--db", default=SCRATCH, help=f"the scratch database: {SCRATCH} or a name starting {SCRATCH}_")
+    ap.add_argument("--keep-db", action="store_true", help="keep the scratch database until the next run")
+    ap.add_argument("--out", help="also write the report as JSON to this file")
     ap.add_argument("--yes", action="store_true", help="confirm the live API may be called and billed")
     ap.add_argument("--fake", action="store_true", help="no network, no MongoDB: check the script itself")
     args = ap.parse_args(argv)
     decks = args.deck or sorted(p.name for p in DECKS.iterdir() if not p.name.startswith("."))
     if args.fake:
         report = asyncio.run(run(decks, args.passes, MemoryDB(), FakeAdapter()))
+        path = write_report(report, Path(tempfile.gettempdir()), args.passes, fake=True)
     else:
         if not os.environ.get("ANTHROPIC_API_KEY"):
             sys.exit("ANTHROPIC_API_KEY is not set: this script calls the live API.")
         if not args.yes:
             sys.exit("This run calls the live API and costs money. Re-run with --yes to confirm.")
-        from motor.motor_asyncio import AsyncIOMotorClient
-        client = AsyncIOMotorClient(os.environ.get("MONGO_URL", "mongodb://localhost:27017"))
-        db = client[args.db]
-        try:
-            report = asyncio.run(run(decks, args.passes, db))
-        finally:
-            if not args.keep_db:
-                asyncio.run(client.drop_database(args.db))
-    text = json.dumps(report, indent=2)
-    print(text)
+        if not _scratch(args.db):
+            sys.exit(f"--db must be {SCRATCH} or start with {SCRATCH}_: the run drops it at the end.")
+        report, path = asyncio.run(live(args, decks))
     if args.out:
-        Path(args.out).write_text(text + "\n", encoding="utf-8")
+        Path(args.out).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    print(f"Report: {path}")
+    print(summary(report))
     return report
 
 
