@@ -43,14 +43,24 @@ analyst confirms it. Results show in the existing approval list (deck-parser.md 
 - names become `[person]`: a cell under a person-role header (name, founder, CEO, owner, contact, hire), or two
   capitalised words starting with a name from a bundled first-name list.
 
-Customer names in spreadsheet samples (columns whose header matches the FIELD_DEFS customer aliases) are
-pseudonymised (Customer_01, Customer_02…) before sending, through the narrative path's existing per-audit mapping
-(`pseudonym_map`), so a customer has the same pseudonym on both paths. The same mapping also replaces customer names
-inside deck structures: every name in the customer column of the uploaded revenue and CRM files, matched as a whole
-word. The CRM file has no customer field of its own, so its customer column is found by the same aliases. Names come
-from the files uploaded at the time of sending, and a structure sent before a data file was uploaded is not re-sent.
-The mapping stays server-side and is removed by Delete audit. The target company's own name is never redacted. The
-gateway runs redaction again and refuses the call if anything changes.
+Customer names are pseudonymised (Customer_01, Customer_02…) through the narrative path's existing per-audit mapping
+(`pseudonym_map`), so a customer has the same pseudonym on both paths.
+- The mapping holds every name in the revenue file's mapped customer column and in the CRM file's customer column. The
+  CRM file has no customer field of its own, so that column is found by the FIELD_DEFS customer aliases, as are the
+  customer cells of spreadsheet samples sent before a file is mapped.
+- Every name in the mapping is replaced wherever it appears as a substring, case-insensitive, in any text cell sent to
+  the model, including CRM deal names. Names under 4 characters are skipped, and so are names that are numbers or
+  dates, as in the narrative path. The target company's own name and existing pseudonyms are never rewritten, so a
+  second pass changes nothing.
+- Known limit: a prospect named only in CRM deal names, and not in the revenue file or a CRM customer column, is not in
+  the mapping and is sent as written.
+- Structure reading waits for the revenue file. Deck structures are not sent until the revenue file is uploaded and
+  its columns are mapped. Decks uploaded before that are queued, and the run log shows "waiting for revenue file".
+  Once the revenue file is mapped, queued decks are processed. Column-mapping calls are not queued. A deck already
+  read is not re-sent when a CRM file is mapped later.
+
+The mapping stays server-side and is removed by Delete audit. The gateway runs redaction again and refuses the call if
+anything changes.
 
 **4. Consent.** `structure_reading_consent` is one checkbox per audit, ticked by default. It covers decks and spreadsheets.
 It sits on the audit creation screen, directly above the Create audit button, next to the engagement reference field.
@@ -92,7 +102,7 @@ removes the stored results (`purge_run`).
 version, model, content hash, tokens, cost, deck and page. It also stores Python's type and, when the two differ,
 the model's type. `llm_calls` adds the content hash and deck id. The server log line carries run id, step, hash,
 tokens, cost and any type change. Sent text is never stored. `GET /api/runs/{id}/llm-usage` gains `by_deck`, and
-the deck panel shows each deck's cost.
+the run log on the deck panel shows each deck's status ("waiting for revenue file", read, not read) and cost.
 
 **10. Boundary test and docstrings.** `test_gateway_data_boundary.py` keeps every existing assertion.
 - It must pass when redacted structure cells, or header rows with at most 3 redacted samples per column, reach the provider.
@@ -105,10 +115,11 @@ The docstrings in `gateway.py`, `decks/__init__.py` and `prompt_store.py` restat
 **11. Tests.** Automated tests replay recorded replies (public test decks only) through the fake adapter, with no
 live API. They cover:
 - the verifier: each normalisation case, period matching, flags, the switch;
-- redaction: each rule with a false friend (amounts, years, "Head of Sales"), and customer pseudonyms in samples and
-  in deck structures;
-- orchestration: schema rejection, caps (including the narrative-only call cap), cache, consent, type-change
-  logging, Delete audit.
+- redaction: each rule with a false friend (amounts, years, "Head of Sales"); customer names as substrings, any case,
+  in samples, deck structures and deal names; names under 4 characters, numeric names, the target's name and
+  pseudonyms left alone;
+- orchestration: decks queued until the revenue file is mapped, then processed; schema rejection, caps (including the
+  narrative-only call cap), cache, consent, type-change logging, Delete audit.
 
 Each new test is first shown failing on a deliberate violation. `scripts/consistency_run.py` is manual: it uses the
 live API and costs money. It runs the 10 decks in `tests/fixtures/decks/decks/` 3 times and reports:
