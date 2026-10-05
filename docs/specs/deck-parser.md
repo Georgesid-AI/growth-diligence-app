@@ -124,12 +124,14 @@ by position and from the slide title.
 - Precision (false candidates) is reported; the test fails if it drops below 30%.
 - Runs as a normal automated test.
 
-## 4. No deck text reaching the model
+## 4. What may reach the model
 - The deck parser has no import of, or call to, the LLM gateway.
-- The gateway never reads raw files, parsed text or claim snippets.
-- The gateway may read only structured claim fields (type, value, high value of a range, unit, date, status).
-  A table row's values by period are not among them: each keeps its column header text and cell.
-- An automated test fails the build if the parser imports the gateway, or the gateway reads the parsed-text or snippet fields.
+- Two paths reach the gateway, and each has its own fields:
+  a) Narrative path: computed results from MongoDB and the structured claim fields (type, value, high value of a range, unit, date, status).
+  b) Structure path (rule 16): redacted deck structures and spreadsheet header rows with, per column, either up to 3 sample values (numeric and date columns only) or a profile (distinct count, typical length, shape pattern) for text columns, as extracted text with cell positions, only with per-audit consent. Table cells, including a row's values by period, travel this path and no other.
+- An automated test fails the build if the parser imports the gateway, if the gateway reads parsed-text, snippet or source-reference fields, or if the structure path sends anything other than redacted structure text and spreadsheet headers with their samples or profiles. The narrative path is unchanged.
+- Logs and MongoDB store model JSON output (values with cell references), prompt version, model version, content hash, token counts and cost. Never deck text sent to the model. Delete audit removes model outputs.
+- Model output never becomes Verified on its own. Python must match every value to a source cell. Unmatched values are shown as 'AI suggestion, not verified' or dropped.
 
 ## 5. Storage and deletion
 - Parsed text and candidates are stored in MongoDB, linked to the audit. An audit can hold
@@ -163,6 +165,20 @@ These figures may inform the growth plan. They were identified automatically and
   deck name and its claim count. It opens on the most recently uploaded deck.
 - Within a deck, claims to review come first, then the rest, each by slide or page. The order
   is set when the list loads, so a row does not move while it is being reviewed.
+
+## 7. Structure detection (Python only, no LLM)
+Finds the structures that CLAUDE.md rule 16 lets the gateway read (docs/specs/llm-structure-reading.md). Every structure
+keeps its source reference (file, slide or page) and every cell keeps its row and column, so a value read from it can be
+cited. Structures are stored with the deck's parsed text and deleted with it (§5).
+- Tables and text boxes: read as today (§1).
+- Charts (pptx): read from the chart XML: series, data labels, chart title and axis titles.
+- KPI panels: text boxes with a number beside a short label.
+- Roadmaps and timelines: text boxes with dates.
+- Hiring, unit-economics and use-of-funds tables: tables classified by header keywords. Any other table is a table.
+- Text that is none of these is prose and is never a structure.
+Python assigns the type. The model may confirm or correct it in its type field, and Python logs any change.
+The keyword lists, the label length and how many dates make a timeline are fixed on the 10 test decks at build time
+and written into this section.
 
 ## Done when
 - All three formats parse with correct slide/page references.

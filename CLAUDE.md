@@ -9,6 +9,18 @@
    they exist.
 9. If a fix needs an architecture change, stop and report it as an
    "Architecture note". Do not change it.
+16. The gateway may read selected deck structures (tables, charts with data labels, KPI
+    panels, roadmaps/timelines, hiring tables, unit-economics boxes, use-of-funds
+    tables) and spreadsheet header rows with, per column, either up to 3 sample values
+    (numeric and date columns only) or a profile (distinct count, typical length, shape
+    pattern) for text columns — only after redaction, only with per-audit consent, only
+    as extracted text with cell positions. Never raw files, full pages or prose slides.
+    The deck parser has no direct link to the gateway.
+17. Logs and MongoDB store model JSON output (values with cell references), prompt
+    version, model version, content hash, token counts and cost. Never deck text sent to
+    the model. Delete audit removes model outputs.
+18. Model output never becomes Verified on its own. Python must match every value to a
+    source cell. Unmatched values are shown as 'AI suggestion, not verified' or dropped.
 
 ## Before and during coding
 4. Before coding, in max 5 lines: (a) challenge the requirement: is it needed, who
