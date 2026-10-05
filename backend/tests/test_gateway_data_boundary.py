@@ -983,6 +983,24 @@ def test_a_corrected_period_stores_a_count_and_never_the_cell_text_or_the_rebuil
         assert needle not in flat, f"{needle!r} was stored"
 
 
+# Every check the verifier puts on an item, stored on its approval row as ai_checks: a boolean, or for
+# dot_reading the closed word naming how a "2.500"-style number was read. Never cell text.
+VERIFIER_CHECKS = {"value": (True, False), "period": (True, False), "period_corrected": (True, False),
+                   "flags": (True, False), "dot_reading": ("decimal", "thousands", None)}
+
+
+def test_the_verifier_checks_are_booleans_and_closed_words_only():
+    structure = {"type": "kpi_panel", "header_rows": 0, "cells": [
+        {"row": 1, "col": 1, "text": "Approx. 2.500 hours", "box": 1},
+        {"row": 2, "col": 1, "text": "Jane Doe", "box": 2}]}
+    item = {"metric": "sales", "period": None, "value": 2500, "unit": None, "unit_other": None,
+            "actual_or_forecast": "actual", "value_cell": "r1c1", "period_cells": [], "proposed_flags": []}
+    checked = structures.verify.verify(structure, [item, {**item, "value": 2.5}, {**item, "value_cell": "r2c1"}])
+    for got, reading in zip(checked["items"], ("thousands", "decimal", None)):
+        assert set(got["checks"]) == set(VERIFIER_CHECKS) and got["checks"]["dot_reading"] == reading
+        assert all(value in VERIFIER_CHECKS[key] for key, value in got["checks"].items()), got["checks"]
+
+
 def test_the_structure_path_never_reads_parsed_deck_text():
     """read_structure is handed the text; it reads consent and names from the audit, the pseudonym map,
     its own cache and the call log, never the parsed-text or candidate collections."""

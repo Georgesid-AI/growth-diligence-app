@@ -32,7 +32,10 @@ No field is free text, so model output cannot carry deck prose into a log.
 normalisation:
 - currency symbols and thousands separators are removed;
 - a decimal comma is read only if the structure writes numbers like `1.234,5`;
-- `(1,200)` is read as −1200;
+- otherwise a dot before exactly three digits (`2.500`, not `0.500`) is ambiguous: the value matches either 2500 or 2.5,
+  and the item records which (`checks.dot_reading`: `thousands` or `decimal`);
+- brackets make a negative only around the whole figure: `(1,200)` and `£(1,200)` are −1200, while a bracketed number
+  after text (`Telegram(30K)`, `MeetUp((3K)`) is positive;
 - `k`/`m`/`bn` suffixes are applied;
 - a unit or scale in a neighbouring or header cell (`£m`, `'000`, `%`) is applied.
 
@@ -41,7 +44,8 @@ they must be header cells of the value cell (its row header or the header stack 
 the value cell's lowest period header (a quarterly or monthly value cited against its year header alone is unmatched; a
 year header alone verifies only a yearly value), and Python rebuilds the period from them under the deck-parser.md §2
 period rules; if it cannot, or gets a period with a different start or
-end date, the period is unmatched. When the value matches and Python rebuilds a period from the `period_cells`, the
+end date, the period is unmatched. A period written in the value cell's own text (`$8,000 revenue in 2022`) rebuilds
+from that cell, with `period_cells` empty or citing the value cell itself. When the value matches and Python rebuilds a period from the `period_cells`, the
 rebuilt period replaces the model's and the item is Verified (the model is not sent the year-end); a model period that
 differed is a "period corrected" case, kept in the stored reading and counted. A null period matches only when `period_cells` is empty and neither header holds a period. An unmatched value or period makes the item unmatched. Every proposed flag is
 recomputed from the matched values; a flag Python cannot reproduce counts as unmatched. Matched items are `Verified`. For unmatched ones, the switch

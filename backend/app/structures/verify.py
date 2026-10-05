@@ -7,9 +7,12 @@ switch (unmatched_mode) and passes it in.
 An item is matched when
 - its value matches its `value_cell` only: that cell exists and holds the same number after
   normalisation (currency symbols and thousands separators removed; a decimal comma read only if
-  the structure writes numbers like 1.234,5; "(1,200)" is -1200; k/m/bn suffixes applied; a scale in
-  a neighbouring cell, a header cell or the table's corner cell, such as "£m" or "'000", applied). The match is exact: a rounded
-  number does not match. An item with no value is never matched;
+  the structure writes numbers like 1.234,5; otherwise a dot before exactly three digits, "2.500",
+  is read as 2500 or 2.5, whichever matches, and the item records which in checks.dot_reading;
+  brackets make a negative only around the whole figure, so "(1,200)" is -1200 and "Telegram(30K)"
+  is 30000; k/m/bn suffixes applied; a scale in a neighbouring cell, a header cell or the table's
+  corner cell, such as "£m" or "'000", applied). The match is exact: a rounded number does not
+  match. An item with no value is never matched;
 - its period matches its `period_cells` only: they are header cells of the value cell (its row
   header or the header stack above its column; in a KPI panel or a roadmap, the cells left of it in
   its row and the top line of its own box), the first is the value cell's lowest period header (a
@@ -19,7 +22,9 @@ An item is matched when
   falls inside that year). A two-cell period is a month, quarter or half cell and the year cell
   above it in the same column range. A null period matches only when
   `period_cells` is empty and no header of the value cell holds a period. A relative column ("M3",
-  "Year 1") has no period unless its second period cell states the start date ("Start: Jan 2025");
+  "Year 1") has no period unless its second period cell states the start date ("Start: Jan 2025").
+  A period the value cell's own text states ("$8,000 revenue in 2022") rebuilds from that cell, with
+  `period_cells` empty or citing the cell itself;
 - every proposed flag is reproduced from the matched values (see _flag_reproduced).
 
 When the value matches and Python rebuilds a period from the cited period cells, the rebuilt period
@@ -61,6 +66,8 @@ def unmatched_mode() -> str:
 # ---------------------------------------------------------------------------
 _CURRENCY = re.compile(r"US\$|[£$€¥₹]|\b(?:USD|EUR|GBP|CHF|JPY|BGN|PLN|SEK|NOK|DKK|CAD|AUD)\b")
 _DECIMAL_COMMA = re.compile(r"\d{1,3}(?:\.\d{3})+,\d+")
+_DOT_THOUSANDS = re.compile(r"[1-9]\d{0,2}\.\d{3}")     # "2.500": 2,500 written with a dot, or 2.5
+_LETTER = re.compile(r"[^\W\d_]")
 _SCALE_WORD = {"k": 1e3, "thousand": 1e3, "thousands": 1e3, "tsd": 1e3, "хил": 1e3,
                "m": 1e6, "mn": 1e6, "mm": 1e6, "million": 1e6, "millions": 1e6, "mio": 1e6, "млн": 1e6,
                "b": 1e9, "bn": 1e9, "billion": 1e9, "billions": 1e9, "mrd": 1e9, "млрд": 1e9}
@@ -87,6 +94,14 @@ def decimal_comma(cells: List[Dict]) -> bool:
 def cell_number(text: str, comma: bool = False) -> Optional[Tuple[float, bool]]:
     """(number, has its own scale or %) for a cell that holds exactly one figure, else None. Dates
     are periods, never values, and are left out first."""
+    found = _cell_figure(text, comma)
+    return found[:2] if found else None
+
+
+def _cell_figure(text: str, comma: bool = False) -> Optional[Tuple[float, bool, Optional[float]]]:
+    """cell_number, plus the number read with its dot as a thousands separator when it has a dot before
+    exactly three digits and no decimal comma ("2.500": 2.5, or 2500), else None. Brackets make a
+    negative only around the whole figure: no letter stands before them ("Telegram(30K)" is 30000)."""
     blanked = text
     for d in reversed(claims.find_dates(text, table=True)):
         blanked = blanked[:d["start"]] + " " + blanked[d["end"]:]
@@ -96,14 +111,15 @@ def cell_number(text: str, comma: bool = False) -> Optional[Tuple[float, bool]]:
         return None
     m = found[0]
     raw = m.group("num")
+    thousands = float(raw.replace(".", "")) if not comma and _DOT_THOUSANDS.fullmatch(raw) else None
     raw = raw.replace(".", "").replace(",", ".") if comma else raw.replace(",", "")
     value = float(raw)
     suffix = (m.group("suffix") or "").lower()
-    if suffix:
-        value *= _SCALE_WORD[suffix]
-    if (m.group("open") and m.group("close")) or m.group("sign"):
-        value = -value
-    return value, bool(suffix or m.group("pct"))
+    scale = _SCALE_WORD[suffix] if suffix else 1.0
+    bracketed = m.group("open") and m.group("close") and not _LETTER.search(blanked[:m.start()])
+    sign = -1.0 if bracketed or m.group("sign") else 1.0
+    return (sign * value * scale, bool(suffix or m.group("pct")),
+            None if thousands is None else sign * thousands * scale)
 
 
 def scale_of(text: str) -> Optional[float]:
@@ -223,8 +239,19 @@ def rebuilt_label(structure: Dict, value_cell: Dict, period_ids: List[str], fisc
     return found[0] if found else None
 
 
+def own_period(value_cell: Optional[Dict]) -> Optional[str]:
+    """The period the value cell's own text states ("$8,000 revenue in 2022" -> "2022"), or None."""
+    found = claims.period_cell(value_cell["text"]) if value_cell else None
+    return found.get("label") if found else None
+
+
 def _rebuild(structure: Dict, value_cell: Dict, period_ids: List[str], fiscal_year_end: int):
-    """(label or None, (start, end)) for rebuild_period and rebuilt_label."""
+    """(label or None, (start, end)) for rebuild_period and rebuilt_label. A period in the value cell's own
+    text rebuilds from that cell when `period_ids` is empty or cites the cell itself."""
+    own = own_period(value_cell) if list(period_ids) in ([], [_id(value_cell)]) else None
+    if own:
+        span = _range(own, fiscal_year_end)
+        return (own, span) if span else None
     by_id = {_id(c): c for c in structure["cells"]}
     cited = [by_id.get(i) for i in period_ids]
     if not cited or None in cited or len(cited) > 2:
@@ -279,22 +306,34 @@ def period_matches(structure: Dict, item: Dict, value_cell: Optional[Dict], fisc
 
 
 def value_matches(structure: Dict, item: Dict, value_cell: Optional[Dict]) -> bool:
+    return match_value(structure, item, value_cell)[0]
+
+
+def match_value(structure: Dict, item: Dict, value_cell: Optional[Dict]) -> Tuple[bool, Optional[str]]:
+    """(matched, dot reading): the reading is "decimal" or "thousands" when the cell's number has a dot
+    before exactly three digits and the value matched that reading, else None."""
     if value_cell is None or item.get("value") is None:
-        return False
+        return False, None
     cells, comma = structure["cells"], decimal_comma(structure["cells"])
-    found = cell_number(value_cell["text"], comma)
+    found = _cell_figure(value_cell["text"], comma)
     if found is None:
-        return False
-    number, own_scale = found
+        return False, None
+    number, own_scale, thousands = found
+    factor = 1.0
     if not own_scale:
         neighbours = [c for c in cells if c["row"] == value_cell["row"] and abs(c["col"] - value_cell["col"]) == 1
                       and not _is_value(c, comma)]
         for c in neighbours + header_cells(structure, value_cell) + _corner(structure):
             scale = scale_of(c["text"])
             if scale:
-                number *= scale
+                factor = scale
                 break
-    return same_number(number, float(item["value"]))
+    wanted = float(item["value"])
+    if same_number(number * factor, wanted):
+        return True, None if thousands is None else "decimal"
+    if thousands is not None and same_number(thousands * factor, wanted):
+        return True, "thousands"
+    return False, None
 
 
 # ---------------------------------------------------------------------------
@@ -386,7 +425,8 @@ def verify(structure: Dict, items: List[Dict], fiscal_year_end: int = 12, mode: 
     `structure` is {"type", "cells", "header_rows"} as the deck parser found it (the cells before
     redaction: redaction never changes a number or a period, and the citation is to the source).
     Every item gets "status" ("verified" or "suggestion") and "checks" ({"value", "period",
-    "period_corrected", "flags"}: booleans). When the value matches and its period cells rebuild a
+    "period_corrected", "flags"}: booleans; "dot_reading": "decimal" or "thousands" when the value
+    matched a "2.500"-style number, else None). When the value matches and its period cells rebuild a
     period, that period replaces the model's; if the model's differed, the item carries it as
     "model_period" and counts as a correction. With mode "drop" the unmatched items are removed and
     counted.
@@ -395,19 +435,20 @@ def verify(structure: Dict, items: List[Dict], fiscal_year_end: int = 12, mode: 
     checked = []
     for item in items:
         cell = by_id.get(item.get("value_cell"))
-        v = value_matches(structure, item, cell)
+        v, dot = match_value(structure, item, cell)
         p = period_matches(structure, item, cell, fiscal_year_end)
-        # A matched value takes the period Python rebuilds from its cited cells; when the model's own
-        # period differs (it does not know the year-end), that is a correction, and the model's is kept.
+        # A matched value takes the period Python rebuilds from its cited cells, or from its own text when
+        # the model gives a period; when the model's own period differs (it does not know the year-end),
+        # that is a correction, and the model's is kept.
         label = rebuilt_label(structure, cell, item["period_cells"], fiscal_year_end) \
-            if v and item.get("period_cells") else None
+            if v and (item.get("period_cells") or item.get("period") is not None) else None
         corrected = bool(label) and not p
         if label:
             item = {**item, "period": label, **({"model_period": item.get("period")} if corrected else {})}
-        checked.append((item, v, p or corrected, corrected))
-    matched = [item for item, v, p, _ in checked if v and p]
+        checked.append((item, v, p or corrected, corrected, dot))
+    matched = [item for item, v, p, *_ in checked if v and p]
     out, dropped = [], 0
-    for item, v, p, corrected in checked:
+    for item, v, p, corrected, dot in checked:
         flags = all(_flag_reproduced(f, item, matched, structure, fiscal_year_end)
                     for f in item.get("proposed_flags") or ()) if v and p else not item.get("proposed_flags")
         ok = v and p and flags
@@ -415,8 +456,9 @@ def verify(structure: Dict, items: List[Dict], fiscal_year_end: int = 12, mode: 
             dropped += 1
             continue
         out.append({**item, "status": VERIFIED if ok else SUGGESTION,
-                    "checks": {"value": v, "period": p, "period_corrected": corrected, "flags": flags}})
-    return {"items": out, "dropped": dropped, "periods_corrected": sum(1 for *_, c in checked if c)}
+                    "checks": {"value": v, "period": p, "period_corrected": corrected, "flags": flags,
+                               "dot_reading": dot}})
+    return {"items": out, "dropped": dropped, "periods_corrected": sum(1 for *_, c, _ in checked if c)}
 
 
 def label(status: str) -> str:
