@@ -9,10 +9,11 @@ An item is matched when
   normalisation (currency symbols and thousands separators removed; a decimal comma read only if
   the structure writes numbers like 1.234,5; otherwise a dot before exactly three digits, "2.500",
   is read as 2500 or 2.5, whichever matches, and the item records which in checks.dot_reading;
-  brackets make a negative only around the whole figure, so "(1,200)" is -1200 and "Telegram(30K)"
-  is 30000; k/m/bn suffixes applied; a scale in a neighbouring cell, a header cell or the table's
-  corner cell, such as "£m" or "'000", applied). The match is exact: a rounded number does not
-  match. An item with no value is never matched;
+  brackets around the whole figure make a negative, so "(1,200)" is -1200, while a bracketed number
+  after text ("Net loss (1,200)", "Telegram(30K)") matches either sign, recorded in
+  checks.bracket_reading; k/m/bn suffixes applied; a scale in a neighbouring cell, a header cell or
+  the table's corner cell, such as "£m" or "'000", applied). The match is exact: a rounded number
+  does not match. An item with no value is never matched;
 - its period matches its `period_cells` only: they are header cells of the value cell (its row
   header or the header stack above its column; in a KPI panel or a roadmap, the cells left of it in
   its row and the top line of its own box), the first is the value cell's lowest period header (a
@@ -95,13 +96,18 @@ def cell_number(text: str, comma: bool = False) -> Optional[Tuple[float, bool]]:
     """(number, has its own scale or %) for a cell that holds exactly one figure, else None. Dates
     are periods, never values, and are left out first."""
     found = _cell_figure(text, comma)
-    return found[:2] if found else None
+    return (found[0][0][0], found[1]) if found else None
 
 
-def _cell_figure(text: str, comma: bool = False) -> Optional[Tuple[float, bool, Optional[float]]]:
-    """cell_number, plus the number read with its dot as a thousands separator when it has a dot before
-    exactly three digits and no decimal comma ("2.500": 2.5, or 2500), else None. Brackets make a
-    negative only around the whole figure: no letter stands before them ("Telegram(30K)" is 30000)."""
+Reading = Tuple[float, Optional[str], Optional[str]]      # number, dot reading, bracket reading
+
+
+def _cell_figure(text: str, comma: bool = False) -> Optional[Tuple[List[Reading], bool]]:
+    """([(number, dot reading, bracket reading), ...], has its own scale or %) for a cell that holds exactly
+    one figure, else None; the first reading is cell_number's. A dot before exactly three digits with no
+    decimal comma ("2.500") reads as 2.5 ("decimal") or 2500 ("thousands"). Brackets around the whole
+    figure ("(1,200)") make a negative; a bracketed number after text ("Net loss (1,200)",
+    "Telegram(30K)") reads as either sign ("positive" or "negative"). Otherwise a reading is None."""
     blanked = text
     for d in reversed(claims.find_dates(text, table=True)):
         blanked = blanked[:d["start"]] + " " + blanked[d["end"]:]
@@ -111,15 +117,19 @@ def _cell_figure(text: str, comma: bool = False) -> Optional[Tuple[float, bool, 
         return None
     m = found[0]
     raw = m.group("num")
-    thousands = float(raw.replace(".", "")) if not comma and _DOT_THOUSANDS.fullmatch(raw) else None
-    raw = raw.replace(".", "").replace(",", ".") if comma else raw.replace(",", "")
-    value = float(raw)
+    dots = [(float(raw.replace(",", "")), "decimal"), (float(raw.replace(".", "")), "thousands")] \
+        if not comma and _DOT_THOUSANDS.fullmatch(raw) else \
+        [(float(raw.replace(".", "").replace(",", ".") if comma else raw.replace(",", "")), None)]
     suffix = (m.group("suffix") or "").lower()
     scale = _SCALE_WORD[suffix] if suffix else 1.0
-    bracketed = m.group("open") and m.group("close") and not _LETTER.search(blanked[:m.start()])
-    sign = -1.0 if bracketed or m.group("sign") else 1.0
-    return (sign * value * scale, bool(suffix or m.group("pct")),
-            None if thousands is None else sign * thousands * scale)
+    if m.group("sign"):
+        signs = [(-1.0, None)]
+    elif m.group("open") and m.group("close"):
+        signs = [(1.0, "positive"), (-1.0, "negative")] if _LETTER.search(blanked[:m.start()]) else [(-1.0, None)]
+    else:
+        signs = [(1.0, None)]
+    return ([(sign * value * scale, dot, bracket) for value, dot in dots for sign, bracket in signs],
+            bool(suffix or m.group("pct")))
 
 
 def scale_of(text: str) -> Optional[float]:
@@ -309,16 +319,17 @@ def value_matches(structure: Dict, item: Dict, value_cell: Optional[Dict]) -> bo
     return match_value(structure, item, value_cell)[0]
 
 
-def match_value(structure: Dict, item: Dict, value_cell: Optional[Dict]) -> Tuple[bool, Optional[str]]:
-    """(matched, dot reading): the reading is "decimal" or "thousands" when the cell's number has a dot
-    before exactly three digits and the value matched that reading, else None."""
+def match_value(structure: Dict, item: Dict, value_cell: Optional[Dict]) \
+        -> Tuple[bool, Optional[str], Optional[str]]:
+    """(matched, dot reading, bracket reading) for the reading of the cell's number the value matched (see
+    _cell_figure); both readings are None when the cell's number has one reading or nothing matched."""
     if value_cell is None or item.get("value") is None:
-        return False, None
+        return False, None, None
     cells, comma = structure["cells"], decimal_comma(structure["cells"])
     found = _cell_figure(value_cell["text"], comma)
     if found is None:
-        return False, None
-    number, own_scale, thousands = found
+        return False, None, None
+    readings, own_scale = found
     factor = 1.0
     if not own_scale:
         neighbours = [c for c in cells if c["row"] == value_cell["row"] and abs(c["col"] - value_cell["col"]) == 1
@@ -329,11 +340,10 @@ def match_value(structure: Dict, item: Dict, value_cell: Optional[Dict]) -> Tupl
                 factor = scale
                 break
     wanted = float(item["value"])
-    if same_number(number * factor, wanted):
-        return True, None if thousands is None else "decimal"
-    if thousands is not None and same_number(thousands * factor, wanted):
-        return True, "thousands"
-    return False, None
+    for number, dot, bracket in readings:
+        if same_number(number * factor, wanted):
+            return True, dot, bracket
+    return False, None, None
 
 
 # ---------------------------------------------------------------------------
@@ -426,7 +436,8 @@ def verify(structure: Dict, items: List[Dict], fiscal_year_end: int = 12, mode: 
     redaction: redaction never changes a number or a period, and the citation is to the source).
     Every item gets "status" ("verified" or "suggestion") and "checks" ({"value", "period",
     "period_corrected", "flags"}: booleans; "dot_reading": "decimal" or "thousands" when the value
-    matched a "2.500"-style number, else None). When the value matches and its period cells rebuild a
+    matched a "2.500"-style number, and "bracket_reading": "positive" or "negative" when it matched a
+    bracketed number after text, else None). When the value matches and its period cells rebuild a
     period, that period replaces the model's; if the model's differed, the item carries it as
     "model_period" and counts as a correction. With mode "drop" the unmatched items are removed and
     counted.
@@ -435,7 +446,7 @@ def verify(structure: Dict, items: List[Dict], fiscal_year_end: int = 12, mode: 
     checked = []
     for item in items:
         cell = by_id.get(item.get("value_cell"))
-        v, dot = match_value(structure, item, cell)
+        v, dot, bracket = match_value(structure, item, cell)
         p = period_matches(structure, item, cell, fiscal_year_end)
         # A matched value takes the period Python rebuilds from its cited cells, or from its own text when
         # the model gives a period; when the model's own period differs (it does not know the year-end),
@@ -445,10 +456,10 @@ def verify(structure: Dict, items: List[Dict], fiscal_year_end: int = 12, mode: 
         corrected = bool(label) and not p
         if label:
             item = {**item, "period": label, **({"model_period": item.get("period")} if corrected else {})}
-        checked.append((item, v, p or corrected, corrected, dot))
+        checked.append((item, v, p or corrected, corrected, dot, bracket))
     matched = [item for item, v, p, *_ in checked if v and p]
     out, dropped = [], 0
-    for item, v, p, corrected, dot in checked:
+    for item, v, p, corrected, dot, bracket in checked:
         flags = all(_flag_reproduced(f, item, matched, structure, fiscal_year_end)
                     for f in item.get("proposed_flags") or ()) if v and p else not item.get("proposed_flags")
         ok = v and p and flags
@@ -457,8 +468,8 @@ def verify(structure: Dict, items: List[Dict], fiscal_year_end: int = 12, mode: 
             continue
         out.append({**item, "status": VERIFIED if ok else SUGGESTION,
                     "checks": {"value": v, "period": p, "period_corrected": corrected, "flags": flags,
-                               "dot_reading": dot}})
-    return {"items": out, "dropped": dropped, "periods_corrected": sum(1 for *_, c, _ in checked if c)}
+                               "dot_reading": dot, "bracket_reading": bracket}})
+    return {"items": out, "dropped": dropped, "periods_corrected": sum(1 for *_, c, _, _ in checked if c)}
 
 
 def label(status: str) -> str:

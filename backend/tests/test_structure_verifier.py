@@ -192,7 +192,7 @@ def test_a_matched_value_takes_the_period_python_rebuilds_from_its_cells():
     assert (item["status"], item["period"], item["model_period"], out["periods_corrected"]) == \
         (verify.VERIFIED, "FY2025-04", "2025-04", 1)
     assert item["checks"] == {"value": True, "period": True, "period_corrected": True, "flags": True,
-                              "dot_reading": None}
+                              "dot_reading": None, "bracket_reading": None}
     out = verify.verify(grid, [literal], 12)
     item, = out["items"]
     assert (item["status"], item["period"], out["periods_corrected"]) == (verify.VERIFIED, "FY2025-04", 0), \
@@ -305,25 +305,47 @@ def test_with_a_decimal_comma_a_dot_before_three_digits_groups_thousands_only():
     assert _status(structure, _item(2.5, "r2c2")) == verify.SUGGESTION
 
 
-def test_a_bracketed_number_after_text_is_positive():
-    """zero2hero p17: "Telegram(30K)" is 30,000 members; read as a negative it never matched."""
+def test_a_bracketed_number_after_text_matches_either_sign_and_records_which():
+    """zero2hero p17: "Telegram(30K)" is 30,000 members; read as a negative it never matched. "Net loss (1,200)" is a
+    loss of 1,200. Text before the brackets leaves the sign open: either matches, and the check records which."""
     panel = _deck_structure("05-zero2hero.pdf", 17, "kpi_panel")
     for cell, text, value in (("r1c1", "Telegram(30K)", 30000), ("r2c1", "Discord(150)", 150),
                               ("r3c1", "Twitter(6.5K)", 6500), ("r4c1", "Instagram(85K)", 85000),
                               ("r6c1", "MeetUp((3K)", 3000), ("r7c1", "LinkedIn(10K)", 10000)):
         assert _text(panel, cell) == text
-        assert _checked(panel, _item(value, cell, metric="users", unit="count"))["status"] == verify.VERIFIED, text
-        assert _checked(panel, _item(-value, cell, metric="users", unit="count"))["status"] == verify.SUGGESTION, text
+        for sign, reading in ((1, "positive"), (-1, "negative")):
+            got = _checked(panel, _item(sign * value, cell, metric="users", unit="count"))
+            assert (got["status"], got["checks"]["bracket_reading"]) == (verify.VERIFIED, reading), (text, sign)
+    loss = _struct([["", "2025"], ["EBITDA", "Net loss (1,200)"]])
+    for value, reading in ((-1200, "negative"), (1200, "positive")):
+        got = _checked(loss, _item(value, "r2c2", "2025", ["r1c2"]))
+        assert (got["status"], got["checks"]["bracket_reading"]) == (verify.VERIFIED, reading), value
+    got = _checked(loss, _item(-120, "r2c2", "2025", ["r1c2"]))
+    assert (got["status"], got["checks"]["bracket_reading"]) == (verify.SUGGESTION, None), "another number"
 
 
-@pytest.mark.parametrize("text, value", [
-    ("(1,200)", -1200), ("£(1,200)", -1200), ("(£1.2m)", -1200000), ("( 1,200 )", -1200), ("(12%)", -12),
-    ("Telegram(30K)", 30000), ("MeetUp((3K)", 3000), ("Net loss (1,200)", 1200), ("(1,200", 1200),
-])
-def test_brackets_make_a_negative_only_around_the_whole_figure(text, value):
+@pytest.mark.parametrize("text", ["(1,200)", "£(1,200)", "( 1,200 )", "-1,200", "Net loss -1,200"])
+def test_a_wholly_bracketed_or_signed_figure_stays_negative_and_records_no_bracket_reading(text):
+    structure = _struct([["", "Plan"], ["EBITDA", text]])
+    assert (_status(structure, _item(-1200, "r2c2")), _status(structure, _item(1200, "r2c2"))) == \
+        (verify.VERIFIED, verify.SUGGESTION)
+    assert _checked(structure, _item(-1200, "r2c2"))["checks"]["bracket_reading"] is None
+
+
+@pytest.mark.parametrize("text, value", [("(£1.2m)", -1200000), ("(12%)", -12), ("(1,200", 1200), ("Plan 1,200", 1200)])
+def test_brackets_around_the_whole_figure_or_none_leave_one_sign(text, value):
     structure = _struct([["", "Plan"], ["EBITDA", text]])
     assert _status(structure, _item(value, "r2c2")) == verify.VERIFIED
     assert _status(structure, _item(-value, "r2c2")) == verify.SUGGESTION
+
+
+def test_a_dot_and_a_bracket_after_text_record_both_readings():
+    structure = _struct([["", "Plan"], ["Hours", "Approx. (2.500)"]])
+    for value, dot, bracket in ((2500, "thousands", "positive"), (-2500, "thousands", "negative"),
+                                (2.5, "decimal", "positive"), (-2.5, "decimal", "negative")):
+        got = _checked(structure, _item(value, "r2c2"))
+        assert (got["status"], got["checks"]["dot_reading"], got["checks"]["bracket_reading"]) == \
+            (verify.VERIFIED, dot, bracket), value
 
 
 def test_a_period_in_the_value_cells_own_text_rebuilds_from_that_cell():

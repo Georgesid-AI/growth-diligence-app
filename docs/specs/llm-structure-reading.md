@@ -34,8 +34,9 @@ normalisation:
 - a decimal comma is read only if the structure writes numbers like `1.234,5`;
 - otherwise a dot before exactly three digits (`2.500`, not `0.500`) is ambiguous: the value matches either 2500 or 2.5,
   and the item records which (`checks.dot_reading`: `thousands` or `decimal`);
-- brackets make a negative only around the whole figure: `(1,200)` and `£(1,200)` are −1200, while a bracketed number
-  after text (`Telegram(30K)`, `MeetUp((3K)`) is positive;
+- brackets around the whole figure make a negative: `(1,200)` and `£(1,200)` are −1200. A bracketed number after text
+  (`Net loss (1,200)`, `Telegram(30K)`, `MeetUp((3K)`) matches either sign, and the item records which
+  (`checks.bracket_reading`: `negative` or `positive`);
 - `k`/`m`/`bn` suffixes are applied;
 - a unit or scale in a neighbouring or header cell (`£m`, `'000`, `%`) is applied.
 
