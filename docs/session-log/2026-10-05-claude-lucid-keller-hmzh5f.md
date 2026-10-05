@@ -1,0 +1,5 @@
+2026-10-05, claude/lucid-keller-hmzh5f, scripts/consistency_run.py crashed with "Event loop is closed" at drop_database and wrote no report.
+Deleted: the second asyncio.run (motor had bound the client to the first, closed loop) and the full JSON dump to stdout (the report file and --out keep it).
+Optimized: leftover drop, run, report and drop share one loop; report in docs/test-runs/consistency_<date>.md (-2, -3 later that day), written before the drop; one line per deck and pass; leftovers dropped by name pattern and --db must match it; crash reproduced with real motor and no server; each new test failed on a deliberate violation; 802 backend tests pass.
+Slow/unclear: the spec does not name docs/test-runs/, only the task did; motor was not installed here, so a venv was built from backend/requirements.txt; test_audit_validation.py needs MONGO_URL set to import.
+Process change: a manual script that calls a paid API writes its report before any cleanup step, so a cleanup failure never costs the run.
