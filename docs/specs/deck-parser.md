@@ -76,7 +76,7 @@ Period rules (apply to tables, structure text and the verifier):
 - A month or quarter header with no year cell above it in the same column range → period null. Never infer the year from the deck date, the file name or neighbouring columns.
 - `fiscal_year_end` is a month field on the audit creation screen, default December, and stays editable after creation through PUT /audits/{id} in the existing MappingWizard settings (no new screen). Changing it re-runs period mapping.
 - Fiscal years are named by the calendar year in which they end: with a March year-end, FY25 = 2024-04-01 to 2025-03-31; with December, FY25 = 2025.
-- Every period resolves internally to a start date and an end date; a December year-end gives the calendar year. Forecast dates, value at stake and comparisons with the revenue file use the range end and the months inside the range. Display keeps the text as stated.
+- Every period resolves internally to a start date and an end date; a December year-end gives the calendar year. Forecast dates, value at stake (defined in docs/specs/forecast-claims.md, to be written) and comparisons with the revenue file use the range end and the months inside the range. Display keeps the text as stated.
 - Relative columns ("M1…M24", "Year 1") → null unless the sheet states the start date in a cell.
 Borrowing: a figure without a keyword or a date in its own line takes them from nearby text,
 first match wins: the table column header, the other lines of its text box (nearest first),
