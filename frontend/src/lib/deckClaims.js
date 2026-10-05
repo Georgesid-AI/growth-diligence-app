@@ -98,6 +98,12 @@ export function rowEdit(row, values) {
 // Shown on both claims when one deck gives the same type and period different values.
 export const INCONSISTENCY_LABEL = "Deck inconsistency";
 
+// Model reading (docs/specs/llm-structure-reading.md): every row the model read carries one of these,
+// and so does every mapping field it proposed. Python checked a Verified value against its source cell.
+export const VERIFIED_LABEL = "Verified";
+export const AI_SUGGESTION_LABEL = "AI suggestion, not verified";
+export const STORED_MAPPING_LABEL = "Your confirmed mapping for these headers";
+
 // Deck selector above the claims table: "All" plus one tab per deck.
 export const ALL_DECKS = "all";
 export const REMOVE_DECK_CONFIRM = "This deletes the deck and all its claims, including reviewed ones.";

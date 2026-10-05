@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getAudit, getFields, uploadDataset, saveMapping, computeAudit, getRevenueCustomers, updateAudit } from "@/lib/api";
 import { asOfInputValue, MONTHS, DEFAULT_FISCAL_YEAR_END } from "@/lib/auditForm";
+import { AI_SUGGESTION_LABEL, STORED_MAPPING_LABEL } from "@/lib/deckClaims";
 
 const DTYPES = [
   { key: "revenue", label: "Revenue Lines", desc: "Recurring & one-off invoices — the basis for MRR/ARR, NRR and churn.", required: true },
@@ -117,11 +118,16 @@ function DatasetPanel({ audit, dtype, fields, onChange }) {
   const [fx, setFx] = useState(existing?.fx || {});
   const [billingTerms, setBillingTerms] = useState(existing?.billing_terms || {});
   const [saving, setSaving] = useState(false);
+  // Where each pre-filled field came from: "rules" (column aliases), "ai" (the model's proposal,
+  // not verified) or "stored" (the mapping confirmed earlier for the same headers).
+  const [source, setSource] = useState(existing?.mapping_source || {});
+  const [aiReading, setAiReading] = useState(existing?.ai_reading || null);
 
   useEffect(() => {
     if (existing) {
       setColumns(existing.columns); setMapping(existing.mapping || {});
       setFx(existing.fx || {}); setBillingTerms(existing.billing_terms || {});
+      setSource(existing.mapping_source || {}); setAiReading(existing.ai_reading || null);
     }
   }, [existing?.file]); // eslint-disable-line
 
@@ -133,6 +139,8 @@ function DatasetPanel({ audit, dtype, fields, onChange }) {
       const res = await uploadDataset(audit.id, dtype.key, file);
       setColumns(res.columns);
       setMapping(res.suggested_mapping);
+      setSource(res.mapping_source || {});
+      setAiReading(res.ai_reading || null);
       toast.success(`${res.file}: ${res.row_count} rows · auto-mapped`);
       onChange();
     } catch (err) {
@@ -146,6 +154,7 @@ function DatasetPanel({ audit, dtype, fields, onChange }) {
     setSaving(true);
     try {
       await saveMapping(audit.id, dtype.key, { mapping, fx, billing_terms: billingTerms });
+      setSource({});
       toast.success("Mapping saved");
       onChange();
     } catch (err) {
@@ -155,7 +164,10 @@ function DatasetPanel({ audit, dtype, fields, onChange }) {
     }
   };
 
-  const setField = (field, val) => setMapping((m) => ({ ...m, [field]: val === NONE ? null : val }));
+  const setField = (field, val) => {
+    setMapping((m) => ({ ...m, [field]: val === NONE ? null : val }));
+    setSource((s) => { const next = { ...s }; delete next[field]; return next; });   // the analyst chose it
+  };
   const requiredUnmapped = fields.required.filter((f) => !mapping[f]);
 
   return (
@@ -203,10 +215,19 @@ function DatasetPanel({ audit, dtype, fields, onChange }) {
                       {columns.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                     </SelectContent>
                   </Select>
+                  {source[field] === "ai" && mapping[field] && (
+                    <p className="text-[10px] font-mono text-amber-700 mt-1" data-testid={`map-ai-suggestion-${field}`}>{AI_SUGGESTION_LABEL}</p>
+                  )}
+                  {source[field] === "stored" && mapping[field] && (
+                    <p className="text-[10px] font-mono text-slate-500 mt-1">{STORED_MAPPING_LABEL}</p>
+                  )}
                 </div>
               );
             })}
           </div>
+          {aiReading?.status === "stopped" && (
+            <p className="text-[11px] text-amber-700 mt-3" data-testid="mapping-ai-stopped">{aiReading.reason}</p>
+          )}
 
           {dtype.key === "revenue" && (
             <FxEditor fx={fx} setFx={setFx} baseCcy={audit.reporting_currency} />

@@ -295,3 +295,120 @@ def test_purge_run_removes_the_stored_structure_readings():
     purged = asyncio.run(gateway.purge_run(db, AUDIT))
     assert purged["llm_structures"] == 1 and db[gateway.STRUCTURES_COLLECTION].docs == []
     assert db["llm_calls"].docs == []
+
+
+# ---------------------------------------------------------------------------
+# Column mapping: header stack of at most 3 rows, samples for numeric and date columns, a profile
+# only for text columns; one-click confirmation; confirmed mappings reused per header set
+# ---------------------------------------------------------------------------
+import app.structures as structures  # noqa: E402
+
+SECRET = "Jane Doe Holdings"           # a text cell value: never on the column-mapping path
+
+
+def _sheet():
+    columns = ["Kunde", "Rechnungsdatum", "Betrag", "Notiz", "Kundennummer"]
+    rows = [{"Kunde": f"{SECRET} {i}", "Rechnungsdatum": f"2025-0{i}-28T00:00:00", "Betrag": 100.5 * i,
+             "Notiz": f"call {SECRET}", "Kundennummer": 10000 + i} for i in range(1, 6)]
+    return columns, rows
+
+
+def test_numeric_and_date_columns_send_up_to_3_samples_and_text_columns_a_profile_only():
+    columns, rows = _sheet()
+    text = structures.column_mapping_text(columns, rows, "Target", {}, ("Kundennummer",))
+    parsed = redact.parse_column_text(text)
+    assert parsed["samples"] == {2: ["2025-01-28", "2025-02-28", "2025-03-28"], 3: ["100.5", "201", "301.5"]}
+    assert set(parsed["profiles"]) == {1, 4, 5}, "text columns and the customer column send a profile"
+    assert parsed["profiles"][1] == {"distinct": 5, "length": 19, "shape": "Aa Aa Aa 0"}
+    assert SECRET.lower() not in text.lower() and "10001" not in text, "no text cell value, no customer number"
+    assert redact.column_text_problem(text) is None
+
+
+def test_the_header_stack_is_capped_at_the_3_rows_nearest_the_data():
+    columns = ["Revenue report 2025", "Unnamed: 1", "Unnamed: 2"]
+    rows = [{"Revenue report 2025": "Prepared by finance", "Unnamed: 1": None, "Unnamed: 2": None},
+            {"Revenue report 2025": None, "Unnamed: 1": 2025, "Unnamed: 2": None},
+            {"Revenue report 2025": "Month", "Unnamed: 1": "Jan", "Unnamed: 2": "Feb"},
+            {"Revenue report 2025": "Revenue", "Unnamed: 1": 100, "Unnamed: 2": 200}]
+    headers, samples, _ = structures.column_mapping_input(columns, rows)
+    assert [(c["row"], c["col"], c["text"]) for c in headers] == [
+        (1, 1, "Prepared by finance"), (2, 2, "2025"), (3, 1, "Month"), (3, 2, "Jan"), (3, 3, "Feb")]
+    assert "Revenue report 2025" not in {c["text"] for c in headers}, "the 4th row from the data is left out"
+    assert samples == {2: ["100"], 3: ["200"]}
+
+
+def _api(monkeypatch, replies, consent=True):
+    pytest.importorskip("fastapi")
+    os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
+    os.environ.setdefault("DB_NAME", "structure_reading_test")
+    from fastapi.testclient import TestClient
+    import server
+    db = t.FakeDB()
+    db["audits"].docs.append({**AUDIT_DOC, "structure_reading_consent": consent})
+    monkeypatch.setattr(server, "db", db)
+    adapter = t.FakeAdapter(replies=[json.dumps(r) for r in replies])
+    monkeypatch.setattr(gateway, "AnthropicAdapter", lambda *a, **k: adapter)
+    return TestClient(server.app, raise_server_exceptions=False), db, adapter
+
+
+GERMAN = "Kunde,Rechnungsdatum,Betrag,Waehrung\nAcme GmbH,2025-01-31,100,EUR\nBeta AG,2025-02-28,200,EUR\n"
+MAPPING_REPLY = {"type": "column_mapping", "items": [
+    {"metric": f, "period": None, "value": None, "unit": None, "actual_or_forecast": "unknown", "value_cell": cell,
+     "period_cells": [], "proposed_flags": []}
+    for f, cell in (("customer_id", "r1c1"), ("invoice_date", "r1c2"), ("amount", "r1c3"), ("currency", "r1c4"),
+                    ("deal_id", "r1c1"))]}
+
+
+def test_the_model_proposes_what_the_aliases_miss_and_the_screen_marks_it_as_a_suggestion(monkeypatch):
+    client, db, adapter = _api(monkeypatch, [MAPPING_REPLY])
+    r = client.post(f"/api/audits/{AUDIT}/datasets/revenue/upload", files={"file": ("rev.csv", GERMAN)})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert adapter.calls == 1 and json.loads(adapter.payloads[0])["type"] == "column_mapping"
+    assert body["suggested_mapping"]["customer_id"] == "Kunde" and body["mapping_source"]["customer_id"] == "ai"
+    assert body["suggested_mapping"]["invoice_date"] == "Rechnungsdatum"
+    assert "deal_id" not in body["suggested_mapping"], "a field of another file type is left out"
+    sent = json.loads(adapter.payloads[0])["text"]
+    assert "Acme" not in sent and "Beta" not in sent, "customer cells travel as a profile"
+    stored, = db[gateway.STRUCTURES_COLLECTION].docs
+    assert stored["statuses"] == ["suggestion"] * 5, "a column mapping is never Verified"
+
+
+def test_one_click_confirms_and_the_confirmed_mapping_is_reused_for_the_same_headers(monkeypatch):
+    client, db, adapter = _api(monkeypatch, [MAPPING_REPLY])
+    client.post(f"/api/audits/{AUDIT}/datasets/revenue/upload", files={"file": ("rev.csv", GERMAN)})
+    mapping = {"customer_id": "Kunde", "invoice_date": "Rechnungsdatum", "amount": "Betrag", "currency": "Waehrung"}
+    assert client.put(f"/api/audits/{AUDIT}/datasets/revenue/mapping", json={"mapping": mapping}).status_code == 200
+    again = client.post(f"/api/audits/{AUDIT}/datasets/revenue/upload", files={"file": ("rev2.csv", GERMAN)}).json()
+    assert adapter.calls == 1, "the stored correction is used: no second model call"
+    assert {f: again["suggested_mapping"][f] for f in mapping} == mapping
+    assert set(again["mapping_source"].values()) == {"stored"}
+    client.delete(f"/api/audits/{AUDIT}")
+    assert db[structures.COLUMN_MAPPINGS_COLLECTION].docs == [], "Delete audit removes the stored mapping"
+
+
+def test_without_consent_the_mapping_comes_from_the_aliases_only(monkeypatch):
+    client, _, adapter = _api(monkeypatch, [MAPPING_REPLY], consent=False)
+    body = client.post(f"/api/audits/{AUDIT}/datasets/revenue/upload", files={"file": ("rev.csv", GERMAN)}).json()
+    assert adapter.calls == 0 and body["ai_reading"]["status"] == "no_consent"
+    assert "ai" not in body["mapping_source"].values()
+
+
+def test_a_proposal_names_a_field_of_this_file_type_and_cites_an_existing_header():
+    items = [dict(MAPPING_REPLY["items"][0]), {**MAPPING_REPLY["items"][0], "metric": "deal_id", "value_cell": "r1c3"},
+             {**MAPPING_REPLY["items"][0], "metric": "amount", "value_cell": "r1c9"},
+             {**MAPPING_REPLY["items"][0], "metric": "currency", "value_cell": "r1c1"}]
+    fields = ["customer_id", "invoice_date", "amount", "currency"]
+    assert structures.proposed_mapping(items, ["Kunde", "Datum", "Betrag"], fields) == {"customer_id": "Kunde"}, \
+        "deal_id is a CRM field, r1c9 does not exist, Kunde is already proposed"
+
+
+def test_the_aliases_keep_their_fields_and_the_model_fills_the_rest(monkeypatch):
+    reply = {"type": "column_mapping", "items": [
+        {**MAPPING_REPLY["items"][0], "metric": "amount", "value_cell": "r1c4"},
+        {**MAPPING_REPLY["items"][0], "metric": "customer_id", "value_cell": "r1c1"}]}
+    client, _, _ = _api(monkeypatch, [reply])
+    sheet = "Kunde,Rechnungsdatum,Amount,Betrag,Waehrung\nAcme,2025-01-31,1,2,EUR\n"
+    body = client.post(f"/api/audits/{AUDIT}/datasets/revenue/upload", files={"file": ("r.csv", sheet)}).json()
+    assert (body["suggested_mapping"]["amount"], body["mapping_source"]["amount"]) == ("Amount", "rules")
+    assert (body["suggested_mapping"]["customer_id"], body["mapping_source"]["customer_id"]) == ("Kunde", "ai")

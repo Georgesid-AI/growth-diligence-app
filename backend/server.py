@@ -22,6 +22,7 @@ from app import formatting as fmt
 from app import disclosure as disclosure_mod
 from app import narrative_export
 from app import decks
+from app import structures
 from app.decks import claims as deck_claims
 from app.decks import parser as deck_parser
 from app.llm import gateway as llm_gateway
@@ -308,7 +309,8 @@ async def audit_public(a: dict) -> dict:
     a.pop("_id", None)
     ds = await db.datasets.find({"audit_id": a["id"]}, {"rows": 0, "_id": 0}).to_list(10)
     a["datasets"] = {
-        d["dtype"]: {k: d.get(k) for k in ("file", "sheet", "columns", "mapping", "fx", "billing_terms", "preview", "row_count")}
+        d["dtype"]: {k: d.get(k) for k in ("file", "sheet", "columns", "mapping", "fx", "billing_terms", "preview", "row_count",
+                                           "mapping_source", "ai_reading")}
         for d in ds
     }
     return sanitize(a)
@@ -396,6 +398,8 @@ async def delete_audit(audit_id: str):
     # Narratives, call log and pseudonym mapping are scoped to the run and must
     # not outlive it.
     purged = await llm_gateway.purge_run(db, audit_id)
+    corrections = await db[structures.COLUMN_MAPPINGS_COLLECTION].delete_many({"audit_id": audit_id})
+    purged["column_mappings"] = corrections.deleted_count
     return {"deleted": audit_id, "llm_purged": purged,
             "decks_purged": {"deck_text": deck_text.deleted_count, "deck_candidates": deck_candidates.deleted_count}}
 
@@ -414,21 +418,52 @@ async def upload_dataset(audit_id: str, dtype: str, file: UploadFile = File(...)
     df, sheet = parse_file(content, file.filename)
     columns = list(df.columns)
     rows = df_to_records(df)
-    mapping = suggest_mapping(dtype, columns)
+    mapping, source, ai_reading = await _prefill_mapping(a, dtype, columns, rows)
     preview = rows[:8]
     await db.datasets.replace_one(
         {"audit_id": audit_id, "dtype": dtype},
         {"audit_id": audit_id, "dtype": dtype, "file": file.filename, "sheet": sheet,
          "columns": columns, "rows": rows, "row_count": len(rows), "mapping": mapping,
-         "fx": {}, "billing_terms": {}, "preview": preview},
+         "fx": {}, "billing_terms": {}, "preview": preview, "mapping_source": source, "ai_reading": ai_reading},
         upsert=True,
     )
     await _mark_stale_and_maybe_recompute(audit_id)
     return {
         "dtype": dtype, "file": file.filename, "sheet": sheet, "columns": columns,
         "row_count": len(rows), "suggested_mapping": mapping, "preview": preview,
+        "mapping_source": source, "ai_reading": ai_reading,
         "fields": {"required": list(FIELD_DEFS[dtype]["required"]), "optional": list(FIELD_DEFS[dtype]["optional"])},
     }
+
+
+async def _prefill_mapping(audit: dict, dtype: str, columns: list, rows: list):
+    """(mapping, source per field, AI reading) to pre-fill the mapping screen; the analyst confirms it.
+
+    A mapping the analyst confirmed for the same header set is reused and no model is asked. Otherwise
+    the column aliases map what they can and, with consent, the model proposes the rest from the
+    header stack, samples and profiles (llm-structure-reading.md section 1): those fields are marked
+    "ai" and shown as "AI suggestion, not verified". Column-mapping calls are not queued.
+    """
+    fields = list(FIELD_DEFS[dtype]["required"]) + list(FIELD_DEFS[dtype]["optional"])
+    mapping = suggest_mapping(dtype, columns)
+    stored = await db[structures.COLUMN_MAPPINGS_COLLECTION].find_one(
+        {"audit_id": audit["id"], "dtype": dtype, "header_key": structures.header_key(dtype, columns)}, {"_id": 0})
+    if stored:
+        kept = {f: c for f, c in (stored.get("mapping") or {}).items() if f in mapping and c in columns}
+        return {f: kept.get(f) for f in mapping}, {f: "stored" for f, c in kept.items() if c}, {"status": "stored"}
+    source = {f: "rules" for f, c in mapping.items() if c}
+    customers = tuple(c for c in [suggest_mapping("revenue", columns).get("customer_id")] if c)
+    text = structures.column_mapping_text(columns, rows, audit.get("company_name"),
+                                          await llm_redaction.get_map(db, audit["id"]), customers)
+    read = await llm_gateway.read_structure(db, audit["id"], text, "column_mapping")
+    if read.status == "read":
+        await llm_gateway.record_verification(db, audit["id"], read.key, ["suggestion"] * len(read.items))
+        used = {c for c in mapping.values() if c}
+        for field, col in structures.proposed_mapping(read.items, columns, fields).items():
+            if mapping.get(field) is None and col not in used:
+                mapping[field], source[field] = col, "ai"
+                used.add(col)
+    return mapping, source, {"status": read.status, "reason": read.reason}
 
 
 @api.get("/fields")
@@ -460,7 +495,15 @@ async def save_mapping(audit_id: str, dtype: str, payload: MappingPayload):
     await db.datasets.update_one(
         {"audit_id": audit_id, "dtype": dtype},
         {"$set": {"mapping": payload.mapping, "fx": payload.fx, "billing_terms": payload.billing_terms,
-                  "mapped_at": datetime.now(timezone.utc).isoformat()}},
+                  "mapped_at": datetime.now(timezone.utc).isoformat(), "mapping_source": {}}},
+    )
+    # The analyst's confirmed mapping is kept for this header set and reused on the next upload.
+    await db[structures.COLUMN_MAPPINGS_COLLECTION].update_one(
+        {"audit_id": audit_id, "dtype": dtype, "header_key": structures.header_key(dtype, ds.get("columns") or [])},
+        {"$set": {"audit_id": audit_id, "dtype": dtype,
+                  "header_key": structures.header_key(dtype, ds.get("columns") or []),
+                  "mapping": payload.mapping, "saved_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
     )
     await _add_customers(audit_id, {**ds, "mapping": payload.mapping})
     await _mark_stale_and_maybe_recompute(audit_id)
