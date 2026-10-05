@@ -117,7 +117,13 @@ def test_month_names_are_english_german_or_bulgarian_in_any_case(month, period):
 @pytest.mark.parametrize("header, period, year_end, status", [
     ("FY2025", "FY2025", 3, verify.VERIFIED),
     ("FY2025", "2025", 12, verify.VERIFIED),          # December: FY2025 is the calendar year
-    ("FY2025", "2025", 3, verify.SUGGESTION),         # March: FY2025 runs 2024-04-01 to 2025-03-31
+    ("FY2025", "2025", 3, verify.VERIFIED),           # March: both run 2024-04-01 to 2025-03-31
+    ("2025E", "FY2025", 3, verify.VERIFIED),          # every year label is fiscal unless December
+    ("FY2025", "2024", 3, verify.SUGGESTION),
+    ("Q3 25", "2025-Q3", 3, verify.VERIFIED),
+    ("Q1 FY25", "2025-Q1", 3, verify.VERIFIED),
+    ("Q1 FY25", "FY2025", 3, verify.SUGGESTION),      # a quarter is not its fiscal year
+    ("Mar 2025", "2025-03", 3, verify.VERIFIED),      # a month stays a calendar month
     ("FY2024/25", "FY2024/25", 3, verify.VERIFIED),
     ("FY2024/25", "FY2025", 3, verify.VERIFIED),      # named by the year it ends in
     ("FY2024/25", "FY2024", 3, verify.SUGGESTION),
@@ -126,6 +132,15 @@ def test_month_names_are_english_german_or_bulgarian_in_any_case(month, period):
 def test_fiscal_years_follow_the_audit_year_end(header, period, year_end, status):
     grid = _struct([["", header], ["Revenue", "£2M"]])
     assert _status(grid, _item(2000000, "r2c2", period, ["r1c2"]), year_end) == status
+
+
+def test_a_quarter_under_a_fiscal_year_is_that_fiscal_quarter_and_a_month_under_it_has_no_period():
+    grid = _struct([["", "FY2025", "", "FY2025"], ["", "Q3", "Q4", "Mar"], ["Revenue", "$3M", "$4M", "$5M"]],
+                   header_rows=2, spans={(1, 2): 2})
+    assert _status(grid, _item(3000000, "r3c2", "2025-Q3", ["r2c2", "r1c2"]), 3) == verify.VERIFIED
+    assert _status(grid, _item(4000000, "r3c3", "2025-Q4", ["r2c3", "r1c2"]), 12) == verify.VERIFIED
+    assert _status(grid, _item(5000000, "r3c4", "2025-03", ["r2c4", "r1c4"]), 3) == verify.SUGGESTION, \
+        "a month's calendar year under a fiscal year depends on the year-end"
 
 
 def test_a_null_period_matches_only_when_no_header_holds_a_period():

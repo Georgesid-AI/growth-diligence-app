@@ -908,6 +908,8 @@ def test_a_merged_claim_is_compared_when_any_of_its_sources_states_the_period():
 # ---------------------------------------------------------------------------
 # Fiscal year-end (spec section 2, period rules): fiscal years are named by the calendar year in
 # which they end, and every period resolves to a start and an end date. Display keeps the text.
+# With a year-end other than December every year, quarter and half label is fiscal ("2025E",
+# "Q1 25", "H1 25"); months stay calendar months. With December nothing moves.
 # ---------------------------------------------------------------------------
 _FISCAL_BLOCKS = [
     {"slide": 1, "kind": "text", "text": "FY25 ARR $3M", "box": 1},
@@ -923,6 +925,16 @@ _FISCAL_BLOCKS = [
     {"slide": 8, "kind": "table", "table": 1, "row": 2, "col": 1, "text": "Users"},
     {"slide": 8, "kind": "table", "table": 1, "row": 2, "col": 2, "text": "200"},
     {"slide": 8, "kind": "table", "table": 1, "row": 2, "col": 3, "text": "5,000"},
+    {"slide": 9, "kind": "text", "text": "Revenue 2025E $7M", "box": 9},
+    {"slide": 10, "kind": "text", "text": "Revenue Q1 FY25 $8M", "box": 10},
+    {"slide": 11, "kind": "text", "text": "FY26 H2 revenue $9M", "box": 11},
+    {"slide": 12, "kind": "table", "table": 2, "row": 1, "col": 1, "text": "Metric"},
+    {"slide": 12, "kind": "table", "table": 2, "row": 1, "col": 2, "text": "FY2025", "col_span": 2},
+    {"slide": 12, "kind": "table", "table": 2, "row": 2, "col": 2, "text": "Q3"},
+    {"slide": 12, "kind": "table", "table": 2, "row": 2, "col": 3, "text": "Q4"},
+    {"slide": 12, "kind": "table", "table": 2, "row": 3, "col": 1, "text": "Customers"},
+    {"slide": 12, "kind": "table", "table": 2, "row": 3, "col": 2, "text": "30"},
+    {"slide": 12, "kind": "table", "table": 2, "row": 3, "col": 3, "text": "40"},
 ]
 
 
@@ -938,33 +950,45 @@ def _periods(found):
 @pytest.mark.parametrize("year_end, expected", [
     (12, {"FY25": ("2025", "2025-01-01", "2025-12-31"), "Y/E 22": ("2022", "2022-01-01", "2022-12-31"),
           "FY2025/26": ("2026", "2026-01-01", "2026-12-31"), "FY23": ("2023", "2023-01-01", "2023-12-31"),
-          "FY24": ("2024", "2024-01-01", "2024-12-31")}),
+          "FY24": ("2024", "2024-01-01", "2024-12-31"), "2024": ("2024", "2024-01-01", "2024-12-31"),
+          "2025E": ("2025", "2025-01-01", "2025-12-31"), "Q3 25": ("2025-Q3", "2025-07-01", "2025-09-30"),
+          "H1 24": ("2024-H1", "2024-01-01", "2024-06-30"), "Q1 FY25": ("2025-Q1", "2025-01-01", "2025-03-31"),
+          "FY26 H2": ("2026-H2", "2026-07-01", "2026-12-31"), "Q3 FY2025": ("2025-Q3", "2025-07-01", "2025-09-30"),
+          "Q4 FY2025": ("2025-Q4", "2025-10-01", "2025-12-31"),
+          "March 2025": ("2025-03", "2025-03-01", "2025-03-31")}),
     (3, {"FY25": ("2025", "2024-04-01", "2025-03-31"), "Y/E 22": ("2022", "2021-04-01", "2022-03-31"),
          "FY2025/26": ("2026", "2025-04-01", "2026-03-31"), "FY23": ("2023", "2022-04-01", "2023-03-31"),
-         "FY24": ("2024", "2023-04-01", "2024-03-31")}),
+         "FY24": ("2024", "2023-04-01", "2024-03-31"), "2024": ("2024", "2023-04-01", "2024-03-31"),
+         "2025E": ("2025", "2024-04-01", "2025-03-31"), "Q3 25": ("2025-Q3", "2024-10-01", "2024-12-31"),
+         "H1 24": ("2024-H1", "2023-04-01", "2023-09-30"), "Q1 FY25": ("2025-Q1", "2024-04-01", "2024-06-30"),
+         "FY26 H2": ("2026-H2", "2025-10-01", "2026-03-31"), "Q3 FY2025": ("2025-Q3", "2024-10-01", "2024-12-31"),
+         "Q4 FY2025": ("2025-Q4", "2025-01-01", "2025-03-31"),
+         "March 2025": ("2025-03", "2025-03-01", "2025-03-31")}),
+    (6, {"FY25": ("2025", "2024-07-01", "2025-06-30"), "Q3 25": ("2025-Q3", "2025-01-01", "2025-03-31"),
+         "H1 24": ("2024-H1", "2023-07-01", "2023-12-31"), "March 2025": ("2025-03", "2025-03-01", "2025-03-31")}),
 ])
-def test_fiscal_years_are_named_by_the_year_they_end_in_and_resolve_to_a_date_range(year_end, expected):
+def test_every_year_quarter_and_half_follows_the_year_end_and_months_stay_calendar(year_end, expected):
     periods = _periods(claims.detect_candidates(_FISCAL_BLOCKS, "deck.pptx", fiscal_year_end=year_end))
-    assert {k: periods[k] for k in expected} == expected
-    # Calendar periods do not move with the year-end; a December year-end gives the calendar year.
-    assert periods["Q3 25"] == ("2025-Q3", "2025-07-01", "2025-09-30")
-    assert periods["H1 24"] == ("2024-H1", "2024-01-01", "2024-06-30")
-    assert periods["March 2025"] == ("2025-03", "2025-03-01", "2025-03-31")
-    assert periods["2024"] == ("2024", "2024-01-01", "2024-12-31")
+    assert {k: periods.get(k) for k in expected} == expected
 
 
 def test_every_period_resolves_to_a_start_and_an_end_and_the_default_year_end_is_december():
     found = claims.detect_candidates(_FISCAL_BLOCKS, "deck.pptx")
-    values = [v for c in found for v in (c.get("by_period") or [c])]
-    assert values and all(v["period_start"] and v["period_end"] and v["period_start"] <= v["period_end"]
-                          for v in values if v["target_date"])
     assert _periods(found)["FY25"] == ("2025", "2025-01-01", "2025-12-31")
+    for year_end in (12, 3):
+        values = [v for c in claims.detect_candidates(_FISCAL_BLOCKS, "deck.pptx", fiscal_year_end=year_end)
+                  for v in (c.get("by_period") or [c])]
+        assert values and all(v["period_start"] and v["period_end"] and v["period_start"] <= v["period_end"]
+                              for v in values if v["target_date"]), year_end
 
 
 def test_changing_the_year_end_re_maps_the_stored_periods():
     found = claims.detect_candidates(_FISCAL_BLOCKS, "deck.pptx", fiscal_year_end=12)
     claims.remap_periods(found, 3)
     assert _periods(found)["FY25"] == ("2025", "2024-04-01", "2025-03-31")
+    assert _periods(found)["Q3 25"] == ("2025-Q3", "2024-10-01", "2024-12-31")
+    assert _periods(found)["March 2025"] == ("2025-03", "2025-03-01", "2025-03-31")
+    claims.remap_periods(found, 12)
     assert _periods(found)["Q3 25"] == ("2025-Q3", "2025-07-01", "2025-09-30")
 
 
@@ -975,6 +999,7 @@ def test_the_audit_year_end_is_used_at_upload_and_a_change_re_maps_the_stored_cl
     stored = {c["period_text"]: c for c in db[decks.CANDIDATES_COLLECTION].docs}
     assert (stored["FY25"]["target_date"], stored["FY25"]["period_start"], stored["FY25"]["period_end"]) == \
         ("2025", "2024-04-01", "2025-03-31")
+    assert (stored["Q3 25"]["period_start"], stored["Q3 25"]["period_end"]) == ("2024-10-01", "2024-12-31")
     assert client.put("/api/audits/audit-1", json={"fiscal_year_end": 12}).status_code == 200
     stored = {c["period_text"]: c for c in db[decks.CANDIDATES_COLLECTION].docs}
     assert (stored["FY25"]["period_start"], stored["FY25"]["period_end"]) == ("2025-01-01", "2025-12-31")
@@ -983,7 +1008,7 @@ def test_the_audit_year_end_is_used_at_upload_and_a_change_re_maps_the_stored_cl
         assert client.put("/api/audits/audit-1", json={"fiscal_year_end": bad}).status_code == 422
 
 
-def test_an_edited_date_is_a_calendar_period_and_drops_the_stated_text(api):
+def test_an_edited_date_follows_the_year_end_and_drops_the_stated_text(api):
     client, db = api
     client.put("/api/audits/audit-1", json={"fiscal_year_end": 3})
     _upload(client, "audit-1", "fy.pptx", _slide([("FY25 ARR $3M", 1, 2)]))
@@ -992,7 +1017,9 @@ def test_an_edited_date_is_a_calendar_period_and_drops_the_stated_text(api):
     kept = client.put(url, json={"value": 3100000, "target_date": "2025"}).json()
     assert (kept["period_text"], kept["period_start"]) == ("FY25", "2024-04-01"), "same date: the stated period stays"
     moved = client.put(url, json={"target_date": "2026-Q1"}).json()
-    assert (moved["period_text"], moved["period_start"], moved["period_end"]) == (None, "2026-01-01", "2026-03-31")
+    assert (moved["period_text"], moved["period_start"], moved["period_end"]) == (None, "2025-04-01", "2025-06-30")
+    month = client.put(url, json={"target_date": "2026-02"}).json()
+    assert (month["period_start"], month["period_end"]) == ("2026-02-01", "2026-02-28"), "a month stays calendar"
 
 
 # ---------------------------------------------------------------------------

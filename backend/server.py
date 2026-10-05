@@ -419,7 +419,8 @@ async def _remap_periods(audit_id: str, fiscal_year_end: int) -> None:
     for c in deck_claims.remap_periods(found, fiscal_year_end):
         changes = {k: c.get(k) for k in ("period_start", "period_end", "by_period") if k in c}
         await db[decks.CANDIDATES_COLLECTION].update_one({"audit_id": audit_id, "id": c["id"]}, {"$set": changes})
-    # The model's readings are verified again: a fiscal year matches a calendar one only in December.
+    # The model's readings are verified again: a period counted from a stated start date ("Year 1"
+    # from "Start: Jan 2025") matches a year label only under the year-end it falls in.
     await structures.reverify_audit(db, audit_id, fiscal_year_end)
 
 
@@ -677,8 +678,9 @@ async def list_deck_candidates(audit_id: str):
 
 
 def _edited_period(value: dict, before: dict, fiscal_year_end: int) -> dict:
-    """A value after an edit, its date range re-run. A date the analyst typed is a calendar period
-    ("2025", "2025-Q3"), so the deck's stated text goes once the date changes."""
+    """A value after an edit, its date range re-run. A date the analyst typed follows the same rules as
+    a stated one: a year, quarter or half follows the audit's year-end, a month is a calendar month.
+    The deck's stated text goes once the date changes."""
     if value.get("target_date") != before.get("target_date"):
         value["period_text"] = None
     else:

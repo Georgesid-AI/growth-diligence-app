@@ -589,20 +589,34 @@ def test_a_new_fiscal_year_end_re_verifies_the_model_readings(monkeypatch):
              and c["sources"][0]["structure"] == "kpi_panel"]
     assert panel[0]["ai_label"] == "Verified"
     client.put(f"/api/audits/{AUDIT}/decks/candidates/{panel[0]['id']}", json={"status": "pending"})
-    # The recorded reading cites "23 Y/E" as FY2023: it stays verified under any year-end.
+    # The recorded reading cites "23 Y/E" as FY2023: it stays verified under any year-end, its range moves.
     client.put(f"/api/audits/{AUDIT}", json={"fiscal_year_end": 3})
     after = next(c for c in db["deck_candidates"].docs if c["id"] == panel[0]["id"])
     assert after["ai_label"] == "Verified" and (after["period_start"], after["period_end"]) == ("2022-04-01", "2023-03-31")
-    # A reading that called the same header the calendar year 2023 holds only with December.
-    stored = next(d for d in db[gateway.STRUCTURES_COLLECTION].docs if d["type"] == "kpi_panel"
-                  and any(i["value"] == 150000 for i in d["output"]["items"]))
-    for item in stored["output"]["items"]:
-        item["period"] = "2023"
-    client.put(f"/api/audits/{AUDIT}", json={"fiscal_year_end": 12})
-    assert next(c for c in db["deck_candidates"].docs if c["id"] == panel[0]["id"])["ai_label"] == "Verified"
-    client.put(f"/api/audits/{AUDIT}", json={"fiscal_year_end": 3})
-    assert next(c for c in db["deck_candidates"].docs if c["id"] == panel[0]["id"])["ai_label"] == \
-        "AI suggestion, not verified"
+
+
+def test_a_reading_whose_match_depends_on_the_year_end_is_re_verified_under_the_new_one():
+    """"Year 1" counted from "Start: Jan 2025" is January to December 2025: a reading of it as the year
+    2025 holds with a December year-end only."""
+    from app.decks import CANDIDATES_COLLECTION, TEXT_COLLECTION
+    from app import structures
+    structure = {"type": "table", "header_rows": 1, "ai": {"key": "k1"}, "cells": [
+        {"row": 1, "col": 1, "text": "Start: Jan 2025"}, {"row": 1, "col": 2, "text": "Year 1"},
+        {"row": 2, "col": 1, "text": "Revenue"}, {"row": 2, "col": 2, "text": "£2M"}]}
+    item = {"metric": "revenue", "period": "2025", "value": 2000000, "unit": "GBP", "actual_or_forecast": "forecast",
+            "value_cell": "r2c2", "period_cells": ["r1c2", "r1c1"], "proposed_flags": []}
+    db = _db()
+    db[TEXT_COLLECTION].docs.append({"audit_id": AUDIT, "deck_id": "d1", "structures": [structure]})
+    db[gateway.STRUCTURES_COLLECTION].docs.append({"audit_id": AUDIT, "key": "k1", "type": "table",
+                                                   "output": {"type": "table", "items": [item]}})
+    db[CANDIDATES_COLLECTION].docs.append({"id": "c1", "audit_id": AUDIT, "deck_id": "d1", "structure_key": "k1",
+                                           "status": "pending", "cell": "r2c2", "claim_type": "revenue",
+                                           "value": 2000000, "ai_status": "verified", "ai_label": "Verified"})
+    labels = []
+    for year_end in (3, 12):
+        asyncio.run(structures.reverify_audit(db, AUDIT, year_end))
+        labels.append(db[CANDIDATES_COLLECTION].docs[0]["ai_label"])
+    assert labels == ["AI suggestion, not verified", "Verified"]
 
 
 def test_delete_audit_removes_model_outputs_cache_and_mapping(monkeypatch):

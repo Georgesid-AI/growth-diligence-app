@@ -26,9 +26,11 @@ carry that period in "inconsistent_dates" (see _flag_inconsistencies).
 Every value keeps its period three ways: "target_date" ("2025", "2025-Q3", "2025-H1", "2025-03"),
 "period_text" (the date as the deck states it, "FY25", for display) and "period_start" and
 "period_end" (ISO dates). A fiscal year ("FY25", "Y/E 25", "FY2024/25") is named by the calendar
-year in which it ends, so its target_date is that year and its range follows the audit's fiscal
-year-end: with a March year-end FY25 runs 2024-04-01 to 2025-03-31; with December it is 2025.
-Every other period is a calendar period. remap_periods re-runs the ranges for a new year-end.
+year in which it ends, so its target_date is that year. The ranges follow the audit's fiscal
+year-end: with December every period is the calendar one; with any other month every year,
+quarter and half label is fiscal ("2025E", "Q1 25", "H1 25" as much as "FY25"), so with a March
+year-end 2025 and FY25 run 2024-04-01 to 2025-03-31 and Q1 25 runs 2024-04-01 to 2024-06-30.
+Months stay calendar months. remap_periods re-runs the ranges for a new year-end.
 
 A figure takes the keyword and the date of its own line. A line with its own keyword never
 borrows a label. When it has none, the figure borrows one from nearby text, first match wins:
@@ -126,9 +128,16 @@ _MONTH_NUMBER = {name: n for n, names in MONTH_NAMES.items() for name in names}
 _MONTH_ANY = (r"(?<![^\W\d_])(?P<month>(?i:" + "|".join(sorted(map(re.escape, _MONTH_NUMBER), key=len, reverse=True))
               + r"))(?![^\W\d_])")
 _YY = r"(?P<year>(?:19|20)\d{2}|\d{2})"
-# (kind, pattern, fiscal). A fiscal year (FY, Y/E) is named by the year it ends in; every other
-# period is a calendar period.
+_FY = r"FY\s*['’]?(?:(?:(?:19|20)\d{2}|\d{2})\s*/\s*)?" + _YY      # FY25, FY2024/25: named by the end year
+# (kind, pattern, fiscal). A fiscal year (FY, Y/E) is named by the year it ends in. `fiscal` marks a
+# period stated as fiscal; it only decides whether a month may be built under it (combine_period).
+# Whether a range is fiscal is decided by the year-end alone (period_range).
 _DATES = [
+    # Q1 FY25, FY25 Q1, H1 FY2024/25, FY25-H2: a quarter or half of a fiscal year
+    ("quarter", re.compile(r"\bQ(?P<q>[1-4])\s*[-/]?\s*" + _FY + r"\b"), True),
+    ("quarter", re.compile(r"\b" + _FY + r"\s*[-/]?\s*Q(?P<q>[1-4])\b"), True),
+    ("half", re.compile(r"\bH(?P<h>[12])\s*[-/]?\s*" + _FY + r"\b"), True),
+    ("half", re.compile(r"\b" + _FY + r"\s*[-/]?\s*H(?P<h>[12])\b"), True),
     # Q3 2021, Q1 17, Q1-Q2 2023
     ("quarter", re.compile(r"\bQ(?P<q>[1-4])(?:\s*[-–]\s*Q[1-4])?\s*['’]?\s*" + _YY + r"\b"), False),
     # 2021 Q3, 2021-Q3
@@ -221,7 +230,7 @@ _PART = re.compile(r"(?i)^\s*(?:Q(?P<q>[1-4])|H(?P<h>[12])|" + _MONTH_ANY + r")\
 def period_cell(text: str) -> Optional[Dict]:
     """What one header cell says about a period (spec section 2, period rules):
 
-        {"label": "2025-Q3", "fiscal": False, "text": "Q3 2025"}   a full period
+        {"label": "2025-Q3", "fiscal": False, "text": "Q3 2025"}   a full period ("fiscal": stated as FY, Y/E)
         {"part": "Q3"} / {"part": "03"} / {"part": "H1"}              a quarter, month or half with no year
         {"relative": 3}                                               M3, Month 3, Year 3: no start date
         None                                                          no period
@@ -250,57 +259,51 @@ def period_cell(text: str) -> Optional[Dict]:
 
 
 def combine_period(part_cell: Optional[Dict], year_cell: Optional[Dict]) -> Optional[Dict]:
-    """A period built from two cells: a month, quarter or half and the calendar year cell above it
-    ("Mar" + "2025" -> 2025-03, "Q3" + "2025" -> 2025-Q3). None when the upper cell is not a calendar
-    year: a part under a fiscal year is not defined by section 2, so it stays without a period."""
-    if not part_cell or "part" not in part_cell or not year_cell or year_cell.get("fiscal") \
-            or year_cell.get("kind") != "year" or not re.fullmatch(r"\d{4}", year_cell.get("label") or ""):
+    """A period built from two cells: a month, quarter or half and the year cell above it ("Mar" +
+    "2025" -> 2025-03, "Q3" + "2025" -> 2025-Q3, "Q3" + "FY2025" -> 2025-Q3). A quarter or half follows
+    the year-end like any other (period_range). A month is a calendar month and is built under a
+    plain year only: under a cell stated as a fiscal year ("FY2025") its calendar year depends on
+    the year-end, so it stays without a period. None when the upper cell is not a year."""
+    if not part_cell or "part" not in part_cell or not year_cell or year_cell.get("kind") != "year" \
+            or not re.fullmatch(r"\d{4}", year_cell.get("label") or ""):
         return None
-    return {"label": f"{year_cell['label']}-{part_cell['part']}", "fiscal": False, "kind": "two_cell"}
+    if year_cell.get("fiscal") and part_cell["part"][0] not in "QH":
+        return None
+    return {"label": f"{year_cell['label']}-{part_cell['part']}", "kind": "two_cell"}
 
 
-def period_range(label: Optional[str], fiscal_year_end: int = 12, fiscal: bool = False) -> Optional[Tuple[str, str]]:
+def period_range(label: Optional[str], fiscal_year_end: int = 12) -> Optional[Tuple[str, str]]:
     """(start, end) as ISO dates for a period label, or None when it is not one.
 
-    "2025", "2025-Q3", "2025-H1", "2025-03" are calendar periods, unless `fiscal` says the year is a
-    fiscal year. "FY2025" and "FY2024/25" are fiscal years, named by the year they end in. A fiscal
-    year ends on the last day of `fiscal_year_end` (1-12); with December it is the calendar year.
+    "2025-03" is a calendar month. "2025", "2025-Q3", "2025-H1", "FY2025" and "FY2024/25" follow the
+    year-end: fiscal year 2025 ends on the last day of `fiscal_year_end` (1-12) in 2025 and starts 12
+    months earlier, and its quarters and halves count from that start. With December every period
+    is the calendar one.
     """
-    m = re.fullmatch(r"FY(?:\d{4}/)?(?P<y>\d{2}|\d{4})", label or "")
-    if m:
+    m = re.fullmatch(r"FY(?:(?P<c>\d{2})\d{2}/)?(?P<y>\d{2}|\d{4})", label or "")
+    if m:                                           # FY2024/25: the second year in the century of the first
         y = m.group("y")
-        label, fiscal = str(_year(y) if len(y) == 2 else int(y)), True
-        if "/" in m.group(0) and len(y) == 2:      # FY2024/25: the second year in the century of the first
-            label = m.group(0)[2:4] + y
+        label = (m.group("c") or "20") + y if len(y) == 2 else y
     m = re.fullmatch(r"(?P<y>\d{4})(?:-(?P<part>Q[1-4]|H[12]|0[1-9]|1[0-2]))?", label or "")
     if not m:
         return None
     year, part = int(m.group("y")), m.group("part")
+    start = year * 12 + fiscal_year_end - 12        # months since year 0 to the fiscal year's first month
     if part is None:
-        if fiscal and fiscal_year_end != 12:
-            first, last = (year - 1, fiscal_year_end + 1), (year, fiscal_year_end)
-        else:
-            first, last = (year, 1), (year, 12)
+        first, length = start, 12
     elif part[0] == "Q":
-        q = int(part[1])
-        first, last = (year, 3 * q - 2), (year, 3 * q)
+        first, length = start + 3 * (int(part[1]) - 1), 3
     elif part[0] == "H":
-        h = int(part[1])
-        first, last = (year, 6 * h - 5), (year, 6 * h)
+        first, length = start + 6 * (int(part[1]) - 1), 6
     else:
-        first = last = (year, int(part))
-    end = date(last[0], last[1], calendar.monthrange(*last)[1])
-    return date(first[0], first[1], 1).isoformat(), end.isoformat()
-
-
-def is_fiscal(text: Optional[str]) -> bool:
-    """True when the stated period is a fiscal year ("FY25", "Y/E 22", "FY2024/25")."""
-    return any(d["fiscal"] for d in find_dates(text or ""))
+        first, length = year * 12 + int(part) - 1, 1
+    (y0, m0), (y1, m1) = divmod(first, 12), divmod(first + length - 1, 12)
+    return date(y0, m0 + 1, 1).isoformat(), date(y1, m1 + 1, calendar.monthrange(y1, m1 + 1)[1]).isoformat()
 
 
 def resolve_period(value: Dict, fiscal_year_end: int = 12) -> Dict:
-    """Set "period_start" and "period_end" on a value from its target_date and its stated text."""
-    found = period_range(value.get("target_date"), fiscal_year_end, is_fiscal(value.get("period_text")))
+    """Set "period_start" and "period_end" on a value from its target_date."""
+    found = period_range(value.get("target_date"), fiscal_year_end)
     value["period_start"], value["period_end"] = found or (None, None)
     return value
 

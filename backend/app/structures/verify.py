@@ -13,8 +13,10 @@ An item is matched when
 - its period matches its `period_cells` only: they are header cells of the value cell (its row
   header or the header stack above its column; in a KPI panel or a roadmap, the cells left of it in
   its row and the top line of its own box), and the period rebuilt from them under the section 2
-  rules has the same start and end date. A two-cell period is a month, quarter or half cell and the
-  calendar year cell above it in the same column range. A null period matches only when
+  rules has the same start and end date under the audit's year-end (a year, quarter or half is
+  fiscal when it is not December; a month is a calendar month). A two-cell period is a month,
+  quarter or half cell and the year cell above it in the same column range (a month never under a
+  year stated as fiscal, "FY2025"). A null period matches only when
   `period_cells` is empty and no header of the value cell holds a period. A relative column ("M3",
   "Year 1") has no period unless its second period cell states the start date ("Start: Jan 2025");
 - every proposed flag is reproduced from the matched values (see _flag_reproduced).
@@ -164,8 +166,8 @@ _START = re.compile(r"(?i)\b(?:start(?:s|ing)?(?: date)?|from|beginning|begins?)
 _RELATIVE_UNIT = re.compile(r"(?i)^\s*(?P<u>M|Month|Monat|Y|Year|Jahr|Q|Quarter)")
 
 
-def _range(label: Optional[str], fiscal: bool, fiscal_year_end: int):
-    return claims.period_range(label, fiscal_year_end, fiscal) if label else None
+def _range(label: Optional[str], fiscal_year_end: int):
+    return claims.period_range(label, fiscal_year_end) if label else None
 
 
 def _relative_range(relative: Dict, unit_text: str, start_cell: Optional[Dict]) -> Optional[Tuple[str, str]]:
@@ -201,18 +203,18 @@ def rebuild_period(structure: Dict, value_cell: Dict, period_ids: List[str], fis
     if not found:
         return None
     if len(cited) == 1:
-        return _range(found.get("label"), found.get("fiscal", False), fiscal_year_end) if "label" in found else None
+        return _range(found.get("label"), fiscal_year_end) if "label" in found else None
     second = cited[1]
     if "relative" in found:
         return _relative_range(found, first["text"], second)
     above = second["row"] < first["row"] and all(k in _cols(second) for k in _cols(first))
     joined = claims.combine_period(found, claims.period_cell(second["text"])) if above else None
-    return _range(joined["label"], False, fiscal_year_end) if joined else None
+    return _range(joined["label"], fiscal_year_end) if joined else None
 
 
 def headers_hold_a_period(structure: Dict, value_cell: Dict) -> bool:
-    """True when a header of the value cell holds a period: a full period, or a part with its calendar
-    year cell above it in the same column range."""
+    """True when a header of the value cell holds a period: a full period, or a part with its year cell
+    above it in the same column range (see claims.combine_period)."""
     cells = structure["cells"]
     for h in header_cells(structure, value_cell):
         found = claims.period_cell(h["text"])
