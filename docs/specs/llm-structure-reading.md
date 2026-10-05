@@ -20,6 +20,9 @@ change (§9). Each item has exactly these fields:
 - `source_cells`: input cell ids, at least one;
 - `proposed_flags`: `total_mismatch` or `growth_mismatch`.
 
+`source_cells` for a period may hold two cells (period cell and year cell). The verifier rebuilds the period from
+those cells under deck-parser.md §2; if it cannot, the period is unmatched.
+
 No field is free text, so model output cannot carry deck prose into a log.
 
 **2. Verifier (Python, pure).** A value matches when one of its `source_cells` exists and holds the same number after

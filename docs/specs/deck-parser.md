@@ -69,6 +69,13 @@ figure, or is not a candidate.
 A line with its own keyword never borrows a label from other lines.
 Periods are dates, never values: "Y/E 22", "22 Y/E", "FY23", "2023E" (also A, F, B, P),
 "H1 24", "1H24", "Q3 25", "3Q25". A half year is stored as "2024-H1".
+Period rules (apply to tables, structure text and the verifier):
+- Header stack: extracted structure text includes every header row above the data; a merged range is written with its span, e.g. "FY2025 (C1:N1)". The model receives the full header stack, not only the row directly above the values.
+- A period may be built from two cells: the month or quarter cell and the year cell above it in the same column range. "Mar" + "2025" → 2025-03; "Q3" + "2025" → 2025-Q3.
+- Month names are matched in English, German and Bulgarian, short and long forms, any case.
+- A month or quarter header with no year cell above it in the same column range → period null. Never infer the year from the deck date, the file name or neighbouring columns.
+- Fiscal years ("FY25", "FY2025/26") are stored as stated. Converting them to calendar periods needs the fiscal year-end, set once per company by the analyst; until it is set, such periods stay unverified. If the year-end is December, FY25 = 2025.
+- Relative columns ("M1…M24", "Year 1") → null unless the sheet states the start date in a cell.
 Borrowing: a figure without a keyword or a date in its own line takes them from nearby text,
 first match wins: the table column header, the other lines of its text box (nearest first),
 the text on the same row or above it, never below, within a quarter of the slide or page
