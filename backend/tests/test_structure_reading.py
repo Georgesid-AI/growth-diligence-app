@@ -1221,23 +1221,61 @@ def test_a_new_fiscal_year_end_re_verifies_the_model_readings(monkeypatch):
     assert after["ai_label"] == "Verified" and (after["period_start"], after["period_end"]) == ("2022-04-01", "2023-03-31")
 
 
-def test_a_reading_whose_match_depends_on_the_year_end_is_re_verified_under_the_new_one():
-    """"Year 1" counted from "Start: Jan 2025" is January to December 2025: a reading of it as the year
-    2025 holds with a December year-end only."""
-    from app.decks import CANDIDATES_COLLECTION, TEXT_COLLECTION
+def _processed(cells, labels, kind="table", header_rows=1, year_end=12):
+    """A deck holding one structure, read through process_deck with these labels (the revenue file mapped)."""
     from app import structures
-    structure = {"type": "table", "header_rows": 1, "ai": {"key": "k1"}, "cells": [
-        {"row": 1, "col": 1, "text": "Start: Jan 2025"}, {"row": 1, "col": 2, "text": "Year 1"},
-        {"row": 2, "col": 1, "text": "Revenue"}, {"row": 2, "col": 2, "text": "£2M"}]}
-    item = {"metric": "revenue", "period": "2025", "value": 2000000, "unit": "GBP", "actual_or_forecast": "forecast",
-            "unit_other": None, "value_cell": "r2c2", "period_cells": ["r1c2", "r1c1"], "proposed_flags": []}
-    db = _db()
-    db[TEXT_COLLECTION].docs.append({"audit_id": AUDIT, "deck_id": "d1", "structures": [structure]})
-    db[gateway.STRUCTURES_COLLECTION].docs.append({"audit_id": AUDIT, "key": "k1", "type": "table",
-                                                   "output": {"type": "table", "items": [item]}})
-    db[CANDIDATES_COLLECTION].docs.append({"id": "c1", "audit_id": AUDIT, "deck_id": "d1", "structure_key": "k1",
-                                           "status": "pending", "cell": "r2c2", "claim_type": "revenue",
-                                           "value": 2000000, "ai_status": "verified", "ai_label": "Verified"})
+    from app.decks import TEXT_COLLECTION
+    db = _db(fiscal_year_end=year_end)
+    db["datasets"].docs.append({"audit_id": AUDIT, "dtype": "revenue", "mapping": REVENUE_MAPPING,
+                                "mapped_at": "2026-10-05T00:00:00"})
+    db[TEXT_COLLECTION].docs.append({"audit_id": AUDIT, "deck_id": "d1", "file": "plan.pptx", "page_unit": "slide",
+                                     "structures": [{"type": kind, "slide": 3, "header_rows": header_rows,
+                                                     "cells": cells}]})
+    adapter = t.FakeAdapter(replies=[json.dumps({"type": kind, "labels": labels, "pairs": []})])
+    status = asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
+    assert status == structures.READ
+    return db
+
+
+def test_llm_structures_stores_the_reply_and_the_item_list_without_raw_text():
+    """Spec section 5, CLAUDE.md rule 17: the reply and the item list (id, cell, position, values, header ids), so every
+    label resolves to a value with its cell reference; no deck text, the raw text of an item included."""
+    cells = [{"row": 1, "col": 1, "text": "Channel"}, {"row": 1, "col": 2, "text": "Members"},
+             {"row": 2, "col": 1, "text": "Social"}, {"row": 2, "col": 2, "text": "Telegram(30K) Discord(150)"},
+             {"row": 3, "col": 1, "text": "Hours"}, {"row": 3, "col": 2, "text": "Approx. 2.500 hours"}]
+    db = _processed(cells, [_label("i1", "users", unit="count"), _label("i2", "users", unit="count"),
+                            _label("i3", "product")])
+    stored, = db[gateway.STRUCTURES_COLLECTION].docs
+    assert stored["output"] == {"type": "table", "labels": [_label("i1", "users", unit="count"),
+                                                            _label("i2", "users", unit="count"), _label("i3", "product")],
+                                "pairs": []}, "the reply as it came"
+    assert stored["items"] == {"dates": [], "lines": [], "items": [
+        {"id": "i1", "cell": "r2c2", "position": 1, "headers": ["r2c1", "r1c2"],
+         "values": [{"value": 30000, "dot_reading": None, "bracket_reading": "positive"},
+                    {"value": -30000, "dot_reading": None, "bracket_reading": "negative"}]},
+        {"id": "i2", "cell": "r2c2", "position": 2, "headers": ["r2c1", "r1c2"],
+         "values": [{"value": 150, "dot_reading": None, "bracket_reading": "positive"},
+                    {"value": -150, "dot_reading": None, "bracket_reading": "negative"}]},
+        {"id": "i3", "cell": "r3c2", "position": 1, "headers": ["r3c1", "r1c2"],
+         "values": [{"value": 2500, "dot_reading": "thousands", "bracket_reading": None},
+                    {"value": 2.5, "dot_reading": "decimal", "bracket_reading": None}]}]}
+    items = {i["id"]: i for i in stored["items"]["items"]}
+    assert all(items[label["item"]]["cell"] for label in stored["output"]["labels"]), "every label resolves to a cell"
+    flat = json.dumps(db[gateway.STRUCTURES_COLLECTION].docs + db["llm_calls"].docs, ensure_ascii=False, default=str)
+    for needle in ("Telegram", "(30K)", "30K", "Discord", "(150)", "Approx", "2.500", "Members", "Social", "raw"):
+        assert needle not in flat, f"{needle!r} was stored"
+
+
+def test_a_new_fiscal_year_end_re_verifies_a_reading_from_its_stored_labels_and_item_list():
+    """"Year 1" counted from "Start: Jan 2025" is January to December 2025: a reading of it as the year 2025 holds
+    with a December year-end only. Re-verification reads the stored reply and item list, never the deck text."""
+    from app import structures
+    from app.decks import CANDIDATES_COLLECTION
+    cells = [{"row": 1, "col": 1, "text": "Start: Jan 2025"}, {"row": 1, "col": 2, "text": "Year 1"},
+             {"row": 2, "col": 1, "text": "Revenue"}, {"row": 2, "col": 2, "text": "£2M"}]
+    db = _processed(cells, [_label("i1", period="2025", unit="GBP")])
+    row, = db[CANDIDATES_COLLECTION].docs
+    assert (row["ai_label"], row["item"]) == ("Verified", "i1")
     labels = []
     for year_end in (3, 12):
         asyncio.run(structures.reverify_audit(db, AUDIT, year_end))
@@ -1245,13 +1283,35 @@ def test_a_reading_whose_match_depends_on_the_year_end_is_re_verified_under_the_
     assert labels == ["AI suggestion, not verified", "Verified"]
 
 
+def test_re_verification_skips_a_reading_stored_under_v2_and_its_row_keeps_its_label():
+    """Spec section 5: reverify_audit skips readings stored under v2 (they hold no labels or item list)."""
+    from app import structures
+    from app.decks import CANDIDATES_COLLECTION, TEXT_COLLECTION
+    structure = {"type": "table", "header_rows": 1, "ai": {"key": "k1", "periods_corrected": 1}, "cells": [
+        {"row": 1, "col": 2, "text": "FY2025"}, {"row": 2, "col": 1, "text": "Revenue"}, {"row": 2, "col": 2, "text": "£2M"}]}
+    v2 = {"metric": "revenue", "period": "2024", "value": 2000000, "unit": "GBP", "actual_or_forecast": "forecast",
+          "unit_other": None, "value_cell": "r2c2", "period_cells": ["r1c2"], "proposed_flags": []}
+    db = _db()
+    db[TEXT_COLLECTION].docs.append({"audit_id": AUDIT, "deck_id": "d1", "structures": [structure],
+                                     "periods_corrected": 1})
+    db[gateway.STRUCTURES_COLLECTION].docs.append({"audit_id": AUDIT, "key": "k1", "type": "table", "prompt_version": "v2",
+                                                   "output": {"type": "table", "items": [v2]}})
+    db[CANDIDATES_COLLECTION].docs.append({"id": "c1", "audit_id": AUDIT, "deck_id": "d1", "structure_key": "k1",
+                                           "status": "pending", "cell": "r2c2", "claim_type": "revenue",
+                                           "value": 2000000, "ai_status": "verified", "ai_label": "Verified"})
+    assert asyncio.run(structures.reverify_audit(db, AUDIT, 3)) == 0
+    assert db[CANDIDATES_COLLECTION].docs[0]["ai_label"] == "Verified"
+    assert db[TEXT_COLLECTION].docs[0]["periods_corrected"] == 1
+
+
 def test_delete_audit_removes_model_outputs_cache_and_mapping(monkeypatch):
     client, db, adapter = _deck_api(monkeypatch)
     _map_revenue(client)
     _upload_deck(client)
     assert db[gateway.STRUCTURES_COLLECTION].docs and db["pseudonym_map"].docs and db["column_mappings"].docs
+    assert all(doc.get("items") for doc in db[gateway.STRUCTURES_COLLECTION].docs if "labels" in doc["output"])
     purged = client.delete(f"/api/audits/{AUDIT}").json()
-    assert purged["llm_purged"]["llm_structures"] > 0
+    assert purged["llm_purged"]["llm_structures"] > 0, "the replies and their item lists go with the audit"
     for name in (gateway.STRUCTURES_COLLECTION, "pseudonym_map", "column_mappings", "llm_calls", "deck_candidates",
                  "deck_text"):
         assert db[name].docs == [], name

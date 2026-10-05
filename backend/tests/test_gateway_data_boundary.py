@@ -995,24 +995,29 @@ def test_a_cap_refusal_logs_a_closed_reason_and_no_text(monkeypatch, caplog):
         assert needle not in "".join(lines), f"{needle!r} was logged"
 
 
-def test_a_corrected_period_stores_a_count_and_never_the_cell_text_or_the_rebuilt_period():
-    """Rule 17: llm_structures keeps the model's output as it came (its own period) and the number of periods
-    Python corrected; the header text the correction came from is not stored there."""
-    db = _structure_db()
-    text = "r1c2: FY2025\nr2c2: Apr\nr3c1: Revenue\nr3c2: $5M"
-    reply = json.dumps({"type": "table", "items": [
-        {"metric": "revenue", "period": "2025-04", "value": 5000000, "unit": "USD", "actual_or_forecast": "forecast",
-         "unit_other": None, "value_cell": "r3c2", "period_cells": ["r2c2", "r1c2"], "proposed_flags": []}]})
-    result, _ = _send(db, text, reply=reply)
-    structure = {"type": "table", "header_rows": 2, "cells": structure_redact.parse_structure_text(text)}
-    checked = structures.verify.verify(structure, result.items, 3)
-    asyncio.run(gateway.record_verification(db, STRUCTURE_AUDIT["id"], result.key,
-                                            [i["status"] for i in checked["items"]], checked["dropped"],
-                                            checked["periods_corrected"]))
+def test_a_corrected_period_stores_a_count_and_never_the_cell_text_the_raw_text_or_the_rebuilt_period():
+    """Rule 17: llm_structures keeps the model's reply as it came (its own period), the item list without raw text
+    and the number of periods Python corrected; the header text the correction came from is not stored there."""
+    from app.decks import TEXT_COLLECTION
+    db = _structure_db(fiscal_year_end=3)
+    db["datasets"].docs.append({"audit_id": STRUCTURE_AUDIT["id"], "dtype": "revenue", "mapped_at": "2026-10-05",
+                                "mapping": {"customer_id": "Customer"}})
+    cells = [{"row": 1, "col": 2, "text": "FY2025"}, {"row": 2, "col": 2, "text": "Apr"},
+             {"row": 3, "col": 1, "text": "Revenue"}, {"row": 3, "col": 2, "text": "$5M"}]
+    db[TEXT_COLLECTION].docs.append({"audit_id": STRUCTURE_AUDIT["id"], "deck_id": "d1", "file": "plan.pptx",
+                                     "structures": [{"type": "table", "slide": 2, "header_rows": 2, "cells": cells}]})
+    reply = json.dumps({"type": "table", "pairs": [], "labels": [
+        {"item": "i1", "metric": "revenue", "period": "2025-04", "unit": "USD", "unit_other": None,
+         "actual_or_forecast": "forecast"}]})
+    adapter = t.FakeAdapter(replies=[reply])
+    asyncio.run(structures.process_deck(db, STRUCTURE_AUDIT["id"], "d1", adapter=adapter, sleep=t._noop_sleep))
+    assert '"$5M"' not in adapter.payloads[0] and '\\"5M\\"' in adapter.payloads[0], "the raw text went out once"
     stored, = db[gateway.STRUCTURES_COLLECTION].docs
-    assert stored["output"]["items"][0]["period"] == "2025-04" and stored["periods_corrected"] == 1
+    assert stored["output"]["labels"][0]["period"] == "2025-04" and stored["periods_corrected"] == 1
+    assert stored["items"]["items"] == [{"id": "i1", "cell": "r3c2", "position": 1, "headers": ["r3c1", "r2c2", "r1c2"],
+                                         "values": [{"value": 5000000, "dot_reading": None, "bracket_reading": None}]}]
     flat = json.dumps(stored, default=str)
-    for needle in ("FY2025-04", "Apr", "Revenue", "$5M"):
+    for needle in ("FY2025-04", "Apr", "Revenue", "$5M", '"5M"', "raw"):
         assert needle not in flat, f"{needle!r} was stored"
 
 

@@ -226,7 +226,8 @@ async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None
                 sent.append({"page": page, "type": structure["type"], "at": datetime.now(timezone.utc).isoformat()})
             checked = verify.verify(structure, listed, result.labels, result.pairs, year_end, mode)
             await gateway.record_verification(db, audit_id, result.key, [x["status"] for x in checked["items"]],
-                                              checked["dropped"], checked["periods_corrected"])
+                                              checked["dropped"], checked["periods_corrected"],
+                                              structure_items.stored(listed))
             entry.update({k: checked[k] for k in ("dropped", "periods_corrected", "not_a_metric")})
             for item in checked["items"]:
                 candidate = candidate_from_item(item, structure, deck, result.model_type, year_end)
@@ -363,8 +364,10 @@ def _target_date(period: Optional[str]) -> Optional[str]:
 
 
 async def reverify_audit(db, audit_id: str, fiscal_year_end: int) -> int:
-    """A new fiscal year-end re-runs period mapping on the model's readings too: every stored item is
-    verified again under it and the open approval rows take the new label. Returns the rows changed."""
+    """A new fiscal year-end re-runs period mapping on the model's readings too: every stored reading is
+    verified again under it, from its stored labels and item list, and the open approval rows take the new
+    label. A reading stored under v2 holds no labels or item list: it is skipped and its rows keep their
+    labels (structure-labelling.md section 5). Returns the rows changed."""
     changed = 0
     decks = await db[TEXT_COLLECTION].find({"audit_id": audit_id}, {"_id": 0, "deck_id": 1, "structures": 1}).to_list(1000)
     mode = verify.unmatched_mode()
@@ -374,16 +377,18 @@ async def reverify_audit(db, audit_id: str, fiscal_year_end: int) -> int:
         for structure in found:
             key = (structure.get("ai") or {}).get("key")
             stored = await gateway.stored_structure(db, audit_id, key) if key else None
-            if not stored:
+            if not stored or "labels" not in (stored.get("output") or {}) or not stored.get("items"):
                 continue
-            checked = verify.verify(structure, stored["output"]["items"], fiscal_year_end, mode)
+            output = stored["output"]
+            checked = verify.verify(structure, stored["items"], output["labels"], output.get("pairs") or [],
+                                    fiscal_year_end, mode)
             await gateway.record_verification(db, audit_id, key, [x["status"] for x in checked["items"]],
                                               checked["dropped"], checked["periods_corrected"])
             structure["ai"] = {**structure["ai"], "periods_corrected": checked["periods_corrected"]}
             for item in checked["items"]:
                 result = await db[CANDIDATES_COLLECTION].update_one(
                     {"audit_id": audit_id, "deck_id": deck["deck_id"], "structure_key": key, "status": "pending",
-                     "cell": item["value_cell"], "claim_type": item["metric"], "value": item.get("value")},
+                     "item": item["item"]},
                     {"$set": {"ai_status": item["status"], "ai_label": verify.label(item["status"]),
                               "ai_checks": item.get("checks")}})
                 changed += getattr(result, "modified_count", 0)

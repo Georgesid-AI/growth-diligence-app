@@ -1567,10 +1567,11 @@ async def stored_structure(db, audit_id: str, key: str) -> Optional[dict]:
 
 
 async def record_verification(db, audit_id: str, key: str, statuses: List[str], dropped: int = 0,
-                              periods_corrected: int = 0) -> None:
-    """Store the verifier status of each item next to the model output it checks, and the number of
-    periods Python corrected (spec section 9). The output itself keeps the model's periods."""
-    await cache.set_structure_statuses(db, audit_id, key, statuses, dropped, periods_corrected)
+                              periods_corrected: int = 0, items: Optional[dict] = None) -> None:
+    """Store the verifier status of each item next to the model output it checks, the number of periods Python
+    corrected, and the item list the labels name, without raw text (structure-labelling.md section 5: ids,
+    cells, positions, values, header ids). The output itself keeps the model's periods."""
+    await cache.set_structure_statuses(db, audit_id, key, statuses, dropped, periods_corrected, items)
 
 
 # ---------------------------------------------------------------------------
