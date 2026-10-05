@@ -1019,7 +1019,7 @@ def test_the_live_run_drops_its_scratch_database_in_the_event_loop_it_ran_in(mon
     dropped = _motor_without_a_server(monkeypatch, ["consistency_run", "consistency_run_old", "growth_diligence"])
     run = script.run
 
-    async def live_run(decks, passes, db, adapter=None):
+    async def live_run(decks, passes, db, adapter=None, **kwargs):
         await db.client.list_database_names()            # a motor call binds the client to this loop, as an insert does
         return await run(decks, passes, script.MemoryDB(), script.FakeAdapter())     # no MongoDB, no live API
     monkeypatch.setattr(script, "run", live_run)
@@ -1060,7 +1060,7 @@ def test_a_failed_drop_keeps_the_paid_report(monkeypatch, tmp_path):
     _motor_without_a_server(monkeypatch, [], drop_fails=True)
     run = script.run
 
-    async def live_run(decks, passes, db, adapter=None):
+    async def live_run(decks, passes, db, adapter=None, **kwargs):
         return await run(decks, passes, script.MemoryDB(), script.FakeAdapter())
     monkeypatch.setattr(script, "run", live_run)
     monkeypatch.setattr(script, "REPORTS", tmp_path)
@@ -1068,6 +1068,170 @@ def test_a_failed_drop_keeps_the_paid_report(monkeypatch, tmp_path):
     with pytest.raises(AutoReconnect):
         script.main(["--yes", "--deck", "05-zero2hero.pdf"])
     assert [p.name.split("_")[0] for p in tmp_path.iterdir()] == ["consistency"]
+
+
+# ---------------------------------------------------------------------------
+# Provider errors: the HTTP status and error type are recorded, 429 and 529 are retried
+# ---------------------------------------------------------------------------
+CELL_MESSAGE = "cannot read cell 'Jane Doe (CEO)'"
+
+
+def _sdk_error(status, error_type, retry_after=None):
+    """The error the Anthropic SDK raises for this HTTP status. Its message and body quote a cell, as a provider
+    message may: neither reaches a log or llm_calls."""
+    anthropic = pytest.importorskip("anthropic")
+    httpx2 = pytest.importorskip("httpx2")
+    headers = {} if retry_after is None else {"retry-after": str(retry_after)}
+    response = httpx2.Response(status, headers=headers,
+                               request=httpx2.Request("POST", "https://api.anthropic.com/v1/messages"))
+    body = {"type": "error", "error": {"type": error_type, "message": CELL_MESSAGE}}
+    return anthropic.Anthropic(api_key="test")._make_status_error(CELL_MESSAGE, body=body, response=response)
+
+
+class _Failing(t.FakeAdapter):
+    """Raises `errors` from complete() and `count_errors` from count_tokens() in turn, then replays REPLY."""
+
+    def __init__(self, errors=(), count_errors=()):
+        super().__init__(replies=[json.dumps(REPLY)])
+        self.errors, self.count_errors = list(errors), list(count_errors)
+
+    def complete(self, **kwargs):
+        if self.errors:
+            self.calls += 1
+            raise self.errors.pop(0)
+        return super().complete(**kwargs)
+
+    def count_tokens(self, **kwargs):
+        if self.count_errors:
+            raise self.count_errors.pop(0)
+        return super().count_tokens(**kwargs)
+
+
+def _read_slept(db, adapter):
+    """read_structure with a sleep that records the backoff instead of waiting."""
+    slept = []
+
+    async def sleep(seconds):
+        slept.append(seconds)
+    return asyncio.run(gateway.read_structure(db, AUDIT, TEXT, "table", adapter=adapter, sleep=sleep)), slept
+
+
+def test_a_provider_error_is_logged_and_recorded_with_its_http_status_and_type(caplog):
+    """The live consistency run logged "reason=provider_error" and 0 tokens for every call after the first deck,
+    and nothing said why. The not-read line and the llm_calls record carry the HTTP status and the provider's
+    error type, for the call and for the token count before it; the message is never read."""
+    import logging
+    db = _db()
+    with caplog.at_level(logging.INFO):
+        result, slept = _read_slept(db, adapter := _Failing([_sdk_error(400, "invalid_request_error")]))
+    assert (result.status, adapter.calls, slept) == ("not_read", 1, []), "a 400 is not retried"
+    call, = db["llm_calls"].docs
+    assert (call["status"], call["http_status"], call["error_type"]) == ("provider_error", 400, "invalid_request_error")
+    assert "tokens=0/0 cost=0.000000 reason=provider_error status=400 type=invalid_request_error" in caplog.text
+
+    db = _db()
+    with caplog.at_level(logging.INFO):
+        result, _ = _read_slept(db, adapter := _Failing(count_errors=[_sdk_error(403, "permission_error")]))
+    assert (result.status, adapter.calls) == ("not_read", 0)
+    call, = db["llm_calls"].docs
+    assert (call["status"], call["http_status"], call["error_type"], call["input_tokens"], call["cache_hit"]) == \
+        ("provider_error", 403, "permission_error", 0, False), "a failed token count is recorded too"
+    assert "reason=provider_error status=403 type=permission_error" in caplog.text
+    assert "Jane Doe" not in caplog.text + json.dumps(db["llm_calls"].docs)
+
+
+def test_429_and_529_are_retried_three_times_honouring_retry_after(caplog):
+    """A burst of rate limits or overloads does not fail the structure: 3 attempts, each wait the longer of the
+    backoff (1 s, 2 s) and the provider's retry-after, at most RETRY_AFTER_MAX_SECONDS so the lock (300 s) cannot
+    expire mid-call. The token count is retried the same way."""
+    import logging
+    burst = [_sdk_error(429, "rate_limit_error", retry_after=7), _sdk_error(529, "overloaded_error")]
+    result, slept = _read_slept(_db(), adapter := _Failing(burst))
+    assert (result.status, adapter.calls, slept) == ("read", 3, [7.0, 2.0]), "retry-after 7 s, then the 2 s backoff"
+
+    db = _db()
+    with caplog.at_level(logging.INFO):
+        result, slept = _read_slept(db, adapter := _Failing([_sdk_error(429, "rate_limit_error", retry_after=600)] * 3))
+    assert (result.status, adapter.calls) == ("not_read", 3)
+    assert slept == [gateway.RETRY_AFTER_MAX_SECONDS] * 2 == [20.0, 20.0]
+    assert 4 * gateway.REQUEST_TIMEOUT_SECONDS + 2 * gateway.RETRY_AFTER_MAX_SECONDS < guards.LOCK_TTL_SECONDS, \
+        "the worst call under the lock (4 attempts at the timeout, 2 capped waits) fits in it"
+    call, = db["llm_calls"].docs
+    assert (call["status"], call["http_status"], call["error_type"]) == ("provider_unreachable", 429, "rate_limit_error")
+    assert "reason=provider_unreachable status=429 type=rate_limit_error" in caplog.text
+
+    result, slept = _read_slept(_db(), _Failing(count_errors=[_sdk_error(429, "rate_limit_error", retry_after=5)]))
+    assert (result.status, slept) == ("read", [5.0])
+
+
+def test_the_consistency_run_logs_one_not_read_line_per_structure_and_pass(caplog):
+    """On passes 2 and 3 each "structure not read" line printed twice: the lookup that counts cache hits called
+    the model when the cache missed, then the call with the cache bypassed did again. The lookup reads the cache
+    only, so a failed structure is sent once per pass, and its line names the HTTP status and error type."""
+    pytest.importorskip("pdfplumber")
+    import logging
+    script = _consistency_script()
+
+    class Failing(script.FakeAdapter):
+        calls = 0
+
+        def complete(self, **kwargs):
+            self.calls += 1
+            raise _sdk_error(400, "invalid_request_error")
+    adapter = Failing()
+    with caplog.at_level(logging.WARNING):
+        report = asyncio.run(script.run(["05-zero2hero.pdf"], 3, script.MemoryDB(), adapter))
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
+    assert (adapter.calls, len(lines), report["not_read"]) == (15, 15, 15), "5 structures, 3 passes, once each"
+    assert all(line.endswith("reason=provider_error status=400 type=invalid_request_error") for line in lines)
+    assert report["cache_hit_rate_pct"] == {"pass_2": 0.0, "pass_3": 0.0}
+
+
+def test_one_provider_error_does_not_stop_the_calls_after_it_in_the_deck_or_the_next():
+    """The circuit breaker (spec section 7: the per-audit lock, the daily spend cap, the retry policy) does not open
+    on an error: after a failed call the next structure and the next deck are still sent. Each deck is read in its
+    own audit, so it has its own lock, and the lock is released after every call."""
+    pytest.importorskip("pdfplumber")
+    script = _consistency_script()
+
+    class OnceFailing(script.FakeAdapter):
+        failed = False
+
+        def complete(self, **kwargs):
+            if not self.failed:
+                self.failed = True
+                raise _sdk_error(400, "invalid_request_error")
+            return super().complete(**kwargs)
+    db = script.MemoryDB()
+    report = asyncio.run(script.run(["05-zero2hero.pdf", "10-tea.pdf"], 1, db, OnceFailing()))
+    assert (report["not_read"], report["model_reads"]) == (1, 8), "the first of 5 + 3 structures only"
+    locks = db[guards.LOCKS_COLLECTION].docs
+    assert len(locks) == 2 and not any(lock["held"] for lock in locks), "one lock per deck, none left held"
+
+
+def test_the_consistency_run_pauses_between_structure_calls(monkeypatch, tmp_path):
+    """--pause (default 2 s) waits between structure calls, not after the last; --fake does not wait."""
+    pytest.importorskip("pdfplumber")
+    script = _consistency_script()
+    slept = []
+
+    async def sleep(seconds):
+        slept.append(seconds)
+    asyncio.run(script.run(["05-zero2hero.pdf"], 3, script.MemoryDB(), script.FakeAdapter(), pause=2.0, sleep=sleep))
+    assert slept == [2.0] * 14, "between the 15 structure calls"
+
+    _motor_without_a_server(monkeypatch, [])
+    run, pauses = script.run, []
+
+    async def live_run(decks, passes, db, adapter=None, **kwargs):
+        pauses.append(kwargs["pause"])
+        return await run(decks, passes, script.MemoryDB(), script.FakeAdapter())
+    monkeypatch.setattr(script, "run", live_run)
+    monkeypatch.setattr(script, "REPORTS", tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "not-used")
+    script.main(["--yes", "--deck", "05-zero2hero.pdf"])
+    script.main(["--yes", "--deck", "05-zero2hero.pdf", "--pause", "0.5"])
+    assert pauses == [2.0, 0.5]
 
 
 # ---------------------------------------------------------------------------

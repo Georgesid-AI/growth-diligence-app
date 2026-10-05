@@ -13,13 +13,16 @@ in tests/fixtures/decks/decks/ three times and reports:
 - roadmap items apart: how many, and how many of their dates Python rebuilt from the cited cells;
 - tokens and cost per deck, the fixed prompt's tokens and the average structure-text tokens;
 - the cache hit rate on passes 2 and 3.
-Passes 2 and 3 read the cache first to get the hit rate (expected 100%), then call the model with the
-cache bypassed, so agreement measures the model. Target: at least 95% agreement.
+Passes 2 and 3 look the cache up first to get the hit rate (expected 100%; the lookup never calls the model),
+then call the model with the cache bypassed, so agreement measures the model. Target: at least 95% agreement.
 
 Usage (from the repository root, with ANTHROPIC_API_KEY set and a MongoDB to keep the cache in):
     python scripts/consistency_run.py --yes [--passes 3] [--deck 05-zero2hero.pdf ...] [--out report.json]
-It prints one line per deck and pass, writes the report to docs/test-runs/consistency_<date>.md (-2, -3, ...
-for a later run that day) and ends with the report path and a summary line; --out also writes it as JSON.
+                                      [--pause 2]
+It waits --pause seconds (default 2) between structure calls; the gateway retries a 429 or 529 itself. It prints
+one line per deck and pass, writes the report to docs/test-runs/consistency_<date>.md (-2, -3, ... for a later
+run that day) and ends with the report path and a summary line; --out also writes it as JSON. A failed model
+call or token count logs one "structure not read" line to stderr, with its reason, HTTP status and error type.
 Each deck is read in its own throwaway audit (consent ticked) in the scratch database --db (default
 "consistency_run"; any name must start with it), dropped at the end unless --keep-db. At start the run drops
 every scratch database an earlier run left, crashed or kept. The audits stay within the 200,000-token cap;
@@ -278,11 +281,13 @@ def _disagreements(readings, types, pages):
     return rows, dict(sorted(by_type.items()))
 
 
-async def run(decks, passes, db, adapter=None):
+async def run(decks, passes, db, adapter=None, pause=0.0, sleep=None):
+    """`pause` seconds between structure calls, so a burst does not hit the provider's rate limit."""
     from app.decks import parser
     from app.llm import gateway
     from app.structures import redact, verify
 
+    sleep = sleep or asyncio.sleep
     counter = adapter or gateway.AnthropicAdapter()       # token counts only; read_structure gets `adapter`
     tokens = await fixed_tokens(counter)
     text_tokens = []                                       # per structure sent, the gateway's 3,000-token measure
@@ -294,6 +299,8 @@ async def run(decks, passes, db, adapter=None):
     unverified = {}                                        # (deck, index, cell, reason, detail) -> {passes}
     per_deck = {}
     hits = {p: [0, 0] for p in range(2, passes + 1)}     # pass -> [cache hits, lookups]
+    keys = {}                                              # (deck, index) -> the cache key of its last reading
+    calls = 0
     for d, file in enumerate(decks, 1):
         deck = parser.parse_deck((DECKS / file).read_bytes(), file)
         audit_id = f"consistency-{Path(file).stem}"
@@ -312,13 +319,16 @@ async def run(decks, passes, db, adapter=None):
         for n in range(1, passes + 1):
             read, tokens_before, cost_before = 0, usage["input_tokens"] + usage["output_tokens"], usage["cost_usd"]
             for i, structure, text, page in sent:
-                if n > 1:
-                    cached = await gateway.read_structure(db, audit_id, text, structure["type"], deck_id=file, page=page,
-                                                          adapter=adapter)
-                    hits[n][0] += int(cached.cache_hit)
+                if n > 1:                   # the cache only: a miss must not call the model a second time
+                    key = keys.get((file, i))
+                    hits[n][0] += int(bool(key) and await gateway.stored_structure(db, audit_id, key) is not None)
                     hits[n][1] += 1
+                if calls and pause:
+                    await sleep(pause)
+                calls += 1
                 result = await gateway.read_structure(db, audit_id, text, structure["type"], deck_id=file, page=page,
                                                       adapter=adapter, use_cache=n == 1)
+                keys[(file, i)] = result.key
                 stats["model_reads"] += int(not result.cache_hit)       # agreement needs the model, not the cache
                 usage["input_tokens"] += result.input_tokens
                 usage["output_tokens"] += result.output_tokens
@@ -519,7 +529,7 @@ async def live(args, decks):
                 await client.drop_database(name)
                 print(f"Dropped scratch database {name} left by an earlier run", flush=True)
         try:
-            report = await run(decks, args.passes, client[args.db])
+            report = await run(decks, args.passes, client[args.db], pause=args.pause)
             return report, write_report(report, REPORTS, args.passes)     # before the drop: a failed drop keeps it
         finally:
             if not args.keep_db:
@@ -535,6 +545,8 @@ def main(argv=None):
     ap.add_argument("--db", default=SCRATCH, help=f"the scratch database: {SCRATCH} or a name starting {SCRATCH}_")
     ap.add_argument("--keep-db", action="store_true", help="keep the scratch database until the next run")
     ap.add_argument("--out", help="also write the report as JSON to this file")
+    ap.add_argument("--pause", type=float, default=2.0,
+                    help="seconds between structure calls on a live run (default 2; --fake does not pause)")
     ap.add_argument("--yes", action="store_true", help="confirm the live API may be called and billed")
     ap.add_argument("--fake", action="store_true", help="no network, no MongoDB: check the script itself")
     args = ap.parse_args(argv)

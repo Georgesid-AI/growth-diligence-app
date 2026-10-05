@@ -864,6 +864,58 @@ def test_no_sent_text_in_a_log_llm_calls_or_llm_structures(caplog):
     assert all(r.exc_info is None for r in caplog.records)
 
 
+# Every key an llm_calls record may carry (rule 17): metadata, never text sent to or received from the provider.
+# http_status and error_type describe a provider error: the HTTP status and the provider's error code (or, when it
+# sends none that reads as a code, the exception's class name), never its message.
+LLM_CALLS_KEYS = frozenset({"run_id", "step", "prompt_version", "model", "input_tokens", "output_tokens",
+                            "estimated_cost_usd", "cache_hit", "status", "unmatched_numbers", "timestamp",
+                            "content_hash", "deck_id", "http_status", "error_type"})
+
+
+def test_a_provider_error_reaches_llm_calls_and_the_log_as_a_status_and_a_type_code_only(caplog):
+    import logging
+    anthropic = pytest.importorskip("anthropic")
+    httpx2 = pytest.importorskip("httpx2")
+    message = "cannot read cell 'Jane Doe (CEO)' in r2c2: £1,200,000"
+
+    def error(status, error_type):
+        response = httpx2.Response(status, request=httpx2.Request("POST", "https://api.anthropic.com/v1/messages"))
+        body = {"type": "error", "error": {"type": error_type, "message": message}}
+        return anthropic.Anthropic(api_key="test")._make_status_error(message, body=body, response=response)
+
+    class Failing(t.FakeAdapter):
+        def __init__(self, raised, on_count=False, replies=None):
+            super().__init__(replies=replies, raise_with=None if on_count else raised)
+            self.on_count, self.raised = on_count, raised
+
+        def count_tokens(self, **kwargs):
+            if self.on_count:
+                raise self.raised
+            return super().count_tokens(**kwargs)
+
+    db, narrative_db = _structure_db(), t.make_db()
+    with caplog.at_level(logging.DEBUG):
+        _send(db, GOOD_STRUCTURE)                                                    # read: the ok record's keys
+        for raised, on_count in ((error(400, "invalid_request_error"), False), (error(403, "permission_error"), True),
+                                 (error(400, "Jane Doe (CEO) may not"), False), (error(529, "overloaded_error"), False)):
+            asyncio.run(gateway.read_structure(db, STRUCTURE_AUDIT["id"], GOOD_STRUCTURE.replace("FY2025", "FY2027"),
+                                               "table", adapter=Failing(raised, on_count), sleep=t._noop_sleep))
+        asyncio.run(gateway.generate_narrative(narrative_db, RUN_ID, "growth_engine",
+                                               adapter=Failing(error(400, "invalid_request_error")),
+                                               sleep=t._noop_sleep))
+    records = db["llm_calls"].docs + narrative_db["llm_calls"].docs
+    assert [(r.get("http_status"), r.get("error_type")) for r in records] == [
+        (None, None), (400, "invalid_request_error"), (403, "permission_error"), (400, "BadRequestError"),
+        (529, "overloaded_error"), (400, "invalid_request_error")], "an error type that is not a code: the class name"
+    for record in records:
+        assert set(record) <= LLM_CALLS_KEYS, set(record) - LLM_CALLS_KEYS
+    logs = caplog.text + "".join(r.getMessage() for r in caplog.records)
+    for needle in ("Jane Doe", "£1,200,000", "cannot read cell"):
+        assert needle not in json.dumps(records, ensure_ascii=False), f"{needle!r} was stored"
+        assert needle not in logs, f"{needle!r} was logged"
+    assert "reason=provider_unreachable status=529 type=overloaded_error" in logs
+
+
 def test_a_corrected_period_stores_a_count_and_never_the_cell_text_or_the_rebuilt_period():
     """Rule 17: llm_structures keeps the model's output as it came (its own period) and the number of periods
     Python corrected; the header text the correction came from is not stored there."""

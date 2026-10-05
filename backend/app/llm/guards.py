@@ -35,7 +35,8 @@ STRUCTURE_CAP_MESSAGE = ("AI reading stopped: this audit reached its 200,000-tok
 
 # How long a lock may be held before it is treated as abandoned, so a worker
 # that died mid-call cannot wedge the step forever. Must exceed the worst live
-# call: 3 network attempts plus 1 reask at the 60 s request timeout = 240 s.
+# call: 3 network attempts plus 1 reask at the 60 s request timeout = 240 s,
+# plus 2 retry waits of at most gateway.RETRY_AFTER_MAX_SECONDS (20 s) = 280 s.
 LOCK_TTL_SECONDS = 300
 LOCK_POLL_SECONDS = 0.25
 
