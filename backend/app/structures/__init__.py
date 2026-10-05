@@ -320,7 +320,7 @@ def candidate_from_item(item: Dict, structure: Dict, deck: Dict, model_type: Opt
     period_cells = [by_id[c]["text"] for c in item.get("period_cells") or () if c in by_id]
     label = next((h["text"] for h in verify.header_cells(structure, cell) if h["row"] == cell.get("row")), None) \
         if cell else None
-    unit = item.get("unit")
+    unit = item.get("unit_other") if item.get("unit") == "other" else item.get("unit")   # "other": the ISO code
     target, stated = _target_date(item.get("period")), (" ".join(period_cells) or item.get("period"))
     source = {"file": deck["file"], **_where(structure), "kind": "structure", "structure": model_type or structure["type"],
               "cell": item["value_cell"]}

@@ -31,7 +31,7 @@ AUDIT_DOC = {"id": AUDIT, "company_name": "Zero2Hero", "client_name": "Northbrid
 TEXT = "r1c2: FY2025\nr1c3: FY2026\nr2c1: Revenue\nr2c2: £1,200,000\nr2c3: £1,500,000"
 REPLY = {"type": "table", "items": [
     {"metric": "revenue", "period": "FY2025", "value": 1200000, "unit": "GBP", "actual_or_forecast": "forecast",
-     "value_cell": "r2c2", "period_cells": ["r1c2"], "proposed_flags": []}]}
+     "unit_other": None, "value_cell": "r2c2", "period_cells": ["r1c2"], "proposed_flags": []}]}
 
 
 def _db(**audit):
@@ -86,6 +86,76 @@ def test_the_call_is_pinned_to_one_model_with_no_temperature_no_tools_and_the_st
     assert request["max_tokens"] == gateway.STRUCTURE_MAX_TOKENS
     assert set(request["json_schema"]["properties"]) == {"type", "items"}
     assert "claude-sonnet-5-5" in gateway.MODEL_PRICING_USD, "the pinned model has a price entry"
+
+
+# ---------------------------------------------------------------------------
+# Units: 20 listed currencies; any other ISO currency is "other", with its code in unit_other
+# ---------------------------------------------------------------------------
+LISTED_CURRENCIES = ("EUR", "USD", "GBP", "CHF", "BGN", "RON", "PLN", "CZK", "HUF", "SEK", "NOK", "DKK", "TRY", "UAH",
+                     "RSD", "JPY", "CNY", "INR", "AUD", "CAD")
+
+
+def test_the_output_schema_lists_20_currencies_and_other_with_the_code_in_unit_other():
+    from app.llm import schemas
+    schema = schemas.structure_output_schema()
+    item = schema["properties"]["items"]["items"]
+    assert item["properties"]["unit"] == {"anyOf": [
+        {"type": "string", "enum": [*LISTED_CURRENCIES, "other", "%", "x", "count", "days", "months", "years"]},
+        {"type": "null"}]}
+    assert item["properties"]["unit_other"] == {"anyOf": [{"type": "string"}, {"type": "null"}]}
+    assert item["required"] == list(item["properties"]) and item["additionalProperties"] is False
+    assert set(LISTED_CURRENCIES) < set(schemas.ISO_CURRENCIES), "listed codes are ISO 4217 codes"
+    assert not [code for code in schemas.ISO_CURRENCIES if code not in LISTED_CURRENCIES and code in json.dumps(schema)]
+
+
+ABSENT = object()
+
+
+@pytest.mark.parametrize("unit, unit_other, valid", [
+    ("other", "ZAR", True),
+    ("GBP", None, True),
+    ("%", None, True),
+    (None, None, True),
+    ("ZAR", None, False),                   # an unlisted code is not a unit of its own any more
+    ("other", None, False),                 # "other" names its code
+    ("other", "USD", False),                # a listed currency has its own value
+    ("other", "XYZ", False),                # not an ISO 4217 code
+    ("other", "zar", False),
+    ("other", "Jane Doe (CEO)", False),     # free text never passes
+    ("GBP", "GBP", False),                  # a code stands only beside "other"
+    ("%", "ZAR", False),
+    ("GBP", ABSENT, False),                 # exactly the schema's fields: unit_other is always written
+])
+def test_unit_other_holds_an_unlisted_iso_code_and_stands_only_beside_other(unit, unit_other, valid):
+    item = {**REPLY["items"][0], "unit": unit, "unit_other": unit_other}
+    if unit_other is ABSENT:
+        del item["unit_other"]
+    reply = json.dumps({"type": "table", "items": [item]})
+    if valid:
+        parsed = gateway.parse_structure_reply(reply, "table", TEXT)
+        assert (parsed.items[0].unit, parsed.items[0].unit_other) == (unit, unit_other)
+    else:
+        with pytest.raises(gateway.GatewayError, match="did not match the schema"):
+            gateway.parse_structure_reply(reply, "table", TEXT)
+
+
+def test_a_currency_outside_the_list_is_read_as_other_and_reaches_the_approval_row_as_its_code():
+    item = {**REPLY["items"][0], "unit": "other", "unit_other": "ZAR"}
+    result, _ = _read(_db(), replies=[{"type": "table", "items": [item]}])
+    assert result.status == "read", result.reason
+    assert (result.items[0]["unit"], result.items[0]["unit_other"]) == ("other", "ZAR")
+    structure = {"type": "table", "header_rows": 1, "cells": redact.parse_structure_text(TEXT)}
+    checked, = verify.verify(structure, result.items)["items"]
+    assert checked["status"] == verify.VERIFIED
+
+    def row(item):
+        found = structures.candidate_from_item(item, structure, {"file": "plan.pdf"}, None, 12)
+        return found["currency"], found["unit"]
+    assert row(checked) == ("ZAR", None)
+    assert row({**checked, "unit": "GBP", "unit_other": None}) == ("GBP", None)
+    assert row({**checked, "unit": "%", "unit_other": None}) == (None, "%")
+    stored_before = {k: v for k, v in checked.items() if k != "unit_other"}
+    assert row({**stored_before, "unit": "ZAR"}) == ("ZAR", None), "a reading stored under the old schema"
 
 
 def test_the_adapter_sends_no_tools_and_no_temperature_to_the_provider(monkeypatch):
@@ -249,9 +319,9 @@ def test_the_3000_cap_is_on_the_structure_text_alone_not_the_prompt_and_schema()
     assert (result.status, adapter.calls) == ("read", 1)
     whole = adapter.count_requests[1]
     assert whole["system"] and whole["json_schema"] and json.loads(whole["user_payload"])["text"] == TEXT
-    # The 200,000 cap counts the whole call: 192,300 used + 4,000 input + 4,000 max_tokens is over
+    # The 400,000 cap counts the whole call: 392,300 used + 4,000 input + 4,000 max_tokens is over
     # (with the text's 2,900 it would fit).
-    db["llm_calls"].docs.append({"run_id": AUDIT, "step": "structures", "cache_hit": False, "input_tokens": 187000,
+    db["llm_calls"].docs.append({"run_id": AUDIT, "step": "structures", "cache_hit": False, "input_tokens": 387000,
                                  "output_tokens": 1000, "estimated_cost_usd": 0.0, "timestamp": "2026-10-05T00:00:00"})
     adapter = t.FakeAdapter(replies=[json.dumps(REPLY)])
     adapter.text_tokens, adapter.input_tokens = 2900, 4000
@@ -259,28 +329,42 @@ def test_the_3000_cap_is_on_the_structure_text_alone_not_the_prompt_and_schema()
     assert result.status == "stopped" and adapter.calls == 0
 
 
-def test_the_200000_token_cap_counts_billed_input_and_output_and_stops_with_the_spec_message():
+def test_the_400000_token_cap_counts_billed_input_and_output_and_stops_with_the_spec_message():
     db = _db()
-    db["llm_calls"].docs.append({"run_id": AUDIT, "step": "structures", "cache_hit": False, "input_tokens": 190000,
+    db["llm_calls"].docs.append({"run_id": AUDIT, "step": "structures", "cache_hit": False, "input_tokens": 390000,
                                  "output_tokens": 4000, "estimated_cost_usd": 0.0, "timestamp": "2026-10-05T00:00:00"})
     adapter = t.FakeAdapter(replies=[json.dumps(REPLY)])
-    adapter.input_tokens = 2001            # 194,000 used + 2,001 input + 4,000 max_tokens > 200,000
+    adapter.input_tokens = 2001            # 394,000 used + 2,001 input + 4,000 max_tokens > 400,000
     result, _ = _read(db, adapter=adapter)
     assert result.status == "stopped" and adapter.calls == 0
-    assert result.reason == ("AI reading stopped: this audit reached its 200,000-token limit. The remaining "
+    assert result.reason == ("AI reading stopped: this audit reached its 400,000-token limit. The remaining "
                              "structures were read by Python only.")
     adapter.input_tokens = 2000            # exactly at the cap: the call goes out
     result, _ = _read(db, adapter=adapter)
     assert result.status == "read" and adapter.calls == 1
 
 
+def test_an_audit_of_8_decks_of_5_structures_fits_the_token_cap():
+    """At the live run's ~9,000 billed input tokens a read and up to 900 output tokens, the 40 reads of an audit of
+    8 decks of 5 structures each fit under the per-audit cap, and the 41st is refused. Under 200,000 the 20th was."""
+    class Read(t.FakeAdapter):
+        input_tokens, text_tokens = 9000, 100
+
+        def complete(self, **kwargs):
+            reply, tokens_in, _ = super().complete(**kwargs)
+            return reply, tokens_in, 900
+    db, adapter = _db(), Read(replies=[json.dumps({"type": "table", "items": []})])
+    statuses = [_read(db, f"r1c1: Revenue\nr1c2: {n}", adapter=adapter)[0].status for n in range(41)]
+    assert statuses == ["read"] * 40 + ["stopped"]
+
+
 def test_a_cap_refusal_logs_a_not_read_line(monkeypatch, caplog):
-    """A structure the daily spend cap or the 200,000-token cap refuses was not read and printed nothing, so a run
+    """A structure the daily spend cap or the 400,000-token cap refuses was not read and printed nothing, so a run
     that hit a cap showed only "0 of N structures read". It now logs reason=spend_cap or reason=token_cap."""
     import logging
     from datetime import datetime, timezone
     db = _db()
-    db["llm_calls"].docs.append({"run_id": AUDIT, "step": "structures", "cache_hit": False, "input_tokens": 194000,
+    db["llm_calls"].docs.append({"run_id": AUDIT, "step": "structures", "cache_hit": False, "input_tokens": 394000,
                                  "output_tokens": 4000, "estimated_cost_usd": 0.0, "timestamp": "2026-10-05T00:00:00"})
     with caplog.at_level(logging.INFO):
         result, adapter = _read(db)
@@ -346,7 +430,7 @@ def test_usage_gains_per_deck_cost_and_keeps_narrative_calls_apart():
     _read(db, deck_id="deck-1")
     _read(db, deck_id="deck-1")             # a cache hit
     usage = asyncio.run(gateway.usage_for_run(db, AUDIT))
-    assert usage.calls == 0 and usage.structure_calls == 1 and usage.structure_token_cap == 200000
+    assert usage.calls == 0 and usage.structure_calls == 1 and usage.structure_token_cap == 400000
     deck = usage.by_deck["deck-1"]
     assert (deck.calls, deck.cache_hits, deck.input_tokens, deck.output_tokens) == (1, 1, 1200, 300)
     assert deck.estimated_cost_usd == pytest.approx(gateway.estimate_cost_usd("claude-sonnet-5-5", 1200, 300))
@@ -417,7 +501,7 @@ def _api(monkeypatch, replies, consent=True):
 GERMAN = "Kunde,Rechnungsdatum,Betrag,Waehrung\nAcme GmbH,2025-01-31,100,EUR\nBeta AG,2025-02-28,200,EUR\n"
 MAPPING_REPLY = {"type": "column_mapping", "items": [
     {"metric": f, "period": None, "value": None, "unit": None, "actual_or_forecast": "unknown", "value_cell": cell,
-     "period_cells": [], "proposed_flags": []}
+     "unit_other": None, "period_cells": [], "proposed_flags": []}
     for f, cell in (("customer_id", "r1c1"), ("invoice_date", "r1c2"), ("amount", "r1c3"), ("currency", "r1c4"),
                     ("deal_id", "r1c1"))]}
 
@@ -591,7 +675,7 @@ def test_a_corrected_period_is_verified_counted_on_the_deck_and_the_models_perio
     from app.decks import TEXT_COLLECTION, CANDIDATES_COLLECTION
     literal = {"type": "table", "items": [
         {"metric": "revenue", "period": "2025-04", "value": 5000000, "unit": "USD", "actual_or_forecast": "forecast",
-         "value_cell": "r3c2", "period_cells": ["r2c2", "r1c2"], "proposed_flags": []}]}
+         "unit_other": None, "value_cell": "r3c2", "period_cells": ["r2c2", "r1c2"], "proposed_flags": []}]}
     client, db, adapter = _api(monkeypatch, [literal])
     db["audits"].docs[0]["fiscal_year_end"] = 3
     db["datasets"].docs.append({"audit_id": AUDIT, "dtype": "revenue", "mapping": REVENUE_MAPPING,
@@ -706,13 +790,13 @@ def test_uploading_the_same_deck_again_is_served_from_the_cache_and_lists_no_row
 def test_the_token_cap_stops_the_remaining_structures_and_the_deck_says_so(monkeypatch):
     client, db, adapter = _deck_api(monkeypatch)
     _map_revenue(client)
-    db["llm_calls"].docs.append({"run_id": AUDIT, "step": "structures", "cache_hit": False, "input_tokens": 194000,
+    db["llm_calls"].docs.append({"run_id": AUDIT, "step": "structures", "cache_hit": False, "input_tokens": 394000,
                                  "output_tokens": 0, "estimated_cost_usd": 0.0, "timestamp": "2026-10-05T00:00:00"})
     before = adapter.calls
     _upload_deck(client)
     deck = _deck(client)["decks"][0]
     assert adapter.calls == before and deck["ai_status"] == "stopped"
-    assert deck["ai_message"] == ("AI reading stopped: this audit reached its 200,000-token limit. The remaining "
+    assert deck["ai_message"] == ("AI reading stopped: this audit reached its 400,000-token limit. The remaining "
                                   "structures were read by Python only.")
     stored = db["deck_text"].docs[0]["structures"]
     assert {s["ai"]["status"] for s in stored} == {"stopped"}
@@ -741,7 +825,7 @@ def test_a_reading_whose_match_depends_on_the_year_end_is_re_verified_under_the_
         {"row": 1, "col": 1, "text": "Start: Jan 2025"}, {"row": 1, "col": 2, "text": "Year 1"},
         {"row": 2, "col": 1, "text": "Revenue"}, {"row": 2, "col": 2, "text": "£2M"}]}
     item = {"metric": "revenue", "period": "2025", "value": 2000000, "unit": "GBP", "actual_or_forecast": "forecast",
-            "value_cell": "r2c2", "period_cells": ["r1c2", "r1c1"], "proposed_flags": []}
+            "unit_other": None, "value_cell": "r2c2", "period_cells": ["r1c2", "r1c1"], "proposed_flags": []}
     db = _db()
     db[TEXT_COLLECTION].docs.append({"audit_id": AUDIT, "deck_id": "d1", "structures": [structure]})
     db[gateway.STRUCTURES_COLLECTION].docs.append({"audit_id": AUDIT, "key": "k1", "type": "table",
@@ -932,7 +1016,7 @@ def test_roadmap_items_are_reported_apart_from_the_verified_rate(tmp_path):
 
     def milestone(cell, period, cells):
         return {"metric": "product", "period": period, "value": None, "unit": None, "actual_or_forecast": "actual",
-                "value_cell": cell, "period_cells": cells, "proposed_flags": []}
+                "unit_other": None, "value_cell": cell, "period_cells": cells, "proposed_flags": []}
 
     class Tea(script.FakeAdapter):
         """The TEA roadmap (page 11), as the model might read four of its milestones."""
@@ -1009,11 +1093,21 @@ def test_each_unverified_item_gets_the_first_reason_that_applies(grid, header_ro
 def test_the_fields_that_differ_are_found_by_lining_items_up_by_value_cell(change, fields):
     script = _consistency_script()
     kept = {"metric": "revenue", "period": "FY2022", "value": 130550, "unit": "GBP", "actual_or_forecast": "forecast",
-            "value_cell": "r4c2", "period_cells": ["r1c2"], "proposed_flags": []}
+            "unit_other": None, "value_cell": "r4c2", "period_cells": ["r1c2"], "proposed_flags": []}
     item = {"metric": "revenue", "period": "FY2023", "value": 150000, "unit": "GBP", "actual_or_forecast": "forecast",
-            "value_cell": "r4c3", "period_cells": ["r1c3"], "proposed_flags": []}
+            "unit_other": None, "value_cell": "r4c3", "period_cells": ["r1c3"], "proposed_flags": []}
     second = [kept] if change is None else [kept, {**item, **change}]
     assert script.differing_fields([[kept, item], second, [kept, item]]) == fields
+
+
+def test_two_passes_writing_other_with_different_codes_differ_in_unit():
+    script = _consistency_script()
+    zar = {"metric": "revenue", "period": "FY2023", "value": 150000, "unit": "other", "unit_other": "ZAR",
+           "actual_or_forecast": "forecast", "value_cell": "r4c3", "period_cells": ["r1c3"], "proposed_flags": []}
+    mxn = {**zar, "unit_other": "MXN"}
+    assert script.differing_fields([[zar], [mxn], [zar]]) == ["unit"]
+    assert script.differing_fields([[zar], [zar], [zar]]) == []
+    assert script._item_key(zar) != script._item_key(mxn), "the old agreement key tells them apart too"
 
 
 def _motor_without_a_server(monkeypatch, names, drop_fails=False):
@@ -1096,6 +1190,26 @@ def test_a_failed_drop_keeps_the_paid_report(monkeypatch, tmp_path):
     with pytest.raises(AutoReconnect):
         script.main(["--yes", "--deck", "05-zero2hero.pdf"])
     assert [p.name.split("_")[0] for p in tmp_path.iterdir()] == ["consistency"]
+
+
+def test_a_live_run_writes_its_diagnostic_beside_the_report_before_the_drop(monkeypatch, tmp_path):
+    pytest.importorskip("pdfplumber")
+    import datetime
+    from pymongo.errors import AutoReconnect
+    script = _consistency_script()
+    _motor_without_a_server(monkeypatch, [], drop_fails=True)
+    run = script.run
+
+    async def live_run(decks, passes, db, adapter=None, **kwargs):
+        return await run(decks, passes, script.MemoryDB(), script.FakeAdapter(), diagnostic=kwargs["diagnostic"])
+    monkeypatch.setattr(script, "run", live_run)
+    monkeypatch.setattr(script, "REPORTS", tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "not-used")
+    with pytest.raises(AutoReconnect):
+        script.main(["--yes", "--diagnostic", "--deck", "05-zero2hero.pdf"])
+    day = datetime.date.today().isoformat()
+    assert sorted(p.name for p in tmp_path.iterdir()) == [f"consistency_{day}.md", f"consistency_{day}_diagnostic.md"]
+    assert "£ 250,000" in (tmp_path / f"consistency_{day}_diagnostic.md").read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -1260,6 +1374,110 @@ def test_the_consistency_run_pauses_between_structure_calls(monkeypatch, tmp_pat
     script.main(["--yes", "--deck", "05-zero2hero.pdf"])
     script.main(["--yes", "--deck", "05-zero2hero.pdf", "--pause", "0.5"])
     assert pauses == [2.0, 0.5]
+
+
+# ---------------------------------------------------------------------------
+# --diagnostic: the cell text behind each unverified item and disagreeing structure, public test decks only
+# ---------------------------------------------------------------------------
+def _seen(metric, value, unit, period, verifier):
+    return {"metric": metric, "value": value, "unit": unit, "period": period, "verifier": verifier}
+
+
+def test_the_diagnostic_gives_the_cell_text_and_every_pass_of_each_unverified_item_and_disagreeing_structure(
+        tmp_path):
+    """The report names a cell, not what it says. --diagnostic adds, for every unverified item and every
+    disagreeing structure: deck, page, cell id, the cell's text as sent to the model, the model's metric, value,
+    unit and period in each pass, and the verifier's result for each (verified or the reason), in a file of its own
+    beside the report. The report and its JSON keys are unchanged."""
+    pytest.importorskip("pdfplumber")
+    script = _consistency_script()
+    rows = []
+    report = asyncio.run(script.run(["05-zero2hero.pdf"], 3, script.MemoryDB(), _drifting(script)(), diagnostic=rows))
+    assert report == asyncio.run(script.run(["05-zero2hero.pdf"], 3, script.MemoryDB(), _drifting(script)())), \
+        "the report is the same with or without the diagnostic"
+    where = {"deck": "05-zero2hero.pdf", "page": 19, "type": "table"}
+    flagged = _seen("gross_profit", 50000, "GBP", "FY2023", "other (flag not reproduced)")
+    users = _seen("users", 200, "count", "FY2022", "period not rebuilt")
+    shared = [_seen("revenue", 250000, "GBP", "FY2024", "verified"),
+              _seen("users", 20000, "count", "FY2024", "value not in cell")]
+    assert [r for r in rows if r["section"] == "unverified"] == [
+        {**where, "section": "unverified", "cell": "r6c3", "cell_text": "£ 50,000",
+         "reason": "other (flag not reproduced)", "passes": [[flagged]] * 3},
+        {**where, "section": "unverified", "cell": "r2c2", "cell_text": "200", "reason": "period not rebuilt",
+         "passes": [[users]] * 3},
+        {**where, "section": "unverified", "cell": "r4c4", "cell_text": "£ 250,000", "reason": "value not in cell",
+         "passes": [shared] * 3}], "every item citing the cell, in each pass, with the verifier's result"
+    assert [r for r in rows if r["section"] == "disagreeing"] == [
+        {**where, "section": "disagreeing", "cell": "r4c3", "cell_text": "£ 150,000", "reason": None,
+         "passes": [[_seen("revenue", 150000, "GBP", "FY2023", "verified")],
+                    [_seen("revenue", 150000, "USD", "FY2023", "verified")],
+                    [_seen("revenue", 150000, "GBP", "2023", "verified")]]},
+        {**where, "type": "kpi_panel", "section": "disagreeing", "cell": "r3c1", "cell_text": "5K Users",
+         "reason": None, "passes": [[_seen("users", 5000, "count", "FY2023", "verified")]] * 2 + [[]]}], \
+        "the cells whose readings differ between passes, as the model wrote them"
+
+    path = script.write_report(report, tmp_path, 3, fake=True)
+    rows.append({**where, "section": "unverified", "cell": "r9c9", "cell_text": "Plan | B\nnext", "reason": "other",
+                 "passes": [None, [], [_seen("product", None, None, None, "other (no value)")]]})
+    diagnostic = script.write_diagnostic(rows, path, 3)
+    assert diagnostic == tmp_path / f"{path.stem}_diagnostic.md", "beside its report, named after it"
+    text = diagnostic.read_text(encoding="utf-8")
+    for line in (
+            f"# Consistency run {path.stem.split('_', 1)[1]}: diagnostic",
+            "| Deck | Page | Type | Cell | Cell text | Reason | Pass 1 | Pass 2 | Pass 3 |",
+            "| 05-zero2hero.pdf | 19 | table | r4c4 | £ 250,000 | value not in cell | "
+            + " | ".join(["revenue 250000 GBP FY2024: verified; users 20000 count FY2024: value not in cell"] * 3)
+            + " |",
+            "| 05-zero2hero.pdf | 19 | table | r9c9 | Plan \\| B next | other | not read | no item | product null null "
+            "null: other (no value) |",
+            "| Deck | Page | Type | Cell | Cell text | Pass 1 | Pass 2 | Pass 3 |",
+            "| 05-zero2hero.pdf | 19 | table | r4c3 | £ 150,000 | revenue 150000 GBP FY2023: verified | "
+            "revenue 150000 USD FY2023: verified | revenue 150000 GBP 2023: verified |",
+            "| 05-zero2hero.pdf | 19 | kpi_panel | r3c1 | 5K Users | users 5000 count FY2023: verified | users 5000 "
+            "count FY2023: verified | no item |"):
+        assert line in text.splitlines(), line
+    report_text = path.read_text(encoding="utf-8")
+    assert "5K Users" not in report_text and "£ 250,000" not in report_text, "the report itself holds no cell text"
+
+
+def test_the_diagnostic_runs_only_on_the_10_public_test_decks(monkeypatch, tmp_path, capsys):
+    """--diagnostic writes cell text, so it refuses any deck that is not one of the 10 public test decks, by file
+    name and SHA-256: another file in the folder, a public name holding other bytes, a path to a public deck. It
+    refuses before anything is read, sent or written; without --diagnostic every deck runs as before."""
+    pytest.importorskip("pdfplumber")
+    import hashlib
+    import shutil
+    import tempfile
+    script = _consistency_script()
+    on_disk = {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+               for p in DECKS.iterdir() if not p.name.startswith(".")}
+    assert script.PUBLIC_DECKS == on_disk and len(on_disk) == 10, "the 10 decks of the folder, byte for byte"
+    folder, temp = tmp_path / "decks", tmp_path / "temp"
+    folder.mkdir()
+    temp.mkdir()
+    shutil.copy(DECKS / "05-zero2hero.pdf", folder / "05-zero2hero.pdf")
+    shutil.copy(DECKS / "05-zero2hero.pdf", folder / "client-deck.pdf")
+    (folder / "10-tea.pdf").write_bytes((DECKS / "10-tea.pdf").read_bytes() + b"\n")
+    monkeypatch.setattr(script, "DECKS", folder)
+    monkeypatch.setattr(tempfile, "tempdir", str(temp))
+    for deck in ("client-deck.pdf", "10-tea.pdf", "../decks/05-zero2hero.pdf", str(folder / "05-zero2hero.pdf")):
+        with pytest.raises(SystemExit, match=f"--diagnostic runs on the 10 public test decks only: {deck} is not one"):
+            script.main(["--fake", "--diagnostic", "--deck", "05-zero2hero.pdf", "--deck", deck])
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with pytest.raises(SystemExit, match="public test decks only: client-deck.pdf"):
+        script.main(["--yes", "--diagnostic", "--deck", "client-deck.pdf"])
+    assert not any(temp.iterdir()), "refused before anything is written"
+    script.main(["--fake", "--deck", "client-deck.pdf"])
+    assert [p.name.endswith("_diagnostic.md") for p in temp.iterdir()] == [False], "without --diagnostic, as before"
+    capsys.readouterr()
+
+    script.main(["--fake", "--diagnostic", "--deck", "05-zero2hero.pdf"])
+    out = capsys.readouterr().out
+    diagnostic, = temp.glob("consistency_*_diagnostic.md")
+    assert diagnostic.with_name(diagnostic.name.replace("_diagnostic", "")).exists()
+    assert f"Diagnostic: {diagnostic}" in out.splitlines(), "its path is printed"
+    assert "£ 250,000" in diagnostic.read_text(encoding="utf-8") and "£ 250,000" not in out, \
+        "its cell text is not: stdout carries the report only"
 
 
 # ---------------------------------------------------------------------------

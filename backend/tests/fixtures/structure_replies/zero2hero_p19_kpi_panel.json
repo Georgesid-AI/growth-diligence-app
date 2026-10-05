@@ -12,6 +12,7 @@
     "period": "FY2023",
     "value": 150000,
     "unit": "GBP",
+    "unit_other": null,
     "actual_or_forecast": "forecast",
     "value_cell": "r2c1",
     "period_cells": [
@@ -24,6 +25,7 @@
     "period": "FY2023",
     "value": 5000,
     "unit": "count",
+    "unit_other": null,
     "actual_or_forecast": "forecast",
     "value_cell": "r3c1",
     "period_cells": [

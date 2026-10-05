@@ -1390,7 +1390,7 @@ async def read_structure(
 
         consent -> boundary and redaction check -> cache (audit, key) -> token count of the text
         alone (3,000 cap) -> token count of the whole call -> lock (step "structures") -> spend cap
-        -> token cap (200,000 per audit, with the whole call's input) -> provider
+        -> token cap (400,000 per audit, with the whole call's input) -> provider
         -> schema, type and cell check (one reask) -> store -> log
 
     Never raises for a model-side problem: the structure is then "Not read by AI" and Python's result
@@ -1430,7 +1430,7 @@ async def read_structure(
     user_payload = cache.canonical_json({"type": structure_type, "text": text})
     adapter = adapter or AnthropicAdapter()
     try:
-        # The 3,000-token cap is on the structure text alone; the 200,000 cap counts the whole call.
+        # The 3,000-token cap is on the structure text alone; the 400,000 cap counts the whole call.
         text_tokens = await _count_tokens(adapter, sleep, model=STRUCTURE_MODEL, system=None, user_payload=text,
                                           json_schema=None)
         if text_tokens > STRUCTURE_INPUT_CAP:

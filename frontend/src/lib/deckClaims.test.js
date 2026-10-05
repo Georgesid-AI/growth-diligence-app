@@ -160,8 +160,8 @@ describe("model readings in the approval list (docs/specs/llm-structure-reading.
     expect(deckRunLog({ ai_status: "waiting" })).toEqual(["AI reading: waiting for revenue file"]);
     expect(deckRunLog({ ai_status: "read", page_unit: "slide", sent_pages: [4, 7, 12], ai_cost_usd: 0.0123 }))
       .toEqual(["AI reading: read", "Sent to the model: slides 4, 7, 12", "Cost: $0.0123"]);
-    expect(deckRunLog({ ai_status: "stopped", ai_message: "AI reading stopped: this audit reached its 200,000-token limit. The remaining structures were read by Python only." }))
-      .toEqual(["AI reading: not read", "AI reading stopped: this audit reached its 200,000-token limit. The remaining structures were read by Python only."]);
+    expect(deckRunLog({ ai_status: "stopped", ai_message: "AI reading stopped: this audit reached its 400,000-token limit. The remaining structures were read by Python only." }))
+      .toEqual(["AI reading: not read", "AI reading stopped: this audit reached its 400,000-token limit. The remaining structures were read by Python only."]);
     expect(deckRunLog({})).toEqual([]);
   });
 

@@ -722,10 +722,10 @@ GOOD_MAPPING = ("r1c1: Customer\nr1c2: Invoice Date\nr1c3: Amount\nc2 sample: 20
                 "c2 sample: 2025-03-31\nc3 sample: 1200.50\nc1 profile: distinct 42, typical length 12, shape Aa Aa")
 STRUCTURE_REPLY = json.dumps({"type": "table", "items": [
     {"metric": "revenue", "period": "FY2025", "value": 1200000, "unit": "GBP", "actual_or_forecast": "forecast",
-     "value_cell": "r2c2", "period_cells": ["r1c2"], "proposed_flags": []}]})
+     "unit_other": None, "value_cell": "r2c2", "period_cells": ["r1c2"], "proposed_flags": []}]})
 MAPPING_REPLY = json.dumps({"type": "column_mapping", "items": [
     {"metric": "customer_id", "period": None, "value": None, "unit": None, "actual_or_forecast": "unknown",
-     "value_cell": "r1c1", "period_cells": [], "proposed_flags": []}]})
+     "unit_other": None, "value_cell": "r1c1", "period_cells": [], "proposed_flags": []}]})
 # Every reason a structure text is refused: codes, never text from the structure.
 STRUCTURE_REFUSALS = frozenset({"not_text", "empty", "raw_bytes", "file_name", "client_name", "engagement_reference",
                                 "not_cells", "cell_too_long", "redaction_changed", "too_many_header_rows",
@@ -864,6 +864,26 @@ def test_no_sent_text_in_a_log_llm_calls_or_llm_structures(caplog):
     assert all(r.exc_info is None for r in caplog.records)
 
 
+def test_unit_other_carries_an_iso_code_only_so_no_cell_text_is_stored_or_logged(caplog):
+    """unit_other is the one string a reply item fills itself (spec section 1): the ISO code of a currency outside the
+    listed 20, beside unit "other". A reply that writes cell text there is rejected (one reask, then not read) and
+    the text reaches neither llm_structures, llm_calls nor a log."""
+    import logging
+    item = {**json.loads(STRUCTURE_REPLY)["items"][0], "unit": "other", "unit_other": "Revenue £1,200,000"}
+    db = _structure_db()
+    with caplog.at_level(logging.DEBUG):
+        result, adapter = _send(db, GOOD_STRUCTURE, reply=json.dumps({"type": "table", "items": [item]}))
+    assert (result.status, adapter.calls) == ("not_read", 2)
+    stored = json.dumps(db[gateway.STRUCTURES_COLLECTION].docs + db["llm_calls"].docs, ensure_ascii=False, default=str)
+    logs = caplog.text + "".join(r.getMessage() for r in caplog.records)
+    for needle in ("Revenue", "£1,200,000"):
+        assert needle not in stored and needle not in logs, needle
+    db = _structure_db()
+    result, _ = _send(db, GOOD_STRUCTURE, reply=json.dumps({"type": "table", "items": [{**item, "unit_other": "ZAR"}]}))
+    stored, = db[gateway.STRUCTURES_COLLECTION].docs
+    assert result.status == "read" and stored["output"]["items"][0]["unit_other"] == "ZAR"
+
+
 # Every key an llm_calls record may carry (rule 17): metadata, never text sent to or received from the provider.
 # http_status and error_type describe a provider error: the HTTP status and the provider's error code (or, when it
 # sends none that reads as a code, the exception's class name), never its message.
@@ -927,7 +947,7 @@ def test_a_cap_refusal_logs_a_closed_reason_and_no_text(monkeypatch, caplog):
     assert set(gateway.CAP_REASONS) == {"daily_spend_cap_exceeded", "structure_token_cap_reached"}
     db = _structure_db()
     db["llm_calls"].docs.append({"run_id": STRUCTURE_AUDIT["id"], "step": "structures", "cache_hit": False,
-                                 "input_tokens": 198000, "output_tokens": 0, "estimated_cost_usd": 0.0,
+                                 "input_tokens": 398000, "output_tokens": 0, "estimated_cost_usd": 0.0,
                                  "timestamp": "2026-10-05T00:00:00"})
     with caplog.at_level(logging.DEBUG):
         _send(db, GOOD_STRUCTURE)
@@ -938,7 +958,7 @@ def test_a_cap_refusal_logs_a_closed_reason_and_no_text(monkeypatch, caplog):
         _send(spent, GOOD_STRUCTURE)
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
     assert [line.split("reason=")[1] for line in lines] == ["token_cap status=- type=-", "spend_cap status=- type=-"]
-    for needle in ("Revenue", "£1,200,000", "200,000-token", "spent today", "$"):
+    for needle in ("Revenue", "£1,200,000", "400,000-token", "spent today", "$"):
         assert needle not in "".join(lines), f"{needle!r} was logged"
 
 
@@ -949,7 +969,7 @@ def test_a_corrected_period_stores_a_count_and_never_the_cell_text_or_the_rebuil
     text = "r1c2: FY2025\nr2c2: Apr\nr3c1: Revenue\nr3c2: $5M"
     reply = json.dumps({"type": "table", "items": [
         {"metric": "revenue", "period": "2025-04", "value": 5000000, "unit": "USD", "actual_or_forecast": "forecast",
-         "value_cell": "r3c2", "period_cells": ["r2c2", "r1c2"], "proposed_flags": []}]})
+         "unit_other": None, "value_cell": "r3c2", "period_cells": ["r2c2", "r1c2"], "proposed_flags": []}]})
     result, _ = _send(db, text, reply=reply)
     structure = {"type": "table", "header_rows": 2, "cells": structure_redact.parse_structure_text(text)}
     checked = structures.verify.verify(structure, result.items, 3)
@@ -987,10 +1007,17 @@ def test_the_deck_parser_still_has_no_link_to_the_structure_path_or_the_gateway(
             assert "structures" not in re.split(r"[.\s\"'()]+", module), f"{path.name} imports {module}"
 
 
+# The --diagnostic file of scripts/consistency_run.py, beside its report: it holds the cell text of the 10 public
+# test decks (the script refuses any other deck), so the check below leaves it out by this name only.
+DIAGNOSTIC_SUFFIX = "_diagnostic.md"
+
+
 def test_the_consistency_run_prints_and_reports_no_text_sent_to_the_model(monkeypatch, tmp_path, capsys):
     """Rule 17 for scripts/consistency_run.py: its progress lines and its report (kept in docs/test-runs) carry
     deck file names, counts, rates, tokens and cost, never the text of a structure. Where passes disagree and why
-    items are unverified are told in closed words only: deck, page, type, cell id, field names, reasons."""
+    items are unverified are told in closed words only: deck, page, type, cell id, field names, reasons.
+    The one file excluded, by name, is the --diagnostic file beside the report, which holds cell text and is
+    written for the 10 public test decks only (spec section 11)."""
     pytest.importorskip("pdfplumber")
     import importlib.util
     import tempfile
@@ -1016,7 +1043,7 @@ def test_the_consistency_run_prints_and_reports_no_text_sent_to_the_model(monkey
     monkeypatch.setattr(script, "FakeAdapter", Drifting)
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     names = ["05-zero2hero.pdf", "02-moz.pdf"]
-    report = script.main(["--fake", "--deck", names[0], "--deck", names[1],
+    report = script.main(["--fake", "--diagnostic", "--deck", names[0], "--deck", names[1],
                           "--out", str(tmp_path / "consistency_report.json")])
     assert report["disagreements"] and report["unverified_items"], "the diagnostic sections have rows to check"
     for row in report["disagreements"]:
@@ -1033,7 +1060,11 @@ def test_the_consistency_run_prints_and_reports_no_text_sent_to_the_model(monkey
                                      "structure_text_avg", "structures_counted", "billed_input_per_model_read"}
     assert all(isinstance(n, (int, float)) for n in report["tokens"].values())
     assert isinstance(report["roadmap_items"], int) and isinstance(report["roadmap_dates_rebuilt"], int)
-    written = capsys.readouterr().out + "".join(p.read_text(encoding="utf-8") for p in tmp_path.glob("consistency_*"))
+    files = sorted(tmp_path.glob("consistency_*"))
+    excluded = [p for p in files if p.name.endswith(DIAGNOSTIC_SUFFIX)]
+    report_md, = [p for p in files if p.suffix == ".md" and p not in excluded]
+    assert [p.name for p in excluded] == [report_md.stem + DIAGNOSTIC_SUFFIX], "only the run's own diagnostic file"
+    written = capsys.readouterr().out + "".join(p.read_text(encoding="utf-8") for p in files if p not in excluded)
     sent = set()
     for name in names:
         for structure in parser.parse_deck((script.DECKS / name).read_bytes(), name)["structures"]:
@@ -1042,3 +1073,6 @@ def test_the_consistency_run_prints_and_reports_no_text_sent_to_the_model(monkey
     words = {text for text in sent if len(text) >= 4 and any(c.isalpha() for c in text)}
     assert len(words) > 50 and "Gross Profit" in words, "the check sees the decks' cell text"
     assert not sorted(text for text in words if text in written)
+    assert any(text in excluded[0].read_text(encoding="utf-8") for text in words), "the excluded file holds cell text"
+    with pytest.raises(SystemExit, match="public test decks only"):
+        script.main(["--fake", "--diagnostic", "--deck", "client-deck.pdf"])
