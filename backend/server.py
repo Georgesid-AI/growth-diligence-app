@@ -659,7 +659,8 @@ async def upload_deck(audit_id: str, background: BackgroundTasks, file: UploadFi
 async def list_deck_candidates(audit_id: str):
     """The audit's decks (no parsed text), most recently uploaded first, and their candidates:
     grouped by deck in that order; within a deck the ones to review first, then by slide or page."""
-    if not await db.audits.find_one({"id": audit_id}, {"id": 1}):
+    audit = await db.audits.find_one({"id": audit_id}, {"id": 1, "structure_reading_consent": 1})
+    if not audit:
         raise HTTPException(404, "Audit not found")
     deck_fields = {"_id": 0, "deck_id": 1, "file": 1, "format": 1, "page_unit": 1, "pages": 1, "uploaded_at": 1,
                    "ai_status": 1, "ai_message": 1, "sent": 1}
@@ -671,6 +672,9 @@ async def list_deck_candidates(audit_id: str):
         d["sent_pages"] = sorted({s["page"] for s in d.pop("sent", None) or [] if s.get("page") is not None})
         usage = by_deck.get(d["deck_id"])
         d["ai_cost_usd"] = usage.estimated_cost_usd if usage else 0.0
+        # Uploaded while AI reading was off (or before it existed) and not read since: re-upload to read.
+        d["uploaded_before_consent"] = audit.get("structure_reading_consent") is True and \
+            d.get("ai_status") in (None, structures.PYTHON_ONLY)
     rank = {d["deck_id"]: i for i, d in enumerate(found)}
     candidates = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0}).to_list(10000)
     candidates.sort(key=lambda c: (rank.get(c.get("deck_id"), len(rank)), c.get("status") != "pending",

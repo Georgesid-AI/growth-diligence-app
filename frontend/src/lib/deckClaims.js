@@ -122,9 +122,14 @@ export const DECK_AI_STATUS = {
   python_only: "not read (AI-assisted reading is off for this audit)",
 };
 
+// A deck uploaded while AI reading was off is not read when reading is switched on: it is uploaded again.
+export const UPLOADED_BEFORE_CONSENT = "Uploaded before AI reading was enabled; re-upload to read.";
+
 /** ["AI reading: read", "Sent to the model: slides 4, 7, 12", "Cost: $0.0123"] for one deck; the stop
- *  message when the audit reached its token limit. */
+ *  message when the audit reached its token limit; the re-upload line for a deck uploaded while AI
+ *  reading was off, once it is on. */
 export function deckRunLog(deck) {
+  if (deck?.uploaded_before_consent) return [`AI reading: ${DECK_AI_STATUS.not_read}`, UPLOADED_BEFORE_CONSENT];
   if (!deck?.ai_status) return [];
   const lines = [`AI reading: ${DECK_AI_STATUS[deck.ai_status] || deck.ai_status}`];
   if (deck.ai_status === "stopped" && deck.ai_message) lines.push(deck.ai_message);

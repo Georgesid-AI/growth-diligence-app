@@ -895,12 +895,12 @@ def _flag_inconsistencies(candidates: List[Dict]) -> None:
                 key = (c["claim_type"], v["target_date"], (v["period_start"], v["period_end"]), c["currency"],
                        c["unit"] if c["unit"] in ("%", "x") else None)
                 seen.setdefault(key, []).append((i, (v["value"], v["value_high"])))
-    for (_, date, _, _, _), found in seen.items():
+    for (_, stated, _, _, _), found in seen.items():
         if len({value for _, value in found}) > 1:
             for i, _ in found:
                 dates = candidates[i].setdefault("inconsistent_dates", [])
-                if date not in dates:
-                    dates.append(date)
+                if stated not in dates:
+                    dates.append(stated)
     for c in candidates:
         c.setdefault("inconsistent_dates", [])
         c["inconsistent_dates"].sort()

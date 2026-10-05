@@ -17,7 +17,7 @@ BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 sys.path.insert(0, str(BACKEND / "tests"))
 
-from app.llm import gateway, guards, redaction  # noqa: E402
+from app.llm import gateway, guards  # noqa: E402
 from app.llm.schemas import StructureReply  # noqa: E402
 from app.structures import redact, verify  # noqa: E402
 import test_llm_gateway as t  # noqa: E402
@@ -558,6 +558,23 @@ def test_a_client_name_in_a_spreadsheet_header_goes_out_as_redacted(monkeypatch)
     client.post(f"/api/audits/{AUDIT}/datasets/revenue/upload", files={"file": ("r.csv", sheet)})
     sent = json.loads(adapter.payloads[0])["text"]
     assert "r1c3: Betrag [redacted]" in sent and "Northbridge" not in sent
+
+
+def test_a_deck_uploaded_while_consent_was_off_is_flagged_once_consent_is_on_and_is_not_read(monkeypatch):
+    from app.decks import TEXT_COLLECTION
+    client, db, adapter = _deck_api(monkeypatch, consent=False)
+    _upload_deck(client)
+    db[TEXT_COLLECTION].docs.append({"audit_id": AUDIT, "deck_id": "old", "file": "old.pptx", "structures": [],
+                                     "uploaded_at": "2020-01-01T00:00:00"})      # uploaded before AI reading existed
+    assert [d["uploaded_before_consent"] for d in _deck(client)["decks"]] == [False, False], "off: nothing to say"
+    client.put(f"/api/audits/{AUDIT}", json={"structure_reading_consent": True})
+    _map_revenue(client)
+    assert [d["uploaded_before_consent"] for d in _deck(client)["decks"]] == [True, True]
+    deck_reads = lambda: [p for p in adapter.payloads if json.loads(p)["type"] != "column_mapping"]  # noqa: E731
+    assert deck_reads() == [], "not read until it is uploaded again"
+    _upload_deck(client)
+    newest = _deck(client)["decks"][0]
+    assert (newest["ai_status"], newest["uploaded_before_consent"]) == ("read", False) and deck_reads()
 
 
 def test_a_deck_waits_for_the_mapped_revenue_file_and_is_read_once_it_is(monkeypatch):

@@ -1,5 +1,5 @@
 import {
-  ALL_DECKS, AI_SUGGESTION_LABEL, CLAIM_TYPES, INCONSISTENCY_LABEL, VERIFIED_LABEL, deckRunLog, REMOVE_DECK_CONFIRM, claimDate, claimsForDeck, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, sourceRef, statusCounts, typeLabel,
+  ALL_DECKS, AI_SUGGESTION_LABEL, CLAIM_TYPES, INCONSISTENCY_LABEL, UPLOADED_BEFORE_CONSENT, VERIFIED_LABEL, deckRunLog, REMOVE_DECK_CONFIRM, claimDate, claimsForDeck, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, sourceRef, statusCounts, typeLabel,
   DECK_SCOPE_CANNOT, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO,
 } from "./deckClaims";
 
@@ -163,5 +163,14 @@ describe("model readings in the approval list (docs/specs/llm-structure-reading.
     expect(deckRunLog({ ai_status: "stopped", ai_message: "AI reading stopped: this audit reached its 200,000-token limit. The remaining structures were read by Python only." }))
       .toEqual(["AI reading: not read", "AI reading stopped: this audit reached its 200,000-token limit. The remaining structures were read by Python only."]);
     expect(deckRunLog({})).toEqual([]);
+  });
+
+  test("a deck uploaded while AI reading was off says to re-upload it once reading is on", () => {
+    const line = "Uploaded before AI reading was enabled; re-upload to read.";
+    expect(UPLOADED_BEFORE_CONSENT).toBe(line);
+    expect(deckRunLog({ ai_status: "python_only", uploaded_before_consent: true })).toEqual(["AI reading: not read", line]);
+    expect(deckRunLog({ uploaded_before_consent: true })).toEqual(["AI reading: not read", line]);
+    expect(deckRunLog({ ai_status: "python_only", uploaded_before_consent: false }))
+      .toEqual(["AI reading: not read (AI-assisted reading is off for this audit)"]);
   });
 });
