@@ -129,11 +129,11 @@ async def delete_run(db, run_id: str) -> int:
 # ---------------------------------------------------------------------------
 # Structure readings (docs/specs/llm-structure-reading.md sections 8 and 9)
 # ---------------------------------------------------------------------------
-# Key = sha256 of the structure text, its type, the prompt cache tag and the model. Looked up by
-# (audit id, key), so no audit is served another audit's result. A record holds the model's JSON
-# output (values with cell references), the verifier status of each item, the prompt version, the
-# model, the content hash, tokens, cost, deck and page, Python's type and the model's when it
-# differs. Never the text that was sent.
+# Key = sha256 of the structure text, its type, the prompt cache tag, the model and the output
+# schema's hash (gateway.structure_key). Looked up by (audit id, key), so no audit is served another
+# audit's result. A record holds the model's JSON output (values with cell references), the verifier
+# status of each item, the prompt version, the model, the content hash, tokens, cost, deck and page,
+# Python's type and the model's when it differs. Never the text that was sent.
 STRUCTURES_COLLECTION = "llm_structures"
 
 

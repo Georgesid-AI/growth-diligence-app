@@ -116,9 +116,9 @@ larger one is not sent and is marked "Too large for AI reading". The 400,000-tok
 The token cap governs structure calls. The 15-call cap per run (`MAX_CALLS_PER_RUN`) counts narrative calls only.
 The existing circuit breaker applies: per-audit lock (step `structures`), daily spend cap, retry policy.
 
-**8. Cache.** The key is sha256 of text, type, prompt cache tag and model. Results are stored in `llm_structures` and
-looked up by (audit id, key), so no audit is served another audit's result. A hit makes no API call. Delete audit
-removes the stored results (`purge_run`).
+**8. Cache.** The key is sha256 of text, type, prompt cache tag, model and a hash of the output schema, so a schema
+change moves every key. Results are stored in `llm_structures` and looked up by (audit id, key), so no audit is
+served another audit's result. A hit makes no API call. Delete audit removes the stored results (`purge_run`).
 
 **9. Logging (rule 17).** `llm_structures` stores the model JSON output (with the model's own periods), the verifier
 status of each item, the number of periods corrected, prompt version, model, content hash, tokens, cost, deck and page. It also stores Python's type and, when the two differ,

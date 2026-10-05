@@ -1239,8 +1239,14 @@ async def load_structure_context(db, audit_id: str) -> dict:
 
 
 def structure_key(text: str, structure_type: str, prompt_tag: str, model: str) -> str:
-    """sha256 of the text, its type, the prompt cache tag and the model (spec section 8)."""
-    return cache.cache_key(STRUCTURE_STEP, structure_type, prompt_tag, model, text)
+    """sha256 of the text, its type, the prompt cache tag, the model and the output schema's hash (spec section 8):
+    a reading stored under another schema is never served."""
+    return cache.cache_key(STRUCTURE_STEP, structure_type, f"{prompt_tag}:{schema_hash()}", model, text)
+
+
+def schema_hash() -> str:
+    """sha256 of the structure output schema as sent."""
+    return content_hash(cache.canonical_json(structure_output_schema()))
 
 
 def content_hash(text: str) -> str:

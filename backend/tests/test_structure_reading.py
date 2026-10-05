@@ -95,6 +95,34 @@ LISTED_CURRENCIES = ("EUR", "USD", "GBP", "CHF", "BGN", "RON", "PLN", "CZK", "HU
                      "RSD", "JPY", "CNY", "INR", "AUD", "CAD")
 
 
+def test_a_change_to_the_output_schema_moves_every_structure_cache_key(monkeypatch):
+    """Spec section 8: the key holds a hash of the output schema, so a reading stored under another schema is never
+    served: the next read of the same structure misses the cache and calls the model."""
+    db = _db()
+    first, _ = _read(db)
+    again, adapter = _read(db)
+    assert (again.cache_hit, adapter.calls, again.key) == (True, 0, first.key)
+    schema = gateway.structure_output_schema()
+    monkeypatch.setattr(gateway, "structure_output_schema", lambda: {**schema, "required": ["items", "type"]})
+    changed, adapter = _read(db)
+    assert (changed.status, changed.cache_hit, adapter.calls) == ("read", False, 1) and changed.key != first.key
+
+
+def test_the_prompt_names_every_output_field_and_the_other_unit():
+    """The prompt lists exactly the schema's item fields: a unit is one of the 20 listed currency codes, or "other"
+    with the currency's ISO code in unit_other."""
+    import re
+    from app.llm import prompt_store, schemas
+    text = prompt_store.load(gateway.STRUCTURE_PROMPT).text
+    fields = text.split("Each item has exactly these fields:")[1].split("List the company")[0]
+    named = re.findall(r"^- `(\w+)`:", fields, re.M)
+    assert sorted(named) == sorted(schemas.structure_output_schema()["properties"]["items"]["items"]["properties"])
+    unit, unit_other = (re.search(rf"^- `{f}`:(.*?)(?=^- `)", fields, re.M | re.S).group(1)
+                        for f in ("unit", "unit_other"))
+    assert "20 currency codes" in unit and "`other`" in unit
+    assert "`other`" in unit_other and "ISO code" in unit_other and "null" in unit_other
+
+
 def test_the_output_schema_lists_20_currencies_and_other_with_the_code_in_unit_other():
     from app.llm import schemas
     schema = schemas.structure_output_schema()
@@ -345,17 +373,19 @@ def test_the_400000_token_cap_counts_billed_input_and_output_and_stops_with_the_
 
 
 def test_an_audit_of_8_decks_of_5_structures_fits_the_token_cap():
-    """At the live run's ~9,000 billed input tokens a read and up to 900 output tokens, the 40 reads of an audit of
-    8 decks of 5 structures each fit under the per-audit cap, and the 41st is refused. Under 200,000 the 20th was."""
+    """At the live run's 4,156 billed input tokens a read and about 300 output tokens, the 40 reads of an audit of 8
+    decks of 5 structures each use about 178,000 tokens. The cap stops reading at the 89th read: each call must leave
+    room for its input and its 4,000 max_tokens."""
     class Read(t.FakeAdapter):
-        input_tokens, text_tokens = 9000, 100
+        input_tokens, text_tokens = 4156, 100
 
         def complete(self, **kwargs):
             reply, tokens_in, _ = super().complete(**kwargs)
-            return reply, tokens_in, 900
+            return reply, tokens_in, 300
     db, adapter = _db(), Read(replies=[json.dumps({"type": "table", "items": []})])
-    statuses = [_read(db, f"r1c1: Revenue\nr1c2: {n}", adapter=adapter)[0].status for n in range(41)]
-    assert statuses == ["read"] * 40 + ["stopped"]
+    statuses = [_read(db, f"r1c1: Revenue\nr1c2: {n}", adapter=adapter)[0].status for n in range(89)]
+    assert statuses == ["read"] * 88 + ["stopped"]
+    assert asyncio.run(guards.structure_tokens_used(db, AUDIT)) == 88 * 4456
 
 
 def test_a_cap_refusal_logs_a_not_read_line(monkeypatch, caplog):
