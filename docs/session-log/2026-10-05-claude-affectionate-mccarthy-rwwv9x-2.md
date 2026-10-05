@@ -1,0 +1,5 @@
+2026-10-05, claude/affectionate-mccarthy-rwwv9x, decisions on PR #37.
+Deleted: the fiscal flag on period ranges and is_fiscal; substring customer matching (customer_pattern); the gateway's separate word check for short client names and engagement references.
+Optimized: a non-December year-end makes every year, quarter and half label fiscal (months stay calendar; "Q1 FY25" forms added); 3,000-token cap on the structure text alone; whole-word matching (punctuation, hyphens, case changes) for customers, and the client name and engagement reference sent as [redacted] with the structure still read; deck panel re-upload line; leftover risks closed with tests: the target's name inside a longer customer name shielded it, a whole-word match overlapping a non-word one was missed; 784 backend tests pass.
+Slow/unclear: a month under a fiscal-year header still gets no period, and the verifier accepts a year header cited for a monthly or quarterly value (both left for a decision); JS tests still ran in the node shim.
+Process change: let each decision name the spec lines it replaces, so spec, code and boundary test change in one step.
