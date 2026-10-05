@@ -1,11 +1,13 @@
 """Cost and loop guards.
 
-Three independent brakes, all backed by Mongo so they hold across workers:
+Four independent brakes, all backed by Mongo so they hold across workers:
 
-  * a hard per-run call cap (the 16th call is refused, never queued or retried);
+  * a hard per-run call cap on narrative calls (the 16th is refused, never queued or retried);
+  * a per-audit token cap on structure reading calls (200,000 billed tokens, input and output);
   * a daily spend ceiling across all runs;
   * a per-run+step advisory lock, so a second request that arrives while one is
-    in flight waits for that result instead of issuing another provider call.
+    in flight waits for that result instead of issuing another provider call. Structure
+    reading takes one lock per audit (step "structures").
 
 The lock is the circuit breaker against save-triggered regeneration loops: a UI
 that re-requests a narrative on every autosave gets the in-flight answer back.
@@ -24,8 +26,12 @@ logger = logging.getLogger("growth.llm")
 CALLS_COLLECTION = "llm_calls"
 LOCKS_COLLECTION = "llm_locks"
 
-MAX_CALLS_PER_RUN = 15
+MAX_CALLS_PER_RUN = 15             # narrative calls only
 DEFAULT_DAILY_SPEND_CAP_USD = 5.00
+STRUCTURE_STEP = "structures"      # the step every structure reading call is logged and locked under
+STRUCTURE_TOKEN_CAP = 200_000      # billed input and output tokens per audit, structure calls only
+STRUCTURE_CAP_MESSAGE = ("AI reading stopped: this audit reached its 200,000-token limit. The remaining "
+                         "structures were read by Python only.")
 
 # How long a lock may be held before it is treated as abandoned, so a worker
 # that died mid-call cannot wedge the step forever. Must exceed the worst live
@@ -60,10 +66,26 @@ def daily_spend_cap_usd() -> float:
 
 
 async def calls_made(db, run_id: str) -> int:
-    """Provider calls already billed to this run. Cache hits do not count."""
+    """Narrative calls already billed to this run. Cache hits and structure reading calls do not
+    count: the token cap governs those."""
     return await db[CALLS_COLLECTION].count_documents(
-        {"run_id": run_id, "cache_hit": False}
+        {"run_id": run_id, "cache_hit": False, "step": {"$ne": STRUCTURE_STEP}}
     )
+
+
+async def structure_tokens_used(db, run_id: str) -> int:
+    """Billed input and output tokens of this audit's structure reading calls."""
+    rows = await db[CALLS_COLLECTION].find(
+        {"run_id": run_id, "step": STRUCTURE_STEP, "cache_hit": False},
+        {"_id": 0, "input_tokens": 1, "output_tokens": 1}).to_list(100000)
+    return sum(int(r.get("input_tokens", 0)) + int(r.get("output_tokens", 0)) for r in rows)
+
+
+async def check_structure_token_cap(db, run_id: str, input_tokens: int, max_tokens: int) -> None:
+    """A call goes out only if the tokens used + its input + its max_tokens fit under the cap."""
+    used = await structure_tokens_used(db, run_id)
+    if used + input_tokens + max_tokens > STRUCTURE_TOKEN_CAP:
+        raise GuardRefusal("structure_token_cap_reached", STRUCTURE_CAP_MESSAGE)
 
 
 async def check_call_cap(db, run_id: str) -> None:

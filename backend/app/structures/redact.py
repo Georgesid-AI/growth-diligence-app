@@ -50,6 +50,71 @@ def parse_structure_text(text: str) -> Optional[List[Dict]]:
 
 
 # ---------------------------------------------------------------------------
+# The column-mapping text: a spreadsheet's header rows (at most 3, the 3 nearest the data), up to
+# 3 sample values per numeric or date column, and a profile instead of values per text column.
+#     r1c2: Invoice Date
+#     c2 sample: 2025-01-31
+#     c1 profile: distinct 42, typical length 12, shape Aa a
+# No text cell value is ever on this path: a sample is a number or an ISO date, nothing else.
+# ---------------------------------------------------------------------------
+MAX_HEADER_ROWS = 3
+MAX_SAMPLES = 3
+_SAMPLE_LINE = re.compile(r"^c(?P<col>\d+) sample: (?P<value>.+)$")
+_PROFILE_LINE = re.compile(r"^c(?P<col>\d+) profile: distinct (?P<distinct>\d+), typical length (?P<length>\d+), "
+                           r"shape (?P<shape>[Aa0 \-_./@:,#()+&']{1,20})$")
+# A sample value: a number (sign, currency symbol, separators, %) or an ISO date or date-time.
+SAMPLE_VALUE = re.compile(r"^(?:[-+(]?\s?(?:[£$€¥]\s?)?\d[\d,]*(?:\.\d+)?\s?%?\)?"
+                          r"|\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?)$")
+
+
+def column_text(headers: List[Dict], samples: Dict[int, List[str]], profiles: Dict[int, Dict]) -> str:
+    """The column-mapping text: header cells, then samples, then profiles, each in column order."""
+    lines = [structure_text(headers)] if headers else []
+    lines += [f"c{col} sample: {value}" for col in sorted(samples) for value in samples[col]]
+    lines += [f"c{col} profile: distinct {p['distinct']}, typical length {p['length']}, shape {p['shape']}"
+              for col, p in sorted(profiles.items())]
+    return "\n".join(line for line in lines if line)
+
+
+def parse_column_text(text: str) -> Optional[Dict]:
+    """{"headers": cells, "samples": {col: [values]}, "profiles": {col: {...}}}, or None when a line is
+    neither a header cell, a sample nor a profile."""
+    headers, samples, profiles = [], {}, {}
+    for line in (text or "").split("\n"):
+        sample, profile = _SAMPLE_LINE.match(line), _PROFILE_LINE.match(line)
+        if sample:
+            samples.setdefault(int(sample.group("col")), []).append(sample.group("value"))
+        elif profile:
+            profiles[int(profile.group("col"))] = {"distinct": int(profile.group("distinct")),
+                                                   "length": int(profile.group("length")), "shape": profile.group("shape")}
+        else:
+            cells = parse_structure_text(line)
+            if not cells:
+                return None
+            headers += cells
+    return {"headers": headers, "samples": samples, "profiles": profiles}
+
+
+def column_text_problem(text: str) -> Optional[str]:
+    """Why a column-mapping text may not reach the model, or None: more than 3 header rows, more than
+    3 samples for a column, a sample that is not a number or a date (a text cell value), or a column
+    with both samples and a profile."""
+    parsed = parse_column_text(text)
+    if parsed is None:
+        return "not_cells"
+    if len({c["row"] for c in parsed["headers"]}) > MAX_HEADER_ROWS or \
+            any(c["row"] + c.get("row_span", 1) - 1 > MAX_HEADER_ROWS for c in parsed["headers"]):
+        return "too_many_header_rows"
+    if any(len(v) > MAX_SAMPLES for v in parsed["samples"].values()):
+        return "too_many_samples"
+    if any(not SAMPLE_VALUE.match(v) for values in parsed["samples"].values() for v in values):
+        return "text_value"
+    if set(parsed["samples"]) & set(parsed["profiles"]):
+        return "text_value"
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Redaction (spec section 3)
 # ---------------------------------------------------------------------------
 EMAIL, PHONE, PERSON = "[email]", "[phone]", "[person]"

@@ -6,9 +6,11 @@ retries once before giving up. Numbers in the narrative are the calc engine's,
 never the model's - see `gateway.numeric_guard`.
 """
 import copy
+import math
+import re
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .. import formatting
 
@@ -131,9 +133,154 @@ class NarrativeResponse(BaseModel):
 
 class UsageResponse(BaseModel):
     run_id: str
-    calls: int
+    calls: int                      # narrative calls billed; the call cap counts these only
     input_tokens: int
     output_tokens: int
     estimated_cost_usd: float
     cache_hits: int
     call_cap: int
+    structure_calls: int = 0        # structure reading calls billed, capped by tokens instead
+    structure_tokens: int = 0
+    structure_token_cap: int = 0
+    by_deck: Dict[str, "DeckUsage"] = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Structure reading (docs/specs/llm-structure-reading.md section 1). One schema for every type.
+# No field is free text, so a reply cannot carry deck prose into a log.
+# ---------------------------------------------------------------------------
+DECK_TYPES = ("table", "chart", "kpi_panel", "roadmap", "hiring_table", "unit_economics", "use_of_funds")
+STRUCTURE_TYPES = DECK_TYPES + ("column_mapping",)
+# deck-parser.md section 2 claim types, "Use of funds", and the FIELD_DEFS fields of server.py. The
+# gateway imports neither the deck package nor the server, so the lists are written out here and a
+# test keeps them equal to claims.CLAIM_TYPES and FIELD_DEFS.
+CLAIM_METRICS = ("revenue", "revenue_growth", "growth", "retention", "sales", "customers", "users", "user_growth",
+                 "gross_margin", "gross_profit", "costs", "ebitda", "net_profit", "people", "product", "market")
+MAPPING_FIELDS = ("customer_id", "invoice_date", "amount", "currency", "service_start", "service_end", "segment",
+                  "revenue_type", "deal_id", "created_date", "close_date", "stage", "founder_involved", "month",
+                  "sm_expense", "revenue", "cost_of_revenue")
+STRUCTURE_METRICS = CLAIM_METRICS + ("use_of_funds",) + tuple(f for f in MAPPING_FIELDS if f not in CLAIM_METRICS)
+ISO_CURRENCIES = tuple("""AED AFN ALL AMD ANG AOA ARS AUD AWG AZN BAM BBD BDT BGN BHD BIF BMD BND BOB BRL BSD BTN BWP
+BYN BZD CAD CDF CHF CLP CNY COP CRC CUP CVE CZK DJF DKK DOP DZD EGP ERN ETB EUR FJD FKP GBP GEL GHS GIP GMD GNF
+GTQ GYD HKD HNL HTG HUF IDR ILS INR IQD IRR ISK JMD JOD JPY KES KGS KHR KMF KPW KRW KWD KYD KZT LAK LBP LKR LRD
+LSL LYD MAD MDL MGA MKD MMK MNT MOP MRU MUR MVR MWK MXN MYR MZN NAD NGN NIO NOK NPR NZD OMR PAB PEN PGK PHP PKR
+PLN PYG QAR RON RSD RUB RWF SAR SBD SCR SDG SEK SGD SHP SLE SOS SRD SSP STN SVC SYP SZL THB TJS TMT TND TOP TRY
+TTD TWD TZS UAH UGX USD UYU UZS VES VND VUV WST XAF XCD XOF XPF YER ZAR ZMW ZWL""".split())
+STRUCTURE_UNITS = ISO_CURRENCIES + ("%", "x", "count", "days", "months", "years")
+STRUCTURE_FLAGS = ("total_mismatch", "growth_mismatch")
+_CELL_ID = re.compile(r"^r[1-9]\d*c[1-9]\d*$")
+_PERIOD = re.compile(r"^(?:\d{4}(?:-(?:Q[1-4]|H[12]|0[1-9]|1[0-2]))?|FY\d{4}(?:/\d{2})?)$")
+
+
+class StructureItem(BaseModel):
+    """One figure the model read, with the cells it cites. Exactly these fields."""
+
+    model_config = {"extra": "forbid"}
+
+    metric: Literal[STRUCTURE_METRICS]
+    period: Optional[str]
+    value: Optional[float]
+    unit: Optional[Literal[STRUCTURE_UNITS]]
+    actual_or_forecast: Literal["actual", "forecast", "unknown"]
+    value_cell: str
+    period_cells: List[str]
+    proposed_flags: List[Literal[STRUCTURE_FLAGS]]
+
+    @field_validator("period")
+    @classmethod
+    def _period_format(cls, v):
+        if v is not None and not _PERIOD.match(v):
+            raise ValueError("period must be YYYY, YYYY-Qn, YYYY-Hn, YYYY-MM, FY2025 or FY2025/26")
+        return v
+
+    @field_validator("value_cell")
+    @classmethod
+    def _cell_format(cls, v):
+        if not _CELL_ID.match(v):
+            raise ValueError("value_cell must be one cell id like r4c3")
+        return v
+
+    @field_validator("period_cells")
+    @classmethod
+    def _period_cells(cls, v):
+        if len(v) > 2 or not all(_CELL_ID.match(c) for c in v):
+            raise ValueError("period_cells holds at most two cell ids")
+        return v
+
+    @field_validator("value")
+    @classmethod
+    def _finite(cls, v):
+        if v is not None and (math.isnan(v) or math.isinf(v)):
+            raise ValueError("value must be a finite number")
+        return v
+
+
+class StructureReply(BaseModel):
+    """What the model must return for one structure. No extra keys are accepted."""
+
+    model_config = {"extra": "forbid"}
+
+    type: Literal[STRUCTURE_TYPES]
+    items: List[StructureItem]
+
+
+def structure_output_schema() -> dict:
+    """The JSON schema sent as `output_config.format.schema`. Written by hand: structured outputs take
+    no array or string constraints, so the item limits (two period cells, the cell id and period
+    formats) are checked by StructureReply after the reply arrives."""
+    nullable = lambda schema: {"anyOf": [schema, {"type": "null"}]}  # noqa: E731
+    item = {
+        "type": "object",
+        "properties": {
+            "metric": {"type": "string", "enum": list(STRUCTURE_METRICS)},
+            "period": nullable({"type": "string"}),
+            "value": nullable({"type": "number"}),
+            "unit": nullable({"type": "string", "enum": list(STRUCTURE_UNITS)}),
+            "actual_or_forecast": {"type": "string", "enum": ["actual", "forecast", "unknown"]},
+            "value_cell": {"type": "string"},
+            "period_cells": {"type": "array", "items": {"type": "string"}},
+            "proposed_flags": {"type": "array", "items": {"type": "string", "enum": list(STRUCTURE_FLAGS)}},
+        },
+        "required": ["metric", "period", "value", "unit", "actual_or_forecast", "value_cell", "period_cells",
+                     "proposed_flags"],
+        "additionalProperties": False,
+    }
+    return {
+        "type": "object",
+        "properties": {"type": {"type": "string", "enum": list(STRUCTURE_TYPES)},
+                       "items": {"type": "array", "items": item}},
+        "required": ["type", "items"],
+        "additionalProperties": False,
+    }
+
+
+StructureStatus = Literal["read", "not_read", "too_large", "stopped", "no_consent", "refused"]
+
+
+class StructureRead(BaseModel):
+    """What read_structure returns. `items` is the validated model output (values with cell
+    references), never the text that was sent."""
+
+    status: StructureStatus
+    reason: Optional[str] = None
+    type: str
+    model_type: Optional[str] = None
+    items: List[dict] = Field(default_factory=list)
+    key: Optional[str] = None
+    cache_hit: bool = False
+    input_tokens: int = 0
+    output_tokens: int = 0
+    estimated_cost_usd: float = 0.0
+    prompt_version: Optional[str] = None
+    model: Optional[str] = None
+
+
+class DeckUsage(BaseModel):
+    calls: int = 0
+    cache_hits: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    estimated_cost_usd: float = 0.0
+
+
+UsageResponse.model_rebuild()
