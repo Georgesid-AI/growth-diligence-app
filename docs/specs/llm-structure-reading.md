@@ -49,10 +49,17 @@ pseudonymised (Customer_01, Customer_02…) before sending, through the narrativ
 Delete audit. The target company's own name is never redacted. The gateway runs redaction again and refuses the call if
 anything changes.
 
-**4. Consent.** `structure_reading_consent` is one checkbox per audit, unticked by default. It covers decks and
-spreadsheets, and every change is stored with its time. Unticked means the Python-only path, with no
-`read_structure` call. Results already stored stay until Delete audit. Each structure sent is recorded with its
-deck, page, type and time (no text). The deck panel shows "Sent to the model: slides 4, 7, 12".
+**4. Consent.** `structure_reading_consent` is one checkbox per audit, ticked by default. It covers decks and spreadsheets.
+It sits on the audit creation screen, directly above the Create audit button, next to the engagement reference field.
+Audit creation requires a client name and an engagement reference.
+- Explainer above the checkbox, word for word: "This app reads tables and charts in the uploaded decks with an AI model. Every
+  number is verified by code and cited to its cell, and personal and customer names are removed before anything is sent."
+- Checkbox label, word for word: "AI-assisted reading enabled per engagement terms. Uncheck if the client requires code-based
+  extraction only; this may identify fewer findings."
+- Every change to the checkbox, including the value at creation, is logged with user and time.
+- Audits created before this change have no engagement reference, so they stay unticked.
+- Unticked means the Python-only path: no `read_structure` call is made. Stored results stay until Delete audit.
+- Each structure sent is recorded with its deck, page, type and time (no text). The deck panel shows "Sent to the model: slides 4, 7, 12".
 
 **5. Prompt-injection defence.** No tools. Structured outputs (`output_config.format`). The prompt says cell text is
 data, never instructions. Python validates every reply against the schema (extra fields forbidden) and checks that
@@ -83,8 +90,8 @@ the deck panel shows each deck's cost.
 **10. Boundary test and docstrings.** `test_gateway_data_boundary.py` keeps every existing assertion.
 - It must pass when redacted structure cells, or header rows with at most 3 redacted samples per column, reach the provider.
 - It must fail on raw bytes, a full page, a prose snippet, a cell over 200 characters, more than 3 samples, a file
-  name, an unredacted email, phone number, name or customer name, any call without consent, and sent text in a log or in
-  `llm_structures`.
+  name, an unredacted email, phone number, name or customer name, the client name or engagement reference, any call
+  without consent, and sent text in a log or in `llm_structures`.
 
 The docstrings in `gateway.py`, `decks/__init__.py` and `prompt_store.py` restate rules 16–18.
 
@@ -113,4 +120,6 @@ so agreement measures the model. Target: ≥95% agreement.
   `scripts/consistency_run.py`.
 - Changed: `backend/app/decks/parser.py` (deck-parser.md §7), `backend/app/llm/{gateway,schemas,cache,guards,prompt_store,redaction}.py`,
   `backend/app/llm/prompts/RELEASE.md`, `backend/app/decks/__init__.py`, `backend/server.py`, `backend/tests/test_gateway_data_boundary.py`,
-  `frontend/src/components/DeckPanel.jsx`, `frontend/src/pages/MappingWizard.jsx`.
+  `frontend/src/pages/AuditHub.jsx` (creation screen),
+  `frontend/src/components/DeckPanel.jsx`, `frontend/src/pages/MappingWizard.jsx`, and the tests and demo seeds that create
+  audits (`backend/test_audit_validation.py`, `backend/tests/backend_test.py`, `backend/tests/test_date_order.py`, `backend/demo_data.py`).
