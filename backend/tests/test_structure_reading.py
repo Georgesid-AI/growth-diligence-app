@@ -81,13 +81,14 @@ def test_recorded_replies_replay_through_the_gateway_and_the_verifier(fixture):
     pytest.importorskip("pptx")
     structure = _structure(fixture)
     cells, _ = redact.redact_structure(structure["cells"], "Zero2Hero", {})
-    text = redact.structure_text(cells)
+    listed = structure_items.list_items({**structure, "cells": cells})
+    text = structure_items.text({**structure, "cells": cells}, listed)
     db = _db()
     result, adapter = _read(db, text, fixture["type"], [fixture["reply"]])
     assert result.status == "read" and adapter.calls == 1, result.reason
     sent = json.loads(adapter.payloads[0])
-    assert sent == {"type": fixture["type"], "text": text}, "the type and the structure text, nothing else"
-    checked = verify.verify(structure, result.items)
+    assert sent == {"type": fixture["type"], "text": text}, "the type, the structure text and its item list, nothing else"
+    checked = verify.verify(structure, listed, result.labels, result.pairs)
     statuses = [i["status"] for i in checked["items"]]
     assert {"verified": statuses.count("verified"), "suggestion": statuses.count("suggestion")} == fixture["expected"]
 
@@ -928,8 +929,16 @@ def test_an_audit_created_before_consent_stays_unticked_until_it_has_an_engageme
 # ---------------------------------------------------------------------------
 # Orchestration: decks wait for the mapped revenue file, then are read, verified and listed
 # ---------------------------------------------------------------------------
+def unlabelled(sent):
+    """The reply to a structure with no recorded reply: every listed item labelled not_a_metric, no pair."""
+    listed = redact.parse_item_lines(redact.split_items(sent["text"])[1] or []) or {"items": []}
+    return {"type": sent["type"], "pairs": [], "labels": [
+        {"item": i["id"], "metric": "not_a_metric", "period": None, "unit": None, "unit_other": None,
+         "actual_or_forecast": "unknown"} for i in listed["items"]]}
+
+
 class RecordedAdapter(t.FakeAdapter):
-    """Replays the recorded reply whose structure the request carries; an empty reading otherwise."""
+    """Replays the recorded reply whose structure the request carries; every item not_a_metric otherwise."""
 
     def __init__(self):
         super().__init__()
@@ -938,7 +947,7 @@ class RecordedAdapter(t.FakeAdapter):
     def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema):
         sent = json.loads(user_payload)
         reply = next((f["reply"] for f in self.fixtures if f["type"] == sent["type"] and f["match"] in sent["text"]),
-                     {"type": sent["type"], "items": []})
+                     None) or (unlabelled(sent) if sent["type"] != "column_mapping" else {"type": sent["type"], "items": []})
         self._replies = [json.dumps(reply)]
         self.calls_before = self.calls
         return super().complete(model=model, system=system, user_payload=user_payload, max_tokens=max_tokens,
@@ -982,11 +991,12 @@ def test_a_client_name_or_engagement_reference_in_a_deck_cell_goes_out_as_redact
              {"row": 2, "col": 1, "text": "Revenue (eng-2026-041)"}, {"row": 2, "col": 2, "text": "£1,200,000"}]
     db[TEXT_COLLECTION].docs.append({"audit_id": AUDIT, "deck_id": "d1", "file": "plan.pptx", "page_unit": "slide",
                                      "structures": [{"type": "table", "slide": 1, "header_rows": 1, "cells": cells}]})
-    adapter = t.FakeAdapter(replies=[json.dumps({"type": "table", "items": []})])
+    adapter = RecordedAdapter()
     status = asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
     assert (status, adapter.calls) == (structures.READ, 1)
     assert json.loads(adapter.payloads[0])["text"] == \
-        "r1c1: Prepared for [redacted]\nr1c2: FY2025\nr2c1: Revenue ([redacted])\nr2c2: £1,200,000"
+        "r1c1: Prepared for [redacted]\nr1c2: FY2025\nr2c1: Revenue ([redacted])\nr2c2: £1,200,000\nitems:\n" \
+        'i1 r2c2 "1,200,000" 1200000 h r2c1 r1c2', "the item list is built from the redacted cells"
 
 
 def test_a_client_name_in_a_spreadsheet_header_goes_out_as_redacted(monkeypatch):
@@ -1000,9 +1010,7 @@ def test_a_client_name_in_a_spreadsheet_header_goes_out_as_redacted(monkeypatch)
 def test_a_corrected_period_is_verified_counted_on_the_deck_and_the_models_period_stays_stored(monkeypatch):
     from app import structures
     from app.decks import TEXT_COLLECTION, CANDIDATES_COLLECTION
-    literal = {"type": "table", "items": [
-        {"metric": "revenue", "period": "2025-04", "value": 5000000, "unit": "USD", "actual_or_forecast": "forecast",
-         "unit_other": None, "value_cell": "r3c2", "period_cells": ["r2c2", "r1c2"], "proposed_flags": []}]}
+    literal = {"type": "table", "pairs": [], "labels": [_label("i1", period="2025-04", unit="USD")]}
     client, db, adapter = _api(monkeypatch, [literal])
     db["audits"].docs[0]["fiscal_year_end"] = 3
     db["datasets"].docs.append({"audit_id": AUDIT, "dtype": "revenue", "mapping": REVENUE_MAPPING,
@@ -1017,7 +1025,7 @@ def test_a_corrected_period_is_verified_counted_on_the_deck_and_the_models_perio
     assert (row["ai_label"], row["target_date"], row["period_start"], row["period_end"]) == \
         ("Verified", "FY2025-04", "2024-04-01", "2024-04-30")
     stored, = db[gateway.STRUCTURES_COLLECTION].docs
-    assert stored["output"]["items"][0]["period"] == "2025-04", "the stored reading keeps the model's period"
+    assert stored["output"]["labels"][0]["period"] == "2025-04", "the stored reading keeps the model's period"
     assert stored["periods_corrected"] == 1
     deck, = client.get(f"/api/audits/{AUDIT}/decks").json()["decks"]
     assert deck["periods_corrected"] == 1
@@ -1074,9 +1082,29 @@ def test_results_show_in_the_approval_list_labelled_and_citing_their_cell(monkey
         ("gross_profit", 150000, "Verified", "r2c1"), ("users", 5000, "Verified", "r3c1")]
     assert panel[0]["period_text"] == "23 Y/E" and panel[0]["target_date"] == "2023"
     table = [c for c in ai if c["sources"][0]["structure"] == "table"]
-    assert [(c["value"], c["ai_label"], c["sources"][0]["cell"]) for c in table] == [(20000, "AI suggestion, not verified", "r4c4")], \
-        "the 14 table values Python already lists in the same cells are not listed twice; the slip stays, unverified"
+    assert table == [], "the 24 table values Python already lists in the same cells are not listed twice"
+    stored = next(s["ai"] for s in db["deck_text"].docs[0]["structures"] if s["type"] == "table")
+    assert (stored["status"], stored["not_a_metric"]) == ("read", 0)
     assert all(c["status"] == "pending" for c in ai)
+
+
+def test_a_roadmaps_pairs_become_milestone_rows_dated_by_their_date_cells(monkeypatch):
+    """Buffer p6, recorded: each line paired with the date below it. A milestone row cites its line's cell, takes
+    its category's claim type and its date cell's period, has no value and is never Verified."""
+    pytest.importorskip("pptx")
+    client, db, adapter = _deck_api(monkeypatch)
+    _map_revenue(client)
+    _upload_deck(client, "03-buffer.pptx")
+    rows = [c for c in _deck(client)["candidates"] if c.get("origin") == "ai" and c["value"] is None
+            and c["sources"][0]["structure"] == "roadmap"]
+    assert sorted((c["sources"][0]["cell"], c["claim_type"], c["target_date"], c["period_text"], c["ai_label"])
+                  for c in rows) == [
+        ("r11c1", "product", "2013-01", "January 2013", "AI suggestion, not verified"),
+        ("r1c1", "product", "2011-01", "January 2011", "AI suggestion, not verified"),
+        ("r3c1", "product", "2011-10", "October 2011", "AI suggestion, not verified"),
+        ("r5c1", "product", "2011-10", "October 2011", "AI suggestion, not verified"),
+        ("r7c1", "product", "2011-12", "December 2011", "AI suggestion, not verified"),
+        ("r9c1", "product", "2012-01", "January 2012", "AI suggestion, not verified")]
 
 
 def test_unticked_consent_is_the_python_only_path(monkeypatch):

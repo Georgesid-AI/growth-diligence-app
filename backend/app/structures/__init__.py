@@ -161,6 +161,7 @@ from ..decks import TEXT_COLLECTION, CANDIDATES_COLLECTION  # noqa: E402
 from ..decks import claims  # noqa: E402
 from ..llm import gateway  # noqa: E402
 from ..llm import redaction as llm_redaction  # noqa: E402
+from . import items as structure_items  # noqa: E402
 from . import verify  # noqa: E402
 
 # A deck's AI reading status, as the deck panel shows it.
@@ -212,7 +213,9 @@ async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None
             continue
         cells, _ = redact.redact_structure(structure["cells"], audit.get("company_name"), mapping,
                                            redact.withheld_values(audit))
-        result = await gateway.read_structure(db, audit_id, redact.structure_text(cells), structure["type"],
+        redacted = {**structure, "cells": cells}
+        listed = structure_items.list_items(redacted)
+        result = await gateway.read_structure(db, audit_id, structure_items.text(redacted, listed), structure["type"],
                                               deck_id=deck_id, page=page, adapter=adapter, sleep=sleep)
         entry = {"status": result.status, "reason": result.reason, "key": result.key, "model_type": result.model_type,
                  "cache_hit": result.cache_hit}
@@ -221,10 +224,10 @@ async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None
         if result.status == "read":
             if not result.cache_hit:
                 sent.append({"page": page, "type": structure["type"], "at": datetime.now(timezone.utc).isoformat()})
-            checked = verify.verify(structure, result.items, year_end, mode)
+            checked = verify.verify(structure, listed, result.labels, result.pairs, year_end, mode)
             await gateway.record_verification(db, audit_id, result.key, [x["status"] for x in checked["items"]],
                                               checked["dropped"], checked["periods_corrected"])
-            entry["dropped"], entry["periods_corrected"] = checked["dropped"], checked["periods_corrected"]
+            entry.update({k: checked[k] for k in ("dropped", "periods_corrected", "not_a_metric")})
             for item in checked["items"]:
                 candidate = candidate_from_item(item, structure, deck, result.model_type, year_end)
                 if _cell_key(candidate) in known:

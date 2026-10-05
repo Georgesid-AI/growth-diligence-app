@@ -1,7 +1,10 @@
-"""The verifier (docs/specs/llm-structure-reading.md section 2, period rules of deck-parser.md section 2).
+"""The verifier (docs/specs/structure-labelling.md section 4, period rules of deck-parser.md section 2).
 
-A value is matched against its value_cell only, a period against its period_cells only; every
-proposed flag is recomputed from the matched values. Pure functions: no model, no database.
+Values and cells are Python's (app/structures/items.py), so nothing matches a value any more. The verifier joins
+each label to its item and rebuilds the period itself: from the item's lowest period header (with the year cell
+above), from its own cell, or in a roadmap from its adjacent date line. It records the dot and bracket readings,
+computes total_mismatch and growth_mismatch over the Verified items, drops not_a_metric items and never verifies an
+"other" item or a milestone. Pure functions: no model, no database.
 """
 import sys
 from pathlib import Path
@@ -11,7 +14,7 @@ import pytest
 BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 
-from app.structures import verify  # noqa: E402
+from app.structures import items, verify  # noqa: E402
 
 
 def _struct(rows, header_rows=1, kind="table", spans=None):
@@ -27,99 +30,91 @@ def _struct(rows, header_rows=1, kind="table", spans=None):
     return {"type": kind, "header_rows": header_rows, "cells": cells}
 
 
-def _item(value, value_cell, period=None, period_cells=(), metric="revenue", unit=None, flags=()):
-    return {"metric": metric, "period": period, "value": value, "unit": unit, "actual_or_forecast": "forecast",
-            "value_cell": value_cell, "period_cells": list(period_cells), "proposed_flags": list(flags)}
+def _lab(period=None, metric="revenue", unit=None, actual_or_forecast="forecast"):
+    """A label's fields, without its item id."""
+    return {"metric": metric, "period": period, "unit": unit, "unit_other": None,
+            "actual_or_forecast": actual_or_forecast}
+
+
+def _verify(structure, labels, pairs=(), year_end=12, mode="suggest"):
+    """verify.verify over Python's item list. `labels`: {cell or (cell, position): label fields}; every other
+    listed item is labelled not_a_metric, as a complete reply must. `pairs`: (line cell, date cell, category)."""
+    listed = items.list_items(structure)
+    reply = []
+    for item in listed["items"]:
+        given = labels.get((item["cell"], item["position"])) or \
+            (labels.get(item["cell"]) if item["position"] == 1 else None)
+        reply.append({"item": item["id"], **(given or _lab(metric=verify.NOT_A_METRIC))})
+    ids = {x["cell"]: x["id"] for x in listed["dates"] + listed["lines"]}
+    paired = [{"line": ids[line], "date": ids[date], "category": category} for line, date, category in pairs]
+    return verify.verify(structure, listed, reply, paired, year_end, mode)
+
+
+def _one(structure, cell, period=None, year_end=12, position=1, **label):
+    """The checked item of one cell, labelled with `period`."""
+    out = _verify(structure, {(cell, position): _lab(period, **label)}, year_end=year_end)
+    return next(i for i in out["items"] if i["value_cell"] == cell and i.get("position") == position)
 
 
 CORRECTED = "verified, period corrected"
 
 
-def _status(structure, item, year_end=12, mode="suggest"):
+def _status(structure, cell, period=None, year_end=12, **label):
     """The item's status, or CORRECTED when it is verified with the period Python rebuilt in place of the model's."""
-    out = verify.verify(structure, [item], year_end, mode)
-    if not out["items"]:
-        return "dropped"
-    got = out["items"][0]
-    return CORRECTED if got["status"] == verify.VERIFIED and got["checks"].get("period_corrected") else got["status"]
+    got = _one(structure, cell, period, year_end, **label)
+    return CORRECTED if got["status"] == verify.VERIFIED and got["checks"]["period_corrected"] else got["status"]
 
 
 PLAN = _struct([["", "FY2025", "FY2026"], ["Revenue", "£1,200,000", "£1,500,000"]])
 
 
 # ---------------------------------------------------------------------------
-# Numbers: normalised, then matched exactly
+# A checked item: its label joined to Python's item
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize("rows, value", [
-    ([["", "2025"], ["Revenue", "£1,200,000"]], 1200000),                 # currency and thousands separators
-    ([["", "2025"], ["Revenue", "€1.234,5"]], 1234.5),                    # the structure writes 1.234,5
-    ([["", "2025"], ["EBITDA", "(1,200)"]], -1200),                       # brackets are a negative
-    ([["", "2025"], ["EBITDA", "-$1,200"]], -1200),                       # the currency symbol is removed first
-    ([["", "2025"], ["Revenue", "$3.6m"]], 3600000),                      # m suffix
-    ([["", "2025"], ["ARR", "2bn"]], 2000000000),                         # bn suffix
-    ([["", "2025"], ["Users", "5K"]], 5000),                              # k suffix
-    ([["", "2025", ""], ["Revenue", "1.2", "£m"]], 1200000),              # a scale in the neighbouring cell
-    ([["£'000", "2025"], ["Revenue", "1,234"]], 1234000),                 # a scale in a header cell
-    ([["", "2025 (£m)"], ["Revenue", "4.5"]], 4500000),                   # a scale in the column header
-    ([["", "2025 %"], ["Gross margin", "62"]], 62),                       # % in a header: no scale
-])
-def test_a_value_matches_its_cell_after_normalisation(rows, value):
-    structure = _struct(rows)
-    assert _status(structure, _item(value, "r2c2", "2025", ["r1c2"])) == verify.VERIFIED
+def test_a_checked_item_keeps_todays_fields_plus_its_id_and_position():
+    got = _one(PLAN, "r2c2", "FY2025", unit="GBP")
+    assert got == {"item": "i1", "position": 1, "metric": "revenue", "period": "2025", "unit": "GBP",
+                   "unit_other": None, "actual_or_forecast": "forecast", "value": 1200000,
+                   "values": [{"value": 1200000, "dot_reading": None, "bracket_reading": None}],
+                   "value_cell": "r2c2", "period_cells": ["r1c2"], "proposed_flags": [], "status": verify.VERIFIED,
+                   "checks": {"period": True, "period_corrected": False, "dot_reading": None, "bracket_reading": None}}
 
 
-@pytest.mark.parametrize("rows, value", [
-    ([["", "2025"], ["Revenue", "£1,234,567"]], 1230000),                 # a rounded number does not match
-    ([["", "2025"], ["Revenue", "12,5"]], 12.5),                          # no 1.234,5 in the structure: no decimal comma
-    ([["", "2025"], ["Revenue", "$12 - $13 million"]], 12000000),         # two figures: no single value
-    ([["", "2025"], ["Revenue", "1.2"]], 1200000),                        # no scale anywhere
-])
-def test_a_value_that_is_not_its_cells_number_is_unmatched(rows, value):
-    assert _status(_struct(rows), _item(value, "r2c2", "2025", ["r1c2"])) == verify.SUGGESTION
-
-
-def test_the_value_is_matched_against_its_value_cell_only():
-    assert _status(PLAN, _item(1500000, "r2c3", "FY2026", ["r1c3"])) == verify.VERIFIED
-    # The same number sits in the structure, but not in the cited cell (whose period is cited right).
-    assert _status(PLAN, _item(1500000, "r2c2", "FY2025", ["r1c2"])) == verify.SUGGESTION
-    assert _status(PLAN, _item(1500000, "r9c9", "FY2026", ["r1c3"])) == verify.SUGGESTION, "a cell that does not exist"
-
-
-def test_an_item_with_no_value_is_never_verified():
-    roadmap = _struct([["Q3 2025", "Launch the API"]], header_rows=0, kind="roadmap")
-    for c in roadmap["cells"]:
-        c["box"] = c["col"]
-    assert _status(roadmap, _item(None, "r1c2", "2025-Q3", ["r1c1"], metric="product")) == verify.SUGGESTION
+def test_the_value_and_the_cell_are_pythons_whatever_the_label_says():
+    out = _verify(PLAN, {"r2c2": _lab("FY2025"), "r2c3": _lab("FY2026", metric="costs")})
+    assert [(i["value_cell"], i["value"], i["metric"]) for i in out["items"]] == \
+        [("r2c2", 1200000, "revenue"), ("r2c3", 1500000, "costs")]
 
 
 # ---------------------------------------------------------------------------
-# Periods: rebuilt from the cited cells only, compared by start and end date
+# Periods: rebuilt by Python from the item's own period cells, compared by start and end date
 # ---------------------------------------------------------------------------
-def test_the_period_is_matched_against_its_period_cells_only():
-    assert _status(PLAN, _item(1200000, "r2c2", "FY2025", ["r1c2"])) == verify.VERIFIED
-    assert _status(PLAN, _item(1200000, "r2c2", "FY2025", [])) == verify.SUGGESTION, "the right header, not cited"
-    assert _status(PLAN, _item(1200000, "r2c2", "FY2026", ["r1c3"])) == verify.SUGGESTION, "not a header of the value"
-    assert _status(PLAN, _item(1200000, "r2c2", "FY2026", ["r1c2"])) == CORRECTED, \
-        "another period: the value matches, so the period its cell gives replaces it"
+def test_the_period_is_rebuilt_from_the_lowest_period_header_and_replaces_the_models():
+    assert _status(PLAN, "r2c2", "FY2025") == verify.VERIFIED
+    got = _one(PLAN, "r2c2", "FY2026")
+    assert (got["status"], got["period"], got["model_period"], got["period_cells"]) == \
+        (verify.VERIFIED, "2025", "FY2026", ["r1c2"]), "another period: the header's replaces it, a correction"
+    got = _one(PLAN, "r2c2", None)
+    assert (got["period"], got["model_period"], got["checks"]["period_corrected"]) == ("2025", None, True)
+    out = _verify(PLAN, {"r2c2": _lab("2024"), "r2c3": _lab("FY2026")})
+    assert out["periods_corrected"] == 1
 
 
 def test_a_two_cell_period_is_a_quarter_and_the_year_above_it_in_the_same_column_range():
     grid = _struct([["", "2025", "", "", ""], ["", "Q1", "Q2", "Q3", "Q4"], ["Revenue", "$1M", "$2M", "$3M", "$4M"]],
                    header_rows=2, spans={(1, 2): 4})
-    assert _status(grid, _item(3000000, "r3c4", "2025-Q3", ["r2c4", "r1c2"])) == verify.VERIFIED
-    assert _status(grid, _item(3000000, "r3c4", "2025-Q3", ["r2c4"])) == verify.SUGGESTION, "Q3 alone is no period"
-    assert _status(grid, _item(3000000, "r3c4", "2025-Q3", ["r1c2", "r2c4"])) == verify.SUGGESTION, "year first"
+    got = _one(grid, "r3c4", "2025-Q3")
+    assert (got["status"], got["period"], got["period_cells"]) == (verify.VERIFIED, "2025-Q3", ["r2c4", "r1c2"])
     narrow = _struct([["", "2025", "", "", ""], ["", "Q1", "Q2", "Q3", "Q4"], ["Revenue", "$1M", "$2M", "$3M", "$4M"]],
                      header_rows=2)
-    assert _status(narrow, _item(3000000, "r3c4", "2025-Q3", ["r2c4", "r1c2"])) == verify.SUGGESTION, \
-        "the year cell does not cover the quarter's column"
+    assert _status(narrow, "r3c4", "2025-Q3") == verify.SUGGESTION, "the year cell does not cover the quarter's column"
 
 
 @pytest.mark.parametrize("month, period", [("Mar", "2025-03"), ("März", "2025-03"), ("МАРТ", "2025-03"),
                                            ("okt", "2025-10"), ("дек", "2025-12"), ("September", "2025-09")])
 def test_month_names_are_english_german_or_bulgarian_in_any_case(month, period):
     grid = _struct([["", "2025"], ["", month], ["Revenue", "€1M"]], header_rows=2)
-    assert _status(grid, _item(1000000, "r3c2", period, ["r2c2", "r1c2"])) == verify.VERIFIED
+    assert _status(grid, "r3c2", period) == verify.VERIFIED
 
 
 @pytest.mark.parametrize("header, period, year_end, status", [
@@ -127,7 +122,7 @@ def test_month_names_are_english_german_or_bulgarian_in_any_case(month, period):
     ("FY2025", "2025", 12, verify.VERIFIED),          # December: FY2025 is the calendar year
     ("FY2025", "2025", 3, verify.VERIFIED),           # March: both run 2024-04-01 to 2025-03-31
     ("2025E", "FY2025", 3, verify.VERIFIED),          # every year label is fiscal unless December
-    ("FY2025", "2024", 3, CORRECTED),                 # the value matches: FY2025 replaces 2024
+    ("FY2025", "2024", 3, CORRECTED),                 # FY2025 replaces 2024
     ("Q3 25", "2025-Q3", 3, verify.VERIFIED),
     ("Q1 FY25", "2025-Q1", 3, verify.VERIFIED),
     ("Q1 FY25", "FY2025", 3, CORRECTED),              # a quarter is not its fiscal year: 2025-Q1 replaces it
@@ -139,19 +134,19 @@ def test_month_names_are_english_german_or_bulgarian_in_any_case(month, period):
 ])
 def test_fiscal_years_follow_the_audit_year_end(header, period, year_end, status):
     grid = _struct([["", header], ["Revenue", "£2M"]])
-    assert _status(grid, _item(2000000, "r2c2", period, ["r1c2"]), year_end) == status
+    assert _status(grid, "r2c2", period, year_end) == status
 
 
 def test_a_quarter_under_a_fiscal_year_is_that_fiscal_quarter():
     grid = _struct([["", "FY2025", ""], ["", "Q3", "Q4"], ["Revenue", "$3M", "$4M"]], header_rows=2, spans={(1, 2): 2})
-    assert _status(grid, _item(3000000, "r3c2", "2025-Q3", ["r2c2", "r1c2"]), 3) == verify.VERIFIED
-    assert _status(grid, _item(4000000, "r3c3", "2025-Q4", ["r2c3", "r1c2"]), 12) == verify.VERIFIED
+    assert _status(grid, "r3c2", "2025-Q3", 3) == verify.VERIFIED
+    assert _status(grid, "r3c3", "2025-Q4", 12) == verify.VERIFIED
 
 
 @pytest.mark.parametrize("header, month, year_end, period, status", [
     ("FY2025", "Mar", 3, "2025-03", verify.VERIFIED),       # up to the year-end month: the named year
     ("FY2025", "Apr", 3, "2024-04", verify.VERIFIED),       # after it: the calendar year before
-    ("FY2025", "Apr", 3, "2025-04", CORRECTED),          # read literally: Python's April 2024 replaces it
+    ("FY2025", "Apr", 3, "2025-04", CORRECTED),             # read literally: Python's April 2024 replaces it
     ("2025", "Jul", 6, "2024-07", verify.VERIFIED),         # a plain year header too
     ("2025", "Jul", 6, "2025-07", CORRECTED),
     ("2025", "Jun", 6, "2025-06", verify.VERIFIED),
@@ -160,96 +155,71 @@ def test_a_quarter_under_a_fiscal_year_is_that_fiscal_quarter():
 ])
 def test_a_month_under_a_year_header_falls_inside_that_year(header, month, year_end, period, status):
     grid = _struct([["", header], ["", month], ["Revenue", "$5M"]], header_rows=2)
-    assert _status(grid, _item(5000000, "r3c2", period, ["r2c2", "r1c2"]), year_end) == status
+    assert _status(grid, "r3c2", period, year_end) == status
+    got = _one(grid, "r3c2", period, year_end)
+    assert got["period"] == f"FY{header[-4:]}-{got['period'][-2:]}" and got["period_cells"] == ["r2c2", "r1c2"]
 
 
 def test_the_period_comes_from_the_lowest_period_header():
     quarters = _struct([["", "2025", "", "", ""], ["", "Q1", "Q2", "Q3", "Q4"], ["Revenue", "$1M", "$2M", "$3M", "$4M"]],
                        header_rows=2, spans={(1, 2): 4})
-    assert _status(quarters, _item(3000000, "r3c4", "2025", ["r1c2"])) == verify.SUGGESTION, \
-        "a quarterly value cited against its year header only"
-    assert _status(PLAN, _item(1200000, "r2c2", "FY2025", ["r1c2"])) == verify.VERIFIED, "a yearly value"
+    got = _one(quarters, "r3c4", "2025")
+    assert (got["period"], got["status"], got["checks"]["period_corrected"]) == ("2025-Q3", verify.VERIFIED, True), \
+        "a quarterly value read as its year: its quarter replaces it"
     months = _struct([["", "2025", ""], ["", "Q3", ""], ["", "Jul", "Aug"], ["Revenue", "$1M", "$2M"]],
                      header_rows=3, spans={(1, 2): 2, (2, 2): 2})
-    assert _status(months, _item(1000000, "r4c2", "2025-Q3", ["r2c2", "r1c2"])) == verify.SUGGESTION, \
-        "a monthly value cited against its quarter"
-    assert _status(months, _item(1000000, "r4c2", "2025-07", ["r3c2", "r1c2"])) == verify.VERIFIED
+    got = _one(months, "r4c2", "2025-Q3")
+    assert (got["period"], got["period_cells"]) == ("FY2025-07", ["r3c2", "r1c2"]), "a month, then the year above it"
     by_row = _struct([["", "2025"], ["Jan", "£1M"]])
-    assert _status(by_row, _item(1000000, "r2c2", "2025", ["r1c2"])) == verify.SUGGESTION, \
-        "the month in its row is lower than the year above it"
+    assert _status(by_row, "r2c2", "2025") == verify.SUGGESTION, "period headers above and beside: no rule builds it"
     relative = _struct([["", "2025", ""], ["", "M1", "M2"], ["Revenue", "£1M", "£2M"]], header_rows=2,
                        spans={(1, 2): 2})
-    assert _status(relative, _item(1000000, "r3c2", "2025", ["r1c2"])) == verify.SUGGESTION
+    assert _status(relative, "r3c2", "2025") == verify.SUGGESTION
     years_by_row = _struct([["", "Revenue"], ["FY2025", "£1M"]])
-    assert _status(years_by_row, _item(1000000, "r2c2", "FY2025", ["r2c1"])) == verify.VERIFIED
+    assert _status(years_by_row, "r2c2", "FY2025") == verify.VERIFIED
 
 
-def test_a_matched_value_takes_the_period_python_rebuilds_from_its_cells():
-    grid = _struct([["", "FY2025"], ["", "Apr"], ["Revenue", "$5M"]], header_rows=2)
-    literal = _item(5000000, "r3c2", "2025-04", ["r2c2", "r1c2"])      # the model does not know the year-end
-    out = verify.verify(grid, [literal], 3)
-    item, = out["items"]
-    assert (item["status"], item["period"], item["model_period"], out["periods_corrected"]) == \
-        (verify.VERIFIED, "FY2025-04", "2025-04", 1)
-    assert item["checks"] == {"value": True, "period": True, "period_corrected": True, "flags": True,
-                              "dot_reading": None, "bracket_reading": None}
-    out = verify.verify(grid, [literal], 12)
-    item, = out["items"]
-    assert (item["status"], item["period"], out["periods_corrected"]) == (verify.VERIFIED, "FY2025-04", 0), \
-        "December: the model's reading holds, nothing is counted"
-    assert "model_period" not in item and item["checks"]["period_corrected"] is False
-    # No correction without the value, without cited cells, or from cells that are not the lowest period header.
-    out = verify.verify(grid, [_item(4000000, "r3c2", "2025-04", ["r2c2", "r1c2"])], 3)
-    assert (out["items"][0]["status"], out["items"][0]["period"], out["periods_corrected"]) == \
-        (verify.SUGGESTION, "2025-04", 0), "a value that does not match keeps the model's period and counts nothing"
-    assert _status(grid, _item(5000000, "r3c2", "2025-04", []), 3) == verify.SUGGESTION
-    assert _status(grid, _item(5000000, "r3c2", "2025", ["r1c2"]), 3) == verify.SUGGESTION
-    # A relative column: one month names a period; a longer span names none, so nothing replaces the model's.
-    month = _struct([["Start: Jan 2025", "M2"], ["Revenue", "£1M"]])
-    out = verify.verify(month, [_item(1000000, "r2c2", "2025-03", ["r1c2", "r1c1"])])
-    assert (out["items"][0]["period"], out["periods_corrected"]) == ("2025-02", 1)
-    year = _struct([["Start: Jan 2025", "Year 1"], ["Revenue", "£1M"]])
-    assert _status(year, _item(1000000, "r2c2", "2026", ["r1c2", "r1c1"])) == verify.SUGGESTION
-
-
-def test_a_null_period_matches_only_when_no_header_holds_a_period():
+def test_a_model_period_with_nothing_to_rebuild_from_is_period_not_rebuilt():
     no_period = _struct([["", "Plan"], ["Revenue", "£2M"]])
-    assert _status(no_period, _item(2000000, "r2c2", None, [])) == verify.VERIFIED
-    assert _status(PLAN, _item(1200000, "r2c2", None, [])) == verify.SUGGESTION, "the header holds FY2025"
+    got = _one(no_period, "r2c2", "2025")
+    assert (got["status"], got["period"], got["checks"]["period"], got["period_cells"]) == \
+        (verify.SUGGESTION, "2025", False, []), "the model's period stays, as an AI suggestion"
+
+
+def test_a_null_period_matches_when_no_header_holds_a_period():
+    no_period = _struct([["", "Plan"], ["Revenue", "£2M"]])
+    assert _status(no_period, "r2c2", None) == verify.VERIFIED
     quarter_only = _struct([["", "Q3"], ["Revenue", "£2M"]])
-    assert _status(quarter_only, _item(2000000, "r2c2", None, [])) == verify.VERIFIED, "Q3 with no year is no period"
-    assert _status(quarter_only, _item(2000000, "r2c2", "2025-Q3", ["r1c2"])) == verify.SUGGESTION, "never inferred"
-    assert _status(no_period, _item(2000000, "r2c2", None, ["r1c2"])) == verify.SUGGESTION, "null cites no cell"
+    assert _status(quarter_only, "r2c2", None) == verify.VERIFIED, "Q3 with no year is no period"
+    assert _status(quarter_only, "r2c2", "2025-Q3") == verify.SUGGESTION, "never inferred"
+    by_row = _struct([["", "2025"], ["Jan", "£1M"]])
+    assert _status(by_row, "r2c2", None) == verify.SUGGESTION, "a header period Python cannot rebuild"
 
 
 def test_relative_columns_have_no_period_unless_a_cell_states_the_start_date():
     relative = _struct([["", "M1", "M2"], ["Revenue", "£1M", "£2M"]])
-    assert _status(relative, _item(2000000, "r2c3", None, [])) == verify.VERIFIED
-    assert _status(relative, _item(2000000, "r2c3", "2025-02", ["r1c3"])) == verify.SUGGESTION
+    assert _status(relative, "r2c3", None) == verify.VERIFIED
+    assert _status(relative, "r2c3", "2025-02") == verify.SUGGESTION
     started = _struct([["Start: Jan 2025", "M1", "M2"], ["Revenue", "£1M", "£2M"]])
-    assert _status(started, _item(2000000, "r2c3", "2025-02", ["r1c3", "r1c1"])) == verify.VERIFIED
+    got = _one(started, "r2c3", "2025-03")
+    assert (got["status"], got["period"], got["period_cells"]) == (verify.VERIFIED, "2025-02", ["r1c3", "r1c1"])
     fiscal_start = _struct([["Start: Apr FY25", "Year 1"], ["Revenue", "£1M"]])
-    assert _status(fiscal_start, _item(1000000, "r2c2", "FY2025", ["r1c2", "r1c1"]), 3) == verify.VERIFIED, \
+    assert _status(fiscal_start, "r2c2", "FY2025", 3) == verify.VERIFIED, \
         "April of FY25 is April 2024 with a March year-end: Year 1 is FY2025"
-    assert _status(fiscal_start, _item(1000000, "r2c2", "FY2025", ["r1c2", "r1c1"]), 12) == verify.SUGGESTION
+    assert _status(fiscal_start, "r2c2", "FY2025", 12) == verify.SUGGESTION, "a year long: no label replaces the model's"
 
 
 def test_in_a_kpi_panel_the_top_line_of_the_box_is_its_header():
     panel = _struct([["23 Y/E"], ["Gross Profit £150K"], ["5K Users"]], header_rows=0, kind="kpi_panel")
     for c in panel["cells"]:
         c["box"] = 1
-    assert _status(panel, _item(150000, "r2c1", "FY2023", ["r1c1"], metric="gross_profit")) == verify.VERIFIED
-    assert _status(panel, _item(5000, "r3c1", "FY2023", ["r1c1"], metric="users")) == verify.VERIFIED
+    assert _status(panel, "r2c1", "FY2023", metric="gross_profit") == verify.VERIFIED
+    assert _status(panel, "r3c1", "FY2023", metric="users") == verify.VERIFIED
     other_box = _struct([["23 Y/E"], ["Gross Profit £150K"]], header_rows=0, kind="kpi_panel")
     other_box["cells"][0]["box"], other_box["cells"][1]["box"] = 1, 2
-    assert _status(other_box, _item(150000, "r2c1", "FY2023", ["r1c1"])) == verify.SUGGESTION, \
-        "another box's line is no header"
+    assert _status(other_box, "r2c1", "FY2023") == verify.SUGGESTION, "another box's line is no header"
 
 
-# ---------------------------------------------------------------------------
-# Cells the first live consistency run left unverified (docs/test-runs/consistency_2026-10-05_diagnostic.md),
-# parsed here from the public test decks they come from
-# ---------------------------------------------------------------------------
 DECKS = BACKEND.parent / "tests" / "fixtures" / "decks" / "decks"
 
 
@@ -265,111 +235,18 @@ def _text(structure, cell):
     return next(c["text"] for c in structure["cells"] if f"r{c['row']}c{c['col']}" == cell)
 
 
-def _checked(structure, item, year_end=12):
-    got, = verify.verify(structure, [item], year_end)["items"]
-    return got
-
-
-def test_a_dot_before_exactly_three_digits_matches_either_reading_and_records_which():
-    """clevergig p7: "Approx. 2.500 hours" is 2,500 hours written with a dot; read as 2.5 it never matched."""
-    panel = _deck_structure("04-clevergig.docx", 7, "kpi_panel")
-    assert (_text(panel, "r4c1"), _text(panel, "r6c1")) == ("Approx. 2.500 hours", "Approx. 6.250 hours")
-    for value, cell, reading in ((2500, "r4c1", "thousands"), (2.5, "r4c1", "decimal"),
-                                 (6250, "r6c1", "thousands"), (6.25, "r6c1", "decimal")):
-        got = _checked(panel, _item(value, cell))
-        assert (got["status"], got["checks"]["dot_reading"]) == (verify.VERIFIED, reading), (value, cell)
-    for value, cell in ((25000, "r4c1"), (250, "r4c1"), (9500, "r2c1")):
-        got = _checked(panel, _item(value, cell))
-        assert (got["status"], got["checks"]["dot_reading"]) == (verify.SUGGESTION, None), (value, cell)
-    got = _checked(panel, _item(950, "r2c1"))
-    assert (got["status"], got["checks"]["dot_reading"]) == (verify.VERIFIED, None), "no dot: nothing to record"
-
-
-@pytest.mark.parametrize("text, value, matched", [
-    ("12.500", 12500, True), ("12.500", 12.5, True),
-    ("$2.500M", 2500000000, True), ("$2.500M", 2500000, True),
-    ("0.500", 500, False),                  # a leading 0 never groups thousands
-    ("1234.500", 1234500, False),           # nor does a group of four
-    ("2.5000", 25000, False),               # four digits after the dot: a decimal
-    ("2.50", 250, False),
-])
-def test_only_a_dot_before_exactly_three_digits_is_ambiguous(text, value, matched):
-    structure = _struct([["", "Plan"], ["Revenue", text]])
-    assert _status(structure, _item(value, "r2c2")) == (verify.VERIFIED if matched else verify.SUGGESTION)
-
-
-def test_with_a_decimal_comma_a_dot_before_three_digits_groups_thousands_only():
-    structure = _struct([["", "Plan", ""], ["Revenue", "2.500", "1.234,5"]])
-    assert _checked(structure, _item(2500, "r2c2"))["checks"]["dot_reading"] is None
-    assert _status(structure, _item(2500, "r2c2")) == verify.VERIFIED
-    assert _status(structure, _item(2.5, "r2c2")) == verify.SUGGESTION
-
-
-def test_a_bracketed_number_after_text_matches_either_sign_and_records_which():
-    """zero2hero p17: "Telegram(30K)" is 30,000 members; read as a negative it never matched. "Net loss (1,200)" is a
-    loss of 1,200. Text before the brackets leaves the sign open: either matches, and the check records which."""
-    panel = _deck_structure("05-zero2hero.pdf", 17, "kpi_panel")
-    for cell, text, value in (("r1c1", "Telegram(30K)", 30000), ("r2c1", "Discord(150)", 150),
-                              ("r3c1", "Twitter(6.5K)", 6500), ("r4c1", "Instagram(85K)", 85000),
-                              ("r6c1", "MeetUp((3K)", 3000), ("r7c1", "LinkedIn(10K)", 10000)):
-        assert _text(panel, cell) == text
-        for sign, reading in ((1, "positive"), (-1, "negative")):
-            got = _checked(panel, _item(sign * value, cell, metric="users", unit="count"))
-            assert (got["status"], got["checks"]["bracket_reading"]) == (verify.VERIFIED, reading), (text, sign)
-    loss = _struct([["", "2025"], ["EBITDA", "Net loss (1,200)"]])
-    for value, reading in ((-1200, "negative"), (1200, "positive")):
-        got = _checked(loss, _item(value, "r2c2", "2025", ["r1c2"]))
-        assert (got["status"], got["checks"]["bracket_reading"]) == (verify.VERIFIED, reading), value
-    got = _checked(loss, _item(-120, "r2c2", "2025", ["r1c2"]))
-    assert (got["status"], got["checks"]["bracket_reading"]) == (verify.SUGGESTION, None), "another number"
-
-
-@pytest.mark.parametrize("text", ["(1,200)", "£(1,200)", "( 1,200 )", "-1,200", "Net loss -1,200"])
-def test_a_wholly_bracketed_or_signed_figure_stays_negative_and_records_no_bracket_reading(text):
-    structure = _struct([["", "Plan"], ["EBITDA", text]])
-    assert (_status(structure, _item(-1200, "r2c2")), _status(structure, _item(1200, "r2c2"))) == \
-        (verify.VERIFIED, verify.SUGGESTION)
-    assert _checked(structure, _item(-1200, "r2c2"))["checks"]["bracket_reading"] is None
-
-
-@pytest.mark.parametrize("text, value", [("(£1.2m)", -1200000), ("(12%)", -12), ("(1,200", 1200), ("Plan 1,200", 1200)])
-def test_brackets_around_the_whole_figure_or_none_leave_one_sign(text, value):
-    structure = _struct([["", "Plan"], ["EBITDA", text]])
-    assert _status(structure, _item(value, "r2c2")) == verify.VERIFIED
-    assert _status(structure, _item(-value, "r2c2")) == verify.SUGGESTION
-
-
-def test_a_dot_and_a_bracket_after_text_record_both_readings():
-    structure = _struct([["", "Plan"], ["Hours", "Approx. (2.500)"]])
-    for value, dot, bracket in ((2500, "thousands", "positive"), (-2500, "thousands", "negative"),
-                                (2.5, "decimal", "positive"), (-2.5, "decimal", "negative")):
-        got = _checked(structure, _item(value, "r2c2"))
-        assert (got["status"], got["checks"]["dot_reading"], got["checks"]["bracket_reading"]) == \
-            (verify.VERIFIED, dot, bracket), value
-
-
-def test_a_period_in_the_value_cells_own_text_rebuilds_from_that_cell():
-    """genesisai-2024 p5: "$8,000 revenue in 2022" states its own period; no header holds one, so it never matched."""
+def test_a_period_in_the_items_own_cell_rebuilds_from_that_cell():
+    """genesisai-2024 p5: "$8,000 revenue in 2022" states its own period; no header holds one."""
     panel = _deck_structure("09-genesisai-2024.pdf", 5, "kpi_panel")
     assert _text(panel, "r1c1") == "$8,000 revenue in 2022"
-    for cells in ([], ["r1c1"]):
-        got = _checked(panel, _item(8000, "r1c1", "2022", cells, unit="USD"))
-        assert (got["status"], got["period"], got["checks"]["period_corrected"]) == (verify.VERIFIED, "2022", False), \
-            cells
-    got = _checked(panel, _item(8000, "r1c1", "2021", [], unit="USD"))
-    assert (got["status"], got["period"], got["model_period"]) == (verify.VERIFIED, "2022", "2021"), \
-        "a matched value takes the period Python rebuilds from the cell, as from a header"
-    assert _status(panel, _item(8001, "r1c1", "2022", [])) == verify.SUGGESTION, "no value, no period"
-    assert _status(panel, _item(8000, "r1c1", "2022", ["r2c1"])) == verify.SUGGESTION, "another cell"
-    assert _status(panel, _item(8000, "r1c1", None, [])) == verify.VERIFIED, "the null-period rule is unchanged"
-
-
-def test_a_cells_own_period_is_read_only_from_that_cell():
+    got = _one(panel, "r1c1", "2022", unit="USD")
+    assert (got["status"], got["period"], got["period_cells"], got["checks"]["period_corrected"]) == \
+        (verify.VERIFIED, "2022", ["r1c1"], False)
+    got = _one(panel, "r1c1", "2021", unit="USD")
+    assert (got["status"], got["period"], got["model_period"]) == (verify.VERIFIED, "2022", "2021")
     table = _struct([["", "Plan"], ["Revenue", "£1.2m in 2023"], ["Costs", "£0.4m"]])
-    assert _status(table, _item(1200000, "r2c2", "2023", [])) == verify.VERIFIED
-    assert _status(table, _item(1200000, "r2c2", "2023-Q1", [])) == CORRECTED, "the cell says the year"
-    assert _status(table, _item(400000, "r3c2", "2023", [])) == verify.SUGGESTION, "another cell's period"
-    assert _status(table, _item(400000, "r3c2", "2023", ["r2c2"])) == verify.SUGGESTION
+    assert _status(table, "r2c2", "2023") == verify.VERIFIED
+    assert _status(table, "r3c2", "2023") == verify.SUGGESTION, "another cell's period is not its own"
 
 
 # ---------------------------------------------------------------------------
@@ -423,42 +300,131 @@ def test_on_the_buffer_timeline_only_the_first_line_has_an_adjacent_date_line():
 
 
 # ---------------------------------------------------------------------------
-# Flags: recomputed from the matched values
+# Roadmaps: the adjacent date line, pair-dated figures and milestones
+# ---------------------------------------------------------------------------
+def _boxed(rows, box=1):
+    structure = _struct(rows, header_rows=0, kind="roadmap")
+    for c in structure["cells"]:
+        c["box"] = box
+    return structure
+
+
+def test_in_a_roadmap_a_line_takes_its_period_from_its_adjacent_date_line():
+    roadmap = _boxed([["5K users"], ["Q3 2025"]])
+    got = _one(roadmap, "r1c1", None, metric="users")
+    assert (got["status"], got["period"], got["period_cells"]) == (verify.VERIFIED, "2025-Q3", ["r2c1"])
+    both = _boxed([["Plan"], ["Q2 2025"], ["5K users"], ["Q3 2025"]])
+    assert _status(both, "r3c1", "2025-Q3", metric="users") == verify.SUGGESTION, "one date line on each side: none"
+
+
+def test_a_figure_in_a_paired_line_is_dated_by_its_pair_and_verified_only_when_its_own_cells_agree():
+    """Spec section 2: the pairing is the model's, so a pair-dated figure is Verified only when Python rebuilds the
+    same period from the figure's own period cells."""
+    agree = _boxed([["5K users"], ["Q3 2025"], ["Hire 5 engineers"], ["Q4 2025"]])
+    out = _verify(agree, {"r1c1": _lab(None, "users")}, pairs=[("r1c1", "r2c1", "launch")])
+    got = next(i for i in out["items"] if i.get("item") == "i1")
+    assert (got["status"], got["period"], got["period_cells"]) == (verify.VERIFIED, "2025-Q3", ["r2c1"])
+    out = _verify(agree, {"r1c1": _lab("2025-Q3", "users")}, pairs=[("r1c1", "r4c1", "launch")])
+    got = next(i for i in out["items"] if i.get("item") == "i1")
+    assert (got["status"], got["period"], got["period_cells"]) == (verify.SUGGESTION, "2025-Q4", ["r4c1"]), \
+        "paired with another date: dated by the pair, but its own cells say Q3"
+    roadmap = _deck_structure("03-buffer.pptx", 6, "roadmap")
+    assert _text(roadmap, "r3c1") == "55,000 users ($150K revenue)"
+    out = _verify(roadmap, {("r3c1", 1): _lab("2011-10", "users", "count", "actual")},
+                  pairs=[("r3c1", "r4c1", "other")])
+    got = next(i for i in out["items"] if i.get("item") and i["value_cell"] == "r3c1" and i["position"] == 1)
+    assert (got["status"], got["period"], got["period_cells"]) == (verify.SUGGESTION, "2011-10", ["r4c1"]), \
+        "buffer p6: a date above and below, so no cell of its own rebuilds October 2011"
+
+
+def test_each_pair_is_a_milestone_dated_by_its_date_cell_and_never_verified():
+    roadmap = _boxed([["Launch the API"], ["Q3 2025"], ["Hire 5 engineers"], ["Q4 2025"], ["Seed round"], ["2026"]])
+    out = _verify(roadmap, {"r3c1": _lab(None, "people", "count")},
+                  pairs=[("r1c1", "r2c1", "launch"), ("r3c1", "r4c1", "hiring"), ("r5c1", "r6c1", "funding")])
+    milestones = [i for i in out["items"] if "line" in i]
+    assert [(m["line"], m["date"], m["category"], m["metric"], m["period"], m["value"], m["value_cell"],
+             m["period_cells"], m["status"]) for m in milestones] == [
+        ("t1", "d1", "launch", "product", "2025-Q3", None, "r1c1", ["r2c1"], verify.SUGGESTION),
+        ("t2", "d2", "hiring", "people", "2025-Q4", None, "r3c1", ["r4c1"], verify.SUGGESTION),
+        ("t3", "d3", "funding", "other", "2026", None, "r5c1", ["r6c1"], verify.SUGGESTION)]
+    assert all(m["item"] == m["line"] and m["checks"]["period"] for m in milestones)
+    out = _verify(roadmap, {}, pairs=[("r1c1", "r2c1", "launch")], mode="drop")
+    assert not [i for i in out["items"] if "line" in i] and out["dropped"] >= 1, "the switch applies to milestones"
+
+
+# ---------------------------------------------------------------------------
+# Separator and sign: both readings come from the item's cell, the default is recorded
+# ---------------------------------------------------------------------------
+def test_a_dot_reading_is_recorded_with_the_default_and_the_item_can_be_verified():
+    """clevergig p7: "Approx. 2.500 hours" is 2,500 hours written with a dot."""
+    panel = _deck_structure("04-clevergig.docx", 7, "kpi_panel")
+    assert _text(panel, "r4c1") == "Approx. 2.500 hours"
+    got = _one(panel, "r4c1", None, metric="product")
+    assert (got["status"], got["value"], got["checks"]["dot_reading"]) == (verify.VERIFIED, 2500, "thousands")
+    assert [v["value"] for v in got["values"]] == [2500, 2.5], "both readings, the default first"
+
+
+def test_a_bracket_reading_is_recorded_with_the_default_and_the_item_can_be_verified():
+    """zero2hero p17: "Telegram(30K)" is 30,000 members; "Net loss (1,200)" a loss."""
+    panel = _deck_structure("05-zero2hero.pdf", 17, "kpi_panel")
+    assert _text(panel, "r1c1") == "Telegram(30K)"
+    got = _one(panel, "r1c1", None, metric="users", unit="count")
+    assert (got["status"], got["value"], got["checks"]["bracket_reading"]) == (verify.VERIFIED, 30000, "positive")
+    loss = _struct([["", "2025"], ["EBITDA", "Net loss (1,200)"]])
+    got = _one(loss, "r2c2", "2025", metric="ebitda")
+    assert (got["status"], got["value"], got["checks"]["bracket_reading"]) == (verify.VERIFIED, -1200, "negative")
+    assert [v["value"] for v in got["values"]] == [-1200, 1200]
+
+
+# ---------------------------------------------------------------------------
+# Metrics: not_a_metric dropped and counted, other never verified
+# ---------------------------------------------------------------------------
+def test_not_a_metric_items_are_dropped_and_counted():
+    out = _verify(PLAN, {"r2c2": _lab("FY2025")})
+    assert [i["value_cell"] for i in out["items"]] == ["r2c2"] and out["not_a_metric"] == 1
+    assert out["dropped"] == 0, "not the switch's count"
+
+
+def test_an_other_item_is_listed_as_type_other_and_never_verified():
+    got = _one(PLAN, "r2c2", "FY2025", metric="other")
+    assert (got["metric"], got["status"], got["checks"]["period"]) == ("other", verify.SUGGESTION, True)
+
+
+# ---------------------------------------------------------------------------
+# Flags: computed by Python over the Verified items
 # ---------------------------------------------------------------------------
 TOTALS = _struct([["", "2025"], ["Product A", "£100"], ["Product B", "£200"], ["Total revenue", "£350"]])
 
 
-def test_a_total_mismatch_is_kept_only_when_python_reproduces_it():
-    parts = [_item(100, "r2c2", "2025", ["r1c2"]), _item(200, "r3c2", "2025", ["r1c2"])]
-    flagged = _item(350, "r4c2", "2025", ["r1c2"], flags=["total_mismatch"])
-    out = verify.verify(TOTALS, parts + [flagged])["items"]
-    assert [i["status"] for i in out] == [verify.VERIFIED] * 3
+def test_python_computes_a_total_mismatch_over_the_verified_items():
+    labels = {cell: _lab("2025", unit="GBP") for cell in ("r2c2", "r3c2", "r4c2")}
+    out = _verify(TOTALS, labels)
+    assert [i["proposed_flags"] for i in out["items"]] == [[], [], ["total_mismatch"]]
+    assert all(i["status"] == verify.VERIFIED for i in out["items"]), "a flag never changes the status"
     right = _struct([["", "2025"], ["Product A", "£100"], ["Product B", "£200"], ["Total revenue", "£300"]])
-    out = verify.verify(right, parts + [{**flagged, "value": 300}])["items"]
-    assert out[2]["status"] == verify.SUGGESTION and out[2]["checks"]["flags"] is False, "300 is the sum"
-    out = verify.verify(TOTALS, [flagged])["items"]
-    assert out[0]["status"] == verify.SUGGESTION, "no matched parts: the flag cannot be reproduced"
+    assert [i["proposed_flags"] for i in _verify(right, labels)["items"]] == [[], [], []], "300 is the sum"
+    unverified = {**labels, "r2c2": _lab("2025", metric="other", unit="GBP")}
+    assert [i["proposed_flags"] for i in _verify(TOTALS, unverified)["items"]] == [[], [], []], \
+        "over the Verified items only: one part is not, so the total has one part left"
 
 
-def test_a_growth_mismatch_is_kept_only_when_python_reproduces_it():
+def test_python_computes_a_growth_mismatch_over_the_verified_items():
     grid = _struct([["", "2024", "2025"], ["Revenue", "£100", "£120"], ["Revenue growth", "", "50%"]])
-    base = [_item(100, "r2c2", "2024", ["r1c2"]), _item(120, "r2c3", "2025", ["r1c3"])]
-    stated = _item(50, "r3c3", "2025", ["r1c3"], metric="revenue_growth", unit="%", flags=["growth_mismatch"])
-    out = verify.verify(grid, base + [stated])["items"]
-    assert out[2]["status"] == verify.VERIFIED, "the values give 20%, the deck says 50%"
+    labels = {"r2c2": _lab("2024"), "r2c3": _lab("2025"), "r3c3": _lab("2025", "revenue_growth", "%")}
+    out = _verify(grid, labels)
+    assert [i["proposed_flags"] for i in out["items"]] == [[], [], ["growth_mismatch"]], "20%, not 50%"
     fine = _struct([["", "2024", "2025"], ["Revenue", "£100", "£120"], ["Revenue growth", "", "20%"]])
-    out = verify.verify(fine, base + [{**stated, "value": 20}])["items"]
-    assert out[2]["status"] == verify.SUGGESTION
+    assert [i["proposed_flags"] for i in _verify(fine, labels)["items"]] == [[], [], []]
 
 
 # ---------------------------------------------------------------------------
 # The switch
 # ---------------------------------------------------------------------------
-def test_unmatched_items_are_suggestions_or_dropped_and_counted():
-    items = [_item(1200000, "r2c2", "FY2025", ["r1c2"]), _item(999, "r2c3", "FY2026", ["r1c3"])]
-    shown = verify.verify(PLAN, items, mode="suggest")
+def test_unverified_items_are_suggestions_or_dropped_and_counted():
+    labels = {"r2c2": _lab("FY2025"), "r2c3": _lab("FY2026", metric="other")}
+    shown = _verify(PLAN, labels, mode="suggest")
     assert [i["status"] for i in shown["items"]] == [verify.VERIFIED, verify.SUGGESTION] and shown["dropped"] == 0
-    dropped = verify.verify(PLAN, items, mode="drop")
+    dropped = _verify(PLAN, labels, mode="drop")
     assert [i["status"] for i in dropped["items"]] == [verify.VERIFIED] and dropped["dropped"] == 1
     assert verify.label(verify.SUGGESTION) == "AI suggestion, not verified" and verify.label(verify.VERIFIED) == "Verified"
 

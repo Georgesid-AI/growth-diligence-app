@@ -3,36 +3,47 @@
  "page": 20,
  "type": "kpi_panel",
  "match": "r2c1: ~$10.8 million",
- "note": "Hand-written in the model's output format for the public test deck; no live call was made. A range cell holds two figures, so it never matches one value.",
+ "note": "Hand-written in the model's labelling format (docs/specs/structure-labelling.md) for the public test deck; no live call was made. The range cell holds two figures, twelve and thirteen million; the months figure is labelled other, so it is listed as type Other and never Verified.",
  "reply": {
   "type": "kpi_panel",
-  "items": [
+  "labels": [
    {
+    "item": "i1",
     "metric": "revenue",
     "period": null,
-    "value": 12000000,
     "unit": "USD",
     "unit_other": null,
-    "actual_or_forecast": "forecast",
-    "value_cell": "r1c1",
-    "period_cells": [],
-    "proposed_flags": []
+    "actual_or_forecast": "forecast"
    },
    {
+    "item": "i2",
     "metric": "revenue",
     "period": null,
-    "value": 10800000,
     "unit": "USD",
     "unit_other": null,
-    "actual_or_forecast": "forecast",
-    "value_cell": "r2c1",
-    "period_cells": [],
-    "proposed_flags": []
+    "actual_or_forecast": "forecast"
+   },
+   {
+    "item": "i3",
+    "metric": "revenue",
+    "period": null,
+    "unit": "USD",
+    "unit_other": null,
+    "actual_or_forecast": "forecast"
+   },
+   {
+    "item": "i4",
+    "metric": "other",
+    "period": null,
+    "unit": "months",
+    "unit_other": null,
+    "actual_or_forecast": "forecast"
    }
-  ]
+  ],
+  "pairs": []
  },
  "expected": {
-  "verified": 1,
+  "verified": 3,
   "suggestion": 1
  }
 }
