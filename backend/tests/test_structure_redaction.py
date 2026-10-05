@@ -134,6 +134,31 @@ def test_the_target_name_inside_a_longer_customer_name_does_not_protect_it():
     assert _texts(out) == ["Customer_01 renewed", "Alpha plan"]
 
 
+# ---------------------------------------------------------------------------
+# The client name and the engagement reference: [redacted], and the structure is still read
+# ---------------------------------------------------------------------------
+AUDIT = {"company_name": "Target Ltd", "client_name": "Northbridge Capital", "engagement_reference": "ENG-2026-041"}
+
+
+def test_the_client_name_and_engagement_reference_become_redacted_as_whole_words():
+    withheld = redact.withheld_values(AUDIT)
+    assert withheld == ("Northbridge Capital", "ENG-2026-041")
+    cells = _cells("Prepared for NORTHBRIDGE CAPITAL", "Ref ENG-2026-041.", "ENG-2026-0412", "Northbridge Capitals")
+    out, counts = redact.redact_structure(cells, "Target Ltd", MAPPING, withheld)
+    assert _texts(out) == ["Prepared for [redacted]", "Ref [redacted].", "ENG-2026-0412", "Northbridge Capitals"]
+    assert counts["withheld"] == 2
+    again, more = redact.redact_structure(out, "Target Ltd", MAPPING, withheld)
+    assert again == out and not any(more.values()), "a second pass changes nothing"
+    assert redact.withheld_values({"company_name": "Old Co"}) == (), "an audit with neither field withholds nothing"
+    kept, _ = redact.pseudonymise_cells(out, {"Redacted": "Customer_09"}, "Target Ltd")
+    assert kept == out, "the placeholder is never rewritten, even by a name that matches it"
+
+
+def test_the_target_name_never_shields_the_client_name():
+    out, _ = redact.redact_structure(_cells("Hill Partners plan"), "Hill Partners", {}, ("Hill",))
+    assert _texts(out) == ["[redacted] Partners plan"]
+
+
 def test_a_second_pass_changes_nothing():
     cells = _cells("jane@northwind.com", "Northwind Trading", "Jane Doe", "+44 20 7946 0958", header="Contact")
     first, _ = redact.redact_structure(cells, "Target Ltd", MAPPING)

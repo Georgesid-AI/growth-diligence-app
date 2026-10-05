@@ -139,13 +139,14 @@ async def run(decks, passes, db, adapter=None):
     for file in decks:
         deck = parser.parse_deck((DECKS / file).read_bytes(), file)
         audit_id = f"consistency-{Path(file).stem}"
-        await db["audits"].insert_one({"id": audit_id, "company_name": Path(file).stem, "client_name": "Consistency run",
-                                       "engagement_reference": "CONSISTENCY", "structure_reading_consent": True})
+        audit = {"id": audit_id, "company_name": Path(file).stem, "client_name": "Consistency run",
+                 "engagement_reference": "CONSISTENCY", "structure_reading_consent": True}
+        await db["audits"].insert_one(dict(audit))
         usage = per_deck.setdefault(file, {"structures": len(deck["structures"]), "input_tokens": 0, "output_tokens": 0,
                                            "cost_usd": 0.0})
         for i, structure in enumerate(deck["structures"]):
             types[(file, i)] = structure["type"]
-            cells, _ = redact.redact_structure(structure["cells"], Path(file).stem, {})
+            cells, _ = redact.redact_structure(structure["cells"], Path(file).stem, {}, redact.withheld_values(audit))
             text = redact.structure_text(cells)
             page = structure.get("slide") or structure.get("page")
             for n in range(1, passes + 1):

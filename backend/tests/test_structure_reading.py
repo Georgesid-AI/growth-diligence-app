@@ -535,6 +535,31 @@ def _deck(client):
     return client.get(f"/api/audits/{AUDIT}/decks").json()
 
 
+def test_a_client_name_or_engagement_reference_in_a_deck_cell_goes_out_as_redacted_and_the_structure_is_read():
+    from app import structures
+    from app.decks import TEXT_COLLECTION
+    db = _db()
+    db["datasets"].docs.append({"audit_id": AUDIT, "dtype": "revenue", "mapping": REVENUE_MAPPING,
+                                "mapped_at": "2026-10-05T00:00:00"})
+    cells = [{"row": 1, "col": 1, "text": "Prepared for Northbridge Capital"}, {"row": 1, "col": 2, "text": "FY2025"},
+             {"row": 2, "col": 1, "text": "Revenue (eng-2026-041)"}, {"row": 2, "col": 2, "text": "£1,200,000"}]
+    db[TEXT_COLLECTION].docs.append({"audit_id": AUDIT, "deck_id": "d1", "file": "plan.pptx", "page_unit": "slide",
+                                     "structures": [{"type": "table", "slide": 1, "header_rows": 1, "cells": cells}]})
+    adapter = t.FakeAdapter(replies=[json.dumps({"type": "table", "items": []})])
+    status = asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
+    assert (status, adapter.calls) == (structures.READ, 1)
+    assert json.loads(adapter.payloads[0])["text"] == \
+        "r1c1: Prepared for [redacted]\nr1c2: FY2025\nr2c1: Revenue ([redacted])\nr2c2: £1,200,000"
+
+
+def test_a_client_name_in_a_spreadsheet_header_goes_out_as_redacted(monkeypatch):
+    client, _, adapter = _api(monkeypatch, [MAPPING_REPLY])
+    sheet = "Kunde,Rechnungsdatum,Betrag Northbridge Capital,Waehrung\nAcme,2025-01-31,1,EUR\n"
+    client.post(f"/api/audits/{AUDIT}/datasets/revenue/upload", files={"file": ("r.csv", sheet)})
+    sent = json.loads(adapter.payloads[0])["text"]
+    assert "r1c3: Betrag [redacted]" in sent and "Northbridge" not in sent
+
+
 def test_a_deck_waits_for_the_mapped_revenue_file_and_is_read_once_it_is(monkeypatch):
     client, db, adapter = _deck_api(monkeypatch)
     upload = _upload_deck(client)
@@ -703,10 +728,14 @@ def test_a_background_failure_marks_the_deck_not_read_and_logs_the_error_type_on
     assert "Jane Doe" not in caplog.text
 
 
-def test_a_short_engagement_reference_is_refused_as_a_word_and_never_inside_one():
+def test_a_short_engagement_reference_is_withheld_as_a_word_and_never_inside_one():
     db = _db(engagement_reference="E7")
     result, adapter = _read(db, "r1c1: Plan E7\nr1c2: £1M")
-    assert result.status == "refused" and adapter.calls == 0
+    assert (result.reason, adapter.calls) == ("refused: redaction_changed", 0), "sent as written, it is refused"
+    cells, _ = redact.redact_structure([{"row": 1, "col": 1, "text": "Plan E7"}, {"row": 1, "col": 2, "text": "£1M"}],
+                                       "Zero2Hero", {}, redact.withheld_values(db["audits"].docs[0]))
+    result, adapter = _read(db, redact.structure_text(cells), replies=[{"type": "table", "items": []}])
+    assert result.status == "read" and json.loads(adapter.payloads[0])["text"] == "r1c1: Plan [redacted]\nr1c2: £1M"
     result, adapter = _read(db, "r1c1: Plan E70\nr1c2: £1M", replies=[{"type": "table", "items": []}])
     assert result.status == "read", "E70 is not the reference"
 

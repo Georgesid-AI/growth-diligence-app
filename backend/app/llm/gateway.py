@@ -1198,10 +1198,12 @@ def structure_text_problem(text: Any, structure_type: str, context: dict, mappin
     """Why a text may not reach the provider, or None (CLAUDE.md rule 16, spec sections 1 and 3).
 
     Only extracted text with cell positions passes: one `r<row>c<col>: <text>` line per cell (and, on
-    the column-mapping path, sample and profile lines). Raw bytes, prose, a file name, a cell over 200
-    characters, the client name or the engagement reference are refused. Redaction is run again and
-    the text must come back unchanged. On the column-mapping path at most 3 header rows and 3
-    samples per column pass, and no text cell value.
+    the column-mapping path, sample and profile lines). Raw bytes, prose, a file name and a cell over
+    200 characters are refused. The client name and the engagement reference reach the provider only
+    as "[redacted]": the caller replaces them (redact.withheld_values); a value of 3 characters or
+    more still found anywhere in the text, even inside a longer word, is refused. Redaction, the
+    withheld values included, is run again and the text must come back unchanged. On the
+    column-mapping path at most 3 header rows and 3 samples per column pass, and no text cell value.
     """
     if not isinstance(text, str):
         return "not_text"
@@ -1214,8 +1216,8 @@ def structure_text_problem(text: Any, structure_type: str, context: dict, mappin
     lowered = text.lower()
     for field in ("client_name", "engagement_reference"):
         value = str(context.get(field) or "").strip().lower()
-        # Anywhere in the text; a value under 3 characters only as a word of its own.
-        if value and (value in lowered if len(value) >= 3 else re.search(rf"(?<!\w){re.escape(value)}(?!\w)", lowered)):
+        # Anywhere in the text; a shorter value is caught as a word by the redaction run below.
+        if len(value) >= 3 and value in lowered:
             return field
     company = context.get("company_name")
     if structure_type == "column_mapping":
@@ -1229,7 +1231,7 @@ def structure_text_problem(text: Any, structure_type: str, context: dict, mappin
             return "not_cells"
     if any(len(c["text"]) > STRUCTURE_CELL_MAX for c in cells):
         return "cell_too_long"
-    redacted, _ = structure_redact.redact_structure(cells, company, mapping)
+    redacted, _ = structure_redact.redact_structure(cells, company, mapping, structure_redact.withheld_values(context))
     if redacted != cells:
         return "redaction_changed"
     return None

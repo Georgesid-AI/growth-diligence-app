@@ -763,6 +763,20 @@ def test_redacted_structure_cells_reach_the_provider_as_cell_lines_only():
     assert all(re.match(r"^r\d+c\d+: ", line) for line in sent["text"].splitlines())
 
 
+def test_the_client_name_and_engagement_reference_reach_the_provider_only_as_redacted():
+    cells = [{"row": 1, "col": 1, "text": "Prepared for Northbridge Capital"}, {"row": 1, "col": 2, "text": "FY2025"},
+             {"row": 2, "col": 1, "text": "Revenue, ref ENG-2026-041"}, {"row": 2, "col": 2, "text": "£1,200,000"}]
+    redacted, counts = structure_redact.redact_structure(cells, "Target Co", {},
+                                                         structure_redact.withheld_values(STRUCTURE_AUDIT))
+    text = structure_redact.structure_text(redacted)
+    result, adapter = _send(_structure_db(), text)
+    assert result.status == "read" and adapter.calls == 1 and counts["withheld"] == 2, result.reason
+    sent = json.loads(adapter.payloads[0])["text"]
+    assert sent == "r1c1: Prepared for [redacted]\nr1c2: FY2025\nr2c1: Revenue, ref [redacted]\nr2c2: £1,200,000"
+    for needle in ("Northbridge", "ENG-2026-041"):
+        assert needle.lower() not in sent.lower(), f"{needle!r} reached the provider"
+
+
 def test_a_column_mapping_text_within_the_caps_reaches_the_provider():
     result, adapter = _send(_structure_db(), GOOD_MAPPING, "column_mapping", MAPPING_REPLY)
     assert result.status == "read" and adapter.calls == 1, result.reason
@@ -794,8 +808,13 @@ def test_a_sheet_built_by_the_app_sends_no_text_cell_value():
     ("an unredacted phone number", "r1c1: +44 20 7946 0958", "table", "redaction_changed"),
     ("an unredacted name", "r1c1: Michael Smith", "table", "redaction_changed"),
     ("an unredacted customer name", "r1c1: Northwind Trading renewed", "table", "redaction_changed"),
+    # Sent as written (not through redaction), the client name or engagement reference is refused,
+    # also inside a longer word, where redaction (whole words) does not replace it.
     ("the client name", "r1c1: Prepared for Northbridge Capital", "table", "client_name"),
     ("the engagement reference", "r1c1: ENG-2026-041", "table", "engagement_reference"),
+    ("the engagement reference inside a longer one", "r1c1: ENG-2026-0412", "table", "engagement_reference"),
+    ("the client name in a column-mapping header", GOOD_MAPPING + "\nr1c4: Northbridge Capital share", "column_mapping",
+     "client_name"),
     ("more than 3 samples", GOOD_MAPPING + "\nc3 sample: 1\nc3 sample: 2\nc3 sample: 3", "column_mapping",
      "too_many_samples"),
     ("more than 3 header rows", GOOD_MAPPING + "\nr4c1: Customer name", "column_mapping", "too_many_header_rows"),
@@ -834,6 +853,7 @@ def test_no_sent_text_in_a_log_llm_calls_or_llm_structures(caplog):
         assert needle not in logs, f"{needle!r} was logged"
     assert "structure read: run_id=audit-boundary step=structures hash=" in caplog.text
     assert "structure refused: run_id=audit-boundary step=structures reason=redaction_changed" in caplog.text
+    assert "[redacted]" not in logs, "the placeholder count is not logged either"
     assert all(r.exc_info is None for r in caplog.records)
 
 

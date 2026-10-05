@@ -493,7 +493,8 @@ async def _prefill_mapping(audit: dict, dtype: str, columns: list, rows: list):
     source = {f: "rules" for f, c in mapping.items() if c}
     customers = tuple(c for c in [suggest_mapping("revenue", columns).get("customer_id")] if c)
     text = structures.column_mapping_text(columns, rows, audit.get("company_name"),
-                                          await llm_redaction.get_map(db, audit["id"]), customers)
+                                          await llm_redaction.get_map(db, audit["id"]), customers,
+                                          structures.redact.withheld_values(audit))
     read = await llm_gateway.read_structure(db, audit["id"], text, "column_mapping")
     if read.status == "read":
         await llm_gateway.record_verification(db, audit["id"], read.key, ["suggestion"] * len(read.items))

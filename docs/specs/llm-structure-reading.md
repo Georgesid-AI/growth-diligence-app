@@ -69,6 +69,9 @@ Customer names are pseudonymised (Customer_01, Customer_02…) through the narra
   Once the revenue file is mapped, queued decks are processed. Column-mapping calls are not queued. A deck already
   read is not re-sent when a CRM file is mapped later.
 
+The client name and the engagement reference are replaced with "[redacted]" wherever they appear as a whole word,
+case-insensitive, in any text cell sent to the model, and the structure is still read.
+
 The mapping stays server-side and is removed by Delete audit. The gateway runs redaction again and refuses the call if
 anything changes.
 
