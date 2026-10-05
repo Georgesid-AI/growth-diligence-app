@@ -748,7 +748,7 @@ def test_a_background_failure_marks_the_deck_not_read_and_logs_the_error_type_on
 def test_a_short_engagement_reference_is_withheld_as_a_word_and_never_inside_one():
     db = _db(engagement_reference="E7")
     result, adapter = _read(db, "r1c1: Plan E7\nr1c2: £1M")
-    assert (result.reason, adapter.calls) == ("refused: redaction_changed", 0), "sent as written, it is refused"
+    assert (result.reason, adapter.calls) == ("refused: engagement_reference", 0), "sent as written, it is refused"
     cells, _ = redact.redact_structure([{"row": 1, "col": 1, "text": "Plan E7"}, {"row": 1, "col": 2, "text": "£1M"}],
                                        "Zero2Hero", {}, redact.withheld_values(db["audits"].docs[0]))
     result, adapter = _read(db, redact.structure_text(cells), replies=[{"type": "table", "items": []}])

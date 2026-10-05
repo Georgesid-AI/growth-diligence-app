@@ -12,11 +12,12 @@ An item is matched when
   number does not match. An item with no value is never matched;
 - its period matches its `period_cells` only: they are header cells of the value cell (its row
   header or the header stack above its column; in a KPI panel or a roadmap, the cells left of it in
-  its row and the top line of its own box), and the period rebuilt from them under the section 2
+  its row and the top line of its own box), the first is the value cell's lowest period header (a
+  year header alone verifies a yearly value only), and the period rebuilt from them under the section 2
   rules has the same start and end date under the audit's year-end (a year, quarter or half is
-  fiscal when it is not December; a month is a calendar month). A two-cell period is a month,
-  quarter or half cell and the year cell above it in the same column range (a month never under a
-  year stated as fiscal, "FY2025"). A null period matches only when
+  fiscal when it is not December; a month is a calendar month, and a month under a year header
+  falls inside that year). A two-cell period is a month, quarter or half cell and the year cell
+  above it in the same column range. A null period matches only when
   `period_cells` is empty and no header of the value cell holds a period. A relative column ("M3",
   "Year 1") has no period unless its second period cell states the start date ("Start: Jan 2025");
 - every proposed flag is reproduced from the matched values (see _flag_reproduced).
@@ -170,14 +171,15 @@ def _range(label: Optional[str], fiscal_year_end: int):
     return claims.period_range(label, fiscal_year_end) if label else None
 
 
-def _relative_range(relative: Dict, unit_text: str, start_cell: Optional[Dict]) -> Optional[Tuple[str, str]]:
+def _relative_range(relative: Dict, unit_text: str, start_cell: Optional[Dict],
+                    fiscal_year_end: int = 12) -> Optional[Tuple[str, str]]:
     """The range of a relative column ("M3", "Year 2") counted from the start date a cell states."""
     if not start_cell or not _START.search(start_cell["text"]):
         return None
     dates = [d for d in claims.find_dates(start_cell["text"], table=True) if d["kind"] == "month"]
     if len(dates) != 1:
         return None
-    year, month = map(int, dates[0]["date"].split("-"))
+    year, month = map(int, claims.period_range(dates[0]["date"], fiscal_year_end)[0].split("-")[:2])
     n = relative["relative"]
     unit = _RELATIVE_UNIT.match(unit_text).group("u").lower()
     length = 12 if unit.startswith(("y", "j")) else 3 if unit.startswith("q") else 1
@@ -188,16 +190,29 @@ def _relative_range(relative: Dict, unit_text: str, start_cell: Optional[Dict]) 
     return begin, end
 
 
+def lowest_period_headers(structure: Dict, value_cell: Dict) -> List[Dict]:
+    """The header cells nearest the value cell that hold a period, a part of one ("Q3", "Mar") or a
+    relative column ("M3"): the lowest one above it and the nearest one left of it in its row."""
+    found = [h for h in header_cells(structure, value_cell) if claims.period_cell(h["text"])]
+    above = [h for h in found if h["row"] < value_cell["row"]]
+    left = [h for h in found if h["row"] == value_cell["row"]]
+    return ([max(above, key=lambda h: h["row"])] if above else []) + \
+        ([max(left, key=lambda h: h["col"])] if left else [])
+
+
 def rebuild_period(structure: Dict, value_cell: Dict, period_ids: List[str], fiscal_year_end: int = 12):
     """The (start, end) the cited period cells give under the section 2 rules, or None when they do
-    not make a period, or are not header cells of the value cell."""
+    not make a period, or the first is not the value cell's lowest period header: a quarterly or
+    monthly value cited against its year header alone is unmatched, so a year header verifies a
+    yearly value only. A value with period headers both above it and left of it in its row has a
+    period the rules do not build, so it is never matched with one."""
     by_id = {_id(c): c for c in structure["cells"]}
     cited = [by_id.get(i) for i in period_ids]
     if not cited or None in cited or len(cited) > 2:
         return None
-    headers = {_id(c) for c in header_cells(structure, value_cell)}
     first = cited[0]
-    if _id(first) not in headers:
+    lowest = lowest_period_headers(structure, value_cell)
+    if len(lowest) != 1 or _id(first) != _id(lowest[0]):
         return None
     found = claims.period_cell(first["text"])
     if not found:
@@ -206,7 +221,7 @@ def rebuild_period(structure: Dict, value_cell: Dict, period_ids: List[str], fis
         return _range(found.get("label"), fiscal_year_end) if "label" in found else None
     second = cited[1]
     if "relative" in found:
-        return _relative_range(found, first["text"], second)
+        return _relative_range(found, first["text"], second, fiscal_year_end)
     above = second["row"] < first["row"] and all(k in _cols(second) for k in _cols(first))
     joined = claims.combine_period(found, claims.period_cell(second["text"])) if above else None
     return _range(joined["label"], fiscal_year_end) if joined else None

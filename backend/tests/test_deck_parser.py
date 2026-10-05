@@ -909,7 +909,8 @@ def test_a_merged_claim_is_compared_when_any_of_its_sources_states_the_period():
 # Fiscal year-end (spec section 2, period rules): fiscal years are named by the calendar year in
 # which they end, and every period resolves to a start and an end date. Display keeps the text.
 # With a year-end other than December every year, quarter and half label is fiscal ("2025E",
-# "Q1 25", "H1 25"); months stay calendar months. With December nothing moves.
+# "Q1 25", "H1 25"); months stay calendar months, but a month under a year header falls inside that
+# year: after the year-end month it is in the previous calendar year. With December nothing moves.
 # ---------------------------------------------------------------------------
 _FISCAL_BLOCKS = [
     {"slide": 1, "kind": "text", "text": "FY25 ARR $3M", "box": 1},
@@ -935,6 +936,19 @@ _FISCAL_BLOCKS = [
     {"slide": 12, "kind": "table", "table": 2, "row": 3, "col": 1, "text": "Customers"},
     {"slide": 12, "kind": "table", "table": 2, "row": 3, "col": 2, "text": "30"},
     {"slide": 12, "kind": "table", "table": 2, "row": 3, "col": 3, "text": "40"},
+    {"slide": 13, "kind": "table", "table": 3, "row": 1, "col": 1, "text": "Metric"},
+    {"slide": 13, "kind": "table", "table": 3, "row": 1, "col": 2, "text": "FY2025", "col_span": 3},
+    {"slide": 13, "kind": "table", "table": 3, "row": 1, "col": 5, "text": "2025"},
+    {"slide": 13, "kind": "table", "table": 3, "row": 2, "col": 2, "text": "Mar"},
+    {"slide": 13, "kind": "table", "table": 3, "row": 2, "col": 3, "text": "Apr"},
+    {"slide": 13, "kind": "table", "table": 3, "row": 2, "col": 4, "text": "Dec"},
+    {"slide": 13, "kind": "table", "table": 3, "row": 2, "col": 5, "text": "Jul"},
+    {"slide": 13, "kind": "table", "table": 3, "row": 3, "col": 1, "text": "Users"},
+    {"slide": 13, "kind": "table", "table": 3, "row": 3, "col": 2, "text": "10"},
+    {"slide": 13, "kind": "table", "table": 3, "row": 3, "col": 3, "text": "20"},
+    {"slide": 13, "kind": "table", "table": 3, "row": 3, "col": 4, "text": "30"},
+    {"slide": 13, "kind": "table", "table": 3, "row": 3, "col": 5, "text": "50"},
+    {"slide": 14, "kind": "text", "text": "Revenue Apr FY25 $10M", "box": 14},
 ]
 
 
@@ -955,7 +969,10 @@ def _periods(found):
           "H1 24": ("2024-H1", "2024-01-01", "2024-06-30"), "Q1 FY25": ("2025-Q1", "2025-01-01", "2025-03-31"),
           "FY26 H2": ("2026-H2", "2026-07-01", "2026-12-31"), "Q3 FY2025": ("2025-Q3", "2025-07-01", "2025-09-30"),
           "Q4 FY2025": ("2025-Q4", "2025-10-01", "2025-12-31"),
-          "March 2025": ("2025-03", "2025-03-01", "2025-03-31")}),
+          "March 2025": ("2025-03", "2025-03-01", "2025-03-31"),
+          "Mar FY2025": ("FY2025-03", "2025-03-01", "2025-03-31"), "Apr FY2025": ("FY2025-04", "2025-04-01", "2025-04-30"),
+          "Dec FY2025": ("FY2025-12", "2025-12-01", "2025-12-31"), "Jul 2025": ("FY2025-07", "2025-07-01", "2025-07-31"),
+          "Apr FY25": ("FY2025-04", "2025-04-01", "2025-04-30")}),
     (3, {"FY25": ("2025", "2024-04-01", "2025-03-31"), "Y/E 22": ("2022", "2021-04-01", "2022-03-31"),
          "FY2025/26": ("2026", "2025-04-01", "2026-03-31"), "FY23": ("2023", "2022-04-01", "2023-03-31"),
          "FY24": ("2024", "2023-04-01", "2024-03-31"), "2024": ("2024", "2023-04-01", "2024-03-31"),
@@ -963,9 +980,16 @@ def _periods(found):
          "H1 24": ("2024-H1", "2023-04-01", "2023-09-30"), "Q1 FY25": ("2025-Q1", "2024-04-01", "2024-06-30"),
          "FY26 H2": ("2026-H2", "2025-10-01", "2026-03-31"), "Q3 FY2025": ("2025-Q3", "2024-10-01", "2024-12-31"),
          "Q4 FY2025": ("2025-Q4", "2025-01-01", "2025-03-31"),
-         "March 2025": ("2025-03", "2025-03-01", "2025-03-31")}),
+         "March 2025": ("2025-03", "2025-03-01", "2025-03-31"),
+         # A month under a year header: up to the year-end month in the named year, after it the year before.
+         "Mar FY2025": ("FY2025-03", "2025-03-01", "2025-03-31"), "Apr FY2025": ("FY2025-04", "2024-04-01", "2024-04-30"),
+         "Dec FY2025": ("FY2025-12", "2024-12-01", "2024-12-31"), "Jul 2025": ("FY2025-07", "2024-07-01", "2024-07-31"),
+         "Apr FY25": ("FY2025-04", "2024-04-01", "2024-04-30")}),
     (6, {"FY25": ("2025", "2024-07-01", "2025-06-30"), "Q3 25": ("2025-Q3", "2025-01-01", "2025-03-31"),
-         "H1 24": ("2024-H1", "2023-07-01", "2023-12-31"), "March 2025": ("2025-03", "2025-03-01", "2025-03-31")}),
+         "H1 24": ("2024-H1", "2023-07-01", "2023-12-31"), "March 2025": ("2025-03", "2025-03-01", "2025-03-31"),
+         "Mar FY2025": ("FY2025-03", "2025-03-01", "2025-03-31"), "Apr FY2025": ("FY2025-04", "2025-04-01", "2025-04-30"),
+         "Dec FY2025": ("FY2025-12", "2024-12-01", "2024-12-31"), "Jul 2025": ("FY2025-07", "2024-07-01", "2024-07-31"),
+         "Apr FY25": ("FY2025-04", "2025-04-01", "2025-04-30")}),
 ])
 def test_every_year_quarter_and_half_follows_the_year_end_and_months_stay_calendar(year_end, expected):
     periods = _periods(claims.detect_candidates(_FISCAL_BLOCKS, "deck.pptx", fiscal_year_end=year_end))
@@ -1020,6 +1044,23 @@ def test_an_edited_date_follows_the_year_end_and_drops_the_stated_text(api):
     assert (moved["period_text"], moved["period_start"], moved["period_end"]) == (None, "2025-04-01", "2025-06-30")
     month = client.put(url, json={"target_date": "2026-02"}).json()
     assert (month["period_start"], month["period_end"]) == ("2026-02-01", "2026-02-28"), "a month stays calendar"
+    in_year = client.put(url, json={"target_date": "FY2026-04"}).json()
+    assert (in_year["period_start"], in_year["period_end"]) == ("2025-04-01", "2025-04-30"), "April of FY2026"
+
+
+def test_a_table_row_with_months_under_a_year_header_can_be_edited(api):
+    client, db = api
+    client.put("/api/audits/audit-1", json={"fiscal_year_end": 3})
+    blocks = [b for b in _FISCAL_BLOCKS if b.get("slide") == 13]
+    db[decks.CANDIDATES_COLLECTION].docs.extend(
+        {**c, "id": f"c{i}", "audit_id": "audit-1", "deck_id": "d1", "status": "pending"}
+        for i, c in enumerate(claims.detect_candidates(blocks, "deck.pptx", fiscal_year_end=3)))
+    row = next(c for c in db[decks.CANDIDATES_COLLECTION].docs if c.get("by_period"))
+    edit = [{"value": i["value"] + 1, "value_high": None, "target_date": i["target_date"]} for i in row["by_period"]]
+    r = client.put(f"/api/audits/audit-1/decks/candidates/{row['id']}", json={"by_period": edit})
+    assert r.status_code == 200, r.text
+    assert [(i["target_date"], i["period_start"]) for i in r.json()["by_period"]][:2] == \
+        [("FY2025-03", "2025-03-01"), ("FY2025-04", "2024-04-01")]
 
 
 # ---------------------------------------------------------------------------

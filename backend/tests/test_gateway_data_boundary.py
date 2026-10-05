@@ -777,6 +777,12 @@ def test_the_client_name_and_engagement_reference_reach_the_provider_only_as_red
         assert needle.lower() not in sent.lower(), f"{needle!r} reached the provider"
 
 
+def test_a_longer_word_holding_the_client_name_or_engagement_reference_is_not_refused():
+    for text in ("r1c1: ENG-2026-0412\nr1c2: £1M", "r1c1: Northbridge Capitalists\nr1c2: £1M"):
+        result, adapter = _send(_structure_db(), text, reply=json.dumps({"type": "table", "items": []}))
+        assert (result.status, adapter.calls) == ("read", 1), text
+
+
 def test_a_column_mapping_text_within_the_caps_reaches_the_provider():
     result, adapter = _send(_structure_db(), GOOD_MAPPING, "column_mapping", MAPPING_REPLY)
     assert result.status == "read" and adapter.calls == 1, result.reason
@@ -808,11 +814,12 @@ def test_a_sheet_built_by_the_app_sends_no_text_cell_value():
     ("an unredacted phone number", "r1c1: +44 20 7946 0958", "table", "redaction_changed"),
     ("an unredacted name", "r1c1: Michael Smith", "table", "redaction_changed"),
     ("an unredacted customer name", "r1c1: Northwind Trading renewed", "table", "redaction_changed"),
-    # Sent as written (not through redaction), the client name or engagement reference is refused,
-    # also inside a longer word, where redaction (whole words) does not replace it.
+    # Sent as written (not through redaction), the client name or engagement reference is refused as a
+    # whole word, with the boundaries redaction uses.
     ("the client name", "r1c1: Prepared for Northbridge Capital", "table", "client_name"),
+    ("the client name in any case", "r1c1: NORTHBRIDGE CAPITAL", "table", "client_name"),
     ("the engagement reference", "r1c1: ENG-2026-041", "table", "engagement_reference"),
-    ("the engagement reference inside a longer one", "r1c1: ENG-2026-0412", "table", "engagement_reference"),
+    ("the engagement reference after a change of case", "r1c1: refENG-2026-041", "table", "engagement_reference"),
     ("the client name in a column-mapping header", GOOD_MAPPING + "\nr1c4: Northbridge Capital share", "column_mapping",
      "client_name"),
     ("more than 3 samples", GOOD_MAPPING + "\nc3 sample: 1\nc3 sample: 2\nc3 sample: 3", "column_mapping",

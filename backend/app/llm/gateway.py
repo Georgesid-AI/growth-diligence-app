@@ -1200,9 +1200,9 @@ def structure_text_problem(text: Any, structure_type: str, context: dict, mappin
     Only extracted text with cell positions passes: one `r<row>c<col>: <text>` line per cell (and, on
     the column-mapping path, sample and profile lines). Raw bytes, prose, a file name and a cell over
     200 characters are refused. The client name and the engagement reference reach the provider only
-    as "[redacted]": the caller replaces them (redact.withheld_values); a value of 3 characters or
-    more still found anywhere in the text, even inside a longer word, is refused. Redaction, the
-    withheld values included, is run again and the text must come back unchanged. On the
+    as "[redacted]": the caller replaces them (redact.withheld_values), and one still standing in the
+    text as a whole word (any case; a word ends at a space, punctuation, a hyphen or a change of
+    case, as in redaction) is refused. Redaction is run again and the text must come back unchanged. On the
     column-mapping path at most 3 header rows and 3 samples per column pass, and no text cell value.
     """
     if not isinstance(text, str):
@@ -1213,11 +1213,8 @@ def structure_text_problem(text: Any, structure_type: str, context: dict, mappin
         return "raw_bytes"
     if _FILE_NAME.search(text):
         return "file_name"
-    lowered = text.lower()
     for field in ("client_name", "engagement_reference"):
-        value = str(context.get(field) or "").strip().lower()
-        # Anywhere in the text; a shorter value is caught as a word by the redaction run below.
-        if len(value) >= 3 and value in lowered:
+        if structure_redact.has_word(text, str(context.get(field) or "").strip()):
             return field
     company = context.get("company_name")
     if structure_type == "column_mapping":

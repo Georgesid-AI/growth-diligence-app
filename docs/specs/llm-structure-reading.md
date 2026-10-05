@@ -34,8 +34,10 @@ normalisation:
 - a unit or scale in a neighbouring or header cell (`£m`, `'000`, `%`) is applied.
 
 The match is exact, so a rounded number does not match. The period is matched against its `period_cells` only:
-they must be header cells of the value cell (its row header or the header stack above its column), and Python rebuilds
-the period from them under the deck-parser.md §2 period rules; if it cannot, or gets a period with a different start or
+they must be header cells of the value cell (its row header or the header stack above its column), the first must be
+the value cell's lowest period header (a quarterly or monthly value cited against its year header alone is unmatched; a
+year header alone verifies only a yearly value), and Python rebuilds the period from them under the deck-parser.md §2
+period rules; if it cannot, or gets a period with a different start or
 end date, the period is unmatched. A null period matches only when `period_cells` is empty and neither header holds a period. An unmatched value or period makes the item unmatched. Every proposed flag is
 recomputed from the matched values; a flag Python cannot reproduce counts as unmatched. Matched items are `Verified`. For unmatched ones, the switch
 `STRUCTURE_UNMATCHED` decides: `"suggest"` (the default) shows "AI suggestion, not verified", and `"drop"` removes them
@@ -70,7 +72,8 @@ Customer names are pseudonymised (Customer_01, Customer_02…) through the narra
   read is not re-sent when a CRM file is mapped later.
 
 The client name and the engagement reference are replaced with "[redacted]" wherever they appear as a whole word,
-case-insensitive, in any text cell sent to the model, and the structure is still read.
+case-insensitive, in any text cell sent to the model, and the structure is still read. The gateway refuses a text in
+which either still stands as a whole word, with the same boundaries.
 
 The mapping stays server-side and is removed by Delete audit. The gateway runs redaction again and refuses the call if
 anything changes.

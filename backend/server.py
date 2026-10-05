@@ -579,7 +579,8 @@ async def _add_customers(audit_id: str, dataset: dict) -> None:
 # ---------------------------------------------------------------------------
 # Board decks and growth plans: parsed text and candidate claims (docs/specs/deck-parser.md)
 # ---------------------------------------------------------------------------
-_TARGET_DATE = re.compile(r"^\d{4}(-(0[1-9]|1[0-2])|-Q[1-4]|-H[12])?$")
+# "FY2025-04": the April inside year 2025, a month under a year header (deck-parser.md section 2).
+_TARGET_DATE = re.compile(r"^(\d{4}(-(0[1-9]|1[0-2])|-Q[1-4]|-H[12])?|FY\d{4}-(0[1-9]|1[0-2]))$")
 
 
 class PeriodValue(BaseModel):

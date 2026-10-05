@@ -71,7 +71,7 @@ Periods are dates, never values: "Y/E 22", "22 Y/E", "FY23", "2023E" (also A, F,
 "H1 24", "1H24", "Q3 25", "3Q25". A half year is stored as "2024-H1".
 Period rules (apply to tables, structure text and the verifier):
 - Header stack: extracted structure text includes every header row above the data; a merged range is written with its span, e.g. "FY2025 (r1c3:r1c14)". The model receives the full header stack, not only the row directly above the values. On the column-mapping path the stack is capped at 3 header rows, the 3 nearest the data, and carries no text cell values.
-- A period may be built from two cells: the month or quarter cell and the year cell above it in the same column range. "Mar" + "2025" → 2025-03; "Q3" + "2025" → 2025-Q3.
+- A period may be built from two cells: the month or quarter cell and the year cell above it in the same column range. "Mar" + "2025" → 2025-03; "Q3" + "2025" → 2025-Q3. With a year-end other than December, a month under any year header (plain or FY) is shifted by the year-end: months after the year-end month belong to the previous calendar year, months up to and including it to the named year (March year-end: "Apr" + "FY2025" → 2024-04, "Mar" + "FY2025" → 2025-03).
 - Month names are matched in English, German and Bulgarian, short and long forms, any case.
 - A month or quarter header with no year cell above it in the same column range → period null. Never infer the year from the deck date, the file name or neighbouring columns.
 - `fiscal_year_end` is a month field on the audit creation screen, default December, and stays editable after creation through PUT /audits/{id} in the existing MappingWizard settings (no new screen). Changing it re-runs period mapping.

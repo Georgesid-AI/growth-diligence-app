@@ -30,7 +30,10 @@ year in which it ends, so its target_date is that year. The ranges follow the au
 year-end: with December every period is the calendar one; with any other month every year,
 quarter and half label is fiscal ("2025E", "Q1 25", "H1 25" as much as "FY25"), so with a March
 year-end 2025 and FY25 run 2024-04-01 to 2025-03-31 and Q1 25 runs 2024-04-01 to 2024-06-30.
-Months stay calendar months. remap_periods re-runs the ranges for a new year-end.
+Months stay calendar months, but a month under a year header ("Apr" under "FY2025" or "2025",
+target_date "FY2025-04") or stated with one ("Apr FY25") falls inside that year: up to the year-end
+month it is in the named year, after it in the calendar year before (with a March year-end April
+of FY2025 is April 2024). remap_periods re-runs the ranges for a new year-end.
 
 A figure takes the keyword and the date of its own line. A line with its own keyword never
 borrows a label. When it has none, the figure borrows one from nearby text, first match wins:
@@ -128,48 +131,50 @@ _MONTH_NUMBER = {name: n for n, names in MONTH_NAMES.items() for name in names}
 _MONTH_ANY = (r"(?<![^\W\d_])(?P<month>(?i:" + "|".join(sorted(map(re.escape, _MONTH_NUMBER), key=len, reverse=True))
               + r"))(?![^\W\d_])")
 _YY = r"(?P<year>(?:19|20)\d{2}|\d{2})"
-_FY = r"FY\s*['’]?(?:(?:(?:19|20)\d{2}|\d{2})\s*/\s*)?" + _YY      # FY25, FY2024/25: named by the end year
-# (kind, pattern, fiscal). A fiscal year (FY, Y/E) is named by the year it ends in. `fiscal` marks a
-# period stated as fiscal; it only decides whether a month may be built under it (combine_period).
-# Whether a range is fiscal is decided by the year-end alone (period_range).
+_FY = r"(?P<fy>FY)\s*['’]?(?:(?:(?:19|20)\d{2}|\d{2})\s*/\s*)?" + _YY    # FY25, FY2024/25: named by the end year
+# (kind, pattern). A fiscal year (FY, Y/E) is named by the year it ends in. Whether a range is fiscal is
+# decided by the year-end alone (period_range).
 _DATES = [
+    # Apr FY25, FY2025 Apr: a month of a fiscal year ("FY2025-04")
+    ("month", re.compile(_MONTH + r"\.?\s*[-/]?\s*" + _FY + r"\b")),
+    ("month", re.compile(r"\b" + _FY + r"\s*[-/]?\s*" + _MONTH)),
     # Q1 FY25, FY25 Q1, H1 FY2024/25, FY25-H2: a quarter or half of a fiscal year
-    ("quarter", re.compile(r"\bQ(?P<q>[1-4])\s*[-/]?\s*" + _FY + r"\b"), True),
-    ("quarter", re.compile(r"\b" + _FY + r"\s*[-/]?\s*Q(?P<q>[1-4])\b"), True),
-    ("half", re.compile(r"\bH(?P<h>[12])\s*[-/]?\s*" + _FY + r"\b"), True),
-    ("half", re.compile(r"\b" + _FY + r"\s*[-/]?\s*H(?P<h>[12])\b"), True),
+    ("quarter", re.compile(r"\bQ(?P<q>[1-4])\s*[-/]?\s*" + _FY + r"\b")),
+    ("quarter", re.compile(r"\b" + _FY + r"\s*[-/]?\s*Q(?P<q>[1-4])\b")),
+    ("half", re.compile(r"\bH(?P<h>[12])\s*[-/]?\s*" + _FY + r"\b")),
+    ("half", re.compile(r"\b" + _FY + r"\s*[-/]?\s*H(?P<h>[12])\b")),
     # Q3 2021, Q1 17, Q1-Q2 2023
-    ("quarter", re.compile(r"\bQ(?P<q>[1-4])(?:\s*[-–]\s*Q[1-4])?\s*['’]?\s*" + _YY + r"\b"), False),
+    ("quarter", re.compile(r"\bQ(?P<q>[1-4])(?:\s*[-–]\s*Q[1-4])?\s*['’]?\s*" + _YY + r"\b")),
     # 2021 Q3, 2021-Q3
-    ("quarter", re.compile(r"(?<![\d.,])(?P<year>(?:19|20)\d{2})\s*[-/]?\s*Q(?P<q>[1-4])\b"), False),
+    ("quarter", re.compile(r"(?<![\d.,])(?P<year>(?:19|20)\d{2})\s*[-/]?\s*Q(?P<q>[1-4])\b")),
     # 3Q25, 3Q 2025
-    ("quarter", re.compile(r"(?<![\w.,])(?P<q>[1-4])Q\s*['’]?" + _YY + r"\b"), False),
+    ("quarter", re.compile(r"(?<![\w.,])(?P<q>[1-4])Q\s*['’]?" + _YY + r"\b")),
     # Periods (spec section 2): H1 24, 1H 2024, then FY2024/25, Y/E 22, 23 Y/E, FY23, 2023E
-    ("half", re.compile(r"\bH(?P<h>[12])\s*['’]?\s*" + _YY + r"\b"), False),
-    ("half", re.compile(r"(?<![\w.,])(?P<h>[12])H\s*['’]?" + _YY + r"\b"), False),
+    ("half", re.compile(r"\bH(?P<h>[12])\s*['’]?\s*" + _YY + r"\b")),
+    ("half", re.compile(r"(?<![\w.,])(?P<h>[12])H\s*['’]?" + _YY + r"\b")),
     # FY2024/25, FY24/25: the fiscal year that ends in the second year
-    ("year", re.compile(r"\bFY\s*['’]?(?:(?:19|20)\d{2}|\d{2})\s*/\s*(?P<year>(?:19|20)\d{2}|\d{2})\b"), True),
-    ("year", re.compile(r"\b(?:Y/?E|FY)\s*['’]?" + _YY + r"\b"), True),
-    ("year", re.compile(r"(?<![\w$€£.,])" + _YY + r"\s*Y/?E\b"), True),
-    ("year", re.compile(r"(?<![\w$€£.,'’])(?P<year>(?:19|20)\d{2})[EAFBP]\b"), False),
+    ("year", re.compile(r"\bFY\s*['’]?(?:(?:19|20)\d{2}|\d{2})\s*/\s*(?P<year>(?:19|20)\d{2}|\d{2})\b")),
+    ("year", re.compile(r"\b(?:Y/?E|FY)\s*['’]?" + _YY + r"\b")),
+    ("year", re.compile(r"(?<![\w$€£.,])" + _YY + r"\s*Y/?E\b")),
+    ("year", re.compile(r"(?<![\w$€£.,'’])(?P<year>(?:19|20)\d{2})[EAFBP]\b")),
     # January 2011, Feb. 2007, April of 2011, May, 2021, Nov28,08, Aug2008, Mar '15
     ("month", re.compile(_MONTH + r"\.?,?\s*(?:(?:\d{1,2})(?:st|nd|rd|th)?,\s*(?P<y2>\d{2})\b|"
-                         r"(?:\d{1,2}(?:st|nd|rd|th)?,?\s+)?(?:of\s+)?(?P<year>(?:19|20)\d{2})\b|['’](?P<y3>\d{2})\b)"),
-     False),
+                         r"(?:\d{1,2}(?:st|nd|rd|th)?,?\s+)?(?:of\s+)?(?P<year>(?:19|20)\d{2})\b|['’](?P<y3>\d{2})\b)")),
     # a bare year: 2024, by end of 2020
-    ("year", re.compile(r"(?<![\w$€£.,'’])(?P<year>(?:19|20)\d{2})(?![\d%]|\.\d|,\d)"), False),
+    ("year", re.compile(r"(?<![\w$€£.,'’])(?P<year>(?:19|20)\d{2})(?![\d%]|\.\d|,\d)")),
 ]
 
 
 def _table_dates() -> list:
-    """_DATES with month names in every language and case, and ISO months (2025-03), for tables."""
+    """_DATES with month names in every language and case, and ISO months (2025-03) just before the
+    plain month form, for tables."""
     out = []
-    for kind, rx, fiscal in _DATES:
+    for kind, rx in _DATES:
         if kind == "month":
+            if "fy" not in rx.groupindex:
+                out.append(("month", re.compile(r"(?<![\d.,/-])(?P<year>(?:19|20)\d{2})-(?P<mnum>0[1-9]|1[0-2])(?![\d-])")))
             rx = re.compile(rx.pattern.replace(_MONTH, _MONTH_ANY))
-            out.append(("month", re.compile(r"(?<![\d.,/-])(?P<year>(?:19|20)\d{2})-(?P<mnum>0[1-9]|1[0-2])(?![\d-])"),
-                        False))
-        out.append((kind, rx, fiscal))
+        out.append((kind, rx))
     return out
 
 
@@ -194,10 +199,10 @@ def _year(text: str) -> int:
 
 
 def find_dates(line: str, table: bool = False) -> List[Dict]:
-    """[{"start", "end", "date", "kind", "text", "fiscal"}], longest forms first, no overlaps. In a
-    table cell (`table`) month names are matched in English, German and Bulgarian, any case."""
+    """[{"start", "end", "date", "kind", "text"}], longest forms first, no overlaps. In a table cell
+    (`table`) month names are matched in English, German and Bulgarian, any case."""
     found = []
-    for kind, rx, fiscal in (_TABLE_DATES if table else _DATES):
+    for kind, rx in (_TABLE_DATES if table else _DATES):
         for m in rx.finditer(line):
             if any(m.start() < d["end"] and d["start"] < m.end() for d in found):
                 continue
@@ -209,11 +214,10 @@ def find_dates(line: str, table: bool = False) -> List[Dict]:
             elif kind == "month":
                 year = g.get("year") or g.get("y2") or g.get("y3")
                 month = int(g["mnum"]) if g.get("mnum") else _month_number(g["month"])
-                date = f"{_year(year)}-{month:02d}"
+                date = f"{'FY' if g.get('fy') else ''}{_year(year)}-{month:02d}"
             else:
                 date = str(_year(g["year"]))
-            found.append({"start": m.start(), "end": m.end(), "date": date, "kind": kind, "text": m.group(0),
-                          "fiscal": fiscal})
+            found.append({"start": m.start(), "end": m.end(), "date": date, "kind": kind, "text": m.group(0)})
     return sorted(found, key=lambda d: d["start"])
 
 
@@ -230,13 +234,13 @@ _PART = re.compile(r"(?i)^\s*(?:Q(?P<q>[1-4])|H(?P<h>[12])|" + _MONTH_ANY + r")\
 def period_cell(text: str) -> Optional[Dict]:
     """What one header cell says about a period (spec section 2, period rules):
 
-        {"label": "2025-Q3", "fiscal": False, "text": "Q3 2025"}   a full period ("fiscal": stated as FY, Y/E)
+        {"label": "2025-Q3", "text": "Q3 2025", "kind": "quarter"}  a full period
         {"part": "Q3"} / {"part": "03"} / {"part": "H1"}              a quarter, month or half with no year
         {"relative": 3}                                               M3, Month 3, Year 3: no start date
         None                                                          no period
 
     A full period is a cell with exactly one date. A bare year is a full period and can also stand
-    above a part ("Mar" under "2025" is 2025-03, see combine_period). "Q3" with no year is a part,
+    above a part ("Mar" under "2025" is FY2025-03, see combine_period). "Q3" with no year is a part,
     never a period: the year is never inferred from the deck date, the file name or neighbouring
     columns. Month names are matched in English, German and Bulgarian, any case."""
     text = (text or "").strip()
@@ -255,21 +259,19 @@ def period_cell(text: str) -> Optional[Dict]:
     if len(dates) != 1:
         return None
     d = dates[0]
-    return {"label": d["date"], "fiscal": d["fiscal"], "text": d["text"], "kind": d["kind"]}
+    return {"label": d["date"], "text": d["text"], "kind": d["kind"]}
 
 
 def combine_period(part_cell: Optional[Dict], year_cell: Optional[Dict]) -> Optional[Dict]:
-    """A period built from two cells: a month, quarter or half and the year cell above it ("Mar" +
-    "2025" -> 2025-03, "Q3" + "2025" -> 2025-Q3, "Q3" + "FY2025" -> 2025-Q3). A quarter or half follows
-    the year-end like any other (period_range). A month is a calendar month and is built under a
-    plain year only: under a cell stated as a fiscal year ("FY2025") its calendar year depends on
-    the year-end, so it stays without a period. None when the upper cell is not a year."""
+    """A period built from two cells: a month, quarter or half and the year cell above it ("Q3" + "2025"
+    or "FY2025" -> 2025-Q3; "Mar" + "2025" or "FY2025" -> FY2025-03, the March inside that year). Both
+    follow the year-end (period_range). None when the upper cell is not a year."""
     if not part_cell or "part" not in part_cell or not year_cell or year_cell.get("kind") != "year" \
             or not re.fullmatch(r"\d{4}", year_cell.get("label") or ""):
         return None
-    if year_cell.get("fiscal") and part_cell["part"][0] not in "QH":
-        return None
-    return {"label": f"{year_cell['label']}-{part_cell['part']}", "kind": "two_cell"}
+    part = part_cell["part"]
+    label = f"{year_cell['label']}-{part}" if part[0] in "QH" else f"FY{year_cell['label']}-{part}"
+    return {"label": label, "kind": "two_cell"}
 
 
 def period_range(label: Optional[str], fiscal_year_end: int = 12) -> Optional[Tuple[str, str]]:
@@ -277,9 +279,14 @@ def period_range(label: Optional[str], fiscal_year_end: int = 12) -> Optional[Tu
 
     "2025-03" is a calendar month. "2025", "2025-Q3", "2025-H1", "FY2025" and "FY2024/25" follow the
     year-end: fiscal year 2025 ends on the last day of `fiscal_year_end` (1-12) in 2025 and starts 12
-    months earlier, and its quarters and halves count from that start. With December every period
-    is the calendar one.
+    months earlier, and its quarters and halves count from that start. "FY2025-04" is the April inside
+    year 2025: up to the year-end month in 2025, after it in 2024. With December every period is the
+    calendar one.
     """
+    m = re.fullmatch(r"FY(?P<y>\d{4})-(?P<m>0[1-9]|1[0-2])", label or "")
+    if m:
+        year, month = int(m.group("y")), int(m.group("m"))
+        label = f"{year - 1 if month > fiscal_year_end else year}-{month:02d}"
     m = re.fullmatch(r"FY(?:(?P<c>\d{2})\d{2}/)?(?P<y>\d{2}|\d{4})", label or "")
     if m:                                           # FY2024/25: the second year in the century of the first
         y = m.group("y")
@@ -593,7 +600,7 @@ def column_periods(rows: Dict[int, List[Dict]]) -> Dict[int, Dict]:
 
     The header stack is the rows above the first row that holds a figure other than a date. For
     each column, the lowest header cell covering it that is a period decides: a full period
-    ("Y/E 22", "Q3 2025", "Mär 2025"), a month, quarter or half combined with the calendar year cell
+    ("Y/E 22", "Q3 2025", "Mär 2025"), a month, quarter or half combined with the year cell
     above it in the same column range ("Q3" under "2025" spanning the quarters), or NO_PERIOD for
     a part with no year above it or a relative column. A column no period cell covers is absent,
     and its figures borrow a date as before."""

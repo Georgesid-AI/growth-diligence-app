@@ -134,13 +134,46 @@ def test_fiscal_years_follow_the_audit_year_end(header, period, year_end, status
     assert _status(grid, _item(2000000, "r2c2", period, ["r1c2"]), year_end) == status
 
 
-def test_a_quarter_under_a_fiscal_year_is_that_fiscal_quarter_and_a_month_under_it_has_no_period():
-    grid = _struct([["", "FY2025", "", "FY2025"], ["", "Q3", "Q4", "Mar"], ["Revenue", "$3M", "$4M", "$5M"]],
-                   header_rows=2, spans={(1, 2): 2})
+def test_a_quarter_under_a_fiscal_year_is_that_fiscal_quarter():
+    grid = _struct([["", "FY2025", ""], ["", "Q3", "Q4"], ["Revenue", "$3M", "$4M"]], header_rows=2, spans={(1, 2): 2})
     assert _status(grid, _item(3000000, "r3c2", "2025-Q3", ["r2c2", "r1c2"]), 3) == verify.VERIFIED
     assert _status(grid, _item(4000000, "r3c3", "2025-Q4", ["r2c3", "r1c2"]), 12) == verify.VERIFIED
-    assert _status(grid, _item(5000000, "r3c4", "2025-03", ["r2c4", "r1c4"]), 3) == verify.SUGGESTION, \
-        "a month's calendar year under a fiscal year depends on the year-end"
+
+
+@pytest.mark.parametrize("header, month, year_end, period, status", [
+    ("FY2025", "Mar", 3, "2025-03", verify.VERIFIED),       # up to the year-end month: the named year
+    ("FY2025", "Apr", 3, "2024-04", verify.VERIFIED),       # after it: the calendar year before
+    ("FY2025", "Apr", 3, "2025-04", verify.SUGGESTION),
+    ("2025", "Jul", 6, "2024-07", verify.VERIFIED),         # a plain year header too
+    ("2025", "Jul", 6, "2025-07", verify.SUGGESTION),
+    ("2025", "Jun", 6, "2025-06", verify.VERIFIED),
+    ("FY2025", "Apr", 12, "2025-04", verify.VERIFIED),      # December: unchanged
+    ("2025", "Jul", 12, "2025-07", verify.VERIFIED),
+])
+def test_a_month_under_a_year_header_falls_inside_that_year(header, month, year_end, period, status):
+    grid = _struct([["", header], ["", month], ["Revenue", "$5M"]], header_rows=2)
+    assert _status(grid, _item(5000000, "r3c2", period, ["r2c2", "r1c2"]), year_end) == status
+
+
+def test_the_period_comes_from_the_lowest_period_header():
+    quarters = _struct([["", "2025", "", "", ""], ["", "Q1", "Q2", "Q3", "Q4"], ["Revenue", "$1M", "$2M", "$3M", "$4M"]],
+                       header_rows=2, spans={(1, 2): 4})
+    assert _status(quarters, _item(3000000, "r3c4", "2025", ["r1c2"])) == verify.SUGGESTION, \
+        "a quarterly value cited against its year header only"
+    assert _status(PLAN, _item(1200000, "r2c2", "FY2025", ["r1c2"])) == verify.VERIFIED, "a yearly value"
+    months = _struct([["", "2025", ""], ["", "Q3", ""], ["", "Jul", "Aug"], ["Revenue", "$1M", "$2M"]],
+                     header_rows=3, spans={(1, 2): 2, (2, 2): 2})
+    assert _status(months, _item(1000000, "r4c2", "2025-Q3", ["r2c2", "r1c2"])) == verify.SUGGESTION, \
+        "a monthly value cited against its quarter"
+    assert _status(months, _item(1000000, "r4c2", "2025-07", ["r3c2", "r1c2"])) == verify.VERIFIED
+    by_row = _struct([["", "2025"], ["Jan", "£1M"]])
+    assert _status(by_row, _item(1000000, "r2c2", "2025", ["r1c2"])) == verify.SUGGESTION, \
+        "the month in its row is lower than the year above it"
+    relative = _struct([["", "2025", ""], ["", "M1", "M2"], ["Revenue", "£1M", "£2M"]], header_rows=2,
+                       spans={(1, 2): 2})
+    assert _status(relative, _item(1000000, "r3c2", "2025", ["r1c2"])) == verify.SUGGESTION
+    years_by_row = _struct([["", "Revenue"], ["FY2025", "£1M"]])
+    assert _status(years_by_row, _item(1000000, "r2c2", "FY2025", ["r2c1"])) == verify.VERIFIED
 
 
 def test_a_null_period_matches_only_when_no_header_holds_a_period():
@@ -159,6 +192,10 @@ def test_relative_columns_have_no_period_unless_a_cell_states_the_start_date():
     assert _status(relative, _item(2000000, "r2c3", "2025-02", ["r1c3"])) == verify.SUGGESTION
     started = _struct([["Start: Jan 2025", "M1", "M2"], ["Revenue", "£1M", "£2M"]])
     assert _status(started, _item(2000000, "r2c3", "2025-02", ["r1c3", "r1c1"])) == verify.VERIFIED
+    fiscal_start = _struct([["Start: Apr FY25", "Year 1"], ["Revenue", "£1M"]])
+    assert _status(fiscal_start, _item(1000000, "r2c2", "FY2025", ["r1c2", "r1c1"]), 3) == verify.VERIFIED, \
+        "April of FY25 is April 2024 with a March year-end: Year 1 is FY2025"
+    assert _status(fiscal_start, _item(1000000, "r2c2", "FY2025", ["r1c2", "r1c1"]), 12) == verify.SUGGESTION
 
 
 def test_in_a_kpi_panel_the_top_line_of_the_box_is_its_header():

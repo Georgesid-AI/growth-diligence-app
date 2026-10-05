@@ -182,6 +182,11 @@ def _word_spans(text: str, word: str) -> List[Tuple[int, int]]:
     return [(s, e) for s, e in found if _edge(text, s) and _edge(text, e)]
 
 
+def has_word(text: str, word: Optional[str]) -> bool:
+    """True when the word stands in the text as a whole word, in any case (the boundaries of _edge)."""
+    return bool(_word_spans(text or "", word))
+
+
 def _protected(text: str, company_name: Optional[str]) -> List[Tuple[int, int]]:
     """Spans no rule may rewrite: the target company's own name (as a whole word), existing pseudonyms
     and placeholders."""
