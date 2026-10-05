@@ -4,8 +4,11 @@ Status: Draft. Location: docs/specs/llm-structure-reading.md. Implements CLAUDE.
 **1. Gateway function.** `gateway.read_structure(text, type) → JSON`, plus the db and audit id every gateway call
 carries. There is one prompt (`prompts/structure_reading.md`) and one schema, and `type` is an input field. Types:
 `table`, `chart`, `kpi_panel`, `roadmap`, `hiring_table`, `unit_economics`, `use_of_funds`, `column_mapping`.
-Python builds `text` as one line per cell, `r<row>c<col>: <cell text>`, with no file name, slide number or prose.
-The output is `{"items": [...]}`, and each item has exactly these fields:
+Python finds the structures and assigns their type (deck-parser.md §7). It builds `text` as one line per cell,
+`r<row>c<col>: <cell text>`, with no file name, slide number or prose. Adding the prompt file records its hash in
+`RELEASE.md` without a release bump; later edits bump it as today. The output is `{"type": ..., "items": [...]}`.
+`type` confirms or corrects Python's type, within the deck types (a column mapping stays one), and Python logs any
+change (§9). Each item has exactly these fields:
 - `metric`: a deck-parser.md §2 claim type, `Use of funds`, or a FIELD_DEFS field;
 - `period`: `YYYY`, `YYYY-Qn`, `YYYY-Hn`, `YYYY-MM` or null;
 - `value`: a number, null only for a roadmap milestone or a column mapping;
@@ -24,8 +27,10 @@ normalisation:
 - `k`/`m`/`bn` suffixes are applied;
 - a unit or scale in a neighbouring or header cell (`£m`, `'000`, `%`) is applied.
 
-The match is exact, so a rounded number does not match. Every proposed flag is recomputed from the matched values;
-a flag Python cannot reproduce counts as unmatched. Matched items are `Verified`. For unmatched ones, the switch
+The match is exact, so a rounded number does not match. The period must match too: the row or column header of
+the matched cell must read as that period under the deck-parser.md §2 period rules. A null period matches only when
+neither header holds a period. An unmatched value or period makes the item unmatched. Every proposed flag is
+recomputed from the matched values; a flag Python cannot reproduce counts as unmatched. Matched items are `Verified`. For unmatched ones, the switch
 `STRUCTURE_UNMATCHED` decides: `"suggest"` (the default) shows "AI suggestion, not verified", and `"drop"` removes them
 and keeps a count. An item with no value is never Verified. A column mapping only pre-fills the mapping screen, where the
 analyst confirms it.
@@ -50,13 +55,14 @@ every source cell exists. A failing reply is rejected. After the existing one re
 "Not read by AI" and Python's result stands.
 
 **6. Model.** `STRUCTURE_MODEL = "claude-sonnet-5-5"`, a constant in gateway.py separate from `NARRATIVE_MODEL`. It
-needs a price entry, and changing it moves every cache key. Temperature 0 is not possible, because this model
-returns a 400 for any non-default temperature (question 2).
+needs a price entry, and changing it moves every cache key. Temperature stays at the default and is not sent.
+Consistency relies on the cache, the verifier and the 95% agreement target (§11).
 
 **7. Caps.** 200,000 tokens per audit, counting billed input and output. A call goes out only if tokens used + its
 input + its `max_tokens` fit under the cap. Otherwise the analyst sees: "AI reading stopped: this audit reached its
 200,000-token limit. The remaining structures were read by Python only." Each structure may use at most 3,000 input
 tokens, measured with the provider's token counter. A larger one is not sent and is marked "Too large for AI reading".
+The token cap governs structure calls. The 15-call cap per run (`MAX_CALLS_PER_RUN`) counts narrative calls only.
 The existing circuit breaker applies: per-audit lock (step `structures`), daily spend cap, retry policy.
 
 **8. Cache.** The key is sha256 of text, type, prompt cache tag and model. Results are stored in `llm_structures` and
@@ -64,9 +70,10 @@ looked up by (audit id, key), so no audit is served another audit's result. A hi
 removes the stored results (`purge_run`).
 
 **9. Logging (rule 17).** `llm_structures` stores the model JSON output, the verifier status of each item, prompt
-version, model, content hash, tokens, cost, deck, page and type. `llm_calls` adds the content hash and deck id. The
-server log line carries run id, step, hash, tokens and cost. Sent text is never stored. `GET /api/runs/{id}/llm-usage`
-gains `by_deck`, and the deck panel shows each deck's cost.
+version, model, content hash, tokens, cost, deck and page. It also stores Python's type and, when the two differ,
+the model's type. `llm_calls` adds the content hash and deck id. The server log line carries run id, step, hash,
+tokens, cost and any type change. Sent text is never stored. `GET /api/runs/{id}/llm-usage` gains `by_deck`, and
+the deck panel shows each deck's cost.
 
 **10. Boundary test and docstrings.** `test_gateway_data_boundary.py` keeps every existing assertion.
 - It must pass when redacted structure cells, or header rows with at most 3 redacted samples per column, reach the provider.
@@ -78,9 +85,10 @@ The docstrings in `gateway.py`, `decks/__init__.py` and `prompt_store.py` restat
 
 **11. Tests.** Automated tests replay recorded replies (public test decks only) through the fake adapter, with no
 live API. They cover:
-- the verifier: each normalisation case, flags, the switch;
+- the verifier: each normalisation case, period matching, flags, the switch;
 - redaction: each rule with a false friend (amounts, years, "Head of Sales");
-- orchestration: schema rejection, caps, cache, consent, logging, Delete audit.
+- orchestration: schema rejection, caps (including the narrative-only call cap), cache, consent, type-change
+  logging, Delete audit.
 
 Each new test is first shown failing on a deliberate violation. `scripts/consistency_run.py` is manual: it uses the
 live API and costs money. It runs the 10 decks in `tests/fixtures/decks/decks/` 3 times and reports:
@@ -93,18 +101,13 @@ Passes 2 and 3 read the cache first to get the hit rate (expected 100%), then ca
 so agreement measures the model. Target: ≥95% agreement.
 
 **Open questions.**
-1. Who picks the structures and their types? Proposal: a Python detector, specified first in deck-parser.md.
-2. Keep `claude-sonnet-5-5` without temperature, or pin `claude-sonnet-4-6`, which accepts 0 ($3/$15 against $2/$10 per million tokens)?
-3. Where do results show? Proposal: in the existing approval list, marked AI-read.
-4. A matched value with a wrong period becomes Verified. Should the period be matched too?
-5. Should customer names in spreadsheet samples be pseudonymised, as the narrative path does?
-6. Do structure calls count toward the 15-call cap per run? Proposal: no, the token cap governs them.
-7. Does adding the prompt file bump the release, which supersedes all stored narratives? Proposal: no bump now, bump on later edits.
+1. Where do results show? Proposal: in the existing approval list, marked AI-read.
+2. Should customer names in spreadsheet samples be pseudonymised, as the narrative path does?
 
 **Files.**
 - New: `backend/app/structures/{__init__,redact,verify}.py`, `backend/app/llm/prompts/structure_reading.md`,
   `backend/tests/test_structure_{redaction,verifier,reading}.py`, `backend/tests/fixtures/structure_replies/`,
   `scripts/consistency_run.py`.
-- Changed: `backend/app/llm/{gateway,schemas,cache,guards,prompt_store}.py`, `backend/app/llm/prompts/RELEASE.md`,
-  `backend/app/decks/__init__.py`, `backend/server.py`, `backend/tests/test_gateway_data_boundary.py`,
+- Changed: `backend/app/decks/parser.py` (deck-parser.md §7), `backend/app/llm/{gateway,schemas,cache,guards,prompt_store}.py`,
+  `backend/app/llm/prompts/RELEASE.md`, `backend/app/decks/__init__.py`, `backend/server.py`, `backend/tests/test_gateway_data_boundary.py`,
   `frontend/src/components/DeckPanel.jsx`, `frontend/src/pages/MappingWizard.jsx`.

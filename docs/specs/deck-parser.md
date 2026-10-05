@@ -166,6 +166,20 @@ These figures may inform the growth plan. They were identified automatically and
 - Within a deck, claims to review come first, then the rest, each by slide or page. The order
   is set when the list loads, so a row does not move while it is being reviewed.
 
+## 7. Structure detection (Python only, no LLM)
+Finds the structures that CLAUDE.md rule 16 lets the gateway read (docs/specs/llm-structure-reading.md). Every structure
+keeps its source reference (file, slide or page) and every cell keeps its row and column, so a value read from it can be
+cited. Structures are stored with the deck's parsed text and deleted with it (§5).
+- Tables and text boxes: read as today (§1).
+- Charts (pptx): read from the chart XML: series, data labels, chart title and axis titles.
+- KPI panels: text boxes with a number beside a short label.
+- Roadmaps and timelines: text boxes with dates.
+- Hiring, unit-economics and use-of-funds tables: tables classified by header keywords. Any other table is a table.
+- Text that is none of these is prose and is never a structure.
+Python assigns the type. The model may confirm or correct it in its type field, and Python logs any change.
+The keyword lists, the label length and how many dates make a timeline are fixed on the 10 test decks at build time
+and written into this section.
+
 ## Done when
 - All three formats parse with correct slide/page references.
 - Recall test passes at 95%+ with precision at 30%+.
