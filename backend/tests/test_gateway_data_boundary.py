@@ -1087,7 +1087,7 @@ def test_the_consistency_run_prints_and_reports_no_text_sent_to_the_model(monkey
     import tempfile
     from app.decks import parser
     from app.llm.schemas import DECK_TYPES
-    from app.structures import redact
+    from app.structures import items, redact
     spec = importlib.util.spec_from_file_location("consistency_run", BACKEND.parent / "scripts" / "consistency_run.py")
     script = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(script)
@@ -1102,8 +1102,10 @@ def test_the_consistency_run_prints_and_reports_no_text_sent_to_the_model(monkey
             reply, tokens_in, tokens_out = super().complete(**kwargs)
             n = self.calls[kwargs["user_payload"]] = self.calls.get(kwargs["user_payload"], 0) + 1
             body = json.loads(reply)
-            items = [{**item, "unit": None if n == 2 else item["unit"]} for item in body["items"]]
-            return json.dumps({**body, "items": items[:len(items) - (n == 3)]}), tokens_in, tokens_out
+            labels = [{**label, "unit": None if n == 2 else label["unit"]} for label in body["labels"]]
+            if n == 3 and labels:
+                labels[-1] = {**labels[-1], "metric": "other"}
+            return json.dumps({**body, "labels": labels}), tokens_in, tokens_out
     monkeypatch.setattr(script, "FakeAdapter", Drifting)
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     names = ["05-zero2hero.pdf", "02-moz.pdf"]
@@ -1114,16 +1116,18 @@ def test_the_consistency_run_prints_and_reports_no_text_sent_to_the_model(monkey
         assert set(row) == {"deck", "page", "type", "fields", "same_after_normalisation"}
         assert row["deck"] in names and row["type"] in DECK_TYPES and set(row["fields"]) <= set(script.FIELDS)
     for row in report["unverified_items"]:
-        assert set(row) == {"deck", "page", "type", "value_cell", "reason", "detail", "passes"}
-        assert row["deck"] in names and row["type"] in DECK_TYPES and re.fullmatch(r"r\d+c\d+", row["value_cell"])
-        assert row["reason"] in script.REASONS and row["detail"] in (None, "no value", "flag not reproduced")
-    for counts in [*report["disagreement_fields"].values(), *report["unverified_reasons"].values()]:
-        assert set(counts) <= {"structures", "disagreeing", *script.FIELDS, *script.REASONS}
+        assert set(row) == {"deck", "page", "type", "item", "cell", "reason", "detail", "passes"}
+        assert row["deck"] in names and row["type"] in DECK_TYPES and re.fullmatch(r"i\d+", row["item"])
+        assert re.fullmatch(r"r\d+c\d+#\d+", row["cell"])
+        assert row["reason"] in script.REASONS and row["detail"] in (None, "type Other")
+    for counts in [*report["disagreement_fields"].values(), *report["unverified_reasons"].values(),
+                   *report["counts"].values()]:
+        assert set(counts) <= {"structures", "disagreeing", *script.FIELDS, *script.REASONS, *script.COUNTS}
         assert all(isinstance(n, int) for n in counts.values())
     assert set(report["tokens"]) == {"fixed_prompt", "system_prompt", "output_schema", "empty_message",
-                                     "structure_text_avg", "structures_counted", "billed_input_per_model_read"}
+                                     "text_and_items_avg", "structures_counted", "billed_input_per_model_read"}
     assert all(isinstance(n, (int, float)) for n in report["tokens"].values())
-    assert isinstance(report["roadmap_items"], int) and isinstance(report["roadmap_dates_rebuilt"], int)
+    assert all(isinstance(report[k], int) for k in ("roadmap_lines", "roadmap_same_pair", "roadmap_dates_rebuilt"))
     files = sorted(tmp_path.glob("consistency_*"))
     excluded = [p for p in files if p.name.endswith(DIAGNOSTIC_SUFFIX)]
     report_md, = [p for p in files if p.suffix == ".md" and p not in excluded]
@@ -1134,6 +1138,8 @@ def test_the_consistency_run_prints_and_reports_no_text_sent_to_the_model(monkey
         for structure in parser.parse_deck((script.DECKS / name).read_bytes(), name)["structures"]:
             cells, _ = redact.redact_structure(structure["cells"], Path(name).stem, {}, set())
             sent |= {line.split(": ", 1)[1] for line in redact.structure_text(cells).splitlines()}
+            listed = items.list_items({**structure, "cells": cells})
+            sent |= {item["raw"] for item in listed["items"] if len(item["raw"]) >= 4 and not item["raw"].isdigit()}
     words = {text for text in sent if len(text) >= 4 and any(c.isalpha() for c in text)}
     assert len(words) > 50 and "Gross Profit" in words, "the check sees the decks' cell text"
     assert not sorted(text for text in words if text in written)

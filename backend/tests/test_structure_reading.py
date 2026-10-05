@@ -1327,7 +1327,8 @@ def _consistency_script():
 
 def test_the_consistency_script_reports_agreement_match_rate_cost_and_cache_hits_without_a_live_call(
         monkeypatch, tmp_path):
-    """scripts/consistency_run.py is manual (live API, costs money); --fake checks its arithmetic."""
+    """scripts/consistency_run.py is manual (live API, costs money); --fake checks its arithmetic. Its FakeAdapter
+    replays the recorded labelling replies and labels every other listed item not_a_metric."""
     pytest.importorskip("pdfplumber")
     import tempfile
     script = _consistency_script()
@@ -1337,35 +1338,41 @@ def test_the_consistency_script_reports_agreement_match_rate_cost_and_cache_hits
     report = script.main(["--fake", "--deck", "05-zero2hero.pdf"])
     assert [p.name.split("_")[0] for p in (tmp_path / "temp").iterdir()] == ["consistency"]
     assert not script.REPORTS.exists(), "a fake run's report never lands in docs/test-runs"
-    assert report["agreement_pct"]["table"] == 100.0 and report["agreement_pct"]["kpi_panel"] == 100.0
-    assert report["verifier_match_rate_pct"] == pytest.approx(100.0 * 16 / 17, abs=0.1), "14 + 2 verified of 17 per pass"
+    assert report["agreement_pct"] == {"hiring_table": 100.0, "kpi_panel": 100.0, "table": 100.0}
+    assert (report["agreement_pct_all"], report["agreement_pct_all_old"]) == (100.0, 100.0)
+    assert report["verifier_match_rate_pct"] == 100.0, "the table's 24 and the panel's 2 per pass"
+    assert report["counts"]["table"] == {"not_a_metric": 0, "other": 0, "ambiguous": 0, "flags": 0}
+    assert report["counts"]["hiring_table"]["not_a_metric"] == 9, "3 items, 3 passes"
+    assert report["counts"]["kpi_panel"] == {"not_a_metric": 27, "other": 0, "ambiguous": 18, "flags": 0}, \
+        "pages 11 and 17 (9 items), 3 passes; page 17's six bracketed figures after text read two ways"
     assert report["cache_hit_rate_pct"] == {"pass_2": 100.0, "pass_3": 100.0}
     assert report["per_deck"]["05-zero2hero.pdf"]["structures"] == 5
     assert report["model_reads"] == 5 * 3, "passes 2 and 3 bypass the cache after counting its hits"
     assert report["period_corrected"] == 0
 
     class WrongYear(script.FakeAdapter):
-        """Replays the recorded replies with one revenue period a year off: its value still matches its cell."""
+        """Replays the recorded replies with one revenue period a year off: Python rebuilds it from its header."""
         def complete(self, **kwargs):
             reply, tokens_in, tokens_out = super().complete(**kwargs)
             body = json.loads(reply)
-            for item in body["items"]:
-                if (item["metric"], item["value"], item["period"]) == ("revenue", 150000, "FY2023"):
-                    item["period"] = "FY2021"
+            for label in body.get("labels", []):
+                if (label["metric"], label["period"]) == ("revenue", "FY2023"):
+                    label["period"] = "FY2021"
             return json.dumps(body), tokens_in, tokens_out
     report = asyncio.run(script.run(["05-zero2hero.pdf"], 3, script.MemoryDB(), WrongYear()))
     assert report["period_corrected"] == 3, "one per pass"
-    assert report["verifier_match_rate_pct"] == pytest.approx(100.0 * 16 / 17, abs=0.1), "a corrected item is verified"
+    assert report["verifier_match_rate_pct"] == 100.0, "a corrected item is verified"
+    assert report["agreement_pct_all"] == 100.0, "the period is compared as the verifier keeps it"
     os.environ.pop("ANTHROPIC_API_KEY", None)
     with pytest.raises(SystemExit, match="ANTHROPIC_API_KEY"):
         script.main(["--yes", "--deck", "05-zero2hero.pdf"])
 
 
 def _drifting(script):
-    """The recorded replies, read a little differently from pass to pass (05-zero2hero.pdf page 19): pass 2 writes
-    the FY2023 revenue's unit as USD, pass 3 writes its period as "2023" and leaves out the KPI panel's users. In
-    every pass the FY2022 users cite their row label as period cell and the FY2023 gross profit proposes a total
-    mismatch, so both stay unverified."""
+    """The recorded replies, read a little differently from pass to pass (05-zero2hero.pdf): pass 2 writes the FY2023
+    revenue's unit as USD, pass 3 writes its period as "2023" and labels the page 19 panel's users as customers. In
+    every pass the FY2022 gross profit is labelled other and page 17's Telegram members are read as users in 2023,
+    a period no cell of theirs holds: both stay unverified."""
     class Drifting(script.FakeAdapter):
         def __init__(self):
             super().__init__()
@@ -1374,93 +1381,96 @@ def _drifting(script):
         def complete(self, **kwargs):
             reply, tokens_in, tokens_out = super().complete(**kwargs)
             n = self.calls[kwargs["user_payload"]] = self.calls.get(kwargs["user_payload"], 0) + 1   # the pass
-            body = json.loads(reply)
-            items = []
-            for item in body["items"]:
-                key = (item["metric"], item["value_cell"])
-                if key == ("revenue", "r4c3"):
-                    item.update({2: {"unit": "USD"}, 3: {"period": "2023"}}.get(n, {}))
-                if key == ("users", "r3c1") and n == 3:
-                    continue
-                if key == ("users", "r2c2"):
-                    item["period_cells"] = ["r2c1"]
-                if key == ("gross_profit", "r6c3"):
-                    item["proposed_flags"] = ["total_mismatch"]
-                items.append(item)
-            return json.dumps({**body, "items": items}), tokens_in, tokens_out
+            text, body = json.loads(kwargs["user_payload"])["text"], json.loads(reply)
+            for label in body.get("labels", []):
+                if "r4c1: Revenue" in text and label["item"] == "i11":
+                    label.update({2: {"unit": "USD"}, 3: {"period": "2023"}}.get(n, {}))
+                if "r4c1: Revenue" in text and label["item"] == "i20":
+                    label["metric"] = "other"
+                if "r2c1: Gross Profit £150K" in text and label["item"] == "i2" and n == 3:
+                    label["metric"] = "customers"
+                if "Telegram(30K)" in text and label["item"] == "i1":
+                    label.update(metric="users", period="2023", unit="count", actual_or_forecast="actual")
+            return json.dumps(body), tokens_in, tokens_out
     return Drifting
 
 
 def test_the_consistency_report_shows_where_passes_disagree_why_items_are_unverified_and_the_fixed_prompt(
         monkeypatch, tmp_path):
-    """The diagnostics of a fake run: agreement on metric, period, value and cell after the verifier's
-    normalisation next to the old all-field figure; the fields that differ per disagreeing structure; a reason
-    per unverified item; the fixed prompt's tokens apart from the structure text's."""
+    """Spec sections 6 and 7: agreement on metric and the period the verifier keeps over the items Python listed,
+    with the old method (period as written, unit, actual or forecast) beside it; the fields that differ per
+    disagreeing structure; a reason per unverified item; the counts per type; the fixed prompt's tokens and the
+    average text plus item list against 4,000."""
     pytest.importorskip("pdfplumber")
     from app.decks import parser
     from app.llm import cache, prompt_store, schemas
     script = _consistency_script()
     report = asyncio.run(script.run(["05-zero2hero.pdf"], 3, script.MemoryDB(), _drifting(script)()))
-    # Table: 15 items, one written three ways (USD, then "2023"): 14 of 17 as written, 15 of 15 normalised.
-    # KPI panel: its users missing in pass 3, so 1 of 2 either way.
-    assert report["agreement_pct_old"] == {"hiring_table": None, "kpi_panel": 50.0, "table": 82.4}
-    assert report["agreement_pct"] == {"hiring_table": None, "kpi_panel": 50.0, "table": 100.0}
-    assert (report["agreement_pct_all_old"], report["agreement_pct_all"]) == (78.9, 94.1), "15 of 19; 16 of 17"
+    # Table: 24 items, the FY2023 revenue written three ways but kept as one period: 23 of 24 as written, 24 of 24
+    # normalised. KPI panels: 3 + 6 + 2 items, the page 19 users read as customers in pass 3: 10 of 11 either way.
+    assert report["agreement_pct_old"] == {"hiring_table": 100.0, "kpi_panel": 90.9, "table": 95.8}
+    assert report["agreement_pct"] == {"hiring_table": 100.0, "kpi_panel": 90.9, "table": 100.0}
+    assert (report["agreement_pct_all_old"], report["agreement_pct_all"]) == (94.7, 97.4), "36 of 38; 37 of 38"
     assert report["disagreements"] == [
         {"deck": "05-zero2hero.pdf", "page": 19, "type": "table", "fields": ["period", "unit"],
          "same_after_normalisation": True},
-        {"deck": "05-zero2hero.pdf", "page": 19, "type": "kpi_panel", "fields": ["cell", "items"],
+        {"deck": "05-zero2hero.pdf", "page": 19, "type": "kpi_panel", "fields": ["metric"],
          "same_after_normalisation": False}]
     zero = dict.fromkeys(script.FIELDS, 0)
+    assert script.FIELDS == ("metric", "period", "unit", "actual_or_forecast")
     assert report["disagreement_fields"] == {
         "hiring_table": {"structures": 1, "disagreeing": 0, **zero},
-        "kpi_panel": {"structures": 3, "disagreeing": 1, **zero, "cell": 1, "items": 1},
+        "kpi_panel": {"structures": 3, "disagreeing": 1, **zero, "metric": 1},
         "table": {"structures": 1, "disagreeing": 1, **zero, "period": 1, "unit": 1}}
-    assert report["unverified_reasons"] == {"table": {**dict.fromkeys(script.REASONS, 0), "value not in cell": 3,
-                                                      "period not rebuilt": 3, "other": 3}}
-    where = {"deck": "05-zero2hero.pdf", "page": 19, "type": "table", "passes": 3}
+    assert script.REASONS == ("period not rebuilt", "metric invalid", "other")
+    assert report["unverified_reasons"] == {"kpi_panel": {**dict.fromkeys(script.REASONS, 0), "period not rebuilt": 3},
+                                            "table": {**dict.fromkeys(script.REASONS, 0), "other": 3}}
     assert report["unverified_items"] == [
-        {**where, "value_cell": "r6c3", "reason": "other", "detail": "flag not reproduced"},
-        {**where, "value_cell": "r2c2", "reason": "period not rebuilt", "detail": None},
-        {**where, "value_cell": "r4c4", "reason": "value not in cell", "detail": None}]
-    assert report["verifier_match_rate_pct"] == 82.0, "41 of 50 items: 15 + 2, 15 + 2, 15 + 1"
+        {"deck": "05-zero2hero.pdf", "page": 17, "type": "kpi_panel", "item": "i1", "cell": "r1c1#1",
+         "reason": "period not rebuilt", "detail": None, "passes": 3},
+        {"deck": "05-zero2hero.pdf", "page": 19, "type": "table", "item": "i20", "cell": "r6c2#1",
+         "reason": "other", "detail": "type Other", "passes": 3}]
+    assert report["verifier_match_rate_pct"] == 92.6, "25 of 27 per pass: 24 + 2 + Telegram, less two"
+    assert report["counts"]["table"] == {"not_a_metric": 0, "other": 3, "ambiguous": 0, "flags": 0}
 
     # Tokens: the fake counter is one token per 4 characters of what would be sent.
     def count(system=None, payload="", schema=None):
         return (len(system or "") + len(payload) + (len(json.dumps(schema)) if schema else 0)) // 4
-    system, schema = prompt_store.load(gateway.STRUCTURE_PROMPT).text, schemas.structure_output_schema()
+    system, schema = prompt_store.load(gateway.STRUCTURE_PROMPT).text, schemas.labelling_output_schema()
     empty = cache.canonical_json({"type": "table", "text": ""})
-    texts = [redact.structure_text(redact.redact_structure(s["cells"], "05-zero2hero", {}, set())[0])
-             for s in parser.parse_deck((DECKS / "05-zero2hero.pdf").read_bytes(), "05-zero2hero.pdf")["structures"]]
+    texts = []
+    for structure in parser.parse_deck((DECKS / "05-zero2hero.pdf").read_bytes(), "05-zero2hero.pdf")["structures"]:
+        cells = redact.redact_structure(structure["cells"], "05-zero2hero", {}, ("Consistency run", "CONSISTENCY"))[0]
+        redacted = {**structure, "cells": cells}
+        texts.append(structure_items.text(redacted, structure_items.list_items(redacted)))
     assert report["tokens"] == {
         "fixed_prompt": count(system, empty, schema), "system_prompt": count(system, empty) - count(payload=empty),
         "output_schema": count(payload=empty, schema=schema) - count(payload=empty),
         "empty_message": count(payload=empty),
-        "structure_text_avg": round(sum(count(payload=text) for text in texts) / 5, 1), "structures_counted": 5,
+        "text_and_items_avg": round(sum(count(payload=text) for text in texts) / 5, 1), "structures_counted": 5,
         "billed_input_per_model_read": 1000.0}
 
     path = script.write_report(report, tmp_path, 3, fake=True)
     text = path.read_text(encoding="utf-8")
     tokens = report["tokens"]
     for line in (
-            "| table | 100.0% | 82.4% |", "| kpi_panel | 50.0% | 50.0% |", "| all | 94.1% | 78.9% |",
-            "| Type | Structures | Disagreeing | metric | period | value | unit | cell | other | items |",
-            "| kpi_panel | 3 | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 1 |", "| table | 1 | 1 | 0 | 1 | 0 | 1 | 0 | 0 | 0 |",
+            "| table | 100.0% | 95.8% |", "| kpi_panel | 90.9% | 90.9% |", "| all | 97.4% | 94.7% |",
+            "| Type | Structures | Disagreeing | metric | period | unit | actual_or_forecast |",
+            "| kpi_panel | 3 | 1 | 1 | 0 | 0 | 0 |", "| table | 1 | 1 | 0 | 1 | 1 | 0 |",
             "| 05-zero2hero.pdf | 19 | table | period, unit | yes |",
-            "| 05-zero2hero.pdf | 19 | kpi_panel | cell, items | no |",
-            "| Type | value not in cell | period not rebuilt | lowest-header rule | metric invalid | other "
-            "| Unverified |",
-            "| table | 3 | 3 | 0 | 0 | 3 | 9 |", "| all | 3 | 3 | 0 | 0 | 3 | 9 |",
-            "| 05-zero2hero.pdf | 19 | table | r6c3 | other (flag not reproduced) | 3 |",
-            "| 05-zero2hero.pdf | 19 | table | r2c2 | period not rebuilt | 3 |",
-            "| 05-zero2hero.pdf | 19 | table | r4c4 | value not in cell | 3 |",
+            "| 05-zero2hero.pdf | 19 | kpi_panel | metric | no |",
+            "| Type | period not rebuilt | metric invalid | other | Unverified |",
+            "| kpi_panel | 3 | 0 | 0 | 3 |", "| table | 0 | 0 | 3 | 3 |", "| all | 3 | 0 | 3 | 6 |",
+            "| 05-zero2hero.pdf | 17 | kpi_panel | i1 | r1c1#1 | period not rebuilt | 3 |",
+            "| 05-zero2hero.pdf | 19 | table | i20 | r6c2#1 | other (type Other) | 3 |",
+            "| Type | not_a_metric | other | ambiguous readings | flags |", "| table | 0 | 3 | 0 | 0 |",
             f"- Fixed prompt: {tokens['fixed_prompt']:,} (system prompt {tokens['system_prompt']:,}, output schema "
             f"{tokens['output_schema']:,}, empty message {tokens['empty_message']:,})",
-            f"- Structure text, average of 5 structures: {tokens['structure_text_avg']:,} (the gateway's 3,000-token "
-            "measure: the text alone)",
+            f"- Structure text and item list, average of 5 structures: {tokens['text_and_items_avg']:,} against the "
+            "gateway's 4,000-token cap",
             "- Billed input per model read: 1,000.0"):
         assert line in text, line
-    assert script.summary(report).startswith("Agreement 94.1% (target 95.0%: missed; old method 78.9%); verified 82.0%")
+    assert script.summary(report).startswith("Agreement 97.4% (target 95.0%: met; old method 94.7%); verified 92.6%")
 
     class Uncountable:
         def count_tokens(self, **kwargs):
@@ -1473,106 +1483,91 @@ def test_the_consistency_report_shows_where_passes_disagree_why_items_are_unveri
         script.write_report(report, tmp_path, 3, fake=True).read_text(encoding="utf-8")
 
 
-def test_roadmap_items_are_reported_apart_from_the_verified_rate(tmp_path):
-    """A roadmap item is counted with whether Python rebuilt its date from the cited cells, and is left out of the
-    match and unverified rates and their reasons: a milestone has no value, so it is never verified."""
+def test_roadmap_lines_are_reported_apart_with_their_pairs_and_dates_rebuilt_from_cells(tmp_path):
+    """Spec section 6: "roadmap lines: N, same pair and category in every pass: M, date rebuilt from cell: K". K counts
+    the lines whose period Python rebuilds from their own period cells, whatever the pair says."""
     pytest.importorskip("pdfplumber")
+    pytest.importorskip("pptx")
     script = _consistency_script()
-
-    def milestone(cell, period, cells):
-        return {"metric": "product", "period": period, "value": None, "unit": None, "actual_or_forecast": "actual",
-                "unit_other": None, "value_cell": cell, "period_cells": cells, "proposed_flags": []}
 
     class Tea(script.FakeAdapter):
-        """The TEA roadmap (page 11), as the model might read four of its milestones."""
+        """The TEA roadmap (page 11): two milestones paired, one of them with another date in pass 3."""
+        def __init__(self):
+            super().__init__()
+            self.calls = {}
+
         def complete(self, **kwargs):
+            reply, tokens_in, tokens_out = super().complete(**kwargs)
             sent = json.loads(kwargs["user_payload"])
             if sent["type"] != "roadmap" or "r8c2: Rich dApps running on network" not in sent["text"]:
-                return super().complete(**kwargs)
-            items = [milestone("r3c2", "2021", ["r1c2"]),             # the year at the top of its box
-                     milestone("r8c2", "2021-Q4", ["r8c1", "r7c1"]),  # the quarter left of it, the year above that
-                     milestone("r2c2", "2021-Q2", ["r2c1", "r1c1"]),  # period headers above and beside: no period
-                     milestone("r4c3", None, [])]                      # no date: matches, but nothing is rebuilt
-            return json.dumps({"type": "roadmap", "items": items}), 1000, 20
-    decks = ["03-buffer.pptx", "05-zero2hero.pdf", "10-tea.pdf"]
-    report = asyncio.run(script.run(decks, 3, script.MemoryDB(), Tea()))
-    assert (report["roadmap_items"], report["roadmap_dates_rebuilt"]) == (24, 6), \
-        "4 Buffer milestones (dates below their lines: none rebuilt) and 4 TEA ones (2 rebuilt), in each of 3 passes"
-    assert report["verifier_match_rate_pct"] == 94.1 and report["unverified_rate_pct"] == 5.9, \
-        "16 of 17 zero2hero items per pass; no roadmap item in the rates"
-    assert list(report["unverified_reasons"]) == ["table"]
-    assert [row["type"] for row in report["unverified_items"]] == ["table"]
-    assert report["agreement_pct"]["roadmap"] == 100.0, "agreement still counts roadmap items"
-    assert "roadmap items: 24, date rebuilt from cell: 6;" in script.summary(report)
+                return reply, tokens_in, tokens_out
+            n = self.calls[sent["text"]] = self.calls.get(sent["text"], 0) + 1
+            body = json.loads(reply)
+            body["pairs"] = [{"line": "t4", "date": "d1", "category": "launch"},
+                             {"line": "t16", "date": "d4" if n == 3 else "d3", "category": "launch"}]
+            return json.dumps(body), tokens_in, tokens_out
+    report = asyncio.run(script.run(["03-buffer.pptx", "10-tea.pdf"], 3, script.MemoryDB(), Tea()))
+    assert (report["roadmap_lines"], report["roadmap_same_pair"], report["roadmap_dates_rebuilt"]) == (36, 35, 22), \
+        "Buffer: 6 lines, all paired alike, only the first with a date line on one side; TEA: 30 lines, one paired " \
+        "with another date in pass 3, 21 with a period in their own cells or headers"
+    assert report["agreement_pct"]["roadmap"] == 100.0, "agreement counts a roadmap's items like any other"
+    assert "roadmap lines: 36, same pair and category in every pass: 35, date rebuilt from cell: 22;" in \
+        script.summary(report)
     text = script.write_report(report, tmp_path, 3, fake=True).read_text(encoding="utf-8")
-    assert "- Roadmap items: 24, date rebuilt from cell: 6" in text
-    assert "| roadmap |" not in text.split("## Unverified items: reasons")[1].split("## Cache hit rate")[0]
+    assert "- Roadmap lines: 36, same pair and category in every pass: 35, date rebuilt from cell: 22" in text
 
 
-@pytest.mark.parametrize("grid, header_rows, spans, item, reason", [
-    # A quarterly value cited against its year header: the year is a period header, but not the lowest.
-    ("quarters", 2, {(1, 2): 4}, dict(value=3000000, period="2025", cells=["r1c2"]), ("lowest-header rule", None)),
-    # A month in its row and a year above it: the rules build no period from either.
-    ([["", "2025"], ["Jan", "£1M"]], 1, None, dict(value=1000000, period="2025", cells=["r1c2"], cell="r2c2"),
-     ("lowest-header rule", None)),
-    ("quarters", 2, {(1, 2): 4}, dict(value=3000000, period="2025-Q3", cells=["r2c4"]), ("period not rebuilt", None)),
-    ("quarters", 2, {(1, 2): 4}, dict(value=3000000, period="2025-Q3", cells=["r3c1"]), ("period not rebuilt", None)),
-    ("quarters", 2, {(1, 2): 4}, dict(value=3000000, period="2025-Q3", cells=[]), ("period not rebuilt", None)),
-    # The cells rebuild 2025-Q3, which replaces the model's year: a period corrected, verified.
-    ("quarters", 2, {(1, 2): 4}, dict(value=3000000, period="2024-Q3", cells=["r2c4", "r1c2"]), None),
-    ("quarters", 2, {(1, 2): 4}, dict(value=3100000, period="2025-Q3", cells=["r2c4", "r1c2"]),
-     ("value not in cell", None)),
-    ("quarters", 2, {(1, 2): 4}, dict(value=None, period="2025-Q3", cells=["r2c4", "r1c2"]), ("other", "no value")),
-    ("quarters", 2, {(1, 2): 4}, dict(value=3100000, period="2025-Q3", cells=["r2c4", "r1c2"], metric="amount"),
-     ("metric invalid", None)),
-    ("quarters", 2, {(1, 2): 4},
-     dict(value=3000000, period="2025-Q3", cells=["r2c4", "r1c2"], flags=["total_mismatch"]),
-     ("other", "flag not reproduced")),
-    ("quarters", 2, {(1, 2): 4}, dict(value=3000000, period="2025-Q3", cells=["r2c4", "r1c2"]), None),
+@pytest.mark.parametrize("label, reason", [
+    (dict(period="2025"), ("period not rebuilt", None)),         # a period no cell of the item holds
+    (dict(metric="other"), ("other", "type Other")),
+    (dict(period=None), None),                                   # verified
 ])
-def test_each_unverified_item_gets_the_first_reason_that_applies(grid, header_rows, spans, item, reason):
-    import test_structure_verifier as v
+def test_each_unverified_item_gets_its_reason(label, reason):
+    import test_structure_verifier as tv
     script = _consistency_script()
-    if grid == "quarters":
-        grid = [["", "2025", "", "", ""], ["", "Q1", "Q2", "Q3", "Q4"], ["Revenue", "$1M", "$2M", "$3M", "$4M"]]
-    structure = v._struct(grid, header_rows=header_rows, spans=spans)
-    sent = v._item(item["value"], item.get("cell", "r3c4"), item["period"], item["cells"],
-                   metric=item.get("metric", "revenue"), flags=item.get("flags", ()))
-    checked, = verify.verify(structure, [sent])["items"]
+    structure = v._struct([["", "Plan"], ["Revenue", "£2M"]])
+    checked, = tv._verify(structure, {"r2c2": tv._lab(**label)})["items"]
     assert (None if checked["status"] == verify.VERIFIED else script.unverified_reason(structure, checked)) == reason
+    assert script.unverified_reason(structure, {**checked, "metric": "amount"}) == ("metric invalid", None)
 
 
 @pytest.mark.parametrize("change, fields", [
     ({}, []),
-    ({"value": 150000.0}, []),                                       # one number, written two ways
-    ({"value_cell": "r4c9"}, ["cell"]),
     ({"metric": "sales"}, ["metric"]),
-    ({"period": "2023"}, ["period"]),
-    ({"value": 150001}, ["value"]),
+    ({"period": "2023"}, ["period"]),                            # as written: FY2023 and 2023 differ here
     ({"unit": "USD"}, ["unit"]),
-    ({"actual_or_forecast": "actual"}, ["other"]),
-    ({"period_cells": []}, ["other"]),
-    ({"proposed_flags": ["total_mismatch"]}, ["other"]),
-    (None, ["cell", "items"]),                                       # left out in the second pass
+    ({"actual_or_forecast": "actual"}, ["actual_or_forecast"]),
+    ({"metric": "sales", "unit": None}, ["metric", "unit"]),
 ])
-def test_the_fields_that_differ_are_found_by_lining_items_up_by_value_cell(change, fields):
+def test_the_fields_that_differ_are_found_by_lining_labels_up_by_item_id(change, fields):
     script = _consistency_script()
-    kept = {"metric": "revenue", "period": "FY2022", "value": 130550, "unit": "GBP", "actual_or_forecast": "forecast",
-            "unit_other": None, "value_cell": "r4c2", "period_cells": ["r1c2"], "proposed_flags": []}
-    item = {"metric": "revenue", "period": "FY2023", "value": 150000, "unit": "GBP", "actual_or_forecast": "forecast",
-            "unit_other": None, "value_cell": "r4c3", "period_cells": ["r1c3"], "proposed_flags": []}
-    second = [kept] if change is None else [kept, {**item, **change}]
-    assert script.differing_fields([[kept, item], second, [kept, item]]) == fields
+    kept, item = _label("i1", period="FY2022", unit="GBP"), _label("i2", period="FY2023", unit="GBP")
+    assert script.differing_fields([[kept, item], [kept, {**item, **change}], [item, kept]]) == fields
+
+
+def test_agreement_compares_the_metric_and_the_period_the_verifier_keeps_by_its_dates():
+    """Spec section 6: the period as the verifier keeps it (start and end dates), not as the model wrote it; a
+    not_a_metric label counts as a metric, with no period kept."""
+    script = _consistency_script()
+    written = _label("i1", period="FY2021")
+    assert script._normalised_key(written, {"period": "2023"}) == ("i1", "revenue", ("2023-01-01", "2023-12-31")), \
+        "the verifier rebuilt 2023 from the header: the model's FY2021 is not compared"
+    assert script._normalised_key(written, {"period": "2023"}) == script._normalised_key(written, {"period": "FY2023"})
+    assert script._normalised_key(written, {"period": "2023"}) != script._normalised_key(written, {"period": "2024"})
+    assert script._normalised_key(written, {"period": None}) == ("i1", "revenue", None)
+    dropped = _label("i2", metric="not_a_metric", period="2023")
+    assert script._normalised_key(dropped, None) == ("i2", "not_a_metric", None)
+    assert script._normalised_key(dropped, None) != script._normalised_key({**dropped, "metric": "revenue"}, None)
 
 
 def test_two_passes_writing_other_with_different_codes_differ_in_unit():
     script = _consistency_script()
-    zar = {"metric": "revenue", "period": "FY2023", "value": 150000, "unit": "other", "unit_other": "ZAR",
-           "actual_or_forecast": "forecast", "value_cell": "r4c3", "period_cells": ["r1c3"], "proposed_flags": []}
+    zar = _label("i1", period="FY2023", unit="other", unit_other="ZAR")
     mxn = {**zar, "unit_other": "MXN"}
     assert script.differing_fields([[zar], [mxn], [zar]]) == ["unit"]
     assert script.differing_fields([[zar], [zar], [zar]]) == []
     assert script._item_key(zar) != script._item_key(mxn), "the old agreement key tells them apart too"
+    assert script._item_key(zar) == ("i1", "revenue", "FY2023", "ZAR", "forecast")
 
 
 def _motor_without_a_server(monkeypatch, names, drop_fails=False):
@@ -1622,12 +1617,12 @@ def test_the_live_run_drops_its_scratch_database_in_the_event_loop_it_ran_in(mon
     assert [line.split(":")[0] for line in out[2:5]] == [f"[1/1] 05-zero2hero.pdf pass {n}/3" for n in (1, 2, 3)]
     assert all("5 of 5 structures read" in line for line in out[2:5]), "one progress line per deck and pass"
     assert out[5:7] == [f"Report: {path}", script.summary(report)], "the report path and a summary line"
-    assert out[6].startswith("Agreement 100.0% (target 95.0%: met; old method 100.0%); verified 94.1%")
+    assert out[6].startswith("Agreement 100.0% (target 95.0%: met; old method 100.0%); verified 100.0%")
     text = path.read_text(encoding="utf-8")
     assert "\n".join(out[7:]) + "\n" == text, \
         "then the whole report: the file is untracked and lost on re-import, so it is copied from stdout"
     assert text.startswith(f"# Consistency run {day}\n\nLive API. Decks: 1. Passes: 3. Model: {gateway.STRUCTURE_MODEL}.")
-    for line in ("| table | 100.0% |", "| kpi_panel | 100.0% |", "- Match rate: 94.1%", "| 2 | 100.0% |", "| 3 | 100.0% |",
+    for line in ("| table | 100.0% |", "| kpi_panel | 100.0% |", "- Match rate: 100.0%", "| 2 | 100.0% |", "| 3 | 100.0% |",
                  "| 05-zero2hero.pdf | 5 | 15,000 | 300 |"):
         assert line in text, line
     script.main(["--yes", "--deck", "05-zero2hero.pdf"])
@@ -1666,7 +1661,7 @@ def test_a_live_run_writes_its_diagnostic_beside_the_report_before_the_drop(monk
     run = script.run
 
     async def live_run(decks, passes, db, adapter=None, **kwargs):
-        return await run(decks, passes, script.MemoryDB(), script.FakeAdapter(), diagnostic=kwargs["diagnostic"])
+        return await run(decks, passes, script.MemoryDB(), _drifting(script)(), diagnostic=kwargs["diagnostic"])
     monkeypatch.setattr(script, "run", live_run)
     monkeypatch.setattr(script, "REPORTS", tmp_path)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "not-used")
@@ -1674,7 +1669,7 @@ def test_a_live_run_writes_its_diagnostic_beside_the_report_before_the_drop(monk
         script.main(["--yes", "--diagnostic", "--deck", "05-zero2hero.pdf"])
     day = datetime.date.today().isoformat()
     assert sorted(p.name for p in tmp_path.iterdir()) == [f"consistency_{day}.md", f"consistency_{day}_diagnostic.md"]
-    assert "£ 250,000" in (tmp_path / f"consistency_{day}_diagnostic.md").read_text(encoding="utf-8")
+    assert "£ 150,000" in (tmp_path / f"consistency_{day}_diagnostic.md").read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -1844,65 +1839,62 @@ def test_the_consistency_run_pauses_between_structure_calls(monkeypatch, tmp_pat
 # ---------------------------------------------------------------------------
 # --diagnostic: the cell text behind each unverified item and disagreeing structure, public test decks only
 # ---------------------------------------------------------------------------
-def _seen(metric, value, unit, period, verifier):
-    return {"metric": metric, "value": value, "unit": unit, "period": period, "verifier": verifier}
+def _seen(metric, period, unit, actual_or_forecast, verifier):
+    return {"metric": metric, "period": period, "unit": unit, "actual_or_forecast": actual_or_forecast,
+            "verifier": verifier}
 
 
-def test_the_diagnostic_gives_the_cell_text_and_every_pass_of_each_unverified_item_and_disagreeing_structure(
-        tmp_path):
-    """The report names a cell, not what it says. --diagnostic adds, for every unverified item and every
-    disagreeing structure: deck, page, cell id, the cell's text as sent to the model, the model's metric, value,
-    unit and period in each pass, and the verifier's result for each (verified or the reason), in a file of its own
-    beside the report. The report and its JSON keys are unchanged."""
+def test_the_diagnostic_gives_the_cell_text_and_every_pass_of_each_unverified_and_disagreeing_item(tmp_path):
+    """Spec section 7: for every unverified item and every item whose labels differ between passes: deck, page, type,
+    item id, cell#position, the cell's text as sent, Python's values, the reason, then per pass the model's metric,
+    period, unit and actual_or_forecast and the verifier's result, in a file of its own beside the report. The report
+    and its JSON keys are unchanged by it."""
     pytest.importorskip("pdfplumber")
     script = _consistency_script()
     rows = []
     report = asyncio.run(script.run(["05-zero2hero.pdf"], 3, script.MemoryDB(), _drifting(script)(), diagnostic=rows))
     assert report == asyncio.run(script.run(["05-zero2hero.pdf"], 3, script.MemoryDB(), _drifting(script)())), \
         "the report is the same with or without the diagnostic"
-    where = {"deck": "05-zero2hero.pdf", "page": 19, "type": "table"}
-    flagged = _seen("gross_profit", 50000, "GBP", "FY2023", "other (flag not reproduced)")
-    users = _seen("users", 200, "count", "FY2022", "period not rebuilt")
-    shared = [_seen("revenue", 250000, "GBP", "FY2024", "verified"),
-              _seen("users", 20000, "count", "FY2024", "value not in cell")]
+    panel = {"deck": "05-zero2hero.pdf", "type": "kpi_panel"}
+    table = {"deck": "05-zero2hero.pdf", "page": 19, "type": "table"}
     assert [r for r in rows if r["section"] == "unverified"] == [
-        {**where, "section": "unverified", "cell": "r6c3", "cell_text": "£ 50,000",
-         "reason": "other (flag not reproduced)", "passes": [[flagged]] * 3},
-        {**where, "section": "unverified", "cell": "r2c2", "cell_text": "200", "reason": "period not rebuilt",
-         "passes": [[users]] * 3},
-        {**where, "section": "unverified", "cell": "r4c4", "cell_text": "£ 250,000", "reason": "value not in cell",
-         "passes": [shared] * 3}], "every item citing the cell, in each pass, with the verifier's result"
+        {**panel, "page": 17, "section": "unverified", "item": "i1", "cell": "r1c1#1", "cell_text": "Telegram(30K)",
+         "values": [30000, -30000], "reason": "period not rebuilt",
+         "passes": [_seen("users", "2023", "count", "actual", "period not rebuilt")] * 3},
+        {**table, "section": "unverified", "item": "i20", "cell": "r6c2#1", "cell_text": "£ 42,638",
+         "values": [42638], "reason": "other (type Other)",
+         "passes": [_seen("other", "FY2022", "GBP", "actual", "other (type Other)")] * 3}]
     assert [r for r in rows if r["section"] == "disagreeing"] == [
-        {**where, "section": "disagreeing", "cell": "r4c3", "cell_text": "£ 150,000", "reason": None,
-         "passes": [[_seen("revenue", 150000, "GBP", "FY2023", "verified")],
-                    [_seen("revenue", 150000, "USD", "FY2023", "verified")],
-                    [_seen("revenue", 150000, "GBP", "2023", "verified")]]},
-        {**where, "type": "kpi_panel", "section": "disagreeing", "cell": "r3c1", "cell_text": "5K Users",
-         "reason": None, "passes": [[_seen("users", 5000, "count", "FY2023", "verified")]] * 2 + [[]]}], \
-        "the cells whose readings differ between passes, as the model wrote them"
+        {**table, "section": "disagreeing", "item": "i11", "cell": "r4c3#1", "cell_text": "£ 150,000",
+         "values": [150000], "reason": None,
+         "passes": [_seen("revenue", "FY2023", "GBP", "forecast", "verified"),
+                    _seen("revenue", "FY2023", "USD", "forecast", "verified"),
+                    _seen("revenue", "2023", "GBP", "forecast", "verified")]},
+        {**panel, "page": 19, "section": "disagreeing", "item": "i2", "cell": "r3c1#1", "cell_text": "5K Users",
+         "values": [5000], "reason": None,
+         "passes": [_seen("users", "FY2023", "count", "forecast", "verified")] * 2
+         + [_seen("customers", "FY2023", "count", "forecast", "verified")]}], "the items labelled differently"
 
     path = script.write_report(report, tmp_path, 3, fake=True)
-    rows.append({**where, "section": "unverified", "cell": "r9c9", "cell_text": "Plan | B\nnext", "reason": "other",
-                 "passes": [None, [], [_seen("product", None, None, None, "other (no value)")]]})
+    rows.append({**table, "section": "unverified", "item": "i9", "cell": "r9c9#1", "cell_text": "Plan | B\nnext",
+                 "values": [2500, 2.5], "reason": "other", "passes": [None, _seen("product", None, None, "unknown",
+                                                                               "other (type Other)"), None]})
     diagnostic = script.write_diagnostic(rows, path, 3)
     assert diagnostic == tmp_path / f"{path.stem}_diagnostic.md", "beside its report, named after it"
     text = diagnostic.read_text(encoding="utf-8")
+    head = "| Deck | Page | Type | Item | Cell | Cell text | Python's values | Reason | Pass 1 | Pass 2 | Pass 3 |"
     for line in (
-            f"# Consistency run {path.stem.split('_', 1)[1]}: diagnostic",
-            "| Deck | Page | Type | Cell | Cell text | Reason | Pass 1 | Pass 2 | Pass 3 |",
-            "| 05-zero2hero.pdf | 19 | table | r4c4 | £ 250,000 | value not in cell | "
-            + " | ".join(["revenue 250000 GBP FY2024: verified; users 20000 count FY2024: value not in cell"] * 3)
-            + " |",
-            "| 05-zero2hero.pdf | 19 | table | r9c9 | Plan \\| B next | other | not read | no item | product null null "
-            "null: other (no value) |",
-            "| Deck | Page | Type | Cell | Cell text | Pass 1 | Pass 2 | Pass 3 |",
-            "| 05-zero2hero.pdf | 19 | table | r4c3 | £ 150,000 | revenue 150000 GBP FY2023: verified | "
-            "revenue 150000 USD FY2023: verified | revenue 150000 GBP 2023: verified |",
-            "| 05-zero2hero.pdf | 19 | kpi_panel | r3c1 | 5K Users | users 5000 count FY2023: verified | users 5000 "
-            "count FY2023: verified | no item |"):
+            f"# Consistency run {path.stem.split('_', 1)[1]}: diagnostic", head,
+            "| 05-zero2hero.pdf | 17 | kpi_panel | i1 | r1c1#1 | Telegram(30K) | 30000 or -30000 | period not rebuilt | "
+            + " | ".join(["users 2023 count actual: period not rebuilt"] * 3) + " |",
+            "| 05-zero2hero.pdf | 19 | table | i9 | r9c9#1 | Plan \\| B next | 2500 or 2.5 | other | not read | "
+            "product null null unknown: other (type Other) | not read |",
+            "| 05-zero2hero.pdf | 19 | table | i11 | r4c3#1 | £ 150,000 | 150000 |  | revenue FY2023 GBP forecast: verified | "
+            "revenue FY2023 USD forecast: verified | revenue 2023 GBP forecast: verified |"):
         assert line in text.splitlines(), line
+    assert text.count(head) == 2, "both sections take the same columns"
     report_text = path.read_text(encoding="utf-8")
-    assert "5K Users" not in report_text and "£ 250,000" not in report_text, "the report itself holds no cell text"
+    assert "5K Users" not in report_text and "£ 150,000" not in report_text, "the report itself holds no cell text"
 
 
 def test_the_diagnostic_runs_only_on_the_10_public_test_decks(monkeypatch, tmp_path, capsys):
@@ -1936,13 +1928,14 @@ def test_the_diagnostic_runs_only_on_the_10_public_test_decks(monkeypatch, tmp_p
     assert [p.name.endswith("_diagnostic.md") for p in temp.iterdir()] == [False], "without --diagnostic, as before"
     capsys.readouterr()
 
-    script.main(["--fake", "--diagnostic", "--deck", "05-zero2hero.pdf"])
+    monkeypatch.setattr(script, "DECKS", DECKS)
+    script.main(["--fake", "--diagnostic", "--deck", "02-moz.pdf"])
     out = capsys.readouterr().out
     diagnostic, = temp.glob("consistency_*_diagnostic.md")
     assert diagnostic.with_name(diagnostic.name.replace("_diagnostic", "")).exists()
     assert f"Diagnostic: {diagnostic}" in out.splitlines(), "its path is printed"
-    assert "£ 250,000" in diagnostic.read_text(encoding="utf-8") and "£ 250,000" not in out, \
-        "its cell text is not: stdout carries the report only"
+    assert "~9 Months" in diagnostic.read_text(encoding="utf-8") and "~9 Months" not in out, \
+        "its cell text is not: stdout carries the report only (moz p20: the months figure, labelled other)"
 
 
 # ---------------------------------------------------------------------------
