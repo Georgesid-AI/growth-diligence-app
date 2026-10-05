@@ -6,7 +6,7 @@ carries. There is one prompt (`prompts/structure_reading.md`) and one schema, an
 `table`, `chart`, `kpi_panel`, `roadmap`, `hiring_table`, `unit_economics`, `use_of_funds`, `column_mapping`.
 Python finds the structures and assigns their type (deck-parser.md §7). It builds `text` as one line per cell,
 `r<row>c<col>: <cell text>`, with no file name, slide number or prose. For `column_mapping` the text holds the header
-stack (at most 3 header rows, deck-parser.md §2), up to 3 sample values for each numeric or date column, and for each text column a profile instead of values:
+stack (at most 3 header rows, the 3 nearest the data; deck-parser.md §2), up to 3 sample values for each numeric or date column, and for each text column a profile instead of values:
 distinct count, typical length and a shape pattern (e.g. `Aa aa`, `A-0000`). No text cell value leaves the server on
 the column-mapping path. Adding the prompt file records its hash in
 `RELEASE.md` without a release bump; later edits bump it as today. The output is `{"type": ..., "items": [...]}`.
@@ -35,8 +35,8 @@ normalisation:
 
 The match is exact, so a rounded number does not match. The period is matched against its `period_cells` only:
 they must be header cells of the value cell (its row header or the header stack above its column), and Python rebuilds
-the period from them under the deck-parser.md §2 period rules; if it cannot, or gets a different period, the period is
-unmatched. A null period matches only when `period_cells` is empty and neither header holds a period. An unmatched value or period makes the item unmatched. Every proposed flag is
+the period from them under the deck-parser.md §2 period rules; if it cannot, or gets a period with a different start or
+end date, the period is unmatched. A null period matches only when `period_cells` is empty and neither header holds a period. An unmatched value or period makes the item unmatched. Every proposed flag is
 recomputed from the matched values; a flag Python cannot reproduce counts as unmatched. Matched items are `Verified`. For unmatched ones, the switch
 `STRUCTURE_UNMATCHED` decides: `"suggest"` (the default) shows "AI suggestion, not verified", and `"drop"` removes them
 and keeps a count. An item with no value is never Verified. A column mapping only pre-fills the mapping screen, where the
@@ -129,7 +129,7 @@ live API. They cover:
 - redaction: each rule with a false friend (amounts, years, "Head of Sales"); customer names as substrings, any case,
   in deck structures; names under 4 characters, numeric names, the target's name and
   pseudonyms left alone;
-- column mapping: a header stack of at most 3 rows, up to 3 samples for numeric and date columns, a profile only for
+- column mapping: a header stack of at most 3 rows (the 3 nearest the data when a sheet has more), up to 3 samples for numeric and date columns, a profile only for
   text columns;
 - orchestration: decks queued until the revenue file is mapped, then processed; schema rejection, caps (including the
   narrative-only call cap), cache, consent, type-change logging, Delete audit.
@@ -155,6 +155,8 @@ so agreement measures the model. Target: ≥95% agreement.
   `frontend/src/pages/AuditHub.jsx` (creation screen),
   `frontend/src/components/DeckPanel.jsx`, `frontend/src/pages/MappingWizard.jsx`, and the tests and demo seeds that create
   audits (`backend/test_audit_validation.py`, `backend/tests/backend_test.py`, `backend/tests/test_date_order.py`, `backend/demo_data.py`).
-- Fiscal year-end (deck-parser.md §2): a test that fails without the field is written first; then `fiscal_year_end` on
-  the audit model (`backend/server.py`), a month field on the creation screen (`frontend/src/pages/AuditHub.jsx`), and
-  `backend/app/decks/claims.py` converts FY periods with it instead of always reading FY23 as 2023.
+- Fiscal year-end (deck-parser.md §2): a `claims.py` test covering December and March year-ends is written first and
+  shown failing; then `fiscal_year_end` on the audit model (`AuditCreate` and `AuditUpdate` in `backend/server.py`, so
+  PUT /audits/{id} accepts it), a month field on the creation screen (`frontend/src/pages/AuditHub.jsx`) and in the
+  existing MappingWizard settings (`frontend/src/pages/MappingWizard.jsx`), and `backend/app/decks/claims.py` resolves
+  every period to a start and an end date with it, keeping the stated text for display.
