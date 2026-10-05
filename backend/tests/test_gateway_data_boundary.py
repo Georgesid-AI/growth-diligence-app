@@ -911,18 +911,49 @@ def test_the_deck_parser_still_has_no_link_to_the_structure_path_or_the_gateway(
 
 def test_the_consistency_run_prints_and_reports_no_text_sent_to_the_model(monkeypatch, tmp_path, capsys):
     """Rule 17 for scripts/consistency_run.py: its progress lines and its report (kept in docs/test-runs) carry
-    deck file names, counts, rates, tokens and cost, never the text of a structure."""
+    deck file names, counts, rates, tokens and cost, never the text of a structure. Where passes disagree and why
+    items are unverified are told in closed words only: deck, page, type, cell id, field names, reasons."""
     pytest.importorskip("pdfplumber")
     import importlib.util
     import tempfile
     from app.decks import parser
+    from app.llm.schemas import DECK_TYPES
     from app.structures import redact
     spec = importlib.util.spec_from_file_location("consistency_run", BACKEND.parent / "scripts" / "consistency_run.py")
     script = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(script)
+
+    class Drifting(script.FakeAdapter):
+        """Each pass reads a little differently, so both diagnostic sections have rows."""
+        def __init__(self):
+            super().__init__()
+            self.calls = {}
+
+        def complete(self, **kwargs):
+            reply, tokens_in, tokens_out = super().complete(**kwargs)
+            n = self.calls[kwargs["user_payload"]] = self.calls.get(kwargs["user_payload"], 0) + 1
+            body = json.loads(reply)
+            items = [{**item, "unit": None if n == 2 else item["unit"]} for item in body["items"]]
+            return json.dumps({**body, "items": items[:len(items) - (n == 3)]}), tokens_in, tokens_out
+    monkeypatch.setattr(script, "FakeAdapter", Drifting)
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     names = ["05-zero2hero.pdf", "02-moz.pdf"]
-    script.main(["--fake", "--deck", names[0], "--deck", names[1]])
+    report = script.main(["--fake", "--deck", names[0], "--deck", names[1],
+                          "--out", str(tmp_path / "consistency_report.json")])
+    assert report["disagreements"] and report["unverified_items"], "the diagnostic sections have rows to check"
+    for row in report["disagreements"]:
+        assert set(row) == {"deck", "page", "type", "fields", "same_after_normalisation"}
+        assert row["deck"] in names and row["type"] in DECK_TYPES and set(row["fields"]) <= set(script.FIELDS)
+    for row in report["unverified_items"]:
+        assert set(row) == {"deck", "page", "type", "value_cell", "reason", "detail", "passes"}
+        assert row["deck"] in names and row["type"] in DECK_TYPES and re.fullmatch(r"r\d+c\d+", row["value_cell"])
+        assert row["reason"] in script.REASONS and row["detail"] in (None, "no value", "flag not reproduced")
+    for counts in [*report["disagreement_fields"].values(), *report["unverified_reasons"].values()]:
+        assert set(counts) <= {"structures", "disagreeing", *script.FIELDS, *script.REASONS}
+        assert all(isinstance(n, int) for n in counts.values())
+    assert set(report["tokens"]) == {"fixed_prompt", "system_prompt", "output_schema", "empty_message",
+                                     "structure_text_avg", "structures_counted", "billed_input_per_model_read"}
+    assert all(isinstance(n, (int, float)) for n in report["tokens"].values())
     written = capsys.readouterr().out + "".join(p.read_text(encoding="utf-8") for p in tmp_path.glob("consistency_*"))
     sent = set()
     for name in names:
