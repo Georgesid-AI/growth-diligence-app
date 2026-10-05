@@ -5,7 +5,10 @@ Status: Draft. Location: docs/specs/llm-structure-reading.md. Implements CLAUDE.
 carries. There is one prompt (`prompts/structure_reading.md`) and one schema, and `type` is an input field. Types:
 `table`, `chart`, `kpi_panel`, `roadmap`, `hiring_table`, `unit_economics`, `use_of_funds`, `column_mapping`.
 Python finds the structures and assigns their type (deck-parser.md §7). It builds `text` as one line per cell,
-`r<row>c<col>: <cell text>`, with no file name, slide number or prose. Adding the prompt file records its hash in
+`r<row>c<col>: <cell text>`, with no file name, slide number or prose. For `column_mapping` the text holds the header
+row, up to 3 sample values for each numeric or date column, and for each text column a profile instead of values:
+distinct count, typical length and a shape pattern (e.g. `Aa aa`, `A-0000`). No text cell value leaves the server on
+the column-mapping path. Adding the prompt file records its hash in
 `RELEASE.md` without a release bump; later edits bump it as today. The output is `{"type": ..., "items": [...]}`.
 `type` confirms or corrects Python's type, within the deck types (a column mapping stays one), and Python logs any
 change (§9). Each item has exactly these fields:
@@ -49,11 +52,13 @@ Customer names are pseudonymised (Customer_01, Customer_02…) through the narra
   CRM file has no customer field of its own, so that column is found by the FIELD_DEFS customer aliases, as are the
   customer cells of spreadsheet samples sent before a file is mapped.
 - Every name in the mapping is replaced wherever it appears as a substring, case-insensitive, in any text cell sent to
-  the model, including CRM deal names. Names under 4 characters are skipped, and so are names that are numbers or
+  the model. Only deck structures send text cells: the column-mapping path sends none, CRM deal names included. Names
+  under 4 characters are skipped, and so are names that are numbers or
   dates, as in the narrative path. The target company's own name and existing pseudonyms are never rewritten, so a
   second pass changes nothing.
-- Known limit: a prospect named only in CRM deal names, and not in the revenue file or a CRM customer column, is not in
-  the mapping and is sent as written.
+- Known limit: a name that is not in the mapping is sent as written in deck structures. This covers a prospect named
+  only in CRM deal names, and a customer or prospect first named in a CRM file mapped after the deck was read. Decks
+  do not wait for the CRM file.
 - Structure reading waits for the revenue file. Deck structures are not sent until the revenue file is uploaded and
   its columns are mapped. Decks uploaded before that are queued, and the run log shows "waiting for revenue file".
   Once the revenue file is mapped, queued decks are processed. Column-mapping calls are not queued. A deck already
@@ -105,10 +110,11 @@ tokens, cost and any type change. Sent text is never stored. `GET /api/runs/{id}
 the run log on the deck panel shows each deck's status ("waiting for revenue file", read, not read) and cost.
 
 **10. Boundary test and docstrings.** `test_gateway_data_boundary.py` keeps every existing assertion.
-- It must pass when redacted structure cells, or header rows with at most 3 redacted samples per column, reach the provider.
-- It must fail on raw bytes, a full page, a prose snippet, a cell over 200 characters, more than 3 samples, a file
-  name, an unredacted email, phone number, name or customer name, the client name or engagement reference, any call
-  without consent, and sent text in a log or in `llm_structures`.
+- It must pass when redacted structure cells reach the provider, and when a column-mapping text does: a header row, at
+  most 3 samples per numeric or date column, and a profile per text column.
+- It must fail on raw bytes, a full page, a prose snippet, a cell over 200 characters, more than 3 samples, any text
+  cell value on the column-mapping path, a file name, an unredacted email, phone number, name or customer name, the
+  client name or engagement reference, any call without consent, and sent text in a log or in `llm_structures`.
 
 The docstrings in `gateway.py`, `decks/__init__.py` and `prompt_store.py` restate rules 16–18.
 
@@ -116,8 +122,9 @@ The docstrings in `gateway.py`, `decks/__init__.py` and `prompt_store.py` restat
 live API. They cover:
 - the verifier: each normalisation case, period matching, flags, the switch;
 - redaction: each rule with a false friend (amounts, years, "Head of Sales"); customer names as substrings, any case,
-  in samples, deck structures and deal names; names under 4 characters, numeric names, the target's name and
+  in deck structures; names under 4 characters, numeric names, the target's name and
   pseudonyms left alone;
+- column mapping: up to 3 samples for numeric and date columns, a profile only for text columns;
 - orchestration: decks queued until the revenue file is mapped, then processed; schema rejection, caps (including the
   narrative-only call cap), cache, consent, type-change logging, Delete audit.
 
