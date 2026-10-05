@@ -916,6 +916,32 @@ def test_a_provider_error_reaches_llm_calls_and_the_log_as_a_status_and_a_type_c
     assert "reason=provider_unreachable status=529 type=overloaded_error" in logs
 
 
+# The reason a cap refusal's "structure not read" line gives: a closed word per guard, never the guard's message.
+CAP_REASONS = frozenset({"spend_cap", "token_cap"})
+
+
+def test_a_cap_refusal_logs_a_closed_reason_and_no_text(monkeypatch, caplog):
+    import logging
+    from datetime import datetime, timezone
+    assert set(gateway.CAP_REASONS.values()) == CAP_REASONS
+    assert set(gateway.CAP_REASONS) == {"daily_spend_cap_exceeded", "structure_token_cap_reached"}
+    db = _structure_db()
+    db["llm_calls"].docs.append({"run_id": STRUCTURE_AUDIT["id"], "step": "structures", "cache_hit": False,
+                                 "input_tokens": 198000, "output_tokens": 0, "estimated_cost_usd": 0.0,
+                                 "timestamp": "2026-10-05T00:00:00"})
+    with caplog.at_level(logging.DEBUG):
+        _send(db, GOOD_STRUCTURE)
+        monkeypatch.setenv("LLM_DAILY_SPEND_CAP_USD", "0.01")
+        spent = _structure_db()
+        spent["llm_calls"].docs.append({"run_id": "elsewhere", "cache_hit": False, "estimated_cost_usd": 1.0,
+                                        "timestamp": datetime.now(timezone.utc).isoformat()})
+        _send(spent, GOOD_STRUCTURE)
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
+    assert [line.split("reason=")[1] for line in lines] == ["token_cap status=- type=-", "spend_cap status=- type=-"]
+    for needle in ("Revenue", "£1,200,000", "200,000-token", "spent today", "$"):
+        assert needle not in "".join(lines), f"{needle!r} was logged"
+
+
 def test_a_corrected_period_stores_a_count_and_never_the_cell_text_or_the_rebuilt_period():
     """Rule 17: llm_structures keeps the model's output as it came (its own period) and the number of periods
     Python corrected; the header text the correction came from is not stored there."""

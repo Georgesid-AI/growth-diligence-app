@@ -1214,6 +1214,8 @@ STRUCTURE_CELL_MAX = 200            # a longer cell is prose
 STRUCTURES_COLLECTION = cache.STRUCTURES_COLLECTION
 NOT_READ = "Not read by AI"
 TOO_LARGE = "Too large for AI reading"
+# The reason a cap refusal's "structure not read" line gives, per guard code (llm_calls keeps the code).
+CAP_REASONS = {"daily_spend_cap_exceeded": "spend_cap", "structure_token_cap_reached": "token_cap"}
 # A file name in the text means it was built from the wrong thing: refused.
 _FILE_NAME = re.compile(r"(?i)\b[\w\-. ]{1,80}\.(?:pptx?|pdf|docx?|xlsx?|xlsm|xls|csv)\b")
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
@@ -1461,6 +1463,9 @@ async def read_structure(
             await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version,
                            model=STRUCTURE_MODEL, input_tokens=0, output_tokens=0, estimated_cost_usd=0.0,
                            cache_hit=False, status=refusal.reason, content_hash=digest, deck_id=deck_id)
+            cap = CAP_REASONS.get(refusal.reason, "cap")          # a closed word, never the guard's message
+            logger.warning("structure not read: run_id=%s step=%s hash=%s reason=%s status=- type=-", audit_id,
+                           STRUCTURE_STEP, digest, cap)
             stopped = refusal.reason == "structure_token_cap_reached"
             return _structure_result("stopped" if stopped else "not_read", structure_type,
                                      refusal.detail if stopped else NOT_READ, **base)

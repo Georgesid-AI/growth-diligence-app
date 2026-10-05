@@ -21,8 +21,11 @@ Usage (from the repository root, with ANTHROPIC_API_KEY set and a MongoDB to kee
                                       [--pause 2]
 It waits --pause seconds (default 2) between structure calls; the gateway retries a 429 or 529 itself. It prints
 one line per deck and pass, writes the report to docs/test-runs/consistency_<date>.md (-2, -3, ... for a later
-run that day) and ends with the report path and a summary line; --out also writes it as JSON. A failed model
-call or token count logs one "structure not read" line to stderr, with its reason, HTTP status and error type.
+run that day) and ends with the report path, a summary line and the full report; --out also writes it as JSON.
+Reports are untracked and lost on re-import; copy the printed report out before re-importing.
+A failed model call or token count logs one "structure not read" line to stderr, with its reason, HTTP status
+and error type; a structure the daily spend cap or the token cap refuses logs one with reason=spend_cap or
+reason=token_cap.
 Each deck is read in its own throwaway audit (consent ticked) in the scratch database --db (default
 "consistency_run"; any name must start with it), dropped at the end unless --keep-db. At start the run drops
 every scratch database an earlier run left, crashed or kept. The audits stay within the 200,000-token cap;
@@ -566,6 +569,7 @@ def main(argv=None):
         Path(args.out).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(f"Report: {path}")
     print(summary(report))
+    print(path.read_text(encoding="utf-8"), end="", flush=True)     # untracked: lost on re-import, copy it out
     return report
 
 

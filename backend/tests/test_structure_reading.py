@@ -274,6 +274,32 @@ def test_the_200000_token_cap_counts_billed_input_and_output_and_stops_with_the_
     assert result.status == "read" and adapter.calls == 1
 
 
+def test_a_cap_refusal_logs_a_not_read_line(monkeypatch, caplog):
+    """A structure the daily spend cap or the 200,000-token cap refuses was not read and printed nothing, so a run
+    that hit a cap showed only "0 of N structures read". It now logs reason=spend_cap or reason=token_cap."""
+    import logging
+    from datetime import datetime, timezone
+    db = _db()
+    db["llm_calls"].docs.append({"run_id": AUDIT, "step": "structures", "cache_hit": False, "input_tokens": 194000,
+                                 "output_tokens": 4000, "estimated_cost_usd": 0.0, "timestamp": "2026-10-05T00:00:00"})
+    with caplog.at_level(logging.INFO):
+        result, adapter = _read(db)
+    assert (result.status, adapter.calls) == ("stopped", 0)
+    assert caplog.text.count("structure not read:") == 1
+    assert "structure not read: run_id=audit-s step=structures hash=" in caplog.text
+    assert "reason=token_cap status=- type=-" in caplog.text
+    caplog.clear()
+    monkeypatch.setenv("LLM_DAILY_SPEND_CAP_USD", "0.01")
+    db = _db()
+    db["llm_calls"].docs.append({"run_id": "elsewhere", "cache_hit": False, "estimated_cost_usd": 1.0,
+                                 "timestamp": datetime.now(timezone.utc).isoformat()})
+    with caplog.at_level(logging.INFO):
+        result, adapter = _read(db)
+    assert (result.status, adapter.calls) == ("not_read", 0)
+    assert caplog.text.count("structure not read:") == 1 and "reason=spend_cap status=- type=-" in caplog.text
+    assert db["llm_calls"].docs[-1]["status"] == "daily_spend_cap_exceeded", "llm_calls keeps the guard's code"
+
+
 def test_the_15_call_cap_counts_narrative_calls_only():
     db = t.make_db()
     for _ in range(guards.MAX_CALLS_PER_RUN):
@@ -1036,9 +1062,11 @@ def test_the_live_run_drops_its_scratch_database_in_the_event_loop_it_ran_in(mon
                        "Dropped scratch database consistency_run_old left by an earlier run"]
     assert [line.split(":")[0] for line in out[2:5]] == [f"[1/1] 05-zero2hero.pdf pass {n}/3" for n in (1, 2, 3)]
     assert all("5 of 5 structures read" in line for line in out[2:5]), "one progress line per deck and pass"
-    assert out[5:] == [f"Report: {path}", script.summary(report)], "the report path and a summary line, last"
+    assert out[5:7] == [f"Report: {path}", script.summary(report)], "the report path and a summary line"
     assert out[6].startswith("Agreement 100.0% (target 95.0%: met; old method 100.0%); verified 94.1%")
     text = path.read_text(encoding="utf-8")
+    assert "\n".join(out[7:]) + "\n" == text, \
+        "then the whole report: the file is untracked and lost on re-import, so it is copied from stdout"
     assert text.startswith(f"# Consistency run {day}\n\nLive API. Decks: 1. Passes: 3. Model: {gateway.STRUCTURE_MODEL}.")
     for line in ("| table | 100.0% |", "| kpi_panel | 100.0% |", "- Match rate: 94.1%", "| 2 | 100.0% |", "| 3 | 100.0% |",
                  "| 05-zero2hero.pdf | 5 | 15,000 | 300 |"):
