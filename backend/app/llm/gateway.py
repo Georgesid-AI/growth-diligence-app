@@ -464,13 +464,19 @@ class AnthropicAdapter:
         )
 
 
-    def count_tokens(self, *, model: str, system: str, user_payload: str, json_schema: dict) -> int:
-        """The input tokens a call would bill, from the provider's token counter (no call is made)."""
+    def count_tokens(self, *, model: str, system: Optional[str], user_payload: str,
+                     json_schema: Optional[dict]) -> int:
+        """The input tokens a call would bill, from the provider's token counter (no call is made).
+        With no system prompt and no schema it counts `user_payload` alone."""
         client = self._ensure_client()
+        extra = {}
+        if system is not None:
+            extra["system"] = system
+        if json_schema is not None:
+            extra["output_config"] = {"format": {"type": "json_schema", "schema": json_schema}}
         try:
             response = client.messages.count_tokens(
-                model=model, system=system, messages=[{"role": "user", "content": user_payload}],
-                output_config={"format": {"type": "json_schema", "schema": json_schema}})
+                model=model, messages=[{"role": "user", "content": user_payload}], **extra)
         except Exception as exc:
             raise _classify_provider_error(exc)
         return int(getattr(response, "input_tokens", 0) or 0)
@@ -1151,7 +1157,7 @@ STRUCTURE_MODEL = "claude-sonnet-5-5"
 STRUCTURE_PROMPT = "structure_reading"
 STRUCTURE_STEP = guards.STRUCTURE_STEP
 STRUCTURE_MAX_TOKENS = 4000
-STRUCTURE_INPUT_CAP = 3000          # input tokens per structure, by the provider's token counter
+STRUCTURE_INPUT_CAP = 3000          # tokens of structure text alone, by the provider's token counter
 STRUCTURE_CELL_MAX = 200            # a longer cell is prose
 STRUCTURES_COLLECTION = cache.STRUCTURES_COLLECTION
 NOT_READ = "Not read by AI"
@@ -1329,8 +1335,9 @@ async def read_structure(
     never stored: only the model's JSON output (values with cell references), the prompt version,
     the model, the content hash, the tokens and the cost are. Order of operations:
 
-        consent -> boundary and redaction check -> cache (audit, key) -> token count (3,000 cap)
-        -> lock (step "structures") -> spend cap -> token cap (200,000 per audit) -> provider
+        consent -> boundary and redaction check -> cache (audit, key) -> token count of the text
+        alone (3,000 cap) -> token count of the whole call -> lock (step "structures") -> spend cap
+        -> token cap (200,000 per audit, with the whole call's input) -> provider
         -> schema, type and cell check (one reask) -> store -> log
 
     Never raises for a model-side problem: the structure is then "Not read by AI" and Python's result
@@ -1370,6 +1377,11 @@ async def read_structure(
     user_payload = cache.canonical_json({"type": structure_type, "text": text})
     adapter = adapter or AnthropicAdapter()
     try:
+        # The 3,000-token cap is on the structure text alone; the 200,000 cap counts the whole call.
+        text_tokens = await _count_tokens(adapter, sleep, model=STRUCTURE_MODEL, system=None, user_payload=text,
+                                          json_schema=None)
+        if text_tokens > STRUCTURE_INPUT_CAP:
+            return _structure_result("too_large", structure_type, TOO_LARGE, input_tokens=0, **base)
         counted = await _count_tokens(adapter, sleep, model=STRUCTURE_MODEL, system=prompt.text,
                                       user_payload=user_payload, json_schema=structure_output_schema())
     except GatewayError as exc:
@@ -1377,8 +1389,6 @@ async def read_structure(
         logger.warning("structure not read: run_id=%s step=%s hash=%s reason=%s", audit_id, STRUCTURE_STEP,
                        digest, code)
         return _structure_result("not_read", structure_type, NOT_READ, **base)
-    if counted > STRUCTURE_INPUT_CAP:
-        return _structure_result("too_large", structure_type, TOO_LARGE, input_tokens=0, **base)
 
     token = await guards.acquire(db, audit_id, STRUCTURE_STEP)
     if token is None:

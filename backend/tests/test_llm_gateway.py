@@ -214,7 +214,8 @@ class FakeAdapter:
         self._replies = list(replies or [json.dumps(GOOD_NARRATIVE)])
         self._raise_with = raise_with
 
-    input_tokens = 1200           # what count_tokens reports and complete bills
+    input_tokens = 1200           # what count_tokens reports for a whole call and complete bills
+    text_tokens = None            # what count_tokens reports for the structure text alone (None: input_tokens)
 
     def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema):
         self.calls += 1
@@ -228,6 +229,10 @@ class FakeAdapter:
 
     def count_tokens(self, *, model, system, user_payload, json_schema):
         self.counted = getattr(self, "counted", 0) + 1
+        self.count_requests = getattr(self, "count_requests", []) + [
+            {"system": system, "user_payload": user_payload, "json_schema": json_schema}]
+        if system is None and self.text_tokens is not None:
+            return self.text_tokens
         return self.input_tokens
 
 

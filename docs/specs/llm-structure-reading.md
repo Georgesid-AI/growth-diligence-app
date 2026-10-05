@@ -98,8 +98,9 @@ Consistency relies on the cache, the verifier and the 95% agreement target (§11
 
 **7. Caps.** 200,000 tokens per audit, counting billed input and output. A call goes out only if tokens used + its
 input + its `max_tokens` fit under the cap. Otherwise the analyst sees: "AI reading stopped: this audit reached its
-200,000-token limit. The remaining structures were read by Python only." Each structure may use at most 3,000 input
-tokens, measured with the provider's token counter. A larger one is not sent and is marked "Too large for AI reading".
+200,000-token limit. The remaining structures were read by Python only." Each structure may use at most 3,000 tokens,
+measured with the provider's token counter on the structure text alone (the prompt and schema are not counted). A
+larger one is not sent and is marked "Too large for AI reading". The 200,000-token cap counts the whole call's input.
 The token cap governs structure calls. The 15-call cap per run (`MAX_CALLS_PER_RUN`) counts narrative calls only.
 The existing circuit breaker applies: per-audit lock (step `structures`), daily spend cap, retry policy.
 

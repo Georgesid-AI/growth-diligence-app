@@ -107,6 +107,23 @@ def test_the_adapter_sends_no_tools_and_no_temperature_to_the_provider(monkeypat
     assert "tools" not in sent and "temperature" not in sent and sent["output_config"]["format"]["type"] == "json_schema"
 
 
+def test_the_adapter_counts_the_text_alone_with_no_system_prompt_and_no_schema():
+    sent = []
+
+    class Messages:
+        def count_tokens(self, **kwargs):
+            sent.append(kwargs)
+            return type("R", (), {"input_tokens": 7})()
+
+    adapter = gateway.AnthropicAdapter(api_key="test")
+    adapter._client = type("C", (), {"messages": Messages()})()
+    assert adapter.count_tokens(model=gateway.STRUCTURE_MODEL, system=None, user_payload="r1c1: Revenue",
+                                json_schema=None) == 7
+    adapter.count_tokens(model=gateway.STRUCTURE_MODEL, system="s", user_payload="u", json_schema={"type": "object"})
+    assert sent[0] == {"model": gateway.STRUCTURE_MODEL, "messages": [{"role": "user", "content": "r1c1: Revenue"}]}
+    assert sent[1]["system"] == "s" and sent[1]["output_config"]["format"]["schema"] == {"type": "object"}
+
+
 def test_the_adapter_raises_on_a_refusal_stop_reason():
     class Messages:
         def create(self, **kwargs):
@@ -215,11 +232,31 @@ def test_the_cache_key_covers_text_type_prompt_and_model():
     assert key != gateway.structure_key(TEXT, "table", "r4:v1", "claude-opus-5-5")
 
 
-def test_a_structure_over_3000_input_tokens_is_not_sent():
+def test_a_structure_over_3000_tokens_of_text_is_not_sent():
     adapter = t.FakeAdapter(replies=[json.dumps(REPLY)])
-    adapter.input_tokens = 3001
+    adapter.text_tokens, adapter.input_tokens = 3001, 3500
     result, _ = _read(_db(), adapter=adapter)
     assert (result.status, result.reason, adapter.calls) == ("too_large", "Too large for AI reading", 0)
+    assert adapter.count_requests == [{"system": None, "user_payload": TEXT, "json_schema": None}], \
+        "the structure text alone is counted, and nothing more once it is over"
+
+
+def test_the_3000_cap_is_on_the_structure_text_alone_not_the_prompt_and_schema():
+    db = _db()
+    adapter = t.FakeAdapter(replies=[json.dumps(REPLY)])
+    adapter.text_tokens, adapter.input_tokens = 2900, 4000
+    result, _ = _read(db, adapter=adapter)
+    assert (result.status, adapter.calls) == ("read", 1)
+    whole = adapter.count_requests[1]
+    assert whole["system"] and whole["json_schema"] and json.loads(whole["user_payload"])["text"] == TEXT
+    # The 200,000 cap counts the whole call: 192,300 used + 4,000 input + 4,000 max_tokens is over
+    # (with the text's 2,900 it would fit).
+    db["llm_calls"].docs.append({"run_id": AUDIT, "step": "structures", "cache_hit": False, "input_tokens": 187000,
+                                 "output_tokens": 1000, "estimated_cost_usd": 0.0, "timestamp": "2026-10-05T00:00:00"})
+    adapter = t.FakeAdapter(replies=[json.dumps(REPLY)])
+    adapter.text_tokens, adapter.input_tokens = 2900, 4000
+    result, _ = _read(db, adapter=adapter, use_cache=False)
+    assert result.status == "stopped" and adapter.calls == 0
 
 
 def test_the_200000_token_cap_counts_billed_input_and_output_and_stops_with_the_spec_message():
