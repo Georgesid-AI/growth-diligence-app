@@ -11,10 +11,11 @@
    "Architecture note". Do not change it.
 16. The gateway may read selected deck structures (tables, charts with data labels, KPI
     panels, roadmaps/timelines, hiring tables, unit-economics boxes, use-of-funds
-    tables) and spreadsheet header rows with up to 3 redacted sample values per column —
-    only after redaction, only with per-audit consent, only as extracted text with cell
-    positions. Never raw files, full pages or prose slides. The deck parser has no
-    direct link to the gateway.
+    tables) and spreadsheet header rows with, per column, either up to 3 sample values
+    (numeric and date columns only) or a profile (distinct count, typical length, shape
+    pattern) for text columns — only after redaction, only with per-audit consent, only
+    as extracted text with cell positions. Never raw files, full pages or prose slides.
+    The deck parser has no direct link to the gateway.
 17. Logs and MongoDB store model JSON output (values with cell references), prompt
     version, model version, content hash, token counts and cost. Never deck text sent to
     the model. Delete audit removes model outputs.

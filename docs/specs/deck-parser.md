@@ -128,7 +128,7 @@ by position and from the slide title.
 - The deck parser has no import of, or call to, the LLM gateway.
 - Two paths reach the gateway, and each has its own fields:
   a) Narrative path: computed results from MongoDB and the structured claim fields (type, value, high value of a range, unit, date, status).
-  b) Structure path (rule 16): redacted deck structures and spreadsheet header rows with up to 3 redacted sample values per column, as extracted text with cell positions, only with per-audit consent. Table cells, including a row's values by period, travel this path and no other.
+  b) Structure path (rule 16): redacted deck structures and spreadsheet header rows with, per column, either up to 3 sample values (numeric and date columns only) or a profile (distinct count, typical length, shape pattern) for text columns, as extracted text with cell positions, only with per-audit consent. Table cells, including a row's values by period, travel this path and no other.
 - An automated test fails the build if the parser imports the gateway, if the gateway reads parsed-text, snippet or source-reference fields, or if the structure path sends anything other than redacted structure text and spreadsheet headers. The narrative path is unchanged.
 - Logs and MongoDB store model JSON output (values with cell references), prompt version, model version, content hash, token counts and cost. Never deck text sent to the model. Delete audit removes model outputs.
 - Model output never becomes Verified on its own. Python must match every value to a source cell. Unmatched values are shown as 'AI suggestion, not verified' or dropped.
