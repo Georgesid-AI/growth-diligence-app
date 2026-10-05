@@ -739,6 +739,11 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
         raise HTTPException(400, "Edit the row's values by period")
     if "target_date" in edits:
         edits.update(_period_fields(_edited_period({"target_date": edits["target_date"]}, current, year_end)))
+    if current.get("claim_type") == structures.verify.OTHER and "parsed" not in current and \
+            (payload.status == "approved" or (edits and "claim_type" not in edits)):
+        # An item the model labelled "other" is listed as type Other; it is approved only once its type is edited
+        # to a claim type (structure-labelling.md section 4). An edit approves, so it needs the type too.
+        raise HTTPException(400, "Choose a claim type for this item before approving it")
     if edits:
         changes = {**edits, "status": "edited"}
         if "parsed" not in current:       # what the parser found stays next to the analyst's edit

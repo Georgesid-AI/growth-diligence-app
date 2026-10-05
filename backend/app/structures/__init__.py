@@ -316,8 +316,11 @@ def _python_cells(candidates: List[Dict]) -> set:
 
 
 def candidate_from_item(item: Dict, structure: Dict, deck: Dict, model_type: Optional[str], fiscal_year_end: int) -> Dict:
-    """One approval-list row for a verified or suggested item, citing its source cell. The snippet is
-    the value cell's own text (as the deck states it); the period keeps the text of its period cell."""
+    """One approval-list row for a verified or suggested item, citing its source cell (the cell id, as before;
+    the figure's position in it rides beside). The snippet is the cell's own text (as the deck states it); the
+    period keeps the text of its period cells. An ambiguous figure carries both readings, Python's default first
+    and the row's value (structure-labelling.md section 1): the analyst confirms it or uses Edit. The source
+    names the type Python sent: a type the model corrected is only logged (`model_type` is not used)."""
     by_id = {f"r{c['row']}c{c['col']}": c for c in structure["cells"]}
     cell = by_id.get(item["value_cell"]) or {}
     period_cells = [by_id[c]["text"] for c in item.get("period_cells") or () if c in by_id]
@@ -325,7 +328,7 @@ def candidate_from_item(item: Dict, structure: Dict, deck: Dict, model_type: Opt
         if cell else None
     unit = item.get("unit_other") if item.get("unit") == "other" else item.get("unit")   # "other": the ISO code
     target, stated = _target_date(item.get("period")), (" ".join(period_cells) or item.get("period"))
-    source = {"file": deck["file"], **_where(structure), "kind": "structure", "structure": model_type or structure["type"],
+    source = {"file": deck["file"], **_where(structure), "kind": "structure", "structure": structure["type"],
               "cell": item["value_cell"]}
     if structure.get("table") is not None:
         source.update(table=structure["table"], row=cell.get("row"), col=cell.get("col"))
@@ -335,7 +338,9 @@ def candidate_from_item(item: Dict, structure: Dict, deck: Dict, model_type: Opt
         "target_date": target, "period_text": stated if target else None,
         "snippet": (cell.get("text") or "")[:claims.SNIPPET_MAX], "label_from": label if label != cell.get("text") else None,
         "date_from": stated if target and stated != cell.get("text") else None, "sources": [source],
-        "inconsistent_dates": [], "origin": "ai", "cell": item["value_cell"], "ai_status": item["status"],
+        "inconsistent_dates": [], "origin": "ai", "cell": item["value_cell"], "position": item.get("position"),
+        "item": item.get("item"), "readings": item["values"] if len(item.get("values") or ()) > 1 else [],
+        "ai_status": item["status"],
         "ai_label": verify.label(item["status"]),
         "ai_checks": item.get("checks"), "period_cells": list(item.get("period_cells") or []),
         "actual_or_forecast": item.get("actual_or_forecast"),

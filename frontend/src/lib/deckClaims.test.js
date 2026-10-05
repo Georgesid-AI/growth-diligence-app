@@ -1,6 +1,6 @@
 import {
   ALL_DECKS, AI_SUGGESTION_LABEL, CLAIM_TYPES, INCONSISTENCY_LABEL, UPLOADED_BEFORE_CONSENT, VERIFIED_LABEL, deckRunLog, REMOVE_DECK_CONFIRM, claimDate, claimsForDeck, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, sourceRef, statusCounts, typeLabel,
-  DECK_SCOPE_CANNOT, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO,
+  DECK_SCOPE_CANNOT, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, OTHER_TYPE_NOTE, needsType, readingChoices,
 } from "./deckClaims";
 
 describe("source reference", () => {
@@ -178,5 +178,37 @@ describe("model readings in the approval list (docs/specs/llm-structure-reading.
     expect(deckRunLog({ uploaded_before_consent: true })).toEqual(["AI reading: not read", line]);
     expect(deckRunLog({ ai_status: "python_only", uploaded_before_consent: false }))
       .toEqual(["AI reading: not read (AI-assisted reading is off for this audit)"]);
+  });
+});
+
+describe("structure labelling in the approval list (docs/specs/structure-labelling.md)", () => {
+  const hours = {
+    value: 2500, unit: "hours",
+    readings: [{ value: 2500, dot_reading: "thousands", bracket_reading: null },
+      { value: 2.5, dot_reading: "decimal", bracket_reading: null }],
+  };
+
+  test("an ambiguous figure shows both readings, Python's default first and pre-selected", () => {
+    expect(readingChoices(hours)).toEqual([
+      { value: 2500, label: "2,500 hours (thousands)", selected: true },
+      { value: 2.5, label: "2.5 hours (decimal)", selected: false },
+    ]);
+    const loss = { value: -1200, currency: "GBP", readings: [{ value: -1200, dot_reading: null, bracket_reading: "negative" },
+      { value: 1200, dot_reading: null, bracket_reading: "positive" }] };
+    expect(readingChoices(loss).map((r) => r.label)).toEqual(["-1,200 GBP (negative)", "1,200 GBP (positive)"]);
+  });
+
+  test("a figure with one reading offers no choice", () => {
+    expect(readingChoices({ value: 5000, readings: [] })).toEqual([]);
+    expect(readingChoices({ value: 5000 })).toEqual([]);
+    expect(readingChoices({ value: 5000, readings: [{ value: 5000, dot_reading: null, bracket_reading: null }] })).toEqual([]);
+  });
+
+  test("an item labelled other is listed as type Other and needs a type before it can be approved", () => {
+    expect(typeLabel("other")).toBe("Other");
+    expect(CLAIM_TYPES).not.toContain("other");
+    expect(needsType({ claim_type: "other" })).toBe(true);
+    expect(needsType({ claim_type: "product" })).toBe(false);
+    expect(OTHER_TYPE_NOTE).toBe("Choose a claim type, then approve.");
   });
 });

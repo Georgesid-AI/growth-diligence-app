@@ -390,23 +390,73 @@ def test_unit_other_holds_an_unlisted_iso_code_and_stands_only_beside_other(unit
             gateway.parse_structure_reply(reply, "table", TEXT)
 
 
-def test_a_currency_outside_the_list_is_read_as_other_and_reaches_the_approval_row_as_its_code():
-    item = {**REPLY["items"][0], "unit": "other", "unit_other": "ZAR"}
-    result, _ = _read(_db(), replies=[{"type": "table", "items": [item]}])
-    assert result.status == "read", result.reason
-    assert (result.items[0]["unit"], result.items[0]["unit_other"]) == ("other", "ZAR")
-    structure = {"type": "table", "header_rows": 1, "cells": redact.parse_structure_text(TEXT)}
-    checked, = verify.verify(structure, result.items)["items"]
-    assert checked["status"] == verify.VERIFIED
+def _rows(structure, labels, model_type=None, pairs=()):
+    """The approval rows process_deck would add for a structure read with these labels."""
+    listed = structure_items.list_items(structure)
+    checked = verify.verify(structure, listed, labels, pairs)
+    return [structures.candidate_from_item(item, structure, {"file": "plan.pdf"}, model_type, 12)
+            for item in checked["items"]]
 
-    def row(item):
-        found = structures.candidate_from_item(item, structure, {"file": "plan.pdf"}, None, 12)
-        return found["currency"], found["unit"]
-    assert row(checked) == ("ZAR", None)
-    assert row({**checked, "unit": "GBP", "unit_other": None}) == ("GBP", None)
-    assert row({**checked, "unit": "%", "unit_other": None}) == (None, "%")
-    stored_before = {k: v for k, v in checked.items() if k != "unit_other"}
-    assert row({**stored_before, "unit": "ZAR"}) == ("ZAR", None), "a reading stored under the old schema"
+
+def test_a_currency_outside_the_list_is_read_as_other_and_reaches_the_approval_row_as_its_code():
+    label = _label("i1", period="FY2025", unit="other", unit_other="ZAR")
+    result, _ = _read(_db(), replies=[{**REPLY, "labels": [label, REPLY["labels"][1]]}])
+    assert result.status == "read", result.reason
+    assert (result.labels[0]["unit"], result.labels[0]["unit_other"]) == ("other", "ZAR")
+
+    def row(**unit):
+        found, _ = _rows(PLAN, [{**label, **unit}, REPLY["labels"][1]])
+        return found["currency"], found["unit"], found["ai_label"]
+    assert row() == ("ZAR", None, "Verified")
+    assert row(unit="GBP", unit_other=None) == ("GBP", None, "Verified")
+    assert row(unit="%", unit_other=None) == (None, "%", "Verified")
+
+
+PLAN = v._struct([["", "FY2025", "FY2026"], ["Revenue", "£1,200,000", "£1,500,000"]])
+
+
+def test_an_ambiguous_figure_reaches_its_row_with_both_readings_and_the_default_first():
+    """Spec section 1: the approval row shows both readings; the default is the row's value, pre-selected."""
+    structure = v._struct([["", "Plan"], ["Hours", "Approx. 2.500 hours"], ["P&L", "Net loss (1,200)"], ["Users", "5K"]])
+    rows = _rows(structure, [_label("i1", "product"), _label("i2", "net_profit"), _label("i3", "users", unit="count")])
+    assert [(r["value"], r["readings"]) for r in rows] == [
+        (2500, [{"value": 2500, "dot_reading": "thousands", "bracket_reading": None},
+                {"value": 2.5, "dot_reading": "decimal", "bracket_reading": None}]),
+        (-1200, [{"value": -1200, "dot_reading": None, "bracket_reading": "negative"},
+                 {"value": 1200, "dot_reading": None, "bracket_reading": "positive"}]),
+        (5000, [])], "one reading: nothing to choose"
+    assert [r["ai_label"] for r in rows] == ["Verified"] * 3
+
+
+def test_the_rows_cell_citation_is_unchanged_and_names_the_type_python_sent():
+    structure = v._struct([["", "Members"], ["Social", "Discord(150) Telegram(30K)"]])
+    rows = _rows(structure, [_label("i1", "users", unit="count"), _label("i2", "users", unit="count")], "kpi_panel")
+    assert [(r["sources"][0]["cell"], r["cell"], r["position"], r["item"]) for r in rows] == \
+        [("r2c2", "r2c2", 1, "i1"), ("r2c2", "r2c2", 2, "i2")], "the cell id as before; the position beside it"
+    assert {r["sources"][0]["structure"] for r in rows} == {"table"}, "a corrected type is only logged"
+    assert [r["snippet"] for r in rows] == ["Discord(150) Telegram(30K)"] * 2
+
+
+def test_an_other_item_is_listed_as_type_other_and_approved_only_once_its_type_is_edited(monkeypatch):
+    """Spec section 4: the server refuses to approve an "other" item until its type is edited to a claim type."""
+    client, db, adapter = _deck_api(monkeypatch)
+    _map_revenue(client)
+    _upload_deck(client, "02-moz.pdf")
+    other, = [c for c in _deck(client)["candidates"] if c.get("claim_type") == "other"]
+    assert (other["value"], other["ai_label"], other["unit"]) == (9, "AI suggestion, not verified", "months")
+    url = f"/api/audits/{AUDIT}/decks/candidates/{other['id']}"
+    refused = client.put(url, json={"status": "approved"})
+    assert refused.status_code == 400 and "type" in refused.json()["detail"]
+    assert client.put(url, json={"value": 10}).status_code == 400, "an edit approves, so it needs a type too"
+    assert client.put(url, json={"claim_type": "other"}).status_code == 422, "other is no claim type to choose"
+    assert next(c for c in db["deck_candidates"].docs if c["id"] == other["id"])["status"] == "pending"
+    edited = client.put(url, json={"claim_type": "product"})
+    assert edited.status_code == 200 and edited.json()["status"] == "edited"
+    assert edited.json()["parsed"]["claim_type"] == "other", "what the model read stays next to the edit"
+    assert client.put(url, json={"status": "approved"}).json()["status"] == "edited"
+    rejected = next(c for c in _deck(client)["candidates"] if c.get("ai_label") == "Verified")
+    assert client.put(f"/api/audits/{AUDIT}/decks/candidates/{rejected['id']}",
+                      json={"status": "rejected"}).status_code == 200
 
 
 def test_the_adapter_sends_no_tools_and_no_temperature_to_the_provider(monkeypatch):
