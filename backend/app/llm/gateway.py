@@ -57,8 +57,10 @@ CALLS_COLLECTION = guards.CALLS_COLLECTION
 RESULTS_COLLECTION = "audits"
 
 REQUEST_TIMEOUT_SECONDS = 60.0
-MAX_PROVIDER_RETRIES = 2          # network / 5xx only
+MAX_PROVIDER_RETRIES = 2          # network, 408/409/429 and 5xx (529 overloaded included) only
 MAX_PARSE_RETRIES = 1             # one reask on a malformed body, then fail
+# The provider's retry-after is honoured up to this, so the worst call stays inside the lock (guards.LOCK_TTL_SECONDS).
+RETRY_AFTER_MAX_SECONDS = 20.0
 
 # Per-1M-token list prices, used only to estimate spend for the cap and the
 # usage endpoint. Not authoritative billing.
@@ -136,11 +138,15 @@ STEP_CONFIG = {
 
 
 class GatewayError(Exception):
-    """Generation failed in a way that yields narrative_status=unavailable."""
+    """Generation failed in a way that yields narrative_status=unavailable. A provider error carries its
+    HTTP status and error type (codes only, see _provider_error_type)."""
 
-    def __init__(self, reason: str, detail: str = ""):
+    def __init__(self, reason: str, detail: str = "", status: Optional[int] = None,
+                 error_type: Optional[str] = None):
         self.reason = reason
         self.detail = detail
+        self.status = status
+        self.error_type = error_type
         super().__init__(f"{reason}: {detail}" if detail else reason)
 
 
@@ -483,7 +489,43 @@ class AnthropicAdapter:
 
 
 class RetryableProviderError(Exception):
-    """Network error or 5xx - safe to retry with backoff."""
+    """Network error, 408/409/429 or 5xx - safe to retry with backoff."""
+
+    def __init__(self, message: str, status: Optional[int] = None, error_type: Optional[str] = None,
+                 retry_after: Optional[float] = None):
+        super().__init__(message)
+        self.status = status
+        self.error_type = error_type
+        self.retry_after = retry_after
+
+
+_ERROR_CODE = re.compile(r"[a-z][a-z0-9_]{0,59}")
+
+
+def _provider_error_type(exc: Exception) -> str:
+    """The provider's error type ("rate_limit_error"), from the SDK's `type` or the body's error.type, when it
+    reads as a code; otherwise the exception's class name. The message is never read: it can quote the request."""
+    code = getattr(exc, "type", None)
+    if not isinstance(code, str):
+        body = getattr(exc, "body", None)
+        error = body.get("error") if isinstance(body, dict) else None
+        code = error.get("type") if isinstance(error, dict) else None
+    return code if isinstance(code, str) and _ERROR_CODE.fullmatch(code) else type(exc).__name__
+
+
+def _retry_after_seconds(exc: Exception) -> Optional[float]:
+    """The provider's retry-after header in seconds, or None."""
+    try:
+        value = float(getattr(getattr(exc, "response", None), "headers", {}).get("retry-after"))
+    except (AttributeError, TypeError, ValueError):
+        return None
+    return value if 0 <= value < float("inf") else None
+
+
+def _backoff_seconds(exc: Exception, attempt: int) -> float:
+    """Exponential backoff (1 s, 2 s), or the provider's retry-after when longer, up to RETRY_AFTER_MAX_SECONDS."""
+    retry_after = getattr(exc, "retry_after", None)
+    return max(2 ** attempt * 0.5, min(retry_after or 0.0, RETRY_AFTER_MAX_SECONDS))
 
 
 def _classify_provider_error(exc: Exception) -> Exception:
@@ -491,19 +533,26 @@ def _classify_provider_error(exc: Exception) -> Exception:
 
     Only connection failures, timeouts, 408/409/429 and 5xx are retryable. A
     400 (bad request) or 401 (bad key) is returned as-is, because retrying it
-    just spends money on the same failure.
+    just spends money on the same failure. Either carries the HTTP status and
+    the provider's error type for the log and llm_calls.
     """
     status = getattr(exc, "status_code", None)
     name = type(exc).__name__
+    error_type = _provider_error_type(exc)
     if status is not None and (status >= 500 or status in (408, 409, 429)):
-        return RetryableProviderError(f"{name} {status}: {exc}")
+        return RetryableProviderError(f"{name} {status}: {exc}", status, error_type, _retry_after_seconds(exc))
     if status is None and name in {
         "APIConnectionError", "APITimeoutError", "APIConnectionTimeoutError",
     }:
-        return RetryableProviderError(f"{name}: {exc}")
+        return RetryableProviderError(f"{name}: {exc}", None, error_type)
     if status is not None:
-        return GatewayError("provider_error", f"{name} {status}: {exc}")
-    return RetryableProviderError(f"{name}: {exc}")
+        return GatewayError("provider_error", f"{name} {status}: {exc}", status, error_type)
+    return RetryableProviderError(f"{name}: {exc}", None, error_type)
+
+
+def _unreachable(exc: RetryableProviderError) -> GatewayError:
+    """The GatewayError for a retryable error that outlasted MAX_PROVIDER_RETRIES, with its status and type."""
+    return GatewayError("provider_unreachable", str(exc), exc.status, exc.error_type)
 
 
 # ---------------------------------------------------------------------------
@@ -714,6 +763,7 @@ async def log_call(
     input_tokens: int, output_tokens: int, estimated_cost_usd: float,
     cache_hit: bool, status: str, unmatched_numbers: Optional[List[str]] = None,
     content_hash: Optional[str] = None, deck_id: Optional[str] = None,
+    http_status: Optional[int] = None, error_type: Optional[str] = None,
 ) -> None:
     """Append to llm_calls.
 
@@ -722,9 +772,11 @@ async def log_call(
     fragment of model output kept, and by construction it contains only numerals
     the payload does NOT hold, so it cannot echo the computed figures back. A
     structure reading call adds the content hash of the text sent (never the
-    text) and the deck it came from (CLAUDE.md rule 17).
+    text) and the deck it came from (CLAUDE.md rule 17). A provider error adds
+    its HTTP status and error type, never its message.
     """
-    extra = {k: v for k, v in (("content_hash", content_hash), ("deck_id", deck_id)) if v is not None}
+    extra = {k: v for k, v in (("content_hash", content_hash), ("deck_id", deck_id), ("http_status", http_status),
+                               ("error_type", error_type)) if v is not None}
     await db[CALLS_COLLECTION].insert_one({**extra,
         "run_id": run_id,
         "step": step,
@@ -912,7 +964,7 @@ async def generate_narrative(
         await log_call(
             db, run_id=run_id, step=step, prompt_version=prompt.version, model=model,
             input_tokens=0, output_tokens=0, estimated_cost_usd=0.0,
-            cache_hit=False, status=exc.reason,
+            cache_hit=False, status=exc.reason, http_status=exc.status, error_type=exc.error_type,
         )
         return _unavailable(run_id, step, str(exc), metrics)
     except Exception as exc:  # never let the gateway block the dashboard
@@ -979,8 +1031,8 @@ async def _call_with_retries(adapter, config, prompt, outbound, sleep):
         except RetryableProviderError as exc:
             network_attempts += 1
             if network_attempts > MAX_PROVIDER_RETRIES:
-                raise GatewayError("provider_unreachable", str(exc))
-            await sleep(2 ** network_attempts * 0.5)
+                raise _unreachable(exc)
+            await sleep(_backoff_seconds(exc, network_attempts))
             continue
 
         try:
@@ -1162,6 +1214,8 @@ STRUCTURE_CELL_MAX = 200            # a longer cell is prose
 STRUCTURES_COLLECTION = cache.STRUCTURES_COLLECTION
 NOT_READ = "Not read by AI"
 TOO_LARGE = "Too large for AI reading"
+# The reason a cap refusal's "structure not read" line gives, per guard code (llm_calls keeps the code).
+CAP_REASONS = {"daily_spend_cap_exceeded": "spend_cap", "structure_token_cap_reached": "token_cap"}
 # A file name in the text means it was built from the wrong thing: refused.
 _FILE_NAME = re.compile(r"(?i)\b[\w\-. ]{1,80}\.(?:pptx?|pdf|docx?|xlsx?|xlsm|xls|csv)\b")
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
@@ -1278,8 +1332,8 @@ async def _count_tokens(adapter, sleep, **kwargs) -> int:
         except RetryableProviderError as exc:
             attempts += 1
             if attempts > MAX_PROVIDER_RETRIES:
-                raise GatewayError("provider_unreachable", str(exc))
-            await sleep(2 ** attempts * 0.5)
+                raise _unreachable(exc)
+            await sleep(_backoff_seconds(exc, attempts))
 
 
 async def _structure_call(adapter, prompt, user_payload, structure_type, text, sleep):
@@ -1301,10 +1355,10 @@ async def _structure_call(adapter, prompt, user_payload, structure_type, text, s
         except RetryableProviderError as exc:
             network_attempts += 1
             if network_attempts > MAX_PROVIDER_RETRIES:
-                exc_out = GatewayError("provider_unreachable", str(exc))
+                exc_out = _unreachable(exc)
                 exc_out.billed = (billed_in, billed_out)
                 raise exc_out
-            await sleep(2 ** network_attempts * 0.5)
+            await sleep(_backoff_seconds(exc, network_attempts))
             continue
         except GatewayError as exc:
             exc.billed = (billed_in, billed_out)
@@ -1384,9 +1438,13 @@ async def read_structure(
         counted = await _count_tokens(adapter, sleep, model=STRUCTURE_MODEL, system=prompt.text,
                                       user_payload=user_payload, json_schema=structure_output_schema())
     except GatewayError as exc:
-        code = exc.reason           # a reason code; the exception's message never reaches the log
-        logger.warning("structure not read: run_id=%s step=%s hash=%s reason=%s", audit_id, STRUCTURE_STEP,
-                       digest, code)
+        # Codes only: the reason, the HTTP status and the provider's error type; never the exception's message.
+        code, status, kind = exc.reason, exc.status, exc.error_type
+        await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version, model=STRUCTURE_MODEL,
+                       input_tokens=0, output_tokens=0, estimated_cost_usd=0.0, cache_hit=False, status=code,
+                       content_hash=digest, deck_id=deck_id, http_status=status, error_type=kind)
+        logger.warning("structure not read: run_id=%s step=%s hash=%s reason=%s status=%s type=%s", audit_id,
+                       STRUCTURE_STEP, digest, code, status or "-", kind or "-")
         return _structure_result("not_read", structure_type, NOT_READ, **base)
 
     token = await guards.acquire(db, audit_id, STRUCTURE_STEP)
@@ -1405,20 +1463,25 @@ async def read_structure(
             await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version,
                            model=STRUCTURE_MODEL, input_tokens=0, output_tokens=0, estimated_cost_usd=0.0,
                            cache_hit=False, status=refusal.reason, content_hash=digest, deck_id=deck_id)
+            cap = CAP_REASONS.get(refusal.reason, "cap")          # a closed word, never the guard's message
+            logger.warning("structure not read: run_id=%s step=%s hash=%s reason=%s status=- type=-", audit_id,
+                           STRUCTURE_STEP, digest, cap)
             stopped = refusal.reason == "structure_token_cap_reached"
             return _structure_result("stopped" if stopped else "not_read", structure_type,
                                      refusal.detail if stopped else NOT_READ, **base)
         try:
             parsed, in_tok, out_tok = await _structure_call(adapter, prompt, user_payload, structure_type, text, sleep)
         except GatewayError as exc:
-            billed, code = getattr(exc, "billed", (0, 0)), exc.reason    # a reason code, never the message
+            # Codes only: the reason, the HTTP status and the provider's error type; never the message.
+            billed, code, status, kind = getattr(exc, "billed", (0, 0)), exc.reason, exc.status, exc.error_type
             cost = estimate_cost_usd(STRUCTURE_MODEL, *billed)
             await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version,
                            model=STRUCTURE_MODEL, input_tokens=billed[0], output_tokens=billed[1],
                            estimated_cost_usd=cost, cache_hit=False, status=code, content_hash=digest,
-                           deck_id=deck_id)
-            logger.warning("structure not read: run_id=%s step=%s hash=%s tokens=%d/%d cost=%.6f reason=%s",
-                           audit_id, STRUCTURE_STEP, digest, billed[0], billed[1], cost, code)
+                           deck_id=deck_id, http_status=status, error_type=kind)
+            logger.warning("structure not read: run_id=%s step=%s hash=%s tokens=%d/%d cost=%.6f reason=%s "
+                           "status=%s type=%s", audit_id, STRUCTURE_STEP, digest, billed[0], billed[1], cost, code,
+                           status or "-", kind or "-")
             return _structure_result("not_read", structure_type, NOT_READ, input_tokens=billed[0],
                                      output_tokens=billed[1], estimated_cost_usd=cost, **base)
         cost = estimate_cost_usd(STRUCTURE_MODEL, in_tok, out_tok)

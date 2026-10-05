@@ -715,6 +715,34 @@ def test_bad_request_is_not_retried():
     assert adapter.calls == 1
 
 
+def test_a_narrative_provider_error_records_its_http_status_and_type_and_honours_retry_after():
+    """Shaped like the SDK's APIStatusError: status_code, type (the body's error type), response headers. The
+    message is never read."""
+    from types import SimpleNamespace
+
+    class ProviderError(Exception):
+        def __init__(self, status, error_type, retry_after=None):
+            super().__init__("cannot read cell 'Jane Doe (CEO)'")
+            self.status_code, self.type = status, error_type
+            self.response = SimpleNamespace(headers={} if retry_after is None else {"retry-after": str(retry_after)})
+
+    async def run(error):
+        db, slept = make_db(), []
+
+        async def sleep(seconds):
+            slept.append(seconds)
+        adapter = FakeAdapter(raise_with=error)
+        await gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=adapter, sleep=sleep)
+        call, = db["llm_calls"].docs
+        return (call["status"], call["http_status"], call["error_type"]), adapter.calls, slept, json.dumps(call)
+
+    record, calls, slept, stored = asyncio.run(run(ProviderError(400, "invalid_request_error")))
+    assert (record, calls, slept) == (("provider_error", 400, "invalid_request_error"), 1, [])
+    record, calls, slept, stored = asyncio.run(run(ProviderError(429, "rate_limit_error", retry_after=3)))
+    assert (record, calls, slept) == (("provider_unreachable", 429, "rate_limit_error"), 3, [3.0, 3.0])
+    assert "Jane Doe" not in stored
+
+
 def test_parse_failure_retries_once_then_fails():
     async def run():
         db = make_db()
