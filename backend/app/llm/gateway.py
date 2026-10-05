@@ -12,18 +12,24 @@ labels, KPI panels, roadmaps and timelines, hiring, unit-economics and use-of-fu
 spreadsheet header rows (at most 3) with, per column, up to 3 sample values (numeric and date
 columns only) or a profile (distinct count, typical length, shape pattern) for text columns. Only
 after redaction, only with the audit's consent, only as extracted text with cell positions; never
-raw files, full pages or prose slides. The caller hands the text in; the gateway reads no parsed
-deck text, runs redaction again and refuses the call if anything changes. `load_structure_context`
-reads the audit's consent and the names to protect, and nothing else. The deck parser has no link
-to the gateway.
+raw files, full pages or prose slides. A deck structure's text carries, below its cells, the item
+list Python made (docs/specs/structure-labelling.md): one line per figure with its cell, its raw
+text cut from the redacted cell, its values and header cells, and a roadmap's date cells and text
+lines; an item line out of format, or whose raw text is not a figure inside its cell, is refused
+(bad_item_line). The caller hands the text in; the gateway reads no parsed deck text, runs
+redaction again and refuses the call if anything changes. `load_structure_context` reads the
+audit's consent and the names to protect, and nothing else. The deck parser has no link to the
+gateway.
 
-Logs and Mongo (rule 17) store model JSON output (values with cell references), the prompt
-version, the model version, the content hash, token counts and cost; never deck text sent to the
-model. Delete audit removes the model outputs (purge_run).
+Logs and Mongo (rule 17) store model JSON output (labels naming listed items, roadmap pairs) and the
+item list without raw text (values with cell references), the prompt version, the model version,
+the content hash, token counts and cost; never deck text sent to the model. Delete audit removes
+the model outputs (purge_run).
 
-Verification (rule 18): model output never becomes Verified on its own. app/structures/verify.py
-matches every value to its source cell; unmatched values are shown as "AI suggestion, not
-verified" or dropped.
+Verification (rule 18): model output never becomes Verified on its own. The model only labels the
+figures Python listed: every value and cell is Python's, read from its source cell
+(app/structures/items.py), and app/structures/verify.py rebuilds every period; anything it cannot
+verify is shown as "AI suggestion, not verified" or dropped.
 
 No other function here touches Mongo for audit data, and no module in this package except
 `prompt_store` performs file I/O.
@@ -1259,9 +1265,10 @@ def content_hash(text: str) -> str:
 def structure_text_problem(text: Any, structure_type: str, context: dict, mapping: Dict[str, str]) -> Optional[str]:
     """Why a text may not reach the provider, or None (CLAUDE.md rule 16, spec sections 1 and 3).
 
-    Only extracted text with cell positions passes: one `r<row>c<col>: <text>` line per cell (and, on
-    the column-mapping path, sample and profile lines). Raw bytes, prose, a file name and a cell over
-    200 characters are refused. The client name and the engagement reference reach the provider only
+    Only extracted text with cell positions passes: one `r<row>c<col>: <text>` line per cell (on the
+    column-mapping path, sample and profile lines; for a deck structure, below "items:", Python's item
+    lines, each raw text a figure inside its cell, and a roadmap's date and text lines). Raw bytes,
+    prose, a file name and a cell over 200 characters are refused. The client name and the engagement reference reach the provider only
     as "[redacted]": the caller replaces them (redact.withheld_values), and one still standing in the
     text as a whole word (any case; a word ends at a space, punctuation, a hyphen or a change of
     case, as in redaction) is refused. Redaction is run again and the text must come back unchanged. On the
@@ -1429,17 +1436,19 @@ async def read_structure(
     """Read one structure or one sheet's headers with the model (CLAUDE.md rules 16-18).
 
     `text` is the redacted structure text the caller built (one `r<row>c<col>: <text>` line per
-    cell; for `column_mapping`, header cells, samples and profiles). It is checked again here and
-    never stored: only the model's JSON output (values with cell references), the prompt version,
-    the model, the content hash, the tokens and the cost are. Order of operations:
+    cell, then for a deck structure the item list; for `column_mapping`, header cells, samples and
+    profiles). It is checked again here and never stored: only the model's JSON output, the prompt
+    version, the model, the content hash, the tokens and the cost are. A deck structure is sent the
+    labelling schema, a column mapping its own. Order of operations:
 
         consent -> boundary and redaction check -> cache (audit, key) -> token count of the text and
         its item list (4,000 cap) -> token count of the whole call -> lock (step "structures") -> spend cap
         -> token cap (400,000 per audit, with the whole call's input) -> provider
-        -> schema, type and cell check (one reask) -> store -> log
+        -> schema, type and item id check (one reask) -> store -> log
 
     Never raises for a model-side problem: the structure is then "Not read by AI" and Python's result
-    stands. The output is not Verified here: the caller matches every value to its source cell.
+    stands. The output is not Verified here: the caller joins each label to Python's item and
+    verifies it.
     """
     import asyncio
     sleep = sleep or asyncio.sleep

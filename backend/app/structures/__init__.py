@@ -2,8 +2,10 @@
 
 The orchestration around gateway.read_structure. The deck parser finds the structures and has no
 link to the gateway (CLAUDE.md rule 16); this package builds the text the model reads from them,
-redacted, and checks every value the model returns against its source cell (rule 18). The gateway
-never reads parsed deck text: it is handed the redacted structure text and nothing else.
+redacted, with the item list Python makes of every figure in it (items.py,
+docs/specs/structure-labelling.md). The model labels the items; verify.py joins each label to its
+item, so every value and cell is Python's, and rebuilds every period (rule 18). The gateway never
+reads parsed deck text: it is handed the redacted structure text and its item list, nothing else.
 
 What may reach the model (rule 16): redacted deck structures as extracted text with cell positions,
 and spreadsheet header rows (at most 3, the 3 nearest the data) with up to 3 sample values per

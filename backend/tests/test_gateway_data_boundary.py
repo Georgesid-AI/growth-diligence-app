@@ -707,10 +707,12 @@ def test_the_gateway_reads_no_deck_text_snippet_or_source():
 
 
 # ---------------------------------------------------------------------------
-# The structure path (CLAUDE.md rules 16-18, docs/specs/llm-structure-reading.md section 10).
-# Redacted deck structure cells and column-mapping texts (at most 3 header rows, at most 3 samples per
-# numeric or date column, a profile per text column) may reach the provider, with the audit's consent,
-# as extracted text with cell positions. Nothing else does, and no sent text is stored or logged.
+# The structure path (CLAUDE.md rules 16-18, docs/specs/llm-structure-reading.md section 10 and
+# docs/specs/structure-labelling.md section 9). Redacted deck structure cells with Python's item list (each
+# item's raw text a figure inside its cell) and column-mapping texts (at most 3 header rows, at most 3 samples
+# per numeric or date column, a profile per text column) may reach the provider, with the audit's consent, as
+# extracted text with cell positions. Nothing else does, and no sent text, raw item text included, is stored or
+# logged.
 # ---------------------------------------------------------------------------
 from app.structures import redact as structure_redact  # noqa: E402
 from app import structures  # noqa: E402
@@ -885,7 +887,7 @@ def test_no_sent_text_in_a_log_llm_calls_or_llm_structures(caplog):
         _send(db, "r1c1: jane.doe@northwind.com")                                   # refused
     stored = json.dumps(db[gateway.STRUCTURES_COLLECTION].docs + db["llm_calls"].docs, ensure_ascii=False, default=str)
     logs = caplog.text + "".join(r.getMessage() for r in caplog.records)
-    for needle in ("Revenue", "£1,200,000", "1,500,000", "jane.doe", GOOD_STRUCTURE, GOOD_ITEMS):
+    for needle in ("Revenue", "£1,200,000", "1,200,000", "1,500,000", "jane.doe", GOOD_STRUCTURE, GOOD_ITEMS):
         assert needle not in stored, f"{needle!r} was stored"
         assert needle not in logs, f"{needle!r} was logged"
     assert "structure read: run_id=audit-boundary step=structures hash=" in caplog.text

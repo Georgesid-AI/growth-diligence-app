@@ -226,6 +226,21 @@ def test_the_same_structure_always_gives_the_same_list():
         ("i1", "r2c2", 1), ("i2", "r2c3", 1), ("i3", "r3c2", 1), ("i4", "r3c2", 2), ("i5", "r3c3", 1)]
 
 
+def test_a_figure_spanning_a_line_break_or_double_space_is_cut_as_the_cell_line_writes_it():
+    """The structure text writes each cell on one line with single spaces; an item's raw text is cut from that same
+    text, so it is always inside its cell line and the structure is sent, not refused (bad_item_line)."""
+    structure = v._struct([["", "Plan"], ["Revenue", "$12 -\n$13\nmillion"], ["EBITDA", "Net  loss  (  1,200 )"]])
+    listed = structure_items.list_items(structure)
+    assert [(i["raw"], i["values"][0]["value"]) for i in listed["items"]] == \
+        [("12", 12000000), ("13 million", 13000000), ("( 1,200 )", -1200)]
+    text = structure_items.text(structure, listed)
+    assert "\n".join(text.split("\n")[:5]) == "r1c2: Plan\nr2c1: Revenue\nr2c2: $12 - $13 million\nr3c1: EBITDA\n" \
+        "r3c2: Net loss ( 1,200 )"
+    result, adapter = _read(_db(), text, replies=[{"type": "table", "pairs": [], "labels": [
+        _label(i["id"], "not_a_metric") for i in listed["items"]]}])
+    assert (result.status, adapter.calls) == ("read", 1), result.reason
+
+
 def test_the_item_list_is_built_from_the_redacted_cells():
     cells = [{"row": 1, "col": 1, "text": "Call +44 20 7946 0958"}, {"row": 1, "col": 2, "text": "£1M"}]
     redacted, _ = redact.redact_structure(cells, "Zero2Hero", {})

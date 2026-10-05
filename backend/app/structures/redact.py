@@ -8,7 +8,9 @@ name and the engagement reference become [redacted]; customer names their pseudo
 
 The text is one line per cell, `r<row>c<col>: <cell text>`, with no file name, slide number or
 prose. A merged cell carries its span after its text, `r1c3: FY2025 (r1c3:r1c14)`, so the model
-receives the full header stack (deck-parser.md section 2).
+receives the full header stack (deck-parser.md section 2). Below a deck structure's cells comes its
+item list (structure-labelling.md section 3): the lines are written and checked here, so the
+gateway checks them with no link to the deck package.
 """
 import re
 from collections import Counter
@@ -21,11 +23,16 @@ def cell_id(cell: Dict) -> str:
     return f"r{cell['row']}c{cell['col']}"
 
 
+def cell_text(cell: Dict) -> str:
+    """A cell's text as its line writes it: on one line, single spaces. Item raw text is cut from this too."""
+    return re.sub(r"\s+", " ", str(cell["text"])).strip()
+
+
 def structure_text(cells: List[Dict]) -> str:
     """The structure as the model reads it: one `r<row>c<col>: <text>` line per cell, in reading order."""
     lines = []
     for c in sorted(cells, key=lambda c: (c["row"], c["col"])):
-        text = re.sub(r"\s+", " ", str(c["text"])).strip()
+        text = cell_text(c)
         if not text:
             continue
         rows, cols = c.get("row_span", 1), c.get("col_span", 1)

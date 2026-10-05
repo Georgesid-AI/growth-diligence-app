@@ -43,10 +43,11 @@ def list_items(structure: Dict) -> Dict:
     comma = verify.decimal_comma(cells)
     out = []
     for cell in cells:
-        found = claims.period_cell(cell["text"])
+        text = redact.cell_text(cell)                 # as its cell line writes it, so raw text stays inside it
+        found = claims.period_cell(text)
         if found and ("part" in found or "relative" in found):
             continue                                  # "Q3", "Mar", "M3", "Year 1": a period header, never a value
-        figures = verify.figures(cell["text"], comma)
+        figures = verify.figures(text, comma)
         if not figures:
             continue
         headers = [redact.cell_id(h) for h in verify.header_cells(structure, cell)]
@@ -57,13 +58,13 @@ def list_items(structure: Dict) -> Dict:
             scale = 1.0 if figure["own_scale"] else factor
             readings = figure["readings"]
             dot = ("decimal" if figure["suffix"] else "thousands") if readings[0][1] else None
-            bracket = ("negative" if _LOSS_WORD.search(cell["text"][:figure["start"]]) else "positive") \
+            bracket = ("negative" if _LOSS_WORD.search(text[:figure["start"]]) else "positive") \
                 if readings[0][2] else None
             dots = _first(list(dict.fromkeys(r[1] for r in readings)), dot)
             signs = _first(list(dict.fromkeys(r[2] for r in readings)), bracket)
             ordered = [next(r for r in readings if r[1] == d and r[2] == b) for d in dots for b in signs]
             out.append({"id": f"i{len(out) + 1}", "cell": redact.cell_id(cell), "position": n,
-                        "raw": cell["text"][figure["start"]:figure["end"]],
+                        "raw": text[figure["start"]:figure["end"]],
                         "values": [{"value": _full_units(number, scale), "dot_reading": d, "bracket_reading": b}
                                    for number, d, b in ordered],
                         "headers": headers})
