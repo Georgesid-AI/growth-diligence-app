@@ -898,6 +898,42 @@ def test_the_consistency_report_shows_where_passes_disagree_why_items_are_unveri
         script.write_report(report, tmp_path, 3, fake=True).read_text(encoding="utf-8")
 
 
+def test_roadmap_items_are_reported_apart_from_the_verified_rate(tmp_path):
+    """A roadmap item is counted with whether Python rebuilt its date from the cited cells, and is left out of the
+    match and unverified rates and their reasons: a milestone has no value, so it is never verified."""
+    pytest.importorskip("pdfplumber")
+    script = _consistency_script()
+
+    def milestone(cell, period, cells):
+        return {"metric": "product", "period": period, "value": None, "unit": None, "actual_or_forecast": "actual",
+                "value_cell": cell, "period_cells": cells, "proposed_flags": []}
+
+    class Tea(script.FakeAdapter):
+        """The TEA roadmap (page 11), as the model might read four of its milestones."""
+        def complete(self, **kwargs):
+            sent = json.loads(kwargs["user_payload"])
+            if sent["type"] != "roadmap" or "r8c2: Rich dApps running on network" not in sent["text"]:
+                return super().complete(**kwargs)
+            items = [milestone("r3c2", "2021", ["r1c2"]),             # the year at the top of its box
+                     milestone("r8c2", "2021-Q4", ["r8c1", "r7c1"]),  # the quarter left of it, the year above that
+                     milestone("r2c2", "2021-Q2", ["r2c1", "r1c1"]),  # period headers above and beside: no period
+                     milestone("r4c3", None, [])]                      # no date: matches, but nothing is rebuilt
+            return json.dumps({"type": "roadmap", "items": items}), 1000, 20
+    decks = ["03-buffer.pptx", "05-zero2hero.pdf", "10-tea.pdf"]
+    report = asyncio.run(script.run(decks, 3, script.MemoryDB(), Tea()))
+    assert (report["roadmap_items"], report["roadmap_dates_rebuilt"]) == (24, 6), \
+        "4 Buffer milestones (dates below their lines: none rebuilt) and 4 TEA ones (2 rebuilt), in each of 3 passes"
+    assert report["verifier_match_rate_pct"] == 94.1 and report["unverified_rate_pct"] == 5.9, \
+        "16 of 17 zero2hero items per pass; no roadmap item in the rates"
+    assert list(report["unverified_reasons"]) == ["table"]
+    assert [row["type"] for row in report["unverified_items"]] == ["table"]
+    assert report["agreement_pct"]["roadmap"] == 100.0, "agreement still counts roadmap items"
+    assert "roadmap items: 24, date rebuilt from cell: 6;" in script.summary(report)
+    text = script.write_report(report, tmp_path, 3, fake=True).read_text(encoding="utf-8")
+    assert "- Roadmap items: 24, date rebuilt from cell: 6" in text
+    assert "| roadmap |" not in text.split("## Unverified items: reasons")[1].split("## Cache hit rate")[0]
+
+
 @pytest.mark.parametrize("grid, header_rows, spans, item, reason", [
     # A quarterly value cited against its year header: the year is a period header, but not the lowest.
     ("quarters", 2, {(1, 2): 4}, dict(value=3000000, period="2025", cells=["r1c2"]), ("lowest-header rule", None)),

@@ -151,8 +151,10 @@ live API and costs money. It runs the 10 decks in `tests/fixtures/decks/decks/` 
   period, value and `value_cell` after the verifier's normalisation, with the old all-field figure beside it;
 - for each structure whose passes disagree, the fields that differ (metric, period, value, unit, cell), with a count
   per type;
-- verifier match rate and unverified rate, and for each unverified item the reason (value not in cell, period not
-  rebuilt, lowest-header rule, metric invalid, other), with a count per type;
+- verifier match rate and unverified rate over the items outside roadmaps, and for each of their unverified items the
+  reason (value not in cell, period not rebuilt, lowest-header rule, metric invalid, other), with a count per type;
+- roadmap items apart, as "roadmap items: N, date rebuilt from cell: M": N items of roadmap structures, M of them
+  with a period that matches the one Python rebuilds from their period cells;
 - tokens and cost per deck, the fixed prompt's tokens and the average structure-text tokens;
 - cache hit rate on passes 2 and 3.
 

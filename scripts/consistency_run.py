@@ -6,9 +6,11 @@ in tests/fixtures/decks/decks/ three times and reports:
   metric, period, value and value cell after the verifier's normalisation; beside it the old figure, every
   field compared as the model wrote it;
 - for every structure whose passes disagree, the fields that differ, with a count per structure type;
-- the verifier's match rate and unverified rate, and how many periods it corrected (a matched value whose
-  model period differed from the one Python rebuilds from its cells; the item counts as verified);
-- for every unverified item, the reason, with a count per structure type;
+- the verifier's match rate and unverified rate over the items outside roadmaps, and how many periods it
+  corrected (a matched value whose model period differed from the one Python rebuilds from its cells; the item
+  counts as verified);
+- for every unverified item outside a roadmap, the reason, with a count per structure type;
+- roadmap items apart: how many, and how many of their dates Python rebuilt from the cited cells;
 - tokens and cost per deck, the fixed prompt's tokens and the average structure-text tokens;
 - the cache hit rate on passes 2 and 3.
 Passes 2 and 3 read the cache first to get the hit rate (expected 100%), then call the model with the
@@ -188,7 +190,7 @@ def unverified_reason(structure, item):
     """(reason, detail) for an item the verifier left unverified: the first that applies.
     - "metric invalid": not a metric the gateway accepts for a deck structure. The gateway rejects such a reply
       whole (one reask, then "Not read by AI"), so a live run counts it under not read, not here.
-    - "other", "no value": an item with no value (a roadmap milestone) is never verified.
+    - "other", "no value": an item with no value is never verified.
     - "value not in cell": the value is not the number its value cell holds after normalisation.
     - "lowest-header rule": the first period cell is a period header of the value cell but not its lowest one
       (a quarterly value cited against its year header), or the value has period headers above and beside it.
@@ -286,7 +288,8 @@ async def run(decks, passes, db, adapter=None):
     text_tokens = []                                       # per structure sent, the gateway's 3,000-token measure
     readings = defaultdict(list)          # (deck, index) -> per pass None (not read) or {"raw", "norm", "items"}
     types, pages = {}, {}
-    stats = {"items": 0, "verified": 0, "unverified": 0, "not_read": 0, "model_reads": 0, "period_corrected": 0}
+    stats = {"items": 0, "verified": 0, "unverified": 0, "not_read": 0, "model_reads": 0, "period_corrected": 0,
+             "roadmap_items": 0, "roadmap_dates_rebuilt": 0}
     reasons = {}                                           # type -> {reason: unverified items over all passes}
     unverified = {}                                        # (deck, index, cell, reason, detail) -> {passes}
     per_deck = {}
@@ -331,6 +334,11 @@ async def run(decks, passes, db, adapter=None):
                                             "items": result.items})
                 stats["period_corrected"] += checked["periods_corrected"]
                 for item in checked["items"]:
+                    if structure["type"] == "roadmap":          # apart from the rates: a milestone has no value
+                        stats["roadmap_items"] += 1
+                        stats["roadmap_dates_rebuilt"] += int(item.get("period") is not None
+                                                              and item["checks"]["period"])
+                        continue
                     stats["items"] += 1
                     if item["status"] == verify.VERIFIED:
                         stats["verified"] += 1
@@ -363,6 +371,8 @@ async def run(decks, passes, db, adapter=None):
         "unverified_items": [{"deck": f, "page": pages[(f, i)], "type": types[(f, i)], "value_cell": cell,
                               "reason": reason, "detail": detail, "passes": len(seen)}
                              for (f, i, cell, reason, detail), seen in unverified.items()],
+        "roadmap_items": stats["roadmap_items"],
+        "roadmap_dates_rebuilt": stats["roadmap_dates_rebuilt"],
         "not_read": stats["not_read"],
         "model_reads": stats["model_reads"],
         "period_corrected": stats["period_corrected"],
@@ -412,8 +422,9 @@ def _reason_lines(report):
     total = {r: sum(c[r] for c in by_type.values()) for r in REASONS}
     return [
         "## Unverified items: reasons", "",
-        "One reason per unverified item, the first that applies: metric invalid, other (no value), value not in "
-        "cell, lowest-header rule, period not rebuilt, other (flag not reproduced). Counts are over all passes. "
+        "One reason per unverified item outside a roadmap, the first that applies: metric invalid, other (no value), "
+        "value not in cell, lowest-header rule, period not rebuilt, other (flag not reproduced). Counts are over all "
+        "passes. "
         "Metric invalid stays 0 on a live run: the gateway rejects a reply with such a metric whole, and the "
         "structure counts as not read.", "",
         "| Type | " + " | ".join(REASONS) + " | Unverified |", "|---|" + "---:|" * (len(REASONS) + 1),
@@ -435,7 +446,8 @@ def summary(report):
     return (f"Agreement {_pct(agreement)} (target {_pct(target)}: {verdict}; "
             f"old method {_pct(report['agreement_pct_all_old'])}); "
             f"verified {_pct(report['verifier_match_rate_pct'])}, "
-            f"unverified {_pct(report['unverified_rate_pct'])}, {report['not_read']} not read, "
+            f"unverified {_pct(report['unverified_rate_pct'])}, {report['not_read']} not read; "
+            f"roadmap items: {report['roadmap_items']}, date rebuilt from cell: {report['roadmap_dates_rebuilt']}; "
             f"{report['period_corrected']} periods corrected; cache hits {hits or 'n/a'}; cost ${cost:.4f}.")
 
 
@@ -467,9 +479,12 @@ def write_report(report, folder, passes, fake=False):
         f"| all | {_pct(report['agreement_pct_all'])} | {_pct(report['agreement_pct_all_old'])} |", "",
         *_disagreement_lines(report),
         "## Verifier", "",
+        "Rates over the items outside roadmaps. A roadmap item's date is rebuilt from cell when Python rebuilds "
+        "its period from the cited period cells and it matches.", "",
         f"- Match rate: {_pct(report['verifier_match_rate_pct'])}",
         f"- Unverified rate: {_pct(report['unverified_rate_pct'])}",
         f"- Periods corrected: {report['period_corrected']}",
+        f"- Roadmap items: {report['roadmap_items']}, date rebuilt from cell: {report['roadmap_dates_rebuilt']}",
         f"- Not read: {report['not_read']}; model reads: {report['model_reads']}", "",
         *_reason_lines(report),
         "## Cache hit rate", "", "| Pass | Hit rate |", "|---|---:|",

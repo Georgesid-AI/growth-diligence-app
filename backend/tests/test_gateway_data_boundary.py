@@ -954,6 +954,7 @@ def test_the_consistency_run_prints_and_reports_no_text_sent_to_the_model(monkey
     assert set(report["tokens"]) == {"fixed_prompt", "system_prompt", "output_schema", "empty_message",
                                      "structure_text_avg", "structures_counted", "billed_input_per_model_read"}
     assert all(isinstance(n, (int, float)) for n in report["tokens"].values())
+    assert isinstance(report["roadmap_items"], int) and isinstance(report["roadmap_dates_rebuilt"], int)
     written = capsys.readouterr().out + "".join(p.read_text(encoding="utf-8") for p in tmp_path.glob("consistency_*"))
     sent = set()
     for name in names:
