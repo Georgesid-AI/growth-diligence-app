@@ -3,7 +3,7 @@
 Four independent brakes, all backed by Mongo so they hold across workers:
 
   * a hard per-run call cap on narrative calls (the 16th is refused, never queued or retried);
-  * a per-audit token cap on structure reading calls (200,000 billed tokens, input and output);
+  * a per-audit token cap on structure reading calls (400,000 billed tokens, input and output);
   * a daily spend ceiling across all runs;
   * a per-run+step advisory lock, so a second request that arrives while one is
     in flight waits for that result instead of issuing another provider call. Structure
@@ -29,8 +29,8 @@ LOCKS_COLLECTION = "llm_locks"
 MAX_CALLS_PER_RUN = 15             # narrative calls only
 DEFAULT_DAILY_SPEND_CAP_USD = 5.00
 STRUCTURE_STEP = "structures"      # the step every structure reading call is logged and locked under
-STRUCTURE_TOKEN_CAP = 200_000      # billed input and output tokens per audit, structure calls only
-STRUCTURE_CAP_MESSAGE = ("AI reading stopped: this audit reached its 200,000-token limit. The remaining "
+STRUCTURE_TOKEN_CAP = 400_000      # billed input and output tokens per audit, structure calls only
+STRUCTURE_CAP_MESSAGE = ("AI reading stopped: this audit reached its 400,000-token limit. The remaining "
                          "structures were read by Python only.")
 
 # How long a lock may be held before it is treated as abandoned, so a worker

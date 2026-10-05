@@ -18,17 +18,21 @@ then call the model with the cache bypassed, so agreement measures the model. Ta
 
 Usage (from the repository root, with ANTHROPIC_API_KEY set and a MongoDB to keep the cache in):
     python scripts/consistency_run.py --yes [--passes 3] [--deck 05-zero2hero.pdf ...] [--out report.json]
-                                      [--pause 2]
+                                      [--pause 2] [--diagnostic]
 It waits --pause seconds (default 2) between structure calls; the gateway retries a 429 or 529 itself. It prints
 one line per deck and pass, writes the report to docs/test-runs/consistency_<date>.md (-2, -3, ... for a later
 run that day) and ends with the report path, a summary line and the full report; --out also writes it as JSON.
 Reports are untracked and lost on re-import; copy the printed report out before re-importing.
+--diagnostic also writes <report>_diagnostic.md beside the report (and prints its path, not its text): for every
+unverified item and every disagreeing structure, deck, page, cell id, the cell's text as sent to the model, the
+model's metric, value, unit and period in each pass, and the verifier's result. It holds deck text, so it runs on the
+10 public test decks only: any other deck, by file name and SHA-256, is refused before anything is read.
 A failed model call or token count logs one "structure not read" line to stderr, with its reason, HTTP status
 and error type; a structure the daily spend cap or the token cap refuses logs one with reason=spend_cap or
 reason=token_cap.
 Each deck is read in its own throwaway audit (consent ticked) in the scratch database --db (default
 "consistency_run"; any name must start with it), dropped at the end unless --keep-db. At start the run drops
-every scratch database an earlier run left, crashed or kept. The audits stay within the 200,000-token cap;
+every scratch database an earlier run left, crashed or kept. The audits stay within the 400,000-token cap;
 raise LLM_DAILY_SPEND_CAP_USD if the run would pass the daily spend cap.
 --fake replays empty readings with no network and no MongoDB, to check the script itself; its report goes to
 the system temp folder, never to docs/test-runs.
@@ -36,8 +40,10 @@ the system temp folder, never to docs/test-runs.
 import argparse
 import asyncio
 import datetime
+import hashlib
 import json
 import os
+import re
 import sys
 import tempfile
 from collections import defaultdict
@@ -48,6 +54,20 @@ BACKEND = ROOT / "backend"
 DECKS = ROOT / "tests" / "fixtures" / "decks" / "decks"
 REPORTS = ROOT / "docs" / "test-runs"
 SCRATCH = "consistency_run"          # a scratch database is named this or starts with it and "_"
+# The 10 public test decks (tests/fixtures/decks/README.md): file name -> SHA-256 of the file. --diagnostic writes
+# cell text and runs on these only.
+PUBLIC_DECKS = {
+    "01-front-b.pptx": "d37b20a89c01b072a0e4300f3811e47811550ed19a67e7314ec3c7fb1ef882b0",
+    "02-moz.pdf": "902c1fdbb21210e6611325012fca4b663da32d50493e19cb8ab69b499b51c1e7",
+    "03-buffer.pptx": "bb298b81ef4b2b2bf25661674275c24d7964a2223081351aeb761763b28f876f",
+    "04-clevergig.docx": "99d18ecc059eb0f5b838ea03d379a0d502d64ca74a4f94fba5386561b0cc5167",
+    "05-zero2hero.pdf": "08cf5173c0d9d312d1cb4a984f56b48117d365bcc1e06c37a929560c6e56dfe5",
+    "06-uber.pdf": "dd45d5c79cab6a8ada45b0a99e2c4cc21c75447f1b96b7753ffa95a33141d803",
+    "07-equals-seed.docx": "ab89bd498f48b0d27dd3d2fe79a963ba1bd9bfd9cfee568cb7c3606b5f35b604",
+    "08-genesisai-2021.pdf": "b02df6adc90b2a45ca823466dbdf4c4613e28a909790478606e1de4523f6f93a",
+    "09-genesisai-2024.pdf": "4cd9c6e091468faa36a8f1a71bb6ae62ea960bd175adee0c8302b5a3ee5bc458",
+    "10-tea.pdf": "db9b0e2bee1e1855dd62df6a359e4a67683459a3fe34fc5fb616e617f26bcad9",
+}
 sys.path.insert(0, str(BACKEND))
 
 
@@ -146,9 +166,14 @@ FIELDS = ("metric", "period", "value", "unit", "cell", "other", "items")
 REASONS = ("value not in cell", "period not rebuilt", "lowest-header rule", "metric invalid", "other")
 
 
+def _unit(item):
+    """The unit as written; for "other", the ISO code the model gave beside it."""
+    return item.get("unit_other") if item.get("unit") == "other" else item.get("unit")
+
+
 def _item_key(item):
     """The old agreement key: every field the model returns, as it wrote it."""
-    return (item["metric"], item.get("period"), item.get("value"), item.get("unit"), item.get("actual_or_forecast"),
+    return (item["metric"], item.get("period"), item.get("value"), _unit(item), item.get("actual_or_forecast"),
             item["value_cell"], tuple(item.get("period_cells") or ()), tuple(item.get("proposed_flags") or ()))
 
 
@@ -167,7 +192,7 @@ _COMPARED = {
     "metric": lambda i: i["metric"],
     "period": lambda i: i.get("period"),
     "value": lambda i: None if i.get("value") is None else float(i["value"]),
-    "unit": lambda i: i.get("unit"),
+    "unit": _unit,
     "other": lambda i: (i.get("actual_or_forecast"), tuple(i.get("period_cells") or ()),
                         tuple(i.get("proposed_flags") or ())),
 }
@@ -284,8 +309,52 @@ def _disagreements(readings, types, pages):
     return rows, dict(sorted(by_type.items()))
 
 
-async def run(decks, passes, db, adapter=None, pause=0.0, sleep=None):
-    """`pause` seconds between structure calls, so a burst does not hit the provider's rate limit."""
+def _verdict(structure, item):
+    """The verifier's result for one checked item: verified, or the reason it is not."""
+    from app.structures import verify
+    if item["status"] == verify.VERIFIED:
+        return "verified"
+    reason, detail = unverified_reason(structure, item)
+    return f"{reason} ({detail})" if detail else reason
+
+
+def _at_cell(reading, structure, cell):
+    """What one pass read at a value cell: None when the structure was not read in it, else for every item citing
+    the cell the model's metric, value, unit and period as written, and the verifier's result."""
+    if reading is None:
+        return None
+    return [{"metric": item["metric"], "value": item.get("value"), "unit": _unit(item), "period": item.get("period"),
+             "verifier": _verdict(structure, checked)}
+            for item, checked in zip(reading["items"], reading["checked"]) if item["value_cell"] == cell]
+
+
+def _cell_order(cell):
+    return tuple(int(n) for n in re.findall(r"\d+", cell))
+
+
+def diagnostic_rows(readings, unverified, types, pages, texts, structures):
+    """--diagnostic: one row per unverified item outside a roadmap (the report's list), then one per cell of each
+    disagreeing structure whose readings differ between passes as the model wrote them. A row carries the cell's
+    text as sent to the model, so it goes to the diagnostic file only, never to the report."""
+    def row(section, where, cell, reason):
+        return {"section": section, "deck": where[0], "page": pages[where], "type": types[where], "cell": cell,
+                "cell_text": texts[where].get(cell, ""), "reason": reason,
+                "passes": [_at_cell(r, structures[where], cell) for r in readings[where]]}
+    rows = [row("unverified", (f, i), cell, f"{reason} ({detail})" if detail else reason)
+            for f, i, cell, reason, detail in unverified]
+    for where, passes_read in readings.items():
+        if any(r is None for r in passes_read) or all(r["raw"] == passes_read[0]["raw"] for r in passes_read):
+            continue
+        for cell in sorted({item["value_cell"] for r in passes_read for item in r["items"]}, key=_cell_order):
+            seen = [sorted(repr(_item_key(i)) for i in r["items"] if i["value_cell"] == cell) for r in passes_read]
+            if any(s != seen[0] for s in seen[1:]):
+                rows.append(row("disagreeing", where, cell, None))
+    return rows
+
+
+async def run(decks, passes, db, adapter=None, pause=0.0, sleep=None, diagnostic=None):
+    """`pause` seconds between structure calls, so a burst does not hit the provider's rate limit. A `diagnostic`
+    list gets the rows of diagnostic_rows; the report itself is the same either way."""
     from app.decks import parser
     from app.llm import gateway
     from app.structures import redact, verify
@@ -294,8 +363,9 @@ async def run(decks, passes, db, adapter=None, pause=0.0, sleep=None):
     counter = adapter or gateway.AnthropicAdapter()       # token counts only; read_structure gets `adapter`
     tokens = await fixed_tokens(counter)
     text_tokens = []                                       # per structure sent, the gateway's 3,000-token measure
-    readings = defaultdict(list)          # (deck, index) -> per pass None (not read) or {"raw", "norm", "items"}
+    readings = defaultdict(list)    # (deck, index) -> per pass None (not read) or {"raw", "norm", "items", "checked"}
     types, pages = {}, {}
+    texts, structures = {}, {}                           # (deck, index) -> {cell id: text as sent}, the structure
     stats = {"items": 0, "verified": 0, "unverified": 0, "not_read": 0, "model_reads": 0, "period_corrected": 0,
              "roadmap_items": 0, "roadmap_dates_rebuilt": 0}
     reasons = {}                                           # type -> {reason: unverified items over all passes}
@@ -317,6 +387,7 @@ async def run(decks, passes, db, adapter=None, pause=0.0, sleep=None):
             types[(file, i)] = structure["type"]
             pages[(file, i)] = structure.get("slide") or structure.get("page")
             cells, _ = redact.redact_structure(structure["cells"], Path(file).stem, {}, redact.withheld_values(audit))
+            texts[(file, i)], structures[(file, i)] = {redact.cell_id(c): c["text"] for c in cells}, structure
             sent.append((i, structure, redact.structure_text(cells), pages[(file, i)]))
             text_tokens.append(await _count(counter, system=None, user_payload=sent[-1][2], json_schema=None))
         for n in range(1, passes + 1):
@@ -344,7 +415,7 @@ async def run(decks, passes, db, adapter=None, pause=0.0, sleep=None):
                 checked = verify.verify(structure, result.items)
                 readings[(file, i)].append({"raw": {_item_key(item) for item in result.items},
                                             "norm": {_normalised_key(item) for item in checked["items"]},
-                                            "items": result.items})
+                                            "items": result.items, "checked": checked["items"]})
                 stats["period_corrected"] += checked["periods_corrected"]
                 for item in checked["items"]:
                     if structure["type"] == "roadmap":          # apart from the rates: a milestone has no value
@@ -363,6 +434,8 @@ async def run(decks, passes, db, adapter=None, pause=0.0, sleep=None):
             spent = usage["input_tokens"] + usage["output_tokens"] - tokens_before
             print(f"[{d}/{len(decks)}] {file} pass {n}/{passes}: {read} of {len(sent)} structures read, "
                   f"{spent:,} tokens, ${usage['cost_usd'] - cost_before:.4f}", flush=True)
+    if diagnostic is not None:
+        diagnostic.extend(diagnostic_rows(readings, unverified, types, pages, texts, structures))
     agreement, agreement_all = _agreement(readings, types, "norm")
     agreement_old, agreement_all_old = _agreement(readings, types, "raw")
     disagreements, disagreement_fields = _disagreements(readings, types, pages)
@@ -521,9 +594,71 @@ def write_report(report, folder, passes, fake=False):
     return path
 
 
-async def live(args, decks):
+def _md(text):
+    """A markdown table cell: line breaks as spaces, a pipe escaped."""
+    return " ".join(str(text).splitlines()).replace("|", "\\|")
+
+
+def _number(value):
+    return "null" if value is None else str(int(value)) if float(value).is_integer() else repr(float(value))
+
+
+def _pass_text(found):
+    """One pass at a cell: each item as metric, value, unit, period, then the verifier's result."""
+    if found is None:
+        return "not read"
+    return "; ".join(f"{s['metric']} {_number(s['value'])} {s['unit'] or 'null'} {s['period'] or 'null'}: "
+                     f"{s['verifier']}" for s in found) or "no item"
+
+
+def diagnostic_path(report_path):
+    return report_path.with_name(f"{report_path.stem}_diagnostic.md")
+
+
+def write_diagnostic(rows, report_path, passes):
+    """<report>_diagnostic.md beside the report, from diagnostic_rows. It holds the text of cells as sent to the
+    model, so main writes it for the 10 public test decks only; the boundary test leaves it out by this name."""
+    path = diagnostic_path(report_path)
+    heads = " | ".join(f"Pass {n}" for n in range(1, passes + 1))
+
+    def line(row, reason):
+        cells = [row["deck"], row["page"], row["type"], row["cell"], _md(row["cell_text"]),
+                 *([_md(row["reason"])] if reason else []), *(_md(_pass_text(found)) for found in row["passes"])]
+        return "| " + " | ".join(str(c) for c in cells) + " |"
+    unverified = [line(r, True) for r in rows if r["section"] == "unverified"]
+    disagreeing = [line(r, False) for r in rows if r["section"] == "disagreeing"]
+    lines = [
+        f"# Consistency run {report_path.stem.split('_', 1)[1]}: diagnostic", "",
+        "Public test decks only: --diagnostic refuses any other deck. This file holds the text of cells as sent to "
+        "the model; the report beside it holds none. A pass gives, for every item citing the cell, the model's "
+        "metric, value, unit and period as written, then the verifier's result: verified or the reason. "
+        "No item: the pass cited nothing there; not read: the structure was not read in that pass.", "",
+        "## Unverified items", "", "Every unverified item outside a roadmap, as listed in the report.", "",
+        *([f"| Deck | Page | Type | Cell | Cell text | Reason | {heads} |",
+           "|---|---:|---|---|---|---|" + "---|" * passes, *unverified] if unverified else ["No unverified item."]), "",
+        "## Disagreeing structures", "",
+        "Every cell whose readings differ between passes, as the model wrote them.", "",
+        *([f"| Deck | Page | Type | Cell | Cell text | {heads} |", "|---|---:|---|---|---|" + "---|" * passes,
+           *disagreeing] if disagreeing else ["Every structure read in every pass was read the same way in each."]),
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def not_public(decks):
+    """The first deck that is not one of the 10 public test decks, by file name and SHA-256, or None."""
+    for name in decks:
+        path = DECKS / name
+        if name not in PUBLIC_DECKS or not path.is_file() or \
+                hashlib.sha256(path.read_bytes()).hexdigest() != PUBLIC_DECKS[name]:
+            return name
+    return None
+
+
+async def live(args, decks, rows=None):
     """The whole live run in one event loop. Motor binds a client to the loop of its first call, so a drop in a
-    second asyncio.run found that loop closed ("Event loop is closed") and the report was never written."""
+    second asyncio.run found that loop closed ("Event loop is closed") and the report was never written. `rows`
+    (--diagnostic) collects the diagnostic, written beside the report, before the drop too."""
     from motor.motor_asyncio import AsyncIOMotorClient
     client = AsyncIOMotorClient(os.environ.get("MONGO_URL", "mongodb://localhost:27017"))
     try:
@@ -532,8 +667,11 @@ async def live(args, decks):
                 await client.drop_database(name)
                 print(f"Dropped scratch database {name} left by an earlier run", flush=True)
         try:
-            report = await run(decks, args.passes, client[args.db], pause=args.pause)
-            return report, write_report(report, REPORTS, args.passes)     # before the drop: a failed drop keeps it
+            report = await run(decks, args.passes, client[args.db], pause=args.pause, diagnostic=rows)
+            path = write_report(report, REPORTS, args.passes)            # before the drop: a failed drop keeps it
+            if rows is not None:
+                write_diagnostic(rows, path, args.passes)
+            return report, path
         finally:
             if not args.keep_db:
                 await client.drop_database(args.db)
@@ -552,11 +690,20 @@ def main(argv=None):
                     help="seconds between structure calls on a live run (default 2; --fake does not pause)")
     ap.add_argument("--yes", action="store_true", help="confirm the live API may be called and billed")
     ap.add_argument("--fake", action="store_true", help="no network, no MongoDB: check the script itself")
+    ap.add_argument("--diagnostic", action="store_true",
+                    help="also write <report>_diagnostic.md with each cell's text (the 10 public test decks only)")
     args = ap.parse_args(argv)
     decks = args.deck or sorted(p.name for p in DECKS.iterdir() if not p.name.startswith("."))
+    outside = not_public(decks) if args.diagnostic else None
+    if outside is not None:
+        sys.exit(f"--diagnostic runs on the 10 public test decks only: {outside} is not one of them "
+                 "(checked by file name and SHA-256).")
+    rows = [] if args.diagnostic else None
     if args.fake:
-        report = asyncio.run(run(decks, args.passes, MemoryDB(), FakeAdapter()))
+        report = asyncio.run(run(decks, args.passes, MemoryDB(), FakeAdapter(), diagnostic=rows))
         path = write_report(report, Path(tempfile.gettempdir()), args.passes, fake=True)
+        if rows is not None:
+            write_diagnostic(rows, path, args.passes)
     else:
         if not os.environ.get("ANTHROPIC_API_KEY"):
             sys.exit("ANTHROPIC_API_KEY is not set: this script calls the live API.")
@@ -564,10 +711,12 @@ def main(argv=None):
             sys.exit("This run calls the live API and costs money. Re-run with --yes to confirm.")
         if not _scratch(args.db):
             sys.exit(f"--db must be {SCRATCH} or start with {SCRATCH}_: the run drops it at the end.")
-        report, path = asyncio.run(live(args, decks))
+        report, path = asyncio.run(live(args, decks, rows))
     if args.out:
         Path(args.out).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(f"Report: {path}")
+    if rows is not None:
+        print(f"Diagnostic: {diagnostic_path(path)}")                  # its path only: its cell text stays in the file
     print(summary(report))
     print(path.read_text(encoding="utf-8"), end="", flush=True)     # untracked: lost on re-import, copy it out
     return report

@@ -1,6 +1,6 @@
-<!-- release: r4 -->
+<!-- release: r5 -->
 <!-- One stamp shared by every prompt. Editing any prompt file means bumping the release
      and re-recording its hash below (python -m app.llm.prompt_store --record); the
      test suite fails if a hash is stale. -->
 growth_engine.md sha256:72283b7b6d30cbc6fc7d3204b84b205a806e41e348a1fa7e23bb9e46e27275e7
-structure_reading.md sha256:b719e54c6c48e467be4b92ce84de446ab0875c6235b3f7ab0c2b5528d8d383f2
+structure_reading.md sha256:55f1f956f2a42d3671fad0c8b351b902ab65db083ec3808884a76ea3de6a4a39

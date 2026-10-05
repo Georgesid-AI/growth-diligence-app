@@ -1407,10 +1407,13 @@ def test_baseline_release_keeps_the_cache_keys_that_existed_before_releases():
     assert prompt_store.tag_for(prompt_store.BASELINE_RELEASE, prompt.version) == prompt.version
 
 
-def test_the_shipped_release_is_r4_and_its_cache_tag_carries_it():
+def test_the_shipped_release_is_r5_and_its_cache_tag_carries_it():
     prompt = prompt_store.load("growth_engine")
-    assert prompt_store.release() == "r4" and prompt.version == "v7"
-    assert prompt_store.cache_tag(prompt) == "r4:v7", "narratives written under r3/v6 are not served under r4/v7"
+    assert prompt_store.release() == "r5" and prompt.version == "v7"
+    assert prompt_store.cache_tag(prompt) == "r5:v7", "narratives written under r4/v7 are not served under r5/v7"
+    structure = prompt_store.load("structure_reading")
+    assert structure.version == "v2" and prompt_store.cache_tag(structure) == "r5:v2", \
+        "the structure prompt's unit edit (20 listed codes or other with unit_other) is v2 of release r5"
 
 
 def test_a_release_bump_makes_every_cached_narrative_unreachable_until_regenerated(monkeypatch):
@@ -1421,7 +1424,7 @@ def test_a_release_bump_makes_every_cached_narrative_unreachable_until_regenerat
         db = make_db()
         await gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=FakeAdapter(), sleep=_noop_sleep)
         served = await gateway.read_cached_narrative(db, RUN_ID, "growth_engine")
-        monkeypatch.setattr(prompt_store, "release", lambda: "r5")
+        monkeypatch.setattr(prompt_store, "release", lambda: "r6")
         after_bump = await gateway.read_cached_narrative(db, RUN_ID, "growth_engine")
         disclosure_after = await gateway.disclosure_for_run(db, RUN_ID)
         calls_after_read = len(db["llm_calls"].docs)
@@ -1438,7 +1441,7 @@ def test_a_release_bump_makes_every_cached_narrative_unreachable_until_regenerat
     assert regenerated.narrative_status == "ok" and regenerated.cache_hit is False
     stored = db["llm_narratives"].docs
     assert len(stored) == 2, "the old narrative is kept, not deleted"
-    assert {d["prompt_release"] for d in stored} == {"r4", "r5"}
+    assert {d["prompt_release"] for d in stored} == {"r5", "r6"}
 
 
 # ---------------------------------------------------------------------------

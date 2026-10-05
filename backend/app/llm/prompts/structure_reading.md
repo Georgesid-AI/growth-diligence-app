@@ -1,4 +1,4 @@
-<!-- version: v1 -->
+<!-- version: v2 -->
 <!-- step: structures -->
 <!-- This text is server-side only. It is never returned in an API response. -->
 
@@ -44,8 +44,9 @@ Each item has exactly these fields:
   `5K` is 5000, and `1.2` under a `£m` header is 1200000. A percentage is its number: `12%` is 12.
   Copy the number exactly; never round, add or derive a figure. Use null only for a roadmap
   milestone with no figure, and for every `column_mapping` item.
-- `unit`: an ISO currency code (`GBP`, `USD`, `EUR`, ...), `%`, `x`, `count`, `days`, `months`,
-  `years`, or null.
+- `unit`: one of the 20 currency codes the output format lists (`EUR`, `USD`, `GBP`, ...), `other`
+  for any other currency, `%`, `x`, `count`, `days`, `months`, `years`, or null.
+- `unit_other`: when `unit` is `other`, the currency's ISO code (`ZAR`, `MXN`, ...); otherwise null.
 - `period`: `YYYY`, `YYYY-Qn`, `YYYY-Hn`, `YYYY-MM`, or a fiscal year as stated: a year-end label
   (`FY25`, `FY2025`, `Y/E 25`, `25 Y/E`) is `FY2025`, and `FY2025/26` stays `FY2025/26`. A suffixed
   year (`2025E`, `2025A`) is `2025`. Use null when no header of the value cell states a period. A

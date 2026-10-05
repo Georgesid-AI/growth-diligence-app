@@ -147,7 +147,8 @@ class UsageResponse(BaseModel):
 
 # ---------------------------------------------------------------------------
 # Structure reading (docs/specs/llm-structure-reading.md section 1). One schema for every type.
-# No field is free text, so a reply cannot carry deck prose into a log.
+# No field is free text, so a reply cannot carry deck prose into a log: the one string an item fills
+# itself, unit_other, must be an ISO currency code.
 # ---------------------------------------------------------------------------
 DECK_TYPES = ("table", "chart", "kpi_panel", "roadmap", "hiring_table", "unit_economics", "use_of_funds")
 STRUCTURE_TYPES = DECK_TYPES + ("column_mapping",)
@@ -166,7 +167,12 @@ GTQ GYD HKD HNL HTG HUF IDR ILS INR IQD IRR ISK JMD JOD JPY KES KGS KHR KMF KPW 
 LSL LYD MAD MDL MGA MKD MMK MNT MOP MRU MUR MVR MWK MXN MYR MZN NAD NGN NIO NOK NPR NZD OMR PAB PEN PGK PHP PKR
 PLN PYG QAR RON RSD RUB RWF SAR SBD SCR SDG SEK SGD SHP SLE SOS SRD SSP STN SVC SYP SZL THB TJS TMT TND TOP TRY
 TTD TWD TZS UAH UGX USD UYU UZS VES VND VUV WST XAF XCD XOF XPF YER ZAR ZMW ZWL""".split())
-STRUCTURE_UNITS = ISO_CURRENCIES + ("%", "x", "count", "days", "months", "years")
+# The schema lists 20 currencies; any other ISO currency is unit "other", with its code in unit_other. The full
+# ISO list stays here, to check unit_other, and is never sent: its enum cost every call input tokens.
+SCHEMA_CURRENCIES = ("EUR", "USD", "GBP", "CHF", "BGN", "RON", "PLN", "CZK", "HUF", "SEK", "NOK", "DKK", "TRY", "UAH",
+                     "RSD", "JPY", "CNY", "INR", "AUD", "CAD")
+OTHER_UNIT = "other"
+STRUCTURE_UNITS = SCHEMA_CURRENCIES + (OTHER_UNIT, "%", "x", "count", "days", "months", "years")
 STRUCTURE_FLAGS = ("total_mismatch", "growth_mismatch")
 _CELL_ID = re.compile(r"^r[1-9]\d*c[1-9]\d*$")
 _PERIOD = re.compile(r"^(?:\d{4}(?:-(?:Q[1-4]|H[12]|0[1-9]|1[0-2]))?|FY\d{4}(?:/\d{2})?)$")
@@ -181,6 +187,7 @@ class StructureItem(BaseModel):
     period: Optional[str]
     value: Optional[float]
     unit: Optional[Literal[STRUCTURE_UNITS]]
+    unit_other: Optional[str]
     actual_or_forecast: Literal["actual", "forecast", "unknown"]
     value_cell: str
     period_cells: List[str]
@@ -214,6 +221,17 @@ class StructureItem(BaseModel):
             raise ValueError("value must be a finite number")
         return v
 
+    @model_validator(mode="after")
+    def _other_currency(self):
+        """unit_other is an ISO currency code outside the listed 20, beside unit "other", and null otherwise:
+        never free text."""
+        if self.unit == OTHER_UNIT:
+            if self.unit_other not in ISO_CURRENCIES or self.unit_other in SCHEMA_CURRENCIES:
+                raise ValueError("unit other needs the ISO code of a currency that is not listed")
+        elif self.unit_other is not None:
+            raise ValueError("unit_other is set only when unit is other")
+        return self
+
 
 class StructureReply(BaseModel):
     """What the model must return for one structure. No extra keys are accepted."""
@@ -227,7 +245,8 @@ class StructureReply(BaseModel):
 def structure_output_schema() -> dict:
     """The JSON schema sent as `output_config.format.schema`. Written by hand: structured outputs take
     no array or string constraints, so the item limits (two period cells, the cell id and period
-    formats) are checked by StructureReply after the reply arrives."""
+    formats, unit_other an ISO code beside unit "other") are checked by StructureReply after the reply
+    arrives."""
     nullable = lambda schema: {"anyOf": [schema, {"type": "null"}]}  # noqa: E731
     item = {
         "type": "object",
@@ -236,13 +255,14 @@ def structure_output_schema() -> dict:
             "period": nullable({"type": "string"}),
             "value": nullable({"type": "number"}),
             "unit": nullable({"type": "string", "enum": list(STRUCTURE_UNITS)}),
+            "unit_other": nullable({"type": "string"}),
             "actual_or_forecast": {"type": "string", "enum": ["actual", "forecast", "unknown"]},
             "value_cell": {"type": "string"},
             "period_cells": {"type": "array", "items": {"type": "string"}},
             "proposed_flags": {"type": "array", "items": {"type": "string", "enum": list(STRUCTURE_FLAGS)}},
         },
-        "required": ["metric", "period", "value", "unit", "actual_or_forecast", "value_cell", "period_cells",
-                     "proposed_flags"],
+        "required": ["metric", "period", "value", "unit", "unit_other", "actual_or_forecast", "value_cell",
+                     "period_cells", "proposed_flags"],
         "additionalProperties": False,
     }
     return {

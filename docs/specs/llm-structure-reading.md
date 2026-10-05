@@ -15,7 +15,10 @@ change (§9). Each item has exactly these fields:
 - `metric`: a deck-parser.md §2 claim type, `Use of funds`, or a FIELD_DEFS field;
 - `period`: `YYYY`, `YYYY-Qn`, `YYYY-Hn`, `YYYY-MM`, a fiscal year stored as stated (`FY2025` or `FY2025/26`) or null;
 - `value`: a number, null only for a roadmap milestone or a column mapping;
-- `unit`: an ISO currency, `%`, `x`, `count`, `days`, `months`, `years` or null;
+- `unit`: one of 20 currencies (EUR, USD, GBP, CHF, BGN, RON, PLN, CZK, HUF, SEK, NOK, DKK, TRY, UAH, RSD, JPY, CNY,
+  INR, AUD, CAD), `other`, `%`, `x`, `count`, `days`, `months`, `years` or null;
+- `unit_other`: the ISO 4217 code of a currency outside those 20 when `unit` is `other`, else null. Python accepts
+  only such a code there and rejects the reply otherwise;
 - `actual_or_forecast`: `actual`, `forecast` or `unknown`;
 - `value_cell`: one input cell id: the cell that holds the value, or the milestone or column header cell when `value` is
   null;
@@ -105,17 +108,17 @@ every cited cell (`value_cell`, `period_cells`) exists. A failing reply is rejec
 needs a price entry, and changing it moves every cache key. Temperature stays at the default and is not sent.
 Consistency relies on the cache, the verifier and the 95% agreement target (§11).
 
-**7. Caps.** 200,000 tokens per audit, counting billed input and output. A call goes out only if tokens used + its
+**7. Caps.** 400,000 tokens per audit, counting billed input and output. A call goes out only if tokens used + its
 input + its `max_tokens` fit under the cap. Otherwise the analyst sees: "AI reading stopped: this audit reached its
-200,000-token limit. The remaining structures were read by Python only." Each structure may use at most 3,000 tokens,
+400,000-token limit. The remaining structures were read by Python only." Each structure may use at most 3,000 tokens,
 measured with the provider's token counter on the structure text alone (the prompt and schema are not counted). A
-larger one is not sent and is marked "Too large for AI reading". The 200,000-token cap counts the whole call's input.
+larger one is not sent and is marked "Too large for AI reading". The 400,000-token cap counts the whole call's input.
 The token cap governs structure calls. The 15-call cap per run (`MAX_CALLS_PER_RUN`) counts narrative calls only.
 The existing circuit breaker applies: per-audit lock (step `structures`), daily spend cap, retry policy.
 
-**8. Cache.** The key is sha256 of text, type, prompt cache tag and model. Results are stored in `llm_structures` and
-looked up by (audit id, key), so no audit is served another audit's result. A hit makes no API call. Delete audit
-removes the stored results (`purge_run`).
+**8. Cache.** The key is sha256 of text, type, prompt cache tag, model and a hash of the output schema, so a schema
+change moves every key. Results are stored in `llm_structures` and looked up by (audit id, key), so no audit is
+served another audit's result. A hit makes no API call. Delete audit removes the stored results (`purge_run`).
 
 **9. Logging (rule 17).** `llm_structures` stores the model JSON output (with the model's own periods), the verifier
 status of each item, the number of periods corrected, prompt version, model, content hash, tokens, cost, deck and page. It also stores Python's type and, when the two differ,
@@ -133,7 +136,8 @@ corrected and cost. `scripts/consistency_run.py` reports the periods corrected t
   most 3 rows, at most 3 samples per numeric or date column, and a profile per text column.
 - It must fail on raw bytes, a full page, a prose snippet, a cell over 200 characters, more than 3 samples, more than 3
   header rows or any text cell value on the column-mapping path, a file name, an unredacted email, phone number, name or customer name, the
-  client name or engagement reference, any call without consent, and sent text in a log or in `llm_structures`.
+  client name or engagement reference, any call without consent, sent text in a log or in `llm_structures`, and
+  anything but an ISO code in `unit_other`.
 
 The docstrings in `gateway.py`, `decks/__init__.py` and `prompt_store.py` restate rules 16–18.
 
@@ -165,6 +169,13 @@ live API and costs money. It runs the 10 decks in `tests/fixtures/decks/decks/` 
 The consistency report is written to `docs/test-runs/consistency_<date>.md`, with -2, -3 suffixes for same-day runs.
 The script prints the full report after its summary line. Reports are untracked and lost on re-import; copy the
 printed report out before re-importing.
+
+`--diagnostic` exists only for the 10 public test decks: the script refuses any other deck, checked by file name and
+SHA-256, before anything is read. It also writes `docs/test-runs/consistency_<date>_diagnostic.md` beside the report
+(same suffix) and prints its path, not its content. For every unverified item and every disagreeing structure it
+lists deck, page, cell id, the cell's text as sent to the model, the model's metric, value, unit and period in each
+pass, and the verifier's reason. It holds deck text, so the boundary test excludes this file by name; the report
+holds none.
 
 Passes 2 and 3 read the cache first to get the hit rate (expected 100%), then call the model with the cache bypassed,
 so agreement measures the model. Target: ≥95% agreement. `--pause` sets the seconds between structure calls
