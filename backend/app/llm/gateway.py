@@ -1,11 +1,31 @@
 """The LLM gateway - the only component permitted to call a model provider.
 
-Data boundary
--------------
-`load_computed_results` is the gateway's ONLY data accessor. It projects the
-calc engine's output field and nothing else, so uploaded rows, raw file bytes
-and parsed deck text are never fetched, let alone sent. No other function here
-touches Mongo for audit data, and no module in this package except
+Data boundary (CLAUDE.md rules 16-18, docs/specs/deck-parser.md section 4)
+--------------------------------------------------------------------------
+Two paths reach the provider, each with its own fields.
+
+Narrative path: `load_computed_results` projects the calc engine's output field and nothing else,
+so uploaded rows, raw file bytes and parsed deck text are never fetched, let alone sent.
+
+Structure path (rule 16, read_structure): selected deck structures (tables, charts with data
+labels, KPI panels, roadmaps and timelines, hiring, unit-economics and use-of-funds tables) and
+spreadsheet header rows (at most 3) with, per column, up to 3 sample values (numeric and date
+columns only) or a profile (distinct count, typical length, shape pattern) for text columns. Only
+after redaction, only with the audit's consent, only as extracted text with cell positions; never
+raw files, full pages or prose slides. The caller hands the text in; the gateway reads no parsed
+deck text, runs redaction again and refuses the call if anything changes. `load_structure_context`
+reads the audit's consent and the names to protect, and nothing else. The deck parser has no link
+to the gateway.
+
+Logs and Mongo (rule 17) store model JSON output (values with cell references), the prompt
+version, the model version, the content hash, token counts and cost; never deck text sent to the
+model. Delete audit removes the model outputs (purge_run).
+
+Verification (rule 18): model output never becomes Verified on its own. app/structures/verify.py
+matches every value to its source cell; unmatched values are shown as "AI suggestion, not
+verified" or dropped.
+
+No other function here touches Mongo for audit data, and no module in this package except
 `prompt_store` performs file I/O.
 
 Order of operations for a generation request:
