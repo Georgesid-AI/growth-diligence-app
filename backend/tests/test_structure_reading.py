@@ -615,3 +615,21 @@ def test_delete_audit_removes_model_outputs_cache_and_mapping(monkeypatch):
     for name in (gateway.STRUCTURES_COLLECTION, "pseudonym_map", "column_mappings", "llm_calls", "deck_candidates",
                  "deck_text"):
         assert db[name].docs == [], name
+
+
+def test_the_consistency_script_reports_agreement_match_rate_cost_and_cache_hits_without_a_live_call():
+    """scripts/consistency_run.py is manual (live API, costs money); --fake checks its arithmetic."""
+    pytest.importorskip("pdfplumber")
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("consistency_run", BACKEND.parent / "scripts" / "consistency_run.py")
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+    report = script.main(["--fake", "--deck", "05-zero2hero.pdf"])
+    assert report["agreement_pct"]["table"] == 100.0 and report["agreement_pct"]["kpi_panel"] == 100.0
+    assert report["verifier_match_rate_pct"] == pytest.approx(100.0 * 16 / 17, abs=0.1), "14 + 2 verified of 17 per pass"
+    assert report["cache_hit_rate_pct"] == {"pass_2": 100.0, "pass_3": 100.0}
+    assert report["per_deck"]["05-zero2hero.pdf"]["structures"] == 5
+    assert report["model_reads"] == 5 * 3, "passes 2 and 3 bypass the cache after counting its hits"
+    os.environ.pop("ANTHROPIC_API_KEY", None)
+    with pytest.raises(SystemExit, match="ANTHROPIC_API_KEY"):
+        script.main(["--yes", "--deck", "05-zero2hero.pdf"])
