@@ -191,7 +191,8 @@ def test_a_matched_value_takes_the_period_python_rebuilds_from_its_cells():
     item, = out["items"]
     assert (item["status"], item["period"], item["model_period"], out["periods_corrected"]) == \
         (verify.VERIFIED, "FY2025-04", "2025-04", 1)
-    assert item["checks"] == {"value": True, "period": True, "period_corrected": True, "flags": True}
+    assert item["checks"] == {"value": True, "period": True, "period_corrected": True, "flags": True,
+                              "dot_reading": None, "bracket_reading": None}
     out = verify.verify(grid, [literal], 12)
     item, = out["items"]
     assert (item["status"], item["period"], out["periods_corrected"]) == (verify.VERIFIED, "FY2025-04", 0), \
@@ -243,6 +244,132 @@ def test_in_a_kpi_panel_the_top_line_of_the_box_is_its_header():
     other_box["cells"][0]["box"], other_box["cells"][1]["box"] = 1, 2
     assert _status(other_box, _item(150000, "r2c1", "FY2023", ["r1c1"])) == verify.SUGGESTION, \
         "another box's line is no header"
+
+
+# ---------------------------------------------------------------------------
+# Cells the first live consistency run left unverified (docs/test-runs/consistency_2026-10-05_diagnostic.md),
+# parsed here from the public test decks they come from
+# ---------------------------------------------------------------------------
+DECKS = BACKEND.parent / "tests" / "fixtures" / "decks" / "decks"
+
+
+def _deck_structure(file, page, kind):
+    pytest.importorskip("pdfplumber")
+    pytest.importorskip("docx")
+    from app.decks import parser
+    deck = parser.parse_deck((DECKS / file).read_bytes(), file)
+    return next(s for s in deck["structures"] if (s.get("slide") or s.get("page")) == page and s["type"] == kind)
+
+
+def _text(structure, cell):
+    return next(c["text"] for c in structure["cells"] if f"r{c['row']}c{c['col']}" == cell)
+
+
+def _checked(structure, item, year_end=12):
+    got, = verify.verify(structure, [item], year_end)["items"]
+    return got
+
+
+def test_a_dot_before_exactly_three_digits_matches_either_reading_and_records_which():
+    """clevergig p7: "Approx. 2.500 hours" is 2,500 hours written with a dot; read as 2.5 it never matched."""
+    panel = _deck_structure("04-clevergig.docx", 7, "kpi_panel")
+    assert (_text(panel, "r4c1"), _text(panel, "r6c1")) == ("Approx. 2.500 hours", "Approx. 6.250 hours")
+    for value, cell, reading in ((2500, "r4c1", "thousands"), (2.5, "r4c1", "decimal"),
+                                 (6250, "r6c1", "thousands"), (6.25, "r6c1", "decimal")):
+        got = _checked(panel, _item(value, cell))
+        assert (got["status"], got["checks"]["dot_reading"]) == (verify.VERIFIED, reading), (value, cell)
+    for value, cell in ((25000, "r4c1"), (250, "r4c1"), (9500, "r2c1")):
+        got = _checked(panel, _item(value, cell))
+        assert (got["status"], got["checks"]["dot_reading"]) == (verify.SUGGESTION, None), (value, cell)
+    got = _checked(panel, _item(950, "r2c1"))
+    assert (got["status"], got["checks"]["dot_reading"]) == (verify.VERIFIED, None), "no dot: nothing to record"
+
+
+@pytest.mark.parametrize("text, value, matched", [
+    ("12.500", 12500, True), ("12.500", 12.5, True),
+    ("$2.500M", 2500000000, True), ("$2.500M", 2500000, True),
+    ("0.500", 500, False),                  # a leading 0 never groups thousands
+    ("1234.500", 1234500, False),           # nor does a group of four
+    ("2.5000", 25000, False),               # four digits after the dot: a decimal
+    ("2.50", 250, False),
+])
+def test_only_a_dot_before_exactly_three_digits_is_ambiguous(text, value, matched):
+    structure = _struct([["", "Plan"], ["Revenue", text]])
+    assert _status(structure, _item(value, "r2c2")) == (verify.VERIFIED if matched else verify.SUGGESTION)
+
+
+def test_with_a_decimal_comma_a_dot_before_three_digits_groups_thousands_only():
+    structure = _struct([["", "Plan", ""], ["Revenue", "2.500", "1.234,5"]])
+    assert _checked(structure, _item(2500, "r2c2"))["checks"]["dot_reading"] is None
+    assert _status(structure, _item(2500, "r2c2")) == verify.VERIFIED
+    assert _status(structure, _item(2.5, "r2c2")) == verify.SUGGESTION
+
+
+def test_a_bracketed_number_after_text_matches_either_sign_and_records_which():
+    """zero2hero p17: "Telegram(30K)" is 30,000 members; read as a negative it never matched. "Net loss (1,200)" is a
+    loss of 1,200. Text before the brackets leaves the sign open: either matches, and the check records which."""
+    panel = _deck_structure("05-zero2hero.pdf", 17, "kpi_panel")
+    for cell, text, value in (("r1c1", "Telegram(30K)", 30000), ("r2c1", "Discord(150)", 150),
+                              ("r3c1", "Twitter(6.5K)", 6500), ("r4c1", "Instagram(85K)", 85000),
+                              ("r6c1", "MeetUp((3K)", 3000), ("r7c1", "LinkedIn(10K)", 10000)):
+        assert _text(panel, cell) == text
+        for sign, reading in ((1, "positive"), (-1, "negative")):
+            got = _checked(panel, _item(sign * value, cell, metric="users", unit="count"))
+            assert (got["status"], got["checks"]["bracket_reading"]) == (verify.VERIFIED, reading), (text, sign)
+    loss = _struct([["", "2025"], ["EBITDA", "Net loss (1,200)"]])
+    for value, reading in ((-1200, "negative"), (1200, "positive")):
+        got = _checked(loss, _item(value, "r2c2", "2025", ["r1c2"]))
+        assert (got["status"], got["checks"]["bracket_reading"]) == (verify.VERIFIED, reading), value
+    got = _checked(loss, _item(-120, "r2c2", "2025", ["r1c2"]))
+    assert (got["status"], got["checks"]["bracket_reading"]) == (verify.SUGGESTION, None), "another number"
+
+
+@pytest.mark.parametrize("text", ["(1,200)", "£(1,200)", "( 1,200 )", "-1,200", "Net loss -1,200"])
+def test_a_wholly_bracketed_or_signed_figure_stays_negative_and_records_no_bracket_reading(text):
+    structure = _struct([["", "Plan"], ["EBITDA", text]])
+    assert (_status(structure, _item(-1200, "r2c2")), _status(structure, _item(1200, "r2c2"))) == \
+        (verify.VERIFIED, verify.SUGGESTION)
+    assert _checked(structure, _item(-1200, "r2c2"))["checks"]["bracket_reading"] is None
+
+
+@pytest.mark.parametrize("text, value", [("(£1.2m)", -1200000), ("(12%)", -12), ("(1,200", 1200), ("Plan 1,200", 1200)])
+def test_brackets_around_the_whole_figure_or_none_leave_one_sign(text, value):
+    structure = _struct([["", "Plan"], ["EBITDA", text]])
+    assert _status(structure, _item(value, "r2c2")) == verify.VERIFIED
+    assert _status(structure, _item(-value, "r2c2")) == verify.SUGGESTION
+
+
+def test_a_dot_and_a_bracket_after_text_record_both_readings():
+    structure = _struct([["", "Plan"], ["Hours", "Approx. (2.500)"]])
+    for value, dot, bracket in ((2500, "thousands", "positive"), (-2500, "thousands", "negative"),
+                                (2.5, "decimal", "positive"), (-2.5, "decimal", "negative")):
+        got = _checked(structure, _item(value, "r2c2"))
+        assert (got["status"], got["checks"]["dot_reading"], got["checks"]["bracket_reading"]) == \
+            (verify.VERIFIED, dot, bracket), value
+
+
+def test_a_period_in_the_value_cells_own_text_rebuilds_from_that_cell():
+    """genesisai-2024 p5: "$8,000 revenue in 2022" states its own period; no header holds one, so it never matched."""
+    panel = _deck_structure("09-genesisai-2024.pdf", 5, "kpi_panel")
+    assert _text(panel, "r1c1") == "$8,000 revenue in 2022"
+    for cells in ([], ["r1c1"]):
+        got = _checked(panel, _item(8000, "r1c1", "2022", cells, unit="USD"))
+        assert (got["status"], got["period"], got["checks"]["period_corrected"]) == (verify.VERIFIED, "2022", False), \
+            cells
+    got = _checked(panel, _item(8000, "r1c1", "2021", [], unit="USD"))
+    assert (got["status"], got["period"], got["model_period"]) == (verify.VERIFIED, "2022", "2021"), \
+        "a matched value takes the period Python rebuilds from the cell, as from a header"
+    assert _status(panel, _item(8001, "r1c1", "2022", [])) == verify.SUGGESTION, "no value, no period"
+    assert _status(panel, _item(8000, "r1c1", "2022", ["r2c1"])) == verify.SUGGESTION, "another cell"
+    assert _status(panel, _item(8000, "r1c1", None, [])) == verify.VERIFIED, "the null-period rule is unchanged"
+
+
+def test_a_cells_own_period_is_read_only_from_that_cell():
+    table = _struct([["", "Plan"], ["Revenue", "£1.2m in 2023"], ["Costs", "£0.4m"]])
+    assert _status(table, _item(1200000, "r2c2", "2023", [])) == verify.VERIFIED
+    assert _status(table, _item(1200000, "r2c2", "2023-Q1", [])) == CORRECTED, "the cell says the year"
+    assert _status(table, _item(400000, "r3c2", "2023", [])) == verify.SUGGESTION, "another cell's period"
+    assert _status(table, _item(400000, "r3c2", "2023", ["r2c2"])) == verify.SUGGESTION
 
 
 # ---------------------------------------------------------------------------
