@@ -45,18 +45,25 @@ analyst confirms it. Results show in the existing approval list (deck-parser.md 
 
 Customer names in spreadsheet samples (columns whose header matches the FIELD_DEFS customer aliases) are
 pseudonymised (Customer_01, Customer_02…) before sending, through the narrative path's existing per-audit mapping
-(`pseudonym_map`), so a customer has the same pseudonym on both paths. The mapping stays server-side and is removed by
-Delete audit. The target company's own name is never redacted. The gateway runs redaction again and refuses the call if
-anything changes.
+(`pseudonym_map`), so a customer has the same pseudonym on both paths. The same mapping also replaces customer names
+inside deck structures: every name in the customer column of the uploaded revenue and CRM files, matched as a whole
+word. The CRM file has no customer field of its own, so its customer column is found by the same aliases. Names come
+from the files uploaded at the time of sending, and a structure sent before a data file was uploaded is not re-sent.
+The mapping stays server-side and is removed by Delete audit. The target company's own name is never redacted. The
+gateway runs redaction again and refuses the call if anything changes.
 
 **4. Consent.** `structure_reading_consent` is one checkbox per audit, ticked by default. It covers decks and spreadsheets.
 It sits on the audit creation screen, directly above the Create audit button, next to the engagement reference field.
-Audit creation requires a client name and an engagement reference.
+Audit creation requires a client name (a new field: the investor commissioning the audit) and an engagement reference.
+The company name stays the target company. The basis for sending is the engagement terms, recorded by this per-audit
+checkbox (CLAUDE.md rule 16).
 - Explainer above the checkbox, word for word: "This app reads tables and charts in the uploaded decks with an AI model. Every
-  number is verified by code and cited to its cell, and personal and customer names are removed before anything is sent."
+  number is checked by code against its source cell; anything that does not match is marked as unverified. Emails, phone
+  numbers, personal names and the customers named in the uploaded data files are replaced before anything is sent."
 - Checkbox label, word for word: "AI-assisted reading enabled per engagement terms. Uncheck if the client requires code-based
   extraction only; this may identify fewer findings."
-- Every change to the checkbox, including the value at creation, is logged with user and time.
+- Every change to the checkbox, including the value at creation, is logged with its time. The user field is added when
+  user accounts exist (Phase 2); until then there is no user to record.
 - Audits created before this change have no engagement reference, so they stay unticked.
 - Unticked means the Python-only path: no `read_structure` call is made. Stored results stay until Delete audit.
 - Each structure sent is recorded with its deck, page, type and time (no text). The deck panel shows "Sent to the model: slides 4, 7, 12".
@@ -98,7 +105,8 @@ The docstrings in `gateway.py`, `decks/__init__.py` and `prompt_store.py` restat
 **11. Tests.** Automated tests replay recorded replies (public test decks only) through the fake adapter, with no
 live API. They cover:
 - the verifier: each normalisation case, period matching, flags, the switch;
-- redaction: each rule with a false friend (amounts, years, "Head of Sales"), and customer pseudonyms;
+- redaction: each rule with a false friend (amounts, years, "Head of Sales"), and customer pseudonyms in samples and
+  in deck structures;
 - orchestration: schema rejection, caps (including the narrative-only call cap), cache, consent, type-change
   logging, Delete audit.
 
