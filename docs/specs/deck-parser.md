@@ -124,12 +124,12 @@ by position and from the slide title.
 - Precision (false candidates) is reported; the test fails if it drops below 30%.
 - Runs as a normal automated test.
 
-## 4. No deck text reaching the model
+## 4. What may reach the model
 - The deck parser has no import of, or call to, the LLM gateway.
-- The gateway may read selected deck structures (tables, charts with data labels, KPI panels, roadmaps/timelines, hiring tables, unit-economics boxes, use-of-funds tables) and spreadsheet header rows with up to 3 redacted sample values per column — only after redaction, only with per-audit consent, only as extracted text with cell positions. Never raw files, full pages or prose slides. The deck parser has no direct link to the gateway.
-- The gateway may read only structured claim fields (type, value, high value of a range, unit, date, status).
-  A table row's values by period are not among them: each keeps its column header text and cell.
-- An automated test fails the build if the parser imports the gateway, or the gateway reads the parsed-text or snippet fields.
+- Two paths reach the gateway, and each has its own fields:
+  a) Narrative path: computed results from MongoDB and the structured claim fields (type, value, high value of a range, unit, date, status).
+  b) Structure path (rule 16): redacted deck structures and spreadsheet header rows with up to 3 redacted sample values per column, as extracted text with cell positions, only with per-audit consent. Table cells, including a row's values by period, travel this path and no other.
+- An automated test fails the build if the parser imports the gateway, if the gateway reads parsed-text, snippet or source-reference fields, or if the structure path sends anything other than redacted structure text and spreadsheet headers. The narrative path is unchanged.
 - Logs and MongoDB store model JSON output (values with cell references), prompt version, model version, content hash, token counts and cost. Never deck text sent to the model. Delete audit removes model outputs.
 - Model output never becomes Verified on its own. Python must match every value to a source cell. Unmatched values are shown as 'AI suggestion, not verified' or dropped.
 

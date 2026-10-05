@@ -33,7 +33,8 @@ neither header holds a period. An unmatched value or period makes the item unmat
 recomputed from the matched values; a flag Python cannot reproduce counts as unmatched. Matched items are `Verified`. For unmatched ones, the switch
 `STRUCTURE_UNMATCHED` decides: `"suggest"` (the default) shows "AI suggestion, not verified", and `"drop"` removes them
 and keeps a count. An item with no value is never Verified. A column mapping only pre-fills the mapping screen, where the
-analyst confirms it.
+analyst confirms it. Results show in the existing approval list (deck-parser.md §6), each row labelled Verified or
+"AI suggestion, not verified", with its cell citation. No new screen.
 
 **3. Redaction (pure function, own tests).** `redact_cells(cells, company_name) → (cells, counts)`, with no I/O:
 - emails become `[email]`;
@@ -42,7 +43,10 @@ analyst confirms it.
 - names become `[person]`: a cell under a person-role header (name, founder, CEO, owner, contact, hire), or two
   capitalised words starting with a name from a bundled first-name list.
 
-The audit's company name is never redacted. The gateway runs redaction again and refuses the call if anything changes.
+Customer names in spreadsheet samples (columns whose header matches the FIELD_DEFS customer aliases) are
+pseudonymised (Customer_001, Customer_002…) before sending. The mapping stays server-side and is removed by Delete
+audit. The target company's own name is never redacted. The gateway runs redaction again and refuses the call if
+anything changes.
 
 **4. Consent.** `structure_reading_consent` is one checkbox per audit, unticked by default. It covers decks and
 spreadsheets, and every change is stored with its time. Unticked means the Python-only path, with no
@@ -78,7 +82,7 @@ the deck panel shows each deck's cost.
 **10. Boundary test and docstrings.** `test_gateway_data_boundary.py` keeps every existing assertion.
 - It must pass when redacted structure cells, or header rows with at most 3 redacted samples per column, reach the provider.
 - It must fail on raw bytes, a full page, a prose snippet, a cell over 200 characters, more than 3 samples, a file
-  name, an unredacted email, phone number or name, any call without consent, and sent text in a log or in
+  name, an unredacted email, phone number, name or customer name, any call without consent, and sent text in a log or in
   `llm_structures`.
 
 The docstrings in `gateway.py`, `decks/__init__.py` and `prompt_store.py` restate rules 16–18.
@@ -86,7 +90,7 @@ The docstrings in `gateway.py`, `decks/__init__.py` and `prompt_store.py` restat
 **11. Tests.** Automated tests replay recorded replies (public test decks only) through the fake adapter, with no
 live API. They cover:
 - the verifier: each normalisation case, period matching, flags, the switch;
-- redaction: each rule with a false friend (amounts, years, "Head of Sales");
+- redaction: each rule with a false friend (amounts, years, "Head of Sales"), and customer pseudonyms;
 - orchestration: schema rejection, caps (including the narrative-only call cap), cache, consent, type-change
   logging, Delete audit.
 
@@ -100,9 +104,7 @@ live API and costs money. It runs the 10 decks in `tests/fixtures/decks/decks/` 
 Passes 2 and 3 read the cache first to get the hit rate (expected 100%), then call the model with the cache bypassed,
 so agreement measures the model. Target: ≥95% agreement.
 
-**Open questions.**
-1. Where do results show? Proposal: in the existing approval list, marked AI-read.
-2. Should customer names in spreadsheet samples be pseudonymised, as the narrative path does?
+**Open questions.** None. All were resolved on 2026-10-05.
 
 **Files.**
 - New: `backend/app/structures/{__init__,redact,verify}.py`, `backend/app/llm/prompts/structure_reading.md`,
