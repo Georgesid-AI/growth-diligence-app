@@ -901,3 +901,66 @@ def test_a_merged_claim_is_compared_when_any_of_its_sources_states_the_period():
     found = claims.detect_candidates(blocks, "deck.pptx")
     assert sorted((c["value"], len(c["sources"]), c["inconsistent_dates"]) for c in found) == \
         [(1000000, 2, ["2023"]), (2000000, 1, ["2023"])]
+
+
+# ---------------------------------------------------------------------------
+# Fiscal year-end (spec section 2, period rules): fiscal years are named by the calendar year in
+# which they end, and every period resolves to a start and an end date. Display keeps the text.
+# ---------------------------------------------------------------------------
+_FISCAL_BLOCKS = [
+    {"slide": 1, "kind": "text", "text": "FY25 ARR $3M", "box": 1},
+    {"slide": 2, "kind": "text", "text": "Y/E 22 revenue £1M", "box": 2},
+    {"slide": 3, "kind": "text", "text": "FY2025/26 revenue £4M", "box": 3},
+    {"slide": 4, "kind": "text", "text": "Revenue Q3 25 $2M", "box": 4},
+    {"slide": 5, "kind": "text", "text": "Revenue H1 24 $5M", "box": 5},
+    {"slide": 6, "kind": "text", "text": "Launch in March 2025", "box": 6},
+    {"slide": 7, "kind": "text", "text": "Revenue in 2024 $6M", "box": 7},
+    {"slide": 8, "kind": "table", "table": 1, "row": 1, "col": 1, "text": "Metric"},
+    {"slide": 8, "kind": "table", "table": 1, "row": 1, "col": 2, "text": "FY23"},
+    {"slide": 8, "kind": "table", "table": 1, "row": 1, "col": 3, "text": "FY24"},
+    {"slide": 8, "kind": "table", "table": 1, "row": 2, "col": 1, "text": "Users"},
+    {"slide": 8, "kind": "table", "table": 1, "row": 2, "col": 2, "text": "200"},
+    {"slide": 8, "kind": "table", "table": 1, "row": 2, "col": 3, "text": "5,000"},
+]
+
+
+def _periods(found):
+    """{stated text: (target_date, start, end)} over every value of every candidate."""
+    out = {}
+    for c in found:
+        for v in c.get("by_period") or [c]:
+            out[v["period_text"]] = (v["target_date"], v["period_start"], v["period_end"])
+    return out
+
+
+@pytest.mark.parametrize("year_end, expected", [
+    (12, {"FY25": ("2025", "2025-01-01", "2025-12-31"), "Y/E 22": ("2022", "2022-01-01", "2022-12-31"),
+          "FY2025/26": ("2026", "2026-01-01", "2026-12-31"), "FY23": ("2023", "2023-01-01", "2023-12-31"),
+          "FY24": ("2024", "2024-01-01", "2024-12-31")}),
+    (3, {"FY25": ("2025", "2024-04-01", "2025-03-31"), "Y/E 22": ("2022", "2021-04-01", "2022-03-31"),
+         "FY2025/26": ("2026", "2025-04-01", "2026-03-31"), "FY23": ("2023", "2022-04-01", "2023-03-31"),
+         "FY24": ("2024", "2023-04-01", "2024-03-31")}),
+])
+def test_fiscal_years_are_named_by_the_year_they_end_in_and_resolve_to_a_date_range(year_end, expected):
+    periods = _periods(claims.detect_candidates(_FISCAL_BLOCKS, "deck.pptx", fiscal_year_end=year_end))
+    assert {k: periods[k] for k in expected} == expected
+    # Calendar periods do not move with the year-end; a December year-end gives the calendar year.
+    assert periods["Q3 25"] == ("2025-Q3", "2025-07-01", "2025-09-30")
+    assert periods["H1 24"] == ("2024-H1", "2024-01-01", "2024-06-30")
+    assert periods["March 2025"] == ("2025-03", "2025-03-01", "2025-03-31")
+    assert periods["2024"] == ("2024", "2024-01-01", "2024-12-31")
+
+
+def test_every_period_resolves_to_a_start_and_an_end_and_the_default_year_end_is_december():
+    found = claims.detect_candidates(_FISCAL_BLOCKS, "deck.pptx")
+    values = [v for c in found for v in (c.get("by_period") or [c])]
+    assert values and all(v["period_start"] and v["period_end"] and v["period_start"] <= v["period_end"]
+                          for v in values if v["target_date"])
+    assert _periods(found)["FY25"] == ("2025", "2025-01-01", "2025-12-31")
+
+
+def test_changing_the_year_end_re_maps_the_stored_periods():
+    found = claims.detect_candidates(_FISCAL_BLOCKS, "deck.pptx", fiscal_year_end=12)
+    claims.remap_periods(found, 3)
+    assert _periods(found)["FY25"] == ("2025", "2024-04-01", "2025-03-31")
+    assert _periods(found)["Q3 25"] == ("2025-Q3", "2025-07-01", "2025-09-30")
