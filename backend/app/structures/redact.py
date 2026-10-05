@@ -47,3 +47,160 @@ def parse_structure_text(text: str) -> Optional[List[Dict]]:
                 cell["col_span"] = cols
         cells.append(cell)
     return cells
+
+
+# ---------------------------------------------------------------------------
+# Redaction (spec section 3)
+# ---------------------------------------------------------------------------
+EMAIL, PHONE, PERSON = "[email]", "[phone]", "[person]"
+PLACEHOLDERS = (EMAIL, PHONE, PERSON)
+_EMAIL = re.compile(r"[\w.+'-]+@[\w-]+(?:\.[\w-]+)+")
+# "+" or "0" followed by 9-15 digits in groups: +44 20 7946 0958, 020-7946-0958, (0)20 7946 0958.
+_PHONE = re.compile(r"(?<![\w+])(?:\+|(?<![\d.,])0)(?:[\s().\-/]{0,2}\d){9,15}(?![\d])")
+# A cell that is an amount, a year or a date is never a phone number.
+_AMOUNT = re.compile(r"^\s*[(+\-−]?\s*(?:US\$|[£$€¥₹])?\s*\d{1,3}(?:[,.]\d{3})*(?:[.,]\d+)?\s*"
+                     r"(?:k|m|mn|bn|thousand|million|billion|%)?\s*\)?\s*$", re.IGNORECASE)
+_YEAR_OR_DATE = re.compile(r"^\s*(?:(?:19|20)\d{2}|\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}-\d{2}(?:-\d{2})?)\s*$")
+# Person-role headers: a name-shaped cell under one is a person ("Hire: Jane Doe").
+_PERSON_ROLE = re.compile(r"(?i)(?<![^\W\d_])(?:names?|founders?|co-founders?|ceo|owners?|contacts?|hires?)(?![^\W\d_])")
+# 1 to 4 capitalised words, no digits: "Jane Doe", "J. Smith", "Иван Петров"; not "Head of Sales".
+_NAME_SHAPE = re.compile(r"^\s*(?:[^\W\d_a-zа-я][^\W\d_]*\.?(?:[-'’][^\W\d_]+)*)(?:\s+[^\W\d_a-zа-я][^\W\d_]*\.?(?:[-'’][^\W\d_]+)*){0,3}\s*$")
+_PSEUDONYM = re.compile(r"Customer_\d+|Segment [A-Z]+")
+CUSTOMER_PREFIX = "Customer_"
+MIN_NAME_LENGTH = 4
+
+# Bundled first names (English, German, French, Bulgarian in Latin and Cyrillic letters). Words that
+# are also everyday words in a deck ("May", "Will", "Mark", "Max", "Grace", "Hope") are left out.
+FIRST_NAMES = frozenset("""
+Aaron Adam Adrian Alan Albert Alex Alexander Alexandra Alice Alicia Alison Amanda Amelia Amy Andrea Andreas Andrew Angela
+Anja Ann Anna Anne Anthony Antoine Anton Ashley Barbara Ben Benjamin Bernard Beth Birgit Boris Brandon Brenda Brian Bruce
+Camille Carl Carlos Carol Caroline Catherine Charles Charlie Charlotte Chloe Chloé Chris Christian Christina Christine
+Christopher Claire Claudia Daniel Daniela David Deborah Dennis Diana Diane Dieter Dimitar Donna Dorothy Douglas Edward
+Elena Elizabeth Ella Emil Emily Emma Eric Erik Eva Evgeni Felix Finn Florian Frank Gabriel Gary George Georgi Gergana
+Gillian Gregory Hannah Hans Harry Heather Helen Henry Hristo Hugo Ian Isabel Isabella Ivan Ivanka Jack Jacob James Jan
+Jane Janet Jason Jean Jeffrey Jennifer Jessica Joan Johannes John Jonas Jonathan Joseph Joshua Julia Julian Julien Julie
+Jürgen Justin Kalina Karen Katharina Katherine Kathleen Katrin Kevin Kiril Klaus Krasimir Kyle Laura Lauren Lea Lena
+Leon Linda Lisa Louis Louise Lucas Lukas Lyubomir Margaret Maria Marie Marina Marion Markus Martin Mary Mathilde Matthew
+Matthias Maximilian Megan Melissa Mia Michael Michelle Milena Monika Moritz Nadezhda Nancy Natalie Nicholas Nicolas Nicole
+Niklas Nikolay Oliver Olivia Pamela Patricia Patrick Paul Peter Petar Petra Philip Pierre Plamen Rachel Radostina Rebecca
+Richard Robert Ronald Rumen Ryan Samantha Samuel Sandra Sarah Scott Sebastian Sharon Shirley Simon Sophia Sophie Stefan
+Stephanie Stephen Steven Stoyan Susan Susanne Svetlana Teodora Thomas Tim Timothy Tobias Todor Tsvetelina Ursula Valentin
+Vasil Victoria Viktoria Vincent William Wolfgang Yavor Yordanka Zdravko
+Иван Георги Димитър Николай Петър Христо Стоян Тодор Васил Пламен Красимир Мартин Борис Кирил Мария Елена Иванка
+Десислава Гергана Радостина Цветелина Светлана Йорданка Милена Теодора Виктория Калина Надежда Румен Любомир Стефан
+Александър Атанас Емил Евгени Огнян Валентин Венцислав Явор Здравко
+""".split())
+_FIRST_NAME = re.compile(r"(?<![^\W\d_])(?:" + "|".join(sorted(map(re.escape, FIRST_NAMES), key=len, reverse=True))
+                         + r")\s+[^\W\d_a-zа-я][^\W\d_]+(?:[-'’][^\W\d_]+)?(?![^\W\d_])")
+
+
+def _protected(text: str, company_name: Optional[str]) -> List[Tuple[int, int]]:
+    """Spans no rule may rewrite: the target company's own name, existing pseudonyms and placeholders."""
+    spans = [m.span() for m in _PSEUDONYM.finditer(text)]
+    spans += [(m.start(), m.end()) for p in PLACEHOLDERS for m in re.finditer(re.escape(p), text)]
+    if company_name and company_name.strip():
+        spans += [m.span() for m in re.finditer(re.escape(company_name.strip()), text, re.IGNORECASE)]
+    return spans
+
+
+def _replace(text: str, pattern: "re.Pattern", repl, company_name: Optional[str]) -> Tuple[str, int]:
+    """Replace every match of `pattern` that does not overlap a protected span."""
+    keep = _protected(text, company_name)
+    out, last, count = [], 0, 0
+    for m in pattern.finditer(text):
+        if any(m.start() < e and s < m.end() for s, e in keep):
+            continue
+        out.append(text[last:m.start()])
+        out.append(repl(m) if callable(repl) else repl)
+        last, count = m.end(), count + 1
+    return "".join(out) + text[last:], count
+
+
+def _is_amount_or_date(text: str) -> bool:
+    return bool(_AMOUNT.match(text) or _YEAR_OR_DATE.match(text))
+
+
+def _under_person_role(cell: Dict, cells: List[Dict]) -> bool:
+    """True when a cell above it in its column range is a person-role header (name, founder, CEO...)."""
+    span = range(cell["col"], cell["col"] + cell.get("col_span", 1))
+    return any(c["row"] < cell["row"] and any(k in range(c["col"], c["col"] + c.get("col_span", 1)) for k in span)
+               and _PERSON_ROLE.search(c["text"]) for c in cells)
+
+
+def redact_cells(cells: List[Dict], company_name: Optional[str]) -> Tuple[List[Dict], Dict[str, int]]:
+    """(cells, counts): emails become [email]; phone numbers become [phone] ("+" or "0" and 9-15 digits
+    in groups, never in a cell that is an amount, a year or a date); names become [person] (a
+    name-shaped cell under a person-role header, or two capitalised words starting with a bundled
+    first name). The target company's name, pseudonyms and placeholders are never rewritten, so a
+    second pass changes nothing. The input is not modified."""
+    return _redact(cells, company_name, ("email", "phone", "person"))
+
+
+def _redact(cells: List[Dict], company_name: Optional[str], rules) -> Tuple[List[Dict], Dict[str, int]]:
+    counts = {"email": 0, "phone": 0, "person": 0}
+    out = []
+    for cell in cells:
+        text = cell["text"]
+        if "email" in rules:
+            text, n = _replace(text, _EMAIL, EMAIL, company_name)
+            counts["email"] += n
+        if "phone" in rules and not _is_amount_or_date(text):
+            text, n = _replace(text, _PHONE, PHONE, company_name)
+            counts["phone"] += n
+        if "person" in rules:
+            if _NAME_SHAPE.match(text) and _under_person_role(cell, cells) and not _protected(text, company_name):
+                text, n = PERSON, 1
+            else:
+                text, n = _replace(text, _FIRST_NAME, PERSON, company_name)
+            counts["person"] += n
+        out.append({**cell, "text": text})
+    return out, counts
+
+
+def _usable_name(name: str) -> bool:
+    """A customer name substring replacement may use: 4 characters or more, not a number or a date."""
+    name = (name or "").strip()
+    return len(name) >= MIN_NAME_LENGTH and not re.fullmatch(r"[\d\s.,:/%+\-]+", name) and not _YEAR_OR_DATE.match(name)
+
+
+def customer_pattern(mapping: Dict[str, str], company_name: Optional[str]) -> Optional["re.Pattern"]:
+    """One case-insensitive pattern for every usable customer name in the mapping, longest first. The
+    target company's own name and existing pseudonyms are never in it."""
+    company = (company_name or "").strip().lower()
+    names = sorted({real for real, pseudo in mapping.items() if pseudo.startswith(CUSTOMER_PREFIX)
+                    and _usable_name(real) and real.strip().lower() != company and not _PSEUDONYM.fullmatch(real.strip())},
+                   key=len, reverse=True)
+    if not names:
+        return None
+    return re.compile("|".join(re.escape(n.strip()) for n in names), re.IGNORECASE)
+
+
+def pseudonymise_cells(cells: List[Dict], mapping: Dict[str, str], company_name: Optional[str]
+                       ) -> Tuple[List[Dict], int]:
+    """(cells, count): every customer name in the per-audit mapping (pseudonym_map, shared with the
+    narrative path) is replaced by its pseudonym wherever it appears as a substring, in any case.
+    Names under 4 characters, numbers and dates are skipped; the target company's own name and
+    existing pseudonyms are never rewritten, so a second pass changes nothing."""
+    pattern = customer_pattern(mapping, company_name)
+    if pattern is None:
+        return [dict(c) for c in cells], 0
+    lookup = {real.strip().lower(): pseudo for real, pseudo in mapping.items()}
+    total, out = 0, []
+    for cell in cells:
+        text, n = _replace(cell["text"], pattern, lambda m: lookup[m.group(0).lower()], company_name)
+        total += n
+        out.append({**cell, "text": text})
+    return out, total
+
+
+def redact_structure(cells: List[Dict], company_name: Optional[str], mapping: Dict[str, str]
+                     ) -> Tuple[List[Dict], Dict[str, int]]:
+    """Every redaction rule on a structure's cells: emails and phone numbers, then customer names,
+    then personal names. What the gateway runs again before a call."""
+    # Emails and phones go first, so a customer name inside an address goes with it; customer names go
+    # before personal names, so a customer listed under a "Contact" header keeps its pseudonym.
+    first, counts = _redact(cells, company_name, ("email", "phone"))
+    named, counts["customer"] = pseudonymise_cells(first, mapping, company_name)
+    second, more = _redact(named, company_name, ("person",))
+    counts["person"] = more["person"]
+    return second, counts

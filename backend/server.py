@@ -25,6 +25,7 @@ from app import decks
 from app.decks import claims as deck_claims
 from app.decks import parser as deck_parser
 from app.llm import gateway as llm_gateway
+from app.llm import redaction as llm_redaction
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -458,10 +459,35 @@ async def save_mapping(audit_id: str, dtype: str, payload: MappingPayload):
         raise HTTPException(404, "Dataset not uploaded")
     await db.datasets.update_one(
         {"audit_id": audit_id, "dtype": dtype},
-        {"$set": {"mapping": payload.mapping, "fx": payload.fx, "billing_terms": payload.billing_terms}},
+        {"$set": {"mapping": payload.mapping, "fx": payload.fx, "billing_terms": payload.billing_terms,
+                  "mapped_at": datetime.now(timezone.utc).isoformat()}},
     )
+    await _add_customers(audit_id, {**ds, "mapping": payload.mapping})
     await _mark_stale_and_maybe_recompute(audit_id)
     return {"ok": True}
+
+
+def customer_column(dataset: dict) -> Optional[str]:
+    """The column whose cells are customer names: the revenue file's mapped customer column; for the
+    CRM file, which has no customer field of its own, the column the FIELD_DEFS customer aliases find."""
+    if dataset.get("dtype") == "revenue":
+        return (dataset.get("mapping") or {}).get("customer_id")
+    return suggest_mapping("revenue", dataset.get("columns") or []).get("customer_id")
+
+
+async def _add_customers(audit_id: str, dataset: dict) -> None:
+    """Every customer name of a mapped revenue or CRM file joins the audit's pseudonym mapping, shared
+    by the narrative and structure paths (llm-structure-reading.md section 3)."""
+    if dataset.get("dtype") not in ("revenue", "crm"):
+        return
+    col = customer_column(dataset)
+    if not col:
+        return
+    rows = dataset.get("rows")
+    if rows is None:
+        full = await db.datasets.find_one({"audit_id": audit_id, "dtype": dataset["dtype"]}, {"rows": 1})
+        rows = (full or {}).get("rows") or []
+    await llm_redaction.add_customers(db, audit_id, (r.get(col) for r in rows))
 
 
 # ---------------------------------------------------------------------------

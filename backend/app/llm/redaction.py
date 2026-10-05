@@ -141,6 +141,32 @@ async def get_or_create_map(db, run_id: str, payload: Any) -> Dict[str, str]:
     return mapping
 
 
+async def add_customers(db, run_id: str, names: Iterable[str]) -> Dict[str, str]:
+    """Add customer names to the run's mapping and return it (llm-structure-reading.md section 3).
+
+    The structure path shares this mapping with the narrative path, so a customer has the same
+    pseudonym on both: every name in the revenue file's mapped customer column and in the CRM file's
+    customer column. New names get the next Customer_NN in sorted order; a name already mapped keeps
+    its pseudonym. Stored server-side only, removed by Delete audit (purge_run).
+    """
+    doc = await db[PSEUDONYM_COLLECTION].find_one({"run_id": run_id}, {"_id": 0})
+    mapping: Dict[str, str] = dict(doc["mapping"]) if doc else {}
+    new = sorted({str(n).strip() for n in names if n is not None and str(n).strip()} - set(mapping))
+    if new:
+        customers = sum(1 for v in mapping.values() if v.startswith(_CUSTOMER_PREFIX))
+        for offset, real in enumerate(new, start=customers + 1):
+            mapping[real] = _pseudonym(offset)
+        await db[PSEUDONYM_COLLECTION].update_one(
+            {"run_id": run_id}, {"$set": {"run_id": run_id, "mapping": mapping}}, upsert=True)
+    return mapping
+
+
+async def get_map(db, run_id: str) -> Dict[str, str]:
+    """The run's mapping as stored, without adding anything."""
+    doc = await db[PSEUDONYM_COLLECTION].find_one({"run_id": run_id}, {"_id": 0})
+    return dict(doc["mapping"]) if doc else {}
+
+
 def redact(payload: Any, mapping: Dict[str, str]) -> Any:
     """Deep-copy `payload` with every real identifier replaced by its pseudonym.
 
