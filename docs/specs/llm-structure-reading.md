@@ -55,8 +55,9 @@ Customer names are pseudonymised (Customer_01, Customer_02…) through the narra
 - The mapping holds every name in the revenue file's mapped customer column and in the CRM file's customer column. The
   CRM file has no customer field of its own, so that column is found by the FIELD_DEFS customer aliases, as are the
   customer cells of spreadsheet samples sent before a file is mapped.
-- Every name in the mapping is replaced wherever it appears as a substring, case-insensitive, in any text cell sent to
-  the model. Only deck structures send text cells: the column-mapping path sends none, CRM deal names included. Names
+- Every name in the mapping is replaced wherever it appears as a whole word, case-insensitive, in any text cell sent to
+  the model. Word boundaries include punctuation, hyphens and case changes: "AcmeCorp" and "ACME-led" hold Acme;
+  "Acmes" does not, and "customers" does not hold Cust. Only deck structures send text cells: the column-mapping path sends none, CRM deal names included. Names
   under 4 characters are skipped, and so are names that are numbers or
   dates, as in the narrative path. The target company's own name and existing pseudonyms are never rewritten, so a
   second pass changes nothing.
@@ -127,8 +128,8 @@ The docstrings in `gateway.py`, `decks/__init__.py` and `prompt_store.py` restat
 live API. They cover:
 - the verifier: each normalisation case, value matched against `value_cell` only, period matched against `period_cells`
   only (two-cell periods, fiscal years), flags, the switch;
-- redaction: each rule with a false friend (amounts, years, "Head of Sales"); customer names as substrings, any case,
-  in deck structures; names under 4 characters, numeric names, the target's name and
+- redaction: each rule with a false friend (amounts, years, "Head of Sales"); customer names as whole words (boundaries
+  at punctuation, hyphens and case changes), any case, in deck structures; names under 4 characters, numeric names, the target's name and
   pseudonyms left alone;
 - column mapping: a header stack of at most 3 rows (the 3 nearest the data when a sheet has more), up to 3 samples for numeric and date columns, a profile only for
   text columns;

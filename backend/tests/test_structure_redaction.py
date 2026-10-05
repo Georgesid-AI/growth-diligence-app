@@ -1,9 +1,10 @@
 """Redaction of deck structure cells (docs/specs/llm-structure-reading.md section 3).
 
 Each rule with a false friend: amounts, years and dates are never phone numbers, "Head of Sales" is
-not a person. Customer names are replaced as substrings in any case through the per-audit mapping the
-narrative path already keeps; short, numeric and date names, the target's own name and existing
-pseudonyms are left alone, so a second pass changes nothing.
+not a person. Customer names are replaced as whole words in any case through the per-audit mapping
+the narrative path already keeps (a word ends at a space, punctuation, a hyphen or a change of case);
+short, numeric and date names, the target's own name and existing pseudonyms are left alone, so a
+second pass changes nothing.
 """
 import asyncio
 import os
@@ -84,13 +85,13 @@ def test_the_target_company_name_is_never_rewritten():
 
 
 # ---------------------------------------------------------------------------
-# Customer names: substring, any case, through the shared per-audit mapping
+# Customer names: whole words, any case, through the shared per-audit mapping
 # ---------------------------------------------------------------------------
 MAPPING = {"Northwind Trading": "Customer_01", "Acme": "Customer_02", "ABC": "Customer_03", "12345": "Customer_04",
-           "2024-01": "Customer_05", "Cust": "Customer_06", "Enterprise": "Segment A"}
+           "2024-01": "Customer_05", "Cust": "Customer_06", "Enterprise": "Segment A", "Acme Co": "Customer_07"}
 
 
-def test_customer_names_are_replaced_as_substrings_in_any_case():
+def test_customer_names_are_replaced_as_whole_words_in_any_case():
     out, count = redact.pseudonymise_cells(
         _cells("Revenue from Northwind Trading Ltd", "NORTHWIND TRADING renewed", "AcmeCorp expansion"), MAPPING, "Target Ltd")
     assert _texts(out) == ["Revenue from Customer_01 Ltd", "Customer_01 renewed", "Customer_02Corp expansion"]
@@ -106,9 +107,31 @@ def test_short_numeric_and_date_names_the_target_name_and_pseudonyms_are_left_al
     assert count == 1, "Cust is never matched inside Customer_01; segment labels are not customer names"
 
 
-def test_a_substring_match_is_any_case_even_inside_a_word():
-    out, _ = redact.pseudonymise_cells(_cells("Paying customers"), MAPPING, "Target Ltd")
-    assert _texts(out) == ["Paying Customer_06omers"], "a 4-character name matches inside a word, as agreed"
+@pytest.mark.parametrize("text, expected", [
+    ("Paying customers", "Paying customers"),                      # "Cust" inside a word
+    ("Acmes grew", "Acmes grew"),                                  # no boundary before the "s"
+    ("Cust", "Customer_06"),
+    ("ACME-led growth", "Customer_02-led growth"),                 # a hyphen
+    ("(Acme), Northwind Trading.", "(Customer_02), Customer_01."),  # punctuation
+    ("myAcme portal", "myCustomer_02 portal"),                     # a change of case before
+    ("ACMECorp", "Customer_02Corp"),                               # capitals, then a capitalised word
+    ("Acme Corp", "Customer_02 Corp"),                             # "Acme Co" is no whole word here; "Acme" is
+    ("Acme Co renewed", "Customer_07 renewed"),                    # the longest whole-word name wins
+])
+def test_a_word_boundary_is_a_space_punctuation_a_hyphen_or_a_change_of_case(text, expected):
+    out, _ = redact.pseudonymise_cells(_cells(text), MAPPING, "Target Ltd")
+    assert _texts(out) == [expected]
+
+
+def test_a_whole_word_overlapping_a_non_word_match_of_the_same_name_is_still_replaced():
+    # "nana" first matches inside "Banana" (no boundary); the whole word "Nana" after the change of case overlaps it.
+    out, _ = redact.pseudonymise_cells(_cells("BanaNana"), {"Nana": "Customer_01"}, "Target Ltd")
+    assert _texts(out) == ["BanaCustomer_01"]
+
+
+def test_the_target_name_inside_a_longer_customer_name_does_not_protect_it():
+    out, _ = redact.pseudonymise_cells(_cells("Alphabet renewed", "Alpha plan"), {"Alphabet": "Customer_01"}, "Alpha")
+    assert _texts(out) == ["Customer_01 renewed", "Alpha plan"]
 
 
 def test_a_second_pass_changes_nothing():

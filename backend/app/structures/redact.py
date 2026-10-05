@@ -159,12 +159,33 @@ _FIRST_NAME = re.compile(r"(?<![^\W\d_])(?:" + "|".join(sorted(map(re.escape, FI
                          + r")\s+[^\W\d_a-zа-я][^\W\d_]+(?:[-'’][^\W\d_]+)?(?![^\W\d_])")
 
 
+def _edge(text: str, i: int) -> bool:
+    """True when position i of the text is a word boundary: the start or end of the text, a character
+    that is not a letter or a digit on either side (a space, punctuation, a hyphen), or a change of
+    case: "acmeCorp" between e and C, "ACMECorp" between E and C."""
+    if i <= 0 or i >= len(text):
+        return True
+    a, b = text[i - 1], text[i]
+    if not a.isalnum() or not b.isalnum():
+        return True
+    return (a.islower() and b.isupper()) or (a.isupper() and b.isupper() and i + 1 < len(text) and text[i + 1].islower())
+
+
+def _word_spans(text: str, word: str) -> List[Tuple[int, int]]:
+    """Every place the word stands as a whole word in the text, in any case, overlaps included."""
+    word = (word or "").strip()
+    if not word:
+        return []
+    found = (m.span(1) for m in re.finditer("(?=(" + re.escape(word) + "))", text, re.IGNORECASE))
+    return [(s, e) for s, e in found if _edge(text, s) and _edge(text, e)]
+
+
 def _protected(text: str, company_name: Optional[str]) -> List[Tuple[int, int]]:
-    """Spans no rule may rewrite: the target company's own name, existing pseudonyms and placeholders."""
+    """Spans no rule may rewrite: the target company's own name (as a whole word), existing pseudonyms
+    and placeholders."""
     spans = [m.span() for m in _PSEUDONYM.finditer(text)]
     spans += [(m.start(), m.end()) for p in PLACEHOLDERS for m in re.finditer(re.escape(p), text)]
-    if company_name and company_name.strip():
-        spans += [m.span() for m in re.finditer(re.escape(company_name.strip()), text, re.IGNORECASE)]
+    spans += _word_spans(text, company_name)
     return spans
 
 
@@ -222,37 +243,49 @@ def _redact(cells: List[Dict], company_name: Optional[str], rules) -> Tuple[List
     return out, counts
 
 
+def _replace_words(text: str, words: List[Tuple[str, str]], company_name: Optional[str]) -> Tuple[str, int]:
+    """Replace each (word, replacement) wherever the word stands as a whole word, in any case. Where two
+    words overlap the longer one wins; protected spans are never rewritten."""
+    taken = _protected(text, company_name)
+    found = []
+    for word, repl in sorted(words, key=lambda w: len(w[0].strip()), reverse=True):
+        for s, e in _word_spans(text, word):
+            if not any(s < b and a < e for a, b in taken):
+                taken.append((s, e))
+                found.append((s, e, repl))
+    out, last = [], 0
+    for s, e, repl in sorted(found):
+        out += [text[last:s], repl]
+        last = e
+    return "".join(out) + text[last:], len(found)
+
+
 def _usable_name(name: str) -> bool:
-    """A customer name substring replacement may use: 4 characters or more, not a number or a date."""
+    """A customer name the replacement may use: 4 characters or more, not a number or a date."""
     name = (name or "").strip()
     return len(name) >= MIN_NAME_LENGTH and not re.fullmatch(r"[\d\s.,:/%+\-]+", name) and not _YEAR_OR_DATE.match(name)
 
 
-def customer_pattern(mapping: Dict[str, str], company_name: Optional[str]) -> Optional["re.Pattern"]:
-    """One case-insensitive pattern for every usable customer name in the mapping, longest first. The
-    target company's own name and existing pseudonyms are never in it."""
+def customer_names(mapping: Dict[str, str], company_name: Optional[str]) -> List[Tuple[str, str]]:
+    """(name, pseudonym) for every usable customer name in the mapping. The target company's own name
+    and existing pseudonyms are never among them."""
     company = (company_name or "").strip().lower()
-    names = sorted({real for real, pseudo in mapping.items() if pseudo.startswith(CUSTOMER_PREFIX)
-                    and _usable_name(real) and real.strip().lower() != company and not _PSEUDONYM.fullmatch(real.strip())},
-                   key=len, reverse=True)
-    if not names:
-        return None
-    return re.compile("|".join(re.escape(n.strip()) for n in names), re.IGNORECASE)
+    return [(real.strip(), pseudo) for real, pseudo in mapping.items() if pseudo.startswith(CUSTOMER_PREFIX)
+            and _usable_name(real) and real.strip().lower() != company and not _PSEUDONYM.fullmatch(real.strip())]
 
 
 def pseudonymise_cells(cells: List[Dict], mapping: Dict[str, str], company_name: Optional[str]
                        ) -> Tuple[List[Dict], int]:
     """(cells, count): every customer name in the per-audit mapping (pseudonym_map, shared with the
-    narrative path) is replaced by its pseudonym wherever it appears as a substring, in any case.
-    Names under 4 characters, numbers and dates are skipped; the target company's own name and
-    existing pseudonyms are never rewritten, so a second pass changes nothing."""
-    pattern = customer_pattern(mapping, company_name)
-    if pattern is None:
-        return [dict(c) for c in cells], 0
-    lookup = {real.strip().lower(): pseudo for real, pseudo in mapping.items()}
+    narrative path) is replaced by its pseudonym wherever it stands as a whole word, in any case. A
+    word ends at the start or end of the cell, a space, punctuation, a hyphen or a change of case
+    ("AcmeCorp" holds Acme; "Acmes" and "customers" hold no Acme or Cust). Names under 4 characters,
+    numbers and dates are skipped; the target company's own name and existing pseudonyms are never
+    rewritten, so a second pass changes nothing."""
+    names = customer_names(mapping, company_name)
     total, out = 0, []
     for cell in cells:
-        text, n = _replace(cell["text"], pattern, lambda m: lookup[m.group(0).lower()], company_name)
+        text, n = _replace_words(cell["text"], names, company_name) if names else (cell["text"], 0)
         total += n
         out.append({**cell, "text": text})
     return out, total
