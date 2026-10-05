@@ -55,3 +55,16 @@ export function groupThousands(plain) {
 export const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September",
   "October", "November", "December"];
 export const DEFAULT_FISCAL_YEAR_END = 12;
+
+// AI-assisted reading (docs/specs/llm-structure-reading.md section 4): one checkbox per audit, ticked by
+// default, directly above the create button next to the engagement reference. Word for word from the spec.
+export const CONSENT_EXPLAINER = "This app reads tables and charts in the uploaded decks with an AI model. Every number is checked by code against its source cell; anything that does not match is marked as unverified. Emails, phone numbers, personal names and the customers named in the uploaded data files are replaced before anything is sent.";
+export const CONSENT_LABEL = "AI-assisted reading enabled per engagement terms. Uncheck if the client requires code-based extraction only; this may identify fewer findings.";
+
+// The client (the investor commissioning the audit) and the engagement reference are required.
+export function requiredFieldError(form) {
+  if (!form.company_name?.trim()) return "Company name is required";
+  if (!form.client_name?.trim()) return "Client name is required";
+  if (!form.engagement_reference?.trim()) return "Engagement reference is required";
+  return null;
+}

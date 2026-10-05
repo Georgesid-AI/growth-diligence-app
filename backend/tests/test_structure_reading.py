@@ -412,3 +412,40 @@ def test_the_aliases_keep_their_fields_and_the_model_fills_the_rest(monkeypatch)
     body = client.post(f"/api/audits/{AUDIT}/datasets/revenue/upload", files={"file": ("r.csv", sheet)}).json()
     assert (body["suggested_mapping"]["amount"], body["mapping_source"]["amount"]) == ("Amount", "rules")
     assert (body["suggested_mapping"]["customer_id"], body["mapping_source"]["customer_id"]) == ("Kunde", "ai")
+
+
+# ---------------------------------------------------------------------------
+# Consent (spec section 4)
+# ---------------------------------------------------------------------------
+NEW_AUDIT = {"company_name": "Zero2Hero", "client_name": "Northbridge Capital", "engagement_reference": "ENG-2026-041"}
+
+
+def test_consent_is_ticked_at_creation_by_default_and_every_change_is_logged_with_its_time(monkeypatch):
+    client, db, _ = _api(monkeypatch, [])
+    created = client.post("/api/audits", json=NEW_AUDIT).json()
+    assert created["structure_reading_consent"] is True
+    assert [e["value"] for e in created["consent_log"]] == [True] and created["consent_log"][0]["at"]
+    assert (created["client_name"], created["engagement_reference"]) == ("Northbridge Capital", "ENG-2026-041")
+    client.put(f"/api/audits/{created['id']}", json={"structure_reading_consent": False})
+    client.put(f"/api/audits/{created['id']}", json={"structure_reading_consent": False})      # no change: no entry
+    stored = next(a for a in db["audits"].docs if a["id"] == created["id"])
+    assert [e["value"] for e in stored["consent_log"]] == [True, False] and all(e["at"] for e in stored["consent_log"])
+    unticked = client.post("/api/audits", json={**NEW_AUDIT, "structure_reading_consent": False}).json()
+    assert unticked["structure_reading_consent"] is False and [e["value"] for e in unticked["consent_log"]] == [False]
+
+
+@pytest.mark.parametrize("missing", ["client_name", "engagement_reference"])
+def test_audit_creation_refuses_a_missing_client_name_or_engagement_reference(monkeypatch, missing):
+    client, _, _ = _api(monkeypatch, [])
+    assert client.post("/api/audits", json={k: v for k, v in NEW_AUDIT.items() if k != missing}).status_code == 422
+    assert client.post("/api/audits", json={**NEW_AUDIT, missing: " "}).status_code == 422
+
+
+def test_an_audit_created_before_consent_stays_unticked_until_it_has_an_engagement_reference(monkeypatch):
+    client, db, adapter = _api(monkeypatch, [REPLY])
+    db["audits"].docs.append({"id": "old", "company_name": "Old Co", "results": None})
+    result = asyncio.run(gateway.read_structure(db, "old", TEXT, "table", adapter=adapter, sleep=t._noop_sleep))
+    assert result.status == "no_consent" and adapter.calls == 0, "no field means unticked"
+    assert client.put("/api/audits/old", json={"structure_reading_consent": True}).status_code == 400
+    assert client.put("/api/audits/old", json={"structure_reading_consent": True,
+                                              "engagement_reference": "ENG-9"}).status_code == 200

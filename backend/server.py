@@ -261,8 +261,18 @@ def _validate_as_of_month(v: Optional[str]) -> Optional[str]:
     raise ValueError("as_of_month must be an ISO date (YYYY-MM-DD) with a year between 2000 and 2100")
 
 
+def _required_text(v: Optional[str]) -> Optional[str]:
+    """A required name or reference: trimmed, and never blank."""
+    if v is None:
+        return v
+    v = v.strip()
+    if not v:
+        raise ValueError("must not be empty")
+    return v
+
+
 class AuditCreate(BaseModel):
-    company_name: str
+    company_name: str                       # the target company
     reporting_currency: str = "EUR"
     target_arr: float = 0
     target_date: Optional[str] = None
@@ -270,9 +280,15 @@ class AuditCreate(BaseModel):
     # The month the company's fiscal year ends in (deck-parser.md section 2). FY25 is the fiscal year
     # that ends in 2025; with December it is the calendar year.
     fiscal_year_end: int = Field(default=12, ge=1, le=12)
+    # The investor commissioning the audit, and the engagement whose terms are the basis for sending
+    # structures to the model (llm-structure-reading.md section 4). Neither ever reaches the model.
+    client_name: str
+    engagement_reference: str
+    structure_reading_consent: bool = True
 
     _check_target_date = field_validator("target_date")(_validate_target_date)
     _check_as_of_month = field_validator("as_of_month")(_validate_as_of_month)
+    _check_required = field_validator("client_name", "engagement_reference")(_required_text)
 
 
 class AuditUpdate(BaseModel):
@@ -282,9 +298,18 @@ class AuditUpdate(BaseModel):
     target_date: Optional[str] = None
     as_of_month: Optional[str] = None
     fiscal_year_end: Optional[int] = Field(default=None, ge=1, le=12)
+    client_name: Optional[str] = None
+    engagement_reference: Optional[str] = None
+    structure_reading_consent: Optional[bool] = None
 
     _check_target_date = field_validator("target_date")(_validate_target_date)
     _check_as_of_month = field_validator("as_of_month")(_validate_as_of_month)
+    _check_required = field_validator("client_name", "engagement_reference")(_required_text)
+
+
+def _consent_entry(value: bool) -> dict:
+    """One change of the consent checkbox, with its time. The user is added when accounts exist."""
+    return {"value": bool(value), "at": datetime.now(timezone.utc).isoformat()}
 
 
 class MappingPayload(BaseModel):
@@ -334,6 +359,10 @@ async def create_audit(payload: AuditCreate):
         "target_date": payload.target_date,
         "as_of_month": payload.as_of_month,
         "fiscal_year_end": payload.fiscal_year_end,
+        "client_name": payload.client_name,
+        "engagement_reference": payload.engagement_reference,
+        "structure_reading_consent": payload.structure_reading_consent,
+        "consent_log": [_consent_entry(payload.structure_reading_consent)],
         "created_at": datetime.now(timezone.utc).isoformat(),
         "status": "draft",
         "results": None,
@@ -361,7 +390,14 @@ async def update_audit(audit_id: str, payload: AuditUpdate):
     a = await db.audits.find_one({"id": audit_id})
     if not a:
         raise HTTPException(404, "Audit not found")
-    updates = {k: v for k, v in payload.dict().items() if v is not None}
+    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+    consent = updates.get("structure_reading_consent")
+    if consent is True and not (updates.get("engagement_reference") or a.get("engagement_reference")):
+        # The basis for sending is the engagement terms: no reference, no AI-assisted reading.
+        raise HTTPException(400, "An engagement reference is required before AI-assisted reading can be enabled")
+    if consent is not None and consent != (a.get("structure_reading_consent") is True):
+        await db.audits.update_one({"id": audit_id},
+                                   {"$set": {"consent_log": list(a.get("consent_log") or []) + [_consent_entry(consent)]}})
     if updates:
         await db.audits.update_one({"id": audit_id}, {"$set": updates})
         if RECOMPUTE_TRIGGER_FIELDS & updates.keys():
@@ -1248,13 +1284,19 @@ app.add_middleware(
 )
 
 
+# 4: demo audits carry a client name, an engagement reference, consent and a fiscal year-end.
+SEED_VERSION = 4
+
+
 @app.on_event("startup")
 async def seed_demo():
-    if await db.audits.count_documents({"seed_version": 3}) > 0:
+    if await db.audits.count_documents({"seed_version": SEED_VERSION}) > 0:
         return
     demo_ids = {"audit_id": {"$in": [a["id"] for a in await db.audits.find({"demo": True}, {"id": 1}).to_list(50)]}}
     for name in ("datasets", decks.TEXT_COLLECTION, decks.CANDIDATES_COLLECTION):
         await db[name].delete_many(demo_ids)
+    for audit in demo_ids["audit_id"]["$in"]:
+        await llm_gateway.purge_run(db, audit)
     await db.audits.delete_many({"demo": True})
     for spec in demo_data.DEMO_AUDITS:
         datasets, meta = demo_data.build(spec)
@@ -1266,9 +1308,11 @@ async def seed_demo():
                 {"audit_id": audit_id, "dtype": dtype},
                 {"audit_id": audit_id, "dtype": dtype, "file": meta[dtype]["file"], "sheet": meta[dtype]["sheet"],
                  "columns": list(df.columns), "rows": recs, "row_count": len(recs),
-                 "mapping": mapping, "fx": meta.get("fx", {}), "billing_terms": {}, "preview": recs[:8]},
+                 "mapping": mapping, "fx": meta.get("fx", {}), "billing_terms": {}, "preview": recs[:8],
+                 "mapped_at": datetime.now(timezone.utc).isoformat()},
                 upsert=True,
             )
+            await _add_customers(audit_id, {"dtype": dtype, "columns": list(df.columns), "rows": recs, "mapping": mapping})
             norm[dtype] = normalize(recs, dtype, mapping)
             uploads[dtype] = {"file": meta[dtype]["file"], "sheet": meta[dtype]["sheet"], "columns": list(df.columns),
                               "rows": recs, "mapping": mapping}
@@ -1284,8 +1328,12 @@ async def seed_demo():
         await db.audits.insert_one({
             "id": audit_id, "company_name": spec["company_name"], "reporting_currency": spec["reporting_currency"],
             "target_arr": spec["target_arr"], "target_date": spec["target_date"],
+            "fiscal_year_end": spec["fiscal_year_end"], "client_name": spec["client_name"],
+            "engagement_reference": spec["engagement_reference"], "structure_reading_consent": True,
+            "consent_log": [_consent_entry(True)],
             "created_at": datetime.now(timezone.utc).isoformat(), "status": "computed",
-            "computed_at": datetime.now(timezone.utc).isoformat(), "results": sanitize(results), "demo": True, "seed_version": 3,
+            "computed_at": datetime.now(timezone.utc).isoformat(), "results": sanitize(results), "demo": True,
+            "seed_version": SEED_VERSION,
         })
     logger.info("Seeded demo audits")
 
