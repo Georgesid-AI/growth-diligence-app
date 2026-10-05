@@ -99,8 +99,9 @@ describe("deck selector", () => {
 
 test("the analyst chooses among plan claim types only; old usage claims keep their label", () => {
   expect(CLAIM_TYPES).toEqual(["revenue", "revenue_growth", "growth", "retention", "sales", "customers", "users",
-    "user_growth", "gross_margin", "gross_profit", "costs", "ebitda", "people", "product", "market"]);
-  expect([typeLabel("gross_profit"), typeLabel("costs"), typeLabel("ebitda")]).toEqual(["Gross profit", "Costs", "EBITDA"]);
+    "user_growth", "gross_margin", "gross_profit", "costs", "ebitda", "net_profit", "people", "product", "market"]);
+  expect([typeLabel("gross_profit"), typeLabel("costs"), typeLabel("ebitda"), typeLabel("net_profit")])
+    .toEqual(["Gross profit", "Costs", "EBITDA", "Net profit"]);
   expect(typeLabel("usage")).toBe("Usage");
 });
 

@@ -833,10 +833,17 @@ def test_a_period_at_the_top_of_a_text_box_dates_every_figure_in_it():
 @pytest.mark.parametrize("text, family", [
     ("Gross Profit £150K", "gross_profit"), ("Gross margin £1.2M", "gross_profit"), ("Gross margin 82%", "gross_margin"),
     ("Direct costs £83,403", "costs"), ("Opex of $2M", "costs"), ("Costs $500K", "costs"),
-    ("EBITDA of $1.5M", "ebitda"), ("40 institutions", "customers"),
+    ("EBITDA of $1.5M", "ebitda"), ("Profitable in 10 months", "ebitda"), ("40 institutions", "customers"),
+    ("Net income $1.5M", "net_profit"), ("Net profit 12%", "net_profit"), ("Net loss of $2M", "net_profit"),
 ])
 def test_gross_profit_costs_ebitda_and_institutions(text, family):
     assert [c["claim_type"] for c in _line(text)] == [family]
+
+
+def test_a_net_loss_is_a_negative_net_profit():
+    assert [(c["value"], c["value_high"]) for c in _line("Net loss of $2M in 2023")] == [(-2000000, None)]
+    assert [(c["value"], c["value_high"]) for c in _line("Net losses of $1-2M")] == [(-2000000, -1000000)]
+    assert [(c["value"], c["value_high"]) for c in _line("Net income $1.5M")] == [(1500000, None)]
 
 
 def test_a_break_even_milestone_takes_its_date():

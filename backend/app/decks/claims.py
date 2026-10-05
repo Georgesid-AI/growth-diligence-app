@@ -63,7 +63,8 @@ _FAMILIES = [
     ("gross_margin", r"(?i:\bmargins?\b)"),
     ("gross_profit", r"(?i:\bgross profits?\b)"),
     ("costs", r"(?i:\bcosts?\b|\bopex\b)"),
-    ("ebitda", r"\bEBITDA\b|(?i:\bprofitability\b|\bbreak[- ]?even\b)"),
+    ("ebitda", r"\bEBITDA\b|(?i:\bprofitab(?:ility|le)\b|\bbreak[- ]?even\b)"),
+    ("net_profit", r"(?i:\bnet (?:profits?|income|loss(?:es)?)\b)"),
     ("people", r"(?i:\bhir(?:e|es|ed|ing)\b|\bheadcounts?\b|\bteams?\b|\brecruit(?:s|ed|ing|ment)?\b"
                r"|\battrition\b)"),
     ("product", r"(?i:\blaunch(?:es|ed|ing)?\b|\breleas(?:e|es|ed|ing)\b|\broadmaps?\b|\bship(?:s|ped|ping)?\b"
@@ -75,7 +76,9 @@ _NOUN_KEYWORDS = [(family, rx) for family, rx in _KEYWORDS if family in ("custom
 _GROWTH_OF = {"revenue": "revenue_growth", "users": "user_growth"}
 # Plan claims only: the company's own figures the growth plan depends on.
 CLAIM_TYPES = ("revenue", "revenue_growth", "growth", "retention", "sales", "customers", "users", "user_growth",
-               "gross_margin", "gross_profit", "costs", "ebitda", "people", "product", "market")
+               "gross_margin", "gross_profit", "costs", "ebitda", "net_profit", "people", "product", "market")
+# A net loss is a negative net profit: "Net loss of $2M" is stored as -2,000,000.
+_NET_LOSS = re.compile(r"(?i)\bnet loss(?:es)?\b")
 # A gross margin given as an amount ("Gross margin £1.2M") is gross profit.
 _GROSS_MARGIN = re.compile(r"(?i)\bgross margins?\b")
 # Lines that are a claim with no figure, given a date: a roadmap bullet, a break-even milestone.
@@ -332,6 +335,9 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
             continue
         if family == "gross_margin" and n["currency"] and _GROSS_MARGIN.search(borrowed[1] if borrowed else line):
             family = "gross_profit"
+        if family == "net_profit" and _NET_LOSS.search(borrowed[1] if borrowed else line[own["start"]:own["end"]]):
+            n = {**n, "value": -(n["value_high"] if n["value_high"] is not None else n["value"]),
+                 "value_high": -n["value"] if n["value_high"] is not None else None}
         own_date = _nearest(dates, n)
         date = None if own_date else _borrow_date(nearby) or _borrow_date([box_period] if box_period else [])
         stated = bool(own_date or date)

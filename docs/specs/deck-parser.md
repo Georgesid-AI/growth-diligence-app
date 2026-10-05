@@ -35,7 +35,7 @@ If a file has no readable text, show: "No readable text found in this file. It m
 
 ## 2. Candidate claim detection (Python only, no LLM, rule-based)
 Only plan claims are listed: the company's own revenue, customers, users, retention, margins,
-gross profit, costs, EBITDA, sales metrics, hiring and launch dates, plus targets and forecasts.
+gross profit, costs, EBITDA, net profit, sales metrics, hiring and launch dates, plus targets and forecasts.
 A figure (a number, or a date) is a candidate if it has a claim keyword: in its own text line,
 or borrowed from nearby text when its line has none.
 Keywords and claim types (a keyword also matches its plural and verb forms: revenues, growing,
@@ -54,7 +54,9 @@ hired, launches; of two overlapping keywords the longer one counts):
 - Gross margin: margin, margins
 - Gross profit: gross profit; also a gross margin given as an amount ("Gross margin £1.2M")
 - Costs: direct costs, costs, opex
-- EBITDA: EBITDA, profitability, break-even
+- EBITDA: EBITDA, profitability, profitable, break-even
+- Net profit: net profit, net income, net loss. A net loss is stored as a negative net profit
+  ("Net loss of $2M" → -2,000,000).
 - People: hires, headcount, team, recruitment, attrition
 - Product: launch, release, roadmap, ship, milestone, Q1–Q4, month names
 - Market: TAM, SAM, SOM, addressable market, market size. The bare word "market" does not count.

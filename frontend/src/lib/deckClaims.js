@@ -30,7 +30,7 @@ export const CLAIMS_CHOICES = [
 export const TYPE_LABELS = {
   revenue: "Revenue", revenue_growth: "Revenue growth", growth: "Growth", retention: "Retention", sales: "Sales",
   customers: "Customers", users: "Users", user_growth: "User growth", gross_margin: "Gross margin",
-  gross_profit: "Gross profit", costs: "Costs", ebitda: "EBITDA", usage: "Usage",
+  gross_profit: "Gross profit", costs: "Costs", ebitda: "EBITDA", net_profit: "Net profit", usage: "Usage",
   people: "People", product: "Product", market: "Market",
 };
 // The types an analyst can choose: same order and names as backend app/decks/claims.py CLAIM_TYPES.
