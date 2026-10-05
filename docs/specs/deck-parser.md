@@ -126,10 +126,12 @@ by position and from the slide title.
 
 ## 4. No deck text reaching the model
 - The deck parser has no import of, or call to, the LLM gateway.
-- The gateway never reads raw files, parsed text or claim snippets.
+- The gateway may read selected deck structures (tables, charts with data labels, KPI panels, roadmaps/timelines, hiring tables, unit-economics boxes, use-of-funds tables) and spreadsheet header rows with up to 3 redacted sample values per column — only after redaction, only with per-audit consent, only as extracted text with cell positions. Never raw files, full pages or prose slides. The deck parser has no direct link to the gateway.
 - The gateway may read only structured claim fields (type, value, high value of a range, unit, date, status).
   A table row's values by period are not among them: each keeps its column header text and cell.
 - An automated test fails the build if the parser imports the gateway, or the gateway reads the parsed-text or snippet fields.
+- Logs and MongoDB store model JSON output (values with cell references), prompt version, model version, content hash, token counts and cost. Never deck text sent to the model. Delete audit removes model outputs.
+- Model output never becomes Verified on its own. Python must match every value to a source cell. Unmatched values are shown as 'AI suggestion, not verified' or dropped.
 
 ## 5. Storage and deletion
 - Parsed text and candidates are stored in MongoDB, linked to the audit. An audit can hold
