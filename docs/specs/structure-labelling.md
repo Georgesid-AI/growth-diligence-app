@@ -20,12 +20,16 @@ The approval row shows both readings. The analyst confirms the default or uses E
 **2. Roadmaps.** Python also lists date cells (`d1`…, date labels as in deck-parser.md §7) and text lines (`t1`…,
 the other non-empty cells). The model returns pairs (line id, date id) with a category: `launch`, `feature`,
 `expansion`, `partnership`, `hiring`, `break_even`, `funding`, `certification` or `other`. Claim types: `hiring` →
-people, `break_even` → ebitda, `funding` → cash, the rest → product.
+people, `break_even` → ebitda, `funding` → other (type Other, §4), the rest → product. Parser rules are unchanged.
 
 A line has at most one pair, and a date may serve several lines. A milestone's period is the one Python rebuilds from
 its date cell. A milestone has no value, so it is never Verified. A figure in a paired line is dated by its pair: its
 period is the one Python rebuilds from that date cell. The pairing is the model's, so the figure is Verified only
-when §4 rebuilds the same period from its headers or its own cell.
+when §4 rebuilds the same period from its own period cells.
+
+Adjacent date line: a text line may have exactly one date line directly above or below it in the same text box (not
+one above and one below). That date line is then a period cell of the line, and Python rebuilds the period itself.
+This also raises "date rebuilt from cell" on timelines such as buffer p6, where dates sit below their lines.
 
 **3. Text and reply.** The structure text is unchanged (`r<row>c<col>: <text>`, with spans). Below it comes the line
 `items:`, then one line per item, e.g. `i3 r3c2#2 "(30K)" 30000 or -30000 h r3c1 r1c2`. A roadmap adds `d1 r2c1`
@@ -41,10 +45,10 @@ schema's hash enters the cache key. Tie-breaks in the prompt: hours and time fig
 is named; "% of marketplace" and market share → `market`; commission and take rate → `sales`.
 
 **4. Verifier.** Values and cells are Python's, so value matching is deleted. What is left:
-- Period: rebuilt from the item's lowest period header (with the year cell above) or from its own cell
-  (deck-parser.md §2). The rebuilt period replaces the model's, and a difference counts as "period corrected". A
-  model period with nothing to rebuild from, or a header period Python cannot rebuild, is "period not rebuilt" (an
-  AI suggestion). A null period matches when no header holds a period.
+- Period: rebuilt from the item's lowest period header (with the year cell above), from its own cell, or in a
+  roadmap from its adjacent date line (§2), under deck-parser.md §2. The rebuilt period replaces the model's, and a
+  difference counts as "period corrected". A model period with nothing to rebuild from, or a header period Python
+  cannot rebuild, is "period not rebuilt" (an AI suggestion). A null period matches when no header holds a period.
 - Separator and sign: recorded as `dot_reading` and `bracket_reading` with the default. Both readings come from the
   item's cell, so the item can be Verified.
 - Flags: Python computes `total_mismatch` and `growth_mismatch` over the Verified items (`verify._flag_reproduced`).
@@ -65,7 +69,9 @@ their rows keep their labels.
 **6. Agreement.** Agreement per type = items with the same metric and period in every pass ÷ items Python listed,
 over structures read in every pass. The period is compared as the verifier keeps it (start and end dates), and
 `not_a_metric` counts as a metric. Cells and the item count are fixed by code. The ≥95% target applies to this figure
-over all deck types. Roadmap pairs are reported apart: "roadmap lines: N, same pair and category in every pass: M".
+over all deck types. Roadmaps are reported apart: "roadmap lines: N, same pair and category in every pass: M,
+date rebuilt from cell: K". K counts roadmap items whose period Python rebuilds from their own period cells (§4),
+whatever the pair says.
 
 **7. scripts/consistency_run.py.**
 - Keys: `_normalised_key` = (item id, metric, kept period range); old method = (item id, metric, period as written,
@@ -92,15 +98,12 @@ Unchanged: §3, §4, §6, §8 and the 400,000-token audit cap.
 
 **9. Tests.** Each is first shown failing on a deliberate violation. Enumeration: several figures per cell, dates
 left out, both defaults, stable ids. Reply: bad, duplicate or missing ids, and bad pairs. Verifier: periods, a
-pair-dated figure, flags. Other: refused until its type is edited. The 4,000 cap, with the list counted. Boundary: an
-item line passes only in format, with raw text that is a figure inside its cell (else reason `bad_item_line`), and no
-raw text reaches `llm_structures` or a log.
+pair-dated figure, the adjacent date line (one above or below counts; one each side does not), flags. Other: refused
+until its type is edited. The 4,000 cap, with the list counted. Boundary: an item line passes only in format, with
+raw text that is a figure inside its cell (else reason `bad_item_line`), and no raw text reaches `llm_structures` or
+a log.
 
-**Open question.** `funding` → cash conflicts with the code and deck-parser.md:
-- `cash` is not a claim type (`claims.CLAIM_TYPES`, `schemas.CLAIM_METRICS`, the server's edit type, `deckClaims.js`);
-- deck-parser.md §2 drops lines about funds raised, and §6 tells the analyst to reject them.
-
-Adding `cash` changes those lists and rules. Otherwise `funding` needs another mapping.
+**Open questions.** None. A cash claim type is left to the forecast-claims spec.
 
 **Files.** New: `backend/app/structures/items.py`. Changed: `backend/app/structures/{__init__,verify,redact}.py`,
 `backend/app/llm/{schemas,gateway}.py`, `backend/app/llm/prompts/{structure_reading.md,RELEASE.md}`,
