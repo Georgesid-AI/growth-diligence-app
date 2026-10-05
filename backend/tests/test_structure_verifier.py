@@ -373,6 +373,56 @@ def test_a_cells_own_period_is_read_only_from_that_cell():
 
 
 # ---------------------------------------------------------------------------
+# The adjacent date line (docs/specs/structure-labelling.md section 2): a text line of a roadmap with exactly one
+# date line directly above or below it in the same text box has that date line as a period cell
+# ---------------------------------------------------------------------------
+def _roadmap(rows, boxes):
+    structure = _struct(rows, header_rows=0, kind="roadmap")
+    for c in structure["cells"]:
+        c["box"] = boxes[(c["row"], c["col"])] if isinstance(boxes, dict) else boxes[c["col"] - 1]
+    return structure
+
+
+def _adjacent(structure, cell):
+    by_id = {f"r{c['row']}c{c['col']}": c for c in structure["cells"]}
+    found = verify.adjacent_date_line(structure, by_id[cell])
+    return f"r{found['row']}c{found['col']}" if found else None
+
+
+def test_a_text_line_with_one_date_line_directly_above_or_below_it_in_its_box_takes_it():
+    below = _roadmap([["Launch the API"], ["Q3 2025"]], [1])
+    assert _adjacent(below, "r1c1") == "r2c1"
+    above = _roadmap([["Q3 2025"], ["Launch the API"]], [1])
+    assert _adjacent(above, "r2c1") == "r1c1"
+
+
+def test_one_date_line_on_each_side_is_no_adjacent_date_line():
+    both = _roadmap([["Q3 2025"], ["Launch the API"], ["Q4 2025"]], [1])
+    assert _adjacent(both, "r2c1") is None
+
+
+def test_only_a_date_line_directly_next_to_the_line_in_the_same_box_counts():
+    other_box = _roadmap([["Q3 2025"], ["Launch the API"]], {(1, 1): 1, (2, 1): 2})
+    assert _adjacent(other_box, "r2c1") is None, "the date line above sits in another box"
+    gap = _roadmap([["Q3 2025"], ["Our API"], ["Launch the API"]], [1])
+    assert _adjacent(gap, "r3c1") is None, "a line between"
+    beside = _roadmap([["Launch the API", "Q3 2025"]], [1, 1])
+    assert _adjacent(beside, "r1c1") is None, "beside it is not above or below"
+    dates = _roadmap([["Q3 2025"], ["Q4 2025"]], [1])
+    assert _adjacent(dates, "r1c1") is None, "a date line is not a text line"
+    panel = {**_roadmap([["Launch the API"], ["Q3 2025"]], [1]), "type": "kpi_panel"}
+    assert _adjacent(panel, "r1c1") is None, "roadmaps only"
+
+
+def test_on_the_buffer_timeline_only_the_first_line_has_an_adjacent_date_line():
+    """Buffer p6 alternates line, date, line, date in one box: the first line has its date below only; every later
+    line has a date above and below, so none of them has one."""
+    roadmap = _deck_structure("03-buffer.pptx", 6, "roadmap")
+    assert [(cell, _adjacent(roadmap, cell)) for cell in ("r1c1", "r3c1", "r5c1", "r11c1")] == \
+        [("r1c1", "r2c1"), ("r3c1", None), ("r5c1", None), ("r11c1", None)]
+
+
+# ---------------------------------------------------------------------------
 # Flags: recomputed from the matched values
 # ---------------------------------------------------------------------------
 TOTALS = _struct([["", "2025"], ["Product A", "£100"], ["Product B", "£200"], ["Total revenue", "£350"]])

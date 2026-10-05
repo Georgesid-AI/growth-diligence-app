@@ -72,8 +72,15 @@ def list_items(structure: Dict) -> Dict:
 
 
 def roadmap_cells(structure: Dict):
-    """([{"id": "d1", "cell"}...], [{"id": "t1", "cell"}...]): a roadmap's date cells and its text lines."""
-    return [], []
+    """([{"id": "d1", "cell"}...], [{"id": "t1", "cell"}...]): a roadmap's date cells (date labels, deck-parser.md
+    section 7) and its text lines (every other non-empty cell), each in reading order."""
+    dates, lines = [], []
+    for cell in sorted(structure["cells"], key=lambda c: (c["row"], c["col"])):
+        if not str(cell["text"]).strip():
+            continue
+        kept = dates if verify.is_date_line(cell["text"]) else lines
+        kept.append({"id": f"{'d' if kept is dates else 't'}{len(kept) + 1}", "cell": redact.cell_id(cell)})
+    return dates, lines
 
 
 def text(structure: Dict, listed: Dict) -> str:

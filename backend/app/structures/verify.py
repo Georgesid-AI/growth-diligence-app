@@ -42,7 +42,7 @@ import os
 import re
 from typing import Dict, List, Optional, Tuple
 
-from ..decks import claims
+from ..decks import claims, parser
 from . import redact
 
 VERIFIED = "verified"
@@ -254,6 +254,22 @@ def _relative_range(relative: Dict, unit_text: str, start_cell: Optional[Dict],
     begin = claims.period_range(f"{first // 12}-{first % 12 + 1:02d}")[0]
     end = claims.period_range(f"{last // 12}-{last % 12 + 1:02d}")[1]
     return begin, end
+
+
+def is_date_line(text: str) -> bool:
+    """A date label as deck-parser.md section 7 counts one for a roadmap: a date with at most two other words
+    ("Nov. 2007", "Launch Q3 2024"); not a sentence that holds a date."""
+    return bool(parser._date_labels(text or "", claims))
+
+
+def adjacent_date_line(structure: Dict, cell: Dict) -> Optional[Dict]:
+    """In a roadmap, the date line of a text line (structure-labelling.md section 2): the one date line directly
+    above or below it in the same text box, or None when there is none or one on each side."""
+    if structure.get("type") != "roadmap" or is_date_line(cell["text"]):
+        return None
+    found = [c for c in structure["cells"] if c.get("box") is not None and c.get("box") == cell.get("box")
+             and c["col"] == cell["col"] and abs(c["row"] - cell["row"]) == 1 and is_date_line(c["text"])]
+    return found[0] if len(found) == 1 else None
 
 
 def lowest_period_headers(structure: Dict, value_cell: Dict) -> List[Dict]:

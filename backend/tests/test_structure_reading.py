@@ -217,6 +217,38 @@ def test_the_item_list_is_built_from_the_redacted_cells():
     assert [(i["cell"], i["raw"]) for i in listed["items"]] == [("r1c2", "1M")], "no figure of the phone number"
 
 
+def _roadmap(rows, boxes):
+    """A roadmap from a grid of texts; boxes: the box of each column, or {(row, col): box}."""
+    structure = v._struct(rows, header_rows=0, kind="roadmap")
+    for c in structure["cells"]:
+        c["box"] = boxes[(c["row"], c["col"])] if isinstance(boxes, dict) else boxes[c["col"] - 1]
+    return structure
+
+
+def test_a_roadmap_lists_its_date_cells_and_text_lines_below_its_items():
+    """Spec section 2: date cells are date labels (deck-parser.md section 7: a date with at most two other words);
+    every other non-empty cell is a text line. A figure in a line is an item too."""
+    roadmap = _roadmap([["Launch the API", "2026"], ["Launch Q3 2025", "Break even"],
+                        ["Hire 5 engineers", "Launched the web app to our first users in January 2011"]], [1, 2])
+    listed = structure_items.list_items(roadmap)
+    assert listed["dates"] == [{"id": "d1", "cell": "r1c2"}, {"id": "d2", "cell": "r2c1"}]
+    assert listed["lines"] == [{"id": "t1", "cell": "r1c1"}, {"id": "t2", "cell": "r2c2"}, {"id": "t3", "cell": "r3c1"},
+                               {"id": "t4", "cell": "r3c2"}], "a sentence holding a date is a line"
+    assert structure_items.text(roadmap, listed).split("items:\n")[1] == \
+        'i1 r3c1 "5" 5 h r1c1\nd1 r1c2\nd2 r2c1\nt1 r1c1\nt2 r2c2\nt3 r3c1\nt4 r3c2'
+    table = {**roadmap, "type": "table"}
+    assert (structure_items.list_items(table)["dates"], structure_items.list_items(table)["lines"]) == ([], []), \
+        "only a roadmap lists its dates and lines"
+
+
+def test_the_buffer_timeline_lists_six_dates_and_six_lines():
+    pytest.importorskip("pptx")
+    roadmap = _structure({"file": "03-buffer.pptx", "page": 6, "type": "roadmap"})
+    listed = structure_items.list_items(roadmap)
+    assert [d["cell"] for d in listed["dates"]] == [f"r{n}c1" for n in (2, 4, 6, 8, 10, 12)]
+    assert [t["cell"] for t in listed["lines"]] == [f"r{n}c1" for n in (1, 3, 5, 7, 9, 11)]
+
+
 # ---------------------------------------------------------------------------
 # Units: 20 listed currencies; any other ISO currency is "other", with its code in unit_other
 # ---------------------------------------------------------------------------
