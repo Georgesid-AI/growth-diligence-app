@@ -63,40 +63,52 @@ _LABEL_MAX = SNIPPET_MAX
 # "growing", "hired", "launches". Acronyms match in capitals only, so "Sam" or "arr" do not count.
 # "market" is a whole word: "marketing" and "marketplace" do not count.
 # Where two keywords overlap, the longer one counts: "paying users" is customers, not users;
-# "customer lifetime value" is sales, not customers.
+# "customer lifetime value" is ltv, not customers or customer_lifetime; "LTV / CAC" is ltv_cac.
 _FAMILIES = [
     ("growth", r"\bCAGR\b|(?i:\bgrowth\b|\bgr(?:ow|ows|owing|own|ew)\b)"),
     ("revenue", r"\b(?:ARR|MRR)\b|(?i:\brevenues?\b|\bbookings?\b|\bturnover\b)"),
-    ("retention", r"\bNRR\b|(?i:\bchurn(?:s|ed|ing)?\b|\bretention\b|\bretain(?:s|ed|ing)?\b|\bcustomer life\b)"),
-    ("sales", r"\b(?:ACV|CAC|LTV)s?\b|(?i:\bsales cycles?\b|\bwin rates?\b|\bpipelines?\b|\bpayback\b"
-              r"|\b(?:customer )?lifetime value\b|\bacqui(?:re|res|red|ring|sition)\b|\bconver(?:t|ts|ted|ting|sion|sions)\b"
-              r"|\bleads\b|\bcosts? (?:of|per) (?:paid )?(?:customer )?acquisitions?\b|\bacquisition costs?\b)"),
+    ("retention", r"\bNRR\b|(?i:\bchurn(?:s|ed|ing)?\b|\bretention\b|\bretain(?:s|ed|ing)?\b)"),
+    ("sales", r"\bACVs?\b|(?i:\bsales cycles?\b|\bwin rates?\b|\bpipelines?\b|\bpayback\b"
+              r"|\bacqui(?:re|res|red|ring|sition)\b|\bconver(?:t|ts|ted|ting|sion|sions)\b|\bleads\b)"),
     ("customers", r"(?i:\bcustomers?\b|\bclients?\b|\bpaying users?\b|\baccounts?\b"
                   r"|\bcompan(?:y|ies)\b|\bagenc(?:y|ies)\b|\bsubscribers?\b|\binstitutions?\b)"),
     ("users", r"(?i:\busers?\b)"),
     ("gross_margin", r"(?i:\bmargins?\b)"),
     ("gross_profit", r"(?i:\bgross profits?\b)"),
     ("costs", r"(?i:\bcosts?\b|\bopex\b)"),
-    ("ebitda", r"\bEBITDA\b|(?i:\bprofitab(?:ility|le)\b|\bbreak[- ]?even\b)"),
+    ("ebitda", r"\bEBITDA\b|(?i:\bprofitability\b|\bbreak[- ]?even\b)"),
     ("net_profit", r"(?i:\bnet (?:profits?|income|loss(?:es)?)\b)"),
     ("people", r"(?i:\bhir(?:e|es|ed|ing)\b|\bheadcounts?\b|\bteams?\b|\brecruit(?:s|ed|ing|ment)?\b"
                r"|\battrition\b)"),
     ("product", r"(?i:\blaunch(?:es|ed|ing)?\b|\breleas(?:e|es|ed|ing)\b|\broadmaps?\b|\bship(?:s|ped|ping)?\b"
                 r"|\bmilestones?\b)"),
     ("market", r"\b(?:TAM|SAM|SOM)\b|(?i:\baddressable markets?\b|\bmarket[ -]sizes?\b)"),
+    # Issue #45: the keywords of LTV, CAC, customer life and "profitable" moved here from sales, retention and
+    # ebitda; "cash flow" is no cash keyword.
+    ("cash", r"(?i:\bcash\b(?![- ]?flows?\b))"),
+    ("burn", r"(?i:\b(?:net )?burn(?:s|ed|ing)?(?: rates?)?\b)"),
+    ("runway", r"(?i:\brunways?\b)"),
+    ("ltv", r"\bLTVs?\b|(?i:\b(?:customer )?lifetime values?\b)"),
+    ("cac", r"\bCACs?\b|(?i:\bcosts? (?:of|per) (?:paid )?(?:customer )?acquisitions?\b|\bacquisition costs?\b)"),
+    ("customer_lifetime", r"(?i:\bcustomer life(?:time)?s?\b)"),
+    ("ltv_cac", r"\bLTV\s*/\s*CAC\b"),
+    ("trials_per_day", r"(?i:\btrials?\s*(?:per|/)\s*day\b)"),
+    ("months_to_profitability", r"(?i:\bprofitable\b)"),
 ]
 _KEYWORDS = [(family, re.compile(rx)) for family, rx in _FAMILIES]
 _NOUN_KEYWORDS = [(family, rx) for family, rx in _KEYWORDS if family in ("customers", "users")]
 _GROWTH_OF = {"revenue": "revenue_growth", "users": "user_growth"}
 # Plan claims only: the company's own figures the growth plan depends on.
 CLAIM_TYPES = ("revenue", "revenue_growth", "growth", "retention", "sales", "customers", "users", "user_growth",
-               "gross_margin", "gross_profit", "costs", "ebitda", "net_profit", "people", "product", "market")
+               "gross_margin", "gross_profit", "costs", "ebitda", "net_profit", "people", "product", "market",
+               "cash", "burn", "runway", "ltv", "cac", "customer_lifetime", "ltv_cac", "trials_per_day",
+               "months_to_profitability")
 # A net loss is a negative net profit: "Net loss of $2M" is stored as -2,000,000.
 _NET_LOSS = re.compile(r"(?i)\bnet loss(?:es)?\b")
 # A gross margin given as an amount ("Gross margin £1.2M") is gross profit.
 _GROSS_MARGIN = re.compile(r"(?i)\bgross margins?\b")
-# Lines that are a claim with no figure, given a date: a roadmap bullet, a break-even milestone.
-_MILESTONES = ("product", "ebitda")
+# Lines that are a claim with no figure, given a date: a roadmap bullet, a break-even or profitability milestone.
+_MILESTONES = ("product", "ebitda", "months_to_profitability")
 # Words after a number that are not the thing counted: "20 of them", "5 per month".
 _NOT_NOUNS = frozenset("""a an and are as at be by each for from has have in into is it its more of on or our
 over per than that the this to under up was we were with""".split())
@@ -535,7 +547,7 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
             if not borrowed or all(d["kind"] == "year" for d in dates):
                 return []
         # A bare date under a milestone ("Positive EBITDA" / "Q2 2024") takes the milestone's type.
-        family = "ebitda" if not keywords and (borrowed or [None])[0] == "ebitda" else "product"
+        family = borrowed[0] if not keywords and borrowed and borrowed[0] in _MILESTONES else "product"
         return [claim(d["start"], _type(_nearest(keywords, d), keywords) if keywords else family, date=d["date"],
                       label=family != "product" and borrowed[1] or None, stated=True, period_text=d["text"])
                 for d in dates if d["kind"] != "year" or keywords]

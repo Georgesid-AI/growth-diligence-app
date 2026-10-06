@@ -520,7 +520,7 @@ def detect_structures(blocks: List[Dict], charts: List[Dict] = ()) -> List[Dict]
          "cells": [{"row": 1, "col": 2, "text": "FY2025", "col_span": 12}, ...]}
 
     with "table" (a table's number on its page), "chart" (a chart's) or, for a KPI panel or a
-    roadmap, a "box" on every cell: the text box the line comes from; a KPI panel's cells also keep
+    roadmap, a "box" on every cell: the text box the line comes from; their cells also keep
     "next_to" (_band_cells). header_rows counts the rows
     above the first row that holds a figure. A structure holds at least one figure (a number or a
     date); text that is none of these structures is prose and is never one. Pages whose figures
@@ -722,8 +722,8 @@ def _axis_lines(lines: List[Dict], claims) -> set:
 def _band_cells(boxes: List[List[Dict]], others=None) -> List[Dict]:
     """Text boxes as a grid: boxes that overlap in height form a band of rows, each box a column of
     its band in left-to-right order, each line a row. Every cell keeps its box; a title line is marked.
-    With `others` (a KPI panel: the extents of every text box of its page and its title), a cell whose line
-    has a position also keeps "next_to": the ids of the cells of other boxes whose line is directly next to
+    With `others` (a KPI panel or a roadmap: the extents of every text box of its page and its title), a cell whose
+    line has a position also keeps "next_to": the ids of the cells of other boxes whose line is directly next to
     its own line (_next_to, line to line). A tall box can put two visual rows in one band (front-b p15), so
     a cell's row neighbour need not sit next to it on the page."""
     def extent(lines):
@@ -864,6 +864,6 @@ def _box_structures(blocks: List[Dict], excluded: set, claims) -> List[Dict]:
             continue
         first = kept[0][0]
         page_boxes = list(boxes.values()) + ([titles[page]] if page in titles else [])
-        others = [e for e in map(_extent, page_boxes) if e] if kind == "kpi_panel" else None
+        others = [e for e in map(_extent, page_boxes) if e]
         out.append({"type": kind, **_where(first), "header_rows": 0, "cells": _band_cells(kept, others)})
     return out

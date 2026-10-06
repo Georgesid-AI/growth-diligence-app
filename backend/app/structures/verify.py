@@ -181,20 +181,29 @@ def _is_value(cell: Dict, comma: bool) -> bool:
     return cell_number(cell["text"], comma) is not None and claims.period_cell(cell["text"]) is None
 
 
+def _date_box(structure: Dict, box) -> bool:
+    """Whether a text box holds dates only: each of its lines is a date or a part of one ("2022" / "Q2")."""
+    lines = [c["text"] for c in structure["cells"] if box is not None and c.get("box") == box]
+    return bool(lines) and all(claims.period_cell(text) or is_date_line(text) for text in lines)
+
+
 def _beside(structure: Dict, cell: Dict, others: List[Dict]) -> List[Dict]:
-    """In a KPI panel, those of `others` (cells of other boxes in the cell's grid row) that are directly next to it
-    on the page, its "next_to" (deck-parser.md section 7): a tall box can merge two visual rows into one grid row,
-    and a wrong label or scale is worse than a missing one (structure-labelling.md section 1). Elsewhere all."""
-    if structure.get("type") != "kpi_panel":
+    """In a KPI panel or a roadmap, those of `others` (cells of other boxes in the cell's grid row) that are directly
+    next to it on the page, its "next_to" (deck-parser.md section 7): a tall box can merge two visual rows into one
+    grid row, and a wrong label or scale is worse than a missing one (structure-labelling.md section 1). In a roadmap
+    only those of a date box (issue #56): the cells beside a figure are other boxes, such as the neighbouring
+    paragraph, and only a date box may date it. Elsewhere all."""
+    if structure.get("type") not in BOX_TYPES:
         return others
-    return [c for c in others if _id(c) in (cell.get("next_to") or ())]
+    near = [c for c in others if _id(c) in (cell.get("next_to") or ())]
+    return near if structure["type"] == "kpi_panel" else [c for c in near if _date_box(structure, c.get("box"))]
 
 
 def header_cells(structure: Dict, cell: Dict) -> List[Dict]:
     """The header cells of a value cell, nearest first: its row header (the cells left of it in its
     row that are not values) and the header stack above its column (header rows covering it). In a
-    KPI panel or a roadmap, the cells left of it in its row and the top line of its own box; in a KPI
-    panel only the cells left of it that are directly next to it (_beside)."""
+    KPI panel or a roadmap, the top line of its own box and those cells left of it in its row that are
+    directly next to it; in a roadmap only those of a date box (_beside)."""
     cells, comma = structure["cells"], decimal_comma(structure["cells"])
     left = _beside(structure, cell, sorted((c for c in cells if c["row"] == cell["row"] and c["col"] < cell["col"]
                                             and not _is_value(c, comma)), key=lambda c: -c["col"]))

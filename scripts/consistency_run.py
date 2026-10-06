@@ -33,7 +33,9 @@ with the code it measured.
 --diagnostic also writes <report>_diagnostic.md beside the report (and prints its path, not its text): for every
 unverified item and every item labelled differently between passes, deck, page, type, item id, cell#position,
 the cell's text as sent to the model, Python's values, the reason, then per pass the model's metric, period, unit
-and actual_or_forecast and the verifier's result. It holds deck text, so it runs on the 10 public test decks only:
+and actual_or_forecast and the verifier's result; then every line of the roadmaps read in every pass, with the date
+it is paired with (id, cell and text) and its category in each pass, or no pair. It holds deck text, so it runs on
+the 10 public test decks only:
 any other deck, by file name and SHA-256, is refused before anything is read.
 A failed model call or token count logs one "structure not read" line to stderr, with its reason, HTTP status
 and error type; a structure the daily spend cap or the token cap refuses logs one with reason=spend_cap or
@@ -326,9 +328,17 @@ def _cell_ref(item):
     return f"{item['cell']}#{item['position']}"
 
 
+def _pairs_of(line, reading, listing, texts):
+    """What one pass paired a roadmap line with: the date's id, cell and text as sent and the category, or {}."""
+    dates = {d["id"]: d["cell"] for d in listing["dates"]}
+    return next(({"date": p["date"], "date_cell": dates[p["date"]], "date_text": texts.get(dates[p["date"]], ""),
+                  "category": p["category"]} for p in reading["pairs"] if p["line"] == line["id"]), {})
+
+
 def diagnostic_rows(readings, unverified, types, pages, texts, structures, listings):
     """--diagnostic: one row per unverified item (the report's list), then one per item whose labels differ between
-    passes as the model wrote them. A row carries the cell's text as sent to the model, so it goes to the
+    passes as the model wrote them, then one per line of a roadmap read in every pass (the lines the report counts),
+    with its pair and category in each pass. A row carries the cell's text as sent to the model, so it goes to the
     diagnostic file only, never to the report."""
     def row(section, where, item_id, reason):
         item = next(i for i in listings[where]["items"] if i["id"] == item_id)
@@ -345,6 +355,14 @@ def diagnostic_rows(readings, unverified, types, pages, texts, structures, listi
             seen = [next(_item_key(label) for label in r["labels"] if label["item"] == item["id"]) for r in passes_read]
             if any(s != seen[0] for s in seen[1:]):
                 rows.append(row("disagreeing", where, item["id"], None))
+    for where, passes_read in readings.items():
+        if structures[where]["type"] != "roadmap" or any(r is None for r in passes_read):
+            continue
+        for line in listings[where]["lines"]:
+            paired = [_pairs_of(line, r, listings[where], texts[where]) for r in passes_read]
+            rows.append({"section": "roadmap", "deck": where[0], "page": pages[where], "type": types[where],
+                         "line": line["id"], "cell": line["cell"], "cell_text": texts[where].get(line["cell"], ""),
+                         "same": all(p == paired[0] for p in paired), "passes": paired})
     return rows
 
 
@@ -681,6 +699,12 @@ def write_diagnostic(rows, report_path, passes):
         return "| " + " | ".join(str(c) for c in cells) + " |"
     unverified = [line(r) for r in rows if r["section"] == "unverified"]
     disagreeing = [line(r) for r in rows if r["section"] == "disagreeing"]
+    paired = lambda p: f"{p['date']} {p['date_cell']} {_md(p['date_text'])}: {p['category']}" if p else "no pair"  # noqa: E731
+    roadmap = ["| " + " | ".join(str(c) for c in (r["deck"], r["page"], r["line"], r["cell"], _md(r["cell_text"]),
+                                                   "yes" if r["same"] else "no", *map(paired, r["passes"]))) + " |"
+               for r in rows if r["section"] == "roadmap"]
+    roadmap_head = ("| Deck | Page | Line | Cell | Line text | Same | "
+                    + " | ".join(f"Pass {n}" for n in range(1, passes + 1)) + " |")
     lines = [
         f"# Consistency run {report_path.stem.split('_', 1)[1]}: diagnostic", "",
         "Public test decks only: --diagnostic refuses any other deck. This file holds the text of cells as sent to "
@@ -692,6 +716,12 @@ def write_diagnostic(rows, report_path, passes):
         "## Disagreeing items", "",
         "Every item whose labels differ between passes, as the model wrote them.", "",
         *([head, rule, *disagreeing] if disagreeing else ["Every structure read in every pass was read the same way in each."]),
+        "", "## Roadmap lines", "",
+        "Every text line of the roadmaps read in every pass (the lines the report counts): the date the model paired "
+        "it with (id, cell, text) and the category, per pass; no pair: the model left the line out. Same: the pair "
+        "and the category are the same in every pass.", "",
+        *([roadmap_head, "|---|---:|---|---|---|---|" + "---|" * passes, *roadmap] if roadmap
+          else ["No roadmap was read in every pass."]),
     ]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
