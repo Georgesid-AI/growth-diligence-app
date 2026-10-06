@@ -181,7 +181,7 @@ keeps its source reference (file, slide or page) and every cell keeps its row an
 cited. Structures are stored with the deck's parsed text and deleted with it (§5).
 - Tables and text boxes: read as today (§1).
 - Charts (pptx): read from the chart XML: series, data labels, chart title and axis titles.
-- KPI panels: text boxes with a number beside a short label.
+- KPI panels: text boxes with a number beside a short label, and the label boxes and value boxes next to them.
 - Roadmaps and timelines: text boxes with dates.
 - Hiring, unit-economics and use-of-funds tables: tables classified by header keywords. Any other table is a table.
 - Text that is none of these is prose and is never a structure.
@@ -196,6 +196,31 @@ Fixed on the 10 test decks (2026-10-05):
 - KPI panel: a text box of at most 4 lines, each at most 30 characters, holding a figure that is not a date and a
   word, and not one sentence wrapped over its lines (a line ends on, or the next starts with, a word such as "of",
   "and", "the", or a line ends with a comma). The KPI boxes of a page form one panel.
+- Label boxes, value boxes and a title as label (decisions of 2026-10-06, issue #48). They only join a page's panel: a
+  page with no KPI box has no panel.
+  - Label length: 59 characters. The longest label on the 10 test decks is "Crawling, Serving, Hosting + Processing"
+    (moz p21, 39 characters); 39 plus 50% is 58.5, rounded up to 59. It applies to label boxes and to a title used as
+    a label. A KPI box's lines keep their 30 characters: at 59, bullet sentences on 20 more pages became KPI boxes.
+  - Label box: a text box of at most 4 lines with a word and no figure other than a date, whose lines read as one
+    line are at most the label length. So a label wrapped over two lines counts ("Spend as / % of revenue", front-b
+    p12), and a wrapped sentence longer than that is prose and stays out. It joins the panel when it sits directly
+    next to a KPI box or a value box.
+  - Value box: a text box that holds one figure that is not a date, and no word outside it; a scale word such as
+    "million" is part of the figure ("~13,500", "~82%", "$12 -$13 million"). It joins the panel when a label box sits
+    directly next to it. A chart axis tick (§2) is no value box, and "3/1/15" holds three figures.
+  - Directly next to: in the same band (the two boxes overlap in height), or directly above or below (they overlap in
+    width and are at most a tenth of the page apart, as a table caption), with no other text box between them.
+  - Title as label: when no label box sits next to a value box, a title line (the pptx slide title, the topmost text
+    of a pdf page) directly next to it, in its band or above it, is its label, if the title has no figure other than
+    a date and fits the label length. The value box joins the panel with it (moz p20: "2011 Estimated Revenue" beside
+    "$12 -$13 million").
+  - The title is sent marked as a title: its cell line is `r<row>c<col> title: <text>` (`r1c1 title: 2011 Estimated
+    Revenue`), extending the cell-line format of llm-structure-reading.md §1 in `redact.structure_text`. A title cell
+    is a label, never a value: the item list skips it and the gateway refuses an item line citing it (bad_item_line).
+    The prompt's input section describes the marker (prompt v4, release r7), and
+    backend/tests/test_gateway_data_boundary.py covers the title line (CLAUDE.md rule 14).
+  - CLAUDE.md rule 16 holds: label boxes and titles become KPI panel cells, short, redacted and sent as extracted text
+    with cell positions. A cell over 200 characters and a wrapped sentence still stay out.
 - Roadmap or timeline: at least 3 date labels on the page (a line that is a date with at most two other words), once
   chart axes are left out (3 or more distinct dates, evenly spaced, in one line, row or column), and a product
   keyword (§2) on the page. It holds every box on the page whose lines are at most 60 characters.
@@ -204,6 +229,11 @@ Fixed on the 10 test decks (2026-10-05):
 - Text boxes become a grid: boxes that overlap in height form a band, each box a column of its band, each line a row.
 - On the test decks: 22 KPI panels, 3 timelines (moz p2, buffer p6, tea p11), 1 table, 1 hiring table. Neither pptx
   deck holds a native chart; chart reading is tested on built decks.
+- Recounted with label boxes, value boxes and titles (2026-10-06): the same 22 KPI panels, 3 timelines, 1 table and 1
+  hiring table. 13 KPI panels gain cells: front-b p12, p14, p15, p16, p18; moz p13, p20, p21, p23; zero2hero p11;
+  genesisai-2021 p14; genesisai-2024 p14; tea p9. On moz p20 and p21 every label joins, the nine value boxes join
+  with their labels (p20: "~13,500", "~100", "~$900", "~$100", "~$93"; p21: "~300K", "~82%", "~57%", "~25%"), and
+  the title labels the first value ("2011 Estimated Revenue", "% of Free Trials Converting to Paid").
 
 ## Done when
 - All three formats parse with correct slide/page references.
