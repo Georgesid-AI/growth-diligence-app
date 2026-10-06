@@ -169,6 +169,28 @@ def test_roadmaps_keep_their_header_cells():
     assert item["headers"] == ["r2c2", "r2c1", "r1c3"]
 
 
+def test_a_kpi_value_takes_a_neighbours_scale_only_when_it_sits_directly_next_to_it():
+    """Issue #50 (decision of 2026-10-06): a tall box puts the label row ("Headcount", "Revenue £m") and the value row
+    ("12", "4.5") in one grid row, so "Revenue £m" is a grid neighbour of "12" as well. Its scale is for "4.5", the value
+    right under it; the headcount stays 12."""
+    pptx = pytest.importorskip("pptx")
+    import io
+    from pptx.util import Inches
+    from app.decks import parser
+    prs = pptx.Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    for text, left, top, height in (("Headcount", 1, 1, 0.5), ("Revenue £m", 3.2, 1, 0.5), ("12", 1, 1.6, 0.5),
+                                    ("4.5", 3.2, 1.6, 0.5), ("Runway\n18 months", 5.4, 1, 1.1)):
+        slide.shapes.add_textbox(Inches(left), Inches(top), Inches(2), Inches(height)).text_frame.text = text
+    buf = io.BytesIO()
+    prs.save(buf)
+    panel, = parser.parse_deck(buf.getvalue(), "d.pptx")["structures"]
+    text = {redact.cell_id(c): c["text"] for c in panel["cells"]}
+    assert [text[f"r1c{n}"] for n in range(1, 6)] == ["Headcount", "12", "Revenue £m", "4.5", "Runway"], "one grid row"
+    assert [(text[i["cell"]], i["values"][0]["value"]) for i in structure_items.list_items(panel)["items"]] == \
+        [("12", 12), ("4.5", 4500000), ("18 months", 18)]
+
+
 def test_the_call_is_pinned_to_one_model_with_no_temperature_no_tools_and_the_structure_schema(monkeypatch):
     monkeypatch.setenv("NARRATIVE_MODEL", "claude-opus-5-5")      # the narrative setting does not move it
     result, adapter = _read(_db())
