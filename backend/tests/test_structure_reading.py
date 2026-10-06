@@ -83,6 +83,7 @@ def test_recorded_replies_replay_through_the_gateway_and_the_verifier(fixture):
     cells, _ = redact.redact_structure(structure["cells"], "Zero2Hero", {})
     listed = structure_items.list_items({**structure, "cells": cells})
     text = structure_items.text({**structure, "cells": cells}, listed)
+    assert fixture["match"] in text, "--fake and RecordedAdapter find a recorded reply by this text: it must be today's"
     db = _db()
     result, adapter = _read(db, text, fixture["type"], [fixture["reply"]])
     assert result.status == "read" and adapter.calls == 1, result.reason
@@ -631,10 +632,11 @@ def test_an_other_item_is_listed_as_type_other_and_approved_only_once_its_type_i
     client, db, adapter = _deck_api(monkeypatch)
     _map_revenue(client)
     _upload_deck(client, "02-moz.pdf")
-    ranged, = [c for c in _deck(client)["candidates"] if c.get("origin") == "ai" and c["sources"][0]["cell"] == "r1c2"]
+    p20 = [c for c in _deck(client)["candidates"] if c.get("origin") == "ai" and c["sources"][0].get("page") == 20]
+    ranged, = [c for c in p20 if c["sources"][0]["cell"] == "r1c2"]
     assert (ranged["value"], ranged["value_high"], ranged["ai_label"]) == (12000000, 13000000, "Verified"), \
         "moz p20 \"$12 -$13 million\": one row, twelve to thirteen million"
-    other, = [c for c in _deck(client)["candidates"] if c.get("claim_type") == "other"]
+    other, = [c for c in p20 if c.get("claim_type") == "other"]
     assert (other["value"], other["ai_label"], other["unit"]) == (9, "AI suggestion, not verified", "months")
     url = f"/api/audits/{AUDIT}/decks/candidates/{other['id']}"
     refused = client.put(url, json={"status": "approved"})
