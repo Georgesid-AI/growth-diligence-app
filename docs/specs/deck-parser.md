@@ -54,30 +54,32 @@ hired, launches; of two overlapping keywords the longer one counts):
 - Gross margin: margin, margins
 - Gross profit: gross profit; also a gross margin given as an amount ("Gross margin £1.2M")
 - Costs: direct costs, costs, opex
-- EBITDA: EBITDA, profitability, break-even
+- EBITDA: EBITDA, profitability, profitable, break-even. "Profitable" with a figure in months is months to
+  profitability (below).
 - Net profit: net profit, net income, net loss. A net loss is stored as a negative net profit
   ("Net loss of $2M" → -2,000,000).
 - People: hires, headcount, team, recruitment, attrition
 - Product: launch, release, roadmap, ship, milestone, Q1–Q4, month names
 - Market: TAM, SAM, SOM, addressable market, market size. The bare word "market" does not count.
-- Claim types of issue #45 (decisions of 2026-10-06). The keywords of LTV, CAC, customer life and "profitable" move
-  here from Sales, Retention and EBITDA:
+- Claim types of issue #45 (decisions of 2026-10-06). The keywords of LTV, CAC and customer life move here from
+  Sales and Retention, and "profitable" with a figure in months from EBITDA:
   - LTV: LTV, (customer) lifetime value (a lifetime value, in a currency)
   - CAC: CAC, cost of (paid) acquisition, acquisition cost (in a currency)
   - LTV/CAC: LTV/CAC, also written "LTV / CAC", "LTV:CAC" or "LTV to CAC" (unit x). It is longer than LTV and CAC,
     so it counts over both.
   - Customer lifetime: customer life, customer lifetime (unit months). "Customer lifetime value" is LTV, the
     longer keyword.
-  - Months to profitability: profitable ("Profitable in 10 months", unit months). A line with no figure but a date
-    is a milestone, as an EBITDA line is ("By December, moz is profitable"), and a bare date under it takes its type.
+  - Months to profitability: "profitable" whose figure is a number of months ("Profitable in 10 months"). Any
+    other "profitable" figure or line stays EBITDA: a dated one is an EBITDA milestone ("By December, moz is
+    profitable"; decision of 2026-10-06, so it matches the roadmap category `break_even`, structure-labelling.md §2).
   - Cash: cash, the cash balance ("Cash on hand" / "$7m left", in a currency). "Cash flow" does not count.
   - Burn: burn, net burn, burn rate (in a currency)
   - Runway: runway (unit months)
   - Trials per day: trials per day, trials / day ("# of New Free Trials / Day", a count)
-  On the 10 test decks these change 12 candidates' type and no other candidate (no row appears or disappears):
+  On the 10 test decks these change 11 candidates' type and no other candidate (no row appears or disappears):
   front-b p12 "LTV / CAC" 2.5, 2.6, 4.4 (Sales → LTV/CAC); front-b p15 "$7m left" (Revenue → Cash), "18 months"
-  (EBITDA → Runway), "Profitable in 10 months" (EBITDA → Months to profitability); moz p2 "moz is profitable"
-  (EBITDA → Months to profitability); moz p20 "~$900" (Sales → LTV), "~$100" (Sales → CAC), "~9 Months"
+  (EBITDA → Runway), "Profitable in 10 months" (EBITDA → Months to profitability); moz p20 "~$900" (Sales → LTV),
+  "~$100" (Sales → CAC), "~9 Months"
   (Retention → Customer lifetime), "~100" (Customers → Trials per day); buffer p7 "LTV of $240" (Sales → LTV).
   Three of them also borrow their label from the right box: "$7m left" from "Cash on hand" (was "Seed to Series
   A …"), "18 months" from "Runway *" (was "“Default alive” † Profitable in 10 months") and moz p20 "~100" from "# of
@@ -110,9 +112,9 @@ dates figures only; the period line itself is never a candidate.
 The snippet is the figure's own line. A borrowed label is kept apart and shown below the
 snippet as "Label from: <text>"; a borrowed date as "Date from: <text>".
 A line with no figure becomes a candidate only if it is a product line (launch, release, ship,
-roadmap or milestone, its own or borrowed), an EBITDA line ("Positive EBITDA") or a months to
-profitability line ("Profitable") and it can borrow a date: a roadmap bullet, a break-even
-milestone. A bare date under an EBITDA or months to profitability line ("Q2 2024") takes that type.
+roadmap or milestone, its own or borrowed) or an EBITDA line ("Positive EBITDA") and it can
+borrow a date: a roadmap bullet, a break-even milestone. A bare date under an EBITDA line
+("Q2 2024") takes the EBITDA type.
 Tables: one candidate per table row. The row's figures of one type become a single candidate
 that holds its values by period, each with the date and the text of its column header
 ("Registered Users: 200 (Y/E 22) · 5,000 (Y/E 23) · …"). A lone figure, or figures of different
@@ -277,6 +279,15 @@ Fixed on the 10 test decks (2026-10-05):
   line with no position has no `next_to`. It is layout, stored with the structure and never sent to the model
   (structure-labelling.md §1 uses it for header cells). Roadmap cells keep `next_to` too, measured the same way
   (issue #56): a roadmap figure takes a header from a date box only when it sits directly next to it.
+- Date boxes (decision of 2026-10-06 on issue #47, option a). In a roadmap, a date box is a text box each of whose
+  lines is a date label or a part of one ("2022" / "Q2", "Nov. 2007"). Each line of a text box that is no date box
+  also keeps `date_box`: the box number of the one date box directly next to its text box, measured box to box with
+  the rule above (same band, or directly above or below within a tenth of the page, with no other text box of the
+  page between them). A text box with no date box or two beside it keeps none. Like `next_to` it is layout, stored
+  with the structure and never sent (structure-labelling.md §2 dates paired lines by it).
+  - On the test decks: each of moz p2's 9 paragraphs has one (its date box above or below it); 21 of tea p11's 22
+    bullet lines have one ("2021" / "Q2" and so on). "Mainnet starts" has none: its date box reads "2023" / "Q1-Q2",
+    and "Q1-Q2" is no period part (§2), so the box is no date box. buffer p6 is one box and has none.
 - On the test decks: 22 KPI panels, 3 timelines (moz p2, buffer p6, tea p11), 1 table, 1 hiring table. Neither pptx
   deck holds a native chart; chart reading is tested on built decks.
 - Recounted with label boxes, value boxes and titles (2026-10-06): the same 22 KPI panels, 3 timelines, 1 table and 1

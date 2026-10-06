@@ -73,10 +73,26 @@ media,"). Each box is one column of the grid, so a roadmap row has no "Label fro
 their value. Header cells in the item list follow §1 (issue #56): the top line of the item's own box, and a date box
 directly left of it.
 
-A line has at most one pair, and a date may serve several lines. A milestone's period is the one Python rebuilds from
-its date cell. A milestone has no value, so it is never Verified. A figure in a paired line is dated by its pair: its
-period is the one Python rebuilds from that date cell. The pairing is the model's, so the figure is Verified only
-when §4 rebuilds the same period from its own period cells.
+A line has at most one pair, and a date may serve several lines. A milestone has no value, so it is never Verified.
+
+Position date (decision of 2026-10-06 on issue #47, option a): Python dates a line by its place on the slide. A
+line's position date is its adjacent date line (below), else the date of the one date box directly next to its
+text box (`date_box`, deck-parser.md §7). A date box gives a date when its lines are one date ("Nov. 2007") or a year
+with a quarter, half or month below it ("2021" / "Q2" → 2021-Q2, the two-cell rule of deck-parser.md §2); otherwise
+none. The model still says which lines are milestones, pairs them and gives the category; the prompt and the schema
+are unchanged.
+- A paired line with a position date takes it: the milestone's period and period cells are the position date's, and
+  so is the period of each figure in the line. Python builds that date itself, so the figure is Verified unless it
+  is type Other; a model period that differs counts as "period corrected".
+- A paired line with no position date keeps the model's date, as before: the milestone's period is the one Python
+  rebuilds from the paired date cell, and a figure in the line takes it and is Verified only when §4 rebuilds the
+  same period from its own period cells.
+- A line the model leaves unpaired is no milestone; its figures are dated by §4 as before.
+On the test decks: buffer p6's 6 lines take the date line below them, as its recorded pairs already do (unchanged);
+moz p2's 9 paragraphs take their date box (1981 to July 2011); 21 of tea p11's 22 bullet lines take the quarter of
+their date box ("Gluon wallet" 2021-Q2, "TEA Party dApp released" 2022-Q1) where the model can pair them with the year
+line only ("2021"), and "Mainnet starts" keeps the model's date. tea p11's 5 figures ("Preview 1", "epoch 9",
+"Layer-1", "layer-1 to layer-2") can thus be Verified when the model labels them a claim type and pairs their line.
 
 Adjacent date line: a text line takes the date line directly above or below it in the same text box. A line with a
 date line on each side takes the one in the timeline's date direction (decisions of 2026-10-06), decided once per
@@ -113,6 +129,10 @@ Prompt v5, release r8 (issues #45 and #47, decisions of 2026-10-06), one bump fo
   Visits and "~300K" Email Subscribers).
 - Board seats are `not_a_metric`, the whole count (moz p23 "2 Investors (Michelle +1)", "1 Independent (TBD)").
 - A team member's tenure is `not_a_metric` ("2 weeks ago", "joined 6 months ago" on front-b p12).
+- The share of a market or of a survey that does something is `not_a_metric` (moz p13 "Many (75%+):", "Most
+  (~50%):"); the company's own market share stays `market`.
+- DAU/MAU and other engagement ratios are `product`, like hours (front-b p18 "64%").
+- Integrations and partnerships are `product` (buffer p6 "Integrated in 50 apps").
 Other is never Verified, unchanged (§4).
 
 **4. Verifier.** Values and cells are Python's, so value matching is deleted. What is left:
@@ -140,9 +160,11 @@ their rows keep their labels.
 **6. Agreement.** Agreement per type = items with the same metric and period in every pass ÷ items Python listed,
 over structures read in every pass. The period is compared as the verifier keeps it (start and end dates), and
 `not_a_metric` counts as a metric. Cells and the item count are fixed by code. The ≥95% target applies to this figure
-over all deck types. Roadmaps are reported apart: "roadmap lines: N, same pair and category in every pass: M,
-date rebuilt from cell: K". K counts roadmap items whose period Python rebuilds from their own period cells (§4),
-whatever the pair says. The match rate counts every labelled item, roadmap figures included and milestones left out,
+over all deck types. Roadmaps are reported apart: "roadmap lines: N, dated by position: P, same pair and category
+in every pass: M, same date and category: D, date rebuilt from cell: K". P counts the lines with a position date
+(§2). M compares the model's pairs (the date cell and the category); D compares what the analyst sees: whether the
+line is paired, the period Python keeps for it (§2) and the category. K counts roadmap items whose period Python
+rebuilds from their own period cells (§4), whatever the pair says. The match rate counts every labelled item, roadmap figures included and milestones left out,
 and is also given apart: financial (outside roadmaps) and roadmap (decision of 2026-10-06).
 
 **7. scripts/consistency_run.py.**
@@ -154,8 +176,9 @@ and is also given apart: financial (outside roadmaps) and roadmap (decision of 2
 - Diagnostic columns: deck, page, type, item id, cell#position, cell text, Python's values, reason, then per pass the
   model's metric, period, unit and actual_or_forecast and the verifier's result.
 - The diagnostic also lists every roadmap line of the roadmaps read in every pass (issue #47, the pairing
-  investigation): deck, page, line id, cell, line text, whether the pair and category are the same in every pass,
-  then per pass the date it is paired with (id, cell and text) and the category, or "no pair". The tracked reports
+  investigation): deck, page, line id, cell, line text, its position date (§2) or none, whether the date and category
+  are the same in every pass (D of §6), then per pass the date it is paired with (id, cell and text) and the
+  category, or "no pair". The tracked reports
   of 2026-10-06 give only the count, so they cannot say which lines move, or whether the date or the category does.
 - The token line gives the average of text plus list against 4,000, and `FakeAdapter` replays the new format.
 
@@ -180,14 +203,17 @@ slide); in a roadmap (issue #56) no header from a text box of another box (moz p
 another box). Prompt v5 (issues #45, #47): every new claim type and tie-break is named; the recorded replies give
 moz p20 "~$900", "~9 Months", "~100" and "~$100" and front-b p15 "$7m left", "18 months" and "Profitable in 10
 months" their new types, Verified. Reply: bad, duplicate or missing ids, and bad pairs. Verifier: periods, a
-pair-dated figure, the adjacent date line (one above or below counts; one each side takes the timeline's direction, also under a title line), flags. Roadmaps
+pair-dated figure, the adjacent date line (one above or below counts; one each side takes the timeline's direction, also under a title line), flags. Position
+dates (issue #47): each line's date box on moz p2 and tea p11, tea p11's lines dated per quarter, a paired line
+taking its position date over the model's (milestone and figure, Verified), and the model's date standing where no
+position date exists; buffer p6 unchanged. Roadmaps
 (issue #49, moz p2): one milestone row per dated paragraph, and no "Label from" from another box. Other: refused
 until its type is edited. The 4,000 cap, with the list counted. Boundary: an item line passes only in format, with
 raw text that is a figure inside its cell (else reason `bad_item_line`), and no raw text reaches `llm_structures` or
 a log.
 
-**Open questions.** None. The cash, burn and runway claim types are in deck-parser.md §2 (issue #45). Whether Python
-should pair roadmap lines to dates by position (issue #47) is not decided; the model pairs, as above.
+**Open questions.** None. The cash, burn and runway claim types are in deck-parser.md §2 (issue #45). Roadmap lines
+are dated by position where they can be (§2, issue #47).
 
 **Files.** New: `backend/app/structures/items.py`. Changed: `backend/app/structures/{__init__,verify,redact}.py`,
 `backend/app/llm/{schemas,gateway}.py`, `backend/app/llm/prompts/{structure_reading.md,RELEASE.md}`,
