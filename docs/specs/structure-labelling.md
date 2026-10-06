@@ -23,6 +23,12 @@ hand" (which sits above "$7m left"); p12's five team-tenure values cite neither 
 sustainable trajectory"); p16's 12 figures read from the axis dates no longer cite the chart legend entry "Cash".
 Roadmaps keep their header cells as they are.
 
+A scale read from a neighbouring cell of its row (`£m`, `'000`; llm-structure-reading.md §2) follows the same rule
+(decision of 2026-10-06 on issue #50): in a KPI panel, a neighbouring cell from another box gives its scale only when it
+is directly next to the item's cell. Otherwise a headcount "12" in the grid row of a "Revenue £m" label that sits above
+another value would read as 12 million. No value on the 10 test decks takes its scale from a neighbour, so they are
+unchanged; a built slide shows the case.
+
 An ambiguous reading carries both values, with Python's default first; the model does not choose.
 - `dot_reading`: `2.500` defaults to thousands, unless it carries a k/m/bn suffix (`1.250M` → 1.25m).
 - `bracket_reading`: a bracketed number after text defaults to negative when the text before it in its cell
@@ -124,7 +130,8 @@ Unchanged: §3, §4, §6, §8 and the 400,000-token audit cap.
 
 **9. Tests.** Each is first shown failing on a deliberate violation. Enumeration: several figures per cell, dates
 left out, both defaults, stable ids, no figure from a digit inside a word. Header cells: in a KPI panel a header from
-another box only when directly next to the item (front-b p12, p15 and p16). Reply: bad, duplicate or missing ids, and bad pairs. Verifier: periods, a
+another box only when directly next to the item (front-b p12, p15 and p16), and a neighbour's scale too (a built
+slide). Reply: bad, duplicate or missing ids, and bad pairs. Verifier: periods, a
 pair-dated figure, the adjacent date line (one above or below counts; one each side takes the timeline's direction, also under a title line), flags. Other: refused
 until its type is edited. The 4,000 cap, with the list counted. Boundary: an item line passes only in format, with
 raw text that is a figure inside its cell (else reason `bad_item_line`), and no raw text reaches `llm_structures` or
