@@ -1696,22 +1696,25 @@ def test_the_consistency_report_shows_where_passes_disagree_why_items_are_unveri
     assert report["verifier_match_rate_pct"] == 92.6, "25 of 27 per pass: 24 + 2 + Telegram, less two"
     assert report["counts"]["table"] == {"not_a_metric": 0, "other": 3, "ambiguous": 0, "flags": 0}
 
-    # Tokens: the fake counter is one token per 4 characters of what would be sent.
+    # Tokens: the fake counter is one token per 2 characters of what would be sent, as measured on the live runs of
+    # 2026-10-06, and a read bills what it sends at that rate.
     def count(system=None, payload="", schema=None):
-        return (len(system or "") + len(payload) + (len(json.dumps(schema)) if schema else 0)) // 4
+        return (len(system or "") + len(payload) + (len(json.dumps(schema)) if schema else 0)) // 2
+    assert script.FakeAdapter.CHARS_PER_TOKEN == 2
     system, schema = prompt_store.load(gateway.STRUCTURE_PROMPT).text, schemas.labelling_output_schema()
     empty = cache.canonical_json({"type": "table", "text": ""})
-    texts = []
+    sent = []
     for structure in parser.parse_deck((DECKS / "05-zero2hero.pdf").read_bytes(), "05-zero2hero.pdf")["structures"]:
         cells = redact.redact_structure(structure["cells"], "05-zero2hero", {}, ("Consistency run", "CONSISTENCY"))[0]
         redacted = {**structure, "cells": cells}
-        texts.append(structure_items.text(redacted, structure_items.list_items(redacted)))
+        sent.append((structure["type"], structure_items.text(redacted, structure_items.list_items(redacted))))
+    billed = [count(system, cache.canonical_json({"type": kind, "text": text}), schema) for kind, text in sent]
     assert report["tokens"] == {
         "fixed_prompt": count(system, empty, schema), "system_prompt": count(system, empty) - count(payload=empty),
         "output_schema": count(payload=empty, schema=schema) - count(payload=empty),
         "empty_message": count(payload=empty),
-        "text_and_items_avg": round(sum(count(payload=text) for text in texts) / 5, 1), "structures_counted": 5,
-        "billed_input_per_model_read": 1000.0}
+        "text_and_items_avg": round(sum(count(payload=text) for _, text in sent) / 5, 1), "structures_counted": 5,
+        "billed_input_per_model_read": round(sum(billed) / 5, 1)}, "each structure read once per pass"
 
     path = script.write_report(report, tmp_path, 3, fake=True)
     text = path.read_text(encoding="utf-8")
@@ -1731,7 +1734,7 @@ def test_the_consistency_report_shows_where_passes_disagree_why_items_are_unveri
             f"{tokens['output_schema']:,}, empty message {tokens['empty_message']:,})",
             f"- Structure text and item list, average of 5 structures: {tokens['text_and_items_avg']:,} against the "
             "gateway's 4,000-token cap",
-            "- Billed input per model read: 1,000.0"):
+            f"- Billed input per model read: {tokens['billed_input_per_model_read']:,}"):
         assert line in text, line
     assert script.summary(report).startswith("Agreement 97.4% (target 95.0%: met; old method 94.7%); verified 92.6%")
 
@@ -1873,7 +1876,11 @@ def test_the_live_run_drops_its_scratch_database_in_the_event_loop_it_ran_in(mon
 
     async def live_run(decks, passes, db, adapter=None, **kwargs):
         await db.client.list_database_names()            # a motor call binds the client to this loop, as an insert does
-        return await run(decks, passes, script.MemoryDB(), script.FakeAdapter())     # no MongoDB, no live API
+        return await run(decks, passes, script.MemoryDB(), Billed())     # no MongoDB, no live API
+
+    class Billed(script.FakeAdapter):
+        def complete(self, **kwargs):
+            return super().complete(**kwargs)[0], 1000, 20          # a round bill per read, so the sums show
     monkeypatch.setattr(script, "run", live_run)
     monkeypatch.setattr(script, "REPORTS", tmp_path / "docs" / "test-runs")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "not-used")
