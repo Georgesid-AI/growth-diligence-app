@@ -363,12 +363,14 @@ def candidate_from_item(item: Dict, structure: Dict, deck: Dict, model_type: Opt
     the figure's position in it rides beside). The snippet is the cell's own text (as the deck states it); the
     period keeps the text of its period cells. An ambiguous figure carries both readings, Python's default first
     and the row's value (structure-labelling.md section 1): the analyst confirms it or uses Edit. The source
-    names the type Python sent: a type the model corrected is only logged (`model_type` is not used)."""
+    names the type Python sent: a type the model corrected is only logged (`model_type` is not used). "Label
+    from" is a header cell in the row's grid row; in a roadmap only one of its own text box, since the cells
+    beside it belong to other boxes, such as the neighbouring paragraph (structure-labelling.md section 2)."""
     by_id = {f"r{c['row']}c{c['col']}": c for c in structure["cells"]}
     cell = by_id.get(item["value_cell"]) or {}
     period_cells = [by_id[c]["text"] for c in item.get("period_cells") or () if c in by_id]
-    label = next((h["text"] for h in verify.header_cells(structure, cell) if h["row"] == cell.get("row")), None) \
-        if cell else None
+    label = next((h["text"] for h in verify.header_cells(structure, cell) if h["row"] == cell.get("row")
+                  and (structure.get("type") != "roadmap" or h.get("box") == cell.get("box"))), None) if cell else None
     unit = item.get("unit_other") if item.get("unit") == "other" else item.get("unit")   # "other": the ISO code
     target, stated = _target_date(item.get("period")), (" ".join(period_cells) or item.get("period"))
     source = {"file": deck["file"], **_where(structure), "kind": "structure", "structure": structure["type"],

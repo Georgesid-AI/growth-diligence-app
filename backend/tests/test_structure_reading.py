@@ -83,6 +83,7 @@ def test_recorded_replies_replay_through_the_gateway_and_the_verifier(fixture):
     cells, _ = redact.redact_structure(structure["cells"], "Zero2Hero", {})
     listed = structure_items.list_items({**structure, "cells": cells})
     text = structure_items.text({**structure, "cells": cells}, listed)
+    assert fixture["match"] in text, "--fake and RecordedAdapter find a recorded reply by this text: it must be today's"
     db = _db()
     result, adapter = _read(db, text, fixture["type"], [fixture["reply"]])
     assert result.status == "read" and adapter.calls == 1, result.reason
@@ -162,11 +163,16 @@ def test_front_b_a_kpi_value_cites_a_label_from_another_box_only_when_it_sits_di
 
 
 def test_roadmaps_keep_their_header_cells():
-    """The guard is a KPI panel's: moz p2's "1.1M" still cites the lines left of it in its row and its box's top line."""
+    """The guard is a KPI panel's: moz p2's "1.1M" still cites the cells left of it in its row (its paragraph is one
+    cell since issue #49, so it is its box's top line), and tea p11's "layer-2" the cell left of it and its box's top
+    line."""
     pytest.importorskip("pdfplumber")
     roadmap = _deck_structure("02-moz.pdf", 2, "roadmap")
     item, = [i for i in structure_items.list_items(roadmap)["items"] if i["raw"] == "1.1M"]
-    assert item["headers"] == ["r2c2", "r2c1", "r1c3"]
+    assert item["headers"] == ["r1c2", "r1c1"]
+    tea = _deck_structure("10-tea.pdf", 11, "roadmap")
+    item, = [i for i in structure_items.list_items(tea)["items"] if i["raw"] == "2"]
+    assert (v._text(tea, item["cell"]), item["headers"]) == ("layer-1 to layer-2", ["r10c1", "r9c2"])
 
 
 def test_a_kpi_value_takes_a_neighbours_scale_only_when_it_sits_directly_next_to_it():
@@ -626,10 +632,11 @@ def test_an_other_item_is_listed_as_type_other_and_approved_only_once_its_type_i
     client, db, adapter = _deck_api(monkeypatch)
     _map_revenue(client)
     _upload_deck(client, "02-moz.pdf")
-    ranged, = [c for c in _deck(client)["candidates"] if c.get("origin") == "ai" and c["sources"][0]["cell"] == "r1c2"]
+    p20 = [c for c in _deck(client)["candidates"] if c.get("origin") == "ai" and c["sources"][0].get("page") == 20]
+    ranged, = [c for c in p20 if c["sources"][0]["cell"] == "r1c2"]
     assert (ranged["value"], ranged["value_high"], ranged["ai_label"]) == (12000000, 13000000, "Verified"), \
         "moz p20 \"$12 -$13 million\": one row, twelve to thirteen million"
-    other, = [c for c in _deck(client)["candidates"] if c.get("claim_type") == "other"]
+    other, = [c for c in p20 if c.get("claim_type") == "other"]
     assert (other["value"], other["ai_label"], other["unit"]) == (9, "AI suggestion, not verified", "months")
     url = f"/api/audits/{AUDIT}/decks/candidates/{other['id']}"
     refused = client.put(url, json={"status": "approved"})
@@ -1342,6 +1349,102 @@ def test_a_roadmaps_pairs_become_milestone_rows_dated_by_their_date_cells(monkey
         ("r5c1", "product", "2011-10", "October 2011", "AI suggestion, not verified"),
         ("r7c1", "product", "2011-12", "December 2011", "AI suggestion, not verified"),
         ("r9c1", "product", "2012-01", "January 2012", "AI suggestion, not verified")]
+
+
+# moz p2's 9 dated paragraphs, each with its date, as the page prints them (issue #49).
+MOZ_P2_MILESTONES = [
+    ("Rand starts working w/ Gillian building websites for small, local businesses", "1997"),
+    ("Deeply in debt, and failing to get traffic to clients’ sites, Rand starts the SEOmoz Blog as part of learning the "
+     "SEO process.", "2004"),
+    ("SEOmoz takes an investment of $1.1M from Ignition Partners & Curious Office", "Nov. 2007"),
+    ("Moz’scollection of tools becomes a singular, campaign-based web app. Prices rise to $99 / $499 / $1999 per month.",
+     "Sept. 2010"),
+    ("Gillian (Rand’s Mom) founds the company that will become SEOmoz", "1981"),
+    ("Rand drops out of UW, 2 classes from graduation to work full time w/ Gillian", "2001"),
+    ("SEOmoz launches its first subscription software product, “PRO” for $39/month", "Feb. 2007"),
+    ("Linkscape, SEOmoz’sweb index and link graph, launches. By December, mozis profitable.", "Oct. 2008"),
+    ("SEOmozis moving from just “SEO” to social media, content marketing, analytics, local and video. To this end, we’ve "
+     "acquired “Moz.com.”", "July 2011"),
+]
+
+
+def column_dates(sent):
+    """Issue #49: the reply the live reading gave on moz p2, as a rule: every text line paired with the nearest date
+    cell in its grid column; every item not_a_metric."""
+    listed = redact.parse_item_lines(redact.split_items(sent["text"])[1] or [])
+
+    def at(cell):
+        row, col = cell[1:].split("c")
+        return int(row), int(col)
+    pairs = []
+    for line in listed["lines"]:
+        row, col = at(line["cell"])
+        dates = [d for d in listed["dates"] if at(d["cell"])[1] == col]
+        if dates:
+            date = min(dates, key=lambda d: abs(at(d["cell"])[0] - row))
+            pairs.append({"line": line["id"], "date": date["id"], "category": "launch"})
+    return {**unlabelled(sent), "pairs": pairs}
+
+
+class ColumnDatesAdapter(RecordedAdapter):
+    """A roadmap read with column_dates, whatever its text; every other structure as RecordedAdapter reads it."""
+
+    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema):
+        sent = json.loads(user_payload)
+        if sent["type"] != "roadmap":
+            return super().complete(model=model, system=system, user_payload=user_payload, max_tokens=max_tokens,
+                                    temperature=temperature, json_schema=json_schema)
+        self._replies = [json.dumps(column_dates(sent))]
+        self.calls_before = self.calls
+        return t.FakeAdapter.complete(self, model=model, system=system, user_payload=user_payload,
+                                      max_tokens=max_tokens, temperature=temperature, json_schema=json_schema)
+
+
+def _moz_p2_roadmap_rows(monkeypatch):
+    """The approval rows of moz p2's roadmap, read with column_dates."""
+    client, _, _ = _deck_api(monkeypatch)
+    adapter = ColumnDatesAdapter()
+    monkeypatch.setattr(gateway, "AnthropicAdapter", lambda *a, **k: adapter)
+    _map_revenue(client)
+    _upload_deck(client, "02-moz.pdf")
+    return [c for c in _deck(client)["candidates"] if c.get("origin") == "ai"
+            and c["sources"][0]["structure"] == "roadmap" and c["sources"][0].get("page") == 2]
+
+
+def test_moz_p2_gives_one_milestone_row_per_dated_paragraph(monkeypatch):
+    """Issue #49: read as the live reading read it, every line paired with the date in its column, a row per wrapped
+    line gave 40 milestone rows for the page's 9 dated paragraphs. Each paragraph is one row, with its date."""
+    rows = [c for c in _moz_p2_roadmap_rows(monkeypatch) if c["value"] is None]
+    assert sorted((c["snippet"], c["period_text"]) for c in rows) == sorted(MOZ_P2_MILESTONES)
+
+
+def test_a_moz_p2_roadmap_row_takes_no_label_from_another_box(monkeypatch):
+    """Issue #49: "Label from" was the cell left of the row in its grid row, a line of the neighbouring paragraph
+    ("just “SEO” to social media," showed "Label from: index and link graph,")."""
+    roadmap = _deck_structure("02-moz.pdf", 2, "roadmap")
+    box_of = {f"r{c['row']}c{c['col']}": c["box"] for c in roadmap["cells"]}
+    own = {}
+    for c in roadmap["cells"]:
+        own.setdefault(c["box"], set()).add(c["text"])
+    rows = _moz_p2_roadmap_rows(monkeypatch)
+    assert rows and [(c["snippet"], c["label_from"]) for c in rows
+                     if c["label_from"] and c["label_from"] not in own[box_of[c["cell"]]]] == []
+
+
+def test_a_roadmap_row_takes_no_label_from_another_box_while_a_kpi_value_keeps_the_label_beside_it():
+    """Issue #49: in a roadmap the cell left of a row in its grid row is another text box. In a KPI panel the label
+    beside the value is its label, and it stays."""
+    roadmap = {"type": "roadmap", "header_rows": 0, "cells": [
+        {"row": 1, "col": 1, "text": "Launch the API", "box": 1}, {"row": 1, "col": 2, "text": "Hire 5 engineers", "box": 2},
+        {"row": 2, "col": 1, "text": "Q3 2025", "box": 1}, {"row": 2, "col": 2, "text": "Q4 2025", "box": 2}]}
+    rows = _rows(roadmap, [_label("i1", "people", unit="count")], pairs=[{"line": "t2", "date": "d2", "category": "hiring"}])
+    assert [(r["cell"], r["value"], r["label_from"]) for r in rows] == [("r1c2", 5, None), ("r1c2", None, None)], \
+        "the figure and the milestone of the line"
+    kpi = {"type": "kpi_panel", "header_rows": 0, "cells": [
+        {"row": 1, "col": 1, "text": "Gross churn", "box": 1, "next_to": ["r1c2"]},
+        {"row": 1, "col": 2, "text": "4.5%", "box": 2, "next_to": ["r1c1"]}]}
+    row, = _rows(kpi, [_label("i1", "retention", unit="%")])
+    assert row["label_from"] == "Gross churn"
 
 
 @pytest.mark.parametrize("value, high, known, found", [
