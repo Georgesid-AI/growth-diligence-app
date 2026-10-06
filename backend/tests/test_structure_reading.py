@@ -94,6 +94,61 @@ def test_recorded_replies_replay_through_the_gateway_and_the_verifier(fixture):
     assert {"verified": statuses.count("verified"), "suggestion": statuses.count("suggestion")} == fixture["expected"]
 
 
+NEW_TYPES = {("02-moz.pdf", 20): {"~100": "trials_per_day", "~$900": "ltv", "~9 Months": "customer_lifetime",
+                                   "~$100": "cac"},
+             ("01-front-b.pptx", 15): {"$7m left": "cash", "18 months": "runway",
+                                       "Profitable in 10 months": "months_to_profitability"}}
+
+
+@pytest.mark.parametrize("where", list(NEW_TYPES), ids=lambda w: f"{w[0]}-p{w[1]}")
+def test_the_recorded_replies_give_the_new_claim_types_and_they_are_verified(where):
+    """Issue #45 (decisions of 2026-10-06): the recorded replies label these figures with the new claim types, the
+    gateway accepts them, and the verifier verifies them; type Other they were never Verified."""
+    pytest.importorskip("pdfplumber")
+    pytest.importorskip("pptx")
+    fixture, = [f for f in _fixtures() if (f["file"], f["page"]) == where and f["type"] == "kpi_panel"]
+    structure = _structure(fixture)
+    cells, _ = redact.redact_structure(structure["cells"], "Zero2Hero", {})
+    listed = structure_items.list_items({**structure, "cells": cells})
+    result, _ = _read(_db(), structure_items.text({**structure, "cells": cells}, listed), "kpi_panel", [fixture["reply"]])
+    assert result.status == "read", result.reason
+    checked = verify.verify(structure, listed, result.labels, result.pairs)
+    text = {redact.cell_id(c): c["text"] for c in structure["cells"]}
+    got = {text[i["value_cell"]]: (i["metric"], i["status"]) for i in checked["items"] if text[i["value_cell"]] in NEW_TYPES[where]}
+    assert got == {cell: (metric, verify.VERIFIED) for cell, metric in NEW_TYPES[where].items()}
+
+
+def test_tea_p11_milestones_take_the_quarter_of_their_date_box_over_the_year_the_model_paired():
+    """Decision of 2026-10-06 on issue #47 (structure-labelling.md section 2): the recorded reply pairs each bullet with
+    the year line it can see; Python dates it by the date box beside it. "Mainnet starts" sits beside "2023" /
+    "Q1-Q2", no date box, so the year it is paired with stands."""
+    pytest.importorskip("pdfplumber")
+    fixture, = [f for f in _fixtures() if (f["file"], f["page"]) == ("10-tea.pdf", 11)]
+    structure = _structure(fixture)
+    cells, _ = redact.redact_structure(structure["cells"], "Zero2Hero", {})
+    listed = structure_items.list_items({**structure, "cells": cells})
+    result, _ = _read(_db(), structure_items.text({**structure, "cells": cells}, listed), "roadmap", [fixture["reply"]])
+    assert result.status == "read", result.reason
+    text = {redact.cell_id(c): c["text"] for c in structure["cells"]}
+    checked = verify.verify(structure, listed, result.labels, result.pairs)
+    assert {text[m["value_cell"]]: m["period"] for m in checked["items"] if "line" in m} == {
+        "Preview 1 version launch": "2021-Q3", "Gluon wallet": "2021-Q2",
+        "Begin Go2Market strategy starting with miners'": "2021-Q3", "Web3 Foundation Open Grant": "2021-Q2",
+        "Migrating TEA runtime to Amazon Nitro": "2021-Q2", "Testnet starts": "2021-Q3",
+        "Seed round secured including investment": "2021-Q2", "Public mining in preview mode": "2021-Q4",
+        "Testnet mining up to epoch 9": "2022-Q1", "Rich dApps running on network": "2021-Q4",
+        "TEA Party dApp released": "2022-Q1", "Majority of business logic migrated from": "2022-Q2",
+        "Layer-1 EVM smart contract compatibility": "2022-Q3", "TEA framework dev guide released": "2022-Q2",
+        "Post-seed round secured": "2022-Q2", "Last testing epochs before mainnet": "2022-Q4",
+        "Mainnet starts": "2023", "Migrate to AWS Nitro for all nodes": "2022-Q4"}
+    gluon = next(m for m in checked["items"] if "line" in m and text[m["value_cell"]] == "Gluon wallet")
+    assert (gluon["date"], gluon["period_cells"]) == ("d1", ["r2c1", "r1c1"]), "Q2 under 2021, beside its box"
+    product = [{**label, "metric": "product", "unit": "count"} if label["item"] == "i1" else label for label in result.labels]
+    preview = next(i for i in verify.verify(structure, listed, product, result.pairs)["items"] if i.get("item") == "i1")
+    assert (preview["status"], preview["period"], preview["period_cells"]) == \
+        (verify.VERIFIED, "2021-Q3", ["r2c4", "r1c4"]), "a figure in a line dated by position is Verified"
+
+
 def _moz_text(page):
     from app.decks import parser
     deck = parser.parse_deck((DECKS / "02-moz.pdf").read_bytes(), "02-moz.pdf")
@@ -162,17 +217,27 @@ def test_front_b_a_kpi_value_cites_a_label_from_another_box_only_when_it_sits_di
     assert len(p16) == 12 and not [i for i in p16 if "Cash" in i[2]], "a chart legend entry never labels an axis date"
 
 
-def test_roadmaps_keep_their_header_cells():
-    """The guard is a KPI panel's: moz p2's "1.1M" still cites the cells left of it in its row (its paragraph is one
-    cell since issue #49, so it is its box's top line), and tea p11's "layer-2" the cell left of it and its box's top
-    line."""
+def test_a_roadmap_figure_takes_headers_from_its_own_box_and_a_date_box_directly_left_of_it():
+    """Issue #56 (decision of 2026-10-06), structure-labelling.md section 1: in a roadmap the cells left of an item in
+    its grid row are other text boxes, such as the neighbouring paragraph. A header comes from the top line of the
+    item's own box, or from a date box ("2022" / "Q2") left of it and in its next_to. Only header text comes from the
+    figure's own box; a date box directly next to it may still date it."""
     pytest.importorskip("pdfplumber")
-    roadmap = _deck_structure("02-moz.pdf", 2, "roadmap")
-    item, = [i for i in structure_items.list_items(roadmap)["items"] if i["raw"] == "1.1M"]
-    assert item["headers"] == ["r1c2", "r1c1"]
+    pytest.importorskip("pptx")
+    moz = _deck_structure("02-moz.pdf", 2, "roadmap")
+    assert [(i["raw"], i["headers"]) for i in structure_items.list_items(moz)["items"]] == [
+        ("1.1M", []), ("99", []), ("499", []), ("1999", []), ("2", []), ("39", [])], "no neighbouring paragraph"
     tea = _deck_structure("10-tea.pdf", 11, "roadmap")
-    item, = [i for i in structure_items.list_items(tea)["items"] if i["raw"] == "2"]
-    assert (v._text(tea, item["cell"]), item["headers"]) == ("layer-1 to layer-2", ["r10c1", "r9c2"])
+    listed = structure_items.list_items(tea)["items"]
+    assert [(i["cell"], i["headers"]) for i in listed] == [
+        ("r1c3", []), ("r7c3", []), ("r9c3", []), ("r10c2", ["r10c1", "r9c2"]), ("r10c2", ["r10c1", "r9c2"])], \
+        "i4 and i5 keep Q2, directly left in its date box; i1-i3 cite no box beside them on the left"
+    cells = {redact.cell_id(c): c for c in tea["cells"]}
+    assert cells["r10c2"]["next_to"] == ["r10c1", "r10c4"], "Q3 is directly right of the line, another bullet's date"
+    rebuilt = [verify.rebuild(tea, cells[i["cell"]]) for i in listed]
+    assert [r and r[0] for r in rebuilt] == [None, None, None, "2022-Q2", "2022-Q2"]
+    buffer = _deck_structure("03-buffer.pptx", 6, "roadmap")
+    assert {tuple(i["headers"]) for i in structure_items.list_items(buffer)["items"]} == {("r1c1",)}, "one box: its top line"
 
 
 def test_a_kpi_value_takes_a_neighbours_scale_only_when_it_sits_directly_next_to_it():
@@ -195,6 +260,16 @@ def test_a_kpi_value_takes_a_neighbours_scale_only_when_it_sits_directly_next_to
     assert [text[f"r1c{n}"] for n in range(1, 6)] == ["Headcount", "12", "Revenue £m", "4.5", "Runway"], "one grid row"
     assert [(text[i["cell"]], i["values"][0]["value"]) for i in structure_items.list_items(panel)["items"]] == \
         [("12", 12), ("4.5", 4500000), ("18 months", 18)]
+
+
+@pytest.mark.parametrize("kind, scale", [("kpi_panel", 1e6), ("roadmap", 1.0)])
+def test_a_roadmap_figure_takes_no_scale_from_a_text_box_beside_it(kind, scale):
+    """Issue #56 (structure-labelling.md section 1): in a roadmap a neighbour's scale follows the header rule, so only
+    a date box beside a figure counts, and a date box holds no scale word. The same cells in a KPI panel: "Revenue
+    £m" directly next to "12" gives its scale."""
+    cells = [{"row": 1, "col": 1, "text": "Revenue £m", "box": 1, "next_to": ["r1c2"]},
+             {"row": 1, "col": 2, "text": "12", "box": 2, "next_to": ["r1c1"]}]
+    assert verify.scale_factor({"type": kind, "cells": cells}, cells[1]) == scale
 
 
 def test_the_call_is_pinned_to_one_model_with_no_temperature_no_tools_and_the_structure_schema(monkeypatch):
@@ -490,14 +565,16 @@ def test_each_schemas_hash_enters_the_cache_key_of_its_own_type(monkeypatch):
     assert (moved.cache_hit, adapter.calls) == (False, 1) and moved.key != mapping.key
 
 
-def test_the_prompt_is_v4_and_names_every_label_field_metric_category_and_tie_break():
+def test_the_prompt_is_v5_and_names_every_label_field_metric_category_and_tie_break():
     """The prompt lists exactly the label fields, every metric (other and not_a_metric too), the roadmap categories
     and the tie-breaks; a unit is one of the 20 listed currency codes, or "other" with its ISO code in unit_other.
-    The column-mapping section keeps its own item fields. v4 (issue #48): its input section reads a title cell."""
+    The column-mapping section keeps its own item fields. v4 (issue #48): its input section reads a title cell. v5
+    (issues #45 and #47, decisions of 2026-10-06): the new claim types and tie-breaks."""
     import re
+    from app.decks import claims
     from app.llm import prompt_store, schemas
     prompt = prompt_store.load(gateway.STRUCTURE_PROMPT)
-    assert prompt.version == "v4"
+    assert prompt.version == "v5"
     text = prompt.text
     given = text.split("# The input")[1].split("# Deck structures")[0]
     assert "`r1c1 title: 2011 Estimated Revenue`" in given and "label of the value" in given
@@ -510,10 +587,26 @@ def test_the_prompt_is_v4_and_names_every_label_field_metric_category_and_tie_br
     assert "`other`" in unit_other and "ISO code" in unit_other and "null" in unit_other
     for word in [*schemas.LABEL_METRICS, *schemas.ROADMAP_CATEGORIES]:
         assert f"`{word}`" in text, word
+    metric = re.search(r"^- `metric`:(.*?)(?=^- `)", fields, re.M | re.S).group(1)
+    assert all(f"`{m}`" in metric for m in claims.CLAIM_TYPES), "the metric field lists every claim type"
     ties = text.split("Tie-breaks:")[1].split("\n\n")[0]
-    assert "time figures are `product`, unless a user count is named" in ties
+    assert "time figures are `product`, unless a user count is named or a tie-break below names them" in ties
     assert '"% of marketplace" and market share are `market`' in ties
     assert "commission and take rate are `sales`" in ties
+    assert "monthly revenue, MRR, ARR and revenue run rate are `revenue`" in ties
+    for new in ("cash", "burn", "runway", "ltv", "cac", "customer_lifetime", "ltv_cac", "trials_per_day",
+                "months_to_profitability"):
+        assert re.search(rf"^- [^\n]* `{new}`[;.]$", ties, re.M), f"{new} has its tie-break line"
+    assert ("followers and other social counts, visits, email subscribers and community members on a channel are "
+            "`other`, not `users`") in " ".join(ties.split())
+    assert "board seats are `not_a_metric`, the whole count" in ties
+    assert "a team member's tenure" in ties and re.search(r"tenure[^\n]* is `not_a_metric`", ties)
+    flat = " ".join(ties.split())
+    assert "the share of a market or of a survey that does something" in flat and \
+        re.search(r"share of a market or of a survey[^;]* is `not_a_metric`; the company's own market share stays "
+                  r"`market`", flat), "decision of 2026-10-06 on issue #47"
+    assert "DAU/MAU and other engagement ratios are `product`, like hours" in flat
+    assert "integrations and partnerships are `product`" in flat
     mapping = text.split("# Column mapping")[1].split("Each item has exactly these fields:")[1]
     heads = [line.split(":")[0] for line in mapping.splitlines() if line.startswith("- `")]
     named = [name for head in heads for name in re.findall(r"`(\w+)`", head)]
@@ -632,12 +725,16 @@ def test_an_other_item_is_listed_as_type_other_and_approved_only_once_its_type_i
     client, db, adapter = _deck_api(monkeypatch)
     _map_revenue(client)
     _upload_deck(client, "02-moz.pdf")
-    p20 = [c for c in _deck(client)["candidates"] if c.get("origin") == "ai" and c["sources"][0].get("page") == 20]
-    ranged, = [c for c in p20 if c["sources"][0]["cell"] == "r1c2"]
+    ai = [c for c in _deck(client)["candidates"] if c.get("origin") == "ai"]
+    ranged, = [c for c in ai if c["sources"][0].get("page") == 20 and c["sources"][0]["cell"] == "r1c2"]
     assert (ranged["value"], ranged["value_high"], ranged["ai_label"]) == (12000000, 13000000, "Verified"), \
         "moz p20 \"$12 -$13 million\": one row, twelve to thirteen million"
-    other, = [c for c in p20 if c.get("claim_type") == "other"]
-    assert (other["value"], other["ai_label"], other["unit"]) == (9, "AI suggestion, not verified", "months")
+    assert not [c for c in ai if c["sources"][0].get("page") == 20 and c.get("claim_type") == "other"], \
+        "prompt v5 (issue #45): the months figure is a customer lifetime"
+    other, = [c for c in ai if c["sources"][0].get("page") == 2 and c["sources"][0]["cell"] == "r4c3"
+              and c["value"] is not None]                       # its paragraph is also a milestone, with no value
+    assert (other["claim_type"], other["value"], other["ai_label"], other["currency"]) == \
+        ("other", 39, "AI suggestion, not verified", "USD"), "moz p2: the price of PRO, labelled other"
     url = f"/api/audits/{AUDIT}/decks/candidates/{other['id']}"
     refused = client.put(url, json={"status": "approved"})
     assert refused.status_code == 400 and "type" in refused.json()["detail"]
@@ -1876,9 +1973,11 @@ def test_roadmap_lines_are_reported_apart_with_their_pairs_and_dates_rebuilt_fro
                              {"line": "t16", "date": "d4" if n == 3 else "d3", "category": "launch"}]
             return json.dumps(body), tokens_in, tokens_out
     report = asyncio.run(script.run(["03-buffer.pptx", "05-zero2hero.pdf", "10-tea.pdf"], 3, script.MemoryDB(), Tea()))
-    assert (report["roadmap_lines"], report["roadmap_same_pair"], report["roadmap_dates_rebuilt"]) == (36, 35, 27), \
-        "Buffer: 6 lines, all paired alike, all dated from the date line below them; TEA: 30 lines, one paired " \
-        "with another date in pass 3, 21 with a period in their own cells or headers"
+    assert (report["roadmap_lines"], report["roadmap_dated_by_position"], report["roadmap_same_pair"],
+            report["roadmap_same_date"], report["roadmap_dates_rebuilt"]) == (36, 35, 35, 36, 25), \
+        "Buffer: 6 lines, all paired alike, all dated from the date line below them; TEA: 30 lines, 29 with a " \
+        "position date, one paired with another year in pass 3 but dated 2021-Q4 by its date box in every pass, " \
+        "19 with a period in their own cells or headers (issue #56: from another box only a date box directly left)"
     # The match rate keeps roadmap figures (milestones left out) and is also given apart: financial (outside
     # roadmaps: zero2hero's 26 a pass) and roadmap (Buffer's 7 pair-dated figures a pass, each paired with the date
     # line its own timeline gives it).
@@ -1886,10 +1985,11 @@ def test_roadmap_lines_are_reported_apart_with_their_pairs_and_dates_rebuilt_fro
             report["verifier_match_rate_roadmap_pct"]) == (100.0, 100.0, 100.0), "99 of 99; 78 of 78; 21 of 21"
     assert "verified 100.0% (financial 100.0%, roadmap 100.0%)" in script.summary(report)
     assert report["agreement_pct"]["roadmap"] == 100.0, "agreement counts a roadmap's items like any other"
-    assert "roadmap lines: 36, same pair and category in every pass: 35, date rebuilt from cell: 27;" in \
-        script.summary(report)
+    line = ("roadmap lines: 36, dated by position: 35, same pair and category in every pass: 35, same date and "
+            "category: 36, date rebuilt from cell: 25")
+    assert f"{line};" in script.summary(report)
     text = script.write_report(report, tmp_path, 3, fake=True).read_text(encoding="utf-8")
-    assert "- Roadmap lines: 36, same pair and category in every pass: 35, date rebuilt from cell: 27" in text
+    assert f"- R{line[1:]}" in text
     for line in ("- Match rate: 100.0%", "- Match rate, financial (outside roadmaps): 100.0%",
                  "- Match rate, roadmap (figures in roadmaps, milestones left out): 100.0%"):
         assert line in text.splitlines(), line
@@ -2279,6 +2379,57 @@ def test_the_diagnostic_gives_the_cell_text_and_every_pass_of_each_unverified_an
     assert "5K Users" not in report_text and "£ 150,000" not in report_text, "the report itself holds no cell text"
 
 
+def test_the_diagnostic_lists_every_roadmap_line_with_its_pair_and_category_in_each_pass(tmp_path):
+    """Issue #47, the pairing investigation (structure-labelling.md section 7): every line of a roadmap read in every
+    pass, whether its pair and category are the same in every pass, then per pass the date it is paired with (id,
+    cell, text) and the category, or no pair. The report gives the count only and is unchanged."""
+    pytest.importorskip("pdfplumber")
+    script = _consistency_script()
+
+    class Tea(script.FakeAdapter):
+        def __init__(self):
+            super().__init__()
+            self.calls = {}
+
+        def complete(self, **kwargs):
+            reply, tokens_in, tokens_out = super().complete(**kwargs)
+            sent = json.loads(kwargs["user_payload"])
+            if sent["type"] != "roadmap":
+                return reply, tokens_in, tokens_out
+            n = self.calls[sent["text"]] = self.calls.get(sent["text"], 0) + 1
+            body = json.loads(reply)
+            body["pairs"] = [{"line": "t4", "date": "d1", "category": "launch"},
+                             {"line": "t16", "date": "d4" if n == 3 else "d3", "category": "launch"}]
+            return json.dumps(body), tokens_in, tokens_out
+    rows = []
+    report = asyncio.run(script.run(["10-tea.pdf"], 3, script.MemoryDB(), Tea(), diagnostic=rows))
+    assert report == asyncio.run(script.run(["10-tea.pdf"], 3, script.MemoryDB(), Tea())), "the report is unchanged"
+    lines = [r for r in rows if r["section"] == "roadmap"]
+    assert len(lines) == report["roadmap_lines"] == 30
+    assert sum(r["same"] for r in lines) == report["roadmap_same_date"] == 30, "the date the analyst sees"
+    gluon, = [r for r in lines if r["line"] == "t4"]
+    assert gluon == {"section": "roadmap", "deck": "10-tea.pdf", "page": 11, "type": "roadmap", "line": "t4",
+                     "cell": "r2c2", "cell_text": "Gluon wallet", "position_date": "2021-Q2", "same": True,
+                     "passes": [{"date": "d1", "date_cell": "r1c1", "date_text": "2021", "category": "launch"}] * 3}
+    rich, = [r for r in lines if r["line"] == "t16"]
+    assert (rich["same"], [p["date_text"] for p in rich["passes"]]) == (True, ["2021", "2021", "2022"]), \
+        "paired with another year in pass 3, dated 2021-Q4 by its date box in every pass"
+    assert next(r for r in lines if r["line"] == "t1")["passes"] == [{}] * 3, "no pair in any pass"
+    assert next(r for r in lines if r["line"] == "t27")["position_date"] is None, "Mainnet starts: no date box"
+    text = script.write_diagnostic(rows, script.write_report(report, tmp_path, 3, fake=True), 3).read_text(
+        encoding="utf-8").splitlines()
+    head = "| Deck | Page | Line | Cell | Line text | Python's date | Same | Pass 1 | Pass 2 | Pass 3 |"
+    assert text[text.index("## Roadmap lines") + 4] == head
+    for line in ("| 10-tea.pdf | 11 | t4 | r2c2 | Gluon wallet | 2021-Q2 | yes | "
+                 + " | ".join(["d1 r1c1 2021: launch"] * 3) + " |",
+                 "| 10-tea.pdf | 11 | t16 | r8c2 | Rich dApps running on network | 2021-Q4 | yes | d3 r7c1 2021: launch | "
+                 "d3 r7c1 2021: launch | d4 r7c4 2022: launch |",
+                 "| 10-tea.pdf | 11 | t1 | r1c2 | Second milestone ongoing in 2021 | 2021-Q2 | yes | no pair | no pair | "
+                 "no pair |",
+                 "| 10-tea.pdf | 11 | t27 | r13c3 | Mainnet starts | none | yes | no pair | no pair | no pair |"):
+        assert line in text, line
+
+
 def test_the_diagnostic_runs_only_on_the_10_public_test_decks(monkeypatch, tmp_path, capsys):
     """--diagnostic writes cell text, so it refuses any deck that is not one of the 10 public test decks, by file
     name and SHA-256: another file in the folder, a public name holding other bytes, a path to a public deck. It
@@ -2316,8 +2467,8 @@ def test_the_diagnostic_runs_only_on_the_10_public_test_decks(monkeypatch, tmp_p
     diagnostic, = temp.glob("consistency_*_diagnostic.md")
     assert diagnostic.with_name(diagnostic.name.replace("_diagnostic", "")).exists()
     assert f"Diagnostic: {diagnostic}" in out.splitlines(), "its path is printed"
-    assert "~9 Months" in diagnostic.read_text(encoding="utf-8") and "~9 Months" not in out, \
-        "its cell text is not: stdout carries the report only (moz p20: the months figure, labelled other)"
+    assert "“PRO” for $39/month" in diagnostic.read_text(encoding="utf-8") and "“PRO” for $39/month" not in out, \
+        "its cell text is not: stdout carries the report only (moz p2: the price of PRO, labelled other)"
 
 
 # ---------------------------------------------------------------------------

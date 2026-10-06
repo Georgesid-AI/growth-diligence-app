@@ -63,14 +63,13 @@ _LABEL_MAX = SNIPPET_MAX
 # "growing", "hired", "launches". Acronyms match in capitals only, so "Sam" or "arr" do not count.
 # "market" is a whole word: "marketing" and "marketplace" do not count.
 # Where two keywords overlap, the longer one counts: "paying users" is customers, not users;
-# "customer lifetime value" is sales, not customers.
+# "customer lifetime value" is ltv, not customers or customer_lifetime; "LTV / CAC", "LTV:CAC" is ltv_cac.
 _FAMILIES = [
     ("growth", r"\bCAGR\b|(?i:\bgrowth\b|\bgr(?:ow|ows|owing|own|ew)\b)"),
     ("revenue", r"\b(?:ARR|MRR)\b|(?i:\brevenues?\b|\bbookings?\b|\bturnover\b)"),
-    ("retention", r"\bNRR\b|(?i:\bchurn(?:s|ed|ing)?\b|\bretention\b|\bretain(?:s|ed|ing)?\b|\bcustomer life\b)"),
-    ("sales", r"\b(?:ACV|CAC|LTV)s?\b|(?i:\bsales cycles?\b|\bwin rates?\b|\bpipelines?\b|\bpayback\b"
-              r"|\b(?:customer )?lifetime value\b|\bacqui(?:re|res|red|ring|sition)\b|\bconver(?:t|ts|ted|ting|sion|sions)\b"
-              r"|\bleads\b|\bcosts? (?:of|per) (?:paid )?(?:customer )?acquisitions?\b|\bacquisition costs?\b)"),
+    ("retention", r"\bNRR\b|(?i:\bchurn(?:s|ed|ing)?\b|\bretention\b|\bretain(?:s|ed|ing)?\b)"),
+    ("sales", r"\bACVs?\b|(?i:\bsales cycles?\b|\bwin rates?\b|\bpipelines?\b|\bpayback\b"
+              r"|\bacqui(?:re|res|red|ring|sition)\b|\bconver(?:t|ts|ted|ting|sion|sions)\b|\bleads\b)"),
     ("customers", r"(?i:\bcustomers?\b|\bclients?\b|\bpaying users?\b|\baccounts?\b"
                   r"|\bcompan(?:y|ies)\b|\bagenc(?:y|ies)\b|\bsubscribers?\b|\binstitutions?\b)"),
     ("users", r"(?i:\busers?\b)"),
@@ -84,17 +83,32 @@ _FAMILIES = [
     ("product", r"(?i:\blaunch(?:es|ed|ing)?\b|\breleas(?:e|es|ed|ing)\b|\broadmaps?\b|\bship(?:s|ped|ping)?\b"
                 r"|\bmilestones?\b)"),
     ("market", r"\b(?:TAM|SAM|SOM)\b|(?i:\baddressable markets?\b|\bmarket[ -]sizes?\b)"),
+    # Issue #45: the keywords of LTV, CAC and customer life moved here from sales and retention; "cash flow" is no
+    # cash keyword. "Profitable" stays ebitda unless its figure is in months (_PROFITABLE).
+    ("cash", r"(?i:\bcash\b(?![- ]?flows?\b))"),
+    ("burn", r"(?i:\b(?:net )?burn(?:s|ed|ing)?(?: rates?)?\b)"),
+    ("runway", r"(?i:\brunways?\b)"),
+    ("ltv", r"\bLTVs?\b|(?i:\b(?:customer )?lifetime values?\b)"),
+    ("cac", r"\bCACs?\b|(?i:\bcosts? (?:of|per) (?:paid )?(?:customer )?acquisitions?\b|\bacquisition costs?\b)"),
+    ("customer_lifetime", r"(?i:\bcustomer life(?:time)?s?\b)"),
+    ("ltv_cac", r"\bLTV\s*(?:/|:|\bto\b)\s*CAC\b"),
+    ("trials_per_day", r"(?i:\btrials?\s*(?:per|/)\s*day\b)"),
 ]
 _KEYWORDS = [(family, re.compile(rx)) for family, rx in _FAMILIES]
 _NOUN_KEYWORDS = [(family, rx) for family, rx in _KEYWORDS if family in ("customers", "users")]
 _GROWTH_OF = {"revenue": "revenue_growth", "users": "user_growth"}
 # Plan claims only: the company's own figures the growth plan depends on.
 CLAIM_TYPES = ("revenue", "revenue_growth", "growth", "retention", "sales", "customers", "users", "user_growth",
-               "gross_margin", "gross_profit", "costs", "ebitda", "net_profit", "people", "product", "market")
+               "gross_margin", "gross_profit", "costs", "ebitda", "net_profit", "people", "product", "market",
+               "cash", "burn", "runway", "ltv", "cac", "customer_lifetime", "ltv_cac", "trials_per_day",
+               "months_to_profitability")
 # A net loss is a negative net profit: "Net loss of $2M" is stored as -2,000,000.
 _NET_LOSS = re.compile(r"(?i)\bnet loss(?:es)?\b")
 # A gross margin given as an amount ("Gross margin £1.2M") is gross profit.
 _GROSS_MARGIN = re.compile(r"(?i)\bgross margins?\b")
+# "Profitable in 10 months" is months to profitability; any other "profitable" figure or line stays ebitda, a dated
+# one a break-even milestone (decision of 2026-10-06 on issue #45).
+_PROFITABLE = re.compile(r"(?i)\bprofitable\b")
 # Lines that are a claim with no figure, given a date: a roadmap bullet, a break-even milestone.
 _MILESTONES = ("product", "ebitda")
 # Words after a number that are not the thing counted: "20 of them", "5 per month".
@@ -507,6 +521,9 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
             continue
         if family == "gross_margin" and n["currency"] and _GROSS_MARGIN.search(borrowed[1] if borrowed else line):
             family = "gross_profit"
+        if family == "ebitda" and n["unit"] == "months" and \
+                _PROFITABLE.search(borrowed[1] if borrowed else line[own["start"]:own["end"]]):
+            family = "months_to_profitability"
         if family == "net_profit" and _NET_LOSS.search(borrowed[1] if borrowed else line[own["start"]:own["end"]]):
             n = {**n, "value": -(n["value_high"] if n["value_high"] is not None else n["value"]),
                  "value_high": -n["value"] if n["value_high"] is not None else None}

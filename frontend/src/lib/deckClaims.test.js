@@ -99,7 +99,12 @@ describe("deck selector", () => {
 
 test("the analyst chooses among plan claim types only; old usage claims keep their label", () => {
   expect(CLAIM_TYPES).toEqual(["revenue", "revenue_growth", "growth", "retention", "sales", "customers", "users",
-    "user_growth", "gross_margin", "gross_profit", "costs", "ebitda", "net_profit", "people", "product", "market"]);
+    "user_growth", "gross_margin", "gross_profit", "costs", "ebitda", "net_profit", "people", "product", "market",
+    "cash", "burn", "runway", "ltv", "cac", "customer_lifetime", "ltv_cac", "trials_per_day", "months_to_profitability"]);
+  // Issue #45 (deck-parser.md section 2): the new claim types and their labels.
+  expect(["cash", "burn", "runway", "ltv", "cac", "customer_lifetime", "ltv_cac", "trials_per_day",
+    "months_to_profitability"].map(typeLabel)).toEqual(["Cash", "Burn", "Runway", "LTV", "CAC", "Customer lifetime",
+    "LTV/CAC", "Trials per day", "Months to profitability"]);
   expect([typeLabel("gross_profit"), typeLabel("costs"), typeLabel("ebitda"), typeLabel("net_profit")])
     .toEqual(["Gross profit", "Costs", "EBITDA", "Net profit"]);
   expect(typeLabel("usage")).toBe("Usage");

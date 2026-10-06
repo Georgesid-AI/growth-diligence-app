@@ -32,7 +32,9 @@ export const TYPE_LABELS = {
   revenue: "Revenue", revenue_growth: "Revenue growth", growth: "Growth", retention: "Retention", sales: "Sales",
   customers: "Customers", users: "Users", user_growth: "User growth", gross_margin: "Gross margin",
   gross_profit: "Gross profit", costs: "Costs", ebitda: "EBITDA", net_profit: "Net profit", usage: "Usage",
-  people: "People", product: "Product", market: "Market", use_of_funds: "Use of funds", other: "Other",
+  people: "People", product: "Product", market: "Market", cash: "Cash", burn: "Burn", runway: "Runway", ltv: "LTV",
+  cac: "CAC", customer_lifetime: "Customer lifetime", ltv_cac: "LTV/CAC", trials_per_day: "Trials per day",
+  months_to_profitability: "Months to profitability", use_of_funds: "Use of funds", other: "Other",
 };
 // The types an analyst can choose: same order and names as backend app/decks/claims.py CLAIM_TYPES.
 // "Use of funds" is a type the model may read from a structure, not one the parser gives.

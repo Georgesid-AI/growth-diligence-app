@@ -157,7 +157,9 @@ STRUCTURE_TYPES = DECK_TYPES + ("column_mapping",)
 # gateway imports neither the deck package nor the server, so the lists are written out here and a
 # test keeps them equal to claims.CLAIM_TYPES and FIELD_DEFS.
 CLAIM_METRICS = ("revenue", "revenue_growth", "growth", "retention", "sales", "customers", "users", "user_growth",
-                 "gross_margin", "gross_profit", "costs", "ebitda", "net_profit", "people", "product", "market")
+                 "gross_margin", "gross_profit", "costs", "ebitda", "net_profit", "people", "product", "market",
+                 "cash", "burn", "runway", "ltv", "cac", "customer_lifetime", "ltv_cac", "trials_per_day",
+                 "months_to_profitability")
 MAPPING_FIELDS = ("customer_id", "invoice_date", "amount", "currency", "service_start", "service_end", "segment",
                   "revenue_type", "deal_id", "created_date", "close_date", "stage", "founder_involved", "month",
                   "sm_expense", "revenue", "cost_of_revenue")

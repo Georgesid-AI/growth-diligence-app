@@ -1,4 +1,4 @@
-<!-- version: v4 -->
+<!-- version: v5 -->
 <!-- step: structures -->
 <!-- This text is server-side only. It is never returned in an API response. -->
 
@@ -45,7 +45,9 @@ type it sent.
 - `item`: the item's id (`i1`, `i2`, ...).
 - `metric`: what the figure measures. A claim type (`revenue`, `revenue_growth`, `growth`,
   `retention`, `sales`, `customers`, `users`, `user_growth`, `gross_margin`, `gross_profit`,
-  `costs`, `ebitda`, `net_profit`, `people`, `product`, `market`), `use_of_funds`, `other` for one
+  `costs`, `ebitda`, `net_profit`, `people`, `product`, `market`, `cash`, `burn`, `runway`, `ltv`,
+  `cac`, `customer_lifetime`, `ltv_cac`, `trials_per_day`, `months_to_profitability`),
+  `use_of_funds`, `other` for one
   of the company's own plan or track-record figures that is none of these, or `not_a_metric` for
   page numbers, years, footnote marks, list numbers, and figures that are not the company's own plan
   or track record (funds raised, valuations, token allocations, other companies' figures, market
@@ -62,9 +64,27 @@ type it sent.
 - `actual_or_forecast`: `actual`, `forecast`, or `unknown`.
 
 Tie-breaks:
-- hours and other time figures are `product`, unless a user count is named;
+- hours and other time figures are `product`, unless a user count is named or a tie-break below names them;
 - "% of marketplace" and market share are `market`;
-- commission and take rate are `sales`.
+- commission and take rate are `sales`;
+- monthly revenue, MRR, ARR and revenue run rate are `revenue`: the program rebuilds the period from the cells;
+- cash on hand, the cash balance and the cash left are `cash`;
+- net burn and burn rate are `burn`;
+- the runway, in months, is `runway`;
+- lifetime value (LTV) is `ltv`;
+- customer acquisition cost (CAC) and the cost of paid acquisition are `cac`;
+- customer life and customer lifetime, in months, are `customer_lifetime`;
+- LTV / CAC is `ltv_cac`;
+- free trials per day are `trials_per_day`;
+- the months until the company is profitable ("Profitable in 10 months") are `months_to_profitability`;
+- social media followers and other social counts, visits, email subscribers and community members on a
+  channel are `other`, not `users`;
+- board seats are `not_a_metric`, the whole count ("2 Investors (Michelle +1)", "1 Independent");
+- a team member's tenure ("joined 6 months ago") is `not_a_metric`;
+- the share of a market or of a survey that does something ("Many (75%+)" use a tool) is `not_a_metric`;
+  the company's own market share stays `market`;
+- DAU/MAU and other engagement ratios are `product`, like hours;
+- integrations and partnerships are `product`.
 
 `pairs`: for a roadmap only; `[]` for every other structure. Pair a text line with the date cell it
 belongs to and give the milestone its category: `{"line": "t1", "date": "d1", "category": "launch"}`.
