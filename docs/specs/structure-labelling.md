@@ -34,9 +34,11 @@ period is the one Python rebuilds from that date cell. The pairing is the model'
 when §4 rebuilds the same period from its own period cells.
 
 Adjacent date line: a text line takes the date line directly above or below it in the same text box. A line with a
-date line on each side takes the one in the timeline's date direction (decision of 2026-10-06): decided once per
-timeline, from the first line in reading order with a date line on one side only (above or below). A timeline with
-no such line has no direction, and its lines with a date on each side have no adjacent date line. That date line is
+date line on each side takes the one in the timeline's date direction (decisions of 2026-10-06), decided once per
+timeline from its lines with a date line on one side only (above or below). When they all name the same side, that
+is the direction. When they disagree, only those that hold a figure (one §1 lists) count, and they must all name the
+same side. Otherwise the timeline has no direction, and its lines with a date on each side have no adjacent date
+line. So a title over the first date of a timeline with dates above does not turn it downwards. That date line is
 then a period cell of the line, and Python rebuilds the period itself. This also raises "date rebuilt from cell" on
 timelines such as buffer p6, where dates sit below their lines.
 
@@ -108,7 +110,7 @@ Unchanged: §3, §4, §6, §8 and the 400,000-token audit cap.
 
 **9. Tests.** Each is first shown failing on a deliberate violation. Enumeration: several figures per cell, dates
 left out, both defaults, stable ids. Reply: bad, duplicate or missing ids, and bad pairs. Verifier: periods, a
-pair-dated figure, the adjacent date line (one above or below counts; one each side takes the timeline's direction), flags. Other: refused
+pair-dated figure, the adjacent date line (one above or below counts; one each side takes the timeline's direction, also under a title line), flags. Other: refused
 until its type is edited. The 4,000 cap, with the list counted. Boundary: an item line passes only in format, with
 raw text that is a figure inside its cell (else reason `bad_item_line`), and no raw text reaches `llm_structures` or
 a log.
