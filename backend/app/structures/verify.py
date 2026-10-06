@@ -181,18 +181,23 @@ def _is_value(cell: Dict, comma: bool) -> bool:
     return cell_number(cell["text"], comma) is not None and claims.period_cell(cell["text"]) is None
 
 
+def _beside(structure: Dict, cell: Dict, others: List[Dict]) -> List[Dict]:
+    """In a KPI panel, those of `others` (cells of other boxes in the cell's grid row) that are directly next to it
+    on the page, its "next_to" (deck-parser.md section 7): a tall box can merge two visual rows into one grid row,
+    and a wrong label or scale is worse than a missing one (structure-labelling.md section 1). Elsewhere all."""
+    if structure.get("type") != "kpi_panel":
+        return others
+    return [c for c in others if _id(c) in (cell.get("next_to") or ())]
+
+
 def header_cells(structure: Dict, cell: Dict) -> List[Dict]:
     """The header cells of a value cell, nearest first: its row header (the cells left of it in its
     row that are not values) and the header stack above its column (header rows covering it). In a
-    KPI panel or a roadmap, the cells left of it in its row and the top line of its own box. In a KPI
-    panel a cell left of it, from another box, counts only when it is directly next to it on the page
-    (its "next_to", deck-parser.md section 7): a tall box can merge two visual rows into one grid row,
-    and a wrong label is worse than a missing one (structure-labelling.md section 1)."""
+    KPI panel or a roadmap, the cells left of it in its row and the top line of its own box; in a KPI
+    panel only the cells left of it that are directly next to it (_beside)."""
     cells, comma = structure["cells"], decimal_comma(structure["cells"])
-    left = sorted((c for c in cells if c["row"] == cell["row"] and c["col"] < cell["col"]
-                   and not _is_value(c, comma)), key=lambda c: -c["col"])
-    if structure.get("type") == "kpi_panel":
-        left = [c for c in left if _id(c) in (cell.get("next_to") or ())]
+    left = _beside(structure, cell, sorted((c for c in cells if c["row"] == cell["row"] and c["col"] < cell["col"]
+                                            and not _is_value(c, comma)), key=lambda c: -c["col"]))
     if structure.get("type") in BOX_TYPES:
         box = [c for c in cells if c.get("box") is not None and c.get("box") == cell.get("box")]
         top = min(box, key=lambda c: c["row"]) if box else None
@@ -217,10 +222,11 @@ def _corner(structure: Dict) -> List[Dict]:
 
 def scale_factor(structure: Dict, cell: Dict) -> float:
     """The scale a figure with no suffix or % of its own takes: the first stated in a neighbouring cell of its
-    row, one of its header cells or the table's corner cell ("£m" -> 1e6, "'000" -> 1e3), else 1."""
+    row (in a KPI panel one directly next to it, _beside), one of its header cells or the table's corner cell
+    ("£m" -> 1e6, "'000" -> 1e3), else 1."""
     cells, comma = structure["cells"], decimal_comma(structure["cells"])
-    neighbours = [c for c in cells if c["row"] == cell["row"] and abs(c["col"] - cell["col"]) == 1
-                  and not _is_value(c, comma)]
+    neighbours = _beside(structure, cell, [c for c in cells if c["row"] == cell["row"]
+                                           and abs(c["col"] - cell["col"]) == 1 and not _is_value(c, comma)])
     for c in neighbours + header_cells(structure, cell) + _corner(structure):
         scale = scale_of(c["text"])
         if scale:
