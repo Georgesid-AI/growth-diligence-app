@@ -33,9 +33,12 @@ its date cell. A milestone has no value, so it is never Verified. A figure in a 
 period is the one Python rebuilds from that date cell. The pairing is the model's, so the figure is Verified only
 when §4 rebuilds the same period from its own period cells.
 
-Adjacent date line: a text line may have exactly one date line directly above or below it in the same text box (not
-one above and one below). That date line is then a period cell of the line, and Python rebuilds the period itself.
-This also raises "date rebuilt from cell" on timelines such as buffer p6, where dates sit below their lines.
+Adjacent date line: a text line takes the date line directly above or below it in the same text box. A line with a
+date line on each side takes the one in the timeline's date direction (decision of 2026-10-06): decided once per
+timeline, from the first line in reading order with a date line on one side only (above or below). A timeline with
+no such line has no direction, and its lines with a date on each side have no adjacent date line. That date line is
+then a period cell of the line, and Python rebuilds the period itself. This also raises "date rebuilt from cell" on
+timelines such as buffer p6, where dates sit below their lines.
 
 **3. Text and reply.** The structure text is unchanged (`r<row>c<col>: <text>`, with spans). Below it comes the line
 `items:`, then one line per item, e.g. `i3 r3c2#2 "(30K)" 30000 or -30000 h r3c1 r1c2`. A roadmap adds `d1 r2c1`
@@ -105,7 +108,7 @@ Unchanged: §3, §4, §6, §8 and the 400,000-token audit cap.
 
 **9. Tests.** Each is first shown failing on a deliberate violation. Enumeration: several figures per cell, dates
 left out, both defaults, stable ids. Reply: bad, duplicate or missing ids, and bad pairs. Verifier: periods, a
-pair-dated figure, the adjacent date line (one above or below counts; one each side does not), flags. Other: refused
+pair-dated figure, the adjacent date line (one above or below counts; one each side takes the timeline's direction), flags. Other: refused
 until its type is edited. The 4,000 cap, with the list counted. Boundary: an item line passes only in format, with
 raw text that is a figure inside its cell (else reason `bad_item_line`), and no raw text reaches `llm_structures` or
 a log.
