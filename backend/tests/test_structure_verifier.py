@@ -292,8 +292,8 @@ def test_only_a_date_line_directly_next_to_the_line_in_the_same_box_counts():
 
 
 def test_a_timeline_with_dates_below_its_lines_dates_every_line_from_below():
-    """Decision of 2026-10-06: a line with a date line on each side takes the one in the timeline's direction, decided
-    once from the first line in reading order with a date on one side only: here the first line, date below."""
+    """Decisions of 2026-10-06: a line with a date line on each side takes the one in the timeline's direction, decided
+    once from its lines with a date on one side only: here the first line alone, date below."""
     below = _roadmap([["Launched web app"], ["January 2011"], ["Launch the API"], ["October 2011"],
                       ["Integrated in 50 apps"], ["December 2011"]], [1])
     assert [_adjacent(below, cell) for cell in ("r1c1", "r3c1", "r5c1")] == ["r2c1", "r4c1", "r6c1"]
@@ -302,24 +302,53 @@ def test_a_timeline_with_dates_below_its_lines_dates_every_line_from_below():
 
 
 def test_a_timeline_with_dates_above_its_lines_dates_every_line_from_above():
-    """Here the first line with a date on one side only is the last one, its date above."""
+    """Here the only line with a date on one side only is the last one, its date above."""
     above = _roadmap([["January 2011"], ["Launched web app"], ["October 2011"], ["Launch the API"],
                       ["December 2011"], ["Integrated in 50 apps"]], [1])
     assert [_adjacent(above, cell) for cell in ("r2c1", "r4c1", "r6c1")] == ["r1c1", "r3c1", "r5c1"]
 
 
 def test_the_date_direction_is_decided_once_for_the_whole_timeline():
-    """The first one-sided line sits in box 1 (date below); box 2's line with a date on each side follows it."""
+    """The one-sided line sits in box 1 (date below); box 2's line with a date on each side follows it."""
     timeline = _roadmap([["Launch the API", "Q2 2025"], ["Q3 2025", "Hire 5 engineers"], ["", "Q4 2025"]],
                         {(1, 1): 1, (2, 1): 1, (1, 2): 2, (2, 2): 2, (3, 2): 2})
     assert (_adjacent(timeline, "r1c1"), _adjacent(timeline, "r2c2")) == ("r2c1", "r3c2")
     flipped = _roadmap([["Q1 2025", "Q2 2025"], ["Launch the API", "Hire 5 engineers"], ["", "Q4 2025"]],
                        {(1, 1): 1, (2, 1): 1, (1, 2): 2, (2, 2): 2, (3, 2): 2})
     assert (_adjacent(flipped, "r2c1"), _adjacent(flipped, "r2c2")) == ("r1c1", "r1c2"), "box 1 decides: date above"
-    first = _roadmap([["Launch the API", "Q1 2025", "Q2 2025"], ["Q3 2025", "Hire 5 engineers", "Break even"],
-                      ["", "", "Q4 2025"]],
-                     {(1, 1): 1, (2, 1): 1, (1, 2): 2, (2, 2): 2, (1, 3): 3, (2, 3): 3, (3, 3): 3})
-    assert _adjacent(first, "r2c3") == "r3c3", "two one-sided lines (below in box 1, above in box 2): the first decides"
+    boxes = {(1, 1): 1, (2, 1): 1, (1, 2): 2, (2, 2): 2, (1, 3): 3, (2, 3): 3, (3, 3): 3}
+    disagree = _roadmap([["Launch the API", "Q1 2025", "Q2 2025"], ["Q3 2025", "Hire 5 engineers", "Break even"],
+                         ["", "", "Q4 2025"]], boxes)
+    assert _adjacent(disagree, "r2c3") == "r1c3", \
+        "one-sided lines disagree (below in box 1, above in box 2): only the one holding a figure counts, date above"
+    neither = _roadmap([["Launch the API", "Q1 2025", "Q2 2025"], ["Q3 2025", "Hire engineers", "Break even"],
+                        ["", "", "Q4 2025"]], boxes)
+    assert _adjacent(neither, "r2c3") is None, "they disagree and neither holds a figure: no direction"
+
+
+def test_a_title_over_a_timeline_with_dates_above_does_not_turn_it_downwards():
+    """The title has a date line below only, the last line one above only. They disagree, so only the lines holding a
+    figure count: the last line, date above."""
+    titled = _roadmap([["Product roadmap"], ["January 2011"], ["Launched web app"], ["October 2011"],
+                       ["55,000 users"], ["December 2011"], ["100,000 users"]], [1])
+    assert [_adjacent(titled, cell) for cell in ("r3c1", "r5c1", "r7c1")] == ["r2c1", "r4c1", "r6c1"]
+    no_figure = _roadmap([["Product roadmap"], ["January 2011"], ["55,000 users"], ["October 2011"],
+                          ["Launch the API"]], [1])
+    assert (_adjacent(no_figure, "r3c1"), _adjacent(no_figure, "r5c1")) == (None, "r4c1"), \
+        "neither the title nor the last line holds a figure: no direction, the one-sided line keeps its date"
+    quarter = _roadmap([["Q3"], ["2025"], ["55,000 users"], ["2026"], ["Launch the API"]], [1])
+    assert _adjacent(quarter, "r3c1") is None, "a period header such as Q3 holds no figure (section 1 lists none)"
+
+
+def test_a_title_over_a_timeline_with_dates_below_leaves_it_unchanged():
+    """The title sits over the first line, not over a date line, so it has no date line; the first line alone has
+    one on one side only, below. A rule ignoring the lines before the first date line would leave no direction."""
+    plain = [["Launched web app"], ["January 2011"], ["55,000 users"], ["October 2011"], ["100,000 users"],
+             ["December 2011"]]
+    titled = _roadmap([["Product roadmap"]] + plain, [1])
+    assert [_adjacent(titled, cell) for cell in ("r1c1", "r2c1", "r4c1", "r6c1")] == [None, "r3c1", "r5c1", "r7c1"]
+    untitled = _roadmap(plain, [1])
+    assert [_adjacent(untitled, cell) for cell in ("r1c1", "r3c1", "r5c1")] == ["r2c1", "r4c1", "r6c1"]
 
 
 def test_on_the_buffer_timeline_every_line_takes_the_date_below_it():

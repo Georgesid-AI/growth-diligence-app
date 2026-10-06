@@ -22,7 +22,6 @@ A roadmap also lists its date cells (d1, ...: date labels as in deck-parser.md s
 import re
 from typing import Dict, List
 
-from ..decks import claims
 from . import redact, verify
 
 _LOSS_WORD = re.compile(r"(?i)loss|deficit|negative|decline")
@@ -46,8 +45,7 @@ def list_items(structure: Dict) -> Dict:
     out = []
     for cell in cells:
         text = redact.cell_text(cell)                 # as its cell line writes it, so raw text stays inside it
-        found = claims.period_cell(text)
-        if found and ("part" in found or "relative" in found):
+        if verify.period_header(text):
             continue                                  # "Q3", "Mar", "M3", "Year 1": a period header, never a value
         figures = verify.figures(text, comma)
         if not figures:

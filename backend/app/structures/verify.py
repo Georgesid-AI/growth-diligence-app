@@ -269,14 +269,27 @@ def _date_sides(structure: Dict, cell: Dict) -> Dict[str, Dict]:
     return found
 
 
+def period_header(text: str) -> bool:
+    """A period header ("Q3", "Mar", "M3", "Year 1"): a part of a period or a relative column, never a value."""
+    found = claims.period_cell(text)
+    return bool(found) and ("part" in found or "relative" in found)
+
+
+def holds_figure(cell: Dict, comma: bool = False) -> bool:
+    """Whether the item list (structure-labelling.md section 1) lists a figure in the cell."""
+    return not period_header(cell["text"]) and bool(figures(cell["text"], comma))
+
+
 def date_direction(structure: Dict) -> Optional[str]:
-    """A roadmap's date direction, "above" or "below" (structure-labelling.md section 2, decision of 2026-10-06): the
-    side of the first text line in reading order with a date line on one side only; None when no line has one."""
-    for c in sorted(structure["cells"], key=lambda c: (c["row"], c["col"])):
-        if not is_date_line(c["text"]):
-            sides = _date_sides(structure, c)
-            if len(sides) == 1:
-                return next(iter(sides))
+    """A roadmap's date direction, "above" or "below" (structure-labelling.md section 2, decisions of 2026-10-06), from
+    its text lines with a date line on one side only: the side they all name; when they disagree, the side those that
+    hold a figure all name; else None."""
+    comma = decimal_comma(structure["cells"])
+    one_sided = [(next(iter(sides)), c) for c in structure["cells"] if not is_date_line(c["text"])
+                 for sides in [_date_sides(structure, c)] if len(sides) == 1]
+    for named in ([side for side, _ in one_sided], [side for side, c in one_sided if holds_figure(c, comma)]):
+        if len(set(named)) == 1:
+            return named[0]
     return None
 
 
