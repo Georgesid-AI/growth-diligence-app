@@ -521,7 +521,7 @@ def detect_structures(blocks: List[Dict], charts: List[Dict] = ()) -> List[Dict]
 
     with "table" (a table's number on its page), "chart" (a chart's) or, for a KPI panel or a
     roadmap, a "box" on every cell: the text box the line comes from; their cells also keep
-    "next_to" (_band_cells). header_rows counts the rows
+    "next_to", and a roadmap's lines "date_box" (_band_cells). header_rows counts the rows
     above the first row that holds a figure. A structure holds at least one figure (a number or a
     date); text that is none of these structures is prose and is never one. Pages whose figures
     section 2 drops as background or cited research hold no structure.
@@ -678,6 +678,12 @@ def _chart_structures(charts: List[Dict]) -> List[Dict]:
     return out
 
 
+def dates_only(texts: List[str], claims) -> bool:
+    """A date box's lines (spec section 7, decision of 2026-10-06 on issue #47): each is a date label or a part of
+    one ("2022" / "Q2", "Nov. 2007")."""
+    return bool(texts) and all(_date_labels(text, claims) or claims.period_cell(text) for text in texts)
+
+
 def _date_labels(text: str, claims) -> List[Dict]:
     """The dates of a line that is a date label: dates and at most two other words ("Nov. 2007",
     "Q1 17 Q2 17", "Launch Q3 2024"); [] for a sentence that holds a date."""
@@ -719,13 +725,15 @@ def _axis_lines(lines: List[Dict], claims) -> set:
     return out
 
 
-def _band_cells(boxes: List[List[Dict]], others=None) -> List[Dict]:
+def _band_cells(boxes: List[List[Dict]], others=None, date_box=None) -> List[Dict]:
     """Text boxes as a grid: boxes that overlap in height form a band of rows, each box a column of
     its band in left-to-right order, each line a row. Every cell keeps its box; a title line is marked.
     With `others` (a KPI panel or a roadmap: the extents of every text box of its page and its title), a cell whose
     line has a position also keeps "next_to": the ids of the cells of other boxes whose line is directly next to
     its own line (_next_to, line to line). A tall box can put two visual rows in one band (front-b p15), so
-    a cell's row neighbour need not sit next to it on the page."""
+    a cell's row neighbour need not sit next to it on the page. With `date_box` (a roadmap: whether a box is a date
+    box), each line of a box that is none also keeps "date_box": the number of the one date box directly next to its
+    box, box to box (_next_to), when exactly one is."""
     def extent(lines):
         placed = [l["bbox"] for l in lines if l.get("bbox")]
         return (min(b[1] for b in placed), max(b[3] for b in placed), min(b[0] for b in placed)) if placed else None
@@ -740,11 +748,12 @@ def _band_cells(boxes: List[List[Dict]], others=None) -> List[Dict]:
         else:
             bands.append({"top": top, "bottom": bottom, "boxes": [box]})
     bands += [{"boxes": [box]} for box in boxes if not extent(box)]       # no layout: one box per band
-    cells, lines, row, number = [], [], 0, 0
+    cells, lines, row, number, numbered = [], [], 0, 0, []
     for band in bands:
         members = sorted(band["boxes"], key=lambda b: extent(b)[2] if extent(b) else 0)
         for col, box in enumerate(members, 1):
             number += 1
+            numbered.append((number, box))
             cells += [{"row": row + i + 1, "col": col, "text": line["text"], "box": number,
                        **({"title": True} if line.get("title") else {})} for i, line in enumerate(box)]
             lines += [line.get("bbox") for line in box]
@@ -754,6 +763,14 @@ def _band_cells(boxes: List[List[Dict]], others=None) -> List[Dict]:
             if bbox:
                 cell["next_to"] = [f"r{o['row']}c{o['col']}" for o, near in zip(cells, lines) if near and
                                    o["box"] != cell["box"] and _next_to(tuple(bbox), tuple(near), others)]
+    if others is not None and date_box is not None:
+        dated = [(n, _extent(box)) for n, box in numbered if _extent(box) and date_box(box)]
+        for n, box in numbered:
+            near = [d for d, e in dated if _extent(box) and not date_box(box) and _next_to(_extent(box), e, others)]
+            if len(near) == 1:
+                for cell in cells:
+                    if cell["box"] == n:
+                        cell["date_box"] = near[0]
     return cells
 
 
@@ -865,5 +882,6 @@ def _box_structures(blocks: List[Dict], excluded: set, claims) -> List[Dict]:
         first = kept[0][0]
         page_boxes = list(boxes.values()) + ([titles[page]] if page in titles else [])
         others = [e for e in map(_extent, page_boxes) if e]
-        out.append({"type": kind, **_where(first), "header_rows": 0, "cells": _band_cells(kept, others)})
+        dated = (lambda box: dates_only([line["text"] for line in box], claims)) if kind == "roadmap" else None
+        out.append({"type": kind, **_where(first), "header_rows": 0, "cells": _band_cells(kept, others, dated)})
     return out

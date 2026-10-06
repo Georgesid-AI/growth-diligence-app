@@ -80,7 +80,11 @@ Tie-breaks:
 - social media followers and other social counts, visits, email subscribers and community members on a
   channel are `other`, not `users`;
 - board seats are `not_a_metric`, the whole count ("2 Investors (Michelle +1)", "1 Independent");
-- a team member's tenure ("joined 6 months ago") is `not_a_metric`.
+- a team member's tenure ("joined 6 months ago") is `not_a_metric`;
+- the share of a market or of a survey that does something ("Many (75%+)" use a tool) is `not_a_metric`;
+  the company's own market share stays `market`;
+- DAU/MAU and other engagement ratios are `product`, like hours;
+- integrations and partnerships are `product`.
 
 `pairs`: for a roadmap only; `[]` for every other structure. Pair a text line with the date cell it
 belongs to and give the milestone its category: `{"line": "t1", "date": "d1", "category": "launch"}`.

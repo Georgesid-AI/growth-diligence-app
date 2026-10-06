@@ -183,8 +183,7 @@ def _is_value(cell: Dict, comma: bool) -> bool:
 
 def _date_box(structure: Dict, box) -> bool:
     """Whether a text box holds dates only: each of its lines is a date or a part of one ("2022" / "Q2")."""
-    lines = [c["text"] for c in structure["cells"] if box is not None and c.get("box") == box]
-    return bool(lines) and all(claims.period_cell(text) or is_date_line(text) for text in lines)
+    return box is not None and parser.dates_only([c["text"] for c in structure["cells"] if c.get("box") == box], claims)
 
 
 def _beside(structure: Dict, cell: Dict, others: List[Dict]) -> List[Dict]:
@@ -324,6 +323,38 @@ def adjacent_date_line(structure: Dict, cell: Dict) -> Optional[Dict]:
         return next(iter(sides.values()))
     direction = date_direction(structure) if sides else None
     return sides.get(direction) if direction else None
+
+
+def _box_date(structure: Dict, box, fiscal_year_end: int):
+    """(label, (start, end), [cell ids]) a date box gives: its one date ("Nov. 2007"), or its year with a quarter,
+    half or month below it ("2021" / "Q2" -> 2021-Q2, deck-parser.md section 2); None for anything else."""
+    lines = sorted((c for c in structure["cells"] if c.get("box") == box), key=lambda c: c["row"])
+    dated = [c for c in lines if date_period(c["text"])]
+    parts = [c for c in lines if not date_period(c["text"]) and "part" in (claims.period_cell(c["text"]) or {})]
+    if len(dated) != 1 or len(parts) > 1 or len(dated) + len(parts) != len(lines):
+        return None
+    if parts:
+        joined = claims.combine_period(claims.period_cell(parts[0]["text"]), claims.period_cell(dated[0]["text"]))
+        label = joined["label"] if joined and parts[0]["row"] > dated[0]["row"] else None
+        cells = [_id(parts[0]), _id(dated[0])]
+    else:
+        label, cells = date_period(dated[0]["text"]), [_id(dated[0])]
+    span = _range(label, fiscal_year_end) if label else None
+    return (label, span, cells) if span else None
+
+
+def position_date(structure: Dict, cell: Dict, fiscal_year_end: int = 12):
+    """In a roadmap, the date Python gives a text line by its place (structure-labelling.md section 2, decision of
+    2026-10-06 on issue #47): its adjacent date line, else the date of the one date box beside its text box
+    ("date_box", deck-parser.md section 7). (label, (start, end), [cell ids]) or None."""
+    if structure.get("type") != "roadmap":
+        return None
+    date = adjacent_date_line(structure, cell)
+    if date is not None:
+        label = date_period(date["text"])
+        span = _range(label, fiscal_year_end) if label else None
+        return (label, span, [_id(date)]) if span else None
+    return _box_date(structure, cell["date_box"], fiscal_year_end) if cell.get("date_box") is not None else None
 
 
 def lowest_period_headers(structure: Dict, value_cell: Dict) -> List[Dict]:
@@ -511,10 +542,15 @@ def _checks(ok: bool, corrected: bool, values: List[Dict]) -> Dict:
 def _dated(structure: Dict, cell: Dict, model: Optional[str], pair_date: Optional[Dict], fiscal_year_end: int):
     """(period, period cells, ok, corrected) for an item: the period Python rebuilds from the item's own period
     cells replaces the model's (a difference is a correction); a null period stands when no header holds one; a
-    model period with nothing to rebuild from is not rebuilt. A figure in a paired roadmap line is dated by its
-    pair, and is ok only when its own cells rebuild that same period."""
+    model period with nothing to rebuild from is not rebuilt. A figure in a paired roadmap line takes the line's
+    position date, which Python builds, so it is ok; with none it is dated by its pair, and is ok only when its own
+    cells rebuild that same period."""
     found = rebuild(structure, cell, fiscal_year_end)
     wanted = _range(model, fiscal_year_end) if model else None
+    placed = position_date(structure, cell, fiscal_year_end) if pair_date is not None else None
+    if placed is not None:
+        label, span, cells = placed
+        return label, cells, True, wanted != span
     if pair_date is not None:
         label = date_period(pair_date["text"])
         span = _range(label, fiscal_year_end) if label else None
@@ -545,8 +581,8 @@ def verify(structure: Dict, listed: Dict, labels: List[Dict], pairs: List[Dict] 
     booleans; "dot_reading" and "bracket_reading": the default reading's closed word, or None). A corrected period
     keeps the model's as "model_period". not_a_metric items are dropped and counted; an "other" item is never
     Verified. Each roadmap pair is a milestone (its line's cell, the claim type MILESTONE_TYPES gives its category,
-    the period of its date cell, no value), never Verified. With mode "drop" the unverified are removed and
-    counted.
+    the line's position date, else the period of its date cell, no value), never Verified. With mode "drop" the
+    unverified are removed and counted.
     """
     by_id = {_id(c): c for c in structure["cells"]}
     item_of = {item["id"]: item for item in listed.get("items") or ()}
@@ -578,11 +614,13 @@ def verify(structure: Dict, listed: Dict, labels: List[Dict], pairs: List[Dict] 
         c["proposed_flags"] = [f for f in FLAGS if _flag_reproduced(f, c, verified, structure, fiscal_year_end)]
     for p in pairs:
         line, date = lines.get(p["line"]), dates.get(p["date"])
-        period = date_period(date["text"]) if date else None
+        placed = position_date(structure, by_id[line], fiscal_year_end) if line in by_id else None
+        period, period_cells = (placed[0], placed[2]) if placed else \
+            (date_period(date["text"]) if date else None, [_id(date)] if date else [])
         checked.append({"item": p["line"], "line": p["line"], "date": p["date"], "category": p["category"],
                         "position": None, "metric": MILESTONE_TYPES[p["category"]], "period": period, "unit": None,
                         "unit_other": None, "actual_or_forecast": "unknown", "value": None, "values": [],
-                        "value_cell": line, "period_cells": [_id(date)] if date else [], "proposed_flags": [],
+                        "value_cell": line, "period_cells": period_cells, "proposed_flags": [],
                         "status": SUGGESTION, "checks": _checks(period is not None, False, [])})
     kept = [c for c in checked if c["status"] == VERIFIED or mode != "drop"]
     return {"items": kept, "dropped": len(checked) - len(kept), "periods_corrected": corrected_count,

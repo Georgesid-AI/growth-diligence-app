@@ -14,8 +14,10 @@ in tests/fixtures/decks/decks/ three times and reports:
   many periods it corrected, and for every unverified item the reason (period not rebuilt, metric invalid,
   other), with a count per structure type;
 - per type the not_a_metric and other labels, the ambiguous readings and the items with a flag;
-- roadmap lines apart: "roadmap lines: N, same pair and category in every pass: M, date rebuilt from cell: K",
-  K the lines whose period Python rebuilds from their own period cells, whatever the pair says;
+- roadmap lines apart: "roadmap lines: N, dated by position: P, same pair and category in every pass: M, same date
+  and category: D, date rebuilt from cell: K": P the lines with a position date, M the model's pairs alike in every
+  pass, D the milestone the analyst sees alike (paired or not, the date Python keeps, the category), K the lines whose
+  period Python rebuilds from their own period cells, whatever the pair says;
 - tokens and cost per deck, the fixed prompt's tokens and the average structure text plus item list against
   the gateway's 4,000-token cap;
 - the cache hit rate on passes 2 and 3.
@@ -33,8 +35,8 @@ with the code it measured.
 --diagnostic also writes <report>_diagnostic.md beside the report (and prints its path, not its text): for every
 unverified item and every item labelled differently between passes, deck, page, type, item id, cell#position,
 the cell's text as sent to the model, Python's values, the reason, then per pass the model's metric, period, unit
-and actual_or_forecast and the verifier's result; then every line of the roadmaps read in every pass, with the date
-it is paired with (id, cell and text) and its category in each pass, or no pair. It holds deck text, so it runs on
+and actual_or_forecast and the verifier's result; then every line of the roadmaps read in every pass, with its
+position date and, in each pass, the date it is paired with (id, cell and text) and its category, or no pair. It holds deck text, so it runs on
 the 10 public test decks only:
 any other deck, by file name and SHA-256, is refused before anything is read.
 A failed model call or token count logs one "structure not read" line to stderr, with its reason, HTTP status
@@ -328,6 +330,20 @@ def _cell_ref(item):
     return f"{item['cell']}#{item['position']}"
 
 
+def _kept(structure, line, reading, listing):
+    """The milestone the analyst sees for a roadmap line in one pass: None when the model left it unpaired, else
+    (the period Python keeps for it, the category): its position date, else the paired date cell's period
+    (structure-labelling.md section 2)."""
+    from app.structures import redact, verify
+    pair = next((p for p in reading["pairs"] if p["line"] == line["id"]), None)
+    if pair is None:
+        return None
+    cells = {redact.cell_id(c): c for c in structure["cells"]}
+    placed = verify.position_date(structure, cells[line["cell"]])
+    date = next(d["cell"] for d in listing["dates"] if d["id"] == pair["date"])
+    return (placed[0] if placed else verify.date_period(cells[date]["text"]), pair["category"])
+
+
 def _pairs_of(line, reading, listing, texts):
     """What one pass paired a roadmap line with: the date's id, cell and text as sent and the category, or {}."""
     dates = {d["id"]: d["cell"] for d in listing["dates"]}
@@ -338,8 +354,11 @@ def _pairs_of(line, reading, listing, texts):
 def diagnostic_rows(readings, unverified, types, pages, texts, structures, listings):
     """--diagnostic: one row per unverified item (the report's list), then one per item whose labels differ between
     passes as the model wrote them, then one per line of a roadmap read in every pass (the lines the report counts),
-    with its pair and category in each pass. A row carries the cell's text as sent to the model, so it goes to the
-    diagnostic file only, never to the report."""
+    with its position date, whether the milestone the analyst sees is the same in every pass (_kept), and its pair
+    and category in each pass. A row carries the cell's text as sent to the model, so it goes to the diagnostic file
+    only, never to the report."""
+    from app.structures import verify
+
     def row(section, where, item_id, reason):
         item = next(i for i in listings[where]["items"] if i["id"] == item_id)
         return {"section": section, "deck": where[0], "page": pages[where], "type": types[where], "item": item_id,
@@ -358,19 +377,24 @@ def diagnostic_rows(readings, unverified, types, pages, texts, structures, listi
     for where, passes_read in readings.items():
         if structures[where]["type"] != "roadmap" or any(r is None for r in passes_read):
             continue
+        cells = {f"r{c['row']}c{c['col']}": c for c in structures[where]["cells"]}
         for line in listings[where]["lines"]:
             paired = [_pairs_of(line, r, listings[where], texts[where]) for r in passes_read]
+            kept = [_kept(structures[where], line, r, listings[where]) for r in passes_read]
+            placed = verify.position_date(structures[where], cells[line["cell"]])
             rows.append({"section": "roadmap", "deck": where[0], "page": pages[where], "type": types[where],
                          "line": line["id"], "cell": line["cell"], "cell_text": texts[where].get(line["cell"], ""),
-                         "same": all(p == paired[0] for p in paired), "passes": paired})
+                         "position_date": placed[0] if placed else None, "same": all(k == kept[0] for k in kept),
+                         "passes": paired})
     return rows
 
 
 def _roadmap_lines(readings, structures, listings):
-    """(lines, lines with the same pair and category in every pass, lines whose period Python rebuilds from their own
-    period cells, whatever the pair says) over the roadmaps read in every pass."""
+    """(lines, lines with a position date, lines with the same pair and category in every pass, lines whose milestone
+    the analyst sees is the same in every pass (_kept), lines whose period Python rebuilds from their own period
+    cells, whatever the pair says) over the roadmaps read in every pass."""
     from app.structures import redact, verify
-    lines = same = rebuilt = 0
+    lines = positioned = same = same_date = rebuilt = 0
     for where, passes_read in readings.items():
         if structures[where]["type"] != "roadmap" or any(r is None for r in passes_read):
             continue
@@ -380,8 +404,11 @@ def _roadmap_lines(readings, structures, listings):
             paired = [next(((p["date"], p["category"]) for p in r["pairs"] if p["line"] == line["id"]), None)
                       for r in passes_read]
             same += int(all(p == paired[0] for p in paired))
+            kept = [_kept(structures[where], line, r, listings[where]) for r in passes_read]
+            same_date += int(all(k == kept[0] for k in kept))
+            positioned += int(verify.position_date(structures[where], cells[line["cell"]]) is not None)
             rebuilt += int(verify.rebuild(structures[where], cells[line["cell"]]) is not None)
-    return lines, same, rebuilt
+    return lines, positioned, same, same_date, rebuilt
 
 
 async def run(decks, passes, db, adapter=None, pause=0.0, sleep=None, diagnostic=None):
@@ -482,7 +509,7 @@ async def run(decks, passes, db, adapter=None, pause=0.0, sleep=None, diagnostic
     agreement, agreement_all = _agreement(readings, types, "norm")
     agreement_old, agreement_all_old = _agreement(readings, types, "raw")
     disagreements, disagreement_fields = _disagreements(readings, types, pages)
-    lines, same_pair, rebuilt = _roadmap_lines(readings, structures, listings)
+    lines, positioned, same_pair, same_date, rebuilt = _roadmap_lines(readings, structures, listings)
     counted = [t for t in text_tokens if t is not None]
     tokens["text_and_items_avg"] = round(sum(counted) / len(counted), 1) if counted else None
     tokens["structures_counted"] = len(counted)
@@ -506,7 +533,9 @@ async def run(decks, passes, db, adapter=None, pause=0.0, sleep=None, diagnostic
                              for (f, i, item, reason, detail), seen in unverified.items()],
         "counts": dict(sorted(counts.items())),
         "roadmap_lines": lines,
+        "roadmap_dated_by_position": positioned,
         "roadmap_same_pair": same_pair,
+        "roadmap_same_date": same_date,
         "roadmap_dates_rebuilt": rebuilt,
         "not_read": stats["not_read"],
         "model_reads": stats["model_reads"],
@@ -581,8 +610,9 @@ def _count_lines(report):
 
 
 def _roadmap_line(report):
-    return (f"roadmap lines: {report['roadmap_lines']}, same pair and category in every pass: "
-            f"{report['roadmap_same_pair']}, date rebuilt from cell: {report['roadmap_dates_rebuilt']}")
+    return (f"roadmap lines: {report['roadmap_lines']}, dated by position: {report['roadmap_dated_by_position']}, "
+            f"same pair and category in every pass: {report['roadmap_same_pair']}, same date and category: "
+            f"{report['roadmap_same_date']}, date rebuilt from cell: {report['roadmap_dates_rebuilt']}")
 
 
 def summary(report):
@@ -629,8 +659,11 @@ def write_report(report, folder, passes, fake=False):
         *_disagreement_lines(report),
         "## Verifier", "",
         "Rates over the labelled items (not_a_metric dropped, roadmap milestones left out), then the match rate apart "
-        "for the financial items (outside roadmaps) and the roadmap figures. A roadmap line's date is rebuilt from cell "
-        "when Python rebuilds its period from its own period cells, whatever the pair says.", "",
+        "for the financial items (outside roadmaps) and the roadmap figures. A roadmap line is dated by position when "
+        "Python gives it a date by its place (its date line, or the date box beside it); same pair compares the model's "
+        "pairs, same date the milestone the analyst sees (paired or not, the date Python keeps, the category). A "
+        "roadmap line's date is rebuilt from cell when Python rebuilds its period from its own period cells, whatever "
+        "the pair says.", "",
         f"- Match rate: {_pct(report['verifier_match_rate_pct'])}",
         f"- Match rate, financial (outside roadmaps): {_pct(report['verifier_match_rate_financial_pct'])}",
         f"- Match rate, roadmap (figures in roadmaps, milestones left out): "
@@ -701,9 +734,10 @@ def write_diagnostic(rows, report_path, passes):
     disagreeing = [line(r) for r in rows if r["section"] == "disagreeing"]
     paired = lambda p: f"{p['date']} {p['date_cell']} {_md(p['date_text'])}: {p['category']}" if p else "no pair"  # noqa: E731
     roadmap = ["| " + " | ".join(str(c) for c in (r["deck"], r["page"], r["line"], r["cell"], _md(r["cell_text"]),
-                                                   "yes" if r["same"] else "no", *map(paired, r["passes"]))) + " |"
+                                                   r["position_date"] or "none", "yes" if r["same"] else "no",
+                                                   *map(paired, r["passes"]))) + " |"
                for r in rows if r["section"] == "roadmap"]
-    roadmap_head = ("| Deck | Page | Line | Cell | Line text | Same | "
+    roadmap_head = ("| Deck | Page | Line | Cell | Line text | Python's date | Same | "
                     + " | ".join(f"Pass {n}" for n in range(1, passes + 1)) + " |")
     lines = [
         f"# Consistency run {report_path.stem.split('_', 1)[1]}: diagnostic", "",
@@ -717,10 +751,11 @@ def write_diagnostic(rows, report_path, passes):
         "Every item whose labels differ between passes, as the model wrote them.", "",
         *([head, rule, *disagreeing] if disagreeing else ["Every structure read in every pass was read the same way in each."]),
         "", "## Roadmap lines", "",
-        "Every text line of the roadmaps read in every pass (the lines the report counts): the date the model paired "
-        "it with (id, cell, text) and the category, per pass; no pair: the model left the line out. Same: the pair "
-        "and the category are the same in every pass.", "",
-        *([roadmap_head, "|---|---:|---|---|---|---|" + "---|" * passes, *roadmap] if roadmap
+        "Every text line of the roadmaps read in every pass (the lines the report counts): Python's date, the date it "
+        "gives the line by its place (none: the line keeps the date the model pairs it with); then per pass the date "
+        "the model paired it with (id, cell, text) and the category; no pair: the model left the line out. Same: the "
+        "milestone the analyst sees is the same in every pass (paired or not, the date Python keeps, the category).", "",
+        *([roadmap_head, "|---|---:|---|---|---|---|---|" + "---|" * passes, *roadmap] if roadmap
           else ["No roadmap was read in every pass."]),
     ]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")

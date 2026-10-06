@@ -3,4 +3,4 @@
      and re-recording its hash below (python -m app.llm.prompt_store --record); the
      test suite fails if a hash is stale. -->
 growth_engine.md sha256:72283b7b6d30cbc6fc7d3204b84b205a806e41e348a1fa7e23bb9e46e27275e7
-structure_reading.md sha256:b6660ec64c520379b79aac52082d78ef091a78af13bd79a695194d7fde6e4b8c
+structure_reading.md sha256:f36aa9717b1883adb6cca6227847e259f242f3491045850e267438751ce7eb5d

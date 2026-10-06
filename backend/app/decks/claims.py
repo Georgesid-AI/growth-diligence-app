@@ -76,15 +76,15 @@ _FAMILIES = [
     ("gross_margin", r"(?i:\bmargins?\b)"),
     ("gross_profit", r"(?i:\bgross profits?\b)"),
     ("costs", r"(?i:\bcosts?\b|\bopex\b)"),
-    ("ebitda", r"\bEBITDA\b|(?i:\bprofitability\b|\bbreak[- ]?even\b)"),
+    ("ebitda", r"\bEBITDA\b|(?i:\bprofitab(?:ility|le)\b|\bbreak[- ]?even\b)"),
     ("net_profit", r"(?i:\bnet (?:profits?|income|loss(?:es)?)\b)"),
     ("people", r"(?i:\bhir(?:e|es|ed|ing)\b|\bheadcounts?\b|\bteams?\b|\brecruit(?:s|ed|ing|ment)?\b"
                r"|\battrition\b)"),
     ("product", r"(?i:\blaunch(?:es|ed|ing)?\b|\breleas(?:e|es|ed|ing)\b|\broadmaps?\b|\bship(?:s|ped|ping)?\b"
                 r"|\bmilestones?\b)"),
     ("market", r"\b(?:TAM|SAM|SOM)\b|(?i:\baddressable markets?\b|\bmarket[ -]sizes?\b)"),
-    # Issue #45: the keywords of LTV, CAC, customer life and "profitable" moved here from sales, retention and
-    # ebitda; "cash flow" is no cash keyword.
+    # Issue #45: the keywords of LTV, CAC and customer life moved here from sales and retention; "cash flow" is no
+    # cash keyword. "Profitable" stays ebitda unless its figure is in months (_PROFITABLE).
     ("cash", r"(?i:\bcash\b(?![- ]?flows?\b))"),
     ("burn", r"(?i:\b(?:net )?burn(?:s|ed|ing)?(?: rates?)?\b)"),
     ("runway", r"(?i:\brunways?\b)"),
@@ -93,7 +93,6 @@ _FAMILIES = [
     ("customer_lifetime", r"(?i:\bcustomer life(?:time)?s?\b)"),
     ("ltv_cac", r"\bLTV\s*(?:/|:|\bto\b)\s*CAC\b"),
     ("trials_per_day", r"(?i:\btrials?\s*(?:per|/)\s*day\b)"),
-    ("months_to_profitability", r"(?i:\bprofitable\b)"),
 ]
 _KEYWORDS = [(family, re.compile(rx)) for family, rx in _FAMILIES]
 _NOUN_KEYWORDS = [(family, rx) for family, rx in _KEYWORDS if family in ("customers", "users")]
@@ -107,8 +106,11 @@ CLAIM_TYPES = ("revenue", "revenue_growth", "growth", "retention", "sales", "cus
 _NET_LOSS = re.compile(r"(?i)\bnet loss(?:es)?\b")
 # A gross margin given as an amount ("Gross margin £1.2M") is gross profit.
 _GROSS_MARGIN = re.compile(r"(?i)\bgross margins?\b")
-# Lines that are a claim with no figure, given a date: a roadmap bullet, a break-even or profitability milestone.
-_MILESTONES = ("product", "ebitda", "months_to_profitability")
+# "Profitable in 10 months" is months to profitability; any other "profitable" figure or line stays ebitda, a dated
+# one a break-even milestone (decision of 2026-10-06 on issue #45).
+_PROFITABLE = re.compile(r"(?i)\bprofitable\b")
+# Lines that are a claim with no figure, given a date: a roadmap bullet, a break-even milestone.
+_MILESTONES = ("product", "ebitda")
 # Words after a number that are not the thing counted: "20 of them", "5 per month".
 _NOT_NOUNS = frozenset("""a an and are as at be by each for from has have in into is it its more of on or our
 over per than that the this to under up was we were with""".split())
@@ -519,6 +521,9 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
             continue
         if family == "gross_margin" and n["currency"] and _GROSS_MARGIN.search(borrowed[1] if borrowed else line):
             family = "gross_profit"
+        if family == "ebitda" and n["unit"] == "months" and \
+                _PROFITABLE.search(borrowed[1] if borrowed else line[own["start"]:own["end"]]):
+            family = "months_to_profitability"
         if family == "net_profit" and _NET_LOSS.search(borrowed[1] if borrowed else line[own["start"]:own["end"]]):
             n = {**n, "value": -(n["value_high"] if n["value_high"] is not None else n["value"]),
                  "value_high": -n["value"] if n["value_high"] is not None else None}
@@ -547,7 +552,7 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
             if not borrowed or all(d["kind"] == "year" for d in dates):
                 return []
         # A bare date under a milestone ("Positive EBITDA" / "Q2 2024") takes the milestone's type.
-        family = borrowed[0] if not keywords and borrowed and borrowed[0] in _MILESTONES else "product"
+        family = "ebitda" if not keywords and (borrowed or [None])[0] == "ebitda" else "product"
         return [claim(d["start"], _type(_nearest(keywords, d), keywords) if keywords else family, date=d["date"],
                       label=family != "product" and borrowed[1] or None, stated=True, period_text=d["text"])
                 for d in dates if d["kind"] != "year" or keywords]
