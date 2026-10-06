@@ -738,6 +738,10 @@ STRUCTURE_REFUSALS = frozenset({"not_text", "empty", "raw_bytes", "file_name", "
 # raw text a figure cut from its cell; a roadmap adds its date cells and text lines. Nothing else passes.
 GOOD_ITEMS = GOOD_STRUCTURE + ('\nitems:\ni1 r2c2 "1,200,000" 1200000 h r2c1 r1c2\n'
                                'i2 r2c3 "1,500,000" 1500000 h r2c1 r1c3')
+# A KPI panel whose value has no label of its own takes the slide title as its label, marked (deck-parser.md section 7):
+# a title cell is a label, never a value.
+TITLED = ('r1c1 title: 2011 Estimated Revenue\nr1c2: $12 -$13 million\nitems:\n'
+          'i1 r1c2#1 "12" 12000000 h r1c1\ni2 r1c2#2 "13 million" 13000000 h r1c1')
 
 
 def _structure_db(mapping=None, **audit):
@@ -851,6 +855,13 @@ def test_a_sheet_built_by_the_app_sends_no_text_cell_value():
     ("a date line on a structure not sent as a roadmap", GOOD_ITEMS + "\nd1 r1c2", "table", "bad_item_line"),
     ("a date line citing a cell not sent", "r1c1: Launch the API\nr2c1: Q3 2025\nitems:\nd1 r9c1", "roadmap",
      "bad_item_line"),
+    # A title line passes only in format, redacted like any cell, and no item line may cite it.
+    ("an item citing a title cell", 'r1c1 title: Top 3 Metrics\nr1c2: $7m\nitems:\ni1 r1c1 "3" 3', "kpi_panel",
+     "bad_item_line"),
+    ("a title mark out of format", "title r1c1: 2011 Estimated Revenue\nr1c2: $7m", "kpi_panel", "not_cells"),
+    ("an unredacted name in a title", "r1c1 title: Michael Smith\nr1c2: $7m", "kpi_panel", "redaction_changed"),
+    ("the client name in a title", "r1c1 title: Northbridge Capital plan\nr1c2: $7m", "kpi_panel", "client_name"),
+    ("a title over 200 characters", "r1c1 title: " + "x" * 201 + "\nr1c2: $7m", "kpi_panel", "cell_too_long"),
 ])
 def test_the_structure_path_refuses_what_rule_16_does_not_allow(name, text, kind, reason):
     assert reason in STRUCTURE_REFUSALS
@@ -867,6 +878,17 @@ def test_an_item_list_in_format_reaches_the_provider():
     roadmap = 'r1c1: Launch the API\nr2c1: Q3 2025\nr3c1: 5K users\nitems:\ni1 r3c1 "5K" 5000\nd1 r2c1\nt1 r1c1\nt2 r3c1'
     result, adapter = _send(_structure_db(), roadmap, "roadmap")
     assert result.status != "refused" and adapter.calls > 0, result.reason
+
+
+def test_a_title_line_on_a_kpi_panel_reaches_the_provider_marked_with_no_item_in_it():
+    reply = json.dumps({"type": "kpi_panel", "pairs": [], "labels": [
+        {"item": f"i{n}", "metric": "revenue", "period": "2011", "unit": "USD", "unit_other": None,
+         "actual_or_forecast": "forecast"} for n in (1, 2)]})
+    result, adapter = _send(_structure_db(), TITLED, "kpi_panel", reply)
+    assert result.status == "read" and adapter.calls == 1, result.reason
+    sent = json.loads(adapter.payloads[0])
+    assert sent == {"type": "kpi_panel", "text": TITLED}
+    assert [line for line in sent["text"].splitlines() if " title: " in line] == ["r1c1 title: 2011 Estimated Revenue"]
 
 
 def test_no_call_is_made_without_consent():
@@ -1144,7 +1166,10 @@ def test_the_consistency_run_prints_and_reports_no_text_sent_to_the_model(monkey
             sent |= {line.split(": ", 1)[1] for line in redact.structure_text(cells).splitlines()}
             listed = items.list_items({**structure, "cells": cells})
             sent |= {item["raw"] for item in listed["items"] if len(item["raw"]) >= 4 and not item["raw"].isdigit()}
-    words = {text for text in sent if len(text) >= 4 and any(c.isalpha() for c in text)}
+    # A cell that only names the company ("zero2hero", zero2hero p11) is part of the deck's file name, which the
+    # report carries.
+    words = {text for text in sent if len(text) >= 4 and any(c.isalpha() for c in text)
+             and not any(text in name for name in names)}
     assert len(words) > 50 and "Gross Profit" in words, "the check sees the decks' cell text"
     assert not sorted(text for text in words if text in written)
     assert any(text in excluded[0].read_text(encoding="utf-8") for text in words), "the excluded file holds cell text"

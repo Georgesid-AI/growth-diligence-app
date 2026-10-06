@@ -8,7 +8,9 @@ name and the engagement reference become [redacted]; customer names their pseudo
 
 The text is one line per cell, `r<row>c<col>: <cell text>`, with no file name, slide number or
 prose. A merged cell carries its span after its text, `r1c3: FY2025 (r1c3:r1c14)`, so the model
-receives the full header stack (deck-parser.md section 2). Below a deck structure's cells comes its
+receives the full header stack (deck-parser.md section 2). A slide title a KPI panel takes as the label
+of a value is marked, `r1c1 title: 2011 Estimated Revenue` (deck-parser.md section 7): a label, never a
+value, so no item line may cite it. Below a deck structure's cells comes its
 item list (structure-labelling.md section 3): the lines are written and checked here, so the
 gateway checks them with no link to the deck package.
 """
@@ -16,7 +18,9 @@ import re
 from collections import Counter
 from typing import Dict, List, Optional, Tuple
 
-_LINE = re.compile(r"^r(?P<row>\d+)c(?P<col>\d+): (?P<text>.*?)(?: \(r(?P=row)c(?P=col):r(?P<row2>\d+)c(?P<col2>\d+)\))?$")
+_LINE = re.compile(r"^r(?P<row>\d+)c(?P<col>\d+)(?P<title> title)?: (?P<text>.*?)"
+                   r"(?: \(r(?P=row)c(?P=col):r(?P<row2>\d+)c(?P<col2>\d+)\))?$")
+TITLE = " title"           # after a title cell's id in its line: the slide title, a KPI value's label
 
 
 def cell_id(cell: Dict) -> str:
@@ -29,7 +33,8 @@ def cell_text(cell: Dict) -> str:
 
 
 def structure_text(cells: List[Dict]) -> str:
-    """The structure as the model reads it: one `r<row>c<col>: <text>` line per cell, in reading order."""
+    """The structure as the model reads it: one `r<row>c<col>: <text>` line per cell, in reading order; a title
+    cell's id is followed by its mark (`r1c1 title: <text>`)."""
     lines = []
     for c in sorted(cells, key=lambda c: (c["row"], c["col"])):
         text = cell_text(c)
@@ -37,7 +42,7 @@ def structure_text(cells: List[Dict]) -> str:
             continue
         rows, cols = c.get("row_span", 1), c.get("col_span", 1)
         span = f" ({cell_id(c)}:r{c['row'] + rows - 1}c{c['col'] + cols - 1})" if rows > 1 or cols > 1 else ""
-        lines.append(f"{cell_id(c)}: {text}{span}")
+        lines.append(f"{cell_id(c)}{TITLE if c.get('title') else ''}: {text}{span}")
     return "\n".join(lines)
 
 
@@ -49,6 +54,8 @@ def parse_structure_text(text: str) -> Optional[List[Dict]]:
         if not m:
             return None
         cell = {"row": int(m.group("row")), "col": int(m.group("col")), "text": m.group("text")}
+        if m.group("title"):
+            cell["title"] = True
         if m.group("row2"):
             rows, cols = int(m.group("row2")) - cell["row"] + 1, int(m.group("col2")) - cell["col"] + 1
             if rows > 1:
@@ -149,11 +156,13 @@ def parse_item_lines(lines: List[str]) -> Optional[Dict]:
 
 def items_in_format(lines: List[str], cells: List[Dict], roadmap: bool) -> bool:
     """True when every line below "items:" is in format (CLAUDE.md rule 16): ids numbered in order, every cited
-    cell sent, each item's raw text a figure inside its cell, date and text lines on a roadmap only."""
+    cell sent, each item's raw text a figure inside its cell and never in a title cell, date and text lines on a
+    roadmap only."""
     parsed = parse_item_lines(lines)
     if parsed is None:
         return False
     by_id = {cell_id(c): c["text"] for c in cells}
+    titles = {cell_id(c) for c in cells if c.get("title")}
     for key, prefix in (("items", "i"), ("dates", "d"), ("lines", "t")):
         if [x["id"] for x in parsed[key]] != [f"{prefix}{n}" for n in range(1, len(parsed[key]) + 1)]:
             return False
@@ -161,8 +170,8 @@ def items_in_format(lines: List[str], cells: List[Dict], roadmap: bool) -> bool:
             return False
     if (parsed["dates"] or parsed["lines"]) and not roadmap:
         return False
-    return all(item["raw"] in by_id[item["cell"]] and is_figure(item["raw"]) and all(h in by_id for h in item["headers"])
-               for item in parsed["items"])
+    return all(item["raw"] in by_id[item["cell"]] and is_figure(item["raw"]) and item["cell"] not in titles
+               and all(h in by_id for h in item["headers"]) for item in parsed["items"])
 
 
 # ---------------------------------------------------------------------------

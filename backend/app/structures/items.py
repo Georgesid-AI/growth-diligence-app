@@ -5,7 +5,8 @@ Pure: no I/O, no model, no database. For every deck type Python lists every figu
 
 - "id": i1, i2, ... in reading order (row, column, position), so the same structure always gives the same
   list;
-- "cell" and "position": a cell with several figures gives one item each, the position counting from 1;
+- "cell" and "position": a cell with several figures gives one item each, the position counting from 1. A
+  title cell (a slide title a KPI panel takes as a label, deck-parser.md section 7) is a label, never an item;
 - "raw": the figure's text, cut from the redacted cell. It is sent in the item line and never stored;
 - "values": [{"value", "dot_reading", "bracket_reading"}], the value in full units under today's
   normalisation (verify.figures, verify.scale_factor), Python's default first. A "2.500" reads as thousands
@@ -45,8 +46,9 @@ def list_items(structure: Dict) -> Dict:
     out = []
     for cell in cells:
         text = redact.cell_text(cell)                 # as its cell line writes it, so raw text stays inside it
-        if verify.period_header(text):
-            continue                                  # "Q3", "Mar", "M3", "Year 1": a period header, never a value
+        if verify.period_header(text) or cell.get("title"):
+            continue                                  # "Q3", "Mar", "M3", "Year 1": a period header, never a value;
+                                                      # a title used as a label (deck-parser.md section 7) neither
         figures = verify.figures(text, comma)
         if not figures:
             continue

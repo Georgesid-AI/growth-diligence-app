@@ -1,4 +1,4 @@
-<!-- version: v3 -->
+<!-- version: v4 -->
 <!-- step: structures -->
 <!-- This text is server-side only. It is never returned in an API response. -->
 
@@ -16,6 +16,8 @@ A JSON object with `type` and `text`.
 - `text` starts with one line per cell, `r<row>c<col>: <cell text>`. A merged cell ends with its
   span, `r1c3: FY2025 (r1c3:r1c14)`: it is a header over columns 3 to 14. In a KPI panel or a
   roadmap each text box is a column of lines, and boxes side by side share rows.
+- In a KPI panel, a cell marked `title`, `r1c1 title: 2011 Estimated Revenue`, is the slide title. It
+  is the label of the value beside it or below it, which has no label of its own. It holds no item.
 - Below the cells of a deck structure comes the line `items:`, then one line per figure the program
   found. `i3 r3c2#2 "(30K)" 30000 or -30000 h r3c1 r1c2` is item `i3`: the second figure in cell
   r3c2, written "(30K)", worth 30000 (or -30000: the program shows both readings to the analyst),

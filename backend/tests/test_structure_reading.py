@@ -93,6 +93,42 @@ def test_recorded_replies_replay_through_the_gateway_and_the_verifier(fixture):
     assert {"verified": statuses.count("verified"), "suggestion": statuses.count("suggestion")} == fixture["expected"]
 
 
+def _moz_text(page):
+    from app.decks import parser
+    deck = parser.parse_deck((DECKS / "02-moz.pdf").read_bytes(), "02-moz.pdf")
+    structure, = [s for s in deck["structures"] if s.get("page") == page and s["type"] == "kpi_panel"]
+    cells, _ = redact.redact_structure(structure["cells"], "Moz", {})
+    return structure_items.text({**structure, "cells": cells}, structure_items.list_items({**structure, "cells": cells}))
+
+
+def test_moz_p20_and_p21_reach_the_model_with_every_value_beside_its_label_and_the_title_marked():
+    """Issue #48: the nine value boxes that hold only a figure reach the model, each in the row of its label and citing
+    it as its header; "2011 Estimated Revenue" goes as the title, the label of "$12 -$13 million"."""
+    pytest.importorskip("pdfplumber")
+    sent = {}
+    for page in (20, 21):
+        text = _moz_text(page)
+        result, adapter = _read(_db(), text, "kpi_panel", [unlabelled({"type": "kpi_panel", "text": text})])
+        assert result.status == "read", result.reason
+        sent[page] = json.loads(adapter.payloads[0])["text"]
+    assert sent[20].splitlines()[:2] == ["r1c1 title: 2011 Estimated Revenue", "r1c2: $12 -$13 million"]
+    assert sent[21].splitlines()[:2] == ["r1c1 title: % of Free Trials Converting to Paid", "r1c2: ~57%"]
+    assert 'i1 r1c2#1 "12" 12000000 h r1c1' in sent[20].splitlines()
+    pairs = {(20, "Number of PRO Subscribers", "~13,500"), (20, "# of New Free Trials / Day", "~100"),
+             (20, "Avg. Customer Lifetime Value", "~$900"), (20, "Avg. Cost of Paid Acquisition", "~$100"),
+             (20, "Avg. Monthly Revenue / Subscriber", "~$93"), (21, "Email Subscribers", "~300K"),
+             (21, "Gross Margins", "~82%"), (21, "% of Free Trials Converting to Paid", "~57%"),
+             (21, "Churn Rate in 1st2 Paid Months", "~25%")}
+    for page, label, value in pairs:
+        lines = sent[page].splitlines()
+        cell = next(line.split(": ", 1)[0] for line in lines if line.endswith(f": {value}"))
+        row = cell.split("c")[0]
+        assert any(line.startswith(f"{row}c1") and line.endswith(f": {label}") for line in lines), (page, value)
+        items = [line.split() for line in lines[lines.index("items:") + 1:]]
+        assert any(item[1] == cell and item[-2:] == ["h", f"{row}c1"] for item in items), \
+            f"{value}'s item cites {label} as its header"
+
+
 def test_the_call_is_pinned_to_one_model_with_no_temperature_no_tools_and_the_structure_schema(monkeypatch):
     monkeypatch.setenv("NARRATIVE_MODEL", "claude-opus-5-5")      # the narrative setting does not move it
     result, adapter = _read(_db())
@@ -149,6 +185,22 @@ def test_dates_are_periods_and_are_left_out():
                       ["Users", "Mar 2025: 5K", "", "", ""]])
     assert [(i["cell"], i["raw"], i["values"][0]["value"]) for i in listed] == \
         [("r2c2", "1.2m", 1200000), ("r3c2", "5K", 5000)]
+
+
+def test_a_title_cell_is_marked_in_its_line_read_back_and_never_an_item():
+    """deck-parser.md section 7: a slide title a KPI panel takes as a label goes as `r<row>c<col> title: <text>`; it is
+    a label, so the item list skips it, a digit in it too, and redaction keeps the mark for the gateway's check."""
+    cells = [{"row": 1, "col": 1, "text": "2011 Estimated Revenue", "title": True},
+             {"row": 1, "col": 2, "text": "$12 -$13 million"}]
+    text = redact.structure_text(cells)
+    assert text == "r1c1 title: 2011 Estimated Revenue\nr1c2: $12 -$13 million"
+    assert redact.parse_structure_text(text) == cells
+    assert redact.redact_structure(cells, "Target Co", {})[0] == cells
+    structure = {"type": "kpi_panel", "header_rows": 0, "cells": [{**c, "box": n} for n, c in enumerate(cells, 1)]}
+    assert [(i["cell"], i["headers"]) for i in structure_items.list_items(structure)["items"]] == \
+        [("r1c2", ["r1c1"]), ("r1c2", ["r1c1"])], "the title is the range's header"
+    structure["cells"][0]["text"] = "Top 3 Metrics"
+    assert [i["cell"] for i in structure_items.list_items(structure)["items"]] == ["r1c2", "r1c2"]
 
 
 def test_values_are_in_full_units_under_todays_normalisation():
@@ -351,15 +403,17 @@ def test_each_schemas_hash_enters_the_cache_key_of_its_own_type(monkeypatch):
     assert (moved.cache_hit, adapter.calls) == (False, 1) and moved.key != mapping.key
 
 
-def test_the_prompt_is_v3_and_names_every_label_field_metric_category_and_tie_break():
+def test_the_prompt_is_v4_and_names_every_label_field_metric_category_and_tie_break():
     """The prompt lists exactly the label fields, every metric (other and not_a_metric too), the roadmap categories
     and the tie-breaks; a unit is one of the 20 listed currency codes, or "other" with its ISO code in unit_other.
-    The column-mapping section keeps its own item fields."""
+    The column-mapping section keeps its own item fields. v4 (issue #48): its input section reads a title cell."""
     import re
     from app.llm import prompt_store, schemas
     prompt = prompt_store.load(gateway.STRUCTURE_PROMPT)
-    assert prompt.version == "v3"
+    assert prompt.version == "v4"
     text = prompt.text
+    given = text.split("# The input")[1].split("# Deck structures")[0]
+    assert "`r1c1 title: 2011 Estimated Revenue`" in given and "label of the value" in given
     fields = text.split("Each label has exactly these fields:")[1].split("\n\n")[1]
     named = re.findall(r"^- `(\w+)`:", fields, re.M)
     assert named == list(schemas.labelling_output_schema()["properties"]["labels"]["items"]["properties"])
@@ -491,7 +545,7 @@ def test_an_other_item_is_listed_as_type_other_and_approved_only_once_its_type_i
     client, db, adapter = _deck_api(monkeypatch)
     _map_revenue(client)
     _upload_deck(client, "02-moz.pdf")
-    ranged, = [c for c in _deck(client)["candidates"] if c.get("origin") == "ai" and c["sources"][0]["cell"] == "r1c1"]
+    ranged, = [c for c in _deck(client)["candidates"] if c.get("origin") == "ai" and c["sources"][0]["cell"] == "r1c2"]
     assert (ranged["value"], ranged["value_high"], ranged["ai_label"]) == (12000000, 13000000, "Verified"), \
         "moz p20 \"$12 -$13 million\": one row, twelve to thirteen million"
     other, = [c for c in _deck(client)["candidates"] if c.get("claim_type") == "other"]
@@ -1455,8 +1509,9 @@ def test_the_consistency_script_reports_agreement_match_rate_cost_and_cache_hits
     assert report["verifier_match_rate_pct"] == 100.0, "the table's 24 and the panel's 2 per pass"
     assert report["counts"]["table"] == {"not_a_metric": 0, "other": 0, "ambiguous": 0, "flags": 0}
     assert report["counts"]["hiring_table"]["not_a_metric"] == 9, "3 items, 3 passes"
-    assert report["counts"]["kpi_panel"] == {"not_a_metric": 27, "other": 0, "ambiguous": 18, "flags": 0}, \
-        "pages 11 and 17 (9 items), 3 passes; page 17's six bracketed figures after text read two ways"
+    assert report["counts"]["kpi_panel"] == {"not_a_metric": 30, "other": 0, "ambiguous": 18, "flags": 0}, \
+        "pages 11 and 17 (10 items: page 11's label box \"zero2hero\" holds a 2), 3 passes; page 17's six " \
+        "bracketed figures after text read two ways"
     assert report["cache_hit_rate_pct"] == {"pass_2": 100.0, "pass_3": 100.0}
     assert report["per_deck"]["05-zero2hero.pdf"]["structures"] == 5
     assert report["model_reads"] == 5 * 3, "passes 2 and 3 bypass the cache after counting its hits"
@@ -1519,10 +1574,11 @@ def test_the_consistency_report_shows_where_passes_disagree_why_items_are_unveri
     script = _consistency_script()
     report = asyncio.run(script.run(["05-zero2hero.pdf"], 3, script.MemoryDB(), _drifting(script)()))
     # Table: 24 items, the FY2023 revenue written three ways but kept as one period: 23 of 24 as written, 24 of 24
-    # normalised. KPI panels: 3 + 6 + 2 items, the page 19 users read as customers in pass 3: 10 of 11 either way.
-    assert report["agreement_pct_old"] == {"hiring_table": 100.0, "kpi_panel": 90.9, "table": 95.8}
-    assert report["agreement_pct"] == {"hiring_table": 100.0, "kpi_panel": 90.9, "table": 100.0}
-    assert (report["agreement_pct_all_old"], report["agreement_pct_all"]) == (94.7, 97.4), "36 of 38; 37 of 38"
+    # normalised. KPI panels: 4 + 6 + 2 items (page 11's label box "zero2hero" holds a 2), the page 19 users read as
+    # customers in pass 3: 11 of 12 either way.
+    assert report["agreement_pct_old"] == {"hiring_table": 100.0, "kpi_panel": 91.7, "table": 95.8}
+    assert report["agreement_pct"] == {"hiring_table": 100.0, "kpi_panel": 91.7, "table": 100.0}
+    assert (report["agreement_pct_all_old"], report["agreement_pct_all"]) == (94.9, 97.4), "37 of 39; 38 of 39"
     assert report["disagreements"] == [
         {"deck": "05-zero2hero.pdf", "page": 19, "type": "table", "fields": ["period", "unit"],
          "same_after_normalisation": True},
@@ -1566,7 +1622,7 @@ def test_the_consistency_report_shows_where_passes_disagree_why_items_are_unveri
     text = path.read_text(encoding="utf-8")
     tokens = report["tokens"]
     for line in (
-            "| table | 100.0% | 95.8% |", "| kpi_panel | 90.9% | 90.9% |", "| all | 97.4% | 94.7% |",
+            "| table | 100.0% | 95.8% |", "| kpi_panel | 91.7% | 91.7% |", "| all | 97.4% | 94.9% |",
             "| Type | Structures | Disagreeing | metric | period | unit | actual_or_forecast |",
             "| kpi_panel | 3 | 1 | 1 | 0 | 0 | 0 |", "| table | 1 | 1 | 0 | 1 | 1 | 0 |",
             "| 05-zero2hero.pdf | 19 | table | period, unit | yes |",
@@ -1582,7 +1638,7 @@ def test_the_consistency_report_shows_where_passes_disagree_why_items_are_unveri
             "gateway's 4,000-token cap",
             "- Billed input per model read: 1,000.0"):
         assert line in text, line
-    assert script.summary(report).startswith("Agreement 97.4% (target 95.0%: met; old method 94.7%); verified 92.6%")
+    assert script.summary(report).startswith("Agreement 97.4% (target 95.0%: met; old method 94.9%); verified 92.6%")
 
     class Uncountable:
         def count_tokens(self, **kwargs):
