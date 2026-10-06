@@ -63,7 +63,7 @@ _LABEL_MAX = SNIPPET_MAX
 # "growing", "hired", "launches". Acronyms match in capitals only, so "Sam" or "arr" do not count.
 # "market" is a whole word: "marketing" and "marketplace" do not count.
 # Where two keywords overlap, the longer one counts: "paying users" is customers, not users;
-# "customer lifetime value" is ltv, not customers or customer_lifetime; "LTV / CAC" is ltv_cac.
+# "customer lifetime value" is ltv, not customers or customer_lifetime; "LTV / CAC", "LTV:CAC" is ltv_cac.
 _FAMILIES = [
     ("growth", r"\bCAGR\b|(?i:\bgrowth\b|\bgr(?:ow|ows|owing|own|ew)\b)"),
     ("revenue", r"\b(?:ARR|MRR)\b|(?i:\brevenues?\b|\bbookings?\b|\bturnover\b)"),
@@ -91,7 +91,7 @@ _FAMILIES = [
     ("ltv", r"\bLTVs?\b|(?i:\b(?:customer )?lifetime values?\b)"),
     ("cac", r"\bCACs?\b|(?i:\bcosts? (?:of|per) (?:paid )?(?:customer )?acquisitions?\b|\bacquisition costs?\b)"),
     ("customer_lifetime", r"(?i:\bcustomer life(?:time)?s?\b)"),
-    ("ltv_cac", r"\bLTV\s*/\s*CAC\b"),
+    ("ltv_cac", r"\bLTV\s*(?:/|:|\bto\b)\s*CAC\b"),
     ("trials_per_day", r"(?i:\btrials?\s*(?:per|/)\s*day\b)"),
     ("months_to_profitability", r"(?i:\bprofitable\b)"),
 ]
