@@ -494,9 +494,14 @@ TABLE_KEYWORDS = (
     ("unit_economics", re.compile(r"\b(?:CAC|LTV|ARPU|ARPA|ACV)s?\b|(?i:\bpayback\b|\bunit economics\b|\bcontribution margin\b)")),
     ("hiring_table", re.compile(r"(?i)\b(?:hir(?:e|es|ing)|headcount|recruit(?:s|ed|ing|ment)?|roles?|positions?|FTEs?)\b")),
 )
-CAPTION_REACH = 0.1         # how far above a table its caption may sit, as a share of the page
-KPI_LABEL_MAX = 30          # a KPI box: every line at most this many characters...
+# How far above a table its caption may sit, as a share of the page; also how far a KPI panel's label box may sit
+# directly above or below its box.
+CAPTION_REACH = 0.1
+KPI_LINE_MAX = 30           # a KPI box: every line at most this many characters...
 KPI_MAX_LINES = 4           # ...at most this many lines, a figure and a word, and not a wrapped sentence
+# The label length (decision of 2026-10-06): the longest label on the 10 test decks, "Crawling, Serving, Hosting +
+# Processing" (39 characters), plus 50%, rounded up. A label box or a title used as a label, read as one line.
+LABEL_MAX = 59
 TIMELINE_MIN_DATES = 3      # date labels on a page (chart axes left out) that make it a roadmap, with a
 TIMELINE_LINE_MAX = 60      # product keyword on the page; every line of a timeline box at most this long
 CELL_MAX = 200              # a longer cell is prose and is left out of its structure
@@ -688,7 +693,7 @@ def _axis_lines(lines: List[Dict], claims) -> set:
 
 def _band_cells(boxes: List[List[Dict]]) -> List[Dict]:
     """Text boxes as a grid: boxes that overlap in height form a band of rows, each box a column of
-    its band in left-to-right order, each line a row. Every cell keeps its box."""
+    its band in left-to-right order, each line a row. Every cell keeps its box; a title line is marked."""
     def extent(lines):
         placed = [l["bbox"] for l in lines if l.get("bbox")]
         return (min(b[1] for b in placed), max(b[3] for b in placed), min(b[0] for b in placed)) if placed else None
@@ -708,26 +713,106 @@ def _band_cells(boxes: List[List[Dict]]) -> List[Dict]:
         members = sorted(band["boxes"], key=lambda b: extent(b)[2] if extent(b) else 0)
         for col, box in enumerate(members, 1):
             number += 1
-            cells += [{"row": row + i + 1, "col": col, "text": line["text"], "box": number}
-                      for i, line in enumerate(box)]
+            cells += [{"row": row + i + 1, "col": col, "text": line["text"], "box": number,
+                       **({"title": True} if line.get("title") else {})} for i, line in enumerate(box)]
         row += max(len(box) for box in members)
     return cells
 
 
+def _extent(box: List[Dict]):
+    """(left, top, right, bottom) of a text box, or None when its lines have no position."""
+    placed = [l["bbox"] for l in box if l.get("bbox")]
+    return (min(b[0] for b in placed), min(b[1] for b in placed), max(b[2] for b in placed),
+            max(b[3] for b in placed)) if placed else None
+
+
+def _overlap(a, b, axis: int) -> bool:
+    """Whether two extents overlap along x (axis 0) or y (axis 1)."""
+    return min(a[axis + 2], b[axis + 2]) > max(a[axis], b[axis])
+
+
+def _next_to(a, b, others) -> bool:
+    """Two box extents directly next to each other: in the same band (they overlap in height) or directly above or
+    below (they overlap in width, at most CAPTION_REACH apart), with no other box between them."""
+    for along, across in ((0, 1), (1, 0)):            # side by side, then one above the other
+        if not _overlap(a, b, across) or _overlap(a, b, along):
+            continue
+        first, second = (a, b) if a[along + 2] <= b[along] else (b, a)
+        if along == 1 and second[1] - first[3] > CAPTION_REACH:
+            continue
+        if not any(c[along] >= first[along + 2] - 1e-9 and c[along + 2] <= second[along] + 1e-9
+                   and _overlap(c, a, across) and _overlap(c, b, across) for c in others if c is not a and c is not b):
+            return True
+    return False
+
+
+def _kpi_box(box: List[Dict], claims) -> bool:
+    return len(box) <= KPI_MAX_LINES and all(len(l["text"]) <= KPI_LINE_MAX for l in box) \
+        and any(_figures(l["text"], claims) for l in box) and any(_WORD.search(l["text"]) for l in box) \
+        and not _wrapped(box)
+
+
+def _value_box(box: List[Dict], ticks: set, claims) -> bool:
+    """One figure that is not a date and no word outside it ("~13,500", "$12 -$13 million"); never an axis tick."""
+    if any(id(l) in ticks for l in box):
+        return False
+    texts = [_LIST_NUMBER.sub("", l["text"]) for l in box]
+    found = [(i, f) for i, text in enumerate(texts) for f in claims.figures(text)]
+    if len(found) != 1:
+        return False
+    (i, figure), = found
+    texts[i] = texts[i][:figure["start"]] + " " + texts[i][figure["end"]:]
+    return not any(_WORD.search(text) for text in texts)
+
+
+def _label_box(box: List[Dict], claims) -> bool:
+    """A word and no figure other than a date, at most LABEL_MAX characters read as one line (a label wrapped over
+    two lines counts; a longer wrapped sentence is prose)."""
+    return len(box) <= KPI_MAX_LINES and not any(_figures(l["text"], claims) for l in box) \
+        and any(_WORD.search(l["text"]) for l in box) and len(" ".join(l["text"] for l in box)) <= LABEL_MAX
+
+
+def _kpi_panel(boxes: List[List[Dict]], title: List[Dict], ticks: set, claims) -> List[List[Dict]]:
+    """The boxes of a page's KPI panel (spec section 7): its KPI boxes, the value boxes a label box sits directly next
+    to, the label boxes directly next to a KPI or value box, and the title line as the label of a value box with no
+    label box of its own, beside it or above it. A page with no KPI box has no panel."""
+    kpi = [box for box in boxes if _kpi_box(box, claims)]
+    if not kpi:
+        return []
+    placed = {id(box): _extent(box) for box in boxes + ([title] if title else []) if _extent(box)}
+    others = list(placed.values())
+
+    def near(a, b):
+        return id(a) in placed and id(b) in placed and _next_to(placed[id(a)], placed[id(b)], others)
+
+    labels = [box for box in boxes if _label_box(box, claims)]
+    values = [box for box in boxes if _value_box(box, ticks, claims)]
+    labelled = [box for box in values if any(near(label, box) for label in labels)]
+    labels = [label for label in labels if any(near(label, box) for box in kpi + labelled)]
+    titled = [box for box in values if title and box not in labelled and _label_box(title, claims)
+              and near(title, box) and placed[id(title)][1] < placed[id(box)][3]]
+    kept = kpi + [box for box in labelled + titled if box not in kpi] + labels
+    return kept + ([title] if titled else [])
+
+
 def _box_structures(blocks: List[Dict], excluded: set, claims) -> List[Dict]:
     """Per page: a roadmap or timeline when TIMELINE_MIN_DATES date labels remain once chart axes are
-    left out, holding every box that is not prose; otherwise a KPI panel of its KPI boxes."""
-    pages = {}
+    left out, holding every box that is not prose; otherwise a KPI panel (_kpi_panel)."""
+    pages, titles = {}, {}
     for b in blocks:
-        if b["kind"] == "text" and not b.get("title") and _page_key(b) not in excluded:
+        if b["kind"] == "text" and _page_key(b) not in excluded:
+            if b.get("title"):
+                titles.setdefault(_page_key(b), []).append(b)
+                continue
             key = b.get("box") if b.get("box") is not None else ("line", len(pages.get(_page_key(b), {})))
             pages.setdefault(_page_key(b), {}).setdefault(key, []).append(b)
+    ticks = claims.tick_lines(blocks)
     out = []
     for page, boxes in pages.items():
         lines = [line for box in boxes.values() for line in box]
         axis = _axis_lines(lines, claims)
         labels = [line for line in lines if id(line) not in axis and _date_labels(line["text"], claims)]
-        titled = [b["text"] for b in blocks if b["kind"] == "text" and b.get("title") and _page_key(b) == page]
+        titled = [t["text"] for t in titles.get(page, ())]
         if len(labels) >= TIMELINE_MIN_DATES and any(claims.has_product_keyword(t) for t in titled + [l["text"] for l in lines]):
             kind = "roadmap"
             kept = [box for box in boxes.values()
@@ -735,11 +820,7 @@ def _box_structures(blocks: List[Dict], excluded: set, claims) -> List[Dict]:
                     and not all(id(l) in axis for l in box)]
         else:
             kind = "kpi_panel"
-            kept = [box for box in boxes.values()
-                    if len(box) <= KPI_MAX_LINES and all(len(l["text"]) <= KPI_LABEL_MAX for l in box)
-                    and any(_figures(l["text"], claims) for l in box) and any(_WORD.search(l["text"]) for l in box)
-                    and not _wrapped(box)]
-        kept = [box for box in kept if any(_has_figure(l["text"], claims) for l in box) or kind == "roadmap"]
+            kept = _kpi_panel(list(boxes.values()), titles.get(page), ticks, claims)
         if not kept or not any(_has_figure(l["text"], claims) for box in kept for l in box):
             continue
         first = kept[0][0]

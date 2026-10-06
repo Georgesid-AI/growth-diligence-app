@@ -767,6 +767,14 @@ def tick_cells(blocks: List[Dict]) -> set:
     return _tick_cells(blocks)
 
 
+def tick_lines(blocks: List[Dict]) -> set:
+    """id() of the text lines that are chart axis ticks (see _axis_ticks)."""
+    lines = [b for b in blocks if b["kind"] != "table"]
+    units = [{"text": b["text"], "page": (b.get("slide"), b.get("page")), "bbox": b.get("bbox")} for b in lines]
+    ticks = _axis_ticks(units)
+    return {id(b) for b, u in zip(lines, units) if id(u) in ticks}
+
+
 def _bare_values(text: str) -> List[float]:
     """The figures of a line that holds nothing but numbers ("800,000", "40%", "$5.5T"); else []."""
     if _WORD.search(text):

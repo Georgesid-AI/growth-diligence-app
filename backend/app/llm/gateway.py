@@ -1265,9 +1265,10 @@ def content_hash(text: str) -> str:
 def structure_text_problem(text: Any, structure_type: str, context: dict, mapping: Dict[str, str]) -> Optional[str]:
     """Why a text may not reach the provider, or None (CLAUDE.md rule 16, spec sections 1 and 3).
 
-    Only extracted text with cell positions passes: one `r<row>c<col>: <text>` line per cell (on the
-    column-mapping path, sample and profile lines; for a deck structure, below "items:", Python's item
-    lines, each raw text a figure inside its cell, and a roadmap's date and text lines). Raw bytes,
+    Only extracted text with cell positions passes: one `r<row>c<col>: <text>` line per cell, a slide title
+    a KPI panel takes as a label marked `r<row>c<col> title: <text>` (on the column-mapping path, sample and
+    profile lines; for a deck structure, below "items:", Python's item lines, each raw text a figure inside
+    its cell and never in a title cell, and a roadmap's date and text lines). Raw bytes,
     prose, a file name and a cell over 200 characters are refused. The client name and the engagement reference reach the provider only
     as "[redacted]": the caller replaces them (redact.withheld_values), and one still standing in the
     text as a whole word (any case; a word ends at a space, punctuation, a hyphen or a change of
