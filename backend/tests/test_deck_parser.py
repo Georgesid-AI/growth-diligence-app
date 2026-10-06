@@ -1249,6 +1249,59 @@ def test_a_page_with_no_kpi_box_has_no_panel():
     assert _panel_texts([("Cash on hand", 1, 1), ("$7m", 1, 1.6)], title="Our runway") == []
 
 
+# ---------------------------------------------------------------------------
+# A tall box merges two visual rows into one grid band (spec section 7, issue #50), so each KPI cell keeps the cells of
+# other boxes whose line is directly next to its own. Built from the public test deck front-b, slides 15, 12 and 16.
+# ---------------------------------------------------------------------------
+def _cell_of(panel, text):
+    cell, = [c for c in panel["cells"] if c["text"] == text]
+    return cell
+
+
+def _cell_id(cell):
+    return f"r{cell['row']}c{cell['col']}"
+
+
+def test_front_b_p15_one_grid_row_holds_two_visual_rows_and_next_to_tells_them_apart():
+    """"“Default alive” † / Profitable in 10 months" spans the label row and the value row, so all five boxes share a
+    grid row; "Cash on hand" sits above "$7m left", "Runway *" above "18 months"."""
+    panel = _panel("01-front-b.pptx", 15)
+    cash, left, months, runway = (_cell_of(panel, t) for t in ("Cash on hand", "$7m left", "18 months", "Runway *"))
+    assert len({cash["row"], left["row"], months["row"], runway["row"]}) == 1, "one grid row"
+    assert _cell_id(cash) in left["next_to"] and _cell_id(left) in cash["next_to"], "directly above it"
+    assert _cell_id(cash) not in months["next_to"] and _cell_id(runway) in months["next_to"]
+
+
+def test_front_b_p12_a_tall_box_between_two_lines_on_one_visual_row_keeps_them_apart():
+    panel = _panel("01-front-b.pptx", 12)
+    weeks = _cell_of(panel, "2 weeks ago")
+    assert not {_cell_id(_cell_of(panel, t)) for t in ("LTV / CAC", "Spend as", "% of revenue")} & set(weeks["next_to"])
+    assert _cell_id(_cell_of(panel, "The team isn’t one year old")) in _cell_of(panel, "joined 6 months ago")["next_to"]
+
+
+def test_front_b_p16_next_to_is_measured_line_to_line_not_box_to_box():
+    """The legend entry "Cash" sits on the "Gross margin" line's row, beside the box "1/1/18 5/1/18 / Gross margin",
+    not on the axis dates' row."""
+    panel = _panel("01-front-b.pptx", 16)
+    cash = _cell_id(_cell_of(panel, "Cash"))
+    assert cash not in _cell_of(panel, "1/1/18 5/1/18")["next_to"] and cash in _cell_of(panel, "Gross margin")["next_to"]
+
+
+def test_roadmaps_keep_their_grid_with_no_next_to():
+    for file, page in (("02-moz.pdf", 2), ("03-buffer.pptx", 6), ("10-tea.pdf", 11)):
+        deck = parser.parse_deck((DECKS / file).read_bytes(), file)
+        roadmap, = [s for s in deck["structures"] if (s.get("slide") or s.get("page")) == page]
+        assert roadmap["type"] == "roadmap" and not [c for c in roadmap["cells"] if "next_to" in c], (file, page)
+
+
+def test_front_b_p15_seed_to_series_a_joins_its_panel_like_its_twin():
+    """"Seed to Series A" ends on a capital "A": a name, not the article that wraps a sentence over its lines."""
+    texts = [c["text"] for c in _panel("01-front-b.pptx", 15)["cells"]]
+    assert {"Seed to Series A", "$3.1m raised", "Series A to date", "$10m raised"} <= set(texts)
+    assert _panel_texts([("Seed to Series A\n$3.1m raised", 1, 1), ("We closed a\n$3.1m seed round", 4, 1)]) == \
+        ["Seed to Series A", "$3.1m raised"], "a line ending on a lower-case \"a\" still wraps a sentence"
+
+
 def test_a_table_without_a_figure_is_prose_and_row_numbers_are_not_figures():
     deck = parser.parse_deck((DECKS / "07-equals-seed.docx").read_bytes(), "07-equals-seed.docx")
     assert deck["structures"] == [], "numbered text tables are prose"

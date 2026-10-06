@@ -129,6 +129,46 @@ def test_moz_p20_and_p21_reach_the_model_with_every_value_beside_its_label_and_t
             f"{value}'s item cites {label} as its header"
 
 
+def _deck_structure(file, page, kind):
+    from app.decks import parser
+    deck = parser.parse_deck((DECKS / file).read_bytes(), file)
+    structure, = [s for s in deck["structures"] if (s.get("slide") or s.get("page")) == page and s["type"] == kind]
+    return structure
+
+
+def _front_b_items(page):
+    """(cell text, raw text, header texts) per item of front-b's KPI panel on a slide, as Python lists them."""
+    structure = _deck_structure("01-front-b.pptx", page, "kpi_panel")
+    text = {redact.cell_id(c): c["text"] for c in structure["cells"]}
+    return [(text[i["cell"]], i["raw"], [text[h] for h in i["headers"]])
+            for i in structure_items.list_items(structure)["items"]]
+
+
+def test_front_b_a_kpi_value_cites_a_label_from_another_box_only_when_it_sits_directly_next_to_it():
+    """Issue #50: a tall box merges two visual rows into one grid row, so a value's row neighbour need not sit next to
+    it on the page. A wrong label is worse than a missing one: the verifier checks the value and the period, never the
+    metric. The top line of the value's own box always counts."""
+    p15 = _front_b_items(15)
+    assert ("18 months", "18", []) in p15, "\"Cash on hand\" sits above \"$7m left\", not next to \"18 months\""
+    assert ("$7m left", "7m", ["Cash on hand"]) in p15, "the label directly above its value still counts"
+    p12 = _front_b_items(12)
+    assert [i for i in p12 if i[0].endswith("ago")] == [
+        ("2 weeks ago", "2", []), ("10 months ago", "10", []),
+        ("joined 6 months ago", "6", ["The team isn’t one year old"]), ("2 months ago", "2", []),
+        ("10 months ago", "10", [])], "no tenure value cites \"LTV / CAC\" or \"Spend as\""
+    assert ("2.5 2.6 4.4", "2.5", ["On a sustainable trajectory"]) in p12, "the top line of its own box"
+    p16 = _front_b_items(16)
+    assert len(p16) == 12 and not [i for i in p16 if "Cash" in i[2]], "a chart legend entry never labels an axis date"
+
+
+def test_roadmaps_keep_their_header_cells():
+    """The guard is a KPI panel's: moz p2's "1.1M" still cites the lines left of it in its row and its box's top line."""
+    pytest.importorskip("pdfplumber")
+    roadmap = _deck_structure("02-moz.pdf", 2, "roadmap")
+    item, = [i for i in structure_items.list_items(roadmap)["items"] if i["raw"] == "1.1M"]
+    assert item["headers"] == ["r2c2", "r2c1", "r1c3"]
+
+
 def test_the_call_is_pinned_to_one_model_with_no_temperature_no_tools_and_the_structure_schema(monkeypatch):
     monkeypatch.setenv("NARRATIVE_MODEL", "claude-opus-5-5")      # the narrative setting does not move it
     result, adapter = _read(_db())
@@ -187,6 +227,24 @@ def test_dates_are_periods_and_are_left_out():
         [("r2c2", "1.2m", 1200000), ("r3c2", "5K", 5000)]
 
 
+def test_a_digit_inside_a_word_is_no_figure_as_the_parser_reads_it():
+    """Issue #50: "zero2hero" (zero2hero p11) and "Churn Rate in 1st2 Paid Months" (moz p21) give no item, as the
+    parser's reader (claims.figures) already reads them: no letter right before a number, no ordinal ending. A scale,
+    a % or brackets stay part of their figure."""
+    from app.decks import claims
+    words = ["zero2hero", "Churn Rate in 1st2 Paid Months", "Go2Market", "Web3 Foundation Open Grant"]
+    for text in words:
+        assert (verify.figures(text), claims.figures(text)) == ([], []), text
+    assert _listed([["", "Plan"]] + [["Name", w] for w in words]) == []
+    assert [i["raw"] for i in _listed([["", "Plan"], ["Social", "Telegram(30K) ~$93 62% £1.2m 2.5x"]])] == \
+        ["(30K)", "93", "62%", "1.2m", "2.5"]
+    pytest.importorskip("pdfplumber")
+    for file, page, text in (("05-zero2hero.pdf", 11, "zero2hero"), ("02-moz.pdf", 21, "Churn Rate in 1st2 Paid Months")):
+        structure = _deck_structure(file, page, "kpi_panel")
+        cell, = [redact.cell_id(c) for c in structure["cells"] if c["text"] == text]
+        assert not [i for i in structure_items.list_items(structure)["items"] if i["cell"] == cell], (file, page)
+
+
 def test_a_title_cell_is_marked_in_its_line_read_back_and_never_an_item():
     """deck-parser.md section 7: a slide title a KPI panel takes as a label goes as `r<row>c<col> title: <text>`; it is
     a label, so the item list skips it, a digit in it too, and redaction keeps the mark for the gateway's check."""
@@ -197,6 +255,7 @@ def test_a_title_cell_is_marked_in_its_line_read_back_and_never_an_item():
     assert redact.parse_structure_text(text) == cells
     assert redact.redact_structure(cells, "Target Co", {})[0] == cells
     structure = {"type": "kpi_panel", "header_rows": 0, "cells": [{**c, "box": n} for n, c in enumerate(cells, 1)]}
+    structure["cells"][1]["next_to"] = ["r1c1"]           # the title sits beside it (deck-parser.md section 7)
     assert [(i["cell"], i["headers"]) for i in structure_items.list_items(structure)["items"]] == \
         [("r1c2", ["r1c1"]), ("r1c2", ["r1c1"])], "the title is the range's header"
     structure["cells"][0]["text"] = "Top 3 Metrics"
@@ -1509,9 +1568,9 @@ def test_the_consistency_script_reports_agreement_match_rate_cost_and_cache_hits
     assert report["verifier_match_rate_pct"] == 100.0, "the table's 24 and the panel's 2 per pass"
     assert report["counts"]["table"] == {"not_a_metric": 0, "other": 0, "ambiguous": 0, "flags": 0}
     assert report["counts"]["hiring_table"]["not_a_metric"] == 9, "3 items, 3 passes"
-    assert report["counts"]["kpi_panel"] == {"not_a_metric": 30, "other": 0, "ambiguous": 18, "flags": 0}, \
-        "pages 11 and 17 (10 items: page 11's label box \"zero2hero\" holds a 2), 3 passes; page 17's six " \
-        "bracketed figures after text read two ways"
+    assert report["counts"]["kpi_panel"] == {"not_a_metric": 27, "other": 0, "ambiguous": 18, "flags": 0}, \
+        "pages 11 and 17 (9 items: the 2 in page 11's label box \"zero2hero\" is no figure), 3 passes; page 17's " \
+        "six bracketed figures after text read two ways"
     assert report["cache_hit_rate_pct"] == {"pass_2": 100.0, "pass_3": 100.0}
     assert report["per_deck"]["05-zero2hero.pdf"]["structures"] == 5
     assert report["model_reads"] == 5 * 3, "passes 2 and 3 bypass the cache after counting its hits"
@@ -1574,11 +1633,11 @@ def test_the_consistency_report_shows_where_passes_disagree_why_items_are_unveri
     script = _consistency_script()
     report = asyncio.run(script.run(["05-zero2hero.pdf"], 3, script.MemoryDB(), _drifting(script)()))
     # Table: 24 items, the FY2023 revenue written three ways but kept as one period: 23 of 24 as written, 24 of 24
-    # normalised. KPI panels: 4 + 6 + 2 items (page 11's label box "zero2hero" holds a 2), the page 19 users read as
-    # customers in pass 3: 11 of 12 either way.
-    assert report["agreement_pct_old"] == {"hiring_table": 100.0, "kpi_panel": 91.7, "table": 95.8}
-    assert report["agreement_pct"] == {"hiring_table": 100.0, "kpi_panel": 91.7, "table": 100.0}
-    assert (report["agreement_pct_all_old"], report["agreement_pct_all"]) == (94.9, 97.4), "37 of 39; 38 of 39"
+    # normalised. KPI panels: 3 + 6 + 2 items (the 2 in page 11's label box "zero2hero" is no figure), the page 19
+    # users read as customers in pass 3: 10 of 11 either way.
+    assert report["agreement_pct_old"] == {"hiring_table": 100.0, "kpi_panel": 90.9, "table": 95.8}
+    assert report["agreement_pct"] == {"hiring_table": 100.0, "kpi_panel": 90.9, "table": 100.0}
+    assert (report["agreement_pct_all_old"], report["agreement_pct_all"]) == (94.7, 97.4), "36 of 38; 37 of 38"
     assert report["disagreements"] == [
         {"deck": "05-zero2hero.pdf", "page": 19, "type": "table", "fields": ["period", "unit"],
          "same_after_normalisation": True},
@@ -1622,7 +1681,7 @@ def test_the_consistency_report_shows_where_passes_disagree_why_items_are_unveri
     text = path.read_text(encoding="utf-8")
     tokens = report["tokens"]
     for line in (
-            "| table | 100.0% | 95.8% |", "| kpi_panel | 91.7% | 91.7% |", "| all | 97.4% | 94.9% |",
+            "| table | 100.0% | 95.8% |", "| kpi_panel | 90.9% | 90.9% |", "| all | 97.4% | 94.7% |",
             "| Type | Structures | Disagreeing | metric | period | unit | actual_or_forecast |",
             "| kpi_panel | 3 | 1 | 1 | 0 | 0 | 0 |", "| table | 1 | 1 | 0 | 1 | 1 | 0 |",
             "| 05-zero2hero.pdf | 19 | table | period, unit | yes |",
@@ -1638,7 +1697,7 @@ def test_the_consistency_report_shows_where_passes_disagree_why_items_are_unveri
             "gateway's 4,000-token cap",
             "- Billed input per model read: 1,000.0"):
         assert line in text, line
-    assert script.summary(report).startswith("Agreement 97.4% (target 95.0%: met; old method 94.9%); verified 92.6%")
+    assert script.summary(report).startswith("Agreement 97.4% (target 95.0%: met; old method 94.7%); verified 92.6%")
 
     class Uncountable:
         def count_tokens(self, **kwargs):
