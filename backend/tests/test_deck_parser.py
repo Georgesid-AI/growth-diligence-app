@@ -445,12 +445,12 @@ def test_a_pdf_value_borrows_the_label_on_its_row():
     file = "02-moz.pdf"
     found = claims.detect_candidates(parser.parse_deck((DECKS / file).read_bytes(), file)["blocks"], file)
     cac, = [c for c in _by_value(found, 100) if c["currency"] == "USD"]
-    assert (cac["claim_type"], cac["snippet"], cac["label_from"]) == ("sales", "~$100", "Avg. Cost of Paid Acquisition")
+    assert (cac["claim_type"], cac["snippet"], cac["label_from"]) == ("cac", "~$100", "Avg. Cost of Paid Acquisition")
 
 
 @pytest.mark.parametrize("text, family", [
-    ("Turnover £49,284", "revenue"), ("Avg. Customer Lifetime Value ~$900", "sales"), ("LTV $240", "sales"),
-    ("Implied Customer Life ~9 Months", "retention"), ("% of Free Trials Converting to Paid ~57%", "sales"),
+    ("Turnover £49,284", "revenue"), ("Avg. Customer Lifetime Value ~$900", "ltv"), ("LTV $240", "ltv"),
+    ("Implied Customer Life ~9 Months", "customer_lifetime"), ("% of Free Trials Converting to Paid ~57%", "sales"),
     ("30% of our leads come via referrals", "sales"),
     ("Recruit 3 engineers", "people"), ("Low attrition: 0", "people"), ("Ship v2 in 40 days", "product"),
     ("Milestone 3 reached", "product"),
@@ -559,7 +559,7 @@ def test_an_amount_beside_a_growth_word_takes_the_noun_type():
     ("10K+ subscribers", "customers", "subscribers"),
     ("2,600+ users", "users", "users"),
     ("Gross Margins ~82%", "gross_margin", "%"),
-    ("Avg. Customer Lifetime Value ~$900", "sales", None),
+    ("Avg. Customer Lifetime Value ~$900", "ltv", None),
 ])
 def test_customers_users_and_margin(text, family, unit):
     c = _line(text)[0]
@@ -638,9 +638,11 @@ def test_a_re_upload_keeps_approved_edited_and_rejected_claims(api):
 
 @pytest.mark.parametrize("text, families", [
     ("800 Paying Users", ["customers"]),
-    ("Avg. Customer Lifetime Value", ["sales"]),
-    ("Implied Customer Life", ["retention"]),
-    ("Avg. Cost of Paid Acquisition", ["sales"]),
+    ("Avg. Customer Lifetime Value", ["ltv"]),
+    ("Implied Customer Life", ["customer_lifetime"]),
+    ("Avg. Cost of Paid Acquisition", ["cac"]),
+    ("LTV / CAC", ["ltv_cac"]),
+    ("LTV/CAC", ["ltv_cac"]),
 ])
 def test_of_two_overlapping_keywords_the_longer_one_counts(text, families):
     assert [k["family"] for k in claims._keywords(text)] == families
@@ -835,7 +837,7 @@ def test_a_period_at_the_top_of_a_text_box_dates_every_figure_in_it():
 @pytest.mark.parametrize("text, family", [
     ("Gross Profit £150K", "gross_profit"), ("Gross margin £1.2M", "gross_profit"), ("Gross margin 82%", "gross_margin"),
     ("Direct costs £83,403", "costs"), ("Opex of $2M", "costs"), ("Costs $500K", "costs"),
-    ("EBITDA of $1.5M", "ebitda"), ("Profitable in 10 months", "ebitda"), ("40 institutions", "customers"),
+    ("EBITDA of $1.5M", "ebitda"), ("Profitability of 12% by 2026", "ebitda"), ("40 institutions", "customers"),
     ("Net income $1.5M", "net_profit"), ("Net profit 12%", "net_profit"), ("Net loss of $2M", "net_profit"),
 ])
 def test_gross_profit_costs_ebitda_and_institutions(text, family):
@@ -855,6 +857,86 @@ def test_a_break_even_milestone_takes_its_date():
     assert [(c["claim_type"], c["value"], c["target_date"]) for c in found] == [("ebitda", None, "2024-Q2")]
     titled = _found(_slide([("Break-even", 1, 2)], title="Targets Q3 2025"))
     assert ("ebitda", "2025-Q3") in [(c["claim_type"], c["target_date"]) for c in titled]
+
+
+# ---------------------------------------------------------------------------
+# Claim types of issue #45 (spec section 2, decisions of 2026-10-06)
+# ---------------------------------------------------------------------------
+NEW_TYPES = ("cash", "burn", "runway", "ltv", "cac", "customer_lifetime", "ltv_cac", "trials_per_day",
+             "months_to_profitability")
+
+
+def test_the_new_claim_types_follow_the_old_ones():
+    assert claims.CLAIM_TYPES == ("revenue", "revenue_growth", "growth", "retention", "sales", "customers", "users",
+                                  "user_growth", "gross_margin", "gross_profit", "costs", "ebitda", "net_profit",
+                                  "people", "product", "market") + NEW_TYPES
+
+
+@pytest.mark.parametrize("text, family, value, unit, currency", [
+    ("Cash on hand $7m", "cash", 7000000, None, "USD"),
+    ("Net burn of $200K per month", "burn", 200000, None, "USD"),
+    ("Burn rate €150K", "burn", 150000, None, "EUR"),
+    ("Runway: 18 months", "runway", 18, "months", None),
+    ("LTV $240", "ltv", 240, None, "USD"),
+    ("Customer lifetime value of $900", "ltv", 900, None, "USD"),
+    ("CAC $100", "cac", 100, None, "USD"),
+    ("Cost per customer acquisition $120", "cac", 120, None, "USD"),
+    ("Acquisition cost of $80", "cac", 80, None, "USD"),
+    ("LTV / CAC 2.5x", "ltv_cac", 2.5, "x", None),
+    ("Customer lifetime of 24 months", "customer_lifetime", 24, "months", None),
+    ("Implied Customer Life ~9 Months", "customer_lifetime", 9, "months", None),
+    ("# of New Free Trials / Day ~100", "trials_per_day", 100, None, None),
+    ("200 trials per day", "trials_per_day", 200, None, None),
+    ("Profitable in 10 months", "months_to_profitability", 10, "months", None),
+])
+def test_the_new_claim_types_and_their_keywords(text, family, value, unit, currency):
+    found, = _line(text)
+    assert (found["claim_type"], found["value"], found["currency"]) == (family, value, currency)
+    assert unit is None or found["unit"] == unit
+
+
+@pytest.mark.parametrize("text, family", [
+    ("Payback in 12 months", "sales"), ("Customer acquisition up 30%", "sales"), ("Win rate 25%", "sales"),
+    ("Churn of 5%", "retention"), ("Profitability of 12% by 2026", "ebitda"), ("Break-even in 18 months", "ebitda"),
+])
+def test_the_keywords_left_behind_keep_their_type(text, family):
+    assert _line(text)[0]["claim_type"] == family
+
+
+def test_cash_flow_is_no_cash_keyword():
+    assert claims._keywords("Cash flow of $2M") == [] and claims._keywords("Cash-flow positive") == []
+    assert [k["family"] for k in claims._keywords("Cash on hand")] == ["cash"]
+
+
+def test_a_profitable_line_is_a_months_to_profitability_milestone():
+    """Spec section 2: like an EBITDA line, a "profitable" line with no figure takes a nearby date, and a bare date
+    under it takes its type."""
+    assert [(c["claim_type"], c["target_date"]) for c in _line("Profitable by Q3 2025")] == \
+        [("months_to_profitability", "2025-Q3")]
+    found = _found(_slide([("Profitable\nQ2 2024", 1, 2)]))
+    assert [(c["claim_type"], c["value"], c["target_date"]) for c in found] == \
+        [("months_to_profitability", None, "2024-Q2")]
+
+
+def test_the_test_decks_retype_twelve_candidates_and_list_no_other_change():
+    """Spec section 2: on the 10 test decks the keyword moves and the new keywords retype exactly these candidates."""
+    retyped = {
+        ("01-front-b.pptx", 12, 2.5): "ltv_cac", ("01-front-b.pptx", 12, 2.6): "ltv_cac",
+        ("01-front-b.pptx", 12, 4.4): "ltv_cac", ("01-front-b.pptx", 15, 7000000): "cash",
+        ("01-front-b.pptx", 15, 18): "runway", ("01-front-b.pptx", 15, 10): "months_to_profitability",
+        ("02-moz.pdf", 2, None): "months_to_profitability", ("02-moz.pdf", 20, 900): "ltv",
+        ("02-moz.pdf", 20, 100): "cac", ("02-moz.pdf", 20, 9): "customer_lifetime",
+        ("03-buffer.pptx", 7, 240): "ltv",
+    }
+    seen = {}
+    for file in ("01-front-b.pptx", "02-moz.pdf", "03-buffer.pptx"):
+        for c in claims.detect_candidates(parser.parse_deck((DECKS / file).read_bytes(), file)["blocks"], file):
+            if c["claim_type"] in NEW_TYPES:
+                seen.setdefault((file, _page(c), c["value"]), []).append((c["claim_type"], c["snippet"]))
+    moz_100 = seen.pop(("02-moz.pdf", 20, 100))
+    assert sorted(moz_100) == [("cac", "~$100"), ("trials_per_day", "~100")], "the CAC and the trials, both 100"
+    assert {k: [t for t, _ in v] for k, v in seen.items()} == {k: [t] for k, t in retyped.items() if k != ("02-moz.pdf", 20, 100)}
+    assert seen[("02-moz.pdf", 2, None)] == [("months_to_profitability", "mozis profitable.")]
 
 
 def test_only_stated_periods_with_different_values_are_a_deck_inconsistency():
@@ -1287,11 +1369,19 @@ def test_front_b_p16_next_to_is_measured_line_to_line_not_box_to_box():
     assert cash not in _cell_of(panel, "1/1/18 5/1/18")["next_to"] and cash in _cell_of(panel, "Gross margin")["next_to"]
 
 
-def test_roadmaps_keep_their_grid_with_no_next_to():
+def test_roadmap_cells_keep_next_to_measured_line_to_line():
+    """Spec section 7 (issue #56): roadmap cells keep next_to, as KPI panel cells do. moz p2's paragraphs sit directly
+    over or under their dates, a one-box timeline (buffer p6) has no other box, and tea p11's "layer-1 to layer-2"
+    has the Q2 of its date box on its left and another bullet's Q3 on its right."""
+    near = {}
     for file, page in (("02-moz.pdf", 2), ("03-buffer.pptx", 6), ("10-tea.pdf", 11)):
         deck = parser.parse_deck((DECKS / file).read_bytes(), file)
         roadmap, = [s for s in deck["structures"] if (s.get("slide") or s.get("page")) == page]
-        assert roadmap["type"] == "roadmap" and not [c for c in roadmap["cells"] if "next_to" in c], (file, page)
+        assert roadmap["type"] == "roadmap", (file, page)
+        near[file] = {f"r{c['row']}c{c['col']}": c["next_to"] for c in roadmap["cells"]}
+    assert near["02-moz.pdf"]["r1c1"] == ["r1c2", "r2c1"] and near["02-moz.pdf"]["r4c1"] == ["r3c1", "r4c2"]
+    assert set(map(tuple, near["03-buffer.pptx"].values())) == {()}
+    assert near["10-tea.pdf"]["r10c2"] == ["r10c1", "r10c4"]
 
 
 # ---------------------------------------------------------------------------

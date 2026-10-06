@@ -1,0 +1,57 @@
+{
+ "file": "01-front-b.pptx",
+ "page": 15,
+ "type": "kpi_panel",
+ "match": "r5c1: Cash on hand\nr5c2: $7m left",
+ "note": "Hand-written in the model's labelling format (docs/specs/structure-labelling.md) for the public test deck; no live call was made. Under prompt v5 (issue #45, decisions of 2026-10-06) the cash on hand is cash, the 18 months beside \"Runway *\" are runway and \"Profitable in 10 months\" is months to profitability, each with no period, so all three are Verified. The two funds-raised figures are not a metric.",
+ "reply": {
+  "type": "kpi_panel",
+  "labels": [
+   {
+    "item": "i1",
+    "metric": "not_a_metric",
+    "period": null,
+    "unit": null,
+    "unit_other": null,
+    "actual_or_forecast": "unknown"
+   },
+   {
+    "item": "i2",
+    "metric": "not_a_metric",
+    "period": null,
+    "unit": null,
+    "unit_other": null,
+    "actual_or_forecast": "unknown"
+   },
+   {
+    "item": "i3",
+    "metric": "cash",
+    "period": null,
+    "unit": "USD",
+    "unit_other": null,
+    "actual_or_forecast": "actual"
+   },
+   {
+    "item": "i4",
+    "metric": "runway",
+    "period": null,
+    "unit": "months",
+    "unit_other": null,
+    "actual_or_forecast": "actual"
+   },
+   {
+    "item": "i5",
+    "metric": "months_to_profitability",
+    "period": null,
+    "unit": "months",
+    "unit_other": null,
+    "actual_or_forecast": "forecast"
+   }
+  ],
+  "pairs": []
+ },
+ "expected": {
+  "verified": 3,
+  "suggestion": 0
+ }
+}

@@ -3,7 +3,7 @@
  "page": 20,
  "type": "kpi_panel",
  "match": "r1c1 title: 2011 Estimated Revenue\nr1c2: $12 -$13 million",
- "note": "Hand-written in the model's labelling format (docs/specs/structure-labelling.md) for the public test deck; no live call was made. Every value sits beside its label box, and the slide title labels the range (deck-parser.md section 7, issue #48). The range cell holds two figures, twelve and thirteen million, dated 2011 by the title beside it; the months figure is labelled other, so it is listed as type Other and never Verified.",
+ "note": "Hand-written in the model's labelling format (docs/specs/structure-labelling.md) for the public test deck; no live call was made. Every value sits beside its label box, and the slide title labels the range (deck-parser.md section 7, issue #48). The range cell holds two figures, twelve and thirteen million, dated 2011 by the title beside it; the run rate is revenue (prompt v5 tie-break). Under prompt v5 (issue #45) the trials per day, the lifetime value, the customer life and the cost of paid acquisition take their own claim types, so every figure is Verified.",
  "reply": {
   "type": "kpi_panel",
   "labels": [
@@ -41,7 +41,7 @@
    },
    {
     "item": "i5",
-    "metric": "sales",
+    "metric": "trials_per_day",
     "period": null,
     "unit": "count",
     "unit_other": null,
@@ -49,7 +49,7 @@
    },
    {
     "item": "i6",
-    "metric": "sales",
+    "metric": "ltv",
     "period": null,
     "unit": "USD",
     "unit_other": null,
@@ -57,15 +57,15 @@
    },
    {
     "item": "i7",
-    "metric": "other",
+    "metric": "customer_lifetime",
     "period": null,
     "unit": "months",
     "unit_other": null,
-    "actual_or_forecast": "forecast"
+    "actual_or_forecast": "actual"
    },
    {
     "item": "i8",
-    "metric": "sales",
+    "metric": "cac",
     "period": null,
     "unit": "USD",
     "unit_other": null,
@@ -83,7 +83,7 @@
   "pairs": []
  },
  "expected": {
-  "verified": 8,
-  "suggestion": 1
+  "verified": 9,
+  "suggestion": 0
  }
 }
