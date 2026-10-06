@@ -28,7 +28,8 @@ Usage (from the repository root, with ANTHROPIC_API_KEY set and a MongoDB to kee
 It waits --pause seconds (default 2) between structure calls; the gateway retries a 429 or 529 itself. It prints
 one line per deck and pass, writes the report to docs/test-runs/consistency_<date>.md (-2, -3, ... for a later
 run that day) and ends with the report path, a summary line and the full report; --out also writes it as JSON.
-Reports are untracked and lost on re-import; copy the printed report out before re-importing.
+Reports and diagnostics are tracked by git (docs/test-runs/README.md): commit both after a run, so its numbers stay
+with the code it measured.
 --diagnostic also writes <report>_diagnostic.md beside the report (and prints its path, not its text): for every
 unverified item and every item labelled differently between passes, deck, page, type, item id, cell#position,
 the cell's text as sent to the model, Python's values, the reason, then per pass the model's metric, period, unit
@@ -42,7 +43,8 @@ Each deck is read in its own throwaway audit (consent ticked) in the scratch dat
 every scratch database an earlier run left, crashed or kept. The audits stay within the 400,000-token cap;
 raise LLM_DAILY_SPEND_CAP_USD if the run would pass the daily spend cap.
 --fake replays the recorded readings with no network and no MongoDB, to check the script itself; its report goes
-to the system temp folder, never to docs/test-runs.
+to the system temp folder, never to docs/test-runs. It counts 2 characters per token, as measured on the live runs,
+so its input tokens and cost are a first estimate of a live run's (its output reads low, see FakeAdapter).
 """
 import argparse
 import asyncio
@@ -151,15 +153,23 @@ class MemoryDB:
 
 class FakeAdapter:
     """--fake: no network. Replays the recorded labelling replies of backend/tests/fixtures/structure_replies for
-    the structures they were written for; every other structure's listed items are labelled not_a_metric."""
+    the structures they were written for; every other structure's listed items are labelled not_a_metric. Its token
+    counts and the input and output it bills take CHARS_PER_TOKEN characters per token. Billed input matches a live
+    run; billed output reads low, as replayed and not_a_metric replies are shorter than the model's (the 10 test
+    decks: about 30,000 output tokens against 40,534 and 44,517 on the two live runs of 2026-10-06)."""
+
+    # Measured on the live runs of 2026-10-06, 3 passes over the 10 test decks: 287,576 input tokens for 570,753
+    # characters sent (PR #44's head) and 294,621 for 592,974 (PR #51's), about 2 characters per token.
+    CHARS_PER_TOKEN = 2
 
     def __init__(self):
         folder = BACKEND / "tests" / "fixtures" / "structure_replies"
         self.fixtures = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(folder.glob("*.json"))]
 
     def count_tokens(self, *, model, system, user_payload, json_schema):
-        """A stand-in for the provider's counter: one token per 4 characters of what would be sent."""
-        return (len(system or "") + len(user_payload) + (len(json.dumps(json_schema)) if json_schema else 0)) // 4
+        """A stand-in for the provider's counter: one token per CHARS_PER_TOKEN characters of what would be sent."""
+        sent = len(system or "") + len(user_payload) + (len(json.dumps(json_schema)) if json_schema else 0)
+        return sent // self.CHARS_PER_TOKEN
 
     def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema):
         from app.structures import redact
@@ -171,7 +181,9 @@ class FakeAdapter:
             reply = {"type": sent["type"], "pairs": [], "labels": [
                 {"item": i["id"], "metric": "not_a_metric", "period": None, "unit": None, "unit_other": None,
                  "actual_or_forecast": "unknown"} for i in listed["items"]]}
-        return json.dumps(reply), 1000, 20
+        text = json.dumps(reply)
+        billed = self.count_tokens(model=model, system=system, user_payload=user_payload, json_schema=json_schema)
+        return text, billed, len(text) // self.CHARS_PER_TOKEN
 
 
 FIELDS = ("metric", "period", "unit", "actual_or_forecast")
@@ -758,7 +770,7 @@ def main(argv=None):
     if rows is not None:
         print(f"Diagnostic: {diagnostic_path(path)}")                  # its path only: its cell text stays in the file
     print(summary(report))
-    print(path.read_text(encoding="utf-8"), end="", flush=True)     # untracked: lost on re-import, copy it out
+    print(path.read_text(encoding="utf-8"), end="", flush=True)     # also on screen; the file is committed
     return report
 
 

@@ -77,13 +77,15 @@ def parse_structure_text(text: str) -> Optional[List[Dict]]:
 ITEMS_HEADER = "items:"
 CURRENCY = re.compile(r"US\$|[£$€¥₹]|\b(?:USD|EUR|GBP|CHF|JPY|BGN|PLN|SEK|NOK|DKK|CAD|AUD)\b")
 SUFFIX = r"(?:\s?(?P<suffix>k|K|mn|MM|m|M|bn|B|thousand|million|billion|Mio|Mrd|Tsd|млн|млрд|хил)(?![^\W\d_]))?"
-# A figure, keyed by whether the structure writes a decimal comma (1.234,5).
+# A figure, keyed by whether the structure writes a decimal comma (1.234,5). A digit inside a word is no figure, as
+# in the parser's reader (claims.figures): no letter directly before it ("zero2hero", "Web3"), no ordinal ending
+# ("1st") (structure-labelling.md section 1).
 NUMBER = {
-    False: re.compile(r"(?P<open>\()?\s*(?:(?<![\w.])(?P<sign>[-−–]))?\s*(?<![\d.,])"
-                      r"(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?![\d]|[.,]\d)"
+    False: re.compile(r"(?P<open>\()?\s*(?:(?<![\w.])(?P<sign>[-−–]))?\s*(?<![\d.,])(?<![^\W\d_])"
+                      r"(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?![\d]|[.,]\d|st|nd|rd|th)"
                       + SUFFIX + r"\s*(?P<pct>%)?\s*(?P<close>\))?"),
-    True: re.compile(r"(?P<open>\()?\s*(?:(?<![\w.])(?P<sign>[-−–]))?\s*(?<![\d.,])"
-                     r"(?P<num>\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d+(?:,\d+)?)(?![\d]|[.,]\d)"
+    True: re.compile(r"(?P<open>\()?\s*(?:(?<![\w.])(?P<sign>[-−–]))?\s*(?<![\d.,])(?<![^\W\d_])"
+                     r"(?P<num>\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d+(?:,\d+)?)(?![\d]|[.,]\d|st|nd|rd|th)"
                      + SUFFIX + r"\s*(?P<pct>%)?\s*(?P<close>\))?"),
 }
 _VALUE = r"-?\d+(?:\.\d+)?"

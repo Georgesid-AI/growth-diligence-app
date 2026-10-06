@@ -40,7 +40,8 @@ normalisation:
   (`Net loss (1,200)`, `Telegram(30K)`, `MeetUp((3K)`) matches either sign, and the item records which
   (`checks.bracket_reading`: `negative` or `positive`);
 - `k`/`m`/`bn` suffixes are applied;
-- a unit or scale in a neighbouring or header cell (`£m`, `'000`, `%`) is applied.
+- a unit or scale in a neighbouring or header cell (`£m`, `'000`, `%`) is applied. In a KPI panel a cell of another
+  box counts only when it is directly next to the value (structure-labelling.md §1).
 
 The match is exact, so a rounded number does not match. The period is matched against its `period_cells` only:
 they must be header cells of the value cell (its row header or the header stack above its column), the first must be

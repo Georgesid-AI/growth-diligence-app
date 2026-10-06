@@ -891,6 +891,32 @@ def test_a_title_line_on_a_kpi_panel_reaches_the_provider_marked_with_no_item_in
     assert [line for line in sent["text"].splitlines() if " title: " in line] == ["r1c1 title: 2011 Estimated Revenue"]
 
 
+def test_a_kpi_cells_next_to_is_cell_ids_kept_with_the_structure_and_never_sent():
+    """deck-parser.md section 7 (issue #50): a KPI panel cell keeps next_to, the ids of the cells of other boxes beside
+    its line, stored with the structure. What reaches the provider is the cell lines and the item lines alone."""
+    from app.decks import parser
+    from app.structures import items as structure_items
+    deck_file = BACKEND.parent / "tests" / "fixtures" / "decks" / "decks" / "01-front-b.pptx"
+    panel, = [s for s in parser.parse_deck(deck_file.read_bytes(), deck_file.name)["structures"] if s["slide"] == 15]
+    near = [n for c in panel["cells"] for n in c.get("next_to", ())]
+    assert near and all(re.fullmatch(r"r\d+c\d+", n) for n in near)
+    cells, _ = structure_redact.redact_structure(panel["cells"], "Target Co", {})
+    redacted = {**panel, "cells": cells}
+    listed = structure_items.list_items(redacted)
+    text = structure_items.text(redacted, listed)
+    reply = json.dumps({"type": "kpi_panel", "pairs": [], "labels": [
+        {"item": i["id"], "metric": "not_a_metric", "period": None, "unit": None, "unit_other": None,
+         "actual_or_forecast": "unknown"} for i in listed["items"]]})
+    result, adapter = _send(_structure_db(), text, "kpi_panel", reply)
+    assert result.status == "read" and adapter.calls == 1, result.reason
+    sent = json.loads(adapter.payloads[0])
+    assert sent == {"type": "kpi_panel", "text": text}
+    lines = sent["text"].splitlines()
+    assert lines[:lines.index("items:")] == [f"r{c['row']}c{c['col']}{' title' if c.get('title') else ''}: {c['text']}"
+                                             for c in sorted(cells, key=lambda c: (c["row"], c["col"]))]
+    assert lines[lines.index("items:") + 1:] == structure_redact.item_lines(listed)
+
+
 def test_no_call_is_made_without_consent():
     for audit in ({"structure_reading_consent": False}, {"structure_reading_consent": None}):
         result, adapter = _send(_structure_db(**audit), GOOD_STRUCTURE)

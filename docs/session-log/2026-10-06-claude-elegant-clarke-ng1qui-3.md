@@ -1,0 +1,5 @@
+2026-10-06, claude/elegant-clarke-ng1qui (3): the --fake counter takes 2 characters per token and a fake read bills its input and reply at that rate; --fake on the 10 test decks now reads 296,082 input / 29,928 output tokens, $0.89 (live #51 run: 294,621 / 40,534, $0.9946; before: $0.18).
+Deleted: the fixed 1,000/20 tokens a fake read billed. Optimized: complete() bills through count_tokens, so the counter and the bill cannot drift apart.
+Decided: 2 characters per token for input and output alike, because input was measured on both live runs (0.504 and 0.497 tokens per character) and output has no character count of its own; fake output stays low (replayed replies are shorter), as the script's docstring says.
+Slow or unclear: the live-path test needs a round bill to check its per-deck sums, so it keeps 1,000/20 through a subclass rather than the real rate.
+Process change: when a live run lands, compare its token lines with a --fake run on the same head and record the ratio in the run's PR.
