@@ -1572,6 +1572,20 @@ def _consistency_script():
     return script
 
 
+def test_live_run_reports_and_diagnostics_are_kept_by_git_in_docs_test_runs():
+    """docs/test-runs/README.md (decision of 2026-10-06): a live run's report and diagnostic are committed, so their
+    numbers are not lost; nothing may ignore them."""
+    import shutil
+    import subprocess
+    script = _consistency_script()
+    assert script.REPORTS == BACKEND.parent / "docs" / "test-runs" and (script.REPORTS / "README.md").is_file()
+    if not shutil.which("git") or not (BACKEND.parent / ".git").exists():
+        pytest.skip("not a git checkout")
+    for name in ("consistency_2026-10-06.md", "consistency_2026-10-06-2_diagnostic.md"):
+        found = subprocess.run(["git", "check-ignore", "-q", f"docs/test-runs/{name}"], cwd=BACKEND.parent)
+        assert found.returncode == 1, f"{name} is ignored by git"
+
+
 def test_the_consistency_script_reports_agreement_match_rate_cost_and_cache_hits_without_a_live_call(
         monkeypatch, tmp_path):
     """scripts/consistency_run.py is manual (live API, costs money); --fake checks its arithmetic. Its FakeAdapter
@@ -1878,7 +1892,7 @@ def test_the_live_run_drops_its_scratch_database_in_the_event_loop_it_ran_in(mon
     assert out[6].startswith("Agreement 100.0% (target 95.0%: met; old method 100.0%); verified 100.0%")
     text = path.read_text(encoding="utf-8")
     assert "\n".join(out[7:]) + "\n" == text, \
-        "then the whole report: the file is untracked and lost on re-import, so it is copied from stdout"
+        "then the whole report, as the committed file holds it"
     assert text.startswith(f"# Consistency run {day}\n\nLive API. Decks: 1. Passes: 3. Model: {gateway.STRUCTURE_MODEL}.")
     for line in ("| table | 100.0% |", "| kpi_panel | 100.0% |", "- Match rate: 100.0%", "| 2 | 100.0% |", "| 3 | 100.0% |",
                  "| 05-zero2hero.pdf | 5 | 15,000 | 300 |"):

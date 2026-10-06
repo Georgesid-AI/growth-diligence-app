@@ -28,7 +28,8 @@ Usage (from the repository root, with ANTHROPIC_API_KEY set and a MongoDB to kee
 It waits --pause seconds (default 2) between structure calls; the gateway retries a 429 or 529 itself. It prints
 one line per deck and pass, writes the report to docs/test-runs/consistency_<date>.md (-2, -3, ... for a later
 run that day) and ends with the report path, a summary line and the full report; --out also writes it as JSON.
-Reports are untracked and lost on re-import; copy the printed report out before re-importing.
+Reports and diagnostics are tracked by git (docs/test-runs/README.md): commit both after a run, so its numbers stay
+with the code it measured.
 --diagnostic also writes <report>_diagnostic.md beside the report (and prints its path, not its text): for every
 unverified item and every item labelled differently between passes, deck, page, type, item id, cell#position,
 the cell's text as sent to the model, Python's values, the reason, then per pass the model's metric, period, unit
@@ -758,7 +759,7 @@ def main(argv=None):
     if rows is not None:
         print(f"Diagnostic: {diagnostic_path(path)}")                  # its path only: its cell text stays in the file
     print(summary(report))
-    print(path.read_text(encoding="utf-8"), end="", flush=True)     # untracked: lost on re-import, copy it out
+    print(path.read_text(encoding="utf-8"), end="", flush=True)     # also on screen; the file is committed
     return report
 
 
