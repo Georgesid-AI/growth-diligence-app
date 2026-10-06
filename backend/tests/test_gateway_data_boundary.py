@@ -1130,6 +1130,8 @@ def test_the_consistency_run_prints_and_reports_no_text_sent_to_the_model(monkey
                                      "text_and_items_avg", "structures_counted", "billed_input_per_model_read"}
     assert all(isinstance(n, (int, float)) for n in report["tokens"].values())
     assert all(isinstance(report[k], int) for k in ("roadmap_lines", "roadmap_same_pair", "roadmap_dates_rebuilt"))
+    assert all(report[k] is None or isinstance(report[k], float) for k in
+               ("verifier_match_rate_pct", "verifier_match_rate_financial_pct", "verifier_match_rate_roadmap_pct"))
     files = sorted(tmp_path.glob("consistency_*"))
     excluded = [p for p in files if p.name.endswith(DIAGNOSTIC_SUFFIX)]
     report_md, = [p for p in files if p.suffix == ".md" and p not in excluded]

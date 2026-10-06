@@ -10,8 +10,9 @@ in tests/fixtures/decks/decks/ three times and reports:
 - for every structure whose passes disagree, the fields that differ (metric, period, unit, actual_or_forecast),
   with a count per structure type;
 - the verifier's match rate and unverified rate over the labelled items (not_a_metric dropped, milestones
-  left out), how many periods it corrected, and for every unverified item the reason (period not rebuilt,
-  metric invalid, other), with a count per structure type;
+  left out), and the match rate apart for the financial items (outside roadmaps) and the roadmap figures; how
+  many periods it corrected, and for every unverified item the reason (period not rebuilt, metric invalid,
+  other), with a count per structure type;
 - per type the not_a_metric and other labels, the ambiguous readings and the items with a flag;
 - roadmap lines apart: "roadmap lines: N, same pair and category in every pass: M, date rebuilt from cell: K",
   K the lines whose period Python rebuilds from their own period cells, whatever the pair says;
@@ -369,6 +370,7 @@ async def run(decks, passes, db, adapter=None, pause=0.0, sleep=None, diagnostic
     types, pages = {}, {}
     texts, structures, listings = {}, {}, {}             # (deck, index) -> {cell id: text as sent}, structure, items
     stats = {"items": 0, "verified": 0, "unverified": 0, "not_read": 0, "model_reads": 0, "period_corrected": 0}
+    rates = {"financial": [0, 0], "roadmap": [0, 0]}      # [verified, items]: outside roadmaps, figures in roadmaps
     reasons = {}                                           # type -> {reason: unverified items over all passes}
     counts = {}                                            # type -> {COUNTS: over all passes}
     unverified = {}                                        # (deck, index, item, reason, detail) -> {passes}
@@ -432,8 +434,11 @@ async def run(decks, passes, db, adapter=None, pause=0.0, sleep=None, diagnostic
                     count["other"] += int(item["metric"] == verify.OTHER)
                     count["flags"] += int(bool(item["proposed_flags"]))
                     stats["items"] += 1
+                    group = rates["roadmap" if structure["type"] == "roadmap" else "financial"]
+                    group[1] += 1
                     if item["status"] == verify.VERIFIED:
                         stats["verified"] += 1
+                        group[0] += 1
                         continue
                     stats["unverified"] += 1
                     reason, detail = unverified_reason(structure, item)
@@ -461,6 +466,8 @@ async def run(decks, passes, db, adapter=None, pause=0.0, sleep=None, diagnostic
         "disagreements": disagreements,
         "disagreement_fields": disagreement_fields,
         "verifier_match_rate_pct": _rate(stats["verified"], stats["items"]),
+        "verifier_match_rate_financial_pct": _rate(*rates["financial"]),
+        "verifier_match_rate_roadmap_pct": _rate(*rates["roadmap"]),
         "unverified_rate_pct": _rate(stats["unverified"], stats["items"]),
         "unverified_reasons": dict(sorted(reasons.items())),
         "unverified_items": [{"deck": f, "page": pages[(f, i)], "type": types[(f, i)], "item": item,
@@ -556,7 +563,8 @@ def summary(report):
     cost = sum(d["cost_usd"] for d in report["per_deck"].values())
     return (f"Agreement {_pct(agreement)} (target {_pct(target)}: {verdict}; "
             f"old method {_pct(report['agreement_pct_all_old'])}); "
-            f"verified {_pct(report['verifier_match_rate_pct'])}, "
+            f"verified {_pct(report['verifier_match_rate_pct'])} (financial "
+            f"{_pct(report['verifier_match_rate_financial_pct'])}, roadmap {_pct(report['verifier_match_rate_roadmap_pct'])}), "
             f"unverified {_pct(report['unverified_rate_pct'])}, {report['not_read']} not read; "
             f"{_roadmap_line(report)}; "
             f"{report['period_corrected']} periods corrected; cache hits {hits or 'n/a'}; cost ${cost:.4f}.")
@@ -590,9 +598,13 @@ def write_report(report, folder, passes, fake=False):
         f"| all | {_pct(report['agreement_pct_all'])} | {_pct(report['agreement_pct_all_old'])} |", "",
         *_disagreement_lines(report),
         "## Verifier", "",
-        "Rates over the labelled items (not_a_metric dropped, roadmap milestones left out). A roadmap line's date is "
-        "rebuilt from cell when Python rebuilds its period from its own period cells, whatever the pair says.", "",
+        "Rates over the labelled items (not_a_metric dropped, roadmap milestones left out), then the match rate apart "
+        "for the financial items (outside roadmaps) and the roadmap figures. A roadmap line's date is rebuilt from cell "
+        "when Python rebuilds its period from its own period cells, whatever the pair says.", "",
         f"- Match rate: {_pct(report['verifier_match_rate_pct'])}",
+        f"- Match rate, financial (outside roadmaps): {_pct(report['verifier_match_rate_financial_pct'])}",
+        f"- Match rate, roadmap (figures in roadmaps, milestones left out): "
+        f"{_pct(report['verifier_match_rate_roadmap_pct'])}",
         f"- Unverified rate: {_pct(report['unverified_rate_pct'])}",
         f"- Periods corrected: {report['period_corrected']}",
         f"- {_roadmap_line(report)[0].upper()}{_roadmap_line(report)[1:]}",
