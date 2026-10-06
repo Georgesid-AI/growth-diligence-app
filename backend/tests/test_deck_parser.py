@@ -643,6 +643,8 @@ def test_a_re_upload_keeps_approved_edited_and_rejected_claims(api):
     ("Avg. Cost of Paid Acquisition", ["cac"]),
     ("LTV / CAC", ["ltv_cac"]),
     ("LTV/CAC", ["ltv_cac"]),
+    ("LTV:CAC", ["ltv_cac"]),
+    ("LTV to CAC ratio", ["ltv_cac"]),
 ])
 def test_of_two_overlapping_keywords_the_longer_one_counts(text, families):
     assert [k["family"] for k in claims._keywords(text)] == families
