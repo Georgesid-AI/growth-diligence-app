@@ -36,6 +36,9 @@ the model read as the figure's headers. On the test decks (measured on `89ba331`
   a header is read left of the item only, so "Q3" of the 2022 Q3 box, directly right of "layer-1 to layer-2" but
   another bullet's date, stays out.
 - buffer p6 is one box: every item cites its top line only, unchanged.
+A neighbour's scale in a roadmap follows the same rule, as in a KPI panel: a date box holds no scale word, so a
+roadmap figure takes no scale from another box. No roadmap value on the test decks changes. "Date rebuilt from cell"
+on the test decks goes from 27 to 25 (tea p11: 21 to 19 lines).
 
 A scale read from a neighbouring cell of its row (`£m`, `'000`; llm-structure-reading.md §2) follows the same rule
 (decision of 2026-10-06 on issue #50): in a KPI panel, a neighbouring cell from another box gives its scale only when it

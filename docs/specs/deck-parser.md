@@ -78,6 +78,9 @@ hired, launches; of two overlapping keywords the longer one counts):
   (EBITDA → Runway), "Profitable in 10 months" (EBITDA → Months to profitability); moz p2 "moz is profitable"
   (EBITDA → Months to profitability); moz p20 "~$900" (Sales → LTV), "~$100" (Sales → CAC), "~9 Months"
   (Retention → Customer lifetime), "~100" (Customers → Trials per day); buffer p7 "LTV of $240" (Sales → LTV).
+  Three of them also borrow their label from the right box: "$7m left" from "Cash on hand" (was "Seed to Series
+  A …"), "18 months" from "Runway *" (was "“Default alive” † Profitable in 10 months") and moz p20 "~100" from "# of
+  New Free Trials / Day" (was "Number of PRO Subscribers"). 236 candidates before and after.
 The unit of a count is the noun it counts: "800 paying users". If a Customers or Users keyword
 appears within the next 4 words after the number, it is the unit (">50 Dutch temporary work
 agencies" → agencies); otherwise the word right after the number. The search stops at the next
