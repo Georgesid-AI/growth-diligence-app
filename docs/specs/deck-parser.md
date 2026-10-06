@@ -64,7 +64,8 @@ hired, launches; of two overlapping keywords the longer one counts):
   here from Sales, Retention and EBITDA:
   - LTV: LTV, (customer) lifetime value (a lifetime value, in a currency)
   - CAC: CAC, cost of (paid) acquisition, acquisition cost (in a currency)
-  - LTV/CAC: LTV/CAC, also written "LTV / CAC" (unit x). It is longer than LTV and CAC, so it counts over both.
+  - LTV/CAC: LTV/CAC, also written "LTV / CAC", "LTV:CAC" or "LTV to CAC" (unit x). It is longer than LTV and CAC,
+    so it counts over both.
   - Customer lifetime: customer life, customer lifetime (unit months). "Customer lifetime value" is LTV, the
     longer keyword.
   - Months to profitability: profitable ("Profitable in 10 months", unit months). A line with no figure but a date
