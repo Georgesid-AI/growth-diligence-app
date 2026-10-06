@@ -1294,6 +1294,74 @@ def test_roadmaps_keep_their_grid_with_no_next_to():
         assert roadmap["type"] == "roadmap" and not [c for c in roadmap["cells"] if "next_to" in c], (file, page)
 
 
+# ---------------------------------------------------------------------------
+# Roadmaps: a paragraph wrapped over the lines of a text box is one cell (issue #49)
+# ---------------------------------------------------------------------------
+def _roadmap(file, page):
+    deck = parser.parse_deck((DECKS / file).read_bytes(), file)
+    roadmap, = [s for s in deck["structures"] if (s.get("slide") or s.get("page")) == page and s["type"] == "roadmap"]
+    return deck, roadmap
+
+
+# moz p2's grid: four paragraphs over their dates, five under theirs, each paragraph one cell over or under its date.
+MOZ_P2_GRID = [
+    ["Rand starts working w/ Gillian building websites for small, local businesses",
+     "Deeply in debt, and failing to get traffic to clients’ sites, Rand starts the SEOmoz Blog as part of learning "
+     "the SEO process.",
+     "SEOmoz takes an investment of $1.1M from Ignition Partners & Curious Office",
+     "Moz’scollection of tools becomes a singular, campaign-based web app. Prices rise to $99 / $499 / $1999 per "
+     "month."],
+    ["1997", "2004", "Nov. 2007", "Sept. 2010"],
+    ["1981", "2001", "Feb. 2007", "Oct. 2008", "July 2011"],
+    ["Gillian (Rand’s Mom) founds the company that will become SEOmoz",
+     "Rand drops out of UW, 2 classes from graduation to work full time w/ Gillian",
+     "SEOmoz launches its first subscription software product, “PRO” for $39/month",
+     "Linkscape, SEOmoz’sweb index and link graph, launches. By December, mozis profitable.",
+     "SEOmozis moving from just “SEO” to social media, content marketing, analytics, local and video. To this end, "
+     "we’ve acquired “Moz.com.”"],
+]
+
+
+def test_moz_p2_each_dated_paragraph_is_one_cell():
+    """Issue #49: the pdf wraps each milestone over 2-6 lines, and a row per line made 40 text lines of the page's 9
+    dated paragraphs. Each line continues the one above (lower case, "&", or after punctuation, a wrap word or an open
+    bracket: "Gillian (Rand’s / Mom) founds the"), so each paragraph is one cell, its lines joined in order."""
+    _, roadmap = _roadmap("02-moz.pdf", 2)
+    assert _grid_rows(roadmap) == MOZ_P2_GRID
+
+
+def test_buffer_p6_and_tea_p11_keep_a_row_per_line():
+    """Issue #49: buffer p6 is one box that alternates lines and dates; tea p11's boxes are bullet lists, each bullet a
+    capital letter after a line with no end punctuation. Neither box is one paragraph, so every line stays a row, a
+    wrapped bullet's second line included ("from Hashkey")."""
+    for file, page, count in (("03-buffer.pptx", 6, 12), ("10-tea.pdf", 11, 38)):
+        deck, roadmap = _roadmap(file, page)
+        lines = [b["text"] for b in deck["blocks"] if (b.get("slide") or b.get("page")) == page and b["kind"] == "text"]
+        assert len(roadmap["cells"]) == count and all(c["text"] in lines for c in roadmap["cells"]), file
+    assert "from Hashkey" in [c["text"] for c in _roadmap("10-tea.pdf", 11)[1]["cells"]]
+
+
+def _roadmap_rows(boxes):
+    """The grid rows of the roadmap of a built slide: three date boxes, then the given text boxes below them."""
+    dates = [("Q1 2025", 1, 1), ("Q3 2025", 3.5, 1), ("Q2 2026", 6, 1)]
+    roadmap, = [s for s in parser.parse_deck(_slide(dates + boxes), "d.pptx")["structures"] if s["type"] == "roadmap"]
+    return _grid_rows(roadmap)
+
+
+def test_a_roadmap_box_is_one_cell_only_when_each_line_continues_the_one_above():
+    rows = _roadmap_rows([("We launch the app in\nthree new markets", 1, 2), ("Launch EU\n100 new hires", 3.5, 2),
+                          ("Launch the API.\nHire a CFO", 6, 2)])
+    assert rows == [["Q1 2025", "Q3 2025", "Q2 2026"],
+                    ["We launch the app in three new markets", "Launch EU", "Launch the API. Hire a CFO"],
+                    ["100 new hires"]], \
+        "a figure after a line with no end punctuation starts a new item; a capital after a full stop does not"
+    long = ["We open offices in three new markets across the region and", "hire local teams to sell the platform to",
+            "mid-sized firms, with a partner programme that brings in", "resellers and integrators before the year ends"]
+    assert all(len(line) <= parser.TIMELINE_LINE_MAX for line in long) and len(" ".join(long)) > parser.CELL_MAX
+    assert _roadmap_rows([("\n".join(long), 1, 2)])[1:] == [[line] for line in long], \
+        "a paragraph over 200 characters would be prose: its lines stay rows"
+
+
 def test_front_b_p15_seed_to_series_a_joins_its_panel_like_its_twin():
     """"Seed to Series A" ends on a capital "A": a name, not the article that wraps a sentence over its lines."""
     texts = [c["text"] for c in _panel("01-front-b.pptx", 15)["cells"]]
