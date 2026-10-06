@@ -1619,21 +1619,22 @@ def test_roadmap_lines_are_reported_apart_with_their_pairs_and_dates_rebuilt_fro
                              {"line": "t16", "date": "d4" if n == 3 else "d3", "category": "launch"}]
             return json.dumps(body), tokens_in, tokens_out
     report = asyncio.run(script.run(["03-buffer.pptx", "05-zero2hero.pdf", "10-tea.pdf"], 3, script.MemoryDB(), Tea()))
-    assert (report["roadmap_lines"], report["roadmap_same_pair"], report["roadmap_dates_rebuilt"]) == (36, 35, 22), \
-        "Buffer: 6 lines, all paired alike, only the first with a date line on one side; TEA: 30 lines, one paired " \
+    assert (report["roadmap_lines"], report["roadmap_same_pair"], report["roadmap_dates_rebuilt"]) == (36, 35, 27), \
+        "Buffer: 6 lines, all paired alike, all dated from the date line below them; TEA: 30 lines, one paired " \
         "with another date in pass 3, 21 with a period in their own cells or headers"
     # The match rate keeps roadmap figures (milestones left out) and is also given apart: financial (outside
-    # roadmaps: zero2hero's 26 a pass, all verified) and roadmap (Buffer's 7 pair-dated figures a pass, none).
+    # roadmaps: zero2hero's 26 a pass) and roadmap (Buffer's 7 pair-dated figures a pass, each paired with the date
+    # line its own timeline gives it).
     assert (report["verifier_match_rate_pct"], report["verifier_match_rate_financial_pct"],
-            report["verifier_match_rate_roadmap_pct"]) == (78.8, 100.0, 0.0), "78 of 99; 78 of 78; 0 of 21"
-    assert "verified 78.8% (financial 100.0%, roadmap 0.0%)" in script.summary(report)
+            report["verifier_match_rate_roadmap_pct"]) == (100.0, 100.0, 100.0), "99 of 99; 78 of 78; 21 of 21"
+    assert "verified 100.0% (financial 100.0%, roadmap 100.0%)" in script.summary(report)
     assert report["agreement_pct"]["roadmap"] == 100.0, "agreement counts a roadmap's items like any other"
-    assert "roadmap lines: 36, same pair and category in every pass: 35, date rebuilt from cell: 22;" in \
+    assert "roadmap lines: 36, same pair and category in every pass: 35, date rebuilt from cell: 27;" in \
         script.summary(report)
     text = script.write_report(report, tmp_path, 3, fake=True).read_text(encoding="utf-8")
-    assert "- Roadmap lines: 36, same pair and category in every pass: 35, date rebuilt from cell: 22" in text
-    for line in ("- Match rate: 78.8%", "- Match rate, financial (outside roadmaps): 100.0%",
-                 "- Match rate, roadmap (figures in roadmaps, milestones left out): 0.0%"):
+    assert "- Roadmap lines: 36, same pair and category in every pass: 35, date rebuilt from cell: 27" in text
+    for line in ("- Match rate: 100.0%", "- Match rate, financial (outside roadmaps): 100.0%",
+                 "- Match rate, roadmap (figures in roadmaps, milestones left out): 100.0%"):
         assert line in text.splitlines(), line
 
 

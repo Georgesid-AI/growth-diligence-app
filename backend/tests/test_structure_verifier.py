@@ -291,12 +291,57 @@ def test_only_a_date_line_directly_next_to_the_line_in_the_same_box_counts():
     assert _adjacent(panel, "r1c1") is None, "roadmaps only"
 
 
-def test_on_the_buffer_timeline_only_the_first_line_has_an_adjacent_date_line():
-    """Buffer p6 alternates line, date, line, date in one box: the first line has its date below only; every later
-    line has a date above and below, so none of them has one."""
+def test_a_timeline_with_dates_below_its_lines_dates_every_line_from_below():
+    """Decision of 2026-10-06: a line with a date line on each side takes the one in the timeline's direction, decided
+    once from the first line in reading order with a date on one side only: here the first line, date below."""
+    below = _roadmap([["Launched web app"], ["January 2011"], ["Launch the API"], ["October 2011"],
+                      ["Integrated in 50 apps"], ["December 2011"]], [1])
+    assert [_adjacent(below, cell) for cell in ("r1c1", "r3c1", "r5c1")] == ["r2c1", "r4c1", "r6c1"]
+    tail = _roadmap([["Launched web app"], ["January 2011"], ["Launch the API"], ["October 2011"], ["Series A"]], [1])
+    assert _adjacent(tail, "r5c1") == "r4c1", "a line with a date on one side only keeps it, whatever the direction"
+
+
+def test_a_timeline_with_dates_above_its_lines_dates_every_line_from_above():
+    """Here the first line with a date on one side only is the last one, its date above."""
+    above = _roadmap([["January 2011"], ["Launched web app"], ["October 2011"], ["Launch the API"],
+                      ["December 2011"], ["Integrated in 50 apps"]], [1])
+    assert [_adjacent(above, cell) for cell in ("r2c1", "r4c1", "r6c1")] == ["r1c1", "r3c1", "r5c1"]
+
+
+def test_the_date_direction_is_decided_once_for_the_whole_timeline():
+    """The first one-sided line sits in box 1 (date below); box 2's line with a date on each side follows it."""
+    timeline = _roadmap([["Launch the API", "Q2 2025"], ["Q3 2025", "Hire 5 engineers"], ["", "Q4 2025"]],
+                        {(1, 1): 1, (2, 1): 1, (1, 2): 2, (2, 2): 2, (3, 2): 2})
+    assert (_adjacent(timeline, "r1c1"), _adjacent(timeline, "r2c2")) == ("r2c1", "r3c2")
+    flipped = _roadmap([["Q1 2025", "Q2 2025"], ["Launch the API", "Hire 5 engineers"], ["", "Q4 2025"]],
+                       {(1, 1): 1, (2, 1): 1, (1, 2): 2, (2, 2): 2, (3, 2): 2})
+    assert (_adjacent(flipped, "r2c1"), _adjacent(flipped, "r2c2")) == ("r1c1", "r1c2"), "box 1 decides: date above"
+    first = _roadmap([["Launch the API", "Q1 2025", "Q2 2025"], ["Q3 2025", "Hire 5 engineers", "Break even"],
+                      ["", "", "Q4 2025"]],
+                     {(1, 1): 1, (2, 1): 1, (1, 2): 2, (2, 2): 2, (1, 3): 3, (2, 3): 3, (3, 3): 3})
+    assert _adjacent(first, "r2c3") == "r3c3", "two one-sided lines (below in box 1, above in box 2): the first decides"
+
+
+def test_on_the_buffer_timeline_every_line_takes_the_date_below_it():
+    """Buffer p6 alternates line, date, line, date in one box: the first line has its date below only, so the timeline
+    runs downwards and every later line, with a date above and below, takes the one below."""
     roadmap = _deck_structure("03-buffer.pptx", 6, "roadmap")
-    assert [(cell, _adjacent(roadmap, cell)) for cell in ("r1c1", "r3c1", "r5c1", "r11c1")] == \
-        [("r1c1", "r2c1"), ("r3c1", None), ("r5c1", None), ("r11c1", None)]
+    assert [(cell, _adjacent(roadmap, cell)) for cell in ("r1c1", "r3c1", "r5c1", "r7c1", "r9c1", "r11c1")] == \
+        [("r1c1", "r2c1"), ("r3c1", "r4c1"), ("r5c1", "r6c1"), ("r7c1", "r8c1"), ("r9c1", "r10c1"), ("r11c1", "r12c1")]
+
+
+# What the moz p2 and TEA p11 timelines gave before the date direction (2026-10-06): no line has a date line on each
+# side, so nothing changes. Every other text line has no adjacent date line.
+BEFORE_DIRECTION = {("02-moz.pdf", 2): {},
+                    ("10-tea.pdf", 11): {"r2c1": "r1c1", "r2c4": "r1c4", "r8c1": "r7c1", "r8c4": "r7c4",
+                                         "r10c1": "r9c1", "r10c4": "r9c4", "r14c1": "r13c1", "r14c4": "r13c4"}}
+
+
+@pytest.mark.parametrize("deck, page", list(BEFORE_DIRECTION))
+def test_timelines_with_no_line_dated_on_both_sides_are_unchanged(deck, page):
+    roadmap = _deck_structure(deck, page, "roadmap")
+    lines = [f"r{c['row']}c{c['col']}" for c in roadmap["cells"] if not verify.is_date_line(c["text"])]
+    assert {cell: _adjacent(roadmap, cell) for cell in lines if _adjacent(roadmap, cell)} == BEFORE_DIRECTION[(deck, page)]
 
 
 # ---------------------------------------------------------------------------
@@ -314,7 +359,9 @@ def test_in_a_roadmap_a_line_takes_its_period_from_its_adjacent_date_line():
     got = _one(roadmap, "r1c1", None, metric="users")
     assert (got["status"], got["period"], got["period_cells"]) == (verify.VERIFIED, "2025-Q3", ["r2c1"])
     both = _boxed([["Plan"], ["Q2 2025"], ["5K users"], ["Q3 2025"]])
-    assert _status(both, "r3c1", "2025-Q3", metric="users") == verify.SUGGESTION, "one date line on each side: none"
+    got = _one(both, "r3c1", None, metric="users")
+    assert (got["status"], got["period"], got["period_cells"]) == (verify.VERIFIED, "2025-Q3", ["r4c1"]), \
+        "a date on each side: the timeline runs downwards from Plan, so the one below"
 
 
 def test_a_figure_in_a_paired_line_is_dated_by_its_pair_and_verified_only_when_its_own_cells_agree():
@@ -333,8 +380,12 @@ def test_a_figure_in_a_paired_line_is_dated_by_its_pair_and_verified_only_when_i
     out = _verify(roadmap, {("r3c1", 1): _lab("2011-10", "users", "count", "actual")},
                   pairs=[("r3c1", "r4c1", "other")])
     got = next(i for i in out["items"] if i.get("item") and i["value_cell"] == "r3c1" and i["position"] == 1)
-    assert (got["status"], got["period"], got["period_cells"]) == (verify.SUGGESTION, "2011-10", ["r4c1"]), \
-        "buffer p6: a date above and below, so no cell of its own rebuilds October 2011"
+    assert (got["status"], got["period"], got["period_cells"]) == (verify.VERIFIED, "2011-10", ["r4c1"]), \
+        "buffer p6: the timeline runs downwards, so its own date line below rebuilds October 2011, the pair's date"
+    out = _verify(roadmap, {("r3c1", 1): _lab("2011-01", "users", "count", "actual")},
+                  pairs=[("r3c1", "r2c1", "other")])
+    got = next(i for i in out["items"] if i.get("item") and i["value_cell"] == "r3c1" and i["position"] == 1)
+    assert (got["status"], got["period"]) == (verify.SUGGESTION, "2011-01"), "paired with the date above: not its own"
 
 
 def test_each_pair_is_a_milestone_dated_by_its_date_cell_and_never_verified():

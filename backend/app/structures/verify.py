@@ -259,14 +259,38 @@ def is_date_line(text: str) -> bool:
     return bool(parser._date_labels(text or "", claims))
 
 
+def _date_sides(structure: Dict, cell: Dict) -> Dict[str, Dict]:
+    """{"above": date line, "below": date line}: the date lines directly above and below a text line in its text box."""
+    found = {}
+    for c in structure["cells"]:
+        if c.get("box") is not None and c.get("box") == cell.get("box") and c["col"] == cell["col"] \
+                and abs(c["row"] - cell["row"]) == 1 and is_date_line(c["text"]):
+            found["above" if c["row"] < cell["row"] else "below"] = c
+    return found
+
+
+def date_direction(structure: Dict) -> Optional[str]:
+    """A roadmap's date direction, "above" or "below" (structure-labelling.md section 2, decision of 2026-10-06): the
+    side of the first text line in reading order with a date line on one side only; None when no line has one."""
+    for c in sorted(structure["cells"], key=lambda c: (c["row"], c["col"])):
+        if not is_date_line(c["text"]):
+            sides = _date_sides(structure, c)
+            if len(sides) == 1:
+                return next(iter(sides))
+    return None
+
+
 def adjacent_date_line(structure: Dict, cell: Dict) -> Optional[Dict]:
-    """In a roadmap, the date line of a text line (structure-labelling.md section 2): the one date line directly
-    above or below it in the same text box, or None when there is none or one on each side."""
+    """In a roadmap, the date line of a text line (structure-labelling.md section 2): the date line directly above or
+    below it in the same text box; with one on each side, the one in the timeline's date direction (None when the
+    timeline has none)."""
     if structure.get("type") != "roadmap" or is_date_line(cell["text"]):
         return None
-    found = [c for c in structure["cells"] if c.get("box") is not None and c.get("box") == cell.get("box")
-             and c["col"] == cell["col"] and abs(c["row"] - cell["row"]) == 1 and is_date_line(c["text"])]
-    return found[0] if len(found) == 1 else None
+    sides = _date_sides(structure, cell)
+    if len(sides) == 1:
+        return next(iter(sides.values()))
+    direction = date_direction(structure) if sides else None
+    return sides.get(direction) if direction else None
 
 
 def lowest_period_headers(structure: Dict, value_cell: Dict) -> List[Dict]:

@@ -3,7 +3,7 @@
  "page": 6,
  "type": "roadmap",
  "match": "r1c1: Launched web app",
- "note": "Hand-written in the model's labelling format (docs/specs/structure-labelling.md) for the public test deck; no live call was made. Each line is paired with the date below it. Only the first line has a date line on one side only, so no figure's own cells rebuild its pair's date: every figure stays a suggestion, and a milestone is never Verified.",
+ "note": "Hand-written in the model's labelling format (docs/specs/structure-labelling.md) for the public test deck; no live call was made. Each line is paired with the date below it. The first line has its date below only, so the timeline runs downwards and every line takes the date line below it: each figure's own cells rebuild its pair's date and it is Verified; a milestone is never Verified.",
  "reply": {
   "type": "roadmap",
   "labels": [
@@ -98,7 +98,7 @@
   ]
  },
  "expected": {
-  "verified": 0,
-  "suggestion": 13
+  "verified": 7,
+  "suggestion": 6
  }
 }
