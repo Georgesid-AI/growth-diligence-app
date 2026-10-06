@@ -2,15 +2,15 @@
  "file": "02-moz.pdf",
  "page": 20,
  "type": "kpi_panel",
- "match": "r2c1: ~$10.8 million",
- "note": "Hand-written in the model's labelling format (docs/specs/structure-labelling.md) for the public test deck; no live call was made. The range cell holds two figures, twelve and thirteen million; the months figure is labelled other, so it is listed as type Other and never Verified.",
+ "match": "r1c1 title: 2011 Estimated Revenue\nr1c2: $12 -$13 million",
+ "note": "Hand-written in the model's labelling format (docs/specs/structure-labelling.md) for the public test deck; no live call was made. Every value sits beside its label box, and the slide title labels the range (deck-parser.md section 7, issue #48). The range cell holds two figures, twelve and thirteen million, dated 2011 by the title beside it; the months figure is labelled other, so it is listed as type Other and never Verified.",
  "reply": {
   "type": "kpi_panel",
   "labels": [
    {
     "item": "i1",
     "metric": "revenue",
-    "period": null,
+    "period": "2011",
     "unit": "USD",
     "unit_other": null,
     "actual_or_forecast": "forecast"
@@ -18,7 +18,7 @@
    {
     "item": "i2",
     "metric": "revenue",
-    "period": null,
+    "period": "2011",
     "unit": "USD",
     "unit_other": null,
     "actual_or_forecast": "forecast"
@@ -29,21 +29,61 @@
     "period": null,
     "unit": "USD",
     "unit_other": null,
-    "actual_or_forecast": "forecast"
+    "actual_or_forecast": "actual"
    },
    {
     "item": "i4",
+    "metric": "customers",
+    "period": null,
+    "unit": "count",
+    "unit_other": null,
+    "actual_or_forecast": "actual"
+   },
+   {
+    "item": "i5",
+    "metric": "sales",
+    "period": null,
+    "unit": "count",
+    "unit_other": null,
+    "actual_or_forecast": "actual"
+   },
+   {
+    "item": "i6",
+    "metric": "sales",
+    "period": null,
+    "unit": "USD",
+    "unit_other": null,
+    "actual_or_forecast": "actual"
+   },
+   {
+    "item": "i7",
     "metric": "other",
     "period": null,
     "unit": "months",
     "unit_other": null,
     "actual_or_forecast": "forecast"
+   },
+   {
+    "item": "i8",
+    "metric": "sales",
+    "period": null,
+    "unit": "USD",
+    "unit_other": null,
+    "actual_or_forecast": "actual"
+   },
+   {
+    "item": "i9",
+    "metric": "revenue",
+    "period": null,
+    "unit": "USD",
+    "unit_other": null,
+    "actual_or_forecast": "actual"
    }
   ],
   "pairs": []
  },
  "expected": {
-  "verified": 3,
+  "verified": 8,
   "suggestion": 1
  }
 }

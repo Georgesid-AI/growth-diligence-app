@@ -1125,6 +1125,130 @@ def test_a_kpi_box_is_short_lines_with_a_figure_and_a_label_never_a_wrapped_sent
         ["2.5 hours", "64%", "per user per day", "DAU / MAU ratio"], "the wrapped sentence and the bare 40% stay out"
 
 
+# ---------------------------------------------------------------------------
+# KPI panels keep their label boxes, the value boxes beside them and a title as label (spec section 7, decisions of
+# 2026-10-06, issue #48). Built from the public test decks: moz p20 and p21, front-b p12 and p15.
+# ---------------------------------------------------------------------------
+MOZ_P20 = [["2011 Estimated Revenue", "$12 -$13 million"], ["Current Revenue Run Rate (June)", "~$10.8 million"],
+           ["Number of PRO Subscribers", "~13,500"], ["# of New Free Trials / Day", "~100"],
+           ["Avg. Customer Lifetime Value", "~$900"], ["Implied Customer Life", "~9 Months"],
+           ["Avg. Cost of Paid Acquisition", "~$100"], ["Avg. Monthly Revenue / Subscriber", "~$93"]]
+MOZ_P21 = [["% of Free Trials Converting to Paid", "~57%"], ["Churn Rate in 1st2 Paid Months", "~25%"],
+           ["Monthly Visits to Moz+ OSE", "~1.25 million"], ["Email Subscribers", "~300K"], ["Gross Margins", "~82%"],
+           ["Estimated Net Profit in 2011", "~$1 million"], ["Staffing Costs", "~$650K / Month"],
+           ["Crawling, Serving, Hosting + Processing", "~$180K / Month"]]
+# The value boxes that hold only a figure and never reached the model before (issue #48).
+MOZ_VALUE_BOXES = ["~13,500", "~100", "~$900", "~$100", "~$93", "~300K", "~82%", "~57%", "~25%"]
+
+
+def _panel(file, page):
+    deck = parser.parse_deck((DECKS / file).read_bytes(), file)
+    panel, = [s for s in deck["structures"] if (s.get("slide") or s.get("page")) == page and s["type"] == "kpi_panel"]
+    return panel
+
+
+def _grid_rows(panel):
+    """Each grid row's cell texts, left to right."""
+    rows = {}
+    for c in sorted(panel["cells"], key=lambda c: (c["row"], c["col"])):
+        rows.setdefault(c["row"], []).append(c["text"])
+    return list(rows.values())
+
+
+def _panel_texts(boxes, title=None):
+    """The cell texts of the KPI panels of a built slide."""
+    found = parser.parse_deck(_slide(boxes, title=title), "d.pptx")["structures"]
+    return [c["text"] for s in found if s["type"] == "kpi_panel" for c in s["cells"]]
+
+
+def test_moz_p20_and_p21_every_value_joins_the_panel_beside_its_label():
+    """Every label of these pages is its own text box, and nine value boxes hold only a figure: before, the labels
+    were left out and the nine never reached the model."""
+    p20, p21 = _grid_rows(_panel("02-moz.pdf", 20)), _grid_rows(_panel("02-moz.pdf", 21))
+    assert p20 == MOZ_P20 and p21 == MOZ_P21
+    assert [row[1] for row in p20 + p21 if row[1] in MOZ_VALUE_BOXES] == \
+        ["~13,500", "~100", "~$900", "~$100", "~$93", "~57%", "~25%", "~300K", "~82%"]
+
+
+def test_the_slide_title_labels_a_value_box_with_no_label_of_its_own_and_is_marked():
+    """Decision 2 of 2026-10-06: moz p20's "2011 Estimated Revenue" is the page title, beside "$12 -$13 million"."""
+    for page, title in ((20, "2011 Estimated Revenue"), (21, "% of Free Trials Converting to Paid")):
+        panel = _panel("02-moz.pdf", page)
+        assert [(c["row"], c["col"], c["text"]) for c in panel["cells"] if c.get("title")] == [(1, 1, title)]
+    text = structure_redact.structure_text(_panel("02-moz.pdf", 20)["cells"])
+    assert text.splitlines()[:3] == ["r1c1 title: 2011 Estimated Revenue", "r1c2: $12 -$13 million",
+                                     "r2c1: Current Revenue Run Rate (June)"]
+    kpi = ("Profitable in 10 months", 6, 5)               # a KPI box, so the slide has a panel
+    assert _panel_texts([("$7m", 1, 2), kpi], title="Runway") == ["Runway", "$7m", "Profitable in 10 months"], \
+        "the title right above a value box with no label is its label"
+    assert "Runway" not in _panel_texts([("Cash on hand", 3.2, 2), ("$7m", 1, 2), kpi], title="Runway"), \
+        "a value box with a label box beside it keeps that label; the title stays out"
+    assert "Runway 2" not in _panel_texts([("$7m", 1, 2), kpi], title="Runway 2"), "a title with a figure is no label"
+    from pptx.util import Inches
+    prs = pptx.Presentation(io.BytesIO(_slide([("$7m", 1, 2.2), kpi], title="Runway")))
+    prs.slides[0].shapes.title.top = Inches(3)               # the title 0.3 inch below the value box
+    buf = io.BytesIO()
+    prs.save(buf)
+    found = parser.parse_deck(buf.getvalue(), "d.pptx")["structures"]
+    assert [c["text"] for s in found for c in s["cells"]] == ["Profitable in 10 months"], "never a title below it"
+
+
+def test_front_b_p15_keeps_cash_on_hand_next_to_7m_left_and_runway():
+    rows = _grid_rows(_panel("01-front-b.pptx", 15))
+    row, = [r for r in rows if "$7m left" in r]
+    assert row[row.index("$7m left") - 1] == "Cash on hand" and {"18 months", "Runway *"} <= set(row)
+
+
+def test_front_b_p12_keeps_its_label_wrapped_over_two_lines_and_ltv_cac():
+    """"Spend as / % of revenue" ends its first line on "as", yet read as one line it is a 21-character label."""
+    texts = [c["text"] for c in _panel("01-front-b.pptx", 12)["cells"]]
+    assert {"Spend as", "% of revenue", "LTV / CAC", "18% 18% 19%", "2.5 2.6 4.4"} <= set(texts)
+
+
+def test_the_label_length_is_the_longest_test_deck_label_plus_half_and_one_over_stays_out():
+    """Decision 1 of 2026-10-06: the longest label on the 10 test decks (moz p21) plus 50%, rounded up."""
+    longest = "Crawling, Serving, Hosting + Processing"
+    assert longest in [row[0] for row in MOZ_P21] and parser.LABEL_MAX == -(-len(longest) * 3 // 2) == 59
+    assert parser.KPI_LINE_MAX == 30, "a KPI box's lines keep their 30 characters"
+    for length, kept in ((parser.LABEL_MAX, True), (parser.LABEL_MAX + 1, False)):
+        label = ("Average monthly revenue per paying subscriber " + "x" * 60)[:length]
+        assert (label in _panel_texts([(label, 1, 1), ("$7m left", 1, 1.6)])) is kept, length
+
+
+def test_a_wrapped_sentence_still_stays_out():
+    sentence = "We took one round of\nfinancing and grew our\nsubscriber base steadily"     # 68 characters as one line
+    assert _panel_texts([("$7m left", 1, 1), (sentence, 3.2, 1), ("~40%", 5.4, 1),
+                         ("We raised revenue of\n$1.1M from customers", 1, 3)]) == ["$7m left"], \
+        "neither a label box nor a KPI box; the value box beside it has no label"
+    assert _panel_texts([("$7m left", 1, 1), ("Spend as\n% of revenue", 3.2, 1), ("~40%", 5.4, 1)]) == \
+        ["$7m left", "Spend as", "% of revenue", "~40%"], "a label wrapped over two lines is one label"
+
+
+def test_directly_next_to_is_beside_or_within_a_tenth_of_the_page_with_no_box_between():
+    kpi = ("Profitable in 10 months", 6, 5)               # a KPI box apart from the rest, so the slide has a panel
+    assert "Cash on hand" in _panel_texts([kpi, ("Cash on hand", 1, 1), ("$7m", 1, 1.6)]), "0.1 inch above"
+    assert "Cash on hand" not in _panel_texts([kpi, ("Cash on hand", 1, 1), ("$7m", 1, 2.4)]), \
+        "0.9 inch above: more than a tenth of a 7.5-inch slide"
+    assert "Cash on hand" not in _panel_texts([kpi, ("Cash on hand", 1, 1), ("In the bank", 1, 1.6), ("$7m", 1, 2.2)]), \
+        "another box between them"
+    texts = [c["text"] for c in _panel("05-zero2hero.pdf", 17)["cells"]]
+    assert not {"Turnover(£/year)", "278,085", "181,193"} & set(texts), \
+        "zero2hero p17: the chart title sits a quarter of the page above its data labels"
+
+
+def test_an_axis_tick_or_a_date_written_with_slashes_is_no_value_box():
+    texts = [c["text"] for c in _panel("05-zero2hero.pdf", 17)["cells"]]
+    assert not {"Traction", "800,000"} & set(texts), "zero2hero p17: the axis' top tick sits right under the title"
+    rows = _grid_rows(_panel("01-front-b.pptx", 14))
+    row, = [r for r in rows if "Recommend to a friend" in r]
+    assert row[:4] == ["100%", "Recommend to a friend", "100%", "Approve of CEO"]
+    assert not [t for r in rows for t in r if "/1/1" in t], "front-b p14: \"3/1/15\" holds three figures"
+
+
+def test_a_page_with_no_kpi_box_has_no_panel():
+    assert _panel_texts([("Cash on hand", 1, 1), ("$7m", 1, 1.6)], title="Our runway") == []
+
+
 def test_a_table_without_a_figure_is_prose_and_row_numbers_are_not_figures():
     deck = parser.parse_deck((DECKS / "07-equals-seed.docx").read_bytes(), "07-equals-seed.docx")
     assert deck["structures"] == [], "numbered text tables are prose"
