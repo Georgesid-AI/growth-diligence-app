@@ -26,16 +26,17 @@ export const CLAIMS_CHOICES = [
   ["✕ Reject:", "Exclude items that are not company claims, such as another company's figures, funds raised or chart axis labels. Rejected items remain in the record but are not used."],
 ];
 
-// Labels for every type a stored claim may carry; "usage" only on claims parsed before it was dropped.
+// Labels for every type a stored claim may carry; "usage" only on claims parsed before it was dropped; "other" on an
+// item the model labelled other (docs/specs/structure-labelling.md section 4).
 export const TYPE_LABELS = {
   revenue: "Revenue", revenue_growth: "Revenue growth", growth: "Growth", retention: "Retention", sales: "Sales",
   customers: "Customers", users: "Users", user_growth: "User growth", gross_margin: "Gross margin",
   gross_profit: "Gross profit", costs: "Costs", ebitda: "EBITDA", net_profit: "Net profit", usage: "Usage",
-  people: "People", product: "Product", market: "Market", use_of_funds: "Use of funds",
+  people: "People", product: "Product", market: "Market", use_of_funds: "Use of funds", other: "Other",
 };
 // The types an analyst can choose: same order and names as backend app/decks/claims.py CLAIM_TYPES.
 // "Use of funds" is a type the model may read from a structure, not one the parser gives.
-export const CLAIM_TYPES = Object.keys(TYPE_LABELS).filter((t) => t !== "usage" && t !== "use_of_funds");
+export const CLAIM_TYPES = Object.keys(TYPE_LABELS).filter((t) => !["usage", "use_of_funds", "other"].includes(t));
 // Suggestions for the unit field; a count's unit is the noun it counts ("paying users").
 export const CLAIM_UNITS = ["%", "x", "months", "years", "weeks", "days", "hours", "customers", "users"];
 
@@ -115,6 +116,25 @@ export const INCONSISTENCY_LABEL = "Deck inconsistency";
 export const VERIFIED_LABEL = "Verified";
 export const AI_SUGGESTION_LABEL = "AI suggestion, not verified";
 export const STORED_MAPPING_LABEL = "Your confirmed mapping for these headers";
+
+// Structure labelling (docs/specs/structure-labelling.md): Python reads every figure; an ambiguous one ("2.500",
+// "Telegram(30K)") carries both readings with Python's default first, which is the row's value.
+/** [{value, label, selected}] for a row whose figure reads two ways, the default first and pre-selected;
+ *  [] when there is nothing to choose. Choosing the other reading is an Edit. */
+export function readingChoices(c) {
+  const readings = c?.readings || [];
+  if (readings.length < 2) return [];
+  return readings.map((r, i) => ({
+    value: r.value,
+    label: `${amount(c, r.value)} (${[r.dot_reading, r.bracket_reading].filter(Boolean).join(", ")})`,
+    selected: i === 0,
+  }));
+}
+
+// An item the model labelled "other" is listed as type Other; the server approves it only once its type is
+// edited to a claim type.
+export const OTHER_TYPE_NOTE = "Choose a claim type, then approve.";
+export const needsType = (c) => c?.claim_type === "other";
 
 // The deck panel's run log (docs/specs/llm-structure-reading.md sections 3, 4 and 9).
 export const DECK_AI_STATUS = {

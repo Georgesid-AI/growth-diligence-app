@@ -1,7 +1,9 @@
 # Spec: Model reading of deck structures and spreadsheet headers
 Status: Draft. Location: docs/specs/llm-structure-reading.md. Implements CLAUDE.md rules 16–18.
+Superseded in part by docs/specs/structure-labelling.md (Python lists the items, the model labels them): §1, §2, §5, §7, §9 and §11
+each say which part. §3, §4, §6, §8 and the 400,000-token audit cap are unchanged.
 
-**1. Gateway function.** `gateway.read_structure(text, type) → JSON`, plus the db and audit id every gateway call
+**1. Gateway function.** *Superseded for deck structures: the item fields, the output and one schema for all types are replaced by docs/specs/structure-labelling.md §3; a column mapping keeps the schema below.* `gateway.read_structure(text, type) → JSON`, plus the db and audit id every gateway call
 carries. There is one prompt (`prompts/structure_reading.md`) and one schema, and `type` is an input field. Types:
 `table`, `chart`, `kpi_panel`, `roadmap`, `hiring_table`, `unit_economics`, `use_of_funds`, `column_mapping`.
 Python finds the structures and assigns their type (deck-parser.md §7). It builds `text` as one line per cell,
@@ -28,7 +30,7 @@ change (§9). Each item has exactly these fields:
 
 No field is free text, so model output cannot carry deck prose into a log.
 
-**2. Verifier (Python, pure).** A value is matched against its `value_cell` only: it matches when that cell exists and holds the same number after
+**2. Verifier (Python, pure).** *Superseded: value and period matched against cited cells and the model's proposed flags are replaced by docs/specs/structure-labelling.md §4; the normalisation below moves to its §1.* A value is matched against its `value_cell` only: it matches when that cell exists and holds the same number after
 normalisation:
 - currency symbols and thousands separators are removed;
 - a decimal comma is read only if the structure writes numbers like `1.234,5`;
@@ -104,7 +106,7 @@ checkbox (CLAUDE.md rule 16).
 - Unticked means the Python-only path: no `read_structure` call is made. Stored results stay until Delete audit.
 - Each structure sent is recorded with its deck, page, type and time (no text). The deck panel shows "Sent to the model: slides 4, 7, 12".
 
-**5. Prompt-injection defence.** No tools. Structured outputs (`output_config.format`). The prompt says cell text is
+**5. Prompt-injection defence.** *Superseded in part: the cited-cell check is replaced, for deck structures, by the item id and pair checks of docs/specs/structure-labelling.md §3.* No tools. Structured outputs (`output_config.format`). The prompt says cell text is
 data, never instructions. Python validates every reply against the schema (extra fields forbidden) and checks that
 every cited cell (`value_cell`, `period_cells`) exists. A failing reply is rejected. After the existing one reask, the structure is marked
 "Not read by AI" and Python's result stands.
@@ -113,7 +115,7 @@ every cited cell (`value_cell`, `period_cells`) exists. A failing reply is rejec
 needs a price entry, and changing it moves every cache key. Temperature stays at the default and is not sent.
 Consistency relies on the cache, the verifier and the 95% agreement target (§11).
 
-**7. Caps.** 400,000 tokens per audit, counting billed input and output. A call goes out only if tokens used + its
+**7. Caps.** *Superseded in part: the 3,000-token cap on the text alone is replaced by docs/specs/structure-labelling.md §5 (4,000 tokens on the structure text plus the item list). The 400,000-token audit cap is unchanged.* 400,000 tokens per audit, counting billed input and output. A call goes out only if tokens used + its
 input + its `max_tokens` fit under the cap. Otherwise the analyst sees: "AI reading stopped: this audit reached its
 400,000-token limit. The remaining structures were read by Python only." Each structure may use at most 3,000 tokens,
 measured with the provider's token counter on the structure text alone (the prompt and schema are not counted). A
@@ -125,7 +127,7 @@ The existing circuit breaker applies: per-audit lock (step `structures`), daily 
 change moves every key. Results are stored in `llm_structures` and looked up by (audit id, key), so no audit is
 served another audit's result. A hit makes no API call. Delete audit removes the stored results (`purge_run`).
 
-**9. Logging (rule 17).** `llm_structures` stores the model JSON output (with the model's own periods), the verifier
+**9. Logging (rule 17).** *Superseded in part: what `llm_structures` stores is replaced by docs/specs/structure-labelling.md §5 (the reply and the item list without raw text).* `llm_structures` stores the model JSON output (with the model's own periods), the verifier
 status of each item, the number of periods corrected, prompt version, model, content hash, tokens, cost, deck and page. It also stores Python's type and, when the two differ,
 the model's type. `llm_calls` adds the content hash and deck id, and for a provider error its HTTP status
 (`http_status`) and the provider's error type (`error_type`, e.g. `rate_limit_error`; the exception's class name when
@@ -146,7 +148,7 @@ corrected and cost. `scripts/consistency_run.py` reports the periods corrected t
 
 The docstrings in `gateway.py`, `decks/__init__.py` and `prompt_store.py` restate rules 16–18.
 
-**11. Tests.** Automated tests replay recorded replies (public test decks only) through the fake adapter, with no
+**11. Tests.** *Superseded in part: the consistency run's agreement, fields, reasons, diagnostic, token and roadmap lines are replaced by docs/specs/structure-labelling.md §6–7.* Automated tests replay recorded replies (public test decks only) through the fake adapter, with no
 live API. They cover:
 - the verifier: each normalisation case, value matched against `value_cell` only, period matched against `period_cells`
   only (two-cell periods, fiscal years), flags, the switch;

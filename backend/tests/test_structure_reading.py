@@ -28,10 +28,25 @@ AUDIT = "audit-s"
 AUDIT_DOC = {"id": AUDIT, "company_name": "Zero2Hero", "client_name": "Northbridge Capital",
              "engagement_reference": "ENG-2026-041", "structure_reading_consent": True, "fiscal_year_end": 12,
              "results": None}
-TEXT = "r1c2: FY2025\nr1c3: FY2026\nr2c1: Revenue\nr2c2: £1,200,000\nr2c3: £1,500,000"
-REPLY = {"type": "table", "items": [
-    {"metric": "revenue", "period": "FY2025", "value": 1200000, "unit": "GBP", "actual_or_forecast": "forecast",
-     "unit_other": None, "value_cell": "r2c2", "period_cells": ["r1c2"], "proposed_flags": []}]}
+# A structure as the model reads it: its cells, then the items Python listed (docs/specs/structure-labelling.md).
+TEXT = ('r1c2: FY2025\nr1c3: FY2026\nr2c1: Revenue\nr2c2: £1,200,000\nr2c3: £1,500,000\nitems:\n'
+        'i1 r2c2 "1,200,000" 1200000 h r2c1 r1c2\ni2 r2c3 "1,500,000" 1500000 h r2c1 r1c3')
+
+
+def _label(item, metric="revenue", period=None, unit=None, unit_other=None, actual_or_forecast="forecast"):
+    """One label of the labelling reply: exactly these fields, no value, cell or flag."""
+    return {"item": item, "metric": metric, "period": period, "unit": unit, "unit_other": unit_other,
+            "actual_or_forecast": actual_or_forecast}
+
+
+REPLY = {"type": "table", "labels": [_label("i1", period="FY2025", unit="GBP"), _label("i2", period="FY2026", unit="GBP")],
+         "pairs": []}
+NOTHING = {"type": "table", "labels": [], "pairs": []}          # the reply to a structure with no item
+ROADMAP_TEXT = ('r1c1: Launch the API\nr2c1: Q3 2025\nr3c1: Hire 5 engineers\nr4c1: Q4 2025\nitems:\n'
+                'i1 r3c1 "5" 5 h r1c1\nd1 r2c1\nd2 r4c1\nt1 r1c1\nt2 r3c1')
+ROADMAP_REPLY = {"type": "roadmap", "labels": [_label("i1", "people", unit="count")],
+                 "pairs": [{"line": "t1", "date": "d1", "category": "launch"},
+                           {"line": "t2", "date": "d2", "category": "hiring"}]}
 
 
 def _db(**audit):
@@ -66,13 +81,14 @@ def test_recorded_replies_replay_through_the_gateway_and_the_verifier(fixture):
     pytest.importorskip("pptx")
     structure = _structure(fixture)
     cells, _ = redact.redact_structure(structure["cells"], "Zero2Hero", {})
-    text = redact.structure_text(cells)
+    listed = structure_items.list_items({**structure, "cells": cells})
+    text = structure_items.text({**structure, "cells": cells}, listed)
     db = _db()
     result, adapter = _read(db, text, fixture["type"], [fixture["reply"]])
     assert result.status == "read" and adapter.calls == 1, result.reason
     sent = json.loads(adapter.payloads[0])
-    assert sent == {"type": fixture["type"], "text": text}, "the type and the structure text, nothing else"
-    checked = verify.verify(structure, result.items)
+    assert sent == {"type": fixture["type"], "text": text}, "the type, the structure text and its item list, nothing else"
+    checked = verify.verify(structure, listed, result.labels, result.pairs)
     statuses = [i["status"] for i in checked["items"]]
     assert {"verified": statuses.count("verified"), "suggestion": statuses.count("suggestion")} == fixture["expected"]
 
@@ -84,8 +100,201 @@ def test_the_call_is_pinned_to_one_model_with_no_temperature_no_tools_and_the_st
     request, = adapter.requests
     assert request["model"] == "claude-sonnet-5-5" and request["temperature"] is None
     assert request["max_tokens"] == gateway.STRUCTURE_MAX_TOKENS
-    assert set(request["json_schema"]["properties"]) == {"type", "items"}
+    assert set(request["json_schema"]["properties"]) == {"type", "labels", "pairs"}, "a deck structure is labelled"
     assert "claude-sonnet-5-5" in gateway.MODEL_PRICING_USD, "the pinned model has a price entry"
+
+
+# ---------------------------------------------------------------------------
+# The item list (docs/specs/structure-labelling.md sections 1 and 3): Python lists every figure in every
+# redacted cell, with its cell, position, raw text, value(s) and header cells; the model only labels them
+# ---------------------------------------------------------------------------
+import test_structure_verifier as v  # noqa: E402
+from app.structures import items as structure_items  # noqa: E402
+
+
+def _listed(rows, header_rows=1, kind="table", spans=None):
+    return structure_items.list_items(v._struct(rows, header_rows, kind, spans))["items"]
+
+
+def _brief(listed):
+    """(id, cell, position, raw text, values with the default first, header cells) per item."""
+    return [(i["id"], i["cell"], i["position"], i["raw"], [x["value"] for x in i["values"]], i["headers"])
+            for i in listed]
+
+
+SOCIAL = [["", "Members"], ["Web", "12"], ["Social", "Discord(150) Telegram(30K)"]]
+
+
+def test_a_cell_with_several_figures_gives_one_item_each_with_its_position_in_reading_order():
+    assert _brief(_listed(SOCIAL)) == [
+        ("i1", "r2c2", 1, "12", [12], ["r2c1", "r1c2"]),
+        ("i2", "r3c2", 1, "(150)", [150, -150], ["r3c1", "r1c2"]),
+        ("i3", "r3c2", 2, "(30K)", [30000, -30000], ["r3c1", "r1c2"])]
+
+
+def test_the_item_list_comes_below_the_structure_text_one_line_per_item():
+    structure = v._struct(SOCIAL)
+    text = structure_items.text(structure, structure_items.list_items(structure))
+    assert text == ("r1c2: Members\nr2c1: Web\nr2c2: 12\nr3c1: Social\nr3c2: Discord(150) Telegram(30K)\n"
+                    "items:\n"
+                    'i1 r2c2 "12" 12 h r2c1 r1c2\n'
+                    'i2 r3c2#1 "(150)" 150 or -150 h r3c1 r1c2\n'
+                    'i3 r3c2#2 "(30K)" 30000 or -30000 h r3c1 r1c2'), "the spec's line format"
+    assert structure_items.text(v._struct([["Plan"]], header_rows=0), {"items": [], "dates": [], "lines": []}) == \
+        "r1c1: Plan\nitems:", "a structure with no figure still sends the items line"
+
+
+def test_dates_are_periods_and_are_left_out():
+    listed = _listed([["", "FY2025", "Q3", "M1", "Year 2"], ["Revenue in 2024", "£1.2m in 2025", "", "", ""],
+                      ["Users", "Mar 2025: 5K", "", "", ""]])
+    assert [(i["cell"], i["raw"], i["values"][0]["value"]) for i in listed] == \
+        [("r2c2", "1.2m", 1200000), ("r3c2", "5K", 5000)]
+
+
+def test_values_are_in_full_units_under_todays_normalisation():
+    assert [i["values"][0]["value"] for i in _listed([["£m", "2025", "2026 (€'000)"],
+                                                      ["Revenue", "1.2", "4.5"], ["EBITDA", "(0.3)", "1,234"]])] \
+        == [1200000, 4500, -300000, 1234000], "a scale in the corner or a header, never an item of its own; brackets"
+    assert [i["values"][0]["value"] for i in _listed([["", "Plan"], ["Revenue", "€1.234,5"]])] == [1234.5], \
+        "the structure writes a decimal comma"
+    assert [i["values"][0]["value"] for i in _listed([["", "Plan"], ["Revenue", "$3.6m"], ["ARR", "2bn"],
+                                                      ["Margin", "62%"], ["Loss", "-$1,200"]])] == \
+        [3600000, 2000000000, 62, -1200]
+
+
+def test_a_range_is_two_figures_and_its_low_end_takes_the_high_ends_scale():
+    """moz p20: "$12 -$13 million" is twelve to thirteen million, not 12 and minus thirteen million."""
+    assert [i["values"] for i in _listed([["", "Plan"], ["Revenue", "$12 -$13 million"], ["Margin", "5 – 10%"]])] \
+        == [[{"value": 12000000, "dot_reading": None, "bracket_reading": None}],
+            [{"value": 13000000, "dot_reading": None, "bracket_reading": None}],
+            [{"value": 5, "dot_reading": None, "bracket_reading": None}],
+            [{"value": 10, "dot_reading": None, "bracket_reading": None}]]
+
+
+def test_a_ranges_two_items_are_marked_as_one_range_low_and_high():
+    """Decision of 2026-10-06: the two figures of a range stay two items for the model (spec section 1), and the item
+    list stores them as one range (low, high)."""
+    listed = _listed([["", "Plan"], ["Revenue", "$12 -$13 million"], ["Margin", "5 – 10%"], ["Users", "12 and 13"]])
+    assert [(i["id"], i.get("range")) for i in listed] == [
+        ("i1", {"items": ["i1", "i2"], "low": 12000000, "high": 13000000}),
+        ("i2", {"items": ["i1", "i2"], "low": 12000000, "high": 13000000}),
+        ("i3", {"items": ["i3", "i4"], "low": 5, "high": 10}),
+        ("i4", {"items": ["i3", "i4"], "low": 5, "high": 10}),
+        ("i5", None), ("i6", None)], "two figures with no dash between them are no range"
+    stored = structure_items.stored({"items": listed})["items"]
+    assert stored[0]["range"] == {"items": ["i1", "i2"], "low": 12000000, "high": 13000000} and "raw" not in stored[0]
+    structure = v._struct([["", "Plan"], ["Revenue", "$12 -$13 million"]])
+    assert structure_items.text(structure, structure_items.list_items(structure)).endswith(
+        'i1 r2c2#1 "12" 12000000 h r2c1 r1c2\ni2 r2c2#2 "13 million" 13000000 h r2c1 r1c2'), "the item lines are unchanged"
+
+
+def _readings(text):
+    item, = _listed([["", "Plan"], ["Hours", text]])
+    return [(x["value"], x["dot_reading"], x["bracket_reading"]) for x in item["values"]]
+
+
+@pytest.mark.parametrize("text, readings", [
+    ("Approx. 2.500 hours", [(2500, "thousands", None), (2.5, "decimal", None)]),
+    ("12.500", [(12500, "thousands", None), (12.5, "decimal", None)]),
+    ("1.250M", [(1250000, "decimal", None), (1250000000, "thousands", None)]),       # a suffix: decimal
+    ("$2.500bn", [(2500000000, "decimal", None), (2500000000000, "thousands", None)]),
+    ("0.500", [(0.5, None, None)]),                                                     # not ambiguous
+    ("2.50", [(2.5, None, None)]),
+])
+def test_a_dot_before_three_digits_carries_both_values_thousands_first_unless_a_suffix(text, readings):
+    assert _readings(text) == readings
+
+
+def test_with_a_decimal_comma_a_dot_before_three_digits_is_a_thousands_separator_only():
+    listed = _listed([["", "Plan", ""], ["Revenue", "2.500", "1.234,5"]])
+    assert [x["value"] for x in listed[0]["values"]] == [2500]
+
+
+@pytest.mark.parametrize("text, readings", [
+    ("Telegram(30K)", [(30000, None, "positive"), (-30000, None, "negative")]),
+    ("Discord (150)", [(150, None, "positive"), (-150, None, "negative")]),
+    ("Net loss (1,200)", [(-1200, None, "negative"), (1200, None, "positive")]),
+    ("LOSSES (7)", [(-7, None, "negative"), (7, None, "positive")]),
+    ("Deficit(5)", [(-5, None, "negative"), (5, None, "positive")]),
+    ("Negative cash flow (2)", [(-2, None, "negative"), (2, None, "positive")]),
+    ("Revenue decline (3%)", [(-3, None, "negative"), (3, None, "positive")]),
+    ("(1,200)", [(-1200, None, None)]),                              # wholly bracketed: one reading
+    ("£(1,200)", [(-1200, None, None)]),
+    ("Net loss -1,200", [(-1200, None, None)]),
+    ("Net loss (2.500)", [(-2500, "thousands", "negative"), (2500, "thousands", "positive"),
+                          (-2.5, "decimal", "negative"), (2.5, "decimal", "positive")]),
+])
+def test_a_bracketed_number_after_text_carries_both_signs_negative_first_after_a_loss_word(text, readings):
+    assert _readings(text) == readings
+
+
+def test_a_loss_word_counts_only_in_the_text_before_the_figure():
+    first, second = _listed([["", "Plan"], ["P&L", "Gross (5) then net loss (3)"]])
+    assert [x["bracket_reading"] for x in first["values"]] == ["positive", "negative"]
+    assert [x["bracket_reading"] for x in second["values"]] == ["negative", "positive"]
+
+
+def test_the_same_structure_always_gives_the_same_list():
+    structure = v._struct([["", "2024", "2025"], ["Revenue", "£1M", "£2M"], ["Users", "5K / 7K", "9K"]])
+    shuffled = {**structure, "cells": list(reversed(structure["cells"]))}
+    first = structure_items.list_items(structure)
+    assert first == structure_items.list_items(structure) == structure_items.list_items(shuffled)
+    assert [(i["id"], i["cell"], i["position"]) for i in first["items"]] == [
+        ("i1", "r2c2", 1), ("i2", "r2c3", 1), ("i3", "r3c2", 1), ("i4", "r3c2", 2), ("i5", "r3c3", 1)]
+
+
+def test_a_figure_spanning_a_line_break_or_double_space_is_cut_as_the_cell_line_writes_it():
+    """The structure text writes each cell on one line with single spaces; an item's raw text is cut from that same
+    text, so it is always inside its cell line and the structure is sent, not refused (bad_item_line)."""
+    structure = v._struct([["", "Plan"], ["Revenue", "$12 -\n$13\nmillion"], ["EBITDA", "Net  loss  (  1,200 )"]])
+    listed = structure_items.list_items(structure)
+    assert [(i["raw"], i["values"][0]["value"]) for i in listed["items"]] == \
+        [("12", 12000000), ("13 million", 13000000), ("( 1,200 )", -1200)]
+    text = structure_items.text(structure, listed)
+    assert "\n".join(text.split("\n")[:5]) == "r1c2: Plan\nr2c1: Revenue\nr2c2: $12 - $13 million\nr3c1: EBITDA\n" \
+        "r3c2: Net loss ( 1,200 )"
+    result, adapter = _read(_db(), text, replies=[{"type": "table", "pairs": [], "labels": [
+        _label(i["id"], "not_a_metric") for i in listed["items"]]}])
+    assert (result.status, adapter.calls) == ("read", 1), result.reason
+
+
+def test_the_item_list_is_built_from_the_redacted_cells():
+    cells = [{"row": 1, "col": 1, "text": "Call +44 20 7946 0958"}, {"row": 1, "col": 2, "text": "£1M"}]
+    redacted, _ = redact.redact_structure(cells, "Zero2Hero", {})
+    listed = structure_items.list_items({"type": "table", "header_rows": 0, "cells": redacted})
+    assert [(i["cell"], i["raw"]) for i in listed["items"]] == [("r1c2", "1M")], "no figure of the phone number"
+
+
+def _roadmap(rows, boxes):
+    """A roadmap from a grid of texts; boxes: the box of each column, or {(row, col): box}."""
+    structure = v._struct(rows, header_rows=0, kind="roadmap")
+    for c in structure["cells"]:
+        c["box"] = boxes[(c["row"], c["col"])] if isinstance(boxes, dict) else boxes[c["col"] - 1]
+    return structure
+
+
+def test_a_roadmap_lists_its_date_cells_and_text_lines_below_its_items():
+    """Spec section 2: date cells are date labels (deck-parser.md section 7: a date with at most two other words);
+    every other non-empty cell is a text line. A figure in a line is an item too."""
+    roadmap = _roadmap([["Launch the API", "2026"], ["Launch Q3 2025", "Break even"],
+                        ["Hire 5 engineers", "Launched the web app to our first users in January 2011"]], [1, 2])
+    listed = structure_items.list_items(roadmap)
+    assert listed["dates"] == [{"id": "d1", "cell": "r1c2"}, {"id": "d2", "cell": "r2c1"}]
+    assert listed["lines"] == [{"id": "t1", "cell": "r1c1"}, {"id": "t2", "cell": "r2c2"}, {"id": "t3", "cell": "r3c1"},
+                               {"id": "t4", "cell": "r3c2"}], "a sentence holding a date is a line"
+    assert structure_items.text(roadmap, listed).split("items:\n")[1] == \
+        'i1 r3c1 "5" 5 h r1c1\nd1 r1c2\nd2 r2c1\nt1 r1c1\nt2 r2c2\nt3 r3c1\nt4 r3c2'
+    table = {**roadmap, "type": "table"}
+    assert (structure_items.list_items(table)["dates"], structure_items.list_items(table)["lines"]) == ([], []), \
+        "only a roadmap lists its dates and lines"
+
+
+def test_the_buffer_timeline_lists_six_dates_and_six_lines():
+    pytest.importorskip("pptx")
+    roadmap = _structure({"file": "03-buffer.pptx", "page": 6, "type": "roadmap"})
+    listed = structure_items.list_items(roadmap)
+    assert [d["cell"] for d in listed["dates"]] == [f"r{n}c1" for n in (2, 4, 6, 8, 10, 12)]
+    assert [t["cell"] for t in listed["lines"]] == [f"r{n}c1" for n in (1, 3, 5, 7, 9, 11)]
 
 
 # ---------------------------------------------------------------------------
@@ -95,43 +304,89 @@ LISTED_CURRENCIES = ("EUR", "USD", "GBP", "CHF", "BGN", "RON", "PLN", "CZK", "HU
                      "RSD", "JPY", "CNY", "INR", "AUD", "CAD")
 
 
-def test_a_change_to_the_output_schema_moves_every_structure_cache_key(monkeypatch):
-    """Spec section 8: the key holds a hash of the output schema, so a reading stored under another schema is never
-    served: the next read of the same structure misses the cache and calls the model."""
+def test_deck_structures_use_the_labelling_schema_and_a_column_mapping_keeps_its_own():
+    """Spec section 3: one labelling schema for every deck type, {"type", "labels", "pairs"}; a label holds exactly
+    item, metric, period, unit, unit_other and actual_or_forecast: no value, cell id or flag. Column mapping keeps
+    its own schema, and the gateway picks the schema by type."""
+    from app.llm import schemas
+    schema = schemas.labelling_output_schema()
+    assert list(schema["properties"]) == ["type", "labels", "pairs"] == schema["required"]
+    assert schema["additionalProperties"] is False and schema["properties"]["type"]["enum"] == list(schemas.DECK_TYPES)
+    label = schema["properties"]["labels"]["items"]
+    assert list(label["properties"]) == ["item", "metric", "period", "unit", "unit_other", "actual_or_forecast"]
+    assert label["required"] == list(label["properties"]) and label["additionalProperties"] is False
+    assert label["properties"]["metric"]["enum"] == [*schemas.CLAIM_METRICS, "use_of_funds", "other", "not_a_metric"]
+    pair = schema["properties"]["pairs"]["items"]
+    assert pair["properties"] == {"line": {"type": "string"}, "date": {"type": "string"}, "category": {
+        "type": "string", "enum": ["launch", "feature", "expansion", "partnership", "hiring", "break_even", "funding",
+                                   "certification", "other"]}}
+    assert pair["required"] == ["line", "date", "category"] and pair["additionalProperties"] is False
+    assert all(schemas.output_schema(kind) == schema for kind in schemas.DECK_TYPES)
+    assert schemas.output_schema("column_mapping") == schemas.structure_output_schema()
+    assert set(schemas.output_schema("column_mapping")["properties"]) == {"type", "items"}
+    result, adapter = _read(_db(), MAPPING_TEXT, "column_mapping", replies=[ONE_MAPPING])
+    assert (result.status, result.items, result.labels) == ("read", ONE_MAPPING["items"], [])
+    assert set(adapter.requests[0]["json_schema"]["properties"]) == {"type", "items"}
+    assert set(adapter.count_requests[-1]["json_schema"]["properties"]) == {"type", "items"}
+
+
+def test_each_schemas_hash_enters_the_cache_key_of_its_own_type(monkeypatch):
+    """Spec section 3: each schema's hash enters the cache key, so a reading stored under another schema is never
+    served: the next read misses the cache and calls the model. A change to one schema moves only its own keys."""
+    from app.llm import schemas
     db = _db()
     first, _ = _read(db)
+    mapping, _ = _read(db, MAPPING_TEXT, "column_mapping", replies=[ONE_MAPPING])
     again, adapter = _read(db)
     assert (again.cache_hit, adapter.calls, again.key) == (True, 0, first.key)
-    schema = gateway.structure_output_schema()
-    monkeypatch.setattr(gateway, "structure_output_schema", lambda: {**schema, "required": ["items", "type"]})
+    labelling = schemas.labelling_output_schema()
+    monkeypatch.setattr(schemas, "labelling_output_schema", lambda: {**labelling, "required": ["labels", "type", "pairs"]})
     changed, adapter = _read(db)
     assert (changed.status, changed.cache_hit, adapter.calls) == ("read", False, 1) and changed.key != first.key
+    kept, adapter = _read(db, MAPPING_TEXT, "column_mapping", replies=[ONE_MAPPING])
+    assert (kept.cache_hit, kept.key, adapter.calls) == (True, mapping.key, 0), "the column-mapping key stays"
+    old = schemas.structure_output_schema()
+    monkeypatch.setattr(schemas, "structure_output_schema", lambda: {**old, "required": ["items", "type"]})
+    moved, adapter = _read(db, MAPPING_TEXT, "column_mapping", replies=[ONE_MAPPING])
+    assert (moved.cache_hit, adapter.calls) == (False, 1) and moved.key != mapping.key
 
 
-def test_the_prompt_names_every_output_field_and_the_other_unit():
-    """The prompt lists exactly the schema's item fields: a unit is one of the 20 listed currency codes, or "other"
-    with the currency's ISO code in unit_other."""
+def test_the_prompt_is_v3_and_names_every_label_field_metric_category_and_tie_break():
+    """The prompt lists exactly the label fields, every metric (other and not_a_metric too), the roadmap categories
+    and the tie-breaks; a unit is one of the 20 listed currency codes, or "other" with its ISO code in unit_other.
+    The column-mapping section keeps its own item fields."""
     import re
     from app.llm import prompt_store, schemas
-    text = prompt_store.load(gateway.STRUCTURE_PROMPT).text
-    fields = text.split("Each item has exactly these fields:")[1].split("List the company")[0]
+    prompt = prompt_store.load(gateway.STRUCTURE_PROMPT)
+    assert prompt.version == "v3"
+    text = prompt.text
+    fields = text.split("Each label has exactly these fields:")[1].split("\n\n")[1]
     named = re.findall(r"^- `(\w+)`:", fields, re.M)
-    assert sorted(named) == sorted(schemas.structure_output_schema()["properties"]["items"]["items"]["properties"])
+    assert named == list(schemas.labelling_output_schema()["properties"]["labels"]["items"]["properties"])
     unit, unit_other = (re.search(rf"^- `{f}`:(.*?)(?=^- `)", fields, re.M | re.S).group(1)
                         for f in ("unit", "unit_other"))
     assert "20 currency codes" in unit and "`other`" in unit
     assert "`other`" in unit_other and "ISO code" in unit_other and "null" in unit_other
+    for word in [*schemas.LABEL_METRICS, *schemas.ROADMAP_CATEGORIES]:
+        assert f"`{word}`" in text, word
+    ties = text.split("Tie-breaks:")[1].split("\n\n")[0]
+    assert "time figures are `product`, unless a user count is named" in ties
+    assert '"% of marketplace" and market share are `market`' in ties
+    assert "commission and take rate are `sales`" in ties
+    mapping = text.split("# Column mapping")[1].split("Each item has exactly these fields:")[1]
+    heads = [line.split(":")[0] for line in mapping.splitlines() if line.startswith("- `")]
+    named = [name for head in heads for name in re.findall(r"`(\w+)`", head)]
+    assert sorted(named) == sorted(schemas.structure_output_schema()["properties"]["items"]["items"]["properties"])
 
 
-def test_the_output_schema_lists_20_currencies_and_other_with_the_code_in_unit_other():
+def test_the_labelling_schema_lists_20_currencies_and_other_with_the_code_in_unit_other():
     from app.llm import schemas
-    schema = schemas.structure_output_schema()
-    item = schema["properties"]["items"]["items"]
-    assert item["properties"]["unit"] == {"anyOf": [
+    schema = schemas.labelling_output_schema()
+    label = schema["properties"]["labels"]["items"]
+    assert label["properties"]["unit"] == {"anyOf": [
         {"type": "string", "enum": [*LISTED_CURRENCIES, "other", "%", "x", "count", "days", "months", "years"]},
         {"type": "null"}]}
-    assert item["properties"]["unit_other"] == {"anyOf": [{"type": "string"}, {"type": "null"}]}
-    assert item["required"] == list(item["properties"]) and item["additionalProperties"] is False
+    assert label["properties"]["unit_other"] == {"anyOf": [{"type": "string"}, {"type": "null"}]}
     assert set(LISTED_CURRENCIES) < set(schemas.ISO_CURRENCIES), "listed codes are ISO 4217 codes"
     assert not [code for code in schemas.ISO_CURRENCIES if code not in LISTED_CURRENCIES and code in json.dumps(schema)]
 
@@ -155,35 +410,105 @@ ABSENT = object()
     ("GBP", ABSENT, False),                 # exactly the schema's fields: unit_other is always written
 ])
 def test_unit_other_holds_an_unlisted_iso_code_and_stands_only_beside_other(unit, unit_other, valid):
-    item = {**REPLY["items"][0], "unit": unit, "unit_other": unit_other}
+    label = {**REPLY["labels"][0], "unit": unit, "unit_other": unit_other}
     if unit_other is ABSENT:
-        del item["unit_other"]
-    reply = json.dumps({"type": "table", "items": [item]})
+        del label["unit_other"]
+    reply = json.dumps({**REPLY, "labels": [label, REPLY["labels"][1]]})
     if valid:
         parsed = gateway.parse_structure_reply(reply, "table", TEXT)
-        assert (parsed.items[0].unit, parsed.items[0].unit_other) == (unit, unit_other)
+        assert (parsed.labels[0].unit, parsed.labels[0].unit_other) == (unit, unit_other)
     else:
         with pytest.raises(gateway.GatewayError, match="did not match the schema"):
             gateway.parse_structure_reply(reply, "table", TEXT)
 
 
-def test_a_currency_outside_the_list_is_read_as_other_and_reaches_the_approval_row_as_its_code():
-    item = {**REPLY["items"][0], "unit": "other", "unit_other": "ZAR"}
-    result, _ = _read(_db(), replies=[{"type": "table", "items": [item]}])
-    assert result.status == "read", result.reason
-    assert (result.items[0]["unit"], result.items[0]["unit_other"]) == ("other", "ZAR")
-    structure = {"type": "table", "header_rows": 1, "cells": redact.parse_structure_text(TEXT)}
-    checked, = verify.verify(structure, result.items)["items"]
-    assert checked["status"] == verify.VERIFIED
+def _rows(structure, labels, model_type=None, pairs=()):
+    """The approval rows process_deck would add for a structure read with these labels."""
+    listed = structure_items.list_items(structure)
+    checked = verify.verify(structure, listed, labels, pairs)
+    return [structures.candidate_from_item(item, structure, {"file": "plan.pdf"}, model_type, 12)
+            for item in structures.approval_items(checked["items"])]
 
-    def row(item):
-        found = structures.candidate_from_item(item, structure, {"file": "plan.pdf"}, None, 12)
-        return found["currency"], found["unit"]
-    assert row(checked) == ("ZAR", None)
-    assert row({**checked, "unit": "GBP", "unit_other": None}) == ("GBP", None)
-    assert row({**checked, "unit": "%", "unit_other": None}) == (None, "%")
-    stored_before = {k: v for k, v in checked.items() if k != "unit_other"}
-    assert row({**stored_before, "unit": "ZAR"}) == ("ZAR", None), "a reading stored under the old schema"
+
+def test_a_currency_outside_the_list_is_read_as_other_and_reaches_the_approval_row_as_its_code():
+    label = _label("i1", period="FY2025", unit="other", unit_other="ZAR")
+    result, _ = _read(_db(), replies=[{**REPLY, "labels": [label, REPLY["labels"][1]]}])
+    assert result.status == "read", result.reason
+    assert (result.labels[0]["unit"], result.labels[0]["unit_other"]) == ("other", "ZAR")
+
+    def row(**unit):
+        found, _ = _rows(PLAN, [{**label, **unit}, REPLY["labels"][1]])
+        return found["currency"], found["unit"], found["ai_label"]
+    assert row() == ("ZAR", None, "Verified")
+    assert row(unit="GBP", unit_other=None) == ("GBP", None, "Verified")
+    assert row(unit="%", unit_other=None) == (None, "%", "Verified")
+
+
+PLAN = v._struct([["", "FY2025", "FY2026"], ["Revenue", "£1,200,000", "£1,500,000"]])
+
+
+def test_an_ambiguous_figure_reaches_its_row_with_both_readings_and_the_default_first():
+    """Spec section 1: the approval row shows both readings; the default is the row's value, pre-selected."""
+    structure = v._struct([["", "Plan"], ["Hours", "Approx. 2.500 hours"], ["P&L", "Net loss (1,200)"], ["Users", "5K"]])
+    rows = _rows(structure, [_label("i1", "product"), _label("i2", "net_profit"), _label("i3", "users", unit="count")])
+    assert [(r["value"], r["readings"]) for r in rows] == [
+        (2500, [{"value": 2500, "dot_reading": "thousands", "bracket_reading": None},
+                {"value": 2.5, "dot_reading": "decimal", "bracket_reading": None}]),
+        (-1200, [{"value": -1200, "dot_reading": None, "bracket_reading": "negative"},
+                 {"value": 1200, "dot_reading": None, "bracket_reading": "positive"}]),
+        (5000, [])], "one reading: nothing to choose"
+    assert [r["ai_label"] for r in rows] == ["Verified"] * 3
+
+
+def test_a_ranges_two_items_make_one_approval_row_low_and_high():
+    """A range is one row, its value the low end and value_high the high end, from the low end's label. It is Verified
+    only when both ends are labelled with the same metric and Verified."""
+    structure = v._struct([["", "Plan"], ["Revenue", "$12 -$13 million"], ["Users", "5K"]])
+    rows = _rows(structure, [_label("i1", unit="USD"), _label("i2", unit="USD"), _label("i3", "users", unit="count")])
+    assert [(r["item"], r["value"], r["value_high"], r["ai_label"], r["readings"]) for r in rows] == [
+        ("i1", 12000000, 13000000, "Verified", []), ("i3", 5000, None, "Verified", [])]
+    for labels in ([_label("i1", unit="USD"), _label("i2", "not_a_metric"), _label("i3", "users")],
+                   [_label("i1", unit="USD"), _label("i2", "costs", unit="USD"), _label("i3", "users")],
+                   [_label("i1", unit="USD"), _label("i2", "other", unit="USD"), _label("i3", "users")]):
+        row = _rows(structure, labels)[0]
+        assert (row["value"], row["value_high"], row["ai_label"]) == (12000000, 13000000, "AI suggestion, not verified"), \
+            labels[1]["metric"]
+    assert [r["item"] for r in _rows(structure, [_label("i1", "not_a_metric"), _label("i2", unit="USD"),
+                                                 _label("i3", "users")])] == ["i2", "i3"], "from the end that is kept"
+
+
+def test_the_rows_cell_citation_is_unchanged_and_names_the_type_python_sent():
+    structure = v._struct([["", "Members"], ["Social", "Discord(150) Telegram(30K)"]])
+    rows = _rows(structure, [_label("i1", "users", unit="count"), _label("i2", "users", unit="count")], "kpi_panel")
+    assert [(r["sources"][0]["cell"], r["cell"], r["position"], r["item"]) for r in rows] == \
+        [("r2c2", "r2c2", 1, "i1"), ("r2c2", "r2c2", 2, "i2")], "the cell id as before; the position beside it"
+    assert {r["sources"][0]["structure"] for r in rows} == {"table"}, "a corrected type is only logged"
+    assert [r["snippet"] for r in rows] == ["Discord(150) Telegram(30K)"] * 2
+
+
+def test_an_other_item_is_listed_as_type_other_and_approved_only_once_its_type_is_edited(monkeypatch):
+    """Spec section 4: the server refuses to approve an "other" item until its type is edited to a claim type."""
+    client, db, adapter = _deck_api(monkeypatch)
+    _map_revenue(client)
+    _upload_deck(client, "02-moz.pdf")
+    ranged, = [c for c in _deck(client)["candidates"] if c.get("origin") == "ai" and c["sources"][0]["cell"] == "r1c1"]
+    assert (ranged["value"], ranged["value_high"], ranged["ai_label"]) == (12000000, 13000000, "Verified"), \
+        "moz p20 \"$12 -$13 million\": one row, twelve to thirteen million"
+    other, = [c for c in _deck(client)["candidates"] if c.get("claim_type") == "other"]
+    assert (other["value"], other["ai_label"], other["unit"]) == (9, "AI suggestion, not verified", "months")
+    url = f"/api/audits/{AUDIT}/decks/candidates/{other['id']}"
+    refused = client.put(url, json={"status": "approved"})
+    assert refused.status_code == 400 and "type" in refused.json()["detail"]
+    assert client.put(url, json={"value": 10}).status_code == 400, "an edit approves, so it needs a type too"
+    assert client.put(url, json={"claim_type": "other"}).status_code == 422, "other is no claim type to choose"
+    assert next(c for c in db["deck_candidates"].docs if c["id"] == other["id"])["status"] == "pending"
+    edited = client.put(url, json={"claim_type": "product"})
+    assert edited.status_code == 200 and edited.json()["status"] == "edited"
+    assert edited.json()["parsed"]["claim_type"] == "other", "what the model read stays next to the edit"
+    assert client.put(url, json={"status": "approved"}).json()["status"] == "edited"
+    rejected = next(c for c in _deck(client)["candidates"] if c.get("ai_label") == "Verified")
+    assert client.put(f"/api/audits/{AUDIT}/decks/candidates/{rejected['id']}",
+                      json={"status": "rejected"}).status_code == 200
 
 
 def test_the_adapter_sends_no_tools_and_no_temperature_to_the_provider(monkeypatch):
@@ -247,15 +572,24 @@ def test_a_refusal_is_not_retried_and_the_structure_is_not_read():
 
 
 # ---------------------------------------------------------------------------
-# Schema validation, cited cells, the type
+# Schema violations (spec section 3): one reask, then "Not read by AI"; the type
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("bad", [
     {**REPLY, "comment": "extra field"},
-    {"type": "table", "items": [{**REPLY["items"][0], "note": "Revenue grew strongly"}]},
-    {"type": "table", "items": [{**REPLY["items"][0], "value_cell": "r9c9"}]},          # no such cell
-    {"type": "table", "items": [{**REPLY["items"][0], "period_cells": ["r1c2", "r1c3", "r2c1"]}]},
-    {"type": "table", "items": [{**REPLY["items"][0], "period": "next year"}]},
-    {"type": "column_mapping", "items": []},                                             # a deck structure is never one
+    {**REPLY, "labels": [{**REPLY["labels"][0], "value": 1200000}, REPLY["labels"][1]]},          # no value
+    {**REPLY, "labels": [{**REPLY["labels"][0], "value_cell": "r2c2"}, REPLY["labels"][1]]},      # no cell id
+    {**REPLY, "labels": [{**REPLY["labels"][0], "proposed_flags": []}, REPLY["labels"][1]]},      # no flag
+    {**REPLY, "labels": [{**REPLY["labels"][0], "note": "Revenue grew strongly"}, REPLY["labels"][1]]},
+    {**REPLY, "labels": [{**REPLY["labels"][0], "period": "next year"}, REPLY["labels"][1]]},
+    {**REPLY, "labels": REPLY["labels"] + [{**REPLY["labels"][1], "item": "i9"}]},                # an unknown id
+    {**REPLY, "labels": REPLY["labels"] + [REPLY["labels"][0]]},                                   # a duplicate id
+    {**REPLY, "labels": [REPLY["labels"][0]]},                                                     # a missing id
+    {**REPLY, "labels": REPLY["labels"] + [{**REPLY["labels"][1], "item": "r2c3"}]},              # a cell, not an id
+    {**REPLY, "labels": [REPLY["labels"][0], {**REPLY["labels"][1], "metric": "invoice_date"}]},  # a sheet field
+    {**REPLY, "pairs": [{"line": "t1", "date": "d1", "category": "launch"}]},     # pairs, not sent as a roadmap
+    {**REPLY, "type": "roadmap", "pairs": [{"line": "t1", "date": "d1", "category": "launch"}]},
+    {"type": "column_mapping", "items": []},                                       # a deck structure is never one
+    {"type": "table", "items": []},                                                # the old reply
     "not json",
 ])
 def test_a_reply_that_fails_validation_is_asked_again_once_then_not_read(bad):
@@ -268,17 +602,67 @@ def test_a_reply_that_fails_validation_is_asked_again_once_then_not_read(bad):
     assert (result.status, adapter.calls) == ("read", 2), "the one reask recovers"
 
 
-def test_the_type_may_be_corrected_within_the_deck_types_and_the_change_is_logged(caplog):
+def _pair(line, date, category="launch"):
+    return {"line": line, "date": date, "category": category}
+
+
+@pytest.mark.parametrize("pairs", [
+    [_pair("t9", "d1")],                                  # a line that was not listed
+    [_pair("t1", "d9")],                                  # a date that was not listed
+    [_pair("d1", "d2")],                                  # a date is not a line
+    [_pair("t1", "t2")],                                  # a line is not a date
+    [_pair("i1", "d1")],                                  # an item is not a line
+    [_pair("t1", "d1"), _pair("t1", "d2", "hiring")],     # a line has at most one pair
+    [_pair("t1", "d1", "ipo")],                           # not a category
+    [{**_pair("t1", "d1"), "period": "2025-Q3"}],         # exactly line, date and category
+])
+def test_a_roadmap_pair_must_be_one_listed_line_and_one_listed_date_with_a_category(pairs):
+    bad = json.dumps({**ROADMAP_REPLY, "pairs": pairs})
+    result, adapter = _read(_db(), ROADMAP_TEXT, "roadmap", adapter=t.FakeAdapter(replies=[bad, bad]))
+    assert (result.status, result.reason, adapter.calls) == ("not_read", "Not read by AI", 2)
+
+
+def test_pairs_stand_only_on_a_structure_python_sent_as_a_roadmap_whatever_type_the_reply_gives():
+    """The reply follows the type Python sent: pairs of listed lines and dates are a violation on any other type,
+    even when the reply corrects the type to roadmap."""
+    for reply_type in ("table", "roadmap"):
+        reply = json.dumps({**ROADMAP_REPLY, "type": reply_type})
+        with pytest.raises(gateway.GatewayError, match="pairs on a structure not sent as a roadmap"):
+            gateway.parse_labelling_reply(reply, "table", ROADMAP_TEXT)
+    assert gateway.parse_labelling_reply(json.dumps({**ROADMAP_REPLY, "type": "table"}), "roadmap", ROADMAP_TEXT).pairs
+
+
+def test_a_roadmap_reply_pairs_lines_with_dates_and_a_date_may_serve_several_lines():
+    result, _ = _read(_db(), ROADMAP_TEXT, "roadmap", replies=[ROADMAP_REPLY])
+    assert result.status == "read", result.reason
+    assert (result.labels, result.pairs) == (ROADMAP_REPLY["labels"], ROADMAP_REPLY["pairs"])
+    shared = {**ROADMAP_REPLY, "pairs": [_pair("t1", "d1"), _pair("t2", "d1", "hiring")]}
+    result, _ = _read(_db(), ROADMAP_TEXT, "roadmap", replies=[shared])
+    assert result.status == "read" and len(result.pairs) == 2
+    result, _ = _read(_db(), ROADMAP_TEXT, "roadmap", replies=[{**ROADMAP_REPLY, "pairs": []}])
+    assert result.status == "read", "a line may stay unpaired"
+
+
+def test_each_roadmap_category_maps_to_a_claim_type():
+    """Spec section 2: hiring -> people, break_even -> ebitda, funding -> other (type Other), the rest -> product."""
+    from app.llm import schemas
+    assert verify.MILESTONE_TYPES == {"launch": "product", "feature": "product", "expansion": "product",
+                                      "partnership": "product", "hiring": "people", "break_even": "ebitda",
+                                      "funding": "other", "certification": "product", "other": "product"}
+    assert tuple(verify.MILESTONE_TYPES) == schemas.ROADMAP_CATEGORIES
+
+
+def test_the_reply_follows_the_type_python_sent_and_a_corrected_type_is_only_logged(caplog):
     import logging
     db = _db()
     with caplog.at_level(logging.INFO):
         result, _ = _read(db, replies=[{**REPLY, "type": "unit_economics"}])
     assert (result.status, result.type, result.model_type) == ("read", "table", "unit_economics")
+    assert result.labels == REPLY["labels"]
     stored, = db[gateway.STRUCTURES_COLLECTION].docs
     assert (stored["type"], stored["model_type"]) == ("table", "unit_economics")
     assert "type_change=table->unit_economics" in caplog.text
-    mapping_text = "r1c1: Customer\nr1c2: Amount\nc2 sample: 1200"
-    result, adapter = _read(_db(), mapping_text, "column_mapping", replies=[REPLY, REPLY])
+    result, adapter = _read(_db(), MAPPING_TEXT, "column_mapping", replies=[REPLY, REPLY])
     assert result.status == "not_read" and adapter.calls == 2, "a column mapping stays a column mapping"
 
 
@@ -292,6 +676,7 @@ def test_the_schema_lists_match_the_claim_types_and_the_mapping_fields():
     assert schemas.CLAIM_METRICS == claims.CLAIM_TYPES
     assert set(schemas.MAPPING_FIELDS) == fields
     assert set(schemas.STRUCTURE_METRICS) == set(claims.CLAIM_TYPES) | {"use_of_funds"} | fields
+    assert schemas.LABEL_METRICS == claims.CLAIM_TYPES + ("use_of_funds", "other", "not_a_metric")
     assert StructureReply.model_json_schema()["additionalProperties"] is False
 
 
@@ -313,7 +698,7 @@ def test_a_cache_hit_makes_no_call_and_no_audit_is_served_another_audits_result(
     first, adapter = _read(db)
     again, cached = _read(db)
     assert first.status == again.status == "read" and again.cache_hit and cached.calls == 0
-    assert again.items == first.items and again.key == first.key
+    assert (again.labels, again.pairs) == (first.labels, first.pairs) and again.key == first.key
     db["audits"].docs.append({**AUDIT_DOC, "id": "audit-other"})
     other = t.FakeAdapter(replies=[json.dumps(REPLY)])
     asyncio.run(gateway.read_structure(db, "audit-other", TEXT, "table", adapter=other, sleep=t._noop_sleep))
@@ -330,29 +715,40 @@ def test_the_cache_key_covers_text_type_prompt_and_model():
     assert key != gateway.structure_key(TEXT, "table", "r4:v1", "claude-opus-5-5")
 
 
-def test_a_structure_over_3000_tokens_of_text_is_not_sent():
+LISTED = structure_items.text(v._struct([["", "FY2025", "FY2026"], ["Revenue", "£1,200,000", "£1,500,000"]]),
+                              structure_items.list_items(v._struct([["", "FY2025", "FY2026"],
+                                                                    ["Revenue", "£1,200,000", "£1,500,000"]])))
+
+
+def test_a_structure_over_4000_tokens_of_text_and_item_list_is_not_sent():
+    """Spec section 5: the cap is 4,000 tokens per structure, counted on the structure text plus the item list."""
+    assert gateway.STRUCTURE_INPUT_CAP == 4000 and "\nitems:\ni1 r2c2 " in LISTED
     adapter = t.FakeAdapter(replies=[json.dumps(REPLY)])
-    adapter.text_tokens, adapter.input_tokens = 3001, 3500
-    result, _ = _read(_db(), adapter=adapter)
+    adapter.text_tokens, adapter.input_tokens = 4001, 4500
+    result, _ = _read(_db(), LISTED, adapter=adapter)
     assert (result.status, result.reason, adapter.calls) == ("too_large", "Too large for AI reading", 0)
-    assert adapter.count_requests == [{"system": None, "user_payload": TEXT, "json_schema": None}], \
-        "the structure text alone is counted, and nothing more once it is over"
+    assert adapter.count_requests == [{"system": None, "user_payload": LISTED, "json_schema": None}], \
+        "the structure text with its item list is counted, and nothing more once it is over"
+    adapter = t.FakeAdapter(replies=[json.dumps(REPLY)])
+    adapter.text_tokens, adapter.input_tokens = 4000, 4500
+    result, _ = _read(_db(), LISTED, adapter=adapter)
+    assert result.status != "too_large" and adapter.calls == 1, "exactly at the cap: sent"
 
 
-def test_the_3000_cap_is_on_the_structure_text_alone_not_the_prompt_and_schema():
+def test_the_4000_cap_is_on_the_text_and_item_list_not_the_prompt_and_schema():
     db = _db()
     adapter = t.FakeAdapter(replies=[json.dumps(REPLY)])
-    adapter.text_tokens, adapter.input_tokens = 2900, 4000
+    adapter.text_tokens, adapter.input_tokens = 3900, 5000
     result, _ = _read(db, adapter=adapter)
     assert (result.status, adapter.calls) == ("read", 1)
     whole = adapter.count_requests[1]
     assert whole["system"] and whole["json_schema"] and json.loads(whole["user_payload"])["text"] == TEXT
-    # The 400,000 cap counts the whole call: 392,300 used + 4,000 input + 4,000 max_tokens is over
-    # (with the text's 2,900 it would fit).
-    db["llm_calls"].docs.append({"run_id": AUDIT, "step": "structures", "cache_hit": False, "input_tokens": 387000,
+    # The 400,000 cap counts the whole call: 391,300 used + 5,000 input + 4,000 max_tokens is over
+    # (with the text's 3,900 it would fit).
+    db["llm_calls"].docs.append({"run_id": AUDIT, "step": "structures", "cache_hit": False, "input_tokens": 385000,
                                  "output_tokens": 1000, "estimated_cost_usd": 0.0, "timestamp": "2026-10-05T00:00:00"})
     adapter = t.FakeAdapter(replies=[json.dumps(REPLY)])
-    adapter.text_tokens, adapter.input_tokens = 2900, 4000
+    adapter.text_tokens, adapter.input_tokens = 3900, 5000
     result, _ = _read(db, adapter=adapter, use_cache=False)
     assert result.status == "stopped" and adapter.calls == 0
 
@@ -382,7 +778,7 @@ def test_an_audit_of_8_decks_of_5_structures_fits_the_token_cap():
         def complete(self, **kwargs):
             reply, tokens_in, _ = super().complete(**kwargs)
             return reply, tokens_in, 300
-    db, adapter = _db(), Read(replies=[json.dumps({"type": "table", "items": []})])
+    db, adapter = _db(), Read(replies=[json.dumps({"type": "table", "labels": [], "pairs": []})])
     statuses = [_read(db, f"r1c1: Revenue\nr1c2: {n}", adapter=adapter)[0].status for n in range(89)]
     assert statuses == ["read"] * 88 + ["stopped"]
     assert asyncio.run(guards.structure_tokens_used(db, AUDIT)) == 88 * 4456
@@ -481,6 +877,7 @@ def test_purge_run_removes_the_stored_structure_readings():
 import app.structures as structures  # noqa: E402
 
 SECRET = "Jane Doe Holdings"           # a text cell value: never on the column-mapping path
+MAPPING_TEXT = "r1c1: Customer\nr1c2: Amount\nc2 sample: 1200"
 
 
 def _sheet():
@@ -534,6 +931,9 @@ MAPPING_REPLY = {"type": "column_mapping", "items": [
      "unit_other": None, "period_cells": [], "proposed_flags": []}
     for f, cell in (("customer_id", "r1c1"), ("invoice_date", "r1c2"), ("amount", "r1c3"), ("currency", "r1c4"),
                     ("deal_id", "r1c1"))]}
+
+
+ONE_MAPPING = {"type": "column_mapping", "items": [MAPPING_REPLY["items"][0]]}     # fits MAPPING_TEXT
 
 
 def test_the_model_proposes_what_the_aliases_miss_and_the_screen_marks_it_as_a_suggestion(monkeypatch):
@@ -631,8 +1031,16 @@ def test_an_audit_created_before_consent_stays_unticked_until_it_has_an_engageme
 # ---------------------------------------------------------------------------
 # Orchestration: decks wait for the mapped revenue file, then are read, verified and listed
 # ---------------------------------------------------------------------------
+def unlabelled(sent):
+    """The reply to a structure with no recorded reply: every listed item labelled not_a_metric, no pair."""
+    listed = redact.parse_item_lines(redact.split_items(sent["text"])[1] or []) or {"items": []}
+    return {"type": sent["type"], "pairs": [], "labels": [
+        {"item": i["id"], "metric": "not_a_metric", "period": None, "unit": None, "unit_other": None,
+         "actual_or_forecast": "unknown"} for i in listed["items"]]}
+
+
 class RecordedAdapter(t.FakeAdapter):
-    """Replays the recorded reply whose structure the request carries; an empty reading otherwise."""
+    """Replays the recorded reply whose structure the request carries; every item not_a_metric otherwise."""
 
     def __init__(self):
         super().__init__()
@@ -641,7 +1049,7 @@ class RecordedAdapter(t.FakeAdapter):
     def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema):
         sent = json.loads(user_payload)
         reply = next((f["reply"] for f in self.fixtures if f["type"] == sent["type"] and f["match"] in sent["text"]),
-                     {"type": sent["type"], "items": []})
+                     None) or (unlabelled(sent) if sent["type"] != "column_mapping" else {"type": sent["type"], "items": []})
         self._replies = [json.dumps(reply)]
         self.calls_before = self.calls
         return super().complete(model=model, system=system, user_payload=user_payload, max_tokens=max_tokens,
@@ -685,11 +1093,12 @@ def test_a_client_name_or_engagement_reference_in_a_deck_cell_goes_out_as_redact
              {"row": 2, "col": 1, "text": "Revenue (eng-2026-041)"}, {"row": 2, "col": 2, "text": "£1,200,000"}]
     db[TEXT_COLLECTION].docs.append({"audit_id": AUDIT, "deck_id": "d1", "file": "plan.pptx", "page_unit": "slide",
                                      "structures": [{"type": "table", "slide": 1, "header_rows": 1, "cells": cells}]})
-    adapter = t.FakeAdapter(replies=[json.dumps({"type": "table", "items": []})])
+    adapter = RecordedAdapter()
     status = asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
     assert (status, adapter.calls) == (structures.READ, 1)
     assert json.loads(adapter.payloads[0])["text"] == \
-        "r1c1: Prepared for [redacted]\nr1c2: FY2025\nr2c1: Revenue ([redacted])\nr2c2: £1,200,000"
+        "r1c1: Prepared for [redacted]\nr1c2: FY2025\nr2c1: Revenue ([redacted])\nr2c2: £1,200,000\nitems:\n" \
+        'i1 r2c2 "1,200,000" 1200000 h r2c1 r1c2', "the item list is built from the redacted cells"
 
 
 def test_a_client_name_in_a_spreadsheet_header_goes_out_as_redacted(monkeypatch):
@@ -703,9 +1112,7 @@ def test_a_client_name_in_a_spreadsheet_header_goes_out_as_redacted(monkeypatch)
 def test_a_corrected_period_is_verified_counted_on_the_deck_and_the_models_period_stays_stored(monkeypatch):
     from app import structures
     from app.decks import TEXT_COLLECTION, CANDIDATES_COLLECTION
-    literal = {"type": "table", "items": [
-        {"metric": "revenue", "period": "2025-04", "value": 5000000, "unit": "USD", "actual_or_forecast": "forecast",
-         "unit_other": None, "value_cell": "r3c2", "period_cells": ["r2c2", "r1c2"], "proposed_flags": []}]}
+    literal = {"type": "table", "pairs": [], "labels": [_label("i1", period="2025-04", unit="USD")]}
     client, db, adapter = _api(monkeypatch, [literal])
     db["audits"].docs[0]["fiscal_year_end"] = 3
     db["datasets"].docs.append({"audit_id": AUDIT, "dtype": "revenue", "mapping": REVENUE_MAPPING,
@@ -720,7 +1127,7 @@ def test_a_corrected_period_is_verified_counted_on_the_deck_and_the_models_perio
     assert (row["ai_label"], row["target_date"], row["period_start"], row["period_end"]) == \
         ("Verified", "FY2025-04", "2024-04-01", "2024-04-30")
     stored, = db[gateway.STRUCTURES_COLLECTION].docs
-    assert stored["output"]["items"][0]["period"] == "2025-04", "the stored reading keeps the model's period"
+    assert stored["output"]["labels"][0]["period"] == "2025-04", "the stored reading keeps the model's period"
     assert stored["periods_corrected"] == 1
     deck, = client.get(f"/api/audits/{AUDIT}/decks").json()["decks"]
     assert deck["periods_corrected"] == 1
@@ -777,9 +1184,77 @@ def test_results_show_in_the_approval_list_labelled_and_citing_their_cell(monkey
         ("gross_profit", 150000, "Verified", "r2c1"), ("users", 5000, "Verified", "r3c1")]
     assert panel[0]["period_text"] == "23 Y/E" and panel[0]["target_date"] == "2023"
     table = [c for c in ai if c["sources"][0]["structure"] == "table"]
-    assert [(c["value"], c["ai_label"], c["sources"][0]["cell"]) for c in table] == [(20000, "AI suggestion, not verified", "r4c4")], \
-        "the 14 table values Python already lists in the same cells are not listed twice; the slip stays, unverified"
+    assert table == [], "the 24 table values Python already lists in the same cells are not listed twice"
+    stored = next(s["ai"] for s in db["deck_text"].docs[0]["structures"] if s["type"] == "table")
+    assert (stored["status"], stored["not_a_metric"]) == ("read", 0)
     assert all(c["status"] == "pending" for c in ai)
+
+
+def test_a_roadmaps_pairs_become_milestone_rows_dated_by_their_date_cells(monkeypatch):
+    """Buffer p6, recorded: each line paired with the date below it. A milestone row cites its line's cell, takes
+    its category's claim type and its date cell's period, has no value and is never Verified."""
+    pytest.importorskip("pptx")
+    client, db, adapter = _deck_api(monkeypatch)
+    _map_revenue(client)
+    _upload_deck(client, "03-buffer.pptx")
+    rows = [c for c in _deck(client)["candidates"] if c.get("origin") == "ai" and c["value"] is None
+            and c["sources"][0]["structure"] == "roadmap"]
+    assert sorted((c["sources"][0]["cell"], c["claim_type"], c["target_date"], c["period_text"], c["ai_label"])
+                  for c in rows) == [
+        ("r11c1", "product", "2013-01", "January 2013", "AI suggestion, not verified"),
+        ("r1c1", "product", "2011-01", "January 2011", "AI suggestion, not verified"),
+        ("r3c1", "product", "2011-10", "October 2011", "AI suggestion, not verified"),
+        ("r5c1", "product", "2011-10", "October 2011", "AI suggestion, not verified"),
+        ("r7c1", "product", "2011-12", "December 2011", "AI suggestion, not verified"),
+        ("r9c1", "product", "2012-01", "January 2012", "AI suggestion, not verified")]
+
+
+@pytest.mark.parametrize("value, high, known, found", [
+    (12000000, None, [(12000000, None)], "exact"),
+    (12000000, 13000000, [(12000000, 13000000)], "exact"),            # the same range
+    (12500000, None, [(12000000, 13000000)], "in range"),             # a value inside a range the cell lists
+    (12000000, None, [(12000000, 13000000)], "in range"),             # an end is inside its range
+    (12000000, 13000000, [(12500000, None)], "in range"),             # a range holding a value the cell lists
+    (12000000, 13000000, [(12000000, 14000000)], "in range"),         # a range inside the range the cell lists
+    (12000000, 15000000, [(12000000, 14000000)], None),               # a range reaching past it
+    (14000000, None, [(12000000, 13000000)], None),
+    (12000000, None, [(13000000, None)], None),
+    (None, None, [(None, None)], "exact"),                            # a milestone kept from an earlier upload
+    (None, None, [(12000000, 13000000)], None),
+])
+def test_the_dedupe_matcher_returns_exact_in_range_or_no_match(value, high, known, found):
+    """Decision of 2026-10-06: an AI row is not added when its cell already lists the same value ("exact"), or when one
+    falls inside the other's range ("in range")."""
+    assert structures.value_match(value, high, known) == found
+
+
+def test_an_ai_row_inside_a_range_python_lists_in_the_same_cell_is_not_added_twice():
+    from app import structures
+    from app.decks import CANDIDATES_COLLECTION, TEXT_COLLECTION
+    cells = [{"row": 1, "col": 2, "text": "Plan"}, {"row": 2, "col": 1, "text": "Revenue"},
+             {"row": 2, "col": 2, "text": "$12 -$13 million"}, {"row": 3, "col": 1, "text": "Costs"},
+             {"row": 3, "col": 2, "text": "$12.5 million"}, {"row": 4, "col": 1, "text": "EBITDA"},
+             {"row": 4, "col": 2, "text": "$20 million"}]
+
+    def python_row(row, value, high):
+        return {"id": f"p{row}", "audit_id": AUDIT, "deck_id": "d1", "file": "plan.pdf", "status": "pending",
+                "claim_type": "revenue", "value": value, "value_high": high, "target_date": None,
+                "sources": [{"file": "plan.pdf", "page": 3, "kind": "table", "table": 1, "row": row, "col": 2}]}
+    db = _db()
+    db["datasets"].docs.append({"audit_id": AUDIT, "dtype": "revenue", "mapping": REVENUE_MAPPING,
+                                "mapped_at": "2026-10-05T00:00:00"})
+    db[TEXT_COLLECTION].docs.append({"audit_id": AUDIT, "deck_id": "d1", "file": "plan.pdf", "page_unit": "page",
+                                     "structures": [{"type": "table", "page": 3, "table": 1, "header_rows": 1,
+                                                     "cells": cells}]})
+    db[CANDIDATES_COLLECTION].docs += [python_row(2, 12000000, 13000000), python_row(3, 12000000, 13000000),
+                                       python_row(4, 19000000, None)]
+    labels = [_label("i1", unit="USD"), _label("i2", unit="USD"), _label("i3", "costs", unit="USD"),
+              _label("i4", "ebitda", unit="USD")]
+    adapter = t.FakeAdapter(replies=[json.dumps({"type": "table", "labels": labels, "pairs": []})])
+    asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
+    ai = [(c["sources"][0]["row"], c["value"], c["value_high"]) for c in db[CANDIDATES_COLLECTION].docs
+          if c.get("origin") == "ai"]
+    assert ai == [(4, 20000000, None)], "row 2: the same range (exact); row 3: inside Python's range; row 4: added"
 
 
 def test_unticked_consent_is_the_python_only_path(monkeypatch):
@@ -846,23 +1321,61 @@ def test_a_new_fiscal_year_end_re_verifies_the_model_readings(monkeypatch):
     assert after["ai_label"] == "Verified" and (after["period_start"], after["period_end"]) == ("2022-04-01", "2023-03-31")
 
 
-def test_a_reading_whose_match_depends_on_the_year_end_is_re_verified_under_the_new_one():
-    """"Year 1" counted from "Start: Jan 2025" is January to December 2025: a reading of it as the year
-    2025 holds with a December year-end only."""
-    from app.decks import CANDIDATES_COLLECTION, TEXT_COLLECTION
+def _processed(cells, labels, kind="table", header_rows=1, year_end=12):
+    """A deck holding one structure, read through process_deck with these labels (the revenue file mapped)."""
     from app import structures
-    structure = {"type": "table", "header_rows": 1, "ai": {"key": "k1"}, "cells": [
-        {"row": 1, "col": 1, "text": "Start: Jan 2025"}, {"row": 1, "col": 2, "text": "Year 1"},
-        {"row": 2, "col": 1, "text": "Revenue"}, {"row": 2, "col": 2, "text": "£2M"}]}
-    item = {"metric": "revenue", "period": "2025", "value": 2000000, "unit": "GBP", "actual_or_forecast": "forecast",
-            "unit_other": None, "value_cell": "r2c2", "period_cells": ["r1c2", "r1c1"], "proposed_flags": []}
-    db = _db()
-    db[TEXT_COLLECTION].docs.append({"audit_id": AUDIT, "deck_id": "d1", "structures": [structure]})
-    db[gateway.STRUCTURES_COLLECTION].docs.append({"audit_id": AUDIT, "key": "k1", "type": "table",
-                                                   "output": {"type": "table", "items": [item]}})
-    db[CANDIDATES_COLLECTION].docs.append({"id": "c1", "audit_id": AUDIT, "deck_id": "d1", "structure_key": "k1",
-                                           "status": "pending", "cell": "r2c2", "claim_type": "revenue",
-                                           "value": 2000000, "ai_status": "verified", "ai_label": "Verified"})
+    from app.decks import TEXT_COLLECTION
+    db = _db(fiscal_year_end=year_end)
+    db["datasets"].docs.append({"audit_id": AUDIT, "dtype": "revenue", "mapping": REVENUE_MAPPING,
+                                "mapped_at": "2026-10-05T00:00:00"})
+    db[TEXT_COLLECTION].docs.append({"audit_id": AUDIT, "deck_id": "d1", "file": "plan.pptx", "page_unit": "slide",
+                                     "structures": [{"type": kind, "slide": 3, "header_rows": header_rows,
+                                                     "cells": cells}]})
+    adapter = t.FakeAdapter(replies=[json.dumps({"type": kind, "labels": labels, "pairs": []})])
+    status = asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
+    assert status == structures.READ
+    return db
+
+
+def test_llm_structures_stores_the_reply_and_the_item_list_without_raw_text():
+    """Spec section 5, CLAUDE.md rule 17: the reply and the item list (id, cell, position, values, header ids), so every
+    label resolves to a value with its cell reference; no deck text, the raw text of an item included."""
+    cells = [{"row": 1, "col": 1, "text": "Channel"}, {"row": 1, "col": 2, "text": "Members"},
+             {"row": 2, "col": 1, "text": "Social"}, {"row": 2, "col": 2, "text": "Telegram(30K) Discord(150)"},
+             {"row": 3, "col": 1, "text": "Hours"}, {"row": 3, "col": 2, "text": "Approx. 2.500 hours"}]
+    db = _processed(cells, [_label("i1", "users", unit="count"), _label("i2", "users", unit="count"),
+                            _label("i3", "product")])
+    stored, = db[gateway.STRUCTURES_COLLECTION].docs
+    assert stored["output"] == {"type": "table", "labels": [_label("i1", "users", unit="count"),
+                                                            _label("i2", "users", unit="count"), _label("i3", "product")],
+                                "pairs": []}, "the reply as it came"
+    assert stored["items"] == {"dates": [], "lines": [], "items": [
+        {"id": "i1", "cell": "r2c2", "position": 1, "headers": ["r2c1", "r1c2"],
+         "values": [{"value": 30000, "dot_reading": None, "bracket_reading": "positive"},
+                    {"value": -30000, "dot_reading": None, "bracket_reading": "negative"}]},
+        {"id": "i2", "cell": "r2c2", "position": 2, "headers": ["r2c1", "r1c2"],
+         "values": [{"value": 150, "dot_reading": None, "bracket_reading": "positive"},
+                    {"value": -150, "dot_reading": None, "bracket_reading": "negative"}]},
+        {"id": "i3", "cell": "r3c2", "position": 1, "headers": ["r3c1", "r1c2"],
+         "values": [{"value": 2500, "dot_reading": "thousands", "bracket_reading": None},
+                    {"value": 2.5, "dot_reading": "decimal", "bracket_reading": None}]}]}
+    items = {i["id"]: i for i in stored["items"]["items"]}
+    assert all(items[label["item"]]["cell"] for label in stored["output"]["labels"]), "every label resolves to a cell"
+    flat = json.dumps(db[gateway.STRUCTURES_COLLECTION].docs + db["llm_calls"].docs, ensure_ascii=False, default=str)
+    for needle in ("Telegram", "(30K)", "30K", "Discord", "(150)", "Approx", "2.500", "Members", "Social", "raw"):
+        assert needle not in flat, f"{needle!r} was stored"
+
+
+def test_a_new_fiscal_year_end_re_verifies_a_reading_from_its_stored_labels_and_item_list():
+    """"Year 1" counted from "Start: Jan 2025" is January to December 2025: a reading of it as the year 2025 holds
+    with a December year-end only. Re-verification reads the stored reply and item list, never the deck text."""
+    from app import structures
+    from app.decks import CANDIDATES_COLLECTION
+    cells = [{"row": 1, "col": 1, "text": "Start: Jan 2025"}, {"row": 1, "col": 2, "text": "Year 1"},
+             {"row": 2, "col": 1, "text": "Revenue"}, {"row": 2, "col": 2, "text": "£2M"}]
+    db = _processed(cells, [_label("i1", period="2025", unit="GBP")])
+    row, = db[CANDIDATES_COLLECTION].docs
+    assert (row["ai_label"], row["item"]) == ("Verified", "i1")
     labels = []
     for year_end in (3, 12):
         asyncio.run(structures.reverify_audit(db, AUDIT, year_end))
@@ -870,13 +1383,47 @@ def test_a_reading_whose_match_depends_on_the_year_end_is_re_verified_under_the_
     assert labels == ["AI suggestion, not verified", "Verified"]
 
 
+def test_re_verification_labels_a_range_row_from_both_its_ends():
+    from app import structures
+    from app.decks import CANDIDATES_COLLECTION
+    cells = [{"row": 1, "col": 2, "text": "Plan"}, {"row": 2, "col": 1, "text": "Revenue"},
+             {"row": 2, "col": 2, "text": "$12 -$13 million"}]
+    db = _processed(cells, [_label("i1", unit="USD"), _label("i2", "other", unit="USD")])
+    row, = db[CANDIDATES_COLLECTION].docs
+    assert (row["value"], row["value_high"], row["ai_label"]) == (12000000, 13000000, "AI suggestion, not verified")
+    asyncio.run(structures.reverify_audit(db, AUDIT, 12))
+    assert db[CANDIDATES_COLLECTION].docs[0]["ai_label"] == "AI suggestion, not verified", "the high end is other"
+
+
+def test_re_verification_skips_a_reading_stored_under_v2_and_its_row_keeps_its_label():
+    """Spec section 5: reverify_audit skips readings stored under v2 (they hold no labels or item list)."""
+    from app import structures
+    from app.decks import CANDIDATES_COLLECTION, TEXT_COLLECTION
+    structure = {"type": "table", "header_rows": 1, "ai": {"key": "k1", "periods_corrected": 1}, "cells": [
+        {"row": 1, "col": 2, "text": "FY2025"}, {"row": 2, "col": 1, "text": "Revenue"}, {"row": 2, "col": 2, "text": "£2M"}]}
+    v2 = {"metric": "revenue", "period": "2024", "value": 2000000, "unit": "GBP", "actual_or_forecast": "forecast",
+          "unit_other": None, "value_cell": "r2c2", "period_cells": ["r1c2"], "proposed_flags": []}
+    db = _db()
+    db[TEXT_COLLECTION].docs.append({"audit_id": AUDIT, "deck_id": "d1", "structures": [structure],
+                                     "periods_corrected": 1})
+    db[gateway.STRUCTURES_COLLECTION].docs.append({"audit_id": AUDIT, "key": "k1", "type": "table", "prompt_version": "v2",
+                                                   "output": {"type": "table", "items": [v2]}})
+    db[CANDIDATES_COLLECTION].docs.append({"id": "c1", "audit_id": AUDIT, "deck_id": "d1", "structure_key": "k1",
+                                           "status": "pending", "cell": "r2c2", "claim_type": "revenue",
+                                           "value": 2000000, "ai_status": "verified", "ai_label": "Verified"})
+    assert asyncio.run(structures.reverify_audit(db, AUDIT, 3)) == 0
+    assert db[CANDIDATES_COLLECTION].docs[0]["ai_label"] == "Verified"
+    assert db[TEXT_COLLECTION].docs[0]["periods_corrected"] == 1
+
+
 def test_delete_audit_removes_model_outputs_cache_and_mapping(monkeypatch):
     client, db, adapter = _deck_api(monkeypatch)
     _map_revenue(client)
     _upload_deck(client)
     assert db[gateway.STRUCTURES_COLLECTION].docs and db["pseudonym_map"].docs and db["column_mappings"].docs
+    assert all(doc.get("items") for doc in db[gateway.STRUCTURES_COLLECTION].docs if "labels" in doc["output"])
     purged = client.delete(f"/api/audits/{AUDIT}").json()
-    assert purged["llm_purged"]["llm_structures"] > 0
+    assert purged["llm_purged"]["llm_structures"] > 0, "the replies and their item lists go with the audit"
     for name in (gateway.STRUCTURES_COLLECTION, "pseudonym_map", "column_mappings", "llm_calls", "deck_candidates",
                  "deck_text"):
         assert db[name].docs == [], name
@@ -892,7 +1439,8 @@ def _consistency_script():
 
 def test_the_consistency_script_reports_agreement_match_rate_cost_and_cache_hits_without_a_live_call(
         monkeypatch, tmp_path):
-    """scripts/consistency_run.py is manual (live API, costs money); --fake checks its arithmetic."""
+    """scripts/consistency_run.py is manual (live API, costs money); --fake checks its arithmetic. Its FakeAdapter
+    replays the recorded labelling replies and labels every other listed item not_a_metric."""
     pytest.importorskip("pdfplumber")
     import tempfile
     script = _consistency_script()
@@ -902,35 +1450,41 @@ def test_the_consistency_script_reports_agreement_match_rate_cost_and_cache_hits
     report = script.main(["--fake", "--deck", "05-zero2hero.pdf"])
     assert [p.name.split("_")[0] for p in (tmp_path / "temp").iterdir()] == ["consistency"]
     assert not script.REPORTS.exists(), "a fake run's report never lands in docs/test-runs"
-    assert report["agreement_pct"]["table"] == 100.0 and report["agreement_pct"]["kpi_panel"] == 100.0
-    assert report["verifier_match_rate_pct"] == pytest.approx(100.0 * 16 / 17, abs=0.1), "14 + 2 verified of 17 per pass"
+    assert report["agreement_pct"] == {"hiring_table": 100.0, "kpi_panel": 100.0, "table": 100.0}
+    assert (report["agreement_pct_all"], report["agreement_pct_all_old"]) == (100.0, 100.0)
+    assert report["verifier_match_rate_pct"] == 100.0, "the table's 24 and the panel's 2 per pass"
+    assert report["counts"]["table"] == {"not_a_metric": 0, "other": 0, "ambiguous": 0, "flags": 0}
+    assert report["counts"]["hiring_table"]["not_a_metric"] == 9, "3 items, 3 passes"
+    assert report["counts"]["kpi_panel"] == {"not_a_metric": 27, "other": 0, "ambiguous": 18, "flags": 0}, \
+        "pages 11 and 17 (9 items), 3 passes; page 17's six bracketed figures after text read two ways"
     assert report["cache_hit_rate_pct"] == {"pass_2": 100.0, "pass_3": 100.0}
     assert report["per_deck"]["05-zero2hero.pdf"]["structures"] == 5
     assert report["model_reads"] == 5 * 3, "passes 2 and 3 bypass the cache after counting its hits"
     assert report["period_corrected"] == 0
 
     class WrongYear(script.FakeAdapter):
-        """Replays the recorded replies with one revenue period a year off: its value still matches its cell."""
+        """Replays the recorded replies with one revenue period a year off: Python rebuilds it from its header."""
         def complete(self, **kwargs):
             reply, tokens_in, tokens_out = super().complete(**kwargs)
             body = json.loads(reply)
-            for item in body["items"]:
-                if (item["metric"], item["value"], item["period"]) == ("revenue", 150000, "FY2023"):
-                    item["period"] = "FY2021"
+            for label in body.get("labels", []):
+                if (label["metric"], label["period"]) == ("revenue", "FY2023"):
+                    label["period"] = "FY2021"
             return json.dumps(body), tokens_in, tokens_out
     report = asyncio.run(script.run(["05-zero2hero.pdf"], 3, script.MemoryDB(), WrongYear()))
     assert report["period_corrected"] == 3, "one per pass"
-    assert report["verifier_match_rate_pct"] == pytest.approx(100.0 * 16 / 17, abs=0.1), "a corrected item is verified"
+    assert report["verifier_match_rate_pct"] == 100.0, "a corrected item is verified"
+    assert report["agreement_pct_all"] == 100.0, "the period is compared as the verifier keeps it"
     os.environ.pop("ANTHROPIC_API_KEY", None)
     with pytest.raises(SystemExit, match="ANTHROPIC_API_KEY"):
         script.main(["--yes", "--deck", "05-zero2hero.pdf"])
 
 
 def _drifting(script):
-    """The recorded replies, read a little differently from pass to pass (05-zero2hero.pdf page 19): pass 2 writes
-    the FY2023 revenue's unit as USD, pass 3 writes its period as "2023" and leaves out the KPI panel's users. In
-    every pass the FY2022 users cite their row label as period cell and the FY2023 gross profit proposes a total
-    mismatch, so both stay unverified."""
+    """The recorded replies, read a little differently from pass to pass (05-zero2hero.pdf): pass 2 writes the FY2023
+    revenue's unit as USD, pass 3 writes its period as "2023" and labels the page 19 panel's users as customers. In
+    every pass the FY2022 gross profit is labelled other and page 17's Telegram members are read as users in 2023,
+    a period no cell of theirs holds: both stay unverified."""
     class Drifting(script.FakeAdapter):
         def __init__(self):
             super().__init__()
@@ -939,93 +1493,96 @@ def _drifting(script):
         def complete(self, **kwargs):
             reply, tokens_in, tokens_out = super().complete(**kwargs)
             n = self.calls[kwargs["user_payload"]] = self.calls.get(kwargs["user_payload"], 0) + 1   # the pass
-            body = json.loads(reply)
-            items = []
-            for item in body["items"]:
-                key = (item["metric"], item["value_cell"])
-                if key == ("revenue", "r4c3"):
-                    item.update({2: {"unit": "USD"}, 3: {"period": "2023"}}.get(n, {}))
-                if key == ("users", "r3c1") and n == 3:
-                    continue
-                if key == ("users", "r2c2"):
-                    item["period_cells"] = ["r2c1"]
-                if key == ("gross_profit", "r6c3"):
-                    item["proposed_flags"] = ["total_mismatch"]
-                items.append(item)
-            return json.dumps({**body, "items": items}), tokens_in, tokens_out
+            text, body = json.loads(kwargs["user_payload"])["text"], json.loads(reply)
+            for label in body.get("labels", []):
+                if "r4c1: Revenue" in text and label["item"] == "i11":
+                    label.update({2: {"unit": "USD"}, 3: {"period": "2023"}}.get(n, {}))
+                if "r4c1: Revenue" in text and label["item"] == "i20":
+                    label["metric"] = "other"
+                if "r2c1: Gross Profit £150K" in text and label["item"] == "i2" and n == 3:
+                    label["metric"] = "customers"
+                if "Telegram(30K)" in text and label["item"] == "i1":
+                    label.update(metric="users", period="2023", unit="count", actual_or_forecast="actual")
+            return json.dumps(body), tokens_in, tokens_out
     return Drifting
 
 
 def test_the_consistency_report_shows_where_passes_disagree_why_items_are_unverified_and_the_fixed_prompt(
         monkeypatch, tmp_path):
-    """The diagnostics of a fake run: agreement on metric, period, value and cell after the verifier's
-    normalisation next to the old all-field figure; the fields that differ per disagreeing structure; a reason
-    per unverified item; the fixed prompt's tokens apart from the structure text's."""
+    """Spec sections 6 and 7: agreement on metric and the period the verifier keeps over the items Python listed,
+    with the old method (period as written, unit, actual or forecast) beside it; the fields that differ per
+    disagreeing structure; a reason per unverified item; the counts per type; the fixed prompt's tokens and the
+    average text plus item list against 4,000."""
     pytest.importorskip("pdfplumber")
     from app.decks import parser
     from app.llm import cache, prompt_store, schemas
     script = _consistency_script()
     report = asyncio.run(script.run(["05-zero2hero.pdf"], 3, script.MemoryDB(), _drifting(script)()))
-    # Table: 15 items, one written three ways (USD, then "2023"): 14 of 17 as written, 15 of 15 normalised.
-    # KPI panel: its users missing in pass 3, so 1 of 2 either way.
-    assert report["agreement_pct_old"] == {"hiring_table": None, "kpi_panel": 50.0, "table": 82.4}
-    assert report["agreement_pct"] == {"hiring_table": None, "kpi_panel": 50.0, "table": 100.0}
-    assert (report["agreement_pct_all_old"], report["agreement_pct_all"]) == (78.9, 94.1), "15 of 19; 16 of 17"
+    # Table: 24 items, the FY2023 revenue written three ways but kept as one period: 23 of 24 as written, 24 of 24
+    # normalised. KPI panels: 3 + 6 + 2 items, the page 19 users read as customers in pass 3: 10 of 11 either way.
+    assert report["agreement_pct_old"] == {"hiring_table": 100.0, "kpi_panel": 90.9, "table": 95.8}
+    assert report["agreement_pct"] == {"hiring_table": 100.0, "kpi_panel": 90.9, "table": 100.0}
+    assert (report["agreement_pct_all_old"], report["agreement_pct_all"]) == (94.7, 97.4), "36 of 38; 37 of 38"
     assert report["disagreements"] == [
         {"deck": "05-zero2hero.pdf", "page": 19, "type": "table", "fields": ["period", "unit"],
          "same_after_normalisation": True},
-        {"deck": "05-zero2hero.pdf", "page": 19, "type": "kpi_panel", "fields": ["cell", "items"],
+        {"deck": "05-zero2hero.pdf", "page": 19, "type": "kpi_panel", "fields": ["metric"],
          "same_after_normalisation": False}]
     zero = dict.fromkeys(script.FIELDS, 0)
+    assert script.FIELDS == ("metric", "period", "unit", "actual_or_forecast")
     assert report["disagreement_fields"] == {
         "hiring_table": {"structures": 1, "disagreeing": 0, **zero},
-        "kpi_panel": {"structures": 3, "disagreeing": 1, **zero, "cell": 1, "items": 1},
+        "kpi_panel": {"structures": 3, "disagreeing": 1, **zero, "metric": 1},
         "table": {"structures": 1, "disagreeing": 1, **zero, "period": 1, "unit": 1}}
-    assert report["unverified_reasons"] == {"table": {**dict.fromkeys(script.REASONS, 0), "value not in cell": 3,
-                                                      "period not rebuilt": 3, "other": 3}}
-    where = {"deck": "05-zero2hero.pdf", "page": 19, "type": "table", "passes": 3}
+    assert script.REASONS == ("period not rebuilt", "metric invalid", "other")
+    assert report["unverified_reasons"] == {"kpi_panel": {**dict.fromkeys(script.REASONS, 0), "period not rebuilt": 3},
+                                            "table": {**dict.fromkeys(script.REASONS, 0), "other": 3}}
     assert report["unverified_items"] == [
-        {**where, "value_cell": "r6c3", "reason": "other", "detail": "flag not reproduced"},
-        {**where, "value_cell": "r2c2", "reason": "period not rebuilt", "detail": None},
-        {**where, "value_cell": "r4c4", "reason": "value not in cell", "detail": None}]
-    assert report["verifier_match_rate_pct"] == 82.0, "41 of 50 items: 15 + 2, 15 + 2, 15 + 1"
+        {"deck": "05-zero2hero.pdf", "page": 17, "type": "kpi_panel", "item": "i1", "cell": "r1c1#1",
+         "reason": "period not rebuilt", "detail": None, "passes": 3},
+        {"deck": "05-zero2hero.pdf", "page": 19, "type": "table", "item": "i20", "cell": "r6c2#1",
+         "reason": "other", "detail": "type Other", "passes": 3}]
+    assert report["verifier_match_rate_pct"] == 92.6, "25 of 27 per pass: 24 + 2 + Telegram, less two"
+    assert report["counts"]["table"] == {"not_a_metric": 0, "other": 3, "ambiguous": 0, "flags": 0}
 
     # Tokens: the fake counter is one token per 4 characters of what would be sent.
     def count(system=None, payload="", schema=None):
         return (len(system or "") + len(payload) + (len(json.dumps(schema)) if schema else 0)) // 4
-    system, schema = prompt_store.load(gateway.STRUCTURE_PROMPT).text, schemas.structure_output_schema()
+    system, schema = prompt_store.load(gateway.STRUCTURE_PROMPT).text, schemas.labelling_output_schema()
     empty = cache.canonical_json({"type": "table", "text": ""})
-    texts = [redact.structure_text(redact.redact_structure(s["cells"], "05-zero2hero", {}, set())[0])
-             for s in parser.parse_deck((DECKS / "05-zero2hero.pdf").read_bytes(), "05-zero2hero.pdf")["structures"]]
+    texts = []
+    for structure in parser.parse_deck((DECKS / "05-zero2hero.pdf").read_bytes(), "05-zero2hero.pdf")["structures"]:
+        cells = redact.redact_structure(structure["cells"], "05-zero2hero", {}, ("Consistency run", "CONSISTENCY"))[0]
+        redacted = {**structure, "cells": cells}
+        texts.append(structure_items.text(redacted, structure_items.list_items(redacted)))
     assert report["tokens"] == {
         "fixed_prompt": count(system, empty, schema), "system_prompt": count(system, empty) - count(payload=empty),
         "output_schema": count(payload=empty, schema=schema) - count(payload=empty),
         "empty_message": count(payload=empty),
-        "structure_text_avg": round(sum(count(payload=text) for text in texts) / 5, 1), "structures_counted": 5,
+        "text_and_items_avg": round(sum(count(payload=text) for text in texts) / 5, 1), "structures_counted": 5,
         "billed_input_per_model_read": 1000.0}
 
     path = script.write_report(report, tmp_path, 3, fake=True)
     text = path.read_text(encoding="utf-8")
     tokens = report["tokens"]
     for line in (
-            "| table | 100.0% | 82.4% |", "| kpi_panel | 50.0% | 50.0% |", "| all | 94.1% | 78.9% |",
-            "| Type | Structures | Disagreeing | metric | period | value | unit | cell | other | items |",
-            "| kpi_panel | 3 | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 1 |", "| table | 1 | 1 | 0 | 1 | 0 | 1 | 0 | 0 | 0 |",
+            "| table | 100.0% | 95.8% |", "| kpi_panel | 90.9% | 90.9% |", "| all | 97.4% | 94.7% |",
+            "| Type | Structures | Disagreeing | metric | period | unit | actual_or_forecast |",
+            "| kpi_panel | 3 | 1 | 1 | 0 | 0 | 0 |", "| table | 1 | 1 | 0 | 1 | 1 | 0 |",
             "| 05-zero2hero.pdf | 19 | table | period, unit | yes |",
-            "| 05-zero2hero.pdf | 19 | kpi_panel | cell, items | no |",
-            "| Type | value not in cell | period not rebuilt | lowest-header rule | metric invalid | other "
-            "| Unverified |",
-            "| table | 3 | 3 | 0 | 0 | 3 | 9 |", "| all | 3 | 3 | 0 | 0 | 3 | 9 |",
-            "| 05-zero2hero.pdf | 19 | table | r6c3 | other (flag not reproduced) | 3 |",
-            "| 05-zero2hero.pdf | 19 | table | r2c2 | period not rebuilt | 3 |",
-            "| 05-zero2hero.pdf | 19 | table | r4c4 | value not in cell | 3 |",
+            "| 05-zero2hero.pdf | 19 | kpi_panel | metric | no |",
+            "| Type | period not rebuilt | metric invalid | other | Unverified |",
+            "| kpi_panel | 3 | 0 | 0 | 3 |", "| table | 0 | 0 | 3 | 3 |", "| all | 3 | 0 | 3 | 6 |",
+            "| 05-zero2hero.pdf | 17 | kpi_panel | i1 | r1c1#1 | period not rebuilt | 3 |",
+            "| 05-zero2hero.pdf | 19 | table | i20 | r6c2#1 | other (type Other) | 3 |",
+            "| Type | not_a_metric | other | ambiguous readings | flags |", "| table | 0 | 3 | 0 | 0 |",
             f"- Fixed prompt: {tokens['fixed_prompt']:,} (system prompt {tokens['system_prompt']:,}, output schema "
             f"{tokens['output_schema']:,}, empty message {tokens['empty_message']:,})",
-            f"- Structure text, average of 5 structures: {tokens['structure_text_avg']:,} (the gateway's 3,000-token "
-            "measure: the text alone)",
+            f"- Structure text and item list, average of 5 structures: {tokens['text_and_items_avg']:,} against the "
+            "gateway's 4,000-token cap",
             "- Billed input per model read: 1,000.0"):
         assert line in text, line
-    assert script.summary(report).startswith("Agreement 94.1% (target 95.0%: missed; old method 78.9%); verified 82.0%")
+    assert script.summary(report).startswith("Agreement 97.4% (target 95.0%: met; old method 94.7%); verified 92.6%")
 
     class Uncountable:
         def count_tokens(self, **kwargs):
@@ -1038,106 +1595,100 @@ def test_the_consistency_report_shows_where_passes_disagree_why_items_are_unveri
         script.write_report(report, tmp_path, 3, fake=True).read_text(encoding="utf-8")
 
 
-def test_roadmap_items_are_reported_apart_from_the_verified_rate(tmp_path):
-    """A roadmap item is counted with whether Python rebuilt its date from the cited cells, and is left out of the
-    match and unverified rates and their reasons: a milestone has no value, so it is never verified."""
+def test_roadmap_lines_are_reported_apart_with_their_pairs_and_dates_rebuilt_from_cells(tmp_path):
+    """Spec section 6: "roadmap lines: N, same pair and category in every pass: M, date rebuilt from cell: K". K counts
+    the lines whose period Python rebuilds from their own period cells, whatever the pair says."""
     pytest.importorskip("pdfplumber")
+    pytest.importorskip("pptx")
     script = _consistency_script()
-
-    def milestone(cell, period, cells):
-        return {"metric": "product", "period": period, "value": None, "unit": None, "actual_or_forecast": "actual",
-                "unit_other": None, "value_cell": cell, "period_cells": cells, "proposed_flags": []}
 
     class Tea(script.FakeAdapter):
-        """The TEA roadmap (page 11), as the model might read four of its milestones."""
+        """The TEA roadmap (page 11): two milestones paired, one of them with another date in pass 3."""
+        def __init__(self):
+            super().__init__()
+            self.calls = {}
+
         def complete(self, **kwargs):
+            reply, tokens_in, tokens_out = super().complete(**kwargs)
             sent = json.loads(kwargs["user_payload"])
             if sent["type"] != "roadmap" or "r8c2: Rich dApps running on network" not in sent["text"]:
-                return super().complete(**kwargs)
-            items = [milestone("r3c2", "2021", ["r1c2"]),             # the year at the top of its box
-                     milestone("r8c2", "2021-Q4", ["r8c1", "r7c1"]),  # the quarter left of it, the year above that
-                     milestone("r2c2", "2021-Q2", ["r2c1", "r1c1"]),  # period headers above and beside: no period
-                     milestone("r4c3", None, [])]                      # no date: matches, but nothing is rebuilt
-            return json.dumps({"type": "roadmap", "items": items}), 1000, 20
-    decks = ["03-buffer.pptx", "05-zero2hero.pdf", "10-tea.pdf"]
-    report = asyncio.run(script.run(decks, 3, script.MemoryDB(), Tea()))
-    assert (report["roadmap_items"], report["roadmap_dates_rebuilt"]) == (24, 6), \
-        "4 Buffer milestones (dates below their lines: none rebuilt) and 4 TEA ones (2 rebuilt), in each of 3 passes"
-    assert report["verifier_match_rate_pct"] == 94.1 and report["unverified_rate_pct"] == 5.9, \
-        "16 of 17 zero2hero items per pass; no roadmap item in the rates"
-    assert list(report["unverified_reasons"]) == ["table"]
-    assert [row["type"] for row in report["unverified_items"]] == ["table"]
-    assert report["agreement_pct"]["roadmap"] == 100.0, "agreement still counts roadmap items"
-    assert "roadmap items: 24, date rebuilt from cell: 6;" in script.summary(report)
+                return reply, tokens_in, tokens_out
+            n = self.calls[sent["text"]] = self.calls.get(sent["text"], 0) + 1
+            body = json.loads(reply)
+            body["pairs"] = [{"line": "t4", "date": "d1", "category": "launch"},
+                             {"line": "t16", "date": "d4" if n == 3 else "d3", "category": "launch"}]
+            return json.dumps(body), tokens_in, tokens_out
+    report = asyncio.run(script.run(["03-buffer.pptx", "05-zero2hero.pdf", "10-tea.pdf"], 3, script.MemoryDB(), Tea()))
+    assert (report["roadmap_lines"], report["roadmap_same_pair"], report["roadmap_dates_rebuilt"]) == (36, 35, 27), \
+        "Buffer: 6 lines, all paired alike, all dated from the date line below them; TEA: 30 lines, one paired " \
+        "with another date in pass 3, 21 with a period in their own cells or headers"
+    # The match rate keeps roadmap figures (milestones left out) and is also given apart: financial (outside
+    # roadmaps: zero2hero's 26 a pass) and roadmap (Buffer's 7 pair-dated figures a pass, each paired with the date
+    # line its own timeline gives it).
+    assert (report["verifier_match_rate_pct"], report["verifier_match_rate_financial_pct"],
+            report["verifier_match_rate_roadmap_pct"]) == (100.0, 100.0, 100.0), "99 of 99; 78 of 78; 21 of 21"
+    assert "verified 100.0% (financial 100.0%, roadmap 100.0%)" in script.summary(report)
+    assert report["agreement_pct"]["roadmap"] == 100.0, "agreement counts a roadmap's items like any other"
+    assert "roadmap lines: 36, same pair and category in every pass: 35, date rebuilt from cell: 27;" in \
+        script.summary(report)
     text = script.write_report(report, tmp_path, 3, fake=True).read_text(encoding="utf-8")
-    assert "- Roadmap items: 24, date rebuilt from cell: 6" in text
-    assert "| roadmap |" not in text.split("## Unverified items: reasons")[1].split("## Cache hit rate")[0]
+    assert "- Roadmap lines: 36, same pair and category in every pass: 35, date rebuilt from cell: 27" in text
+    for line in ("- Match rate: 100.0%", "- Match rate, financial (outside roadmaps): 100.0%",
+                 "- Match rate, roadmap (figures in roadmaps, milestones left out): 100.0%"):
+        assert line in text.splitlines(), line
 
 
-@pytest.mark.parametrize("grid, header_rows, spans, item, reason", [
-    # A quarterly value cited against its year header: the year is a period header, but not the lowest.
-    ("quarters", 2, {(1, 2): 4}, dict(value=3000000, period="2025", cells=["r1c2"]), ("lowest-header rule", None)),
-    # A month in its row and a year above it: the rules build no period from either.
-    ([["", "2025"], ["Jan", "£1M"]], 1, None, dict(value=1000000, period="2025", cells=["r1c2"], cell="r2c2"),
-     ("lowest-header rule", None)),
-    ("quarters", 2, {(1, 2): 4}, dict(value=3000000, period="2025-Q3", cells=["r2c4"]), ("period not rebuilt", None)),
-    ("quarters", 2, {(1, 2): 4}, dict(value=3000000, period="2025-Q3", cells=["r3c1"]), ("period not rebuilt", None)),
-    ("quarters", 2, {(1, 2): 4}, dict(value=3000000, period="2025-Q3", cells=[]), ("period not rebuilt", None)),
-    # The cells rebuild 2025-Q3, which replaces the model's year: a period corrected, verified.
-    ("quarters", 2, {(1, 2): 4}, dict(value=3000000, period="2024-Q3", cells=["r2c4", "r1c2"]), None),
-    ("quarters", 2, {(1, 2): 4}, dict(value=3100000, period="2025-Q3", cells=["r2c4", "r1c2"]),
-     ("value not in cell", None)),
-    ("quarters", 2, {(1, 2): 4}, dict(value=None, period="2025-Q3", cells=["r2c4", "r1c2"]), ("other", "no value")),
-    ("quarters", 2, {(1, 2): 4}, dict(value=3100000, period="2025-Q3", cells=["r2c4", "r1c2"], metric="amount"),
-     ("metric invalid", None)),
-    ("quarters", 2, {(1, 2): 4},
-     dict(value=3000000, period="2025-Q3", cells=["r2c4", "r1c2"], flags=["total_mismatch"]),
-     ("other", "flag not reproduced")),
-    ("quarters", 2, {(1, 2): 4}, dict(value=3000000, period="2025-Q3", cells=["r2c4", "r1c2"]), None),
+@pytest.mark.parametrize("label, reason", [
+    (dict(period="2025"), ("period not rebuilt", None)),         # a period no cell of the item holds
+    (dict(metric="other"), ("other", "type Other")),
+    (dict(period=None), None),                                   # verified
 ])
-def test_each_unverified_item_gets_the_first_reason_that_applies(grid, header_rows, spans, item, reason):
-    import test_structure_verifier as v
+def test_each_unverified_item_gets_its_reason(label, reason):
+    import test_structure_verifier as tv
     script = _consistency_script()
-    if grid == "quarters":
-        grid = [["", "2025", "", "", ""], ["", "Q1", "Q2", "Q3", "Q4"], ["Revenue", "$1M", "$2M", "$3M", "$4M"]]
-    structure = v._struct(grid, header_rows=header_rows, spans=spans)
-    sent = v._item(item["value"], item.get("cell", "r3c4"), item["period"], item["cells"],
-                   metric=item.get("metric", "revenue"), flags=item.get("flags", ()))
-    checked, = verify.verify(structure, [sent])["items"]
+    structure = v._struct([["", "Plan"], ["Revenue", "£2M"]])
+    checked, = tv._verify(structure, {"r2c2": tv._lab(**label)})["items"]
     assert (None if checked["status"] == verify.VERIFIED else script.unverified_reason(structure, checked)) == reason
+    assert script.unverified_reason(structure, {**checked, "metric": "amount"}) == ("metric invalid", None)
 
 
 @pytest.mark.parametrize("change, fields", [
     ({}, []),
-    ({"value": 150000.0}, []),                                       # one number, written two ways
-    ({"value_cell": "r4c9"}, ["cell"]),
     ({"metric": "sales"}, ["metric"]),
-    ({"period": "2023"}, ["period"]),
-    ({"value": 150001}, ["value"]),
+    ({"period": "2023"}, ["period"]),                            # as written: FY2023 and 2023 differ here
     ({"unit": "USD"}, ["unit"]),
-    ({"actual_or_forecast": "actual"}, ["other"]),
-    ({"period_cells": []}, ["other"]),
-    ({"proposed_flags": ["total_mismatch"]}, ["other"]),
-    (None, ["cell", "items"]),                                       # left out in the second pass
+    ({"actual_or_forecast": "actual"}, ["actual_or_forecast"]),
+    ({"metric": "sales", "unit": None}, ["metric", "unit"]),
 ])
-def test_the_fields_that_differ_are_found_by_lining_items_up_by_value_cell(change, fields):
+def test_the_fields_that_differ_are_found_by_lining_labels_up_by_item_id(change, fields):
     script = _consistency_script()
-    kept = {"metric": "revenue", "period": "FY2022", "value": 130550, "unit": "GBP", "actual_or_forecast": "forecast",
-            "unit_other": None, "value_cell": "r4c2", "period_cells": ["r1c2"], "proposed_flags": []}
-    item = {"metric": "revenue", "period": "FY2023", "value": 150000, "unit": "GBP", "actual_or_forecast": "forecast",
-            "unit_other": None, "value_cell": "r4c3", "period_cells": ["r1c3"], "proposed_flags": []}
-    second = [kept] if change is None else [kept, {**item, **change}]
-    assert script.differing_fields([[kept, item], second, [kept, item]]) == fields
+    kept, item = _label("i1", period="FY2022", unit="GBP"), _label("i2", period="FY2023", unit="GBP")
+    assert script.differing_fields([[kept, item], [kept, {**item, **change}], [item, kept]]) == fields
+
+
+def test_agreement_compares_the_metric_and_the_period_the_verifier_keeps_by_its_dates():
+    """Spec section 6: the period as the verifier keeps it (start and end dates), not as the model wrote it; a
+    not_a_metric label counts as a metric, with no period kept."""
+    script = _consistency_script()
+    written = _label("i1", period="FY2021")
+    assert script._normalised_key(written, {"period": "2023"}) == ("i1", "revenue", ("2023-01-01", "2023-12-31")), \
+        "the verifier rebuilt 2023 from the header: the model's FY2021 is not compared"
+    assert script._normalised_key(written, {"period": "2023"}) == script._normalised_key(written, {"period": "FY2023"})
+    assert script._normalised_key(written, {"period": "2023"}) != script._normalised_key(written, {"period": "2024"})
+    assert script._normalised_key(written, {"period": None}) == ("i1", "revenue", None)
+    dropped = _label("i2", metric="not_a_metric", period="2023")
+    assert script._normalised_key(dropped, None) == ("i2", "not_a_metric", None)
+    assert script._normalised_key(dropped, None) != script._normalised_key({**dropped, "metric": "revenue"}, None)
 
 
 def test_two_passes_writing_other_with_different_codes_differ_in_unit():
     script = _consistency_script()
-    zar = {"metric": "revenue", "period": "FY2023", "value": 150000, "unit": "other", "unit_other": "ZAR",
-           "actual_or_forecast": "forecast", "value_cell": "r4c3", "period_cells": ["r1c3"], "proposed_flags": []}
+    zar = _label("i1", period="FY2023", unit="other", unit_other="ZAR")
     mxn = {**zar, "unit_other": "MXN"}
     assert script.differing_fields([[zar], [mxn], [zar]]) == ["unit"]
     assert script.differing_fields([[zar], [zar], [zar]]) == []
     assert script._item_key(zar) != script._item_key(mxn), "the old agreement key tells them apart too"
+    assert script._item_key(zar) == ("i1", "revenue", "FY2023", "ZAR", "forecast")
 
 
 def _motor_without_a_server(monkeypatch, names, drop_fails=False):
@@ -1187,12 +1738,12 @@ def test_the_live_run_drops_its_scratch_database_in_the_event_loop_it_ran_in(mon
     assert [line.split(":")[0] for line in out[2:5]] == [f"[1/1] 05-zero2hero.pdf pass {n}/3" for n in (1, 2, 3)]
     assert all("5 of 5 structures read" in line for line in out[2:5]), "one progress line per deck and pass"
     assert out[5:7] == [f"Report: {path}", script.summary(report)], "the report path and a summary line"
-    assert out[6].startswith("Agreement 100.0% (target 95.0%: met; old method 100.0%); verified 94.1%")
+    assert out[6].startswith("Agreement 100.0% (target 95.0%: met; old method 100.0%); verified 100.0%")
     text = path.read_text(encoding="utf-8")
     assert "\n".join(out[7:]) + "\n" == text, \
         "then the whole report: the file is untracked and lost on re-import, so it is copied from stdout"
     assert text.startswith(f"# Consistency run {day}\n\nLive API. Decks: 1. Passes: 3. Model: {gateway.STRUCTURE_MODEL}.")
-    for line in ("| table | 100.0% |", "| kpi_panel | 100.0% |", "- Match rate: 94.1%", "| 2 | 100.0% |", "| 3 | 100.0% |",
+    for line in ("| table | 100.0% |", "| kpi_panel | 100.0% |", "- Match rate: 100.0%", "| 2 | 100.0% |", "| 3 | 100.0% |",
                  "| 05-zero2hero.pdf | 5 | 15,000 | 300 |"):
         assert line in text, line
     script.main(["--yes", "--deck", "05-zero2hero.pdf"])
@@ -1231,7 +1782,7 @@ def test_a_live_run_writes_its_diagnostic_beside_the_report_before_the_drop(monk
     run = script.run
 
     async def live_run(decks, passes, db, adapter=None, **kwargs):
-        return await run(decks, passes, script.MemoryDB(), script.FakeAdapter(), diagnostic=kwargs["diagnostic"])
+        return await run(decks, passes, script.MemoryDB(), _drifting(script)(), diagnostic=kwargs["diagnostic"])
     monkeypatch.setattr(script, "run", live_run)
     monkeypatch.setattr(script, "REPORTS", tmp_path)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "not-used")
@@ -1239,7 +1790,7 @@ def test_a_live_run_writes_its_diagnostic_beside_the_report_before_the_drop(monk
         script.main(["--yes", "--diagnostic", "--deck", "05-zero2hero.pdf"])
     day = datetime.date.today().isoformat()
     assert sorted(p.name for p in tmp_path.iterdir()) == [f"consistency_{day}.md", f"consistency_{day}_diagnostic.md"]
-    assert "£ 250,000" in (tmp_path / f"consistency_{day}_diagnostic.md").read_text(encoding="utf-8")
+    assert "£ 150,000" in (tmp_path / f"consistency_{day}_diagnostic.md").read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -1409,65 +1960,62 @@ def test_the_consistency_run_pauses_between_structure_calls(monkeypatch, tmp_pat
 # ---------------------------------------------------------------------------
 # --diagnostic: the cell text behind each unverified item and disagreeing structure, public test decks only
 # ---------------------------------------------------------------------------
-def _seen(metric, value, unit, period, verifier):
-    return {"metric": metric, "value": value, "unit": unit, "period": period, "verifier": verifier}
+def _seen(metric, period, unit, actual_or_forecast, verifier):
+    return {"metric": metric, "period": period, "unit": unit, "actual_or_forecast": actual_or_forecast,
+            "verifier": verifier}
 
 
-def test_the_diagnostic_gives_the_cell_text_and_every_pass_of_each_unverified_item_and_disagreeing_structure(
-        tmp_path):
-    """The report names a cell, not what it says. --diagnostic adds, for every unverified item and every
-    disagreeing structure: deck, page, cell id, the cell's text as sent to the model, the model's metric, value,
-    unit and period in each pass, and the verifier's result for each (verified or the reason), in a file of its own
-    beside the report. The report and its JSON keys are unchanged."""
+def test_the_diagnostic_gives_the_cell_text_and_every_pass_of_each_unverified_and_disagreeing_item(tmp_path):
+    """Spec section 7: for every unverified item and every item whose labels differ between passes: deck, page, type,
+    item id, cell#position, the cell's text as sent, Python's values, the reason, then per pass the model's metric,
+    period, unit and actual_or_forecast and the verifier's result, in a file of its own beside the report. The report
+    and its JSON keys are unchanged by it."""
     pytest.importorskip("pdfplumber")
     script = _consistency_script()
     rows = []
     report = asyncio.run(script.run(["05-zero2hero.pdf"], 3, script.MemoryDB(), _drifting(script)(), diagnostic=rows))
     assert report == asyncio.run(script.run(["05-zero2hero.pdf"], 3, script.MemoryDB(), _drifting(script)())), \
         "the report is the same with or without the diagnostic"
-    where = {"deck": "05-zero2hero.pdf", "page": 19, "type": "table"}
-    flagged = _seen("gross_profit", 50000, "GBP", "FY2023", "other (flag not reproduced)")
-    users = _seen("users", 200, "count", "FY2022", "period not rebuilt")
-    shared = [_seen("revenue", 250000, "GBP", "FY2024", "verified"),
-              _seen("users", 20000, "count", "FY2024", "value not in cell")]
+    panel = {"deck": "05-zero2hero.pdf", "type": "kpi_panel"}
+    table = {"deck": "05-zero2hero.pdf", "page": 19, "type": "table"}
     assert [r for r in rows if r["section"] == "unverified"] == [
-        {**where, "section": "unverified", "cell": "r6c3", "cell_text": "£ 50,000",
-         "reason": "other (flag not reproduced)", "passes": [[flagged]] * 3},
-        {**where, "section": "unverified", "cell": "r2c2", "cell_text": "200", "reason": "period not rebuilt",
-         "passes": [[users]] * 3},
-        {**where, "section": "unverified", "cell": "r4c4", "cell_text": "£ 250,000", "reason": "value not in cell",
-         "passes": [shared] * 3}], "every item citing the cell, in each pass, with the verifier's result"
+        {**panel, "page": 17, "section": "unverified", "item": "i1", "cell": "r1c1#1", "cell_text": "Telegram(30K)",
+         "values": [30000, -30000], "reason": "period not rebuilt",
+         "passes": [_seen("users", "2023", "count", "actual", "period not rebuilt")] * 3},
+        {**table, "section": "unverified", "item": "i20", "cell": "r6c2#1", "cell_text": "£ 42,638",
+         "values": [42638], "reason": "other (type Other)",
+         "passes": [_seen("other", "FY2022", "GBP", "actual", "other (type Other)")] * 3}]
     assert [r for r in rows if r["section"] == "disagreeing"] == [
-        {**where, "section": "disagreeing", "cell": "r4c3", "cell_text": "£ 150,000", "reason": None,
-         "passes": [[_seen("revenue", 150000, "GBP", "FY2023", "verified")],
-                    [_seen("revenue", 150000, "USD", "FY2023", "verified")],
-                    [_seen("revenue", 150000, "GBP", "2023", "verified")]]},
-        {**where, "type": "kpi_panel", "section": "disagreeing", "cell": "r3c1", "cell_text": "5K Users",
-         "reason": None, "passes": [[_seen("users", 5000, "count", "FY2023", "verified")]] * 2 + [[]]}], \
-        "the cells whose readings differ between passes, as the model wrote them"
+        {**table, "section": "disagreeing", "item": "i11", "cell": "r4c3#1", "cell_text": "£ 150,000",
+         "values": [150000], "reason": None,
+         "passes": [_seen("revenue", "FY2023", "GBP", "forecast", "verified"),
+                    _seen("revenue", "FY2023", "USD", "forecast", "verified"),
+                    _seen("revenue", "2023", "GBP", "forecast", "verified")]},
+        {**panel, "page": 19, "section": "disagreeing", "item": "i2", "cell": "r3c1#1", "cell_text": "5K Users",
+         "values": [5000], "reason": None,
+         "passes": [_seen("users", "FY2023", "count", "forecast", "verified")] * 2
+         + [_seen("customers", "FY2023", "count", "forecast", "verified")]}], "the items labelled differently"
 
     path = script.write_report(report, tmp_path, 3, fake=True)
-    rows.append({**where, "section": "unverified", "cell": "r9c9", "cell_text": "Plan | B\nnext", "reason": "other",
-                 "passes": [None, [], [_seen("product", None, None, None, "other (no value)")]]})
+    rows.append({**table, "section": "unverified", "item": "i9", "cell": "r9c9#1", "cell_text": "Plan | B\nnext",
+                 "values": [2500, 2.5], "reason": "other", "passes": [None, _seen("product", None, None, "unknown",
+                                                                               "other (type Other)"), None]})
     diagnostic = script.write_diagnostic(rows, path, 3)
     assert diagnostic == tmp_path / f"{path.stem}_diagnostic.md", "beside its report, named after it"
     text = diagnostic.read_text(encoding="utf-8")
+    head = "| Deck | Page | Type | Item | Cell | Cell text | Python's values | Reason | Pass 1 | Pass 2 | Pass 3 |"
     for line in (
-            f"# Consistency run {path.stem.split('_', 1)[1]}: diagnostic",
-            "| Deck | Page | Type | Cell | Cell text | Reason | Pass 1 | Pass 2 | Pass 3 |",
-            "| 05-zero2hero.pdf | 19 | table | r4c4 | £ 250,000 | value not in cell | "
-            + " | ".join(["revenue 250000 GBP FY2024: verified; users 20000 count FY2024: value not in cell"] * 3)
-            + " |",
-            "| 05-zero2hero.pdf | 19 | table | r9c9 | Plan \\| B next | other | not read | no item | product null null "
-            "null: other (no value) |",
-            "| Deck | Page | Type | Cell | Cell text | Pass 1 | Pass 2 | Pass 3 |",
-            "| 05-zero2hero.pdf | 19 | table | r4c3 | £ 150,000 | revenue 150000 GBP FY2023: verified | "
-            "revenue 150000 USD FY2023: verified | revenue 150000 GBP 2023: verified |",
-            "| 05-zero2hero.pdf | 19 | kpi_panel | r3c1 | 5K Users | users 5000 count FY2023: verified | users 5000 "
-            "count FY2023: verified | no item |"):
+            f"# Consistency run {path.stem.split('_', 1)[1]}: diagnostic", head,
+            "| 05-zero2hero.pdf | 17 | kpi_panel | i1 | r1c1#1 | Telegram(30K) | 30000 or -30000 | period not rebuilt | "
+            + " | ".join(["users 2023 count actual: period not rebuilt"] * 3) + " |",
+            "| 05-zero2hero.pdf | 19 | table | i9 | r9c9#1 | Plan \\| B next | 2500 or 2.5 | other | not read | "
+            "product null null unknown: other (type Other) | not read |",
+            "| 05-zero2hero.pdf | 19 | table | i11 | r4c3#1 | £ 150,000 | 150000 |  | revenue FY2023 GBP forecast: verified | "
+            "revenue FY2023 USD forecast: verified | revenue 2023 GBP forecast: verified |"):
         assert line in text.splitlines(), line
+    assert text.count(head) == 2, "both sections take the same columns"
     report_text = path.read_text(encoding="utf-8")
-    assert "5K Users" not in report_text and "£ 250,000" not in report_text, "the report itself holds no cell text"
+    assert "5K Users" not in report_text and "£ 150,000" not in report_text, "the report itself holds no cell text"
 
 
 def test_the_diagnostic_runs_only_on_the_10_public_test_decks(monkeypatch, tmp_path, capsys):
@@ -1501,13 +2049,14 @@ def test_the_diagnostic_runs_only_on_the_10_public_test_decks(monkeypatch, tmp_p
     assert [p.name.endswith("_diagnostic.md") for p in temp.iterdir()] == [False], "without --diagnostic, as before"
     capsys.readouterr()
 
-    script.main(["--fake", "--diagnostic", "--deck", "05-zero2hero.pdf"])
+    monkeypatch.setattr(script, "DECKS", DECKS)
+    script.main(["--fake", "--diagnostic", "--deck", "02-moz.pdf"])
     out = capsys.readouterr().out
     diagnostic, = temp.glob("consistency_*_diagnostic.md")
     assert diagnostic.with_name(diagnostic.name.replace("_diagnostic", "")).exists()
     assert f"Diagnostic: {diagnostic}" in out.splitlines(), "its path is printed"
-    assert "£ 250,000" in diagnostic.read_text(encoding="utf-8") and "£ 250,000" not in out, \
-        "its cell text is not: stdout carries the report only"
+    assert "~9 Months" in diagnostic.read_text(encoding="utf-8") and "~9 Months" not in out, \
+        "its cell text is not: stdout carries the report only (moz p20: the months figure, labelled other)"
 
 
 # ---------------------------------------------------------------------------
@@ -1533,21 +2082,21 @@ def test_a_short_engagement_reference_is_withheld_as_a_word_and_never_inside_one
     assert (result.reason, adapter.calls) == ("refused: engagement_reference", 0), "sent as written, it is refused"
     cells, _ = redact.redact_structure([{"row": 1, "col": 1, "text": "Plan E7"}, {"row": 1, "col": 2, "text": "£1M"}],
                                        "Zero2Hero", {}, redact.withheld_values(db["audits"].docs[0]))
-    result, adapter = _read(db, redact.structure_text(cells), replies=[{"type": "table", "items": []}])
+    result, adapter = _read(db, redact.structure_text(cells), replies=[NOTHING])
     assert result.status == "read" and json.loads(adapter.payloads[0])["text"] == "r1c1: Plan [redacted]\nr1c2: £1M"
-    result, adapter = _read(db, "r1c1: Plan E70\nr1c2: £1M", replies=[{"type": "table", "items": []}])
+    result, adapter = _read(db, "r1c1: Plan E70\nr1c2: £1M", replies=[NOTHING])
     assert result.status == "read", "E70 is not the reference"
 
 
 def test_ordinary_text_with_a_dot_is_not_taken_for_a_file_name():
-    result, _ = _read(_db(), "r1c1: 2.key metrics\nr1c2: £1M", replies=[{"type": "table", "items": []}])
+    result, _ = _read(_db(), "r1c1: 2.key metrics\nr1c2: £1M", replies=[NOTHING])
     assert result.status == "read"
     result, adapter = _read(_db(), "r1c1: See plan_v2.xlsx\nr1c2: £1M")
     assert result.status == "refused" and adapter.calls == 0
 
 
 def test_a_metric_must_belong_to_the_kind_of_structure_read():
-    deck_reply = {"type": "table", "items": [{**REPLY["items"][0], "metric": "invoice_date"}]}
+    deck_reply = {**REPLY, "labels": [{**REPLY["labels"][0], "metric": "invoice_date"}, REPLY["labels"][1]]}
     result, adapter = _read(_db(), replies=[deck_reply, deck_reply])
     assert result.status == "not_read" and adapter.calls == 2, "a spreadsheet field is not a deck claim"
     mapping_reply = {"type": "column_mapping", "items": [{**MAPPING_REPLY["items"][0], "metric": "revenue_growth"}]}

@@ -12,18 +12,24 @@ labels, KPI panels, roadmaps and timelines, hiring, unit-economics and use-of-fu
 spreadsheet header rows (at most 3) with, per column, up to 3 sample values (numeric and date
 columns only) or a profile (distinct count, typical length, shape pattern) for text columns. Only
 after redaction, only with the audit's consent, only as extracted text with cell positions; never
-raw files, full pages or prose slides. The caller hands the text in; the gateway reads no parsed
-deck text, runs redaction again and refuses the call if anything changes. `load_structure_context`
-reads the audit's consent and the names to protect, and nothing else. The deck parser has no link
-to the gateway.
+raw files, full pages or prose slides. A deck structure's text carries, below its cells, the item
+list Python made (docs/specs/structure-labelling.md): one line per figure with its cell, its raw
+text cut from the redacted cell, its values and header cells, and a roadmap's date cells and text
+lines; an item line out of format, or whose raw text is not a figure inside its cell, is refused
+(bad_item_line). The caller hands the text in; the gateway reads no parsed deck text, runs
+redaction again and refuses the call if anything changes. `load_structure_context` reads the
+audit's consent and the names to protect, and nothing else. The deck parser has no link to the
+gateway.
 
-Logs and Mongo (rule 17) store model JSON output (values with cell references), the prompt
-version, the model version, the content hash, token counts and cost; never deck text sent to the
-model. Delete audit removes the model outputs (purge_run).
+Logs and Mongo (rule 17) store model JSON output (labels naming listed items, roadmap pairs) and the
+item list without raw text (values with cell references), the prompt version, the model version,
+the content hash, token counts and cost; never deck text sent to the model. Delete audit removes
+the model outputs (purge_run).
 
-Verification (rule 18): model output never becomes Verified on its own. app/structures/verify.py
-matches every value to its source cell; unmatched values are shown as "AI suggestion, not
-verified" or dropped.
+Verification (rule 18): model output never becomes Verified on its own. The model only labels the
+figures Python listed: every value and cell is Python's, read from its source cell
+(app/structures/items.py), and app/structures/verify.py rebuilds every period; anything it cannot
+verify is shown as "AI suggestion, not verified" or dropped.
 
 No other function here touches Mongo for audit data, and no module in this package except
 `prompt_store` performs file I/O.
@@ -47,9 +53,9 @@ from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Tuple
 
 from .. import disclosure, formatting
 from ..structures import redact as structure_redact
-from . import cache, guards, prompt_store, redaction
-from .schemas import (CLAIM_METRICS, MAPPING_FIELDS, STRUCTURE_TYPES, DeckUsage, Narrative, NarrativeResponse,
-                      StructureRead, StructureReply, UsageResponse, narrative_output_schema, structure_output_schema)
+from . import cache, guards, prompt_store, redaction, schemas
+from .schemas import (MAPPING_FIELDS, STRUCTURE_TYPES, DeckUsage, LabellingReply, Narrative, NarrativeResponse,
+                      StructureRead, StructureReply, UsageResponse, narrative_output_schema)
 
 logger = logging.getLogger("growth.llm")
 
@@ -1209,7 +1215,7 @@ STRUCTURE_MODEL = "claude-sonnet-5-5"
 STRUCTURE_PROMPT = "structure_reading"
 STRUCTURE_STEP = guards.STRUCTURE_STEP
 STRUCTURE_MAX_TOKENS = 4000
-STRUCTURE_INPUT_CAP = 3000          # tokens of structure text alone, by the provider's token counter
+STRUCTURE_INPUT_CAP = 4000          # tokens of structure text plus item list, by the provider's token counter
 STRUCTURE_CELL_MAX = 200            # a longer cell is prose
 STRUCTURES_COLLECTION = cache.STRUCTURES_COLLECTION
 NOT_READ = "Not read by AI"
@@ -1239,14 +1245,16 @@ async def load_structure_context(db, audit_id: str) -> dict:
 
 
 def structure_key(text: str, structure_type: str, prompt_tag: str, model: str) -> str:
-    """sha256 of the text, its type, the prompt cache tag, the model and the output schema's hash (spec section 8):
-    a reading stored under another schema is never served."""
-    return cache.cache_key(STRUCTURE_STEP, structure_type, f"{prompt_tag}:{schema_hash()}", model, text)
+    """sha256 of the text (with its item list), its type, the prompt cache tag, the model and the hash of the
+    output schema its type is sent (structure-labelling.md section 3): a reading stored under another schema is
+    never served."""
+    return cache.cache_key(STRUCTURE_STEP, structure_type, f"{prompt_tag}:{schema_hash(structure_type)}", model, text)
 
 
-def schema_hash() -> str:
-    """sha256 of the structure output schema as sent."""
-    return content_hash(cache.canonical_json(structure_output_schema()))
+def schema_hash(structure_type: str) -> str:
+    """sha256 of the output schema a structure of this type is sent: the labelling schema for a deck structure,
+    its own for a column mapping."""
+    return content_hash(cache.canonical_json(schemas.output_schema(structure_type)))
 
 
 def content_hash(text: str) -> str:
@@ -1257,9 +1265,10 @@ def content_hash(text: str) -> str:
 def structure_text_problem(text: Any, structure_type: str, context: dict, mapping: Dict[str, str]) -> Optional[str]:
     """Why a text may not reach the provider, or None (CLAUDE.md rule 16, spec sections 1 and 3).
 
-    Only extracted text with cell positions passes: one `r<row>c<col>: <text>` line per cell (and, on
-    the column-mapping path, sample and profile lines). Raw bytes, prose, a file name and a cell over
-    200 characters are refused. The client name and the engagement reference reach the provider only
+    Only extracted text with cell positions passes: one `r<row>c<col>: <text>` line per cell (on the
+    column-mapping path, sample and profile lines; for a deck structure, below "items:", Python's item
+    lines, each raw text a figure inside its cell, and a roadmap's date and text lines). Raw bytes,
+    prose, a file name and a cell over 200 characters are refused. The client name and the engagement reference reach the provider only
     as "[redacted]": the caller replaces them (redact.withheld_values), and one still standing in the
     text as a whole word (any case; a word ends at a space, punctuation, a hyphen or a change of
     case, as in redaction) is refused. Redaction is run again and the text must come back unchanged. On the
@@ -1283,9 +1292,12 @@ def structure_text_problem(text: Any, structure_type: str, context: dict, mappin
             return problem
         cells = structure_redact.parse_column_text(text)["headers"]
     else:
-        cells = structure_redact.parse_structure_text(text)
+        cell_text, listed = structure_redact.split_items(text)
+        cells = structure_redact.parse_structure_text(cell_text)
         if not cells:
             return "not_cells"
+        if listed is not None and not structure_redact.items_in_format(listed, cells, structure_type == "roadmap"):
+            return "bad_item_line"
     if any(len(c["text"]) > STRUCTURE_CELL_MAX for c in cells):
         return "cell_too_long"
     redacted, _ = structure_redact.redact_structure(cells, company, mapping, structure_redact.withheld_values(context))
@@ -1299,28 +1311,55 @@ def _cited_cells(text: str, structure_type: str) -> set:
     if structure_type == "column_mapping":
         cells = (structure_redact.parse_column_text(text) or {}).get("headers") or []
     else:
-        cells = structure_redact.parse_structure_text(text) or []
+        cells = structure_redact.parse_structure_text(structure_redact.split_items(text)[0]) or []
     return {structure_redact.cell_id(c) for c in cells}
 
 
-def parse_structure_reply(reply: str, structure_type: str, text: str) -> StructureReply:
-    """Validate a reply against the schema (extra fields forbidden), the type rule and the cells, or
-    raise GatewayError("parse_failed"). The type may be corrected within the deck types only; a
-    column mapping stays one. Every cited cell must exist in the text that was sent."""
+def parse_structure_reply(reply: str, structure_type: str, text: str):
+    """The validated reply for the type Python sent, or raise GatewayError("parse_failed"): a labelling reply for
+    a deck structure (parse_labelling_reply), the column-mapping reply for a column mapping."""
+    if structure_type != "column_mapping":
+        return parse_labelling_reply(reply, structure_type, text)
     try:
         data = json.loads((reply or "").strip())
         parsed = StructureReply.model_validate(data)
     except Exception as exc:
         raise GatewayError("parse_failed", f"reply did not match the schema: {type(exc).__name__}")
-    if (structure_type == "column_mapping") != (parsed.type == "column_mapping"):
+    if parsed.type != "column_mapping":
         raise GatewayError("parse_failed", "type changed between a deck structure and a column mapping")
-    allowed = MAPPING_FIELDS if structure_type == "column_mapping" else CLAIM_METRICS + ("use_of_funds",)
-    if any(item.metric not in allowed for item in parsed.items):
+    if any(item.metric not in MAPPING_FIELDS for item in parsed.items):
         raise GatewayError("parse_failed", "a metric that does not belong to this kind of structure")
     known = _cited_cells(text, structure_type)
     for item in parsed.items:
         if item.value_cell not in known or any(c not in known for c in item.period_cells):
             raise GatewayError("parse_failed", "reply cites a cell that is not in the structure")
+    return parsed
+
+
+def parse_labelling_reply(reply: str, structure_type: str, text: str) -> LabellingReply:
+    """Validate a deck structure's reply (structure-labelling.md section 3), or raise GatewayError("parse_failed"):
+    the schema (extra fields forbidden; the type may be corrected within the deck types, and is only logged),
+    then every listed item id labelled exactly once (no unknown, duplicate or missing id), and every pair one
+    listed text line and one listed date, a line paired at most once, on a structure sent as a roadmap only."""
+    try:
+        data = json.loads((reply or "").strip())
+        parsed = LabellingReply.model_validate(data)
+    except Exception as exc:
+        raise GatewayError("parse_failed", f"reply did not match the schema: {type(exc).__name__}")
+    listed = structure_redact.parse_item_lines(structure_redact.split_items(text)[1] or []) or \
+        {"items": [], "dates": [], "lines": []}
+    labelled = [label.item for label in parsed.labels]
+    if len(set(labelled)) != len(labelled):
+        raise GatewayError("parse_failed", "an item is labelled twice")
+    if set(labelled) != {item["id"] for item in listed["items"]}:
+        raise GatewayError("parse_failed", "the labels name an item that was not listed or leave one out")
+    if parsed.pairs and structure_type != "roadmap":
+        raise GatewayError("parse_failed", "pairs on a structure not sent as a roadmap")
+    lines, dates = {t["id"] for t in listed["lines"]}, {d["id"] for d in listed["dates"]}
+    if any(pair.line not in lines or pair.date not in dates for pair in parsed.pairs):
+        raise GatewayError("parse_failed", "a pair that is not one listed line and one listed date")
+    if len({pair.line for pair in parsed.pairs}) != len(parsed.pairs):
+        raise GatewayError("parse_failed", "a line paired twice")
     return parsed
 
 
@@ -1345,7 +1384,7 @@ async def _count_tokens(adapter, sleep, **kwargs) -> int:
 async def _structure_call(adapter, prompt, user_payload, structure_type, text, sleep):
     """(reply, input tokens, output tokens) summed over every billed attempt. Network or 5xx: up to
     MAX_PROVIDER_RETRIES with backoff. A reply that fails validation: one reask, then GatewayError."""
-    schema = structure_output_schema()
+    schema = schemas.output_schema(structure_type)
     parse_attempts = network_attempts = 0
     billed_in = billed_out = 0
     while True:
@@ -1383,6 +1422,13 @@ def _structure_result(status, structure_type, reason=None, **fields) -> Structur
     return StructureRead(status=status, type=structure_type, reason=reason, **fields)
 
 
+def _reading(output: dict) -> dict:
+    """The fields of a stored or new reply: a deck structure's labels and pairs, a column mapping's items."""
+    if "labels" in output:
+        return {"labels": output["labels"], "pairs": output.get("pairs") or []}
+    return {"items": output.get("items") or []}
+
+
 async def read_structure(
     db, audit_id: str, text: str, structure_type: str, *, deck_id: Optional[str] = None,
     page: Optional[int] = None, adapter=None, sleep=None, use_cache: bool = True,
@@ -1390,17 +1436,19 @@ async def read_structure(
     """Read one structure or one sheet's headers with the model (CLAUDE.md rules 16-18).
 
     `text` is the redacted structure text the caller built (one `r<row>c<col>: <text>` line per
-    cell; for `column_mapping`, header cells, samples and profiles). It is checked again here and
-    never stored: only the model's JSON output (values with cell references), the prompt version,
-    the model, the content hash, the tokens and the cost are. Order of operations:
+    cell, then for a deck structure the item list; for `column_mapping`, header cells, samples and
+    profiles). It is checked again here and never stored: only the model's JSON output, the prompt
+    version, the model, the content hash, the tokens and the cost are. A deck structure is sent the
+    labelling schema, a column mapping its own. Order of operations:
 
-        consent -> boundary and redaction check -> cache (audit, key) -> token count of the text
-        alone (3,000 cap) -> token count of the whole call -> lock (step "structures") -> spend cap
+        consent -> boundary and redaction check -> cache (audit, key) -> token count of the text and
+        its item list (4,000 cap) -> token count of the whole call -> lock (step "structures") -> spend cap
         -> token cap (400,000 per audit, with the whole call's input) -> provider
-        -> schema, type and cell check (one reask) -> store -> log
+        -> schema, type and item id check (one reask) -> store -> log
 
     Never raises for a model-side problem: the structure is then "Not read by AI" and Python's result
-    stands. The output is not Verified here: the caller matches every value to its source cell.
+    stands. The output is not Verified here: the caller joins each label to Python's item and
+    verifies it.
     """
     import asyncio
     sleep = sleep or asyncio.sleep
@@ -1430,19 +1478,19 @@ async def read_structure(
             await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version,
                            model=STRUCTURE_MODEL, input_tokens=0, output_tokens=0, estimated_cost_usd=0.0,
                            cache_hit=True, status="cache_hit", content_hash=digest, deck_id=deck_id)
-            return _structure_result("read", structure_type, model_type=hit.get("model_type"),
-                                     items=hit["output"]["items"], cache_hit=True, **base)
+            return _structure_result("read", structure_type, model_type=hit.get("model_type"), cache_hit=True,
+                                     **_reading(hit["output"]), **base)
 
     user_payload = cache.canonical_json({"type": structure_type, "text": text})
     adapter = adapter or AnthropicAdapter()
     try:
-        # The 3,000-token cap is on the structure text alone; the 400,000 cap counts the whole call.
+        # The 4,000-token cap is on the structure text plus its item list; the 400,000 cap counts the whole call.
         text_tokens = await _count_tokens(adapter, sleep, model=STRUCTURE_MODEL, system=None, user_payload=text,
                                           json_schema=None)
         if text_tokens > STRUCTURE_INPUT_CAP:
             return _structure_result("too_large", structure_type, TOO_LARGE, input_tokens=0, **base)
         counted = await _count_tokens(adapter, sleep, model=STRUCTURE_MODEL, system=prompt.text,
-                                      user_payload=user_payload, json_schema=structure_output_schema())
+                                      user_payload=user_payload, json_schema=schemas.output_schema(structure_type))
     except GatewayError as exc:
         # Codes only: the reason, the HTTP status and the provider's error type; never the exception's message.
         code, status, kind = exc.reason, exc.status, exc.error_type
@@ -1502,7 +1550,7 @@ async def read_structure(
         logger.info("structure read: run_id=%s step=%s hash=%s tokens=%d/%d cost=%.6f type_change=%s",
                     audit_id, STRUCTURE_STEP, digest, in_tok, out_tok, cost,
                     f"{structure_type}->{model_type}" if model_type else "none")
-        return _structure_result("read", structure_type, model_type=model_type, items=output["items"],
+        return _structure_result("read", structure_type, model_type=model_type, **_reading(output),
                                  input_tokens=in_tok, output_tokens=out_tok, estimated_cost_usd=cost, **base)
     except Exception as exc:  # never let structure reading block an upload
         logger.error("unexpected structure failure: run_id=%s step=%s error=%s", audit_id, STRUCTURE_STEP,
@@ -1528,10 +1576,11 @@ async def stored_structure(db, audit_id: str, key: str) -> Optional[dict]:
 
 
 async def record_verification(db, audit_id: str, key: str, statuses: List[str], dropped: int = 0,
-                              periods_corrected: int = 0) -> None:
-    """Store the verifier status of each item next to the model output it checks, and the number of
-    periods Python corrected (spec section 9). The output itself keeps the model's periods."""
-    await cache.set_structure_statuses(db, audit_id, key, statuses, dropped, periods_corrected)
+                              periods_corrected: int = 0, items: Optional[dict] = None) -> None:
+    """Store the verifier status of each item next to the model output it checks, the number of periods Python
+    corrected, and the item list the labels name, without raw text (structure-labelling.md section 5: ids,
+    cells, positions, values, header ids). The output itself keeps the model's periods."""
+    await cache.set_structure_statuses(db, audit_id, key, statuses, dropped, periods_corrected, items)
 
 
 # ---------------------------------------------------------------------------

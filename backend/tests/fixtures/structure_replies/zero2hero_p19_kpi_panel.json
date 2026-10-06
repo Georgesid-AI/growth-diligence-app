@@ -3,37 +3,28 @@
  "page": 19,
  "type": "kpi_panel",
  "match": "r2c1: Gross Profit \u00a3150K",
- "note": "Hand-written in the model's output format for the public test deck; no live call was made.",
+ "note": "Hand-written in the model's labelling format (docs/specs/structure-labelling.md) for the public test deck; no live call was made. Both periods rebuild from the top line of the box.",
  "reply": {
   "type": "kpi_panel",
-  "items": [
+  "labels": [
    {
+    "item": "i1",
     "metric": "gross_profit",
     "period": "FY2023",
-    "value": 150000,
     "unit": "GBP",
     "unit_other": null,
-    "actual_or_forecast": "forecast",
-    "value_cell": "r2c1",
-    "period_cells": [
-     "r1c1"
-    ],
-    "proposed_flags": []
+    "actual_or_forecast": "forecast"
    },
    {
+    "item": "i2",
     "metric": "users",
     "period": "FY2023",
-    "value": 5000,
     "unit": "count",
     "unit_other": null,
-    "actual_or_forecast": "forecast",
-    "value_cell": "r3c1",
-    "period_cells": [
-     "r1c1"
-    ],
-    "proposed_flags": []
+    "actual_or_forecast": "forecast"
    }
-  ]
+  ],
+  "pairs": []
  },
  "expected": {
   "verified": 2,

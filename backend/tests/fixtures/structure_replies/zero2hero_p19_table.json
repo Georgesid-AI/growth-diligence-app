@@ -3,209 +3,207 @@
  "page": 19,
  "type": "table",
  "match": "r4c1: Revenue",
- "note": "Hand-written in the model's output format for the public test deck; no live call was made.",
+ "note": "Hand-written in the model's labelling format (docs/specs/structure-labelling.md) for the public test deck; no live call was made. Every period rebuilds from its column header.",
  "reply": {
   "type": "table",
-  "items": [
+  "labels": [
    {
-    "metric": "revenue",
-    "period": "FY2022",
-    "value": 130550,
-    "unit": "GBP",
-    "unit_other": null,
-    "actual_or_forecast": "actual",
-    "value_cell": "r4c2",
-    "period_cells": [
-     "r1c2"
-    ],
-    "proposed_flags": []
-   },
-   {
-    "metric": "revenue",
-    "period": "FY2023",
-    "value": 150000,
-    "unit": "GBP",
-    "unit_other": null,
-    "actual_or_forecast": "forecast",
-    "value_cell": "r4c3",
-    "period_cells": [
-     "r1c3"
-    ],
-    "proposed_flags": []
-   },
-   {
-    "metric": "revenue",
-    "period": "FY2024",
-    "value": 250000,
-    "unit": "GBP",
-    "unit_other": null,
-    "actual_or_forecast": "forecast",
-    "value_cell": "r4c4",
-    "period_cells": [
-     "r1c4"
-    ],
-    "proposed_flags": []
-   },
-   {
-    "metric": "revenue",
-    "period": "FY2025",
-    "value": 1000000,
-    "unit": "GBP",
-    "unit_other": null,
-    "actual_or_forecast": "forecast",
-    "value_cell": "r4c5",
-    "period_cells": [
-     "r1c5"
-    ],
-    "proposed_flags": []
-   },
-   {
-    "metric": "revenue",
-    "period": "FY2026",
-    "value": 2500000,
-    "unit": "GBP",
-    "unit_other": null,
-    "actual_or_forecast": "forecast",
-    "value_cell": "r4c6",
-    "period_cells": [
-     "r1c6"
-    ],
-    "proposed_flags": []
-   },
-   {
-    "metric": "gross_profit",
-    "period": "FY2022",
-    "value": 42638,
-    "unit": "GBP",
-    "unit_other": null,
-    "actual_or_forecast": "forecast",
-    "value_cell": "r6c2",
-    "period_cells": [
-     "r1c2"
-    ],
-    "proposed_flags": []
-   },
-   {
-    "metric": "gross_profit",
-    "period": "FY2023",
-    "value": 50000,
-    "unit": "GBP",
-    "unit_other": null,
-    "actual_or_forecast": "forecast",
-    "value_cell": "r6c3",
-    "period_cells": [
-     "r1c3"
-    ],
-    "proposed_flags": []
-   },
-   {
-    "metric": "gross_profit",
-    "period": "FY2024",
-    "value": 100000,
-    "unit": "GBP",
-    "unit_other": null,
-    "actual_or_forecast": "forecast",
-    "value_cell": "r6c4",
-    "period_cells": [
-     "r1c4"
-    ],
-    "proposed_flags": []
-   },
-   {
-    "metric": "gross_profit",
-    "period": "FY2025",
-    "value": 500000,
-    "unit": "GBP",
-    "unit_other": null,
-    "actual_or_forecast": "forecast",
-    "value_cell": "r6c5",
-    "period_cells": [
-     "r1c5"
-    ],
-    "proposed_flags": []
-   },
-   {
-    "metric": "gross_profit",
-    "period": "FY2026",
-    "value": 1500000,
-    "unit": "GBP",
-    "unit_other": null,
-    "actual_or_forecast": "forecast",
-    "value_cell": "r6c6",
-    "period_cells": [
-     "r1c6"
-    ],
-    "proposed_flags": []
-   },
-   {
+    "item": "i1",
     "metric": "users",
     "period": "FY2022",
-    "value": 200,
     "unit": "count",
     "unit_other": null,
-    "actual_or_forecast": "forecast",
-    "value_cell": "r2c2",
-    "period_cells": [
-     "r1c2"
-    ],
-    "proposed_flags": []
+    "actual_or_forecast": "actual"
    },
    {
+    "item": "i2",
     "metric": "users",
     "period": "FY2023",
-    "value": 5000,
     "unit": "count",
     "unit_other": null,
-    "actual_or_forecast": "forecast",
-    "value_cell": "r2c3",
-    "period_cells": [
-     "r1c3"
-    ],
-    "proposed_flags": []
+    "actual_or_forecast": "forecast"
    },
    {
+    "item": "i3",
     "metric": "users",
     "period": "FY2024",
-    "value": 20000,
     "unit": "count",
     "unit_other": null,
-    "actual_or_forecast": "forecast",
-    "value_cell": "r4c4",
-    "period_cells": [
-     "r1c4"
-    ],
-    "proposed_flags": []
+    "actual_or_forecast": "forecast"
    },
    {
+    "item": "i4",
     "metric": "users",
     "period": "FY2025",
-    "value": 30000,
     "unit": "count",
     "unit_other": null,
-    "actual_or_forecast": "forecast",
-    "value_cell": "r2c5",
-    "period_cells": [
-     "r1c5"
-    ],
-    "proposed_flags": []
+    "actual_or_forecast": "forecast"
    },
    {
+    "item": "i5",
     "metric": "users",
     "period": "FY2026",
-    "value": 50000,
     "unit": "count",
     "unit_other": null,
-    "actual_or_forecast": "forecast",
-    "value_cell": "r2c6",
-    "period_cells": [
-     "r1c6"
-    ],
-    "proposed_flags": []
+    "actual_or_forecast": "forecast"
+   },
+   {
+    "item": "i6",
+    "metric": "customers",
+    "period": "FY2023",
+    "unit": "count",
+    "unit_other": null,
+    "actual_or_forecast": "forecast"
+   },
+   {
+    "item": "i7",
+    "metric": "customers",
+    "period": "FY2024",
+    "unit": "count",
+    "unit_other": null,
+    "actual_or_forecast": "forecast"
+   },
+   {
+    "item": "i8",
+    "metric": "customers",
+    "period": "FY2025",
+    "unit": "count",
+    "unit_other": null,
+    "actual_or_forecast": "forecast"
+   },
+   {
+    "item": "i9",
+    "metric": "customers",
+    "period": "FY2026",
+    "unit": "count",
+    "unit_other": null,
+    "actual_or_forecast": "forecast"
+   },
+   {
+    "item": "i10",
+    "metric": "revenue",
+    "period": "FY2022",
+    "unit": "GBP",
+    "unit_other": null,
+    "actual_or_forecast": "actual"
+   },
+   {
+    "item": "i11",
+    "metric": "revenue",
+    "period": "FY2023",
+    "unit": "GBP",
+    "unit_other": null,
+    "actual_or_forecast": "forecast"
+   },
+   {
+    "item": "i12",
+    "metric": "revenue",
+    "period": "FY2024",
+    "unit": "GBP",
+    "unit_other": null,
+    "actual_or_forecast": "forecast"
+   },
+   {
+    "item": "i13",
+    "metric": "revenue",
+    "period": "FY2025",
+    "unit": "GBP",
+    "unit_other": null,
+    "actual_or_forecast": "forecast"
+   },
+   {
+    "item": "i14",
+    "metric": "revenue",
+    "period": "FY2026",
+    "unit": "GBP",
+    "unit_other": null,
+    "actual_or_forecast": "forecast"
+   },
+   {
+    "item": "i15",
+    "metric": "costs",
+    "period": "FY2022",
+    "unit": "GBP",
+    "unit_other": null,
+    "actual_or_forecast": "actual"
+   },
+   {
+    "item": "i16",
+    "metric": "costs",
+    "period": "FY2023",
+    "unit": "GBP",
+    "unit_other": null,
+    "actual_or_forecast": "forecast"
+   },
+   {
+    "item": "i17",
+    "metric": "costs",
+    "period": "FY2024",
+    "unit": "GBP",
+    "unit_other": null,
+    "actual_or_forecast": "forecast"
+   },
+   {
+    "item": "i18",
+    "metric": "costs",
+    "period": "FY2025",
+    "unit": "GBP",
+    "unit_other": null,
+    "actual_or_forecast": "forecast"
+   },
+   {
+    "item": "i19",
+    "metric": "costs",
+    "period": "FY2026",
+    "unit": "GBP",
+    "unit_other": null,
+    "actual_or_forecast": "forecast"
+   },
+   {
+    "item": "i20",
+    "metric": "gross_profit",
+    "period": "FY2022",
+    "unit": "GBP",
+    "unit_other": null,
+    "actual_or_forecast": "actual"
+   },
+   {
+    "item": "i21",
+    "metric": "gross_profit",
+    "period": "FY2023",
+    "unit": "GBP",
+    "unit_other": null,
+    "actual_or_forecast": "forecast"
+   },
+   {
+    "item": "i22",
+    "metric": "gross_profit",
+    "period": "FY2024",
+    "unit": "GBP",
+    "unit_other": null,
+    "actual_or_forecast": "forecast"
+   },
+   {
+    "item": "i23",
+    "metric": "gross_profit",
+    "period": "FY2025",
+    "unit": "GBP",
+    "unit_other": null,
+    "actual_or_forecast": "forecast"
+   },
+   {
+    "item": "i24",
+    "metric": "gross_profit",
+    "period": "FY2026",
+    "unit": "GBP",
+    "unit_other": null,
+    "actual_or_forecast": "forecast"
    }
-  ]
+  ],
+  "pairs": []
  },
  "expected": {
-  "verified": 14,
-  "suggestion": 1
+  "verified": 24,
+  "suggestion": 0
  }
 }

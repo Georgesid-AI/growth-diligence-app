@@ -129,18 +129,21 @@ async def delete_run(db, run_id: str) -> int:
 # ---------------------------------------------------------------------------
 # Structure readings (docs/specs/llm-structure-reading.md sections 8 and 9)
 # ---------------------------------------------------------------------------
-# Key = sha256 of the structure text, its type, the prompt cache tag, the model and the output
-# schema's hash (gateway.structure_key). Looked up by (audit id, key), so no audit is served another
-# audit's result. A record holds the model's JSON output (values with cell references), the verifier
-# status of each item, the prompt version, the model, the content hash, tokens, cost, deck and page,
-# Python's type and the model's when it differs. Never the text that was sent.
+# Key = sha256 of the structure text (with its item list), its type, the prompt cache tag, the model and the hash
+# of its type's output schema (gateway.structure_key). Looked up by (audit id, key), so no audit is served
+# another audit's result. A record holds the model's JSON output, the item list Python sent without its raw text
+# (ids, cells, positions, values, header ids: docs/specs/structure-labelling.md section 5), so every label
+# resolves to a value with its cell reference, the verifier status of each item, the prompt version, the model,
+# the content hash, tokens, cost, deck and page, Python's type and the model's when it differs. Never the text
+# that was sent.
 STRUCTURES_COLLECTION = "llm_structures"
 
 
 async def get_structure(db, audit_id: str, key: str) -> Optional[dict]:
     """The stored reading for this audit and key, or None. A hit makes no provider call."""
     return await db[STRUCTURES_COLLECTION].find_one(
-        {"audit_id": audit_id, "key": key}, {"_id": 0, "output": 1, "model_type": 1, "type": 1})
+        {"audit_id": audit_id, "key": key},
+        {"_id": 0, "output": 1, "model_type": 1, "type": 1, "items": 1, "prompt_version": 1})
 
 
 async def put_structure(db, audit_id: str, key: str, record: dict) -> None:
@@ -154,14 +157,15 @@ async def put_structure(db, audit_id: str, key: str, record: dict) -> None:
 
 
 async def set_structure_statuses(db, audit_id: str, key: str, statuses: list, dropped: int = 0,
-                                 periods_corrected: int = 0) -> None:
-    """The verifier status of each item, next to the output it checks, and how many of its periods
-    Python corrected (the output keeps the model's own periods)."""
-    await db[STRUCTURES_COLLECTION].update_one(
-        {"audit_id": audit_id, "key": key},
-        {"$set": {"statuses": list(statuses), "dropped": int(dropped), "periods_corrected": int(periods_corrected),
-                  "verified_at": datetime.now(timezone.utc).isoformat()}},
-    )
+                                 periods_corrected: int = 0, items: Optional[dict] = None) -> None:
+    """The verifier status of each item, next to the output it checks, how many of its periods Python
+    corrected (the output keeps the model's own periods) and, when given, the item list it was checked
+    against, without raw text."""
+    fields = {"statuses": list(statuses), "dropped": int(dropped), "periods_corrected": int(periods_corrected),
+              "verified_at": datetime.now(timezone.utc).isoformat()}
+    if items is not None:
+        fields["items"] = items
+    await db[STRUCTURES_COLLECTION].update_one({"audit_id": audit_id, "key": key}, {"$set": fields})
 
 
 async def delete_structures(db, audit_id: str) -> int:

@@ -8,9 +8,12 @@ name and the engagement reference become [redacted]; customer names their pseudo
 
 The text is one line per cell, `r<row>c<col>: <cell text>`, with no file name, slide number or
 prose. A merged cell carries its span after its text, `r1c3: FY2025 (r1c3:r1c14)`, so the model
-receives the full header stack (deck-parser.md section 2).
+receives the full header stack (deck-parser.md section 2). Below a deck structure's cells comes its
+item list (structure-labelling.md section 3): the lines are written and checked here, so the
+gateway checks them with no link to the deck package.
 """
 import re
+from collections import Counter
 from typing import Dict, List, Optional, Tuple
 
 _LINE = re.compile(r"^r(?P<row>\d+)c(?P<col>\d+): (?P<text>.*?)(?: \(r(?P=row)c(?P=col):r(?P<row2>\d+)c(?P<col2>\d+)\))?$")
@@ -20,11 +23,16 @@ def cell_id(cell: Dict) -> str:
     return f"r{cell['row']}c{cell['col']}"
 
 
+def cell_text(cell: Dict) -> str:
+    """A cell's text as its line writes it: on one line, single spaces. Item raw text is cut from this too."""
+    return re.sub(r"\s+", " ", str(cell["text"])).strip()
+
+
 def structure_text(cells: List[Dict]) -> str:
     """The structure as the model reads it: one `r<row>c<col>: <text>` line per cell, in reading order."""
     lines = []
     for c in sorted(cells, key=lambda c: (c["row"], c["col"])):
-        text = re.sub(r"\s+", " ", str(c["text"])).strip()
+        text = cell_text(c)
         if not text:
             continue
         rows, cols = c.get("row_span", 1), c.get("col_span", 1)
@@ -49,6 +57,112 @@ def parse_structure_text(text: str) -> Optional[List[Dict]]:
                 cell["col_span"] = cols
         cells.append(cell)
     return cells
+
+
+# ---------------------------------------------------------------------------
+# The item list (docs/specs/structure-labelling.md section 3): below a deck structure's cell lines,
+# the line "items:", then one line per figure Python listed, its raw text cut from its cell:
+#     i3 r3c2#2 "(30K)" 30000 or -30000 h r3c1 r1c2
+# (id, cell and "#position" when the cell holds several figures, raw text, values with Python's
+# default first, "h" and the header cells). A roadmap adds its date cells and text lines, "d1 r2c1",
+# "t1 r1c1". The figure patterns live here so the gateway checks a line without the deck package.
+# ---------------------------------------------------------------------------
+ITEMS_HEADER = "items:"
+CURRENCY = re.compile(r"US\$|[£$€¥₹]|\b(?:USD|EUR|GBP|CHF|JPY|BGN|PLN|SEK|NOK|DKK|CAD|AUD)\b")
+SUFFIX = r"(?:\s?(?P<suffix>k|K|mn|MM|m|M|bn|B|thousand|million|billion|Mio|Mrd|Tsd|млн|млрд|хил)(?![^\W\d_]))?"
+# A figure, keyed by whether the structure writes a decimal comma (1.234,5).
+NUMBER = {
+    False: re.compile(r"(?P<open>\()?\s*(?:(?<![\w.])(?P<sign>[-−–]))?\s*(?<![\d.,])"
+                      r"(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?![\d]|[.,]\d)"
+                      + SUFFIX + r"\s*(?P<pct>%)?\s*(?P<close>\))?"),
+    True: re.compile(r"(?P<open>\()?\s*(?:(?<![\w.])(?P<sign>[-−–]))?\s*(?<![\d.,])"
+                     r"(?P<num>\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d+(?:,\d+)?)(?![\d]|[.,]\d)"
+                     + SUFFIX + r"\s*(?P<pct>%)?\s*(?P<close>\))?"),
+}
+_VALUE = r"-?\d+(?:\.\d+)?"
+_CELL = r"r[1-9]\d*c[1-9]\d*"
+_ITEM_LINE = re.compile(rf'^(?P<id>i[1-9]\d*) (?P<cell>{_CELL})(?:#(?P<position>[1-9]\d*))? "(?P<raw>[^"]{{1,60}})" '
+                        rf'(?P<values>{_VALUE}(?: or {_VALUE}){{0,3}})(?: h(?P<headers>(?: {_CELL})+))?$')
+_LISTED_LINE = re.compile(rf"^(?P<id>[dt][1-9]\d*) (?P<cell>{_CELL})$")
+
+
+def blank_currency(text: str) -> str:
+    """The text with each currency symbol or code turned into as many spaces, so positions still hold."""
+    return CURRENCY.sub(lambda m: " " * len(m.group(0)), text)
+
+
+def is_figure(raw: str) -> bool:
+    """True when the text is one figure and nothing else ("(30K)", "-$13 million", "1.234,5")."""
+    blanked = blank_currency(raw).strip()
+    return any(NUMBER[comma].fullmatch(blanked) for comma in (False, True))
+
+
+def number_text(value: float) -> str:
+    """A value as an item line writes it: 30000, -2.5, never an exponent."""
+    value = float(value)
+    if value.is_integer():
+        return str(int(value))
+    text = repr(value)
+    return format(value, "f").rstrip("0").rstrip(".") if "e" in text else text
+
+
+def item_lines(listed: Dict) -> List[str]:
+    """The lines below "items:" for {"items", "dates", "lines"} (see structures.items.list_items)."""
+    out, per_cell = [], Counter(item["cell"] for item in listed.get("items") or ())
+    for item in listed.get("items") or ():
+        cell = f"{item['cell']}#{item['position']}" if per_cell[item["cell"]] > 1 else item["cell"]
+        values = " or ".join(number_text(v["value"]) for v in item["values"])
+        heads = (" h " + " ".join(item["headers"])) if item.get("headers") else ""
+        out.append(f'{item["id"]} {cell} "{item["raw"]}" {values}{heads}')
+    out += [f"{d['id']} {d['cell']}" for d in listed.get("dates") or ()]
+    out += [f"{t['id']} {t['cell']}" for t in listed.get("lines") or ()]
+    return out
+
+
+def split_items(text: str) -> Tuple[str, Optional[List[str]]]:
+    """(the cell lines, the lines below "items:" or None when the text has no item list)."""
+    lines = (text or "").split("\n")
+    if ITEMS_HEADER not in lines:
+        return text, None
+    at = lines.index(ITEMS_HEADER)
+    return "\n".join(lines[:at]), lines[at + 1:]
+
+
+def parse_item_lines(lines: List[str]) -> Optional[Dict]:
+    """{"items": [{"id", "cell", "position", "raw", "values", "headers"}], "dates": [...], "lines": [...]}, or None
+    when a line is neither an item line nor a date or text line."""
+    out = {"items": [], "dates": [], "lines": []}
+    for line in lines:
+        item, listed = _ITEM_LINE.match(line), _LISTED_LINE.match(line)
+        if item:
+            out["items"].append({"id": item.group("id"), "cell": item.group("cell"),
+                                 "position": int(item.group("position") or 1), "raw": item.group("raw"),
+                                 "values": [float(v) for v in item.group("values").split(" or ")],
+                                 "headers": (item.group("headers") or "").split()})
+        elif listed:
+            out["dates" if listed.group("id")[0] == "d" else "lines"].append(
+                {"id": listed.group("id"), "cell": listed.group("cell")})
+        else:
+            return None
+    return out
+
+
+def items_in_format(lines: List[str], cells: List[Dict], roadmap: bool) -> bool:
+    """True when every line below "items:" is in format (CLAUDE.md rule 16): ids numbered in order, every cited
+    cell sent, each item's raw text a figure inside its cell, date and text lines on a roadmap only."""
+    parsed = parse_item_lines(lines)
+    if parsed is None:
+        return False
+    by_id = {cell_id(c): c["text"] for c in cells}
+    for key, prefix in (("items", "i"), ("dates", "d"), ("lines", "t")):
+        if [x["id"] for x in parsed[key]] != [f"{prefix}{n}" for n in range(1, len(parsed[key]) + 1)]:
+            return False
+        if any(x["cell"] not in by_id for x in parsed[key]):
+            return False
+    if (parsed["dates"] or parsed["lines"]) and not roadmap:
+        return False
+    return all(item["raw"] in by_id[item["cell"]] and is_figure(item["raw"]) and all(h in by_id for h in item["headers"])
+               for item in parsed["items"])
 
 
 # ---------------------------------------------------------------------------

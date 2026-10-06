@@ -2,8 +2,10 @@
 
 The orchestration around gateway.read_structure. The deck parser finds the structures and has no
 link to the gateway (CLAUDE.md rule 16); this package builds the text the model reads from them,
-redacted, and checks every value the model returns against its source cell (rule 18). The gateway
-never reads parsed deck text: it is handed the redacted structure text and nothing else.
+redacted, with the item list Python makes of every figure in it (items.py,
+docs/specs/structure-labelling.md). The model labels the items; verify.py joins each label to its
+item, so every value and cell is Python's, and rebuilds every period (rule 18). The gateway never
+reads parsed deck text: it is handed the redacted structure text and its item list, nothing else.
 
 What may reach the model (rule 16): redacted deck structures as extracted text with cell positions,
 and spreadsheet header rows (at most 3, the 3 nearest the data) with up to 3 sample values per
@@ -161,6 +163,7 @@ from ..decks import TEXT_COLLECTION, CANDIDATES_COLLECTION  # noqa: E402
 from ..decks import claims  # noqa: E402
 from ..llm import gateway  # noqa: E402
 from ..llm import redaction as llm_redaction  # noqa: E402
+from . import items as structure_items  # noqa: E402
 from . import verify  # noqa: E402
 
 # A deck's AI reading status, as the deck panel shows it.
@@ -212,7 +215,9 @@ async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None
             continue
         cells, _ = redact.redact_structure(structure["cells"], audit.get("company_name"), mapping,
                                            redact.withheld_values(audit))
-        result = await gateway.read_structure(db, audit_id, redact.structure_text(cells), structure["type"],
+        redacted = {**structure, "cells": cells}
+        listed = structure_items.list_items(redacted)
+        result = await gateway.read_structure(db, audit_id, structure_items.text(redacted, listed), structure["type"],
                                               deck_id=deck_id, page=page, adapter=adapter, sleep=sleep)
         entry = {"status": result.status, "reason": result.reason, "key": result.key, "model_type": result.model_type,
                  "cache_hit": result.cache_hit}
@@ -221,14 +226,15 @@ async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None
         if result.status == "read":
             if not result.cache_hit:
                 sent.append({"page": page, "type": structure["type"], "at": datetime.now(timezone.utc).isoformat()})
-            checked = verify.verify(structure, result.items, year_end, mode)
+            checked = verify.verify(structure, listed, result.labels, result.pairs, year_end, mode)
             await gateway.record_verification(db, audit_id, result.key, [x["status"] for x in checked["items"]],
-                                              checked["dropped"], checked["periods_corrected"])
-            entry["dropped"], entry["periods_corrected"] = checked["dropped"], checked["periods_corrected"]
-            for item in checked["items"]:
+                                              checked["dropped"], checked["periods_corrected"],
+                                              structure_items.stored(listed))
+            entry.update({k: checked[k] for k in ("dropped", "periods_corrected", "not_a_metric")})
+            for item in approval_items(checked["items"], mode):
                 candidate = candidate_from_item(item, structure, deck, result.model_type, year_end)
-                if _cell_key(candidate) in known:
-                    continue                    # Python already found this value in this cell
+                if value_match(candidate["value"], candidate["value_high"], known.get(_cell_key(candidate), ())):
+                    continue                    # this cell already lists the value, or a range holding it
                 order += 1
                 await db[CANDIDATES_COLLECTION].insert_one(
                     {**candidate, "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"],
@@ -284,37 +290,80 @@ def _where(structure: Dict) -> Dict:
     return {k: structure[k] for k in ("slide", "page") if k in structure}
 
 
-def _source_key(source: Dict, value):
-    """A value and the cell it sits in: a table cell for Python and for a table structure, else the
-    structure cell an earlier AI reading cited."""
+def _source_key(source: Dict):
+    """The cell a value sits in: a table cell for Python and for a table structure, else the structure cell an
+    earlier AI reading cited."""
     page = source.get("slide") or source.get("page")
     if source.get("table") is not None:
-        return (page, "table", source["table"], source.get("row"), source.get("col"), value)
+        return (page, "table", source["table"], source.get("row"), source.get("col"))
     if source.get("cell"):
-        return (page, "structure", source.get("structure"), source["cell"], value)
+        return (page, "structure", source.get("structure"), source["cell"])
     return None
 
 
 def _cell_key(candidate: Dict):
-    return _source_key(candidate["sources"][0], candidate.get("value"))
+    return _source_key(candidate["sources"][0])
 
 
-def _python_cells(candidates: List[Dict]) -> set:
-    """The cell of every value already listed for the deck: Python's, and reviewed AI rows kept from an
-    earlier upload of the same file, so a re-read adds no row twice."""
-    out = set()
+def _python_cells(candidates: List[Dict]) -> Dict:
+    """{cell: [(value, value_high), ...]}: every value already listed for the deck, by its cell: Python's, and
+    reviewed AI rows kept from an earlier upload of the same file, so a re-read adds no row twice."""
+    out = {}
     for c in candidates:
         for v in claims.claim_values(c):
             for s in v.get("sources") or ():
-                key = _source_key(s, v.get("value"))
+                key = _source_key(s)
                 if key:
-                    out.add(key)
+                    out.setdefault(key, []).append((v.get("value"), v.get("value_high")))
+    return out
+
+
+def value_match(value, value_high, known) -> Optional[str]:
+    """How a row's value meets the values its cell already lists (decision of 2026-10-06): "exact" for the same
+    value or the same range, "in range" when one falls inside the other's range (12.5m in "12-13m", or the range
+    holding a value the cell lists), else None. Either match means the row is already listed."""
+    def inside(x, low, high):
+        return x is not None and low is not None and high is not None and min(low, high) <= x <= max(low, high)
+    found = None
+    for low, high in known:
+        if (low, high) == (value, value_high):
+            return "exact"
+        if value is not None and (inside(value, low, high) and (value_high is None or inside(value_high, low, high))
+                                  or (value_high is not None and inside(low, value, value_high) and high is None)):
+            found = "in range"
+    return found
+
+
+def approval_items(checked: List[Dict], mode: str = "suggest") -> List[Dict]:
+    """The checked items as approval rows. A range's two items (items.list_items) make one row from its first
+    labelled end, its value the low end and value_high the high end, Verified only when both ends are labelled
+    with the same metric and Verified; the other end makes no row. With mode "drop" an unverified range row goes
+    too."""
+    by_id = {c["item"]: c for c in checked if c.get("range")}
+    out, done = [], set()
+    for c in checked:
+        span = c.get("range")
+        if not span:
+            out.append(c)
+            continue
+        if c["item"] in done:
+            continue
+        done.update(span["items"])
+        ends = [by_id[i] for i in span["items"] if i in by_id]
+        ok = len(ends) == 2 and ends[0]["metric"] == ends[1]["metric"] and \
+            all(e["status"] == verify.VERIFIED for e in ends)
+        if ok or mode != "drop":
+            out.append({**ends[0], "value": span["low"], "value_high": span["high"], "values": [],
+                        "status": verify.VERIFIED if ok else verify.SUGGESTION})
     return out
 
 
 def candidate_from_item(item: Dict, structure: Dict, deck: Dict, model_type: Optional[str], fiscal_year_end: int) -> Dict:
-    """One approval-list row for a verified or suggested item, citing its source cell. The snippet is
-    the value cell's own text (as the deck states it); the period keeps the text of its period cell."""
+    """One approval-list row for a verified or suggested item, citing its source cell (the cell id, as before;
+    the figure's position in it rides beside). The snippet is the cell's own text (as the deck states it); the
+    period keeps the text of its period cells. An ambiguous figure carries both readings, Python's default first
+    and the row's value (structure-labelling.md section 1): the analyst confirms it or uses Edit. The source
+    names the type Python sent: a type the model corrected is only logged (`model_type` is not used)."""
     by_id = {f"r{c['row']}c{c['col']}": c for c in structure["cells"]}
     cell = by_id.get(item["value_cell"]) or {}
     period_cells = [by_id[c]["text"] for c in item.get("period_cells") or () if c in by_id]
@@ -322,17 +371,19 @@ def candidate_from_item(item: Dict, structure: Dict, deck: Dict, model_type: Opt
         if cell else None
     unit = item.get("unit_other") if item.get("unit") == "other" else item.get("unit")   # "other": the ISO code
     target, stated = _target_date(item.get("period")), (" ".join(period_cells) or item.get("period"))
-    source = {"file": deck["file"], **_where(structure), "kind": "structure", "structure": model_type or structure["type"],
+    source = {"file": deck["file"], **_where(structure), "kind": "structure", "structure": structure["type"],
               "cell": item["value_cell"]}
     if structure.get("table") is not None:
         source.update(table=structure["table"], row=cell.get("row"), col=cell.get("col"))
     candidate = {
-        "claim_type": item["metric"], "value": item.get("value"), "value_high": None,
+        "claim_type": item["metric"], "value": item.get("value"), "value_high": item.get("value_high"),
         "unit": unit if unit in _UNITS else None, "currency": unit if unit and len(unit) == 3 and unit.isupper() else None,
         "target_date": target, "period_text": stated if target else None,
         "snippet": (cell.get("text") or "")[:claims.SNIPPET_MAX], "label_from": label if label != cell.get("text") else None,
         "date_from": stated if target and stated != cell.get("text") else None, "sources": [source],
-        "inconsistent_dates": [], "origin": "ai", "cell": item["value_cell"], "ai_status": item["status"],
+        "inconsistent_dates": [], "origin": "ai", "cell": item["value_cell"], "position": item.get("position"),
+        "item": item.get("item"), "readings": item["values"] if len(item.get("values") or ()) > 1 else [],
+        "ai_status": item["status"],
         "ai_label": verify.label(item["status"]),
         "ai_checks": item.get("checks"), "period_cells": list(item.get("period_cells") or []),
         "actual_or_forecast": item.get("actual_or_forecast"),
@@ -355,8 +406,10 @@ def _target_date(period: Optional[str]) -> Optional[str]:
 
 
 async def reverify_audit(db, audit_id: str, fiscal_year_end: int) -> int:
-    """A new fiscal year-end re-runs period mapping on the model's readings too: every stored item is
-    verified again under it and the open approval rows take the new label. Returns the rows changed."""
+    """A new fiscal year-end re-runs period mapping on the model's readings too: every stored reading is
+    verified again under it, from its stored labels and item list, and the open approval rows take the new
+    label. A reading stored under v2 holds no labels or item list: it is skipped and its rows keep their
+    labels (structure-labelling.md section 5). Returns the rows changed."""
     changed = 0
     decks = await db[TEXT_COLLECTION].find({"audit_id": audit_id}, {"_id": 0, "deck_id": 1, "structures": 1}).to_list(1000)
     mode = verify.unmatched_mode()
@@ -366,16 +419,18 @@ async def reverify_audit(db, audit_id: str, fiscal_year_end: int) -> int:
         for structure in found:
             key = (structure.get("ai") or {}).get("key")
             stored = await gateway.stored_structure(db, audit_id, key) if key else None
-            if not stored:
+            if not stored or "labels" not in (stored.get("output") or {}) or not stored.get("items"):
                 continue
-            checked = verify.verify(structure, stored["output"]["items"], fiscal_year_end, mode)
+            output = stored["output"]
+            checked = verify.verify(structure, stored["items"], output["labels"], output.get("pairs") or [],
+                                    fiscal_year_end, mode)
             await gateway.record_verification(db, audit_id, key, [x["status"] for x in checked["items"]],
                                               checked["dropped"], checked["periods_corrected"])
             structure["ai"] = {**structure["ai"], "periods_corrected": checked["periods_corrected"]}
-            for item in checked["items"]:
+            for item in approval_items(checked["items"], mode):
                 result = await db[CANDIDATES_COLLECTION].update_one(
                     {"audit_id": audit_id, "deck_id": deck["deck_id"], "structure_key": key, "status": "pending",
-                     "cell": item["value_cell"], "claim_type": item["metric"], "value": item.get("value")},
+                     "item": item["item"]},
                     {"$set": {"ai_status": item["status"], "ai_label": verify.label(item["status"]),
                               "ai_checks": item.get("checks")}})
                 changed += getattr(result, "modified_count", 0)

@@ -6,8 +6,8 @@ import { Input } from "@/components/ui/input";
 import { getDecks, removeDeck, updateCandidate, uploadDeck } from "@/lib/api";
 import {
   ALL_DECKS, CLAIM_TYPES, CLAIM_UNITS, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
-  DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, INCONSISTENCY_LABEL, PLACEHOLDER, STATUS_LABELS, VERIFIED_LABEL, claimDate, claimValue, deckRunLog,
-  rowEdit, sourceRef, statusCounts, typeLabel,
+  DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, INCONSISTENCY_LABEL, OTHER_TYPE_NOTE, PLACEHOLDER, STATUS_LABELS, VERIFIED_LABEL, claimDate, claimValue, deckRunLog,
+  needsType, readingChoices, rowEdit, sourceRef, statusCounts, typeLabel,
 } from "@/lib/deckClaims";
 
 const STATUS_STYLE = {
@@ -177,8 +177,10 @@ export default function DeckPanel({ auditId }) {
 function CandidateRow({ candidate: c, onSave }) {
   const [draft, setDraft] = useState(null);
   const isRow = Boolean(c.by_period?.length);      // a table row: its values by period
-  const startEdit = () => setDraft({
-    claim_type: c.claim_type, value: c.value ?? "", value_high: c.value_high ?? "", unit: c.unit ?? "", currency: c.currency ?? "", target_date: c.target_date ?? "",
+  const choices = readingChoices(c);               // a figure that reads two ways: the default is pre-selected
+  // Edit, optionally starting from the other reading of an ambiguous figure.
+  const startEdit = (value) => setDraft({
+    claim_type: c.claim_type, value: value ?? c.value ?? "", value_high: c.value_high ?? "", unit: c.unit ?? "", currency: c.currency ?? "", target_date: c.target_date ?? "",
     values: (c.by_period || []).map((i) => i.value ?? ""),
   });
   const saveEdit = async () => {
@@ -204,6 +206,7 @@ function CandidateRow({ candidate: c, onSave }) {
         <>
           <td className="py-2 pr-3">
             <select value={draft.claim_type} onChange={set("claim_type")} className={selectClass} data-testid="edit-claim-type">
+              {needsType(draft) && <option value={draft.claim_type} disabled>{typeLabel(draft.claim_type)}: choose a type</option>}
               {CLAIM_TYPES.map((t) => <option key={t} value={t}>{typeLabel(t)}</option>)}
             </select>
           </td>
@@ -233,8 +236,19 @@ function CandidateRow({ candidate: c, onSave }) {
         </>
       ) : (
         <>
-          <td className="py-2 pr-3 text-slate-800 whitespace-nowrap">{typeLabel(c.claim_type)}</td>
-          <td className={`py-2 pr-3 font-mono text-slate-900 ${isRow ? "" : "whitespace-nowrap"}`}>{claimValue(c)}</td>
+          <td className="py-2 pr-3 text-slate-800 whitespace-nowrap">
+            {typeLabel(c.claim_type)}
+            {needsType(c) && <div className="text-[10px] text-amber-800 mt-0.5" data-testid="candidate-needs-type">{OTHER_TYPE_NOTE}</div>}
+          </td>
+          <td className={`py-2 pr-3 font-mono text-slate-900 ${isRow ? "" : "whitespace-nowrap"}`}>
+            {choices.length ? (
+              <select value={0} onChange={(e) => Number(e.target.value) && startEdit(choices[Number(e.target.value)].value)}
+                className={selectClass} title="This figure reads two ways. Approve the first reading, or choose the other to edit the claim."
+                data-testid="candidate-readings">
+                {choices.map((r, i) => <option key={i} value={i}>{r.label}</option>)}
+              </select>
+            ) : claimValue(c)}
+          </td>
           <td className="py-2 pr-3 font-mono text-slate-700 whitespace-nowrap">{claimDate(c)}</td>
         </>
       )}
@@ -268,18 +282,19 @@ function CandidateRow({ candidate: c, onSave }) {
       <td className="py-2 whitespace-nowrap">
         {draft ? (
           <div className="flex gap-1">
-            <Button size="sm" onClick={saveEdit} className="h-7 bg-sky-600 hover:bg-sky-500" data-testid="edit-save">Save and approve</Button>
+            <Button size="sm" onClick={saveEdit} disabled={needsType(draft)} className="h-7 bg-sky-600 hover:bg-sky-500" data-testid="edit-save">Save and approve</Button>
             <Button size="sm" variant="outline" onClick={() => setDraft(null)} className="h-7">Cancel</Button>
           </div>
         ) : (
           <div className="flex gap-1">
-            <Button size="sm" variant="outline" title="Approve" onClick={() => onSave(c, { status: "approved" })} className="h-7 px-2" data-testid="candidate-approve">
+            <Button size="sm" variant="outline" title={needsType(c) ? OTHER_TYPE_NOTE : "Approve"} disabled={needsType(c)}
+              onClick={() => onSave(c, { status: "approved" })} className="h-7 px-2" data-testid="candidate-approve">
               <Check className="h-3.5 w-3.5 text-emerald-700" />
             </Button>
             <Button size="sm" variant="outline" title="Reject" onClick={() => onSave(c, { status: "rejected" })} className="h-7 px-2" data-testid="candidate-reject">
               <X className="h-3.5 w-3.5 text-rose-700" />
             </Button>
-            <Button size="sm" variant="outline" title="Edit" onClick={startEdit} className="h-7 px-2" data-testid="candidate-edit">
+            <Button size="sm" variant="outline" title="Edit" onClick={() => startEdit()} className="h-7 px-2" data-testid="candidate-edit">
               <Pencil className="h-3.5 w-3.5 text-slate-700" />
             </Button>
           </div>

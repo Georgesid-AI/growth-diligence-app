@@ -1,48 +1,39 @@
 """The verifier: model output never becomes Verified on its own (CLAUDE.md rule 18).
 
-Spec: docs/specs/llm-structure-reading.md section 2, with the period rules of deck-parser.md
-section 2. Pure: no I/O, no model, no database. The orchestrator reads the STRUCTURE_UNMATCHED
-switch (unmatched_mode) and passes it in.
+Spec: docs/specs/structure-labelling.md section 4, with the period rules of deck-parser.md section 2. Pure:
+no I/O, no model, no database. The orchestrator reads the STRUCTURE_UNMATCHED switch (unmatched_mode) and
+passes it in.
 
-An item is matched when
-- its value matches its `value_cell` only: that cell exists and holds the same number after
-  normalisation (currency symbols and thousands separators removed; a decimal comma read only if
-  the structure writes numbers like 1.234,5; otherwise a dot before exactly three digits, "2.500",
-  is read as 2500 or 2.5, whichever matches, and the item records which in checks.dot_reading;
-  brackets around the whole figure make a negative, so "(1,200)" is -1200, while a bracketed number
-  after text ("Net loss (1,200)", "Telegram(30K)") matches either sign, recorded in
-  checks.bracket_reading; k/m/bn suffixes applied; a scale in a neighbouring cell, a header cell or
-  the table's corner cell, such as "£m" or "'000", applied). The match is exact: a rounded number
-  does not match. An item with no value is never matched;
-- its period matches its `period_cells` only: they are header cells of the value cell (its row
-  header or the header stack above its column; in a KPI panel or a roadmap, the cells left of it in
-  its row and the top line of its own box), the first is the value cell's lowest period header (a
-  year header alone verifies a yearly value only), and the period rebuilt from them under the section 2
-  rules has the same start and end date under the audit's year-end (a year, quarter or half is
-  fiscal when it is not December; a month is a calendar month, and a month under a year header
-  falls inside that year). A two-cell period is a month, quarter or half cell and the year cell
-  above it in the same column range. A null period matches only when
-  `period_cells` is empty and no header of the value cell holds a period. A relative column ("M3",
-  "Year 1") has no period unless its second period cell states the start date ("Start: Jan 2025").
-  A period the value cell's own text states ("$8,000 revenue in 2022") rebuilds from that cell, with
-  `period_cells` empty or citing the cell itself;
-- every proposed flag is reproduced from the matched values (see _flag_reproduced).
+Python lists every figure (app/structures/items.py), so every value and cell is Python's and nothing matches
+a model value any more. The model labels each listed item (metric, period, unit, actual or forecast) and pairs
+a roadmap's lines with its dates. Here each label is joined to its item, and
 
-When the value matches and Python rebuilds a period from the cited period cells, the rebuilt period
-replaces the model's and the period counts as matched: the model is not told the year-end, so it
-reads "Apr" under "FY2025" as 2025-04. A model period that differed is a "period corrected" case: it
-stays in the stored reading, is counted per structure and per deck, and rides on the item as
-"model_period".
+- the period is rebuilt by Python from the item's lowest period header (a month, quarter or half with the
+  year cell above it in the same column range), else from a period its own cell states ("$8,000 revenue in
+  2022"), else in a roadmap from its adjacent date line (the one date line directly above or below it in its
+  text box). The rebuilt period replaces the model's, which the model reads without the audit's year-end;
+  a difference is a "period corrected" case, kept as "model_period" and counted. A model period with
+  nothing to rebuild from, or a header period Python cannot rebuild (period headers both above and beside
+  the cell), is "period not rebuilt": an AI suggestion. A null period stands when no header holds a period;
+- a figure in a paired roadmap line is dated by its pair's date cell, and is Verified only when its own
+  period cells rebuild that same period (the pairing is the model's);
+- the separator and sign readings come from the item's cell: "2.500" (thousands unless a suffix) and a
+  bracketed number after text (negative after loss, deficit, negative or decline) are recorded with
+  Python's default as checks.dot_reading and checks.bracket_reading, so the item can be Verified;
+- total_mismatch and growth_mismatch are computed by Python over the Verified items (_flag_reproduced);
+- not_a_metric items are dropped and counted; an "other" item is listed as type Other and never Verified;
+- each pair is a milestone: no value, so never Verified, dated by its date cell, its claim type its
+  category's (MILESTONE_TYPES).
 
-Matched items are "verified". The others are "suggestion" (shown as "AI suggestion, not verified")
-or, with the switch at "drop", removed and counted.
+Verified items are "verified". The others are "suggestion" (shown as "AI suggestion, not verified") or,
+with the switch at "drop", removed and counted.
 """
-import math
 import os
 import re
 from typing import Dict, List, Optional, Tuple
 
-from ..decks import claims
+from ..decks import claims, parser
+from . import redact
 
 VERIFIED = "verified"
 SUGGESTION = "suggestion"
@@ -50,6 +41,11 @@ SUGGESTION_LABEL = "AI suggestion, not verified"
 VERIFIED_LABEL = "Verified"
 UNMATCHED_MODES = ("suggest", "drop")
 BOX_TYPES = ("kpi_panel", "roadmap")
+OTHER, NOT_A_METRIC = "other", "not_a_metric"
+# A roadmap milestone's claim type, by the category the model gives its pair (structure-labelling.md section 2).
+MILESTONE_TYPES = {"launch": "product", "feature": "product", "expansion": "product", "partnership": "product",
+                   "hiring": "people", "break_even": "ebitda", "funding": OTHER, "certification": "product",
+                   "other": "product"}
 GROWTH_BASE = {"revenue_growth": "revenue", "user_growth": "users"}
 TOTAL_TOLERANCE = 0.005         # a total and the sum of its parts differ by more than 0.5% of the total...
 GROWTH_TOLERANCE = 0.5          # ...a stated growth rate and the one the values give by more than 0.5 points
@@ -65,22 +61,12 @@ def unmatched_mode() -> str:
 # ---------------------------------------------------------------------------
 # Numbers
 # ---------------------------------------------------------------------------
-_CURRENCY = re.compile(r"US\$|[£$€¥₹]|\b(?:USD|EUR|GBP|CHF|JPY|BGN|PLN|SEK|NOK|DKK|CAD|AUD)\b")
-_DECIMAL_COMMA = re.compile(r"\d{1,3}(?:\.\d{3})+,\d+")
 _DOT_THOUSANDS = re.compile(r"[1-9]\d{0,2}\.\d{3}")     # "2.500": 2,500 written with a dot, or 2.5
+_DECIMAL_COMMA = re.compile(r"\d{1,3}(?:\.\d{3})+,\d+")
 _LETTER = re.compile(r"[^\W\d_]")
 _SCALE_WORD = {"k": 1e3, "thousand": 1e3, "thousands": 1e3, "tsd": 1e3, "хил": 1e3,
                "m": 1e6, "mn": 1e6, "mm": 1e6, "million": 1e6, "millions": 1e6, "mio": 1e6, "млн": 1e6,
                "b": 1e9, "bn": 1e9, "billion": 1e9, "billions": 1e9, "mrd": 1e9, "млрд": 1e9}
-_SUFFIX = r"(?:\s?(?P<suffix>k|K|mn|MM|m|M|bn|B|thousand|million|billion|Mio|Mrd|Tsd|млн|млрд|хил)(?![^\W\d_]))?"
-_NUMBER = {
-    False: re.compile(r"(?P<open>\()?\s*(?:(?<![\w.])(?P<sign>[-−–]))?\s*(?<![\d.,])"
-                      r"(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?![\d]|[.,]\d)"
-                      + _SUFFIX + r"\s*(?P<pct>%)?\s*(?P<close>\))?"),
-    True: re.compile(r"(?P<open>\()?\s*(?:(?<![\w.])(?P<sign>[-−–]))?\s*(?<![\d.,])"
-                     r"(?P<num>\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d+(?:,\d+)?)(?![\d]|[.,]\d)"
-                     + _SUFFIX + r"\s*(?P<pct>%)?\s*(?P<close>\))?"),
-}
 # A scale given in a cell of its own or in a header: "£m", "(£000)", "'000", "in millions", "€ Mio".
 _SCALE_MARK = re.compile(
     r"(?i)(?:(?<![^\W\d_])(?P<word>thousands?|millions?|billions?|tsd|mio|mrd|млн|млрд|хил)(?![^\W\d_])"
@@ -108,28 +94,64 @@ def _cell_figure(text: str, comma: bool = False) -> Optional[Tuple[List[Reading]
     decimal comma ("2.500") reads as 2.5 ("decimal") or 2500 ("thousands"). Brackets around the whole
     figure ("(1,200)") make a negative; a bracketed number after text ("Net loss (1,200)",
     "Telegram(30K)") reads as either sign ("positive" or "negative"). Otherwise a reading is None."""
-    blanked = text
-    for d in reversed(claims.find_dates(text, table=True)):
-        blanked = blanked[:d["start"]] + " " + blanked[d["end"]:]
-    blanked = _CURRENCY.sub(" ", blanked)
-    found = [m for m in _NUMBER[comma].finditer(blanked) if m.group("num")]
+    found = figures(text, comma)
     if len(found) != 1:
         return None
-    m = found[0]
-    raw = m.group("num")
-    dots = [(float(raw.replace(",", "")), "decimal"), (float(raw.replace(".", "")), "thousands")] \
-        if not comma and _DOT_THOUSANDS.fullmatch(raw) else \
-        [(float(raw.replace(".", "").replace(",", ".") if comma else raw.replace(",", "")), None)]
-    suffix = (m.group("suffix") or "").lower()
-    scale = _SCALE_WORD[suffix] if suffix else 1.0
-    if m.group("sign"):
-        signs = [(-1.0, None)]
-    elif m.group("open") and m.group("close"):
-        signs = [(1.0, "positive"), (-1.0, "negative")] if _LETTER.search(blanked[:m.start()]) else [(-1.0, None)]
-    else:
-        signs = [(1.0, None)]
-    return ([(sign * value * scale, dot, bracket) for value, dot in dots for sign, bracket in signs],
-            bool(suffix or m.group("pct")))
+    return found[0]["readings"], found[0]["own_scale"]
+
+
+def _blank(text: str, spans) -> str:
+    for start, end in sorted(spans, reverse=True):
+        text = text[:start] + " " * (end - start) + text[end:]
+    return text
+
+
+def figures(text: str, comma: bool = False) -> List[Dict]:
+    """Every figure in a cell's text, in order: [{"start", "end", "readings", "own_scale", "suffix"}]. start and
+    end cut the figure from the text as written; "readings" are (number, dot reading, bracket reading) as for
+    _cell_figure, before any scale from another cell; "own_scale" is True when the figure carries a k/m/bn
+    suffix or %. Dates are periods, never values, and a scale mark ("'000") is no figure: both are left out
+    first. A range ("$12 -$13 million", "5 – 10%") is two figures: the dash is no sign, and the low end takes
+    the high end's suffix or % when it has none (deck-parser.md section 2); the high end carries "range_low",
+    the index of its low end."""
+    marks = [m.span() for m in _SCALE_MARK.finditer(text) if m.group("mark") and "000" in m.group("mark")]
+    blanked = redact.blank_currency(_blank(text, [(d["start"], d["end"]) for d in claims.find_dates(text, table=True)]
+                                           + marks))
+    out = []
+    for m in redact.NUMBER[comma].finditer(blanked):
+        if not m.group("num"):
+            continue
+        raw = m.group("num")
+        dots = [(float(raw.replace(",", "")), "decimal"), (float(raw.replace(".", "")), "thousands")] \
+            if not comma and _DOT_THOUSANDS.fullmatch(raw) else \
+            [(float(raw.replace(".", "").replace(",", ".") if comma else raw.replace(",", "")), None)]
+        sign, range_low = m.group("sign"), None
+        if sign and out and not blanked[out[-1]["end"]:m.start("sign")].strip():
+            sign, range_low = None, len(out) - 1                # a range: "12 - 13"
+            low = out[-1]
+            if not low["suffix"] and not low["pct"]:
+                low.update(suffix=(m.group("suffix") or "").lower(), pct=bool(m.group("pct")))
+        if sign:
+            signs = [(-1.0, None)]
+        elif m.group("open") and m.group("close"):
+            signs = [(1.0, "positive"), (-1.0, "negative")] if _LETTER.search(blanked[:m.start()]) else [(-1.0, None)]
+        else:
+            signs = [(1.0, None)]
+        # The figure as cut from the cell: its brackets when they close around it, its sign unless it is a range
+        # dash; never a leading currency symbol or spaces.
+        both = bool(m.group("open") and m.group("close"))
+        lo = m.start() if both else m.start("sign") if sign else m.start("num")
+        hi = m.end() if both else max(m.end(g) for g in ("num", "suffix", "pct") if m.group(g))
+        seg = blanked[lo:hi]
+        out.append({"start": lo + len(seg) - len(seg.lstrip()), "end": hi - len(seg) + len(seg.rstrip()),
+                    "dots": dots, "signs": signs, "suffix": (m.group("suffix") or "").lower(),
+                    "pct": bool(m.group("pct")), **({"range_low": range_low} if range_low is not None else {})})
+    for f in out:
+        scale = _SCALE_WORD[f["suffix"]] if f["suffix"] else 1.0
+        dots, signs = f.pop("dots"), f.pop("signs")
+        f["readings"] = [(sign * value * scale, dot, bracket) for value, dot in dots for sign, bracket in signs]
+        f["own_scale"] = bool(f["suffix"] or f.pop("pct"))
+    return out
 
 
 def scale_of(text: str) -> Optional[float]:
@@ -141,10 +163,6 @@ def scale_of(text: str) -> Optional[float]:
     if token.startswith("000"):
         return 1e3
     return _SCALE_WORD.get(token.rstrip("s") if token not in _SCALE_WORD else token)
-
-
-def same_number(a: float, b: float) -> bool:
-    return math.isclose(a, b, rel_tol=1e-9, abs_tol=1e-9)
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +210,19 @@ def _corner(structure: Dict) -> List[Dict]:
     return [c for c in cells if c["row"] in rows and c["col"] == first]
 
 
+def scale_factor(structure: Dict, cell: Dict) -> float:
+    """The scale a figure with no suffix or % of its own takes: the first stated in a neighbouring cell of its
+    row, one of its header cells or the table's corner cell ("£m" -> 1e6, "'000" -> 1e3), else 1."""
+    cells, comma = structure["cells"], decimal_comma(structure["cells"])
+    neighbours = [c for c in cells if c["row"] == cell["row"] and abs(c["col"] - cell["col"]) == 1
+                  and not _is_value(c, comma)]
+    for c in neighbours + header_cells(structure, cell) + _corner(structure):
+        scale = scale_of(c["text"])
+        if scale:
+            return scale
+    return 1.0
+
+
 # ---------------------------------------------------------------------------
 # Periods
 # ---------------------------------------------------------------------------
@@ -222,6 +253,59 @@ def _relative_range(relative: Dict, unit_text: str, start_cell: Optional[Dict],
     return begin, end
 
 
+def is_date_line(text: str) -> bool:
+    """A date label as deck-parser.md section 7 counts one for a roadmap: a date with at most two other words
+    ("Nov. 2007", "Launch Q3 2024"); not a sentence that holds a date."""
+    return bool(parser._date_labels(text or "", claims))
+
+
+def _date_sides(structure: Dict, cell: Dict) -> Dict[str, Dict]:
+    """{"above": date line, "below": date line}: the date lines directly above and below a text line in its text box."""
+    found = {}
+    for c in structure["cells"]:
+        if c.get("box") is not None and c.get("box") == cell.get("box") and c["col"] == cell["col"] \
+                and abs(c["row"] - cell["row"]) == 1 and is_date_line(c["text"]):
+            found["above" if c["row"] < cell["row"] else "below"] = c
+    return found
+
+
+def period_header(text: str) -> bool:
+    """A period header ("Q3", "Mar", "M3", "Year 1"): a part of a period or a relative column, never a value."""
+    found = claims.period_cell(text)
+    return bool(found) and ("part" in found or "relative" in found)
+
+
+def holds_figure(cell: Dict, comma: bool = False) -> bool:
+    """Whether the item list (structure-labelling.md section 1) lists a figure in the cell."""
+    return not period_header(cell["text"]) and bool(figures(cell["text"], comma))
+
+
+def date_direction(structure: Dict) -> Optional[str]:
+    """A roadmap's date direction, "above" or "below" (structure-labelling.md section 2, decisions of 2026-10-06), from
+    its text lines with a date line on one side only: the side they all name; when they disagree, the side those that
+    hold a figure all name; else None."""
+    comma = decimal_comma(structure["cells"])
+    one_sided = [(next(iter(sides)), c) for c in structure["cells"] if not is_date_line(c["text"])
+                 for sides in [_date_sides(structure, c)] if len(sides) == 1]
+    for named in ([side for side, _ in one_sided], [side for side, c in one_sided if holds_figure(c, comma)]):
+        if len(set(named)) == 1:
+            return named[0]
+    return None
+
+
+def adjacent_date_line(structure: Dict, cell: Dict) -> Optional[Dict]:
+    """In a roadmap, the date line of a text line (structure-labelling.md section 2): the date line directly above or
+    below it in the same text box; with one on each side, the one in the timeline's date direction (None when the
+    timeline has none)."""
+    if structure.get("type") != "roadmap" or is_date_line(cell["text"]):
+        return None
+    sides = _date_sides(structure, cell)
+    if len(sides) == 1:
+        return next(iter(sides.values()))
+    direction = date_direction(structure) if sides else None
+    return sides.get(direction) if direction else None
+
+
 def lowest_period_headers(structure: Dict, value_cell: Dict) -> List[Dict]:
     """The header cells nearest the value cell that hold a period, a part of one ("Q3", "Mar") or a
     relative column ("M3"): the lowest one above it and the nearest one left of it in its row."""
@@ -232,118 +316,85 @@ def lowest_period_headers(structure: Dict, value_cell: Dict) -> List[Dict]:
         ([max(left, key=lambda h: h["col"])] if left else [])
 
 
-def rebuild_period(structure: Dict, value_cell: Dict, period_ids: List[str], fiscal_year_end: int = 12):
-    """The (start, end) the cited period cells give under the section 2 rules, or None when they do
-    not make a period, or the first is not the value cell's lowest period header: a quarterly or
-    monthly value cited against its year header alone is unmatched, so a year header verifies a
-    yearly value only. A value with period headers both above it and left of it in its row has a
-    period the rules do not build, so it is never matched with one."""
-    found = _rebuild(structure, value_cell, period_ids, fiscal_year_end)
-    return found[1] if found else None
-
-
-def rebuilt_label(structure: Dict, value_cell: Dict, period_ids: List[str], fiscal_year_end: int = 12) -> Optional[str]:
-    """The period label the cited cells give ("2025", "2025-Q3", "FY2025-04"; "2025-02" for a relative
-    column one month long), or None when they give no period or a span no label names."""
-    found = _rebuild(structure, value_cell, period_ids, fiscal_year_end)
-    return found[0] if found else None
-
-
 def own_period(value_cell: Optional[Dict]) -> Optional[str]:
     """The period the value cell's own text states ("$8,000 revenue in 2022" -> "2022"), or None."""
     found = claims.period_cell(value_cell["text"]) if value_cell else None
     return found.get("label") if found else None
 
 
-def _rebuild(structure: Dict, value_cell: Dict, period_ids: List[str], fiscal_year_end: int):
-    """(label or None, (start, end)) for rebuild_period and rebuilt_label. A period in the value cell's own
-    text rebuilds from that cell when `period_ids` is empty or cites the cell itself."""
-    own = own_period(value_cell) if list(period_ids) in ([], [_id(value_cell)]) else None
-    if own:
-        span = _range(own, fiscal_year_end)
-        return (own, span) if span else None
-    by_id = {_id(c): c for c in structure["cells"]}
-    cited = [by_id.get(i) for i in period_ids]
-    if not cited or None in cited or len(cited) > 2:
-        return None
-    first = cited[0]
-    lowest = lowest_period_headers(structure, value_cell)
-    if len(lowest) != 1 or _id(first) != _id(lowest[0]):
-        return None
-    found = claims.period_cell(first["text"])
+def date_period(text: str) -> Optional[str]:
+    """The period a roadmap date cell gives: its one date ("Q3 2025" -> "2025-Q3"), or None for none or several."""
+    dates = claims.find_dates(text or "")
+    return dates[0]["date"] if len(dates) == 1 else None
+
+
+def _year_above(structure: Dict, part: Dict, cell: Dict) -> Optional[Tuple[Dict, Dict]]:
+    """(year cell, combined period) for a month, quarter or half cell: the nearest cell above it in the same
+    column range that is a year (deck-parser.md section 2), or None."""
+    above = sorted((c for c in structure["cells"] if c["row"] < cell["row"] and all(k in _cols(c) for k in _cols(cell))),
+                   key=lambda c: -c["row"])
+    for up in above:
+        joined = claims.combine_period(part, claims.period_cell(up["text"]))
+        if joined:
+            return up, joined
+    return None
+
+
+def _from_header(structure: Dict, header: Dict, fiscal_year_end: int):
+    """(label or None, (start, end), [cell ids]) from a lowest period header, or None."""
+    found = claims.period_cell(header["text"])
     if not found:
         return None
-    if len(cited) == 1:
-        label = found.get("label")
-    else:
-        second = cited[1]
-        if "relative" in found:
-            span = _relative_range(found, first["text"], second, fiscal_year_end)
-            return (span[0][:7] if span[0][:7] == span[1][:7] else None, span) if span else None
-        above = second["row"] < first["row"] and all(k in _cols(second) for k in _cols(first))
-        joined = claims.combine_period(found, claims.period_cell(second["text"])) if above else None
-        label = joined["label"] if joined else None
+    if "relative" in found:
+        starts = [c for c in structure["cells"] if _START.search(c["text"])
+                  and len([d for d in claims.find_dates(c["text"], table=True) if d["kind"] == "month"]) == 1]
+        span = _relative_range(found, header["text"], starts[0], fiscal_year_end) if len(starts) == 1 else None
+        return ((span[0][:7] if span[0][:7] == span[1][:7] else None), span, [_id(header), _id(starts[0])]) \
+            if span else None
+    cells = [_id(header)]
+    label = found.get("label")
+    if "part" in found:
+        year = _year_above(structure, found, header)
+        if not year:
+            return None
+        cells.append(_id(year[0]))
+        label = year[1]["label"]
     span = _range(label, fiscal_year_end)
-    return (label, span) if span else None
+    return (label, span, cells) if span else None
+
+
+def rebuild(structure: Dict, cell: Dict, fiscal_year_end: int = 12):
+    """(label or None, (start, end), [period cell ids]) Python rebuilds for an item's cell, or None
+    (structure-labelling.md section 4): from its lowest period header (a month, quarter or half with the year cell
+    above it in the same column range), else from a period its own text states, else in a roadmap from its
+    adjacent date line. Period headers both above it and beside it make a period the rules do not build. A
+    relative column ("Year 1") counted from a start date ("Start: Jan 2025") has a label only when it is one month
+    long."""
+    lowest = lowest_period_headers(structure, cell)
+    if len(lowest) > 1:
+        return None
+    if lowest:
+        found = _from_header(structure, lowest[0], fiscal_year_end)
+        if found:
+            return found
+    label = own_period(cell)
+    if label and _range(label, fiscal_year_end):
+        return label, _range(label, fiscal_year_end), [_id(cell)]
+    date = adjacent_date_line(structure, cell)
+    label = date_period(date["text"]) if date else None
+    if label and _range(label, fiscal_year_end):
+        return label, _range(label, fiscal_year_end), [_id(date)]
+    return None
 
 
 def headers_hold_a_period(structure: Dict, value_cell: Dict) -> bool:
     """True when a header of the value cell holds a period: a full period, or a part with its year cell
     above it in the same column range (see claims.combine_period)."""
-    cells = structure["cells"]
     for h in header_cells(structure, value_cell):
         found = claims.period_cell(h["text"])
-        if not found:
-            continue
-        if "label" in found:
+        if found and ("label" in found or ("part" in found and _year_above(structure, found, h))):
             return True
-        if "part" in found:
-            for up in cells:
-                if up["row"] < h["row"] and all(k in _cols(up) for k in _cols(h)) and \
-                        claims.combine_period(found, claims.period_cell(up["text"])):
-                    return True
     return False
-
-
-def period_matches(structure: Dict, item: Dict, value_cell: Optional[Dict], fiscal_year_end: int = 12) -> bool:
-    if value_cell is None:
-        return False
-    if item.get("period") is None:
-        return not item.get("period_cells") and not headers_hold_a_period(structure, value_cell)
-    wanted = claims.period_range(item["period"], fiscal_year_end)
-    return wanted is not None and rebuild_period(structure, value_cell, item.get("period_cells") or [],
-                                                 fiscal_year_end) == wanted
-
-
-def value_matches(structure: Dict, item: Dict, value_cell: Optional[Dict]) -> bool:
-    return match_value(structure, item, value_cell)[0]
-
-
-def match_value(structure: Dict, item: Dict, value_cell: Optional[Dict]) \
-        -> Tuple[bool, Optional[str], Optional[str]]:
-    """(matched, dot reading, bracket reading) for the reading of the cell's number the value matched (see
-    _cell_figure); both readings are None when the cell's number has one reading or nothing matched."""
-    if value_cell is None or item.get("value") is None:
-        return False, None, None
-    cells, comma = structure["cells"], decimal_comma(structure["cells"])
-    found = _cell_figure(value_cell["text"], comma)
-    if found is None:
-        return False, None, None
-    readings, own_scale = found
-    factor = 1.0
-    if not own_scale:
-        neighbours = [c for c in cells if c["row"] == value_cell["row"] and abs(c["col"] - value_cell["col"]) == 1
-                      and not _is_value(c, comma)]
-        for c in neighbours + header_cells(structure, value_cell) + _corner(structure):
-            scale = scale_of(c["text"])
-            if scale:
-                factor = scale
-                break
-    wanted = float(item["value"])
-    for number, dot, bracket in readings:
-        if same_number(number * factor, wanted):
-            return True, dot, bracket
-    return False, None, None
 
 
 # ---------------------------------------------------------------------------
@@ -428,48 +479,94 @@ def _months(span: Tuple[str, str]) -> int:
 # ---------------------------------------------------------------------------
 # One reply
 # ---------------------------------------------------------------------------
-def verify(structure: Dict, items: List[Dict], fiscal_year_end: int = 12, mode: str = "suggest") -> Dict:
-    """{"items": [item + "status" + "checks"], "dropped": n, "periods_corrected": n} for one structure's
-    validated reply items.
+FLAGS = ("total_mismatch", "growth_mismatch")
 
-    `structure` is {"type", "cells", "header_rows"} as the deck parser found it (the cells before
-    redaction: redaction never changes a number or a period, and the citation is to the source).
-    Every item gets "status" ("verified" or "suggestion") and "checks" ({"value", "period",
-    "period_corrected", "flags"}: booleans; "dot_reading": "decimal" or "thousands" when the value
-    matched a "2.500"-style number, and "bracket_reading": "positive" or "negative" when it matched a
-    bracketed number after text, else None). When the value matches and its period cells rebuild a
-    period, that period replaces the model's; if the model's differed, the item carries it as
-    "model_period" and counts as a correction. With mode "drop" the unmatched items are removed and
+
+def _checks(ok: bool, corrected: bool, values: List[Dict]) -> Dict:
+    first = values[0] if values else {}
+    return {"period": ok, "period_corrected": corrected, "dot_reading": first.get("dot_reading"),
+            "bracket_reading": first.get("bracket_reading")}
+
+
+def _dated(structure: Dict, cell: Dict, model: Optional[str], pair_date: Optional[Dict], fiscal_year_end: int):
+    """(period, period cells, ok, corrected) for an item: the period Python rebuilds from the item's own period
+    cells replaces the model's (a difference is a correction); a null period stands when no header holds one; a
+    model period with nothing to rebuild from is not rebuilt. A figure in a paired roadmap line is dated by its
+    pair, and is ok only when its own cells rebuild that same period."""
+    found = rebuild(structure, cell, fiscal_year_end)
+    wanted = _range(model, fiscal_year_end) if model else None
+    if pair_date is not None:
+        label = date_period(pair_date["text"])
+        span = _range(label, fiscal_year_end) if label else None
+        if span is None:
+            return model, [], False, False
+        ok = found is not None and found[1] == span
+        return label, [_id(pair_date)], ok, ok and wanted != span
+    if found is None:
+        ok = model is None and not headers_hold_a_period(structure, cell)
+        return model, [], ok, False
+    label, span, cells = found
+    if label is None:                       # a span no label names: the model's period stands if it is that span
+        return model, cells, model is None or wanted == span, False
+    return label, cells, True, wanted != span
+
+
+def verify(structure: Dict, listed: Dict, labels: List[Dict], pairs: List[Dict] = (), fiscal_year_end: int = 12,
+           mode: str = "suggest") -> Dict:
+    """{"items": [checked], "dropped": n, "periods_corrected": n, "not_a_metric": n} for one structure's validated
+    labels and pairs (structure-labelling.md section 4).
+
+    `structure` is {"type", "cells", "header_rows"} as the deck parser found it (the cells before redaction:
+    redaction never changes a number or a period, and the citation is to the source); `listed` is Python's item
+    list for it (items.list_items, the raw text not needed). Each label is joined to its item, so a checked item
+    keeps the label's fields with Python's value, values (the default reading first), cell ("value_cell"),
+    position, the period cells Python rebuilt the period from, Python's flags ("proposed_flags", computed over the
+    Verified items) and its "status" ("verified" or "suggestion") and "checks" ({"period", "period_corrected"}:
+    booleans; "dot_reading" and "bracket_reading": the default reading's closed word, or None). A corrected period
+    keeps the model's as "model_period". not_a_metric items are dropped and counted; an "other" item is never
+    Verified. Each roadmap pair is a milestone (its line's cell, the claim type MILESTONE_TYPES gives its category,
+    the period of its date cell, no value), never Verified. With mode "drop" the unverified are removed and
     counted.
     """
     by_id = {_id(c): c for c in structure["cells"]}
-    checked = []
-    for item in items:
-        cell = by_id.get(item.get("value_cell"))
-        v, dot, bracket = match_value(structure, item, cell)
-        p = period_matches(structure, item, cell, fiscal_year_end)
-        # A matched value takes the period Python rebuilds from its cited cells, or from its own text when
-        # the model gives a period; when the model's own period differs (it does not know the year-end),
-        # that is a correction, and the model's is kept.
-        label = rebuilt_label(structure, cell, item["period_cells"], fiscal_year_end) \
-            if v and (item.get("period_cells") or item.get("period") is not None) else None
-        corrected = bool(label) and not p
-        if label:
-            item = {**item, "period": label, **({"model_period": item.get("period")} if corrected else {})}
-        checked.append((item, v, p or corrected, corrected, dot, bracket))
-    matched = [item for item, v, p, *_ in checked if v and p]
-    out, dropped = [], 0
-    for item, v, p, corrected, dot, bracket in checked:
-        flags = all(_flag_reproduced(f, item, matched, structure, fiscal_year_end)
-                    for f in item.get("proposed_flags") or ()) if v and p else not item.get("proposed_flags")
-        ok = v and p and flags
-        if not ok and mode == "drop":
-            dropped += 1
+    item_of = {item["id"]: item for item in listed.get("items") or ()}
+    dates = {d["id"]: by_id.get(d["cell"]) for d in listed.get("dates") or ()}
+    lines = {t["id"]: t["cell"] for t in listed.get("lines") or ()}
+    pair_of_cell = {lines[p["line"]]: dates.get(p["date"]) for p in pairs if p["line"] in lines}
+    checked, not_a_metric, corrected_count = [], 0, 0
+    for label_ in labels:
+        item = item_of[label_["item"]]
+        if label_["metric"] == NOT_A_METRIC:
+            not_a_metric += 1
             continue
-        out.append({**item, "status": VERIFIED if ok else SUGGESTION,
-                    "checks": {"value": v, "period": p, "period_corrected": corrected, "flags": flags,
-                               "dot_reading": dot, "bracket_reading": bracket}})
-    return {"items": out, "dropped": dropped, "periods_corrected": sum(1 for *_, c, _, _ in checked if c)}
+        cell = by_id[item["cell"]]
+        period, cells, ok, corrected = _dated(structure, cell, label_.get("period"), pair_of_cell.get(item["cell"]),
+                                              fiscal_year_end)
+        corrected_count += int(corrected)
+        out = {"item": item["id"], "position": item["position"],
+               **{k: label_.get(k) for k in ("metric", "period", "unit", "unit_other", "actual_or_forecast")},
+               "period": period, "value": item["values"][0]["value"], "values": [dict(v) for v in item["values"]],
+               "value_cell": item["cell"], **({"range": item["range"]} if item.get("range") else {}),
+               "period_cells": cells, "proposed_flags": [],
+               "status": VERIFIED if ok and label_["metric"] != OTHER else SUGGESTION,
+               "checks": _checks(ok, corrected, item["values"])}
+        if corrected:
+            out["model_period"] = label_.get("period")
+        checked.append(out)
+    verified = [c for c in checked if c["status"] == VERIFIED]
+    for c in verified:
+        c["proposed_flags"] = [f for f in FLAGS if _flag_reproduced(f, c, verified, structure, fiscal_year_end)]
+    for p in pairs:
+        line, date = lines.get(p["line"]), dates.get(p["date"])
+        period = date_period(date["text"]) if date else None
+        checked.append({"item": p["line"], "line": p["line"], "date": p["date"], "category": p["category"],
+                        "position": None, "metric": MILESTONE_TYPES[p["category"]], "period": period, "unit": None,
+                        "unit_other": None, "actual_or_forecast": "unknown", "value": None, "values": [],
+                        "value_cell": line, "period_cells": [_id(date)] if date else [], "proposed_flags": [],
+                        "status": SUGGESTION, "checks": _checks(period is not None, False, [])})
+    kept = [c for c in checked if c["status"] == VERIFIED or mode != "drop"]
+    return {"items": kept, "dropped": len(checked) - len(kept), "periods_corrected": corrected_count,
+            "not_a_metric": not_a_metric}
 
 
 def label(status: str) -> str:

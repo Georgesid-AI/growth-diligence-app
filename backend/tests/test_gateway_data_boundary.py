@@ -707,10 +707,12 @@ def test_the_gateway_reads_no_deck_text_snippet_or_source():
 
 
 # ---------------------------------------------------------------------------
-# The structure path (CLAUDE.md rules 16-18, docs/specs/llm-structure-reading.md section 10).
-# Redacted deck structure cells and column-mapping texts (at most 3 header rows, at most 3 samples per
-# numeric or date column, a profile per text column) may reach the provider, with the audit's consent,
-# as extracted text with cell positions. Nothing else does, and no sent text is stored or logged.
+# The structure path (CLAUDE.md rules 16-18, docs/specs/llm-structure-reading.md section 10 and
+# docs/specs/structure-labelling.md section 9). Redacted deck structure cells with Python's item list (each
+# item's raw text a figure inside its cell) and column-mapping texts (at most 3 header rows, at most 3 samples
+# per numeric or date column, a profile per text column) may reach the provider, with the audit's consent, as
+# extracted text with cell positions. Nothing else does, and no sent text, raw item text included, is stored or
+# logged.
 # ---------------------------------------------------------------------------
 from app.structures import redact as structure_redact  # noqa: E402
 from app import structures  # noqa: E402
@@ -720,16 +722,22 @@ STRUCTURE_AUDIT = {"id": "audit-boundary", "company_name": "Target Co", "client_
 GOOD_STRUCTURE = "r1c2: FY2025\nr1c3: FY2026\nr2c1: Revenue\nr2c2: £1,200,000\nr2c3: £1,500,000"
 GOOD_MAPPING = ("r1c1: Customer\nr1c2: Invoice Date\nr1c3: Amount\nc2 sample: 2025-01-31\nc2 sample: 2025-02-28\n"
                 "c2 sample: 2025-03-31\nc3 sample: 1200.50\nc1 profile: distinct 42, typical length 12, shape Aa Aa")
-STRUCTURE_REPLY = json.dumps({"type": "table", "items": [
-    {"metric": "revenue", "period": "FY2025", "value": 1200000, "unit": "GBP", "actual_or_forecast": "forecast",
-     "unit_other": None, "value_cell": "r2c2", "period_cells": ["r1c2"], "proposed_flags": []}]})
+# The labelling reply to GOOD_ITEMS: one label per listed item, no value, cell or flag.
+STRUCTURE_REPLY = json.dumps({"type": "table", "pairs": [], "labels": [
+    {"item": f"i{n}", "metric": "revenue", "period": period, "unit": "GBP", "unit_other": None,
+     "actual_or_forecast": "forecast"} for n, period in ((1, "FY2025"), (2, "FY2026"))]})
+NO_LABELS = json.dumps({"type": "table", "labels": [], "pairs": []})       # the reply to a text with no item
 MAPPING_REPLY = json.dumps({"type": "column_mapping", "items": [
     {"metric": "customer_id", "period": None, "value": None, "unit": None, "actual_or_forecast": "unknown",
      "unit_other": None, "value_cell": "r1c1", "period_cells": [], "proposed_flags": []}]})
 # Every reason a structure text is refused: codes, never text from the structure.
 STRUCTURE_REFUSALS = frozenset({"not_text", "empty", "raw_bytes", "file_name", "client_name", "engagement_reference",
                                 "not_cells", "cell_too_long", "redaction_changed", "too_many_header_rows",
-                                "too_many_samples", "text_value"})
+                                "too_many_samples", "text_value", "bad_item_line"})
+# A deck structure's item list (docs/specs/structure-labelling.md section 3): one line per figure Python listed, its
+# raw text a figure cut from its cell; a roadmap adds its date cells and text lines. Nothing else passes.
+GOOD_ITEMS = GOOD_STRUCTURE + ('\nitems:\ni1 r2c2 "1,200,000" 1200000 h r2c1 r1c2\n'
+                               'i2 r2c3 "1,500,000" 1500000 h r2c1 r1c3')
 
 
 def _structure_db(mapping=None, **audit):
@@ -754,7 +762,7 @@ def test_redacted_structure_cells_reach_the_provider_as_cell_lines_only():
     mapping = {"Northwind Trading": "Customer_01"}
     redacted, _ = structure_redact.redact_structure(cells, "Target Co", mapping)
     text = structure_redact.structure_text(redacted)
-    result, adapter = _send(_structure_db(mapping), text, reply=json.dumps({"type": "table", "items": []}))
+    result, adapter = _send(_structure_db(mapping), text, reply=NO_LABELS)
     assert result.status == "read" and adapter.calls == 1, result.reason
     sent = json.loads(adapter.payloads[0])
     assert set(sent) == {"type", "text"} and sent["text"] == text
@@ -769,7 +777,7 @@ def test_the_client_name_and_engagement_reference_reach_the_provider_only_as_red
     redacted, counts = structure_redact.redact_structure(cells, "Target Co", {},
                                                          structure_redact.withheld_values(STRUCTURE_AUDIT))
     text = structure_redact.structure_text(redacted)
-    result, adapter = _send(_structure_db(), text)
+    result, adapter = _send(_structure_db(), text, reply=NO_LABELS)
     assert result.status == "read" and adapter.calls == 1 and counts["withheld"] == 2, result.reason
     sent = json.loads(adapter.payloads[0])["text"]
     assert sent == "r1c1: Prepared for [redacted]\nr1c2: FY2025\nr2c1: Revenue, ref [redacted]\nr2c2: £1,200,000"
@@ -779,7 +787,7 @@ def test_the_client_name_and_engagement_reference_reach_the_provider_only_as_red
 
 def test_a_longer_word_holding_the_client_name_or_engagement_reference_is_not_refused():
     for text in ("r1c1: ENG-2026-0412\nr1c2: £1M", "r1c1: Northbridge Capitalists\nr1c2: £1M"):
-        result, adapter = _send(_structure_db(), text, reply=json.dumps({"type": "table", "items": []}))
+        result, adapter = _send(_structure_db(), text, reply=NO_LABELS)
         assert (result.status, adapter.calls) == ("read", 1), text
 
 
@@ -828,6 +836,21 @@ def test_a_sheet_built_by_the_app_sends_no_text_cell_value():
     ("a text cell value on the column-mapping path", GOOD_MAPPING + "\nr1c4: Note\nc4 sample: Northwind Trading",
      "column_mapping", "text_value"),
     ("a text value as a profile and a sample", GOOD_MAPPING + "\nc1 sample: 12", "column_mapping", "text_value"),
+    # An item line passes only in format, its raw text a figure inside its cell.
+    ("an item line out of format", GOOD_STRUCTURE + "\nitems:\ni1 r2c2 Revenue grew strongly 1200000", "table",
+     "bad_item_line"),
+    ("prose after an item line", GOOD_ITEMS + "\nRevenue grew strongly in 2025", "table", "bad_item_line"),
+    ("raw text that is not in its cell", GOOD_STRUCTURE + '\nitems:\ni1 r2c2 "9,999" 9999', "table", "bad_item_line"),
+    ("raw text that is not a figure", GOOD_STRUCTURE + '\nitems:\ni1 r2c1 "Revenue" 1', "table", "bad_item_line"),
+    ("raw text holding more than a figure", "r1c1: Revenue grew 12% in 2025\nitems:\n"
+     'i1 r1c1 "Revenue grew 12%" 12', "table", "bad_item_line"),
+    ("an item citing a cell not sent", GOOD_STRUCTURE + '\nitems:\ni1 r9c9 "5" 5', "table", "bad_item_line"),
+    ("a header cell not sent", GOOD_STRUCTURE + '\nitems:\ni1 r2c2 "1,200,000" 1200000 h r9c9', "table",
+     "bad_item_line"),
+    ("item ids out of order", GOOD_STRUCTURE + '\nitems:\ni2 r2c2 "1,200,000" 1200000', "table", "bad_item_line"),
+    ("a date line on a structure not sent as a roadmap", GOOD_ITEMS + "\nd1 r1c2", "table", "bad_item_line"),
+    ("a date line citing a cell not sent", "r1c1: Launch the API\nr2c1: Q3 2025\nitems:\nd1 r9c1", "roadmap",
+     "bad_item_line"),
 ])
 def test_the_structure_path_refuses_what_rule_16_does_not_allow(name, text, kind, reason):
     assert reason in STRUCTURE_REFUSALS
@@ -835,6 +858,15 @@ def test_the_structure_path_refuses_what_rule_16_does_not_allow(name, text, kind
     result, adapter = _send(db, text, kind)
     assert adapter.calls == 0 and getattr(adapter, "counted", 0) == 0, f"{name} reached the provider"
     assert (result.status, result.reason) == ("refused", f"refused: {reason}"), name
+
+
+def test_an_item_list_in_format_reaches_the_provider():
+    result, adapter = _send(_structure_db(), GOOD_ITEMS)
+    assert result.status != "refused" and adapter.calls == 1, result.reason
+    assert json.loads(adapter.payloads[0])["text"] == GOOD_ITEMS
+    roadmap = 'r1c1: Launch the API\nr2c1: Q3 2025\nr3c1: 5K users\nitems:\ni1 r3c1 "5K" 5000\nd1 r2c1\nt1 r1c1\nt2 r3c1'
+    result, adapter = _send(_structure_db(), roadmap, "roadmap")
+    assert result.status != "refused" and adapter.calls > 0, result.reason
 
 
 def test_no_call_is_made_without_consent():
@@ -849,13 +881,13 @@ def test_no_sent_text_in_a_log_llm_calls_or_llm_structures(caplog):
     import logging
     db = _structure_db()
     with caplog.at_level(logging.DEBUG):
-        _send(db, GOOD_STRUCTURE)
-        _send(db, GOOD_STRUCTURE.replace("FY2025", "FY2027"),
+        _send(db, GOOD_ITEMS)
+        _send(db, GOOD_ITEMS.replace("FY2025", "FY2027"),
               reply=json.dumps({"type": "table", "items": [{"bad": 1}]}))           # rejected twice: not read
         _send(db, "r1c1: jane.doe@northwind.com")                                   # refused
     stored = json.dumps(db[gateway.STRUCTURES_COLLECTION].docs + db["llm_calls"].docs, ensure_ascii=False, default=str)
     logs = caplog.text + "".join(r.getMessage() for r in caplog.records)
-    for needle in ("Revenue", "£1,200,000", "1,500,000", "jane.doe", GOOD_STRUCTURE):
+    for needle in ("Revenue", "£1,200,000", "1,200,000", "1,500,000", "jane.doe", GOOD_STRUCTURE, GOOD_ITEMS):
         assert needle not in stored, f"{needle!r} was stored"
         assert needle not in logs, f"{needle!r} was logged"
     assert "structure read: run_id=audit-boundary step=structures hash=" in caplog.text
@@ -869,19 +901,22 @@ def test_unit_other_carries_an_iso_code_only_so_no_cell_text_is_stored_or_logged
     listed 20, beside unit "other". A reply that writes cell text there is rejected (one reask, then not read) and
     the text reaches neither llm_structures, llm_calls nor a log."""
     import logging
-    item = {**json.loads(STRUCTURE_REPLY)["items"][0], "unit": "other", "unit_other": "Revenue £1,200,000"}
+    first, second = json.loads(STRUCTURE_REPLY)["labels"]
+    item = {**first, "unit": "other", "unit_other": "Revenue £1,200,000"}
     db = _structure_db()
     with caplog.at_level(logging.DEBUG):
-        result, adapter = _send(db, GOOD_STRUCTURE, reply=json.dumps({"type": "table", "items": [item]}))
+        result, adapter = _send(db, GOOD_ITEMS, reply=json.dumps({"type": "table", "labels": [item, second],
+                                                                  "pairs": []}))
     assert (result.status, adapter.calls) == ("not_read", 2)
     stored = json.dumps(db[gateway.STRUCTURES_COLLECTION].docs + db["llm_calls"].docs, ensure_ascii=False, default=str)
     logs = caplog.text + "".join(r.getMessage() for r in caplog.records)
     for needle in ("Revenue", "£1,200,000"):
         assert needle not in stored and needle not in logs, needle
     db = _structure_db()
-    result, _ = _send(db, GOOD_STRUCTURE, reply=json.dumps({"type": "table", "items": [{**item, "unit_other": "ZAR"}]}))
+    result, _ = _send(db, GOOD_ITEMS, reply=json.dumps({"type": "table", "labels": [{**item, "unit_other": "ZAR"}, second],
+                                                         "pairs": []}))
     stored, = db[gateway.STRUCTURES_COLLECTION].docs
-    assert result.status == "read" and stored["output"]["items"][0]["unit_other"] == "ZAR"
+    assert result.status == "read" and stored["output"]["labels"][0]["unit_other"] == "ZAR"
 
 
 # Every key an llm_calls record may carry (rule 17): metadata, never text sent to or received from the provider.
@@ -915,10 +950,10 @@ def test_a_provider_error_reaches_llm_calls_and_the_log_as_a_status_and_a_type_c
 
     db, narrative_db = _structure_db(), t.make_db()
     with caplog.at_level(logging.DEBUG):
-        _send(db, GOOD_STRUCTURE)                                                    # read: the ok record's keys
+        _send(db, GOOD_ITEMS)                                                        # read: the ok record's keys
         for raised, on_count in ((error(400, "invalid_request_error"), False), (error(403, "permission_error"), True),
                                  (error(400, "Jane Doe (CEO) may not"), False), (error(529, "overloaded_error"), False)):
-            asyncio.run(gateway.read_structure(db, STRUCTURE_AUDIT["id"], GOOD_STRUCTURE.replace("FY2025", "FY2027"),
+            asyncio.run(gateway.read_structure(db, STRUCTURE_AUDIT["id"], GOOD_ITEMS.replace("FY2025", "FY2027"),
                                                "table", adapter=Failing(raised, on_count), sleep=t._noop_sleep))
         asyncio.run(gateway.generate_narrative(narrative_db, RUN_ID, "growth_engine",
                                                adapter=Failing(error(400, "invalid_request_error")),
@@ -950,58 +985,64 @@ def test_a_cap_refusal_logs_a_closed_reason_and_no_text(monkeypatch, caplog):
                                  "input_tokens": 398000, "output_tokens": 0, "estimated_cost_usd": 0.0,
                                  "timestamp": "2026-10-05T00:00:00"})
     with caplog.at_level(logging.DEBUG):
-        _send(db, GOOD_STRUCTURE)
+        _send(db, GOOD_ITEMS)
         monkeypatch.setenv("LLM_DAILY_SPEND_CAP_USD", "0.01")
         spent = _structure_db()
         spent["llm_calls"].docs.append({"run_id": "elsewhere", "cache_hit": False, "estimated_cost_usd": 1.0,
                                         "timestamp": datetime.now(timezone.utc).isoformat()})
-        _send(spent, GOOD_STRUCTURE)
+        _send(spent, GOOD_ITEMS)
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
     assert [line.split("reason=")[1] for line in lines] == ["token_cap status=- type=-", "spend_cap status=- type=-"]
     for needle in ("Revenue", "£1,200,000", "400,000-token", "spent today", "$"):
         assert needle not in "".join(lines), f"{needle!r} was logged"
 
 
-def test_a_corrected_period_stores_a_count_and_never_the_cell_text_or_the_rebuilt_period():
-    """Rule 17: llm_structures keeps the model's output as it came (its own period) and the number of periods
-    Python corrected; the header text the correction came from is not stored there."""
-    db = _structure_db()
-    text = "r1c2: FY2025\nr2c2: Apr\nr3c1: Revenue\nr3c2: $5M"
-    reply = json.dumps({"type": "table", "items": [
-        {"metric": "revenue", "period": "2025-04", "value": 5000000, "unit": "USD", "actual_or_forecast": "forecast",
-         "unit_other": None, "value_cell": "r3c2", "period_cells": ["r2c2", "r1c2"], "proposed_flags": []}]})
-    result, _ = _send(db, text, reply=reply)
-    structure = {"type": "table", "header_rows": 2, "cells": structure_redact.parse_structure_text(text)}
-    checked = structures.verify.verify(structure, result.items, 3)
-    asyncio.run(gateway.record_verification(db, STRUCTURE_AUDIT["id"], result.key,
-                                            [i["status"] for i in checked["items"]], checked["dropped"],
-                                            checked["periods_corrected"]))
+def test_a_corrected_period_stores_a_count_and_never_the_cell_text_the_raw_text_or_the_rebuilt_period():
+    """Rule 17: llm_structures keeps the model's reply as it came (its own period), the item list without raw text
+    and the number of periods Python corrected; the header text the correction came from is not stored there."""
+    from app.decks import TEXT_COLLECTION
+    db = _structure_db(fiscal_year_end=3)
+    db["datasets"].docs.append({"audit_id": STRUCTURE_AUDIT["id"], "dtype": "revenue", "mapped_at": "2026-10-05",
+                                "mapping": {"customer_id": "Customer"}})
+    cells = [{"row": 1, "col": 2, "text": "FY2025"}, {"row": 2, "col": 2, "text": "Apr"},
+             {"row": 3, "col": 1, "text": "Revenue"}, {"row": 3, "col": 2, "text": "$5M"}]
+    db[TEXT_COLLECTION].docs.append({"audit_id": STRUCTURE_AUDIT["id"], "deck_id": "d1", "file": "plan.pptx",
+                                     "structures": [{"type": "table", "slide": 2, "header_rows": 2, "cells": cells}]})
+    reply = json.dumps({"type": "table", "pairs": [], "labels": [
+        {"item": "i1", "metric": "revenue", "period": "2025-04", "unit": "USD", "unit_other": None,
+         "actual_or_forecast": "forecast"}]})
+    adapter = t.FakeAdapter(replies=[reply])
+    asyncio.run(structures.process_deck(db, STRUCTURE_AUDIT["id"], "d1", adapter=adapter, sleep=t._noop_sleep))
+    assert '"$5M"' not in adapter.payloads[0] and '\\"5M\\"' in adapter.payloads[0], "the raw text went out once"
     stored, = db[gateway.STRUCTURES_COLLECTION].docs
-    assert stored["output"]["items"][0]["period"] == "2025-04" and stored["periods_corrected"] == 1
+    assert stored["output"]["labels"][0]["period"] == "2025-04" and stored["periods_corrected"] == 1
+    assert stored["items"]["items"] == [{"id": "i1", "cell": "r3c2", "position": 1, "headers": ["r3c1", "r2c2", "r1c2"],
+                                         "values": [{"value": 5000000, "dot_reading": None, "bracket_reading": None}]}]
     flat = json.dumps(stored, default=str)
-    for needle in ("FY2025-04", "Apr", "Revenue", "$5M"):
+    for needle in ("FY2025-04", "Apr", "Revenue", "$5M", '"5M"', "raw"):
         assert needle not in flat, f"{needle!r} was stored"
 
 
 # Every check the verifier puts on an item, stored on its approval row as ai_checks: a boolean, or the closed
-# word naming how a "2.500"-style number (dot_reading) or a bracketed number after text (bracket_reading) was read.
-# Never cell text.
-VERIFIER_CHECKS = {"value": (True, False), "period": (True, False), "period_corrected": (True, False),
-                   "flags": (True, False), "dot_reading": ("decimal", "thousands", None),
-                   "bracket_reading": ("negative", "positive", None)}
+# word naming the default reading of a "2.500"-style number (dot_reading) or a bracketed number after text
+# (bracket_reading). Never cell text. Values and cells are Python's, so there is no value check any more.
+VERIFIER_CHECKS = {"period": (True, False), "period_corrected": (True, False),
+                   "dot_reading": ("decimal", "thousands", None), "bracket_reading": ("negative", "positive", None)}
 
 
 def test_the_verifier_checks_are_booleans_and_closed_words_only():
+    from app.structures import items
     structure = {"type": "kpi_panel", "header_rows": 0, "cells": [
         {"row": 1, "col": 1, "text": "Approx. 2.500 hours", "box": 1},
-        {"row": 2, "col": 1, "text": "Jane Doe", "box": 2},
-        {"row": 3, "col": 1, "text": "Net loss (1,200)", "box": 3}]}
-    item = {"metric": "sales", "period": None, "value": 2500, "unit": None, "unit_other": None,
-            "actual_or_forecast": "actual", "value_cell": "r1c1", "period_cells": [], "proposed_flags": []}
-    checked = structures.verify.verify(structure, [
-        item, {**item, "value": 2.5}, {**item, "value_cell": "r2c1"}, {**item, "value_cell": "r3c1", "value": -1200},
-        {**item, "value_cell": "r3c1", "value": 1200}])
-    readings = [("thousands", None), ("decimal", None), (None, None), (None, "negative"), (None, "positive")]
+        {"row": 2, "col": 1, "text": "Jane Doe 5", "box": 2},
+        {"row": 3, "col": 1, "text": "Net loss (1,200)", "box": 3},
+        {"row": 4, "col": 1, "text": "Telegram (30K)", "box": 4}]}
+    listed = items.list_items(structure)
+    labels = [{"item": i["id"], "metric": "sales", "period": None, "unit": None, "unit_other": None,
+               "actual_or_forecast": "actual"} for i in listed["items"]]
+    checked = structures.verify.verify(structure, listed, labels)
+    readings = [("thousands", None), (None, None), (None, "negative"), (None, "positive")]
+    assert len(checked["items"]) == len(readings)
     for got, (dot, bracket) in zip(checked["items"], readings):
         assert set(got["checks"]) == set(VERIFIER_CHECKS)
         assert (got["checks"]["dot_reading"], got["checks"]["bracket_reading"]) == (dot, bracket)
@@ -1015,7 +1056,7 @@ def test_the_structure_path_never_reads_parsed_deck_text():
     db["audits"].docs[0].update({"company_name": "Target Co", "client_name": "Northbridge Capital",
                                  "engagement_reference": "ENG-2026-041", "structure_reading_consent": True})
     adapter = t.FakeAdapter(replies=[STRUCTURE_REPLY])
-    asyncio.run(gateway.read_structure(db, RUN_ID, GOOD_STRUCTURE, "table", adapter=adapter, sleep=t._noop_sleep))
+    asyncio.run(gateway.read_structure(db, RUN_ID, GOOD_ITEMS, "table", adapter=adapter, sleep=t._noop_sleep))
     assert adapter.calls == 1
     touched = {name for name, _, _ in reads}
     assert not touched & {decks.TEXT_COLLECTION, decks.CANDIDATES_COLLECTION}, touched
@@ -1048,7 +1089,7 @@ def test_the_consistency_run_prints_and_reports_no_text_sent_to_the_model(monkey
     import tempfile
     from app.decks import parser
     from app.llm.schemas import DECK_TYPES
-    from app.structures import redact
+    from app.structures import items, redact
     spec = importlib.util.spec_from_file_location("consistency_run", BACKEND.parent / "scripts" / "consistency_run.py")
     script = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(script)
@@ -1063,8 +1104,10 @@ def test_the_consistency_run_prints_and_reports_no_text_sent_to_the_model(monkey
             reply, tokens_in, tokens_out = super().complete(**kwargs)
             n = self.calls[kwargs["user_payload"]] = self.calls.get(kwargs["user_payload"], 0) + 1
             body = json.loads(reply)
-            items = [{**item, "unit": None if n == 2 else item["unit"]} for item in body["items"]]
-            return json.dumps({**body, "items": items[:len(items) - (n == 3)]}), tokens_in, tokens_out
+            labels = [{**label, "unit": None if n == 2 else label["unit"]} for label in body["labels"]]
+            if n == 3 and labels:
+                labels[-1] = {**labels[-1], "metric": "other"}
+            return json.dumps({**body, "labels": labels}), tokens_in, tokens_out
     monkeypatch.setattr(script, "FakeAdapter", Drifting)
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     names = ["05-zero2hero.pdf", "02-moz.pdf"]
@@ -1075,16 +1118,20 @@ def test_the_consistency_run_prints_and_reports_no_text_sent_to_the_model(monkey
         assert set(row) == {"deck", "page", "type", "fields", "same_after_normalisation"}
         assert row["deck"] in names and row["type"] in DECK_TYPES and set(row["fields"]) <= set(script.FIELDS)
     for row in report["unverified_items"]:
-        assert set(row) == {"deck", "page", "type", "value_cell", "reason", "detail", "passes"}
-        assert row["deck"] in names and row["type"] in DECK_TYPES and re.fullmatch(r"r\d+c\d+", row["value_cell"])
-        assert row["reason"] in script.REASONS and row["detail"] in (None, "no value", "flag not reproduced")
-    for counts in [*report["disagreement_fields"].values(), *report["unverified_reasons"].values()]:
-        assert set(counts) <= {"structures", "disagreeing", *script.FIELDS, *script.REASONS}
+        assert set(row) == {"deck", "page", "type", "item", "cell", "reason", "detail", "passes"}
+        assert row["deck"] in names and row["type"] in DECK_TYPES and re.fullmatch(r"i\d+", row["item"])
+        assert re.fullmatch(r"r\d+c\d+#\d+", row["cell"])
+        assert row["reason"] in script.REASONS and row["detail"] in (None, "type Other")
+    for counts in [*report["disagreement_fields"].values(), *report["unverified_reasons"].values(),
+                   *report["counts"].values()]:
+        assert set(counts) <= {"structures", "disagreeing", *script.FIELDS, *script.REASONS, *script.COUNTS}
         assert all(isinstance(n, int) for n in counts.values())
     assert set(report["tokens"]) == {"fixed_prompt", "system_prompt", "output_schema", "empty_message",
-                                     "structure_text_avg", "structures_counted", "billed_input_per_model_read"}
+                                     "text_and_items_avg", "structures_counted", "billed_input_per_model_read"}
     assert all(isinstance(n, (int, float)) for n in report["tokens"].values())
-    assert isinstance(report["roadmap_items"], int) and isinstance(report["roadmap_dates_rebuilt"], int)
+    assert all(isinstance(report[k], int) for k in ("roadmap_lines", "roadmap_same_pair", "roadmap_dates_rebuilt"))
+    assert all(report[k] is None or isinstance(report[k], float) for k in
+               ("verifier_match_rate_pct", "verifier_match_rate_financial_pct", "verifier_match_rate_roadmap_pct"))
     files = sorted(tmp_path.glob("consistency_*"))
     excluded = [p for p in files if p.name.endswith(DIAGNOSTIC_SUFFIX)]
     report_md, = [p for p in files if p.suffix == ".md" and p not in excluded]
@@ -1095,6 +1142,8 @@ def test_the_consistency_run_prints_and_reports_no_text_sent_to_the_model(monkey
         for structure in parser.parse_deck((script.DECKS / name).read_bytes(), name)["structures"]:
             cells, _ = redact.redact_structure(structure["cells"], Path(name).stem, {}, set())
             sent |= {line.split(": ", 1)[1] for line in redact.structure_text(cells).splitlines()}
+            listed = items.list_items({**structure, "cells": cells})
+            sent |= {item["raw"] for item in listed["items"] if len(item["raw"]) >= 4 and not item["raw"].isdigit()}
     words = {text for text in sent if len(text) >= 4 and any(c.isalpha() for c in text)}
     assert len(words) > 50 and "Gross Profit" in words, "the check sees the decks' cell text"
     assert not sorted(text for text in words if text in written)

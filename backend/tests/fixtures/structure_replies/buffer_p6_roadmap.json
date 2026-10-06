@@ -3,66 +3,102 @@
  "page": 6,
  "type": "roadmap",
  "match": "r1c1: Launched web app",
- "note": "Hand-written in the model's output format for the public test deck; no live call was made. Timeline dates sit below their lines, so no period is a header: every item stays a suggestion.",
+ "note": "Hand-written in the model's labelling format (docs/specs/structure-labelling.md) for the public test deck; no live call was made. Each line is paired with the date below it. The first line has its date below only, so the timeline runs downwards and every line takes the date line below it: each figure's own cells rebuild its pair's date and it is Verified; a milestone is never Verified.",
  "reply": {
   "type": "roadmap",
-  "items": [
+  "labels": [
    {
-    "metric": "product",
-    "period": "2011-01",
-    "value": null,
-    "unit": null,
-    "unit_other": null,
-    "actual_or_forecast": "actual",
-    "value_cell": "r1c1",
-    "period_cells": [
-     "r2c1"
-    ],
-    "proposed_flags": []
-   },
-   {
+    "item": "i1",
     "metric": "users",
     "period": "2011-10",
-    "value": 55000,
     "unit": "count",
     "unit_other": null,
-    "actual_or_forecast": "actual",
-    "value_cell": "r3c1",
-    "period_cells": [
-     "r4c1"
-    ],
-    "proposed_flags": []
+    "actual_or_forecast": "actual"
    },
    {
-    "metric": "product",
+    "item": "i2",
+    "metric": "revenue",
     "period": "2011-10",
-    "value": null,
-    "unit": null,
+    "unit": "USD",
     "unit_other": null,
-    "actual_or_forecast": "actual",
-    "value_cell": "r5c1",
-    "period_cells": [
-     "r6c1"
-    ],
-    "proposed_flags": []
+    "actual_or_forecast": "actual"
    },
    {
+    "item": "i3",
+    "metric": "product",
+    "period": "2011-12",
+    "unit": "count",
+    "unit_other": null,
+    "actual_or_forecast": "actual"
+   },
+   {
+    "item": "i4",
+    "metric": "users",
+    "period": "2012-01",
+    "unit": "count",
+    "unit_other": null,
+    "actual_or_forecast": "actual"
+   },
+   {
+    "item": "i5",
+    "metric": "revenue",
+    "period": "2012-01",
+    "unit": "USD",
+    "unit_other": null,
+    "actual_or_forecast": "actual"
+   },
+   {
+    "item": "i6",
     "metric": "users",
     "period": "2013-01",
-    "value": 1000000,
     "unit": "count",
     "unit_other": null,
-    "actual_or_forecast": "forecast",
-    "value_cell": "r11c1",
-    "period_cells": [
-     "r12c1"
-    ],
-    "proposed_flags": []
+    "actual_or_forecast": "forecast"
+   },
+   {
+    "item": "i7",
+    "metric": "revenue",
+    "period": "2013-01",
+    "unit": "USD",
+    "unit_other": null,
+    "actual_or_forecast": "forecast"
+   }
+  ],
+  "pairs": [
+   {
+    "line": "t1",
+    "date": "d1",
+    "category": "launch"
+   },
+   {
+    "line": "t2",
+    "date": "d2",
+    "category": "other"
+   },
+   {
+    "line": "t3",
+    "date": "d3",
+    "category": "launch"
+   },
+   {
+    "line": "t4",
+    "date": "d4",
+    "category": "partnership"
+   },
+   {
+    "line": "t5",
+    "date": "d5",
+    "category": "other"
+   },
+   {
+    "line": "t6",
+    "date": "d6",
+    "category": "other"
    }
   ]
  },
  "expected": {
-  "verified": 0,
-  "suggestion": 4
+  "verified": 7,
+  "suggestion": 6
  }
 }
