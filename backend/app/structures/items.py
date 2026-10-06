@@ -12,7 +12,9 @@ Pure: no I/O, no model, no database. For every deck type Python lists every figu
   unless it carries a suffix ("1.250M" is 1.25m); a bracketed number after text reads as negative when the
   text before it in its cell holds loss, deficit, negative or decline (any case), else positive. The model
   does not choose between them: the approval row shows both;
-- "headers": the ids of its header cells (verify.header_cells).
+- "headers": the ids of its header cells (verify.header_cells);
+- "range", on both figures of a range ("$12 -$13 million"): {"items": [low id, high id], "low", "high"}, the
+  two default values. They stay two items for the model and become one approval row (decision of 2026-10-06).
 
 A roadmap also lists its date cells (d1, ...: date labels as in deck-parser.md section 7) and its text lines
 (t1, ...: the other non-empty cells), which the model pairs (section 2).
@@ -51,7 +53,7 @@ def list_items(structure: Dict) -> Dict:
         if not figures:
             continue
         headers = [redact.cell_id(h) for h in verify.header_cells(structure, cell)]
-        factor = None
+        factor, first = None, len(out)
         for n, figure in enumerate(figures, 1):
             if not figure["own_scale"] and factor is None:
                 factor = verify.scale_factor(structure, cell)
@@ -68,6 +70,11 @@ def list_items(structure: Dict) -> Dict:
                         "values": [{"value": _full_units(number, scale), "dot_reading": d, "bracket_reading": b}
                                    for number, d, b in ordered],
                         "headers": headers})
+            if "range_low" in figure:
+                low, high = out[first + figure["range_low"]], out[-1]
+                span = {"items": [low["id"], high["id"]], "low": low["values"][0]["value"],
+                        "high": high["values"][0]["value"]}
+                low["range"], high["range"] = span, dict(span)
     dates, lines = roadmap_cells(structure) if structure.get("type") == "roadmap" else ([], [])
     return {"items": out, "dates": dates, "lines": lines}
 

@@ -112,7 +112,8 @@ def figures(text: str, comma: bool = False) -> List[Dict]:
     _cell_figure, before any scale from another cell; "own_scale" is True when the figure carries a k/m/bn
     suffix or %. Dates are periods, never values, and a scale mark ("'000") is no figure: both are left out
     first. A range ("$12 -$13 million", "5 – 10%") is two figures: the dash is no sign, and the low end takes
-    the high end's suffix or % when it has none (deck-parser.md section 2)."""
+    the high end's suffix or % when it has none (deck-parser.md section 2); the high end carries "range_low",
+    the index of its low end."""
     marks = [m.span() for m in _SCALE_MARK.finditer(text) if m.group("mark") and "000" in m.group("mark")]
     blanked = redact.blank_currency(_blank(text, [(d["start"], d["end"]) for d in claims.find_dates(text, table=True)]
                                            + marks))
@@ -124,9 +125,9 @@ def figures(text: str, comma: bool = False) -> List[Dict]:
         dots = [(float(raw.replace(",", "")), "decimal"), (float(raw.replace(".", "")), "thousands")] \
             if not comma and _DOT_THOUSANDS.fullmatch(raw) else \
             [(float(raw.replace(".", "").replace(",", ".") if comma else raw.replace(",", "")), None)]
-        sign = m.group("sign")
+        sign, range_low = m.group("sign"), None
         if sign and out and not blanked[out[-1]["end"]:m.start("sign")].strip():
-            sign = None                                         # a range: "12 - 13"
+            sign, range_low = None, len(out) - 1                # a range: "12 - 13"
             low = out[-1]
             if not low["suffix"] and not low["pct"]:
                 low.update(suffix=(m.group("suffix") or "").lower(), pct=bool(m.group("pct")))
@@ -144,7 +145,7 @@ def figures(text: str, comma: bool = False) -> List[Dict]:
         seg = blanked[lo:hi]
         out.append({"start": lo + len(seg) - len(seg.lstrip()), "end": hi - len(seg) + len(seg.rstrip()),
                     "dots": dots, "signs": signs, "suffix": (m.group("suffix") or "").lower(),
-                    "pct": bool(m.group("pct"))})
+                    "pct": bool(m.group("pct")), **({"range_low": range_low} if range_low is not None else {})})
     for f in out:
         scale = _SCALE_WORD[f["suffix"]] if f["suffix"] else 1.0
         dots, signs = f.pop("dots"), f.pop("signs")
@@ -508,7 +509,8 @@ def verify(structure: Dict, listed: Dict, labels: List[Dict], pairs: List[Dict] 
         out = {"item": item["id"], "position": item["position"],
                **{k: label_.get(k) for k in ("metric", "period", "unit", "unit_other", "actual_or_forecast")},
                "period": period, "value": item["values"][0]["value"], "values": [dict(v) for v in item["values"]],
-               "value_cell": item["cell"], "period_cells": cells, "proposed_flags": [],
+               "value_cell": item["cell"], **({"range": item["range"]} if item.get("range") else {}),
+               "period_cells": cells, "proposed_flags": [],
                "status": VERIFIED if ok and label_["metric"] != OTHER else SUGGESTION,
                "checks": _checks(ok, corrected, item["values"])}
         if corrected:

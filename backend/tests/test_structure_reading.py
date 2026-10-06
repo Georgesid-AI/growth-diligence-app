@@ -171,6 +171,23 @@ def test_a_range_is_two_figures_and_its_low_end_takes_the_high_ends_scale():
             [{"value": 10, "dot_reading": None, "bracket_reading": None}]]
 
 
+def test_a_ranges_two_items_are_marked_as_one_range_low_and_high():
+    """Decision of 2026-10-06: the two figures of a range stay two items for the model (spec section 1), and the item
+    list stores them as one range (low, high)."""
+    listed = _listed([["", "Plan"], ["Revenue", "$12 -$13 million"], ["Margin", "5 – 10%"], ["Users", "12 and 13"]])
+    assert [(i["id"], i.get("range")) for i in listed] == [
+        ("i1", {"items": ["i1", "i2"], "low": 12000000, "high": 13000000}),
+        ("i2", {"items": ["i1", "i2"], "low": 12000000, "high": 13000000}),
+        ("i3", {"items": ["i3", "i4"], "low": 5, "high": 10}),
+        ("i4", {"items": ["i3", "i4"], "low": 5, "high": 10}),
+        ("i5", None), ("i6", None)], "two figures with no dash between them are no range"
+    stored = structure_items.stored({"items": listed})["items"]
+    assert stored[0]["range"] == {"items": ["i1", "i2"], "low": 12000000, "high": 13000000} and "raw" not in stored[0]
+    structure = v._struct([["", "Plan"], ["Revenue", "$12 -$13 million"]])
+    assert structure_items.text(structure, structure_items.list_items(structure)).endswith(
+        'i1 r2c2#1 "12" 12000000 h r2c1 r1c2\ni2 r2c2#2 "13 million" 13000000 h r2c1 r1c2'), "the item lines are unchanged"
+
+
 def _readings(text):
     item, = _listed([["", "Plan"], ["Hours", text]])
     return [(x["value"], x["dot_reading"], x["bracket_reading"]) for x in item["values"]]
@@ -410,7 +427,7 @@ def _rows(structure, labels, model_type=None, pairs=()):
     listed = structure_items.list_items(structure)
     checked = verify.verify(structure, listed, labels, pairs)
     return [structures.candidate_from_item(item, structure, {"file": "plan.pdf"}, model_type, 12)
-            for item in checked["items"]]
+            for item in structures.approval_items(checked["items"])]
 
 
 def test_a_currency_outside_the_list_is_read_as_other_and_reaches_the_approval_row_as_its_code():
@@ -443,6 +460,23 @@ def test_an_ambiguous_figure_reaches_its_row_with_both_readings_and_the_default_
     assert [r["ai_label"] for r in rows] == ["Verified"] * 3
 
 
+def test_a_ranges_two_items_make_one_approval_row_low_and_high():
+    """A range is one row, its value the low end and value_high the high end, from the low end's label. It is Verified
+    only when both ends are labelled with the same metric and Verified."""
+    structure = v._struct([["", "Plan"], ["Revenue", "$12 -$13 million"], ["Users", "5K"]])
+    rows = _rows(structure, [_label("i1", unit="USD"), _label("i2", unit="USD"), _label("i3", "users", unit="count")])
+    assert [(r["item"], r["value"], r["value_high"], r["ai_label"], r["readings"]) for r in rows] == [
+        ("i1", 12000000, 13000000, "Verified", []), ("i3", 5000, None, "Verified", [])]
+    for labels in ([_label("i1", unit="USD"), _label("i2", "not_a_metric"), _label("i3", "users")],
+                   [_label("i1", unit="USD"), _label("i2", "costs", unit="USD"), _label("i3", "users")],
+                   [_label("i1", unit="USD"), _label("i2", "other", unit="USD"), _label("i3", "users")]):
+        row = _rows(structure, labels)[0]
+        assert (row["value"], row["value_high"], row["ai_label"]) == (12000000, 13000000, "AI suggestion, not verified"), \
+            labels[1]["metric"]
+    assert [r["item"] for r in _rows(structure, [_label("i1", "not_a_metric"), _label("i2", unit="USD"),
+                                                 _label("i3", "users")])] == ["i2", "i3"], "from the end that is kept"
+
+
 def test_the_rows_cell_citation_is_unchanged_and_names_the_type_python_sent():
     structure = v._struct([["", "Members"], ["Social", "Discord(150) Telegram(30K)"]])
     rows = _rows(structure, [_label("i1", "users", unit="count"), _label("i2", "users", unit="count")], "kpi_panel")
@@ -457,6 +491,9 @@ def test_an_other_item_is_listed_as_type_other_and_approved_only_once_its_type_i
     client, db, adapter = _deck_api(monkeypatch)
     _map_revenue(client)
     _upload_deck(client, "02-moz.pdf")
+    ranged, = [c for c in _deck(client)["candidates"] if c.get("origin") == "ai" and c["sources"][0]["cell"] == "r1c1"]
+    assert (ranged["value"], ranged["value_high"], ranged["ai_label"]) == (12000000, 13000000, "Verified"), \
+        "moz p20 \"$12 -$13 million\": one row, twelve to thirteen million"
     other, = [c for c in _deck(client)["candidates"] if c.get("claim_type") == "other"]
     assert (other["value"], other["ai_label"], other["unit"]) == (9, "AI suggestion, not verified", "months")
     url = f"/api/audits/{AUDIT}/decks/candidates/{other['id']}"
@@ -1172,6 +1209,54 @@ def test_a_roadmaps_pairs_become_milestone_rows_dated_by_their_date_cells(monkey
         ("r9c1", "product", "2012-01", "January 2012", "AI suggestion, not verified")]
 
 
+@pytest.mark.parametrize("value, high, known, found", [
+    (12000000, None, [(12000000, None)], "exact"),
+    (12000000, 13000000, [(12000000, 13000000)], "exact"),            # the same range
+    (12500000, None, [(12000000, 13000000)], "in range"),             # a value inside a range the cell lists
+    (12000000, None, [(12000000, 13000000)], "in range"),             # an end is inside its range
+    (12000000, 13000000, [(12500000, None)], "in range"),             # a range holding a value the cell lists
+    (12000000, 13000000, [(12000000, 14000000)], "in range"),         # a range inside the range the cell lists
+    (12000000, 15000000, [(12000000, 14000000)], None),               # a range reaching past it
+    (14000000, None, [(12000000, 13000000)], None),
+    (12000000, None, [(13000000, None)], None),
+    (None, None, [(None, None)], "exact"),                            # a milestone kept from an earlier upload
+    (None, None, [(12000000, 13000000)], None),
+])
+def test_the_dedupe_matcher_returns_exact_in_range_or_no_match(value, high, known, found):
+    """Decision of 2026-10-06: an AI row is not added when its cell already lists the same value ("exact"), or when one
+    falls inside the other's range ("in range")."""
+    assert structures.value_match(value, high, known) == found
+
+
+def test_an_ai_row_inside_a_range_python_lists_in_the_same_cell_is_not_added_twice():
+    from app import structures
+    from app.decks import CANDIDATES_COLLECTION, TEXT_COLLECTION
+    cells = [{"row": 1, "col": 2, "text": "Plan"}, {"row": 2, "col": 1, "text": "Revenue"},
+             {"row": 2, "col": 2, "text": "$12 -$13 million"}, {"row": 3, "col": 1, "text": "Costs"},
+             {"row": 3, "col": 2, "text": "$12.5 million"}, {"row": 4, "col": 1, "text": "EBITDA"},
+             {"row": 4, "col": 2, "text": "$20 million"}]
+
+    def python_row(row, value, high):
+        return {"id": f"p{row}", "audit_id": AUDIT, "deck_id": "d1", "file": "plan.pdf", "status": "pending",
+                "claim_type": "revenue", "value": value, "value_high": high, "target_date": None,
+                "sources": [{"file": "plan.pdf", "page": 3, "kind": "table", "table": 1, "row": row, "col": 2}]}
+    db = _db()
+    db["datasets"].docs.append({"audit_id": AUDIT, "dtype": "revenue", "mapping": REVENUE_MAPPING,
+                                "mapped_at": "2026-10-05T00:00:00"})
+    db[TEXT_COLLECTION].docs.append({"audit_id": AUDIT, "deck_id": "d1", "file": "plan.pdf", "page_unit": "page",
+                                     "structures": [{"type": "table", "page": 3, "table": 1, "header_rows": 1,
+                                                     "cells": cells}]})
+    db[CANDIDATES_COLLECTION].docs += [python_row(2, 12000000, 13000000), python_row(3, 12000000, 13000000),
+                                       python_row(4, 19000000, None)]
+    labels = [_label("i1", unit="USD"), _label("i2", unit="USD"), _label("i3", "costs", unit="USD"),
+              _label("i4", "ebitda", unit="USD")]
+    adapter = t.FakeAdapter(replies=[json.dumps({"type": "table", "labels": labels, "pairs": []})])
+    asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
+    ai = [(c["sources"][0]["row"], c["value"], c["value_high"]) for c in db[CANDIDATES_COLLECTION].docs
+          if c.get("origin") == "ai"]
+    assert ai == [(4, 20000000, None)], "row 2: the same range (exact); row 3: inside Python's range; row 4: added"
+
+
 def test_unticked_consent_is_the_python_only_path(monkeypatch):
     client, db, adapter = _deck_api(monkeypatch, consent=False)
     _map_revenue(client)
@@ -1296,6 +1381,18 @@ def test_a_new_fiscal_year_end_re_verifies_a_reading_from_its_stored_labels_and_
         asyncio.run(structures.reverify_audit(db, AUDIT, year_end))
         labels.append(db[CANDIDATES_COLLECTION].docs[0]["ai_label"])
     assert labels == ["AI suggestion, not verified", "Verified"]
+
+
+def test_re_verification_labels_a_range_row_from_both_its_ends():
+    from app import structures
+    from app.decks import CANDIDATES_COLLECTION
+    cells = [{"row": 1, "col": 2, "text": "Plan"}, {"row": 2, "col": 1, "text": "Revenue"},
+             {"row": 2, "col": 2, "text": "$12 -$13 million"}]
+    db = _processed(cells, [_label("i1", unit="USD"), _label("i2", "other", unit="USD")])
+    row, = db[CANDIDATES_COLLECTION].docs
+    assert (row["value"], row["value_high"], row["ai_label"]) == (12000000, 13000000, "AI suggestion, not verified")
+    asyncio.run(structures.reverify_audit(db, AUDIT, 12))
+    assert db[CANDIDATES_COLLECTION].docs[0]["ai_label"] == "AI suggestion, not verified", "the high end is other"
 
 
 def test_re_verification_skips_a_reading_stored_under_v2_and_its_row_keeps_its_label():

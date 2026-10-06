@@ -231,10 +231,10 @@ async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None
                                               checked["dropped"], checked["periods_corrected"],
                                               structure_items.stored(listed))
             entry.update({k: checked[k] for k in ("dropped", "periods_corrected", "not_a_metric")})
-            for item in checked["items"]:
+            for item in approval_items(checked["items"], mode):
                 candidate = candidate_from_item(item, structure, deck, result.model_type, year_end)
-                if _cell_key(candidate) in known:
-                    continue                    # Python already found this value in this cell
+                if value_match(candidate["value"], candidate["value_high"], known.get(_cell_key(candidate), ())):
+                    continue                    # this cell already lists the value, or a range holding it
                 order += 1
                 await db[CANDIDATES_COLLECTION].insert_one(
                     {**candidate, "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"],
@@ -290,31 +290,71 @@ def _where(structure: Dict) -> Dict:
     return {k: structure[k] for k in ("slide", "page") if k in structure}
 
 
-def _source_key(source: Dict, value):
-    """A value and the cell it sits in: a table cell for Python and for a table structure, else the
-    structure cell an earlier AI reading cited."""
+def _source_key(source: Dict):
+    """The cell a value sits in: a table cell for Python and for a table structure, else the structure cell an
+    earlier AI reading cited."""
     page = source.get("slide") or source.get("page")
     if source.get("table") is not None:
-        return (page, "table", source["table"], source.get("row"), source.get("col"), value)
+        return (page, "table", source["table"], source.get("row"), source.get("col"))
     if source.get("cell"):
-        return (page, "structure", source.get("structure"), source["cell"], value)
+        return (page, "structure", source.get("structure"), source["cell"])
     return None
 
 
 def _cell_key(candidate: Dict):
-    return _source_key(candidate["sources"][0], candidate.get("value"))
+    return _source_key(candidate["sources"][0])
 
 
-def _python_cells(candidates: List[Dict]) -> set:
-    """The cell of every value already listed for the deck: Python's, and reviewed AI rows kept from an
-    earlier upload of the same file, so a re-read adds no row twice."""
-    out = set()
+def _python_cells(candidates: List[Dict]) -> Dict:
+    """{cell: [(value, value_high), ...]}: every value already listed for the deck, by its cell: Python's, and
+    reviewed AI rows kept from an earlier upload of the same file, so a re-read adds no row twice."""
+    out = {}
     for c in candidates:
         for v in claims.claim_values(c):
             for s in v.get("sources") or ():
-                key = _source_key(s, v.get("value"))
+                key = _source_key(s)
                 if key:
-                    out.add(key)
+                    out.setdefault(key, []).append((v.get("value"), v.get("value_high")))
+    return out
+
+
+def value_match(value, value_high, known) -> Optional[str]:
+    """How a row's value meets the values its cell already lists (decision of 2026-10-06): "exact" for the same
+    value or the same range, "in range" when one falls inside the other's range (12.5m in "12-13m", or the range
+    holding a value the cell lists), else None. Either match means the row is already listed."""
+    def inside(x, low, high):
+        return x is not None and low is not None and high is not None and min(low, high) <= x <= max(low, high)
+    found = None
+    for low, high in known:
+        if (low, high) == (value, value_high):
+            return "exact"
+        if value is not None and (inside(value, low, high) and (value_high is None or inside(value_high, low, high))
+                                  or (value_high is not None and inside(low, value, value_high) and high is None)):
+            found = "in range"
+    return found
+
+
+def approval_items(checked: List[Dict], mode: str = "suggest") -> List[Dict]:
+    """The checked items as approval rows. A range's two items (items.list_items) make one row from its first
+    labelled end, its value the low end and value_high the high end, Verified only when both ends are labelled
+    with the same metric and Verified; the other end makes no row. With mode "drop" an unverified range row goes
+    too."""
+    by_id = {c["item"]: c for c in checked if c.get("range")}
+    out, done = [], set()
+    for c in checked:
+        span = c.get("range")
+        if not span:
+            out.append(c)
+            continue
+        if c["item"] in done:
+            continue
+        done.update(span["items"])
+        ends = [by_id[i] for i in span["items"] if i in by_id]
+        ok = len(ends) == 2 and ends[0]["metric"] == ends[1]["metric"] and \
+            all(e["status"] == verify.VERIFIED for e in ends)
+        if ok or mode != "drop":
+            out.append({**ends[0], "value": span["low"], "value_high": span["high"], "values": [],
+                        "status": verify.VERIFIED if ok else verify.SUGGESTION})
     return out
 
 
@@ -336,7 +376,7 @@ def candidate_from_item(item: Dict, structure: Dict, deck: Dict, model_type: Opt
     if structure.get("table") is not None:
         source.update(table=structure["table"], row=cell.get("row"), col=cell.get("col"))
     candidate = {
-        "claim_type": item["metric"], "value": item.get("value"), "value_high": None,
+        "claim_type": item["metric"], "value": item.get("value"), "value_high": item.get("value_high"),
         "unit": unit if unit in _UNITS else None, "currency": unit if unit and len(unit) == 3 and unit.isupper() else None,
         "target_date": target, "period_text": stated if target else None,
         "snippet": (cell.get("text") or "")[:claims.SNIPPET_MAX], "label_from": label if label != cell.get("text") else None,
@@ -387,7 +427,7 @@ async def reverify_audit(db, audit_id: str, fiscal_year_end: int) -> int:
             await gateway.record_verification(db, audit_id, key, [x["status"] for x in checked["items"]],
                                               checked["dropped"], checked["periods_corrected"])
             structure["ai"] = {**structure["ai"], "periods_corrected": checked["periods_corrected"]}
-            for item in checked["items"]:
+            for item in approval_items(checked["items"], mode):
                 result = await db[CANDIDATES_COLLECTION].update_one(
                     {"audit_id": audit_id, "deck_id": deck["deck_id"], "structure_key": key, "status": "pending",
                      "item": item["item"]},
