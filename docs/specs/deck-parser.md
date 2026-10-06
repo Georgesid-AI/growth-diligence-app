@@ -35,7 +35,8 @@ If a file has no readable text, show: "No readable text found in this file. It m
 
 ## 2. Candidate claim detection (Python only, no LLM, rule-based)
 Only plan claims are listed: the company's own revenue, customers, users, retention, margins,
-gross profit, costs, EBITDA, net profit, sales metrics, hiring and launch dates, plus targets and forecasts.
+gross profit, costs, EBITDA, net profit, sales metrics, unit economics (LTV, CAC, LTV/CAC, customer lifetime), cash,
+burn, runway, free trials per day, months to profitability, hiring and launch dates, plus targets and forecasts.
 A figure (a number, or a date) is a candidate if it has a claim keyword: in its own text line,
 or borrowed from nearby text when its line has none.
 Keywords and claim types (a keyword also matches its plural and verb forms: revenues, growing,
@@ -45,21 +46,38 @@ hired, launches; of two overlapping keywords the longer one counts):
   same line: revenue → Revenue growth, users → User growth, otherwise Growth; never Revenue by
   default. An amount or a count beside a growth word takes the noun's own type ("ARR grew to
   $3.6M" is Revenue).
-- Retention: NRR, churn, retention, customer life
-- Sales: sales cycle, win rate, pipeline, ACV, CAC, payback, LTV, (customer) lifetime value,
-  acquisition, conversion, leads, cost of (paid) acquisition, acquisition cost
+- Retention: NRR, churn, retention
+- Sales: sales cycle, win rate, pipeline, ACV, payback, acquisition, conversion, leads
 - Customers: customers, clients, paying users, accounts, companies, agencies, subscribers,
   institutions
 - Users: users
 - Gross margin: margin, margins
 - Gross profit: gross profit; also a gross margin given as an amount ("Gross margin £1.2M")
 - Costs: direct costs, costs, opex
-- EBITDA: EBITDA, profitability, profitable, break-even
+- EBITDA: EBITDA, profitability, break-even
 - Net profit: net profit, net income, net loss. A net loss is stored as a negative net profit
   ("Net loss of $2M" → -2,000,000).
 - People: hires, headcount, team, recruitment, attrition
 - Product: launch, release, roadmap, ship, milestone, Q1–Q4, month names
 - Market: TAM, SAM, SOM, addressable market, market size. The bare word "market" does not count.
+- Claim types of issue #45 (decisions of 2026-10-06). The keywords of LTV, CAC, customer life and "profitable" move
+  here from Sales, Retention and EBITDA:
+  - LTV: LTV, (customer) lifetime value (a lifetime value, in a currency)
+  - CAC: CAC, cost of (paid) acquisition, acquisition cost (in a currency)
+  - LTV/CAC: LTV/CAC, also written "LTV / CAC" (unit x). It is longer than LTV and CAC, so it counts over both.
+  - Customer lifetime: customer life, customer lifetime (unit months). "Customer lifetime value" is LTV, the
+    longer keyword.
+  - Months to profitability: profitable ("Profitable in 10 months", unit months). A line with no figure but a date
+    is a milestone, as an EBITDA line is ("By December, moz is profitable"), and a bare date under it takes its type.
+  - Cash: cash, the cash balance ("Cash on hand" / "$7m left", in a currency). "Cash flow" does not count.
+  - Burn: burn, net burn, burn rate (in a currency)
+  - Runway: runway (unit months)
+  - Trials per day: trials per day, trials / day ("# of New Free Trials / Day", a count)
+  On the 10 test decks these change 12 candidates' type and no other candidate (no row appears or disappears):
+  front-b p12 "LTV / CAC" 2.5, 2.6, 4.4 (Sales → LTV/CAC); front-b p15 "$7m left" (Revenue → Cash), "18 months"
+  (EBITDA → Runway), "Profitable in 10 months" (EBITDA → Months to profitability); moz p2 "moz is profitable"
+  (EBITDA → Months to profitability); moz p20 "~$900" (Sales → LTV), "~$100" (Sales → CAC), "~9 Months"
+  (Retention → Customer lifetime), "~100" (Customers → Trials per day); buffer p7 "LTV of $240" (Sales → LTV).
 The unit of a count is the noun it counts: "800 paying users". If a Customers or Users keyword
 appears within the next 4 words after the number, it is the unit (">50 Dutch temporary work
 agencies" → agencies); otherwise the word right after the number. The search stops at the next
@@ -88,9 +106,9 @@ dates figures only; the period line itself is never a candidate.
 The snippet is the figure's own line. A borrowed label is kept apart and shown below the
 snippet as "Label from: <text>"; a borrowed date as "Date from: <text>".
 A line with no figure becomes a candidate only if it is a product line (launch, release, ship,
-roadmap or milestone, its own or borrowed) or an EBITDA line ("Positive EBITDA") and it can
-borrow a date: a roadmap bullet, a break-even milestone. A bare date under an EBITDA line
-("Q2 2024") takes the EBITDA type.
+roadmap or milestone, its own or borrowed), an EBITDA line ("Positive EBITDA") or a months to
+profitability line ("Profitable") and it can borrow a date: a roadmap bullet, a break-even
+milestone. A bare date under an EBITDA or months to profitability line ("Q2 2024") takes that type.
 Tables: one candidate per table row. The row's figures of one type become a single candidate
 that holds its values by period, each with the date and the text of its column header
 ("Registered Users: 200 (Y/E 22) · 5,000 (Y/E 23) · …"). A lone figure, or figures of different
@@ -129,6 +147,9 @@ by position and from the slide title.
 - Test set: 10 public decks (6 pdf, 2 pptx, 2 docx) in tests/fixtures/decks/decks/.
 - A hand-checked answer file lists the claims in each deck, one entry per value. A table row
   candidate is matched value by value, so recall stays per value; it counts once as a candidate.
+- Since issue #45 the answer file gives the claims of §2's new types those types, and lists three more company
+  claims: front-b p15 "$7m left" (cash) and "18 months" (runway), and moz p20 "~100" (trials per day, a usage figure
+  before).
 - Pass mark: the parser finds at least 95% of listed claims.
 - Precision (false candidates) is reported; the test fails if it drops below 30%.
 - Runs as a normal automated test.
@@ -250,7 +271,8 @@ Fixed on the 10 test decks (2026-10-05):
   other boxes whose line is directly next to its own line, as above (same band, or directly above or below within a
   tenth of the page, with no other text box of the page between them), measured line to line, not box to box. A
   line with no position has no `next_to`. It is layout, stored with the structure and never sent to the model
-  (structure-labelling.md §1 uses it for header cells). Roadmaps have no `next_to`.
+  (structure-labelling.md §1 uses it for header cells). Roadmap cells keep `next_to` too, measured the same way
+  (issue #56): a roadmap figure takes a header from a date box only when it sits directly next to it.
 - On the test decks: 22 KPI panels, 3 timelines (moz p2, buffer p6, tea p11), 1 table, 1 hiring table. Neither pptx
   deck holds a native chart; chart reading is tested on built decks.
 - Recounted with label boxes, value boxes and titles (2026-10-06): the same 22 KPI panels, 3 timelines, 1 table and 1

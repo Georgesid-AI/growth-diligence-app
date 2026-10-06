@@ -21,7 +21,21 @@ verifier checks the value and the period, never the metric, so a value citing th
 wrong claim type. On the test decks 18 items lose a header, all on front-b: p15 "18 months" no longer cites "Cash on
 hand" (which sits above "$7m left"); p12's five team-tenure values cite neither "LTV / CAC" nor "Spend as" (nor "On a
 sustainable trajectory"); p16's 12 figures read from the axis dates no longer cite the chart legend entry "Cash".
-Roadmaps keep their header cells as they are.
+
+Header cells in a roadmap (issue #56, decision of 2026-10-06): an item's header cells are the top line of its own
+text box, and a cell of another box only when that box is a date box (each of its lines is a date or a part of one,
+as "2022" / "Q2") and the cell is left of the item in its grid row and in its `next_to` (deck-parser.md §7), as in a
+KPI panel. Only header text comes from the item's own box; a date box directly next to a figure may still date it.
+In a roadmap the cells to the left in a grid row are other text boxes, such as the neighbouring paragraph, which
+the model read as the figure's headers. On the test decks (measured on `89ba331`):
+- moz p2: every item loses its headers from other boxes (the neighbouring paragraphs); no date box sits beside a
+  moz p2 figure. "1.1M" cited r1c2 and r1c1, the 2004 and 1997 paragraphs.
+- tea p11: i4 and i5 ("layer-1 to layer-2") keep 2022-Q2: "Q2" (r10c1) is directly next to their line on the left,
+  and "2022" sits above it in its date box. i1, i2 and i3 lose the year they rebuilt from a box that is not their
+  date (2021 from r1c2, 2021 from r7c1, 2022 from r9c1). Their own date boxes are directly next to them on the right, and
+  a header is read left of the item only, so "Q3" of the 2022 Q3 box, directly right of "layer-1 to layer-2" but
+  another bullet's date, stays out.
+- buffer p6 is one box: every item cites its top line only, unchanged.
 
 A scale read from a neighbouring cell of its row (`£m`, `'000`; llm-structure-reading.md §2) follows the same rule
 (decision of 2026-10-06 on issue #50): in a KPI panel, a neighbouring cell from another box gives its scale only when it
@@ -53,7 +67,8 @@ Label from (issue #49): a roadmap row takes "Label from" only from a cell of its
 (`candidate_from_item`), never from a cell of another box. The cells beside it in its grid row belong to other boxes,
 such as the neighbouring paragraph (moz p2 showed "index and link graph," as the label of "just “SEO” to social
 media,"). Each box is one column of the grid, so a roadmap row has no "Label from". KPI panels keep the label beside
-their value. Header cells in the item list are unchanged (§1: roadmaps keep their header cells).
+their value. Header cells in the item list follow §1 (issue #56): the top line of the item's own box, and a date box
+directly left of it.
 
 A line has at most one pair, and a date may serve several lines. A milestone's period is the one Python rebuilds from
 its date cell. A milestone has no value, so it is never Verified. A figure in a paired line is dated by its pair: its
@@ -71,8 +86,8 @@ timelines such as buffer p6, where dates sit below their lines.
 
 **3. Text and reply.** The structure text is unchanged (`r<row>c<col>: <text>`, with spans). Below it comes the line
 `items:`, then one line per item, e.g. `i3 r3c2#2 "(30K)" 30000 or -30000 h r3c1 r1c2`. The `h` cells are the
-item's header cells (§1): a header the KPI panel guard does not count is left out, with no mark, so the line format
-and the prompt are unchanged. A roadmap adds `d1 r2c1` and `t1 r1c1` lines. All deck types share one labelling schema: `{"type", "labels": [...], "pairs": [...]}`. A label
+item's header cells (§1): a header the KPI panel or roadmap rule does not count is left out, with no mark, so the line
+format is unchanged. A roadmap adds `d1 r2c1` and `t1 r1c1` lines. All deck types share one labelling schema: `{"type", "labels": [...], "pairs": [...]}`. A label
 holds exactly `item` (a listed id), `metric` (`CLAIM_METRICS`, `use_of_funds`, `other`, or `not_a_metric` for page
 numbers, years and footnote marks), and `period`, `unit`, `unit_other` and `actual_or_forecast` as today. There is no
 value, cell id or flag, and each listed id is labelled exactly once. Schema violations (an unknown, duplicate or
@@ -81,7 +96,21 @@ one reask, then "Not read by AI".
 
 The reply follows the type Python sent; a corrected type is only logged. Column mapping keeps its own schema. Each
 schema's hash enters the cache key. Tie-breaks in the prompt: hours and time figures → `product` unless a user count
-is named; "% of marketplace" and market share → `market`; commission and take rate → `sales`.
+is named or a tie-break below names them; "% of marketplace" and market share → `market`; commission and take rate →
+`sales`.
+
+Prompt v5, release r8 (issues #45 and #47, decisions of 2026-10-06), one bump for both:
+- The new claim types of deck-parser.md §2 are metrics: `cash` (cash balance, in a currency), `burn` (net burn, in a
+  currency), `runway` (months), `ltv` (lifetime value), `cac` (customer acquisition cost, cost of paid acquisition),
+  `customer_lifetime` (customer life or lifetime, months), `ltv_cac` (LTV/CAC, x), `trials_per_day` (free trials per
+  day) and `months_to_profitability` (months until the company is profitable). Each is one tie-break line.
+- Monthly revenue, MRR, ARR and revenue run rate are `revenue`. Python rebuilds the period from the cells (§4).
+- Social media followers and other social counts, visits, email subscribers and community members on a channel are
+  `other`, not `users`, so they are never Verified (zero2hero p17 "Telegram(30K)"; moz p21 "~1.25 million" Monthly
+  Visits and "~300K" Email Subscribers).
+- Board seats are `not_a_metric`, the whole count (moz p23 "2 Investors (Michelle +1)", "1 Independent (TBD)").
+- A team member's tenure is `not_a_metric` ("2 weeks ago", "joined 6 months ago" on front-b p12).
+Other is never Verified, unchanged (§4).
 
 **4. Verifier.** Values and cells are Python's, so value matching is deleted. What is left:
 - Period: rebuilt from the item's lowest period header (with the year cell above), from its own cell, or in a
@@ -121,6 +150,10 @@ and is also given apart: financial (outside roadmaps) and roadmap (decision of 2
 - New counts per type: `not_a_metric`, `other`, ambiguous readings, flags.
 - Diagnostic columns: deck, page, type, item id, cell#position, cell text, Python's values, reason, then per pass the
   model's metric, period, unit and actual_or_forecast and the verifier's result.
+- The diagnostic also lists every roadmap line of the roadmaps read in every pass (issue #47, the pairing
+  investigation): deck, page, line id, cell, line text, whether the pair and category are the same in every pass,
+  then per pass the date it is paired with (id, cell and text) and the category, or "no pair". The tracked reports
+  of 2026-10-06 give only the count, so they cannot say which lines move, or whether the date or the category does.
 - The token line gives the average of text plus list against 4,000, and `FakeAdapter` replays the new format.
 
 **8. Replaced in llm-structure-reading.md.**
@@ -139,14 +172,19 @@ Unchanged: §3, §4, §6, §8 and the 400,000-token audit cap.
 **9. Tests.** Each is first shown failing on a deliberate violation. Enumeration: several figures per cell, dates
 left out, both defaults, stable ids, no figure from a digit inside a word. Header cells: in a KPI panel a header from
 another box only when directly next to the item (front-b p12, p15 and p16), and a neighbour's scale too (a built
-slide). Reply: bad, duplicate or missing ids, and bad pairs. Verifier: periods, a
+slide); in a roadmap (issue #56) no header from a text box of another box (moz p2), a date box directly left counts
+(tea p11 i4 and i5 keep 2022-Q2) and one beside it on the right does not (tea p11 i1–i3 rebuild no period from
+another box). Prompt v5 (issues #45, #47): every new claim type and tie-break is named; the recorded replies give
+moz p20 "~$900", "~9 Months", "~100" and "~$100" and front-b p15 "$7m left", "18 months" and "Profitable in 10
+months" their new types, Verified. Reply: bad, duplicate or missing ids, and bad pairs. Verifier: periods, a
 pair-dated figure, the adjacent date line (one above or below counts; one each side takes the timeline's direction, also under a title line), flags. Roadmaps
 (issue #49, moz p2): one milestone row per dated paragraph, and no "Label from" from another box. Other: refused
 until its type is edited. The 4,000 cap, with the list counted. Boundary: an item line passes only in format, with
 raw text that is a figure inside its cell (else reason `bad_item_line`), and no raw text reaches `llm_structures` or
 a log.
 
-**Open questions.** None. A cash claim type is left to the forecast-claims spec.
+**Open questions.** None. The cash, burn and runway claim types are in deck-parser.md §2 (issue #45). Whether Python
+should pair roadmap lines to dates by position (issue #47) is not decided; the model pairs, as above.
 
 **Files.** New: `backend/app/structures/items.py`. Changed: `backend/app/structures/{__init__,verify,redact}.py`,
 `backend/app/llm/{schemas,gateway}.py`, `backend/app/llm/prompts/{structure_reading.md,RELEASE.md}`,
