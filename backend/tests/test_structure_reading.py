@@ -162,11 +162,16 @@ def test_front_b_a_kpi_value_cites_a_label_from_another_box_only_when_it_sits_di
 
 
 def test_roadmaps_keep_their_header_cells():
-    """The guard is a KPI panel's: moz p2's "1.1M" still cites the lines left of it in its row and its box's top line."""
+    """The guard is a KPI panel's: moz p2's "1.1M" still cites the cells left of it in its row (its paragraph is one
+    cell since issue #49, so it is its box's top line), and tea p11's "layer-2" the cell left of it and its box's top
+    line."""
     pytest.importorskip("pdfplumber")
     roadmap = _deck_structure("02-moz.pdf", 2, "roadmap")
     item, = [i for i in structure_items.list_items(roadmap)["items"] if i["raw"] == "1.1M"]
-    assert item["headers"] == ["r2c2", "r2c1", "r1c3"]
+    assert item["headers"] == ["r1c2", "r1c1"]
+    tea = _deck_structure("10-tea.pdf", 11, "roadmap")
+    item, = [i for i in structure_items.list_items(tea)["items"] if i["raw"] == "2"]
+    assert (v._text(tea, item["cell"]), item["headers"]) == ("layer-1 to layer-2", ["r10c1", "r9c2"])
 
 
 def test_a_kpi_value_takes_a_neighbours_scale_only_when_it_sits_directly_next_to_it():

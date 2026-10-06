@@ -1355,7 +1355,9 @@ def test_a_roadmap_box_is_one_cell_only_when_each_line_continues_the_one_above()
                     ["We launch the app in three new markets", "Launch EU", "Launch the API. Hire a CFO"],
                     ["100 new hires"]], \
         "a figure after a line with no end punctuation starts a new item; a capital after a full stop does not"
-    long = ["We open offices in three new markets across the region and", "hire local teams to sell the platform to",
+    assert _roadmap_rows([("We ship the app in\nQ4 2026", 1, 2)])[1:] == [["We ship the app in"], ["Q4 2026"]], \
+        "a date line is never joined, even after a wrap word"
+    long =["We launch offices in three new markets across the region and", "hire local teams to sell the platform to",
             "mid-sized firms, with a partner programme that brings in", "resellers and integrators before the year ends"]
     assert all(len(line) <= parser.TIMELINE_LINE_MAX for line in long) and len(" ".join(long)) > parser.CELL_MAX
     assert _roadmap_rows([("\n".join(long), 1, 2)])[1:] == [[line] for line in long], \

@@ -578,6 +578,32 @@ def _wrapped(box: List[Dict]) -> bool:
         any(w and w[0] in _WRAP_WORDS for w in words[1:])
 
 
+_END_PUNCTUATION = re.compile(r"[.,;:!?/][\"'”’)\]]*$")      # "app.", "media,", "$499 /", "“Moz.com.”"
+
+
+def _continues(above: str, line: str) -> bool:
+    """Whether a roadmap line continues the line above it (spec section 7, issue #49): it starts with a lower-case
+    letter or "&", or the line above ends with punctuation, a wrap word ("a" in lower case only) or inside a bracket
+    it opened ("Gillian (Rand’s / Mom) founds the")."""
+    start = line.lstrip()[:1]
+    words = [w if w == "A" else w.lower() for w in re.findall(r"[^\W\d_]+", above)]
+    return start == "&" or (start.isalpha() and start.islower()) or bool(_END_PUNCTUATION.search(above.rstrip())) \
+        or bool(words and words[-1] in _WRAP_WORDS) or above.count("(") > above.count(")")
+
+
+def _paragraph(box: List[Dict], claims) -> List[Dict]:
+    """A roadmap text box as its grid rows (spec section 7, issue #49): one line holding the box's lines joined with
+    a space when they are one paragraph (two or more lines, none a date label, each continuing the one above, at
+    most CELL_MAX characters joined); otherwise its lines, as in a bullet list or a box of lines and dates."""
+    texts = [line["text"] for line in box]
+    joined = " ".join(texts)
+    if len(texts) < 2 or len(joined) > CELL_MAX or any(_date_labels(text, claims) for text in texts) \
+            or not all(_continues(a, b) for a, b in zip(texts, texts[1:])):
+        return box
+    extent = _extent(box)
+    return [{**box[0], "text": joined, **({"bbox": list(extent)} if extent else {})}]
+
+
 def _caption(blocks: List[Dict], page, cells: List[Dict]) -> str:
     """The text line right above a table, when the layout says where the table is."""
     boxes = [c["bbox"] for c in cells if c.get("bbox")]
@@ -809,7 +835,8 @@ def _kpi_panel(boxes: List[List[Dict]], title: List[Dict], ticks: set, claims) -
 
 def _box_structures(blocks: List[Dict], excluded: set, claims) -> List[Dict]:
     """Per page: a roadmap or timeline when TIMELINE_MIN_DATES date labels remain once chart axes are
-    left out, holding every box that is not prose; otherwise a KPI panel (_kpi_panel)."""
+    left out, holding every box that is not prose, a paragraph as one line (_paragraph); otherwise a KPI
+    panel (_kpi_panel)."""
     pages, titles = {}, {}
     for b in blocks:
         if b["kind"] == "text" and _page_key(b) not in excluded:
@@ -827,7 +854,7 @@ def _box_structures(blocks: List[Dict], excluded: set, claims) -> List[Dict]:
         titled = [t["text"] for t in titles.get(page, ())]
         if len(labels) >= TIMELINE_MIN_DATES and any(claims.has_product_keyword(t) for t in titled + [l["text"] for l in lines]):
             kind = "roadmap"
-            kept = [box for box in boxes.values()
+            kept = [_paragraph(box, claims) for box in boxes.values()
                     if all(len(l["text"]) <= TIMELINE_LINE_MAX for l in box)
                     and not all(id(l) in axis for l in box)]
         else:
