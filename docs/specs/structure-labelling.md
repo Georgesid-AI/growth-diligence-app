@@ -45,7 +45,15 @@ metric and are Verified. The AI-row dedupe (`structures.value_match`) returns ex
 **2. Roadmaps.** Python also lists date cells (`d1`…, date labels as in deck-parser.md §7) and text lines (`t1`…,
 the other non-empty cells). The model returns pairs (line id, date id) with a category: `launch`, `feature`,
 `expansion`, `partnership`, `hiring`, `break_even`, `funding`, `certification` or `other`. Claim types: `hiring` →
-people, `break_even` → ebitda, `funding` → other (type Other, §4), the rest → product. Parser rules are unchanged.
+people, `break_even` → ebitda, `funding` → other (type Other, §4), the rest → product. Parser rules are unchanged,
+except one (issue #49): a paragraph wrapped over the lines of a roadmap text box is one cell (deck-parser.md §7), so it
+is one text line and gives at most one milestone row (moz p2: 9 rows, not 40).
+
+Label from (issue #49): a roadmap row takes "Label from" only from a cell of its own text box in its grid row
+(`candidate_from_item`), never from a cell of another box. The cells beside it in its grid row belong to other boxes,
+such as the neighbouring paragraph (moz p2 showed "index and link graph," as the label of "just “SEO” to social
+media,"). Each box is one column of the grid, so a roadmap row has no "Label from". KPI panels keep the label beside
+their value. Header cells in the item list are unchanged (§1: roadmaps keep their header cells).
 
 A line has at most one pair, and a date may serve several lines. A milestone's period is the one Python rebuilds from
 its date cell. A milestone has no value, so it is never Verified. A figure in a paired line is dated by its pair: its
@@ -132,7 +140,8 @@ Unchanged: §3, §4, §6, §8 and the 400,000-token audit cap.
 left out, both defaults, stable ids, no figure from a digit inside a word. Header cells: in a KPI panel a header from
 another box only when directly next to the item (front-b p12, p15 and p16), and a neighbour's scale too (a built
 slide). Reply: bad, duplicate or missing ids, and bad pairs. Verifier: periods, a
-pair-dated figure, the adjacent date line (one above or below counts; one each side takes the timeline's direction, also under a title line), flags. Other: refused
+pair-dated figure, the adjacent date line (one above or below counts; one each side takes the timeline's direction, also under a title line), flags. Roadmaps
+(issue #49, moz p2): one milestone row per dated paragraph, and no "Label from" from another box. Other: refused
 until its type is edited. The 4,000 cap, with the list counted. Boundary: an item line passes only in format, with
 raw text that is a figure inside its cell (else reason `bad_item_line`), and no raw text reaches `llm_structures` or
 a log.

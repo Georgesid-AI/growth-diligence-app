@@ -229,6 +229,20 @@ Fixed on the 10 test decks (2026-10-05):
 - A structure holds at least one figure (a number or a date; list and row numbers do not count). A cell over 200
   characters is prose and is left out. A page whose figures §2 drops (background, cited research) holds no structure.
 - Text boxes become a grid: boxes that overlap in height form a band, each box a column of its band, each line a row.
+- In a roadmap, a paragraph is one row (issue #49). A pdf wraps a paragraph over several lines, and a row per line
+  gave one milestone per line: moz p2's 9 dated paragraphs became 40 rows. A roadmap text box is one paragraph when it
+  has two or more lines, none of them a date label, and each line after the first continues the one above: it starts
+  with a lower-case letter or "&", or the line above ends with punctuation (. , ; : ! ? /, before any closing quote
+  or bracket), with a wrap word (the KPI list above, "a" in lower case only) or inside a bracket it opened. Such a
+  box becomes one cell: its lines joined with a space, in their order. Otherwise the box keeps a row per line: a line
+  that starts with a capital letter or a figure after a line that ends with none of these starts a new item, as in a
+  bullet list. A box whose joined text would be over 200 characters keeps a row per line too (a longer cell is
+  prose, above). KPI panels keep a row per line.
+  - On the test decks: moz p2's 40 text lines become 9 cells, one per dated paragraph. buffer p6 (one box that
+    alternates lines and dates) and tea p11 (bullet lists, each bullet a capital letter after a line with no end
+    punctuation) keep every line as a row, unchanged.
+  - Known limit: in a bullet list, a bullet wrapped over two lines keeps two rows (tea p11: "from Hashkey",
+    "economy", "layer-1 to layer-2").
 - A band only knows heights, so a tall box can put two visual rows of a page in one grid row (issue #50). front-b p15:
   the box "“Default alive” † / Profitable in 10 months" spans the label row ("Cash on hand", "Runway *") and the value
   row ("$7m left", "18 months"), so the five boxes form one band and the grid row reads `Cash on hand | $7m left |
@@ -236,7 +250,7 @@ Fixed on the 10 test decks (2026-10-05):
   other boxes whose line is directly next to its own line, as above (same band, or directly above or below within a
   tenth of the page, with no other text box of the page between them), measured line to line, not box to box. A
   line with no position has no `next_to`. It is layout, stored with the structure and never sent to the model
-  (structure-labelling.md §1 uses it for header cells). Roadmaps keep their grid as it is and have no `next_to`.
+  (structure-labelling.md §1 uses it for header cells). Roadmaps have no `next_to`.
 - On the test decks: 22 KPI panels, 3 timelines (moz p2, buffer p6, tea p11), 1 table, 1 hiring table. Neither pptx
   deck holds a native chart; chart reading is tested on built decks.
 - Recounted with label boxes, value boxes and titles (2026-10-06): the same 22 KPI panels, 3 timelines, 1 table and 1
