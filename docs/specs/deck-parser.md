@@ -196,6 +196,8 @@ Fixed on the 10 test decks (2026-10-05):
 - KPI panel: a text box of at most 4 lines, each at most 30 characters, holding a figure that is not a date and a
   word, and not one sentence wrapped over its lines (a line ends on, or the next starts with, a word such as "of",
   "and", "the", or a line ends with a comma). The KPI boxes of a page form one panel.
+  The article "a" counts only in lower case (issue #50): a line ending on a capital "A" ends a name, so front-b p15's
+  "Seed to Series A / $3.1m raised / $xx spent / $xx ARR added" is a KPI box, like its twin "Series A to date".
 - Label boxes, value boxes and a title as label (decisions of 2026-10-06, issue #48). They only join a page's panel: a
   page with no KPI box has no panel.
   - Label length: 59 characters. The longest label on the 10 test decks is "Crawling, Serving, Hosting + Processing"
@@ -227,6 +229,14 @@ Fixed on the 10 test decks (2026-10-05):
 - A structure holds at least one figure (a number or a date; list and row numbers do not count). A cell over 200
   characters is prose and is left out. A page whose figures §2 drops (background, cited research) holds no structure.
 - Text boxes become a grid: boxes that overlap in height form a band, each box a column of its band, each line a row.
+- A band only knows heights, so a tall box can put two visual rows of a page in one grid row (issue #50). front-b p15:
+  the box "“Default alive” † / Profitable in 10 months" spans the label row ("Cash on hand", "Runway *") and the value
+  row ("$7m left", "18 months"), so the five boxes form one band and the grid row reads `Cash on hand | $7m left |
+  18 months | Runway * | “Default alive” †`. So in a KPI panel each cell also keeps `next_to`: the ids of the cells of
+  other boxes whose line is directly next to its own line, as above (same band, or directly above or below within a
+  tenth of the page, with no other text box of the page between them), measured line to line, not box to box. A
+  line with no position has no `next_to`. It is layout, stored with the structure and never sent to the model
+  (structure-labelling.md §1 uses it for header cells). Roadmaps keep their grid as it is and have no `next_to`.
 - On the test decks: 22 KPI panels, 3 timelines (moz p2, buffer p6, tea p11), 1 table, 1 hiring table. Neither pptx
   deck holds a native chart; chart reading is tested on built decks.
 - Recounted with label boxes, value boxes and titles (2026-10-06): the same 22 KPI panels, 3 timelines, 1 table and 1
@@ -234,6 +244,8 @@ Fixed on the 10 test decks (2026-10-05):
   genesisai-2021 p14; genesisai-2024 p14; tea p9. On moz p20 and p21 every label joins, the nine value boxes join
   with their labels (p20: "~13,500", "~100", "~$900", "~$100", "~$93"; p21: "~300K", "~82%", "~57%", "~25%"), and
   the title labels the first value ("2011 Estimated Revenue", "% of Free Trials Converting to Paid").
+- Recounted with the wrap word "a" in lower case only (issue #50, 2026-10-06): the same 22 KPI panels, 3 timelines,
+  1 table and 1 hiring table. front-b p15's panel gains the box "Seed to Series A" and its 4 lines; nothing else moves.
 
 ## Done when
 - All three formats parse with correct slide/page references.

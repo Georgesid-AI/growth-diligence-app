@@ -3,12 +3,25 @@ Status: Draft; decisions of 2026-10-05 applied. Location: docs/specs/structure-l
 llm-structure-reading.md (§8). Implements CLAUDE.md rules 16–18.
 
 **1. Item list (Python, pure).** For every deck type, Python lists every figure in every redacted cell. Dates are
-periods and are left out. Each item has:
+periods and are left out. A digit inside a word is no figure, as in the parser's reader (`claims.figures`; issue #50):
+a number with a letter directly before it ("zero2hero", "Web3", "Q1") or an ordinal ending ("1st") gives no item. On
+the test decks this removes 7 items: zero2hero p11 "zero2hero", moz p21 "Churn Rate in 1st2 Paid Months" (2), tea
+p11 "Go2Market", "Web3 Foundation Open Grant" and "Q1-Q2" (2). Each item has:
 - `id`: `i1`, `i2`, … in reading order, so the same structure always gives the same list;
 - the cell id: a cell with several figures gives one item each, `#n` marking the position (`r6c2#2`);
 - the raw text, cut from the redacted cell;
 - the value in full units, under today's normalisation (llm-structure-reading.md §2);
 - the ids of its header cells (`verify.header_cells`).
+
+Header cells in a KPI panel (issue #50, interim guard): a header cell from another box counts only when it is
+directly next to the item's cell, by its `next_to` (deck-parser.md §7: same visual row, or directly above or below
+within a tenth of the page, with no box between, measured line to line). The top line of the item's own box always
+counts. A cell with no `next_to` has no header from another box. A wrong label is worse than a missing one: the
+verifier checks the value and the period, never the metric, so a value citing the wrong box can be Verified under the
+wrong claim type. On the test decks 18 items lose a header, all on front-b: p15 "18 months" no longer cites "Cash on
+hand" (which sits above "$7m left"); p12's five team-tenure values cite neither "LTV / CAC" nor "Spend as" (nor "On a
+sustainable trajectory"); p16's 12 figures read from the axis dates no longer cite the chart legend entry "Cash".
+Roadmaps keep their header cells as they are.
 
 An ambiguous reading carries both values, with Python's default first; the model does not choose.
 - `dot_reading`: `2.500` defaults to thousands, unless it carries a k/m/bn suffix (`1.250M` → 1.25m).
@@ -43,8 +56,9 @@ then a period cell of the line, and Python rebuilds the period itself. This also
 timelines such as buffer p6, where dates sit below their lines.
 
 **3. Text and reply.** The structure text is unchanged (`r<row>c<col>: <text>`, with spans). Below it comes the line
-`items:`, then one line per item, e.g. `i3 r3c2#2 "(30K)" 30000 or -30000 h r3c1 r1c2`. A roadmap adds `d1 r2c1`
-and `t1 r1c1` lines. All deck types share one labelling schema: `{"type", "labels": [...], "pairs": [...]}`. A label
+`items:`, then one line per item, e.g. `i3 r3c2#2 "(30K)" 30000 or -30000 h r3c1 r1c2`. The `h` cells are the
+item's header cells (§1): a header the KPI panel guard does not count is left out, with no mark, so the line format
+and the prompt are unchanged. A roadmap adds `d1 r2c1` and `t1 r1c1` lines. All deck types share one labelling schema: `{"type", "labels": [...], "pairs": [...]}`. A label
 holds exactly `item` (a listed id), `metric` (`CLAIM_METRICS`, `use_of_funds`, `other`, or `not_a_metric` for page
 numbers, years and footnote marks), and `period`, `unit`, `unit_other` and `actual_or_forecast` as today. There is no
 value, cell id or flag, and each listed id is labelled exactly once. Schema violations (an unknown, duplicate or
@@ -109,7 +123,8 @@ and is also given apart: financial (outside roadmaps) and roadmap (decision of 2
 Unchanged: §3, §4, §6, §8 and the 400,000-token audit cap.
 
 **9. Tests.** Each is first shown failing on a deliberate violation. Enumeration: several figures per cell, dates
-left out, both defaults, stable ids. Reply: bad, duplicate or missing ids, and bad pairs. Verifier: periods, a
+left out, both defaults, stable ids, no figure from a digit inside a word. Header cells: in a KPI panel a header from
+another box only when directly next to the item (front-b p12, p15 and p16). Reply: bad, duplicate or missing ids, and bad pairs. Verifier: periods, a
 pair-dated figure, the adjacent date line (one above or below counts; one each side takes the timeline's direction, also under a title line), flags. Other: refused
 until its type is edited. The 4,000 cap, with the list counted. Boundary: an item line passes only in format, with
 raw text that is a figure inside its cell (else reason `bad_item_line`), and no raw text reaches `llm_structures` or
