@@ -184,10 +184,15 @@ def _is_value(cell: Dict, comma: bool) -> bool:
 def header_cells(structure: Dict, cell: Dict) -> List[Dict]:
     """The header cells of a value cell, nearest first: its row header (the cells left of it in its
     row that are not values) and the header stack above its column (header rows covering it). In a
-    KPI panel or a roadmap, the cells left of it in its row and the top line of its own box."""
+    KPI panel or a roadmap, the cells left of it in its row and the top line of its own box. In a KPI
+    panel a cell left of it, from another box, counts only when it is directly next to it on the page
+    (its "next_to", deck-parser.md section 7): a tall box can merge two visual rows into one grid row,
+    and a wrong label is worse than a missing one (structure-labelling.md section 1)."""
     cells, comma = structure["cells"], decimal_comma(structure["cells"])
     left = sorted((c for c in cells if c["row"] == cell["row"] and c["col"] < cell["col"]
                    and not _is_value(c, comma)), key=lambda c: -c["col"])
+    if structure.get("type") == "kpi_panel":
+        left = [c for c in left if _id(c) in (cell.get("next_to") or ())]
     if structure.get("type") in BOX_TYPES:
         box = [c for c in cells if c.get("box") is not None and c.get("box") == cell.get("box")]
         top = min(box, key=lambda c: c["row"]) if box else None

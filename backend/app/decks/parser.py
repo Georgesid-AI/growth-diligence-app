@@ -520,7 +520,8 @@ def detect_structures(blocks: List[Dict], charts: List[Dict] = ()) -> List[Dict]
          "cells": [{"row": 1, "col": 2, "text": "FY2025", "col_span": 12}, ...]}
 
     with "table" (a table's number on its page), "chart" (a chart's) or, for a KPI panel or a
-    roadmap, a "box" on every cell: the text box the line comes from. header_rows counts the rows
+    roadmap, a "box" on every cell: the text box the line comes from; a KPI panel's cells also keep
+    "next_to" (_band_cells). header_rows counts the rows
     above the first row that holds a figure. A structure holds at least one figure (a number or a
     date); text that is none of these structures is prose and is never one. Pages whose figures
     section 2 drops as background or cited research hold no structure.
@@ -570,8 +571,9 @@ def _header_rows(cells: List[Dict], claims) -> int:
 
 
 def _wrapped(box: List[Dict]) -> bool:
-    """True when the lines of a box are one sentence wrapped, not separate labels."""
-    words = [re.findall(r"[^\W\d_]+|,", line["text"].lower()) for line in box]
+    """True when the lines of a box are one sentence wrapped, not separate labels. The article "a" counts only in
+    lower case: "Seed to Series A" ends on a name."""
+    words = [[w if w == "A" else w.lower() for w in re.findall(r"[^\W\d_]+|,", line["text"])] for line in box]
     return any(w and (w[-1] in _WRAP_WORDS or w[-1] == ",") for w in words[:-1]) or \
         any(w and w[0] in _WRAP_WORDS for w in words[1:])
 
@@ -691,9 +693,13 @@ def _axis_lines(lines: List[Dict], claims) -> set:
     return out
 
 
-def _band_cells(boxes: List[List[Dict]]) -> List[Dict]:
+def _band_cells(boxes: List[List[Dict]], others=None) -> List[Dict]:
     """Text boxes as a grid: boxes that overlap in height form a band of rows, each box a column of
-    its band in left-to-right order, each line a row. Every cell keeps its box; a title line is marked."""
+    its band in left-to-right order, each line a row. Every cell keeps its box; a title line is marked.
+    With `others` (a KPI panel: the extents of every text box of its page and its title), a cell whose line
+    has a position also keeps "next_to": the ids of the cells of other boxes whose line is directly next to
+    its own line (_next_to, line to line). A tall box can put two visual rows in one band (front-b p15), so
+    a cell's row neighbour need not sit next to it on the page."""
     def extent(lines):
         placed = [l["bbox"] for l in lines if l.get("bbox")]
         return (min(b[1] for b in placed), max(b[3] for b in placed), min(b[0] for b in placed)) if placed else None
@@ -708,14 +714,20 @@ def _band_cells(boxes: List[List[Dict]]) -> List[Dict]:
         else:
             bands.append({"top": top, "bottom": bottom, "boxes": [box]})
     bands += [{"boxes": [box]} for box in boxes if not extent(box)]       # no layout: one box per band
-    cells, row, number = [], 0, 0
+    cells, lines, row, number = [], [], 0, 0
     for band in bands:
         members = sorted(band["boxes"], key=lambda b: extent(b)[2] if extent(b) else 0)
         for col, box in enumerate(members, 1):
             number += 1
             cells += [{"row": row + i + 1, "col": col, "text": line["text"], "box": number,
                        **({"title": True} if line.get("title") else {})} for i, line in enumerate(box)]
+            lines += [line.get("bbox") for line in box]
         row += max(len(box) for box in members)
+    if others is not None:
+        for cell, bbox in zip(cells, lines):
+            if bbox:
+                cell["next_to"] = [f"r{o['row']}c{o['col']}" for o, near in zip(cells, lines) if near and
+                                   o["box"] != cell["box"] and _next_to(tuple(bbox), tuple(near), others)]
     return cells
 
 
@@ -824,5 +836,7 @@ def _box_structures(blocks: List[Dict], excluded: set, claims) -> List[Dict]:
         if not kept or not any(_has_figure(l["text"], claims) for box in kept for l in box):
             continue
         first = kept[0][0]
-        out.append({"type": kind, **_where(first), "header_rows": 0, "cells": _band_cells(kept)})
+        page_boxes = list(boxes.values()) + ([titles[page]] if page in titles else [])
+        others = [e for e in map(_extent, page_boxes) if e] if kind == "kpi_panel" else None
+        out.append({"type": kind, **_where(first), "header_rows": 0, "cells": _band_cells(kept, others)})
     return out
