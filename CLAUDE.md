@@ -49,3 +49,20 @@
     scope, with a test. A new test counts only after it has failed on a deliberate
     violation. Report only what needs my decision. If a fix goes beyond the task,
     list it under "Decisions for you" and do not build it.
+
+## Rule: which decisions to bring to George
+19. Decide engineering questions yourself and record them in the session log as
+    "Decided: X, because Y". This covers rule wording, limits measured from data, test
+    design, code structure, commit order, naming, and anything cheap to change later.
+
+    Stop and ask George only for these three kinds of decision:
+    1. What counts as a metric, and when a figure may be labelled Verified. Examples:
+       whether followers are users, whether a price is a metric, whether a range is one
+       figure.
+    2. Anything that costs money or touches client data: a live API run, sending deck text
+       outside the app, storing anything about a client.
+    3. Anything that changes what the analyst sees on screen: a new or removed column, a
+       changed label, rows appearing or disappearing.
+
+    When you ask, put the question first, in one sentence, then the options with your
+    recommendation. One message, all open decisions together, not one at a time.
