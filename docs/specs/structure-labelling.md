@@ -17,6 +17,12 @@ An ambiguous reading carries both values, with Python's default first; the model
 
 The approval row shows both readings. The analyst confirms the default or uses Edit (deck-parser.md §6).
 
+Ranges (decision of 2026-10-06): in `$12 -$13 million` the dash is no sign and the low end takes the high end's scale
+(12,000,000 to 13,000,000). The two figures stay two items; both carry `range` (low id, high id, low, high) and make
+one approval row (`value`, `value_high`) from the first labelled end, Verified only when both ends have the same
+metric and are Verified. The AI-row dedupe (`structures.value_match`) returns exact (same value or range), in range
+(one falls inside the other's range) or no match; either match means the cell already lists the row.
+
 **2. Roadmaps.** Python also lists date cells (`d1`…, date labels as in deck-parser.md §7) and text lines (`t1`…,
 the other non-empty cells). The model returns pairs (line id, date id) with a category: `launch`, `feature`,
 `expansion`, `partnership`, `hiring`, `break_even`, `funding`, `certification` or `other`. Claim types: `hiring` →
@@ -60,7 +66,7 @@ Python joins each label to its item, so a checked item keeps today's fields plus
 `STRUCTURE_UNMATCHED` and the labels are unchanged.
 
 **5. Storage, prompt, cache and cap.** `llm_structures` stores the reply and the item list without raw text (id,
-cell, position, values, header ids), so every label resolves to a value with its cell reference (rule 17) and no deck
+cell, position, values, header ids, a range's low and high), so every label resolves to a value with its cell reference (rule 17) and no deck
 text is stored. The prompt becomes v3 and the release r6; the narrative keys move once, as with r5. The key formula
 stays; the schema hash and the item list move every key. Cap: 4,000 tokens per structure, on the structure text plus
 the item list; a larger structure is "Too large for AI reading". `reverify_audit` skips readings stored under v2, and
@@ -71,7 +77,8 @@ over structures read in every pass. The period is compared as the verifier keeps
 `not_a_metric` counts as a metric. Cells and the item count are fixed by code. The ≥95% target applies to this figure
 over all deck types. Roadmaps are reported apart: "roadmap lines: N, same pair and category in every pass: M,
 date rebuilt from cell: K". K counts roadmap items whose period Python rebuilds from their own period cells (§4),
-whatever the pair says.
+whatever the pair says. The match rate counts every labelled item, roadmap figures included and milestones left out,
+and is also given apart: financial (outside roadmaps) and roadmap (decision of 2026-10-06).
 
 **7. scripts/consistency_run.py.**
 - Keys: `_normalised_key` = (item id, metric, kept period range); old method = (item id, metric, period as written,
