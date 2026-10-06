@@ -231,6 +231,16 @@ def test_a_kpi_value_takes_a_neighbours_scale_only_when_it_sits_directly_next_to
         [("12", 12), ("4.5", 4500000), ("18 months", 18)]
 
 
+@pytest.mark.parametrize("kind, scale", [("kpi_panel", 1e6), ("roadmap", 1.0)])
+def test_a_roadmap_figure_takes_no_scale_from_a_text_box_beside_it(kind, scale):
+    """Issue #56 (structure-labelling.md section 1): in a roadmap a neighbour's scale follows the header rule, so only
+    a date box beside a figure counts, and a date box holds no scale word. The same cells in a KPI panel: "Revenue
+    £m" directly next to "12" gives its scale."""
+    cells = [{"row": 1, "col": 1, "text": "Revenue £m", "box": 1, "next_to": ["r1c2"]},
+             {"row": 1, "col": 2, "text": "12", "box": 2, "next_to": ["r1c1"]}]
+    assert verify.scale_factor({"type": kind, "cells": cells}, cells[1]) == scale
+
+
 def test_the_call_is_pinned_to_one_model_with_no_temperature_no_tools_and_the_structure_schema(monkeypatch):
     monkeypatch.setenv("NARRATIVE_MODEL", "claude-opus-5-5")      # the narrative setting does not move it
     result, adapter = _read(_db())
