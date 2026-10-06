@@ -910,35 +910,39 @@ def test_cash_flow_is_no_cash_keyword():
     assert [k["family"] for k in claims._keywords("Cash on hand")] == ["cash"]
 
 
-def test_a_profitable_line_is_a_months_to_profitability_milestone():
-    """Spec section 2: like an EBITDA line, a "profitable" line with no figure takes a nearby date, and a bare date
-    under it takes its type."""
-    assert [(c["claim_type"], c["target_date"]) for c in _line("Profitable by Q3 2025")] == \
-        [("months_to_profitability", "2025-Q3")]
+def test_profitable_is_months_to_profitability_only_with_a_figure_in_months():
+    """Spec section 2 (decision of 2026-10-06): "Profitable in 10 months" is months to profitability; a dated
+    "profitable" line stays an EBITDA milestone, and a bare date under it takes the EBITDA type."""
+    assert [(c["claim_type"], c["value"], c["unit"]) for c in _line("Profitable in 10 months")] == \
+        [("months_to_profitability", 10, "months")]
+    assert [(c["claim_type"], c["target_date"]) for c in _line("Profitable by Q3 2025")] == [("ebitda", "2025-Q3")]
     found = _found(_slide([("Profitable\nQ2 2024", 1, 2)]))
-    assert [(c["claim_type"], c["value"], c["target_date"]) for c in found] == \
-        [("months_to_profitability", None, "2024-Q2")]
+    assert [(c["claim_type"], c["value"], c["target_date"]) for c in found] == [("ebitda", None, "2024-Q2")]
+    found = _found(_slide([("Profitable", 1, 1), ("in 18 months", 1, 1.6)]))
+    assert [(c["claim_type"], c["value"]) for c in found] == [("months_to_profitability", 18)], "a borrowed label too"
 
 
-def test_the_test_decks_retype_twelve_candidates_and_list_no_other_change():
+def test_the_test_decks_retype_eleven_candidates_and_list_no_other_change():
     """Spec section 2: on the 10 test decks the keyword moves and the new keywords retype exactly these candidates."""
     retyped = {
         ("01-front-b.pptx", 12, 2.5): "ltv_cac", ("01-front-b.pptx", 12, 2.6): "ltv_cac",
         ("01-front-b.pptx", 12, 4.4): "ltv_cac", ("01-front-b.pptx", 15, 7000000): "cash",
         ("01-front-b.pptx", 15, 18): "runway", ("01-front-b.pptx", 15, 10): "months_to_profitability",
-        ("02-moz.pdf", 2, None): "months_to_profitability", ("02-moz.pdf", 20, 900): "ltv",
+        ("02-moz.pdf", 20, 900): "ltv",
         ("02-moz.pdf", 20, 100): "cac", ("02-moz.pdf", 20, 9): "customer_lifetime",
         ("03-buffer.pptx", 7, 240): "ltv",
     }
-    seen = {}
+    seen, profitable = {}, []
     for file in ("01-front-b.pptx", "02-moz.pdf", "03-buffer.pptx"):
         for c in claims.detect_candidates(parser.parse_deck((DECKS / file).read_bytes(), file)["blocks"], file):
+            if c["snippet"] == "mozis profitable.":
+                profitable.append((c["claim_type"], c["value"], c["target_date"]))
             if c["claim_type"] in NEW_TYPES:
                 seen.setdefault((file, _page(c), c["value"]), []).append((c["claim_type"], c["snippet"]))
     moz_100 = seen.pop(("02-moz.pdf", 20, 100))
     assert sorted(moz_100) == [("cac", "~$100"), ("trials_per_day", "~100")], "the CAC and the trials, both 100"
     assert {k: [t for t, _ in v] for k, v in seen.items()} == {k: [t] for k, t in retyped.items() if k != ("02-moz.pdf", 20, 100)}
-    assert seen[("02-moz.pdf", 2, None)] == [("months_to_profitability", "mozis profitable.")]
+    assert profitable == [("ebitda", None, "2008-10")], "moz p2's dated profitable line stays an EBITDA milestone"
 
 
 def test_only_stated_periods_with_different_values_are_a_deck_inconsistency():
@@ -1369,6 +1373,31 @@ def test_front_b_p16_next_to_is_measured_line_to_line_not_box_to_box():
     panel = _panel("01-front-b.pptx", 16)
     cash = _cell_id(_cell_of(panel, "Cash"))
     assert cash not in _cell_of(panel, "1/1/18 5/1/18")["next_to"] and cash in _cell_of(panel, "Gross margin")["next_to"]
+
+
+def _date_boxes(file, page):
+    """{text line: the lines of its date box} for the lines of a roadmap that keep a date_box."""
+    deck = parser.parse_deck((DECKS / file).read_bytes(), file)
+    roadmap, = [s for s in deck["structures"] if (s.get("slide") or s.get("page")) == page and s["type"] == "roadmap"]
+    return {c["text"]: [d["text"] for d in roadmap["cells"] if d["box"] == c["date_box"]]
+            for c in roadmap["cells"] if "date_box" in c}
+
+
+def test_a_roadmap_text_box_keeps_the_one_date_box_directly_next_to_it():
+    """Spec section 7 (decision of 2026-10-06 on issue #47, option a): a date box holds only dates or parts of one;
+    each line of another text box keeps the box number of the one date box directly next to its box, box to box."""
+    moz = _date_boxes("02-moz.pdf", 2)
+    assert sorted(v for v, in moz.values()) == ["1981", "1997", "2001", "2004", "Feb. 2007", "July 2011",
+                                                 "Nov. 2007", "Oct. 2008", "Sept. 2010"], "one per paragraph"
+    assert moz["Gillian (Rand’s Mom) founds the company that will become SEOmoz"] == ["1981"]
+    tea = _date_boxes("10-tea.pdf", 11)
+    assert (tea["Gluon wallet"], tea["from Hashkey"], tea["Preview 1 version launch"]) == \
+        (["2021", "Q2"], ["2021", "Q2"], ["2021", "Q3"]), "every line of the box, on either side"
+    assert (tea["layer-1 to layer-2"], tea["TEA framework dev guide released"],
+            tea["Layer-1 EVM smart contract compatibility"]) == (["2022", "Q2"], ["2022", "Q2"], ["2022", "Q3"]), \
+        "box 11 stands between box 10 and the 2022 Q3 box"
+    assert len(tea) == 21 and "Mainnet starts" not in tea, "\"2023\" / \"Q1-Q2\" is no date box"
+    assert _date_boxes("03-buffer.pptx", 6) == {}, "one box"
 
 
 def test_roadmap_cells_keep_next_to_measured_line_to_line():

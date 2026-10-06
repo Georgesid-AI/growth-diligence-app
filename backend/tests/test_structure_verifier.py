@@ -393,28 +393,92 @@ def test_in_a_roadmap_a_line_takes_its_period_from_its_adjacent_date_line():
         "a date on each side: the timeline runs downwards from Plan, so the one below"
 
 
-def test_a_figure_in_a_paired_line_is_dated_by_its_pair_and_verified_only_when_its_own_cells_agree():
-    """Spec section 2: the pairing is the model's, so a pair-dated figure is Verified only when Python rebuilds the
-    same period from the figure's own period cells."""
+def test_a_paired_line_takes_its_position_date_and_its_figure_is_verified():
+    """Spec section 2 (decision of 2026-10-06 on issue #47, option a): a paired line with a position date takes it,
+    whatever date the model paired: Python builds it, so the milestone carries it and a figure in the line is
+    Verified with it; a model period that differs is a period corrected."""
     agree = _boxed([["5K users"], ["Q3 2025"], ["Hire 5 engineers"], ["Q4 2025"]])
-    out = _verify(agree, {"r1c1": _lab(None, "users")}, pairs=[("r1c1", "r2c1", "launch")])
+    out = _verify(agree, {"r1c1": _lab("2025-Q4", "users")}, pairs=[("r1c1", "r4c1", "launch")])
     got = next(i for i in out["items"] if i.get("item") == "i1")
-    assert (got["status"], got["period"], got["period_cells"]) == (verify.VERIFIED, "2025-Q3", ["r2c1"])
-    out = _verify(agree, {"r1c1": _lab("2025-Q3", "users")}, pairs=[("r1c1", "r4c1", "launch")])
-    got = next(i for i in out["items"] if i.get("item") == "i1")
-    assert (got["status"], got["period"], got["period_cells"]) == (verify.SUGGESTION, "2025-Q4", ["r4c1"]), \
-        "paired with another date: dated by the pair, but its own cells say Q3"
+    assert (got["status"], got["period"], got["period_cells"], got["model_period"]) == \
+        (verify.VERIFIED, "2025-Q3", ["r2c1"], "2025-Q4"), "paired with Q4, but its date line below is Q3"
+    milestone, = [i for i in out["items"] if "line" in i]
+    assert (milestone["date"], milestone["period"], milestone["period_cells"], milestone["status"]) == \
+        ("d2", "2025-Q3", ["r2c1"], verify.SUGGESTION), "the model's date id stays; the period is Python's"
     roadmap = _deck_structure("03-buffer.pptx", 6, "roadmap")
     assert _text(roadmap, "r3c1") == "55,000 users ($150K revenue)"
-    out = _verify(roadmap, {("r3c1", 1): _lab("2011-10", "users", "count", "actual")},
-                  pairs=[("r3c1", "r4c1", "other")])
-    got = next(i for i in out["items"] if i.get("item") and i["value_cell"] == "r3c1" and i["position"] == 1)
-    assert (got["status"], got["period"], got["period_cells"]) == (verify.VERIFIED, "2011-10", ["r4c1"]), \
-        "buffer p6: the timeline runs downwards, so its own date line below rebuilds October 2011, the pair's date"
     out = _verify(roadmap, {("r3c1", 1): _lab("2011-01", "users", "count", "actual")},
                   pairs=[("r3c1", "r2c1", "other")])
     got = next(i for i in out["items"] if i.get("item") and i["value_cell"] == "r3c1" and i["position"] == 1)
-    assert (got["status"], got["period"]) == (verify.SUGGESTION, "2011-01"), "paired with the date above: not its own"
+    assert (got["status"], got["period"], got["period_cells"]) == (verify.VERIFIED, "2011-10", ["r4c1"]), \
+        "buffer p6: paired with the date above, dated by its date line below"
+
+
+def test_a_paired_line_with_no_position_date_keeps_the_models_date_and_needs_its_own_cells():
+    """Spec section 2: with no adjacent date line and no date box beside it, the pair's date stands, and a figure is
+    Verified only when Python rebuilds the same period from its own period cells."""
+    apart = _roadmap([["5K users", "Q3 2025"]], [1, 2])
+    out = _verify(apart, {"r1c1": _lab("2025-Q3", "users")}, pairs=[("r1c1", "r1c2", "launch")])
+    got = next(i for i in out["items"] if i.get("item") == "i1")
+    assert (got["status"], got["period"], got["period_cells"]) == (verify.SUGGESTION, "2025-Q3", ["r1c2"])
+    milestone, = [i for i in out["items"] if "line" in i]
+    assert (milestone["period"], milestone["period_cells"]) == ("2025-Q3", ["r1c2"])
+
+
+def _positions(file, page):
+    roadmap = _deck_structure(file, page, "roadmap")
+    out = {}
+    for line in items.list_items(roadmap)["lines"]:
+        cell = next(c for c in roadmap["cells"] if f"r{c['row']}c{c['col']}" == line["cell"])
+        found = verify.position_date(roadmap, cell)
+        out[line["cell"]] = (found[0], found[2]) if found else None
+    return out
+
+
+def test_tea_p11_lines_take_the_quarter_of_the_date_box_beside_them():
+    """Spec section 2: a date box of a year with a quarter below it gives that quarter (the two-cell rule). The
+    "Q2"-style lines of the date boxes are text lines with their year line above. "Mainnet starts" sits beside
+    "2023" / "Q1-Q2", which is no date box, so it has no position date."""
+    got = _positions("10-tea.pdf", 11)
+    box = lambda label, part, year: (label, [part, year])  # noqa: E731
+    assert got == {
+        "r1c2": box("2021-Q2", "r2c1", "r1c1"), "r1c3": box("2021-Q3", "r2c4", "r1c4"), "r2c1": ("2021", ["r1c1"]),
+        "r2c2": box("2021-Q2", "r2c1", "r1c1"), "r2c3": box("2021-Q3", "r2c4", "r1c4"), "r2c4": ("2021", ["r1c4"]),
+        "r3c2": box("2021-Q2", "r2c1", "r1c1"), "r3c3": box("2021-Q3", "r2c4", "r1c4"),
+        "r4c2": box("2021-Q2", "r2c1", "r1c1"), "r4c3": box("2021-Q3", "r2c4", "r1c4"),
+        "r5c2": box("2021-Q2", "r2c1", "r1c1"), "r6c2": box("2021-Q2", "r2c1", "r1c1"),
+        "r7c2": box("2021-Q4", "r8c1", "r7c1"), "r7c3": box("2022-Q1", "r8c4", "r7c4"), "r8c1": ("2021", ["r7c1"]),
+        "r8c2": box("2021-Q4", "r8c1", "r7c1"), "r8c3": box("2022-Q1", "r8c4", "r7c4"), "r8c4": ("2022", ["r7c4"]),
+        "r9c2": box("2022-Q2", "r10c1", "r9c1"), "r9c3": box("2022-Q3", "r10c4", "r9c4"),
+        "r10c1": ("2022", ["r9c1"]), "r10c2": box("2022-Q2", "r10c1", "r9c1"), "r10c4": ("2022", ["r9c4"]),
+        "r11c2": box("2022-Q2", "r10c1", "r9c1"), "r12c2": box("2022-Q2", "r10c1", "r9c1"),
+        "r13c2": box("2022-Q4", "r14c1", "r13c1"), "r13c3": None, "r14c1": ("2022", ["r13c1"]),
+        "r14c2": box("2022-Q4", "r14c1", "r13c1"), "r14c4": ("2023", ["r13c4"])}
+
+
+def test_moz_p2_paragraphs_take_their_date_box_and_buffer_p6_lines_their_date_line_below():
+    assert _positions("02-moz.pdf", 2) == {
+        "r1c1": ("1997", ["r2c1"]), "r1c2": ("2004", ["r2c2"]), "r1c3": ("2007-11", ["r2c3"]),
+        "r1c4": ("2010-09", ["r2c4"]), "r4c1": ("1981", ["r3c1"]), "r4c2": ("2001", ["r3c2"]),
+        "r4c3": ("2007-02", ["r3c3"]), "r4c4": ("2008-10", ["r3c4"]), "r4c5": ("2011-07", ["r3c5"])}
+    assert _positions("03-buffer.pptx", 6) == {
+        "r1c1": ("2011-01", ["r2c1"]), "r3c1": ("2011-10", ["r4c1"]), "r5c1": ("2011-10", ["r6c1"]),
+        "r7c1": ("2011-12", ["r8c1"]), "r9c1": ("2012-01", ["r10c1"]), "r11c1": ("2013-01", ["r12c1"])}
+
+
+def test_a_date_box_gives_a_date_only_as_one_date_or_a_year_with_a_part_below_it():
+    def dated(texts):
+        roadmap = _roadmap([["Launch"] + texts], [1] + [2] * len(texts))
+        for c in roadmap["cells"]:
+            c["row"], c["col"] = (c["col"] - 1, 2) if c["box"] == 2 else (1, 1)
+        roadmap["cells"][0]["date_box"] = 2
+        found = verify.position_date(roadmap, roadmap["cells"][0])
+        return found and found[1]
+    assert [dated(["2021", "Q2"]), dated(["Nov. 2007"]), dated(["2021", "H2"]), dated(["2021", "Mar"])] == \
+        [("2021-04-01", "2021-06-30"), ("2007-11-01", "2007-11-30"), ("2021-07-01", "2021-12-31"),
+         ("2021-03-01", "2021-03-31")], "start and end dates, as the two-cell rule builds them"
+    assert [dated(["Q2", "2021"]), dated(["2021", "2022"]), dated(["2021", "Q2", "Q3"])] == [None, None, None], \
+        "a part above its year, two years, two parts: no one date"
 
 
 def test_each_pair_is_a_milestone_dated_by_its_date_cell_and_never_verified():

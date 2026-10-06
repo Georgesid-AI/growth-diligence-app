@@ -1,0 +1,148 @@
+{
+ "file": "10-tea.pdf",
+ "page": 11,
+ "type": "roadmap",
+ "match": "r8c2: Rich dApps running on network",
+ "note": "Hand-written in the model's labelling format (docs/specs/structure-labelling.md) for the public test deck; no live call was made. The model sees the year lines as dates (d1 to d8), so each bullet is paired with the year line of the date box beside it; the quarter lines, the heading and the wrapped continuations (\"economy\", \"from Hashkey\", \"layer-1 to layer-2\") are left out. The five figures are version, epoch and layer numbers, not a metric. Python dates each paired bullet by its position (structure-labelling.md section 2, decision of 2026-10-06 on issue #47): the quarter of its date box, and \"Mainnet starts\", beside \"2023\" / \"Q1-Q2\", keeps the year it is paired with. A milestone is never Verified.",
+ "reply": {
+  "type": "roadmap",
+  "labels": [
+   {
+    "item": "i1",
+    "metric": "not_a_metric",
+    "period": null,
+    "unit": null,
+    "unit_other": null,
+    "actual_or_forecast": "unknown"
+   },
+   {
+    "item": "i2",
+    "metric": "not_a_metric",
+    "period": null,
+    "unit": null,
+    "unit_other": null,
+    "actual_or_forecast": "unknown"
+   },
+   {
+    "item": "i3",
+    "metric": "not_a_metric",
+    "period": null,
+    "unit": null,
+    "unit_other": null,
+    "actual_or_forecast": "unknown"
+   },
+   {
+    "item": "i4",
+    "metric": "not_a_metric",
+    "period": null,
+    "unit": null,
+    "unit_other": null,
+    "actual_or_forecast": "unknown"
+   },
+   {
+    "item": "i5",
+    "metric": "not_a_metric",
+    "period": null,
+    "unit": null,
+    "unit_other": null,
+    "actual_or_forecast": "unknown"
+   }
+  ],
+  "pairs": [
+   {
+    "line": "t2",
+    "date": "d2",
+    "category": "launch"
+   },
+   {
+    "line": "t4",
+    "date": "d1",
+    "category": "launch"
+   },
+   {
+    "line": "t5",
+    "date": "d2",
+    "category": "other"
+   },
+   {
+    "line": "t7",
+    "date": "d1",
+    "category": "funding"
+   },
+   {
+    "line": "t9",
+    "date": "d1",
+    "category": "feature"
+   },
+   {
+    "line": "t10",
+    "date": "d2",
+    "category": "launch"
+   },
+   {
+    "line": "t11",
+    "date": "d1",
+    "category": "funding"
+   },
+   {
+    "line": "t13",
+    "date": "d3",
+    "category": "launch"
+   },
+   {
+    "line": "t14",
+    "date": "d4",
+    "category": "launch"
+   },
+   {
+    "line": "t16",
+    "date": "d3",
+    "category": "feature"
+   },
+   {
+    "line": "t17",
+    "date": "d4",
+    "category": "launch"
+   },
+   {
+    "line": "t19",
+    "date": "d5",
+    "category": "feature"
+   },
+   {
+    "line": "t20",
+    "date": "d6",
+    "category": "feature"
+   },
+   {
+    "line": "t24",
+    "date": "d5",
+    "category": "launch"
+   },
+   {
+    "line": "t25",
+    "date": "d5",
+    "category": "funding"
+   },
+   {
+    "line": "t26",
+    "date": "d7",
+    "category": "other"
+   },
+   {
+    "line": "t27",
+    "date": "d8",
+    "category": "launch"
+   },
+   {
+    "line": "t29",
+    "date": "d7",
+    "category": "feature"
+   }
+  ]
+ },
+ "expected": {
+  "verified": 0,
+  "suggestion": 18
+ }
+}

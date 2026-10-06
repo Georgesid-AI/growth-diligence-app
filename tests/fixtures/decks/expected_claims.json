@@ -47,7 +47,7 @@
       "claims": [
         {"page": 2, "status": "company claim", "claim_type": "product", "value": null, "unit": null, "currency": null, "target_date": "2007-02", "text": "SEOmoz launches its first subscription software product, “PRO” for $39/month (Feb. 2007)"},
         {"page": 2, "status": "company claim", "claim_type": "product", "value": null, "unit": null, "currency": null, "target_date": "2008-10", "text": "Linkscape, SEOmoz's web index and link graph, launches (Oct. 2008)"},
-        {"page": 2, "status": "company claim", "claim_type": "months_to_profitability", "value": null, "unit": null, "currency": null, "target_date": "2008-12", "text": "By December [2008], moz is profitable.", "note": "milestone; the month has no year in its line"},
+        {"page": 2, "status": "company claim", "claim_type": "ebitda", "value": null, "unit": null, "currency": null, "target_date": "2008-12", "text": "By December [2008], moz is profitable.", "note": "milestone; the month has no year in its line"},
         {"page": 3, "status": "company claim", "claim_type": "gross_margin", "value": 83, "unit": "%", "currency": null, "target_date": null, "text": "we maintain margins of 83%+"},
         {"page": 3, "status": "company claim", "claim_type": "customers", "value": 10000, "unit": "subscribers", "currency": null, "target_date": "2011-04", "text": "and 10K+ subscribers"},
         {"page": 20, "status": "company claim", "claim_type": "revenue", "value": 12000000, "value_high": 13000000, "unit": null, "currency": "USD", "target_date": "2011", "text": "2011 Estimated Revenue $12 - $13 million", "note": "range"},

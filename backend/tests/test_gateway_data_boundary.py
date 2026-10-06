@@ -904,6 +904,9 @@ def test_a_kpi_or_roadmap_cells_next_to_is_cell_ids_kept_with_the_structure_and_
               if (s.get("slide") or s.get("page")) == page and s["type"] == kind]
     near = [n for c in panel["cells"] for n in c.get("next_to", ())]
     assert near and all(re.fullmatch(r"r\d+c\d+", n) for n in near)
+    boxes = [c["date_box"] for c in panel["cells"] if "date_box" in c]
+    assert bool(boxes) == (kind == "roadmap") and all(isinstance(b, int) for b in boxes), \
+        "a roadmap line keeps the number of the date box beside it (issue #47), stored and never sent"
     cells, _ = structure_redact.redact_structure(panel["cells"], "Target Co", {})
     redacted = {**panel, "cells": cells}
     listed = structure_items.list_items(redacted)
