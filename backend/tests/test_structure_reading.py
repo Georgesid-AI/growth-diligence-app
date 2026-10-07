@@ -731,6 +731,42 @@ def test_a_ranges_two_items_make_one_approval_row_low_and_high():
                                                  _label("i3", "users")])] == ["i2", "i3"], "from the end that is kept"
 
 
+# moz p23's money cells (issue #65): a dash right after the low end, a capitalised scale word.
+MOZ_P23 = [["", "Plan"], ["Raising:", "$20-$25 Million"], ["Founder Equity:", "$6-7 Million"],
+           ["Onto Balance Sheet:", "$13-19 Million"]]
+
+
+def test_a_dash_right_after_a_figure_is_a_range_dash_and_a_scale_word_counts_in_any_case():
+    """moz p23 (issue #65): "$6-7 Million" is six to seven million, as the deck parser's reader has it, not the two
+    figures 6 and 7."""
+    from app.decks import claims
+    listed = _listed(MOZ_P23)
+    assert [(i["raw"], i["values"][0]["value"], i.get("range", {}).get("items")) for i in listed] == [
+        ("20", 20000000, ["i1", "i2"]), ("25 Million", 25000000, ["i1", "i2"]),
+        ("6", 6000000, ["i3", "i4"]), ("7 Million", 7000000, ["i3", "i4"]),
+        ("13", 13000000, ["i5", "i6"]), ("19 Million", 19000000, ["i5", "i6"])]
+    assert [(i["range"]["low"], i["range"]["high"]) for i in listed[::2]] == \
+        [(n["value"], n["value_high"]) for _, cell in MOZ_P23[1:] for n in claims.find_numbers(cell, [])], \
+        "the deck parser's reading"
+    assert [i["values"][0]["value"] for i in _listed([["", "Plan"], ["Revenue", "$3 MILLION"], ["ARR", "2 Billion"],
+                                                      ["Users", "4 Thousand"]])] == [3000000, 2000000000, 4000]
+
+
+def test_moz_p23s_ranges_are_read_and_make_one_verified_row_each():
+    """Issue #65, under the labels of the live run of 2026-10-07, pass 1 (i3 to i6 use_of_funds): 4 Verified rows of
+    USD 6, 7, 13 and 19 become 2, six to seven million and thirteen to nineteen million. The item lines pass the
+    gateway's check, the high end's raw text with its scale word."""
+    structure = v._struct(MOZ_P23)
+    text = structure_items.text(structure, structure_items.list_items(structure))
+    assert '"7 Million" 7000000' in text
+    labels = [_label("i1", "not_a_metric"), _label("i2", "not_a_metric")] + \
+        [_label(f"i{n}", "use_of_funds", unit="USD") for n in (3, 4, 5, 6)]
+    result, _ = _read(_db(), text, replies=[{"type": "table", "labels": labels, "pairs": []}])
+    assert result.status == "read", result.reason
+    assert [(r["value"], r["value_high"], r["ai_label"]) for r in _rows(structure, result.labels)] == [
+        (6000000, 7000000, "Verified"), (13000000, 19000000, "Verified")]
+
+
 def test_the_rows_cell_citation_is_unchanged_and_names_the_type_python_sent():
     structure = v._struct([["", "Members"], ["Social", "Discord(150) Telegram(30K)"]])
     rows = _rows(structure, [_label("i1", "users", unit="count"), _label("i2", "users", unit="count")], "kpi_panel")
