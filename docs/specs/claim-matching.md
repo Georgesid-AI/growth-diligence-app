@@ -1,5 +1,5 @@
 # Spec: Claim matching: approved claims tested against the computed metrics
-Status: Draft; decisions of 2026-10-07 applied, R1 and R2 open (§10). Location: docs/specs/claim-matching.md.
+Status: Draft; decisions of 2026-10-07 applied (§10). Location: docs/specs/claim-matching.md.
 Follows deck-parser.md §6.
 
 ## Goal
@@ -33,7 +33,7 @@ the whole-company figure and marked "whole company".
 
 | Metric | Proposed for | Unit | Read from | Periods | Segment | Better |
 |---|---|---|---|---|---|---|
-| Revenue | revenue: "revenue", not "recurring revenue" | currency | new `revenue_series`: the revenue file by month in the reporting currency, recurring lines spread as for MRR, one-off lines in their invoice month (R1) | sum over the period's months | yes | higher |
+| Revenue | revenue: "revenue" or "turnover", not "recurring revenue" | currency | new `revenue_series`: the revenue file by month in the reporting currency, recurring lines spread as for MRR, one-off lines in their invoice month | sum over the period's months | yes | higher |
 | ARR | revenue: "ARR", "annual recurring revenue" | currency | `mrr_series` month total × 12 | period end month; no period: as-of | yes | higher |
 | MRR | revenue: "MRR", "monthly recurring revenue", not "new MRR" | currency | `mrr_series` month total | period end month | yes | higher |
 | Customer count | customers, a count | count | new `customers_series`: customers with MRR above 0 in the month, the engine's current-customer rule | period end month | yes | higher |
@@ -45,7 +45,7 @@ the whole-company figure and marked "whole company".
 | Win rate | sales: "win rate" | % | `win_rate.win_rate_pct` | as-of | no | higher |
 | Gross margin | gross margin, in % | % | `cac_payback.quarters[q].gross_margin_pct` | quarter | no | higher |
 | CAC payback | sales: "payback" | months | `cac_payback.quarters[q]` at the default L | quarter | no | lower |
-| none | every other claim type, growth rates and users among them; "turnover" (R2) or "bookings" alone; "retention" or "churn" without "net", "revenue" or "gross" | | | | | |
+| none | every other claim type, growth rates and users among them; "bookings" alone; "retention" or "churn" without "net", "revenue" or "gross" | | | | | |
 
 | Claim | Rule (table 2b) |
 |---|---|
@@ -195,8 +195,8 @@ in each label class at least for revenue, ARR and customer count. Public decks h
 | D4 | A claim with no period | tested at the as-of figure, marked "no period stated" |
 | D5 | Metric list | table 2a, adding revenue, ARR and customer count by period; growth rates, users and bare retention or churn stay unmatched |
 | D6 | Screen | §8 |
-| R1 (open, kind 1) | Revenue for a period: recurring lines spread over their service months as for MRR, or every line at its invoice date? | Recommendation: spread, so revenue and ARR read the file the same way. The fixture gives the same figures either way (monthly invoices). |
-| R2 (open, kind 1) | Does "turnover" count as revenue? | Recommendation: yes, it is the same figure in UK usage; "bookings" stays unmatched. |
+| R1 | Revenue for a period | recurring lines spread over their service months as for MRR, one-off lines in their invoice month |
+| R2 | "Turnover" | counts as revenue; "bookings" stays unmatched |
 
 ## Done when
 - Every fixture row gives its label, gap, gloss and rank (`backend/tests/test_claim_matching.py`).
