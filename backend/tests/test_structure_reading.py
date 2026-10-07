@@ -579,16 +579,17 @@ def test_each_schemas_hash_enters_the_cache_key_of_its_own_type(monkeypatch):
     assert (moved.cache_hit, adapter.calls) == (False, 1) and moved.key != mapping.key
 
 
-def test_the_prompt_is_v5_and_names_every_label_field_metric_category_and_tie_break():
+def test_the_prompt_is_v6_and_names_every_label_field_metric_category_and_tie_break():
     """The prompt lists exactly the label fields, every metric (other and not_a_metric too), the roadmap categories
     and the tie-breaks; a unit is one of the 20 listed currency codes, or "other" with its ISO code in unit_other.
     The column-mapping section keeps its own item fields. v4 (issue #48): its input section reads a title cell. v5
-    (issues #45 and #47, decisions of 2026-10-06): the new claim types and tie-breaks."""
+    (issues #45 and #47, decisions of 2026-10-06): the new claim types and tie-breaks. v6 (issue #58, decisions of
+    2026-10-06): the run-rate period, the conversion rate and the review scores."""
     import re
     from app.decks import claims
     from app.llm import prompt_store, schemas
     prompt = prompt_store.load(gateway.STRUCTURE_PROMPT)
-    assert prompt.version == "v5"
+    assert prompt.version == "v6"
     text = prompt.text
     given = text.split("# The input")[1].split("# Deck structures")[0]
     assert "`r1c1 title: 2011 Estimated Revenue`" in given and "label of the value" in given
@@ -608,6 +609,12 @@ def test_the_prompt_is_v5_and_names_every_label_field_metric_category_and_tie_br
     assert '"% of marketplace" and market share are `market`' in ties
     assert "commission and take rate are `sales`" in ties
     assert "monthly revenue, MRR, ARR and revenue run rate are `revenue`" in ties
+    flat = " ".join(ties.split())
+    assert "a run rate has a period only when a header of its cell states one" in flat, "issue #58, moz p20 i3"
+    assert "rebuilds the period" not in flat, "issue #58: the v5 clause probably invited the model to write a period"
+    assert re.search(r'a conversion rate \("% of Free Trials Converting to Paid"\) is `sales`', flat), "moz p21 i1"
+    assert re.search(r'employee review scores \("Recommend to a friend", "Approve of CEO"\) and their number of '
+                     r'ratings are `not_a_metric`', flat), "front-b p14 i1-i3"
     for new in ("cash", "burn", "runway", "ltv", "cac", "customer_lifetime", "ltv_cac", "trials_per_day",
                 "months_to_profitability"):
         assert re.search(rf"^- [^\n]* `{new}`[;.]$", ties, re.M), f"{new} has its tie-break line"
@@ -615,7 +622,6 @@ def test_the_prompt_is_v5_and_names_every_label_field_metric_category_and_tie_br
             "`other`, not `users`") in " ".join(ties.split())
     assert "board seats are `not_a_metric`, the whole count" in ties
     assert "a team member's tenure" in ties and re.search(r"tenure[^\n]* is `not_a_metric`", ties)
-    flat = " ".join(ties.split())
     assert "the share of a market or of a survey that does something" in flat and \
         re.search(r"share of a market or of a survey[^;]* is `not_a_metric`; the company's own market share stays "
                   r"`market`", flat), "decision of 2026-10-06 on issue #47"
