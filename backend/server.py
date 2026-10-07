@@ -1,10 +1,11 @@
 from fastapi import BackgroundTasks, FastAPI, APIRouter, HTTPException, UploadFile, File
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import io
+import csv
 import re
 import logging
 import uuid
@@ -21,6 +22,7 @@ import demo_data
 from app import formatting as fmt
 from app import disclosure as disclosure_mod
 from app import narrative_export
+from app import claim_matching
 from app import decks
 from app import structures
 from app.decks import claims as deck_claims
@@ -763,16 +765,127 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
     return sanitize(await db[decks.CANDIDATES_COLLECTION].find_one(where, {"_id": 0}))
 
 
-@api.get("/audits/{audit_id}/claims")
-async def claim_register(audit_id: str):
-    """The claim register: approved and edited claims, with what the parser found next to each
-    edit. Rejected and unreviewed candidates are not in it (they stay on record in the deck list)."""
-    if not await db.audits.find_one({"id": audit_id}, {"id": 1}):
-        raise HTTPException(404, "Audit not found")
+async def _claim_rows(audit_id: str, audit: dict) -> tuple:
+    """(register candidates, register rows in rank order). The rows are computed on read from the stored results and
+    the analyst's inputs on the candidates (docs/specs/claim-matching.md section 6); nothing is sent to a model."""
     claims = await db[decks.CANDIDATES_COLLECTION].find(
         {"audit_id": audit_id, "status": {"$in": list(REGISTER_STATUSES)}}, {"_id": 0}).to_list(10000)
     claims.sort(key=lambda c: (c.get("file") or "", c.get("order", 0)))
-    return sanitize({"claims": claims})
+    revenue = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"}, {"fx": 1}) or {}
+    reporting = audit.get("reporting_currency") or "EUR"
+    fx = {k.upper(): float(v) for k, v in (revenue.get("fx") or {}).items()}
+    fx[reporting.upper()] = 1.0
+    rows = claim_matching.build_register(claims, audit.get("results"), {
+        "fiscal_year_end": _fiscal_year_end(audit), "as_of_month": audit.get("as_of_month"),
+        "reporting_currency": reporting, "fx": fx})
+    # Counts per label only: a value, a gate sentence or a deck file name never reaches a log line.
+    counts = claim_matching.label_counts(rows)
+    logger.info("claim register: run_id=%s rows=%d labels=%s", audit_id, len(rows), counts)
+    return claims, rows
+
+
+@api.get("/audits/{audit_id}/claims")
+async def claim_register(audit_id: str):
+    """The claim register: approved and edited claims, with what the parser found next to each edit, and `register`:
+    one row per claim tested against the computed metrics, in rank order (docs/specs/claim-matching.md). Rejected and
+    unreviewed candidates are not in it (they stay on record in the deck list)."""
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
+    if not audit:
+        raise HTTPException(404, "Audit not found")
+    claims, rows = await _claim_rows(audit_id, audit)
+    return sanitize({"claims": claims, "register": rows})
+
+
+def _csv_cell(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return str(value).lower()
+    if isinstance(value, dict):
+        return f"{value.get('file')} · {value.get('sheet')} · {value.get('rows')}"
+    return str(value)
+
+
+@api.get("/audits/{audit_id}/claims.csv")
+async def claim_register_csv(audit_id: str):
+    """The monitoring baseline: the register's rows in rank order as one CSV, header = the register's field names,
+    numbers unformatted, dates ISO, `observed_source` as "file · sheet · rows" (docs/specs/claim-matching.md section 7)."""
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
+    if not audit:
+        raise HTTPException(404, "Audit not found")
+    _, rows = await _claim_rows(audit_id, audit)
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(claim_matching.FIELDS)
+    for row in rows:
+        writer.writerow([_csv_cell(row[f]) for f in claim_matching.FIELDS])
+    return Response(content=out.getvalue(), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="claim-register-{audit_id}.csv"'})
+
+
+_GATE_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+class ClaimInputs(BaseModel):
+    """What the analyst sets on a claim of the register (section 8): its segment, its metric and its gate. A field sent
+    as null clears it; a field not sent stays."""
+    model_config = {"extra": "forbid"}
+    segment: Optional[str] = Field(default=None, max_length=100)
+    metric: Optional[str] = Field(default=None, max_length=60)
+    gate_threshold: Optional[float] = Field(default=None, allow_inf_nan=False)
+    gate_budget_decision: Optional[str] = Field(default=None, max_length=claim_matching.BUDGET_DECISION_MAX)
+    gate_date: Optional[str] = None
+
+    @field_validator("gate_date")
+    @classmethod
+    def _iso_date(cls, v):
+        if v is not None:
+            if not _GATE_DATE.match(v):
+                raise ValueError("a date as YYYY-MM-DD")
+            datetime.strptime(v, "%Y-%m-%d")
+        return v
+
+
+@api.put("/audits/{audit_id}/claims/{claim_id}")
+async def update_claim_inputs(audit_id: str, claim_id: str, payload: ClaimInputs):
+    """Store the analyst's segment, metric or gate for one claim of the register, on the candidate's row, and give the
+    register back. The claim's text, value and period are edited in the approval list, not here."""
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
+    if not audit:
+        raise HTTPException(404, "Audit not found")
+    sent = payload.model_fields_set
+    if not sent:
+        raise HTTPException(400, "Nothing to change")
+    if not audit.get("results"):
+        raise HTTPException(409, "Audit not computed yet")
+    claims, rows = await _claim_rows(audit_id, audit)
+    row = next((r for r in rows if r["claim_id"] == claim_id), None)
+    if row is None:
+        raise HTTPException(404, "Claim not in the register")
+    values = {k: getattr(payload, k) for k in sent}
+    if isinstance(values.get("gate_budget_decision"), str):
+        values["gate_budget_decision"] = values["gate_budget_decision"].strip() or None
+    metric, segment = values.get("metric"), values.get("segment")
+    if metric is not None and metric != claim_matching.NO_METRIC and \
+            not claim_matching.fits_metric(metric, row["unit"], row["currency"]):
+        raise HTTPException(400, "Choose a metric in the claim's unit, or none")
+    if segment is not None and segment not in (claim_matching.WHOLE, claim_matching.NOT_IN_DATA,
+                                               *claim_matching.data_segments(audit["results"])):
+        raise HTTPException(400, "Choose a segment of the data, Whole company or Not in the data")
+    candidate = next(c for c in claims if c["id"] == claim_id.split("#")[0])
+    inputs = {**(candidate.get("claim_inputs") or {})}
+    kept = {**inputs.get(claim_id, {}), **{k: v for k, v in values.items() if v is not None}}
+    for k, v in values.items():
+        if v is None:
+            kept.pop(k, None)
+    if kept:
+        inputs[claim_id] = kept
+    else:
+        inputs.pop(claim_id, None)
+    await db[decks.CANDIDATES_COLLECTION].update_one({"audit_id": audit_id, "id": candidate["id"]},
+                                                    {"$set": {"claim_inputs": inputs}})
+    _, rows = await _claim_rows(audit_id, audit)
+    return sanitize({"register": rows})
 
 
 # ---------------------------------------------------------------------------

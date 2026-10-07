@@ -311,6 +311,16 @@ def _segments(results: dict) -> Tuple[List[str], set]:
     return revenue, every
 
 
+def fits_metric(metric: str, unit: Optional[str], currency: Optional[str]) -> bool:
+    """Whether a metric is measured in the unit of a claim (the analyst may pick only such a metric, or none)."""
+    return metric in METRICS and _fits(METRICS[metric]["unit"], _claim_unit({"unit": unit, "currency": currency}))
+
+
+def data_segments(results: dict) -> List[str]:
+    """Every segment the engine's figures are split by: what the analyst may pick besides the two markers."""
+    return sorted(_segments(results)[1])
+
+
 def propose_metric(claim_type: str, claim_unit: Optional[str], text: str) -> Optional[str]:
     """The metric a claim names by its type, a keyword in its snippet or borrowed label, and its unit (table 2a)."""
     metric = None
