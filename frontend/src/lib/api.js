@@ -41,6 +41,12 @@ export const removeDeck = (id, deckId) => api.delete(`/audits/${id}/decks/${deck
 export const updateCandidate = (id, candidateId, payload) =>
   api.put(`/audits/${id}/decks/candidates/${candidateId}`, payload).then((r) => r.data);
 
+// Claim register (docs/specs/claim-matching.md): rows tested and ranked by the server, the analyst's inputs, and the CSV baseline.
+export const getClaimRegister = (id) => api.get(`/audits/${id}/claims`).then((r) => r.data);
+export const updateClaimInputs = (id, claimId, payload) =>
+  api.put(`/audits/${id}/claims/${encodeURIComponent(claimId)}`, payload).then((r) => r.data);
+export const claimsCsvUrl = (id) => `${API}/audits/${id}/claims.csv`;
+
 // Narrative gateway. GET is read-only — it returns an existing narrative or
 // narrative_status "not_generated", and can never call the model provider.
 // POST is the only path that spends an AI request.

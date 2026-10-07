@@ -1,0 +1,145 @@
+import { useCallback, useEffect, useState } from "react";
+import { toast } from "sonner";
+import { Download, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Provenance } from "@/components/Provenance";
+import { claimsCsvUrl, getClaimRegister, updateClaimInputs } from "@/lib/api";
+import {
+  DOWNLOAD_LABEL, GATE_BUDGET_MAX, NO_METRIC, REGISTER_COLUMNS, REGISTER_HEADING, claimText, gapText, gateEdit, metricOptions,
+  observedText, readingText, registerRows, segmentOptions,
+} from "@/lib/claimRegister";
+import { describeRequestError } from "@/lib/requestError";
+
+const selectClass = "h-8 rounded-md border border-[#E5E7EB] bg-white px-2 text-xs max-w-[11rem]";
+const LABEL_STYLE = {
+  Verified: "text-emerald-800 border-emerald-500/50 bg-emerald-50",
+  Contradicted: "text-rose-800 border-rose-500/50 bg-rose-50",
+  Unverified: "text-amber-800 border-amber-500/50 bg-amber-50",
+  Unsupported: "text-slate-700 border-slate-400/60 bg-slate-50",
+};
+
+// The options of a select, with the stored choice kept in the list even when it is no longer offered.
+const withCurrent = (options, current) => (options.includes(current) ? options : [...options, current]);
+
+/** The gate: the proposed sentence, and the threshold, budget decision and date the analyst sets. Saved when both are filled. */
+function GateCell({ row, onSave }) {
+  const [draft, setDraft] = useState(null);
+  const open = () => setDraft({ threshold: row.gate_threshold ?? "", budget: row.gate_budget_decision ?? "", date: row.gate_date ?? "" });
+  const set = (k) => (e) => setDraft((d) => ({ ...d, [k]: e.target.value }));
+  const save = () => {
+    let edit;
+    try { edit = gateEdit(row, draft); } catch (e) { toast.error(e.message); return; }
+    if (!Object.keys(edit).length) { setDraft(null); return; }
+    onSave(row, edit).then(() => setDraft(null));
+  };
+  if (!row.gate_sentence) return <span className="text-slate-400">—</span>;
+  return (
+    <div className="max-w-xs">
+      <div className="text-slate-700" data-testid="register-gate-sentence">{row.gate_sentence}</div>
+      {row.gate_saved && <div className="mt-1 text-[10px] font-mono text-emerald-700" data-testid="register-gate-saved">Gate saved</div>}
+      {draft ? (
+        <div className="mt-1 space-y-1">
+          <Input value={draft.threshold} onChange={set("threshold")} placeholder="Threshold" inputMode="decimal" className="h-7 text-xs font-mono" data-testid="register-gate-threshold" />
+          <Input value={draft.budget} onChange={set("budget")} maxLength={GATE_BUDGET_MAX} placeholder="Budget decision (max 200 characters)" className="h-7 text-xs" data-testid="register-gate-budget" />
+          <Input type="date" value={draft.date} onChange={set("date")} className="h-7 text-xs font-mono" data-testid="register-gate-date" />
+          <div className="flex gap-1">
+            <Button size="sm" onClick={save} className="h-7 bg-sky-600 hover:bg-sky-500" data-testid="register-gate-save">Save gate</Button>
+            <Button size="sm" variant="outline" onClick={() => setDraft(null)} className="h-7">Cancel</Button>
+          </div>
+        </div>
+      ) : (
+        <Button size="sm" variant="outline" onClick={open} className="mt-1 h-7" data-testid="register-gate-edit">Set gate</Button>
+      )}
+    </div>
+  );
+}
+
+/** The claim register of one audit, in the order the server ranks it (docs/specs/claim-matching.md section 8). */
+export default function ClaimRegister({ auditId, results }) {
+  const [rows, setRows] = useState(null);
+  const [error, setError] = useState(null);
+  const ccy = results?.reporting_currency;
+
+  useEffect(() => {
+    let cancelled = false;
+    getClaimRegister(auditId)
+      .then((d) => { if (!cancelled) setRows(registerRows(d)); })
+      .catch((e) => { if (!cancelled) setError(describeRequestError(e).message); });
+    return () => { cancelled = true; };
+  }, [auditId]);
+
+  const save = useCallback((row, edit) => updateClaimInputs(auditId, row.claim_id, edit)
+    .then((d) => setRows(registerRows(d)))
+    .catch((e) => { toast.error(describeRequestError(e).message); throw e; }), [auditId]);
+
+  return (
+    <section className="mb-6" data-testid="claim-register">
+      <div className="flex items-end justify-between flex-wrap gap-3 mb-3">
+        <h2 className="font-heading text-lg font-semibold text-slate-900">{REGISTER_HEADING}</h2>
+        <Button asChild variant="outline" size="sm" className="h-8">
+          <a href={claimsCsvUrl(auditId)} data-testid="claim-register-csv"><Download className="h-3.5 w-3.5 mr-1.5" />{DOWNLOAD_LABEL}</a>
+        </Button>
+      </div>
+      {error && <div className="text-xs text-rose-700" data-testid="claim-register-error">{error}</div>}
+      {!rows && !error && <Loader2 className="h-4 w-4 animate-spin text-slate-500" />}
+      {rows && rows.length === 0 && (
+        <p className="text-sm text-slate-600" data-testid="claim-register-empty">No approved claims yet. Approve claims in the deck list and they are tested here.</p>
+      )}
+      {rows && rows.length > 0 && (
+        <div className="overflow-x-auto rounded-md border border-[#E5E7EB] bg-white">
+          <table className="w-full text-xs" data-testid="claim-register-table">
+            <thead>
+              <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500 border-b border-[#E5E7EB]">
+                {REGISTER_COLUMNS.map((c) => <th key={c} className="py-2 px-3 font-medium whitespace-nowrap">{c}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => {
+                const observed = observedText(row, ccy);
+                return (
+                  <tr key={row.claim_id} className="border-b border-[#F1F5F9] align-top" data-testid="claim-register-row">
+                    <td className="py-2 px-3 font-mono text-slate-700">{row.rank}</td>
+                    <td className="py-2 px-3 text-slate-900 min-w-[10rem]">{claimText(row)}</td>
+                    <td className="py-2 px-3 font-mono text-slate-700 whitespace-nowrap">
+                      {row.period || "—"}
+                      {row.period_note && <div className="text-[10px] text-slate-500">{row.period_note}</div>}
+                    </td>
+                    <td className="py-2 px-3">
+                      <select value={row.segment} onChange={(e) => save(row, { segment: e.target.value }).catch(() => {})} className={selectClass} data-testid="register-segment">
+                        {withCurrent(segmentOptions(results), row.segment).map((s) => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                      <div className="text-[10px] text-slate-500 mt-0.5">{row.segment_set_by === "analyst" ? "set by you" : "proposed"}</div>
+                    </td>
+                    <td className="py-2 px-3 font-mono text-slate-600 whitespace-nowrap">{row.page_ref || "—"}</td>
+                    <td className="py-2 px-3 text-slate-700 whitespace-nowrap" data-testid="register-reading">{readingText(row.deck_reading)}</td>
+                    <td className="py-2 px-3 min-w-[9rem]">
+                      <select value={row.metric ?? NO_METRIC} onChange={(e) => save(row, { metric: e.target.value }).catch(() => {})} className={selectClass} data-testid="register-metric">
+                        {withCurrent(metricOptions(row), row.metric ?? NO_METRIC).map((m) => (
+                          <option key={m} value={m}>{m === NO_METRIC ? "none" : m}</option>
+                        ))}
+                      </select>
+                      <div className="font-mono text-slate-900 mt-1" data-testid="register-observed">
+                        <Provenance source={row.observed_source}>{observed.value}</Provenance>
+                        {observed.at && <span className="text-[10px] text-slate-500"> · {observed.at}</span>}
+                      </div>
+                    </td>
+                    <td className="py-2 px-3 font-mono text-slate-800 whitespace-nowrap" data-testid="register-gap">{gapText(row, ccy)}</td>
+                    <td className="py-2 px-3 text-slate-700 min-w-[9rem]" data-testid="register-gloss">{row.gloss || "—"}</td>
+                    <td className="py-2 px-3 min-w-[10rem]">
+                      <span className={`text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-nowrap ${LABEL_STYLE[row.evidence_label] || ""}`} data-testid="register-evidence">
+                        {row.evidence_label}
+                      </span>
+                      <div className="mt-1 text-slate-600">{row.reason}</div>
+                    </td>
+                    <td className="py-2 px-3"><GateCell row={row} onSave={save} /></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}

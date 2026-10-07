@@ -14,6 +14,7 @@ import { NarrativeControl } from "@/components/NarrativeControl";
 import { getAudit, getResults, exportUrl, readNarrative, generateNarrative, getDisclosure, NARRATIVE_TIMEOUT_MS } from "@/lib/api";
 import { GLOSSARY } from "@/lib/glossary";
 import { SegmentPaths } from "@/components/SegmentPaths";
+import ClaimRegister from "@/components/ClaimRegister";
 import { describeRequestError, logRequestFailure } from "@/lib/requestError";
 import { metricLabel, metricQualifier, bracketed } from "@/lib/metricNames";
 import { ANOMALIES_NOT_COMPUTED, NONE, anomalyFlags, missingRows, questionRows, questionsEmptyText } from "@/lib/gapLists";
@@ -263,6 +264,9 @@ export default function Dashboard() {
           ) : ""}
           caption="Shows how repeatable sales are" />
       </div>
+
+      {/* Claim register: approved deck claims tested against the computed metrics (docs/specs/claim-matching.md section 8) */}
+      <ClaimRegister auditId={id} results={r} />
 
       {/* Narrative — status tells the reader which figures were verified */}
       <Narrative state={generating ? { loading: true } : narrative} />

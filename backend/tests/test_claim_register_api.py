@@ -222,3 +222,14 @@ def test_the_register_log_line_holds_counts_per_label_never_a_value_or_gate_text
     assert "claim register" in text and "Verified" in text, "the counts per label are logged"
     for needle in ("202125", "198142", "Series B", "Before ", "must be at", "testco_board", "Enterprise", "AI suggestion"):
         assert needle not in text, f"{needle!r} reached a log line"
+
+
+def test_the_screens_metric_table_is_pinned_to_the_matching_module():
+    """frontend/src/lib/claim_metrics.json lists each metric and its unit for the metric select; it is the module's table 2a."""
+    import json
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / "frontend" / "src" / "lib" / "claim_metrics.json"
+    shown = json.loads(path.read_text(encoding="utf-8"))["metrics"]
+    assert shown == {name: spec["unit"] for name, spec in cm.METRICS.items()}
+    assert list(shown) == list(cm.METRICS), "same order: the select lists them in it"
