@@ -23,7 +23,7 @@ rest is computed on read by a pure module.
 | Segment, metric | §2; the analyst may set either (§8) |
 | Computed figure and its source | `audits.results` (file, sheet, rows, rule); the as-of month and whether it was defaulted |
 
-A table row candidate gives one claim per value by period, id `<candidate id>#<n>`.
+A table row candidate gives one claim per value by period, id `<candidate id>#<n>`, n counted from 1.
 
 ## 2. Matching
 Python proposes the metric from the claim type, a keyword in its snippet or borrowed label, and its unit
@@ -50,13 +50,13 @@ the whole-company figure and marked "whole company".
 | Claim | Rule (table 2b) |
 |---|---|
 | Period end month | the metric's value in that month |
-| Sum over the period's months | every month of the period lies in the data |
+| Sum over the period's months | every month of the period lies in the data; if months are missing (before the first month, or a gap) the claim is Unverified and the reason names them ("months missing from the data: 2022-04 to 2022-12") |
 | Quarter | the period's months equal one calendar quarter of the engine (every fiscal quarter does with a year-end in March, June, September or December) |
 | As-of | the period ends in the as-of month |
-| Period ends after the as-of month | forecast; observed is the as-of figure, for a sum the period's months up to the as-of month ("to date") |
-| No period | the as-of figure (CAC payback: the headline quarter), marked "no period stated" |
+| Period ends after the as-of month | forecast; observed is the as-of figure, for a sum the period's months up to the as-of month ("to date"; none yet: "—"), for a quarter metric the latest complete quarter (CAC payback: its headline quarter) |
+| No period | the as-of figure (a quarter metric: the latest complete quarter; CAC payback: the headline quarter), marked "no period stated"; revenue, a sum, has no as-of figure: Unverified, reason "no period stated" |
 | Other currency | converted at the audit's FX rate |
-| Duration | 7 days a week, 30.44 a month |
+| Duration | 7 days a week, 30.44 a month, 12 months a year; hours stay unmatched, and so does a claim with no unit its metric measures (a sales cycle, ACV or ARR figure without a unit or currency) |
 | Range | tested at the end nearest the observed value; inside it the gap is 0 |
 
 ## 3. Gap, rank, gloss
@@ -64,14 +64,18 @@ Gap = direction × (claimed − observed), in the metric's unit: positive is a m
 gap ÷ |claimed|. A forecast's gap is "to go" (claimed minus observed), not a miss. Every row with an observed value
 shows its gap in native units and as % of the claim, Verified rows included. Rank: rows with a gap other than "to
 go" by normalised gap, largest first, a beat counting as 0 so it never ranks as a miss; then the rest, in register
-order.
+order. A gap of 0 reads "as claimed".
 
-| Unit | Miss | Beat | To go |
-|---|---|---|---|
-| days | "13.5 days longer, two working weeks" (days ÷ 7, rounded; under 3.5: "under a working week") | "1.5 days shorter than claimed" | as miss |
-| months | "3.0 months longer" | "3.0 months shorter than claimed" | as miss |
-| % | "7.0 points lower" | "0.7 points better than claimed" | "17.0 points to go by Dec 2026" |
-| currency, count | "€41,857 short"; "1 customer fewer" | "€2,125 better than claimed" | "€4.8M to go by Dec 2026" |
+One rule for every gloss: the observed figure against the claimed one in plain words (higher or lower; longer or
+shorter for days and months; more or fewer for a count), the kind in brackets: (miss), (beat), (to go by Dec 2026).
+
+| Unit | Words | Examples |
+|---|---|---|
+| days | longer, shorter; a miss or to-go above the claim adds the working weeks (days ÷ 7, rounded; under 3.5: "under a working week") | "13.5 days longer, two working weeks (miss)"; "1.5 days shorter (beat)" |
+| months | longer, shorter | "3.0 months longer (miss)"; "3.0 months shorter (beat)" |
+| % | N points higher, lower | "7.0 points lower (miss)"; "5.0 points higher (beat)"; "17.0 points lower (to go by Dec 2026)" |
+| currency | amount higher, lower; "to go" over €1M in millions | "€41,857 lower (miss)"; "€2,125 higher (beat)"; "€4.8M lower (to go by Dec 2026)" |
+| count | N customers more, fewer | "1 customer fewer (miss)"; "1 customer more (beat)" |
 
 ## 4. Evidence label
 Tested = the metric has a figure for the claim's period and segment, and the period ended by the as-of month.
@@ -81,18 +85,19 @@ Untested rows stay listed with a reason and observed "—" (a forecast shows its
 |---|---|
 | Verified | Tested and within tolerance: ±5% of the claimed value for amounts, counts and durations; ±1 percentage point for rates. The boundary is Verified. |
 | Contradicted | Tested and outside tolerance: a miss, or a beat. |
-| Unverified | Not testable yet; the reason names what would test it: a Missing file (the engine's `unlocked_by`), a forecast period, a period before the metric's first month, no FX rate for the claim's currency, or a deck reading "AI suggestion, not verified" (until the analyst edits the claim, even unchanged). |
+| Unverified | Not testable yet; the reason names what would test it: a Missing file (the engine's `unlocked_by`), a forecast period, a period before the metric's first month, no FX rate for the claim's currency, a revenue claim with no period ("no period stated"), months of the period missing from the data (named), or a deck reading "AI suggestion, not verified" (until the analyst edits the claim, even unchanged): a claim that would otherwise be Verified or Contradicted; any other reason stands. |
 | Unsupported | The app gives no figure: no metric proposed or picked, the metric not computed for that period or by segment, the segment not in the data, or the engine's "not computable" reason. |
 
 ## 5. Gate
-Proposed for every row with an observed value: "Before {budget decision}, {metric} must be at least (at most)
-{threshold} by {date}. Observed {value} ({month}); claimed {value} ({period})." The date is the last day of the
-first fiscal quarter ending after the as-of month. The analyst sets the threshold and names the budget decision (max
-200 characters); the gate is saved only when both are filled.
+No gate is proposed and no threshold has a default. For every row with an observed value the screen shows the claimed
+and the observed figure beside an empty threshold field. The analyst sets the threshold, names the budget decision (max
+200 characters) and may change the date; the gate is saved only when threshold and decision are both filled, and then
+reads: "Before {budget decision}, {metric} must be at least (at most) {threshold} by {date}. Observed {value} ({month});
+claimed {value} ({period})." The date defaults to the last day of the first fiscal quarter ending after the as-of month.
 
 ## 6. Claim register
 One row per claim, no deck text (no snippet, no label). GET /api/audits/{id}/claims returns the rows in rank order
-under `register`, beside today's `claims`.
+under `register`, beside today's `claims`; `register` is empty when the audit has no results.
 
 | Field | Type | Note |
 |---|---|---|
@@ -113,7 +118,7 @@ under `register`, beside today's `claims`.
 | `evidence_label`, `reason`, `tolerance` | str | table 4; "±5%", "±1 pp" |
 | `rank` | int | §3 |
 | `value_at_stake_arr` | float or null | null until issue #6 |
-| `gate_sentence` | str or null | §5 |
+| `gate_sentence` | str or null | §5; null until the gate is saved |
 | `gate_threshold`, `gate_budget_decision`, `gate_date`, `gate_saved` | float, str, date, bool | |
 | `as_of_month`, `as_of_defaulted` | str, bool | |
 
@@ -125,8 +130,8 @@ names; numbers unformatted, dates ISO, `observed_source` as "file · sheet · ro
 | Part | Content |
 |---|---|
 | Place | a new "Claim register" section on the Dashboard, under the metric cards, with a "Download baseline (CSV)" button |
-| Row | rank, claim, period, segment, page, "Read from deck", observed value (source on hover), gap in native units and %, gloss, "Evidence" with its reason, gate |
-| Editable | segment; metric (a metric in the claim's unit, or none); the gate's threshold, budget decision and date |
+| Row | rank, claim, period, segment, page, "Read from deck", observed value (source on hover), gap in native units and %, gloss, "Evidence" with its reason, gate (claimed and observed beside the empty fields of §5) |
+| Editable | segment; metric (a metric in the claim's unit, or none); the gate's threshold, budget decision and date (the threshold field starts empty) |
 | Read-only | everything else |
 | Not shown | value at stake, until #6 fills it |
 
@@ -185,6 +190,11 @@ in each label class at least for revenue, ARR and customer count. Public decks h
 | 32 | 6 customers, FY2023 | 5 | 1, 16.7% | Contradicted | 4 |
 | 33 | 8 customers, Y/E 22 | — | — | Unverified: before the first month, 2023-01 | 32 |
 | 34 | "Public sector: 3 customers", Feb 2024, analyst sets "Not in the data" | — | — | Unsupported: segment not in the data | 33 |
+| 35 | Run C: revenue €190,000, FY2023 (Apr 2022–Mar 2023) | — | — | Unverified: months missing, 2022-04 to 2022-12 | 2 (run C) |
+| 36 | Run D: revenue €190,000, no period | — | — | Unverified: no period stated | 11 (run D) |
+
+Run D is run A's data with eleven more claims: one for each metric of table 2a that run A does not cover (MRR, New MRR,
+gross revenue churn, ACV), figures by segment, and row 36. Its ranks stand on their own; the test file lists them.
 
 ## 10. Decisions
 | # | Question | Decision of 2026-10-07 |
@@ -197,6 +207,14 @@ in each label class at least for revenue, ARR and customer count. Public decks h
 | D6 | Screen | §8 |
 | R1 | Revenue for a period | recurring lines spread over their service months as for MRR, one-off lines in their invoice month |
 | R2 | "Turnover" | counts as revenue; "bookings" stays unmatched |
+| Q1 | Revenue with no period | Unverified, reason "no period stated" |
+| Q2 | A sum with months missing | Unverified, the reason names the months; Unsupported is only for metrics the app does not compute |
+| Q3, Q4 | Forecast of a quarter metric; a sum with no month to date | latest complete quarter (CAC payback: headline); "—" |
+| Q5 | A gap of 0 | gloss "as claimed" |
+| Q6, Q7 | Gloss wording | one rule for all metrics: direction in plain words, kind in brackets (§3) |
+| Q8 | Units | years × 12 → months; hours and unit-less claims stay unmatched |
+| Q9 | Gate threshold | no default; claimed and observed beside an empty field; saved when filled (§5) |
+| Q10–Q12 | Deck reading, table-row ids, no results | as implemented (§4, §1, §6) |
 
 ## Done when
 - Every fixture row gives its label, gap, gloss and rank (`backend/tests/test_claim_matching.py`).

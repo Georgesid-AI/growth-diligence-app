@@ -115,6 +115,8 @@ def test_a_segment_must_be_in_the_data_or_one_of_the_two_markers(api):
 
 def test_the_gate_is_the_analysts_threshold_budget_decision_and_date(api):
     client, _ = api
+    row = next(x for x in _get(client)["register"] if x["claim_id"] == "c01")
+    assert (row["gate_sentence"], row["gate_threshold"], row["gate_saved"]) == (None, None, False), "no proposed gate"
     body = {"gate_threshold": 195000, "gate_budget_decision": "the Series B hiring plan", "gate_date": "2024-06-30"}
     r = _put(client, "c01", body)
     assert r.status_code == 200, r.text
@@ -122,7 +124,8 @@ def test_the_gate_is_the_analysts_threshold_budget_decision_and_date(api):
     assert (row["gate_saved"], row["gate_threshold"], row["gate_date"]) == (True, 195000, "2024-06-30")
     assert row["gate_sentence"].startswith("Before the Series B hiring plan, ARR must be at least €195,000 by 2024-06-30.")
     half = _put(client, "c01", {"gate_budget_decision": None})
-    assert next(x for x in half.json()["register"] if x["claim_id"] == "c01")["gate_saved"] is False
+    row = next(x for x in half.json()["register"] if x["claim_id"] == "c01")
+    assert (row["gate_saved"], row["gate_sentence"]) == (False, None)
     cleared = _put(client, "c01", {"gate_threshold": None, "gate_date": None})
     row = next(x for x in cleared.json()["register"] if x["claim_id"] == "c01")
     assert (row["gate_threshold"], row["gate_date"], row["gate_saved"]) == (None, "2024-03-31", False)

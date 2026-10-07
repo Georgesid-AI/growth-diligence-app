@@ -48,7 +48,7 @@ METRICS: Dict[str, dict] = {
 }
 NO_METRIC = "none"                      # what the analyst picks to say "no metric fits"
 
-_DURATIONS = ("days", "weeks", "months")
+_DURATIONS = ("days", "weeks", "months", "years")
 _CURRENCY_SYMBOLS = {"EUR": "€", "USD": "$", "GBP": "£"}
 
 _NEW_MRR = re.compile(r"(?i)\bnew mrr\b")
@@ -96,6 +96,16 @@ def _short(metric: str) -> str:
     return re.sub(r"\s*\(.*\)", "", metric)
 
 
+def _month_ranges(indexes: List[int]) -> str:
+    """'2022-04 to 2022-12, 2023-03': the months, joined into runs."""
+    runs, first = [], indexes[0]
+    for prev, m in zip(indexes, indexes[1:] + [None]):
+        if m is None or m != prev + 1:
+            runs.append(_ms(first) if first == prev else f"{_ms(first)} to {_ms(prev)}")
+            first = m
+    return ", ".join(runs)
+
+
 def _quarter_first_month(quarter: str) -> str:
     year, q = quarter.split("-Q")
     return f"{year}-{(int(q) - 1) * 3 + 1:02d}"
@@ -118,9 +128,9 @@ def _claim_unit(c: dict) -> Optional[str]:
     unit = (c.get("unit") or "").strip().lower()
     if unit == "%":
         return "%"
-    if re.fullmatch(r"(?:day|week|month)s?", unit):
+    if re.fullmatch(r"(?:day|week|month|year)s?", unit):
         return unit.rstrip("s") + "s"
-    if re.fullmatch(r"(?:year|hour)s?", unit):
+    if re.fullmatch(r"hours?", unit):
         return None                                 # not a duration the spec converts
     return "count"
 
@@ -132,10 +142,10 @@ def _fits(metric_unit: str, claim_unit: Optional[str]) -> bool:
 
 
 def _to_metric_unit(value: Optional[float], claim_unit: str, metric_unit: str) -> Optional[float]:
-    """A duration in days (7 a week, 30.44 a month) or months; other units unchanged."""
+    """A duration in days (7 a week, 30.44 a month, 12 months a year) or months; other units unchanged."""
     if value is None or metric_unit not in ("days", "months"):
         return value
-    days = {"days": 1.0, "weeks": DAYS_PER_WEEK, "months": DAYS_PER_MONTH}[claim_unit] * value
+    days = {"days": 1.0, "weeks": DAYS_PER_WEEK, "months": DAYS_PER_MONTH, "years": 12 * DAYS_PER_MONTH}[claim_unit] * value
     return days if metric_unit == "days" else days / DAYS_PER_MONTH
 
 
@@ -162,29 +172,30 @@ def _money(amount: float, currency: Optional[str], whole_millions: bool = False)
 
 
 def gloss(unit: str, kind: str, gap: float, currency: Optional[str], direction: Optional[str], by: Optional[str]) -> str:
-    """The gap in words (spec section 3). `gap` is signed: positive a miss, negative a beat; for "to go" it is claimed - observed."""
+    """The gap in words, one rule for every metric (spec section 3): the observed figure against the claimed one in plain
+    words, the kind in brackets. `gap` is signed: positive a miss, negative a beat; for "to go" it is claimed - observed."""
+    if round(gap, 9) == 0:
+        return "as claimed"
     size = abs(gap)
+    # a miss is above the claim when lower is better, a beat when higher is better; a to-go is always claimed - observed
+    above = gap < 0 if kind == "to go" or direction == "higher" else gap > 0
+    higher, lower = {"days": ("longer", "shorter"), "months": ("longer", "shorter"), "count": ("more", "fewer")}.get(
+        unit, ("higher", "lower"))
     if unit in ("days", "months"):
-        if kind == "beat":
-            return f"{size:.1f} {unit} shorter than claimed"
-        text = f"{size:.1f} {unit} longer"                      # a "to go" reads as a miss
-        if unit == "days":
-            weeks = int(size / DAYS_PER_WEEK + 0.5)
-            text += ", under a working week" if weeks == 0 else \
-                f", {_NUMBER_WORDS[weeks] if weeks < len(_NUMBER_WORDS) else weeks} working week{'s' if weeks != 1 else ''}"
-        return text
-    if unit == "%":
-        if kind == "beat":
-            return f"{size:.1f} points better than claimed"
-        if kind == "to go":
-            return f"{size:.1f} points to go by {by}"
-        return f"{size:.1f} points {'lower' if direction == 'higher' else 'higher'}"
-    if unit == "count":
+        amount = f"{size:.1f} {unit}"
+    elif unit == "%":
+        amount = f"{size:.1f} points"
+    elif unit == "count":
         n = f"{size:,.0f}"
-        noun = f"{n} customer{'' if n == '1' else 's'}"
-        return {"beat": f"{noun} better than claimed", "to go": f"{noun} to go by {by}"}.get(kind, f"{noun} fewer")
-    amount = _money(size, currency, whole_millions=kind == "to go")
-    return {"beat": f"{amount} better than claimed", "to go": f"{amount} to go by {by}"}.get(kind, f"{amount} short")
+        amount = f"{n} customer{'' if n == '1' else 's'}"
+    else:
+        amount = _money(size, currency, whole_millions=kind == "to go")
+    text = f"{amount} {higher if above else lower}"
+    if unit == "days" and kind != "beat" and above:
+        weeks = int(size / DAYS_PER_WEEK + 0.5)
+        text += ", under a working week" if weeks == 0 else \
+            f", {_NUMBER_WORDS[weeks] if weeks < len(_NUMBER_WORDS) else weeks} working week{'s' if weeks != 1 else ''}"
+    return f"{text} ({f'to go by {by}' if kind == 'to go' else kind})"
 
 
 def _format(unit: str, value: float, currency: Optional[str]) -> str:
@@ -474,23 +485,21 @@ def _row(c: dict, results: dict, settings: dict) -> dict:
     if round(gap, 9) == 0:
         gap, kind = 0.0, None if not forecast else "to go"
     out.update(gap=round(gap, 6), gap_kind=kind, gap_normalised=round(gap / abs(claimed), 6) if claimed else None)
-    if kind:
-        by = _label_of(end) if forecast else None
-        out["gloss"] = gloss(spec["unit"], kind, gap, results.get("reporting_currency"), spec["direction"], by)
+    out["gloss"] = gloss(spec["unit"], kind, gap, results.get("reporting_currency"), spec["direction"],
+                         _label_of(end) if forecast else None)
 
-    # the proposed gate: the claim, held to as a condition on a budget decision
-    gate_on = inputs.get("gate_date") or gate_date(as_of, settings.get("fiscal_year_end") or 12) if as_of else None
-    threshold = inputs.get("gate_threshold")
-    if threshold is None:
-        threshold = (min(claimed_low, claimed_high) if claimed_high is not None and sign > 0
-                     else max(claimed_low, claimed_high) if claimed_high is not None else claimed_low)
-    shown = metric if segment == WHOLE else f"{metric} ({segment})"
-    unit_currency = results.get("reporting_currency")
-    out.update(gate_date=gate_on, gate_sentence=(
-        f"Before {inputs.get('gate_budget_decision') or '[budget decision]'}, {shown} must be at "
-        f"{'least' if sign > 0 else 'most'} {_format(spec['unit'], threshold, unit_currency)} by {gate_on}. "
-        f"Observed {_format(spec['unit'], observed, unit_currency)} ({observed_at}); "
-        f"claimed {_format(spec['unit'], claimed, unit_currency)} ({period or NO_PERIOD})."))
+    # the gate: no proposal and no default threshold; the sentence exists once the analyst has filled the threshold and
+    # the budget decision (claimed and observed sit beside the empty field on the screen)
+    gate_on = inputs.get("gate_date") or gate_date(as_of, settings.get("fiscal_year_end") or 12)
+    out["gate_date"] = gate_on
+    if out["gate_saved"]:
+        shown = metric if segment == WHOLE else f"{metric} ({segment})"
+        unit_currency = results.get("reporting_currency")
+        out["gate_sentence"] = (
+            f"Before {inputs['gate_budget_decision']}, {shown} must be at {'least' if sign > 0 else 'most'} "
+            f"{_format(spec['unit'], inputs['gate_threshold'], unit_currency)} by {gate_on}. "
+            f"Observed {_format(spec['unit'], observed, unit_currency)} ({observed_at}); "
+            f"claimed {_format(spec['unit'], claimed, unit_currency)} ({period or NO_PERIOD}).")
 
     if forecast:
         return finish("Unverified", f"forecast: the period ends after the as-of month ({as_of})")
@@ -551,7 +560,7 @@ def _observe(figures: "_Figures", spec: dict, metric: str, start: Optional[int],
         if why == "segment not in the data":
             return "Unsupported|segment not in the data", None, None, None
         if start is None or end is None:
-            return "Unsupported|revenue is a sum over months: the claim needs a period", None, None, None
+            return "Unverified|no period stated", None, None, None
         months = sorted(values, key=_mi)
         first = _mi(months[0]) if months else None
         if first is not None and end < first:
@@ -561,11 +570,10 @@ def _observe(figures: "_Figures", spec: dict, metric: str, start: Optional[int],
             if not used:
                 return None, _ms(as_of_i), source, None
         else:
-            if first is not None and start < first:
-                return "Unsupported|the period is only partly in the data", None, None, None
             used = list(range(start, end + 1))
-            if any(_ms(m) not in values or values[_ms(m)] is None for m in used):
-                return "Unsupported|the period is not fully in the data", None, None, None
+            absent = [m for m in used if values.get(_ms(m)) is None]
+            if absent:
+                return f"Unverified|months missing from the data: {_month_ranges(absent)}", None, None, None
         total = round(sum(values[_ms(m)] for m in used), 2)
         return total, f"{_ms(used[0])} to {_ms(used[-1])}", source, None
 

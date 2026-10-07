@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Provenance } from "@/components/Provenance";
 import { claimsCsvUrl, getClaimRegister, updateClaimInputs } from "@/lib/api";
 import {
-  DOWNLOAD_LABEL, GATE_BUDGET_MAX, NO_METRIC, REGISTER_COLUMNS, REGISTER_HEADING, claimText, gapText, gateEdit, metricOptions,
+  DOWNLOAD_LABEL, GATE_BUDGET_MAX, NO_METRIC, REGISTER_COLUMNS, REGISTER_HEADING, claimText, gapText, gateContext, gateEdit, metricOptions,
   observedText, readingText, registerRows, segmentOptions,
 } from "@/lib/claimRegister";
 import { describeRequestError } from "@/lib/requestError";
@@ -22,35 +22,30 @@ const LABEL_STYLE = {
 // The options of a select, with the stored choice kept in the list even when it is no longer offered.
 const withCurrent = (options, current) => (options.includes(current) ? options : [...options, current]);
 
-/** The gate: the proposed sentence, and the threshold, budget decision and date the analyst sets. Saved when both are filled. */
-function GateCell({ row, onSave }) {
-  const [draft, setDraft] = useState(null);
-  const open = () => setDraft({ threshold: row.gate_threshold ?? "", budget: row.gate_budget_decision ?? "", date: row.gate_date ?? "" });
+/** The gate: the claimed and observed figures beside an empty threshold, a budget decision and a date. Nothing is proposed
+ *  and nothing is saved until the threshold and the budget decision are both filled. */
+function GateCell({ row, ccy, onSave }) {
+  const initial = { threshold: row.gate_threshold ?? "", budget: row.gate_budget_decision ?? "", date: row.gate_date ?? "" };
+  const [draft, setDraft] = useState(initial);
+  const key = JSON.stringify(initial);
+  useEffect(() => setDraft(JSON.parse(key)), [key]);
+  const context = gateContext(row, ccy);
+  if (!context) return <span className="text-slate-400">—</span>;
   const set = (k) => (e) => setDraft((d) => ({ ...d, [k]: e.target.value }));
   const save = () => {
     let edit;
     try { edit = gateEdit(row, draft); } catch (e) { toast.error(e.message); return; }
-    if (!Object.keys(edit).length) { setDraft(null); return; }
-    onSave(row, edit).then(() => setDraft(null));
+    if (Object.keys(edit).length) onSave(row, edit).catch(() => {});
   };
-  if (!row.gate_sentence) return <span className="text-slate-400">—</span>;
   return (
-    <div className="max-w-xs">
-      <div className="text-slate-700" data-testid="register-gate-sentence">{row.gate_sentence}</div>
-      {row.gate_saved && <div className="mt-1 text-[10px] font-mono text-emerald-700" data-testid="register-gate-saved">Gate saved</div>}
-      {draft ? (
-        <div className="mt-1 space-y-1">
-          <Input value={draft.threshold} onChange={set("threshold")} placeholder="Threshold" inputMode="decimal" className="h-7 text-xs font-mono" data-testid="register-gate-threshold" />
-          <Input value={draft.budget} onChange={set("budget")} maxLength={GATE_BUDGET_MAX} placeholder="Budget decision (max 200 characters)" className="h-7 text-xs" data-testid="register-gate-budget" />
-          <Input type="date" value={draft.date} onChange={set("date")} className="h-7 text-xs font-mono" data-testid="register-gate-date" />
-          <div className="flex gap-1">
-            <Button size="sm" onClick={save} className="h-7 bg-sky-600 hover:bg-sky-500" data-testid="register-gate-save">Save gate</Button>
-            <Button size="sm" variant="outline" onClick={() => setDraft(null)} className="h-7">Cancel</Button>
-          </div>
-        </div>
-      ) : (
-        <Button size="sm" variant="outline" onClick={open} className="mt-1 h-7" data-testid="register-gate-edit">Set gate</Button>
-      )}
+    <div className="max-w-xs space-y-1">
+      <div className="text-slate-600" data-testid="register-gate-context">{context}</div>
+      {row.gate_sentence && <div className="text-slate-800" data-testid="register-gate-sentence">{row.gate_sentence}</div>}
+      {row.gate_saved && <div className="text-[10px] font-mono text-emerald-700" data-testid="register-gate-saved">Gate saved</div>}
+      <Input value={draft.threshold} onChange={set("threshold")} placeholder="Threshold" inputMode="decimal" className="h-7 text-xs font-mono" data-testid="register-gate-threshold" />
+      <Input value={draft.budget} onChange={set("budget")} maxLength={GATE_BUDGET_MAX} placeholder="Budget decision (max 200 characters)" className="h-7 text-xs" data-testid="register-gate-budget" />
+      <Input type="date" value={draft.date} onChange={set("date")} className="h-7 text-xs font-mono" data-testid="register-gate-date" />
+      <Button size="sm" onClick={save} className="h-7 bg-sky-600 hover:bg-sky-500" data-testid="register-gate-save">Save gate</Button>
     </div>
   );
 }
@@ -132,7 +127,7 @@ export default function ClaimRegister({ auditId, results }) {
                       </span>
                       <div className="mt-1 text-slate-600">{row.reason}</div>
                     </td>
-                    <td className="py-2 px-3"><GateCell row={row} onSave={save} /></td>
+                    <td className="py-2 px-3"><GateCell row={row} ccy={ccy} onSave={save} /></td>
                   </tr>
                 );
               })}

@@ -232,17 +232,34 @@ def test_durations_convert_at_7_days_a_week_and_30_44_a_month(unit, value, claim
 
 def test_a_gap_below_half_a_working_week_reads_under_a_working_week():
     row = run_claim({"claim_type": "sales", "snippet": "Sales cycle", "unit": "weeks", "currency": None, "value": 8})
-    assert row["gloss"] == "2.5 days longer, under a working week" and row["evidence_label"] == "Verified"
+    assert row["gloss"] == "2.5 days longer, under a working week (miss)" and row["evidence_label"] == "Verified"
 
 
-def test_a_year_is_not_a_duration_the_engine_measures():
-    row = run_claim({"claim_type": "sales", "snippet": "Sales cycle", "unit": "years", "currency": None, "value": 1})
-    assert (row["metric"], row["evidence_label"]) == (None, "Unsupported")
+def test_a_year_is_twelve_months_of_30_44_days():
+    row = run_claim({"claim_type": "sales", "snippet": "Sales cycle", "unit": "years", "currency": None, "value": 0.2})
+    assert (row["metric"], row["unit"]) == ("Median sales cycle", "years")
+    assert row["gap"] == pytest.approx(58.5 - 0.2 * 12 * 30.44, abs=0.005)           # 0.2 years = 73.056 days
+
+
+def test_a_claim_in_years_for_a_months_metric_is_tested_at_twelve_months_a_year():
+    results = copy.deepcopy(results_for(RUNS["A"]))
+    results["cac_payback"] = {"default_l": 1, "headline_quarter": "2023-Q3", "source": {"file": "pnl.csv", "sheet": "CSV", "rows": "r", "rule": "x"},
+                              "quarters": {"2023-Q3": {"gross_margin_pct": 78.0, "partial": False, "L1": {"months": 12.0, "reason": None}}}}
+    row = run_claim({"claim_type": "sales", "snippet": "CAC payback", "unit": "years", "currency": None, "value": 1, "target_date": "2023-Q3"},
+                    results=results)
+    assert (row["observed_value"], row["gap"], row["evidence_label"], row["gloss"]) == (12.0, 0.0, "Verified", "as claimed")
+
+
+@pytest.mark.parametrize("unit, snippet, claim_type", [("hours", "Sales cycle", "sales"), (None, "Sales cycle 60", "sales"),
+                                                       (None, "ACV 40", "sales"), (None, "ARR 200", "revenue")])
+def test_hours_and_claims_with_no_unit_stay_unmatched(unit, snippet, claim_type):
+    row = run_claim({"claim_type": claim_type, "snippet": snippet, "unit": unit, "currency": None, "value": 60})
+    assert (row["metric"], row["evidence_label"]) == (None, "Unsupported") and "no metric" in row["reason"]
 
 
 # --- table 2b: periods -------------------------------------------------------------------------------------------------
 
-def test_a_period_before_the_data_is_unverified_and_a_period_cut_by_its_start_is_unsupported():
+def test_a_period_before_the_data_or_cut_by_its_start_is_unverified_and_the_reason_names_the_missing_months():
     full = run_claim({"claim_type": "revenue", "snippet": "Revenue €1M", "target_date": "2022"})
     assert (full["evidence_label"], full["observed_value"]) == ("Unverified", None) and "first month, 2023-01" in full["reason"]
     run = RUNS["A"]
@@ -250,7 +267,17 @@ def test_a_period_before_the_data_is_unverified_and_a_period_cut_by_its_start_is
          "target_date": "2023", "sources": []}
     deck_claims.resolve_period(c, 3)                                   # a March year-end: FY2023 starts April 2022
     row = cm.build_register([c], results_for(run), settings(run, fiscal_year_end=3))[0]
-    assert (row["evidence_label"], row["observed_value"]) == ("Unsupported", None) and "period" in row["reason"]
+    assert (row["evidence_label"], row["observed_value"]) == ("Unverified", None)
+    assert "2022-04 to 2022-12" in row["reason"], "the months the data lacks are named"
+
+
+def test_a_gap_inside_the_period_names_its_months_too():
+    results = copy.deepcopy(results_for(RUNS["A"]))
+    series = results["revenue_series"]
+    series["data"] = [d for d in series["data"] if d["month"] not in ("2023-05", "2023-06", "2023-09")]
+    series["months"] = [d["month"] for d in series["data"]]
+    row = run_claim({"claim_type": "revenue", "snippet": "Revenue", "value": 1, "target_date": "2023"}, results=results)
+    assert row["evidence_label"] == "Unverified" and "2023-05 to 2023-06, 2023-09" in row["reason"]
 
 
 def test_a_quarter_metric_needs_one_calendar_quarter_of_the_engine():
@@ -285,9 +312,10 @@ def test_a_figure_with_no_period_is_tested_at_the_as_of_figure_and_marked():
     assert (cac["observed_at"], cac["period_note"], cac["observed_value"]) == ("2023-Q4", "no period stated", 78.0)
 
 
-def test_revenue_is_a_sum_so_it_needs_a_period():
+def test_revenue_is_a_sum_so_with_no_period_it_is_unverified_not_unsupported():
     row = run_claim({"claim_type": "revenue", "snippet": "Revenue €1M"})
-    assert (row["evidence_label"], row["observed_value"]) == ("Unsupported", None) and "period" in row["reason"]
+    assert (row["evidence_label"], row["observed_value"], row["reason"]) == ("Unverified", None, "no period stated")
+    assert row["period_note"] == "no period stated"
 
 
 def test_a_sum_over_a_period_entirely_in_the_future_has_no_figure_to_date():
@@ -300,7 +328,7 @@ def test_a_forecast_of_a_quarter_figure_shows_the_latest_complete_quarter():
     row = run_claim({"claim_type": "gross_margin", "snippet": "Gross margin", "unit": "%", "currency": None, "value": 80,
                      "target_date": "2025-Q2"})
     assert (row["evidence_label"], row["observed_value"], row["observed_at"], row["gap_kind"]) == ("Unverified", 78.0, "2023-Q4", "to go")
-    assert row["gloss"] == "2.0 points to go by Jun 2025"
+    assert row["gloss"] == "2.0 points lower (to go by Jun 2025)"
 
 
 def test_an_engine_not_computable_reason_is_the_unsupported_reason():
@@ -332,7 +360,7 @@ def test_cac_payback_is_tested_at_the_default_lag_and_the_headline_quarter():
     stated = run_claim({"claim_type": "sales", "snippet": "CAC payback", "unit": "months", "currency": None, "value": 12,
                         "target_date": "2023-Q3"}, results=results)
     assert (stated["observed_value"], stated["gap"], stated["gap_kind"], stated["evidence_label"]) == (14.0, 2.0, "miss", "Contradicted")
-    assert stated["gloss"] == "2.0 months longer" and stated["direction"] == "lower"
+    assert stated["gloss"] == "2.0 months longer (miss)" and stated["direction"] == "lower"
     bare = run_claim({"claim_type": "sales", "snippet": "CAC payback", "unit": "months", "currency": None, "value": 14}, results=results)
     assert (bare["observed_at"], bare["observed_value"], bare["evidence_label"], bare["period_note"]) == ("2023-Q3", 14.0, "Verified", "no period stated")
     weeks = run_claim({"claim_type": "sales", "snippet": "CAC payback", "unit": "weeks", "currency": None, "value": 60,
@@ -345,13 +373,13 @@ def test_another_currency_is_converted_at_the_audits_fx_rate():
                     fx={"EUR": 1.0, "USD": 0.9})
     assert row["claimed_value"] == 210000 and row["currency"] == "USD"
     assert row["gap"] == pytest.approx(189000 - 202125.48, abs=0.005) and row["gap_kind"] == "beat"
-    assert row["evidence_label"] == "Contradicted" and row["gloss"] == "€13,125 better than claimed"
+    assert row["evidence_label"] == "Contradicted" and row["gloss"] == "€13,125 higher (beat)"
 
 
 # --- section 3 and 4: gap, gloss, tolerance --------------------------------------------------------------------------
 
 @pytest.mark.parametrize("unit, value, gap_text", [
-    ("%", 78.0, None), ("%", 85, "7.0 points lower"), ("%", 77.5, "0.5 points better than claimed")])
+    ("%", 78.0, "as claimed"), ("%", 85, "7.0 points lower (miss)"), ("%", 77.5, "0.5 points higher (beat)")])
 def test_percent_gloss(unit, value, gap_text):
     row = run_claim({"claim_type": "gross_margin", "snippet": "Gross margin", "unit": unit, "currency": None, "value": value,
                      "target_date": "2023-Q4"})
@@ -387,30 +415,44 @@ def test_a_zero_claim_has_no_normalised_gap():
 
 
 @pytest.mark.parametrize("gap, gloss", [
-    (4.0, "4.0 days longer, one working week"), (3.5, "3.5 days longer, one working week"), (3.4, "3.4 days longer, under a working week"),
-    (13.5, "13.5 days longer, two working weeks"), (150.0, "150.0 days longer, 21 working weeks")])
+    (4.0, "4.0 days longer, one working week (miss)"), (3.5, "3.5 days longer, one working week (miss)"),
+    (3.4, "3.4 days longer, under a working week (miss)"), (13.5, "13.5 days longer, two working weeks (miss)"),
+    (150.0, "150.0 days longer, 21 working weeks (miss)")])
 def test_the_days_gloss_names_the_working_weeks_rounded(gap, gloss):
     assert cm.gloss("days", "miss", gap, None, None, None) == gloss
 
 
-def test_gloss_wording_per_unit_and_kind():
+def test_one_gloss_rule_for_every_metric_direction_in_plain_words_kind_in_brackets():
     g = cm.gloss
-    assert g("days", "beat", -1.5, None, None, None) == "1.5 days shorter than claimed"
-    assert g("months", "miss", 3.0, None, None, None) == "3.0 months longer"
-    assert g("months", "beat", -3.0, None, None, None) == "3.0 months shorter than claimed"
-    assert g("%", "miss", 7.0, None, "higher", None) == "7.0 points lower"
-    assert g("%", "miss", 7.0, None, "lower", None) == "7.0 points higher"
-    assert g("%", "beat", -0.68, None, "higher", None) == "0.7 points better than claimed"
-    assert g("%", "to go", 17.0, None, "higher", "Dec 2026") == "17.0 points to go by Dec 2026"
-    assert g("currency", "miss", 41857.32, "EUR", "higher", None) == "€41,857 short"
-    assert g("currency", "beat", -2125.48, "EUR", "higher", None) == "€2,125 better than claimed"
-    assert g("currency", "to go", 4797874.52, "EUR", "higher", "Dec 2026") == "€4.8M to go by Dec 2026"
-    assert g("currency", "miss", 1500.0, "USD", "higher", None) == "$1,500 short"
-    assert g("currency", "miss", 1500.0, "CHF", "higher", None) == "CHF 1,500 short"
-    assert g("count", "miss", 1.0, None, "higher", None) == "1 customer fewer"
-    assert g("count", "miss", 3.0, None, "higher", None) == "3 customers fewer"
-    assert g("count", "to go", 3.0, None, "higher", "Dec 2026") == "3 customers to go by Dec 2026"
-    assert g("days", "to go", 13.5, None, "lower", "Dec 2026") == "13.5 days longer, two working weeks"
+    # the direction is the observed figure against the claimed one, whichever way the metric is better
+    assert g("days", "beat", -1.5, None, "lower", None) == "1.5 days shorter (beat)"
+    assert g("days", "miss", 7.0, None, "lower", None) == "7.0 days longer, one working week (miss)"
+    assert g("months", "miss", 3.0, None, "lower", None) == "3.0 months longer (miss)"
+    assert g("months", "beat", -3.0, None, "lower", None) == "3.0 months shorter (beat)"
+    assert g("%", "miss", 3.0, None, "higher", None) == "3.0 points lower (miss)"
+    assert g("%", "miss", 3.0, None, "lower", None) == "3.0 points higher (miss)"
+    assert g("%", "beat", -5.0, None, "higher", None) == "5.0 points higher (beat)"
+    assert g("%", "beat", -0.68, None, "higher", None) == "0.7 points higher (beat)"
+    assert g("%", "beat", -5.0, None, "lower", None) == "5.0 points lower (beat)"
+    assert g("%", "to go", 17.0, None, "higher", "Dec 2026") == "17.0 points lower (to go by Dec 2026)"
+    assert g("currency", "miss", 41857.32, "EUR", "higher", None) == "€41,857 lower (miss)"
+    assert g("currency", "beat", -2125.48, "EUR", "higher", None) == "€2,125 higher (beat)"
+    assert g("currency", "to go", 4797874.52, "EUR", "higher", "Dec 2026") == "€4.8M lower (to go by Dec 2026)"
+    assert g("currency", "miss", 1500.0, "USD", "higher", None) == "$1,500 lower (miss)"
+    assert g("currency", "miss", 1500.0, "CHF", "higher", None) == "CHF 1,500 lower (miss)"
+    assert g("count", "miss", 1.0, None, "higher", None) == "1 customer fewer (miss)"
+    assert g("count", "miss", 3.0, None, "higher", None) == "3 customers fewer (miss)"
+    assert g("count", "beat", -1.0, None, "higher", None) == "1 customer more (beat)"
+    assert g("count", "to go", 3.0, None, "higher", "Dec 2026") == "3 customers fewer (to go by Dec 2026)"
+    # a to-go is claimed - observed: negative, the observed figure is above the claim
+    assert g("days", "to go", -13.5, None, "lower", "Dec 2026") == "13.5 days longer, two working weeks (to go by Dec 2026)"
+    assert g("days", "to go", 13.5, None, "lower", "Dec 2026") == "13.5 days shorter (to go by Dec 2026)"
+
+
+@pytest.mark.parametrize("unit, kind, direction", [("days", "miss", "lower"), ("%", "beat", "higher"), ("currency", "to go", "higher"),
+                                                   ("count", "miss", "higher"), ("months", "beat", "lower")])
+def test_a_gap_of_zero_is_as_claimed_in_every_unit(unit, kind, direction):
+    assert cm.gloss(unit, kind, 0.0, "EUR", direction, "Dec 2026") == "as claimed"
 
 
 def test_a_deck_reading_that_is_an_ai_suggestion_stays_unverified_until_the_analyst_edits_the_claim():
@@ -444,21 +486,12 @@ def test_the_proposed_gate_date_is_the_last_day_of_the_first_fiscal_quarter_endi
     assert cm.gate_date(as_of, year_end) == expected
 
 
-def test_the_gate_sentence_is_proposed_for_every_row_with_an_observed_value():
+def test_no_gate_is_proposed_a_row_has_no_sentence_and_no_default_threshold_until_the_analyst_fills_it():
     rows = register(RUNS["A"])
-    assert all((r["gate_sentence"] is not None) == (r["observed_value"] is not None) for r in rows)
+    assert all(r["gate_sentence"] is None and r["gate_threshold"] is None and r["gate_saved"] is False for r in rows)
     row = row_of(rows, "c01")
-    assert row["gate_sentence"] == ("Before [budget decision], ARR must be at least €200,000 by 2024-03-31. "
-                                    "Observed €202,125 (2024-02); claimed €200,000 (Feb 2024).")
     assert (row["gate_threshold"], row["gate_budget_decision"], row["gate_date"], row["gate_saved"]) == (None, None, "2024-03-31", False)
-    sales = row_of(rows, "c06")
-    assert sales["gate_sentence"] == ("Before [budget decision], Median sales cycle must be at most 45.0 days by 2024-03-31. "
-                                      "Observed 58.5 days (2024-02); claimed 45.0 days (no period stated).")
-
-
-def test_a_forecast_row_carries_a_gate_sentence_too():
-    row = row_of(register(RUNS["A"]), "c09")
-    assert row["gate_sentence"].startswith("Before [budget decision], ARR must be at least €5,000,000 by 2024-03-31. Observed €202,125 (2024-02)")
+    assert row["claimed_value"] == 200000 and row["observed_value"] == 202125.48, "claimed and observed sit beside the empty field"
 
 
 def test_the_analysts_gate_is_saved_only_when_threshold_and_budget_decision_are_filled():
@@ -470,8 +503,18 @@ def test_the_analysts_gate_is_saved_only_when_threshold_and_budget_decision_are_
                                      "Observed €202,125 (2024-02); claimed €200,000 (Feb 2024).")
     for missing in ("gate_threshold", "gate_budget_decision"):
         half = run_claim({**base, "claim_inputs": {"x1": {k: v for k, v in inputs.items() if k != missing}}})
-        assert half["gate_saved"] is False
+        assert half["gate_saved"] is False and half["gate_sentence"] is None, missing
     assert run_claim(base)["gate_saved"] is False
+
+
+def test_a_saved_gate_on_a_lower_is_better_metric_says_at_most_and_a_forecast_row_can_carry_one():
+    sales = run_claim({"claim_type": "sales", "snippet": "Sales cycle", "unit": "days", "currency": None, "value": 45,
+                       "claim_inputs": {"x1": {"gate_threshold": 50, "gate_budget_decision": "the SDR hires"}}})
+    assert sales["gate_sentence"] == ("Before the SDR hires, Median sales cycle must be at most 50.0 days by 2024-03-31. "
+                                      "Observed 58.5 days (2024-02); claimed 45.0 days (no period stated).")
+    forecast = run_claim({"claim_type": "revenue", "snippet": "ARR", "value": 5_000_000, "target_date": "2026",
+                          "claim_inputs": {"x1": {"gate_threshold": 1_000_000, "gate_budget_decision": "the plan"}}})
+    assert forecast["gate_sentence"].startswith("Before the plan, ARR must be at least €1,000,000 by 2024-03-31. Observed €202,125 (2024-02)")
 
 
 # --- section 6: the register's fields ----------------------------------------------------------------------------

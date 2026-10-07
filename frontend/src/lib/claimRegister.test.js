@@ -1,14 +1,14 @@
 import {
   DOWNLOAD_LABEL, EDITABLE_FIELDS, GATE_BUDGET_MAX, NOT_IN_DATA, NO_METRIC, READ_ONLY_FIELDS, REGISTER_COLUMNS, REGISTER_HEADING, WHOLE_COMPANY,
-  claimText, claimUnit, csvUrl, dataSegments, gapText, gateEdit, metricOptions, observedText, readingText, registerRows, segmentOptions,
+  claimFigure, claimText, claimUnit, csvUrl, gateContext, dataSegments, gapText, gateEdit, metricOptions, observedText, readingText, registerRows, segmentOptions,
 } from "./claimRegister";
 
 const ARR_ROW = {
   claim_id: "c01", claim_type: "revenue", claimed_value: 200000, claimed_high: null, unit: null, currency: "EUR",
   period: "Feb 2024", period_note: null, segment: "Whole company", segment_set_by: "python", metric: "ARR", metric_set_by: "python",
   direction: "higher", observed_value: 202125.48, observed_at: "2024-02", observed_source: { file: "revenue.csv", sheet: "CSV", rows: "rows 2–71", rule: "ARR" },
-  gap: -2125.48, gap_normalised: -0.010627, gap_kind: "beat", gloss: "€2,125 better than claimed", evidence_label: "Verified",
-  reason: "within ±5% of the claim", tolerance: "±5%", rank: 11, gate_sentence: "Before [budget decision], ARR must be at least €200,000 by 2024-03-31.",
+  gap: -2125.48, gap_normalised: -0.010627, gap_kind: "beat", gloss: "€2,125 higher (beat)", evidence_label: "Verified",
+  reason: "within ±5% of the claim", tolerance: "±5%", rank: 11, gate_sentence: null,
   gate_threshold: null, gate_budget_decision: null, gate_date: "2024-03-31", gate_saved: false, deck_reading: "parser", page_ref: "slide 4",
 };
 const WIN_ROW = { ...ARR_ROW, claim_id: "c03", claim_type: "sales", claimed_value: 41, unit: "%", currency: null, metric: "Win rate", gap: 1.0,
@@ -69,6 +69,14 @@ describe("what a row shows", () => {
     expect(gapText({ ...ARR_ROW, metric: "CAC payback", gap: 2, gap_normalised: 0.1667, gap_kind: "miss" }, "EUR")).toBe("2.0 months · 16.7%");
   });
 
+  test("the claimed figure alone, and the gate cell: claimed and observed beside an empty field, no proposed threshold", () => {
+    expect(claimFigure(ARR_ROW)).toBe("200,000 EUR");
+    expect(claimFigure({ ...ARR_ROW, unit: "years", currency: null, claimed_value: 1 })).toBe("1 years");
+    expect(gateContext(ARR_ROW, "EUR")).toBe("Claimed 200,000 EUR (Feb 2024) · Observed 202,125 EUR (2024-02)");
+    expect(gateContext(WIN_ROW, "EUR")).toBe("Claimed 41% (no period stated) · Observed 40% (2024-02)");
+    expect(gateContext({ ...ARR_ROW, observed_value: null }, "EUR")).toBeNull();
+  });
+
   test("what the deck reading says", () => {
     expect(readingText("parser")).toBe("Read by the parser");
     expect(readingText("Verified")).toBe("Verified");
@@ -84,7 +92,9 @@ describe("what the analyst may set", () => {
     expect(metricOptions(WIN_ROW)).toEqual(["NRR (12-month)", "Gross revenue churn", "Win rate", "Gross margin", NO_METRIC]);
     expect(metricOptions({ ...ARR_ROW, unit: "customers", currency: null })).toEqual(["Customer count", NO_METRIC]);
     expect(metricOptions({ ...ARR_ROW, unit: "weeks", currency: null })).toEqual(["Median sales cycle", "CAC payback", NO_METRIC]);
-    expect(metricOptions({ ...ARR_ROW, unit: "years", currency: null })).toEqual([NO_METRIC]);
+    expect(metricOptions({ ...ARR_ROW, unit: "years", currency: null })).toEqual(["Median sales cycle", "CAC payback", NO_METRIC]);
+    expect(metricOptions({ ...ARR_ROW, unit: "hours", currency: null })).toEqual([NO_METRIC]);
+    expect(metricOptions({ ...ARR_ROW, unit: null, currency: null })).toEqual(["Customer count", NO_METRIC]);
   });
 
   test("a segment of the data, the whole company or not in the data", () => {

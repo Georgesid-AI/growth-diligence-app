@@ -48,7 +48,7 @@
       "norm": -0.010627,
       "kind": "beat",
       "rank": 11,
-      "gloss": "€2,125 better than claimed",
+      "gloss": "€2,125 higher (beat)",
       "tolerance": "±5%"
      }
     },
@@ -88,7 +88,7 @@
       "kind": "beat",
       "rank": 12,
       "note": "no period stated",
-      "gloss": "1.5 days shorter than claimed"
+      "gloss": "1.5 days shorter (beat)"
      }
     },
     {
@@ -127,7 +127,7 @@
       "kind": "miss",
       "rank": 9,
       "tolerance": "±1 pp",
-      "gloss": "1.0 points lower"
+      "gloss": "1.0 points lower (miss)"
      }
     },
     {
@@ -165,7 +165,7 @@
       "norm": -0.006071,
       "kind": "beat",
       "rank": 13,
-      "gloss": "0.7 points better than claimed"
+      "gloss": "0.7 points higher (beat)"
      }
     },
     {
@@ -203,7 +203,7 @@
       "norm": 0.174405,
       "kind": "miss",
       "rank": 3,
-      "gloss": "€41,857 short"
+      "gloss": "€41,857 lower (miss)"
      }
     },
     {
@@ -241,7 +241,7 @@
       "norm": 0.3,
       "kind": "miss",
       "rank": 1,
-      "gloss": "13.5 days longer, two working weeks"
+      "gloss": "13.5 days longer, two working weeks (miss)"
      }
     },
     {
@@ -279,7 +279,7 @@
       "norm": 0.082353,
       "kind": "miss",
       "rank": 5,
-      "gloss": "7.0 points lower"
+      "gloss": "7.0 points lower (miss)"
      }
     },
     {
@@ -317,7 +317,7 @@
       "norm": -0.25,
       "kind": "beat",
       "rank": 14,
-      "gloss": "1 customer better than claimed"
+      "gloss": "1 customer more (beat)"
      }
     },
     {
@@ -356,7 +356,7 @@
       "norm": 0.959575,
       "kind": "to go",
       "rank": 20,
-      "gloss": "€4.8M to go by Dec 2026"
+      "gloss": "€4.8M lower (to go by Dec 2026)"
      }
     },
     {
@@ -805,7 +805,8 @@
       "gap": 0.0,
       "norm": 0.0,
       "kind": null,
-      "rank": 17
+      "rank": 17,
+      "gloss": "as claimed"
      }
     },
     {
@@ -1026,7 +1027,7 @@
       "norm": 0.0121,
       "kind": "miss",
       "rank": 10,
-      "gloss": "€2,299 short"
+      "gloss": "€2,299 lower (miss)"
      }
     },
     {
@@ -1102,7 +1103,7 @@
       "norm": 0.865917,
       "kind": "to go",
       "rank": 30,
-      "gloss": "€216,479 to go by Dec 2024"
+      "gloss": "€216,479 lower (to go by Dec 2024)"
      }
     },
     {
@@ -1176,7 +1177,8 @@
       "gap": 0.0,
       "norm": 0.0,
       "kind": null,
-      "rank": 19
+      "rank": 19,
+      "gloss": "as claimed"
      }
     },
     {
@@ -1213,7 +1215,7 @@
       "norm": 0.166667,
       "kind": "miss",
       "rank": 4,
-      "gloss": "1 customer fewer"
+      "gloss": "1 customer fewer (miss)"
      }
     },
     {
@@ -1384,6 +1386,40 @@
       "kind": "miss",
       "rank": 1
      }
+    },
+    {
+     "n": 46,
+     "claim_id": "c46",
+     "candidate": {
+      "id": "c46",
+      "status": "approved",
+      "claim_type": "revenue",
+      "value": 190000,
+      "value_high": null,
+      "unit": null,
+      "currency": "EUR",
+      "target_date": "2023",
+      "period_text": "FY2023",
+      "snippet": "Revenue €190,000 in FY2023",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 46,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 3,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Unverified",
+      "reason": "2022-04 to 2022-12",
+      "metric": "Revenue",
+      "observed": null,
+      "rank": 2
+     }
     }
    ]
   },
@@ -1548,7 +1584,7 @@
       "kind": "beat",
       "tolerance": "±1 pp",
       "rank": 5,
-      "gloss": "0.5 points better than claimed"
+      "gloss": "0.5 points lower (beat)"
      }
     },
     {
@@ -1736,7 +1772,8 @@
       "gap": 0.0,
       "norm": 0.0,
       "kind": null,
-      "rank": 10
+      "rank": 10,
+      "gloss": "as claimed"
      }
     },
     {
@@ -1775,6 +1812,40 @@
       "norm": 0.06995,
       "kind": "miss",
       "rank": 2
+     }
+    },
+    {
+     "n": 45,
+     "claim_id": "c45",
+     "candidate": {
+      "id": "c45",
+      "status": "approved",
+      "claim_type": "revenue",
+      "value": 190000,
+      "value_high": null,
+      "unit": null,
+      "currency": "EUR",
+      "target_date": null,
+      "period_text": null,
+      "snippet": "Revenue €190,000",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 45,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 2,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Unverified",
+      "reason": "no period stated",
+      "metric": "Revenue",
+      "observed": null,
+      "rank": 11
      }
     }
    ]

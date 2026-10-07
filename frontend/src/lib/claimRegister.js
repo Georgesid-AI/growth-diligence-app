@@ -20,7 +20,7 @@ export const NO_METRIC = "none";
 export const GATE_BUDGET_MAX = 200;
 
 const METRIC_UNIT = metricUnits.metrics;
-const DURATIONS = ["days", "weeks", "months"];
+const DURATIONS = ["days", "weeks", "months", "years"];
 
 export const csvUrl = (apiBase, auditId) => `${apiBase}/audits/${auditId}/claims.csv`;
 export const registerRows = (data) => data?.register ?? [];
@@ -30,9 +30,9 @@ export function claimUnit(row) {
   if (row.currency) return "currency";
   const unit = (row.unit || "").trim().toLowerCase();
   if (unit === "%") return "%";
-  const duration = unit.match(/^(day|week|month)s?$/);
+  const duration = unit.match(/^(day|week|month|year)s?$/);
   if (duration) return `${duration[1]}s`;
-  if (/^(year|hour)s?$/.test(unit)) return null;       // not a duration the engine measures
+  if (/^hours?$/.test(unit)) return null;              // not a duration the engine measures
   return "count";
 }
 
@@ -55,22 +55,18 @@ export const segmentOptions = (results) => [WHOLE_COMPANY, ...dataSegments(resul
 
 const trimmed = (v, dp) => String(Number(Number(v).toFixed(dp)));
 
-/** "Revenue · 200,000 EUR", "Sales · 41%", "Customers · 4 customers": the claim's type and its figure in its own unit. */
-export function claimText(row) {
+/** "200,000 EUR", "41%", "4 customers": the claimed figure in the claim's own unit. */
+export function claimFigure(row) {
   const lo = row.claimed_value;
   const hi = row.claimed_high;
-  let figure;
-  if (row.currency) {
-    const ccy = fmtCurrency(lo, row.currency);
-    figure = hi == null ? ccy : `${fmtCurrency(lo)}–${fmtCurrency(hi, row.currency)}`;
-  } else if (row.unit === "%") {
-    figure = hi == null ? `${trimmed(lo, 4)}%` : `${trimmed(lo, 4)}–${trimmed(hi, 4)}%`;
-  } else {
-    const num = (v) => (DURATIONS.includes(claimUnit(row)) ? trimmed(v, 4) : fmtCount(v));
-    figure = `${hi == null ? num(lo) : `${num(lo)}–${num(hi)}`}${row.unit ? ` ${row.unit}` : ""}`;
-  }
-  return `${typeLabel(row.claim_type)} · ${figure}`;
+  if (row.currency) return hi == null ? fmtCurrency(lo, row.currency) : `${fmtCurrency(lo)}–${fmtCurrency(hi, row.currency)}`;
+  if (row.unit === "%") return hi == null ? `${trimmed(lo, 4)}%` : `${trimmed(lo, 4)}–${trimmed(hi, 4)}%`;
+  const num = (v) => (DURATIONS.includes(claimUnit(row)) ? trimmed(v, 4) : fmtCount(v));
+  return `${hi == null ? num(lo) : `${num(lo)}–${num(hi)}`}${row.unit ? ` ${row.unit}` : ""}`;
 }
+
+/** "Revenue · 200,000 EUR": the claim's type and its figure. */
+export const claimText = (row) => `${typeLabel(row.claim_type)} · ${claimFigure(row)}`;
 
 /** The figure in the metric's unit, as the backend's gloss rounds it. */
 function inUnit(metric, value, ccy) {
@@ -119,4 +115,11 @@ export function gateEdit(row, draft) {
   const date = String(draft.date ?? "").trim();
   if ((date || null) !== (row.gate_date ?? null)) out.gate_date = date || null;
   return out;
+}
+
+/** What the analyst sees beside the empty gate fields: the claimed and the observed figure. No threshold is proposed. */
+export function gateContext(row, ccy) {
+  if (row.observed_value == null) return null;
+  const observed = observedText(row, ccy);
+  return `Claimed ${claimFigure(row)} (${row.period || row.period_note || PLACEHOLDER}) · Observed ${observed.value} (${observed.at})`;
 }

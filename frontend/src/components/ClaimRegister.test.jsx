@@ -20,7 +20,7 @@ const ROW = {
   observed_value: 202125.48, observed_at: "2024-02", observed_source: { file: "revenue.csv", sheet: "CSV", rows: "rows 2–71", rule: "ARR" },
   gap: -2125.48, gap_normalised: -0.010627, gap_kind: "beat", gloss: "€2,125 better than claimed", evidence_label: "Verified",
   reason: "within ±5% of the claim", tolerance: "±5%", rank: 1, value_at_stake_arr: null,
-  gate_sentence: "Before [budget decision], ARR must be at least €200,000 by 2024-03-31.", gate_threshold: null, gate_budget_decision: null,
+  gate_sentence: null, gate_threshold: null, gate_budget_decision: null,
   gate_date: "2024-03-31", gate_saved: false, deck_reading: "parser", page_ref: "slide 4",
 };
 const RESULTS = { reporting_currency: "EUR", mrr_series: { segments: ["Enterprise", "SMB"] } };
@@ -52,7 +52,9 @@ test("the section has its title, the download button and one row per claim with 
   expect(row.querySelector('[data-testid="register-gloss"]').textContent).toBe("€2,125 better than claimed");
   expect(row.querySelector('[data-testid="register-evidence"]').textContent).toBe("Verified");
   expect(row.textContent).toContain("within ±5% of the claim");
-  expect(row.querySelector('[data-testid="register-gate-sentence"]').textContent).toContain("ARR must be at least €200,000");
+  expect(row.querySelector('[data-testid="register-gate-context"]').textContent).toBe("Claimed 200,000 EUR (Feb 2024) · Observed 202,125 EUR (2024-02)");
+  expect(row.querySelector('[data-testid="register-gate-threshold"]').value).toBe("");
+  expect(row.querySelector('[data-testid="register-gate-sentence"]')).toBeNull();
   expect(host.textContent.toLowerCase()).not.toContain("value at stake");
 });
 
@@ -80,10 +82,14 @@ test("choosing a segment saves it and the rows follow the server's answer", asyn
   expect(host.textContent).toContain("set by you");
 });
 
-test("a row with no gate sentence shows a dash, a saved gate says so", async () => {
-  const { host } = await mount([{ ...ROW, gate_sentence: null, observed_value: null }, { ...ROW, claim_id: "c2", gate_saved: true }]);
+test("a row with no observed value has no gate, a saved gate shows its sentence", async () => {
+  const saved = { ...ROW, claim_id: "c2", gate_saved: true, gate_threshold: 195000, gate_budget_decision: "the plan",
+    gate_sentence: "Before the plan, ARR must be at least €195,000 by 2024-03-31. Observed €202,125 (2024-02); claimed €200,000 (Feb 2024)." };
+  const { host } = await mount([{ ...ROW, observed_value: null }, saved]);
   const rows = host.querySelectorAll('[data-testid="claim-register-row"]');
-  expect(rows[0].querySelector('[data-testid="register-gate-sentence"]')).toBeNull();
+  expect(rows[0].querySelector('[data-testid="register-gate-context"]')).toBeNull();
+  expect(rows[0].querySelector('[data-testid="register-gate-edit"]')).toBeNull();
+  expect(rows[1].querySelector('[data-testid="register-gate-sentence"]').textContent).toContain("Before the plan");
   expect(rows[1].querySelector('[data-testid="register-gate-saved"]').textContent).toBe("Gate saved");
 });
 
