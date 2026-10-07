@@ -157,10 +157,12 @@ _DATES = [
     ("quarter", re.compile(r"\b" + _FY + r"\s*[-/]?\s*Q(?P<q>[1-4])\b")),
     ("half", re.compile(r"\bH(?P<h>[12])\s*[-/]?\s*" + _FY + r"\b")),
     ("half", re.compile(r"\b" + _FY + r"\s*[-/]?\s*H(?P<h>[12])\b")),
-    # Q1-Q2 2023, Q3-Q4 23: the first and the second half (issue #55)
+    # Q1-Q2 2023, Q3-Q4 23, 2023 Q1-Q2: the first and the second half (issue #55). Any other quarter range has no
+    # period (no_period_dates).
     ("half", re.compile(r"\b(?P<hq>Q1\s*[-–]\s*Q2|Q3\s*[-–]\s*Q4)\s*['’]?\s*" + _YY + r"\b")),
-    # Q3 2021, Q1 17, Q2-Q3 2023
-    ("quarter", re.compile(r"\bQ(?P<q>[1-4])(?:\s*[-–]\s*Q[1-4])?\s*['’]?\s*" + _YY + r"\b")),
+    ("half", re.compile(r"(?<![\d.,])(?P<year>(?:19|20)\d{2})\s*[-/]?\s*(?P<hq>Q1\s*[-–]\s*Q2|Q3\s*[-–]\s*Q4)\b")),
+    # Q3 2021, Q1 17
+    ("quarter", re.compile(r"\bQ(?P<q>[1-4])\s*['’]?\s*" + _YY + r"\b")),
     # 2021 Q3, 2021-Q3
     ("quarter", re.compile(r"(?<![\d.,])(?P<year>(?:19|20)\d{2})\s*[-/]?\s*Q(?P<q>[1-4])\b")),
     # 3Q25, 3Q 2025
@@ -223,15 +225,29 @@ def slash_dates(text: str) -> List[Tuple[int, int]]:
             if all(1 <= int(m.group(g)) <= 31 for g in "ab") and min(int(m.group("a")), int(m.group("b"))) <= 12]
 
 
+# A quarter range that is no half ("Q2-Q3 2023", "2023 Q1-Q3"; decision of 2026-10-07 on issue #55): it has no period,
+# so nothing is dated from it and its year is no figure. "Q1-Q2" and "Q3-Q4" are the halves (_DATES).
+_QUARTER_RANGES = (re.compile(r"\bQ(?P<a>[1-4])\s*[-–]\s*Q(?P<b>[1-4])(?:\s*['’]?\s*" + _YY + r"\b)?"),
+                   re.compile(r"(?<![\d.,])(?:19|20)\d{2}\s*[-/]?\s*Q(?P<a>[1-4])\s*[-–]\s*Q(?P<b>[1-4])\b"))
+
+
+def no_period_dates(text: str) -> List[Tuple[int, int]]:
+    """(start, end) of each date with no period in a text: a date written with slashes (slash_dates) and a quarter
+    range that is no half."""
+    ranges = [m.span() for rx in _QUARTER_RANGES for m in rx.finditer(text or "")
+              if (m.group("a"), m.group("b")) not in (("1", "2"), ("3", "4"))]
+    return slash_dates(text) + ranges
+
+
 def _year(text: str) -> int:
     return int(text) if len(text) == 4 else 2000 + int(text)
 
 
 def find_dates(line: str, table: bool = False) -> List[Dict]:
     """[{"start", "end", "date", "kind", "text"}], longest forms first, no overlaps. In a table cell
-    (`table`) month names are matched in English, German and Bulgarian, any case. A date written with slashes
-    gives none (slash_dates)."""
-    found, slashes = [], slash_dates(line)
+    (`table`) month names are matched in English, German and Bulgarian, any case. A date with no period (a date
+    written with slashes, a quarter range that is no half) gives none (no_period_dates)."""
+    found, slashes = [], no_period_dates(line)
     for kind, rx in (_TABLE_DATES if table else _DATES):
         for m in rx.finditer(line):
             if any(m.start() < d["end"] and d["start"] < m.end() for d in found) \
@@ -365,9 +381,9 @@ def remap_periods(candidates: List[Dict], fiscal_year_end: int = 12) -> List[Dic
 
 
 def find_numbers(line: str, dates: List[Dict]) -> List[Dict]:
-    """Figures in the line that are not part of a date (one written with slashes included) and not an ordinal
-    ("2nd half")."""
-    out, slashes = [], slash_dates(line)
+    """Figures in the line that are not part of a date (one with no period included, no_period_dates) and not an
+    ordinal ("2nd half")."""
+    out, slashes = [], no_period_dates(line)
     for m in _NUMBER.finditer(line):
         num_start = m.start("num")
         if m.group("ord") or any(d["start"] <= num_start < d["end"] for d in dates) \
