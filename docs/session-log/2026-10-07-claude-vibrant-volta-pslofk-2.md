@@ -1,0 +1,5 @@
+2026-10-07, claude/vibrant-volta-pslofk (2): decisions of 2026-10-07 on D1–D6 applied to docs/specs/claim-matching.md in PR #67; fixture extended so revenue, ARR and customer count each have a claim in every label class.
+Deleted: the open-decision options in §10 (now a table of decisions taken) and the % from the glosses, since the gap column now carries it on every row.
+Decided: revenue and customer count read two new monthly engine series kept out of every narrative slice, so the matcher still reads stored results only; a forecast of a sum is observed "to date" (the period's months up to the as-of month); "annual recurring revenue" spelled out is ARR, not revenue; the screen moved into a table to stay under 600 words.
+Slow or unclear: the request's "sum from the revenue file" can mean recognised (spread) or invoiced revenue, and "turnover" was not named; both are brought back as R1 and R2 instead of guessed.
+Process change: when a decision adds a metric, state its definition in one line (which file, which rows, recognised or invoiced), so the spec follows without a question round.
