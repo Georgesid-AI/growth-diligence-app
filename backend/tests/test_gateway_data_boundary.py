@@ -1052,6 +1052,30 @@ def test_a_cap_refusal_logs_a_closed_reason_and_no_text(monkeypatch, caplog):
         assert needle not in "".join(lines), f"{needle!r} was logged"
 
 
+# The check a "structure not read" line names for a reply that fails validation (issue #64): a closed word, never the
+# reply, the check's message or cell text.
+PARSE_CHECKS = frozenset({"schema", "metric_list", "item_count", "other"})
+
+
+def test_a_failed_reply_logs_a_closed_check_and_no_text(caplog):
+    import logging
+    assert set(gateway.PARSE_CHECKS) == PARSE_CHECKS
+    labels = json.loads(STRUCTURE_REPLY)["labels"]
+
+    def reply(**first):
+        return json.dumps({"type": "table", "pairs": [], "labels": [{**labels[0], **first}, labels[1]]})
+    with caplog.at_level(logging.DEBUG):
+        for sent in (reply(period="Northbridge Capital £1,200,000"), reply(metric="Revenue at Target Co"),
+                     reply(item="Target Co"), "Revenue £1,200,000 at Target Co"):
+            result, adapter = _send(_structure_db(), GOOD_ITEMS, reply=sent)
+            assert (result.status, adapter.calls) == ("not_read", 2)
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
+    assert [line.rsplit(" check=", 1)[1] for line in lines] == ["schema", "metric_list", "item_count", "schema"]
+    logs = caplog.text + "".join(r.getMessage() for r in caplog.records)
+    for needle in ("Northbridge", "£1,200,000", "Target Co", "Revenue", "period must be", "Input should", "labelled"):
+        assert needle not in logs, f"{needle!r} was logged"
+
+
 def test_a_corrected_period_stores_a_count_and_never_the_cell_text_the_raw_text_or_the_rebuilt_period():
     """Rule 17: llm_structures keeps the model's reply as it came (its own period), the item list without raw text
     and the number of periods Python corrected; the header text the correction came from is not stored there."""

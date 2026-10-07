@@ -869,24 +869,29 @@ def test_a_refusal_is_not_retried_and_the_structure_is_not_read():
 # ---------------------------------------------------------------------------
 # Schema violations (spec section 3): one reask, then "Not read by AI"; the type
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize("bad", [
-    {**REPLY, "comment": "extra field"},
-    {**REPLY, "labels": [{**REPLY["labels"][0], "value": 1200000}, REPLY["labels"][1]]},          # no value
-    {**REPLY, "labels": [{**REPLY["labels"][0], "value_cell": "r2c2"}, REPLY["labels"][1]]},      # no cell id
-    {**REPLY, "labels": [{**REPLY["labels"][0], "proposed_flags": []}, REPLY["labels"][1]]},      # no flag
-    {**REPLY, "labels": [{**REPLY["labels"][0], "note": "Revenue grew strongly"}, REPLY["labels"][1]]},
-    {**REPLY, "labels": [{**REPLY["labels"][0], "period": "next year"}, REPLY["labels"][1]]},
-    {**REPLY, "labels": REPLY["labels"] + [{**REPLY["labels"][1], "item": "i9"}]},                # an unknown id
-    {**REPLY, "labels": REPLY["labels"] + [REPLY["labels"][0]]},                                   # a duplicate id
-    {**REPLY, "labels": [REPLY["labels"][0]]},                                                     # a missing id
-    {**REPLY, "labels": REPLY["labels"] + [{**REPLY["labels"][1], "item": "r2c3"}]},              # a cell, not an id
-    {**REPLY, "labels": [REPLY["labels"][0], {**REPLY["labels"][1], "metric": "invoice_date"}]},  # a sheet field
-    {**REPLY, "pairs": [{"line": "t1", "date": "d1", "category": "launch"}]},     # pairs, not sent as a roadmap
-    {**REPLY, "type": "roadmap", "pairs": [{"line": "t1", "date": "d1", "category": "launch"}]},
-    {"type": "column_mapping", "items": []},                                       # a deck structure is never one
-    {"type": "table", "items": []},                                                # the old reply
-    "not json",
-])
+# Each reply that fails validation, with the check its "structure not read" line names (issue #64).
+BAD_REPLIES = [
+    ({**REPLY, "comment": "extra field"}, "schema"),
+    ({**REPLY, "labels": [{**REPLY["labels"][0], "value": 1200000}, REPLY["labels"][1]]}, "schema"),      # no value
+    ({**REPLY, "labels": [{**REPLY["labels"][0], "value_cell": "r2c2"}, REPLY["labels"][1]]}, "schema"),  # no cell id
+    ({**REPLY, "labels": [{**REPLY["labels"][0], "proposed_flags": []}, REPLY["labels"][1]]}, "schema"),  # no flag
+    ({**REPLY, "labels": [{**REPLY["labels"][0], "note": "Revenue grew strongly"}, REPLY["labels"][1]]}, "schema"),
+    ({**REPLY, "labels": [{**REPLY["labels"][0], "period": "next year"}, REPLY["labels"][1]]}, "schema"),
+    ({**REPLY, "labels": REPLY["labels"] + [{**REPLY["labels"][1], "item": "i9"}]}, "item_count"),       # unknown id
+    ({**REPLY, "labels": REPLY["labels"] + [REPLY["labels"][0]]}, "item_count"),                          # duplicate id
+    ({**REPLY, "labels": [REPLY["labels"][0]]}, "item_count"),                                            # missing id
+    ({**REPLY, "labels": REPLY["labels"] + [{**REPLY["labels"][1], "item": "r2c3"}]}, "item_count"),     # a cell id
+    ({**REPLY, "labels": [REPLY["labels"][0], {**REPLY["labels"][1], "metric": "invoice_date"}]},         # sheet field
+     "metric_list"),
+    ({**REPLY, "pairs": [{"line": "t1", "date": "d1", "category": "launch"}]}, "other"),  # pairs, not a roadmap
+    ({**REPLY, "type": "roadmap", "pairs": [{"line": "t1", "date": "d1", "category": "launch"}]}, "other"),
+    ({"type": "column_mapping", "items": []}, "schema"),                         # a deck structure is never one
+    ({"type": "table", "items": []}, "schema"),                                  # the old reply
+    ("not json", "schema"),
+]
+
+
+@pytest.mark.parametrize("bad", [bad for bad, _ in BAD_REPLIES])
 def test_a_reply_that_fails_validation_is_asked_again_once_then_not_read(bad):
     reply = bad if isinstance(bad, str) else json.dumps(bad)
     adapter = t.FakeAdapter(replies=[reply, reply])
@@ -895,6 +900,43 @@ def test_a_reply_that_fails_validation_is_asked_again_once_then_not_read(bad):
     adapter = t.FakeAdapter(replies=[reply, json.dumps(REPLY)])
     result, _ = _read(_db(), adapter=adapter)
     assert (result.status, adapter.calls) == ("read", 2), "the one reask recovers"
+
+
+@pytest.mark.parametrize("bad,check", BAD_REPLIES)
+def test_a_reply_that_fails_validation_logs_the_check_it_failed(bad, check, caplog):
+    """Issue #64: a parse_failed line named no check, so a live run's failure could not be told apart (front-b, live
+    run of 2026-10-07). The line now ends with the check the last reply failed, a closed word."""
+    import logging
+    reply = bad if isinstance(bad, str) else json.dumps(bad)
+    with caplog.at_level(logging.INFO):
+        result, _ = _read(_db(), adapter=t.FakeAdapter(replies=[reply]))
+    assert result.status == "not_read"
+    line, = [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
+    assert line.endswith(f"reason=parse_failed status=- type=- check={check}"), line
+
+
+def test_the_check_follows_the_last_reply_and_a_mapping_has_its_own_metric_list(caplog):
+    """The reask's check is the one logged; a column mapping's metric outside the sheet fields is metric_list, a cell
+    outside the structure other, and a failure that is not a reply's logs check=-."""
+    import logging
+    unknown = json.dumps({**REPLY, "labels": REPLY["labels"] + [{**REPLY["labels"][1], "item": "i9"}]})
+    mapping = json.loads(json.dumps(ONE_MAPPING))
+    mapping["items"][0]["metric"] = "ebitda"
+    elsewhere = json.loads(json.dumps(ONE_MAPPING))
+    elsewhere["items"][0]["value_cell"] = "r9c9"
+
+    class Refusing(t.FakeAdapter):
+        def complete(self, **kwargs):
+            self.calls += 1
+            raise gateway.GatewayError("model_refused", "declined")
+    with caplog.at_level(logging.INFO):
+        _read(_db(), adapter=t.FakeAdapter(replies=["not json", unknown]))
+        _read(_db(), MAPPING_TEXT, "column_mapping", replies=[mapping])
+        _read(_db(), MAPPING_TEXT, "column_mapping", replies=[elsewhere])
+        _read(_db(), adapter=Refusing())
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
+    assert [line.rsplit(" ", 1)[1] for line in lines] == ["check=item_count", "check=metric_list", "check=other",
+                                                         "check=-"]
 
 
 def _pair(line, date, category="launch"):
@@ -2345,7 +2387,7 @@ def test_the_consistency_run_logs_one_not_read_line_per_structure_and_pass(caplo
         report = asyncio.run(script.run(["05-zero2hero.pdf"], 3, script.MemoryDB(), adapter))
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
     assert (adapter.calls, len(lines), report["not_read"]) == (15, 15, 15), "5 structures, 3 passes, once each"
-    assert all(line.endswith("reason=provider_error status=400 type=invalid_request_error") for line in lines)
+    assert all(line.endswith("reason=provider_error status=400 type=invalid_request_error check=-") for line in lines)
     assert report["cache_hit_rate_pct"] == {"pass_2": 0.0, "pass_3": 0.0}
 
 
