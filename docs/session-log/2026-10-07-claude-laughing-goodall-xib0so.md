@@ -1,0 +1,5 @@
+2026-10-07, claude/laughing-goodall-xib0so: live consistency run of 2026-10-07 committed as pasted (report and diagnostic, PR #63); front-b's not-read structures checked with --fake: a real parse failure, issue #64 opened, not fixed; moz p23's split ranges opened as issue #65, not fixed.
+Deleted: nothing.
+Decided: no bookkeeping fix, as the script counts not read only for structures it sends, p16 is no structure since #53 and p14 still sends its items; the failing panel is narrowed from the diagnostic and the cache hits and named by content hash instead of a paid re-run; #65 needs no new decision, as #44 already makes a range one row and the parser's own reader reads the same cells as one range.
+Slow or unclear: the "structure not read" line gives only the code parse_failed, not which check failed, and the reply is not kept, so neither the panel nor the cause can be read back from a run.
+Process change: the "structure not read" line names the failed check with a closed word (schema, item_ids, pairs), so a live parse failure is diagnosed without a second paid run.
