@@ -6,7 +6,10 @@ llm-structure-reading.md (§8). Implements CLAUDE.md rules 16–18.
 periods and are left out. A digit inside a word is no figure, as in the parser's reader (`claims.figures`; issue #50):
 a number with a letter directly before it ("zero2hero", "Web3", "Q1") or an ordinal ending ("1st") gives no item. On
 the test decks this removes 7 items: zero2hero p11 "zero2hero", moz p21 "Churn Rate in 1st2 Paid Months" (2), tea
-p11 "Go2Market", "Web3 Foundation Open Grant" and "Q1-Q2" (2). Each item has:
+p11 "Go2Market", "Web3 Foundation Open Grant" and "Q1-Q2" (2). A date written with slashes ("5/1/18") is a date
+with no period (deck-parser.md §2, issue #53): it gives no item and is no period cell. On the test decks this removes
+front-b p16's 12 items (1, 1, 18, 5, 1, 18, 9, 1, 18, 12, 1, 18 from "1/1/18 5/1/18" and "9/1/18 12/1/18") and with
+them its panel, which held no other figure (deck-parser.md §7). Each item has:
 - `id`: `i1`, `i2`, … in reading order, so the same structure always gives the same list;
 - the cell id: a cell with several figures gives one item each, `#n` marking the position (`r6c2#2`);
 - the raw text, cut from the redacted cell;
@@ -36,6 +39,9 @@ the model read as the figure's headers. On the test decks (measured on `89ba331`
   a header is read left of the item only, so "Q3" of the 2022 Q3 box, directly right of "layer-1 to layer-2" but
   another bullet's date, stays out.
 - buffer p6 is one box: every item cites its top line only, unchanged.
+Since issue #55 "layer-1 to layer-2" is joined into its bullet ("Majority of business logic migrated from layer-1 to
+layer-2", r8c2). Its two figures (now i3 and i4) cite only "2022", directly left of the bullet on its grid row ("Q2"
+is on the next row), so unpaired they rebuild 2022; paired, they take the line's position date, 2022-Q2 (§2).
 A neighbour's scale in a roadmap follows the same rule, as in a KPI panel: a date box holds no scale word, so a
 roadmap figure takes no scale from another box. No roadmap value on the test decks changes. "Date rebuilt from cell"
 on the test decks goes from 27 to 25 (tea p11: 21 to 19 lines).
@@ -49,7 +55,13 @@ unchanged; a built slide shows the case.
 An ambiguous reading carries both values, with Python's default first; the model does not choose.
 - `dot_reading`: `2.500` defaults to thousands, unless it carries a k/m/bn suffix (`1.250M` → 1.25m).
 - `bracket_reading`: a bracketed number after text defaults to negative when the text before it in its cell
-  contains loss, deficit, negative or decline (any case). Otherwise it defaults to positive.
+  contains loss, deficit, negative or decline (any case). Otherwise it defaults to positive. A level keeps the
+  positive reading only (issue #46, decision of 2026-10-06): when the label's metric is `customers`, `users` or
+  `people`, the verifier drops the negative reading where the label joins the item, so the item has one value and
+  its approval row shows one. `user_growth`, `growth` and every other type keep both readings; brackets around a
+  whole cell ("(30K)") stay negative only. The value still comes from the cell (CLAUDE.md rule 18), and the report's
+  ambiguous readings, counted on the item list before labelling, are unchanged. On the test decks no row changes:
+  zero2hero p17's six bracketed counts are `other` in every pass under prompt v5 (live run of 2026-10-06-2).
 
 The approval row shows both readings. The analyst confirms the default or uses Edit (deck-parser.md §6).
 
@@ -63,8 +75,9 @@ metric and are Verified. The AI-row dedupe (`structures.value_match`) returns ex
 the other non-empty cells). The model returns pairs (line id, date id) with a category: `launch`, `feature`,
 `expansion`, `partnership`, `hiring`, `break_even`, `funding`, `certification` or `other`. Claim types: `hiring` →
 people, `break_even` → ebitda, `funding` → other (type Other, §4), the rest → product. Parser rules are unchanged,
-except one (issue #49): a paragraph wrapped over the lines of a roadmap text box is one cell (deck-parser.md §7), so it
-is one text line and gives at most one milestone row (moz p2: 9 rows, not 40).
+except two: a paragraph wrapped over the lines of a roadmap text box is one cell (issue #49), and so is a bullet
+wrapped over two lines (issue #55; deck-parser.md §7). Each is one text line and gives at most one milestone row (moz
+p2: 9 rows, not 40; tea p11: 27 text lines, not 30).
 
 Label from (issue #49): a roadmap row takes "Label from" only from a cell of its own text box in its grid row
 (`candidate_from_item`), never from a cell of another box. The cells beside it in its grid row belong to other boxes,
@@ -89,9 +102,13 @@ are unchanged.
   same period from its own period cells.
 - A line the model leaves unpaired is no milestone; its figures are dated by §4 as before.
 On the test decks: buffer p6's 6 lines take the date line below them, as its recorded pairs already do (unchanged);
-moz p2's 9 paragraphs take their date box (1981 to July 2011); 21 of tea p11's 22 bullet lines take the quarter of
+moz p2's 9 paragraphs take their date box (1981 to July 2011); tea p11's 19 bullet lines take the quarter or half of
 their date box ("Gluon wallet" 2021-Q2, "TEA Party dApp released" 2022-Q1) where the model can pair them with the year
-line only ("2021"), and "Mainnet starts" keeps the model's date. tea p11's 5 figures ("Preview 1", "epoch 9",
+line only ("2021"), "Mainnet starts" 2023-H1 ("2023" / "Q1-Q2", issue #55). Before issue #55 tea p11 had 22 bullet
+lines, 21 with a position date, and "Mainnet starts" kept the model's date. With the recorded replies (`--fake`) the
+roadmap line of §6 goes from "roadmap lines: 45, dated by position: 44, …, date rebuilt from cell: 25" to "42, 42, …,
+24": two wrapped bullets rebuilt a period on each of their lines and now on one, and "TEA framework dev guide
+released" now shares a grid row with the "Q2" of its own date box and rebuilds 2022-Q2, its position date. tea p11's 5 figures ("Preview 1", "epoch 9",
 "Layer-1", "layer-1 to layer-2") can thus be Verified when the model labels them a claim type and pairs their line.
 
 Adjacent date line: a text line takes the date line directly above or below it in the same text box. A line with a
@@ -134,6 +151,24 @@ Prompt v5, release r8 (issues #45 and #47, decisions of 2026-10-06), one bump fo
 - DAU/MAU and other engagement ratios are `product`, like hours (front-b p18 "64%").
 - Integrations and partnerships are `product` (buffer p6 "Integrated in 50 apps").
 Other is never Verified, unchanged (§4).
+
+Prompt v6, release r9 (issue #58, decisions of 2026-10-06 on the live run of 2026-10-06-2), one bump; issue #55
+changes the text sent for tea p11, not the prompt. The release moves every cache key, and the narrative keys once
+(growth_engine stays v7, its tag r9:v7).
+- A run rate has a period only when a header of its cell states one. The v5 tie-break loses "the program rebuilds the
+  period from the cells", which probably invited the model to write a period: moz p20 i3 "~$10.8 million" (label
+  "Current Revenue Run Rate (June)", "June" with no year cell) was revenue 2011-06 in every pass, "period not
+  rebuilt". Expected: revenue with no period, Verified in every pass.
+- A conversion rate ("% of Free Trials Converting to Paid") is `sales`, as the parser's "conversion" keyword says
+  (deck-parser.md §2): moz p21 i1 "~57%" (the title labels it) was product, growth and other. Expected: `sales`,
+  Verified in every pass.
+- Employee review scores ("Recommend to a friend", "Approve of CEO") and their number of ratings are `not_a_metric`:
+  front-b p14 i1 and i2 "100%" and i3 "17 Ratings", under "Team growth is built upon solid foundations", were other
+  in pass 1 and dropped in passes 2 and 3. Expected: dropped in every pass.
+These are 5 items, measured on this branch with `--probe` (moz p20 i3 r2c2, moz p21 i1 r1c2, front-b p14 i1 r1c1, i2
+r1c3, i3 r2c5); the live run reports the agreement they give. No guard word or reason string is added, so
+backend/tests/test_gateway_data_boundary.py is unchanged (CLAUDE.md rule 14). The recorded replies keep their labels:
+moz p20's already gives the run rate no period, and moz p21 and front-b p14 have none.
 
 **4. Verifier.** Values and cells are Python's, so value matching is deleted. What is left:
 - Period: rebuilt from the item's lowest period header (with the year cell above), from its own cell, or in a
@@ -196,14 +231,20 @@ and is also given apart: financial (outside roadmaps) and roadmap (decision of 2
 Unchanged: §3, §4, §6, §8 and the 400,000-token audit cap.
 
 **9. Tests.** Each is first shown failing on a deliberate violation. Enumeration: several figures per cell, dates
-left out, both defaults, stable ids, no figure from a digit inside a word. Header cells: in a KPI panel a header from
+left out, both defaults, stable ids, no figure from a digit inside a word, no figure from a date written with slashes
+(front-b p16; issue #53). A level (issue #46): a bracketed `users`
+count keeps one positive value, a bracketed `user_growth` both readings, and a whole-cell "(30K)" stays negative. Header cells: in a KPI panel a header from
 another box only when directly next to the item (front-b p12, p15 and p16), and a neighbour's scale too (a built
 slide); in a roadmap (issue #56) no header from a text box of another box (moz p2), a date box directly left counts
 (tea p11 i4 and i5 keep 2022-Q2) and one beside it on the right does not (tea p11 i1–i3 rebuild no period from
-another box). Prompt v5 (issues #45, #47): every new claim type and tie-break is named; the recorded replies give
+another box). Prompt v6 (issue #58): the run-rate tie-break says a run rate has a period only when a header of its cell states
+one and no longer that the program rebuilds it, and the conversion-rate and review-score tie-breaks are named. Prompt
+v5 (issues #45, #47): every new claim type and tie-break is named; the recorded replies give
 moz p20 "~$900", "~9 Months", "~100" and "~$100" and front-b p15 "$7m left", "18 months" and "Profitable in 10
 months" their new types, Verified. Reply: bad, duplicate or missing ids, and bad pairs. Verifier: periods, a
-pair-dated figure, the adjacent date line (one above or below counts; one each side takes the timeline's direction, also under a title line), flags. Position
+pair-dated figure, the adjacent date line (one above or below counts; one each side takes the timeline's direction, also under a title line), flags. Wrapped
+bullets (issue #55, tea p11): each wrapped bullet one cell, "from Hashkey" no cell, a line ending on a figure ends on no
+wrap word, "Q1-Q2" under a year the first half ("Mainnet starts" 2023-H1), buffer p6 and moz p2 unchanged. Position
 dates (issue #47): each line's date box on moz p2 and tea p11, tea p11's lines dated per quarter, a paired line
 taking its position date over the model's (milestone and figure, Verified), and the model's date standing where no
 position date exists; buffer p6 unchanged. Roadmaps

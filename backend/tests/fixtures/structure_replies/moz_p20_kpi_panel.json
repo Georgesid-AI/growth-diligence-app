@@ -3,7 +3,7 @@
  "page": 20,
  "type": "kpi_panel",
  "match": "r1c1 title: 2011 Estimated Revenue\nr1c2: $12 -$13 million",
- "note": "Hand-written in the model's labelling format (docs/specs/structure-labelling.md) for the public test deck; no live call was made. Every value sits beside its label box, and the slide title labels the range (deck-parser.md section 7, issue #48). The range cell holds two figures, twelve and thirteen million, dated 2011 by the title beside it; the run rate is revenue (prompt v5 tie-break). Under prompt v5 (issue #45) the trials per day, the lifetime value, the customer life and the cost of paid acquisition take their own claim types, so every figure is Verified.",
+ "note": "Hand-written in the model's labelling format (docs/specs/structure-labelling.md) for the public test deck; no live call was made. Every value sits beside its label box, and the slide title labels the range (deck-parser.md section 7, issue #48). The range cell holds two figures, twelve and thirteen million, dated 2011 by the title beside it; the run rate is revenue with no period: \"June\" has no year cell, and a run rate has a period only when a header of its cell states one (prompt v6 tie-break, issue #58). Under prompt v5 (issue #45) the trials per day, the lifetime value, the customer life and the cost of paid acquisition take their own claim types, so every figure is Verified.",
  "reply": {
   "type": "kpi_panel",
   "labels": [

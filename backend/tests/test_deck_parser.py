@@ -21,6 +21,7 @@ sys.path.insert(0, str(BACKEND / "tests"))
 
 from app import decks  # noqa: E402
 from app.decks import claims, parser  # noqa: E402
+from app.structures import items, verify  # noqa: E402
 
 DECKS = BACKEND.parent / "tests" / "fixtures" / "decks" / "decks"
 
@@ -807,6 +808,45 @@ def test_periods_are_read_as_dates_never_as_values(text, date):
     assert claims.find_numbers(text, claims.find_dates(text)) == []
 
 
+@pytest.mark.parametrize("text", ["1/1/18 5/1/18", "9/1/18 12/1/18", "3/1/15", "12/31/2018", "Paid on 5/1/2018"])
+def test_a_date_written_with_slashes_is_a_date_with_no_period(text):
+    """Issue #53, option a (decision of 2026-10-07): the order of day and month is not stated ("5/1/18" is 1 May or
+    5 January), so none of its parts is a figure, it is no period cell and nothing is dated from it, the year of
+    "12/31/2018" included."""
+    assert claims.figures(text) == [] and claims.find_dates(text) == [], text
+    assert verify.figures(text) == [] and claims.period_cell(text) is None, text
+
+
+@pytest.mark.parametrize("text, date", [("Q1-Q2 2023", "2023-H1"), ("Q3-Q4 23", "2023-H2"), ("2023 Q1-Q2", "2023-H1"),
+                                        ("2023 Q3-Q4", "2023-H2")])
+def test_q1_q2_and_q3_q4_are_the_halves_with_the_year_before_or_after(text, date):
+    """Issue #55 (decision of 2026-10-06): tea p11's "Mainnet starts" borrows "2023 Q1-Q2" from its box."""
+    assert [d["date"] for d in claims.find_dates(text)] == [date] and claims.figures(text) == []
+
+
+@pytest.mark.parametrize("text", ["Q2-Q3 2023", "Q1-Q3 23", "2023 Q2-Q3", "Q1-Q4 2023", "Launch Q2-Q3 2023"])
+def test_a_quarter_range_that_is_no_half_has_no_period(text):
+    """Decision of 2026-10-07 on issue #55: "Q2-Q3 2023" read 2023-Q2. A quarter range that is no half dates nothing,
+    and its year is no figure."""
+    assert claims.find_dates(text) == [] and claims.figures(text) == [], text
+    assert verify.figures(text) == [] and claims.period_cell(text) is None, text
+
+
+def test_a_pair_with_no_year_or_a_part_over_31_is_no_slash_date():
+    assert [n["value"] for n in claims.figures("Building a predictable sales organization (1/2)")] == [1, 2]
+    assert [n["value"] for n in claims.figures("45/3/20")] == [45, 3, 20]
+
+
+def test_front_b_p14_and_p16_slash_dates_give_no_candidate_and_p16_no_panel():
+    """Issue #53: front-b p14's axis dates ("3/1/15" to "11/1/17") and p16's ("1/1/18 5/1/18", "9/1/18 12/1/18") gave
+    11 candidates from their parts; p16's panel held no other figure, so it is no panel and its 12 items go."""
+    file = "01-front-b.pptx"
+    deck = parser.parse_deck((DECKS / file).read_bytes(), file)
+    found = claims.detect_candidates(deck["blocks"], file)
+    assert not [c for c in found if "/1/1" in c["snippet"]], "no candidate from a slash date's parts"
+    assert not [s for s in deck["structures"] if s.get("slide") == 16], "front-b p16 holds no structure"
+
+
 def test_a_column_header_period_beats_a_date_nearby():
     rows = [["", "Y/E 22", "Y/E 23"], ["Revenue", "£ 130,550", "£ 150,000"]]
     row, = [c for c in _found(_slide([("Q2 2024", 1, 1.6)], table=(rows, 1, 2))) if c.get("by_period")]
@@ -1157,9 +1197,9 @@ def test_a_table_row_with_months_under_a_year_header_can_be_edited(api):
 # ---------------------------------------------------------------------------
 from app.structures import redact as structure_redact  # noqa: E402
 
+# front-b p16's panel held only dates written with slashes, so it is none (issue #53): 21 KPI panels.
 DECK_STRUCTURES = {
-    "01-front-b.pptx": [(11, "kpi_panel"), (12, "kpi_panel"), (14, "kpi_panel"), (15, "kpi_panel"), (16, "kpi_panel"),
-                        (18, "kpi_panel")],
+    "01-front-b.pptx": [(11, "kpi_panel"), (12, "kpi_panel"), (14, "kpi_panel"), (15, "kpi_panel"), (18, "kpi_panel")],
     "02-moz.pdf": [(2, "roadmap"), (13, "kpi_panel"), (20, "kpi_panel"), (21, "kpi_panel"), (23, "kpi_panel"),
                    (32, "kpi_panel")],
     "03-buffer.pptx": [(6, "roadmap")],
@@ -1330,7 +1370,7 @@ def test_an_axis_tick_or_a_date_written_with_slashes_is_no_value_box():
     rows = _grid_rows(_panel("01-front-b.pptx", 14))
     row, = [r for r in rows if "Recommend to a friend" in r]
     assert row[:4] == ["100%", "Recommend to a friend", "100%", "Approve of CEO"]
-    assert not [t for r in rows for t in r if "/1/1" in t], "front-b p14: \"3/1/15\" holds three figures"
+    assert not [t for r in rows for t in r if "/1/1" in t], "front-b p14: \"3/1/15\" is a date, no figure (#53)"
 
 
 def test_a_page_with_no_kpi_box_has_no_panel():
@@ -1367,12 +1407,15 @@ def test_front_b_p12_a_tall_box_between_two_lines_on_one_visual_row_keeps_them_a
     assert _cell_id(_cell_of(panel, "The team isn’t one year old")) in _cell_of(panel, "joined 6 months ago")["next_to"]
 
 
-def test_front_b_p16_next_to_is_measured_line_to_line_not_box_to_box():
-    """The legend entry "Cash" sits on the "Gross margin" line's row, beside the box "1/1/18 5/1/18 / Gross margin",
-    not on the axis dates' row."""
-    panel = _panel("01-front-b.pptx", 16)
-    cash = _cell_id(_cell_of(panel, "Cash"))
-    assert cash not in _cell_of(panel, "1/1/18 5/1/18")["next_to"] and cash in _cell_of(panel, "Gross margin")["next_to"]
+def test_next_to_is_measured_line_to_line_not_box_to_box():
+    """Built after front-b p16 (whose panel went with issue #53): the legend entry "Cash" sits on the "Gross margin"
+    line's row, beside the box "$4M $6M / Gross margin", not on its figures' row, though the grid puts it there."""
+    panel, = [s for s in parser.parse_deck(_slide([("Cash", 1, 1.25), ("$4M $6M\nGross margin", 3.5, 1)]),
+                                           "d.pptx")["structures"] if s["type"] == "kpi_panel"]
+    cash, figures = _cell_of(panel, "Cash"), _cell_of(panel, "$4M $6M")
+    assert cash["row"] == figures["row"], "one grid row"
+    assert _cell_id(cash) not in figures["next_to"] and _cell_id(cash) in _cell_of(panel, "Gross margin")["next_to"]
+    assert all(i["headers"] == [] for i in items.list_items(panel)["items"]), "the legend entry labels no figure"
 
 
 def _date_boxes(file, page):
@@ -1391,19 +1434,22 @@ def test_a_roadmap_text_box_keeps_the_one_date_box_directly_next_to_it():
                                                  "Nov. 2007", "Oct. 2008", "Sept. 2010"], "one per paragraph"
     assert moz["Gillian (Rand’s Mom) founds the company that will become SEOmoz"] == ["1981"]
     tea = _date_boxes("10-tea.pdf", 11)
-    assert (tea["Gluon wallet"], tea["from Hashkey"], tea["Preview 1 version launch"]) == \
-        (["2021", "Q2"], ["2021", "Q2"], ["2021", "Q3"]), "every line of the box, on either side"
-    assert (tea["layer-1 to layer-2"], tea["TEA framework dev guide released"],
+    assert (tea["Gluon wallet"], tea["Seed round secured including investment from Hashkey"],
+            tea["Preview 1 version launch"]) == (["2021", "Q2"], ["2021", "Q2"], ["2021", "Q3"]), \
+        "every line of the box, on either side"
+    assert (tea["Majority of business logic migrated from layer-1 to layer-2"], tea["TEA framework dev guide released"],
             tea["Layer-1 EVM smart contract compatibility"]) == (["2022", "Q2"], ["2022", "Q2"], ["2022", "Q3"]), \
         "box 11 stands between box 10 and the 2022 Q3 box"
-    assert len(tea) == 21 and "Mainnet starts" not in tea, "\"2023\" / \"Q1-Q2\" is no date box"
+    assert len(tea) == 19 and tea["Mainnet starts"] == ["2023", "Q1-Q2"], \
+        "issue #55: \"Q1-Q2\" is the first half, so \"2023\" / \"Q1-Q2\" is a date box; 19 bullets, 3 of them wrapped"
     assert _date_boxes("03-buffer.pptx", 6) == {}, "one box"
 
 
 def test_roadmap_cells_keep_next_to_measured_line_to_line():
     """Spec section 7 (issue #56): roadmap cells keep next_to, as KPI panel cells do. moz p2's paragraphs sit directly
-    over or under their dates, a one-box timeline (buffer p6) has no other box, and tea p11's "layer-1 to layer-2"
-    has the Q2 of its date box on its left and another bullet's Q3 on its right."""
+    over or under their dates, a one-box timeline (buffer p6) has no other box, and tea p11's wrapped bullet "Majority
+    of business logic migrated from layer-1 to layer-2" (one cell since issue #55, measured over both its lines) has
+    its date box "2022" / "Q2" on its left, and the bullet "Layer-1 EVM …" and another bullet's Q3 on its right."""
     near = {}
     for file, page in (("02-moz.pdf", 2), ("03-buffer.pptx", 6), ("10-tea.pdf", 11)):
         deck = parser.parse_deck((DECKS / file).read_bytes(), file)
@@ -1412,7 +1458,7 @@ def test_roadmap_cells_keep_next_to_measured_line_to_line():
         near[file] = {f"r{c['row']}c{c['col']}": c["next_to"] for c in roadmap["cells"]}
     assert near["02-moz.pdf"]["r1c1"] == ["r1c2", "r2c1"] and near["02-moz.pdf"]["r4c1"] == ["r3c1", "r4c2"]
     assert set(map(tuple, near["03-buffer.pptx"].values())) == {()}
-    assert near["10-tea.pdf"]["r10c2"] == ["r10c1", "r10c4"]
+    assert near["10-tea.pdf"]["r8c2"] == ["r8c1", "r9c1", "r8c3", "r9c4"]
 
 
 # ---------------------------------------------------------------------------
@@ -1451,15 +1497,34 @@ def test_moz_p2_each_dated_paragraph_is_one_cell():
     assert _grid_rows(roadmap) == MOZ_P2_GRID
 
 
-def test_buffer_p6_and_tea_p11_keep_a_row_per_line():
-    """Issue #49: buffer p6 is one box that alternates lines and dates; tea p11's boxes are bullet lists, each bullet a
-    capital letter after a line with no end punctuation. Neither box is one paragraph, so every line stays a row, a
-    wrapped bullet's second line included ("from Hashkey")."""
-    for file, page, count in (("03-buffer.pptx", 6, 12), ("10-tea.pdf", 11, 38)):
-        deck, roadmap = _roadmap(file, page)
-        lines = [b["text"] for b in deck["blocks"] if (b.get("slide") or b.get("page")) == page and b["kind"] == "text"]
-        assert len(roadmap["cells"]) == count and all(c["text"] in lines for c in roadmap["cells"]), file
-    assert "from Hashkey" in [c["text"] for c in _roadmap("10-tea.pdf", 11)[1]["cells"]]
+def test_buffer_p6_keeps_a_row_per_line():
+    """Issue #49: buffer p6 is one box that alternates lines and dates, so every line stays a row."""
+    deck, roadmap = _roadmap("03-buffer.pptx", 6)
+    lines = [b["text"] for b in deck["blocks"] if b.get("slide") == 6 and b["kind"] == "text"]
+    assert len(roadmap["cells"]) == 12 and all(c["text"] in lines for c in roadmap["cells"])
+
+
+TEA_P11_WRAPPED = {"Seed round secured including investment from Hashkey": ("Seed round secured including investment",
+                                                                           "from Hashkey"),
+                   "Begin Go2Market strategy starting with miners' economy": (
+                       "Begin Go2Market strategy starting with miners'", "economy"),
+                   "Majority of business logic migrated from layer-1 to layer-2": (
+                       "Majority of business logic migrated from", "layer-1 to layer-2")}
+
+
+def test_tea_p11_each_wrapped_bullet_is_one_cell():
+    """Issue #55: tea p11's boxes are bullet lists. A bullet wrapped over two lines gave a row per line, and each line
+    could become its own milestone. The box splits into items at each line that does not continue the one above, and
+    each item's lines are joined: 38 cells become 35, 30 text lines 27. "Second milestone ongoing in 2021" ends on a
+    figure, not on the wrap word "in", so "Gluon wallet" below it stays its own bullet."""
+    deck, roadmap = _roadmap("10-tea.pdf", 11)
+    texts = [c["text"] for c in roadmap["cells"]]
+    lines = [b["text"] for b in deck["blocks"] if b.get("page") == 11 and b["kind"] == "text"]
+    assert len(texts) == 35 and all(t in lines or t in TEA_P11_WRAPPED for t in texts)
+    assert set(TEA_P11_WRAPPED) <= set(texts), "each wrapped bullet is one cell, its lines joined in order"
+    assert not {line for pair in TEA_P11_WRAPPED.values() for line in pair} & set(texts), "\"from Hashkey\" is no cell"
+    assert {"Second milestone ongoing in 2021", "Gluon wallet"} <= set(texts)
+    assert len([t for t in texts if not verify.is_date_line(t)]) == 27, "text lines"
 
 
 def _roadmap_rows(boxes):
@@ -1478,6 +1543,11 @@ def test_a_roadmap_box_is_one_cell_only_when_each_line_continues_the_one_above()
         "a figure after a line with no end punctuation starts a new item; a capital after a full stop does not"
     assert _roadmap_rows([("We ship the app in\nQ4 2026", 1, 2)])[1:] == [["We ship the app in"], ["Q4 2026"]], \
         "a date line is never joined, even after a wrap word"
+    assert _roadmap_rows([("Hire a CFO\nLaunch the app in\nthree new markets\nOpen Berlin", 1, 2)])[1:] == \
+        [["Hire a CFO"], ["Launch the app in three new markets"], ["Open Berlin"]], \
+        "issue #55: a bullet list splits at each line that does not continue the one above; a wrapped bullet is one cell"
+    assert _roadmap_rows([("Ship the beta to 12\nOpen Berlin", 1, 2)])[1:] == [["Ship the beta to 12"], ["Open Berlin"]], \
+        "a line ending on a figure ends on no wrap word (tea p11: \"Second milestone ongoing in 2021\")"
     long =["We launch offices in three new markets across the region and", "hire local teams to sell the platform to",
             "mid-sized firms, with a partner programme that brings in", "resellers and integrators before the year ends"]
     assert all(len(line) <= parser.TIMELINE_LINE_MAX for line in long) and len(" ".join(long)) > parser.CELL_MAX

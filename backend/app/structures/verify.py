@@ -19,7 +19,8 @@ a roadmap's lines with its dates. Here each label is joined to its item, and
   period cells rebuild that same period (the pairing is the model's);
 - the separator and sign readings come from the item's cell: "2.500" (thousands unless a suffix) and a
   bracketed number after text (negative after loss, deficit, negative or decline) are recorded with
-  Python's default as checks.dot_reading and checks.bracket_reading, so the item can be Verified;
+  Python's default as checks.dot_reading and checks.bracket_reading, so the item can be Verified; a level
+  (customers, users, people) keeps its positive reading only;
 - total_mismatch and growth_mismatch are computed by Python over the Verified items (_flag_reproduced);
 - not_a_metric items are dropped and counted; an "other" item is listed as type Other and never Verified;
 - each pair is a milestone: no value, so never Verified, dated by its date cell, its claim type its
@@ -47,6 +48,9 @@ MILESTONE_TYPES = {"launch": "product", "feature": "product", "expansion": "prod
                    "hiring": "people", "break_even": "ebitda", "funding": OTHER, "certification": "product",
                    "other": "product"}
 GROWTH_BASE = {"revenue_growth": "revenue", "user_growth": "users"}
+# Levels, never below zero: a bracketed count labelled one keeps its positive reading only (structure-labelling.md
+# section 1, issue #46).
+LEVELS = ("customers", "users", "people")
 TOTAL_TOLERANCE = 0.005         # a total and the sum of its parts differ by more than 0.5% of the total...
 GROWTH_TOLERANCE = 0.5          # ...a stated growth rate and the one the values give by more than 0.5 points
 
@@ -113,10 +117,10 @@ def figures(text: str, comma: bool = False) -> List[Dict]:
     suffix or %. Dates are periods, never values, and a scale mark ("'000") is no figure: both are left out
     first. A range ("$12 -$13 million", "5 – 10%") is two figures: the dash is no sign, and the low end takes
     the high end's suffix or % when it has none (deck-parser.md section 2); the high end carries "range_low",
-    the index of its low end."""
+    the index of its low end. A date with no period ("5/1/18", "Q2-Q3 2023") is a date too (claims.no_period_dates)."""
     marks = [m.span() for m in _SCALE_MARK.finditer(text) if m.group("mark") and "000" in m.group("mark")]
     blanked = redact.blank_currency(_blank(text, [(d["start"], d["end"]) for d in claims.find_dates(text, table=True)]
-                                           + marks))
+                                           + claims.no_period_dates(text) + marks))
     out = []
     for m in redact.NUMBER[comma].finditer(blanked):
         if not m.group("num"):
@@ -596,16 +600,17 @@ def verify(structure: Dict, listed: Dict, labels: List[Dict], pairs: List[Dict] 
             not_a_metric += 1
             continue
         cell = by_id[item["cell"]]
+        values = [v for v in item["values"] if label_["metric"] not in LEVELS or v["bracket_reading"] != "negative"]
         period, cells, ok, corrected = _dated(structure, cell, label_.get("period"), pair_of_cell.get(item["cell"]),
                                               fiscal_year_end)
         corrected_count += int(corrected)
         out = {"item": item["id"], "position": item["position"],
                **{k: label_.get(k) for k in ("metric", "period", "unit", "unit_other", "actual_or_forecast")},
-               "period": period, "value": item["values"][0]["value"], "values": [dict(v) for v in item["values"]],
+               "period": period, "value": values[0]["value"], "values": [dict(v) for v in values],
                "value_cell": item["cell"], **({"range": item["range"]} if item.get("range") else {}),
                "period_cells": cells, "proposed_flags": [],
                "status": VERIFIED if ok and label_["metric"] != OTHER else SUGGESTION,
-               "checks": _checks(ok, corrected, item["values"])}
+               "checks": _checks(ok, corrected, values)}
         if corrected:
             out["model_period"] = label_.get("period")
         checked.append(out)

@@ -1,4 +1,4 @@
-<!-- version: v5 -->
+<!-- version: v6 -->
 <!-- step: structures -->
 <!-- This text is server-side only. It is never returned in an API response. -->
 
@@ -67,7 +67,9 @@ Tie-breaks:
 - hours and other time figures are `product`, unless a user count is named or a tie-break below names them;
 - "% of marketplace" and market share are `market`;
 - commission and take rate are `sales`;
-- monthly revenue, MRR, ARR and revenue run rate are `revenue`: the program rebuilds the period from the cells;
+- a conversion rate ("% of Free Trials Converting to Paid") is `sales`;
+- monthly revenue, MRR, ARR and revenue run rate are `revenue`; a run rate has a period only when a header of its
+  cell states one;
 - cash on hand, the cash balance and the cash left are `cash`;
 - net burn and burn rate are `burn`;
 - the runway, in months, is `runway`;
@@ -81,6 +83,7 @@ Tie-breaks:
   channel are `other`, not `users`;
 - board seats are `not_a_metric`, the whole count ("2 Investors (Michelle +1)", "1 Independent");
 - a team member's tenure ("joined 6 months ago") is `not_a_metric`;
+- employee review scores ("Recommend to a friend", "Approve of CEO") and their number of ratings are `not_a_metric`;
 - the share of a market or of a survey that does something ("Many (75%+)" use a tool) is `not_a_metric`;
   the company's own market share stays `market`;
 - DAU/MAU and other engagement ratios are `product`, like hours;

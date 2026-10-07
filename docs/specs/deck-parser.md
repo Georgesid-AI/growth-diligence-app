@@ -93,8 +93,16 @@ figure, or is not a candidate.
 A line with its own keyword never borrows a label from other lines.
 Periods are dates, never values: "Y/E 22", "22 Y/E", "FY23", "2023E" (also A, F, B, P),
 "H1 24", "1H24", "Q3 25", "3Q25". A half year is stored as "2024-H1".
+A date written with slashes, d/d/yy or d/d/yyyy (both parts 1 to 31, one at most 12: "5/1/18", "12/31/2018"), is a
+date with no period (issue #53, option a, decision of 2026-10-07). The order of day and month is not stated ("5/1/18"
+is 1 May or 5 January), so none of its parts is a figure, it is no period cell, no date label (§7) and nothing is
+dated from it, the year of "12/31/2018" included. A pair with no year ("(1/2)") is unchanged. On the test decks:
+front-b p14's axis dates ("3/1/15" to "11/1/17") and p16's ("1/1/18 5/1/18", "9/1/18 12/1/18" and the four dates on
+lines of their own) give no candidate: 236 candidates become 225 (p14: 6, p16: 5 fewer). Recall stays 121 of 124;
+precision goes from 46.2% to 48.4%.
 Period rules (apply to tables, structure text and the verifier):
 - Header stack: extracted structure text includes every header row above the data; a merged range is written with its span, e.g. "FY2025 (r1c3:r1c14)". The model receives the full header stack, not only the row directly above the values. The column-mapping path has its own cap (llm-structure-reading.md §1).
+- "Q1-Q2" reads as the first half-year and "Q3-Q4" as the second (issue #55, decision of 2026-10-06): a period part like "H1" ("2023" over "Q1-Q2" → 2023-H1), and on one line with its year, before or after it ("Q1-Q2 2023", "2023 Q1-Q2"), 2023-H1 (both read 2023-Q1). Any other quarter range ("Q2-Q3", "Q1-Q4") has no period (decision of 2026-10-07): it is no period part, nothing is dated from it on one line with a year ("Q2-Q3 2023" read 2023-Q2), and its year is no figure. On the test decks only tea p11's "Q1-Q2" exists, a line of its own under "2023". "Mainnet starts" borrows "2023 Q1-Q2" from its box, so its candidate's date goes from 2023-Q1 to 2023-H1, and the answer file follows (§3); no other candidate changes (225), and `--fake` is unchanged.
 - A period may be built from two cells: the month or quarter cell and the year cell above it in the same column range. "Mar" + "2025" → 2025-03; "Q3" + "2025" → 2025-Q3. With a year-end other than December, a month under any year header (plain or FY) is shifted by the year-end: months after the year-end month belong to the previous calendar year, months up to and including it to the named year (March year-end: "Apr" + "FY2025" → 2024-04, "Mar" + "FY2025" → 2025-03).
 - Month names are matched in English, German and Bulgarian, short and long forms, any case.
 - A month or quarter header with no year cell above it in the same column range → period null. Never infer the year from the deck date, the file name or neighbouring columns.
@@ -153,6 +161,7 @@ by position and from the slide title.
 - Test set: 10 public decks (6 pdf, 2 pptx, 2 docx) in tests/fixtures/decks/decks/.
 - A hand-checked answer file lists the claims in each deck, one entry per value. A table row
   candidate is matched value by value, so recall stays per value; it counts once as a candidate.
+- Since issue #55 the answer file dates tea p11's "Mainnet starts (2023 Q1-Q2)" 2023-H1, the first half (§2).
 - Since issue #45 the answer file gives the claims of §2's new types those types, and lists three more company
   claims: front-b p15 "$7m left" (cash) and "18 months" (runway), and moz p20 "~100" (trials per day, a usage figure
   before).
@@ -235,7 +244,7 @@ Fixed on the 10 test decks (2026-10-05):
     next to a KPI box or a value box.
   - Value box: a text box that holds one figure that is not a date, and no word outside it; a scale word such as
     "million" is part of the figure ("~13,500", "~82%", "$12 -$13 million"). It joins the panel when a label box sits
-    directly next to it. A chart axis tick (§2) is no value box, and "3/1/15" holds three figures.
+    directly next to it. A chart axis tick (§2) is no value box, and "3/1/15" is a date with no figure (§2).
   - Directly next to: in the same band (the two boxes overlap in height), or directly above or below (they overlap in
     width and are at most a tenth of the page apart, as a table caption), with no other text box between them.
   - Title as label: when no label box sits next to a value box, a title line (the pptx slide title, the topmost text
@@ -255,20 +264,26 @@ Fixed on the 10 test decks (2026-10-05):
 - A structure holds at least one figure (a number or a date; list and row numbers do not count). A cell over 200
   characters is prose and is left out. A page whose figures §2 drops (background, cited research) holds no structure.
 - Text boxes become a grid: boxes that overlap in height form a band, each box a column of its band, each line a row.
-- In a roadmap, a paragraph is one row (issue #49). A pdf wraps a paragraph over several lines, and a row per line
-  gave one milestone per line: moz p2's 9 dated paragraphs became 40 rows. A roadmap text box is one paragraph when it
-  has two or more lines, none of them a date label, and each line after the first continues the one above: it starts
+- In a roadmap, a paragraph is one row (issue #49), and so is a bullet (issue #55). A pdf wraps a paragraph or a bullet
+  over several lines, and a row per line gave one milestone per line: moz p2's 9 dated paragraphs became 40 rows, and
+  tea p11's wrapped bullets could pair their second line ("from Hashkey") as a milestone of its own. A roadmap text box
+  splits into items at each line that does not continue the one above. A line continues the one above when it starts
   with a lower-case letter or "&", or the line above ends with punctuation (. , ; : ! ? /, before any closing quote
-  or bracket), with a wrap word (the KPI list above, "a" in lower case only) or inside a bracket it opened. Such a
-  box becomes one cell: its lines joined with a space, in their order. Otherwise the box keeps a row per line: a line
-  that starts with a capital letter or a figure after a line that ends with none of these starts a new item, as in a
-  bullet list. A box whose joined text would be over 200 characters keeps a row per line too (a longer cell is
-  prose, above). KPI panels keep a row per line.
+  or bracket), with a wrap word (the KPI list above, "a" in lower case only; a line ending on a figure, "Second
+  milestone ongoing in 2021", ends on no word) or inside a bracket it opened. A date label is an item of its own and
+  is never joined. Each item becomes one cell: its lines joined with a space, in their order. A paragraph is the box
+  of one item; in a bullet list a line that starts with a capital letter or a figure after a line that ends with none
+  of these starts a new item. An item whose joined text would be over 200 characters keeps a row per line (a longer
+  cell is prose, above). KPI panels keep a row per line.
   - On the test decks: moz p2's 40 text lines become 9 cells, one per dated paragraph. buffer p6 (one box that
-    alternates lines and dates) and tea p11 (bullet lists, each bullet a capital letter after a line with no end
-    punctuation) keep every line as a row, unchanged.
-  - Known limit: in a bullet list, a bullet wrapped over two lines keeps two rows (tea p11: "from Hashkey",
-    "economy", "layer-1 to layer-2").
+    alternates lines and dates) keeps its 12 rows, unchanged. tea p11's three wrapped bullets become one cell each
+    ("Seed round secured including investment from Hashkey", "Begin Go2Market strategy starting with miners'
+    economy", "Majority of business logic migrated from layer-1 to layer-2"): 38 cells become 35, 30 text lines 27.
+  - Known limit: a bullet that starts with a lower-case letter joins the bullet above. No roadmap bullet on the test
+    decks does. Across every text box of the 10 test decks, 192 lines start in lower case after a line with no end
+    punctuation, wrap word or open bracket: wrapped sentences and pdf letter fragments, and one probable bullet
+    (buffer p10 "in talks with Reeder, Pocket and Feedly" under "6 integrations so far", on a page that is no
+    roadmap).
 - A band only knows heights, so a tall box can put two visual rows of a page in one grid row (issue #50). front-b p15:
   the box "“Default alive” † / Profitable in 10 months" spans the label row ("Cash on hand", "Runway *") and the value
   row ("$7m left", "18 months"), so the five boxes form one band and the grid row reads `Cash on hand | $7m left |
@@ -284,9 +299,9 @@ Fixed on the 10 test decks (2026-10-05):
   the rule above (same band, or directly above or below within a tenth of the page, with no other text box of the
   page between them). A text box with no date box or two beside it keeps none. Like `next_to` it is layout, stored
   with the structure and never sent (structure-labelling.md §2 dates paired lines by it).
-  - On the test decks: each of moz p2's 9 paragraphs has one (its date box above or below it); 21 of tea p11's 22
-    bullet lines have one ("2021" / "Q2" and so on). "Mainnet starts" has none: its date box reads "2023" / "Q1-Q2",
-    and "Q1-Q2" is no period part (§2), so the box is no date box. buffer p6 is one box and has none.
+  - On the test decks: each of moz p2's 9 paragraphs has one (its date box above or below it); each of tea p11's 19
+    bullet lines has one ("2021" / "Q2" and so on). "Mainnet starts" has one since issue #55: its date box reads
+    "2023" / "Q1-Q2", and "Q1-Q2" is the first half (§2). buffer p6 is one box and has none.
 - On the test decks: 22 KPI panels, 3 timelines (moz p2, buffer p6, tea p11), 1 table, 1 hiring table. Neither pptx
   deck holds a native chart; chart reading is tested on built decks.
 - Recounted with label boxes, value boxes and titles (2026-10-06): the same 22 KPI panels, 3 timelines, 1 table and 1
@@ -296,6 +311,9 @@ Fixed on the 10 test decks (2026-10-05):
   the title labels the first value ("2011 Estimated Revenue", "% of Free Trials Converting to Paid").
 - Recounted with the wrap word "a" in lower case only (issue #50, 2026-10-06): the same 22 KPI panels, 3 timelines,
   1 table and 1 hiring table. front-b p15's panel gains the box "Seed to Series A" and its 4 lines; nothing else moves.
+- Recounted with dates written with slashes (issue #53, 2026-10-07): 21 KPI panels, 3 timelines, 1 table and 1 hiring
+  table. front-b p16's panel ("Cash", "1/1/18 5/1/18", "9/1/18 12/1/18", "Gross margin", "Operating margin") holds no
+  figure once its dates are dates, so it has no KPI box and is no panel; nothing else moves.
 
 ## Done when
 - All three formats parse with correct slide/page references.

@@ -157,8 +157,12 @@ _DATES = [
     ("quarter", re.compile(r"\b" + _FY + r"\s*[-/]?\s*Q(?P<q>[1-4])\b")),
     ("half", re.compile(r"\bH(?P<h>[12])\s*[-/]?\s*" + _FY + r"\b")),
     ("half", re.compile(r"\b" + _FY + r"\s*[-/]?\s*H(?P<h>[12])\b")),
-    # Q3 2021, Q1 17, Q1-Q2 2023
-    ("quarter", re.compile(r"\bQ(?P<q>[1-4])(?:\s*[-–]\s*Q[1-4])?\s*['’]?\s*" + _YY + r"\b")),
+    # Q1-Q2 2023, Q3-Q4 23, 2023 Q1-Q2: the first and the second half (issue #55). Any other quarter range has no
+    # period (no_period_dates).
+    ("half", re.compile(r"\b(?P<hq>Q1\s*[-–]\s*Q2|Q3\s*[-–]\s*Q4)\s*['’]?\s*" + _YY + r"\b")),
+    ("half", re.compile(r"(?<![\d.,])(?P<year>(?:19|20)\d{2})\s*[-/]?\s*(?P<hq>Q1\s*[-–]\s*Q2|Q3\s*[-–]\s*Q4)\b")),
+    # Q3 2021, Q1 17
+    ("quarter", re.compile(r"\bQ(?P<q>[1-4])\s*['’]?\s*" + _YY + r"\b")),
     # 2021 Q3, 2021-Q3
     ("quarter", re.compile(r"(?<![\d.,])(?P<year>(?:19|20)\d{2})\s*[-/]?\s*Q(?P<q>[1-4])\b")),
     # 3Q25, 3Q 2025
@@ -208,23 +212,52 @@ _SCALE = {"k": 1e3, "thousand": 1e3, "m": 1e6, "mm": 1e6, "mn": 1e6, "million": 
 _CURRENCY = {"$": "USD", "US$": "USD", "USD": "USD", "€": "EUR", "EUR": "EUR", "£": "GBP", "GBP": "GBP"}
 
 
+# A date written with slashes, d/d/yy or d/d/yyyy ("5/1/18", "12/31/2018"; issue #53, option a): the order of day
+# and month is not stated, so it is a date with no period. None of its parts is a figure, it is no period cell and
+# nothing is dated from it, its year included.
+_SLASH_DATE = re.compile(r"(?<![\w/.,])(?P<a>\d{1,2})/(?P<b>\d{1,2})/(?:\d{4}|\d{2})(?![\w/]|[.,]\d)")
+
+
+def slash_dates(text: str) -> List[Tuple[int, int]]:
+    """(start, end) of each date written with slashes in a text: d/d/yy or d/d/yyyy, both parts 1 to 31 and one of
+    them at most 12."""
+    return [m.span() for m in _SLASH_DATE.finditer(text or "")
+            if all(1 <= int(m.group(g)) <= 31 for g in "ab") and min(int(m.group("a")), int(m.group("b"))) <= 12]
+
+
+# A quarter range that is no half ("Q2-Q3 2023", "2023 Q1-Q3"; decision of 2026-10-07 on issue #55): it has no period,
+# so nothing is dated from it and its year is no figure. "Q1-Q2" and "Q3-Q4" are the halves (_DATES).
+_QUARTER_RANGES = (re.compile(r"\bQ(?P<a>[1-4])\s*[-–]\s*Q(?P<b>[1-4])(?:\s*['’]?\s*" + _YY + r"\b)?"),
+                   re.compile(r"(?<![\d.,])(?:19|20)\d{2}\s*[-/]?\s*Q(?P<a>[1-4])\s*[-–]\s*Q(?P<b>[1-4])\b"))
+
+
+def no_period_dates(text: str) -> List[Tuple[int, int]]:
+    """(start, end) of each date with no period in a text: a date written with slashes (slash_dates) and a quarter
+    range that is no half."""
+    ranges = [m.span() for rx in _QUARTER_RANGES for m in rx.finditer(text or "")
+              if (m.group("a"), m.group("b")) not in (("1", "2"), ("3", "4"))]
+    return slash_dates(text) + ranges
+
+
 def _year(text: str) -> int:
     return int(text) if len(text) == 4 else 2000 + int(text)
 
 
 def find_dates(line: str, table: bool = False) -> List[Dict]:
     """[{"start", "end", "date", "kind", "text"}], longest forms first, no overlaps. In a table cell
-    (`table`) month names are matched in English, German and Bulgarian, any case."""
-    found = []
+    (`table`) month names are matched in English, German and Bulgarian, any case. A date with no period (a date
+    written with slashes, a quarter range that is no half) gives none (no_period_dates)."""
+    found, slashes = [], no_period_dates(line)
     for kind, rx in (_TABLE_DATES if table else _DATES):
         for m in rx.finditer(line):
-            if any(m.start() < d["end"] and d["start"] < m.end() for d in found):
+            if any(m.start() < d["end"] and d["start"] < m.end() for d in found) \
+                    or any(m.start() < end and start < m.end() for start, end in slashes):
                 continue
             g = m.groupdict()
             if kind == "quarter":
                 date = f"{_year(g['year'])}-Q{g['q']}"
             elif kind == "half":
-                date = f"{_year(g['year'])}-H{g['h']}"
+                date = f"{_year(g['year'])}-H{g.get('h') or _half(g['hq'])}"
             elif kind == "month":
                 year = g.get("year") or g.get("y2") or g.get("y3")
                 month = int(g["mnum"]) if g.get("mnum") else _month_number(g["month"])
@@ -235,6 +268,11 @@ def find_dates(line: str, table: bool = False) -> List[Dict]:
     return sorted(found, key=lambda d: d["start"])
 
 
+def _half(quarters: str) -> str:
+    """The half a quarter range gives: "Q1-Q2" -> "1", "Q3-Q4" -> "2" (issue #55)."""
+    return "1" if quarters.lstrip().startswith("Q1") else "2"
+
+
 def _month_number(name: str) -> int:
     name = name.lower().rstrip(".")
     return _MONTH_NUMBER.get(name) or _MONTHS[name[:3]]
@@ -242,7 +280,8 @@ def _month_number(name: str) -> int:
 
 # A header that counts periods from a start the sheet does not give: M1...M24, Month 3, Year 1.
 _RELATIVE = re.compile(r"(?i)^\s*(?:M|Month|Monat|Y|Year|Jahr|Q|Quarter)\s*-?\s*(?P<n>\d{1,3})\s*$")
-_PART = re.compile(r"(?i)^\s*(?:Q(?P<q>[1-4])|H(?P<h>[12])|" + _MONTH_ANY + r")\.?\s*$")
+_PART = re.compile(r"(?i)^\s*(?:(?P<hq>Q1\s*[-–]\s*Q2|Q3\s*[-–]\s*Q4)|Q(?P<q>[1-4])|H(?P<h>[12])|" + _MONTH_ANY
+                   + r")\.?\s*$")
 
 
 def period_cell(text: str) -> Optional[Dict]:
@@ -262,6 +301,8 @@ def period_cell(text: str) -> Optional[Dict]:
         return None
     m = _PART.match(text)
     if m:
+        if m.group("hq"):
+            return {"part": f"H{_half(m.group('hq').upper())}"}
         if m.group("q"):
             return {"part": f"Q{m.group('q')}"}
         if m.group("h"):
@@ -340,11 +381,13 @@ def remap_periods(candidates: List[Dict], fiscal_year_end: int = 12) -> List[Dic
 
 
 def find_numbers(line: str, dates: List[Dict]) -> List[Dict]:
-    """Figures in the line that are not part of a date and not an ordinal ("2nd half")."""
-    out = []
+    """Figures in the line that are not part of a date (one with no period included, no_period_dates) and not an
+    ordinal ("2nd half")."""
+    out, slashes = [], no_period_dates(line)
     for m in _NUMBER.finditer(line):
         num_start = m.start("num")
-        if m.group("ord") or any(d["start"] <= num_start < d["end"] for d in dates):
+        if m.group("ord") or any(d["start"] <= num_start < d["end"] for d in dates) \
+                or any(start <= num_start < end for start, end in slashes):
             continue
         g = m.groupdict()
         end = m.end()
