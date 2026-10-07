@@ -49,7 +49,13 @@ unchanged; a built slide shows the case.
 An ambiguous reading carries both values, with Python's default first; the model does not choose.
 - `dot_reading`: `2.500` defaults to thousands, unless it carries a k/m/bn suffix (`1.250M` → 1.25m).
 - `bracket_reading`: a bracketed number after text defaults to negative when the text before it in its cell
-  contains loss, deficit, negative or decline (any case). Otherwise it defaults to positive.
+  contains loss, deficit, negative or decline (any case). Otherwise it defaults to positive. A level keeps the
+  positive reading only (issue #46, decision of 2026-10-06): when the label's metric is `customers`, `users` or
+  `people`, the verifier drops the negative reading where the label joins the item, so the item has one value and
+  its approval row shows one. `user_growth`, `growth` and every other type keep both readings; brackets around a
+  whole cell ("(30K)") stay negative only. The value still comes from the cell (CLAUDE.md rule 18), and the report's
+  ambiguous readings, counted on the item list before labelling, are unchanged. On the test decks no row changes:
+  zero2hero p17's six bracketed counts are `other` in every pass under prompt v5 (live run of 2026-10-06-2).
 
 The approval row shows both readings. The analyst confirms the default or uses Edit (deck-parser.md §6).
 
@@ -196,7 +202,8 @@ and is also given apart: financial (outside roadmaps) and roadmap (decision of 2
 Unchanged: §3, §4, §6, §8 and the 400,000-token audit cap.
 
 **9. Tests.** Each is first shown failing on a deliberate violation. Enumeration: several figures per cell, dates
-left out, both defaults, stable ids, no figure from a digit inside a word. Header cells: in a KPI panel a header from
+left out, both defaults, stable ids, no figure from a digit inside a word. A level (issue #46): a bracketed `users`
+count keeps one positive value, a bracketed `user_growth` both readings, and a whole-cell "(30K)" stays negative. Header cells: in a KPI panel a header from
 another box only when directly next to the item (front-b p12, p15 and p16), and a neighbour's scale too (a built
 slide); in a roadmap (issue #56) no header from a text box of another box (moz p2), a date box directly left counts
 (tea p11 i4 and i5 keep 2022-Q2) and one beside it on the right does not (tea p11 i1–i3 rebuild no period from
