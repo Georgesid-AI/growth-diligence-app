@@ -520,6 +520,27 @@ def test_a_bracket_reading_is_recorded_with_the_default_and_the_item_can_be_veri
     assert [v["value"] for v in got["values"]] == [-1200, 1200]
 
 
+@pytest.mark.parametrize("metric", ["customers", "users", "people"])
+def test_a_bracketed_level_keeps_the_positive_reading_only(metric):
+    """Issue #46, zero2hero p17: a count of customers, users or people is never below zero, so "Telegram(30K)"
+    labelled one has one value, and its approval row shows one."""
+    panel = _deck_structure("05-zero2hero.pdf", 17, "kpi_panel")
+    assert [v["value"] for v in items.list_items(panel)["items"][0]["values"]] == [30000, -30000], "listed with both"
+    got = _one(panel, "r1c1", None, metric=metric, unit="count")
+    assert [v["value"] for v in got["values"]] == [30000], "the negative reading is dropped"
+    assert (got["status"], got["value"], got["checks"]["bracket_reading"]) == (verify.VERIFIED, 30000, "positive")
+
+
+def test_a_bracketed_growth_keeps_both_readings_and_a_whole_cell_bracket_stays_negative():
+    panel = _deck_structure("05-zero2hero.pdf", 17, "kpi_panel")
+    got = _one(panel, "r1c1", None, metric="user_growth", unit="count")
+    assert [v["value"] for v in got["values"]] == [30000, -30000], "user_growth keeps both readings"
+    whole = _struct([["Users"], ["(30K)"]], header_rows=1)
+    got = _one(whole, "r2c1", None, metric="users", unit="count")
+    assert [v["value"] for v in got["values"]] == [-30000] and got["checks"]["bracket_reading"] is None, \
+        "brackets around a whole cell: accounting style, negative only"
+
+
 # ---------------------------------------------------------------------------
 # Metrics: not_a_metric dropped and counted, other never verified
 # ---------------------------------------------------------------------------
