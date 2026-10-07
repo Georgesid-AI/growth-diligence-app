@@ -1419,19 +1419,22 @@ def test_a_roadmap_text_box_keeps_the_one_date_box_directly_next_to_it():
                                                  "Nov. 2007", "Oct. 2008", "Sept. 2010"], "one per paragraph"
     assert moz["Gillian (Rand’s Mom) founds the company that will become SEOmoz"] == ["1981"]
     tea = _date_boxes("10-tea.pdf", 11)
-    assert (tea["Gluon wallet"], tea["from Hashkey"], tea["Preview 1 version launch"]) == \
-        (["2021", "Q2"], ["2021", "Q2"], ["2021", "Q3"]), "every line of the box, on either side"
-    assert (tea["layer-1 to layer-2"], tea["TEA framework dev guide released"],
+    assert (tea["Gluon wallet"], tea["Seed round secured including investment from Hashkey"],
+            tea["Preview 1 version launch"]) == (["2021", "Q2"], ["2021", "Q2"], ["2021", "Q3"]), \
+        "every line of the box, on either side"
+    assert (tea["Majority of business logic migrated from layer-1 to layer-2"], tea["TEA framework dev guide released"],
             tea["Layer-1 EVM smart contract compatibility"]) == (["2022", "Q2"], ["2022", "Q2"], ["2022", "Q3"]), \
         "box 11 stands between box 10 and the 2022 Q3 box"
-    assert len(tea) == 21 and "Mainnet starts" not in tea, "\"2023\" / \"Q1-Q2\" is no date box"
+    assert len(tea) == 19 and tea["Mainnet starts"] == ["2023", "Q1-Q2"], \
+        "issue #55: \"Q1-Q2\" is the first half, so \"2023\" / \"Q1-Q2\" is a date box; 19 bullets, 3 of them wrapped"
     assert _date_boxes("03-buffer.pptx", 6) == {}, "one box"
 
 
 def test_roadmap_cells_keep_next_to_measured_line_to_line():
     """Spec section 7 (issue #56): roadmap cells keep next_to, as KPI panel cells do. moz p2's paragraphs sit directly
-    over or under their dates, a one-box timeline (buffer p6) has no other box, and tea p11's "layer-1 to layer-2"
-    has the Q2 of its date box on its left and another bullet's Q3 on its right."""
+    over or under their dates, a one-box timeline (buffer p6) has no other box, and tea p11's wrapped bullet "Majority
+    of business logic migrated from layer-1 to layer-2" (one cell since issue #55, measured over both its lines) has
+    its date box "2022" / "Q2" on its left, and the bullet "Layer-1 EVM …" and another bullet's Q3 on its right."""
     near = {}
     for file, page in (("02-moz.pdf", 2), ("03-buffer.pptx", 6), ("10-tea.pdf", 11)):
         deck = parser.parse_deck((DECKS / file).read_bytes(), file)
@@ -1440,7 +1443,7 @@ def test_roadmap_cells_keep_next_to_measured_line_to_line():
         near[file] = {f"r{c['row']}c{c['col']}": c["next_to"] for c in roadmap["cells"]}
     assert near["02-moz.pdf"]["r1c1"] == ["r1c2", "r2c1"] and near["02-moz.pdf"]["r4c1"] == ["r3c1", "r4c2"]
     assert set(map(tuple, near["03-buffer.pptx"].values())) == {()}
-    assert near["10-tea.pdf"]["r10c2"] == ["r10c1", "r10c4"]
+    assert near["10-tea.pdf"]["r8c2"] == ["r8c1", "r9c1", "r8c3", "r9c4"]
 
 
 # ---------------------------------------------------------------------------
@@ -1479,15 +1482,34 @@ def test_moz_p2_each_dated_paragraph_is_one_cell():
     assert _grid_rows(roadmap) == MOZ_P2_GRID
 
 
-def test_buffer_p6_and_tea_p11_keep_a_row_per_line():
-    """Issue #49: buffer p6 is one box that alternates lines and dates; tea p11's boxes are bullet lists, each bullet a
-    capital letter after a line with no end punctuation. Neither box is one paragraph, so every line stays a row, a
-    wrapped bullet's second line included ("from Hashkey")."""
-    for file, page, count in (("03-buffer.pptx", 6, 12), ("10-tea.pdf", 11, 38)):
-        deck, roadmap = _roadmap(file, page)
-        lines = [b["text"] for b in deck["blocks"] if (b.get("slide") or b.get("page")) == page and b["kind"] == "text"]
-        assert len(roadmap["cells"]) == count and all(c["text"] in lines for c in roadmap["cells"]), file
-    assert "from Hashkey" in [c["text"] for c in _roadmap("10-tea.pdf", 11)[1]["cells"]]
+def test_buffer_p6_keeps_a_row_per_line():
+    """Issue #49: buffer p6 is one box that alternates lines and dates, so every line stays a row."""
+    deck, roadmap = _roadmap("03-buffer.pptx", 6)
+    lines = [b["text"] for b in deck["blocks"] if b.get("slide") == 6 and b["kind"] == "text"]
+    assert len(roadmap["cells"]) == 12 and all(c["text"] in lines for c in roadmap["cells"])
+
+
+TEA_P11_WRAPPED = {"Seed round secured including investment from Hashkey": ("Seed round secured including investment",
+                                                                           "from Hashkey"),
+                   "Begin Go2Market strategy starting with miners' economy": (
+                       "Begin Go2Market strategy starting with miners'", "economy"),
+                   "Majority of business logic migrated from layer-1 to layer-2": (
+                       "Majority of business logic migrated from", "layer-1 to layer-2")}
+
+
+def test_tea_p11_each_wrapped_bullet_is_one_cell():
+    """Issue #55: tea p11's boxes are bullet lists. A bullet wrapped over two lines gave a row per line, and each line
+    could become its own milestone. The box splits into items at each line that does not continue the one above, and
+    each item's lines are joined: 38 cells become 35, 30 text lines 27. "Second milestone ongoing in 2021" ends on a
+    figure, not on the wrap word "in", so "Gluon wallet" below it stays its own bullet."""
+    deck, roadmap = _roadmap("10-tea.pdf", 11)
+    texts = [c["text"] for c in roadmap["cells"]]
+    lines = [b["text"] for b in deck["blocks"] if b.get("page") == 11 and b["kind"] == "text"]
+    assert len(texts) == 35 and all(t in lines or t in TEA_P11_WRAPPED for t in texts)
+    assert set(TEA_P11_WRAPPED) <= set(texts), "each wrapped bullet is one cell, its lines joined in order"
+    assert not {line for pair in TEA_P11_WRAPPED.values() for line in pair} & set(texts), "\"from Hashkey\" is no cell"
+    assert {"Second milestone ongoing in 2021", "Gluon wallet"} <= set(texts)
+    assert len([t for t in texts if not verify.is_date_line(t)]) == 27, "text lines"
 
 
 def _roadmap_rows(boxes):
@@ -1506,6 +1528,11 @@ def test_a_roadmap_box_is_one_cell_only_when_each_line_continues_the_one_above()
         "a figure after a line with no end punctuation starts a new item; a capital after a full stop does not"
     assert _roadmap_rows([("We ship the app in\nQ4 2026", 1, 2)])[1:] == [["We ship the app in"], ["Q4 2026"]], \
         "a date line is never joined, even after a wrap word"
+    assert _roadmap_rows([("Hire a CFO\nLaunch the app in\nthree new markets\nOpen Berlin", 1, 2)])[1:] == \
+        [["Hire a CFO"], ["Launch the app in three new markets"], ["Open Berlin"]], \
+        "issue #55: a bullet list splits at each line that does not continue the one above; a wrapped bullet is one cell"
+    assert _roadmap_rows([("Ship the beta to 12\nOpen Berlin", 1, 2)])[1:] == [["Ship the beta to 12"], ["Open Berlin"]], \
+        "a line ending on a figure ends on no wrap word (tea p11: \"Second milestone ongoing in 2021\")"
     long =["We launch offices in three new markets across the region and", "hire local teams to sell the platform to",
             "mid-sized firms, with a partner programme that brings in", "resellers and integrators before the year ends"]
     assert all(len(line) <= parser.TIMELINE_LINE_MAX for line in long) and len(" ".join(long)) > parser.CELL_MAX

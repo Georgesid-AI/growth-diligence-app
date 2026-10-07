@@ -119,10 +119,10 @@ def test_the_recorded_replies_give_the_new_claim_types_and_they_are_verified(whe
     assert got == {cell: (metric, verify.VERIFIED) for cell, metric in NEW_TYPES[where].items()}
 
 
-def test_tea_p11_milestones_take_the_quarter_of_their_date_box_over_the_year_the_model_paired():
+def test_tea_p11_milestones_take_the_quarter_or_half_of_their_date_box_over_the_year_the_model_paired():
     """Decision of 2026-10-06 on issue #47 (structure-labelling.md section 2): the recorded reply pairs each bullet with
-    the year line it can see; Python dates it by the date box beside it. "Mainnet starts" sits beside "2023" /
-    "Q1-Q2", no date box, so the year it is paired with stands."""
+    the year line it can see; Python dates it by the date box beside it. Issue #55: a wrapped bullet is one line, and
+    "Mainnet starts" sits beside "2023" / "Q1-Q2", the first half, so it is 2023-H1."""
     pytest.importorskip("pdfplumber")
     fixture, = [f for f in _fixtures() if (f["file"], f["page"]) == ("10-tea.pdf", 11)]
     structure = _structure(fixture)
@@ -134,14 +134,16 @@ def test_tea_p11_milestones_take_the_quarter_of_their_date_box_over_the_year_the
     checked = verify.verify(structure, listed, result.labels, result.pairs)
     assert {text[m["value_cell"]]: m["period"] for m in checked["items"] if "line" in m} == {
         "Preview 1 version launch": "2021-Q3", "Gluon wallet": "2021-Q2",
-        "Begin Go2Market strategy starting with miners'": "2021-Q3", "Web3 Foundation Open Grant": "2021-Q2",
+        "Begin Go2Market strategy starting with miners' economy": "2021-Q3", "Web3 Foundation Open Grant": "2021-Q2",
         "Migrating TEA runtime to Amazon Nitro": "2021-Q2", "Testnet starts": "2021-Q3",
-        "Seed round secured including investment": "2021-Q2", "Public mining in preview mode": "2021-Q4",
+        "Seed round secured including investment from Hashkey": "2021-Q2", "Public mining in preview mode": "2021-Q4",
         "Testnet mining up to epoch 9": "2022-Q1", "Rich dApps running on network": "2021-Q4",
-        "TEA Party dApp released": "2022-Q1", "Majority of business logic migrated from": "2022-Q2",
+        "TEA Party dApp released": "2022-Q1", "Majority of business logic migrated from layer-1 to layer-2": "2022-Q2",
         "Layer-1 EVM smart contract compatibility": "2022-Q3", "TEA framework dev guide released": "2022-Q2",
         "Post-seed round secured": "2022-Q2", "Last testing epochs before mainnet": "2022-Q4",
-        "Mainnet starts": "2023", "Migrate to AWS Nitro for all nodes": "2022-Q4"}
+        "Mainnet starts": "2023-H1", "Migrate to AWS Nitro for all nodes": "2022-Q4"}
+    mainnet = next(m for m in checked["items"] if "line" in m and text[m["value_cell"]] == "Mainnet starts")
+    assert (mainnet["date"], mainnet["period_cells"]) == ("d8", ["r12c4", "r11c4"]), "Q1-Q2 under 2023"
     gluon = next(m for m in checked["items"] if "line" in m and text[m["value_cell"]] == "Gluon wallet")
     assert (gluon["date"], gluon["period_cells"]) == ("d1", ["r2c1", "r1c1"]), "Q2 under 2021, beside its box"
     product = [{**label, "metric": "product", "unit": "count"} if label["item"] == "i1" else label for label in result.labels]
@@ -238,12 +240,16 @@ def test_a_roadmap_figure_takes_headers_from_its_own_box_and_a_date_box_directly
     tea = _deck_structure("10-tea.pdf", 11, "roadmap")
     listed = structure_items.list_items(tea)["items"]
     assert [(i["cell"], i["headers"]) for i in listed] == [
-        ("r1c3", []), ("r7c3", []), ("r9c3", []), ("r10c2", ["r10c1", "r9c2"]), ("r10c2", ["r10c1", "r9c2"])], \
-        "i4 and i5 keep Q2, directly left in its date box; i1-i3 cite no box beside them on the left"
+        ("r1c3", []), ("r6c3", []), ("r8c2", ["r8c1"]), ("r8c2", ["r8c1"]), ("r8c3", [])], \
+        "i3 and i4 (\"layer-1 to layer-2\", joined into its bullet by issue #55) cite \"2022\", directly left in its " \
+        "date box and on its grid row; \"Q2\" is on the next row; the others cite no box beside them on the left"
     cells = {redact.cell_id(c): c for c in tea["cells"]}
-    assert cells["r10c2"]["next_to"] == ["r10c1", "r10c4"], "Q3 is directly right of the line, another bullet's date"
+    assert {"r8c1", "r9c1"} <= set(cells["r8c2"]["next_to"]), "its date box, both lines, directly left"
     rebuilt = [verify.rebuild(tea, cells[i["cell"]]) for i in listed]
-    assert [r and r[0] for r in rebuilt] == [None, None, None, "2022-Q2", "2022-Q2"]
+    assert [r and r[0] for r in rebuilt] == [None, None, "2022", "2022", None], \
+        "issue #55: unpaired, the two figures rebuild only the year beside them"
+    paired = verify.position_date(tea, cells["r8c2"])
+    assert (paired[0], paired[2]) == ("2022-Q2", ["r9c1", "r8c1"]), "paired, they take the line's position date"
     buffer = _deck_structure("03-buffer.pptx", 6, "roadmap")
     assert {tuple(i["headers"]) for i in structure_items.list_items(buffer)["items"]} == {("r1c1",)}, "one box: its top line"
 
@@ -1993,19 +1999,21 @@ def test_roadmap_lines_are_reported_apart_with_their_pairs_and_dates_rebuilt_fro
         def complete(self, **kwargs):
             reply, tokens_in, tokens_out = super().complete(**kwargs)
             sent = json.loads(kwargs["user_payload"])
-            if sent["type"] != "roadmap" or "r8c2: Rich dApps running on network" not in sent["text"]:
+            if sent["type"] != "roadmap" or "r7c2: Rich dApps running on network" not in sent["text"]:
                 return reply, tokens_in, tokens_out
             n = self.calls[sent["text"]] = self.calls.get(sent["text"], 0) + 1
             body = json.loads(reply)
             body["pairs"] = [{"line": "t4", "date": "d1", "category": "launch"},
-                             {"line": "t16", "date": "d4" if n == 3 else "d3", "category": "launch"}]
+                             {"line": "t14", "date": "d4" if n == 3 else "d3", "category": "launch"}]
             return json.dumps(body), tokens_in, tokens_out
     report = asyncio.run(script.run(["03-buffer.pptx", "05-zero2hero.pdf", "10-tea.pdf"], 3, script.MemoryDB(), Tea()))
     assert (report["roadmap_lines"], report["roadmap_dated_by_position"], report["roadmap_same_pair"],
-            report["roadmap_same_date"], report["roadmap_dates_rebuilt"]) == (36, 35, 35, 36, 25), \
-        "Buffer: 6 lines, all paired alike, all dated from the date line below them; TEA: 30 lines, 29 with a " \
-        "position date, one paired with another year in pass 3 but dated 2021-Q4 by its date box in every pass, " \
-        "19 with a period in their own cells or headers (issue #56: from another box only a date box directly left)"
+            report["roadmap_same_date"], report["roadmap_dates_rebuilt"]) == (33, 33, 32, 33, 24), \
+        "Buffer: 6 lines, all paired alike, all dated from the date line below them; TEA: 27 lines (a wrapped bullet " \
+        "is one, issue #55), all with a position date (\"Mainnet starts\": 2023-H1), one paired with another year in " \
+        "pass 3 but dated 2021-Q4 by its date box in every pass, 18 with a period in their own cells or headers (19 " \
+        "before #55: two wrapped bullets gave two each; \"TEA framework dev guide released\" now shares a grid row " \
+        "with the Q2 of its own date box)"
     # The match rate keeps roadmap figures (milestones left out) and is also given apart: financial (outside
     # roadmaps: zero2hero's 26 a pass) and roadmap (Buffer's 7 pair-dated figures a pass, each paired with the date
     # line its own timeline gives it).
@@ -2013,8 +2021,8 @@ def test_roadmap_lines_are_reported_apart_with_their_pairs_and_dates_rebuilt_fro
             report["verifier_match_rate_roadmap_pct"]) == (100.0, 100.0, 100.0), "99 of 99; 78 of 78; 21 of 21"
     assert "verified 100.0% (financial 100.0%, roadmap 100.0%)" in script.summary(report)
     assert report["agreement_pct"]["roadmap"] == 100.0, "agreement counts a roadmap's items like any other"
-    line = ("roadmap lines: 36, dated by position: 35, same pair and category in every pass: 35, same date and "
-            "category: 36, date rebuilt from cell: 25")
+    line = ("roadmap lines: 33, dated by position: 33, same pair and category in every pass: 32, same date and "
+            "category: 33, date rebuilt from cell: 24")
     assert f"{line};" in script.summary(report)
     text = script.write_report(report, tmp_path, 3, fake=True).read_text(encoding="utf-8")
     assert f"- R{line[1:]}" in text
@@ -2427,34 +2435,35 @@ def test_the_diagnostic_lists_every_roadmap_line_with_its_pair_and_category_in_e
             n = self.calls[sent["text"]] = self.calls.get(sent["text"], 0) + 1
             body = json.loads(reply)
             body["pairs"] = [{"line": "t4", "date": "d1", "category": "launch"},
-                             {"line": "t16", "date": "d4" if n == 3 else "d3", "category": "launch"}]
+                             {"line": "t14", "date": "d4" if n == 3 else "d3", "category": "launch"}]
             return json.dumps(body), tokens_in, tokens_out
     rows = []
     report = asyncio.run(script.run(["10-tea.pdf"], 3, script.MemoryDB(), Tea(), diagnostic=rows))
     assert report == asyncio.run(script.run(["10-tea.pdf"], 3, script.MemoryDB(), Tea())), "the report is unchanged"
     lines = [r for r in rows if r["section"] == "roadmap"]
-    assert len(lines) == report["roadmap_lines"] == 30
-    assert sum(r["same"] for r in lines) == report["roadmap_same_date"] == 30, "the date the analyst sees"
+    assert len(lines) == report["roadmap_lines"] == 27
+    assert sum(r["same"] for r in lines) == report["roadmap_same_date"] == 27, "the date the analyst sees"
     gluon, = [r for r in lines if r["line"] == "t4"]
     assert gluon == {"section": "roadmap", "deck": "10-tea.pdf", "page": 11, "type": "roadmap", "line": "t4",
                      "cell": "r2c2", "cell_text": "Gluon wallet", "position_date": "2021-Q2", "same": True,
                      "passes": [{"date": "d1", "date_cell": "r1c1", "date_text": "2021", "category": "launch"}] * 3}
-    rich, = [r for r in lines if r["line"] == "t16"]
+    rich, = [r for r in lines if r["line"] == "t14"]
     assert (rich["same"], [p["date_text"] for p in rich["passes"]]) == (True, ["2021", "2021", "2022"]), \
         "paired with another year in pass 3, dated 2021-Q4 by its date box in every pass"
     assert next(r for r in lines if r["line"] == "t1")["passes"] == [{}] * 3, "no pair in any pass"
-    assert next(r for r in lines if r["line"] == "t27")["position_date"] is None, "Mainnet starts: no date box"
+    assert next(r for r in lines if r["line"] == "t24")["position_date"] == "2023-H1", \
+        "Mainnet starts: \"2023\" / \"Q1-Q2\" is a date box (issue #55)"
     text = script.write_diagnostic(rows, script.write_report(report, tmp_path, 3, fake=True), 3).read_text(
         encoding="utf-8").splitlines()
     head = "| Deck | Page | Line | Cell | Line text | Python's date | Same | Pass 1 | Pass 2 | Pass 3 |"
     assert text[text.index("## Roadmap lines") + 4] == head
     for line in ("| 10-tea.pdf | 11 | t4 | r2c2 | Gluon wallet | 2021-Q2 | yes | "
                  + " | ".join(["d1 r1c1 2021: launch"] * 3) + " |",
-                 "| 10-tea.pdf | 11 | t16 | r8c2 | Rich dApps running on network | 2021-Q4 | yes | d3 r7c1 2021: launch | "
-                 "d3 r7c1 2021: launch | d4 r7c4 2022: launch |",
+                 "| 10-tea.pdf | 11 | t14 | r7c2 | Rich dApps running on network | 2021-Q4 | yes | d3 r6c1 2021: launch | "
+                 "d3 r6c1 2021: launch | d4 r6c4 2022: launch |",
                  "| 10-tea.pdf | 11 | t1 | r1c2 | Second milestone ongoing in 2021 | 2021-Q2 | yes | no pair | no pair | "
                  "no pair |",
-                 "| 10-tea.pdf | 11 | t27 | r13c3 | Mainnet starts | none | yes | no pair | no pair | no pair |"):
+                 "| 10-tea.pdf | 11 | t24 | r11c3 | Mainnet starts | 2023-H1 | yes | no pair | no pair | no pair |"):
         assert line in text, line
 
 

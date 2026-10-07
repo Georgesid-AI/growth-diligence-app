@@ -360,10 +360,11 @@ def test_on_the_buffer_timeline_every_line_takes_the_date_below_it():
 
 
 # What the moz p2 and TEA p11 timelines gave before the date direction (2026-10-06): no line has a date line on each
-# side, so nothing changes. Every other text line has no adjacent date line.
+# side, so nothing changes. Every other text line has no adjacent date line. TEA p11's rows as its wrapped bullets
+# are one cell each (issue #55).
 BEFORE_DIRECTION = {("02-moz.pdf", 2): {},
-                    ("10-tea.pdf", 11): {"r2c1": "r1c1", "r2c4": "r1c4", "r8c1": "r7c1", "r8c4": "r7c4",
-                                         "r10c1": "r9c1", "r10c4": "r9c4", "r14c1": "r13c1", "r14c4": "r13c4"}}
+                    ("10-tea.pdf", 11): {"r2c1": "r1c1", "r2c4": "r1c4", "r7c1": "r6c1", "r7c4": "r6c4",
+                                         "r9c1": "r8c1", "r9c4": "r8c4", "r12c1": "r11c1", "r12c4": "r11c4"}}
 
 
 @pytest.mark.parametrize("deck, page", list(BEFORE_DIRECTION))
@@ -435,25 +436,26 @@ def _positions(file, page):
     return out
 
 
-def test_tea_p11_lines_take_the_quarter_of_the_date_box_beside_them():
-    """Spec section 2: a date box of a year with a quarter below it gives that quarter (the two-cell rule). The
-    "Q2"-style lines of the date boxes are text lines with their year line above. "Mainnet starts" sits beside
-    "2023" / "Q1-Q2", which is no date box, so it has no position date."""
+def test_tea_p11_lines_take_the_quarter_or_half_of_the_date_box_beside_them():
+    """Spec section 2: a date box of a year with a quarter or half below it gives that quarter or half (the two-cell
+    rule). The "Q2"-style lines of the date boxes are text lines with their year line above. "Mainnet starts" sits
+    beside "2023" / "Q1-Q2", the first half (issue #55), so it is 2023-H1. A wrapped bullet is one line (r5c2 "Seed
+    round secured including investment from Hashkey", r8c2 "Majority of business logic migrated from layer-1 to
+    layer-2") and takes its box's date."""
     got = _positions("10-tea.pdf", 11)
     box = lambda label, part, year: (label, [part, year])  # noqa: E731
     assert got == {
         "r1c2": box("2021-Q2", "r2c1", "r1c1"), "r1c3": box("2021-Q3", "r2c4", "r1c4"), "r2c1": ("2021", ["r1c1"]),
         "r2c2": box("2021-Q2", "r2c1", "r1c1"), "r2c3": box("2021-Q3", "r2c4", "r1c4"), "r2c4": ("2021", ["r1c4"]),
         "r3c2": box("2021-Q2", "r2c1", "r1c1"), "r3c3": box("2021-Q3", "r2c4", "r1c4"),
-        "r4c2": box("2021-Q2", "r2c1", "r1c1"), "r4c3": box("2021-Q3", "r2c4", "r1c4"),
-        "r5c2": box("2021-Q2", "r2c1", "r1c1"), "r6c2": box("2021-Q2", "r2c1", "r1c1"),
-        "r7c2": box("2021-Q4", "r8c1", "r7c1"), "r7c3": box("2022-Q1", "r8c4", "r7c4"), "r8c1": ("2021", ["r7c1"]),
-        "r8c2": box("2021-Q4", "r8c1", "r7c1"), "r8c3": box("2022-Q1", "r8c4", "r7c4"), "r8c4": ("2022", ["r7c4"]),
-        "r9c2": box("2022-Q2", "r10c1", "r9c1"), "r9c3": box("2022-Q3", "r10c4", "r9c4"),
-        "r10c1": ("2022", ["r9c1"]), "r10c2": box("2022-Q2", "r10c1", "r9c1"), "r10c4": ("2022", ["r9c4"]),
-        "r11c2": box("2022-Q2", "r10c1", "r9c1"), "r12c2": box("2022-Q2", "r10c1", "r9c1"),
-        "r13c2": box("2022-Q4", "r14c1", "r13c1"), "r13c3": None, "r14c1": ("2022", ["r13c1"]),
-        "r14c2": box("2022-Q4", "r14c1", "r13c1"), "r14c4": ("2023", ["r13c4"])}
+        "r4c2": box("2021-Q2", "r2c1", "r1c1"), "r5c2": box("2021-Q2", "r2c1", "r1c1"),
+        "r6c2": box("2021-Q4", "r7c1", "r6c1"), "r6c3": box("2022-Q1", "r7c4", "r6c4"), "r7c1": ("2021", ["r6c1"]),
+        "r7c2": box("2021-Q4", "r7c1", "r6c1"), "r7c3": box("2022-Q1", "r7c4", "r6c4"), "r7c4": ("2022", ["r6c4"]),
+        "r8c2": box("2022-Q2", "r9c1", "r8c1"), "r8c3": box("2022-Q3", "r9c4", "r8c4"),
+        "r9c1": ("2022", ["r8c1"]), "r9c2": box("2022-Q2", "r9c1", "r8c1"), "r9c4": ("2022", ["r8c4"]),
+        "r10c2": box("2022-Q2", "r9c1", "r8c1"),
+        "r11c2": box("2022-Q4", "r12c1", "r11c1"), "r11c3": box("2023-H1", "r12c4", "r11c4"), "r12c1": ("2022", ["r11c1"]),
+        "r12c2": box("2022-Q4", "r12c1", "r11c1"), "r12c4": ("2023", ["r11c4"])}
 
 
 def test_moz_p2_paragraphs_take_their_date_box_and_buffer_p6_lines_their_date_line_below():
@@ -477,8 +479,10 @@ def test_a_date_box_gives_a_date_only_as_one_date_or_a_year_with_a_part_below_it
     assert [dated(["2021", "Q2"]), dated(["Nov. 2007"]), dated(["2021", "H2"]), dated(["2021", "Mar"])] == \
         [("2021-04-01", "2021-06-30"), ("2007-11-01", "2007-11-30"), ("2021-07-01", "2021-12-31"),
          ("2021-03-01", "2021-03-31")], "start and end dates, as the two-cell rule builds them"
-    assert [dated(["Q2", "2021"]), dated(["2021", "2022"]), dated(["2021", "Q2", "Q3"])] == [None, None, None], \
-        "a part above its year, two years, two parts: no one date"
+    assert [dated(["2023", "Q1-Q2"]), dated(["2023", "Q3–Q4"])] == \
+        [("2023-01-01", "2023-06-30"), ("2023-07-01", "2023-12-31")], "issue #55: Q1-Q2 is the first half, Q3-Q4 the second"
+    assert [dated(["Q2", "2021"]), dated(["2021", "2022"]), dated(["2021", "Q2", "Q3"]), dated(["2023", "Q2-Q3"])] == \
+        [None, None, None, None], "a part above its year, two years, two parts, a range that is no half: no one date"
 
 
 def test_each_pair_is_a_milestone_dated_by_its_date_cell_and_never_verified():

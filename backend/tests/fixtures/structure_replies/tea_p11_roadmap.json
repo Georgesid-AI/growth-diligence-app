@@ -2,8 +2,8 @@
  "file": "10-tea.pdf",
  "page": 11,
  "type": "roadmap",
- "match": "r8c2: Rich dApps running on network",
- "note": "Hand-written in the model's labelling format (docs/specs/structure-labelling.md) for the public test deck; no live call was made. The model sees the year lines as dates (d1 to d8), so each bullet is paired with the year line of the date box beside it; the quarter lines, the heading and the wrapped continuations (\"economy\", \"from Hashkey\", \"layer-1 to layer-2\") are left out. The five figures are version, epoch and layer numbers, not a metric. Python dates each paired bullet by its position (structure-labelling.md section 2, decision of 2026-10-06 on issue #47): the quarter of its date box, and \"Mainnet starts\", beside \"2023\" / \"Q1-Q2\", keeps the year it is paired with. A milestone is never Verified.",
+ "match": "r7c2: Rich dApps running on network",
+ "note": "Hand-written in the model's labelling format (docs/specs/structure-labelling.md) for the public test deck; no live call was made. The model sees the year lines as dates (d1 to d8), so each bullet is paired with the year line of the date box beside it; the quarter lines and the heading are left out. A bullet wrapped over two lines is one line (deck-parser.md section 7, issue #55): \"Seed round secured including investment from Hashkey\", \"Begin Go2Market strategy starting with miners' economy\", \"Majority of business logic migrated from layer-1 to layer-2\". The five figures are version, epoch and layer numbers, not a metric. Python dates each paired bullet by its position (structure-labelling.md section 2, decision of 2026-10-06 on issue #47): the quarter or half of its date box, so \"Mainnet starts\", beside \"2023\" / \"Q1-Q2\", is 2023-H1. A milestone is never Verified.",
  "reply": {
   "type": "roadmap",
   "labels": [
@@ -75,67 +75,67 @@
     "category": "feature"
    },
    {
-    "line": "t10",
+    "line": "t8",
     "date": "d2",
     "category": "launch"
    },
    {
-    "line": "t11",
+    "line": "t10",
     "date": "d1",
     "category": "funding"
    },
    {
-    "line": "t13",
+    "line": "t11",
     "date": "d3",
+    "category": "launch"
+   },
+   {
+    "line": "t12",
+    "date": "d4",
     "category": "launch"
    },
    {
     "line": "t14",
-    "date": "d4",
-    "category": "launch"
-   },
-   {
-    "line": "t16",
     "date": "d3",
     "category": "feature"
    },
    {
-    "line": "t17",
+    "line": "t15",
     "date": "d4",
     "category": "launch"
    },
    {
-    "line": "t19",
+    "line": "t17",
     "date": "d5",
     "category": "feature"
    },
    {
-    "line": "t20",
+    "line": "t18",
     "date": "d6",
     "category": "feature"
    },
    {
-    "line": "t24",
+    "line": "t20",
     "date": "d5",
     "category": "launch"
    },
    {
-    "line": "t25",
+    "line": "t22",
     "date": "d5",
     "category": "funding"
    },
    {
-    "line": "t26",
+    "line": "t23",
     "date": "d7",
     "category": "other"
    },
    {
-    "line": "t27",
+    "line": "t24",
     "date": "d8",
     "category": "launch"
    },
    {
-    "line": "t29",
+    "line": "t26",
     "date": "d7",
     "category": "feature"
    }
