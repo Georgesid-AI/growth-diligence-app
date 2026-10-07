@@ -6,7 +6,10 @@ llm-structure-reading.md (§8). Implements CLAUDE.md rules 16–18.
 periods and are left out. A digit inside a word is no figure, as in the parser's reader (`claims.figures`; issue #50):
 a number with a letter directly before it ("zero2hero", "Web3", "Q1") or an ordinal ending ("1st") gives no item. On
 the test decks this removes 7 items: zero2hero p11 "zero2hero", moz p21 "Churn Rate in 1st2 Paid Months" (2), tea
-p11 "Go2Market", "Web3 Foundation Open Grant" and "Q1-Q2" (2). Each item has:
+p11 "Go2Market", "Web3 Foundation Open Grant" and "Q1-Q2" (2). A date written with slashes ("5/1/18") is a date
+with no period (deck-parser.md §2, issue #53): it gives no item and is no period cell. On the test decks this removes
+front-b p16's 12 items (1, 1, 18, 5, 1, 18, 9, 1, 18, 12, 1, 18 from "1/1/18 5/1/18" and "9/1/18 12/1/18") and with
+them its panel, which held no other figure (deck-parser.md §7). Each item has:
 - `id`: `i1`, `i2`, … in reading order, so the same structure always gives the same list;
 - the cell id: a cell with several figures gives one item each, `#n` marking the position (`r6c2#2`);
 - the raw text, cut from the redacted cell;
@@ -202,7 +205,8 @@ and is also given apart: financial (outside roadmaps) and roadmap (decision of 2
 Unchanged: §3, §4, §6, §8 and the 400,000-token audit cap.
 
 **9. Tests.** Each is first shown failing on a deliberate violation. Enumeration: several figures per cell, dates
-left out, both defaults, stable ids, no figure from a digit inside a word. A level (issue #46): a bracketed `users`
+left out, both defaults, stable ids, no figure from a digit inside a word, no figure from a date written with slashes
+(front-b p16; issue #53). A level (issue #46): a bracketed `users`
 count keeps one positive value, a bracketed `user_growth` both readings, and a whole-cell "(30K)" stays negative. Header cells: in a KPI panel a header from
 another box only when directly next to the item (front-b p12, p15 and p16), and a neighbour's scale too (a built
 slide); in a roadmap (issue #56) no header from a text box of another box (moz p2), a date box directly left counts

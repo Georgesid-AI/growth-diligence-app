@@ -93,6 +93,13 @@ figure, or is not a candidate.
 A line with its own keyword never borrows a label from other lines.
 Periods are dates, never values: "Y/E 22", "22 Y/E", "FY23", "2023E" (also A, F, B, P),
 "H1 24", "1H24", "Q3 25", "3Q25". A half year is stored as "2024-H1".
+A date written with slashes, d/d/yy or d/d/yyyy (both parts 1 to 31, one at most 12: "5/1/18", "12/31/2018"), is a
+date with no period (issue #53, option a, decision of 2026-10-07). The order of day and month is not stated ("5/1/18"
+is 1 May or 5 January), so none of its parts is a figure, it is no period cell, no date label (§7) and nothing is
+dated from it, the year of "12/31/2018" included. A pair with no year ("(1/2)") is unchanged. On the test decks:
+front-b p14's axis dates ("3/1/15" to "11/1/17") and p16's ("1/1/18 5/1/18", "9/1/18 12/1/18" and the four dates on
+lines of their own) give no candidate: 236 candidates become 225 (p14: 6, p16: 5 fewer). Recall stays 121 of 124;
+precision goes from 46.2% to 48.4%.
 Period rules (apply to tables, structure text and the verifier):
 - Header stack: extracted structure text includes every header row above the data; a merged range is written with its span, e.g. "FY2025 (r1c3:r1c14)". The model receives the full header stack, not only the row directly above the values. The column-mapping path has its own cap (llm-structure-reading.md §1).
 - A period may be built from two cells: the month or quarter cell and the year cell above it in the same column range. "Mar" + "2025" → 2025-03; "Q3" + "2025" → 2025-Q3. With a year-end other than December, a month under any year header (plain or FY) is shifted by the year-end: months after the year-end month belong to the previous calendar year, months up to and including it to the named year (March year-end: "Apr" + "FY2025" → 2024-04, "Mar" + "FY2025" → 2025-03).
@@ -235,7 +242,7 @@ Fixed on the 10 test decks (2026-10-05):
     next to a KPI box or a value box.
   - Value box: a text box that holds one figure that is not a date, and no word outside it; a scale word such as
     "million" is part of the figure ("~13,500", "~82%", "$12 -$13 million"). It joins the panel when a label box sits
-    directly next to it. A chart axis tick (§2) is no value box, and "3/1/15" holds three figures.
+    directly next to it. A chart axis tick (§2) is no value box, and "3/1/15" is a date with no figure (§2).
   - Directly next to: in the same band (the two boxes overlap in height), or directly above or below (they overlap in
     width and are at most a tenth of the page apart, as a table caption), with no other text box between them.
   - Title as label: when no label box sits next to a value box, a title line (the pptx slide title, the topmost text
@@ -296,6 +303,9 @@ Fixed on the 10 test decks (2026-10-05):
   the title labels the first value ("2011 Estimated Revenue", "% of Free Trials Converting to Paid").
 - Recounted with the wrap word "a" in lower case only (issue #50, 2026-10-06): the same 22 KPI panels, 3 timelines,
   1 table and 1 hiring table. front-b p15's panel gains the box "Seed to Series A" and its 4 lines; nothing else moves.
+- Recounted with dates written with slashes (issue #53, 2026-10-07): 21 KPI panels, 3 timelines, 1 table and 1 hiring
+  table. front-b p16's panel ("Cash", "1/1/18 5/1/18", "9/1/18 12/1/18", "Gross margin", "Operating margin") holds no
+  figure once its dates are dates, so it has no KPI box and is no panel; nothing else moves.
 
 ## Done when
 - All three formats parse with correct slide/page references.
