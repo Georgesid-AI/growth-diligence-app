@@ -21,6 +21,7 @@ sys.path.insert(0, str(BACKEND / "tests"))
 
 from app import decks  # noqa: E402
 from app.decks import claims, parser  # noqa: E402
+from app.structures import items, verify  # noqa: E402
 
 DECKS = BACKEND.parent / "tests" / "fixtures" / "decks" / "decks"
 
@@ -807,6 +808,30 @@ def test_periods_are_read_as_dates_never_as_values(text, date):
     assert claims.find_numbers(text, claims.find_dates(text)) == []
 
 
+@pytest.mark.parametrize("text", ["1/1/18 5/1/18", "9/1/18 12/1/18", "3/1/15", "12/31/2018", "Paid on 5/1/2018"])
+def test_a_date_written_with_slashes_is_a_date_with_no_period(text):
+    """Issue #53, option a (decision of 2026-10-07): the order of day and month is not stated ("5/1/18" is 1 May or
+    5 January), so none of its parts is a figure, it is no period cell and nothing is dated from it, the year of
+    "12/31/2018" included."""
+    assert claims.figures(text) == [] and claims.find_dates(text) == [], text
+    assert verify.figures(text) == [] and claims.period_cell(text) is None, text
+
+
+def test_a_pair_with_no_year_or_a_part_over_31_is_no_slash_date():
+    assert [n["value"] for n in claims.figures("Building a predictable sales organization (1/2)")] == [1, 2]
+    assert [n["value"] for n in claims.figures("45/3/20")] == [45, 3, 20]
+
+
+def test_front_b_p14_and_p16_slash_dates_give_no_candidate_and_p16_no_panel():
+    """Issue #53: front-b p14's axis dates ("3/1/15" to "11/1/17") and p16's ("1/1/18 5/1/18", "9/1/18 12/1/18") gave
+    11 candidates from their parts; p16's panel held no other figure, so it is no panel and its 12 items go."""
+    file = "01-front-b.pptx"
+    deck = parser.parse_deck((DECKS / file).read_bytes(), file)
+    found = claims.detect_candidates(deck["blocks"], file)
+    assert not [c for c in found if "/1/1" in c["snippet"]], "no candidate from a slash date's parts"
+    assert not [s for s in deck["structures"] if s.get("slide") == 16], "front-b p16 holds no structure"
+
+
 def test_a_column_header_period_beats_a_date_nearby():
     rows = [["", "Y/E 22", "Y/E 23"], ["Revenue", "£ 130,550", "£ 150,000"]]
     row, = [c for c in _found(_slide([("Q2 2024", 1, 1.6)], table=(rows, 1, 2))) if c.get("by_period")]
@@ -1157,9 +1182,9 @@ def test_a_table_row_with_months_under_a_year_header_can_be_edited(api):
 # ---------------------------------------------------------------------------
 from app.structures import redact as structure_redact  # noqa: E402
 
+# front-b p16's panel held only dates written with slashes, so it is none (issue #53): 21 KPI panels.
 DECK_STRUCTURES = {
-    "01-front-b.pptx": [(11, "kpi_panel"), (12, "kpi_panel"), (14, "kpi_panel"), (15, "kpi_panel"), (16, "kpi_panel"),
-                        (18, "kpi_panel")],
+    "01-front-b.pptx": [(11, "kpi_panel"), (12, "kpi_panel"), (14, "kpi_panel"), (15, "kpi_panel"), (18, "kpi_panel")],
     "02-moz.pdf": [(2, "roadmap"), (13, "kpi_panel"), (20, "kpi_panel"), (21, "kpi_panel"), (23, "kpi_panel"),
                    (32, "kpi_panel")],
     "03-buffer.pptx": [(6, "roadmap")],
@@ -1330,7 +1355,7 @@ def test_an_axis_tick_or_a_date_written_with_slashes_is_no_value_box():
     rows = _grid_rows(_panel("01-front-b.pptx", 14))
     row, = [r for r in rows if "Recommend to a friend" in r]
     assert row[:4] == ["100%", "Recommend to a friend", "100%", "Approve of CEO"]
-    assert not [t for r in rows for t in r if "/1/1" in t], "front-b p14: \"3/1/15\" holds three figures"
+    assert not [t for r in rows for t in r if "/1/1" in t], "front-b p14: \"3/1/15\" is a date, no figure (#53)"
 
 
 def test_a_page_with_no_kpi_box_has_no_panel():
@@ -1367,12 +1392,15 @@ def test_front_b_p12_a_tall_box_between_two_lines_on_one_visual_row_keeps_them_a
     assert _cell_id(_cell_of(panel, "The team isn’t one year old")) in _cell_of(panel, "joined 6 months ago")["next_to"]
 
 
-def test_front_b_p16_next_to_is_measured_line_to_line_not_box_to_box():
-    """The legend entry "Cash" sits on the "Gross margin" line's row, beside the box "1/1/18 5/1/18 / Gross margin",
-    not on the axis dates' row."""
-    panel = _panel("01-front-b.pptx", 16)
-    cash = _cell_id(_cell_of(panel, "Cash"))
-    assert cash not in _cell_of(panel, "1/1/18 5/1/18")["next_to"] and cash in _cell_of(panel, "Gross margin")["next_to"]
+def test_next_to_is_measured_line_to_line_not_box_to_box():
+    """Built after front-b p16 (whose panel went with issue #53): the legend entry "Cash" sits on the "Gross margin"
+    line's row, beside the box "$4M $6M / Gross margin", not on its figures' row, though the grid puts it there."""
+    panel, = [s for s in parser.parse_deck(_slide([("Cash", 1, 1.25), ("$4M $6M\nGross margin", 3.5, 1)]),
+                                           "d.pptx")["structures"] if s["type"] == "kpi_panel"]
+    cash, figures = _cell_of(panel, "Cash"), _cell_of(panel, "$4M $6M")
+    assert cash["row"] == figures["row"], "one grid row"
+    assert _cell_id(cash) not in figures["next_to"] and _cell_id(cash) in _cell_of(panel, "Gross margin")["next_to"]
+    assert all(i["headers"] == [] for i in items.list_items(panel)["items"]), "the legend entry labels no figure"
 
 
 def _date_boxes(file, page):

@@ -214,8 +214,15 @@ def test_front_b_a_kpi_value_cites_a_label_from_another_box_only_when_it_sits_di
         ("joined 6 months ago", "6", ["The team isn’t one year old"]), ("2 months ago", "2", []),
         ("10 months ago", "10", [])], "no tenure value cites \"LTV / CAC\" or \"Spend as\""
     assert ("2.5 2.6 4.4", "2.5", ["On a sustainable trajectory"]) in p12, "the top line of its own box"
-    p16 = _front_b_items(16)
-    assert len(p16) == 12 and not [i for i in p16 if "Cash" in i[2]], "a chart legend entry never labels an axis date"
+
+
+def test_a_date_written_with_slashes_gives_no_item():
+    """Issue #53, built from front-b p16's cells: "1/1/18 5/1/18" and "9/1/18 12/1/18" gave 12 items (1, 1, 18, 5, 1,
+    18, ...); a slash date is a date with no period, so they give none."""
+    cells = [{"row": 1, "col": 1, "text": "Cash", "box": 1}, {"row": 1, "col": 2, "text": "1/1/18 5/1/18", "box": 2},
+             {"row": 1, "col": 3, "text": "9/1/18 12/1/18", "box": 3}, {"row": 2, "col": 2, "text": "Gross margin", "box": 2},
+             {"row": 2, "col": 3, "text": "Operating margin", "box": 3}]
+    assert structure_items.list_items({"type": "kpi_panel", "header_rows": 0, "cells": cells})["items"] == []
 
 
 def test_a_roadmap_figure_takes_headers_from_its_own_box_and_a_date_box_directly_left_of_it():
