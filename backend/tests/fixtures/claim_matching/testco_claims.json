@@ -1,0 +1,1873 @@
+{
+ "runs": {
+  "A": {
+   "note": "EUR, December year-end, as-of 2024-02 defaulted from the last P&L month, P&L present",
+   "files": [
+    "revenue",
+    "pnl",
+    "crm"
+   ],
+   "fiscal_year_end": 12,
+   "as_of_month": null,
+   "reporting_currency": "EUR",
+   "gate_date": "2024-03-31",
+   "claims": [
+    {
+     "n": 1,
+     "claim_id": "c01",
+     "candidate": {
+      "id": "c01",
+      "status": "approved",
+      "claim_type": "revenue",
+      "value": 200000,
+      "value_high": null,
+      "unit": null,
+      "currency": "EUR",
+      "target_date": "2024-02",
+      "period_text": "Feb 2024",
+      "snippet": "ARR of €200,000 in Feb 2024",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 1,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 3,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Verified",
+      "metric": "ARR",
+      "segment": "Whole company",
+      "observed": 202125.48,
+      "observed_at": "2024-02",
+      "gap": -2125.48,
+      "norm": -0.010627,
+      "kind": "beat",
+      "rank": 11,
+      "gloss": "€2,125 higher (beat)",
+      "tolerance": "±5%"
+     }
+    },
+    {
+     "n": 2,
+     "claim_id": "c02",
+     "candidate": {
+      "id": "c02",
+      "status": "approved",
+      "claim_type": "sales",
+      "value": 60,
+      "value_high": null,
+      "unit": "days",
+      "currency": null,
+      "target_date": null,
+      "period_text": null,
+      "snippet": "Enterprise sales cycle 60 days",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 2,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 4,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Verified",
+      "metric": "Median sales cycle",
+      "segment": "Enterprise",
+      "observed": 58.5,
+      "gap": -1.5,
+      "norm": -0.025,
+      "kind": "beat",
+      "rank": 12,
+      "note": "no period stated",
+      "gloss": "1.5 days shorter (beat)"
+     }
+    },
+    {
+     "n": 3,
+     "claim_id": "c03",
+     "candidate": {
+      "id": "c03",
+      "status": "approved",
+      "claim_type": "sales",
+      "value": 41,
+      "value_high": null,
+      "unit": "%",
+      "currency": null,
+      "target_date": null,
+      "period_text": null,
+      "snippet": "Win rate 41%",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 3,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 5,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Verified",
+      "metric": "Win rate",
+      "segment": "Whole company",
+      "observed": 40.0,
+      "gap": 1.0,
+      "norm": 0.02439,
+      "kind": "miss",
+      "rank": 9,
+      "tolerance": "±1 pp",
+      "gloss": "1.0 points lower (miss)"
+     }
+    },
+    {
+     "n": 4,
+     "claim_id": "c04",
+     "candidate": {
+      "id": "c04",
+      "status": "approved",
+      "claim_type": "retention",
+      "value": 112,
+      "value_high": null,
+      "unit": "%",
+      "currency": null,
+      "target_date": "2024-02",
+      "period_text": "Feb 2024",
+      "snippet": "NRR 112% in Feb 2024",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 4,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 6,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Verified",
+      "metric": "NRR (12-month)",
+      "observed": 112.68,
+      "observed_at": "2024-02",
+      "gap": -0.68,
+      "norm": -0.006071,
+      "kind": "beat",
+      "rank": 13,
+      "gloss": "0.7 points higher (beat)"
+     }
+    },
+    {
+     "n": 5,
+     "claim_id": "c05",
+     "candidate": {
+      "id": "c05",
+      "status": "approved",
+      "claim_type": "revenue",
+      "value": 240000,
+      "value_high": null,
+      "unit": null,
+      "currency": "EUR",
+      "target_date": "2023",
+      "period_text": "FY2023",
+      "snippet": "ARR €240,000 for FY2023",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 5,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 7,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Contradicted",
+      "metric": "ARR",
+      "observed": 198142.68,
+      "observed_at": "2023-12",
+      "gap": 41857.32,
+      "norm": 0.174405,
+      "kind": "miss",
+      "rank": 3,
+      "gloss": "€41,857 lower (miss)"
+     }
+    },
+    {
+     "n": 6,
+     "claim_id": "c06",
+     "candidate": {
+      "id": "c06",
+      "status": "approved",
+      "claim_type": "sales",
+      "value": 45,
+      "value_high": null,
+      "unit": "days",
+      "currency": null,
+      "target_date": null,
+      "period_text": null,
+      "snippet": "Sales cycle 45 days",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 6,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 8,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Contradicted",
+      "metric": "Median sales cycle",
+      "segment": "Whole company",
+      "observed": 58.5,
+      "gap": 13.5,
+      "norm": 0.3,
+      "kind": "miss",
+      "rank": 1,
+      "gloss": "13.5 days longer, two working weeks (miss)"
+     }
+    },
+    {
+     "n": 7,
+     "claim_id": "c07",
+     "candidate": {
+      "id": "c07",
+      "status": "approved",
+      "claim_type": "gross_margin",
+      "value": 85,
+      "value_high": null,
+      "unit": "%",
+      "currency": null,
+      "target_date": "2023-Q4",
+      "period_text": "Q4 2023",
+      "snippet": "Gross margin 85% in Q4 2023",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 7,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 9,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Contradicted",
+      "metric": "Gross margin",
+      "observed": 78.0,
+      "observed_at": "2023-Q4",
+      "gap": 7.0,
+      "norm": 0.082353,
+      "kind": "miss",
+      "rank": 5,
+      "gloss": "7.0 points lower (miss)"
+     }
+    },
+    {
+     "n": 8,
+     "claim_id": "c08",
+     "candidate": {
+      "id": "c08",
+      "status": "approved",
+      "claim_type": "customers",
+      "value": 4,
+      "value_high": null,
+      "unit": "customers",
+      "currency": null,
+      "target_date": "2024-02",
+      "period_text": "Feb 2024",
+      "snippet": "4 customers in Feb 2024",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 8,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 10,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Contradicted",
+      "metric": "Customer count",
+      "observed": 5,
+      "observed_at": "2024-02",
+      "gap": -1.0,
+      "norm": -0.25,
+      "kind": "beat",
+      "rank": 14,
+      "gloss": "1 customer more (beat)"
+     }
+    },
+    {
+     "n": 9,
+     "claim_id": "c09",
+     "candidate": {
+      "id": "c09",
+      "status": "approved",
+      "claim_type": "revenue",
+      "value": 5000000,
+      "value_high": null,
+      "unit": null,
+      "currency": "EUR",
+      "target_date": "2026",
+      "period_text": "FY2026",
+      "snippet": "ARR €5,000,000 by FY2026",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 9,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 2,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Unverified",
+      "reason": "forecast",
+      "metric": "ARR",
+      "observed": 202125.48,
+      "observed_at": "2024-02",
+      "gap": 4797874.52,
+      "norm": 0.959575,
+      "kind": "to go",
+      "rank": 20,
+      "gloss": "€4.8M lower (to go by Dec 2026)"
+     }
+    },
+    {
+     "n": 10,
+     "claim_id": "c10",
+     "candidate": {
+      "id": "c10",
+      "status": "approved",
+      "claim_type": "retention",
+      "value": 115,
+      "value_high": null,
+      "unit": "%",
+      "currency": null,
+      "target_date": "2023",
+      "period_text": "FY2023",
+      "snippet": "NRR 115% in FY2023",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 10,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 3,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Unverified",
+      "reason": "before NRR's first month, 2024-01",
+      "metric": "NRR (12-month)",
+      "observed": null,
+      "rank": 21
+     }
+    },
+    {
+     "n": 12,
+     "claim_id": "c12",
+     "candidate": {
+      "id": "c12",
+      "status": "approved",
+      "claim_type": "revenue",
+      "value": 210000,
+      "value_high": null,
+      "unit": null,
+      "currency": "USD",
+      "target_date": "2024-02",
+      "period_text": "Feb 2024",
+      "snippet": "ARR $210,000 in Feb 2024",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 12,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 5,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Unverified",
+      "reason": "no FX rate for USD",
+      "metric": "ARR",
+      "observed": null,
+      "rank": 22
+     }
+    },
+    {
+     "n": 13,
+     "claim_id": "c13",
+     "candidate": {
+      "id": "c13",
+      "status": "approved",
+      "claim_type": "retention",
+      "value": 112,
+      "value_high": null,
+      "unit": "%",
+      "currency": null,
+      "target_date": "2024-02",
+      "period_text": "Feb 2024",
+      "snippet": "NRR 112% in Feb 2024",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 13,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 6,
+        "kind": "text"
+       }
+      ],
+      "origin": "ai",
+      "ai_status": "unverified",
+      "ai_label": "AI suggestion, not verified"
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Unverified",
+      "reason": "deck reading",
+      "metric": "NRR (12-month)",
+      "observed": 112.68,
+      "gap": -0.68,
+      "norm": -0.006071,
+      "kind": "beat",
+      "rank": 15,
+      "deck_reading": "AI suggestion, not verified"
+     }
+    },
+    {
+     "n": 14,
+     "claim_id": "c14",
+     "candidate": {
+      "id": "c14",
+      "status": "approved",
+      "claim_type": "market",
+      "value": 2000000000,
+      "value_high": null,
+      "unit": null,
+      "currency": "EUR",
+      "target_date": null,
+      "period_text": null,
+      "snippet": "TAM €2bn",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 14,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 7,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Unsupported",
+      "reason": "no metric",
+      "metric": null,
+      "observed": null,
+      "rank": 23
+     }
+    },
+    {
+     "n": 15,
+     "claim_id": "c15",
+     "candidate": {
+      "id": "c15",
+      "status": "approved",
+      "claim_type": "users",
+      "value": 10000,
+      "value_high": null,
+      "unit": "users",
+      "currency": null,
+      "target_date": null,
+      "period_text": null,
+      "snippet": "10,000 users",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 15,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 8,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Unsupported",
+      "reason": "no metric",
+      "metric": null,
+      "observed": null,
+      "rank": 24
+     }
+    },
+    {
+     "n": 16,
+     "claim_id": "c16",
+     "candidate": {
+      "id": "c16",
+      "status": "approved",
+      "claim_type": "sales",
+      "value": 12,
+      "value_high": null,
+      "unit": "months",
+      "currency": null,
+      "target_date": "2023-Q4",
+      "period_text": "Q4 2023",
+      "snippet": "CAC payback 12 months in Q4 2023",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 16,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 9,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Unsupported",
+      "reason": "new MRR is zero",
+      "metric": "CAC payback",
+      "observed": null,
+      "rank": 25
+     }
+    },
+    {
+     "n": 17,
+     "claim_id": "c17",
+     "candidate": {
+      "id": "c17",
+      "status": "approved",
+      "claim_type": "retention",
+      "value": 130,
+      "value_high": null,
+      "unit": "%",
+      "currency": null,
+      "target_date": null,
+      "period_text": null,
+      "snippet": "Public sector NRR 130%",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 17,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 10,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {
+      "segment": "Not in the data"
+     },
+     "expect": {
+      "label": "Unsupported",
+      "reason": "segment not in the data",
+      "segment": "Not in the data",
+      "observed": null,
+      "rank": 26
+     }
+    },
+    {
+     "n": 18,
+     "claim_id": "c18",
+     "candidate": {
+      "id": "c18",
+      "status": "approved",
+      "claim_type": "sales",
+      "value": 50,
+      "value_high": null,
+      "unit": "%",
+      "currency": null,
+      "target_date": null,
+      "period_text": null,
+      "snippet": "Enterprise win rate 50%",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 18,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 2,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Unsupported",
+      "reason": "not computed by segment",
+      "metric": "Win rate",
+      "segment": "Enterprise",
+      "observed": null,
+      "rank": 27
+     }
+    },
+    {
+     "n": 19,
+     "claim_id": "c19#1",
+     "candidate": {
+      "id": "c19",
+      "status": "approved",
+      "claim_type": "revenue",
+      "value": null,
+      "value_high": null,
+      "unit": null,
+      "currency": "EUR",
+      "target_date": null,
+      "period_text": null,
+      "snippet": "ARR: €150,000 · €198,000",
+      "label_from": "ARR",
+      "file": "testco_board.pptx",
+      "order": 19,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 7,
+        "kind": "text"
+       }
+      ],
+      "by_period": [
+       {
+        "value": 150000,
+        "value_high": null,
+        "target_date": "2022",
+        "period_text": "Y/E 22",
+        "source": {
+         "file": "testco_board.pptx",
+         "slide": 7,
+         "kind": "table",
+         "table": 1,
+         "row": 2,
+         "col": 2
+        }
+       },
+       {
+        "value": 198000,
+        "value_high": null,
+        "target_date": "2023",
+        "period_text": "Y/E 23",
+        "source": {
+         "file": "testco_board.pptx",
+         "slide": 7,
+         "kind": "table",
+         "table": 1,
+         "row": 2,
+         "col": 3
+        }
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Unverified",
+      "reason": "before ARR's first month, 2023-01",
+      "metric": "ARR",
+      "observed": null,
+      "rank": 28
+     }
+    },
+    {
+     "n": 19,
+     "claim_id": "c19#2",
+     "candidate": {
+      "id": "c19",
+      "status": "approved",
+      "claim_type": "revenue",
+      "value": null,
+      "value_high": null,
+      "unit": null,
+      "currency": "EUR",
+      "target_date": null,
+      "period_text": null,
+      "snippet": "ARR: €150,000 · €198,000",
+      "label_from": "ARR",
+      "file": "testco_board.pptx",
+      "order": 19,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 7,
+        "kind": "text"
+       }
+      ],
+      "by_period": [
+       {
+        "value": 150000,
+        "value_high": null,
+        "target_date": "2022",
+        "period_text": "Y/E 22",
+        "source": {
+         "file": "testco_board.pptx",
+         "slide": 7,
+         "kind": "table",
+         "table": 1,
+         "row": 2,
+         "col": 2
+        }
+       },
+       {
+        "value": 198000,
+        "value_high": null,
+        "target_date": "2023",
+        "period_text": "Y/E 23",
+        "source": {
+         "file": "testco_board.pptx",
+         "slide": 7,
+         "kind": "table",
+         "table": 1,
+         "row": 2,
+         "col": 3
+        }
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Verified",
+      "metric": "ARR",
+      "observed": 198142.68,
+      "observed_at": "2023-12",
+      "gap": -142.68,
+      "norm": -0.000721,
+      "kind": "beat",
+      "rank": 16
+     }
+    },
+    {
+     "n": 21,
+     "claim_id": "c21",
+     "candidate": {
+      "id": "c21",
+      "status": "approved",
+      "claim_type": "revenue",
+      "value": 190000,
+      "value_high": 210000,
+      "unit": null,
+      "currency": "EUR",
+      "target_date": "2024-02",
+      "period_text": "Feb 2024",
+      "snippet": "ARR of €190,000–210,000 in Feb 2024",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 21,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 5,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Verified",
+      "metric": "ARR",
+      "observed": 202125.48,
+      "gap": 0.0,
+      "norm": 0.0,
+      "kind": null,
+      "rank": 17,
+      "gloss": "as claimed"
+     }
+    },
+    {
+     "n": 22,
+     "claim_id": "c22",
+     "candidate": {
+      "id": "c22",
+      "status": "approved",
+      "claim_type": "sales",
+      "value": 42,
+      "value_high": null,
+      "unit": "%",
+      "currency": null,
+      "target_date": null,
+      "period_text": null,
+      "snippet": "Win rate 42%",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 22,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 6,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Contradicted",
+      "metric": "Win rate",
+      "observed": 40.0,
+      "gap": 2.0,
+      "norm": 0.047619,
+      "kind": "miss",
+      "rank": 8
+     }
+    },
+    {
+     "n": 23,
+     "claim_id": "c23",
+     "candidate": {
+      "id": "c23",
+      "status": "approved",
+      "claim_type": "revenue",
+      "value": 212700,
+      "value_high": null,
+      "unit": null,
+      "currency": "EUR",
+      "target_date": "2024-02",
+      "period_text": "Feb 2024",
+      "snippet": "ARR of €212,700 in Feb 2024",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 23,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 7,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Verified",
+      "metric": "ARR",
+      "observed": 202125.48,
+      "gap": 10574.52,
+      "norm": 0.049716,
+      "kind": "miss",
+      "rank": 7
+     }
+    },
+    {
+     "n": 24,
+     "claim_id": "c24",
+     "candidate": {
+      "id": "c24",
+      "status": "approved",
+      "claim_type": "revenue",
+      "value": 213000,
+      "value_high": null,
+      "unit": null,
+      "currency": "EUR",
+      "target_date": "2024-02",
+      "period_text": "Feb 2024",
+      "snippet": "ARR of €213,000 in Feb 2024",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 24,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 8,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Contradicted",
+      "metric": "ARR",
+      "observed": 202125.48,
+      "gap": 10874.52,
+      "norm": 0.051054,
+      "kind": "miss",
+      "rank": 6
+     }
+    },
+    {
+     "n": 25,
+     "claim_id": "c25",
+     "candidate": {
+      "id": "c25",
+      "status": "approved",
+      "claim_type": "revenue",
+      "value": 200000,
+      "value_high": null,
+      "unit": null,
+      "currency": "EUR",
+      "target_date": null,
+      "period_text": null,
+      "snippet": "ARR €200,000",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 25,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 9,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Verified",
+      "metric": "ARR",
+      "observed": 202125.48,
+      "observed_at": "2024-02",
+      "gap": -2125.48,
+      "norm": -0.010627,
+      "kind": "beat",
+      "rank": 18,
+      "note": "no period stated"
+     }
+    },
+    {
+     "n": 26,
+     "claim_id": "c26",
+     "candidate": {
+      "id": "c26",
+      "status": "approved",
+      "claim_type": "revenue",
+      "value": 50000,
+      "value_high": null,
+      "unit": null,
+      "currency": "EUR",
+      "target_date": "2024-02",
+      "period_text": "Feb 2024",
+      "snippet": "Public sector ARR €50,000 in Feb 2024",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 26,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 10,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {
+      "segment": "Not in the data"
+     },
+     "expect": {
+      "label": "Unsupported",
+      "reason": "segment not in the data",
+      "metric": "ARR",
+      "segment": "Not in the data",
+      "observed": null,
+      "rank": 29
+     }
+    },
+    {
+     "n": 27,
+     "claim_id": "c27",
+     "candidate": {
+      "id": "c27",
+      "status": "approved",
+      "claim_type": "revenue",
+      "value": 190000,
+      "value_high": null,
+      "unit": null,
+      "currency": "EUR",
+      "target_date": "2023",
+      "period_text": "FY2023",
+      "snippet": "Revenue €190,000 in FY2023",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 27,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 2,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Verified",
+      "metric": "Revenue",
+      "observed": 187701.05,
+      "observed_at": "2023-01 to 2023-12",
+      "gap": 2298.95,
+      "norm": 0.0121,
+      "kind": "miss",
+      "rank": 10,
+      "gloss": "€2,299 lower (miss)"
+     }
+    },
+    {
+     "n": 28,
+     "claim_id": "c28",
+     "candidate": {
+      "id": "c28",
+      "status": "approved",
+      "claim_type": "revenue",
+      "value": 60000,
+      "value_high": null,
+      "unit": null,
+      "currency": "EUR",
+      "target_date": "2023-Q4",
+      "period_text": "Q4 2023",
+      "snippet": "Revenue €60,000 in Q4 2023",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 28,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 3,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Contradicted",
+      "metric": "Revenue",
+      "observed": 49046.84,
+      "observed_at": "2023-10 to 2023-12",
+      "gap": 10953.16,
+      "norm": 0.182553,
+      "kind": "miss",
+      "rank": 2
+     }
+    },
+    {
+     "n": 29,
+     "claim_id": "c29",
+     "candidate": {
+      "id": "c29",
+      "status": "approved",
+      "claim_type": "revenue",
+      "value": 250000,
+      "value_high": null,
+      "unit": null,
+      "currency": "EUR",
+      "target_date": "2024",
+      "period_text": "FY2024",
+      "snippet": "Revenue €250,000 in FY2024",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 29,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 4,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Unverified",
+      "reason": "forecast",
+      "metric": "Revenue",
+      "observed": 33520.81,
+      "observed_at": "2024-01 to 2024-02",
+      "gap": 216479.19,
+      "norm": 0.865917,
+      "kind": "to go",
+      "rank": 30,
+      "gloss": "€216,479 lower (to go by Dec 2024)"
+     }
+    },
+    {
+     "n": 30,
+     "claim_id": "c30",
+     "candidate": {
+      "id": "c30",
+      "status": "approved",
+      "claim_type": "revenue",
+      "value": 40000,
+      "value_high": null,
+      "unit": null,
+      "currency": "EUR",
+      "target_date": "2023",
+      "period_text": "FY2023",
+      "snippet": "Public sector revenue €40,000 in FY2023",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 30,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 5,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {
+      "segment": "Not in the data"
+     },
+     "expect": {
+      "label": "Unsupported",
+      "reason": "segment not in the data",
+      "metric": "Revenue",
+      "segment": "Not in the data",
+      "observed": null,
+      "rank": 31
+     }
+    },
+    {
+     "n": 31,
+     "claim_id": "c31",
+     "candidate": {
+      "id": "c31",
+      "status": "approved",
+      "claim_type": "customers",
+      "value": 5,
+      "value_high": null,
+      "unit": "customers",
+      "currency": null,
+      "target_date": "2023-12",
+      "period_text": "Dec 2023",
+      "snippet": "5 customers in Dec 2023",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 31,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 6,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Verified",
+      "metric": "Customer count",
+      "observed": 5,
+      "observed_at": "2023-12",
+      "gap": 0.0,
+      "norm": 0.0,
+      "kind": null,
+      "rank": 19,
+      "gloss": "as claimed"
+     }
+    },
+    {
+     "n": 32,
+     "claim_id": "c32",
+     "candidate": {
+      "id": "c32",
+      "status": "approved",
+      "claim_type": "customers",
+      "value": 6,
+      "value_high": null,
+      "unit": "customers",
+      "currency": null,
+      "target_date": "2023",
+      "period_text": "FY2023",
+      "snippet": "6 customers in FY2023",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 32,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 7,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Contradicted",
+      "metric": "Customer count",
+      "observed": 5,
+      "gap": 1.0,
+      "norm": 0.166667,
+      "kind": "miss",
+      "rank": 4,
+      "gloss": "1 customer fewer (miss)"
+     }
+    },
+    {
+     "n": 33,
+     "claim_id": "c33",
+     "candidate": {
+      "id": "c33",
+      "status": "approved",
+      "claim_type": "customers",
+      "value": 8,
+      "value_high": null,
+      "unit": "customers",
+      "currency": null,
+      "target_date": "2022",
+      "period_text": "Y/E 22",
+      "snippet": "8 customers, Y/E 22",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 33,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 8,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Unverified",
+      "reason": "before Customer count's first month, 2023-01",
+      "metric": "Customer count",
+      "observed": null,
+      "rank": 32
+     }
+    },
+    {
+     "n": 34,
+     "claim_id": "c34",
+     "candidate": {
+      "id": "c34",
+      "status": "approved",
+      "claim_type": "customers",
+      "value": 3,
+      "value_high": null,
+      "unit": "customers",
+      "currency": null,
+      "target_date": "2024-02",
+      "period_text": "Feb 2024",
+      "snippet": "Public sector: 3 customers in Feb 2024",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 34,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 9,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {
+      "segment": "Not in the data"
+     },
+     "expect": {
+      "label": "Unsupported",
+      "reason": "segment not in the data",
+      "metric": "Customer count",
+      "segment": "Not in the data",
+      "observed": null,
+      "rank": 33
+     }
+    }
+   ]
+  },
+  "B": {
+   "note": "run A without crm.csv",
+   "files": [
+    "revenue",
+    "pnl"
+   ],
+   "fiscal_year_end": 12,
+   "as_of_month": null,
+   "reporting_currency": "EUR",
+   "gate_date": "2024-03-31",
+   "claims": [
+    {
+     "n": 11,
+     "claim_id": "c11",
+     "candidate": {
+      "id": "c11",
+      "status": "approved",
+      "claim_type": "sales",
+      "value": 40,
+      "value_high": null,
+      "unit": "%",
+      "currency": null,
+      "target_date": null,
+      "period_text": null,
+      "snippet": "Win rate 40%",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 11,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 4,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Unverified",
+      "reason": "Missing: Upload CRM deals with",
+      "metric": "Win rate",
+      "observed": null,
+      "rank": 1
+     }
+    }
+   ]
+  },
+  "C": {
+   "note": "run A with a March year-end",
+   "files": [
+    "revenue",
+    "pnl",
+    "crm"
+   ],
+   "fiscal_year_end": 3,
+   "as_of_month": null,
+   "reporting_currency": "EUR",
+   "gate_date": "2024-03-31",
+   "claims": [
+    {
+     "n": 20,
+     "claim_id": "c20",
+     "candidate": {
+      "id": "c20",
+      "status": "approved",
+      "claim_type": "gross_margin",
+      "value": 85,
+      "value_high": null,
+      "unit": "%",
+      "currency": null,
+      "target_date": "2024-Q3",
+      "period_text": "Q3 FY24",
+      "snippet": "Gross margin 85% in Q3 FY24",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 20,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 4,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Contradicted",
+      "metric": "Gross margin",
+      "observed": 78.0,
+      "observed_at": "2023-Q4",
+      "gap": 7.0,
+      "norm": 0.082353,
+      "kind": "miss",
+      "rank": 1
+     }
+    },
+    {
+     "n": 46,
+     "claim_id": "c46",
+     "candidate": {
+      "id": "c46",
+      "status": "approved",
+      "claim_type": "revenue",
+      "value": 190000,
+      "value_high": null,
+      "unit": null,
+      "currency": "EUR",
+      "target_date": "2023",
+      "period_text": "FY2023",
+      "snippet": "Revenue €190,000 in FY2023",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 46,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 3,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Unverified",
+      "reason": "2022-04 to 2022-12",
+      "metric": "Revenue",
+      "observed": null,
+      "rank": 2
+     }
+    }
+   ]
+  },
+  "D": {
+   "note": "run A's data: the metrics of table 2a that run A does not cover, and figures by segment",
+   "files": [
+    "revenue",
+    "pnl",
+    "crm"
+   ],
+   "fiscal_year_end": 12,
+   "as_of_month": null,
+   "reporting_currency": "EUR",
+   "gate_date": "2024-03-31",
+   "claims": [
+    {
+     "n": 35,
+     "claim_id": "c35",
+     "candidate": {
+      "id": "c35",
+      "status": "approved",
+      "claim_type": "revenue",
+      "value": 16800,
+      "value_high": null,
+      "unit": null,
+      "currency": "EUR",
+      "target_date": "2024-02",
+      "period_text": "Feb 2024",
+      "snippet": "MRR of €16,800 in Feb 2024",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 35,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 10,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Verified",
+      "metric": "MRR",
+      "segment": "Whole company",
+      "observed": 16843.79,
+      "observed_at": "2024-02",
+      "gap": -43.79,
+      "norm": -0.002607,
+      "kind": "beat",
+      "rank": 3
+     }
+    },
+    {
+     "n": 36,
+     "claim_id": "c36",
+     "candidate": {
+      "id": "c36",
+      "status": "approved",
+      "claim_type": "revenue",
+      "value": 15000,
+      "value_high": null,
+      "unit": null,
+      "currency": "EUR",
+      "target_date": "2023-Q1",
+      "period_text": "Q1 2023",
+      "snippet": "New MRR €15,000 in Q1 2023",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 36,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 2,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Verified",
+      "metric": "New MRR",
+      "observed": 15097.48,
+      "observed_at": "2023-Q1",
+      "gap": -97.48,
+      "norm": -0.006499,
+      "kind": "beat",
+      "rank": 4
+     }
+    },
+    {
+     "n": 37,
+     "claim_id": "c37",
+     "candidate": {
+      "id": "c37",
+      "status": "approved",
+      "claim_type": "revenue",
+      "value": 5000,
+      "value_high": null,
+      "unit": null,
+      "currency": "EUR",
+      "target_date": "2023-Q4",
+      "period_text": "Q4 2023",
+      "snippet": "New MRR €5,000 in Q4 2023",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 37,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 3,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Contradicted",
+      "metric": "New MRR",
+      "observed": 0.0,
+      "observed_at": "2023-Q4",
+      "gap": 5000.0,
+      "norm": 1.0,
+      "kind": "miss",
+      "rank": 1
+     }
+    },
+    {
+     "n": 38,
+     "claim_id": "c38",
+     "candidate": {
+      "id": "c38",
+      "status": "approved",
+      "claim_type": "retention",
+      "value": 0.5,
+      "value_high": null,
+      "unit": "%",
+      "currency": null,
+      "target_date": "2024-02",
+      "period_text": "Feb 2024",
+      "snippet": "Gross revenue churn 0.5% in Feb 2024",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 38,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 4,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Verified",
+      "metric": "Gross revenue churn",
+      "direction": "lower",
+      "observed": 0.0,
+      "observed_at": "2024-02",
+      "gap": -0.5,
+      "norm": -1.0,
+      "kind": "beat",
+      "tolerance": "±1 pp",
+      "rank": 5,
+      "gloss": "0.5 points lower (beat)"
+     }
+    },
+    {
+     "n": 39,
+     "claim_id": "c39",
+     "candidate": {
+      "id": "c39",
+      "status": "approved",
+      "claim_type": "sales",
+      "value": 40000,
+      "value_high": null,
+      "unit": null,
+      "currency": "EUR",
+      "target_date": null,
+      "period_text": null,
+      "snippet": "ACV €40,000",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 39,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 5,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Verified",
+      "metric": "ACV",
+      "segment": "Whole company",
+      "observed": 40425.1,
+      "observed_at": "2024-02",
+      "gap": -425.1,
+      "norm": -0.010628,
+      "kind": "beat",
+      "rank": 6,
+      "note": "no period stated"
+     }
+    },
+    {
+     "n": 40,
+     "claim_id": "c40",
+     "candidate": {
+      "id": "c40",
+      "status": "approved",
+      "claim_type": "sales",
+      "value": 70000,
+      "value_high": null,
+      "unit": null,
+      "currency": "EUR",
+      "target_date": null,
+      "period_text": null,
+      "snippet": "Enterprise ACV €70,000",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 40,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 6,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Contradicted",
+      "metric": "ACV",
+      "segment": "Enterprise",
+      "observed": 75114.18,
+      "gap": -5114.18,
+      "norm": -0.07306,
+      "kind": "beat",
+      "rank": 7
+     }
+    },
+    {
+     "n": 41,
+     "claim_id": "c41",
+     "candidate": {
+      "id": "c41",
+      "status": "approved",
+      "claim_type": "revenue",
+      "value": 12000,
+      "value_high": null,
+      "unit": null,
+      "currency": "EUR",
+      "target_date": "2024-02",
+      "period_text": "Feb 2024",
+      "snippet": "Enterprise MRR €12,000 in Feb 2024",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 41,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 7,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Verified",
+      "metric": "MRR",
+      "segment": "Enterprise",
+      "observed": 12519.03,
+      "gap": -519.03,
+      "norm": -0.043253,
+      "kind": "beat",
+      "rank": 8
+     }
+    },
+    {
+     "n": 42,
+     "claim_id": "c42",
+     "candidate": {
+      "id": "c42",
+      "status": "approved",
+      "claim_type": "retention",
+      "value": 110,
+      "value_high": null,
+      "unit": "%",
+      "currency": null,
+      "target_date": null,
+      "period_text": null,
+      "snippet": "Enterprise NRR 110%",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 42,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 8,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Contradicted",
+      "metric": "NRR (12-month)",
+      "segment": "Enterprise",
+      "observed": 112.68,
+      "observed_at": "2024-02",
+      "gap": -2.68,
+      "norm": -0.024364,
+      "kind": "beat",
+      "rank": 9
+     }
+    },
+    {
+     "n": 43,
+     "claim_id": "c43",
+     "candidate": {
+      "id": "c43",
+      "status": "approved",
+      "claim_type": "customers",
+      "value": 2,
+      "value_high": null,
+      "unit": "customers",
+      "currency": null,
+      "target_date": "2024-02",
+      "period_text": "Feb 2024",
+      "snippet": "Enterprise: 2 customers in Feb 2024",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 43,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 9,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Verified",
+      "metric": "Customer count",
+      "segment": "Enterprise",
+      "observed": 2,
+      "gap": 0.0,
+      "norm": 0.0,
+      "kind": null,
+      "rank": 10,
+      "gloss": "as claimed"
+     }
+    },
+    {
+     "n": 44,
+     "claim_id": "c44",
+     "candidate": {
+      "id": "c44",
+      "status": "approved",
+      "claim_type": "revenue",
+      "value": 150000,
+      "value_high": null,
+      "unit": null,
+      "currency": "EUR",
+      "target_date": "2023",
+      "period_text": "FY2023",
+      "snippet": "Enterprise revenue €150,000 in FY2023",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 44,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 10,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Contradicted",
+      "metric": "Revenue",
+      "segment": "Enterprise",
+      "observed": 139507.53,
+      "observed_at": "2023-01 to 2023-12",
+      "gap": 10492.47,
+      "norm": 0.06995,
+      "kind": "miss",
+      "rank": 2
+     }
+    },
+    {
+     "n": 45,
+     "claim_id": "c45",
+     "candidate": {
+      "id": "c45",
+      "status": "approved",
+      "claim_type": "revenue",
+      "value": 190000,
+      "value_high": null,
+      "unit": null,
+      "currency": "EUR",
+      "target_date": null,
+      "period_text": null,
+      "snippet": "Revenue €190,000",
+      "label_from": null,
+      "file": "testco_board.pptx",
+      "order": 45,
+      "sources": [
+       {
+        "file": "testco_board.pptx",
+        "slide": 2,
+        "kind": "text"
+       }
+      ]
+     },
+     "analyst": {},
+     "expect": {
+      "label": "Unverified",
+      "reason": "no period stated",
+      "metric": "Revenue",
+      "observed": null,
+      "rank": 11
+     }
+    }
+   ]
+  }
+ },
+ "engine": {
+  "revenue_FY2023": 187701.05,
+  "revenue_2023-Q4": 49046.84,
+  "revenue_2024-01_to_2024-02": 33520.81,
+  "first_month": "2023-01",
+  "arr_2024-02": 202125.48,
+  "arr_2023-12": 198142.68,
+  "customers_every_month": 5,
+  "customers_by_segment": {
+   "Enterprise": 2,
+   "Mid-Market": 2,
+   "SMB": 1
+  },
+  "nrr_2024-02": 112.68,
+  "nrr_first_month": "2024-01",
+  "sales_cycle": 58.5,
+  "win_rate": 40.0,
+  "gross_margin_2023-Q4": 78.0
+ }
+}
