@@ -1233,3 +1233,144 @@ def test_the_consistency_run_prints_and_reports_no_text_sent_to_the_model(monkey
     assert any(text in excluded[0].read_text(encoding="utf-8") for text in words), "the excluded file holds cell text"
     with pytest.raises(SystemExit, match="public test decks only"):
         script.main(["--fake", "--diagnostic", "--deck", "client-deck.pdf"])
+
+
+# ---------------------------------------------------------------------------
+# Claim matching (docs/specs/claim-matching.md section 9, CLAUDE.md rules 14 and 17). Python only: the matching
+# module has no link to the gateway, the two monthly engine series (revenue, customers) and every register field
+# stay out of every narrative payload and out of everything the gateway reads, and a log line about the register
+# holds counts per label, never a value or a gate text.
+# ---------------------------------------------------------------------------
+from app import claim_matching  # noqa: E402
+
+SERIES_SENTINEL = 7123456.78            # a monthly revenue figure only the matcher may read
+SERIES_FILE = "Secret_Billing_Export.xlsx"
+GATE_SENTINEL = "the Falcon hiring plan"
+MATCHING_SERVER_ONLY = ("revenue_series", "customers_series")
+# Names of the register that the gateway must never mention: the analyst's inputs, the row's fields, the series.
+REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decision", "gate_threshold", "gate_date",
+                            "observed_source", "evidence_label", "value_at_stake_arr", "claim_matching",
+                            *MATCHING_SERVER_ONLY})
+# The functions that log about the register, and the only things their log calls may name.
+REGISTER_LOGGERS = frozenset({"_claim_rows", "claim_register", "claim_register_csv", "update_claim_inputs"})
+REGISTER_LOG_ARGS = frozenset({"audit_id", "counts", "len(rows)"})      # exactly these expressions, as format arguments
+
+
+def _results_with_the_series():
+    results = copy.deepcopy(RESULTS)
+    results["revenue_series"] = {"months": ["2026-11", "2026-12"], "segments": ["Enterprise"],
+                                 "data": [{"month": "2026-11", "total": 1.5, "Enterprise": 1.5},
+                                          {"month": "2026-12", "total": SERIES_SENTINEL, "Enterprise": SERIES_SENTINEL}],
+                                 "source": {**SOURCE, "file": SERIES_FILE}}
+    results["customers_series"] = {"months": ["2026-12"], "segments": ["Enterprise"], "data": [{"month": "2026-12", "total": 4242,
+                                                                                               "Enterprise": 4242}],
+                                   "source": {**SOURCE, "file": SERIES_FILE}}
+    return results
+
+
+def _db_with_the_series():
+    db = t.FakeDB()
+    doc = copy.deepcopy(t.RESULTS_DOC)
+    doc["results"] = _results_with_the_series()
+    db["audits"].docs.append(doc)
+    return db
+
+
+def test_the_two_monthly_series_are_declared_server_only_and_in_no_step_slice():
+    assert set(MATCHING_SERVER_ONLY) <= SERVER_ONLY_TOP_LEVEL
+    assert not set(MATCHING_SERVER_ONLY) & gateway.OUTBOUND_FIELDS
+    for step in gateway.STEP_CONFIG:
+        sliced = gateway._slice_for_step(_results_with_the_series(), step)
+        assert not set(MATCHING_SERVER_ONLY) & set(sliced), f"{step} slices a matching series"
+
+
+def test_the_two_monthly_series_never_reach_a_narrative_payload():
+    db = _db_with_the_series()
+    for step in gateway.STEP_CONFIG:
+        computed = asyncio.run(gateway.load_computed_results(db, RUN_ID, step))
+        assert set(MATCHING_SERVER_ONLY) <= set(db["audits"].docs[0]["results"]), "fixture: the series are in the stored results"
+        sent = json.dumps(gateway.build_outbound(computed, {}), ensure_ascii=False)
+        for needle in (*MATCHING_SERVER_ONLY, str(SERIES_SENTINEL), "7,123,456", "7123456", SERIES_FILE, "4242"):
+            assert needle not in sent, f"{step}: {needle!r} reached the outbound payload"
+    adapter = t.FakeAdapter(replies=[json.dumps(NARRATIVE)])
+    asyncio.run(gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=adapter, sleep=t._noop_sleep))
+    assert adapter.calls == 1
+    for needle in (*MATCHING_SERVER_ONLY, "7123456", "7,123,456", SERIES_FILE):
+        assert needle not in adapter.payloads[0], f"{needle!r} reached the provider"
+    assert db["audits"].docs[0]["results"]["revenue_series"] == _results_with_the_series()["revenue_series"], \
+        "Mongo keeps the series for the matcher"
+
+
+def test_the_matching_module_imports_nothing_from_the_gateway_or_a_provider_and_no_gateway_module_imports_it():
+    path = BACKEND / "app" / "claim_matching.py"
+    offenders = []
+    for module, name in _imports(ast.parse(path.read_text(encoding="utf-8"))):
+        parts = set(re.split(r"[.\s\"'()]+", module)) | {name}
+        if parts & {"llm", "gateway", "anthropic", "structures", "<dynamic>", "server"}:
+            offenders.append(f"{module} -> {name}")
+    assert not offenders, "the matching module reaches for the gateway:\n  " + "\n  ".join(offenders)
+    code = ("import sys, app.claim_matching; "
+            "print(sorted(m for m in sys.modules if m.startswith('app.llm') or m.split('.')[0] == 'anthropic'))")
+    out = subprocess.run([sys.executable, "-c", code], cwd=BACKEND, capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == "[]", out.stdout
+    for gateway_file in sorted((BACKEND / "app" / "llm").glob("*.py")):
+        for module, name in _imports(ast.parse(gateway_file.read_text(encoding="utf-8"))):
+            assert "claim_matching" not in re.split(r"[.\s\"'()]+", module) and name != "claim_matching", \
+                f"{gateway_file.name} imports the matching module"
+
+
+def test_the_gateway_names_no_register_field_input_or_series():
+    offenders = []
+    for path in sorted((BACKEND / "app" / "llm").glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        offenders += [f"{path.name}:{node.lineno}: {node.value!r}" for node in ast.walk(tree)
+                      if isinstance(node, ast.Constant) and node.value in REGISTER_NAMES]
+        offenders += [f"{path.name}:{node.lineno}: {ast.unparse(node)}" for node in ast.walk(tree)
+                      if isinstance(node, (ast.Name, ast.Attribute)) and getattr(node, "id", getattr(node, "attr", None)) in REGISTER_NAMES]
+    assert not offenders, "the gateway names the claim register:\n  " + "\n  ".join(offenders)
+    assert not REGISTER_NAMES & decks.GATEWAY_READABLE_FIELDS
+    assert not set(claim_matching.FIELDS) & decks.GATEWAY_READABLE_FIELDS - {"claim_type", "status", "unit"}, \
+        "the readable candidate fields stay the six of the narrative path"
+
+
+def test_the_gateway_reads_no_analyst_input_register_row_or_series():
+    """Dynamic: a stored candidate carrying the analyst's gate and the stored series, every gateway path run: what the gateway
+    reads is limited to the readable fields, and nothing it reads or sends holds the input or the series."""
+    db, reads = _recording_db()
+    db[decks.CANDIDATES_COLLECTION].docs[0]["claim_inputs"] = {"c1": {"gate_budget_decision": GATE_SENTINEL, "segment": "Enterprise",
+                                                                      "gate_threshold": 4242.4242}}
+    db["audits"].docs[0]["results"] = _results_with_the_series()
+    adapter = t.FakeAdapter(replies=[json.dumps(NARRATIVE)])
+    asyncio.run(gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=adapter, sleep=t._noop_sleep))
+    asyncio.run(gateway.read_cached_narrative(db, RUN_ID, "growth_engine"))
+    asyncio.run(gateway.narratives_for_run(db, RUN_ID))
+    asyncio.run(gateway.disclosure_for_run(db, RUN_ID))
+    asyncio.run(gateway.usage_for_run(db, RUN_ID))
+    for name, projection, _ in reads:
+        if name == decks.CANDIDATES_COLLECTION:
+            assert {k for k, v in (projection or {}).items() if v and k != "_id"} <= decks.GATEWAY_READABLE_FIELDS
+    sent = adapter.payloads[0]
+    for needle in (GATE_SENTINEL, "4242.4242", "claim_inputs", "7123456", SERIES_FILE):
+        assert needle not in sent, f"{needle!r} reached the provider"
+        assert needle not in json.dumps([doc for name, _, doc in reads if name == decks.CANDIDATES_COLLECTION], default=str)
+
+
+def test_the_register_log_lines_name_counts_per_label_and_the_run_only():
+    """Static: every log call in a register function names the run, the label counts or a row count, as format arguments
+    and nothing else (no row, no claim, no gate, no value)."""
+    tree = ast.parse((BACKEND / "server.py").read_text(encoding="utf-8"))
+    found = []
+    for fn in ast.walk(tree):
+        if not (isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) and fn.name in REGISTER_LOGGERS):
+            continue
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in _LOG_LEVELS \
+                    and isinstance(node.func.value, ast.Name) and "log" in node.func.value.id.lower():
+                found.append((fn.name, ast.unparse(node)))
+                assert not node.keywords and isinstance(node.args[0], ast.Constant) and "{" not in node.args[0].value, ast.unparse(node)
+                for arg in node.args[1:]:
+                    assert ast.unparse(arg) in REGISTER_LOG_ARGS, f"{fn.name}: {ast.unparse(node)} logs {ast.unparse(arg)}"
+    assert found, "the register logs its label counts"
+    module = ast.parse((BACKEND / "app" / "claim_matching.py").read_text(encoding="utf-8"))
+    assert not [n for n in ast.walk(module) if isinstance(n, ast.Name) and n.id in ("logger", "logging", "log", "print")], \
+        "the matching module logs and prints nothing"
