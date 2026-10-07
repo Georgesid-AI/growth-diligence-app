@@ -135,7 +135,14 @@ the model's type. `llm_calls` adds the content hash and deck id, and for a provi
 the provider sends no code), never its message. The server log line carries run id, step, hash, tokens, cost and
 any type change. A failed provider call or token count logs one "structure not read" line with its reason, HTTP
 status and error type (`reason=provider_error status=400 type=invalid_request_error`); a structure the daily spend
-cap or the token cap refuses logs one with `reason=spend_cap` or `reason=token_cap`. Sent text is never stored. `GET /api/runs/{id}/llm-usage` gains `by_deck`, and
+cap or the token cap refuses logs one with `reason=spend_cap` or `reason=token_cap`. A reply that fails validation on
+the call and on its one reask logs `reason=parse_failed` and, last on the line, `check=` with the check the last reply
+failed (issue #64): `schema` (not JSON, or not the reply schema: a field missing, extra or in the wrong form),
+`metric_list` (a metric outside the structure's list, and nothing else, fails the schema; for a column mapping also a
+metric that is not a sheet field), `item_count` (the labels do not name each listed item exactly once: one left out,
+labelled twice or not listed) or `other` (pairs on a structure not sent as a roadmap, a pair that is not one listed
+line and one listed date, a line paired twice; for a column mapping a changed type or a cell not in the structure).
+Every other failed call logs `check=-`. The word is a code: never the reply, the check's message or cell text. Sent text is never stored. `GET /api/runs/{id}/llm-usage` gains `by_deck`, and
 the run log on the deck panel shows each deck's status ("waiting for revenue file", read, not read), its periods
 corrected and cost. `scripts/consistency_run.py` reports the periods corrected too.
 
