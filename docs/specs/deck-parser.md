@@ -102,7 +102,7 @@ lines of their own) give no candidate: 236 candidates become 225 (p14: 6, p16: 5
 precision goes from 46.2% to 48.4%.
 Period rules (apply to tables, structure text and the verifier):
 - Header stack: extracted structure text includes every header row above the data; a merged range is written with its span, e.g. "FY2025 (r1c3:r1c14)". The model receives the full header stack, not only the row directly above the values. The column-mapping path has its own cap (llm-structure-reading.md §1).
-- "Q1-Q2" reads as the first half-year and "Q3-Q4" as the second (issue #55, decision of 2026-10-06): a period part like "H1" ("2023" over "Q1-Q2" → 2023-H1), and "Q1-Q2 2023" on one line is 2023-H1 (it read 2023-Q1). A range that is no half ("Q2-Q3") is no period part. On the test decks only tea p11's "Q1-Q2" exists, a line of its own under "2023"; no candidate's date changes (225 candidates before and after).
+- "Q1-Q2" reads as the first half-year and "Q3-Q4" as the second (issue #55, decision of 2026-10-06): a period part like "H1" ("2023" over "Q1-Q2" → 2023-H1), and on one line with its year, before or after it ("Q1-Q2 2023", "2023 Q1-Q2"), 2023-H1 (both read 2023-Q1). Any other quarter range ("Q2-Q3", "Q1-Q4") has no period (decision of 2026-10-07): it is no period part, nothing is dated from it on one line with a year ("Q2-Q3 2023" read 2023-Q2), and its year is no figure. On the test decks only tea p11's "Q1-Q2" exists, a line of its own under "2023". "Mainnet starts" borrows "2023 Q1-Q2" from its box, so its candidate's date goes from 2023-Q1 to 2023-H1, and the answer file follows (§3); no other candidate changes (225), and `--fake` is unchanged.
 - A period may be built from two cells: the month or quarter cell and the year cell above it in the same column range. "Mar" + "2025" → 2025-03; "Q3" + "2025" → 2025-Q3. With a year-end other than December, a month under any year header (plain or FY) is shifted by the year-end: months after the year-end month belong to the previous calendar year, months up to and including it to the named year (March year-end: "Apr" + "FY2025" → 2024-04, "Mar" + "FY2025" → 2025-03).
 - Month names are matched in English, German and Bulgarian, short and long forms, any case.
 - A month or quarter header with no year cell above it in the same column range → period null. Never infer the year from the deck date, the file name or neighbouring columns.
@@ -161,6 +161,7 @@ by position and from the slide title.
 - Test set: 10 public decks (6 pdf, 2 pptx, 2 docx) in tests/fixtures/decks/decks/.
 - A hand-checked answer file lists the claims in each deck, one entry per value. A table row
   candidate is matched value by value, so recall stays per value; it counts once as a candidate.
+- Since issue #55 the answer file dates tea p11's "Mainnet starts (2023 Q1-Q2)" 2023-H1, the first half (§2).
 - Since issue #45 the answer file gives the claims of §2's new types those types, and lists three more company
   claims: front-b p15 "$7m left" (cash) and "18 months" (runway), and moz p20 "~100" (trials per day, a usage figure
   before).
