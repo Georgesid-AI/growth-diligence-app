@@ -8,6 +8,7 @@ import asyncio
 import copy
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -1784,6 +1785,26 @@ def test_live_run_reports_and_diagnostics_are_kept_by_git_in_docs_test_runs():
     for name in ("consistency_2026-10-06.md", "consistency_2026-10-06-2_diagnostic.md"):
         found = subprocess.run(["git", "check-ignore", "-q", f"docs/test-runs/{name}"], cwd=BACKEND.parent)
         assert found.returncode == 1, f"{name} is ignored by git"
+
+
+def test_the_probe_prints_a_public_deck_page_as_sent_with_periods_and_approval_rows(capsys):
+    """--probe (weekly review of 2026-10-07, change 3): a rule is measured on the public decks before its spec
+    commit, so the script prints what four sessions wrote scratch scripts for: a page's structure text with its
+    item lines, each item's values, headers and rebuilt period, a roadmap's date direction and each line's adjacent
+    and position date, and the approval rows the recorded replies give (count, milestones, Label from). No network,
+    no MongoDB; it prints cell text, so the 10 public test decks only."""
+    pytest.importorskip("pptx")
+    script = _consistency_script()
+    script.main(["--probe", "--deck", "03-buffer.pptx", "--page", "6"])
+    out = capsys.readouterr().out
+    assert out.startswith("== 03-buffer.pptx p6 roadmap"), out[:200]
+    assert "items:" in out and re.search(r"^  i1 r\d+c\d+#1 values=\[", out, re.M), "each item with its values"
+    assert "date direction: below" in out, "buffer p6 dates sit below their lines (decision of 2026-10-06)"
+    assert re.search(r"^  t1 r\d+c\d+ .*position date=", out, re.M), "each roadmap line with its dates"
+    assert re.search(r"^  approval rows under the recorded replies: \d+ \(milestones \d+, with Label from \d+\)", out, re.M)
+    assert "== 03-buffer.pptx p7" not in out, "--page keeps the other pages out"
+    with pytest.raises(SystemExit, match="public test decks only"):
+        script.main(["--probe", "--deck", "11-not-public.pdf"])
 
 
 def test_the_consistency_script_reports_agreement_match_rate_cost_and_cache_hits_without_a_live_call(

@@ -140,10 +140,9 @@ the run log on the deck panel shows each deck's status ("waiting for revenue fil
 corrected and cost. `scripts/consistency_run.py` reports the periods corrected too.
 
 **10. Boundary test and docstrings.** `test_gateway_data_boundary.py` keeps every existing assertion.
-- It must pass when redacted structure cells reach the provider, and when a column-mapping text does: a header stack of at
-  most 3 rows, at most 3 samples per numeric or date column, and a profile per text column.
-- It must fail on raw bytes, a full page, a prose snippet, a cell over 200 characters, more than 3 samples, more than 3
-  header rows or any text cell value on the column-mapping path, a file name, an unredacted email, phone number, name or customer name, the
+- It must pass when redacted structure cells reach the provider, and when a column-mapping text within the §1 limits does.
+- It must fail on raw bytes, a full page, a prose snippet, a cell over 200 characters, one more header row, sample or
+  text cell value than §1 allows on the column-mapping path, a file name, an unredacted email, phone number, name or customer name, the
   client name or engagement reference, any call without consent, sent text in a log or in `llm_structures`, and
   anything but an ISO code in `unit_other`.
 
@@ -156,8 +155,8 @@ live API. They cover:
 - redaction: each rule with a false friend (amounts, years, "Head of Sales"); customer names as whole words (boundaries
   at punctuation, hyphens and case changes), any case, in deck structures; names under 4 characters, numeric names, the target's name and
   pseudonyms left alone;
-- column mapping: a header stack of at most 3 rows (the 3 nearest the data when a sheet has more), up to 3 samples for numeric and date columns, a profile only for
-  text columns;
+- column mapping: the §1 limits (which header rows are kept when a sheet has more, samples for numeric and date
+  columns, a profile only for text columns), each refused one over;
 - orchestration: decks queued until the revenue file is mapped, then processed; schema rejection, caps (including the
   narrative-only call cap), cache, consent, type-change logging, Delete audit.
 
@@ -174,13 +173,12 @@ live API and costs money. It runs the 10 decks in `tests/fixtures/decks/decks/` 
 - tokens and cost per deck, the fixed prompt's tokens and the average structure-text tokens;
 - cache hit rate on passes 2 and 3.
 
-The consistency report is written to `docs/test-runs/consistency_<date>.md`, with -2, -3 suffixes for same-day runs.
-The script prints the full report after its summary line. Reports are untracked and lost on re-import; copy the
-printed report out before re-importing.
+Where the report and the diagnostic are written, and that both are committed, is in docs/test-runs/README.md. The
+script prints the full report after its summary line.
 
 `--diagnostic` exists only for the 10 public test decks: the script refuses any other deck, checked by file name and
-SHA-256, before anything is read. It also writes `docs/test-runs/consistency_<date>_diagnostic.md` beside the report
-(same suffix) and prints its path, not its content. For every unverified item and every disagreeing structure it
+SHA-256, before anything is read. It also writes a diagnostic beside the report (docs/test-runs/README.md names both)
+and prints its path, not its content. For every unverified item and every disagreeing structure it
 lists deck, page, cell id, the cell's text as sent to the model, the model's metric, value, unit and period in each
 pass, and the verifier's reason. It holds deck text, so the boundary test excludes this file by name; the report
 holds none.

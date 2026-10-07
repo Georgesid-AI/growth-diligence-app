@@ -18,6 +18,11 @@ made from its cells. It asks for structured JSON with no free text, so a reply c
 prose into a log (rule 17): the model labels the figures Python listed, so every value and cell is
 Python's, and Python rebuilds every period before an item can be Verified (rule 18). A prompt's
 version is part of every cache key and of the stored model output.
+
+Build rule (architecture note of 2026-10-07): any change to a prompt's text bumps its `version:`
+line, whether or not that version has run live. A version names exactly one text, so readings
+stored under it stay comparable; the release stamp then moves too, as below. RELEASE.md records
+each prompt's version beside its hash, and `--record` refuses a changed text under its old version.
 """
 from pathlib import Path
 from typing import NamedTuple
@@ -85,14 +90,25 @@ def release() -> str:
     raise ValueError(f"{RELEASE_FILE}.md has no 'release:' line in its first 10 lines")
 
 
-def release_manifest() -> dict:
-    """{prompt name: sha256 of its file} as recorded in RELEASE.md."""
+def _manifest_entries() -> dict:
+    """{prompt name: (version or None, sha256)} from RELEASE.md's `name.md vN sha256:...` lines (a line
+    written before versions were recorded has no vN)."""
     out = {}
     for line in _release_lines():
         parts = line.split()
-        if len(parts) == 2 and parts[0].endswith(".md") and parts[1].startswith("sha256:"):
-            out[parts[0][:-3]] = parts[1][len("sha256:"):]
+        if len(parts) in (2, 3) and parts[0].endswith(".md") and parts[-1].startswith("sha256:"):
+            out[parts[0][:-3]] = (parts[1] if len(parts) == 3 else None, parts[-1][len("sha256:"):])
     return out
+
+
+def release_manifest() -> dict:
+    """{prompt name: sha256 of its file} as recorded in RELEASE.md."""
+    return {name: digest for name, (_, digest) in _manifest_entries().items()}
+
+
+def recorded_versions() -> dict:
+    """{prompt name: the version RELEASE.md recorded its hash under}."""
+    return {name: version for name, (version, _) in _manifest_entries().items()}
 
 
 def file_hash(name: str) -> str:
@@ -131,16 +147,23 @@ def _parse_version(raw: str, name: str) -> str:
     raise ValueError(f"prompt {name!r} has no 'version:' line in its first 10 lines")
 
 
-def _record() -> None:  # pragma: no cover - maintenance helper
-    """Rewrite RELEASE.md's hashes from the prompt files on disk (keeps the stamp)."""
+def _record() -> None:
+    """Rewrite RELEASE.md's hashes from the prompt files on disk (keeps the stamp). Refuses a prompt whose
+    text changed while its version did not: a version names one text (build rule above)."""
     stamp = release()
+    recorded = _manifest_entries()
     names = sorted(p.stem for p in PROMPTS_DIR.glob("*.md") if p.stem != RELEASE_FILE)
+    for name in names:
+        version, digest = recorded.get(name, (None, None))
+        if version == version_of(name) and digest not in (None, file_hash(name)):
+            raise SystemExit(f"{name}.md changed but is still {version}: bump its version: line, then record.")
     body = [
         f"<!-- release: {stamp} -->",
-        "<!-- One stamp shared by every prompt. Editing any prompt file means bumping the release",
-        "     and re-recording its hash below (python -m app.llm.prompt_store --record); the",
-        "     test suite fails if a hash is stale. -->",
-    ] + [f"{n}.md sha256:{file_hash(n)}" for n in names]
+        "<!-- One stamp shared by every prompt. Editing any prompt file means bumping its version: line",
+        "     and the release, then re-recording its hash below (python -m app.llm.prompt_store --record);",
+        "     --record refuses a changed text under its old version, and the test suite fails if a hash",
+        "     is stale. -->",
+    ] + [f"{n}.md {version_of(n)} sha256:{file_hash(n)}" for n in names]
     (PROMPTS_DIR / f"{RELEASE_FILE}.md").write_text("\n".join(body) + "\n", encoding="utf-8")
 
 

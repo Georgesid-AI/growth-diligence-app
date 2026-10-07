@@ -49,6 +49,11 @@ raise LLM_DAILY_SPEND_CAP_USD if the run would pass the daily spend cap.
 --fake replays the recorded readings with no network and no MongoDB, to check the script itself; its report goes
 to the system temp folder, never to docs/test-runs. It counts 2 characters per token, as measured on the live runs,
 so its input tokens and cost are a first estimate of a live run's (its output reads low, see FakeAdapter).
+--probe [--page N ...] prints, for each structure of the chosen decks (and pages), what a rule is measured on
+before its spec commit (docs/specs/README.md): the structure text with its item lines as sent, each item's values,
+header cells and the period Python rebuilds, a roadmap's date direction and each line's adjacent and position
+date, then the approval rows the recorded replies give (count, milestones, rows with a Label from). No network,
+no MongoDB, no report. It prints cell text, so like --diagnostic it runs on the 10 public test decks only.
 """
 import argparse
 import asyncio
@@ -762,6 +767,64 @@ def write_diagnostic(rows, report_path, passes):
     return path
 
 
+async def probe(decks, pages=None, out=print):
+    """--probe: one block per structure. The structure text and item lines as the model would read them, then per
+    item its values (Python's default first), header cells and the period Python rebuilds from its cells
+    (verify.rebuild); for a roadmap the date direction and, per text line, its adjacent date line and position
+    date (structure-labelling.md section 2); then the approval rows the recorded replies give under FakeAdapter
+    (a structure with no recorded reply is labelled not_a_metric throughout and gives none)."""
+    from app.decks import parser
+    from app.llm import gateway
+    from app.structures import approval_items, candidate_from_item, redact, verify
+    from app.structures import items as structure_items
+    db, adapter = MemoryDB(), FakeAdapter()
+    for file in decks:
+        deck = parser.parse_deck((DECKS / file).read_bytes(), file)
+        audit = {"id": f"probe-{Path(file).stem}", "company_name": Path(file).stem, "client_name": "Probe",
+                 "engagement_reference": "PROBE", "structure_reading_consent": True}
+        await db["audits"].insert_one(dict(audit))
+        for structure in deck["structures"]:
+            page = structure.get("slide") or structure.get("page")
+            if pages and page not in pages:
+                continue
+            cells, _ = redact.redact_structure(structure["cells"], Path(file).stem, {}, redact.withheld_values(audit))
+            redacted = {**structure, "cells": cells}
+            listed = structure_items.list_items(redacted)
+            text = structure_items.text(redacted, listed)
+            by_id = {redact.cell_id(c): c for c in structure["cells"]}
+            lines, dates = listed.get("lines") or (), listed.get("dates") or ()
+            out(f"== {file} p{page} {structure['type']}: {len(listed['items'])} items, {len(lines)} text lines, "
+                f"{len(dates)} date cells")
+            out(text)
+            for item in listed["items"]:
+                rebuilt = verify.rebuild(structure, by_id[item["cell"]])
+                out(f"  {item['id']} {item['cell']}#{item['position']} values={[v['value'] for v in item['values']]} "
+                    f"headers={item['headers']} period={rebuilt[0] if rebuilt else None}")
+            if structure["type"] == "roadmap":
+                out(f"  date direction: {verify.date_direction(structure)}")
+                for line in listed["lines"]:
+                    cell = by_id[line["cell"]]
+                    adjacent = verify.adjacent_date_line(structure, cell)
+                    placed = verify.position_date(structure, cell)
+                    out(f"  {line['id']} {line['cell']} adjacent date={adjacent['text'] if adjacent else None!r} "
+                        f"position date={placed[0] if placed else None}")
+            result = await gateway.read_structure(db, audit["id"], text, structure["type"], deck_id=file, page=page,
+                                                  adapter=adapter)
+            if result.status != "read":
+                out(f"  not read under the recorded replies: {result.reason}")
+                continue
+            checked = verify.verify(structure, listed, result.labels, result.pairs)
+            rows = [candidate_from_item(row, structure, {"file": file}, result.model_type, 12)
+                    for row in approval_items(checked["items"])]
+            out(f"  approval rows under the recorded replies: {len(rows)} (milestones "
+                f"{sum(1 for c in checked['items'] if 'line' in c)}, with Label from "
+                f"{sum(1 for r in rows if r['label_from'])})")
+            for row in rows:
+                out(f"    {row['ai_status']} {row['claim_type']} value={row['value']} high={row['value_high']} "
+                    f"date={row['target_date']} cell={row['cell']} label_from={row['label_from']!r} "
+                    f"date_from={row['date_from']!r}")
+
+
 def not_public(decks):
     """The first deck that is not one of the 10 public test decks, by file name and SHA-256, or None."""
     for name in decks:
@@ -809,12 +872,19 @@ def main(argv=None):
     ap.add_argument("--fake", action="store_true", help="no network, no MongoDB: check the script itself")
     ap.add_argument("--diagnostic", action="store_true",
                     help="also write <report>_diagnostic.md with each cell's text (the 10 public test decks only)")
+    ap.add_argument("--probe", action="store_true",
+                    help="print each structure as sent, its items' periods and its approval rows under the recorded "
+                         "replies; no run, no report (the 10 public test decks only)")
+    ap.add_argument("--page", type=int, action="append", help="with --probe: only this slide or page (repeatable)")
     args = ap.parse_args(argv)
     decks = args.deck or sorted(p.name for p in DECKS.iterdir() if not p.name.startswith("."))
-    outside = not_public(decks) if args.diagnostic else None
+    outside = not_public(decks) if args.diagnostic or args.probe else None
     if outside is not None:
-        sys.exit(f"--diagnostic runs on the 10 public test decks only: {outside} is not one of them "
-                 "(checked by file name and SHA-256).")
+        sys.exit(f"{'--probe' if args.probe else '--diagnostic'} runs on the 10 public test decks only: {outside} is "
+                 "not one of them (checked by file name and SHA-256).")
+    if args.probe:
+        asyncio.run(probe(decks, args.page))
+        return None
     rows = [] if args.diagnostic else None
     if args.fake:
         report = asyncio.run(run(decks, args.passes, MemoryDB(), FakeAdapter(), diagnostic=rows))

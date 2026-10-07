@@ -4,7 +4,6 @@ in Missing Data instead of crashing, and an engine error in the auto-recompute d
 fail the upload that triggered it. Stub only - no real API calls."""
 import asyncio
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -16,8 +15,6 @@ pytest.importorskip("motor")
 BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 sys.path.insert(0, str(BACKEND / "tests"))
-os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
-os.environ.setdefault("DB_NAME", "test_calc_correctness")
 
 import growth_engine as ge  # noqa: E402
 import server  # noqa: E402

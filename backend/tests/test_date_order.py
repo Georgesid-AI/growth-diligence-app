@@ -4,7 +4,6 @@ pandas infers the order of a whole column from its first value, so 03/04/2024 fi
 made every row month-first and silently dropped 13/04/2024. Now one day above 12 fixes
 the order for the column (with a note); with none, the rows stay unread and Missing Data
 asks management for the format, with the row count only."""
-import os
 import sys
 from pathlib import Path
 
@@ -17,8 +16,6 @@ pytest.importorskip("motor")
 BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 sys.path.insert(0, str(BACKEND / "tests"))
-os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
-os.environ.setdefault("DB_NAME", "test_date_order")
 
 import growth_engine as ge  # noqa: E402
 import server  # noqa: E402
