@@ -817,6 +817,21 @@ def test_a_date_written_with_slashes_is_a_date_with_no_period(text):
     assert verify.figures(text) == [] and claims.period_cell(text) is None, text
 
 
+@pytest.mark.parametrize("text, date", [("Q1-Q2 2023", "2023-H1"), ("Q3-Q4 23", "2023-H2"), ("2023 Q1-Q2", "2023-H1"),
+                                        ("2023 Q3-Q4", "2023-H2")])
+def test_q1_q2_and_q3_q4_are_the_halves_with_the_year_before_or_after(text, date):
+    """Issue #55 (decision of 2026-10-06): tea p11's "Mainnet starts" borrows "2023 Q1-Q2" from its box."""
+    assert [d["date"] for d in claims.find_dates(text)] == [date] and claims.figures(text) == []
+
+
+@pytest.mark.parametrize("text", ["Q2-Q3 2023", "Q1-Q3 23", "2023 Q2-Q3", "Q1-Q4 2023", "Launch Q2-Q3 2023"])
+def test_a_quarter_range_that_is_no_half_has_no_period(text):
+    """Decision of 2026-10-07 on issue #55: "Q2-Q3 2023" read 2023-Q2. A quarter range that is no half dates nothing,
+    and its year is no figure."""
+    assert claims.find_dates(text) == [] and claims.figures(text) == [], text
+    assert verify.figures(text) == [] and claims.period_cell(text) is None, text
+
+
 def test_a_pair_with_no_year_or_a_part_over_31_is_no_slash_date():
     assert [n["value"] for n in claims.figures("Building a predictable sales organization (1/2)")] == [1, 2]
     assert [n["value"] for n in claims.figures("45/3/20")] == [45, 3, 20]

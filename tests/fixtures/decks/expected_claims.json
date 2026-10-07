@@ -278,7 +278,7 @@
         {"page": 11, "status": "company claim", "claim_type": "product", "value": null, "unit": null, "currency": null, "target_date": "2022-Q1", "text": "TEA Party dApp released (2022 Q1)"},
         {"page": 11, "status": "company claim", "claim_type": "product", "value": null, "unit": null, "currency": null, "target_date": "2022-Q2", "text": "TEA framework dev guide released (2022 Q2)"},
         {"page": 11, "status": "company claim", "claim_type": "product", "value": null, "unit": null, "currency": null, "target_date": "2022-Q3", "text": "Layer-1 EVM smart contract compatibility (2022 Q3)"},
-        {"page": 11, "status": "company claim", "claim_type": "product", "value": null, "unit": null, "currency": null, "target_date": "2023-Q1", "text": "Mainnet starts (2023 Q1-Q2)"},
+        {"page": 11, "status": "company claim", "claim_type": "product", "value": null, "unit": null, "currency": null, "target_date": "2023-H1", "text": "Mainnet starts (2023 Q1-Q2)"},
         {"page": 9, "status": "not a company claim", "claim_type": "revenue", "value": 100000000, "unit": null, "currency": null, "target_date": null, "text": "100 million total supply", "note": "token supply"},
         {"page": 12, "status": "not a company claim", "claim_type": "revenue", "value": 1000000, "unit": null, "currency": "USD", "target_date": "2021-05", "text": "Seed Round: $1 Million Investment, Completed May, 2021", "note": "funds raised"},
         {"page": 12, "status": "not a company claim", "claim_type": "revenue", "value": 1400000, "unit": null, "currency": "USD", "target_date": "2022-04", "text": "Post-Seed Round: $1.4 Million Investment, Completed April, 2022", "note": "funds raised"},
