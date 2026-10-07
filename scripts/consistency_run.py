@@ -40,7 +40,8 @@ position date and, in each pass, the date it is paired with (id, cell and text) 
 the 10 public test decks only:
 any other deck, by file name and SHA-256, is refused before anything is read.
 A failed model call or token count logs one "structure not read" line to stderr, with its reason, HTTP status
-and error type; a structure the daily spend cap or the token cap refuses logs one with reason=spend_cap or
+and error type, and for a reply that fails validation the check it failed (check=schema, metric_list, item_count
+or other); a structure the daily spend cap or the token cap refuses logs one with reason=spend_cap or
 reason=token_cap.
 Each deck is read in its own throwaway audit (consent ticked) in the scratch database --db (default
 "consistency_run"; any name must start with it), dropped at the end unless --keep-db. At start the run drops

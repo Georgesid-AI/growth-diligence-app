@@ -1,0 +1,5 @@
+2026-10-07, claude/laughing-goodall-xib0so (2): decisions of 2026-10-07 on #64 (option a) and #65 applied in PR #66, each as spec, failing tests, code: the "structure not read" line names the check a reply failed; a dash right after a figure is a range dash and a scale word counts in any case.
+Deleted: nothing.
+Decided: #65 reuses #44's range marking in verify.figures, plus thousand, million and billion in any case in redact.SUFFIX, so the item model, the item line format and the one approval row per range are unchanged; #64's word is read from the error's locations and types, never its message, and sits last on the line so reason, status and type keep their place; one existing test's pinned line ending gains check=-.
+Slow or unclear: no recorded reply exists for moz p23, so its Verified counts replay the live run's pass-1 labels from the diagnostic by hand; a test built from deck cells must copy them exactly, as redaction reads "Onto Balance Sheet" without its colon as a person.
+Process change: record a reply fixture for each page a decision cites (here moz p23), so --probe gives its approval rows and Verified counts without a hand-built replay.

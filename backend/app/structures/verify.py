@@ -68,6 +68,7 @@ def unmatched_mode() -> str:
 _DOT_THOUSANDS = re.compile(r"[1-9]\d{0,2}\.\d{3}")     # "2.500": 2,500 written with a dot, or 2.5
 _DECIMAL_COMMA = re.compile(r"\d{1,3}(?:\.\d{3})+,\d+")
 _LETTER = re.compile(r"[^\W\d_]")
+_RANGE_DASH = re.compile(r"\s*[-−–]\s*")     # a range dash right after the low end ("6-7"), which NUMBER takes as no sign
 _SCALE_WORD = {"k": 1e3, "thousand": 1e3, "thousands": 1e3, "tsd": 1e3, "хил": 1e3,
                "m": 1e6, "mn": 1e6, "mm": 1e6, "million": 1e6, "millions": 1e6, "mio": 1e6, "млн": 1e6,
                "b": 1e9, "bn": 1e9, "billion": 1e9, "billions": 1e9, "mrd": 1e9, "млрд": 1e9}
@@ -115,8 +116,9 @@ def figures(text: str, comma: bool = False) -> List[Dict]:
     end cut the figure from the text as written; "readings" are (number, dot reading, bracket reading) as for
     _cell_figure, before any scale from another cell; "own_scale" is True when the figure carries a k/m/bn
     suffix or %. Dates are periods, never values, and a scale mark ("'000") is no figure: both are left out
-    first. A range ("$12 -$13 million", "5 – 10%") is two figures: the dash is no sign, and the low end takes
-    the high end's suffix or % when it has none (deck-parser.md section 2); the high end carries "range_low",
+    first. A range ("$12 -$13 million", "5 – 10%", "$6-7 Million" with the dash right after the low end) is two
+    figures: the dash is no sign, and the low end takes the high end's suffix or % when it has none (deck-parser.md
+    section 2, structure-labelling.md section 1, issue #65); the high end carries "range_low",
     the index of its low end. A date with no period ("5/1/18", "Q2-Q3 2023") is a date too (claims.no_period_dates)."""
     marks = [m.span() for m in _SCALE_MARK.finditer(text) if m.group("mark") and "000" in m.group("mark")]
     blanked = redact.blank_currency(_blank(text, [(d["start"], d["end"]) for d in claims.find_dates(text, table=True)]
@@ -130,8 +132,9 @@ def figures(text: str, comma: bool = False) -> List[Dict]:
             if not comma and _DOT_THOUSANDS.fullmatch(raw) else \
             [(float(raw.replace(".", "").replace(",", ".") if comma else raw.replace(",", "")), None)]
         sign, range_low = m.group("sign"), None
-        if sign and out and not blanked[out[-1]["end"]:m.start("sign")].strip():
-            sign, range_low = None, len(out) - 1                # a range: "12 - 13"
+        if sign and out and not blanked[out[-1]["end"]:m.start("sign")].strip() \
+                or not sign and out and _RANGE_DASH.fullmatch(blanked[out[-1]["end"]:m.start("num")]):
+            sign, range_low = None, len(out) - 1                # a range: "12 - 13", "6-7", "20-$25"
             low = out[-1]
             if not low["suffix"] and not low["pct"]:
                 low.update(suffix=(m.group("suffix") or "").lower(), pct=bool(m.group("pct")))

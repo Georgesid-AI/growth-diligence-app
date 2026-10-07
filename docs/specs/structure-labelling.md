@@ -66,7 +66,14 @@ An ambiguous reading carries both values, with Python's default first; the model
 The approval row shows both readings. The analyst confirms the default or uses Edit (deck-parser.md §6).
 
 Ranges (decision of 2026-10-06): in `$12 -$13 million` the dash is no sign and the low end takes the high end's scale
-(12,000,000 to 13,000,000). The two figures stay two items; both carry `range` (low id, high id, low, high) and make
+(12,000,000 to 13,000,000). As in the deck parser's reader (`claims.find_numbers`; issue #65, decision of
+2026-10-07), a dash right after the low end is a range dash too (`$6-7`, `$20-$25`), and the scale words thousand,
+million and billion are read in any case (`Million`): `$6-7 Million` is 6,000,000 to 7,000,000. On the test decks
+(`--probe --deck 02-moz.pdf --page 23`) only moz p23 moves: `$20-$25 Million`, `$6-7 Million` and `$13-19 Million`
+become 3 ranges in millions (11 items before and after; the values 20, 25, 6, 7, 13 and 19 become millions); no other
+of the 135 items changes. Under the labels of the live run of 2026-10-07, pass 1 (i3 to i6 `use_of_funds`), the 4
+Verified items stay 4 and their 4 approval rows become 2 (6,000,000 to 7,000,000; 13,000,000 to 19,000,000). The two
+figures stay two items; both carry `range` (low id, high id, low, high) and make
 one approval row (`value`, `value_high`) from the first labelled end, Verified only when both ends have the same
 metric and are Verified. The AI-row dedupe (`structures.value_match`) returns exact (same value or range), in range
 (one falls inside the other's range) or no match; either match means the cell already lists the row.
