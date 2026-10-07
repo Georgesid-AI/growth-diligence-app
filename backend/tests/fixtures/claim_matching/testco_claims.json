@@ -462,6 +462,7 @@
       "metric": "NRR (12-month)",
       "observed": 112.68,
       "gap": -0.68,
+      "norm": -0.006071,
       "kind": "beat",
       "rank": 15,
       "deck_reading": "AI suggestion, not verified"
