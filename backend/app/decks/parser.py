@@ -582,26 +582,37 @@ _END_PUNCTUATION = re.compile(r"[.,;:!?/][\"'”’)\]]*$")      # "app.", "medi
 
 
 def _continues(above: str, line: str) -> bool:
-    """Whether a roadmap line continues the line above it (spec section 7, issue #49): it starts with a lower-case
-    letter or "&", or the line above ends with punctuation, a wrap word ("a" in lower case only) or inside a bracket
-    it opened ("Gillian (Rand’s / Mom) founds the")."""
+    """Whether a roadmap line continues the line above it (spec section 7, issues #49 and #55): it starts with a
+    lower-case letter or "&", or the line above ends with punctuation, a wrap word ("a" in lower case only; a line
+    ending on a figure, "ongoing in 2021", ends on no word) or inside a bracket it opened ("Gillian (Rand’s / Mom)
+    founds the")."""
     start = line.lstrip()[:1]
-    words = [w if w == "A" else w.lower() for w in re.findall(r"[^\W\d_]+", above)]
+    tokens = [w if w == "A" else w.lower() for w in re.findall(r"[^\W_]+", above)]
     return start == "&" or (start.isalpha() and start.islower()) or bool(_END_PUNCTUATION.search(above.rstrip())) \
-        or bool(words and words[-1] in _WRAP_WORDS) or above.count("(") > above.count(")")
+        or bool(tokens and tokens[-1] in _WRAP_WORDS) or above.count("(") > above.count(")")
 
 
 def _paragraph(box: List[Dict], claims) -> List[Dict]:
-    """A roadmap text box as its grid rows (spec section 7, issue #49): one line holding the box's lines joined with
-    a space when they are one paragraph (two or more lines, none a date label, each continuing the one above, at
-    most CELL_MAX characters joined); otherwise its lines, as in a bullet list or a box of lines and dates."""
-    texts = [line["text"] for line in box]
-    joined = " ".join(texts)
-    if len(texts) < 2 or len(joined) > CELL_MAX or any(_date_labels(text, claims) for text in texts) \
-            or not all(_continues(a, b) for a, b in zip(texts, texts[1:])):
-        return box
-    extent = _extent(box)
-    return [{**box[0], "text": joined, **({"bbox": list(extent)} if extent else {})}]
+    """A roadmap text box as its grid rows (spec section 7, issues #49 and #55): its lines split into items at each
+    line that does not continue the one above, each item one row holding its lines joined with a space. A date label
+    is an item of its own, never joined. An item whose joined text would be over CELL_MAX characters keeps a row per
+    line. A paragraph is the one-item box; a bullet list gives one row per bullet, a wrapped bullet included."""
+    items = []
+    for line in box:
+        dated = bool(_date_labels(line["text"], claims))
+        if items and not dated and not items[-1][0] and _continues(items[-1][1][-1]["text"], line["text"]):
+            items[-1][1].append(line)
+        else:
+            items.append((dated, [line]))
+    out = []
+    for _, lines in items:
+        joined = " ".join(line["text"] for line in lines)
+        if len(lines) < 2 or len(joined) > CELL_MAX:
+            out += lines
+            continue
+        extent = _extent(lines)
+        out.append({**lines[0], "text": joined, **({"bbox": list(extent)} if extent else {})})
+    return out
 
 
 def _caption(blocks: List[Dict], page, cells: List[Dict]) -> str:

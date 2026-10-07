@@ -157,7 +157,9 @@ _DATES = [
     ("quarter", re.compile(r"\b" + _FY + r"\s*[-/]?\s*Q(?P<q>[1-4])\b")),
     ("half", re.compile(r"\bH(?P<h>[12])\s*[-/]?\s*" + _FY + r"\b")),
     ("half", re.compile(r"\b" + _FY + r"\s*[-/]?\s*H(?P<h>[12])\b")),
-    # Q3 2021, Q1 17, Q1-Q2 2023
+    # Q1-Q2 2023, Q3-Q4 23: the first and the second half (issue #55)
+    ("half", re.compile(r"\b(?P<hq>Q1\s*[-–]\s*Q2|Q3\s*[-–]\s*Q4)\s*['’]?\s*" + _YY + r"\b")),
+    # Q3 2021, Q1 17, Q2-Q3 2023
     ("quarter", re.compile(r"\bQ(?P<q>[1-4])(?:\s*[-–]\s*Q[1-4])?\s*['’]?\s*" + _YY + r"\b")),
     # 2021 Q3, 2021-Q3
     ("quarter", re.compile(r"(?<![\d.,])(?P<year>(?:19|20)\d{2})\s*[-/]?\s*Q(?P<q>[1-4])\b")),
@@ -239,7 +241,7 @@ def find_dates(line: str, table: bool = False) -> List[Dict]:
             if kind == "quarter":
                 date = f"{_year(g['year'])}-Q{g['q']}"
             elif kind == "half":
-                date = f"{_year(g['year'])}-H{g['h']}"
+                date = f"{_year(g['year'])}-H{g.get('h') or _half(g['hq'])}"
             elif kind == "month":
                 year = g.get("year") or g.get("y2") or g.get("y3")
                 month = int(g["mnum"]) if g.get("mnum") else _month_number(g["month"])
@@ -250,6 +252,11 @@ def find_dates(line: str, table: bool = False) -> List[Dict]:
     return sorted(found, key=lambda d: d["start"])
 
 
+def _half(quarters: str) -> str:
+    """The half a quarter range gives: "Q1-Q2" -> "1", "Q3-Q4" -> "2" (issue #55)."""
+    return "1" if quarters.lstrip().startswith("Q1") else "2"
+
+
 def _month_number(name: str) -> int:
     name = name.lower().rstrip(".")
     return _MONTH_NUMBER.get(name) or _MONTHS[name[:3]]
@@ -257,7 +264,8 @@ def _month_number(name: str) -> int:
 
 # A header that counts periods from a start the sheet does not give: M1...M24, Month 3, Year 1.
 _RELATIVE = re.compile(r"(?i)^\s*(?:M|Month|Monat|Y|Year|Jahr|Q|Quarter)\s*-?\s*(?P<n>\d{1,3})\s*$")
-_PART = re.compile(r"(?i)^\s*(?:Q(?P<q>[1-4])|H(?P<h>[12])|" + _MONTH_ANY + r")\.?\s*$")
+_PART = re.compile(r"(?i)^\s*(?:(?P<hq>Q1\s*[-–]\s*Q2|Q3\s*[-–]\s*Q4)|Q(?P<q>[1-4])|H(?P<h>[12])|" + _MONTH_ANY
+                   + r")\.?\s*$")
 
 
 def period_cell(text: str) -> Optional[Dict]:
@@ -277,6 +285,8 @@ def period_cell(text: str) -> Optional[Dict]:
         return None
     m = _PART.match(text)
     if m:
+        if m.group("hq"):
+            return {"part": f"H{_half(m.group('hq').upper())}"}
         if m.group("q"):
             return {"part": f"Q{m.group('q')}"}
         if m.group("h"):
