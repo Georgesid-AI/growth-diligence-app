@@ -152,6 +152,24 @@ Prompt v5, release r8 (issues #45 and #47, decisions of 2026-10-06), one bump fo
 - Integrations and partnerships are `product` (buffer p6 "Integrated in 50 apps").
 Other is never Verified, unchanged (§4).
 
+Prompt v6, release r9 (issue #58, decisions of 2026-10-06 on the live run of 2026-10-06-2), one bump; issue #55
+changes the text sent for tea p11, not the prompt. The release moves every cache key, and the narrative keys once
+(growth_engine stays v7, its tag r9:v7).
+- A run rate has a period only when a header of its cell states one. The v5 tie-break loses "the program rebuilds the
+  period from the cells", which probably invited the model to write a period: moz p20 i3 "~$10.8 million" (label
+  "Current Revenue Run Rate (June)", "June" with no year cell) was revenue 2011-06 in every pass, "period not
+  rebuilt". Expected: revenue with no period, Verified in every pass.
+- A conversion rate ("% of Free Trials Converting to Paid") is `sales`, as the parser's "conversion" keyword says
+  (deck-parser.md §2): moz p21 i1 "~57%" (the title labels it) was product, growth and other. Expected: `sales`,
+  Verified in every pass.
+- Employee review scores ("Recommend to a friend", "Approve of CEO") and their number of ratings are `not_a_metric`:
+  front-b p14 i1 and i2 "100%" and i3 "17 Ratings", under "Team growth is built upon solid foundations", were other
+  in pass 1 and dropped in passes 2 and 3. Expected: dropped in every pass.
+These are 5 items, measured on this branch with `--probe` (moz p20 i3 r2c2, moz p21 i1 r1c2, front-b p14 i1 r1c1, i2
+r1c3, i3 r2c5); the live run reports the agreement they give. No guard word or reason string is added, so
+backend/tests/test_gateway_data_boundary.py is unchanged (CLAUDE.md rule 14). The recorded replies keep their labels:
+moz p20's already gives the run rate no period, and moz p21 and front-b p14 have none.
+
 **4. Verifier.** Values and cells are Python's, so value matching is deleted. What is left:
 - Period: rebuilt from the item's lowest period header (with the year cell above), from its own cell, or in a
   roadmap from its adjacent date line (§2), under deck-parser.md §2. The rebuilt period replaces the model's, and a
@@ -219,7 +237,9 @@ count keeps one positive value, a bracketed `user_growth` both readings, and a w
 another box only when directly next to the item (front-b p12, p15 and p16), and a neighbour's scale too (a built
 slide); in a roadmap (issue #56) no header from a text box of another box (moz p2), a date box directly left counts
 (tea p11 i4 and i5 keep 2022-Q2) and one beside it on the right does not (tea p11 i1–i3 rebuild no period from
-another box). Prompt v5 (issues #45, #47): every new claim type and tie-break is named; the recorded replies give
+another box). Prompt v6 (issue #58): the run-rate tie-break says a run rate has a period only when a header of its cell states
+one and no longer that the program rebuilds it, and the conversion-rate and review-score tie-breaks are named. Prompt
+v5 (issues #45, #47): every new claim type and tie-break is named; the recorded replies give
 moz p20 "~$900", "~9 Months", "~100" and "~$100" and front-b p15 "$7m left", "18 months" and "Profitable in 10
 months" their new types, Verified. Reply: bad, duplicate or missing ids, and bad pairs. Verifier: periods, a
 pair-dated figure, the adjacent date line (one above or below counts; one each side takes the timeline's direction, also under a title line), flags. Wrapped
