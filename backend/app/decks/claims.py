@@ -208,17 +208,32 @@ _SCALE = {"k": 1e3, "thousand": 1e3, "m": 1e6, "mm": 1e6, "mn": 1e6, "million": 
 _CURRENCY = {"$": "USD", "US$": "USD", "USD": "USD", "€": "EUR", "EUR": "EUR", "£": "GBP", "GBP": "GBP"}
 
 
+# A date written with slashes, d/d/yy or d/d/yyyy ("5/1/18", "12/31/2018"; issue #53, option a): the order of day
+# and month is not stated, so it is a date with no period. None of its parts is a figure, it is no period cell and
+# nothing is dated from it, its year included.
+_SLASH_DATE = re.compile(r"(?<![\w/.,])(?P<a>\d{1,2})/(?P<b>\d{1,2})/(?:\d{4}|\d{2})(?![\w/]|[.,]\d)")
+
+
+def slash_dates(text: str) -> List[Tuple[int, int]]:
+    """(start, end) of each date written with slashes in a text: d/d/yy or d/d/yyyy, both parts 1 to 31 and one of
+    them at most 12."""
+    return [m.span() for m in _SLASH_DATE.finditer(text or "")
+            if all(1 <= int(m.group(g)) <= 31 for g in "ab") and min(int(m.group("a")), int(m.group("b"))) <= 12]
+
+
 def _year(text: str) -> int:
     return int(text) if len(text) == 4 else 2000 + int(text)
 
 
 def find_dates(line: str, table: bool = False) -> List[Dict]:
     """[{"start", "end", "date", "kind", "text"}], longest forms first, no overlaps. In a table cell
-    (`table`) month names are matched in English, German and Bulgarian, any case."""
-    found = []
+    (`table`) month names are matched in English, German and Bulgarian, any case. A date written with slashes
+    gives none (slash_dates)."""
+    found, slashes = [], slash_dates(line)
     for kind, rx in (_TABLE_DATES if table else _DATES):
         for m in rx.finditer(line):
-            if any(m.start() < d["end"] and d["start"] < m.end() for d in found):
+            if any(m.start() < d["end"] and d["start"] < m.end() for d in found) \
+                    or any(m.start() < end and start < m.end() for start, end in slashes):
                 continue
             g = m.groupdict()
             if kind == "quarter":
@@ -340,11 +355,13 @@ def remap_periods(candidates: List[Dict], fiscal_year_end: int = 12) -> List[Dic
 
 
 def find_numbers(line: str, dates: List[Dict]) -> List[Dict]:
-    """Figures in the line that are not part of a date and not an ordinal ("2nd half")."""
-    out = []
+    """Figures in the line that are not part of a date (one written with slashes included) and not an ordinal
+    ("2nd half")."""
+    out, slashes = [], slash_dates(line)
     for m in _NUMBER.finditer(line):
         num_start = m.start("num")
-        if m.group("ord") or any(d["start"] <= num_start < d["end"] for d in dates):
+        if m.group("ord") or any(d["start"] <= num_start < d["end"] for d in dates) \
+                or any(start <= num_start < end for start, end in slashes):
             continue
         g = m.groupdict()
         end = m.end()

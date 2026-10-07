@@ -117,10 +117,10 @@ def figures(text: str, comma: bool = False) -> List[Dict]:
     suffix or %. Dates are periods, never values, and a scale mark ("'000") is no figure: both are left out
     first. A range ("$12 -$13 million", "5 – 10%") is two figures: the dash is no sign, and the low end takes
     the high end's suffix or % when it has none (deck-parser.md section 2); the high end carries "range_low",
-    the index of its low end."""
+    the index of its low end. A date written with slashes ("5/1/18") is a date too (claims.slash_dates)."""
     marks = [m.span() for m in _SCALE_MARK.finditer(text) if m.group("mark") and "000" in m.group("mark")]
     blanked = redact.blank_currency(_blank(text, [(d["start"], d["end"]) for d in claims.find_dates(text, table=True)]
-                                           + marks))
+                                           + claims.slash_dates(text) + marks))
     out = []
     for m in redact.NUMBER[comma].finditer(blanked):
         if not m.group("num"):
