@@ -1,0 +1,5 @@
+2026-10-07, claude/vibrant-volta-pslofk: spec docs/specs/claim-matching.md for testing register claims against the computed metrics; no code, no live run.
+Deleted: nothing.
+Decided: the register stays the approved and edited rows of deck_candidates and everything but the analyst's inputs is computed on read, so nothing goes stale and no collection is added; metrics are read from the stored results only (ARR at a past month is the engine's own MRR × 12); the register holds no deck text; rank follows the decision of 2026-10-07 (misses by normalised gap, beats as 0, untested rows after); the fixture runs on sample_data/ so every gap is known by construction.
+Slow or unclear: the method's A9 and the TestCo audit are not in the repo, so the baseline follows the request's wording and the fixture uses sample_data/; prose had to fit 600 words, so period and unit rules moved into tables.
+Process change: keep the method document (or the sections a spec cites, such as A9) in docs/, so a spec can quote it instead of the request.
