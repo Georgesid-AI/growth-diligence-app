@@ -1392,6 +1392,35 @@ def test_release_manifest_matches_the_prompt_files():
         "release in prompts/RELEASE.md, then run `python -m app.llm.prompt_store --record`"
     )
     assert re.fullmatch(r"r\d+", prompt_store.release())
+    versions = prompt_store.recorded_versions()
+    assert {n: prompt_store.version_of(n) for n in on_disk} == versions, \
+        "RELEASE.md records each prompt's version beside its hash, so a text change under an old version shows"
+
+
+def _prompt_dir(tmp_path, monkeypatch, text, manifest_lines):
+    monkeypatch.setattr(prompt_store, "PROMPTS_DIR", tmp_path)
+    (tmp_path / "demo.md").write_text(text, encoding="utf-8")
+    (tmp_path / "RELEASE.md").write_text("<!-- release: r8 -->\n" + "".join(l + "\n" for l in manifest_lines),
+                                         encoding="utf-8")
+
+
+def test_a_prompt_text_change_under_its_old_version_is_refused_by_record(tmp_path, monkeypatch):
+    """Build rule (architecture note of 2026-10-07): any prompt text change bumps the prompt version, live or not.
+    A version names one text, so readings stored under it stay comparable; re-recording a changed text under the
+    old version (as v5's hash was re-recorded under r8 on 2026-10-06) is refused."""
+    _prompt_dir(tmp_path, monkeypatch, "<!-- version: v1 -->\nfirst text\n", [])
+    prompt_store._record()
+    recorded = prompt_store.release_manifest()["demo"]
+    assert prompt_store.recorded_versions() == {"demo": "v1"} and recorded == prompt_store.file_hash("demo")
+    (tmp_path / "demo.md").write_text("<!-- version: v1 -->\nchanged text\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="demo.md changed but is still v1: bump its version"):
+        prompt_store._record()
+    assert prompt_store.release_manifest()["demo"] == recorded, "a refused record changes nothing"
+    (tmp_path / "demo.md").write_text("<!-- version: v2 -->\nchanged text\n", encoding="utf-8")
+    prompt_store._record()
+    assert prompt_store.recorded_versions() == {"demo": "v2"}
+    assert prompt_store.release_manifest()["demo"] == prompt_store.file_hash("demo")
+    assert prompt_store.release() == "r8", "the stamp is the release's to bump, not --record's"
 
 
 def test_release_stamp_is_part_of_the_cache_key():
