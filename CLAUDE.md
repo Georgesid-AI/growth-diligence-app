@@ -1,14 +1,11 @@
 # CLAUDE.md — working rules
 
 ## Architecture
-1. Architecture is frozen. Never change it. Only execution steps may change.
-2. Do not challenge the frozen architecture when questioning requirements. Only
-   execution steps are open.
+1. The architecture (docs/architecture.md) is frozen. Never change it; only execution steps may
+   change. If a fix needs an architecture change, stop and report it as an "Architecture note".
 3. Do not confuse rigor with dumb. Evidence tiers, citations and source references
-   are the core of the audit method. Challenge how they are built, never whether
-   they exist.
-9. If a fix needs an architecture change, stop and report it as an
-   "Architecture note". Do not change it.
+   (docs/architecture.md) are the core of the audit method. Challenge how they are built, never
+   whether they exist.
 16. The gateway may read selected deck structures (tables, charts with data labels, KPI
     panels, roadmaps/timelines, hiring tables, unit-economics boxes, use-of-funds
     tables) and spreadsheet header rows with, per column, either up to 3 sample values
@@ -18,7 +15,7 @@
     The deck parser has no direct link to the gateway.
 17. Logs and MongoDB store model JSON output (values with cell references), prompt
     version, model version, content hash, token counts and cost. Never deck text sent to
-    the model. Delete audit removes model outputs.
+    the model. Delete audit removes model outputs. Rules 16–18: see docs/architecture.md.
 18. Model output never becomes Verified on its own. Python must match every value to a
     source cell. Unmatched values are shown as 'AI suggestion, not verified' or dropped.
 
@@ -38,11 +35,11 @@
 
 ## Finishing a task
 7. A task is finished when the change is committed and pushed. Then create
-   docs/session-log/YYYY-MM-DD-<branch>.md with max 5 lines: date, what was
-   deleted, what was optimized, what was slow or unclear, one process change to
-   propose. If that file already exists, add a number to the name
-   (YYYY-MM-DD-<branch>-2.md, ...). Then commit and push the log. Pushing the log
-   itself does not count as a finished task. Never log the log.
+   docs/session-log/YYYY-MM-DD-<branch>.md (-2, -3, ... if the name exists) with five lines: date
+   and branch; deleted; decided (what and why, optimizations included); slow or unclear; one
+   process change to propose. Run figures go to docs/test-runs or the PR, never the log. Commit
+   and push the log. Neither the log nor a spec wording edit applied as given is a task: the
+   edit rides the next commit on its branch and that task's log.
 8. Never write client names or data into the log.
 10. Log only in docs/session-log/. Never write to, edit or delete memory/PRD.md.
 11. Before reporting, fix any leftover risk you find that is inside the task's
@@ -51,11 +48,9 @@
     list it under "Decisions for you" and do not build it.
 
 ## Rule: which decisions to bring to George
-19. Decide engineering questions yourself and record them in the session log as
-    "Decided: X, because Y". This covers rule wording, limits measured from data, test
-    design, code structure, commit order, naming, and anything cheap to change later.
-
-    Stop and ask George only for these three kinds of decision:
+19. Decide engineering questions yourself: rule wording, limits measured from data, test design,
+    code structure, commit order, naming, and anything cheap to change later. Stop and ask
+    George only for these three kinds of decision:
     1. What counts as a metric, and when a figure may be labelled Verified. Examples:
        whether followers are users, whether a price is a metric, whether a range is one
        figure.
