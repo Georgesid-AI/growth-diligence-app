@@ -1,0 +1,17 @@
+{
+  "note": "Table 2a of docs/specs/claim-matching.md: each metric and the unit its figure is measured in. Pinned to backend/app/claim_matching.py METRICS by backend/tests/test_claim_register_api.py.",
+  "metrics": {
+    "Revenue": "currency",
+    "ARR": "currency",
+    "MRR": "currency",
+    "Customer count": "count",
+    "New MRR": "currency",
+    "NRR (12-month)": "%",
+    "Gross revenue churn": "%",
+    "ACV": "currency",
+    "Median sales cycle": "days",
+    "Win rate": "%",
+    "Gross margin": "%",
+    "CAC payback": "months"
+  }
+}
