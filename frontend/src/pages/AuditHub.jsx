@@ -27,6 +27,7 @@ export default function AuditHub() {
   const [audits, setAudits] = useState(null);
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [explainerOpen, setExplainerOpen] = useState(false);
   const blank = { company_name: "", reporting_currency: "EUR", target_arr: "", target_date: "", as_of_month: "",
     fiscal_year_end: DEFAULT_FISCAL_YEAR_END, client_name: "", engagement_reference: "", structure_reading_consent: true };
   const [form, setForm] = useState(blank);
@@ -87,14 +88,17 @@ export default function AuditHub() {
               <Plus className="h-4 w-4" /> New Audit
             </Button>
           </DialogTrigger>
-          <DialogContent className="bg-white border-[#E5E7EB] text-slate-900">
-            <DialogHeader>
+          <DialogContent
+            data-testid="audit-dialog"
+            className="bg-white border-[#E5E7EB] text-slate-900 flex flex-col max-h-[100dvh] overflow-hidden"
+          >
+            <DialogHeader className="shrink-0">
               <DialogTitle className="font-heading">Create Growth Audit</DialogTitle>
               <DialogDescription className="text-slate-600">
                 Set the company, reporting currency and plan target. You'll add data next.
               </DialogDescription>
             </DialogHeader>
-            <div className="space-y-4 py-2">
+            <div data-testid="audit-dialog-body" className="space-y-4 py-2 flex-1 min-h-0 overflow-y-auto">
               <div>
                 <Label className="text-slate-700">Company name</Label>
                 <Input
@@ -186,7 +190,6 @@ export default function AuditHub() {
                 />
               </div>
               <div className="rounded-md border border-[#E5E7EB] bg-slate-50 p-3 space-y-2" data-testid="audit-consent">
-                <p className="text-xs text-slate-600">{CONSENT_EXPLAINER}</p>
                 <label className="flex items-start gap-2 text-xs text-slate-800 cursor-pointer">
                   <Checkbox
                     data-testid="audit-consent-checkbox"
@@ -196,9 +199,19 @@ export default function AuditHub() {
                   />
                   <span>{CONSENT_LABEL}</span>
                 </label>
+                <button
+                  type="button"
+                  data-testid="audit-consent-toggle"
+                  aria-expanded={explainerOpen}
+                  onClick={() => setExplainerOpen((v) => !v)}
+                  className="text-xs text-sky-700 underline underline-offset-2"
+                >What is sent</button>
+                {explainerOpen && (
+                  <p data-testid="audit-consent-explainer" className="text-xs text-slate-600">{CONSENT_EXPLAINER}</p>
+                )}
               </div>
             </div>
-            <DialogFooter>
+            <DialogFooter data-testid="audit-dialog-footer" className="shrink-0">
               <Button data-testid="submit-audit-button" onClick={submit} disabled={saving} className="bg-sky-600 hover:bg-sky-500 gap-2">
                 {saving && <Loader2 className="h-4 w-4 animate-spin" />} Create & Add Data
               </Button>
