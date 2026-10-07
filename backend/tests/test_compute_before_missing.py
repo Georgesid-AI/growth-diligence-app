@@ -2,15 +2,12 @@
 tested for the columns the analysis needs. If one can answer it, the figure is computed
 from that file and management is asked to explain it, not to supply it."""
 import json
-import os
 import sys
 from pathlib import Path
 
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
-os.environ.setdefault("DB_NAME", "test_compute_before_missing")
 
 import growth_engine as ge  # noqa: E402
 import server  # noqa: E402

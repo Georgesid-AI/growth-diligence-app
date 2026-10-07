@@ -1,7 +1,6 @@
 """Unexpected endpoint errors are logged (with credentials masked) and reach the browser as a
 readable 500 that carries CORS headers - not as a bare network failure."""
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -14,8 +13,6 @@ pytest.importorskip("pandas")
 BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 sys.path.insert(0, str(BACKEND / "tests"))
-os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
-os.environ.setdefault("DB_NAME", "endpoint_errors_test")
 
 from fastapi.testclient import TestClient  # noqa: E402
 

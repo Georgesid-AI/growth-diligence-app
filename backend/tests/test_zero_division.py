@@ -6,7 +6,6 @@ carries the error type, run id and engine step only. Stub only - no real API cal
 import asyncio
 import json
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -18,8 +17,6 @@ pytest.importorskip("motor")
 BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 sys.path.insert(0, str(BACKEND / "tests"))
-os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
-os.environ.setdefault("DB_NAME", "test_zero_division")
 
 import demo_data  # noqa: E402
 import growth_engine as ge  # noqa: E402

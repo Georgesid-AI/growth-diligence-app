@@ -1,6 +1,5 @@
 """The xlsx export keeps cells numeric and formats them with Excel number formats."""
 import io
-import os
 
 import pytest
 
@@ -9,8 +8,6 @@ openpyxl = pytest.importorskip("openpyxl")
 pytest.importorskip("fastapi")
 pytest.importorskip("motor")
 
-os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
-os.environ.setdefault("DB_NAME", "export_test")
 
 import server  # noqa: E402
 
