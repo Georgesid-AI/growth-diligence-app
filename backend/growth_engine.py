@@ -694,6 +694,94 @@ def compute_mrr_series(mrr: pd.DataFrame, seg_map: dict):
     return {"months": [_period_str(m) for m in cols], "segments": segments, "data": data}
 
 
+def compute_revenue_series(rev: pd.DataFrame, billing_terms: dict, fx: dict, as_of=None):
+    """Monthly revenue in the reporting currency, total and by segment (claim-matching.md table 2a).
+
+    Recurring lines are spread over their service months exactly as for MRR; one-off lines count in
+    their invoice month. A row the MRR matrix leaves out (no customer, no amount, no exchange rate, no
+    usable date) is left out here too, so revenue and MRR describe the same lines. The series ends at
+    `as_of`, like every current figure. `rows` lists the rows that fed it, for the source reference.
+    """
+    empty = {"months": [], "segments": [], "data": [], "rows": []}
+    if rev is None or rev.empty:
+        return empty
+    has_service = "service_start" in rev.columns and "service_end" in rev.columns
+    has_rtype = "revenue_type" in rev.columns
+    has_seg = "segment" in rev.columns
+    records, seg_map, one_off_seg, rows = [], {}, {}, []
+    for _, row in rev.iterrows():
+        cust = row.get("customer_id")
+        if cust is None or (isinstance(cust, float) and pd.isna(cust)) or str(cust).strip() == "":
+            continue
+        cust = str(cust).strip()
+        amount = row.get("amount")
+        currency = str(row.get("currency") or "").strip().upper()
+        if amount is None or pd.isna(amount) or currency not in fx:
+            continue
+        amount = float(amount) * float(fx[currency])
+        one_off = has_rtype and str(row.get("revenue_type") or "").strip().lower() in ONE_OFF_ALIASES
+        inv_m = _month_of(row.get("invoice_date"))
+        if one_off:
+            months = [inv_m] if inv_m is not None else None
+        else:
+            months = None
+            if has_service:
+                sm, em = _month_of(row.get("service_start")), _month_of(row.get("service_end"))
+                if sm is not None and em is not None and em >= sm:
+                    months = list(pd.period_range(sm, em, freq="M"))
+            if months is None and inv_m is not None:
+                n = TERM_MONTHS.get(str(billing_terms.get(cust, "monthly")).lower(), 1)
+                months = list(pd.period_range(inv_m, periods=n, freq="M"))
+        if not months:
+            continue
+        for m in months:
+            records.append((cust, m, amount / len(months)))
+        if row.get("_row") is not None and not pd.isna(row.get("_row")):
+            rows.append(int(row["_row"]))
+        seg = row.get("segment") if has_seg else None
+        if seg is not None and not (isinstance(seg, float) and pd.isna(seg)) and str(seg).strip():
+            (one_off_seg if one_off else seg_map).setdefault(cust, str(seg).strip())
+    if not records:
+        return empty
+    for cust, seg in one_off_seg.items():       # a customer with one-off lines only takes the segment of its first
+        seg_map.setdefault(cust, seg)
+    df = pd.DataFrame(records, columns=["customer_id", "month", "amount"])
+    last = min(df["month"].max(), as_of) if as_of is not None else df["month"].max()
+    first = df["month"].min()
+    if last < first:
+        return empty
+    months = pd.period_range(first, last, freq="M")
+    by_cust = df.groupby(["customer_id", "month"])["amount"].sum().unstack(fill_value=0.0).reindex(columns=months, fill_value=0.0)
+    return {**_monthly_by_segment(by_cust, seg_map), "rows": sorted(set(rows))}
+
+
+def _monthly_by_segment(frame: pd.DataFrame, seg_map: dict, count: bool = False) -> dict:
+    """customer x month -> {"months", "segments", "data"}: the month's sum (or number of customers above 0),
+    total and per segment, with an "Unsegmented" bucket when some customers have no segment."""
+    segments = sorted(set(seg_map.values()))
+    unmapped = [c for c in frame.index if c not in seg_map]
+    groups = {s: [c for c in frame.index if seg_map.get(c) == s] for s in segments}
+    if unmapped and segments:
+        groups["Unsegmented"] = unmapped
+    data = []
+    for m in frame.columns:
+        col = frame[m]
+        rec = {"month": _period_str(m), "total": int((col > 0).sum()) if count else _round(float(col.sum()))}
+        for s, custs in groups.items():
+            part = col.loc[custs]
+            rec[s] = int((part > 0).sum()) if count else _round(float(part.sum()))
+        data.append(rec)
+    return {"months": [_period_str(m) for m in frame.columns], "segments": list(groups), "data": data}
+
+
+def compute_customers_series(mrr: pd.DataFrame, seg_map: dict):
+    """Customers with MRR above 0 in each month, total and by segment: the engine's current-customer rule
+    (as in compute_acv_path), month by month (claim-matching.md table 2a)."""
+    if mrr.empty:
+        return {"months": [], "segments": [], "data": []}
+    return _monthly_by_segment(mrr, seg_map, count=True)
+
+
 def compute_cohort_retention(mrr: pd.DataFrame, first_month: dict):
     """Rows = start cohort (quarter), cols = months since start, value = % starting MRR retained.
 
@@ -1555,6 +1643,17 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
         results["anomalies"]["date_order_from_data"] = date_order_notes
     results["mrr_series"] = guarded("MRR by segment", rev_src.get("file"), {"months": [], "segments": [], "data": []},
                                     compute_mrr_series, mrr, seg_map)
+    # Two monthly series that only the claim-matching module reads: never in a narrative payload.
+    revenue_series = guarded("Revenue by month", rev_src.get("file"), {"months": [], "segments": [], "data": [], "rows": []},
+                             compute_revenue_series, rev, billing_terms, fx, as_of)
+    rows = revenue_series.pop("rows", [])
+    revenue_series["source"] = src(rev_src, rows, "Revenue = recurring lines spread over their service months as for MRR; "
+                                                  "one-off lines in their invoice month")
+    results["revenue_series"] = revenue_series
+    customers_series = guarded("Customers by month", rev_src.get("file"), {"months": [], "segments": [], "data": []},
+                               compute_customers_series, mrr, seg_map)
+    customers_series["source"] = src(rev_src, contrib_rows, "Customers = customers with MRR above 0 in the month")
+    results["customers_series"] = customers_series
     results["cohort_retention"] = guarded("Cohort retention", rev_src.get("file"), {"cohorts": [], "max_offset": 0, "data": []},
                                           compute_cohort_retention, mrr, first_month)
     results["missing_data"], results["questions_for_management"] = resolve_missing(

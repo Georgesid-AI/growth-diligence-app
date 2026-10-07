@@ -259,7 +259,8 @@ HEADER_SENTINEL = "Jane Doe"    # every mapped column header is renamed to carry
 # Results keys the engine writes that never leave the server. A key that is in
 # neither this set nor gateway.OUTBOUND_FIELDS fails test_every_results_key_is_
 # allowlisted_or_declared_server_only: decide where it belongs when you add it.
-SERVER_ONLY_TOP_LEVEL = frozenset({"anomalies", "mrr_series", "new_mrr_by_quarter"})
+SERVER_ONLY_TOP_LEVEL = frozenset({"anomalies", "mrr_series", "new_mrr_by_quarter",
+                                   "revenue_series", "customers_series"})   # claim-matching.md table 2a
 SERVER_ONLY_FIELDS = frozenset({
     "file", "sheet", "columns", "rows", "row_numbers", "unlocked_by",
     "values",                       # founder_involved_excluded.values are raw cells (cohort `data.values` is allowed by parent)
