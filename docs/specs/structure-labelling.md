@@ -39,6 +39,9 @@ the model read as the figure's headers. On the test decks (measured on `89ba331`
   a header is read left of the item only, so "Q3" of the 2022 Q3 box, directly right of "layer-1 to layer-2" but
   another bullet's date, stays out.
 - buffer p6 is one box: every item cites its top line only, unchanged.
+Since issue #55 "layer-1 to layer-2" is joined into its bullet ("Majority of business logic migrated from layer-1 to
+layer-2", r8c2). Its two figures (now i3 and i4) cite only "2022", directly left of the bullet on its grid row ("Q2"
+is on the next row), so unpaired they rebuild 2022; paired, they take the line's position date, 2022-Q2 (§2).
 A neighbour's scale in a roadmap follows the same rule, as in a KPI panel: a date box holds no scale word, so a
 roadmap figure takes no scale from another box. No roadmap value on the test decks changes. "Date rebuilt from cell"
 on the test decks goes from 27 to 25 (tea p11: 21 to 19 lines).
@@ -72,8 +75,9 @@ metric and are Verified. The AI-row dedupe (`structures.value_match`) returns ex
 the other non-empty cells). The model returns pairs (line id, date id) with a category: `launch`, `feature`,
 `expansion`, `partnership`, `hiring`, `break_even`, `funding`, `certification` or `other`. Claim types: `hiring` →
 people, `break_even` → ebitda, `funding` → other (type Other, §4), the rest → product. Parser rules are unchanged,
-except one (issue #49): a paragraph wrapped over the lines of a roadmap text box is one cell (deck-parser.md §7), so it
-is one text line and gives at most one milestone row (moz p2: 9 rows, not 40).
+except two: a paragraph wrapped over the lines of a roadmap text box is one cell (issue #49), and so is a bullet
+wrapped over two lines (issue #55; deck-parser.md §7). Each is one text line and gives at most one milestone row (moz
+p2: 9 rows, not 40; tea p11: 27 text lines, not 30).
 
 Label from (issue #49): a roadmap row takes "Label from" only from a cell of its own text box in its grid row
 (`candidate_from_item`), never from a cell of another box. The cells beside it in its grid row belong to other boxes,
@@ -98,9 +102,13 @@ are unchanged.
   same period from its own period cells.
 - A line the model leaves unpaired is no milestone; its figures are dated by §4 as before.
 On the test decks: buffer p6's 6 lines take the date line below them, as its recorded pairs already do (unchanged);
-moz p2's 9 paragraphs take their date box (1981 to July 2011); 21 of tea p11's 22 bullet lines take the quarter of
+moz p2's 9 paragraphs take their date box (1981 to July 2011); tea p11's 19 bullet lines take the quarter or half of
 their date box ("Gluon wallet" 2021-Q2, "TEA Party dApp released" 2022-Q1) where the model can pair them with the year
-line only ("2021"), and "Mainnet starts" keeps the model's date. tea p11's 5 figures ("Preview 1", "epoch 9",
+line only ("2021"), "Mainnet starts" 2023-H1 ("2023" / "Q1-Q2", issue #55). Before issue #55 tea p11 had 22 bullet
+lines, 21 with a position date, and "Mainnet starts" kept the model's date. With the recorded replies (`--fake`) the
+roadmap line of §6 goes from "roadmap lines: 45, dated by position: 44, …, date rebuilt from cell: 25" to "42, 42, …,
+24": two wrapped bullets rebuilt a period on each of their lines and now on one, and "TEA framework dev guide
+released" now shares a grid row with the "Q2" of its own date box and rebuilds 2022-Q2, its position date. tea p11's 5 figures ("Preview 1", "epoch 9",
 "Layer-1", "layer-1 to layer-2") can thus be Verified when the model labels them a claim type and pairs their line.
 
 Adjacent date line: a text line takes the date line directly above or below it in the same text box. A line with a
@@ -214,7 +222,9 @@ slide); in a roadmap (issue #56) no header from a text box of another box (moz p
 another box). Prompt v5 (issues #45, #47): every new claim type and tie-break is named; the recorded replies give
 moz p20 "~$900", "~9 Months", "~100" and "~$100" and front-b p15 "$7m left", "18 months" and "Profitable in 10
 months" their new types, Verified. Reply: bad, duplicate or missing ids, and bad pairs. Verifier: periods, a
-pair-dated figure, the adjacent date line (one above or below counts; one each side takes the timeline's direction, also under a title line), flags. Position
+pair-dated figure, the adjacent date line (one above or below counts; one each side takes the timeline's direction, also under a title line), flags. Wrapped
+bullets (issue #55, tea p11): each wrapped bullet one cell, "from Hashkey" no cell, a line ending on a figure ends on no
+wrap word, "Q1-Q2" under a year the first half ("Mainnet starts" 2023-H1), buffer p6 and moz p2 unchanged. Position
 dates (issue #47): each line's date box on moz p2 and tea p11, tea p11's lines dated per quarter, a paired line
 taking its position date over the model's (milestone and figure, Verified), and the model's date standing where no
 position date exists; buffer p6 unchanged. Roadmaps
