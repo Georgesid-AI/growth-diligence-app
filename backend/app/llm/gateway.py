@@ -148,11 +148,12 @@ class GatewayError(Exception):
     HTTP status and error type (codes only, see _provider_error_type)."""
 
     def __init__(self, reason: str, detail: str = "", status: Optional[int] = None,
-                 error_type: Optional[str] = None):
+                 error_type: Optional[str] = None, check: Optional[str] = None):
         self.reason = reason
         self.detail = detail
         self.status = status
         self.error_type = error_type
+        self.check = check              # parse_failed on a structure reply: one of PARSE_CHECKS
         super().__init__(f"{reason}: {detail}" if detail else reason)
 
 
@@ -1316,6 +1317,20 @@ def _cited_cells(text: str, structure_type: str) -> set:
     return {structure_redact.cell_id(c) for c in cells}
 
 
+# The check a structure reply failed, named last on its "structure not read" line (llm-structure-reading.md section 9,
+# issue #64): a closed word, never the reply, the check's message or cell text.
+PARSE_CHECKS = ("schema", "metric_list", "item_count", "other")
+
+
+def _schema_check(exc: Exception) -> str:
+    """"metric_list" when the schema fails on a metric outside the list and nothing else, else "schema". Read from
+    the error locations and types only, never from the input they quote."""
+    errors = exc.errors() if hasattr(exc, "errors") else []
+    if errors and all(e["type"] == "literal_error" and e["loc"][-1:] == ("metric",) for e in errors):
+        return "metric_list"
+    return "schema"
+
+
 def parse_structure_reply(reply: str, structure_type: str, text: str):
     """The validated reply for the type Python sent, or raise GatewayError("parse_failed"): a labelling reply for
     a deck structure (parse_labelling_reply), the column-mapping reply for a column mapping."""
@@ -1325,15 +1340,17 @@ def parse_structure_reply(reply: str, structure_type: str, text: str):
         data = json.loads((reply or "").strip())
         parsed = StructureReply.model_validate(data)
     except Exception as exc:
-        raise GatewayError("parse_failed", f"reply did not match the schema: {type(exc).__name__}")
+        raise GatewayError("parse_failed", f"reply did not match the schema: {type(exc).__name__}",
+                           check=_schema_check(exc))
     if parsed.type != "column_mapping":
-        raise GatewayError("parse_failed", "type changed between a deck structure and a column mapping")
+        raise GatewayError("parse_failed", "type changed between a deck structure and a column mapping", check="other")
     if any(item.metric not in MAPPING_FIELDS for item in parsed.items):
-        raise GatewayError("parse_failed", "a metric that does not belong to this kind of structure")
+        raise GatewayError("parse_failed", "a metric that does not belong to this kind of structure",
+                           check="metric_list")
     known = _cited_cells(text, structure_type)
     for item in parsed.items:
         if item.value_cell not in known or any(c not in known for c in item.period_cells):
-            raise GatewayError("parse_failed", "reply cites a cell that is not in the structure")
+            raise GatewayError("parse_failed", "reply cites a cell that is not in the structure", check="other")
     return parsed
 
 
@@ -1346,21 +1363,23 @@ def parse_labelling_reply(reply: str, structure_type: str, text: str) -> Labelli
         data = json.loads((reply or "").strip())
         parsed = LabellingReply.model_validate(data)
     except Exception as exc:
-        raise GatewayError("parse_failed", f"reply did not match the schema: {type(exc).__name__}")
+        raise GatewayError("parse_failed", f"reply did not match the schema: {type(exc).__name__}",
+                           check=_schema_check(exc))
     listed = structure_redact.parse_item_lines(structure_redact.split_items(text)[1] or []) or \
         {"items": [], "dates": [], "lines": []}
     labelled = [label.item for label in parsed.labels]
     if len(set(labelled)) != len(labelled):
-        raise GatewayError("parse_failed", "an item is labelled twice")
+        raise GatewayError("parse_failed", "an item is labelled twice", check="item_count")
     if set(labelled) != {item["id"] for item in listed["items"]}:
-        raise GatewayError("parse_failed", "the labels name an item that was not listed or leave one out")
+        raise GatewayError("parse_failed", "the labels name an item that was not listed or leave one out",
+                           check="item_count")
     if parsed.pairs and structure_type != "roadmap":
-        raise GatewayError("parse_failed", "pairs on a structure not sent as a roadmap")
+        raise GatewayError("parse_failed", "pairs on a structure not sent as a roadmap", check="other")
     lines, dates = {t["id"] for t in listed["lines"]}, {d["id"] for d in listed["dates"]}
     if any(pair.line not in lines or pair.date not in dates for pair in parsed.pairs):
-        raise GatewayError("parse_failed", "a pair that is not one listed line and one listed date")
+        raise GatewayError("parse_failed", "a pair that is not one listed line and one listed date", check="other")
     if len({pair.line for pair in parsed.pairs}) != len(parsed.pairs):
-        raise GatewayError("parse_failed", "a line paired twice")
+        raise GatewayError("parse_failed", "a line paired twice", check="other")
     return parsed
 
 
@@ -1527,16 +1546,18 @@ async def read_structure(
         try:
             parsed, in_tok, out_tok = await _structure_call(adapter, prompt, user_payload, structure_type, text, sleep)
         except GatewayError as exc:
-            # Codes only: the reason, the HTTP status and the provider's error type; never the message.
+            # Codes only: the reason, the HTTP status, the provider's error type and the check a reply failed (issue
+            # #64); never the message.
             billed, code, status, kind = getattr(exc, "billed", (0, 0)), exc.reason, exc.status, exc.error_type
+            check = exc.check if exc.check in PARSE_CHECKS else "-"
             cost = estimate_cost_usd(STRUCTURE_MODEL, *billed)
             await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version,
                            model=STRUCTURE_MODEL, input_tokens=billed[0], output_tokens=billed[1],
                            estimated_cost_usd=cost, cache_hit=False, status=code, content_hash=digest,
                            deck_id=deck_id, http_status=status, error_type=kind)
             logger.warning("structure not read: run_id=%s step=%s hash=%s tokens=%d/%d cost=%.6f reason=%s "
-                           "status=%s type=%s", audit_id, STRUCTURE_STEP, digest, billed[0], billed[1], cost, code,
-                           status or "-", kind or "-")
+                           "status=%s type=%s check=%s", audit_id, STRUCTURE_STEP, digest, billed[0], billed[1], cost,
+                           code, status or "-", kind or "-", check)
             return _structure_result("not_read", structure_type, NOT_READ, input_tokens=billed[0],
                                      output_tokens=billed[1], estimated_cost_usd=cost, **base)
         cost = estimate_cost_usd(STRUCTURE_MODEL, in_tok, out_tok)
