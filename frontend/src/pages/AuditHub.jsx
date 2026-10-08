@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { Plus, Trash2, ArrowRight, Building2, Loader2 } from "lucide-react";
@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { listAudits, createAudit, deleteAudit, getUsageTotals } from "@/lib/api";
-import { S18_TITLE, S18_BODY, S18_MISMATCH, S19_USAGE_TOTALS } from "@/lib/chatUpload";
+import { S18_TITLE, S18_BODY, S18_MISMATCH, S19_USAGE_TOTALS, S19_USAGE_EXPLAINER } from "@/lib/chatUpload";
 import { fmtCurrency } from "@/lib/format";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -330,16 +330,22 @@ function DeleteAudit({ audit, onDelete }) {
   );
 }
 
+const EVIDENCE_COUNTS = [["Verified", "Verified"], ["Unverified", "Unverified"], ["Unsupported", "Unsupported"], ["Contradicted", "Contradicted"], ["missing", "Metrics missing"]];
 const pairs = (o) => Object.entries(o || {}).map(([k, v]) => `${k} ${v}`).join(" · ") || "none";
 
 /** S19: usage totals across audits, folded. Counts and codes only; no per-audit rows. */
 function UsageTotals() {
   const [totals, setTotals] = useState(null);
   const [open, setOpen] = useState(false);
-  useEffect(() => { if (open && !totals) getUsageTotals().then(setTotals).catch(() => setTotals(false)); }, [open]); // eslint-disable-line
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+  useEffect(() => {
+    if (open && !totals) getUsageTotals().then((t) => alive.current && setTotals(t)).catch(() => alive.current && setTotals(false));
+  }, [open]); // eslint-disable-line
   return (
     <details data-testid="usage-totals" className="mt-10 border border-[#E5E7EB] rounded-lg bg-white" onToggle={(e) => setOpen(e.currentTarget.open)}>
       <summary className="px-5 py-3 cursor-pointer text-sm font-medium text-slate-800">{S19_USAGE_TOTALS}</summary>
+      <p data-testid="usage-explainer" className="px-5 pb-3 text-xs text-slate-500">{S19_USAGE_EXPLAINER}</p>
       {open && totals === false && <p className="px-5 pb-4 text-xs text-slate-500">Not available.</p>}
       {open && totals && (
         <dl className="px-5 pb-5 grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 text-xs text-slate-700">
@@ -350,10 +356,10 @@ function UsageTotals() {
           <Row label="Compute runs" value={String(totals.steps?.compute?.runs ?? 0)} />
           <Row label="Compute failures" value={pairs(totals.steps?.compute?.failures)} />
           <Row label="AI mapping calls by status" value={pairs(totals.steps?.mapping_ai)} />
-          <Row label="Evidence labels" value={`${pairs(totals.evidence_labels)} · metrics missing ${totals.metrics_missing ?? 0}`} />
+          <Row label="Evidence labels" value={EVIDENCE_COUNTS.map(([k, label]) => `${label} ${k === "missing" ? totals.metrics_missing ?? 0 : totals.evidence_labels?.[k] ?? 0}`).join(" · ")} />
           <Row label="Analyst changes" value={String(totals.analyst_changes ?? 0)} />
           <Row label="Median days from first upload to export" value={totals.median_days_to_export == null ? "—" : String(totals.median_days_to_export)} />
-          <Row label="Tokens and cost by step" value={Object.entries(totals.tokens_and_cost_by_step || {}).map(([k, v]) => `${k} ${v.input_tokens + v.output_tokens} tokens · $${v.cost_usd}`).join(" · ") || "none"} />
+          <Row label="Tokens and cost by step" value={Object.entries(totals.tokens_and_cost_by_step || {}).map(([k, v]) => `${k} ${v.input_tokens + v.output_tokens} tokens · $${Number(v.cost_usd).toFixed(2)}`).join(" · ") || "none"} />
           <div className="md:col-span-2" data-testid="usage-notes">
             <dt className="text-slate-500">“Other” notes, newest first</dt>
             <dd><ul className="mt-1 space-y-0.5">{(totals.other_notes || []).map((n, i) => <li key={i}>{n.note}</li>)}</ul></dd>

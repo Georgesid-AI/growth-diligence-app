@@ -211,7 +211,7 @@ deck_text, column_mappings (every saved version) and the rest. There is no mappi
   or rejected, plus register metric or segment overrides).
 - `GET /api/usage/totals` returns sums across audits, the median time from first upload to first export, and the
   50 newest "Other" notes across audits. It has no per-audit rows, names or ids. AuditHub shows the totals as a
-  folded "Usage totals" section (S19).
+  folded "Usage totals (all audits)" section (S19).
 - Delete audit removes the counters with the audit (§6.3).
 
 ## 8. Privacy
@@ -298,7 +298,7 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 | S17 | narrative failed | Today's text, unchanged: "Narrative could not be generated. The computed metrics below are unaffected — they come from the calculation engine, not the narrative." |
 | S18 | delete dialog | Title: Delete {company name}? Body: Type **{company name}** to delete this audit with its files, mappings and results. This cannot be undone. (the name in bold, in both) |
 | S18b | delete dialog | Name does not match (under the box, after about a second without typing or when the box loses focus, while the trimmed text is not empty and is not the name exactly) |
-| S19 | audit list | Usage totals (folded): files uploaded and refused by type; columns by rules, saved, AI, corrected (by reason); compute runs and failures; evidence labels; analyst changes; median days from first upload to export; tokens and cost by step; "Other" notes, newest first (at most 50). |
+| S19 | audit list | Title: Usage totals (all audits) (folded). Explainer under the title: "Totals across all audits on this server since counting began. Counts and costs only — no file names, figures or company names. Kept to improve the app." Content: files uploaded and refused by type; columns by rules, saved, AI, corrected (by reason); compute runs and failures; evidence labels as five named counts in a row, Verified · Unverified · Unsupported · Contradicted · Metrics missing; analyst changes; median days from first upload to export; tokens and cost by step (cost to 2 decimals); "Other" notes, newest first (at most 50). |
 | S20 | "Other" box placeholder | Why? Up to 60 characters; no file names, figures or names. |
 | S21 | "Other" note refused | Leave out file names, figures and cell values: this note is kept with the usage counts. |
 | S22 | Diagnostics section | Revenue reconciliation · columns: Month · Revenue file · P&L · Gap · Gap % · last row: Window total |
@@ -319,6 +319,9 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 | — | Follow-up the same day | Approved: the reconciliation section on Diagnostics, with the banner link; the S19 extension; S20–S22. Column headers are allowed in "Other" notes; digits, cell text, file names, the company and client names and the engagement reference stay refused; logs still never hold header text or notes (§4.3, §8, §9). S21 reworded to match ("…file names, figures and cell values…"); spec final |
 
 ## 13. Decided (engineering, rule 19)
+- Every background request (the deck AI-reading status, the blockers, the usage totals) stops when the audit is deleted
+  or the page is left: a 404 or any error on such a poll is caught, the poll ends, nothing is shown, and no state is
+  set after unmount. Tested in DeckPanel.test.jsx, Layout.test.jsx and AuditHub.test.jsx.
 - Detection is Python only.
 - An unknown file is held in the browser and nothing is stored.
 - Files are sent one at a time.
