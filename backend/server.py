@@ -249,7 +249,7 @@ def _consent_entry(value: bool) -> dict:
 
 
 class MappingPayload(BaseModel):
-    mapping: dict
+    mapping: Optional[dict] = None          # omitted: the FX rates and billing terms only; the mapping is decided column by column
     fx: dict = Field(default_factory=dict)
     billing_terms: dict = Field(default_factory=dict)
 
@@ -468,6 +468,11 @@ async def _versions(audit_id: str, dtype: str) -> list:
     return sorted(found, key=lambda v: v.get("version") or 0)
 
 
+def _saved_columns(version: dict) -> list:
+    """The columns of a saved version. One saved before versions existed holds only {field: column}."""
+    return version.get("columns") or [{"column": c, "field": f} for f, c in (version.get("mapping") or {}).items() if c]
+
+
 def _fingerprint(states: list) -> list:
     return sorted((s["column"], s.get("field")) for s in states)
 
@@ -476,7 +481,7 @@ async def _write_version(audit_id: str, dtype: str, ds: dict, states: list) -> O
     """Write a mapping version unless the latest one for this file already says the same thing."""
     versions = await _versions(audit_id, dtype)
     same = [v for v in versions if v.get("file_hash") == ds.get("file_hash")]
-    if same and _fingerprint(same[-1].get("columns") or []) == _fingerprint(states):
+    if same and _fingerprint(_saved_columns(same[-1])) == _fingerprint(states):
         return same[-1].get("version")
     number = (versions[-1].get("version") or 0) + 1 if versions else 1
     mapping = cr.mapping_of(dtype, states)
@@ -581,7 +586,7 @@ async def _ingest(audit_id: str, upload: UploadFile, dtype: Optional[str], repla
     if existing and existing.get("file_hash") == digest:
         same = [v for v in versions if v.get("file_hash") == digest]
         if same:        # the latest saved version is applied again: no rules, no model, no clicks
-            states = cr.states_from_saved(chosen, sheet, same[-1]["columns"], scale=False)
+            states = cr.states_from_saved(chosen, sheet, _saved_columns(same[-1]), scale=False)
             existing = {**existing, "columns_state": states, "mapping": cr.mapping_of(chosen, states),
                         "mapping_source": _source_map(states)}
             await db.datasets.update_one({"audit_id": audit_id, "dtype": chosen}, {"$set": {
@@ -595,7 +600,7 @@ async def _ingest(audit_id: str, upload: UploadFile, dtype: Optional[str], repla
     headers = [v for v in versions if v.get("header_key") == key]
     ai_reading = {"status": "rules", "reason": None}
     if same or headers:      # a saved mapping: no rules run for the columns, no model call (section 5)
-        states = cr.states_from_saved(chosen, sheet, (same or headers)[-1]["columns"], scale=not same)
+        states = cr.states_from_saved(chosen, sheet, _saved_columns((same or headers)[-1]), scale=not same)
         ai_reading = {"status": "stored", "reason": None}
     else:
         proposals, open_fields = cr.analyse(chosen, sheet)
@@ -802,6 +807,9 @@ async def save_mapping(audit_id: str, dtype: str, payload: MappingPayload, backg
         raise HTTPException(404, "Dataset not uploaded")
     await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype},
                                  {"$set": {"fx": payload.fx, "billing_terms": payload.billing_terms}})
+    if payload.mapping is None:
+        await _mark_stale_and_maybe_recompute(audit_id)
+        return {"ok": True}
     if ds.get("columns_state") is None:       # stored before the chat upload: the mapping is the analyst's, as before
         await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype}, {"$set": {
             "mapping": payload.mapping, "mapped_at": usage_mod.now(), "mapping_source": {}}})

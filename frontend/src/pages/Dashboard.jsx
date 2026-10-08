@@ -11,7 +11,7 @@ import { Provenance } from "@/components/Provenance";
 import { Gloss } from "@/components/Gloss";
 import { Narrative } from "@/components/Narrative";
 import { NarrativeControl } from "@/components/NarrativeControl";
-import { getAudit, getResults, exportUrl, readNarrative, generateNarrative, getDisclosure, NARRATIVE_TIMEOUT_MS } from "@/lib/api";
+import { getAudit, getResults, exportUrl, readNarrative, generateNarrative, getDisclosure, reportUsage, NARRATIVE_TIMEOUT_MS } from "@/lib/api";
 import { GLOSSARY } from "@/lib/glossary";
 import { SegmentPaths } from "@/components/SegmentPaths";
 import ClaimRegister from "@/components/ClaimRegister";
@@ -45,6 +45,7 @@ export default function Dashboard() {
   const [disclosure, setDisclosure] = useState(null);
 
   useEffect(() => {
+    reportUsage(id, { screen: "dashboard" });
     getAudit(id).then(setAudit).catch(() => {});
     getResults(id)
       .then(setData)

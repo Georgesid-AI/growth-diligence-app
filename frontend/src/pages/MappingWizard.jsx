@@ -1,33 +1,26 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Upload, CheckCircle2, Loader2, FileSpreadsheet, Plus, X, Play, Search } from "lucide-react";
+import { Loader2, Plus, X, Play, Search } from "lucide-react";
 import { Layout } from "@/components/Layout";
 import DeckPanel from "@/components/DeckPanel";
+import UploadChat from "@/components/UploadChat";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { getAudit, getFields, uploadDataset, saveMapping, computeAudit, getRevenueCustomers, updateAudit } from "@/lib/api";
+import { getAudit, saveMapping, computeAudit, getRevenueCustomers, updateAudit, reportUsage } from "@/lib/api";
 import { asOfInputValue, MONTHS, DEFAULT_FISCAL_YEAR_END } from "@/lib/auditForm";
-import { AI_SUGGESTION_LABEL, STORED_MAPPING_LABEL } from "@/lib/deckClaims";
-
-const DTYPES = [
-  { key: "revenue", label: "Revenue Lines", desc: "Recurring & one-off invoices — the basis for MRR/ARR, NRR and churn.", required: true },
-  { key: "crm", label: "CRM Deals", desc: "Pipeline for sales cycle and win rate.", required: false },
-  { key: "pnl", label: "P&L (monthly)", desc: "S&M expense, revenue and cost of revenue — needed for CAC payback.", required: false },
-];
-const NONE = "__none__";
 
 export default function MappingWizard() {
   const { id } = useParams();
   const nav = useNavigate();
   const [audit, setAudit] = useState(null);
-  const [fields, setFields] = useState(null);
+  const [views, setViews] = useState([]);
   const [computing, setComputing] = useState(false);
   const [asOf, setAsOf] = useState("");
 
   const load = useCallback(() => getAudit(id).then((a) => { setAudit(a); setAsOf(asOfInputValue(a.as_of_month)); }), [id]);
-  useEffect(() => { load(); getFields().then(setFields); }, [load]);
+  useEffect(() => { load(); reportUsage(id, { screen: "mapping" }); }, [load, id]);
 
   // The fiscal year-end stays editable after creation; saving it re-runs period mapping on the server.
   const saveYearEnd = async (month) => {
@@ -38,6 +31,10 @@ export default function MappingWizard() {
       toast.error("Could not save the fiscal year-end");
     }
   };
+
+  // Compute waits for the analyst: no AI or unsure row left, every required field of each file mapped (section 4.3).
+  const hasRevenue = views.some((v) => v.dtype === "revenue");
+  const ready = hasRevenue && views.every((v) => v.pending === 0 && v.missing_required.length === 0);
 
   const runCompute = async () => {
     setComputing(true);
@@ -53,22 +50,15 @@ export default function MappingWizard() {
     }
   };
 
-  if (!audit || !fields) {
+  if (!audit) {
     return <Layout audit={audit}><div className="flex justify-center py-32 text-slate-500"><Loader2 className="h-6 w-6 animate-spin" /></div></Layout>;
   }
-
-  const hasRevenue = !!audit.datasets?.revenue;
 
   return (
     <Layout audit={audit}>
       <div className="flex items-end justify-between mb-6 flex-wrap gap-3">
         <div>
           <h1 className="font-heading text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">Upload & Column Mapping</h1>
-          <p className="text-slate-600 text-sm mt-2 max-w-2xl">
-            Upload <span className="font-mono text-slate-700">.xlsx</span> or <span className="font-mono text-slate-700">.csv</span> files.
-            Confirm every mapping — nothing is guessed. Required fields must be mapped; optional fields left blank move the
-            dependent metric to the diagnostics panel.
-          </p>
         </div>
         <div className="flex items-end gap-3">
           <div>
@@ -93,7 +83,7 @@ export default function MappingWizard() {
               placeholder="last P&L month"
             />
           </div>
-          <Button data-testid="compute-button" onClick={runCompute} disabled={!hasRevenue || computing}
+          <Button data-testid="compute-button" onClick={runCompute} disabled={!ready || computing}
             className="bg-sky-600 hover:bg-sky-500 gap-2">
             {computing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />} Compute Metrics
           </Button>
@@ -101,161 +91,40 @@ export default function MappingWizard() {
       </div>
 
       <div className="space-y-5">
-        {DTYPES.map((dt) => (
-          <DatasetPanel key={dt.key} audit={audit} dtype={dt} fields={fields[dt.key]} onChange={load} />
-        ))}
+        <UploadChat audit={audit} onViews={setViews}
+          extras={(view) => <RevenueSettings key={`${view.file}-${view.uploaded_at}`} audit={audit} view={view} />} />
         <DeckPanel auditId={audit.id} />
       </div>
     </Layout>
   );
 }
 
-function DatasetPanel({ audit, dtype, fields, onChange }) {
-  const existing = audit.datasets?.[dtype.key];
-  const [uploading, setUploading] = useState(false);
-  const [columns, setColumns] = useState(existing?.columns || null);
-  const [mapping, setMapping] = useState(existing?.mapping || {});
-  const [fx, setFx] = useState(existing?.fx || {});
-  const [billingTerms, setBillingTerms] = useState(existing?.billing_terms || {});
-  const [saving, setSaving] = useState(false);
-  // Where each pre-filled field came from: "rules" (column aliases), "ai" (the model's proposal,
-  // not verified) or "stored" (the mapping confirmed earlier for the same headers).
-  const [source, setSource] = useState(existing?.mapping_source || {});
-  const [aiReading, setAiReading] = useState(existing?.ai_reading || null);
+/** What follows a revenue file's mapping table, unchanged: FX rates and billing terms. They save as they change. */
+function RevenueSettings({ audit, view }) {
+  const [fx, setFx] = useState(view.fx || {});
+  const [billingTerms, setBillingTerms] = useState(view.billing_terms || {});
+  const first = useRef(true);
+  const mapping = view.mapping || {};
 
   useEffect(() => {
-    if (existing) {
-      setColumns(existing.columns); setMapping(existing.mapping || {});
-      setFx(existing.fx || {}); setBillingTerms(existing.billing_terms || {});
-      setSource(existing.mapping_source || {}); setAiReading(existing.ai_reading || null);
-    }
-  }, [existing?.file]); // eslint-disable-line
-
-  const onFile = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploading(true);
-    try {
-      const res = await uploadDataset(audit.id, dtype.key, file);
-      setColumns(res.columns);
-      setMapping(res.suggested_mapping);
-      setSource(res.mapping_source || {});
-      setAiReading(res.ai_reading || null);
-      toast.success(`${res.file}: ${res.row_count} rows · auto-mapped`);
-      onChange();
-    } catch (err) {
-      toast.error(err.response?.data?.detail || "Upload failed");
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const save = async () => {
-    setSaving(true);
-    try {
-      await saveMapping(audit.id, dtype.key, { mapping, fx, billing_terms: billingTerms });
-      setSource({});
-      toast.success("Mapping saved");
-      onChange();
-    } catch (err) {
-      toast.error("Save failed");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const setField = (field, val) => {
-    setMapping((m) => ({ ...m, [field]: val === NONE ? null : val }));
-    setSource((s) => { const next = { ...s }; delete next[field]; return next; });   // the analyst chose it
-  };
-  const requiredUnmapped = fields.required.filter((f) => !mapping[f]);
+    if (first.current) { first.current = false; return undefined; }
+    const timer = setTimeout(() => {
+      saveMapping(audit.id, "revenue", { fx, billing_terms: billingTerms })   // never the mapping: a click decides it
+        .catch(() => toast.error("Save failed"));
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [fx, billingTerms]); // eslint-disable-line
 
   return (
-    <div className="bg-white border border-[#E5E7EB] rounded-lg p-5" data-testid={`dataset-panel-${dtype.key}`}>
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="flex items-start gap-3">
-          <div className={`h-9 w-9 rounded-md flex items-center justify-center ${columns ? "bg-emerald-500/15 border border-emerald-500/40" : "bg-sky-50 border border-[#E5E7EB]"}`}>
-            {columns ? <CheckCircle2 className="h-4 w-4 text-emerald-700" /> : <FileSpreadsheet className="h-4 w-4 text-slate-600" />}
-          </div>
-          <div>
-            <h3 className="font-heading font-semibold text-slate-900 flex items-center gap-2">
-              {dtype.label}
-              {dtype.required && <span className="text-[9px] font-mono uppercase text-sky-700 border border-sky-500/40 rounded px-1.5 py-0.5">required</span>}
-            </h3>
-            <p className="text-xs text-slate-500 mt-0.5 max-w-xl">{dtype.desc}</p>
-            {existing && <p className="text-[11px] font-mono text-slate-600 mt-1">{existing.file} · {existing.row_count} rows</p>}
-          </div>
-        </div>
-        <label className="cursor-pointer">
-          <input type="file" accept=".xlsx,.csv,.xls" className="hidden" onChange={onFile} data-testid={`upload-dropzone-${dtype.key}`} />
-          <span className="inline-flex items-center gap-2 px-3.5 py-2 rounded-md bg-sky-50 border border-[#D1D5DB] text-sm text-slate-800 hover:bg-slate-100 transition-colors">
-            {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-            {columns ? "Replace file" : "Upload file"}
-          </span>
-        </label>
-      </div>
-
-      {columns && (
-        <div className="mt-5 pt-5 border-t border-[#E5E7EB]">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {[...fields.required, ...fields.optional].map((field) => {
-              const isReq = fields.required.includes(field);
-              return (
-                <div key={field}>
-                  <label className="text-xs text-slate-700 flex items-center gap-1.5 mb-1">
-                    {field.replace(/_/g, " ")}
-                    {isReq ? <span className="text-sky-700">*</span> : <span className="text-slate-600 text-[10px]">optional</span>}
-                  </label>
-                  <Select value={mapping[field] || NONE} onValueChange={(v) => setField(field, v)}>
-                    <SelectTrigger data-testid={`map-column-${field}`} className={`bg-white border-[#E5E7EB] h-9 ${isReq && !mapping[field] ? "border-amber-500/50" : ""}`}>
-                      <SelectValue placeholder="— none —" />
-                    </SelectTrigger>
-                    <SelectContent className="bg-white border-[#E5E7EB] text-slate-900 max-h-64">
-                      <SelectItem value={NONE}>— none —</SelectItem>
-                      {columns.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                  {source[field] === "ai" && mapping[field] && (
-                    <p className="text-[10px] font-mono text-amber-700 mt-1" data-testid={`map-ai-suggestion-${field}`}>{AI_SUGGESTION_LABEL}</p>
-                  )}
-                  {source[field] === "stored" && mapping[field] && (
-                    <p className="text-[10px] font-mono text-slate-500 mt-1">{STORED_MAPPING_LABEL}</p>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          {aiReading?.status === "stopped" && (
-            <p className="text-[11px] text-amber-700 mt-3" data-testid="mapping-ai-stopped">{aiReading.reason}</p>
-          )}
-
-          {dtype.key === "revenue" && (
-            <FxEditor fx={fx} setFx={setFx} baseCcy={audit.reporting_currency} />
-          )}
-
-          {dtype.key === "revenue" && (
-            <BillingTerms
-              auditId={audit.id}
-              customerCol={mapping.customer_id}
-              hasServiceDates={!!mapping.service_start && !!mapping.service_end}
-              billingTerms={billingTerms}
-              setBillingTerms={setBillingTerms}
-            />
-          )}
-
-          <div className="flex items-center justify-between mt-4">
-            <div className="text-xs font-mono">
-              {requiredUnmapped.length > 0
-                ? <span className="text-amber-700">{requiredUnmapped.length} required field(s) unmapped: {requiredUnmapped.join(", ")}</span>
-                : <span className="text-emerald-700">All required fields mapped</span>}
-            </div>
-            <Button data-testid={`confirm-mapping-button-${dtype.key}`} size="sm" onClick={save} disabled={saving}
-              className="bg-sky-600 hover:bg-sky-500 gap-2">
-              {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Confirm mapping
-            </Button>
-          </div>
-        </div>
-      )}
+    <div data-testid="revenue-settings">
+      <FxEditor fx={fx} setFx={setFx} baseCcy={audit.reporting_currency} />
+      <BillingTerms
+        auditId={audit.id}
+        customerCol={mapping.customer_id}
+        hasServiceDates={!!mapping.service_start && !!mapping.service_end}
+        billingTerms={billingTerms}
+        setBillingTerms={setBillingTerms}
+      />
     </div>
   );
 }

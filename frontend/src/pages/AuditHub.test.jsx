@@ -4,11 +4,13 @@ import { createRoot } from "react-dom/client";
 import AuditHub from "./AuditHub";
 import * as api from "@/lib/api";
 import { CONSENT_EXPLAINER, CONSENT_LABEL } from "@/lib/auditForm";
+import { S18_DELETE, S19_USAGE_TOTALS } from "@/lib/chatUpload";
 
 jest.mock("@/lib/api", () => ({
   listAudits: jest.fn(),
   createAudit: jest.fn(),
   deleteAudit: jest.fn(),
+  getUsageTotals: jest.fn(),
 }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
 jest.mock("react-router-dom", () => ({ useNavigate: () => jest.fn() }), { virtual: true });
@@ -81,5 +83,66 @@ describe("AI-assisted reading explainer", () => {
     expect(q("audit-consent-toggle").getAttribute("aria-expanded")).toBe("true");
     await act(async () => { q("audit-consent-toggle").click(); });
     expect(document.body.textContent).not.toContain(CONSENT_EXPLAINER);
+  });
+});
+
+
+describe("delete audit and the usage totals", () => {
+  const AUDITS = [{ id: "a1", company_name: "Acme SaaS Inc.", status: "draft", reporting_currency: "EUR", target_arr: 1000000 }];
+  let host, root;
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    api.listAudits.mockResolvedValue(AUDITS);
+    api.deleteAudit.mockResolvedValue({});
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => { root.render(<AuditHub />); });
+  });
+  afterEach(async () => { await act(async () => { root.unmount(); }); host.remove(); });
+  const type = async (el, value) => act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+
+  test("the dialog says S18 and Delete is enabled only when the typed name matches, trimmed and in any case", async () => {
+    await act(async () => { q("delete-audit-a1").click(); });
+    expect(q("delete-dialog-text").textContent).toBe(S18_DELETE);
+    const button = q("confirm-delete-a1");
+    expect(button.disabled).toBe(true);
+    await type(q("delete-name-a1"), "Acme SaaS");
+    expect(button.disabled).toBe(true);
+    await type(q("delete-name-a1"), "  acme saas inc.  ");
+    expect(button.disabled).toBe(false);
+  });
+
+  test("Delete sends the name in the call, never in a URL, and nothing is sent before it matches", async () => {
+    await act(async () => { q("delete-audit-a1").click(); });
+    await type(q("delete-name-a1"), "wrong");
+    await act(async () => { q("confirm-delete-a1").click(); });
+    expect(api.deleteAudit).not.toHaveBeenCalled();
+    await type(q("delete-name-a1"), "Acme SaaS Inc.");
+    await act(async () => { q("confirm-delete-a1").click(); });
+    expect(api.deleteAudit).toHaveBeenCalledWith("a1", "Acme SaaS Inc.");
+  });
+
+  test("the usage totals are folded, asked for only when opened, and list the notes", async () => {
+    api.getUsageTotals.mockResolvedValue({
+      files: { uploaded: { revenue: 2 }, rejected: { pptx: 1 } }, columns: { rules: 9, saved: 1, ai: 2, confirmed: 3, corrected: 1, reasons: { other: 1 } },
+      steps: { compute: { runs: 4, failures: { KeyError: 1 } }, mapping_ai: { read: 2 } }, evidence_labels: { Verified: 3 }, metrics_missing: 2,
+      analyst_changes: 5, median_days_to_export: 1.5, tokens_and_cost_by_step: { structures: { input_tokens: 10, output_tokens: 5, cost_usd: 0.01 } },
+      other_notes: [{ note: "Adj is not it", at: "t" }],
+    });
+    const details = q("usage-totals");
+    expect(details.querySelector("summary").textContent).toBe(S19_USAGE_TOTALS);
+    expect(details.open).toBe(false);
+    expect(api.getUsageTotals).not.toHaveBeenCalled();
+    await act(async () => { details.open = true; details.dispatchEvent(new Event("toggle", { bubbles: true })); });
+    await act(async () => { await Promise.resolve(); });
+    expect(api.getUsageTotals).toHaveBeenCalledTimes(1);
+    expect(q("usage-notes").textContent).toContain("Adj is not it");
+    expect(details.textContent).toContain("revenue 2");
+    expect(details.textContent).toContain("pptx 1");
+    expect(details.textContent).not.toContain("Acme");
   });
 });

@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Loader2, ShieldAlert, CheckCircle2, ArrowRight } from "lucide-react";
 import { Layout } from "@/components/Layout";
-import { getAudit, getResults } from "@/lib/api";
+import { getAudit, getResults, reportUsage } from "@/lib/api";
+import { S22_RECONCILIATION } from "@/lib/chatUpload";
+import { fmtCurrency } from "@/lib/format";
 import { ANOMALIES_NOT_COMPUTED } from "@/lib/gapLists";
 
 export default function Diagnostics() {
@@ -12,6 +14,7 @@ export default function Diagnostics() {
   const [data, setData] = useState(null);
 
   useEffect(() => {
+    reportUsage(id, { screen: "diagnostics" });
     getAudit(id).then(setAudit).catch(() => {});
     getResults(id).then(setData).catch(() => setData(false));
   }, [id]);
@@ -33,6 +36,8 @@ export default function Diagnostics() {
           Why certain metrics are not computable, and exactly which field or file unlocks each. The engine never fabricates a number.
         </p>
       </div>
+
+      <ReconciliationTable rec={r.revenue_reconciliation} currency={r.reporting_currency} />
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-7 bg-white border border-[#E5E7EB] rounded-lg p-5">
@@ -93,5 +98,41 @@ export default function Diagnostics() {
         </div>
       </div>
     </Layout>
+  );
+}
+
+/** S22: the revenue file against the P&L, month by month, the window total last. Hidden without a P&L. Never a blocker per month. */
+export function ReconciliationTable({ rec, currency }) {
+  if (!rec) return null;
+  const money = (v) => (v == null ? "—" : fmtCurrency(v, currency));
+  const pct = (v) => (v == null ? "—" : `${v}%`);
+  return (
+    <section data-testid="reconciliation" className="bg-white border border-[#E5E7EB] rounded-lg p-5 mb-6">
+      <h3 className="font-heading font-semibold text-slate-900 text-sm mb-4">{S22_RECONCILIATION}</h3>
+      {!rec.available ? <p className="text-xs text-slate-600">{rec.reason}</p> : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left text-slate-500 border-b border-[#E5E7EB]">
+                {["Month", "Revenue file", "P&L", "Gap", "Gap %"].map((h) => <th key={h} className="py-1.5 pr-4 font-medium">{h}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {rec.by_month.map((m) => (
+                <tr key={m.month} data-testid="reconciliation-row" className="border-b border-[#F1F5F9]"
+                  title={`${m.source.revenue_file.file} ${m.source.revenue_file.rows} · ${m.source.pnl.file} ${m.source.pnl.rows}`}>
+                  <td className="py-1.5 pr-4 font-mono">{m.month}</td><td className="pr-4 font-mono">{money(m.revenue_file)}</td>
+                  <td className="pr-4 font-mono">{money(m.pnl)}</td><td className="pr-4 font-mono">{money(m.gap)}</td><td className="font-mono">{pct(m.gap_pct)}</td>
+                </tr>
+              ))}
+              <tr data-testid="reconciliation-total" className="font-semibold">
+                <td className="py-1.5 pr-4">Window total</td><td className="pr-4 font-mono">{money(rec.file_total)}</td>
+                <td className="pr-4 font-mono">{money(rec.pnl_total)}</td><td className="pr-4 font-mono">{money(rec.gap)}</td><td className="font-mono">{pct(rec.gap_pct)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }

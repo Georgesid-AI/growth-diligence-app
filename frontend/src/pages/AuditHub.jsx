@@ -9,12 +9,9 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger,
 } from "@/components/ui/dialog";
-import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
-  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { listAudits, createAudit, deleteAudit } from "@/lib/api";
+import { listAudits, createAudit, deleteAudit, getUsageTotals } from "@/lib/api";
+import { S18_DELETE, S19_USAGE_TOTALS } from "@/lib/chatUpload";
 import { fmtCurrency } from "@/lib/format";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -66,10 +63,14 @@ export default function AuditHub() {
     }
   };
 
-  const remove = async (id) => {
-    await deleteAudit(id);
-    toast.success("Audit deleted");
-    load();
+  const remove = async (id, name) => {
+    try {
+      await deleteAudit(id, name);
+      toast.success("Audit deleted");
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Delete failed");
+    }
   };
 
   return (
@@ -251,34 +252,7 @@ export default function AuditHub() {
                     <span className="text-[10px] font-mono text-slate-500">{a.reporting_currency}</span>
                   </div>
                 </div>
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <button
-                      data-testid={`delete-audit-${a.id}`}
-                      className="text-slate-600 hover:text-rose-700 transition-colors p-1"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent className="bg-white border-[#E5E7EB] text-slate-900">
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Delete this audit?</AlertDialogTitle>
-                      <AlertDialogDescription className="text-slate-600">
-                        This permanently removes the audit's files and computed results. This cannot be undone.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel className="bg-transparent border-[#E5E7EB] text-slate-700">Cancel</AlertDialogCancel>
-                      <AlertDialogAction
-                        data-testid={`confirm-delete-${a.id}`}
-                        onClick={() => remove(a.id)}
-                        className="bg-rose-600 hover:bg-rose-500"
-                      >
-                        Delete
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
+                <DeleteAudit audit={a} onDelete={remove} />
               </div>
 
               <div className="mt-4 pt-4 border-t border-[#E5E7EB] flex items-center justify-between">
@@ -310,6 +284,73 @@ export default function AuditHub() {
           ))}
         </div>
       )}
+      <UsageTotals />
     </Layout>
   );
 }
+
+/** S18: Delete is enabled only when the typed name matches the company (trimmed, any case); the name goes in the body. */
+export const nameMatches = (typed, company) => !!typed.trim() && typed.trim().toLowerCase() === (company || "").trim().toLowerCase();
+
+function DeleteAudit({ audit, onDelete }) {
+  const [open, setOpen] = useState(false);
+  const [typed, setTyped] = useState("");
+  return (
+    <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) setTyped(""); }}>
+      <DialogTrigger asChild>
+        <button data-testid={`delete-audit-${audit.id}`} className="text-slate-600 hover:text-rose-700 transition-colors p-1">
+          <Trash2 className="h-4 w-4" />
+        </button>
+      </DialogTrigger>
+      <DialogContent className="bg-white border-[#E5E7EB] text-slate-900">
+        <DialogHeader>
+          <DialogTitle>Delete this audit?</DialogTitle>
+          <DialogDescription data-testid="delete-dialog-text" className="text-slate-600">{S18_DELETE}</DialogDescription>
+        </DialogHeader>
+        <Input data-testid={`delete-name-${audit.id}`} value={typed} onChange={(e) => setTyped(e.target.value)}
+          autoComplete="off" className="bg-white border-[#E5E7EB]" />
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)} className="bg-transparent border-[#E5E7EB] text-slate-700">Cancel</Button>
+          <Button data-testid={`confirm-delete-${audit.id}`} disabled={!nameMatches(typed, audit.company_name)}
+            onClick={() => { setOpen(false); onDelete(audit.id, typed.trim()); }} className="bg-rose-600 hover:bg-rose-500">Delete</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+const pairs = (o) => Object.entries(o || {}).map(([k, v]) => `${k} ${v}`).join(" · ") || "none";
+
+/** S19: usage totals across audits, folded. Counts and codes only; no per-audit rows. */
+function UsageTotals() {
+  const [totals, setTotals] = useState(null);
+  const [open, setOpen] = useState(false);
+  useEffect(() => { if (open && !totals) getUsageTotals().then(setTotals).catch(() => setTotals(false)); }, [open]); // eslint-disable-line
+  return (
+    <details data-testid="usage-totals" className="mt-10 border border-[#E5E7EB] rounded-lg bg-white" onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary className="px-5 py-3 cursor-pointer text-sm font-medium text-slate-800">{S19_USAGE_TOTALS}</summary>
+      {open && totals === false && <p className="px-5 pb-4 text-xs text-slate-500">Not available.</p>}
+      {open && totals && (
+        <dl className="px-5 pb-5 grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 text-xs text-slate-700">
+          <Row label="Files uploaded" value={pairs(totals.files?.uploaded)} />
+          <Row label="Files refused (by extension)" value={pairs(totals.files?.rejected)} />
+          <Row label="Columns by rules, saved, AI, confirmed, corrected" value={["rules", "saved", "ai", "confirmed", "corrected"].map((k) => `${k} ${totals.columns?.[k] ?? 0}`).join(" · ")} />
+          <Row label="Corrections by reason" value={pairs(totals.columns?.reasons)} />
+          <Row label="Compute runs" value={String(totals.steps?.compute?.runs ?? 0)} />
+          <Row label="Compute failures" value={pairs(totals.steps?.compute?.failures)} />
+          <Row label="AI mapping calls by status" value={pairs(totals.steps?.mapping_ai)} />
+          <Row label="Evidence labels" value={`${pairs(totals.evidence_labels)} · metrics missing ${totals.metrics_missing ?? 0}`} />
+          <Row label="Analyst changes" value={String(totals.analyst_changes ?? 0)} />
+          <Row label="Median days from first upload to export" value={totals.median_days_to_export == null ? "—" : String(totals.median_days_to_export)} />
+          <Row label="Tokens and cost by step" value={Object.entries(totals.tokens_and_cost_by_step || {}).map(([k, v]) => `${k} ${v.input_tokens + v.output_tokens} tokens · $${v.cost_usd}`).join(" · ") || "none"} />
+          <div className="md:col-span-2" data-testid="usage-notes">
+            <dt className="text-slate-500">“Other” notes, newest first</dt>
+            <dd><ul className="mt-1 space-y-0.5">{(totals.other_notes || []).map((n, i) => <li key={i}>{n.note}</li>)}</ul></dd>
+          </div>
+        </dl>
+      )}
+    </details>
+  );
+}
+
+const Row = ({ label, value }) => (<div><dt className="text-slate-500">{label}</dt><dd className="font-mono">{value}</dd></div>);

@@ -238,6 +238,18 @@ def test_a_required_field_that_is_not_mapped_stops_compute_and_the_status_names_
     assert api.post(f"/api/audits/{AUDIT}/compute").status_code == 409
 
 
+def test_saving_fx_rates_without_a_mapping_confirms_nothing(api):
+    api.state["adapter"] = t.FakeAdapter(replies=[mapping_reply(("revenue_type", 6))])
+    body = upload(api, "blank_vs_zero.csv").json()
+    assert body["pending"] == 1
+    r = api.put(f"/api/audits/{AUDIT}/datasets/revenue/mapping", json={"fx": {"USD": 0.9}, "billing_terms": {}})
+    assert r.status_code == 200
+    stored = api.db["datasets"].docs[0]
+    assert stored["fx"] == {"USD": 0.9} and stored["mapped_at"] is None
+    assert by_column(view(api))["Adj"]["state"] == "ai", "an AI suggestion is confirmed by a click only"
+    assert api.db["column_mappings"].docs == []
+
+
 def test_correct_takes_a_field_and_a_listed_reason_and_a_held_field_is_refused(api):
     body = upload(api, "blank_vs_zero.csv").json()
     url = f"/api/audits/{AUDIT}/datasets/revenue/decisions"
@@ -289,6 +301,31 @@ def test_the_same_headers_on_other_data_use_the_saved_mapping_scaled_by_the_new_
     assert adapter_of(api).calls == calls, "no model call for a saved mapping"
     assert (amount["source"], amount["confidence"], amount["state"]) == ("saved", 100, "auto")
     assert first["Amount"]["confidence"] == 0
+
+
+def test_a_mapping_saved_before_versions_existed_is_still_applied_to_the_same_headers(api):
+    sheet = cr.read_sheet((MESSY / "blank_vs_zero.csv").read_bytes(), "x.csv")
+    api.db["column_mappings"].docs.append({
+        "audit_id": AUDIT, "dtype": "revenue", "header_key": structures.header_key("revenue", sheet.columns),
+        "mapping": {"customer_id": "Customer ID", "invoice_date": "Invoice Date", "amount": "Amount", "currency": "Currency",
+                    "revenue_type": "Adj"}, "saved_at": "2026-10-01T00:00:00"})
+    calls = adapter_of(api).calls
+    body = upload(api, "blank_vs_zero.csv")
+    assert body.status_code == 200, body.text
+    rows = by_column(body.json())
+    assert adapter_of(api).calls == calls and rows["Adj"]["field"] == "revenue_type" and rows["Adj"]["source"] == "saved"
+    assert rows["Segment"]["state"] == "unused", "a column the old mapping left out stays unused"
+
+
+def test_a_file_stored_before_the_chat_upload_takes_decisions_like_any_other(api):
+    api.db["datasets"].docs.append({"audit_id": AUDIT, "dtype": "revenue", "file": "old.csv", "sheet": "CSV",
+                                    "columns": ["Customer", "Amount"], "rows": [{"Customer": "A", "Amount": 1}],
+                                    "mapping": {"customer_id": "Customer", "amount": "Amount"}, "mapped_at": "2026-09-01"})
+    body = api.get(f"/api/audits/{AUDIT}/datasets").json()["datasets"][0]
+    assert {c["state"] for c in body["columns"]} == {"confirmed"} and body["pending"] == 0
+    r = api.post(f"/api/audits/{AUDIT}/datasets/revenue/decisions", json=[
+        {"column": "Amount", "action": "correct", "field": None, "reason": "not_needed"}])
+    assert r.status_code == 200 and by_column(r.json())["Amount"]["state"] == "unused"
 
 
 def test_an_unknown_file_stores_nothing_and_the_typed_upload_names_its_type(api):
