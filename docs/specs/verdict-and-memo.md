@@ -1,5 +1,5 @@
 # Spec: Gates, verdict and IC memo (method A9, A10, A11)
-Status: Decisions of 2026-10-08 applied (§12). Wording W1–W22 and W24 approved; W23 and W25 are open (§11).
+Status: Final (2026-10-08). Every decision is in §12 and every wording item in §11 is approved.
 Location: docs/specs/verdict-and-memo.md. Follows claim-matching.md (the register) and interface-contracts.md
 (MetricsPayload). The method's lists (evidence categories, appendices, thesis labels, rating scale) are as given on
 2026-10-08; the method text itself stays out of the repo.
@@ -275,7 +275,7 @@ Measured on this branch with the claim-matching fixture (no network, no MongoDB)
 run A gives Re-plan (rows 1–5 all Contradicted); run B gives Underwrite with gates (one row, Unverified, so blocked
 until it has a gate); runs C and D give Re-plan. The outcome tests use subsets of the fixture's claims.
 
-## 11. Screen wording (W1–W22 approved 2026-10-08 as drafted; W15's appendix titles follow Q1; W24 as given; W23 and W25 open)
+## 11. Screen wording (approved 2026-10-08: W1–W23 and W25 as drafted, W15's appendix titles per Q1, W24 as given)
 | Id | Where | Text |
 |---|---|---|
 | W1 | value at stake | not yet computed · shortfall {x}% (no shortfall: "not yet computed") |
@@ -300,9 +300,9 @@ until it has a gate); runs C and D give Re-plan. The outcome tests use subsets o
 | W20 | cost panel | Title: AI usage and cost (this audit) · columns: Step · Calls · Cache hits · Input tokens · Output tokens · Cost (USD), 2 decimals · last row: Total · steps: Narrative – {step} · Deck structure reading · Column mapping |
 | W21 | button | Download IC memo (Markdown) |
 | W22 | gate, no app metric | Metric (max 100 characters) · At least / At most |
-| W23 | top 5 (open) | Heading: Top 5 · proposed: Proposed by shortfall – confirm or replace. · per row: Replace with… (a register pick) · button: Confirm top 5 · no verdict: No verdict until the top 5 is confirmed. · void: A claim of the confirmed top 5 left the register – confirm the top 5 again. · memo refused: … confirm the top 5. |
+| W23 | top 5 | Heading: Top 5 · proposed: Proposed by shortfall – confirm or replace. · per row: Replace with… (a register pick) · button: Confirm top 5 · no verdict: No verdict until the top 5 is confirmed. · void: A claim of the confirmed top 5 left the register – confirm the top 5 again. · memo refused: … confirm the top 5. |
 | W24 | top 5 (as given) | Top 5 set by the analyst pending ARR bridge. |
-| W25 | fewer than 3 gates (open) | {n} gates set; all are key gates. |
+| W25 | fewer than 3 gates | {n} gates set; all are key gates. |
 
 ## 12. Decisions of 2026-10-08
 | # | Question | Decision |
@@ -314,6 +314,11 @@ until it has a gate); runs C and D give Re-plan. The outcome tests use subsets o
 | Q5 | Who sets the ratings | The analyst, Strong · Adequate · Weak, on the two assessed rows; the memo refuses without them (§7.2) |
 | Q6 | Wording W1–W22 | Approved as drafted |
 | R | Ranking | The app pre-sorts by shortfall; the analyst confirms or replaces the top 5, stored as an analyst decision; the memo states "top 5 set by the analyst pending ARR bridge" (§6.1) |
+| D1 | Banner and the analyst's top 5 | Approved: the banner keeps the pre-sort's rows 1–5 (§6.1) |
+| D2 | Evidence categories covered | Approved: counted from the stored file types; partial coverage noted in Appendix D (§7.2) |
+| D3 | Where the cost table goes | Approved: Appendix D, with the disclosure block (§7.2) |
+| D4 | When a confirmed top 5 is void | Approved: only when one of its claims leaves the register (§6.1) |
+| W | W23, W25 | Approved as drafted |
 
 ## 13. Decided (engineering, rule 19)
 - Re-plan is checked first (§6.2). With fewer than 5 rows, the top 5 is every row. With no rows there is no verdict.
