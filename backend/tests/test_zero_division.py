@@ -21,6 +21,7 @@ sys.path.insert(0, str(BACKEND / "tests"))
 import demo_data  # noqa: E402
 import growth_engine as ge  # noqa: E402
 import server  # noqa: E402
+import contract_fixtures as cf  # noqa: E402
 import test_llm_gateway as t  # noqa: E402
 
 SPEC = demo_data.DEMO_AUDITS[0]  # Apex Cloud demo: EUR, target ARR 40M
@@ -97,12 +98,12 @@ def _segment_a(final_amount):
     return ge.compute_all(rev, None, None, cfg, {"revenue": {"file": "revenue.csv", "sheet": "Sheet1"}})
 
 
-@pytest.mark.parametrize("final_amount, nrr", [(0, 0), (-500, -50)])
-def test_segment_projection_at_nrr_zero_or_negative_is_none_with_a_reason(final_amount, nrr):
+@pytest.mark.parametrize("final_amount, fraction, nrr", [(0, 0, 0), (-500, -0.5, -50)])
+def test_segment_projection_at_nrr_zero_or_negative_is_none_with_a_reason(final_amount, fraction, nrr):
     """NRR 0% with years < 1 divided by zero; a negative NRR gave a complex number."""
     results = _segment_a(final_amount)
     row = results["segment_paths"]["stage_one"]["segments"]["A"]
-    assert row["nrr_pct"] == nrr
+    assert row["nrr_pct"] == fraction
     assert row["projected_arr"] is None and row["change_arr"] is None and row["arr_change_per_nrr_point"] is None
     assert f"NRR is {nrr}%" in row["reason"]
     assert results["segment_paths"]["available"] is False
@@ -228,7 +229,7 @@ def test_failing_anomaly_flags_are_missing_and_never_zero(monkeypatch):
 
 def test_the_export_shows_the_anomaly_calculation_error_not_zero_counts():
     import openpyxl
-    wb = openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, {"anomalies": None}))
+    wb = openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, cf.stored(anomalies=None)))
     rows = [tuple(c.value for c in r) for r in wb["Anomalies"].iter_rows(min_row=2)]
     assert rows == [("Anomaly flags", "calculation error", "Not computed; see Missing Data")]
 

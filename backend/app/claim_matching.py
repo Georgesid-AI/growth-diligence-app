@@ -210,6 +210,11 @@ def _format(unit: str, value: float, currency: Optional[str]) -> str:
 
 # --- what the engine holds ----------------------------------------------------------------------------------------------
 
+def _points(fraction: Optional[float]) -> Optional[float]:
+    """The engine holds a percent as its fraction (1.0641); a claim states percent points (106.41)."""
+    return None if fraction is None else round(fraction * 100, 2)
+
+
 def _source(block: Optional[dict], rule: Optional[str] = None) -> Optional[dict]:
     src = (block or {}).get("source") or {}
     if not src:
@@ -250,7 +255,7 @@ class _Figures:
             if not block:
                 return None
             field = "nrr_pct" if m == "NRR (12-month)" else "churn_pct"
-            return {d["month"]: d.get(field) for d in block.get("series") or ()}, _source(block), block.get("reason")
+            return {d["month"]: _points(d.get(field)) for d in block.get("series") or ()}, _source(block), block.get("reason")
         return None
 
     def asof(self) -> Optional[Tuple[Optional[float], dict, Optional[str]]]:
@@ -261,13 +266,14 @@ class _Figures:
         if not block:
             return None
         field = {"NRR (12-month)": "nrr_pct", "ACV": "acv", "Median sales cycle": "median_days", "Win rate": "win_rate_pct"}[m]
+        convert = _points if m in ("NRR (12-month)", "Win rate") else (lambda v: v)
         if self.whole:
             value = block.get("overall_pct") if m == "NRR (12-month)" else block.get(field)
-            return value, _source(block), block.get("reason")
+            return convert(value), _source(block), block.get("reason")
         entry = (block.get("by_segment") or {}).get(self.segment)
         if entry is None:
             return None, None, "segment not in the data"
-        return entry.get(field), _source(block), entry.get("reason")
+        return convert(entry.get(field)), _source(block), entry.get("reason")
 
     def quarters(self) -> Optional[Tuple[Dict[str, dict], dict]]:
         """{quarter: {"value", "reason", "partial"}} and the source, for a metric read by calendar quarter."""
@@ -285,7 +291,7 @@ class _Figures:
         out = {}
         for q, v in cac["quarters"].items():
             if m == "Gross margin":
-                out[q] = {"value": v.get("gross_margin_pct"), "reason": f"no P&L for {q}", "partial": bool(v.get("partial"))}
+                out[q] = {"value": _points(v.get("gross_margin_pct")), "reason": f"no P&L for {q}", "partial": bool(v.get("partial"))}
             else:
                 out[q] = {"value": (v.get(lag) or {}).get("months"), "reason": (v.get(lag) or {}).get("reason"),
                           "partial": bool(v.get("partial"))}

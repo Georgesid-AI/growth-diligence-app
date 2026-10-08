@@ -177,7 +177,7 @@ def test_the_structure_text_carries_cells_and_spans_and_nothing_else():
 
 def test_customers_join_the_narrative_mapping_with_the_same_pseudonyms():
     async def run():
-        db = t.make_db()
+        db = t.make_db(t.LEAKY_DOC)           # the names sit where the engine never writes them: redaction is the second wall
         from app.llm import gateway
         computed = await gateway.load_computed_results(db, t.RUN_ID, "growth_engine")
         narrative = await redaction.get_or_create_map(db, t.RUN_ID, computed)

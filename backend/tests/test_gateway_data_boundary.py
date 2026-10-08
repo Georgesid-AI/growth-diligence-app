@@ -19,6 +19,7 @@ sys.path.insert(0, str(BACKEND))
 sys.path.insert(0, str(BACKEND / "tests"))
 
 from app.llm import gateway, redaction  # noqa: E402
+import contract_fixtures as cf  # noqa: E402
 import test_llm_gateway as t  # noqa: E402
 
 RUN_ID = t.RUN_ID
@@ -30,37 +31,37 @@ HEADERS = ("Deal Opened On", "Signed Date")   # column headers in the upload
 SOURCE = {"file": FILE, "sheet": SHEET, "rows": "rows 2–40 (39 rows)", "row_numbers": [2, 3, 4],
           "rule": "ARR = current-month recurring MRR × 12"}
 
-RESULTS = {
-    "as_of_month": "2026-12",
-    "reporting_currency": "EUR",
-    "arr": {"value": 3129600, "mrr": 260800, "month": "2026-12", "source": SOURCE},
-    "nrr": {"overall_pct": 104.0, "nrr_base_customers": 110, "month": "2026-12", "trailing_window_months": 12,
-            "by_segment": {"Enterprise": {"nrr_pct": 112.0, "nrr_base_customers": 40},
-                           "Mid-Market": {"nrr_pct": 96.0, "nrr_base_customers": 70}},
-            "source": {**SOURCE, "rule": "NRR = base-cohort MRR now ÷ MRR 12 months ago"}},
-    "win_rate": {"won": 30, "lost": 70, "win_rate_pct": 30.0,
-                 "founder_involved_excluded": {"count": 1, "rows": [7], "values": [PERSON]},
-                 "source": {"file": "CRM_Deals.csv", "sheet": "Deals", "rule": "Win rate = won ÷ (won + lost)"}},
-    "sales_cycle": {"median_days": 45, "n": 30, "status": "Computed - management to explain",
-                    "source": {"file": FILE, "sheet": SHEET, "rule": "Median days from created to close",
-                               "dataset": "revenue",
-                               "columns": {"created_date": HEADERS[0], "close_date": HEADERS[1]}}},
-    "segment_paths": {"available": True, "stage_one": {"segments": {
-        "Enterprise": {"start_arr": 2000000, "customers": 40},
-        "Mid-Market": {"start_arr": 1129600, "customers": 70}}},
-        "reverse_solve": {"12": {"window_months": 12, "best_segment": "Enterprise",
-                                 "reason": "no landed ACV for Mid-Market"}}},
-    "missing_data": [{"metric": "CRM rows with unrecognized founder-involved value", "status": "Missing",
-                      "reason": f"1 row(s) have a founder-involved value that isn't yes/no-like ({PERSON})",
-                      "unlocked_by": "Use a yes/no style value", "file": "CRM_Deals.csv"}],
-    "questions_for_management": [{
+RESULTS = cf.stored(
+    as_of_month="2026-12",
+    arr=cf.arr(3129600.0, 260800.0, month="2026-12", source=SOURCE),
+    nrr=cf.nrr(1.04, 110, month="2026-12",
+               by_segment={"Enterprise": cf.nrr_group(1.12, 40), "Mid-Market": cf.nrr_group(0.96, 70)},
+               source={**SOURCE, "rule": "NRR = base-cohort MRR now ÷ MRR 12 months ago"}),
+    win_rate=cf.win_rate(0.30, 30, 70,
+                         founder_involved_excluded={"count": 1, "rows": [7], "values": [PERSON]},
+                         source={"file": "CRM_Deals.csv", "sheet": "Deals", "rows": "no rows", "row_numbers": [],
+                                 "rule": "Win rate = won ÷ (won + lost)"}),
+    sales_cycle=cf.sales_cycle(45, 30, status="Computed - management to explain",
+                               source={"file": FILE, "sheet": SHEET, "rows": "no rows", "row_numbers": [],
+                                       "rule": "Median days from created to close", "dataset": "revenue",
+                                       "columns": {"created_date": HEADERS[0], "close_date": HEADERS[1]}}),
+    segment_paths=cf.segment_paths(
+        available=True,
+        stage_one={"segments": {"Enterprise": cf.seg_base(2000000.0, 40), "Mid-Market": cf.seg_base(1129600.0, 70)},
+                   "start_arr_total": 3129600.0},
+        reverse_solve={"12": {"window_months": 12, "computable": True, "reachable": None, "best_segment": "Enterprise",
+                              "reason": "no landed ACV for Mid-Market"}}),
+    missing_data=[{"metric": "CRM rows with unrecognized founder-involved value", "status": "Missing",
+                   "reason": f"1 row(s) have a founder-involved value that isn't yes/no-like ({PERSON})",
+                   "unlocked_by": "Use a yes/no style value", "file": "CRM_Deals.csv"}],
+    questions_for_management=[{
         "metric": "Sales cycle", "status": "Computed - management to explain", "result_key": "sales_cycle",
         "dataset": "revenue", "file": FILE,
         "columns": {"created_date": HEADERS[0], "close_date": HEADERS[1]},
         "question": (f"Sales cycle was computed from the revenue upload (created_date = '{HEADERS[0]}', "
                      f"close_date = '{HEADERS[1]}') because it was not available from the crm upload."),
     }],
-}
+)
 
 NARRATIVE = {
     "headline": "Segment A retains 112% of its revenue over twelve months.",
@@ -259,7 +260,8 @@ HEADER_SENTINEL = "Jane Doe"    # every mapped column header is renamed to carry
 # Results keys the engine writes that never leave the server. A key that is in
 # neither this set nor gateway.OUTBOUND_FIELDS fails test_every_results_key_is_
 # allowlisted_or_declared_server_only: decide where it belongs when you add it.
-SERVER_ONLY_TOP_LEVEL = frozenset({"anomalies", "mrr_series", "new_mrr_by_quarter",
+SERVER_ONLY_TOP_LEVEL = frozenset({"contract_version",                   # interface-contracts.md: the version the stored payload was built under
+                                   "anomalies", "mrr_series", "new_mrr_by_quarter",
                                    "revenue_series", "customers_series",    # claim-matching.md table 2a
                                    "revenue_reconciliation"})               # chat-upload.md section 6.2
 SERVER_ONLY_FIELDS = frozenset({
@@ -1525,14 +1527,44 @@ def test_chat_a_kept_note_is_found_only_in_the_usage_counters_and_the_totals(api
 
 def test_chat_revenue_reconciliation_is_in_no_narrative_slice_and_never_reaches_the_provider():
     results = copy.deepcopy(RESULTS)
-    results["revenue_reconciliation"] = {"available": True, "first": "2024-01", "last": "2024-12", "file_total": 7654321,
-                                         "pnl_total": 7000000, "gap": 654321, "gap_pct": 9.35, "blocker": True,
-                                         "by_month": [{"month": "2024-01", "gap": 31337, "source": {"revenue_file": {"file": FILE}}}]}
+    cite = {"revenue_file": SOURCE, "pnl": SOURCE}
+    results["revenue_reconciliation"] = {
+        "available": True, "first": "2024-01", "last": "2024-12", "tolerance_pct": 0.02, "file_total": 7654321.0,
+        "pnl_total": 7000000.0, "gap": 654321.0, "gap_pct": 0.0935, "blocker": True, "source": cite,
+        "by_month": [{"month": "2024-01", "revenue_file": 1.0, "pnl": 1.0, "gap": 31337.0, "gap_pct": 0.0935, "source": cite}]}
     for step in gateway.STEP_CONFIG:
         assert "revenue_reconciliation" not in gateway._slice_for_step(results, step), step
     db = _db()
     db["audits"].docs[0]["results"] = results
     adapter = t.FakeAdapter(replies=[json.dumps(NARRATIVE)])
     asyncio.run(gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=adapter, sleep=t._noop_sleep))
-    for needle in ("revenue_reconciliation", "7654321", "654321", "31337", "9.35", "by_month", "gap_pct"):
+    for needle in ("revenue_reconciliation", "7654321", "654321", "31337", "0.0935", "9.35", "by_month", "gap_pct"):
         assert needle not in adapter.payloads[0], f"{needle!r} reached the provider"
+
+
+# ---------------------------------------------------------------------------
+# Interface contract (docs/specs/interface-contracts.md section 4, CLAUDE.md rules 14 and 23): the stored metrics are checked
+# against backend/schemas/metrics.py before any prompt is built. The new results key `contract_version` is declared server-only
+# above; the one new reason string is a constant sentence; the one new log line carries paths and error types.
+# ---------------------------------------------------------------------------
+def test_a_payload_that_breaks_the_contract_reaches_no_provider_and_no_log_line_holds_its_content(caplog):
+    import logging
+    secrets = ("Zeta Holdings", "4242.4242", "Jane Roe", "Hidden_Billing.xlsx")
+    results = cf.stored(arr=cf.arr(source={**SOURCE, "file": secrets[3]}),
+                        nrr=cf.nrr(1.04, 110, by_segment={secrets[0]: cf.nrr_group(1.1, 4242.4242)}),
+                        missing_data=[{"metric": "m", "status": "Missing", "reason": f"{secrets[2]} left",
+                                       "unlocked_by": "x", "file": secrets[3]}])
+    db = t.FakeDB()
+    doc = copy.deepcopy(t.RESULTS_DOC)
+    doc["results"] = results
+    db["audits"].docs.append(doc)
+    adapter = t.FakeAdapter()
+    with caplog.at_level(logging.DEBUG):
+        result = asyncio.run(gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=adapter, sleep=t._noop_sleep))
+        asyncio.run(gateway.read_cached_narrative(db, RUN_ID, "growth_engine"))
+    assert adapter.calls == 0 and result.reason == gateway.NARRATIVE_NOT_GENERATED
+    assert "metrics contract violated" in caplog.text, "fixture: the contract line was logged"
+    for text in (caplog.text, result.reason, *[r.getMessage() for r in caplog.records]):
+        for secret in secrets:
+            assert secret not in text, f"{secret!r} reached a log line or the reason"
+    assert db["llm_calls"].docs == [] and db["llm_narratives"].docs == [], "nothing is stored about a call that was not made"

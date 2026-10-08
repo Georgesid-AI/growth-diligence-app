@@ -8,32 +8,38 @@ openpyxl = pytest.importorskip("openpyxl")
 pytest.importorskip("fastapi")
 pytest.importorskip("motor")
 
+import contract_fixtures as cf  # noqa: E402
+from schemas.metrics import SegmentPaths  # noqa: E402
+
 
 import server  # noqa: E402
 
-RESULTS = {
-    "reporting_currency": "EUR",
-    "arr": {"value": 3129104.4, "mrr": 260758.7, "month": "2026-06"},
-    "nrr": {"overall_pct": 106.41, "n": 100, "by_segment": {}, "by_cohort": {}, "series": []},
-    "gross_churn": {"overall_pct": 8.38},
-    "sales_cycle": {"median_days": 42.1, "n": 12},
-    "win_rate": {"win_rate_pct": 50.0, "excluded_invalid": 0},
-    "cac_payback": {"default_l": 1, "headline_quarter": "2026-Q1", "quarters": {
-        "2026-Q1": {
-            "new_mrr": 1000.4, "gross_margin_pct": 71.2, "months_in_quarter": 3, "partial": False,
-            "L0": {"months": None, "reason": "x"}, "L2": {"months": None, "reason": "x"},
-            "L1": {"months": 12.24, "sm_expense": 9000.0, "reason": None}},
-        "2026-Q2": {
-            "new_mrr": 400.0, "gross_margin_pct": 70.0, "months_in_quarter": 2, "partial": True,
-            "L0": {"months": None, "reason": "x"}, "L2": {"months": None, "reason": "x"},
-            "L1": {"months": 30.0, "sm_expense": 9000.0, "reason": None}}}},
-    "acv_path": {"current_customers": 24, "current_arr": 3129104.4, "acv": 130379.35,
-                 "target_arr": 5000000, "target_date": "2027-12-31", "total_customers_at_target": 128.3, "additional_customers_needed": 104.3,
-                 "required_net_new_per_year": 60.1, "observed_net_new_per_year_12m": 6.0,
-                 "observed_net_new_per_year_24m": 3.0, "required_vs_observed_12m": 1.28,
-                 "required_vs_observed_24m": 1.685, "bands": [], "by_segment": {}},
-    "anomalies": {}, "missing_data": [],
-}
+RESULTS = cf.stored(
+    arr=cf.arr(3129104.4, 260758.7),
+    nrr=cf.nrr(1.0641, 100),
+    gross_churn=cf.gross_churn(0.0838),
+    sales_cycle=cf.sales_cycle(43, 12),
+    win_rate=cf.win_rate(0.5, 10, 10),
+    cac_payback=cf.cac_payback({
+        "2026-Q1": cf.cac_quarter(1000.4, 0.712, L1=cf.lag(12.24, None, 9000.0)),
+        "2026-Q2": cf.cac_quarter(400.0, 0.70, partial=True, months_in_quarter=2, L1=cf.lag(30.0, None, 9000.0))},
+        headline="2026-Q1"),
+    acv_path=cf.acv_path(current_customers=24, current_arr=3129104.4, acv=130379.35, target_arr=5000000.0,
+                         total_customers_at_target=129, additional_customers_needed=105,
+                         required_net_new_per_year=61, observed_net_new_per_year_12m=6,
+                         observed_net_new_per_year_24m=3, required_vs_observed_12m=1.28,
+                         required_vs_observed_24m=1.685),
+)
+
+
+def _partial_only_cac():
+    """Only a partial quarter has a figure: the headline is empty, the quarter table still shows it."""
+    return cf.cac_payback({"2026-Q2": cf.cac_quarter(400.0, 0.70, partial=True, months_in_quarter=2,
+                                                      L1=cf.lag(30.0, None, 9000.0))}, headline=None)
+
+
+def _with_segment_paths(sp):
+    return {**RESULTS, "segment_paths": cf.conformed(SegmentPaths, sp)}
 
 
 def _cell(ws, label):
@@ -101,10 +107,7 @@ def test_quarterly_sheet_labels_the_partial_quarter():
 
 
 def test_no_complete_quarter_is_stated_not_filled_with_a_partial_figure():
-    results = {**RESULTS, "cac_payback": {"default_l": 1, "headline_quarter": None, "quarters": {
-        "2026-Q2": {"new_mrr": 400.0, "gross_margin_pct": 70.0, "months_in_quarter": 2, "partial": True,
-                    "L0": {"months": None, "reason": "x"}, "L2": {"months": None, "reason": "x"},
-                    "L1": {"months": 30.0, "sm_expense": 9000.0, "reason": None}}}}}
+    results = {**RESULTS, "cac_payback": _partial_only_cac()}
     wb = openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, results))
     rows = {str(r[0].value): r[1].value for r in wb["Headline"].iter_rows(min_row=2)}
     assert rows["CAC payback (no complete quarter, months)"] is None
@@ -117,7 +120,7 @@ def _segment_results(**kw):
     import test_growth_engine as tge
     _, years, base = tge._seg_paths(target_arr=1_000_000)
     sp = tge._seg_paths(target_arr=base + 25_000 * 3 * years, **kw)[0]
-    return {**RESULTS, "segment_paths": sp}, sp
+    return _with_segment_paths(sp), sp
 
 
 def test_segment_sheets_keep_cells_numeric_with_number_formats():
@@ -160,19 +163,9 @@ def test_unavailable_segment_paths_name_what_would_resolve_them():
     sys.path.insert(0, str(Path(__file__).parents[1]))
     import test_growth_engine as tge
     sp = tge._seg_paths(target_arr=1_000_000, no_segments=True)[0]
-    wb = openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, {**RESULTS, "segment_paths": sp}))
+    wb = openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, _with_segment_paths(sp)))
     values = [c.value for row in wb["Segment Base"].iter_rows() for c in row]
     assert "segment" in " ".join(str(v) for v in values if v)
-
-
-def test_results_stored_before_the_rename_still_export_the_total_under_its_new_name():
-    legacy = {**RESULTS, "acv_path": {k: v for k, v in RESULTS["acv_path"].items()
-                                      if k not in ("total_customers_at_target", "additional_customers_needed")}}
-    legacy["acv_path"]["customers_needed"] = 128.3
-    wb = openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, legacy))
-    path = wb["Path to Plan"]
-    assert _cell(path, "Total customers at target ARR").value == 129
-    assert _cell(path, "Additional customers needed").value is None      # not derived, not invented
 
 
 # ---------------------------------------------------------------------------
@@ -214,10 +207,7 @@ def test_no_export_label_has_a_comma_outside_its_brackets():
 
 
 def test_no_export_label_breaks_the_rule_when_there_is_no_complete_cac_quarter():
-    results = {**RESULTS, "cac_payback": {"default_l": 1, "headline_quarter": None, "quarters": {
-        "2026-Q2": {"new_mrr": 400.0, "gross_margin_pct": 70.0, "months_in_quarter": 2, "partial": True,
-                    "L0": {"months": None, "reason": "x"}, "L2": {"months": None, "reason": "x"},
-                    "L1": {"months": 30.0, "sm_expense": 9000.0, "reason": None}}}}}
+    results = {**RESULTS, "cac_payback": _partial_only_cac()}
     wb = openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, results))
     labels = [l for _, l in _export_labels(wb)]
     assert "CAC payback (no complete quarter, months)" in labels
@@ -336,7 +326,7 @@ def test_every_sheet_a_source_key_can_point_to_exists_in_a_full_export():
     from app import narrative_export as ne
     results, _ = _segment_results()
     names = set(openpyxl.load_workbook(server.build_export_workbook(
-        _META, {**results, "anomalies": {"negative_mrr_months": []}, "missing_data": []},
+        _META, {**results, "anomalies": cf.anomalies(), "missing_data": []},
         "x", [_narrative()])).sheetnames)
     assert set(ne.DATA_SHEETS) <= names, sorted(set(ne.DATA_SHEETS) - names)
 
@@ -374,9 +364,7 @@ _GROUP2 = _re.compile(r"\(([^)]*)\)")
 
 def _rich_export():
     results, _ = _segment_results()
-    results = {**results, "anomalies": {"negative_mrr_months": [], "revenue_gap_then_resume": [],
-                                        "revenue_missing_customer_id": {"count": 0},
-                                        "deals_close_before_created": {"excluded_count": 0}}}
+    results = {**results, "anomalies": cf.anomalies()}
     return openpyxl.load_workbook(server.build_export_workbook(
         _META, results, "Narrative generated by claude-opus-5 on 2026-09-30 14:07 UTC.", [_narrative()]))
 
@@ -412,12 +400,12 @@ def test_no_export_label_carries_the_acv_definition():
 def test_the_glossary_sheet_is_in_every_export_and_defines_acv():
     """It is the only definition of ACV in the workbook, so it must never depend on what else is there."""
     variants = {
-        "empty results": ({}, {}, None, None),
+        "nothing computed": ({}, cf.stored(), None, None),
         "core results only": (_META, RESULTS, None, None),
         "with narratives and disclosure": (_META, RESULTS, "Narrative generated by x on y.", [_narrative()]),
         "with segment paths": (_META, _segment_results()[0], None, None),
-        "no segment column": (_META, {**RESULTS, "segment_paths": {"available": False, "missing_inputs": [
-            {"input": "customer segments", "resolve": "Map the optional 'segment' column"}]}}, None, None),
+        "no segment column": (_META, {**RESULTS, "segment_paths": cf.segment_paths(missing_inputs=[
+            {"input": "customer segments", "resolve": "Map the optional 'segment' column"}])}, None, None),
     }
     for name, (meta, results, disclosure_text, narratives) in variants.items():
         wb = openpyxl.load_workbook(server.build_export_workbook(meta, results, disclosure_text, narratives))
@@ -454,17 +442,16 @@ def test_an_unavailable_reconciliation_is_stated_in_the_workbook():
     sys.path.insert(0, str(Path(__file__).parents[1]))
     import test_growth_engine as tge
     sp = tge._seg_paths(target_arr=50_000)[0]                       # target already met by the base
-    wb = openpyxl.load_workbook(server.build_export_workbook(_META, {**RESULTS, "segment_paths": sp}))
+    wb = openpyxl.load_workbook(server.build_export_workbook(_META, _with_segment_paths(sp)))
     rows = {str(r[0].value): r[1].value for r in wb["Segment Mix"].iter_rows(min_row=2)}
     assert "reaches the target" in rows["Reconciliation of the simple and segment views (12-month window)"]
 
 
 def test_the_cohort_sheet_explains_a_null_nrr_and_names_what_n_counts():
-    nrr = {"month": "2025-02", "trailing_window_months": 12, "overall_pct": 106.0, "nrr_base_customers": 39,
-           "by_segment": {}, "series": [],
-           "by_cohort": {"2024-Q1": {"nrr_pct": 127.4, "nrr_base_customers": 5},
-                         "2024-Q3": {"nrr_pct": None, "nrr_base_customers": 0,
-                                     "reason": "cohort younger than 12 months: none of its customers had revenue 12 months before the as-of month"}}}
+    nrr = cf.nrr(1.06, 39, month="2025-02", by_cohort={
+        "2024-Q1": cf.nrr_group(1.274, 5),
+        "2024-Q3": cf.nrr_group(None, 0, reason="cohort younger than 12 months: none of its customers had revenue "
+                                                "12 months before the as-of month")})
     wb = openpyxl.load_workbook(server.build_export_workbook(_META, {**RESULTS, "nrr": nrr}))
     ws = wb["NRR by Cohort"]
     assert [c.value for c in ws[1]] == ["Cohort", "NRR", "NRR base customers", "Note"]

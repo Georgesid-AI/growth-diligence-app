@@ -53,7 +53,7 @@ def _nrr():
     rows += monthly_lines("B", {i: 200 for i in range(3, 13)}, start_row=100)
     mrr, seg, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
     res = ge.compute_nrr(mrr, seg, fm)
-    return 110.0, res["overall_pct"]
+    return 1.1, res["overall_pct"]
 
 
 @case("Gross revenue churn = 35%")
@@ -64,7 +64,7 @@ def _churn():
     rows += monthly_lines("D", {i: (150 if i == 12 else 100) for i in range(13)}, start_row=300)  # expansion (not netted)
     mrr, _, _, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
     res = ge.compute_gross_churn(mrr)
-    return 35.0, res["overall_pct"]
+    return 0.35, res["overall_pct"]
 
 
 @case("Median sales cycle = 60 days")
@@ -97,7 +97,7 @@ def _winrate():
     for _ in range(68):
         rows.append({"deal_id": rid, "stage": "lost", "founder_involved": "no", "_row": rid}); rid += 1
     res = ge.compute_win_rate(pd.DataFrame(rows), True)
-    return 30.0, res["win_rate_pct"]
+    return 0.3, res["win_rate_pct"]
 
 
 @case("Win rate small-sample flag (founder n=10)")
@@ -299,7 +299,7 @@ def _cohort_m6():
     rows = monthly_lines("A", vals)
     mrr, _, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
     coh = ge.compute_cohort_retention(mrr, fm)
-    return 130.0, coh["data"][0]["values"]["6"]
+    return 1.3, coh["data"][0]["values"]["6"]
 
 
 @case("Cohort heatmap: ramping cohort no longer inflates past 100% (regression for M0 bug)")
@@ -316,7 +316,7 @@ def _cohort_ramp_in_fix():
     coh = ge.compute_cohort_retention(mrr, fm)
     row = coh["data"][0]
     # only ages 0 and 1 are fully observed for all three customers as of month 3
-    return ({"0": 100.0, "1": 100.0}, 1), (row["values"], max(int(k) for k in row["values"]))
+    return ({"0": 1.0, "1": 1.0}, 1), (row["values"], max(int(k) for k in row["values"]))
 
 
 def _demo_engine_inputs(spec_idx):
@@ -345,7 +345,7 @@ def _cohort_m0_always_100_demo():
     for idx in (0, 1):
         mrr, _, fm, _, _ = _demo_engine_inputs(idx)
         coh = ge.compute_cohort_retention(mrr, fm)
-        ok = ok and all(row["values"].get("0") == 100.0 for row in coh["data"])
+        ok = ok and all(row["values"].get("0") == 1.0 for row in coh["data"])
     return True, ok
 
 
@@ -357,7 +357,7 @@ def _cohort_plausible_range_demo():
         coh = ge.compute_cohort_retention(mrr, fm)
         for row in coh["data"]:
             for v in row["values"].values():
-                if v is None or v < 0 or v > 250:
+                if v is None or v < 0 or v > 2.5:
                     ok = False
     return True, ok
 
@@ -369,8 +369,8 @@ def _nrr_by_cohort_unchanged_demo():
     # The numbers are exactly the ones this case has always pinned; only the count's field name
     # changed ("n" -> "nrr_base_customers"), and a null NRR now carries its reason.
     expected = {
-        "2023-Q1": (127.64, 8), "2023-Q2": (90.14, 11), "2023-Q3": (111.56, 8),
-        "2023-Q4": (127.63, 7), "2024-Q1": (127.42, 5), "2024-Q2": (None, 0), "2024-Q3": (None, 0),
+        "2023-Q1": (1.2764, 8), "2023-Q2": (0.9014, 11), "2023-Q3": (1.1156, 8),
+        "2023-Q4": (1.2763, 7), "2024-Q1": (1.2742, 5), "2024-Q2": (None, 0), "2024-Q3": (None, 0),
     }
     actual = {q: (v["nrr_pct"], v["nrr_base_customers"]) for q, v in nrr["by_cohort"].items()}
     return expected, actual
@@ -472,7 +472,7 @@ def _sp_erosion():
 def _sp_nrr_inputs():
     sp, _, _ = _seg_paths(target_arr=1_000_000)
     a, b = sp["stage_one"]["segments"]["A"], sp["stage_one"]["segments"]["B"]
-    return (125.0, 75.0, 2, 2, True, True), (a["nrr_pct"], b["nrr_pct"], a["nrr_base_customers"], b["nrr_base_customers"], a["small_base"], b["small_base"])
+    return (1.25, 0.75, 2, 2, True, True), (a["nrr_pct"], b["nrr_pct"], a["nrr_base_customers"], b["nrr_base_customers"], a["small_base"], b["small_base"])
 
 
 @case("Segment paths: per-point sensitivity is the derivative of ARR * (NRR/100)^years")
@@ -516,8 +516,8 @@ def _sp_shift():
     sp, _, _ = _seg_paths(target_arr=target)
     r = sp["reverse_solve"]["12"]
     a = r["by_segment"]["A"]
-    return (True, 25000.0, round(21400 / 32400 * 100, 3), round(21400 / 32400 * 100 - 300 / 7, 3), _r(300 / 7, 3)), (
-        r["reachable"], _r(r["required_blended_landed_acv"], 2), _r(a["required_mix_pct"], 3), _r(a["shift_pct_points"], 3), _r(a["current_mix_pct"], 3))
+    return (True, 25000.0, round(21400 / 32400, 5), round(21400 / 32400 - 3 / 7, 5), _r(3 / 7, 5)), (
+        r["reachable"], _r(r["required_blended_landed_acv"], 2), _r(a["required_mix_pct"], 5), _r(a["shift_pct_points"], 5), _r(a["current_mix_pct"], 5))
 
 
 @case("Reverse-solve: the shift comes out of the segment with the lowest landed ACV")
@@ -556,7 +556,7 @@ def _sp_current_mix():
     _, years, base = _seg_paths(target_arr=1_000_000)
     sp, _, _ = _seg_paths(target_arr=base + 25_000 * 3 * years)
     r = sp["reverse_solve"]["12"]["by_segment"]
-    return (_r(300 / 7, 3), _r(400 / 7, 3)), (_r(r["A"]["current_mix_pct"], 3), _r(r["B"]["current_mix_pct"], 3))
+    return (_r(3 / 7, 5), _r(4 / 7, 5)), (_r(r["A"]["current_mix_pct"], 5), _r(r["B"]["current_mix_pct"], 5))
 
 
 @case("24-month window not computable on 14 months of history: stated, not omitted")
@@ -934,12 +934,12 @@ def _founder_deals():
 
 @case("Win rate WITH founder = 80.0%")
 def _wr_with():
-    return 80.0, ge.compute_win_rate(_founder_deals(), True)["by_founder"]["with_founder"]["win_rate_pct"]
+    return 0.8, ge.compute_win_rate(_founder_deals(), True)["by_founder"]["with_founder"]["win_rate_pct"]
 
 
 @case("Win rate WITHOUT founder = 24.44%")
 def _wr_without():
-    return 24.44, ge.compute_win_rate(_founder_deals(), True)["by_founder"]["without_founder"]["win_rate_pct"]
+    return 0.2444, ge.compute_win_rate(_founder_deals(), True)["by_founder"]["without_founder"]["win_rate_pct"]
 
 
 @case("CRM founder-involved value that isn't yes/no-like is flagged, not silently dropped")
@@ -980,27 +980,27 @@ def _nrr_scenario():
 
 @case("NRR overall (mixed cohorts) = 100%")
 def _nrr_overall_mixed():
-    return 100.0, _nrr_scenario()[0]["overall_pct"]
+    return 1.0, _nrr_scenario()[0]["overall_pct"]
 
 
 @case("NRR by segment: Enterprise = 120%")
 def _nrr_seg_ent():
-    return 120.0, _nrr_scenario()[0]["by_segment"]["Ent"]["nrr_pct"]
+    return 1.2, _nrr_scenario()[0]["by_segment"]["Ent"]["nrr_pct"]
 
 
 @case("NRR by segment: SMB = 80%")
 def _nrr_seg_smb():
-    return 80.0, _nrr_scenario()[0]["by_segment"]["SMB"]["nrr_pct"]
+    return 0.8, _nrr_scenario()[0]["by_segment"]["SMB"]["nrr_pct"]
 
 
 @case("NRR by cohort: 2023-Q1 = 120%")
 def _nrr_cohort_q1():
-    return 120.0, _nrr_scenario()[0]["by_cohort"]["2023-Q1"]["nrr_pct"]
+    return 1.2, _nrr_scenario()[0]["by_cohort"]["2023-Q1"]["nrr_pct"]
 
 
 @case("NRR by cohort: 2023-Q2 = 80%")
 def _nrr_cohort_q2():
-    return 80.0, _nrr_scenario()[0]["by_cohort"]["2023-Q2"]["nrr_pct"]
+    return 0.8, _nrr_scenario()[0]["by_cohort"]["2023-Q2"]["nrr_pct"]
 
 
 @case("New MRR 2023-Q1 = 100")
@@ -1121,7 +1121,7 @@ def _winrate_excl_invalid():
         {"deal_id": 7, "stage": "lost", "created_date": created, "close_date": created - pd.Timedelta(days=3), "_row": 7},  # invalid
     ])
     wr = ge.compute_win_rate(deals, False)
-    return (60.0, 3, 2, 2), (wr["win_rate_pct"], wr["won"], wr["lost"], wr["excluded_invalid"])
+    return (0.6, 3, 2, 2), (wr["win_rate_pct"], wr["won"], wr["lost"], wr["excluded_invalid"])
 
 
 # ---------------------------------------------------------------------------

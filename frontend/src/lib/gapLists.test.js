@@ -10,7 +10,7 @@ const results = {
     median_days: 45.5, n: 2, status: COMPUTED_STATUS,
     source: { file: "revenue.xlsx", sheet: "Sheet1", rows: "rows 2–14 (13 rows)", dataset: "revenue" },
   },
-  win_rate: { won: 1, lost: 1, win_rate_pct: 50 },
+  win_rate: { won: 1, lost: 1, win_rate_pct: 0.5 },
   questions_for_management: [{
     metric: "Sales cycle", status: COMPUTED_STATUS, result_key: "sales_cycle", dataset: "revenue",
     question: "Sales cycle was computed from the revenue upload ... Please explain the result.",
@@ -35,8 +35,8 @@ describe("questions for management", () => {
   });
 
   test("values follow the number display rules", () => {
-    expect(computedValue("win_rate", { win_rate: { win_rate_pct: 49.6 } })).toBe("50%");
-    expect(computedValue("nrr", { nrr: { overall_pct: 106.41 } })).toBe("106%");
+    expect(computedValue("win_rate", { win_rate: { win_rate_pct: 0.496 } })).toBe("50%");
+    expect(computedValue("nrr", { nrr: { overall_pct: 1.0641 } })).toBe("106%");
     expect(computedValue("cac_payback", {
       cac_payback: { default_l: 1, headline_quarter: "2024-Q2", quarters: { "2024-Q2": { L1: { months: 12.24 } } } },
     })).toBe("12.2 months (2024-Q2)");

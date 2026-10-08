@@ -11,6 +11,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from schemas import metrics as contract
+
 RECURRING_ALIASES = {"recurring", "subscription", "mrr", "arr", "rec"}
 ONE_OFF_ALIASES = {"one-off", "one off", "oneoff", "onetime", "one-time", "services", "service"}
 WON_ALIASES = {"won", "closed won", "closed-won", "closedwon", "win"}
@@ -237,7 +239,7 @@ def compute_nrr(mrr: pd.DataFrame, seg_map: dict, first_month: dict):
     m0_latest = cols[latest - 12]
 
     def entry(val, base_n, customers, noun):
-        row = {"nrr_pct": _round(val * 100) if val is not None else None, "nrr_base_customers": base_n}
+        row = {"nrr_pct": _round(val, 4) if val is not None else None, "nrr_base_customers": base_n}
         if val is None:
             younger = bool(customers) and all(first_month.get(c) is not None and first_month[c] > m0_latest for c in customers)
             row["reason"] = (
@@ -268,13 +270,13 @@ def compute_nrr(mrr: pd.DataFrame, seg_map: dict, first_month: dict):
     series = []
     for i in range(12, len(cols)):
         v, cn = nrr_for(i, list(mrr.index))
-        series.append({"month": _period_str(cols[i]), "nrr_pct": _round(v * 100) if v is not None else None})
+        series.append({"month": _period_str(cols[i]), "nrr_pct": _round(v, 4) if v is not None else None})
 
     top = {
         "month": _period_str(cols[latest]),
         # NRR is a trailing-12-month figure measured at `month`, never one month's movement.
         "trailing_window_months": 12,
-        "overall_pct": _round(overall * 100) if overall is not None else None,
+        "overall_pct": _round(overall, 4) if overall is not None else None,
         "nrr_base_customers": n,
         "by_segment": by_segment,
         "by_cohort": by_cohort,
@@ -308,14 +310,14 @@ def compute_gross_churn(mrr: pd.DataFrame):
 
     latest = len(cols) - 1
     series = [
-        {"month": _period_str(cols[i]), "churn_pct": _round(churn_for(i) * 100) if churn_for(i) is not None else None}
+        {"month": _period_str(cols[i]), "churn_pct": _round(churn_for(i), 4)}
         for i in range(12, len(cols))
     ]
     v = churn_for(latest)
     # A trailing-12-month figure measured at `month`: MRR lost (churn and contraction, expansion
     # not netted) over the 12 months to that month, as a share of MRR 12 months earlier.
     return {"month": _period_str(cols[latest]), "trailing_window_months": 12,
-            "overall_pct": _round(v * 100) if v is not None else None, "series": series}
+            "overall_pct": _round(v, 4), "series": series}
 
 
 def compute_new_mrr_by_quarter(mrr: pd.DataFrame, first_month: dict):
@@ -359,7 +361,7 @@ def compute_cac_payback(new_mrr_q: dict, pnl: pd.DataFrame, default_l: int = 1):
             gm = (rev - grp.at[q, "cost"]) / rev if rev else None
         else:
             gm = None
-        row["gross_margin_pct"] = _round(gm * 100) if gm is not None else None
+        row["gross_margin_pct"] = _round(gm, 4) if gm is not None else None
         for L in (0, 1, 2):
             lag_q = _shift_quarter(q, L)
             key = f"L{L}"
@@ -441,7 +443,7 @@ def compute_win_rate(deals: pd.DataFrame, founder_available: bool):
     lost = d["stage_l"].isin(LOST_ALIASES).sum()
     total = won + lost
     overall = won / total if total else None
-    out = {"won": int(won), "lost": int(lost), "win_rate_pct": _round(overall * 100) if overall is not None else None,
+    out = {"won": int(won), "lost": int(lost), "win_rate_pct": _round(overall, 4) if overall is not None else None,
            "excluded_invalid": excluded}
 
     if founder_available and "founder_involved" in d.columns:
@@ -459,7 +461,7 @@ def compute_win_rate(deals: pd.DataFrame, founder_available: bool):
             split[key] = {
                 "won": int(w),
                 "lost": int(l),
-                "win_rate_pct": _round((w / t) * 100) if t else None,
+                "win_rate_pct": _round(w / t, 4) if t else None,
                 "n": int(t),
                 "small_sample": bool(t < 20),
             }
@@ -759,7 +761,7 @@ def compute_revenue_series(rev: pd.DataFrame, billing_terms: dict, fx: dict, as_
 
 
 
-RECONCILIATION_TOLERANCE_PCT = 2.0     # a window gap above this is a blocker (chat-upload.md section 6.2)
+RECONCILIATION_TOLERANCE_PCT = 0.02    # a window gap above this fraction (2%) is a blocker (chat-upload.md section 6.2)
 RECONCILIATION_MAX_MONTHS = 12
 
 
@@ -793,7 +795,7 @@ def compute_revenue_reconciliation(series: dict, month_rows: dict, pnl: pd.DataF
         return s.to_dict(rule)
 
     def pct(gap, base):
-        return None if not base else _round(gap / base * 100, 2)
+        return None if not base else _round(gap / base, 4)
 
     by_month = []
     for m in window:
@@ -808,7 +810,7 @@ def compute_revenue_reconciliation(series: dict, month_rows: dict, pnl: pd.DataF
     gap = file_total - pnl_total
     gap_pct = pct(gap, pnl_total)
     # A P&L total of 0 has no percentage ("—"); a file total against it is still a mismatch.
-    blocker = (abs(gap) / abs(pnl_total) * 100 > RECONCILIATION_TOLERANCE_PCT) if pnl_total else bool(round(file_total, 2))
+    blocker = (abs(gap) / abs(pnl_total) > RECONCILIATION_TOLERANCE_PCT) if pnl_total else bool(round(file_total, 2))
     all_file = sorted({r for m in window for r in (month_rows or {}).get(m, [])})
     all_pnl = sorted({r for m in window for r in pnl_rows.get(m, [])})
     return {
@@ -877,7 +879,7 @@ def compute_cohort_retention(mrr: pd.DataFrame, first_month: dict):
         row = {"cohort": q, "start_mrr": _round(start_mrr), "n": len(custs), "values": {}}
         for k in range(0, max_age_observed + 1):
             total_k = sum(mrr.at[c, cols[start_idx[c] + k]] for c in custs)
-            row["values"][str(k)] = _round((total_k / start_mrr) * 100)
+            row["values"][str(k)] = _round(total_k / start_mrr, 4)
             max_offset = max(max_offset, k)
         data.append(row)
     return {"cohorts": [d["cohort"] for d in data], "max_offset": max_offset, "data": data}
@@ -1028,12 +1030,12 @@ def _reverse_solve(window: int, landed: dict, gap, years, active_by_seg: dict) -
     else:
         out["reachable"] = False
     if out["reachable"]:
-        out["moved_mix_pct"] = sum(abs(new_w[s] - weights[s]) for s in weights) / 2 * 100
+        out["moved_mix_pct"] = sum(abs(new_w[s] - weights[s]) for s in weights) / 2
     out["by_segment"] = {
         s: {"landed_acv": acv[s],
-            "current_mix_pct": weights[s] * 100,
-            **({"required_mix_pct": new_w[s] * 100,
-                "shift_pct_points": (new_w[s] - weights[s]) * 100} if out["reachable"] else {})}
+            "current_mix_pct": weights[s],
+            **({"required_mix_pct": new_w[s],
+                "shift_pct_points": new_w[s] - weights[s]} if out["reachable"] else {})}
         for s in sorted(weights)
     }
     return out
@@ -1128,11 +1130,11 @@ def compute_segment_paths(mrr: pd.DataFrame, seg_map: dict, first_month: dict, n
         elif pct <= 0:
             # 0 ** (years - 1) divides by zero for years < 1, and a negative NRR raised to a
             # fractional power is a complex number: neither is a projection
-            not_positive.append(f"{s} ({pct:g}%)")
+            not_positive.append(f"{s} ({pct * 100:g}%)")
             row.update({"projected_arr": None, "change_arr": None, "arr_change_per_nrr_point": None,
-                        "reason": f"NRR is {pct:g}%, so a constant-NRR projection is not meaningful"})
+                        "reason": f"NRR is {pct * 100:g}%, so a constant-NRR projection is not meaningful"})
         else:
-            factor = pct / 100
+            factor = pct
             projected = a["arr"] * factor ** years
             row.update({"projected_arr": projected, "change_arr": projected - a["arr"],
                         # ARR at the target date moved by one NRR point, all else equal
@@ -1429,9 +1431,9 @@ def resolve_missing(missing_data: list, results: dict, files: dict | None, **ctx
     return missing, questions
 
 
-def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, config: dict, sources: dict,
-                files: dict | None = None, on_error=None):
-    """Run the full engine. `sources` maps dataset -> {file, sheet}; `files` is every
+def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, config: dict, sources: dict,
+                    files: dict | None = None, on_error=None):
+    """Run the full engine, before the contract (see compute_all). `sources` maps dataset -> {file, sheet}; `files` is every
     upload read as each dataset type (see can_compute), for compute-before-Missing.
     A metric whose calculation raises is reported as Missing and the rest still compute;
     `on_error(exc)`, if given, receives each such exception (the server logs it)."""
@@ -1730,3 +1732,11 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
         missing_data, results, files, as_of=as_of, fx=fx, new_mrr_q=new_mrr_q,
         default_l=config.get("default_l", 1))
     return results
+
+
+def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, config: dict, sources: dict,
+                files: dict | None = None, on_error=None):
+    """The engine's output as stored: `compute_all_raw` built into schemas.metrics.MetricsPayload
+    (docs/specs/interface-contracts.md). Percents are fractions; counts and days are integers, rounded once, here.
+    A field the metric functions emit that the model does not declare raises a ValidationError."""
+    return contract.build(compute_all_raw(rev, deals, pnl, config, sources, files=files, on_error=on_error))

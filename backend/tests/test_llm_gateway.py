@@ -21,6 +21,8 @@ if str(BACKEND) not in sys.path:
 from app.llm import cache, gateway, guards, prompt_store, redaction  # noqa: E402
 from app.llm.schemas import Narrative  # noqa: E402
 
+import contract_fixtures as cf  # noqa: E402
+
 
 # ---------------------------------------------------------------------------
 # Minimal async Mongo stub
@@ -177,20 +179,21 @@ RESULTS_DOC = {
     "target_date": "2027-12-31",
     "as_of_month": "2026-06",
     "computed_at": "2026-09-26T10:00:00Z",
-    "results": {
-        "as_of_month": "2026-06",
-        "reporting_currency": "EUR",
-        "arr": {"value": 3129600, "mrr": 260800, "month": "2026-06",
-                "customer": REAL_NAMES[0]},
-        "nrr": {"overall_pct": 104.2, "n": 110, "month": "2026-06",
-                "by_segment": {"Enterprise": {"customer": REAL_NAMES[1]}}},
-        "gross_churn": {"overall_pct": 6.1, "month": "2026-06"},
-        "win_rate": {"win_rate_pct": 28.7, "won": 269, "lost": 667},
-        # Must never be sent: lives outside the projection, included here to
-        # prove load_computed_results does not pick it up.
-    },
-    "datasets": {"revenue": {"rows": [{"customer": REAL_NAMES[2], "amount": 999999}]}},
+    "results": cf.stored(
+        arr=cf.arr(3129600.0, 260800.0),
+        nrr=cf.nrr(1.042, 110, by_segment={"Enterprise": cf.nrr_group(1.1)}),
+        gross_churn=cf.gross_churn(0.061),
+        win_rate=cf.win_rate(0.287, 269, 667),
+    ),
 }
+
+# What the allowlist and the redaction must hold back even when it reaches them: identifiers and an uploaded row sit
+# where the engine never writes them. Such a payload fails the contract, so these tests read it with
+# load_computed_results (which only reports the contract verdict) and never through generate_narrative.
+LEAKY_DOC = copy.deepcopy(RESULTS_DOC)
+LEAKY_DOC["results"]["arr"]["customer"] = REAL_NAMES[0]
+LEAKY_DOC["results"]["nrr"]["by_segment"]["Enterprise"]["customer"] = REAL_NAMES[1]
+LEAKY_DOC["datasets"] = {"revenue": {"rows": [{"customer": REAL_NAMES[2], "amount": 999999}]}}
 
 GOOD_NARRATIVE = {
     "headline": "Ending ARR is 3,129,600 EUR with NRR at 104%.",
@@ -240,7 +243,7 @@ async def _noop_sleep(_seconds):
     return None
 
 
-def make_db():
+def make_db(doc=None):
     """Fresh DB per test.
 
     Deep-copied: `dict(RESULTS_DOC)` would share the nested `results` dict, so a
@@ -248,7 +251,7 @@ def make_db():
     the fixture for every test that ran after it.
     """
     db = FakeDB()
-    db["audits"].docs.append(copy.deepcopy(RESULTS_DOC))
+    db["audits"].docs.append(copy.deepcopy(doc or RESULTS_DOC))
     return db
 
 
@@ -258,7 +261,7 @@ def make_db():
 def test_redaction_no_real_identifier_in_outbound_payload():
     """No value held in pseudonym_map may appear in what leaves the server."""
     async def run():
-        db = make_db()
+        db = make_db(LEAKY_DOC)
         computed = await gateway.load_computed_results(db, RUN_ID, "growth_engine")
         mapping = await redaction.get_or_create_map(db, RUN_ID, computed)
         outbound = redaction.redact(computed, mapping)
@@ -299,7 +302,7 @@ def test_restore_puts_real_names_back():
 def test_gateway_never_loads_uploaded_rows():
     """The projection must exclude datasets - raw uploaded values are off-limits."""
     async def run():
-        db = make_db()
+        db = make_db(LEAKY_DOC)
         computed = await gateway.load_computed_results(db, RUN_ID, "growth_engine")
         return cache.canonical_json(computed)
 
@@ -660,7 +663,7 @@ def test_model_is_given_the_valid_key_list_in_the_exact_accepted_form():
 
     async def run():
         db = make_db()
-        db["audits"].docs[0]["results"]["acv_path"] = {"acv": 28451, "customers_needed": 211}
+        db["audits"].docs[0]["results"]["acv_path"] = cf.acv_path(acv=28451.0)
         return await gateway.generate_narrative(
             db, RUN_ID, "growth_engine", adapter=PayloadCapturingAdapter(), sleep=_noop_sleep
         )
@@ -1231,7 +1234,7 @@ def test_sub_one_percent_no_longer_flags_a_narrative():
     async def run():
         db = make_db()
         # 1 appears in the computed results, so the sentence is fully supported.
-        db["audits"].docs[0]["results"]["gross_churn"]["overall_pct"] = 1
+        db["audits"].docs[0]["results"]["gross_churn"]["overall_pct"] = 0.01
         return await gateway.generate_narrative(
             db, RUN_ID, "growth_engine",
             adapter=FakeAdapter(replies=[json.dumps(prose)]), sleep=_noop_sleep
@@ -1653,10 +1656,11 @@ def test_nrr_and_gross_churn_state_their_twelve_month_window_in_the_payload():
 
 def _both_views_results():
     return {
-        "acv_path": {"required_vs_observed_12m": 1.28},
-        "segment_paths": {"available": True, "reconciliation": {"12": {
-            "window_months": 12, "available": True, "path_to_plan_ratio": 1.28, "factor_compounded_base": 0.8,
-            "factor_landed_acv": 1.25, "factor_gross_rate": 0.8, "segment_ratio": 1.024}}},
+        "acv_path": cf.acv_path(required_vs_observed_12m=1.28),
+        "segment_paths": cf.segment_paths(available=True, reconciliation={"12": {
+            "window_months": 12, "available": True, "reason": None, "path_to_plan_ratio": 1.28,
+            "factor_compounded_base": 0.8, "factor_landed_acv": 1.25, "factor_gross_rate": 0.8,
+            "segment_ratio": 1.024}}),
     }
 
 

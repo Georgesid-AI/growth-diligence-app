@@ -12,7 +12,7 @@ Rules (kind -> behaviour):
     count_up   required / implied count, rounds UP            128.3     -> "129"
     days       rounds UP to the next whole day, unit suffix   42.1      -> "43 days"
     months     one decimal, nearest, "months" suffix          12.24     -> "12.2 months"
-    pct        whole number, nearest, half away from zero     106.41    -> "106%"
+    pct        a fraction shown as a whole percent, nearest    1.0641    -> "106%"
     ratio      always two decimals, "x" suffix                1.28      -> "1.28x"
     plain      integer identifier / setting, no grouping      1         -> "1"
 
@@ -21,16 +21,16 @@ to `format_vectors.json` by a test on each side.
 """
 import math
 import re
-from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Optional
 
-CURRENCY, COUNT, COUNT_UP, DAYS, MONTHS, PCT, RATIO, PLAIN = (
-    "currency", "count", "count_up", "days", "months", "pct", "ratio", "plain",
-)
+from schemas import metrics as contract
+from schemas.metrics import COUNT, COUNT_UP, CURRENCY, DAYS, MONTHS, PCT, PLAIN, RATIO
 
 # A binary float that is "really" 43.0 can arrive as 43.00000000000001, and
-# ceil would then say 44. Absorb noise far below any real figure's precision.
-_EPSILON = Decimal("1e-9")
+# ceil would then say 44. The contract owns the rule; the display and the engine share it.
+_nearest = contract.round_nearest
+_up = contract.round_up
 
 PLACEHOLDER = "—"
 
@@ -47,14 +47,6 @@ def _dec(value: Any) -> Optional[Decimal]:
     # str() of a float is its shortest round-trip repr, so 0.1 stays 0.1
     # rather than 0.1000000000000000055...
     return Decimal(str(value))
-
-
-def _nearest(d: Decimal) -> int:
-    return int(d.quantize(Decimal(1), rounding=ROUND_HALF_UP))
-
-
-def _up(d: Decimal) -> int:
-    return int((d - _EPSILON).to_integral_value(rounding=ROUND_CEILING))
 
 
 def _grouped(n: int) -> str:
@@ -106,8 +98,9 @@ def fmt_months(value: Any) -> str:
 
 
 def fmt_pct(value: Any) -> str:
+    """A fraction as a whole percent: 1.0641 -> "106%". Reading the raw number for display means times 100."""
     d = _dec(value)
-    return PLACEHOLDER if d is None else f"{_nearest(d)}%"
+    return PLACEHOLDER if d is None else f"{_nearest(d * 100)}%"
 
 
 def fmt_ratio(value: Any) -> str:
@@ -147,24 +140,35 @@ def fmt(kind: str, value: Any, ccy: Optional[str] = None) -> str:
 # Spreadsheet cells: numeric, with an Excel number format
 # ---------------------------------------------------------------------------
 # Analysts must be able to sum and sort, so the export keeps cells numeric and
-# lets the number format do the display. Excel formats can round but not round
-# UP, and "0%" scales by 100, so `xlsx_value` prepares the stored number so the
-# format then shows exactly what `fmt` would.
+# lets the number format do the display. Counts and days arrive already rounded by
+# the engine (the format cannot round up), and "0%" scales by 100, so a fraction is
+# written as it is: 1.0641 is shown by "0%" as 106%.
 XLSX_NUMBER_FORMAT = {
     CURRENCY: "#,##0", COUNT: "#,##0", COUNT_UP: "#,##0", DAYS: "#,##0",
     MONTHS: "0.0", PCT: "0%", RATIO: '0.00"x"', PLAIN: "0",
 }
 
 
+class UnitError(ValueError):
+    """A cell's number does not fit its unit; nothing is written."""
+
+
 def xlsx_value(kind: str, value: Any) -> Optional[float]:
-    """The number to store in a cell that will carry XLSX_NUMBER_FORMAT[kind]."""
+    """The number to store in a cell that will carry XLSX_NUMBER_FORMAT[kind].
+
+    Fails loudly rather than write a wrong cell: a percent must be a fraction (|x| <= 10), a count or a number of
+    days must already be an integer (the engine rounds, the export does not)."""
     d = _dec(value)
     if d is None:
         return None
-    if kind in (COUNT_UP, DAYS):
-        return _up(d)              # the format cannot round up, so the cell holds the rounded-up value
+    if kind in (COUNT, COUNT_UP, DAYS) and d != d.to_integral_value():
+        raise UnitError(f"{value!r} is not a whole number; a {kind.replace('_', ' ')} is rounded by the engine")
     if kind == PCT:
-        return float(d / 100)      # 106.41 -> 1.0641, shown by "0%" as 106%
+        if abs(d) > 10:
+            raise UnitError(f"{value!r} is not a fraction (1.0641 is 106.41%); a percent is written as its fraction")
+        return float(d)
+    if kind in (COUNT, COUNT_UP, DAYS):
+        return int(d)
     return float(d)
 
 
@@ -173,54 +177,11 @@ def xlsx_value(kind: str, value: Any) -> Optional[float]:
 # ---------------------------------------------------------------------------
 # Keyed by the field's own name; the same name means the same thing wherever it
 # appears in the engine's output (by_segment, quarters, series, ...).
-KIND_BY_KEY = {
-    # money
-    "value": CURRENCY, "mrr": CURRENCY, "current_arr": CURRENCY, "acv": CURRENCY,
-    "target_arr": CURRENCY, "arr": CURRENCY, "new_mrr": CURRENCY,
-    "sm_expense": CURRENCY, "start_mrr": CURRENCY, "total": CURRENCY,
-    "low": CURRENCY, "high": CURRENCY,
-    # counts of things that were observed
-    "n": COUNT, "n_customers": COUNT, "customers": COUNT, "current_customers": COUNT,
-    "count": COUNT, "won": COUNT, "lost": COUNT, "excluded_invalid": COUNT, "excluded_after_as_of": COUNT,
-    "months_available": COUNT,
-    "observed_net_new_per_year_12m": COUNT, "observed_net_new_per_year_24m": COUNT,
-    # counts the plan requires or implies - never round down
-    "total_customers_at_target": COUNT_UP, "additional_customers_needed": COUNT_UP,
-    "customers_needed": COUNT_UP,   # legacy name of total_customers_at_target in stored results
-    "required_net_new_per_year": COUNT_UP,
-    # durations
-    "median_days": DAYS, "iqr": DAYS,
-    "months": MONTHS,
-    # percentages
-    "overall_pct": PCT, "nrr_pct": PCT, "churn_pct": PCT, "win_rate_pct": PCT,
-    "gross_margin_pct": PCT,
-    # ratios
-    "required_vs_observed_12m": RATIO, "required_vs_observed_24m": RATIO,
-    # settings that are numbers but not measurements
-    "default_l": PLAIN, "max_offset": PLAIN, "months_in_quarter": PLAIN,
-    # segment paths to target ARR (segments only; landed ACV = first-month ARR, no expansion)
-    "horizon_months": MONTHS,
-    "start_arr": CURRENCY, "start_arr_total": CURRENCY, "projected_arr": CURRENCY,
-    "projected_base_arr": CURRENCY, "change_arr": CURRENCY, "arr_change_per_nrr_point": CURRENCY,
-    "gap_arr": CURRENCY, "unsegmented_arr": CURRENCY, "landed_acv": CURRENCY,
-    "required_blended_landed_acv": CURRENCY, "best_segment_landed_acv": CURRENCY,
-    "current_mix_landed_acv": CURRENCY,
-    "nrr_base_customers": COUNT, "unsegmented_customers": COUNT, "unsegmented_new_customers": COUNT,
-    "new_customers": COUNT, "gross_new_per_year": COUNT,
-    "new_customers_by_target": COUNT_UP, "required_new_per_year_at_current_mix": COUNT_UP,
-    "required_vs_observed_gross": RATIO,
-    "current_mix_pct": PCT, "required_mix_pct": PCT, "shift_pct_points": PCT, "moved_mix_pct": PCT,
-    "window_months": PLAIN, "trailing_window_months": PLAIN,
-    # reconciliation of the simple view (Path to Plan) with the segment view
-    "path_to_plan_ratio": RATIO, "factor_compounded_base": RATIO, "factor_landed_acv": RATIO,
-    "factor_gross_rate": RATIO, "segment_ratio": RATIO,
-    # source-row references (provenance): identifiers, not measurements
-    "row_numbers": PLAIN, "rows": PLAIN,
-}
-
-# Numeric fields inside a container whose own key decides the kind: cohort
-# retention stores {"values": {"0": 100.0, "3": 96.2}} - every value a pct.
-KIND_BY_PARENT = {"values": PCT}
+_BY_NAME, KIND_BY_PARENT, _AMBIGUOUS = contract.kinds_by_name()
+# Derived from the contract (schemas/metrics.py): there is no second table. `total` is the month's amount in the MRR and
+# revenue series (the customers series' count never reaches a prompt); a new ambiguous name fails
+# tests/test_interface_contracts.py and, until resolved here, raises FormattingError.
+KIND_BY_KEY = {**_BY_NAME, "total": CURRENCY}
 
 # Engine-built display strings ("€45.2K", "€25K–50K"). They format the same
 # figures in a different style. `range_label` is rebuilt here from the band's

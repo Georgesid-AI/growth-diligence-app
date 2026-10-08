@@ -105,7 +105,7 @@ export default function Diagnostics() {
 export function ReconciliationTable({ rec, currency }) {
   if (!rec) return null;
   const money = (v) => (v == null ? "—" : fmtCurrency(v, currency));
-  const pct = (v) => (v == null ? "—" : `${v}%`);
+  const pct = (v) => (v == null ? "—" : `${Math.round(v * 10000) / 100}%`);   // gap_pct is a fraction (0.035 is 3.5%)
   return (
     <section data-testid="reconciliation" className="bg-white border border-[#E5E7EB] rounded-lg p-5 mb-6">
       <h3 className="font-heading font-semibold text-slate-900 text-sm mb-4">{S22_RECONCILIATION}</h3>

@@ -21,12 +21,12 @@ RAW = {
     "target_arr": 5000000,
     "metrics": {
         "arr": {"value": 3129104.4, "mrr": 260758.7, "month": "2026-06"},
-        "nrr": {"overall_pct": 106.41, "n": 100.0, "series": [{"month": "2026-06", "nrr_pct": 8.38}]},
-        "sales_cycle": {"median_days": 42.1, "iqr": [17.0, 58.5], "n": 12},
-        "cac_payback": {"default_l": 1, "quarters": {"2026-Q1": {"new_mrr": 1000.4, "gross_margin_pct": 71.2,
+        "nrr": {"overall_pct": 1.0641, "n": 100, "series": [{"month": "2026-06", "nrr_pct": 0.0838}]},
+        "sales_cycle": {"median_days": 43, "iqr": [17, 59], "n": 12},
+        "cac_payback": {"default_l": 1, "quarters": {"2026-Q1": {"new_mrr": 1000.4, "gross_margin_pct": 0.712,
                         "L1": {"months": 12.24, "sm_expense": 9000.0, "reason": None}}}},
         "acv_path": {
-            "acv": 28451.2, "customers_needed": 128.3, "required_vs_observed_12m": 1.28,
+            "acv": 28451.2, "total_customers_at_target": 129, "required_vs_observed_12m": 1.28,
             "bands": [{"key": "k", "label": "Self-serve", "low": 100, "high": 1000,
                        "range_label": "€100–1K", "count": 3}],
             "overall_band": {"key": "k", "label": "x", "value_label": "€28.5K"},
@@ -54,7 +54,7 @@ def test_format_payload_leaves_no_raw_numbers():
     assert m["arr"]["value"] == "3,129,104 EUR"
     assert m["nrr"]["overall_pct"] == "106%" and m["nrr"]["n"] == "100"
     assert m["sales_cycle"]["median_days"] == "43 days" and m["sales_cycle"]["iqr"] == ["17 days", "59 days"]
-    assert m["acv_path"]["customers_needed"] == "129"
+    assert m["acv_path"]["total_customers_at_target"] == "129"
     assert m["cac_payback"]["quarters"]["2026-Q1"]["L1"]["months"] == "12.2 months"
     assert m["acv_path"]["required_vs_observed_12m"] == "1.28x"
     assert m["acv_path"]["bands"][0]["range_label"] == "100–1,000 EUR"
@@ -87,14 +87,21 @@ def test_acv_defined_once_at_first_use():
 
 def test_xlsx_values_display_like_the_formatter():
     # The cell holds a number; the Excel format shows what fmt() would.
-    assert f.xlsx_value(f.PCT, 106.41) == pytest.approx(1.0641)   # "0%" -> 106%
-    assert f.xlsx_value(f.COUNT_UP, 128.3) == 129                # formats cannot round up
-    assert f.xlsx_value(f.DAYS, 42.1) == 43
+    assert f.xlsx_value(f.PCT, 1.0641) == pytest.approx(1.0641)  # "0%" -> 106%
+    assert f.xlsx_value(f.COUNT_UP, 129) == 129
+    assert f.xlsx_value(f.DAYS, 43) == 43
     assert f.xlsx_value(f.MONTHS, 12.24) == 12.24                # "0.0" -> 12.2
     assert f.xlsx_value(f.CURRENCY, 3129104.4) == 3129104.4      # "#,##0" -> 3,129,104
     assert f.xlsx_value(f.RATIO, 1.28) == 1.28                   # 0.00"x"
     assert f.xlsx_value(f.COUNT, None) is None
     assert f.XLSX_NUMBER_FORMAT[f.RATIO] == '0.00"x"'
+
+
+@pytest.mark.parametrize("kind, value", [(f.PCT, 106.41), (f.PCT, -10.5), (f.COUNT_UP, 128.3), (f.DAYS, 42.1), (f.COUNT, 5.5)])
+def test_a_cell_that_does_not_fit_its_unit_is_refused_not_rounded(kind, value):
+    """The engine rounds; the writer only checks. A whole-number percent or a fractional count writes nothing."""
+    with pytest.raises(f.UnitError):
+        f.xlsx_value(kind, value)
 
 
 # ---------------------------------------------------------------------------
@@ -130,8 +137,6 @@ def test_provenance_row_references_are_registered():
 # Fields the engine emits only on rare branches, which the demo data never hits.
 # Keep this in step with growth_engine.py; the engine scan below catches the rest.
 RARE_BRANCH_FIELDS = {
-    "nrr": {"insufficient_history": True, "months_available": 7},
-    "gross_churn": {"insufficient_history": True, "months_available": 7},
     "win_rate": {"founder_involved_excluded": {"count": 2, "rows": [4, 9], "values": ["maybe"]}},
     "acv_path": {"target_date_error": "bad date", "required_net_new_per_year": None},
 }
@@ -414,7 +419,7 @@ def test_segment_path_figures_format_by_the_rules():
         "horizon_months": 34.03, "gap_arr": 35112601.4, "landed": {"12": {"gross_new_per_year": 24.0}},
         "reverse_solve": {"12": {"new_customers_by_target": 68.05, "required_new_per_year_at_current_mix": 319.41,
                                  "required_vs_observed_gross": 13.31, "required_blended_landed_acv": 515946.03,
-                                 "by_segment": {"A": {"current_mix_pct": 29.3, "shift_pct_points": -12.4}}}},
+                                 "by_segment": {"A": {"current_mix_pct": 0.293, "shift_pct_points": -0.124}}}},
     }}}, "EUR")["metrics"]["segment_paths"]
     assert out["horizon_months"] == "34.0 months"
     assert out["gap_arr"] == "35,112,601 EUR"

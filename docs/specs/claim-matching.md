@@ -162,11 +162,11 @@ in each label class at least for revenue, ARR and customer count. Public decks h
 | # | Claim | Observed | Gap | Label | Rank |
 |---|---|---|---|---|---|
 | 1 | ARR €200,000, Feb 2024 | 202,125.48 | beat 2,125.48, 1.1% | Verified | 11 |
-| 2 | "Enterprise sales cycle 60 days", no period | 58.5 (Enterprise) | beat 1.5 days, 2.5% | Verified | 12 |
+| 2 | "Enterprise sales cycle 60 days", no period | 59 (Enterprise) | beat 1 day, 1.7% | Verified | 12 |
 | 3 | Win rate 41%, no period | 40.0% | 1.0 pp, 2.4% | Verified (boundary) | 9 |
 | 4 | NRR 112%, Feb 2024 | 112.68% | beat 0.68 pp, 0.6% | Verified | 13 |
 | 5 | ARR €240,000, FY2023 | 198,142.68 | 41,857.32, 17.4% | Contradicted | 3 |
-| 6 | Sales cycle 45 days, no period | 58.5 | 13.5 days, 30.0% | Contradicted | 1 |
+| 6 | Sales cycle 45 days, no period | 59 | 14 days, 31.1% | Contradicted | 1 |
 | 7 | Gross margin 85%, Q4 2023 | 78.0% | 7.0 pp, 8.2% | Contradicted | 5 |
 | 8 | 4 customers, Feb 2024 | 5 | beat 1, 25.0% | Contradicted (a beat) | 14 |
 | 9 | ARR €5,000,000, FY2026 | 202,125.48 (as-of) | to go 4,797,874.52, 96.0% | Unverified: forecast | 20 |

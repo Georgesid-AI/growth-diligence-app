@@ -68,3 +68,5 @@
     docs/specs/chat-upload.md §6.2. Per-month gaps go in the reconciliation evidence table, never in the banner.
 22. Delete audit requires typing the company name and removes every document of the audit in every
     collection, saved mappings and stored files included.
+23. Any change to engine output fields changes backend/schemas/metrics.py and the contract test
+    (backend/tests/test_interface_contracts.py) in the same PR. Spec: docs/specs/interface-contracts.md.
