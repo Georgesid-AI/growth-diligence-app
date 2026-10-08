@@ -7,7 +7,7 @@ against it. Every figure is declared with a unit type, so the unit is read from 
     Fraction   a percent as its fraction: 1.0641 is 106.41%. Field names keep their historical `_pct` suffix.
     Count      an observed count, an integer, rounded to nearest by the engine
     CountUp    a required or implied count, an integer, rounded UP by the engine
-    Days       a duration in days, an integer, rounded UP by the engine
+    Days       a duration in days, full precision (the display and the export round up when they write it)
     Currency   an amount in the top-level `reporting_currency`, full precision
     Months     a duration in months, full precision
     Ratio      a quotient
@@ -30,7 +30,7 @@ CONTRACT_VERSION = 1
 CURRENCY, COUNT, COUNT_UP, DAYS, MONTHS, PCT, RATIO, PLAIN = (
     "currency", "count", "count_up", "days", "months", "pct", "ratio", "plain",
 )
-INTEGER_KINDS = frozenset({COUNT, COUNT_UP, DAYS, PLAIN})
+INTEGER_KINDS = frozenset({COUNT, COUNT_UP, DAYS, PLAIN})     # DAYS is whole only where a field says so (none today)
 
 # A binary float that is "really" 43.0 can arrive as 43.00000000000001, and ceil would then say 44.
 _EPSILON = Decimal("1e-9")
@@ -52,6 +52,7 @@ class Unit:
     kind: str
     lo: Optional[float] = None
     hi: Optional[float] = None
+    whole: bool = True              # an integer kind is held as an integer unless this says otherwise
 
 
 def _conform(rounder):
@@ -74,7 +75,7 @@ SignedFraction = Annotated[float, Unit(PCT, -10.0, 10.0), _FINITE]          # gr
 GapFraction = Annotated[float, Unit(PCT), _FINITE]                            # a gap against the P&L: no natural bound
 Count = Annotated[int, Unit(COUNT), BeforeValidator(_conform(round_nearest)), _INTEGER]
 CountUp = Annotated[int, Unit(COUNT_UP), BeforeValidator(_conform(round_up)), _INTEGER]
-Days = Annotated[int, Unit(DAYS), BeforeValidator(_conform(round_up)), _INTEGER]
+Days = Annotated[float, Unit(DAYS, whole=False), _FINITE]
 Currency = Annotated[float, Unit(CURRENCY), _FINITE]
 Months = Annotated[float, Unit(MONTHS), _FINITE]
 Ratio = Annotated[float, Unit(RATIO), _FINITE]
@@ -661,7 +662,7 @@ def unit_violations(payload: MetricsPayload) -> List[Violation]:
             if unit.lo is not None and not (unit.lo <= value <= unit.hi):
                 problems.append(Violation(path, value, f"a percent is a fraction between {unit.lo:g} and {unit.hi:g} "
                                                        f"(1.0641 is 106.41%)"))
-        elif unit.kind in INTEGER_KINDS:
+        elif unit.kind in INTEGER_KINDS and unit.whole:
             if isinstance(value, bool) or not isinstance(value, int):
                 problems.append(Violation(path, value, f"a {unit.kind.replace('_', ' ')} is an integer"))
     return problems

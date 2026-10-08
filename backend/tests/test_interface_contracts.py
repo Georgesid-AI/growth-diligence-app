@@ -143,7 +143,7 @@ def test_the_sample_run_exercises_the_blocks_the_contract_exists_for():
 
 def test_the_engine_rounds_counts_and_days_once_and_percents_are_fractions():
     s = stored_form(_sample_raw())
-    assert isinstance(s["sales_cycle"]["median_days"], int) and all(isinstance(d, int) for d in s["sales_cycle"]["iqr"])
+    assert isinstance(s["sales_cycle"]["median_days"], float), "days stay unrounded; the display and the export round up"
     assert isinstance(s["acv_path"]["total_customers_at_target"], int)
     assert isinstance(s["acv_path"]["required_net_new_per_year"], int)
     assert 0 < s["nrr"]["overall_pct"] < 10 and 0 <= s["win_rate"]["win_rate_pct"] <= 1
@@ -153,13 +153,13 @@ def test_the_engine_rounds_counts_and_days_once_and_percents_are_fractions():
 
 @pytest.mark.parametrize("model, value, expected", [
     (metrics.CountUp, 128.3, 129), (metrics.CountUp, 129.00000000001, 129), (metrics.CountUp, -3.2, -3),
-    (metrics.Days, 42.1, 43), (metrics.Days, 43.0, 43), (metrics.Count, 2.5, 3), (metrics.Count, 2.4, 2)])
+    (metrics.Count, 2.5, 3), (metrics.Count, 2.4, 2)])
 def test_the_engine_rounds_up_or_to_nearest_by_the_unit_of_the_field(model, value, expected):
     from pydantic import TypeAdapter
     assert TypeAdapter(model).validate_python(value, context={"conform": True}) == expected
 
 
-@pytest.mark.parametrize("model", [metrics.Count, metrics.CountUp, metrics.Days])
+@pytest.mark.parametrize("model", [metrics.Count, metrics.CountUp])
 def test_a_stored_count_or_day_count_with_a_fraction_is_refused_not_rounded(model):
     from pydantic import TypeAdapter
     with pytest.raises(ValidationError):
@@ -288,7 +288,7 @@ def _drop(path):
 VIOLATIONS = {
     "nrr as a whole-number percent": _set("nrr.overall_pct", 112.68),
     "churn as a whole-number percent, above the range": _set("gross_churn.overall_pct", 35.0),
-    "a fractional day count": _set("sales_cycle.median_days", 58.5),
+    "a fractional customer count": _set("acv_path.current_customers", 24.5),
     "a fractional required count": _set("acv_path.total_customers_at_target", 24.7),
     "a count as text": _set("nrr.nrr_base_customers", "5"),
     "a missing contract version": _drop("contract_version"),
@@ -510,3 +510,11 @@ def test_a_new_unit_type_without_a_display_kind_is_caught():
     """The kinds in the schema are the formatter's kinds: a unit the formatter cannot show fails here, not in production."""
     kinds = {u.kind for cls in metrics._all_models() for f in cls.model_fields.values() if (u := metrics._field_unit(f))}
     assert kinds <= set(fmt.XLSX_NUMBER_FORMAT), kinds - set(fmt.XLSX_NUMBER_FORMAT)
+
+
+def test_sales_cycle_days_are_stored_unrounded_and_rounded_up_by_the_export_and_the_display():
+    stored = _sample_stored()
+    median = stored["sales_cycle"]["median_days"]
+    assert median == 58.5, "claim matching reads this value"
+    cell = _cell(openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, stored)), "Headline", "Median sales cycle")
+    assert cell.value == 59 and fmt.fmt_days(median) == "59 days"

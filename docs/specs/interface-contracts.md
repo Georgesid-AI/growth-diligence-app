@@ -11,7 +11,7 @@ wrong figure the analyst or the model reads:
 | H1 | engine output stored in MongoDB (`audits.results`) | LLM gateway | validate against `MetricsPayload` before any prompt is built (§4) |
 | H2 | engine output stored in MongoDB | memo / xlsx export | validate, then a unit check, before any cell is written (§5) |
 
-Strict types: a number is a number, never text that reads as one ("5", "0.4"); a count or a number of days is an
+Strict types: a number is a number, never text that reads as one ("5", "0.4"); a count is an
 integer.
 
 Out of scope: every other reader of the stored results (dashboard, claim register, banner, usage) keeps its own
@@ -38,7 +38,7 @@ with. It is the only description of the engine output.
   Blocks with one today: `arr`, `nrr`, `gross_churn`, `cac_payback`, `sales_cycle`, `win_rate`, `founder_win_rate`,
   `acv_path`, `revenue_series`, `customers_series`, and both sides of `revenue_reconciliation`. The model requires
   it there. Blocks without one today (`segment_paths`, `new_mrr_by_quarter`, `cohort_retention`, `mrr_series`,
-  `anomalies`) stay without; adding one is a screen change and is not in this scope.
+  `anomalies`) stay without; adding one is a screen change and is not in this scope. Next item.
 
 ## 2. Units
 | Unit | Type | Rule | Example |
@@ -46,7 +46,7 @@ with. It is the only description of the engine output.
 | Fraction | float | a percent is its fraction: 1.0641 is 106.41%; finite; 4 decimals from the engine | NRR 1.0641 |
 | Count | int | an observed count, rounded to nearest (half up) by the engine | 12 |
 | CountUp | int | a required or implied count, rounded UP by the engine | 129 |
-| Days | int | rounded UP by the engine | 43 |
+| Days | float | full precision; the display and the export round UP when they write it | 42.1 shows as 43 |
 | Currency | float | reporting currency, full precision (the display rounds) | 3129104.4 |
 | Months | float | a duration, full precision (the display shows one decimal) | 12.24 |
 | Ratio | float | a quotient, 2 decimals from the engine where it was before | 1.28 |
@@ -67,7 +67,7 @@ reads changes, except as noted in §8.
   `gross_margin_pct`, `shift_pct_points`, and the NRR fields (a credit note sinks a segment's NRR below zero; the
   engine already handles that case, so the export must not refuse the whole audit for it); no range for `gap_pct` (a
   gap against the P&L has no natural bound);
-- a Count, CountUp or Days that is not an integer.
+- a Count or CountUp that is not an integer.
 
 A value of 106.41 where a fraction belongs is caught here (it is above 10), which is the failure this contract
 exists for.
@@ -95,8 +95,8 @@ cell is written. A failure raises `ExportContractError` naming the field paths a
 that message and writes no file. In the writer, `xlsx_value` re-checks each cell it prepares (a percent outside
 -10 to 10 or a count that is not an integer raises) so no path around the model can write a wrong cell.
 
-Percent cells hold the fraction and carry the Excel format `0%`; Excel shows 1.0641 as 106%. Counts and days are
-written as integers. Any code that reads a Fraction as a raw number for display multiplies by 100 first
+Percent cells hold the fraction and carry the Excel format `0%`; Excel shows 1.0641 as 106%. Counts are
+written as integers and days are rounded up at the write. Any code that reads a Fraction as a raw number for display multiplies by 100 first
 (`fmt_pct`, `fmtPct`, the claim register, the banner text).
 
 ## 6. Contract test
@@ -127,11 +127,9 @@ possible (a mapping was cleared) the read answers 409 "Results predate the curre
 never a 100x figure.
 
 ## 8. Consequences to know
-- `median_days` and `iqr` are whole days, rounded up: the claim register's gap for a sales-cycle claim is computed on
-  the rounded-up median (at most a day from before). The dashboard already showed the rounded-up number. At the
-  tolerance edge a label can change: on the sample files a claim of 8 weeks against a median of 58.5 days was Verified
-  (4.5% over) and is Contradicted against 59 (5.4% over). claim-matching.md section 9 and its fixture carry the new
-  figures (59 for 58.5).
+- Sales-cycle days (`median_days`, `iqr`) are stored unrounded, so claim matching reads the unrounded median and its
+  gaps and labels are unchanged (claim-matching.md section 9 stands). Rounding a median up before matching would move a
+  claim across its tolerance at the edge (a Verified claim becomes Contradicted), which is a labelling decision.
 - A cohort or segment NRR above 1000%, or a negative one, fails an export with the field named instead of writing it.
 - New results key: `contract_version` (server-only: not in the gateway allowlist; backend/tests/test_gateway_data_boundary.py extended).
 

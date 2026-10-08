@@ -226,19 +226,19 @@ def test_a_segment_on_a_metric_the_engine_does_not_split_is_unsupported(snippet,
 def test_durations_convert_at_7_days_a_week_and_30_44_a_month(unit, value, claimed_days):
     row = run_claim({"claim_type": "sales", "snippet": "Sales cycle", "unit": unit, "currency": None, "value": value})
     assert row["metric"] == "Median sales cycle"
-    assert row["gap"] == pytest.approx(59 - claimed_days, abs=0.005) and row["claimed_value"] == value
+    assert row["gap"] == pytest.approx(58.5 - claimed_days, abs=0.005) and row["claimed_value"] == value
     assert row["unit"] == unit
 
 
 def test_a_gap_below_half_a_working_week_reads_under_a_working_week():
-    row = run_claim({"claim_type": "sales", "snippet": "Sales cycle", "unit": "weeks", "currency": None, "value": 8.3})
-    assert row["gloss"] == "0.9 days longer, under a working week (miss)" and row["evidence_label"] == "Verified"
+    row = run_claim({"claim_type": "sales", "snippet": "Sales cycle", "unit": "weeks", "currency": None, "value": 8})
+    assert row["gloss"] == "2.5 days longer, under a working week (miss)" and row["evidence_label"] == "Verified"
 
 
 def test_a_year_is_twelve_months_of_30_44_days():
     row = run_claim({"claim_type": "sales", "snippet": "Sales cycle", "unit": "years", "currency": None, "value": 0.2})
     assert (row["metric"], row["unit"]) == ("Median sales cycle", "years")
-    assert row["gap"] == pytest.approx(59 - 0.2 * 12 * 30.44, abs=0.005)           # 0.2 years = 73.056 days
+    assert row["gap"] == pytest.approx(58.5 - 0.2 * 12 * 30.44, abs=0.005)           # 0.2 years = 73.056 days
 
 
 def test_a_claim_in_years_for_a_months_metric_is_tested_at_twelve_months_a_year():
@@ -406,7 +406,7 @@ def test_a_range_is_tested_at_the_end_nearest_the_observed_value():
 
 def test_a_range_on_a_lower_is_better_metric_uses_the_same_nearest_end():
     row = run_claim({"claim_type": "sales", "snippet": "Sales cycle", "unit": "days", "currency": None, "value": 30, "value_high": 50})
-    assert row["gap"] == pytest.approx(9) and row["gap_kind"] == "miss"
+    assert row["gap"] == pytest.approx(8.5) and row["gap_kind"] == "miss"
 
 
 def test_a_zero_claim_has_no_normalised_gap():
@@ -511,7 +511,7 @@ def test_a_saved_gate_on_a_lower_is_better_metric_says_at_most_and_a_forecast_ro
     sales = run_claim({"claim_type": "sales", "snippet": "Sales cycle", "unit": "days", "currency": None, "value": 45,
                        "claim_inputs": {"x1": {"gate_threshold": 50, "gate_budget_decision": "the SDR hires"}}})
     assert sales["gate_sentence"] == ("Before the SDR hires, Median sales cycle must be at most 50.0 days by 2024-03-31. "
-                                      "Observed 59.0 days (2024-02); claimed 45.0 days (no period stated).")
+                                      "Observed 58.5 days (2024-02); claimed 45.0 days (no period stated).")
     forecast = run_claim({"claim_type": "revenue", "snippet": "ARR", "value": 5_000_000, "target_date": "2026",
                           "claim_inputs": {"x1": {"gate_threshold": 1_000_000, "gate_budget_decision": "the plan"}}})
     assert forecast["gate_sentence"].startswith("Before the plan, ARR must be at least €1,000,000 by 2024-03-31. Observed €202,125 (2024-02)")

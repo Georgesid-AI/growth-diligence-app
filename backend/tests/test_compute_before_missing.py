@@ -70,7 +70,7 @@ def test_sales_cycle_is_computed_from_the_revenue_file_when_the_crm_file_lacks_t
 
     sc = r["sales_cycle"]
     assert sc is not None and sc["n"] == 2
-    assert sc["median_days"] == 46, "median of 30 and 61 days (45.5), rounded up; the lost deal is not a won cycle"
+    assert sc["median_days"] == 45.5, "median of 30 and 61 days; the lost deal is not a won cycle"
     assert sc["status"] == "Computed – explanation requested"
     assert sc["source"]["file"] == "revenue.xlsx" and sc["source"]["dataset"] == "revenue"
     assert sc["source"]["columns"] == {"created_date": "Created date", "close_date": "Won date", "stage": "Stage"}

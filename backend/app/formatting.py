@@ -156,18 +156,20 @@ class UnitError(ValueError):
 def xlsx_value(kind: str, value: Any) -> Optional[float]:
     """The number to store in a cell that will carry XLSX_NUMBER_FORMAT[kind].
 
-    Fails loudly rather than write a wrong cell: a percent must be a fraction (|x| <= 10), a count or a number of
-    days must already be an integer (the engine rounds, the export does not)."""
+    Fails loudly rather than write a wrong cell: a percent must be a fraction (|x| <= 10), a count must already be an
+    integer (the engine rounds it, the export does not). Days are stored unrounded and rounded up here, as the display does."""
     d = _dec(value)
     if d is None:
         return None
-    if kind in (COUNT, COUNT_UP, DAYS) and d != d.to_integral_value():
+    if kind in (COUNT, COUNT_UP) and d != d.to_integral_value():
         raise UnitError(f"{value!r} is not a whole number; a {kind.replace('_', ' ')} is rounded by the engine")
     if kind == PCT:
         if abs(d) > 10:
             raise UnitError(f"{value!r} is not a fraction (1.0641 is 106.41%); a percent is written as its fraction")
         return float(d)
-    if kind in (COUNT, COUNT_UP, DAYS):
+    if kind == DAYS:
+        return _up(d)
+    if kind in (COUNT, COUNT_UP):
         return int(d)
     return float(d)
 

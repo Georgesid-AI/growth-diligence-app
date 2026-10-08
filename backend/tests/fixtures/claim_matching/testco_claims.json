@@ -82,13 +82,13 @@
       "label": "Verified",
       "metric": "Median sales cycle",
       "segment": "Enterprise",
-      "observed": 59,
-      "gap": -1,
-      "norm": -0.016667,
+      "observed": 58.5,
+      "gap": -1.5,
+      "norm": -0.025,
       "kind": "beat",
       "rank": 12,
       "note": "no period stated",
-      "gloss": "1.0 days shorter (beat)"
+      "gloss": "1.5 days shorter (beat)"
      }
     },
     {
@@ -236,12 +236,12 @@
       "label": "Contradicted",
       "metric": "Median sales cycle",
       "segment": "Whole company",
-      "observed": 59,
-      "gap": 14,
-      "norm": 0.311111,
+      "observed": 58.5,
+      "gap": 13.5,
+      "norm": 0.3,
       "kind": "miss",
       "rank": 1,
-      "gloss": "14.0 days longer, two working weeks (miss)"
+      "gloss": "13.5 days longer, two working weeks (miss)"
      }
     },
     {

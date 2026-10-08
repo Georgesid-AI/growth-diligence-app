@@ -89,7 +89,7 @@ def test_xlsx_values_display_like_the_formatter():
     # The cell holds a number; the Excel format shows what fmt() would.
     assert f.xlsx_value(f.PCT, 1.0641) == pytest.approx(1.0641)  # "0%" -> 106%
     assert f.xlsx_value(f.COUNT_UP, 129) == 129
-    assert f.xlsx_value(f.DAYS, 43) == 43
+    assert f.xlsx_value(f.DAYS, 42.1) == 43                     # days are stored unrounded; the cell holds them rounded up
     assert f.xlsx_value(f.MONTHS, 12.24) == 12.24                # "0.0" -> 12.2
     assert f.xlsx_value(f.CURRENCY, 3129104.4) == 3129104.4      # "#,##0" -> 3,129,104
     assert f.xlsx_value(f.RATIO, 1.28) == 1.28                   # 0.00"x"
@@ -97,7 +97,7 @@ def test_xlsx_values_display_like_the_formatter():
     assert f.XLSX_NUMBER_FORMAT[f.RATIO] == '0.00"x"'
 
 
-@pytest.mark.parametrize("kind, value", [(f.PCT, 106.41), (f.PCT, -10.5), (f.COUNT_UP, 128.3), (f.DAYS, 42.1), (f.COUNT, 5.5)])
+@pytest.mark.parametrize("kind, value", [(f.PCT, 106.41), (f.PCT, -10.5), (f.COUNT_UP, 128.3), (f.COUNT, 5.5)])
 def test_a_cell_that_does_not_fit_its_unit_is_refused_not_rounded(kind, value):
     """The engine rounds; the writer only checks. A whole-number percent or a fractional count writes nothing."""
     with pytest.raises(f.UnitError):
