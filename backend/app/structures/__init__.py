@@ -141,8 +141,7 @@ def column_mapping_input(columns: List[str], rows: List[Dict], customer_columns:
 def column_mapping_text(columns: List[str], rows: List[Dict], company_name: Optional[str], mapping: Dict[str, str],
                         customer_columns: Tuple[str, ...] = (), withheld: Tuple[str, ...] = (),
                         only: Optional[Tuple[str, ...]] = None) -> str:
-    """The redacted column-mapping text the model reads (`withheld`: the client name and engagement
-    reference, see redact.withheld_values; `only`: the undecided columns, see column_mapping_input)."""
+    """The redacted column-mapping text the model reads (`withheld`: the client name, see redact.withheld_values; `only`: the undecided columns, see column_mapping_input)."""
     headers, samples, profiles = column_mapping_input(columns, rows, customer_columns, only)
     headers, _ = redact.redact_structure(headers, company_name, mapping, withheld)
     return redact.column_text(headers, samples, profiles)
@@ -200,8 +199,7 @@ async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None
     verified". A deck already read is not sent again (a re-read is served from the cache).
     """
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "id": 1, "company_name": 1, "fiscal_year_end": 1,
-                                                       "structure_reading_consent": 1, "client_name": 1,
-                                                       "engagement_reference": 1})
+                                                       "structure_reading_consent": 1, "client_name": 1})
     deck = await db[TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id},
                                               {"_id": 0, "structures": 1, "file": 1, "page_unit": 1, "blocks": 1})
     if not audit or not deck:

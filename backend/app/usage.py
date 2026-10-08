@@ -2,7 +2,7 @@
 
 The counters hold counts and codes: never a file name, a cell value or a company name. The one free-text
 field is the kept "Other" note, which may quote a column header and nothing else (a digit, a file name, a cell
-text, the company, client or engagement reference is refused).
+text, the company or client name is refused).
 """
 import re
 import statistics
@@ -98,7 +98,7 @@ def clean_note(note: Optional[str]) -> str:
 def check_note(note: str, *, headers: Iterable[str], file_names: Iterable[str], cell_texts: Iterable[str],
                names: Iterable[str]) -> None:
     """Raise NoteRefused unless the note is at most 60 characters and, after its headers are set aside, holds no
-    digit, file name, cell text, company name, client name or engagement reference. A digit is refused anywhere,
+    digit, file name, cell text, company name or client name. A digit is refused anywhere,
     also inside a header ("Revenue 2024" cannot be quoted). Headers are set aside whole, in any case, before the
     other checks, so a header that contains a cell word still passes."""
     if len(note) > NOTE_MAX:

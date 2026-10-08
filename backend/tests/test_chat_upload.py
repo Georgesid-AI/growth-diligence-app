@@ -33,7 +33,7 @@ COMPANY = "Fixture Target Ltd"
 CUSTOMERS = ["Alder Works", "Birch Labs", "Cedar Foods", "Dune Print", "Elm Studio", "Fern Tools", "Birch Labs Ltd"]
 
 AUDIT_DOC = {"id": AUDIT, "company_name": COMPANY, "client_name": "Northbridge Capital",
-             "engagement_reference": "ENG-2026-041", "structure_reading_consent": True, "fiscal_year_end": 12,
+             "structure_reading_consent": True, "fiscal_year_end": 12,
              "reporting_currency": "EUR", "target_arr": 1000000, "target_date": "2027-12-31", "as_of_month": None,
              "results": None, "status": "draft", "usage": usage_mod.empty()}
 
@@ -581,6 +581,22 @@ def test_only_a_top_5_contradicted_claim_reaches_the_banner_and_a_beat_counts(ap
     assert blockers[0]["text"] == "Top-5 claim contradicted: revenue 100 EUR vs 80 EUR observed (board.pptx, slide 4)."
     rows[1]["evidence_label"] = rows[2]["evidence_label"] = rows[4]["evidence_label"] = "Verified"
     assert _kinds(api) == []
+
+
+def test_the_banner_shows_a_claim_in_another_currency_with_both_figures_and_the_observed_figure_in_the_audits_currency(api, monkeypatch):
+    """2026-10-08: the observed figure is the audit's currency, never the claim's (it was labelled GBP)."""
+    row = {"claim_id": "c1", "rank": 1, "evidence_label": "Contradicted", "claim_type": "revenue", "metric": "ARR", "claimed_value": 100.0,
+           "claimed_high": None, "unit": None, "currency": "GBP", "claimed_converted": 114.0, "claimed_converted_high": None,
+           "fx_rate": 1.14, "fx_date": "2026-06-30", "observed_value": 80.0, "observed_source": {"file": "r.csv"},
+           "deck_file": "board.pptx", "page_ref": "slide 4"}
+
+    async def fake_rows(audit_id, audit):
+        return [], [row]
+    monkeypatch.setattr(server, "_claim_rows", fake_rows)
+    _banner_audit(api, {"arr": None})
+    blockers = api.get(f"/api/audits/{AUDIT}/blockers").json()["blockers"]
+    assert blockers[0]["text"] == ("Top-5 claim contradicted: revenue 100 GBP (114 EUR at 1.14, 30 Jun 2026) vs 80 EUR observed "
+                                   "(board.pptx, slide 4).")
 
 
 def test_the_banner_has_three_kinds_and_no_others():

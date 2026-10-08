@@ -16,7 +16,7 @@ from typing import Dict, List, Optional, Tuple
 # The register's fields, in the order of the spec's section 6 (and the CSV header of section 7).
 FIELDS = (
     "claim_id", "deck_file", "page_ref", "claim_type", "status", "deck_reading", "claimed_value", "claimed_high",
-    "unit", "currency", "period", "period_start", "period_end", "period_note", "segment", "segment_set_by", "metric",
+    "claim_direction", "unit", "currency", "claimed_converted", "claimed_converted_high", "fx_rate", "fx_date", "period", "period_start", "period_end", "period_note", "segment", "segment_set_by", "metric",
     "metric_set_by", "direction", "observed_value", "observed_at", "observed_source", "gap", "gap_normalised",
     "gap_kind", "gloss", "evidence_label", "reason", "tolerance", "rank", "value_at_stake_arr", "shortfall",
     "overlaps_with", "evidence_analysis", "evidence_source_key", "gate_sentence", "gate_threshold",
@@ -24,7 +24,8 @@ FIELDS = (
     "as_of_month", "as_of_defaulted",
 )
 # How the baseline CSV reads each field back (verdict-and-memo.md section 5); a field not listed is text.
-FLOAT_FIELDS = frozenset({"claimed_value", "claimed_high", "observed_value", "gap", "gap_normalised", "value_at_stake_arr",
+FLOAT_FIELDS = frozenset({"claimed_value", "claimed_high", "claimed_converted", "claimed_converted_high", "fx_rate",
+                          "observed_value", "gap", "gap_normalised", "value_at_stake_arr",
                           "shortfall", "gate_threshold"})
 INT_FIELDS = frozenset({"rank"})
 BOOL_FIELDS = frozenset({"gate_saved", "key_gate", "gate_needed", "as_of_defaulted"})
@@ -33,6 +34,8 @@ SOURCE_FIELDS = frozenset({"observed_source"})
 
 WHOLE, NOT_IN_DATA = "Whole company", "Not in the data"
 NO_PERIOD = "no period stated"
+FX_NEEDED = "FX rate needed"
+DIRECTION_ONLY = "direction only: the claim states no figure to test"
 SUGGESTION = "AI suggestion, not verified"
 DAYS_PER_WEEK, DAYS_PER_MONTH = 7.0, 30.44
 RATE_TOLERANCE_PP, AMOUNT_TOLERANCE = 1.0, 0.05
@@ -365,12 +368,53 @@ def format_figure(unit: Optional[str], value: float, currency: Optional[str], un
     return f"{value:g} {unit}" if unit else f"{value:g}{' ' + unit_text if unit_text else ''}"
 
 
+def as_of_date(as_of: Optional[str]) -> Optional[str]:
+    """The as-of month as a date: its last day ("2026-06" -> "2026-06-30"); a full date stands."""
+    if not as_of:
+        return None
+    if len(str(as_of)) >= 10:
+        return str(as_of)[:10]
+    year, month = (int(p) for p in str(as_of)[:7].split("-"))
+    return f"{year:04d}-{month:02d}-{calendar.monthrange(year, month)[1]:02d}"
+
+
+def fx_view(c: dict, settings: dict, as_of: Optional[str]) -> Optional[dict]:
+    """{"rate", "date", "currency"} for a claimed amount in a currency other than the audit's: the saved rate to the
+    reporting currency (None when none is saved: "FX rate needed") and the date it applies at, the as-of month's last
+    day. None for any other claim."""
+    currency, reporting = c.get("currency") or None, settings.get("reporting_currency")
+    if not currency or currency == reporting or _claim_unit(c) != "currency":
+        return None
+    rate = (settings.get("fx") or {}).get(currency)
+    return {"rate": rate, "date": as_of_date(as_of), "currency": reporting}
+
+
+def fx_date_text(day: Optional[str]) -> str:
+    """'2026-06-30' -> '30 Jun 2026'; '' for a date that is missing or not an ISO date."""
+    try:
+        d = date.fromisoformat(str(day)[:10])
+    except ValueError:
+        return ""
+    return f"{d.day} {calendar.month_abbr[d.month]} {d.year}"
+
+
+def converted_note(row: dict, money) -> str:
+    """' (171,000 EUR at 1.14, 30 Jun 2026)': a claim in another currency at the saved rate, both ends of a range, in the
+    audit's currency as `money` writes an amount. '' for a claim in the audit's currency or with no saved rate."""
+    low, high = row.get("claimed_converted"), row.get("claimed_converted_high")
+    if low is None or row.get("fx_rate") is None:
+        return ""
+    text = money(low) if high is None else f"{money(low)}–{money(high)}"
+    when = fx_date_text(row.get("fx_date"))
+    return f" ({text} at {row['fx_rate']:g}{', ' + when if when else ''})"
+
+
 def _claimed_text(c: dict) -> str:
     """The claim's figure in its own unit: what a gate sentence says was claimed."""
     unit, currency = _claim_unit(c), c.get("currency") or None
     low, high = c.get("value"), c.get("value_high")
     if low is None:
-        return "—"
+        return f"{c['claim_direction']} (no figure)" if c.get("claim_direction") else "—"
     text = format_figure(unit, low, currency) if unit != "currency" else _money(low, currency)
     if high is not None:
         end = format_figure(unit, high, currency) if unit != "currency" else _money(high, currency)
@@ -496,7 +540,8 @@ def _row(c: dict, results: dict, settings: dict) -> dict:
     out.update(
         claim_id=c["claim_id"], deck_file=c.get("file"), page_ref=_page_ref(c.get("sources")),
         claim_type=c.get("claim_type"), status=c.get("status"), deck_reading=_deck_reading(c), claimed_value=low,
-        claimed_high=high, unit=c.get("unit"), currency=currency, period=period,
+        claimed_high=high, claim_direction=c.get("claim_direction") if low is None else None, unit=c.get("unit"),
+        currency=currency, period=period,
         period_start=str(c["period_start"]) if c.get("period_start") else None,
         period_end=str(c["period_end"]) if c.get("period_end") else None,
         period_note=None if c.get("target_date") else NO_PERIOD, segment=segment, segment_set_by=segment_by,
@@ -516,6 +561,13 @@ def _row(c: dict, results: dict, settings: dict) -> dict:
         _gate(out, c, inputs, spec, claim_unit, results, shown_claim[0])
         return out
 
+    fx = fx_view(c, settings, as_of)
+    if fx and fx["rate"] is not None:           # converted at the saved rate before matching; both figures are shown
+        out.update(fx_rate=fx["rate"], fx_date=fx["date"],
+                   claimed_converted=low * fx["rate"] if low is not None else None,
+                   claimed_converted_high=high * fx["rate"] if high is not None else None)
+    if out["claim_direction"]:                  # "Positive EBITDA": never Verified or Contradicted
+        return finish("Unverified", DIRECTION_ONLY)
     if not spec:
         return finish("Unsupported", "no metric")
     if not _fits(spec["unit"], claim_unit):
@@ -527,6 +579,8 @@ def _row(c: dict, results: dict, settings: dict) -> dict:
     if c.get("target_date") and (start is None or end is None):
         return finish("Unsupported", "period not readable")
 
+    if fx and fx["rate"] is None:
+        return finish("Unverified", FX_NEEDED)
     figures = _Figures(results, metric, segment)
     observed, observed_at, source, why = _observe(figures, spec, metric, start, end, as_of_i)
     if isinstance(observed, str):                       # a verdict instead of a figure
@@ -540,12 +594,8 @@ def _row(c: dict, results: dict, settings: dict) -> dict:
             return finish("Unverified", f"forecast: the period ends after the as-of month ({as_of})")
         return finish("Unsupported", why or "not computed")
 
-    # currency claims are converted at the audit's FX rate
-    rate = 1.0
-    if claim_unit == "currency" and currency != settings.get("reporting_currency"):
-        rate = (settings.get("fx") or {}).get(currency)
-        if rate is None:
-            return finish("Unverified", f"no FX rate for {currency}")
+    # currency claims are converted at the audit's FX rate (checked above: a claim with no saved rate is not tested)
+    rate = fx["rate"] if fx else 1.0
     claimed_low = _to_metric_unit(low, claim_unit, spec["unit"])
     claimed_high = _to_metric_unit(high, claim_unit, spec["unit"])
     if spec["unit"] == "currency":

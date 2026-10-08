@@ -120,6 +120,23 @@ describe("what the analyst may set", () => {
     expect(gateEdit(ARR_ROW, { threshold: "", budget: "", date: "" })).toEqual({});      // the date starts empty: nothing is proposed
   });
 
+  test("a gate date outside 2000 to 2100 or not real is not sent", () => {
+    for (const bad of ["0001-01-01", "1999-12-31", "2101-01-01", "2026-02-30"]) {
+      expect(() => gateEdit(ARR_ROW, { threshold: "", budget: "", date: bad })).toThrow(/gate date/i);
+    }
+  });
+
+  test("a claim in another currency shows both figures; a direction with no figure says so", () => {
+    const gbp = { ...ARR_ROW, currency: "GBP", claimed_value: 150000, claimed_converted: 171000, fx_rate: 1.14, fx_date: "2026-06-30" };
+    expect(claimFigure(gbp, "EUR")).toBe("150,000 GBP (171,000 EUR at 1.14, 30 Jun 2026)");
+    expect(claimText(gbp, "EUR")).toBe("Revenue · 150,000 GBP (171,000 EUR at 1.14, 30 Jun 2026)");
+    expect(claimFigure({ ...gbp, claimed_high: 160000, claimed_converted_high: 182400 }, "EUR"))
+      .toBe("150,000–160,000 GBP (171,000–182,400 EUR at 1.14, 30 Jun 2026)");
+    expect(claimFigure({ ...gbp, claimed_converted: null, fx_rate: null, fx_date: "2026-06-30" }, "EUR")).toBe("150,000 GBP");
+    expect(claimFigure({ ...ARR_ROW, claimed_value: null, currency: null, claim_direction: "negative" })).toBe("negative (no figure)");
+    expect(gateContext(gbp, "EUR")).toContain("Claimed 150,000 GBP (171,000 EUR at 1.14, 30 Jun 2026)");
+  });
+
   test("a threshold that is not a number is not sent, and a budget decision stops at 200 characters", () => {
     expect(() => gateEdit(ARR_ROW, { threshold: "lots", budget: "", date: "" })).toThrow(/number/);
     expect(GATE_BUDGET_MAX).toBe(200);

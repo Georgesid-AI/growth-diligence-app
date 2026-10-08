@@ -219,15 +219,13 @@ class AuditCreate(BaseModel):
     # The month the company's fiscal year ends in (deck-parser.md section 2). FY25 is the fiscal year
     # that ends in 2025; with December it is the calendar year.
     fiscal_year_end: int = Field(default=12, ge=1, le=12)
-    # The investor commissioning the audit, and the engagement whose terms are the basis for sending
-    # structures to the model (llm-structure-reading.md section 4). Neither ever reaches the model.
+    # The investor commissioning the audit; the name never reaches the model.
     client_name: str
-    engagement_reference: str
     structure_reading_consent: bool = True
 
     _check_target_date = field_validator("target_date")(_validate_target_date)
     _check_as_of_month = field_validator("as_of_month")(_validate_as_of_month)
-    _check_required = field_validator("client_name", "engagement_reference")(_required_text)
+    _check_required = field_validator("client_name")(_required_text)
 
 
 class AuditUpdate(BaseModel):
@@ -238,12 +236,11 @@ class AuditUpdate(BaseModel):
     as_of_month: Optional[str] = None
     fiscal_year_end: Optional[int] = Field(default=None, ge=1, le=12)
     client_name: Optional[str] = None
-    engagement_reference: Optional[str] = None
     structure_reading_consent: Optional[bool] = None
 
     _check_target_date = field_validator("target_date")(_validate_target_date)
     _check_as_of_month = field_validator("as_of_month")(_validate_as_of_month)
-    _check_required = field_validator("client_name", "engagement_reference")(_required_text)
+    _check_required = field_validator("client_name")(_required_text)
 
 
 def _consent_entry(value: bool) -> dict:
@@ -300,7 +297,6 @@ async def create_audit(payload: AuditCreate):
         "as_of_month": payload.as_of_month,
         "fiscal_year_end": payload.fiscal_year_end,
         "client_name": payload.client_name,
-        "engagement_reference": payload.engagement_reference,
         "structure_reading_consent": payload.structure_reading_consent,
         "consent_log": [_consent_entry(payload.structure_reading_consent)],
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -332,9 +328,6 @@ async def update_audit(audit_id: str, payload: AuditUpdate):
         raise HTTPException(404, "Audit not found")
     updates = {k: v for k, v in payload.model_dump().items() if v is not None}
     consent = updates.get("structure_reading_consent")
-    if consent is True and not (updates.get("engagement_reference") or a.get("engagement_reference")):
-        # The basis for sending is the engagement terms: no reference, no AI-assisted reading.
-        raise HTTPException(400, "An engagement reference is required before AI-assisted reading can be enabled")
     if consent is not None and consent != (a.get("structure_reading_consent") is True):
         await db.audits.update_one({"id": audit_id},
                                    {"$set": {"consent_log": list(a.get("consent_log") or []) + [_consent_entry(consent)]}})
@@ -731,8 +724,7 @@ async def _check_notes(audit_id: str, audit: dict, notes: list) -> list:
     try:
         for n in cleaned:
             usage_mod.check_note(n, headers=headers, file_names=[d.get("file") for d in files] + [d.get("file") for d in deck_files],
-                                 cell_texts=cells, names=[audit.get("company_name"), audit.get("client_name"),
-                                                          audit.get("engagement_reference")])
+                                 cell_texts=cells, names=[audit.get("company_name"), audit.get("client_name")])
     except usage_mod.NoteRefused:
         raise HTTPException(400, NOTE_REFUSED)
     return cleaned
@@ -939,7 +931,8 @@ async def upload_deck(audit_id: str, background: BackgroundTasks, file: UploadFi
 async def list_deck_candidates(audit_id: str):
     """The audit's decks (no parsed text), most recently uploaded first, and their candidates:
     grouped by deck in that order; within a deck the ones to review first, then by slide or page."""
-    audit = await db.audits.find_one({"id": audit_id}, {"id": 1, "structure_reading_consent": 1})
+    audit = await db.audits.find_one({"id": audit_id}, {"id": 1, "structure_reading_consent": 1, "reporting_currency": 1,
+                                                         "as_of_month": 1, "results.as_of_month": 1})
     if not audit:
         raise HTTPException(404, "Audit not found")
     deck_fields = {"_id": 0, "deck_id": 1, "file": 1, "format": 1, "page_unit": 1, "pages": 1, "uploaded_at": 1,
@@ -957,9 +950,19 @@ async def list_deck_candidates(audit_id: str):
             d.get("ai_status") in (None, structures.PYTHON_ONLY)
     rank = {d["deck_id"]: i for i, d in enumerate(found)}
     candidates = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0}).to_list(10000)
-    # Ascending by slide or page across all decks (a tie goes to the more recent deck), then reading order on the page:
-    # top to bottom in bands of 2% of the height, then left to right, then the order the parser found them in.
-    candidates.sort(key=lambda c: (_first_page(c), rank.get(c.get("deck_id"), len(rank)), *_reading(c), c.get("order", 0)))
+    # By the group of the claim type (revenue, P&L, customers and sales, market size, Unknown, Other), then ascending by
+    # slide or page across all decks (a tie goes to the more recent deck), then reading order on the page: top to bottom
+    # in bands of 2% of the height, then left to right, then the order the parser found them in.
+    for c in candidates:
+        c["group"] = deck_claims.type_group(c.get("claim_type"))
+    candidates.sort(key=lambda c: (c["group"], _first_page(c), rank.get(c.get("deck_id"), len(rank)), *_reading(c),
+                                   c.get("order", 0)))
+    # A claim in another currency than the audit's, with the rate it is converted at (None: "FX rate needed").
+    fx = await _fx(audit_id, audit)
+    settings = _register_settings(audit, fx)
+    as_of = audit.get("as_of_month") or (audit.get("results") or {}).get("as_of_month")
+    for c in candidates:
+        c["fx"] = claim_matching.fx_view(c, settings, as_of)
     peers = {}
     for c in candidates:
         peers.setdefault(c.get("deck_id"), []).append(c)
@@ -1039,6 +1042,8 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
         raise HTTPException(400, "Choose a claim type for this item before approving it")
     if edits:
         changes = {**edits, "status": "edited"}
+        if current.get("claim_direction") and (edits.get("value") is not None or edits.get("by_period")):
+            changes["claim_direction"] = None       # a figure typed in: no longer a direction with no figure
         if "parsed" not in current:       # what the parser found stays next to the analyst's edit
             changes["parsed"] = {k: current.get(k) for k in _EDITABLE if k != "by_period" or rows}
             if current.get("origin") == "ai":
@@ -1159,7 +1164,9 @@ class ClaimInputs(BaseModel):
         if v is not None:
             if not _GATE_DATE.match(v):
                 raise ValueError("a date as YYYY-MM-DD")
-            datetime.strptime(v, "%Y-%m-%d")
+            year = datetime.strptime(v, "%Y-%m-%d").year
+            if not 2000 <= year <= 2100:
+                raise ValueError(f"gate_date year must be between 2000 and 2100, got {year}")
         return v
 
 
@@ -1262,9 +1269,14 @@ async def _blocker_list(audit_id: str, audit: dict) -> list:
                 claimed = _figure(r["claimed_value"], r["unit"], r["currency"])
                 if r.get("claimed_high") is not None:
                     claimed = f"{claimed}–{_figure(r['claimed_high'], r['unit'], r['currency'])}"
+                reporting = audit.get("reporting_currency")
+                claimed += claim_matching.converted_note(r, lambda v: _figure(v, None, reporting))
+                # An amount is observed in the audit's currency, whatever currency the deck states the claim in.
+                observed_currency = reporting if (claim_matching.METRICS.get(r.get("metric") or "") or {}).get("unit") == "currency" \
+                    else r["currency"]
                 out.append({"kind": "claim_contradicted", "citation": r["observed_source"], "claim_id": r["claim_id"],
                             "text": f"Top-5 claim contradicted: {r['claim_type']} {claimed} vs "
-                                    f"{_figure(r['observed_value'], r['unit'], r['currency'])} observed "
+                                    f"{_figure(r['observed_value'], r['unit'], observed_currency)} observed "
                                     f"({r['deck_file']}, {r['page_ref']})."})
     rec = (audit.get("results") or {}).get("revenue_reconciliation")
     if rec and rec.get("available") and rec.get("blocker"):
@@ -2020,15 +2032,18 @@ app.add_middleware(
 )
 
 
-# 4: demo audits carry a client name, an engagement reference, consent and a fiscal year-end.
+# 4: demo audits carry a client name, consent and a fiscal year-end.
 # 5: demo P&L revenue reconciles with the revenue file (one demo audit keeps a deliberate 5% gap).
 # 6: results carry contract_version 1 (percents as fractions, whole counts and days).
 # 7: results carry contract_version 2 (a citation on every result block).
-SEED_VERSION = 7
+# 8: demo audits carry no engagement reference (the field is gone).
+SEED_VERSION = 8
 
 
 @app.on_event("startup")
 async def seed_demo():
+    # The engagement reference is gone from the audit record (2026-10-08): audits created before keep no copy of it.
+    await db.audits.update_many({"engagement_reference": {"$exists": True}}, {"$unset": {"engagement_reference": ""}})
     if await db.audits.count_documents({"seed_version": SEED_VERSION}) > 0:
         return
     demo_ids = {"audit_id": {"$in": [a["id"] for a in await db.audits.find({"demo": True}, {"id": 1}).to_list(50)]}}
@@ -2068,7 +2083,7 @@ async def seed_demo():
             "id": audit_id, "company_name": spec["company_name"], "reporting_currency": spec["reporting_currency"],
             "target_arr": spec["target_arr"], "target_date": spec["target_date"],
             "fiscal_year_end": spec["fiscal_year_end"], "client_name": spec["client_name"],
-            "engagement_reference": spec["engagement_reference"], "structure_reading_consent": True,
+            "structure_reading_consent": True,
             "consent_log": [_consent_entry(True)],
             "created_at": datetime.now(timezone.utc).isoformat(), "status": "computed",
             "computed_at": datetime.now(timezone.utc).isoformat(), "results": sanitize(results), "demo": True,

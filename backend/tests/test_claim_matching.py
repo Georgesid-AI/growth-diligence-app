@@ -520,7 +520,8 @@ def test_a_saved_gate_on_a_lower_is_better_metric_says_at_most_and_a_forecast_ro
 # --- section 6: the register's fields ----------------------------------------------------------------------------
 
 def test_a_register_row_has_exactly_the_fields_of_section_6_and_the_verdict_spec_in_order():
-    section_6 = ("claim_id deck_file page_ref claim_type status deck_reading claimed_value claimed_high unit currency period "
+    section_6 = ("claim_id deck_file page_ref claim_type status deck_reading claimed_value claimed_high claim_direction unit "
+                 "currency claimed_converted claimed_converted_high fx_rate fx_date period "
                  "period_start period_end period_note segment segment_set_by metric metric_set_by direction observed_value "
                  "observed_at observed_source gap gap_normalised gap_kind gloss evidence_label reason tolerance rank "
                  "value_at_stake_arr shortfall overlaps_with evidence_analysis evidence_source_key gate_sentence gate_threshold "
@@ -656,3 +657,41 @@ def test_a_missing_reason_names_the_missing_data_item_and_a_row_with_no_figure_n
         assert r["evidence_source_key"] == "missing_data" and r["evidence_analysis"] == "Sales cycle & win rate"
     none = [r for r in register(RUNS["A"]) if r["observed_value"] is None and not r["reason"].startswith("Missing:")]
     assert none and all(r["evidence_analysis"] is None and r["evidence_source_key"] is None for r in none)
+
+
+# --- 2026-10-08: both figures of a claim in another currency, and a direction with no figure -----------------------------
+
+def test_a_claim_in_another_currency_is_converted_at_the_saved_rate_and_shows_both_figures():
+    row = run_claim({"claim_type": "revenue", "snippet": "ARR £150,000", "currency": "GBP", "value": 150000, "value_high": 160000,
+                     "target_date": "2024-02"}, fx={"EUR": 1.0, "GBP": 1.14})
+    assert (row["claimed_value"], row["currency"], row["fx_rate"], row["fx_date"]) == (150000, "GBP", 1.14, "2024-02-29")
+    assert (row["claimed_converted"], row["claimed_converted_high"]) == (pytest.approx(171000), pytest.approx(182400))
+    assert row["claimed_converted"] / row["claimed_value"] == row["fx_rate"], "matched at the converted figure"
+    assert row["evidence_label"] in ("Verified", "Contradicted") and row["observed_value"] is not None
+    same = run_claim({"claim_type": "revenue", "snippet": "ARR €150,000", "currency": "EUR", "value": 150000,
+                      "target_date": "2024-02"})
+    assert (same["claimed_converted"], same["fx_rate"], same["fx_date"]) == (None, None, None), "the audit's currency"
+
+
+@pytest.mark.parametrize("period", ["2024-02", "2026", None])
+def test_a_claim_with_no_saved_rate_is_unverified_with_fx_rate_needed_whatever_its_period(period):
+    row = run_claim({"claim_type": "revenue", "snippet": "ARR $210,000", "currency": "USD", "value": 210000,
+                     "target_date": period})
+    assert (row["evidence_label"], row["reason"]) == ("Unverified", "FX rate needed")
+    assert (row["fx_rate"], row["claimed_converted"], row["observed_value"]) == (None, None, None)
+
+
+def test_a_direction_with_no_figure_is_unverified_and_never_verified_or_contradicted():
+    for direction in ("positive", "negative"):
+        row = run_claim({"claim_type": "ebitda", "snippet": f"{direction.title()} EBITDA", "currency": None, "value": None,
+                         "claim_direction": direction, "target_date": "2024-02"})
+        assert (row["evidence_label"], row["claim_direction"], row["claimed_value"]) == ("Unverified", direction, None)
+        assert "no figure" in row["reason"]
+    # Even where a metric exists for the type, a direction is not tested against a figure.
+    row = run_claim({"claim_type": "revenue", "snippet": "Positive ARR", "currency": None, "value": None,
+                     "claim_direction": "positive", "target_date": "2024-02"})
+    assert row["evidence_label"] == "Unverified" and row["observed_value"] is None
+    # A figure typed over it ends the direction: it is tested like any claim.
+    typed = run_claim({"claim_type": "revenue", "snippet": "ARR", "currency": "EUR", "value": 200000,
+                       "claim_direction": "positive", "target_date": "2024-02"})
+    assert typed["claim_direction"] is None and typed["evidence_label"] == "Verified"

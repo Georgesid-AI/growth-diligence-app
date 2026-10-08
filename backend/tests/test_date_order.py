@@ -38,8 +38,7 @@ def _ts(*ymd):
 @pytest.mark.parametrize("bad", ["2027-1-5", "2027-01-5"])
 def test_target_date_is_iso_only(bad):
     with pytest.raises(ValidationError):
-        server.AuditCreate(company_name="Acme", client_name="Northbridge Capital", engagement_reference="ENG-1",
-                           target_date=bad)
+        server.AuditCreate(company_name="Acme", client_name="Northbridge Capital", target_date=bad)
     with pytest.raises(ValidationError):
         server.AuditUpdate(target_date=bad)
 

@@ -46,6 +46,8 @@ def _matches(doc, flt):
                     return False
                 if op == "$ne" and value == operand:
                     return False
+                if op == "$exists" and (key in doc) != operand:
+                    return False
         else:
             if doc.get(key) != cond:
                 return False
@@ -117,6 +119,16 @@ class FakeCollection:
             self.docs.append(new)
             return FakeResult(modified_count=0, upserted_id=len(self.docs))
         return FakeResult(modified_count=0)
+
+    async def update_many(self, flt, update):
+        n = 0
+        for d in self.docs:
+            if _matches(d, flt):
+                d.update(update.get("$set", {}))
+                for k in update.get("$unset", {}):
+                    d.pop(k, None)
+                n += 1
+        return FakeResult(modified_count=n)
 
     async def delete_many(self, flt):
         before = len(self.docs)

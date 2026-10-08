@@ -242,9 +242,9 @@ def test_a_no_metric_row_needs_the_metric_name_and_the_direction():
 
 def test_an_untested_row_with_an_app_metric_gets_w6_with_the_apps_metric_and_direction():
     r = run_row({"currency": "USD", "value": 210000}, GATE)
-    assert r["evidence_label"] == "Unverified" and r["reason"] == "no FX rate for USD"
+    assert r["evidence_label"] == "Unverified" and r["reason"] == "FX rate needed"
     assert r["gate_sentence"] == ("Before the Series B hiring plan, ARR must be at least €150,000 by 2024-06-30. "
-                                  "Not yet observed: no FX rate for USD; claimed $210,000 (Feb 2024).")
+                                  "Not yet observed: FX rate needed; claimed $210,000 (Feb 2024).")
 
 
 def test_with_fewer_than_three_saved_gates_every_saved_gate_is_key_and_the_note_says_so():
@@ -485,3 +485,15 @@ def test_delete_audit_removes_the_ic_inputs_and_every_claim_input_with_their_doc
     left = {name: str(col.docs) for name, col in db._cols.items() if col.docs}
     assert not any("Quartz thesis" in b or "Zephyr cover" in b for b in left.values()), left.keys()
     assert not [d for d in db[decks.CANDIDATES_COLLECTION].docs if d.get("audit_id") == AUDIT] and not db["audits"].docs
+
+
+# --- 2026-10-08: the memo and the verdict word a claim in another currency, and a direction, as the register does -------------
+
+def test_a_claim_in_another_currency_is_worded_with_both_figures_in_the_verdict_and_the_memo_register():
+    row = {"claim_id": "c1", "rank": 1, "evidence_label": "Contradicted", "claim_type": "revenue", "metric": "ARR",
+           "claimed_value": 150000.0, "claimed_high": None, "unit": None, "currency": "GBP", "claimed_converted": 171000.0,
+           "claimed_converted_high": None, "fx_rate": 1.14, "fx_date": "2026-06-30", "claim_direction": None}
+    assert vd.claimed_text(row, "EUR") == "£150,000 (€171,000 at 1.14, 30 Jun 2026)"
+    assert vd.claimed_text({**row, "currency": "EUR", "claimed_converted": None, "fx_rate": None, "fx_date": None}, "EUR") == "€150,000"
+    assert vd.claimed_text({**row, "claimed_value": None, "currency": None, "claimed_converted": None, "claim_direction": "positive"},
+                           "EUR") == "positive (no figure)"

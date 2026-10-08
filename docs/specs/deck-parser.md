@@ -99,6 +99,20 @@ over `detect_candidates`, no network): 225 candidates before and after, recall 1
 124 (98%) and precision 109 of 225 (48.4%) unchanged; 8 candidates change from Product to Unknown: front-b p11 "Q3 14"
 and "Q3 15", moz p1 "July 2011" and p2 "Sept. 2010", clevergig p3 "The Economist, January 2015", uber p21
 "SmartPhones, Aug2008", tea p12 "Completed May, 2021" and "Completed April, 2022". No other type changes.
+Nearest heading (2026-10-08, George): a type is assigned only when the claim's own line or its nearest heading names it;
+otherwise the claim is Unknown ("Unknown – choose type"). The nearest heading is the closest text on the page (the figure's
+column header first; then, by distance on the page, the other lines of its text box, the boxes on the same row or above it
+within a quarter of the page, and the slide title; with no layout, as in a .docx, the first in the order of borrowing) that
+is a heading, a word with no figure of its own and at most 59 characters (the label length of §7), or that holds a claim
+keyword; a line of figures or a sentence with no keyword is passed over. When that text names no type the figure takes none,
+however clear a heading further away: zero2hero p11's "AR/VR ($52 B)" and "E-Learning Market ($374B)" sit under "Market"
+(the bare word does not count), and the "Acquisition" of a box further up typed them Sales before; they are Unknown. A
+figure whose only keyword is further away stays a candidate (type Unknown, no "Label from"); one with no keyword anywhere is
+not a candidate, as before. The same rule types a date-only line and a figure-less milestone line. On the 10 test decks
+(measured over `detect_candidates`, no network): 225 candidates before and after, recall 121 of 124 (98%) and precision
+109 of 225 (48.4%) unchanged; 31 more candidates are Unknown (8 before, 39 after), among them front-b p14 "Team growth is built upon solid foundations" 5.0 and 100%, moz p21 "~$180K / Month"
+(was Costs), zero2hero p11 "($52 B)" and "($374B)" and p22 "21%" and "11%" (Sales), uber p11 "Car services require 1-3 hours
+notice" (Users). `type_from` is "line", "heading" (the nearest heading named it) or none (Unknown).
 The unit of a count is the noun it counts: "800 paying users". If a Customers or Users keyword
 appears within the next 4 words after the number, it is the unit (">50 Dutch temporary work
 agencies" → agencies); otherwise the word right after the number. The search stops at the next
@@ -153,7 +167,9 @@ Each candidate stores: claim type, value (low and high for a range), unit, curre
 date (if any), source reference, short snippet (max 300 characters), and the text a label or
 date was borrowed from. A table row stores its values by period instead of one value and date:
 value (low and high), target date, the column header text and the cell of each.
-Duplicates across slides are merged and keep all source references.
+Duplicates are merged and keep all source references, across slides and on one page: the same type, value, unit, currency
+and period is one claim and one row listing every source (2026-10-08). A duplicate is never a Deck inconsistency; the
+mark below applies only to differing values.
 Dropped, never listed:
 - Chart axis ticks: 3 or more numbers, evenly spaced in value, in one line, in one column or
   row of lines that hold only a number, or in one table column (row numbers 1, 2, 3). A table
@@ -167,6 +183,12 @@ Dropped, never listed:
   (founder, CEO, chief, former, previously, employee, exec team) or the industry and the world
   (industry, global, worldwide, economy). This also drops other companies' figures quoted in
   founder bios.
+Direction only (2026-10-08, George): "Positive EBITDA" or "EBITDA negative until Q4 2024" states a direction and no figure.
+It is a candidate with no value, a `claim_direction` ("positive" or "negative") and the date it borrows or states, and
+nothing else is read into it ("profitable" and "break-even" stay EBITDA milestones with no direction). Its value shows
+"positive (no figure)" or "negative (no figure)", its confidence is at most Medium (the failed check is named "no figure"),
+and in the claim register it is Unverified and never Verified or Contradicted (claim-matching.md §4). An edit that types a
+figure ends the direction. On the test decks only zero2hero p19's "Positive EBITDA" (Q2 2024) has one.
 Deck inconsistency: when one deck gives the same type and period different values (the page 19
 panel's Gross Profit £150K for Y/E 23, the table's £ 50,000), every candidate holding one of them
 is marked "Deck inconsistency" with that period. Only stated periods are compared: the figure's
@@ -231,13 +253,29 @@ These figures may inform the growth plan. They were identified automatically and
 - Every column of the approval list has a header; the value shows its unit or currency.
 - A deck selector sits above the claims table: one tab per deck, plus "All". Each tab shows the
   deck name and its claim count. It opens on the most recently uploaded deck.
-- Order (amended 2026-10-08, George): the claims table lists claims ascending by slide or page number: under "All"
-  across all decks (a tie goes to the more recent deck), and within each deck tab. Within a page the order is reading
-  order: top to bottom in bands of 2% of the page height, then left to right, then the order the parser found them in
-  (a claim with no layout, as in a .docx, keeps that order). A claim with several sources sits at its first page. To
-  review no longer comes first, and a reviewed claim does not move. The server sorts; each candidate stores `reading`
+- Order (amended 2026-10-08, George, twice): the claims table is grouped by type, then ascending by slide or page number.
+  Groups: 1 revenue (ARR, MRR, revenue, bookings: type Revenue and Revenue growth); 2 P&L items (gross profit, EBITDA, burn,
+  cash, runway, and with them costs, net profit, gross margin and months to profitability); 3 customers, users, NRR, churn,
+  pipeline, sales cycle (types Customers, Users, User growth, Growth, Retention, Sales, LTV, CAC, LTV/CAC, Customer lifetime,
+  Trials per day); 4 market size; 5 Unknown; 6 Other (the model's "other" and the types no group names: People, Product,
+  Use of funds, Usage). Under "All" the pages run across all decks (a tie goes to the more recent deck), and within each deck
+  tab. Within a page the order is reading order: top to bottom in bands of 2% of the page height, then left to right, then the
+  order the parser found them in (a claim with no layout, as in a .docx, keeps that order). A claim with several sources sits
+  at its first page. To review no longer comes first, and a reviewed claim does not move except when its type is edited into
+  another group. Groups 5 and 6 are collapsed by default under a header with their count ("Unknown – choose type (12)"); the
+  analyst opens them. The server sorts and sends `group` (1 to 6) with each candidate; it is layout only, never sent to a
+  model.
+- Period column (2026-10-08, George): the column "Date" is "Period". Every value reads in one format from the stored target
+  date, whatever the deck's wording: a year "FY2023", a quarter "Q2 2024", a half "H1 2024", a month "Jun 2024"; a table row
+  shows its first to last period ("FY2022–FY2026"). "—" only when the deck gives no period. The deck's own wording ("Y/E 22",
+  "FY25") stays in the snippet and the "Date from" line.
+- Value column and currency (2026-10-08, George): a claim in a currency other than the audit's shows both figures, the claim
+  converted at the saved FX rate, with the rate and the date it applies at (the as-of date): "150,000 GBP (171,000 EUR at
+  1.14, 30 Jun 2026)". With no rate saved it reads "150,000 GBP (FX rate needed)" and the claim is Unverified in the register
+  (claim-matching.md §2). A direction with no figure reads "positive (no figure)".
+- Cost (2026-10-08): the deck panel's "Cost" line shows dollars to 2 decimals ("Cost: $0.01"). The server sorts; each candidate stores `reading`
   (top, left of its first line; for a model row, of the parsed line it cites), layout only, never sent to a model.
-- Confidence column (2026-10-08, George), after Date: High, Medium or Low, computed on read from checks Python
+- Confidence column (2026-10-08, George), after Period: High, Medium or Low, computed on read from checks Python
   already runs, never from a model's own score: (1) a date is present; (2) a unit or currency is present; (3) a line
   or heading names the type (`type_from`; for a model row a header cell or a keyword in its own text; an edited claim
   counts as named; a claim stored before this column has no `type_from` and counts as named unless Unknown or Other);
@@ -245,7 +283,8 @@ These figures may inform the growth plan. They were identified automatically and
   or another candidate of the deck with the same type, value, unit and currency at another place (the cells of one
   table row are one place). A claim with no value skips (2) and (4). No failed check is High, one Medium, two or more
   Low, and the failed checks are named: "High", "Medium – not corroborated", "Low – no date, no heading". The names
-  are "no date", "no unit", "no heading", "not corroborated". The column is not an input to claim matching, and
+  are "no date", "no unit", "no heading", "not corroborated" and, for a direction with no figure, "no figure" (so it is never
+  High). The column is not an input to claim matching, and
   nothing of it reaches the gateway (test_gateway_data_boundary.py names `confidence`, `type_from` and `reading`).
 
 ## 7. Structure detection (Python only, no LLM)

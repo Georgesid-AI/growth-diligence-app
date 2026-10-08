@@ -27,7 +27,7 @@ REPLIES = BACKEND / "tests" / "fixtures" / "structure_replies"
 DECKS = BACKEND.parent / "tests" / "fixtures" / "decks" / "decks"
 AUDIT = "audit-s"
 AUDIT_DOC = {"id": AUDIT, "company_name": "Zero2Hero", "client_name": "Northbridge Capital",
-             "engagement_reference": "ENG-2026-041", "structure_reading_consent": True, "fiscal_year_end": 12,
+             "structure_reading_consent": True, "fiscal_year_end": 12,
              "results": None}
 # A structure as the model reads it: its cells, then the items Python listed (docs/specs/structure-labelling.md).
 TEXT = ('r1c2: FY2025\nr1c3: FY2026\nr2c1: Revenue\nr2c2: £1,200,000\nr2c3: £1,500,000\nitems:\n'
@@ -1351,7 +1351,7 @@ def test_the_aliases_keep_their_fields_and_the_model_fills_the_rest(monkeypatch)
 # ---------------------------------------------------------------------------
 # Consent (spec section 4)
 # ---------------------------------------------------------------------------
-NEW_AUDIT = {"company_name": "Zero2Hero", "client_name": "Northbridge Capital", "engagement_reference": "ENG-2026-041"}
+NEW_AUDIT = {"company_name": "Zero2Hero", "client_name": "Northbridge Capital"}
 
 
 def test_consent_is_ticked_at_creation_by_default_and_every_change_is_logged_with_its_time(monkeypatch):
@@ -1359,7 +1359,7 @@ def test_consent_is_ticked_at_creation_by_default_and_every_change_is_logged_wit
     created = client.post("/api/audits", json=NEW_AUDIT).json()
     assert created["structure_reading_consent"] is True
     assert [e["value"] for e in created["consent_log"]] == [True] and created["consent_log"][0]["at"]
-    assert (created["client_name"], created["engagement_reference"]) == ("Northbridge Capital", "ENG-2026-041")
+    assert created["client_name"] == "Northbridge Capital" and "engagement_reference" not in created
     client.put(f"/api/audits/{created['id']}", json={"structure_reading_consent": False})
     client.put(f"/api/audits/{created['id']}", json={"structure_reading_consent": False})      # no change: no entry
     stored = next(a for a in db["audits"].docs if a["id"] == created["id"])
@@ -1368,21 +1368,19 @@ def test_consent_is_ticked_at_creation_by_default_and_every_change_is_logged_wit
     assert unticked["structure_reading_consent"] is False and [e["value"] for e in unticked["consent_log"]] == [False]
 
 
-@pytest.mark.parametrize("missing", ["client_name", "engagement_reference"])
-def test_audit_creation_refuses_a_missing_client_name_or_engagement_reference(monkeypatch, missing):
+def test_audit_creation_refuses_a_missing_client_name(monkeypatch):
     client, _, _ = _api(monkeypatch, [])
-    assert client.post("/api/audits", json={k: v for k, v in NEW_AUDIT.items() if k != missing}).status_code == 422
-    assert client.post("/api/audits", json={**NEW_AUDIT, missing: " "}).status_code == 422
+    assert client.post("/api/audits", json={"company_name": "Zero2Hero"}).status_code == 422
+    assert client.post("/api/audits", json={**NEW_AUDIT, "client_name": " "}).status_code == 422
 
 
-def test_an_audit_created_before_consent_stays_unticked_until_it_has_an_engagement_reference(monkeypatch):
+def test_an_audit_created_before_consent_stays_unticked_until_consent_is_ticked(monkeypatch):
     client, db, adapter = _api(monkeypatch, [REPLY])
     db["audits"].docs.append({"id": "old", "company_name": "Old Co", "results": None})
     result = asyncio.run(gateway.read_structure(db, "old", TEXT, "table", adapter=adapter, sleep=t._noop_sleep))
     assert result.status == "no_consent" and adapter.calls == 0, "no field means unticked"
-    assert client.put("/api/audits/old", json={"structure_reading_consent": True}).status_code == 400
-    assert client.put("/api/audits/old", json={"structure_reading_consent": True,
-                                              "engagement_reference": "ENG-9"}).status_code == 200
+    assert client.put("/api/audits/old", json={"structure_reading_consent": True}).status_code == 200, \
+        "no engagement reference is needed"
 
 
 # ---------------------------------------------------------------------------
@@ -1440,14 +1438,14 @@ def _deck(client):
     return client.get(f"/api/audits/{AUDIT}/decks").json()
 
 
-def test_a_client_name_or_engagement_reference_in_a_deck_cell_goes_out_as_redacted_and_the_structure_is_read():
+def test_a_client_name_in_a_deck_cell_goes_out_as_redacted_and_the_structure_is_read():
     from app import structures
     from app.decks import TEXT_COLLECTION
     db = _db()
     db["datasets"].docs.append({"audit_id": AUDIT, "dtype": "revenue", "mapping": REVENUE_MAPPING,
                                 "mapped_at": "2026-10-05T00:00:00"})
     cells = [{"row": 1, "col": 1, "text": "Prepared for Northbridge Capital"}, {"row": 1, "col": 2, "text": "FY2025"},
-             {"row": 2, "col": 1, "text": "Revenue (eng-2026-041)"}, {"row": 2, "col": 2, "text": "£1,200,000"}]
+             {"row": 2, "col": 1, "text": "Revenue (northbridge capital)"}, {"row": 2, "col": 2, "text": "£1,200,000"}]
     db[TEXT_COLLECTION].docs.append({"audit_id": AUDIT, "deck_id": "d1", "file": "plan.pptx", "page_unit": "slide",
                                      "structures": [{"type": "table", "slide": 1, "header_rows": 1, "cells": cells}]})
     adapter = RecordedAdapter()
@@ -2629,10 +2627,10 @@ def test_a_background_failure_marks_the_deck_not_read_and_logs_the_error_type_on
     assert "Jane Doe" not in caplog.text
 
 
-def test_a_short_engagement_reference_is_withheld_as_a_word_and_never_inside_one():
-    db = _db(engagement_reference="E7")
+def test_a_short_client_name_is_withheld_as_a_word_and_never_inside_one():
+    db = _db(client_name="E7")
     result, adapter = _read(db, "r1c1: Plan E7\nr1c2: £1M")
-    assert (result.reason, adapter.calls) == ("refused: engagement_reference", 0), "sent as written, it is refused"
+    assert (result.reason, adapter.calls) == ("refused: client_name", 0), "sent as written, it is refused"
     cells, _ = redact.redact_structure([{"row": 1, "col": 1, "text": "Plan E7"}, {"row": 1, "col": 2, "text": "£1M"}],
                                        "Zero2Hero", {}, redact.withheld_values(db["audits"].docs[0]))
     result, adapter = _read(db, redact.structure_text(cells), replies=[NOTHING])
@@ -2681,5 +2679,4 @@ def test_every_structure_refusal_reason_in_the_code_is_declared_in_the_boundary_
         body = next(n for n in _ast.walk(tree) if isinstance(n, _ast.FunctionDef) and n.name == function)
         found |= {n.value.value for n in _ast.walk(body) if isinstance(n, _ast.Return)
                   and isinstance(n.value, _ast.Constant) and isinstance(n.value.value, str)}
-        found |= {"client_name", "engagement_reference"} if function == "structure_text_problem" else set()
     assert found == boundary.STRUCTURE_REFUSALS, "a new refusal reason is declared in test_gateway_data_boundary.py"

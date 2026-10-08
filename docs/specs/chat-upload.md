@@ -50,6 +50,15 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
   values of S24: Rules, AI suggestion – confirm, You, Saved from earlier upload (a column with no proposal yet reads
   "You – choose"). There is no "Your decision" label. Confidence is never a dash (S9). Rows are ordered by §4.4.
   Columns left unused are folded into one "Not used (n)" row that opens to show them, each with Correct.
+- Dates (amended 2026-10-08, George): every date the analyst sets (the creation screen's target date and as-of date, the
+  header bar's as-of date, the gate date of the claim register) uses the app's own date picker, not the browser's
+  date input: a calendar with month arrows and year arrows and a year the analyst can type. Years run from 2000 to
+  2100. A year typed outside is rejected with "Year must be between 2000 and 2100" and the calendar stays where it
+  was; the arrows stop at January 2000 and December 2100; a stored value outside the range is shown empty, so year 0001
+  never appears. The value stays an ISO date (YYYY-MM-DD). The server holds the same range for the target date, the
+  as-of date and the gate date. The engagement reference field is gone from the creation screen, the audit record, the
+  memo, the CSV and the "Other" note check (llm-structure-reading.md §4); an audit stored with one has it removed
+  when the server starts.
 - The month range of the detected line (S5) shows once the date column is confirmed (decided by the analyst, or
   accepted by the rules); before that the line ends on the row count, with no text in place of the months.
 - On reload, the panel rebuilds one analyst bubble and one system bubble per stored dataset. Text replies and
@@ -124,7 +133,7 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
   note, with a 400 and S21, when it holds any of these: a digit (also inside a header, so "Revenue 2024" cannot be
   quoted); a file name of the audit, with or without its extension; a cell text from the data rows of an uploaded
   file of the audit (a whole word, any case, 4 or more characters, the same boundaries as the redaction rules);
-  the company name, client name or engagement reference. A refused note saves nothing. A kept note goes only to
+  the company name or client name. A refused note saves nothing. A kept note goes only to
   the usage counters (§7). The mapping version keeps the code "other" and not the note.
 - "Needs your decision" rows show the field dropdown, preset to "Not used".
 - Compute waits for two things: no AI or unsure row left unconfirmed in any uploaded file, and every required
@@ -232,7 +241,7 @@ violation:
   response hold no file name, cell value or company name, and hold header text only inside a kept note. A reason
   code outside the fixed list is refused.
 - An "Other" note is refused when, after its headers are set aside, it holds a digit, a file name, a cell text from
-  a data row, the company or client name or the engagement reference, or when it is over 60 characters. A note
+  a data row, or the company or client name, or when it is over 60 characters. A note
   that quotes a header is kept, including a header that contains a cell word; a header with a digit is refused. A
   kept note is found only in `audits.usage.other_notes` and the totals response: never in a log line,
   `llm_calls`, `column_mappings` or a model call.
@@ -279,7 +288,7 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 | S1 | text reply | This window accepts files and mapping confirmations. (as given) |
 | S2 | explainer, consent ticked | Mapping is done by rules first. Where rules cannot decide, the AI sees only those columns' headers, up to 3 example numbers or dates per column and a pattern for text columns – never your full file and never a name – and you confirm those columns. |
 | S3 | explainer, consent unticked | Mapping is done by rules only: AI-assisted reading is off for this audit. You map the columns the rules cannot decide. |
-| S4 | drop zone | Drop .xlsx or .csv files here, or use the paperclip. |
+| S4 | drop zone | Drop files here or use the paperclip. Required: revenue by customer (monthly, 24–36 months). Also useful: CRM export, P&L. Board decks go to the Deck panel. .xlsx or .csv only. |
 | S5 | bubble head | Detected: Revenue lines · 1,240 rows · 24 months (Jan 2023 – Dec 2024). Before the date column is confirmed the months are left out: "Detected: Revenue lines · 1,240 rows". |
 | S6 | unknown type | Could not tell what this file holds. Pick its type: Revenue lines / CRM deals / P&L (monthly). |
 | S7 | refused file | This window takes .xlsx and .csv files. Decks go in the deck panel below. |
@@ -316,7 +325,8 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 | Q5 | The model's own confidence on screen | No: the schema is unchanged |
 | Q6 | Wording | S1–S19 approved, with S2 as proposed and the existing S17. "Other" gets a free-text box of up to 60 characters, kept with the counters, with no file names or values (§4.3, §7) |
 | — | Amendment the same day (UI and labelling, George) | Delete dialog with the name in the title and in bold, exact case-sensitive match, S18b; mapping table headers and "Mapped by" (S23, S24), no "Your decision"; confidence cell never a dash (S9); row order (§4.4); the banner says what is left to do when the file is uploaded (S16d); months of the detected line only once the date column is confirmed (S5); the info box S25. The wording not given in the request was chosen under rule 19 (§13) |
-| — | Follow-up the same day | Approved: the reconciliation section on Diagnostics, with the banner link; the S19 extension; S20–S22. Column headers are allowed in "Other" notes; digits, cell text, file names, the company and client names and the engagement reference stay refused; logs still never hold header text or notes (§4.3, §8, §9). S21 reworded to match ("…file names, figures and cell values…"); spec final |
+| — | Follow-up the same day | Approved: the reconciliation section on Diagnostics, with the banner link; the S19 extension; S20–S22. Column headers are allowed in "Other" notes; digits, cell text, file names, the company and client names stay refused (the engagement reference was removed on 2026-10-08); logs still never hold header text or notes (§4.3, §8, §9). S21 reworded to match ("…file names, figures and cell values…"); spec final |
+| — | UI and claims fixes from live testing (2026-10-08, George) | S4 reads: "Drop files here or use the paperclip. Required: revenue by customer (monthly, 24–36 months). Also useful: CRM export, P&L. Board decks go to the Deck panel. .xlsx or .csv only."; own date picker for every date, 2000 to 2100 (§2); the engagement reference is removed (§2); the deck panel's changes are in deck-parser.md §2 and §6 and claim-matching.md §2 and §6 |
 
 ## 13. Decided (engineering, rule 19)
 - Every background request (the deck AI-reading status, the blockers, the usage totals) stops when the audit is deleted

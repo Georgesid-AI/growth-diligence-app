@@ -7,16 +7,16 @@ Column headers are realistic so the mapping wizard demos naturally.
 import numpy as np
 import pandas as pd
 
-# Fictional companies, clients and engagements: no client data (CLAUDE.md rule 15).
+# Fictional companies and clients: no client data (CLAUDE.md rule 15).
 DEMO_AUDITS = [
     {"company_name": "Apex Cloud — Series B Diligence", "reporting_currency": "EUR",
      "target_arr": 40_000_000, "target_date": "2027-12-31", "seed": 7,
      "n_customers": 68, "months": 26, "start": "2023-01", "multi_ccy": True,
-     "client_name": "Demo Growth Partners", "engagement_reference": "DEMO-ENG-001", "fiscal_year_end": 12},
+     "client_name": "Demo Growth Partners", "fiscal_year_end": 12},
     {"company_name": "OmniData Systems — Growth Buyout Review", "reporting_currency": "USD",
      "target_arr": 25_000_000, "target_date": "2027-06-30", "seed": 21,
      "n_customers": 52, "months": 24, "start": "2023-03", "multi_ccy": False,
-     "client_name": "Demo Buyout Fund", "engagement_reference": "DEMO-ENG-002", "fiscal_year_end": 12,
+     "client_name": "Demo Buyout Fund", "fiscal_year_end": 12,
      # The P&L revenue is the revenue file's own, less a deliberate 5% gap: this audit shows the reconciliation banner.
      "pnl_gap": 0.05},
 ]

@@ -682,6 +682,104 @@ def test_a_figure_no_heading_names_a_type_for_is_unknown_not_guessed_as_product(
     assert [(c["claim_type"], c["type_from"]) for c in under] == [("product", "heading")]
 
 
+def test_a_type_comes_from_the_nearest_heading_never_from_one_further_away():
+    """2026-10-08: zero2hero p11's "AR/VR ($52 B)" and "E-Learning Market ($374B)" sit under "Market" (bare "market" names
+    no type); the keyword "Acquisition" of a box further up the page used to type them Sales. They are Unknown."""
+    file = "05-zero2hero.pdf"
+    page = [c for c in claims.detect_candidates(parser.parse_deck((DECKS / file).read_bytes(), file)["blocks"], file)
+            if _page(c) == 11]
+    big = [c for c in page if c["value"] in (52e9, 374e9)]
+    assert sorted(c["value"] for c in big) == [52e9, 374e9]
+    assert [(c["claim_type"], c["type_from"], c["label_from"]) for c in big] == [("unknown", None, None)] * 2
+
+
+def test_the_nearest_heading_names_the_type_or_the_figure_has_none():
+    far = _found(_slide([("Content Acquisition", 1, 1.0), ("Market", 1, 2.6), ("($52 B)", 1, 3.2)]))
+    assert [(c["claim_type"], c["type_from"], c["label_from"]) for c in _by_value(far, 52e9)] == [("unknown", None, None)], \
+        "'Market' is nearer than the keyword and names no type"
+    near = _found(_slide([("Content Acquisition", 1, 2.6), ("($52 B)", 1, 3.2)]))
+    assert [(c["claim_type"], c["label_from"]) for c in _by_value(near, 52e9)] == [("sales", "Content Acquisition")]
+    # A line of figures is not a heading: it is passed over to the label beyond it.
+    passed = _found(_slide([("Spend as % of revenue", 1, 1.5), ("$5M $6M", 1, 2.2), ("12%", 1, 2.9)]))
+    assert [c["claim_type"] for c in _by_value(passed, 12)] == ["revenue"]
+    # Nothing names a type anywhere and there is no date word: not a candidate, as before.
+    assert _found(_slide([("Market", 1, 2.6), ("($52 B)", 1, 3.2)])) == []
+
+
+def test_the_ten_test_decks_keep_225_candidates_and_the_nearest_heading_leaves_31_unknown_more():
+    counts, unknown = 0, 0
+    for file in sorted(p.name for p in DECKS.iterdir() if not p.name.startswith(".")):
+        found = claims.detect_candidates(parser.parse_deck((DECKS / file).read_bytes(), file)["blocks"], file)
+        counts += len(found)
+        unknown += sum(c["claim_type"] == "unknown" for c in found)
+    assert (counts, unknown) == (225, 39), "8 before the rule, 31 more after it; no row appears or disappears"
+
+
+def test_the_same_figure_on_one_page_is_one_row_and_never_a_deck_inconsistency():
+    """2026-10-08: the same type, value, currency and period is one claim whatever noun it is counted in; a different
+    value for it is the only deck inconsistency."""
+    found = _found(_slide([("5 customers in 2024", 1, 1), ("5 customers in 2024", 1, 3)]))
+    one, = found
+    assert (one["claim_type"], one["value"], one["inconsistent_dates"]) == ("customers", 5, [])
+    same = claims.detect_candidates([{"slide": 1, "kind": "text", "text": "Revenue 2024: £150K", "box": 1},
+                                     {"slide": 4, "kind": "text", "text": "Revenue 2024: £ 150,000", "box": 2}], "d.pptx")
+    one, = same
+    assert (one["value"], len(one["sources"]), one["inconsistent_dates"]) == (150000, 2, [])
+    differ = _found(_slide([("5 customers in 2024", 1, 1), ("6 customers in 2024", 1, 3)]))
+    assert sorted((c["value"], c["inconsistent_dates"]) for c in differ) == [(5, ["2024"]), (6, ["2024"])]
+    rate = _found(_slide([("Churn 5% in 2024", 1, 1), ("Churn 5x in 2024", 1, 3)]))
+    assert len(rate) == 2, "a rate and a multiple are different claims"
+
+
+def test_a_direction_with_no_figure_is_stored_as_a_direction_and_is_at_most_medium():
+    found = _found(_slide([("Positive EBITDA", 1, 1), ("Q2 2024", 1, 1.5)]))
+    one, = found
+    assert (one["claim_type"], one["value"], one["claim_direction"], one["target_date"]) == ("ebitda", None, "positive", "2024-Q2")
+    conf = claims.confidence(one, [one])
+    assert conf["level"] == "Medium" and conf["failed"] == ["no figure"], "every other check passes, and it is still not High"
+    negative, = _found(_slide([("EBITDA negative until Q4 2024", 1, 1)]))
+    assert negative["claim_direction"] == "negative"
+    plain, = _found(_slide([("Break-even EBITDA", 1, 1), ("Q2 2024", 1, 1.5)]))
+    assert plain["claim_direction"] is None and claims.confidence(plain, [plain])["level"] == "High"
+    figure, = _found(_slide([("EBITDA of $2M in 2025", 1, 1)]))
+    assert figure["claim_direction"] is None and figure["value"] == 2000000
+    zero2hero = "05-zero2hero.pdf"
+    page = [c for c in claims.detect_candidates(parser.parse_deck((DECKS / zero2hero).read_bytes(), zero2hero)["blocks"], zero2hero)
+            if _page(c) == 19 and c["claim_type"] == "ebitda"]
+    assert [(c["claim_direction"], c["target_date"]) for c in page] == [("positive", "2024-Q2")]
+
+
+def test_an_edit_that_types_a_figure_ends_the_direction_and_the_list_is_grouped_then_by_page(api):
+    client, db = api
+    _upload(client, "audit-1", "05-zero2hero.pdf", (DECKS / "05-zero2hero.pdf").read_bytes())
+    listed = client.get("/api/audits/audit-1/decks").json()["candidates"]
+    groups = [c["group"] for c in listed]
+    assert groups == sorted(groups) and set(groups) >= {1, 2, 3, 5}, "revenue, P&L, customers and sales, Unknown"
+    for group in set(groups):
+        pages = [_page(c) for c in listed if c["group"] == group]
+        assert pages == sorted(pages), f"ascending by page within group {group}"
+    assert {c["claim_type"] for c in listed if c["group"] == 1} <= {"revenue", "revenue_growth"}
+    assert {c["claim_type"] for c in listed if c["group"] == 5} == {"unknown"}
+    direction = next(c for c in listed if c.get("claim_direction"))
+    assert direction["group"] == 2 and direction["claim_type"] == "ebitda"
+    edited = client.put(f"/api/audits/audit-1/decks/candidates/{direction['id']}", json={"value": 3.0, "unit": "%"})
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["claim_direction"] is None and edited.json()["value"] == 3.0
+
+
+def test_claims_in_another_currency_carry_the_saved_rate_or_none(api):
+    client, db = api
+    db["audits"].docs[0].update(reporting_currency="EUR", as_of_month="2026-06")
+    _upload(client, "audit-1", "05-zero2hero.pdf", (DECKS / "05-zero2hero.pdf").read_bytes())
+    gbp = [c for c in client.get("/api/audits/audit-1/decks").json()["candidates"] if c["currency"] == "GBP"]
+    assert gbp and all(c["fx"] == {"rate": None, "date": "2026-06-30", "currency": "EUR"} for c in gbp), "no rate saved"
+    db["datasets"].docs.append({"audit_id": "audit-1", "dtype": "revenue", "fx": {"gbp": 1.14}})
+    gbp = [c for c in client.get("/api/audits/audit-1/decks").json()["candidates"] if c["currency"] == "GBP"]
+    assert all(c["fx"] == {"rate": 1.14, "date": "2026-06-30", "currency": "EUR"} for c in gbp)
+    assert all(c["fx"] is None for c in client.get("/api/audits/audit-1/decks").json()["candidates"]
+               if c["currency"] in (None, "EUR"))
+
+
 def test_an_unknown_date_is_the_product_claim_with_the_same_date_when_there_is_one():
     blocks = [{"slide": 1, "kind": "text", "text": "Launch the API Q3 2025"}, {"slide": 2, "kind": "text", "text": "Q3 2025"}]
     found = claims.detect_candidates(blocks, "d.pptx")
@@ -772,16 +870,22 @@ def test_decks_list_newest_first_and_claims_ascend_by_page_across_decks_then_rea
     assert [d["deck_id"] for d in listed["decks"]] == [new["deck_id"], old["deck_id"]], "most recent deck first"
     rows = listed["candidates"]
     assert {c["deck_id"] for c in rows} == {new["deck_id"], old["deck_id"]}
-    pages = [_page(c) for c in rows]
-    assert pages == sorted(pages), "ascending by slide or page across all decks, not grouped by deck"
+    assert [c["group"] for c in rows] == sorted(c["group"] for c in rows), "by type group first"
+    for group in {c["group"] for c in rows}:
+        members = [c for c in rows if c["group"] == group]
+        pages = [_page(c) for c in members]
+        assert pages == sorted(pages), "ascending by slide or page across all decks, not grouped by deck"
+        for deck in (old, new):
+            mine = [_page(c) for c in members if c["deck_id"] == deck["deck_id"]]
+            assert mine == sorted(mine), "and within each deck"
     assert len({c["deck_id"] for c in rows[:len(rows) // 2]}) == 2, "the decks interleave"
-    for deck in (old, new):
-        mine = [_page(c) for c in rows if c["deck_id"] == deck["deck_id"]]
-        assert mine == sorted(mine), "and within each deck"
     assert [c["id"] for c in rows if _page(c) == _page(late)].count(late["id"]) == 1
-    assert [_page(c) for c in rows].index(_page(late)) <= [c["id"] for c in rows].index(late["id"]), \
+    same_group = [c for c in rows if c["group"] == next(x["group"] for x in rows if x["id"] == late["id"])]
+    assert [_page(c) for c in same_group].index(_page(late)) <= [c["id"] for c in same_group].index(late["id"]), \
         "a reviewed claim keeps the place its page gives it: it does not move below the others"
-    page_two = [c for c in rows if c["deck_id"] == new["deck_id"] and _page(c) == 2 and c.get("reading")]
+    page_two = [c for c in rows if c["deck_id"] == new["deck_id"] and _page(c) == 2 and c.get("reading")
+                and c["group"] == max((x["group"] for x in rows if x["deck_id"] == new["deck_id"] and _page(x) == 2), key=lambda g: sum(
+                    1 for x in rows if x["deck_id"] == new["deck_id"] and _page(x) == 2 and x["group"] == g))]
     assert len(page_two) > 3
     keys = [(round(c["reading"][0] / 0.02), c["reading"][1]) for c in page_two]
     assert keys == sorted(keys), "within a page: top to bottom, then left to right"

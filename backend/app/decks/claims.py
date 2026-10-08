@@ -36,17 +36,20 @@ month it is in the named year, after it in the calendar year before (with a Marc
 of FY2025 is April 2024). remap_periods re-runs the ranges for a new year-end.
 
 A figure takes the keyword and the date of its own line. A line with its own keyword never
-borrows a label. When it has none, the figure borrows one from nearby text, first match wins:
-the table column header, the other lines of its text box (nearest first), the boxes on the same
-row or above it within REACH (nearest first), the slide or page title. A missing date is
-borrowed the same way. The snippet stays the figure's own line; the borrowed text is kept in
-"label_from" and "date_from", so the analyst sees where the type and the date came from.
+borrows a label. When it has none, its type comes from its table column header, else from the nearest
+heading (decision of 2026-10-08): the closest text on the page, in its own text box, in a box on the same
+row or above it within REACH, or the slide or page title, that is a heading (a word, no figure, at most
+HEADING_MAX characters) or holds a keyword. A heading that names no type gives the figure none: type
+Unknown, however clear a heading further away. A missing date is borrowed by position, first match wins.
+The snippet stays the figure's own line; the borrowed text is kept in "label_from" and "date_from", so the
+analyst sees where the type and the date came from.
 
 A line whose only figures are dates gives one candidate per date (value None): a launch month,
 a roadmap quarter. A line with no figure at all gives one when it is a product line (its own
 keyword, or the one it borrows, is a product keyword) and it can borrow a date: a roadmap
-bullet. Candidates with the same type, value, unit, currency and date are merged, keeping
-every source reference.
+bullet. A direction with no figure ("Positive EBITDA") is a candidate with no value and a
+"claim_direction". Candidates with the same type, value, unit, currency and date are merged, keeping every
+source reference.
 """
 import calendar
 import re
@@ -105,7 +108,27 @@ CLAIM_TYPES = ("revenue", "revenue_growth", "growth", "retention", "sales", "cus
 # A figure no line and no heading names a type for: listed as "unknown" and approved only once the analyst chooses a
 # type (docs/specs/deck-parser.md section 2), like the model's "other" (structure-labelling.md section 4).
 UNKNOWN = "unknown"
+
+# The order of the claims table (deck-parser.md section 6): the group of a type, then slide or page. Revenue covers ARR,
+# MRR and bookings; P&L items and unit economics are listed with their neighbours, and the types no group names
+# (people, product, use of funds, usage, the model's "other") are Other.
+GROUPS = {1: "revenue", 2: "P&L", 3: "customers and sales", 4: "market size", 5: "unknown", 6: "other"}
+_GROUP_OF = {
+    "revenue": 1, "revenue_growth": 1,
+    "gross_profit": 2, "ebitda": 2, "burn": 2, "cash": 2, "runway": 2, "costs": 2, "net_profit": 2, "gross_margin": 2,
+    "months_to_profitability": 2,
+    "customers": 3, "users": 3, "user_growth": 3, "growth": 3, "retention": 3, "sales": 3, "ltv": 3, "cac": 3, "ltv_cac": 3,
+    "customer_lifetime": 3, "trials_per_day": 3,
+    "market": 4, UNKNOWN: 5,
+}
+COLLAPSED_GROUPS = (5, 6)
+
+
+def type_group(claim_type: Optional[str]) -> int:
+    """1 to 6: the group a claim type sorts under."""
+    return _GROUP_OF.get(claim_type or "", 6)
 # A net loss is a negative net profit: "Net loss of $2M" is stored as -2,000,000.
+_DIRECTION = re.compile(r"(?i)\b(positive|negative)\b")
 _NET_LOSS = re.compile(r"(?i)\bnet loss(?:es)?\b")
 # A gross margin given as an amount ("Gross margin £1.2M") is gross profit.
 _GROSS_MARGIN = re.compile(r"(?i)\bgross margins?\b")
@@ -507,10 +530,11 @@ class _Text(str):
     """The joined text of a text box (or of a slide title) that keeps its lines, so a label can name the one line that
     holds the keyword (docs/specs/deck-parser.md section 2: "Label from" is a single heading)."""
 
-    def __new__(cls, lines: Iterable[str]):
+    def __new__(cls, lines: Iterable[str], distance: Optional[float] = None):
         lines = list(lines)
         text = super().__new__(cls, " ".join(lines))
         text.lines = lines
+        text.distance = distance      # from the line it is context of, on the page; None when the file has no layout
         return text
 
 
@@ -532,10 +556,26 @@ def _heading(text: str, start: int, end: int) -> str:
     return " ".join(held) or str(text)
 
 
-def _borrow_keyword(texts: Iterable[str]) -> Optional[Tuple[str, str, str]]:
-    """(family, text, heading) of the first text that holds a claim keyword; the heading is the one line of the text
-    that holds it (the text itself when it is one line)."""
-    for text in texts:
+def _is_heading(text: str) -> bool:
+    """A label, not a data line or prose: a word, no figure of its own, and no longer than a heading (HEADING_MAX). A
+    text with a claim keyword is read as a heading whatever it holds ("Revenue $5M" names its type); a figure line or
+    a sentence without one is passed over."""
+    return bool(_WORD.search(text)) and len(text) <= HEADING_MAX and not find_numbers(text, find_dates(text))
+
+
+def _borrow_keyword(texts: Iterable[str], nearest: bool = True) -> Optional[Tuple[str, str, str]]:
+    """(family, text, heading) of the heading that names the type; the heading is the one line of the text that holds
+    the keyword (the text itself when it is one line). With `nearest` only the nearest heading counts (docs/specs/
+    deck-parser.md section 2): the closest text on the page that is a heading or holds a keyword (the first in the
+    order given when the file has no layout); when it names no type the figure has none. Without it the first text
+    with a keyword wins wherever it sits, which only tells that a type exists further away."""
+    texts = list(texts)
+    if not nearest:
+        texts = [t for t in texts if _keywords(t)]
+    else:
+        texts = [t for t in texts if _keywords(t) or _is_heading(t)]
+        texts.sort(key=lambda t: float("inf") if getattr(t, "distance", None) is None else t.distance)   # stable
+    for text in texts[:1]:
         found = _keywords(text)
         if found:
             return _type(found[0], found), text, _heading(text, found[0]["start"], found[0]["end"])
@@ -572,27 +612,29 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
         return next((r for s, e, r in refs if s <= pos < e), refs[0][2])
 
     def claim(pos, family, value=None, high=None, unit=None, currency=None, date=None, label=None, date_from=None,
-              stated=False, period_text=None, type_from="line"):
+              stated=False, period_text=None, type_from="line", direction=None):
         # "_stated": the date is the figure's own, its column header's or its box's period, not one
         # borrowed by position; only stated periods are compared for a deck inconsistency.
         return {"claim_type": family, "value": value, "value_high": high, "unit": unit, "currency": currency,
                 "target_date": date, "period_text": period_text if date else None, "snippet": _snippet(line, pos),
                 "label_from": label and _label(label),
                 "date_from": date_from and date_from != label and _label(date_from) or None, "sources": [ref_at(pos)],
-                "type_from": None if family == UNKNOWN else type_from, "_stated": stated}
+                "type_from": None if family == UNKNOWN else type_from, "claim_direction": direction, "_stated": stated}
 
     out = []
     for n in numbers:
         own = _nearest(keywords, n)
         header = headers.get(ref_at(n["pos"]).get("col"))
         nearby = [header] if header else []
-        borrowed = None if own else _borrow_keyword(nearby + context)
+        borrowed = None if own else _borrow_keyword(nearby, nearest=False) or _borrow_keyword(context)
         if own:
             family = _type(own, keywords, n["unit"])
         elif borrowed:
             family = borrowed[0]
-        elif date_words:
-            family = UNKNOWN          # only a date word: no line and no heading names a type, so it is not guessed
+        elif date_words or _borrow_keyword(nearby + context, nearest=False):
+            # No line and no nearest heading names a type: not guessed. A date word, or a keyword only further away,
+            # keeps the figure as a candidate.
+            family = UNKNOWN
         else:
             continue
         if family == "gross_margin" and n["currency"] and _GROSS_MARGIN.search(borrowed[1] if borrowed else line):
@@ -626,28 +668,37 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
         # claim keyword in its own line ("ARR by end of 2018").
         borrowed = None if keywords else _borrow_keyword(context)
         if not keywords and not date_words:
-            if not borrowed or all(d["kind"] == "year" for d in dates):
+            if not (borrowed or _borrow_keyword(context, nearest=False)) or all(d["kind"] == "year" for d in dates):
                 return []
         # A bare date under a milestone ("Positive EBITDA" / "Q2 2024") takes the milestone's type.
         family = "ebitda" if not keywords and (borrowed or [None])[0] == "ebitda" else "product"
         if not keywords and not borrowed:
             family = UNKNOWN              # a date word alone names no type
+        # "Positive EBITDA" above or beside a date: a direction, and no figure.
+        said = _DIRECTION.search(line if keywords else borrowed[2] if borrowed else "") \
+            if "ebitda" in (family, *(k["family"] for k in keywords)) else None
         return [claim(d["start"], _type(_nearest(keywords, d), keywords) if keywords else family, date=d["date"],
                       label=family not in ("product", UNKNOWN) and borrowed[2] or None, stated=True, period_text=d["text"],
-                      type_from="line" if keywords else "heading")
+                      type_from="line" if keywords else "heading", direction=said and said.group(1).lower())
                 for d in dates if d["kind"] != "year" or keywords]
     # No figure at all: a product line ("Launch the API", a roadmap bullet) or a break-even
     # milestone ("Positive EBITDA") takes a nearby date.
     own = _nearest(keywords, {"start": 0, "end": len(line)})
     borrowed = None if keywords else _borrow_keyword(context)
     family = own["family"] if own else borrowed and borrowed[0]
-    if family not in _MILESTONES:
+    if not own and not borrowed:
+        # A milestone word only further away: the line is kept, its type is not guessed.
+        far = _borrow_keyword(context, nearest=False)
+        family = UNKNOWN if far and far[0] in _MILESTONES else None
+    if family not in _MILESTONES and family != UNKNOWN:
         return []
     date = _borrow_date(context)
     if not date:
         return []
+    # "Positive EBITDA": a direction and no figure, shown as such and never tested against a number.
+    said = _DIRECTION.search(line) if family == "ebitda" and own else None
     return [claim(0, family, date=date[0], label=borrowed and borrowed[2], date_from=date[1], period_text=date[2],
-                  type_from="line" if own else "heading")]
+                  type_from="line" if own else "heading", direction=said and said.group(1).lower())]
 
 
 # ---------------------------------------------------------------------------
@@ -766,6 +817,13 @@ def _reach(line_bbox, box_bbox) -> Optional[float]:
     return hypot(max(0.0, bx0 - x1, x0 - bx1), max(0.0, y0 - by1))
 
 
+def _gap(a, b) -> Optional[float]:
+    """Distance between two boxes on the page (0 when they touch or overlap); None when either has no position."""
+    if not a or not b:
+        return None
+    return hypot(max(0.0, b[0] - a[2], a[0] - b[2]), max(0.0, b[1] - a[3], a[1] - b[3]))
+
+
 def _contexts(units: List[Dict]) -> Dict[int, List[str]]:
     """id(unit) -> nearby texts, most relevant first."""
     pages, boxes = {}, {}
@@ -787,8 +845,8 @@ def _contexts(units: List[Dict]) -> Dict[int, List[str]]:
             if u["box"] is not None and not u.get("table_row"):
                 box = boxes[u["box"]]
                 i = next(k for k, m in enumerate(box) if m is u)
-                texts += [m["text"] for k, m in sorted(enumerate(box), key=lambda km: (abs(km[0] - i), km[0] > i))
-                          if m is not u]
+                texts += [_Text([m["text"]], _gap(u["bbox"], m["bbox"]))
+                          for k, m in sorted(enumerate(box), key=lambda km: (abs(km[0] - i), km[0] > i)) if m is not u]
             if u["bbox"]:
                 near = []
                 for key, (text, bbox) in shapes.items():
@@ -797,7 +855,7 @@ def _contexts(units: List[Dict]) -> Dict[int, List[str]]:
                     distance = _reach(u["bbox"], bbox)
                     if distance is not None and distance <= REACH:
                         near.append((distance, bbox[1], text))
-                texts += [text for _, _, text in sorted(near)]
+                texts += [_Text(text.lines, distance) for distance, _, text in sorted(near, key=lambda n: n[:2])]
             if title and not u["title"]:
                 texts.append(title)
             out[id(u)] = texts
@@ -1124,6 +1182,8 @@ def confidence(candidate: Dict, peers: List[Dict]) -> Dict:
     named = candidate.get("claim_type") not in (UNKNOWN, "other") and \
         bool(candidate.get("type_from", "line") or "parsed" in candidate)
     checks = [("no date", all(v["target_date"] for v in values))]
+    if candidate.get("claim_direction") and not has_value:
+        checks.append(("no figure", False))          # a direction is never better than Medium
     if has_value:
         checks.append(("no unit", bool(candidate.get("unit") or candidate.get("currency"))))
     checks.append(("no heading", named))

@@ -460,7 +460,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, us
     # Appendices
     app: List[str] = []
     app += [f"## {APPENDICES[0]}"]
-    reg = [[f"#{r['rank']}", vd.claim_name(r) + f" – {vd.claimed_text(r)}", r["evidence_label"],
+    reg = [[f"#{r['rank']}", vd.claim_name(r) + f" – {vd.claimed_text(r, results.get('reporting_currency'))}", r["evidence_label"],
             "not yet computed" + (f" · shortfall {r['shortfall'] * 100:.1f}%" if r["shortfall"] is not None else ""),
             ", ".join(f"#{by_id[o]['rank']}" for o in r["overlaps_with"] if o in by_id) or "—",
             f"{r['evidence_analysis']} · {r['evidence_source_key']} ({r['observed_at']})" if r["evidence_analysis"] and r["observed_at"]

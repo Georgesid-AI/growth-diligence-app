@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Check, FileText, Loader2, Pencil, Upload, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, FileText, Loader2, Pencil, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { getDecks, removeDeck, updateCandidate, uploadDeck } from "@/lib/api";
 import {
   ALL_DECKS, CLAIM_TYPES, CLAIM_UNITS, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
-  DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, INCONSISTENCY_LABEL, OTHER_TYPE_NOTE, PLACEHOLDER, STATUS_LABELS, VERIFIED_LABEL, claimDate, claimValue, deckRunLog,
+  DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, INCONSISTENCY_LABEL, OTHER_TYPE_NOTE, PLACEHOLDER, STATUS_LABELS, VERIFIED_LABEL, claimPeriod, claimSections, claimValue, deckRunLog,
   confidenceText, needsType, readingChoices, rowEdit, sourceRef, statusCounts, typeLabel,
 } from "@/lib/deckClaims";
 
@@ -26,6 +26,7 @@ export default function DeckPanel({ auditId }) {
   const [error, setError] = useState(null);
   const [tab, setTab] = useState(null);            // deck id or ALL_DECKS; null until the first load
   const [confirming, setConfirming] = useState(null);
+  const [expanded, setExpanded] = useState({});     // group -> opened or closed by the analyst; groups 5 and 6 start closed
 
   // After a load, keep the chosen tab if its deck still exists; otherwise show the most recent deck.
   // A background poll (silent) that meets an error, a 404 included, stops for good and shows nothing; so does a
@@ -74,7 +75,8 @@ export default function DeckPanel({ auditId }) {
   const save = async (candidate, payload) => {
     try {
       const updated = await updateCandidate(auditId, candidate.id, payload);
-      setData((d) => ({ ...d, candidates: d.candidates.map((c) => (c.id === updated.id ? updated : c)) }));
+      setData((d) => ({ ...d, candidates: d.candidates.map((c) => (c.id === updated.id ? { ...c, ...updated } : c)) }));
+      load();            // the group, the order and the confidence follow the type and the figure: read them again
       return true;
     } catch (err) {
       toast.error(typeof err.response?.data?.detail === "string" ? err.response.data.detail : "Could not save");
@@ -174,7 +176,24 @@ export default function DeckPanel({ auditId }) {
                 </tr>
               </thead>
               <tbody>
-                {shown.map((c) => <CandidateRow key={c.id} candidate={c} onSave={save} />)}
+                {claimSections(shown).map((section) => {
+                  const open = expanded[section.group] ?? !section.collapsed;
+                  return (
+                    <Fragment key={section.group}>
+                      <tr className="bg-slate-50 border-b border-[#E5E7EB]" data-testid={`claim-group-${section.group}`}>
+                        <td colSpan={COLUMNS.length} className="py-1.5 px-2">
+                          <button type="button" aria-expanded={open} data-testid={`claim-group-toggle-${section.group}`}
+                            onClick={() => setExpanded((e) => ({ ...e, [section.group]: !open }))}
+                            className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
+                            {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                            {section.title} <span className="font-mono font-normal text-slate-500">({section.claims.length})</span>
+                          </button>
+                        </td>
+                      </tr>
+                      {open && section.claims.map((c) => <CandidateRow key={c.id} candidate={c} onSave={save} />)}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -239,7 +258,7 @@ function CandidateRow({ candidate: c, onSave }) {
             </div>
           </td>
           <td className="py-2 pr-3">
-            {isRow ? <span className="font-mono text-slate-700 whitespace-nowrap">{claimDate(c)}</span> : (
+            {isRow ? <span className="font-mono text-slate-700 whitespace-nowrap">{claimPeriod(c)}</span> : (
               <Input value={draft.target_date} onChange={set("target_date")} placeholder="2025-Q4" className="h-8 w-24 text-xs font-mono" data-testid="edit-target-date" />
             )}
           </td>
@@ -259,7 +278,7 @@ function CandidateRow({ candidate: c, onSave }) {
               </select>
             ) : claimValue(c)}
           </td>
-          <td className="py-2 pr-3 font-mono text-slate-700 whitespace-nowrap">{claimDate(c)}</td>
+          <td className="py-2 pr-3 font-mono text-slate-700 whitespace-nowrap">{claimPeriod(c)}</td>
         </>
       )}
       <td className="py-2 pr-3 whitespace-nowrap" data-testid="candidate-confidence">

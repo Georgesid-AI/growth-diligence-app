@@ -7,7 +7,8 @@ export const S2_EXPLAINER_CONSENT =
   "Mapping is done by rules first. Where rules cannot decide, the AI sees only those columns' headers, up to 3 example numbers or dates per column and a pattern for text columns – never your full file and never a name – and you confirm those columns.";
 export const S3_EXPLAINER_NO_CONSENT =
   "Mapping is done by rules only: AI-assisted reading is off for this audit. You map the columns the rules cannot decide.";
-export const S4_DROP_ZONE = "Drop .xlsx or .csv files here, or use the paperclip.";
+export const S4_DROP_ZONE =
+  "Drop files here or use the paperclip. Required: revenue by customer (monthly, 24–36 months). Also useful: CRM export, P&L. Board decks go to the Deck panel. .xlsx or .csv only.";
 export const S6_UNKNOWN_TYPE = "Could not tell what this file holds. Pick its type:";
 export const S7_REFUSED = "This window takes .xlsx and .csv files. Decks go in the deck panel below.";
 export const S12_MODEL_FAILED = "AI reading unavailable – these columns need your decision.";

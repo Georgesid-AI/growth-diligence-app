@@ -1,11 +1,12 @@
 /**
  * Create Growth Audit form: date checks and Target ARR display.
  *
- * Both date fields are <input type="date">, whose value is ISO YYYY-MM-DD in every
- * browser whatever it displays (30/06/2026, 06/30/2026, ...). Any other string means
- * the browser fell back to a text box; it is refused, never guessed, because
- * 06/07/2026 is June in one locale and July in another.
+ * Both date fields are the app's own date picker (components/DateField.jsx), whose value is ISO YYYY-MM-DD with a year
+ * from 2000 to 2100. Any other string is refused, never guessed, because 06/07/2026 is June in one locale and July in
+ * another.
  */
+import { dateRangeError } from "./datePicker";
+
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 export function isIsoDate(v) {
@@ -27,11 +28,11 @@ export function asOfInputValue(v) {
 
 // Same rule as the engine: the target must fall in a later month than the as-of month.
 export function targetDateError(targetDate, asOf) {
+  const range = dateRangeError("Target date", targetDate) || dateRangeError("As-of month", asOf);
+  if (range) return range;
   if (targetDate && !isIsoDate(targetDate)) return "Target date must be a full date (YYYY-MM-DD)";
   if (asOf && !isIsoDate(asOf)) return "As-of month must be a full date (YYYY-MM-DD)";
   if (!targetDate) return null;
-  const year = Number(targetDate.slice(0, 4));
-  if (year < 2000 || year > 2100) return "Target date year must be between 2000 and 2100";
   if (asOf && targetDate.slice(0, 7) <= asOf.slice(0, 7)) return "Target date must be after the as-of month";
   return null;
 }
@@ -57,14 +58,13 @@ export const MONTHS = ["January", "February", "March", "April", "May", "June", "
 export const DEFAULT_FISCAL_YEAR_END = 12;
 
 // AI-assisted reading (docs/specs/llm-structure-reading.md section 4): one checkbox per audit, ticked by
-// default, directly above the create button next to the engagement reference. Word for word from the spec.
+// default, directly above the create button. Word for word from the spec.
 export const CONSENT_EXPLAINER = "This app reads tables and charts in the uploaded decks with an AI model. Every number is checked by code against its source cell; anything that does not match is marked as unverified. Emails, phone numbers, personal names and the customers named in the uploaded data files are replaced before anything is sent.";
 export const CONSENT_LABEL = "AI-assisted reading enabled per engagement terms. Uncheck if the client requires code-based extraction only; this may identify fewer findings.";
 
-// The client (the investor commissioning the audit) and the engagement reference are required.
+// The client (the investor commissioning the audit) is required.
 export function requiredFieldError(form) {
   if (!form.company_name?.trim()) return "Company name is required";
   if (!form.client_name?.trim()) return "Client name is required";
-  if (!form.engagement_reference?.trim()) return "Engagement reference is required";
   return null;
 }

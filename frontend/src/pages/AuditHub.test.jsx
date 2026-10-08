@@ -63,6 +63,28 @@ describe("new-audit dialog on a short window", () => {
   });
 });
 
+describe("new-audit dates and fields", () => {
+  let cleanup;
+  beforeEach(async () => { cleanup = await openDialog(); });
+  afterEach(async () => { await cleanup(); });
+
+  test("there is no engagement reference field", () => {
+    expect(q("audit-engagement-input")).toBeNull();
+    expect(q("audit-dialog").textContent).not.toMatch(/engagement reference/i);
+  });
+
+  test("the target date and the as-of month use the date picker with month and year arrows, not the browser's date input", async () => {
+    expect(q("audit-dialog").querySelector('input[type="date"]')).toBeNull();
+    for (const field of ["audit-target-date-input", "audit-asof-month-input"]) {
+      await act(async () => { q(field).click(); });
+      for (const part of ["month-prev", "month-next", "year-prev", "year-next", "year"]) expect(q(`${field}-${part}`)).not.toBeNull();
+      await act(async () => { q(`${field}-day-1`).click(); });
+      expect(q(field).textContent).toMatch(/^1 \w{3} \d{4}$/);
+      expect(q(field).textContent).not.toContain("0001");
+    }
+  });
+});
+
 describe("AI-assisted reading explainer", () => {
   let cleanup;
   beforeEach(async () => { cleanup = await openDialog(); });

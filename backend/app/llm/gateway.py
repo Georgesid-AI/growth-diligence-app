@@ -1258,13 +1258,13 @@ _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 async def load_structure_context(db, audit_id: str) -> dict:
     """The audit's consent and the names the structure path must protect, and nothing else.
 
-    `company_name` is the target, never rewritten by redaction; `client_name` and
-    `engagement_reference` must never reach the provider. Uploaded rows, parsed deck text and
+    `company_name` is the target, never rewritten by redaction; `client_name`
+    must never reach the provider. Uploaded rows, parsed deck text and
     candidates are not read here: the text to read is handed in by the caller.
     """
     doc = await db[RESULTS_COLLECTION].find_one(
         {"id": audit_id},
-        {"_id": 0, "id": 1, "company_name": 1, "client_name": 1, "engagement_reference": 1,
+        {"_id": 0, "id": 1, "company_name": 1, "client_name": 1,
          "structure_reading_consent": 1},
     )
     if not doc:
@@ -1297,7 +1297,7 @@ def structure_text_problem(text: Any, structure_type: str, context: dict, mappin
     a KPI panel takes as a label marked `r<row>c<col> title: <text>` (on the column-mapping path, sample and
     profile lines; for a deck structure, below "items:", Python's item lines, each raw text a figure inside
     its cell and never in a title cell, and a roadmap's date and text lines). Raw bytes,
-    prose, a file name and a cell over 200 characters are refused. The client name and the engagement reference reach the provider only
+    prose, a file name and a cell over 200 characters are refused. The client name reaches the provider only
     as "[redacted]": the caller replaces them (redact.withheld_values), and one still standing in the
     text as a whole word (any case; a word ends at a space, punctuation, a hyphen or a change of
     case, as in redaction) is refused. Redaction is run again and the text must come back unchanged. On the
@@ -1311,9 +1311,8 @@ def structure_text_problem(text: Any, structure_type: str, context: dict, mappin
         return "raw_bytes"
     if _FILE_NAME.search(text):
         return "file_name"
-    for field in ("client_name", "engagement_reference"):
-        if structure_redact.has_word(text, str(context.get(field) or "").strip()):
-            return field
+    if structure_redact.has_word(text, str(context.get("client_name") or "").strip()):
+        return "client_name"
     company = context.get("company_name")
     if structure_type == "column_mapping":
         problem = structure_redact.column_text_problem(text)

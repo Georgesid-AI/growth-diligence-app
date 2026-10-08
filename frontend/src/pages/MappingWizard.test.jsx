@@ -86,6 +86,7 @@ describe("the screen", () => {
     const chat = q("upload-chat");
     expect(chat.compareDocumentPosition(q("deck-panel")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(q("chat-drop-zone").textContent).toBe(S4_DROP_ZONE);
+    expect(S4_DROP_ZONE).toBe("Drop files here or use the paperclip. Required: revenue by customer (monthly, 24–36 months). Also useful: CRM export, P&L. Board decks go to the Deck panel. .xlsx or .csv only.");
     expect(q("chat-paperclip")).not.toBeNull();
     expect(q("chat-file-input").multiple).toBe(true);
   });
