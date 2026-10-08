@@ -9,10 +9,22 @@ import { typeLabel } from "./deckClaims";
 
 export const REGISTER_HEADING = "Claim register";
 export const DOWNLOAD_LABEL = "Download baseline (CSV)";
-export const REGISTER_COLUMNS = ["#", "Claim", "Period", "Segment", "Page", "Read from deck", "Observed", "Gap", "Gloss", "Evidence", "Gate"];
-// Section 8: only these are editable; value at stake is not shown until issue #6 fills it.
-export const EDITABLE_FIELDS = ["segment", "metric", "gate_threshold", "gate_budget_decision", "gate_date"];
-export const READ_ONLY_FIELDS = ["rank", "claim", "period", "page", "deck_reading", "observed", "gap", "gloss", "evidence"];
+// docs/specs/verdict-and-memo.md section 2.1: value at stake, overlaps and evidence join the columns of claim-matching.md section 8.
+export const REGISTER_COLUMNS = ["#", "Claim", "Period", "Segment", "Page", "Read from deck", "Observed", "Gap", "Gloss", "Value at stake",
+  "Overlaps with", "Evidence", "Gate"];
+// Only these are editable (section 3 adds the gate's metric name and direction on a row with no app metric, and the key mark).
+export const EDITABLE_FIELDS = ["segment", "metric", "gate_threshold", "gate_budget_decision", "gate_date", "gate_metric_name",
+  "gate_direction", "key_gate"];
+export const READ_ONLY_FIELDS = ["rank", "claim", "period", "page", "deck_reading", "observed", "gap", "gloss", "value_at_stake",
+  "overlaps_with", "evidence"];
+
+// Screen wording W4, W5, W22 (verdict-and-memo.md section 11).
+export const GATE_NEEDED = "Gate needed";
+export const KEY_GATE_LABEL = "Key gate";
+export const GATE_METRIC_PLACEHOLDER = "Metric (max 100 characters)";
+export const GATE_METRIC_MAX = 100;
+export const GATE_DIRECTIONS = [["at least", "At least"], ["at most", "At most"]];
+const NO_APP_METRIC = ["no metric", "metric does not fit the claim's unit"];
 
 export const WHOLE_COMPANY = "Whole company";
 export const NOT_IN_DATA = "Not in the data";
@@ -52,6 +64,30 @@ export function dataSegments(results) {
 }
 
 export const segmentOptions = (results) => [WHOLE_COMPANY, ...dataSegments(results), NOT_IN_DATA];
+
+/** Whether the gate of a row also needs the analyst's metric name and direction: the row has no metric of the app. */
+export const needsMetricName = (row) => NO_APP_METRIC.includes(row.reason);
+
+/** W1: "not yet computed · shortfall 18.3%"; a row with no shortfall reads "not yet computed". */
+export function valueAtStakeText(row) {
+  const base = "not yet computed";
+  return row.shortfall == null ? base : `${base} · shortfall ${(row.shortfall * 100).toFixed(1)}%`;
+}
+
+/** W2: the ranks of the rows it overlaps with, "#3, #7"; none: a dash. */
+export function overlapsText(row, rows) {
+  const rank = Object.fromEntries(rows.map((r) => [r.claim_id, r.rank]));
+  const ranks = (row.overlaps_with || []).map((id) => rank[id]).filter((n) => n != null).sort((a, b) => a - b);
+  return ranks.length ? ranks.map((n) => `#${n}`).join(", ") : PLACEHOLDER;
+}
+
+/** W3: the label and reason, then the analysis and source key the figure was read from, with the month or quarter. */
+export function evidenceLines(row) {
+  const first = `${row.evidence_label} · ${row.reason}`;
+  if (!row.evidence_analysis) return { first, second: null };
+  const at = row.observed_at ? ` (${row.observed_at})` : "";
+  return { first, second: `${row.evidence_analysis} · ${row.evidence_source_key}${at}` };
+}
 
 const trimmed = (v, dp) => String(Number(Number(v).toFixed(dp)));
 
@@ -114,12 +150,20 @@ export function gateEdit(row, draft) {
   if ((budget || null) !== (row.gate_budget_decision ?? null)) out.gate_budget_decision = budget || null;
   const date = String(draft.date ?? "").trim();
   if ((date || null) !== (row.gate_date ?? null)) out.gate_date = date || null;
+  if (needsMetricName(row)) {
+    const name = String(draft.metricName ?? "").trim();
+    if (name.length > GATE_METRIC_MAX) throw new Error(`The metric is at most ${GATE_METRIC_MAX} characters`);
+    if ((name || null) !== (row.gate_metric_name ?? null)) out.gate_metric_name = name || null;
+    const direction = draft.direction || null;
+    if (direction !== (row.gate_direction ?? null)) out.gate_direction = direction;
+  }
   return out;
 }
 
 /** What the analyst sees beside the empty gate fields: the claimed and the observed figure. No threshold is proposed. */
 export function gateContext(row, ccy) {
-  if (row.observed_value == null) return null;
+  const claimed = `Claimed ${claimFigure(row)} (${row.period || row.period_note || PLACEHOLDER})`;
+  if (row.observed_value == null) return claimed;
   const observed = observedText(row, ccy);
-  return `Claimed ${claimFigure(row)} (${row.period || row.period_note || PLACEHOLDER}) · Observed ${observed.value} (${observed.at})`;
+  return `${claimed} · Observed ${observed.value} (${observed.at})`;
 }

@@ -10,7 +10,6 @@
    "fiscal_year_end": 12,
    "as_of_month": null,
    "reporting_currency": "EUR",
-   "gate_date": "2024-03-31",
    "claims": [
     {
      "n": 1,
@@ -1300,7 +1299,6 @@
    "fiscal_year_end": 12,
    "as_of_month": null,
    "reporting_currency": "EUR",
-   "gate_date": "2024-03-31",
    "claims": [
     {
      "n": 11,
@@ -1348,7 +1346,6 @@
    "fiscal_year_end": 3,
    "as_of_month": null,
    "reporting_currency": "EUR",
-   "gate_date": "2024-03-31",
    "claims": [
     {
      "n": 20,
@@ -1433,7 +1430,6 @@
    "fiscal_year_end": 12,
    "as_of_month": null,
    "reporting_currency": "EUR",
-   "gate_date": "2024-03-31",
    "claims": [
     {
      "n": 35,

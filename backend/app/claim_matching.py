@@ -18,9 +18,18 @@ FIELDS = (
     "claim_id", "deck_file", "page_ref", "claim_type", "status", "deck_reading", "claimed_value", "claimed_high",
     "unit", "currency", "period", "period_start", "period_end", "period_note", "segment", "segment_set_by", "metric",
     "metric_set_by", "direction", "observed_value", "observed_at", "observed_source", "gap", "gap_normalised",
-    "gap_kind", "gloss", "evidence_label", "reason", "tolerance", "rank", "value_at_stake_arr", "gate_sentence",
-    "gate_threshold", "gate_budget_decision", "gate_date", "gate_saved", "as_of_month", "as_of_defaulted",
+    "gap_kind", "gloss", "evidence_label", "reason", "tolerance", "rank", "value_at_stake_arr", "shortfall",
+    "overlaps_with", "evidence_analysis", "evidence_source_key", "gate_sentence", "gate_threshold",
+    "gate_budget_decision", "gate_date", "gate_saved", "gate_metric_name", "gate_direction", "key_gate", "gate_needed",
+    "as_of_month", "as_of_defaulted",
 )
+# How the baseline CSV reads each field back (verdict-and-memo.md section 5); a field not listed is text.
+FLOAT_FIELDS = frozenset({"claimed_value", "claimed_high", "observed_value", "gap", "gap_normalised", "value_at_stake_arr",
+                          "shortfall", "gate_threshold"})
+INT_FIELDS = frozenset({"rank"})
+BOOL_FIELDS = frozenset({"gate_saved", "key_gate", "gate_needed", "as_of_defaulted"})
+LIST_FIELDS = frozenset({"overlaps_with"})
+SOURCE_FIELDS = frozenset({"observed_source"})
 
 WHOLE, NOT_IN_DATA = "Whole company", "Not in the data"
 NO_PERIOD = "no period stated"
@@ -28,6 +37,9 @@ SUGGESTION = "AI suggestion, not verified"
 DAYS_PER_WEEK, DAYS_PER_MONTH = 7.0, 30.44
 RATE_TOLERANCE_PP, AMOUNT_TOLERANCE = 1.0, 0.05
 BUDGET_DECISION_MAX = 200
+GATE_METRIC_MAX = 100
+GATE_DIRECTIONS = ("at least", "at most")
+NO_APP_METRIC = ("no metric", "metric does not fit the claim's unit")      # the rows that need the analyst's metric name
 
 # Table 2a. kind: how the claim's period reads the metric (table 2b): "sum" over the period's months, the value in the
 # period's end "month", one calendar "quarter", or the "asof" figure. `seg`: the engine splits it by segment.
@@ -109,14 +121,6 @@ def _month_ranges(indexes: List[int]) -> str:
 def _quarter_first_month(quarter: str) -> str:
     year, q = quarter.split("-Q")
     return f"{year}-{(int(q) - 1) * 3 + 1:02d}"
-
-
-def gate_date(as_of: str, fiscal_year_end: int) -> str:
-    """The last day of the first fiscal quarter that ends after the as-of month (spec section 5)."""
-    i = _mi(as_of) + 1
-    while (i % 12 + 1 - fiscal_year_end) % 3:
-        i += 1
-    return date(i // 12, i % 12 + 1, calendar.monthrange(i // 12, i % 12 + 1)[1]).isoformat()
 
 
 # --- units, tolerance, gloss -------------------------------------------------------------------------------------------
@@ -315,6 +319,73 @@ def _missing(results: dict, metric: str) -> Optional[str]:
     return None
 
 
+# Table 2.3 of verdict-and-memo.md: where a register figure sits in the stored results. `{seg}` is a segment, `{q}` the
+# quarter the figure was read at, `{l}` the default lag of CAC payback. The contract test pins every key to a path
+# MetricsPayload declares (`*` for a data key).
+EVIDENCE: Dict[str, Tuple[str, str, Optional[str]]] = {
+    "Revenue": ("Revenue by month", "revenue_series.data.total", "revenue_series.data.{seg}"),
+    "ARR": ("Monthly MRR by Segment", "mrr_series.data.total", "mrr_series.data.{seg}"),
+    "MRR": ("Monthly MRR by Segment", "mrr_series.data.total", "mrr_series.data.{seg}"),
+    "Customer count": ("Customers", "customers_series.data.total", "customers_series.data.{seg}"),
+    "New MRR": ("New MRR by quarter", "new_mrr_by_quarter.{q}.new_mrr", None),
+    "NRR (12-month)": ("NRR", "nrr.series.nrr_pct", "nrr.by_segment.{seg}.nrr_pct"),
+    "Gross revenue churn": ("Gross revenue churn", "gross_churn.series.churn_pct", None),
+    "ACV": ("Path to Plan", "acv_path.acv", "acv_path.by_segment.{seg}.acv"),
+    "Median sales cycle": ("Sales cycle", "sales_cycle.median_days", "sales_cycle.by_segment.{seg}.median_days"),
+    "Win rate": ("Win rate", "win_rate.win_rate_pct", None),
+    "Gross margin": ("CAC Payback by Quarter", "cac_payback.quarters.{q}.gross_margin_pct", None),
+    "CAC payback": ("CAC Payback by Quarter", "cac_payback.quarters.{q}.L{l}.months", None),
+}
+MISSING_KEY = "missing_data"
+
+
+def evidence_key(metric: str, segment: str, observed_at: Optional[str], default_l: int = 1) -> Optional[Tuple[str, str]]:
+    """(analysis, source key) of a figure the register read, or None when the metric has no row in table 2.3."""
+    entry = EVIDENCE.get(metric)
+    if not entry:
+        return None
+    analysis, whole, by_segment = entry
+    key = whole if segment == WHOLE or by_segment is None else by_segment
+    return analysis, key.format(seg=segment, q=observed_at or "", l=default_l)
+
+
+def _missing_item(results: dict, metric: str) -> Optional[dict]:
+    """The engine's Missing Data item that stands for the metric (the one `_missing` reads `unlocked_by` from)."""
+    for item in results.get("missing_data") or ():
+        name = str(item.get("metric") or "").lower()
+        if any(word in name for word in METRICS[metric]["missing"]) and item.get("unlocked_by"):
+            return item
+    return None
+
+
+def format_figure(unit: Optional[str], value: float, currency: Optional[str], unit_text: Optional[str] = None) -> str:
+    """A figure in the unit it is measured in (the metric's unit, or the claim's own): the register's one number format."""
+    if unit in ("currency", "%", "days", "months", "count"):
+        return _format(unit, value, currency)
+    return f"{value:g} {unit}" if unit else f"{value:g}{' ' + unit_text if unit_text else ''}"
+
+
+def _claimed_text(c: dict) -> str:
+    """The claim's figure in its own unit: what a gate sentence says was claimed."""
+    unit, currency = _claim_unit(c), c.get("currency") or None
+    low, high = c.get("value"), c.get("value_high")
+    if low is None:
+        return "—"
+    text = format_figure(unit, low, currency) if unit != "currency" else _money(low, currency)
+    if high is not None:
+        end = format_figure(unit, high, currency) if unit != "currency" else _money(high, currency)
+        text = f"{text}–{end}"
+    return text
+
+
+def _is_saved(inputs: dict, needs_name: bool) -> bool:
+    """Threshold, budget decision and date are all filled; a row with no app metric also needs the metric and the direction."""
+    saved = inputs.get("gate_threshold") is not None and bool(inputs.get("gate_budget_decision")) and bool(inputs.get("gate_date"))
+    if needs_name:
+        saved = saved and bool(inputs.get("gate_metric_name")) and inputs.get("gate_direction") in GATE_DIRECTIONS
+    return saved
+
+
 # --- one claim ------------------------------------------------------------------------------------------------------------
 
 def _segments(results: dict) -> Tuple[List[str], set]:
@@ -431,12 +502,18 @@ def _row(c: dict, results: dict, settings: dict) -> dict:
         period_note=None if c.get("target_date") else NO_PERIOD, segment=segment, segment_set_by=segment_by,
         metric=metric, metric_set_by=metric_by, direction=spec["direction"] if spec else None,
         tolerance=tolerance_text(metric) if spec else None, as_of_month=as_of,
-        as_of_defaulted=not settings.get("as_of_month"), gate_date=inputs.get("gate_date"),
+        as_of_defaulted=not settings.get("as_of_month"), overlaps_with=[], gate_date=inputs.get("gate_date"),
         gate_threshold=inputs.get("gate_threshold"), gate_budget_decision=inputs.get("gate_budget_decision"),
-        gate_saved=inputs.get("gate_threshold") is not None and bool(inputs.get("gate_budget_decision")))
+        gate_metric_name=inputs.get("gate_metric_name"), gate_direction=inputs.get("gate_direction"))
+    shown_claim: List[Optional[float]] = [None]         # the claimed figure the gate sentence names, once it is known
 
     def finish(label: str, reason: str) -> dict:
         out.update(evidence_label=label, reason=reason)
+        if out["evidence_analysis"] is None and reason.startswith("Missing:") and metric in METRICS:
+            item = _missing_item(results, metric)
+            if item:
+                out.update(evidence_analysis=str(item.get("metric")), evidence_source_key=MISSING_KEY)
+        _gate(out, c, inputs, spec, claim_unit, results, shown_claim[0])
         return out
 
     if not spec:
@@ -476,6 +553,9 @@ def _row(c: dict, results: dict, settings: dict) -> dict:
         claimed_high = claimed_high * rate if claimed_high is not None else None
 
     out.update(observed_value=observed, observed_at=observed_at, observed_source=source)
+    found = evidence_key(metric, segment, observed_at, (results.get("cac_payback") or {}).get("default_l", 1))
+    if found:
+        out.update(evidence_analysis=found[0], evidence_source_key=found[1])
     if claimed_low is None:
         return finish("Unsupported", "no claimed value")
     claimed = claimed_low
@@ -491,21 +571,11 @@ def _row(c: dict, results: dict, settings: dict) -> dict:
     if round(gap, 9) == 0:
         gap, kind = 0.0, None if not forecast else "to go"
     out.update(gap=round(gap, 6), gap_kind=kind, gap_normalised=round(gap / abs(claimed), 6) if claimed else None)
+    out["shortfall"] = out["gap_normalised"] if kind == "miss" else None
     out["gloss"] = gloss(spec["unit"], kind, gap, results.get("reporting_currency"), spec["direction"],
                          _label_of(end) if forecast else None)
 
-    # the gate: no proposal and no default threshold; the sentence exists once the analyst has filled the threshold and
-    # the budget decision (claimed and observed sit beside the empty field on the screen)
-    gate_on = inputs.get("gate_date") or gate_date(as_of, settings.get("fiscal_year_end") or 12)
-    out["gate_date"] = gate_on
-    if out["gate_saved"]:
-        shown = metric if segment == WHOLE else f"{metric} ({segment})"
-        unit_currency = results.get("reporting_currency")
-        out["gate_sentence"] = (
-            f"Before {inputs['gate_budget_decision']}, {shown} must be at {'least' if sign > 0 else 'most'} "
-            f"{_format(spec['unit'], inputs['gate_threshold'], unit_currency)} by {gate_on}. "
-            f"Observed {_format(spec['unit'], observed, unit_currency)} ({observed_at}); "
-            f"claimed {_format(spec['unit'], claimed, unit_currency)} ({period or NO_PERIOD}).")
+    shown_claim[0] = claimed
 
     if forecast:
         return finish("Unverified", f"forecast: the period ends after the as-of month ({as_of})")
@@ -515,6 +585,38 @@ def _row(c: dict, results: dict, settings: dict) -> dict:
     if verified:
         return finish("Verified", f"within {out['tolerance']} of the claim")
     return finish("Contradicted", f"outside {out['tolerance']}: a {'miss' if kind == 'miss' else 'beat'}")
+
+
+def _gate(out: dict, c: dict, inputs: dict, spec: Optional[dict], claim_unit: Optional[str], results: dict,
+          claimed: Optional[float]) -> None:
+    """The gate of a row (verdict-and-memo.md section 3): saved when threshold, budget decision and date are filled (and, for a
+    row with no app metric, the metric name and the direction). Nothing is proposed. Sets gate_saved, gate_sentence,
+    gate_needed and key_gate; reads the label and the reason `finish` has just set."""
+    app_metric = out["reason"] not in NO_APP_METRIC and spec is not None
+    saved = _is_saved(inputs, needs_name=not app_metric)
+    out["gate_saved"] = saved
+    out["key_gate"] = bool(inputs.get("key_gate")) and saved
+    out["gate_needed"] = out["evidence_label"] in ("Unverified", "Unsupported", "Contradicted") and not saved
+    if not saved:
+        return
+    if app_metric:
+        metric, segment = out["metric"], out["segment"]
+        shown = metric if segment == WHOLE else f"{metric} ({segment})"
+        word = "least" if spec["direction"] == "higher" else "most"
+        reporting = results.get("reporting_currency")
+        threshold = _format(spec["unit"], inputs["gate_threshold"], reporting)
+    else:
+        shown = inputs["gate_metric_name"]
+        word = "least" if inputs["gate_direction"] == "at least" else "most"
+        threshold = format_figure(claim_unit, inputs["gate_threshold"], out["currency"], c.get("unit"))
+    start = f"Before {inputs['gate_budget_decision']}, {shown} must be at {word} {threshold} by {inputs['gate_date']}."
+    period = out["period"] or NO_PERIOD
+    if out["observed_value"] is not None and claimed is not None and spec is not None and app_metric:
+        reporting = results.get("reporting_currency")
+        out["gate_sentence"] = (f"{start} Observed {_format(spec['unit'], out['observed_value'], reporting)} "
+                                f"({out['observed_at']}); claimed {_format(spec['unit'], claimed, reporting)} ({period}).")
+    else:
+        out["gate_sentence"] = f"{start} Not yet observed: {out['reason']}; claimed {_claimed_text(c)} ({period})."
 
 
 def _observe(figures: "_Figures", spec: dict, metric: str, start: Optional[int], end: Optional[int], as_of_i: Optional[int]):
@@ -605,6 +707,46 @@ def _observe(figures: "_Figures", spec: dict, metric: str, start: Optional[int],
     return item["value"], q, source, item["reason"] or "not computed"
 
 
+# --- overlaps (verdict-and-memo.md section 2.2) ----------------------------------------------------------------------
+
+_MONTH = re.compile(r"^(\d{4})-(\d{2})$")
+_QUARTER = re.compile(r"^(\d{4})-Q([1-4])$")
+
+
+def observed_months(observed_at: Optional[str]) -> set:
+    """The months an observed figure stands for: a month, a calendar quarter (its three months) or 'a to b'."""
+    if not observed_at:
+        return set()
+    if " to " in observed_at:
+        first, last = observed_at.split(" to ", 1)
+        if _MONTH.match(first) and _MONTH.match(last):
+            return set(range(_mi(first), _mi(last) + 1))
+        return set()
+    if _MONTH.match(observed_at):
+        return {_mi(observed_at)}
+    q = _QUARTER.match(observed_at)
+    if q:
+        start = _mi(_quarter_first_month(observed_at))
+        return {start, start + 1, start + 2}
+    return set()
+
+
+def _same_measure(a: Optional[str], b: Optional[str]) -> bool:
+    return a is not None and (a == b or {a, b} == {"ARR", "MRR"})
+
+
+def _overlaps(rows: List[dict]) -> None:
+    """Fill `overlaps_with` (claim ids in rank order). Two rows overlap when their metrics are the same (or ARR and MRR), they
+    have the same segment or either is Whole company, and their observed periods share a month. A row with no observed
+    figure overlaps with nothing. Symmetric."""
+    months = {r["claim_id"]: observed_months(r["observed_at"]) if r["observed_value"] is not None else set() for r in rows}
+    for r in rows:
+        mine = months[r["claim_id"]]
+        r["overlaps_with"] = [o["claim_id"] for o in rows if o is not r and mine and months[o["claim_id"]] & mine
+                              and _same_measure(r["metric"], o["metric"])
+                              and (r["segment"] == o["segment"] or WHOLE in (r["segment"], o["segment"]))]
+
+
 # --- the register -----------------------------------------------------------------------------------------------------
 
 def _rank(rows: List[dict]) -> List[dict]:
@@ -628,7 +770,9 @@ def build_register(candidates: List[dict], results: Optional[dict], settings: di
     reporting_currency and fx. Nothing is read from a model and nothing is changed."""
     if not results:
         return []
-    return _rank([_row(c, results, settings) for c in _expand(candidates)])
+    rows = _rank([_row(c, results, settings) for c in _expand(candidates)])
+    _overlaps(rows)
+    return rows
 
 
 def label_counts(rows: List[dict]) -> Dict[str, int]:

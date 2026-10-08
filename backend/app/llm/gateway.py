@@ -1652,8 +1652,20 @@ async def usage_for_run(db, run_id: str) -> UsageResponse:
         deck.input_tokens += int(r.get("input_tokens", 0))
         deck.output_tokens += int(r.get("output_tokens", 0))
         deck.estimated_cost_usd = round(deck.estimated_cost_usd + float(r.get("estimated_cost_usd", 0.0)), 6)
+    by_step: Dict[str, DeckUsage] = {}
+    for r in rows:
+        name = r.get("step")
+        if name == STRUCTURE_STEP:
+            name = "deck_structure" if r.get("deck_id") else "column_mapping"
+        step = by_step.setdefault(name, DeckUsage())
+        step.calls += 0 if r.get("cache_hit") else 1
+        step.cache_hits += 1 if r.get("cache_hit") else 0
+        step.input_tokens += int(r.get("input_tokens", 0))
+        step.output_tokens += int(r.get("output_tokens", 0))
+        step.estimated_cost_usd = round(step.estimated_cost_usd + float(r.get("estimated_cost_usd", 0.0)), 6)
     return UsageResponse(
         run_id=run_id,
+        by_step=by_step,
         calls=sum(1 for r in narratives if not r.get("cache_hit")),
         input_tokens=sum(int(r.get("input_tokens", 0)) for r in rows),
         output_tokens=sum(int(r.get("output_tokens", 0)) for r in rows),

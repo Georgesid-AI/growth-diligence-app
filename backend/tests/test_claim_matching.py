@@ -478,19 +478,17 @@ def test_an_ai_suggestion_with_no_figure_keeps_its_unsupported_reason():
 
 # --- section 5: gate -----------------------------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("as_of, year_end, expected", [
-    ("2024-02", 12, "2024-03-31"), ("2024-03", 12, "2024-06-30"), ("2024-02", 3, "2024-03-31"),
-    ("2023-12", 3, "2024-03-31"), ("2024-04", 3, "2024-06-30"), ("2024-11", 12, "2024-12-31"), ("2024-12", 12, "2025-03-31"),
-    ("2024-02", 6, "2024-03-31"), ("2024-01", 5, "2024-02-29")])
-def test_the_proposed_gate_date_is_the_last_day_of_the_first_fiscal_quarter_ending_after_the_as_of_month(as_of, year_end, expected):
-    assert cm.gate_date(as_of, year_end) == expected
+def test_the_app_proposes_no_gate_date(as_of=None):
+    """verdict-and-memo.md section 3: the date starts empty, so the default of claim-matching section 5 is gone."""
+    assert not hasattr(cm, "gate_date")
+    assert all(r["gate_date"] is None for r in register(RUNS["A"]))
 
 
 def test_no_gate_is_proposed_a_row_has_no_sentence_and_no_default_threshold_until_the_analyst_fills_it():
     rows = register(RUNS["A"])
     assert all(r["gate_sentence"] is None and r["gate_threshold"] is None and r["gate_saved"] is False for r in rows)
     row = row_of(rows, "c01")
-    assert (row["gate_threshold"], row["gate_budget_decision"], row["gate_date"], row["gate_saved"]) == (None, None, "2024-03-31", False)
+    assert (row["gate_threshold"], row["gate_budget_decision"], row["gate_date"], row["gate_saved"]) == (None, None, None, False)
     assert row["claimed_value"] == 200000 and row["observed_value"] == 202125.48, "claimed and observed sit beside the empty field"
 
 
@@ -501,7 +499,7 @@ def test_the_analysts_gate_is_saved_only_when_threshold_and_budget_decision_are_
     assert (full["gate_saved"], full["gate_threshold"], full["gate_date"]) == (True, 195000.0, "2024-06-30")
     assert full["gate_sentence"] == ("Before the Series B hiring plan, ARR must be at least €195,000 by 2024-06-30. "
                                      "Observed €202,125 (2024-02); claimed €200,000 (Feb 2024).")
-    for missing in ("gate_threshold", "gate_budget_decision"):
+    for missing in ("gate_threshold", "gate_budget_decision", "gate_date"):
         half = run_claim({**base, "claim_inputs": {"x1": {k: v for k, v in inputs.items() if k != missing}}})
         assert half["gate_saved"] is False and half["gate_sentence"] is None, missing
     assert run_claim(base)["gate_saved"] is False
@@ -509,21 +507,24 @@ def test_the_analysts_gate_is_saved_only_when_threshold_and_budget_decision_are_
 
 def test_a_saved_gate_on_a_lower_is_better_metric_says_at_most_and_a_forecast_row_can_carry_one():
     sales = run_claim({"claim_type": "sales", "snippet": "Sales cycle", "unit": "days", "currency": None, "value": 45,
-                       "claim_inputs": {"x1": {"gate_threshold": 50, "gate_budget_decision": "the SDR hires"}}})
+                       "claim_inputs": {"x1": {"gate_threshold": 50, "gate_budget_decision": "the SDR hires",
+                                                                      "gate_date": "2024-03-31"}}})
     assert sales["gate_sentence"] == ("Before the SDR hires, Median sales cycle must be at most 50.0 days by 2024-03-31. "
                                       "Observed 58.5 days (2024-02); claimed 45.0 days (no period stated).")
     forecast = run_claim({"claim_type": "revenue", "snippet": "ARR", "value": 5_000_000, "target_date": "2026",
-                          "claim_inputs": {"x1": {"gate_threshold": 1_000_000, "gate_budget_decision": "the plan"}}})
+                          "claim_inputs": {"x1": {"gate_threshold": 1_000_000, "gate_budget_decision": "the plan",
+                                                                     "gate_date": "2024-03-31"}}})
     assert forecast["gate_sentence"].startswith("Before the plan, ARR must be at least €1,000,000 by 2024-03-31. Observed €202,125 (2024-02)")
 
 
 # --- section 6: the register's fields ----------------------------------------------------------------------------
 
-def test_a_register_row_has_exactly_the_fields_of_section_6_in_order():
+def test_a_register_row_has_exactly_the_fields_of_section_6_and_the_verdict_spec_in_order():
     section_6 = ("claim_id deck_file page_ref claim_type status deck_reading claimed_value claimed_high unit currency period "
                  "period_start period_end period_note segment segment_set_by metric metric_set_by direction observed_value "
                  "observed_at observed_source gap gap_normalised gap_kind gloss evidence_label reason tolerance rank "
-                 "value_at_stake_arr gate_sentence gate_threshold gate_budget_decision gate_date gate_saved as_of_month "
+                 "value_at_stake_arr shortfall overlaps_with evidence_analysis evidence_source_key gate_sentence gate_threshold "
+                 "gate_budget_decision gate_date gate_saved gate_metric_name gate_direction key_gate gate_needed as_of_month "
                  "as_of_defaulted").split()
     assert list(register(RUNS["A"])[0]) == section_6 == list(cm.FIELDS)
 
@@ -572,3 +573,86 @@ def test_the_matching_does_not_change_the_candidates_or_the_results():
 
 def test_no_results_gives_an_empty_register():
     assert cm.build_register(candidates_for(RUNS["A"]), None, settings(RUNS["A"])) == []
+
+
+# --- verdict-and-memo.md section 2: value at stake, overlaps, evidence ------------------------------------------------------------------
+
+def test_value_at_stake_is_never_estimated_and_the_shortfall_is_the_normalised_gap_of_a_miss_only():
+    rows = register(RUNS["A"])
+    assert all(r["value_at_stake_arr"] is None for r in rows)
+    for r in rows:
+        assert r["shortfall"] == (r["gap_normalised"] if r["gap_kind"] == "miss" else None), r["claim_id"]
+    assert row_of(rows, "c06")["shortfall"] == 0.3 and row_of(rows, "c01")["shortfall"] is None     # a beat has none
+    assert row_of(rows, "c09")["shortfall"] is None, "a forecast's gap is to go, not a miss"
+
+
+def test_two_rows_overlap_on_the_same_metric_or_arr_and_mrr_a_shared_segment_and_a_shared_month():
+    rows = register(RUNS["A"])
+    arr_feb = {r["claim_id"] for r in rows if r["metric"] == "ARR" and r["observed_at"] == "2024-02" and r["segment"] == cm.WHOLE}
+    assert {"c01", "c23", "c24", "c21", "c25", "c09"} <= arr_feb
+    for claim_id in arr_feb:
+        assert set(row_of(rows, claim_id)["overlaps_with"]) == arr_feb - {claim_id}, claim_id
+    assert row_of(rows, "c05")["overlaps_with"] == ["c19#2"], "ARR Dec 2023 against the table row's Y/E 23 value"
+    assert "c02" in row_of(rows, "c06")["overlaps_with"], "Whole company overlaps Enterprise"
+
+
+def test_overlap_is_symmetric_and_a_row_with_no_observed_figure_overlaps_nothing():
+    rows = register(RUNS["A"])
+    by_id = {r["claim_id"]: r for r in rows}
+    for r in rows:
+        for other in r["overlaps_with"]:
+            assert r["claim_id"] in by_id[other]["overlaps_with"], (r["claim_id"], other)
+        if r["observed_value"] is None:
+            assert r["overlaps_with"] == [], r["claim_id"]
+    assert row_of(rows, "c14")["overlaps_with"] == []
+
+
+def test_overlap_needs_the_same_metric_a_shared_month_and_compatible_segments():
+    run = RUNS["A"]
+    base = {"claim_type": "revenue", "snippet": "ARR", "value": 200000, "target_date": "2024-02", "period_text": "Feb 2024"}
+
+    def pair(second, **extra):
+        a = {**base, "id": "a", "status": "approved", "claim_type": "revenue", "currency": "EUR", "file": "d.pptx", "order": 0,
+             "sources": [{"file": "d.pptx", "slide": 1}], "unit": None, "value_high": None, "label_from": None}
+        b = {**a, **second, "id": "b", "order": 1}
+        for c in (a, b):
+            deck_claims.resolve_period(c, run["fiscal_year_end"])
+        return {r["claim_id"]: r for r in cm.build_register([a, b], results_for(run), settings(run))}
+
+    assert pair({})["a"]["overlaps_with"] == ["b"]
+    assert pair({"snippet": "MRR", "value": 17000})["a"]["overlaps_with"] == ["b"], "ARR is MRR x 12"
+    assert pair({"snippet": "Revenue", "value": 17000, "target_date": "2024-02"})["a"]["overlaps_with"] == [], "revenue is another metric"
+    assert pair({"target_date": "2023-12", "period_text": "Dec 2023"})["a"]["overlaps_with"] == [], "no shared month"
+    assert pair({"snippet": "ARR Enterprise"})["a"]["overlaps_with"] == ["b"], "Whole company overlaps a segment"
+
+
+def test_every_row_with_a_figure_names_its_analysis_and_the_source_key_it_was_read_from():
+    rows = register(RUNS["A"])
+    expected = {
+        "c01": ("Monthly MRR by Segment", "mrr_series.data.total"), "c02": ("Sales cycle", "sales_cycle.by_segment.Enterprise.median_days"),
+        "c03": ("Win rate", "win_rate.win_rate_pct"), "c04": ("NRR", "nrr.series.nrr_pct"),
+        "c07": ("CAC Payback by Quarter", "cac_payback.quarters.2023-Q4.gross_margin_pct"),
+        "c08": ("Customers", "customers_series.data.total"), "c27": ("Revenue by month", "revenue_series.data.total"),
+    }
+    for claim_id, (analysis, key) in expected.items():
+        r = row_of(rows, claim_id)
+        assert (r["evidence_analysis"], r["evidence_source_key"]) == (analysis, key), claim_id
+        assert r["observed_source"] and r["observed_at"], "the hover shows file, sheet, rows and rule"
+    d = register(RUNS["D"])
+    keys = {r["metric"]: r["evidence_source_key"] for r in d if r["evidence_source_key"] and not r["evidence_source_key"] == "missing_data"
+            and r["segment"] == cm.WHOLE}
+    assert keys["New MRR"].startswith("new_mrr_by_quarter.") and keys["New MRR"].endswith(".new_mrr")
+    assert keys["Gross revenue churn"] == "gross_churn.series.churn_pct" and keys["ACV"] == "acv_path.acv"
+    assert keys["MRR"] == "mrr_series.data.total"
+    segment = [r for r in d if r["segment"] != cm.WHOLE and r["evidence_source_key"]]
+    assert segment and all(r["segment"] in r["evidence_source_key"] for r in segment)
+
+
+def test_a_missing_reason_names_the_missing_data_item_and_a_row_with_no_figure_names_nothing():
+    rows = register(RUNS["B"])
+    missing = [r for r in rows if r["reason"].startswith("Missing:")]
+    assert missing
+    for r in missing:
+        assert r["evidence_source_key"] == "missing_data" and r["evidence_analysis"] == "Sales cycle & win rate"
+    none = [r for r in register(RUNS["A"]) if r["observed_value"] is None and not r["reason"].startswith("Missing:")]
+    assert none and all(r["evidence_analysis"] is None and r["evidence_source_key"] is None for r in none)

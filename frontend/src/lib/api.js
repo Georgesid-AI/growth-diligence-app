@@ -68,6 +68,12 @@ export const updateClaimInputs = (id, claimId, payload) =>
   api.put(`/audits/${id}/claims/${encodeURIComponent(claimId)}`, payload).then((r) => r.data);
 export const claimsCsvUrl = (id) => `${API}/audits/${id}/claims.csv`;
 
+// Verdict, data gaps and the IC memo (docs/specs/verdict-and-memo.md): computed on read by the server from the register, the
+// results and the analyst's inputs. No model is called.
+export const getVerdict = (id) => api.get(`/audits/${id}/verdict`).then((r) => r.data);
+export const putIcInputs = (id, payload) => api.put(`/audits/${id}/ic-inputs`, payload).then((r) => r.data);
+export const getMemo = (id) => api.get(`/audits/${id}/memo.md`, { responseType: "text", transformResponse: (d) => d });
+
 // Narrative gateway. GET is read-only — it returns an existing narrative or
 // narrative_status "not_generated", and can never call the model provider.
 // POST is the only path that spends an AI request.

@@ -560,3 +560,107 @@ def test_sales_cycle_days_are_stored_unrounded_and_rounded_up_by_the_export_and_
     assert median == 58.5, "claim matching reads this value"
     cell = _cell(openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, stored)), "Headline", "Median sales cycle")
     assert cell.value == 59 and fmt.fmt_days(median) == "59 days"
+
+
+# ---------------------------------------------------------------------------
+# 8. Verdict and IC memo (docs/specs/verdict-and-memo.md section 9)
+# ---------------------------------------------------------------------------
+import typing  # noqa: E402
+
+from pydantic import BaseModel  # noqa: E402
+
+import test_ic_memo as icm  # noqa: E402
+from app import claim_matching as cm  # noqa: E402
+from app import ic_memo  # noqa: E402
+
+
+def _declared(model, parts) -> bool:
+    """Whether a source-key path is a path MetricsPayload declares: `*` stands for a data key, a list is transparent."""
+    if not parts:
+        return True
+    head, *rest = parts
+    if head in model.model_fields:
+        return _declared_in(model.model_fields[head].annotation, rest)
+    return model.model_config.get("extra") == "allow" and head == "*" and not rest      # a segment's own amount
+
+
+def _declared_in(annotation, rest) -> bool:
+    if not rest:
+        return True
+    origin = typing.get_origin(annotation)
+    if origin is typing.Union:                                    # Optional[...]
+        return any(_declared_in(arg, rest) for arg in typing.get_args(annotation))
+    if origin is typing.Annotated:
+        return _declared_in(typing.get_args(annotation)[0], rest)
+    if origin is dict:                                            # the key is data: `*`
+        return rest[0] == "*" and _declared_in(typing.get_args(annotation)[1], rest[1:])
+    if origin is list:                                            # a list is transparent
+        return _declared_in(typing.get_args(annotation)[0], rest)
+    return isinstance(annotation, type) and issubclass(annotation, BaseModel) and _declared(annotation, rest)
+
+
+def _pattern(key: str) -> str:
+    return key.replace("{seg}", "*").replace("{q}", "*").replace("{l}", "1")
+
+
+def test_every_source_key_of_the_memos_evidence_table_is_a_path_the_model_declares():
+    for metric, (_, whole, by_segment) in cm.EVIDENCE.items():
+        for key in filter(None, (whole, by_segment)):
+            assert _declared(MetricsPayload, _pattern(key).split(".")), f"{metric}: {key} is not declared by MetricsPayload"
+    assert set(cm.EVIDENCE) == set(cm.METRICS), "every metric of the register has an evidence row"
+
+
+def test_a_wrong_source_key_is_caught_by_the_declared_path_check():
+    """A deliberate violation: if this passed, the check above would prove nothing."""
+    for bad in ("nrr.series.nrr", "mrr_series.data.total.extra", "nrr.by_segment.nrr_pct", "arr.value.x", "gross_churn.series.churn_percent"):
+        assert not _declared(MetricsPayload, bad.split(".")), bad
+    assert _declared(MetricsPayload, "nrr.by_segment.*.nrr_pct".split("."))
+
+
+def test_a_memo_is_built_from_the_sample_data_engine_run_and_every_figure_in_it_is_in_the_stored_results():
+    stored = copy.deepcopy(_sample_stored())
+    meta = {"company_name": "TestCo", "as_of_month": stored["as_of_month"], "results": stored}
+    tables = ic_memo.workbook_tables(server.build_export_workbook(meta, stored))          # Appendix C: the export's own tables
+    assert {t["sheet"] for t in tables} >= {"Headline", "By Segment", "CAC by Quarter", "Path to Plan", "Segment Base", "Anomalies"}
+    assert "Missing Data" not in {t["sheet"] for t in tables}
+    kw = icm.inputs(stored=stored, tables=tables)
+    text = ic_memo.build_memo(**kw)
+    assert "## Appendix D" in text and ic_memo.word_count_of(text) <= 1500
+    assert "81,431" in text, "a total the export derives from the stored results is in Appendix C"
+    assert f"ARR {fmt.fmt_currency(stored['arr']['value'], 'EUR')}" in text
+
+
+def test_nrr_written_as_106_41_refuses_the_memo_and_names_the_field():
+    stored = _set("nrr.overall_pct", 106.41)(copy.deepcopy(_sample_stored()))
+    kw = icm.inputs(stored=stored)
+    with pytest.raises(ic_memo.MemoRefused) as exc:
+        ic_memo.build_memo(**kw)
+    assert exc.value.code == "contract" and "nrr.overall_pct" in exc.value.message and "106.41" not in exc.value.message
+
+
+@pytest.mark.parametrize("run", RUNS)
+def test_a_memo_is_built_from_every_engine_run_the_contract_covers_with_no_false_refusal(run):
+    """The number check must not refuse a figure the engine stored or the export's own tables derive: the sample run, both demo
+    companies and their sparse variants (no P&L, no CRM, 8 and 14 months, a bad target date)."""
+    from test_claim_matching import RUNS as CLAIM_RUNS, candidates_for, settings
+    from app import verdict as vd
+    stored = copy.deepcopy(stored_form(all_raws()[run]))
+    tables = ic_memo.workbook_tables(server.build_export_workbook({"company_name": "TestCo", "results": stored}, stored))
+    base = CLAIM_RUNS["A"]
+    cands = candidates_for(base)
+    sets = {**settings(base), "as_of_month": None}
+    top = vd.proposal(cm.build_register(cands, stored, sets))
+    for c in cands:
+        for cid in top:
+            if cid.split("#")[0] == c["id"]:
+                c.setdefault("claim_inputs", {}).setdefault(cid, {}).update({
+                    "gate_threshold": 5.0, "gate_budget_decision": "the plan", "gate_date": "2030-01-01", "gate_metric_name": "Pipeline",
+                    "gate_direction": "at least", "key_gate": True})
+    rows = cm.build_register(cands, stored, sets)
+    state = vd.top5_state(rows, {"claim_ids": top})
+    text = ic_memo.build_memo(
+        audit={"company_name": "TestCo", "target_arr": 1e6, "target_date": "2026-12-31", "as_of_month": stored["as_of_month"]},
+        results=stored, rows=rows, ver=vd.verdict(rows, stored, {"claim_ids": top}), key=vd.key_gates(rows),
+        gaps=vd.data_gaps(stored, rows, state["in_force"]), ic={"ratings": icm.RATINGS, "thesis": {"plan": "p", "evidence": "e", "condition": "c"}},
+        blockers=[], narratives=[], usage=icm.USAGE, files=icm.FILES, decks=icm.DECKS, tables=tables, today="2026-10-08")
+    assert ic_memo.word_count_of(text) <= 1500 and "## Appendix D" in text

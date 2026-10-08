@@ -26,6 +26,8 @@ from app import formatting as fmt
 from app import disclosure as disclosure_mod
 from app import narrative_export
 from app import claim_matching
+from app import ic_memo
+from app import verdict as verdict_mod
 from app import decks
 from app import structures
 from app import column_rules as cr
@@ -1054,6 +1056,19 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
     return sanitize(await db[decks.CANDIDATES_COLLECTION].find_one(where, {"_id": 0}))
 
 
+async def _fx(audit_id: str, audit: dict) -> dict:
+    """The audit's FX rates, upper-cased, with the reporting currency at 1."""
+    revenue = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"}, {"fx": 1}) or {}
+    fx = {k.upper(): float(v) for k, v in (revenue.get("fx") or {}).items()}
+    fx[(audit.get("reporting_currency") or "EUR").upper()] = 1.0
+    return fx
+
+
+def _register_settings(audit: dict, fx: dict) -> dict:
+    return {"fiscal_year_end": _fiscal_year_end(audit), "as_of_month": audit.get("as_of_month"),
+            "reporting_currency": audit.get("reporting_currency") or "EUR", "fx": fx}
+
+
 async def _claim_rows(audit_id: str, audit: dict) -> tuple:
     """(register candidates, register rows in rank order). The rows are computed on read from the stored results and
     the analyst's inputs on the candidates (docs/specs/claim-matching.md section 6); nothing is sent to a model."""
@@ -1061,13 +1076,7 @@ async def _claim_rows(audit_id: str, audit: dict) -> tuple:
     claims = await db[decks.CANDIDATES_COLLECTION].find(
         {"audit_id": audit_id, "status": {"$in": list(REGISTER_STATUSES)}}, {"_id": 0}).to_list(10000)
     claims.sort(key=lambda c: (c.get("file") or "", c.get("order", 0)))
-    revenue = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"}, {"fx": 1}) or {}
-    reporting = audit.get("reporting_currency") or "EUR"
-    fx = {k.upper(): float(v) for k, v in (revenue.get("fx") or {}).items()}
-    fx[reporting.upper()] = 1.0
-    rows = claim_matching.build_register(claims, audit.get("results"), {
-        "fiscal_year_end": _fiscal_year_end(audit), "as_of_month": audit.get("as_of_month"),
-        "reporting_currency": reporting, "fx": fx})
+    rows = claim_matching.build_register(claims, audit.get("results"), _register_settings(audit, await _fx(audit_id, audit)))
     # Counts per label only: a value, a gate sentence or a deck file name never reaches a log line.
     counts = claim_matching.label_counts(rows)
     logger.info("claim register: run_id=%s rows=%d labels=%s", audit_id, len(rows), counts)
@@ -1096,20 +1105,35 @@ def _csv_cell(value) -> str:
     return str(value)
 
 
+async def _ic_context(audit_id: str, audit: dict, validate: bool = True) -> dict:
+    """The register, the top 5 in force, the gaps and the analyst's inputs of an audit: what the verdict and the memo read.
+    Pure reads; nothing is sent to a model (docs/specs/verdict-and-memo.md). With `validate`, the stored results are checked
+    against MetricsPayload and the unit check first (section 9): on a failure there are no rows, and `contract` names the
+    fields (paths only, never a value)."""
+    results = (await _current_audit(audit_id, audit, strict=False)).get("results")
+    ic = audit.get("ic_inputs") or {}
+    if validate and results:
+        try:
+            contract.validate_for_export(results)
+        except contract.ContractError as exc:
+            return {"rows": [], "results": results, "ic": ic, "state": verdict_mod.top5_state([], None), "gaps": [],
+                    "contract": exc.log_text}
+    _, rows = await _claim_rows(audit_id, audit)
+    state = verdict_mod.top5_state(rows, ic.get("top5"))
+    gaps = verdict_mod.data_gaps(results, rows, state["in_force"], ic.get("gap_target_dates"))
+    return {"rows": rows, "results": results, "ic": ic, "state": state, "gaps": gaps, "contract": None}
+
+
 @api.get("/audits/{audit_id}/claims.csv")
 async def claim_register_csv(audit_id: str):
-    """The monitoring baseline: the register's rows in rank order as one CSV, header = the register's field names,
-    numbers unformatted, dates ISO, `observed_source` as "file · sheet · rows" (docs/specs/claim-matching.md section 7)."""
+    """The monitoring baseline (docs/specs/verdict-and-memo.md section 5): the register's rows in rank order, then the data
+    gaps, as one CSV. Numbers unformatted, dates ISO, `observed_source` as "file · sheet · rows · rule", lists joined by "; "."""
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
     if not audit:
         raise HTTPException(404, "Audit not found")
-    _, rows = await _claim_rows(audit_id, audit)
-    out = io.StringIO()
-    writer = csv.writer(out)
-    writer.writerow(claim_matching.FIELDS)
-    for row in rows:
-        writer.writerow([_csv_cell(row[f]) for f in claim_matching.FIELDS])
-    return Response(content=out.getvalue(), media_type="text/csv; charset=utf-8",
+    ctx = await _ic_context(audit_id, audit, validate=False)
+    text = verdict_mod.baseline_csv(ctx["rows"], ctx["gaps"], ctx["state"]["in_force"], ctx["ic"].get("first_quarterly_review"))
+    return Response(content=text, media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="claim-register-{audit_id}.csv"'})
 
 
@@ -1125,6 +1149,9 @@ class ClaimInputs(BaseModel):
     gate_threshold: Optional[float] = Field(default=None, allow_inf_nan=False)
     gate_budget_decision: Optional[str] = Field(default=None, max_length=claim_matching.BUDGET_DECISION_MAX)
     gate_date: Optional[str] = None
+    gate_metric_name: Optional[str] = Field(default=None, max_length=claim_matching.GATE_METRIC_MAX)
+    gate_direction: Optional[Literal["at least", "at most"]] = None
+    key_gate: Optional[bool] = None
 
     @field_validator("gate_date")
     @classmethod
@@ -1153,8 +1180,11 @@ async def update_claim_inputs(audit_id: str, claim_id: str, payload: ClaimInputs
     if row is None:
         raise HTTPException(404, "Claim not in the register")
     values = {k: getattr(payload, k) for k in sent}
-    if isinstance(values.get("gate_budget_decision"), str):
-        values["gate_budget_decision"] = values["gate_budget_decision"].strip() or None
+    for text_field in ("gate_budget_decision", "gate_metric_name"):
+        if isinstance(values.get(text_field), str):
+            values[text_field] = values[text_field].strip() or None
+    if values.get("key_gate") is False:
+        values["key_gate"] = None                    # an unmarked gate is the default: the mark is cleared, not stored as false
     metric, segment = values.get("metric"), values.get("segment")
     if metric is not None and metric != claim_matching.NO_METRIC and \
             not claim_matching.fits_metric(metric, row["unit"], row["currency"]):
@@ -1172,6 +1202,17 @@ async def update_claim_inputs(audit_id: str, claim_id: str, payload: ClaimInputs
         inputs[claim_id] = kept
     else:
         inputs.pop(claim_id, None)
+    if values.get("key_gate"):
+        # A key gate is a saved gate, and at most 5 are marked (verdict-and-memo.md section 3): tested on the row as it
+        # would read after this change, before anything is written.
+        trial = [{**c, "claim_inputs": inputs} if c["id"] == candidate["id"] else c for c in claims]
+        current = await _current_audit(audit_id, audit, strict=False)
+        after = claim_matching.build_register(trial, current.get("results"), _register_settings(audit, await _fx(audit_id, audit)))
+        after_row = next(r for r in after if r["claim_id"] == claim_id)
+        if not after_row["gate_saved"]:
+            raise HTTPException(400, "A key gate needs a saved gate")
+        if sum(1 for r in after if r["key_gate"]) > verdict_mod.MAX_KEY_GATES:
+            raise HTTPException(400, verdict_mod.W5_SIXTH)
     await db[decks.CANDIDATES_COLLECTION].update_one({"audit_id": audit_id, "id": candidate["id"]},
                                                     {"$set": {"claim_inputs": inputs}})
     _, rows = await _claim_rows(audit_id, audit)
@@ -1200,6 +1241,12 @@ async def audit_blockers(audit_id: str):
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
     if not audit:
         raise HTTPException(404, "Audit not found")
+    return sanitize({"blockers": await _blocker_list(audit_id, audit)})
+
+
+async def _blocker_list(audit_id: str, audit: dict) -> list:
+    """The banner's hard blockers. The claim blocker reads rows 1-5 of the pre-sort, so the analyst's top 5 never hides one
+    (docs/specs/verdict-and-memo.md section 6.1)."""
     audit = await _current_audit(audit_id, audit, strict=False)
     out = []
     revenue = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"}, {"_id": 0, "mapped_at": 1})
@@ -1226,7 +1273,152 @@ async def audit_blockers(audit_id: str):
         out.append({"kind": "revenue_reconciliation", "citation": rec["source"], "link": f"/audit/{audit_id}/diagnostics",
                     "text": f"Revenue file and P&L differ by {pct}% over {rec['first']}–{rec['last']} "
                             f"({rec['file_total']:,.0f} {ccy} vs {rec['pnl_total']:,.0f} {ccy})."})
-    return sanitize({"blockers": out})
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Verdict and IC memo (docs/specs/verdict-and-memo.md): computed on read from the register, the results and the analyst's
+# inputs on the audit (`ic_inputs`). No model call, nothing stored but the inputs.
+# ---------------------------------------------------------------------------
+@api.get("/audits/{audit_id}/verdict")
+async def get_verdict(audit_id: str):
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
+    if not audit:
+        raise HTTPException(404, "Audit not found")
+    ctx = await _ic_context(audit_id, audit)
+    rows, ic = ctx["rows"], ctx["ic"]
+    ver = verdict_mod.verdict(rows, ctx["results"], ic.get("top5"))
+    if ctx["contract"]:
+        ver = {**ver, "status": "no_verdict", "message": ic_memo.CONTRACT_NO_VERDICT.format(fields=ctx["contract"])}
+    key = verdict_mod.key_gates(rows)
+    # Codes and counts only: no value, gate, thesis, metric name, company or file name reaches the log.
+    top5 = claim_matching.label_counts([r for r in rows if r["claim_id"] in set(ver["top5"]["claim_ids"])])
+    confirmed = ver["top5"]["confirmed"]
+    blocked = ver["status"] == "blocked"
+    logger.info("verdict: run_id=%s outcome=%s blocked=%s top5=%s confirmed=%s", audit_id, ver["outcome_code"], blocked, top5, confirmed)
+    return sanitize({
+        "verdict": ver, "data_gaps": ctx["gaps"], "top_gaps": verdict_mod.top_gaps(ctx["gaps"]),
+        "key_gates": {"note": key["note"], "ok": key["ok"], "all_key": key["all_key"], "saved": key["saved"],
+                      "sentences": [{"claim_id": g["claim_id"], "rank": g["rank"], "sentence": g["gate_sentence"]} for g in key["gates"]]},
+        "gates_still_needed": verdict_mod.gates_still_needed(rows, ver["top5"]["in_force"]),
+        "deal_terms": verdict_mod.W13_DEAL_TERMS, "top5_statement": verdict_mod.W24_STATEMENT,
+        "candidates": [{"claim_id": r["claim_id"], "rank": r["rank"], "claim": verdict_mod.claim_name(r),
+                        "evidence_label": r["evidence_label"], "reason": r["reason"]} for r in rows],
+        "ic_inputs": {k: ic.get(k) for k in ("first_quarterly_review", "ratings", "thesis")},
+        "ratings": list(verdict_mod.RATINGS), "ratings_for": {k: ic_memo.RATING_LABELS[k] for k in verdict_mod.RATED_ROWS},
+        "thesis_labels": ic_memo.THESIS_LABELS, "thesis_max": verdict_mod.THESIS_MAX,
+    })
+
+
+class IcInputs(BaseModel):
+    """The analyst's inputs to the verdict and the memo. A key sent as null clears it; a key not sent stays."""
+    model_config = {"extra": "forbid"}
+    top5: Optional[List[str]] = None
+    first_quarterly_review: Optional[str] = None
+    gap_target_dates: Optional[dict] = None
+    ratings: Optional[dict] = None
+    thesis: Optional[dict] = None
+
+    @field_validator("first_quarterly_review")
+    @classmethod
+    def _iso_review(cls, v):
+        if v is not None and not verdict_mod.valid_date(v):
+            raise ValueError("a date as YYYY-MM-DD")
+        return v
+
+    @field_validator("gap_target_dates")
+    @classmethod
+    def _iso_gaps(cls, v):
+        for item, day in (v or {}).items():
+            if day is not None and not verdict_mod.valid_date(day):
+                raise ValueError("a date as YYYY-MM-DD")
+        return v
+
+    @field_validator("ratings")
+    @classmethod
+    def _known_ratings(cls, v):
+        for row, rating in (v or {}).items():
+            if row not in verdict_mod.RATED_ROWS or (rating is not None and rating not in verdict_mod.RATINGS):
+                raise ValueError("a rating is Strong, Adequate or Weak, on the two assessed rows")
+        return v
+
+    @field_validator("thesis")
+    @classmethod
+    def _known_thesis(cls, v):
+        for part, text in (v or {}).items():
+            if part not in verdict_mod.THESIS_PARTS or (text is not None and (not isinstance(text, str) or len(text) > verdict_mod.THESIS_MAX)):
+                raise ValueError(f"the thesis is Plan, Evidence and Condition, each at most {verdict_mod.THESIS_MAX} characters")
+        return v
+
+
+@api.put("/audits/{audit_id}/ic-inputs")
+async def put_ic_inputs(audit_id: str, payload: IcInputs):
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
+    if not audit:
+        raise HTTPException(404, "Audit not found")
+    sent = payload.model_fields_set
+    if not sent:
+        raise HTTPException(400, "Nothing to change")
+    ctx = await _ic_context(audit_id, audit, validate=False)       # storing an input reads no figure; the verdict and the memo validate
+    if "top5" in sent and not ctx["rows"]:
+        raise HTTPException(409, "The register has no claims")
+    try:
+        ic = verdict_mod.apply_ic_inputs(ctx["ic"], {k: getattr(payload, k) for k in sent}, ctx["rows"], ctx["gaps"],
+                                         datetime.now(timezone.utc).isoformat())
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    await db.audits.update_one({"id": audit_id}, {"$set": {"ic_inputs": ic}})
+    return await get_verdict(audit_id)
+
+
+def _memo_filename(company: str) -> str:
+    safe = "".join(c for c in (company or "audit") if c.isalnum() or c in " -_").strip().replace(" ", "_")
+    return f"{safe or 'audit'}_ic_memo.md"
+
+
+@api.get("/audits/{audit_id}/memo.md")
+async def export_memo(audit_id: str):
+    """The IC memo as Markdown, built now from the stored data and never stored (verdict-and-memo.md section 7). Refused, with
+    the reason named and nothing written, when it cannot be built."""
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
+    if not audit:
+        raise HTTPException(404, "Audit not found")
+    ctx = await _ic_context(audit_id, audit)
+    rows, results = ctx["rows"], ctx["results"]
+    refusal = None
+    text = ""
+    try:
+        if ctx["contract"]:
+            raise ic_memo.MemoRefused("contract", ic_memo.W19_CONTRACT.format(fields=ctx["contract"]))
+        if not results:
+            raise ic_memo.MemoRefused("no_verdict", ic_memo.WORDING_NOT_IN_W["no_verdict"].format(message="compute the audit first."))
+        try:
+            narratives = [n.model_dump() for n in await llm_gateway.narratives_for_run(db, audit_id)]
+        except Exception:                                 # the memo never depends on the narrative service
+            narratives = []
+        usage = (await llm_gateway.usage_for_run(db, audit_id)).model_dump()
+        datasets = await db.datasets.find({"audit_id": audit_id}, {"dtype": 1, "file": 1, "sheet": 1, "_id": 0}).to_list(10)
+        deck_docs = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, {"file": 1, "_id": 0}).to_list(100)
+        meta = {**audit, "results": results}
+        try:
+            tables = ic_memo.workbook_tables(build_export_workbook(meta, results))
+        except (contract.ContractError, fmt.UnitError):
+            tables = []                                   # the memo itself refuses on the contract before it reads a figure
+        text = ic_memo.build_memo(
+            audit=audit, results=results, rows=rows, ver=verdict_mod.verdict(rows, results, ctx["ic"].get("top5")),
+            key=verdict_mod.key_gates(rows), gaps=ctx["gaps"], ic=ctx["ic"],
+            blockers=await _blocker_list(audit_id, audit), narratives=narratives, usage=usage,
+            files=[{"dtype": d["dtype"], "file": d.get("file"), "sheet": d.get("sheet")} for d in datasets],
+            decks=[{"file": d.get("file")} for d in deck_docs], tables=tables, today=datetime.now(timezone.utc).date().isoformat())
+    except ic_memo.MemoRefused as exc:
+        refusal = exc
+    words = ic_memo.word_count_of(text) if text else (refusal.words or 0)
+    logger.info("memo export: run_id=%s status=%s reason=%s words=%d unmatched=%d", audit_id, "refused" if refusal else "ok",
+                refusal.code if refusal else "none", words, len(refusal.unmatched) if refusal else 0)
+    if refusal:
+        raise HTTPException(409, refusal.message)
+    return Response(content=text, media_type="text/markdown; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{_memo_filename(audit.get("company_name"))}"'})
 
 
 # ---------------------------------------------------------------------------

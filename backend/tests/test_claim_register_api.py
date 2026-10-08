@@ -19,6 +19,7 @@ from test_claim_matching import RUNS, candidates_for  # noqa: E402
 
 from app import claim_matching as cm  # noqa: E402
 from app import decks  # noqa: E402
+from app import verdict as verdict_mod  # noqa: E402
 
 AUDIT = "audit-cm"
 RUN = RUNS["A"]
@@ -128,7 +129,14 @@ def test_the_gate_is_the_analysts_threshold_budget_decision_and_date(api):
     assert (row["gate_saved"], row["gate_sentence"]) == (False, None)
     cleared = _put(client, "c01", {"gate_threshold": None, "gate_date": None})
     row = next(x for x in cleared.json()["register"] if x["claim_id"] == "c01")
-    assert (row["gate_threshold"], row["gate_date"], row["gate_saved"]) == (None, "2024-03-31", False)
+    assert (row["gate_threshold"], row["gate_date"], row["gate_saved"]) == (None, None, False), "the app proposes no date"
+
+
+def test_a_gate_is_not_saved_without_its_date(api):
+    client, _ = api
+    r = _put(client, "c01", {"gate_threshold": 195000, "gate_budget_decision": "the Series B hiring plan"})
+    row = next(x for x in r.json()["register"] if x["claim_id"] == "c01")
+    assert (row["gate_saved"], row["gate_sentence"], row["gate_date"]) == (False, None, None)
 
 
 @pytest.mark.parametrize("body", [{"gate_budget_decision": "x" * 201}, {"gate_date": "next quarter"}, {"gate_date": "2024-13-40"},
@@ -190,29 +198,55 @@ def _cell(value):
     return str(value)
 
 
-def test_the_csv_is_the_register_in_rank_order_with_the_header_of_section_6(api):
-    client, _ = api
-    register = _get(client)["register"]
+def _baseline(client):
     r = client.get(f"/api/audits/{AUDIT}/claims.csv")
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/csv")
     assert "attachment" in r.headers["content-disposition"] and ".csv" in r.headers["content-disposition"]
-    rows = list(csv.reader(io.StringIO(r.text)))
-    assert rows[0] == list(cm.FIELDS)
-    assert len(rows) - 1 == len(register)
-    for line, row in zip(rows[1:], register):
-        assert line == [_cell(row[f]) for f in cm.FIELDS], row["claim_id"]
-    assert [int(line[cm.FIELDS.index("rank")]) for line in rows[1:]] == list(range(1, len(register) + 1))
+    return r.text
+
+
+def test_the_csv_is_the_register_in_rank_order_then_the_data_gaps_with_the_header_of_the_verdict_spec(api):
+    client, _ = api
+    register = _get(client)["register"]
+    rows = list(csv.reader(io.StringIO(_baseline(client))))
+    assert rows[0] == ["row_type", *cm.FIELDS, "in_top5", "gap_item", "gap_why", "gap_requested", "gap_target_date",
+                       "first_quarterly_review"]
+    claims = [r for r in rows[1:] if r[0] == "claim"]
+    gaps = [r for r in rows[1:] if r[0] == "data_gap"]
+    assert len(claims) == len(register) and rows[1:] == claims + gaps and gaps, "claims first, then the gaps"
+    for line, row in zip(claims, register):
+        assert line[1:1 + len(cm.FIELDS)] == [verdict_mod._cell(row[f]) for f in cm.FIELDS], row["claim_id"]
+    assert [int(line[1 + cm.FIELDS.index("rank")]) for line in claims] == list(range(1, len(register) + 1))
+    top = {line[1] for line in claims if line[1 + len(cm.FIELDS)] == "true"}
+    assert top == {r["claim_id"] for r in register[:5]}, "before the analyst confirms, the proposal is the top 5"
+    assert all(line[1 + len(cm.FIELDS) + 1] and line[-5] for line in gaps), "a gap row names its item and why"
 
 
 def test_the_csv_holds_numbers_unformatted_and_dates_in_iso(api):
     client, _ = api
-    rows = list(csv.DictReader(io.StringIO(client.get(f"/api/audits/{AUDIT}/claims.csv").text)))
+    rows = list(csv.DictReader(io.StringIO(_baseline(client))))
     one = next(r for r in rows if r["claim_id"] == "c01")
     assert one["claimed_value"] == "200000" and one["observed_value"] == "202125.48" and one["gap"] == "-2125.48"
-    assert one["period_start"] == "2024-02-01" and one["gate_date"] == "2024-03-31" and one["gate_saved"] == "false"
+    assert one["period_start"] == "2024-02-01" and one["gate_date"] == "" and one["gate_saved"] == "false"
     assert one["observed_source"].startswith("revenue.csv · CSV · rows 2")
-    assert one["as_of_defaulted"] == "true" and one["value_at_stake_arr"] == ""
+    assert one["as_of_defaulted"] == "true" and one["value_at_stake_arr"] == "" and one["overlaps_with"]
     assert "€" not in one["gap"] and "," not in one["observed_value"]
+    assert one["evidence_source_key"] == "mrr_series.data.total" and one["evidence_analysis"] == "Monthly MRR by Segment"
+
+
+def test_the_csv_round_trips_every_field_of_every_row_and_writes_the_same_bytes(api):
+    client, _ = api
+    _put(client, "c01", {"gate_threshold": 195000, "gate_budget_decision": "the Series B, \"hiring\"\nplan", "gate_date": "2024-06-30"})
+    _put(client, "c01", {"key_gate": True})
+    client.put(f"/api/audits/{AUDIT}/ic-inputs", json={"first_quarterly_review": "2024-09-30"})
+    text = _baseline(client)
+    register = _get(client)["register"]
+    claims, gaps, review = verdict_mod.parse_baseline(text)
+    assert review == "2024-09-30" and len(claims) == len(register) and gaps
+    for parsed, row in zip(claims, register):
+        assert {k: v for k, v in parsed.items() if k != "in_top5"} == {f: row[f] for f in cm.FIELDS}, row["claim_id"]
+        assert isinstance(parsed["rank"], int) and isinstance(parsed["gate_saved"], bool)
+    assert verdict_mod.rewrite_baseline(claims, gaps, review) == text, "the same bytes"
 
 
 def test_the_register_log_line_holds_counts_per_label_never_a_value_or_gate_text(api, caplog):

@@ -1,6 +1,8 @@
 # Spec: Claim matching: approved claims tested against the computed metrics
 Status: Draft; decisions of 2026-10-07 applied (§10). Location: docs/specs/claim-matching.md.
 Follows deck-parser.md §6.
+Amended 2026-10-08 by verdict-and-memo.md: the default gate date and "every row with an observed value" (§5), the register-only CSV
+(§7) and "Not shown: value at stake" (§8) are replaced there.
 
 ## Goal
 Test every register claim against the engine's computed metrics and write its gap, evidence label and proposed
