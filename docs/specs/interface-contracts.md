@@ -26,7 +26,7 @@ with. It is the only description of the engine output.
   run (`extra="forbid"` on every fixed-key model); a field the model declares and the engine omits is Optional or
   required exactly as the model says. There is no second list of fields: the data-boundary test, the formatter's
   kind table and the export read their kinds from the model (§6).
-- Top level: `contract_version` (1), `reporting_currency` (the currency code; it is never repeated inside a value),
+- Top level: `contract_version` (2), `reporting_currency` (the currency code; it is never repeated inside a value),
   `as_of_month`, then one field per block: `arr`, `nrr`, `gross_churn`, `new_mrr_by_quarter`, `cac_payback`,
   `sales_cycle`, `win_rate`, `founder_win_rate`, `acv_path`, `segment_paths`, `anomalies`, `mrr_series`,
   `revenue_series`, `revenue_reconciliation`, `customers_series`, `cohort_retention`, `missing_data`,
@@ -34,11 +34,23 @@ with. It is the only description of the engine output.
 - A block that the engine could not compute is `null`; the reason is in `missing_data`, not in the block.
 - Every figure's type and unit are in the model: a field is declared `Fraction`, `Count`, `CountUp`, `Days`,
   `Currency`, `Months`, `Ratio`, `Plain` or text. The currency of every `Currency` is `reporting_currency`.
-- Citation: a block that carries a number the analyst can query has `source` (file, sheet, rows, row numbers, rule).
-  Blocks with one today: `arr`, `nrr`, `gross_churn`, `cac_payback`, `sales_cycle`, `win_rate`, `founder_win_rate`,
-  `acv_path`, `revenue_series`, `customers_series`, and both sides of `revenue_reconciliation`. The model requires
-  it there. Blocks without one today (`segment_paths`, `new_mrr_by_quarter`, `cohort_retention`, `mrr_series`,
-  `anomalies`) stay without; adding one is a screen change and is not in this scope. Next item.
+- Citation: every block that carries a number the analyst can query has `source` (file, sheet, rows, row numbers, rule),
+  and the model requires it: `arr`, `nrr`, `gross_churn`, `cac_payback`, `sales_cycle`, `win_rate`, `founder_win_rate`,
+  `acv_path`, `segment_paths`, `anomalies`, `mrr_series`, `revenue_series`, `customers_series`, `cohort_retention`, and
+  both sides of `revenue_reconciliation`. `new_mrr_by_quarter` is a dict keyed by quarter, so its citation is the
+  top-level `new_mrr_by_quarter_source`. `anomalies` also has `deals_source` (the CRM file, for deals closing before
+  they were created), absent when no CRM was uploaded. The citation is built by the engine from the audit's source list
+  (file and sheet per upload) and the rows that fed the block, in the format of the other blocks (file, sheet,
+  "rows 4–30 (27 rows)", rule). A block added later is decided in `test_interface_contracts.py`: cited, or listed as
+  not needing one with the reason.
+- Version: adding the five citations makes `contract_version` 2. Results stored under version 1 are recomputed on first
+  read (§7), because they would otherwise fail the gateway and the export.
+- Screen: each citation shows like the other blocks' (hover on the block title: file, sheet, rows, rule): MRR by
+  segment, cohort retention, anomaly flags (dashboard and diagnostics), the segment paths panel, and the "New MRR"
+  column header of the CAC table.
+- Gateway: `segment_paths.source` and `cohort_retention.source` go out as the rule only (file, sheet and rows are
+  dropped as for every block); `new_mrr_by_quarter_source`, `mrr_series` and `anomalies` stay server-side
+  (test_gateway_data_boundary.py extended).
 
 ## 2. Units
 | Unit | Type | Rule | Example |
@@ -108,7 +120,10 @@ written as integers and days are rounded up at the write. Any code that reads a 
 4. Opens the xlsx: the NRR cell on the Headline sheet is numeric, its number format is `0%`, and its displayed text
    is the whole-percent of the engine's NRR ("106%"), never "1%".
 5. Failure cases, each shown to fail on a deliberate violation: NRR written as 106.41; a fractional day count; a
-   missing `contract_version`; an undeclared engine field.
+   missing `contract_version`; an undeclared engine field; each of `segment_paths`, `new_mrr_by_quarter`,
+   `cohort_retention`, `mrr_series`, `anomalies` without its citation; a citation without its rule.
+   A block of the model that is neither cited nor listed as exempt fails the test, and so does an engine run whose
+   cited block has no rule or rows.
 6. Gateway: a bad payload makes no model call and returns the fixed sentence with the metrics.
 7. The formatter's kind table is the schema's (no field in one and not the other).
 

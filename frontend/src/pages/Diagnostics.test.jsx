@@ -62,3 +62,15 @@ test("without a P&L the section is hidden", async () => {
   expect(q("reconciliation")).toBeNull();
   expect(document.body.textContent).toContain("Forensic Diagnostics");
 });
+
+test("the anomaly flags show the citation of the revenue file", async () => {
+  api.getAudit.mockResolvedValue({ id: "a1" });
+  api.getResults.mockResolvedValue({ audit: {}, results: { reporting_currency: "EUR", missing_data: [], revenue_reconciliation: null,
+    anomalies: { negative_mrr_months: [], revenue_gap_then_resume: [], revenue_missing_customer_id: { count: 0, rows: [] },
+      deals_close_before_created: { excluded_count: 0, rows: [] }, source: { ...src("rev.csv", "rows 2–9"), rule: "Flags" } } } });
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  await act(async () => { root.render(<Diagnostics />); });
+  expect(q("provenance-hover-diagnostics-anomalies")).not.toBeNull();
+});

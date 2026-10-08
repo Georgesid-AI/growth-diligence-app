@@ -274,7 +274,7 @@ export default function Dashboard() {
 
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6">
-        <Card className="lg:col-span-8" testid="mrr-by-segment-chart" title="Monthly MRR by Segment" hint={`${r.mrr_series.months.length} months · recurring only`}>
+        <Card className="lg:col-span-8" testid="mrr-by-segment-chart" source={r.mrr_series.source} title="Monthly MRR by Segment" hint={`${r.mrr_series.months.length} months · recurring only`}>
           <ResponsiveContainer width="100%" height={300}>
             <AreaChart data={r.mrr_series.data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
@@ -310,7 +310,7 @@ export default function Dashboard() {
 
       {/* Cohort + Path to plan */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6">
-        <Card className="lg:col-span-8" title="Cohort MRR Retention" hint="% of starting MRR retained · rows = start cohort">
+        <Card className="lg:col-span-8" testid="cohort-retention" source={r.cohort_retention.source} title="Cohort MRR Retention" hint="% of starting MRR retained · rows = start cohort">
           <div className="overflow-x-auto -mx-2 px-2">
             <table className="w-full border-separate border-spacing-1 min-w-[640px]">
               <thead>
@@ -460,7 +460,7 @@ export default function Dashboard() {
                 <thead>
                   <tr className="text-[10px] font-mono uppercase tracking-wider text-slate-500 text-left">
                     <th className="py-1.5 pr-3">Quarter</th>
-                    <th className="py-1.5 pr-3">New MRR</th>
+                    <th className="py-1.5 pr-3"><Provenance source={r.new_mrr_by_quarter_source} id="new-mrr-by-quarter">New MRR</Provenance></th>
                     <th className="py-1.5 pr-3">GM%</th>
                     <th className="py-1.5 pr-3">L0</th>
                     <th className="py-1.5 pr-3">L1</th>
@@ -501,7 +501,7 @@ export default function Dashboard() {
 
       {/* Missing data + anomalies summary */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <Card className="lg:col-span-4" title="Anomaly Flags" hint="detected, not interpreted">
+        <Card className="lg:col-span-4" testid="anomaly-flags" source={r.anomalies?.source} title="Anomaly Flags" hint="detected, not interpreted">
           <div className="space-y-2 text-sm">
             {flags
               ? flags.map((f) => <Flag key={f.label} label={f.label} value={fmtCount(f.count)} detail={f.detail} />)
@@ -571,11 +571,13 @@ export default function Dashboard() {
   );
 }
 
-function Card({ title, hint, className = "", testid, children }) {
+function Card({ title, hint, className = "", testid, source, children }) {
   return (
     <div data-testid={testid} className={`bg-white border border-[#E5E7EB] rounded-lg p-5 ${className}`}>
       <div className="flex items-baseline justify-between mb-4">
-        <h3 className="font-heading font-semibold text-slate-900 text-sm">{title}</h3>
+        <h3 className="font-heading font-semibold text-slate-900 text-sm">
+          <Provenance source={source} id={testid}>{title}</Provenance>
+        </h3>
         {hint && <span className="text-[10px] font-mono text-slate-500">{hint}</span>}
       </div>
       {children}

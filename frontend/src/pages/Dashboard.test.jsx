@@ -40,3 +40,36 @@ test("when the narrative cannot be generated the metrics render with their sourc
   await act(async () => { root.unmount(); });
   host.remove();
 });
+
+const CITED_BLOCKS = ["mrr-by-segment-chart", "cohort-retention", "anomaly-flags", "segment-paths", "new-mrr-by-quarter"];
+
+async function mountDashboard(results) {
+  api.getAudit.mockResolvedValue(sample.audit);
+  api.getResults.mockResolvedValue(results);
+  api.readNarrative.mockResolvedValue({ narrative_status: "unavailable", reason: "x" });
+  api.getDisclosure.mockResolvedValue(null);
+  api.getClaimRegister.mockResolvedValue({ claims: [], register: [] });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => { root.render(<Dashboard />); });
+  await act(async () => { await Promise.resolve(); });
+  return { host, unmount: async () => { await act(async () => { root.unmount(); }); host.remove(); } };
+}
+
+test("segment paths, new MRR, cohort retention, MRR by segment and anomaly flags show their citation like the other blocks", async () => {
+  const { host, unmount } = await mountDashboard(sample);
+  for (const id of CITED_BLOCKS) {
+    expect(host.querySelector(`[data-testid="provenance-hover-${id}"]`)).not.toBeNull();
+  }
+  await unmount();
+});
+
+test("a block stored without its citation shows no source trigger (the contract test refuses such a payload)", async () => {
+  const results = JSON.parse(JSON.stringify(sample));
+  delete results.results.mrr_series.source;
+  const { host, unmount } = await mountDashboard(results);
+  expect(host.querySelector('[data-testid="provenance-hover-mrr-by-segment-chart"]')).toBeNull();
+  expect(host.querySelector('[data-testid="provenance-hover-cohort-retention"]')).not.toBeNull();
+  await unmount();
+});

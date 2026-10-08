@@ -162,7 +162,9 @@ def test_one_failing_metric_is_missing_and_the_others_compute(monkeypatch):
     results = ge.compute_all(norm["revenue"], norm["crm"], norm["pnl"], config,
                              {"revenue": {"file": "revenue.csv", "sheet": "Sheet1"}}, on_error=errors.append)
     assert [type(e).__name__ for e in errors] == ["KeyError"]
-    assert results["cohort_retention"] == {"cohorts": [], "max_offset": 0, "data": []}
+    cohorts = results["cohort_retention"]
+    assert {k: v for k, v in cohorts.items() if k != "source"} == {"cohorts": [], "max_offset": 0, "data": []}
+    assert cohorts["source"]["file"] == "revenue.csv", "the fallback block keeps its citation"
     item = _missing(results, "Cohort retention (calculation error)")
     assert item and "unexpected KeyError" in item[0]["reason"] and item[0]["file"] == "revenue.csv"
     for key in ("arr", "nrr", "gross_churn", "cac_payback", "win_rate", "acv_path"):

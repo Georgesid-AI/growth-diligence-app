@@ -76,7 +76,7 @@ def seg_base(start_arr: float, customers: int, nrr_pct: Optional[float] = None, 
 
 
 def segment_paths(**more) -> dict:
-    return {"available": False, "assumption": "Constant-NRR projection, not a forecast.", "missing_inputs": [], **more}
+    return {"available": False, "assumption": "Constant-NRR projection, not a forecast.", "missing_inputs": [], "source": cite(), **more}
 
 
 def anomalies(**more) -> dict:
@@ -85,7 +85,7 @@ def anomalies(**more) -> dict:
             "revenue_missing_fx_rate": {"count": 0, "rows": [], "currencies": []},
             "revenue_missing_amount": {"count": 0, "rows": []},
             "deals_close_before_created": {"excluded_count": 0, "rows": []},
-            "date_order_from_data": []}
+            "date_order_from_data": [], "source": cite()}
     return {**base, **more}
 
 
@@ -103,11 +103,11 @@ def stored(**blocks: Any) -> dict:
     """A complete stored payload. Keyword arguments replace whole blocks (`nrr=nrr(...)`)."""
     base = {
         "contract_version": CONTRACT_VERSION, "reporting_currency": "EUR", "as_of_month": "2026-06",
-        "arr": None, "nrr": None, "gross_churn": None, "new_mrr_by_quarter": {}, "cac_payback": None,
+        "arr": None, "nrr": None, "gross_churn": None, "new_mrr_by_quarter": {}, "new_mrr_by_quarter_source": cite(), "cac_payback": None,
         "sales_cycle": None, "win_rate": None, "acv_path": None, "segment_paths": segment_paths(),
-        "anomalies": None, "mrr_series": series(), "revenue_series": {**series(), "source": cite()},
+        "anomalies": None, "mrr_series": {**series(), "source": cite()}, "revenue_series": {**series(), "source": cite()},
         "revenue_reconciliation": None, "customers_series": {**series(), "source": cite()},
-        "cohort_retention": {"cohorts": [], "max_offset": 0, "data": []},
+        "cohort_retention": {"cohorts": [], "max_offset": 0, "data": [], "source": cite()},
         "missing_data": [], "questions_for_management": [],
     }
     base.update(copy.deepcopy(blocks))
