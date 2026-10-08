@@ -1,0 +1,25 @@
+Customer ID,Invoice Date,Amount,Currency,Segment,Adj
+Alder Works,2024-01-01,1000,EUR,Large,
+Birch Labs,2024-02-02,1037,EUR,Small,
+Cedar Foods,2024-03-03,,EUR,Large,
+Dune Print,2024-04-04,1111,EUR,Small,0
+Elm Studio,2024-05-05,0,EUR,Large,
+Fern Tools,2024-06-06,1185,EUR,Small,
+Alder Works,2024-07-07,1222,EUR,Large,
+Birch Labs,2024-08-08,,EUR,Small,
+Cedar Foods,2024-09-09,1296,EUR,Large,
+Dune Print,2024-10-10,1333,EUR,Small,0
+Elm Studio,2024-11-11,1370,EUR,Large,
+Fern Tools,2024-12-12,0,EUR,Small,
+Alder Works,2024-01-13,1444,EUR,Large,
+Birch Labs,2024-02-14,,EUR,Small,
+Cedar Foods,2024-03-15,1518,EUR,Large,
+Dune Print,2024-04-16,1555,EUR,Small,0
+Elm Studio,2024-05-17,1592,EUR,Large,
+Fern Tools,2024-06-18,0,EUR,Small,
+Alder Works,2024-07-19,1666,EUR,Large,
+Birch Labs,2024-08-20,1703,EUR,Small,
+Cedar Foods,2024-09-21,,EUR,Large,
+Dune Print,2024-10-22,1777,EUR,Small,
+Elm Studio,2024-11-23,1814,EUR,Large,
+Fern Tools,2024-12-24,1851,EUR,Small,

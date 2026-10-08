@@ -1375,3 +1375,162 @@ def test_the_register_log_lines_name_counts_per_label_and_the_run_only():
     module = ast.parse((BACKEND / "app" / "claim_matching.py").read_text(encoding="utf-8"))
     assert not [n for n in ast.walk(module) if isinstance(n, ast.Name) and n.id in ("logger", "logging", "log", "print")], \
         "the matching module logs and prints nothing"
+
+
+# ---------------------------------------------------------------------------
+# Chat upload and column mapping (docs/specs/chat-upload.md section 9). The assertions run through the real endpoints
+# on the in-memory Mongo stub and the fake adapter; the fixtures are synthetic (rule 15).
+# ---------------------------------------------------------------------------
+import logging  # noqa: E402
+
+import test_chat_upload as chat  # noqa: E402
+from test_chat_upload import api  # noqa: E402,F401  (the fixture)
+from app import column_rules, usage as usage_mod  # noqa: E402
+
+FIXTURE_CELLS = ("Alder Works", "Birch Labs", "Cedar Foods", "Dune Print", "Elm Studio", "Fern Tools", "Birch Labs Ltd",
+                 "C-100", "C-101", "C-102", "C-103", "C-104", "Quarterly revenue export", "Large", "Small", "Gold", "Silver")
+FIXTURE_FILES = ("blank_vs_zero", "mixed_currency", "duplicate_ids_header_row3")
+
+
+def _all_documents(db):
+    return {name: json.dumps(col.docs, default=str) for name, col in db._cols.items()}
+
+
+def test_chat_the_mapping_text_holds_only_the_columns_the_rules_could_not_decide_from_at_most_20_rows(api):
+    rows = "\n".join(f"Customer {i},2024-01-{i % 27 + 1:02d},{100 + i},EUR,note {i} {chr(97 + i % 26)}" for i in range(60))
+    chat.upload(api, "wide.csv", ("Customer ID,Invoice Date,Amount,Currency,Remarks\n" + rows + "\n").encode())
+    text = chat.model_text(api)
+    parsed = structure_redact.parse_column_text(text)
+    assert [c["text"] for c in parsed["headers"]] == ["Remarks"], "decided columns' headers are absent"
+    for decided in ("Customer ID", "Invoice Date", "Amount", "Currency"):
+        assert decided not in text
+    assert parsed["profiles"][5]["distinct"] == 20 and not parsed["samples"], "built from the first 20 data rows"
+    assert "Customer " not in text and "note " not in text
+
+
+@pytest.mark.parametrize("name", ["duplicate_ids_header_row3.csv", "blank_vs_zero.csv", "mixed_currency.csv"])
+def test_chat_no_fixture_customer_name_and_no_text_cell_reaches_the_model(api, name):
+    chat.upload(api, name)
+    text = chat.model_text(api)
+    assert structure_redact.column_text_problem(text) is None
+    for cell in FIXTURE_CELLS:
+        assert cell.lower() not in text.lower(), cell
+
+
+def test_chat_a_customer_alias_column_sends_a_profile_only_even_when_its_values_are_numbers(api):
+    csv = "Date,Amount,Currency,Customer ID,Customer ID\n" + "\n".join(
+        f"2024-01-{i + 1:02d},{50 + i},EUR,{70000 + i},{81000 + i}" for i in range(8)) + "\n"
+    chat.upload(api, "numeric_ids.csv", csv.encode())
+    text = chat.model_text(api)
+    parsed = structure_redact.parse_column_text(text)
+    assert set(parsed["profiles"]) == {4, 5} and not parsed["samples"]
+    assert "70000" not in text and "81000" not in text and structure_redact.column_text_problem(text) is None
+
+
+@pytest.mark.parametrize("name", [n + ".csv" for n in FIXTURE_FILES])
+def test_chat_no_collection_holds_the_sent_text_after_an_upload_with_consent(api, name):
+    chat.upload(api, name)
+    texts = [json.loads(p)["text"] for p in api.state["adapter"].payloads]
+    assert texts, "the model was asked"
+    stored = _all_documents(api.db)
+    for text in texts:
+        for line in text.split("\n"):
+            assert line not in stored.get("llm_structures", "") + stored.get("llm_calls", "") + stored.get("column_mappings", ""), line
+        assert all(text not in blob for blob in stored.values())
+    calls = api.db["llm_calls"].docs
+    assert all(set(c) <= {"run_id", "step", "prompt_version", "model", "input_tokens", "output_tokens", "estimated_cost_usd",
+                          "cache_hit", "status", "unmatched_numbers", "timestamp", "content_hash", "deck_id", "http_status",
+                          "error_type"} for c in calls)
+
+
+def test_chat_log_lines_hold_no_file_name_header_cell_value_company_name_or_note(api, caplog):
+    caplog.set_level(logging.INFO)
+    note = "Adj is not the type"
+    for name in FIXTURE_FILES:
+        chat.upload(api, name + ".csv", replace="true")
+    chat.upload(api, "blank_vs_zero.csv", replace="true")
+    api.post(f"/api/audits/{chat.AUDIT}/datasets/revenue/decisions", json=[
+        {"column": "Adj", "action": "correct", "field": "revenue_type", "reason": "other", "note": note}])
+    api.post(f"/api/audits/{chat.AUDIT}/usage", json={"screen": "mapping", "rejected_extension": "pptx"})
+    api.post(f"/api/audits/{chat.AUDIT}/compute")
+    api.get(f"/api/audits/{chat.AUDIT}/blockers")
+    api.get("/api/usage/totals")
+    api.request("DELETE", f"/api/audits/{chat.AUDIT}", json={"confirm": chat.COMPANY})
+    log = "\n".join(r.getMessage() for r in caplog.records)
+    assert "upload: run_id=" in log and "decisions: run_id=" in log, "the new lines were written"
+    secrets = [*FIXTURE_FILES, *FIXTURE_CELLS, "Customer ID", "Invoice Date", "Adj", chat.COMPANY, "Northbridge", "ENG-2026-041",
+               note, "pptx.", "wide.csv"]
+    for secret in secrets:
+        assert secret not in log, f"{secret!r} reached a log line"
+
+
+def test_chat_the_counters_and_the_totals_hold_no_file_name_cell_value_or_company_name_and_header_text_only_in_a_note(api):
+    note = "Adj is not the type"
+    chat.upload(api, "blank_vs_zero.csv")
+    api.post(f"/api/audits/{chat.AUDIT}/datasets/revenue/decisions", json=[
+        {"column": "Adj", "action": "correct", "field": "revenue_type", "reason": "other", "note": note}])
+    api.post(f"/api/audits/{chat.AUDIT}/usage", json={"rejected_extension": "pptx"})
+    usage = api.db["audits"].docs[0]["usage"]
+    totals = api.get("/api/usage/totals").json()
+    for name, doc in (("audits.usage", usage), ("totals", totals)):
+        blob = json.dumps(doc)
+        for secret in (*FIXTURE_FILES, *FIXTURE_CELLS, chat.COMPANY, "Northbridge", "ENG-2026-041", "Customer ID", "Invoice Date"):
+            assert secret not in blob, f"{secret!r} in {name}"
+        assert blob.count("Adj") == blob.count(note) == 1, f"header text only inside the kept note ({name})"
+    assert usage["columns"]["reasons"] == {"other": 1}
+    # A reason code outside the fixed list is refused and counted nowhere.
+    refused = api.post(f"/api/audits/{chat.AUDIT}/datasets/revenue/decisions", json=[
+        {"column": "Adj", "action": "correct", "field": "revenue_type", "reason": "Customer ID is wrong"}])
+    assert refused.status_code == 400 and "Customer ID is wrong" not in json.dumps(api.db["audits"].docs[0]["usage"])
+
+
+@pytest.mark.parametrize("note,refused", [
+    ("Revenue 2024 is wrong", True), ("a" * 61, True), ("Adj is not the type", False),
+    ("see blank_vs_zero", True), ("see blank_vs_zero.csv", True), ("Alder is wrong", True),
+    ("Fixture Target Ltd", True), ("Northbridge Capital", True), ("ENG-2026-041", True),
+])
+def test_chat_an_other_note_is_refused_for_a_digit_a_file_name_a_cell_text_a_name_or_length(api, note, refused):
+    chat.upload(api, "blank_vs_zero.csv")
+    r = api.post(f"/api/audits/{chat.AUDIT}/datasets/revenue/decisions", json=[
+        {"column": "Adj", "action": "correct", "field": "revenue_type", "reason": "other", "note": note}])
+    assert (r.status_code == 400) is refused, r.text
+
+
+def test_chat_a_note_that_quotes_a_header_is_kept_including_a_header_holding_a_cell_word_and_one_with_a_digit_is_refused(api):
+    head = "Customer ID,Invoice Date,Amount,Currency,Segment,Large Account Flag,Plan 2024\nAlder Works,2024-01-01,5,EUR,Large,x,y\n"
+    chat.upload(api, "h.csv", head.encode())
+    ok = lambda note, col: api.post(f"/api/audits/{chat.AUDIT}/datasets/revenue/decisions", json=[  # noqa: E731
+        {"column": col, "action": "correct", "field": None, "reason": "other", "note": note}])
+    assert ok("Large Account Flag is not needed", "Large Account Flag").status_code == 200
+    assert ok("Plan 2024 is not needed", "Plan 2024").status_code == 400
+    assert ok("Segment is not needed", "Large Account Flag").status_code == 200, "a quoted header with no digit"
+
+
+def test_chat_a_kept_note_is_found_only_in_the_usage_counters_and_the_totals(api, caplog):
+    caplog.set_level(logging.INFO)
+    note = "Adj is not the type"
+    chat.upload(api, "blank_vs_zero.csv")
+    api.post(f"/api/audits/{chat.AUDIT}/datasets/revenue/decisions", json=[
+        {"column": "Adj", "action": "correct", "field": "revenue_type", "reason": "other", "note": note}])
+    api.get("/api/usage/totals")
+    holders = {name for name, blob in _all_documents(api.db).items() if note in blob}
+    assert holders == {"audits"}, "not in llm_calls, column_mappings, llm_structures or any other collection"
+    assert note in json.dumps(api.db["audits"].docs[0]["usage"]["other_notes"]) and note in json.dumps(api.get("/api/usage/totals").json())
+    assert not any(note in p for p in api.state["adapter"].payloads), "not in a model call"
+    assert note not in "\n".join(r.getMessage() for r in caplog.records)
+    assert note not in json.dumps({k: v for k, v in api.db["audits"].docs[0].items() if k != "usage"}, default=str)
+
+
+def test_chat_revenue_reconciliation_is_in_no_narrative_slice_and_never_reaches_the_provider():
+    results = copy.deepcopy(RESULTS)
+    results["revenue_reconciliation"] = {"available": True, "first": "2024-01", "last": "2024-12", "file_total": 7654321,
+                                         "pnl_total": 7000000, "gap": 654321, "gap_pct": 9.35, "blocker": True,
+                                         "by_month": [{"month": "2024-01", "gap": 31337, "source": {"revenue_file": {"file": FILE}}}]}
+    for step in gateway.STEP_CONFIG:
+        assert "revenue_reconciliation" not in gateway._slice_for_step(results, step), step
+    db = _db()
+    db["audits"].docs[0]["results"] = results
+    adapter = t.FakeAdapter(replies=[json.dumps(NARRATIVE)])
+    asyncio.run(gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=adapter, sleep=t._noop_sleep))
+    for needle in ("revenue_reconciliation", "7654321", "654321", "31337", "9.35", "by_month", "gap_pct"):
+        assert needle not in adapter.payloads[0], f"{needle!r} reached the provider"

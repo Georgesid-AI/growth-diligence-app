@@ -468,9 +468,9 @@ class DecisionError(Exception):
 
 
 def new_state(column: str, field: Optional[str], source: Optional[str], state: str, confidence: Optional[int] = None,
-              note: Optional[str] = None) -> Dict:
+              fit_note: Optional[str] = None) -> Dict:
     return {"column": column, "field": field, "source": source, "state": state, "confidence": confidence,
-            "note": note, "decision": None, "reason": None}
+            "fit_note": fit_note, "decision": None, "reason": None}
 
 
 def states_from_rules(proposals: List[Proposal]) -> List[Dict]:
