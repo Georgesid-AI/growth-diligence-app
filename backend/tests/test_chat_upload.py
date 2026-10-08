@@ -336,6 +336,14 @@ def test_an_unknown_file_stores_nothing_and_the_typed_upload_names_its_type(api)
     assert stored.status_code == 200 and stored.json()["dtype"] == "crm"
 
 
+def test_an_old_xls_workbook_is_refused_with_the_save_as_message_and_counted(api):
+    r = upload(api, "revenue.xls", b"\xd0\xcf\x11\xe0")
+    assert r.status_code == 400 and r.json()["detail"] == "Save as .xlsx or .csv and upload again."
+    assert usage_mod.get(api.db["audits"].docs[0])["files"]["rejected"] == {"xls": 1}
+    other = upload(api, "deck.pptx", b"PK")
+    assert other.json()["detail"] == "Only .xlsx and .csv files are supported"
+
+
 def test_a_file_that_is_not_xlsx_or_csv_is_refused_and_counted_by_extension(api):
     r = upload(api, "deck.pptx", b"PK")
     assert r.status_code == 400

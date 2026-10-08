@@ -67,7 +67,7 @@ def parse_file(content: bytes, filename: str):
     if filename.lower().endswith(".csv"):
         df = pd.read_csv(io.BytesIO(content))
         sheet = "CSV"
-    elif filename.lower().endswith((".xlsx", ".xls")):
+    elif filename.lower().endswith(".xlsx"):
         xls = pd.ExcelFile(io.BytesIO(content))
         sheet = xls.sheet_names[0]
         df = xls.parse(sheet)
@@ -452,7 +452,8 @@ async def usage_totals():
 # Datasets: upload with type detection, the mapping rule, decisions, saved mappings
 # (docs/specs/chat-upload.md sections 3-5)
 # ---------------------------------------------------------------------------
-ALLOWED_EXTENSIONS = ("xlsx", "xls", "csv")
+ALLOWED_EXTENSIONS = ("xlsx", "csv")
+XLS_REFUSED = "Save as .xlsx or .csv and upload again."       # an old .xls workbook (2026-10-08)
 MAPPING_AI_SECONDS = 20          # the model's budget for one column mapping (section 4.2)
 NOTE_REFUSED = "Leave out file names, figures and cell values: this note is kept with the usage counts."
 DTYPE_ORDER = ("revenue", "crm", "pnl")
@@ -566,7 +567,7 @@ async def _ingest(audit_id: str, upload: UploadFile, dtype: Optional[str], repla
     ext = usage_mod.extension_of(filename)
     if ext not in ALLOWED_EXTENSIONS:
         await _usage_update(audit_id, lambda u: usage_mod.record_rejected(u, ext))
-        raise HTTPException(400, "Only .xlsx and .csv files are supported")
+        raise HTTPException(400, XLS_REFUSED if ext == "xls" else "Only .xlsx and .csv files are supported")
     try:
         sheet = await run_in_threadpool(cr.read_sheet, content, filename)
     except cr.SheetError:

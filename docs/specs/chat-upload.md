@@ -68,7 +68,7 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
 - `POST /api/audits/{id}/datasets/upload` (multipart, `dtype` optional, `replace` default false). Files are sent
   one at a time, in drop order. The typed endpoint `POST .../datasets/{dtype}/upload` stays for the demo seed and
   the tests.
-- Accepted: .xlsx, .xls, .csv. Anything else is refused in the browser (S7) and counted by extension (§7).
+- Accepted: .xlsx and .csv (amended 2026-10-08, George). Anything else is refused in the browser (S7) and counted by extension (§7). An old .xls workbook is refused with S7b, "Save as .xlsx or .csv and upload again.", in the browser and by the server (400), and counted as "xls"; the file picker lists .xlsx and .csv only.
 - Header row: among the first 10 sheet rows, the header row is the first row that fills at least half of the
   widest row's cells and holds no number other than a year. Rows above it (titles, blanks) are dropped and never
   stored. Header-like rows directly below it join the header stack, as today (at most 3). The file is read without
@@ -292,6 +292,7 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 | S5 | bubble head | Detected: Revenue lines · 1,240 rows · 24 months (Jan 2023 – Dec 2024). Before the date column is confirmed the months are left out: "Detected: Revenue lines · 1,240 rows". |
 | S6 | unknown type | Could not tell what this file holds. Pick its type: Revenue lines / CRM deals / P&L (monthly). |
 | S7 | refused file | This window takes .xlsx and .csv files. Decks go in the deck panel below. |
+| S7b | refused .xls file | Save as .xlsx or .csv and upload again. |
 | S8 | replace | A revenue file is already loaded ({file}). Replace it? [Replace] [Keep current] |
 | S9 | confidence cell | A rule row: its number, 100 · or, when the fit lowers it: 0 · 0 of 20 values are numbers. An AI suggestion, or a column with no proposal, until decided: needs confirmation (decided: confirmed). A saved mapping: reused. A column the rules found no field for: 0. Never a dash. |
 | S10 | buttons | Confirm · Correct · Not used (n) |

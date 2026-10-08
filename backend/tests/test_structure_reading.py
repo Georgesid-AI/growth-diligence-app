@@ -801,9 +801,9 @@ def test_an_other_item_is_listed_as_type_other_and_approved_only_once_its_type_i
     _map_revenue(client)
     _upload_deck(client, "02-moz.pdf")
     ai = [c for c in _deck(client)["candidates"] if c.get("origin") == "ai"]
-    ranged, = [c for c in ai if c["sources"][0].get("page") == 20 and c["sources"][0]["cell"] == "r1c2"]
-    assert (ranged["value"], ranged["value_high"], ranged["ai_label"]) == (12000000, 13000000, "Verified"), \
-        "moz p20 \"$12 -$13 million\": one row, twelve to thirteen million"
+    ranged, = [c for c in _deck(client)["candidates"] if c["value"] == 12000000 and c["value_high"] == 13000000]
+    assert ranged.get("origin") != "ai" and [s.get("cell") for s in ranged["sources"]] == [None, "r1c2"], \
+        "moz p20 \"$12 -$13 million\": the parser's row and the model's reading are one row with both sources"
     assert not [c for c in ai if c["sources"][0].get("page") == 20 and c.get("claim_type") == "other"], \
         "prompt v5 (issue #45): the months figure is a customer lifetime"
     other, = [c for c in ai if c["sources"][0].get("page") == 2 and c["sources"][0]["cell"] == "r4c3"
@@ -1535,14 +1535,31 @@ def test_results_show_in_the_approval_list_labelled_and_citing_their_cell(monkey
     _upload_deck(client)
     ai = [c for c in _deck(client)["candidates"] if c.get("origin") == "ai"]
     panel = [c for c in ai if c["sources"][0]["structure"] == "kpi_panel" and c["sources"][0]["page"] == 19]
-    assert sorted((c["claim_type"], c["value"], c["ai_label"], c["sources"][0]["cell"]) for c in panel) == [
-        ("gross_profit", 150000, "Verified", "r2c1"), ("users", 5000, "Verified", "r3c1")]
-    assert panel[0]["period_text"] == "23 Y/E" and panel[0]["target_date"] == "2023"
+    assert panel == [], "page 19's panel values are the parser's own (gross profit £150K, 5K users): listed once, with both sources"
+    assert ai == [], "every value the model read on zero2hero is one the parser lists: no AI row is left"
     table = [c for c in ai if c["sources"][0]["structure"] == "table"]
     assert table == [], "the 24 table values Python already lists in the same cells are not listed twice"
     stored = next(s["ai"] for s in db["deck_text"].docs[0]["structures"] if s["type"] == "table")
     assert (stored["status"], stored["not_a_metric"]) == ("read", 0)
     assert all(c["status"] == "pending" for c in ai)
+
+
+def test_zero2hero_page_19_gross_profit_150000_is_one_row_with_both_sources(monkeypatch):
+    """2026-10-08: "Gross Profit £150K" (23 Y/E) read by the parser from the slide text and again by the model from the KPI
+    panel is one row listing both sources, not a Deck inconsistency row and a Verified row. The mark stays only because the
+    page's table gives a different value (£ 50,000) for the same period."""
+    client, db, adapter = _deck_api(monkeypatch)
+    _map_revenue(client)
+    _upload_deck(client)
+    rows = _deck(client)["candidates"]
+    same = [c for c in rows if c["claim_type"] == "gross_profit" and c["value"] == 150000 and c["target_date"] == "2023"]
+    assert len(same) == 1, [(c.get("origin"), c["ai_label"] if "ai_label" in c else None) for c in same]
+    row, = same
+    assert [(s["kind"], s.get("structure"), s.get("cell")) for s in row["sources"]] == [("text", None, None), ("structure", "kpi_panel", "r2c1")]
+    assert row["inconsistent_dates"] == ["2023"], "the table's £ 50,000 differs"
+    users = [c for c in rows if c["claim_type"] == "users" and c["value"] == 5000 and c["target_date"] == "2023"]
+    assert len(users) == 1 and len(users[0]["sources"]) == 2 and users[0]["inconsistent_dates"] == [], "the same figure: no mark"
+    assert [c for c in rows if c.get("origin") == "ai" and c["sources"][0].get("page") == 19 and c["sources"][0]["structure"] == "kpi_panel"] == []
 
 
 def test_a_roadmaps_pairs_become_milestone_rows_dated_by_their_date_cells(monkeypatch):
@@ -1731,12 +1748,12 @@ def test_a_deck_already_read_is_not_sent_again_when_the_crm_file_is_mapped_later
 def test_uploading_the_same_deck_again_is_served_from_the_cache_and_lists_no_row_twice(monkeypatch):
     client, db, adapter = _deck_api(monkeypatch)
     _map_revenue(client)
-    _upload_deck(client)
+    _upload_deck(client, "01-front-b.pptx")
     first = [c for c in _deck(client)["candidates"] if c.get("origin") == "ai"]
     approved = first[0]
     client.put(f"/api/audits/{AUDIT}/decks/candidates/{approved['id']}", json={"status": "approved"})
     before = adapter.calls
-    _upload_deck(client)
+    _upload_deck(client, "01-front-b.pptx")
     again = [c for c in _deck(client)["candidates"] if c.get("origin") == "ai"]
     assert adapter.calls == before, "every structure is a cache hit"
     assert len(again) == len(first), "the approved row is kept and not added again"
@@ -1759,16 +1776,17 @@ def test_the_token_cap_stops_the_remaining_structures_and_the_deck_says_so(monke
 
 
 def test_a_new_fiscal_year_end_re_verifies_the_model_readings(monkeypatch):
-    client, db, adapter = _deck_api(monkeypatch)
-    _map_revenue(client)
-    _upload_deck(client)
-    panel = [c for c in db["deck_candidates"].docs if c.get("origin") == "ai" and c["claim_type"] == "gross_profit"
-             and c["sources"][0]["structure"] == "kpi_panel"]
-    assert panel[0]["ai_label"] == "Verified"
-    client.put(f"/api/audits/{AUDIT}/decks/candidates/{panel[0]['id']}", json={"status": "pending"})
+    import server
+    from app.decks import CANDIDATES_COLLECTION
+    cells = [{"row": 1, "col": 1, "text": "Metric"}, {"row": 1, "col": 2, "text": "23 Y/E"},
+             {"row": 2, "col": 1, "text": "Gross Profit"}, {"row": 2, "col": 2, "text": "£150K"}]
+    db = _processed(cells, [_label("i1", "gross_profit", period="FY2023", unit="GBP")])
+    row, = db[CANDIDATES_COLLECTION].docs
+    assert row["ai_label"] == "Verified"
     # The recorded reading cites "23 Y/E" as FY2023: it stays verified under any year-end, its range moves.
-    client.put(f"/api/audits/{AUDIT}", json={"fiscal_year_end": 3})
-    after = next(c for c in db["deck_candidates"].docs if c["id"] == panel[0]["id"])
+    monkeypatch.setattr(server, "db", db)
+    asyncio.run(server._remap_periods(AUDIT, 3))
+    after, = db[CANDIDATES_COLLECTION].docs
     assert after["ai_label"] == "Verified" and (after["period_start"], after["period_end"]) == ("2022-04-01", "2023-03-31")
 
 
@@ -2662,7 +2680,7 @@ def test_a_metric_must_belong_to_the_kind_of_structure_read():
 def test_an_edited_ai_row_keeps_the_label_under_parsed_never_next_to_the_analysts_value(monkeypatch):
     client, db, adapter = _deck_api(monkeypatch)
     _map_revenue(client)
-    _upload_deck(client)
+    _upload_deck(client, "01-front-b.pptx")
     row = next(c for c in _deck(client)["candidates"] if c.get("ai_label") == "Verified")
     edited = client.put(f"/api/audits/{AUDIT}/decks/candidates/{row['id']}", json={"value": 1}).json()
     assert edited["status"] == "edited" and edited["ai_label"] is None

@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { BLOCKERS_CHANGED } from "@/components/BlockerBanner";
 import { uploadChatFile, getDatasets, decideColumns, reportUsage } from "@/lib/api";
 import {
-  S1_TEXT_REPLY, S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE, S6_UNKNOWN_TYPE, S7_REFUSED, S12_MODEL_FAILED,
+  S1_TEXT_REPLY, S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE, S6_UNKNOWN_TYPE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED,
   S20_NOTE_PLACEHOLDER, S21_NOTE_REFUSED, NOTE_MAX, ALLOWED_EXTENSIONS, REASONS, TYPE_LABELS, S5_head, S8_replace,
   S9_confidence, S13_status, S14_same, MAPPING_HEADERS, S25_TITLE, S25_PARAGRAPHS, mappedBy, sortColumns, fieldName, fmtBytes, extensionOf, heldFields,
 } from "@/lib/chatUpload";
@@ -85,7 +85,7 @@ export default function UploadChat({ audit, extras, onViews }) {
       const ext = extensionOf(file.name);
       if (!ALLOWED_EXTENSIONS.includes(ext)) {
         push({ kind: "analyst", file: file.name, size: file.size, ext });
-        push({ kind: "text", role: "system", text: S7_REFUSED });
+        push({ kind: "text", role: "system", text: ext === "xls" ? S7B_XLS_REFUSED : S7_REFUSED });
         reportUsage(audit.id, { rejected_extension: ext || "other" });
         continue;
       }
@@ -139,7 +139,7 @@ export default function UploadChat({ audit, extras, onViews }) {
         {busy > 0 && <div className="text-xs text-slate-500 flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Reading…</div>}
       </div>
       <form onSubmit={submitText} className="border-t border-[#E5E7EB] px-3 py-3 flex items-center gap-2">
-        <input ref={picker} type="file" multiple accept=".xlsx,.xls,.csv" className="hidden" data-testid="chat-file-input"
+        <input ref={picker} type="file" multiple accept=".xlsx,.csv" className="hidden" data-testid="chat-file-input"
           onChange={(e) => { takeFiles(e.target.files); e.target.value = ""; }} />
         <button type="button" aria-label="Attach files" data-testid="chat-paperclip" onClick={() => picker.current?.click()}
           className="p-2 rounded-md text-slate-600 hover:bg-slate-100"><Paperclip className="h-4 w-4" /></button>

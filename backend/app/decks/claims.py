@@ -111,22 +111,23 @@ UNKNOWN = "unknown"
 
 # The order of the claims table (deck-parser.md section 6): the group of a type, then slide or page. Revenue covers ARR,
 # MRR and bookings; P&L items and unit economics are listed with their neighbours, and the types no group names
-# (people, product, use of funds, usage, the model's "other") are Other.
-GROUPS = {1: "revenue", 2: "P&L", 3: "customers and sales", 4: "market size", 5: "unknown", 6: "other"}
+# (use of funds, the model's "other") are Other.
+GROUPS = {1: "revenue", 2: "P&L", 3: "customers and sales", 4: "hiring and roadmap", 5: "market size", 6: "unknown", 7: "other"}
 _GROUP_OF = {
     "revenue": 1, "revenue_growth": 1,
     "gross_profit": 2, "ebitda": 2, "burn": 2, "cash": 2, "runway": 2, "costs": 2, "net_profit": 2, "gross_margin": 2,
     "months_to_profitability": 2,
     "customers": 3, "users": 3, "user_growth": 3, "growth": 3, "retention": 3, "sales": 3, "ltv": 3, "cac": 3, "ltv_cac": 3,
-    "customer_lifetime": 3, "trials_per_day": 3,
-    "market": 4, UNKNOWN: 5,
+    "customer_lifetime": 3, "trials_per_day": 3, "usage": 3,
+    "people": 4, "product": 4,
+    "market": 5, UNKNOWN: 6,
 }
-COLLAPSED_GROUPS = (5, 6)
+COLLAPSED_GROUPS = (6, 7)
 
 
 def type_group(claim_type: Optional[str]) -> int:
-    """1 to 6: the group a claim type sorts under."""
-    return _GROUP_OF.get(claim_type or "", 6)
+    """1 to 7: the group a claim type sorts under."""
+    return _GROUP_OF.get(claim_type or "", 7)
 # A net loss is a negative net profit: "Net loss of $2M" is stored as -2,000,000.
 _DIRECTION = re.compile(r"(?i)\b(positive|negative)\b")
 _NET_LOSS = re.compile(r"(?i)\bnet loss(?:es)?\b")
@@ -1041,6 +1042,23 @@ def detect_candidates(blocks: List[Dict], file: str, fiscal_year_end: int = 12) 
     found = _merge_unknown(list(merged.values()))
     _flag_inconsistencies(found)
     return found
+
+
+def same_claim(a: Dict, b: Dict) -> Optional[Dict]:
+    """The value of `a` that `b` states again: the same type, value, currency and period, and the same kind of unit when it is
+    a rate (docs/specs/deck-parser.md section 2). Used to merge what the parser and the model read twice. A claim with no
+    value (a milestone, a direction) never matches: two lines with the same date are not one claim."""
+    if a.get("claim_type") != b.get("claim_type") or (a.get("currency") or None) != (b.get("currency") or None):
+        return None
+    if (a.get("unit") in ("%", "x") or b.get("unit") in ("%", "x")) and a.get("unit") != b.get("unit"):
+        return None
+    for x in claim_values(a):
+        for y in claim_values(b):
+            if x["value"] is not None and x["target_date"] and (x["value"], x["value_high"], x["target_date"], x["period_start"],
+                                                                x["period_end"]) == (y["value"], y["value_high"], y["target_date"],
+                                                                                     y["period_start"], y["period_end"]):
+                return x
+    return None
 
 
 def _merge_unknown(found: List[Dict]) -> List[Dict]:

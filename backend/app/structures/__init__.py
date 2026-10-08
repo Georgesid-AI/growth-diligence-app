@@ -244,10 +244,19 @@ async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None
                 candidate = candidate_from_item(item, structure, deck, result.model_type, year_end)
                 if value_match(candidate["value"], candidate["value_high"], known.get(_cell_key(candidate), ())):
                     continue                    # this cell already lists the value, or a range holding it
+                twin = next((c for c in reviewed if claims.same_claim(c, candidate)), None)
+                if twin is not None:
+                    # Read twice, by the parser and by the model: one row listing both sources (deck-parser.md section 2).
+                    if candidate["sources"][0] not in twin["sources"]:
+                        twin["sources"] = list(twin["sources"]) + candidate["sources"]
+                        await db[CANDIDATES_COLLECTION].update_one({"audit_id": audit_id, "id": twin["id"]},
+                                                                   {"$set": {"sources": twin["sources"]}})
+                    continue
                 order += 1
-                await db[CANDIDATES_COLLECTION].insert_one(
-                    {**candidate, "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"],
-                     "id": str(uuid.uuid4()), "order": order, "status": "pending", "structure_key": result.key})
+                row = {**candidate, "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"],
+                       "id": str(uuid.uuid4()), "order": order, "status": "pending", "structure_key": result.key}
+                await db[CANDIDATES_COLLECTION].insert_one(row)
+                reviewed.append(row)
         statuses.append(entry)
     overall = STOPPED if stopped_message else READ if any(s["status"] == "read" for s in statuses) else NOT_READ
     previous = await db[TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id}, {"_id": 0, "sent": 1})

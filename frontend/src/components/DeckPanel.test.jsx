@@ -20,12 +20,12 @@ const claim = (id, deck_id, page, over = {}) => ({
   confidence: { level: "Medium", failed: ["not corroborated"], text: "Medium – not corroborated" }, ...over,
 });
 // The server sends them ascending by page across the decks within each group.
-// ... and by the group of the claim type first: revenue (1), market size (4), Unknown (5).
+// ... and by the group of the claim type first: revenue (1), market size (5), Unknown (6).
 const CLAIMS = [
   claim("c", "d1", 2, { group: 1 }),
   claim("d", "d2", 3, { group: 1 }),
-  claim("b", "d2", 1, { claim_type: "market", label_from: "MARKET SIZE", group: 4, confidence: { level: "High", failed: [], text: "High" } }),
-  claim("a", "d1", 1, { claim_type: "unknown", target_date: null, group: 5, confidence: { level: "Low", failed: ["no date", "no heading"], text: "Low – no date, no heading" } }),
+  claim("b", "d2", 1, { claim_type: "market", label_from: "MARKET SIZE", group: 5, confidence: { level: "High", failed: [], text: "High" } }),
+  claim("a", "d1", 1, { claim_type: "unknown", target_date: null, group: 6, confidence: { level: "Low", failed: ["no date", "no heading"], text: "Low – no date, no heading" } }),
 ];
 
 const q = (id) => document.body.querySelector(`[data-testid="${id}"]`);
@@ -46,7 +46,7 @@ const text = (tr) => tr.textContent;
 
 test("the table has a Confidence column between Period and the claim, in every row", async () => {
   await act(async () => { q("deck-tab-all").click(); });
-  await open(5);
+  await open(6);
   const heads = [...document.body.querySelectorAll("[data-testid='deck-candidates'] thead th")].map((th) => th.textContent);
   expect(heads).toEqual(["Type", "Value", "Period", "Confidence", "Claim in the deck", "Source", "Status", "Action"]);
   const cells = rows().map((tr) => tr.querySelector("[data-testid='candidate-confidence']").textContent);
@@ -55,7 +55,7 @@ test("the table has a Confidence column between Period and the claim, in every r
 
 test("All lists the claims in the server's order, group by group; a deck tab keeps that order", async () => {
   await act(async () => { q("deck-tab-all").click(); });
-  await open(5);
+  await open(6);
   expect(rows().map((tr) => /snippet-(\w)/.exec(text(tr))[1])).toEqual(["c", "d", "b", "a"]);
   await act(async () => { q("deck-tab-d1").click(); });
   expect(rows().map((tr) => /snippet-(\w)/.exec(text(tr))[1])).toEqual(["c", "a"]);
@@ -63,15 +63,15 @@ test("All lists the claims in the server's order, group by group; a deck tab kee
 
 test("Unknown and Other start collapsed under a header with their count; the other groups are open", async () => {
   await act(async () => { q("deck-tab-all").click(); });
-  expect(["claim-group-1", "claim-group-4", "claim-group-5"].map((id) => q(id).textContent)).toEqual([
+  expect(["claim-group-1", "claim-group-5", "claim-group-6"].map((id) => q(id).textContent)).toEqual([
     "Revenue, ARR, MRR and bookings (2)", "Market size (1)", "Unknown – choose type (1)"]);
   expect(q("claim-group-2")).toBeNull();
-  expect(q("claim-group-toggle-5").getAttribute("aria-expanded")).toBe("false");
+  expect(q("claim-group-toggle-6").getAttribute("aria-expanded")).toBe("false");
   expect(q("claim-group-toggle-1").getAttribute("aria-expanded")).toBe("true");
   expect(rows().map((tr) => /snippet-(\w)/.exec(text(tr))[1])).toEqual(["c", "d", "b"]);
-  await open(5);
+  await open(6);
   expect(rows().length).toBe(4);
-  await open(5);
+  await open(6);
   expect(rows().length).toBe(3);
   await open(1);
   expect(rows().map((tr) => /snippet-(\w)/.exec(text(tr))[1])).toEqual(["b"]);
@@ -79,7 +79,7 @@ test("Unknown and Other start collapsed under a header with their count; the oth
 
 test("the Period column reads FY2025 for the year 2025 and a dash only when the deck gives no period", async () => {
   await act(async () => { q("deck-tab-all").click(); });
-  await open(5);
+  await open(6);
   expect(rows().map((tr) => tr.querySelectorAll("td")[2].textContent)).toEqual(["FY2025", "FY2025", "FY2025", "—"]);
 });
 
@@ -105,7 +105,7 @@ test("a figure in another currency shows both figures, and a direction with no f
 
 test("an Unknown type says so, cannot be approved before a type is chosen, and Market size is a choice", async () => {
   await act(async () => { q("deck-tab-d1").click(); });
-  await open(5);
+  await open(6);
   const first = rows()[1];
   expect(first.textContent).toContain("Unknown – choose type");
   expect(first.querySelector("[data-testid='candidate-approve']").disabled).toBe(true);

@@ -251,10 +251,12 @@ describe("2026-10-08: the Period column, groups, a direction with no figure and 
   });
 
   test("the groups, in order; Unknown and Other are collapsed; an empty group is not listed", () => {
-    const claims = ["c", "a", "b"].map((id, i) => ({ id, group: [4, 1, 5][i] }));
+    const claims = ["c", "a", "b"].map((id, i) => ({ id, group: [5, 1, 6][i] }));
     expect(claimSections(claims).map((s) => [s.group, s.title, s.claims.map((c) => c.id), s.collapsed])).toEqual([
-      [1, "Revenue, ARR, MRR and bookings", ["a"], false], [4, "Market size", ["c"], false], [5, "Unknown – choose type", ["b"], true]]);
-    expect(claimSections([{ id: "z" }])[0]).toMatchObject({ group: 6, title: "Other", collapsed: true });
+      [1, "Revenue, ARR, MRR and bookings", ["a"], false], [5, "Market size", ["c"], false], [6, "Unknown – choose type", ["b"], true]]);
+    expect(claimSections([{ id: "z" }])[0]).toMatchObject({ group: 7, title: "Other", collapsed: true });
+    expect(claimSections([{ id: "p", group: 4 }])[0]).toMatchObject({ title: "Hiring and roadmap", collapsed: false });
+    expect(claimSections([{ id: "p", group: 3 }])[0].title).toBe("Customers, users, usage, retention and sales");
     expect(claimSections([]).length).toBe(0);
   });
 

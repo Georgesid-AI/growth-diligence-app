@@ -233,17 +233,17 @@ export function claimsForDeck(candidates, deckId) {
 }
 
 // The order of the claims table (docs/specs/deck-parser.md section 6): the group of the claim's type, set by the server, then
-// slide or page. Groups 5 and 6 start collapsed under a header with their count.
+// slide or page. Groups 6 and 7 start collapsed under a header with their count.
 export const CLAIM_GROUPS = [
-  [1, "Revenue, ARR, MRR and bookings"], [2, "P&L items"], [3, "Customers, users, retention and sales"], [4, "Market size"],
-  [5, UNKNOWN_TYPE_LABEL], [6, "Other"],
+  [1, "Revenue, ARR, MRR and bookings"], [2, "P&L items"], [3, "Customers, users, usage, retention and sales"],
+  [4, "Hiring and roadmap"], [5, "Market size"], [6, UNKNOWN_TYPE_LABEL], [7, "Other"],
 ];
-export const COLLAPSED_BY_DEFAULT = [5, 6];
+export const COLLAPSED_BY_DEFAULT = [6, 7];
 
 /** [{group, title, claims, collapsed}] for the groups that hold a claim, in group order; the claims keep the server's order. */
 export function claimSections(claims) {
   return CLAIM_GROUPS.map(([group, title]) => ({
-    group, title, claims: (claims || []).filter((c) => (c.group ?? 6) === group), collapsed: COLLAPSED_BY_DEFAULT.includes(group),
+    group, title, claims: (claims || []).filter((c) => (c.group ?? 7) === group), collapsed: COLLAPSED_BY_DEFAULT.includes(group),
   })).filter((s) => s.claims.length > 0);
 }
 

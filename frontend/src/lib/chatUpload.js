@@ -11,6 +11,7 @@ export const S4_DROP_ZONE =
   "Drop files here or use the paperclip. Required: revenue by customer (monthly, 24–36 months). Also useful: CRM export, P&L. Board decks go to the Deck panel. .xlsx or .csv only.";
 export const S6_UNKNOWN_TYPE = "Could not tell what this file holds. Pick its type:";
 export const S7_REFUSED = "This window takes .xlsx and .csv files. Decks go in the deck panel below.";
+export const S7B_XLS_REFUSED = "Save as .xlsx or .csv and upload again.";
 export const S12_MODEL_FAILED = "AI reading unavailable – these columns need your decision.";
 export const S17_NARRATIVE_FAILED_TITLE = "Narrative could not be generated.";
 // S18: the delete dialog. The name in the body is shown in bold by the dialog; the text around it is here.
@@ -24,7 +25,7 @@ export const S21_NOTE_REFUSED = "Leave out file names, figures and cell values: 
 export const S22_RECONCILIATION = "Revenue reconciliation";
 export const NOTE_MAX = 60;
 
-export const ALLOWED_EXTENSIONS = ["xlsx", "xls", "csv"];
+export const ALLOWED_EXTENSIONS = ["xlsx", "csv"];
 
 // S11: the fixed list of reasons for a correction; the codes are the ones the server accepts.
 export const REASONS = [

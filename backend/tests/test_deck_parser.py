@@ -754,17 +754,39 @@ def test_an_edit_that_types_a_figure_ends_the_direction_and_the_list_is_grouped_
     _upload(client, "audit-1", "05-zero2hero.pdf", (DECKS / "05-zero2hero.pdf").read_bytes())
     listed = client.get("/api/audits/audit-1/decks").json()["candidates"]
     groups = [c["group"] for c in listed]
-    assert groups == sorted(groups) and set(groups) >= {1, 2, 3, 5}, "revenue, P&L, customers and sales, Unknown"
+    assert groups == sorted(groups) and set(groups) >= {1, 2, 3, 4, 6}, "revenue, P&L, customers and sales, hiring and roadmap, Unknown"
     for group in set(groups):
         pages = [_page(c) for c in listed if c["group"] == group]
         assert pages == sorted(pages), f"ascending by page within group {group}"
     assert {c["claim_type"] for c in listed if c["group"] == 1} <= {"revenue", "revenue_growth"}
-    assert {c["claim_type"] for c in listed if c["group"] == 5} == {"unknown"}
+    assert {c["claim_type"] for c in listed if c["group"] == 6} == {"unknown"}
     direction = next(c for c in listed if c.get("claim_direction"))
     assert direction["group"] == 2 and direction["claim_type"] == "ebitda"
     edited = client.put(f"/api/audits/audit-1/decks/candidates/{direction['id']}", json={"value": 3.0, "unit": "%"})
     assert edited.status_code == 200, edited.text
     assert edited.json()["claim_direction"] is None and edited.json()["value"] == 3.0
+
+
+def test_every_claim_type_has_its_group():
+    groups = {t: claims.type_group(t) for t in (*claims.CLAIM_TYPES, "usage", "use_of_funds", "other", "unknown")}
+    assert {g: sorted(t for t, x in groups.items() if x == g) for g in range(1, 8)} == {
+        1: ["revenue", "revenue_growth"],
+        2: ["burn", "cash", "costs", "ebitda", "gross_margin", "gross_profit", "months_to_profitability", "net_profit", "runway"],
+        3: ["cac", "customer_lifetime", "customers", "growth", "ltv", "ltv_cac", "retention", "sales", "trials_per_day", "usage",
+            "user_growth", "users"],
+        4: ["people", "product"], 5: ["market"], 6: ["unknown"], 7: ["other", "use_of_funds"]}
+    assert claims.COLLAPSED_GROUPS == (6, 7)
+
+
+def test_the_parser_and_the_model_reading_the_same_value_are_one_claim_only_when_type_value_currency_and_period_agree():
+    base = {"claim_type": "gross_profit", "value": 150000, "value_high": None, "unit": None, "currency": "GBP", "target_date": "2023",
+            "period_start": "2023-01-01", "period_end": "2023-12-31", "sources": [{"slide": 19}]}
+    assert claims.same_claim(base, {**base, "sources": [{"slide": 19, "kind": "structure"}]})
+    for change in ({"value": 50000}, {"currency": "EUR"}, {"claim_type": "revenue"}, {"target_date": "2024", "period_end": "2024-12-31"},
+                   {"value_high": 160000}, {"unit": "%"}, {"value": None}):
+        assert not claims.same_claim(base, {**base, **change}), change
+    milestone = {**base, "claim_type": "product", "value": None, "currency": None}
+    assert not claims.same_claim(milestone, dict(milestone)), "two lines with the same date are not one claim"
 
 
 def test_claims_in_another_currency_carry_the_saved_rate_or_none(api):

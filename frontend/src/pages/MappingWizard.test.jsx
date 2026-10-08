@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 import MappingWizard from "./MappingWizard";
 import * as api from "@/lib/api";
 import {
-  S1_TEXT_REPLY, S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE, S7_REFUSED, S12_MODEL_FAILED, S21_NOTE_REFUSED, REASONS,
+  S1_TEXT_REPLY, S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S21_NOTE_REFUSED, REASONS,
   S5_head, S9_confidence, mappedBy, sortColumns, S25_PARAGRAPHS,
 } from "@/lib/chatUpload";
 
@@ -166,6 +166,16 @@ describe("a file", () => {
     expect(api.uploadChatFile).not.toHaveBeenCalled();
     expect(q("chat-text-system").textContent).toBe(S7_REFUSED);
     expect(api.reportUsage).toHaveBeenCalledWith("a1", { rejected_extension: "pptx" });
+  });
+
+  test("an old .xls file is refused with 'Save as .xlsx or .csv and upload again.' and counted", async () => {
+    await mount();
+    await pick([file("old.xls")]);
+    expect(api.uploadChatFile).not.toHaveBeenCalled();
+    expect(S7B_XLS_REFUSED).toBe("Save as .xlsx or .csv and upload again.");
+    expect(q("chat-text-system").textContent).toBe(S7B_XLS_REFUSED);
+    expect(api.reportUsage).toHaveBeenCalledWith("a1", { rejected_extension: "xls" });
+    expect(q("chat-file-input").getAttribute("accept")).toBe(".xlsx,.csv");
   });
 
   test("an unknown type asks for it and sends the same file again with the type picked", async () => {

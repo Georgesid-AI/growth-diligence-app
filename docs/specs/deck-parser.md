@@ -169,7 +169,17 @@ date was borrowed from. A table row stores its values by period instead of one v
 value (low and high), target date, the column header text and the cell of each.
 Duplicates are merged and keep all source references, across slides and on one page: the same type, value, unit, currency
 and period is one claim and one row listing every source (2026-10-08). A duplicate is never a Deck inconsistency; the
-mark below applies only to differing values.
+mark below applies only to differing values. The same holds across the two reading paths (2026-10-08, George): a value the
+model read from a structure (a KPI panel, a table, a roadmap) that the parser already lists, or that an earlier row of the
+deck lists, with the same type, value (range included), currency and period (and the same kind of unit when it is a rate or a
+multiple), is not a second row: the model's cell is added to the sources of the row that exists, and the row keeps its own
+reading label (the parser's, which Python made itself). A claim with no value (a milestone, a direction) never merges: two
+lines with the same date are not one claim. A value the parser lists in the same cell was already skipped (structure-labelling
+§1). Example, zero2hero p19: "Gross Profit £150K" (23 Y/E) from the slide text and from the KPI panel is one row citing the
+text and the panel's cell; it still carries "Deck inconsistency 2023" because the page's table gives £ 50,000 for the same
+period, a differing value. On the test decks every value the model read on zero2hero (p19's gross profit and users among them) and moz p20's
+"$12 -$13 million" range become sources of the parser's rows; the model's rows the parser does not list (moz p20's panel, front-b
+p15, Buffer p6, moz p2) stay.
 Dropped, never listed:
 - Chart axis ticks: 3 or more numbers, evenly spaced in value, in one line, in one column or
   row of lines that hold only a number, or in one table column (row numbers 1, 2, 3). A table
@@ -254,16 +264,16 @@ These figures may inform the growth plan. They were identified automatically and
 - A deck selector sits above the claims table: one tab per deck, plus "All". Each tab shows the
   deck name and its claim count. It opens on the most recently uploaded deck.
 - Order (amended 2026-10-08, George, twice): the claims table is grouped by type, then ascending by slide or page number.
-  Groups: 1 revenue (ARR, MRR, revenue, bookings: type Revenue and Revenue growth); 2 P&L items (gross profit, EBITDA, burn,
-  cash, runway, and with them costs, net profit, gross margin and months to profitability); 3 customers, users, NRR, churn,
-  pipeline, sales cycle (types Customers, Users, User growth, Growth, Retention, Sales, LTV, CAC, LTV/CAC, Customer lifetime,
-  Trials per day); 4 market size; 5 Unknown; 6 Other (the model's "other" and the types no group names: People, Product,
-  Use of funds, Usage). Under "All" the pages run across all decks (a tie goes to the more recent deck), and within each deck
+  Groups (decision of 2026-10-08, George, second version): 1 revenue (ARR, MRR, revenue, bookings: type Revenue and Revenue
+  growth); 2 P&L items (gross profit, EBITDA, burn, cash, runway, and with them costs, net profit, gross margin and months to
+  profitability); 3 customers, users, usage, NRR, churn, pipeline, sales cycle (types Customers, Users, Usage, User growth,
+  Growth, Retention, Sales, LTV, CAC, LTV/CAC, Customer lifetime, Trials per day); 4 hiring and roadmap (People, Product: hires
+  and launch dates); 5 market size; 6 Unknown; 7 Other (the model's "other" and Use of funds). Under "All" the pages run across all decks (a tie goes to the more recent deck), and within each deck
   tab. Within a page the order is reading order: top to bottom in bands of 2% of the page height, then left to right, then the
   order the parser found them in (a claim with no layout, as in a .docx, keeps that order). A claim with several sources sits
   at its first page. To review no longer comes first, and a reviewed claim does not move except when its type is edited into
-  another group. Groups 5 and 6 are collapsed by default under a header with their count ("Unknown – choose type (12)"); the
-  analyst opens them. The server sorts and sends `group` (1 to 6) with each candidate; it is layout only, never sent to a
+  another group. Groups 6 and 7 are collapsed by default under a header with their count ("Unknown – choose type (12)"); the
+  analyst opens them. The server sorts and sends `group` (1 to 7) with each candidate; it is layout only, never sent to a
   model.
 - Period column (2026-10-08, George): the column "Date" is "Period". Every value reads in one format from the stored target
   date, whatever the deck's wording: a year "FY2023", a quarter "Q2 2024", a half "H1 2024", a month "Jun 2024"; a table row
