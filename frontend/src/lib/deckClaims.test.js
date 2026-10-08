@@ -1,6 +1,6 @@
 import {
   ALL_DECKS, AI_SUGGESTION_LABEL, CLAIM_TYPES, INCONSISTENCY_LABEL, UPLOADED_BEFORE_CONSENT, VERIFIED_LABEL, deckRunLog, REMOVE_DECK_CONFIRM, claimDate, claimsForDeck, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, sourceRef, statusCounts, typeLabel,
-  DECK_SCOPE_CANNOT, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, OTHER_TYPE_NOTE, needsType, readingChoices,
+  DECK_SCOPE_CANNOT, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, OTHER_TYPE_NOTE, needsType, readingChoices, confidenceText, UNKNOWN_TYPE_LABEL,
 } from "./deckClaims";
 
 describe("source reference", () => {
@@ -54,7 +54,7 @@ test("type labels", () => {
 });
 
 test("every column has a header", () => {
-  expect(COLUMNS).toEqual(["Type", "Value", "Date", "Claim in the deck", "Source", "Status", "Action"]);
+  expect(COLUMNS).toEqual(["Type", "Value", "Date", "Confidence", "Claim in the deck", "Source", "Status", "Action"]);
 });
 
 test("instruction text is word for word", () => {
@@ -215,5 +215,24 @@ describe("structure labelling in the approval list (docs/specs/structure-labelli
     expect(needsType({ claim_type: "other" })).toBe(true);
     expect(needsType({ claim_type: "product" })).toBe(false);
     expect(OTHER_TYPE_NOTE).toBe("Choose a claim type, then approve.");
+  });
+
+  test("a figure no heading names a type for is listed as 'Unknown – choose type' and needs a type before approval", () => {
+    expect(UNKNOWN_TYPE_LABEL).toBe("Unknown – choose type");
+    expect(typeLabel("unknown")).toBe("Unknown – choose type");
+    expect(CLAIM_TYPES).not.toContain("unknown");
+    expect(needsType({ claim_type: "unknown" })).toBe(true);
+  });
+
+  test("'Market size' is in the type list the analyst chooses from", () => {
+    expect(CLAIM_TYPES).toContain("market");
+    expect(typeLabel("market")).toBe("Market size");
+    expect(CLAIM_TYPES.map(typeLabel)).toContain("Market size");
+  });
+
+  test("the confidence column shows the server's text: the level and the failed checks", () => {
+    expect(confidenceText({ confidence: { level: "Low", failed: ["no date", "no heading"], text: "Low – no date, no heading" } })).toBe("Low – no date, no heading");
+    expect(confidenceText({ confidence: { level: "High", failed: [], text: "High" } })).toBe("High");
+    expect(confidenceText({})).toBe("—");
   });
 });
