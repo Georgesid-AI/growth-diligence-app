@@ -143,6 +143,9 @@ class UsageResponse(BaseModel):
     structure_tokens: int = 0
     structure_token_cap: int = 0
     by_deck: Dict[str, "DeckUsage"] = Field(default_factory=dict)
+    # Per step: each narrative step by name, `deck_structure` (deck_id set) and `column_mapping` (no deck_id). The steps
+    # add up to the totals above (their calls are `calls` + `structure_calls`).
+    by_step: Dict[str, "DeckUsage"] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------

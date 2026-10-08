@@ -1,6 +1,6 @@
 import {
   DOWNLOAD_LABEL, EDITABLE_FIELDS, GATE_BUDGET_MAX, NOT_IN_DATA, NO_METRIC, READ_ONLY_FIELDS, REGISTER_COLUMNS, REGISTER_HEADING, WHOLE_COMPANY,
-  claimFigure, claimText, claimUnit, csvUrl, gateContext, dataSegments, gapText, gateEdit, metricOptions, observedText, readingText, registerRows, segmentOptions,
+  claimFigure, claimText, claimUnit, csvUrl, evidenceLines, gateContext, needsMetricName, overlapsText, valueAtStakeText, dataSegments, gapText, gateEdit, metricOptions, observedText, readingText, registerRows, segmentOptions,
 } from "./claimRegister";
 
 const ARR_ROW = {
@@ -9,7 +9,9 @@ const ARR_ROW = {
   direction: "higher", observed_value: 202125.48, observed_at: "2024-02", observed_source: { file: "revenue.csv", sheet: "CSV", rows: "rows 2–71", rule: "ARR" },
   gap: -2125.48, gap_normalised: -0.010627, gap_kind: "beat", gloss: "€2,125 higher (beat)", evidence_label: "Verified",
   reason: "within ±5% of the claim", tolerance: "±5%", rank: 11, gate_sentence: null,
-  gate_threshold: null, gate_budget_decision: null, gate_date: "2024-03-31", gate_saved: false, deck_reading: "parser", page_ref: "slide 4",
+  gate_threshold: null, gate_budget_decision: null, gate_date: null, gate_saved: false, deck_reading: "parser", page_ref: "slide 4", shortfall: null, overlaps_with: [],
+  evidence_analysis: "Monthly MRR by Segment", evidence_source_key: "mrr_series.data.total", gate_metric_name: null, gate_direction: null,
+  key_gate: false, gate_needed: false,
 };
 const WIN_ROW = { ...ARR_ROW, claim_id: "c03", claim_type: "sales", claimed_value: 41, unit: "%", currency: null, metric: "Win rate", gap: 1.0,
   gap_normalised: 0.02439, gap_kind: "miss", observed_value: 40.0, period: null, period_note: "no period stated" };
@@ -18,14 +20,16 @@ describe("the Claim register section of the Dashboard (spec section 8)", () => {
   test("its title, its download button and its columns are those of the spec", () => {
     expect(REGISTER_HEADING).toBe("Claim register");
     expect(DOWNLOAD_LABEL).toBe("Download baseline (CSV)");
-    expect(REGISTER_COLUMNS).toEqual(["#", "Claim", "Period", "Segment", "Page", "Read from deck", "Observed", "Gap", "Gloss", "Evidence", "Gate"]);
+    expect(REGISTER_COLUMNS).toEqual(["#", "Claim", "Period", "Segment", "Page", "Read from deck", "Observed", "Gap", "Gloss", "Value at stake",
+      "Overlaps with", "Evidence", "Gate"]);
   });
 
-  test("the segment, the metric and the gate are editable; everything else is read-only; value at stake is not shown", () => {
-    expect(EDITABLE_FIELDS).toEqual(["segment", "metric", "gate_threshold", "gate_budget_decision", "gate_date"]);
-    expect(READ_ONLY_FIELDS).toEqual(expect.arrayContaining(["rank", "claim", "period", "page", "deck_reading", "observed", "gap", "gloss", "evidence"]));
+  test("the segment, the metric and the gate are editable; everything else is read-only", () => {
+    expect(EDITABLE_FIELDS).toEqual(["segment", "metric", "gate_threshold", "gate_budget_decision", "gate_date", "gate_metric_name",
+      "gate_direction", "key_gate"]);
+    expect(READ_ONLY_FIELDS).toEqual(expect.arrayContaining(["rank", "claim", "period", "page", "deck_reading", "observed", "gap", "gloss",
+      "value_at_stake", "overlaps_with", "evidence"]));
     expect(READ_ONLY_FIELDS.some((f) => EDITABLE_FIELDS.includes(f))).toBe(false);
-    expect([...REGISTER_COLUMNS, ...READ_ONLY_FIELDS].join(" ").toLowerCase()).not.toMatch(/value.at.stake/);
   });
 
   test("the CSV button points at the audit's claims.csv", () => {
@@ -74,7 +78,7 @@ describe("what a row shows", () => {
     expect(claimFigure({ ...ARR_ROW, unit: "years", currency: null, claimed_value: 1 })).toBe("1 years");
     expect(gateContext(ARR_ROW, "EUR")).toBe("Claimed 200,000 EUR (Feb 2024) · Observed 202,125 EUR (2024-02)");
     expect(gateContext(WIN_ROW, "EUR")).toBe("Claimed 41% (no period stated) · Observed 40% (2024-02)");
-    expect(gateContext({ ...ARR_ROW, observed_value: null }, "EUR")).toBeNull();
+    expect(gateContext({ ...ARR_ROW, observed_value: null }, "EUR")).toBe("Claimed 200,000 EUR (Feb 2024)");
   });
 
   test("what the deck reading says", () => {
@@ -113,13 +117,43 @@ describe("what the analyst may set", () => {
     expect(gateEdit(row, { threshold: "", budget: "  ", date: "" })).toEqual({ gate_threshold: null, gate_budget_decision: null, gate_date: null });
     expect(gateEdit(ARR_ROW, { threshold: "1", budget: "Series B", date: "2024-06-30" }))
       .toEqual({ gate_threshold: 1, gate_budget_decision: "Series B", gate_date: "2024-06-30" });
-    expect(gateEdit(ARR_ROW, { threshold: "", budget: "", date: "2024-03-31" })).toEqual({});
+    expect(gateEdit(ARR_ROW, { threshold: "", budget: "", date: "" })).toEqual({});      // the date starts empty: nothing is proposed
   });
 
   test("a threshold that is not a number is not sent, and a budget decision stops at 200 characters", () => {
     expect(() => gateEdit(ARR_ROW, { threshold: "lots", budget: "", date: "" })).toThrow(/number/);
     expect(GATE_BUDGET_MAX).toBe(200);
     expect(() => gateEdit(ARR_ROW, { threshold: "", budget: "x".repeat(201), date: "" })).toThrow(/200/);
-    expect(gateEdit(ARR_ROW, { threshold: "", budget: "x".repeat(200), date: "2024-03-31" })).toEqual({ gate_budget_decision: "x".repeat(200) });
+    expect(gateEdit(ARR_ROW, { threshold: "", budget: "x".repeat(200), date: "" })).toEqual({ gate_budget_decision: "x".repeat(200) });
+  });
+});
+
+describe("the columns and the gate of verdict-and-memo.md sections 2 and 3", () => {
+  test("W1: value at stake reads not yet computed, with the shortfall when the claim missed", () => {
+    expect(valueAtStakeText(ARR_ROW)).toBe("not yet computed");
+    expect(valueAtStakeText({ ...ARR_ROW, shortfall: 0.183 })).toBe("not yet computed · shortfall 18.3%");
+  });
+
+  test("W2: overlaps show the ranks of the rows, a dash when none", () => {
+    const rows = [{ claim_id: "a", rank: 7 }, { claim_id: "b", rank: 3 }, { claim_id: "c", rank: 9 }];
+    expect(overlapsText({ overlaps_with: ["a", "b"] }, rows)).toBe("#3, #7");
+    expect(overlapsText({ overlaps_with: [] }, rows)).toBe("—");
+    expect(overlapsText({}, rows)).toBe("—");
+  });
+
+  test("W3: the label and reason, then the analysis and source key with the month it was read at", () => {
+    expect(evidenceLines(ARR_ROW)).toEqual({ first: "Verified · within ±5% of the claim", second: "Monthly MRR by Segment · mrr_series.data.total (2024-02)" });
+    expect(evidenceLines({ ...ARR_ROW, evidence_analysis: null }).second).toBeNull();
+  });
+
+  test("a row with no metric of the app also takes the analyst's metric and its direction", () => {
+    const none = { ...ARR_ROW, metric: null, reason: "no metric", observed_value: null, gate_metric_name: "Pipeline cover", gate_direction: "at least" };
+    expect(needsMetricName(none)).toBe(true);
+    expect(needsMetricName({ ...none, reason: "metric does not fit the claim's unit" })).toBe(true);
+    expect(needsMetricName(ARR_ROW)).toBe(false);
+    expect(gateEdit(none, { threshold: "5", budget: "the plan", date: "2024-06-30", metricName: "Pipeline cover", direction: "at most" }))
+      .toEqual({ gate_threshold: 5, gate_budget_decision: "the plan", gate_date: "2024-06-30", gate_direction: "at most" });
+    expect(() => gateEdit(none, { threshold: "", budget: "", date: "", metricName: "x".repeat(101), direction: "" })).toThrow("at most 100");
+    expect(gateEdit(ARR_ROW, { threshold: "", budget: "", date: "", metricName: "ignored", direction: "at most" })).toEqual({});
   });
 });

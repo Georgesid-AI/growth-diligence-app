@@ -6,8 +6,9 @@ import { Input } from "@/components/ui/input";
 import { Provenance } from "@/components/Provenance";
 import { claimsCsvUrl, getClaimRegister, updateClaimInputs } from "@/lib/api";
 import {
-  DOWNLOAD_LABEL, GATE_BUDGET_MAX, NO_METRIC, REGISTER_COLUMNS, REGISTER_HEADING, claimText, gapText, gateContext, gateEdit, metricOptions,
-  observedText, readingText, registerRows, segmentOptions,
+  DOWNLOAD_LABEL, GATE_BUDGET_MAX, GATE_DIRECTIONS, GATE_METRIC_MAX, GATE_METRIC_PLACEHOLDER, GATE_NEEDED, KEY_GATE_LABEL, NO_METRIC,
+  REGISTER_COLUMNS, REGISTER_HEADING, claimText, evidenceLines, gapText, gateContext, gateEdit, metricOptions, needsMetricName,
+  observedText, overlapsText, readingText, registerRows, segmentOptions, valueAtStakeText,
 } from "@/lib/claimRegister";
 import { describeRequestError } from "@/lib/requestError";
 
@@ -22,15 +23,19 @@ const LABEL_STYLE = {
 // The options of a select, with the stored choice kept in the list even when it is no longer offered.
 const withCurrent = (options, current) => (options.includes(current) ? options : [...options, current]);
 
-/** The gate: the claimed and observed figures beside an empty threshold, a budget decision and a date. Nothing is proposed
- *  and nothing is saved until the threshold and the budget decision are both filled. */
+/** The gate: the claimed and observed figures beside an empty threshold, a budget decision and a date. Nothing is proposed and
+ *  nothing is saved until the threshold, the decision and the date are all filled; a row with no metric of the app also
+ *  needs the analyst's metric and its direction (docs/specs/verdict-and-memo.md section 3). */
 function GateCell({ row, ccy, onSave }) {
-  const initial = { threshold: row.gate_threshold ?? "", budget: row.gate_budget_decision ?? "", date: row.gate_date ?? "" };
+  const initial = {
+    threshold: row.gate_threshold ?? "", budget: row.gate_budget_decision ?? "", date: row.gate_date ?? "",
+    metricName: row.gate_metric_name ?? "", direction: row.gate_direction ?? "",
+  };
   const [draft, setDraft] = useState(initial);
   const key = JSON.stringify(initial);
   useEffect(() => setDraft(JSON.parse(key)), [key]);
   const context = gateContext(row, ccy);
-  if (!context) return <span className="text-slate-400">—</span>;
+  const named = needsMetricName(row);
   const set = (k) => (e) => setDraft((d) => ({ ...d, [k]: e.target.value }));
   const save = () => {
     let edit;
@@ -39,19 +44,34 @@ function GateCell({ row, ccy, onSave }) {
   };
   return (
     <div className="max-w-xs space-y-1">
+      {row.gate_needed && <div className="text-[10px] font-mono text-amber-800" data-testid="register-gate-needed">{GATE_NEEDED}</div>}
       <div className="text-slate-600" data-testid="register-gate-context">{context}</div>
       {row.gate_sentence && <div className="text-slate-800" data-testid="register-gate-sentence">{row.gate_sentence}</div>}
       {row.gate_saved && <div className="text-[10px] font-mono text-emerald-700" data-testid="register-gate-saved">Gate saved</div>}
+      {named && (
+        <div className="flex gap-1">
+          <Input value={draft.metricName} onChange={set("metricName")} maxLength={GATE_METRIC_MAX} placeholder={GATE_METRIC_PLACEHOLDER} className="h-7 text-xs" data-testid="register-gate-metric-name" />
+          <select value={draft.direction} onChange={set("direction")} className={selectClass} data-testid="register-gate-direction">
+            <option value="" />
+            {GATE_DIRECTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </div>
+      )}
       <Input value={draft.threshold} onChange={set("threshold")} placeholder="Threshold" inputMode="decimal" className="h-7 text-xs font-mono" data-testid="register-gate-threshold" />
       <Input value={draft.budget} onChange={set("budget")} maxLength={GATE_BUDGET_MAX} placeholder="Budget decision (max 200 characters)" className="h-7 text-xs" data-testid="register-gate-budget" />
       <Input type="date" value={draft.date} onChange={set("date")} className="h-7 text-xs font-mono" data-testid="register-gate-date" />
       <Button size="sm" onClick={save} className="h-7 bg-sky-600 hover:bg-sky-500" data-testid="register-gate-save">Save gate</Button>
+      <label className="flex items-center gap-1.5 text-slate-700">
+        <input type="checkbox" checked={!!row.key_gate} disabled={!row.gate_saved} data-testid="register-key-gate"
+          onChange={(e) => onSave(row, { key_gate: e.target.checked }).catch(() => {})} />
+        {KEY_GATE_LABEL}
+      </label>
     </div>
   );
 }
 
 /** The claim register of one audit, in the order the server ranks it (docs/specs/claim-matching.md section 8). */
-export default function ClaimRegister({ auditId, results }) {
+export default function ClaimRegister({ auditId, results, onChanged }) {
   const [rows, setRows] = useState(null);
   const [error, setError] = useState(null);
   const ccy = results?.reporting_currency;
@@ -65,8 +85,8 @@ export default function ClaimRegister({ auditId, results }) {
   }, [auditId]);
 
   const save = useCallback((row, edit) => updateClaimInputs(auditId, row.claim_id, edit)
-    .then((d) => setRows(registerRows(d)))
-    .catch((e) => { toast.error(describeRequestError(e).message); throw e; }), [auditId]);
+    .then((d) => { setRows(registerRows(d)); if (onChanged) onChanged(); })
+    .catch((e) => { toast.error(describeRequestError(e).message); throw e; }), [auditId, onChanged]);
 
   return (
     <section className="mb-6" data-testid="claim-register">
@@ -121,11 +141,18 @@ export default function ClaimRegister({ auditId, results }) {
                     </td>
                     <td className="py-2 px-3 font-mono text-slate-800 whitespace-nowrap" data-testid="register-gap">{gapText(row, ccy)}</td>
                     <td className="py-2 px-3 text-slate-700 min-w-[9rem]" data-testid="register-gloss">{row.gloss || "—"}</td>
+                    <td className="py-2 px-3 font-mono text-slate-700 whitespace-nowrap" data-testid="register-value-at-stake">{valueAtStakeText(row)}</td>
+                    <td className="py-2 px-3 font-mono text-slate-700 whitespace-nowrap" data-testid="register-overlaps">{overlapsText(row, rows)}</td>
                     <td className="py-2 px-3 min-w-[10rem]">
                       <span className={`text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-nowrap ${LABEL_STYLE[row.evidence_label] || ""}`} data-testid="register-evidence">
                         {row.evidence_label}
                       </span>
-                      <div className="mt-1 text-slate-600">{row.reason}</div>
+                      <span className="ml-1 text-slate-600" data-testid="register-evidence-reason">· {row.reason}</span>
+                      {evidenceLines(row).second && (
+                        <div className="mt-1 font-mono text-[11px] text-slate-700" data-testid="register-evidence-source">
+                          <Provenance source={row.observed_source}>{evidenceLines(row).second}</Provenance>
+                        </div>
+                      )}
                     </td>
                     <td className="py-2 px-3"><GateCell row={row} ccy={ccy} onSave={save} /></td>
                   </tr>

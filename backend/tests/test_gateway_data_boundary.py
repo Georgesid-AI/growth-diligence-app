@@ -1580,3 +1580,120 @@ def test_a_payload_that_breaks_the_contract_reaches_no_provider_and_no_log_line_
         for secret in secrets:
             assert secret not in text, f"{secret!r} reached a log line or the reason"
     assert db["llm_calls"].docs == [] and db["llm_narratives"].docs == [], "nothing is stored about a call that was not made"
+
+
+# ---------------------------------------------------------------------------
+# Verdict and IC memo (docs/specs/verdict-and-memo.md section 9; CLAUDE.md rules 14 and 17). The gate's metric name, the budget
+# decision, the thesis, the ratings and the top 5 are the analyst's inputs: they are stored on the audit and the candidate rows,
+# read by two pure modules, and reach no model, no log line and no collection of the gateway.
+# ---------------------------------------------------------------------------
+import test_claim_register_api as register_api_tests  # noqa: E402
+from test_claim_register_api import api as register_api  # noqa: E402,F401  (the fixture)
+from app import verdict as verdict_module, ic_memo as memo_module  # noqa: E402
+
+IC_SENTINELS = ("the Falcon hiring plan", "Zephyr pipeline cover", "Quartz thesis plan", "Basalt thesis evidence", "Opal thesis condition")
+VERDICT_LOGGERS = frozenset({"get_verdict", "export_memo"})
+VERDICT_LOG_FORMATS = {
+    "get_verdict": "verdict: run_id=%s outcome=%s blocked=%s top5=%s confirmed=%s",
+    "export_memo": "memo export: run_id=%s status=%s reason=%s words=%d unmatched=%d"}
+VERDICT_LOG_ARGS = frozenset({"audit_id", "ver['outcome_code']", "blocked", "top5", "confirmed", "'refused' if refusal else 'ok'",
+                              "refusal.code if refusal else 'none'", "words", "len(refusal.unmatched) if refusal else 0"})   # ast.unparse
+
+
+def test_the_new_register_fields_and_the_analysts_inputs_are_names_the_gateway_never_mentions():
+    names = {"ic_inputs", "gate_metric_name", "gate_direction", "key_gate", "overlaps_with", "evidence_analysis",
+             "evidence_source_key", "shortfall", "thesis", "first_quarterly_review", "gap_target_dates"}
+    assert names <= set(claim_matching.FIELDS) | {"ic_inputs", "thesis", "first_quarterly_review", "gap_target_dates"}
+    offenders = []
+    for path in sorted((BACKEND / "app" / "llm").glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        offenders += [f"{path.name}:{n.lineno}: {n.value!r}" for n in ast.walk(tree) if isinstance(n, ast.Constant) and n.value in names]
+        offenders += [f"{path.name}:{n.lineno}: {ast.unparse(n)}" for n in ast.walk(tree)
+                      if isinstance(n, (ast.Name, ast.Attribute)) and getattr(n, "id", getattr(n, "attr", None)) in names]
+    assert not offenders, "the gateway names the verdict inputs:\n  " + "\n  ".join(offenders)
+    assert not names & gateway.OUTBOUND_FIELDS and not names & decks.GATEWAY_READABLE_FIELDS
+
+
+def test_the_verdict_and_memo_modules_import_nothing_from_the_gateway_a_provider_or_the_server_and_log_nothing():
+    for path in (BACKEND / "app" / "verdict.py", BACKEND / "app" / "ic_memo.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        offenders = [f"{m} -> {n}" for m, n in _imports(tree)
+                     if (set(re.split(r"[.\s\"'()]+", m)) | {n}) & {"llm", "gateway", "anthropic", "structures", "<dynamic>", "server"}]
+        assert not offenders, f"{path.name} reaches for the gateway:\n  " + "\n  ".join(offenders)
+        assert not [n for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id in ("logger", "logging", "log", "print")], \
+            f"{path.name} logs or prints"
+    code = ("import sys, app.verdict, app.ic_memo; "
+            "print(sorted(m for m in sys.modules if m.startswith('app.llm') or m.split('.')[0] == 'anthropic'))")
+    out = subprocess.run([sys.executable, "-c", code], cwd=BACKEND, capture_output=True, text=True, check=True)
+    assert out.stdout.strip() == "[]", out.stdout
+    for gateway_file in sorted((BACKEND / "app" / "llm").glob("*.py")):
+        for module, name in _imports(ast.parse(gateway_file.read_text(encoding="utf-8"))):
+            parts = re.split(r"[.\s\"'()]+", module)
+            assert not ({"verdict", "ic_memo"} & set(parts)) and name not in ("verdict", "ic_memo"), \
+                f"{gateway_file.name} imports the verdict or memo module"
+
+
+def test_the_two_new_log_lines_are_fixed_formats_with_codes_and_counts_as_their_only_arguments():
+    tree = ast.parse((BACKEND / "server.py").read_text(encoding="utf-8"))
+    seen = {}
+    for fn in ast.walk(tree):
+        if not (isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) and fn.name in VERDICT_LOGGERS):
+            continue
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in _LOG_LEVELS \
+                    and isinstance(node.func.value, ast.Name) and "log" in node.func.value.id.lower():
+                assert not node.keywords and isinstance(node.args[0], ast.Constant), ast.unparse(node)
+                seen.setdefault(fn.name, []).append(node.args[0].value)
+                for arg in node.args[1:]:
+                    assert ast.unparse(arg) in VERDICT_LOG_ARGS, f"{fn.name}: {ast.unparse(node)} logs {ast.unparse(arg)}"
+    assert {k: v for k, v in seen.items()} == {k: [v] for k, v in VERDICT_LOG_FORMATS.items()}
+
+
+def _with_the_analysts_inputs(client, db):
+    ids = client.get(f"/api/audits/{register_api_tests.AUDIT}/verdict").json()["verdict"]["top5"]["proposed"]
+    base = f"/api/audits/{register_api_tests.AUDIT}"
+    assert client.put(f"{base}/ic-inputs", json={"top5": ids}).status_code == 200
+    for n, cid in enumerate(ids):
+        body = {"gate_threshold": 10.0 + n, "gate_budget_decision": IC_SENTINELS[0], "gate_date": "2024-06-30",
+                "gate_metric_name": IC_SENTINELS[1], "gate_direction": "at least"}
+        assert register_api_tests._put(client, cid, body).status_code == 200
+        assert register_api_tests._put(client, cid, {"key_gate": True}).status_code == 200
+    r = client.put(f"{base}/ic-inputs", json={"ratings": {"data_reliability": "Strong", "growth_engine": "Weak"},
+                                              "thesis": {"plan": IC_SENTINELS[2], "evidence": IC_SENTINELS[3], "condition": IC_SENTINELS[4]}})
+    assert r.status_code == 200, r.text
+
+
+def test_the_analysts_inputs_reach_no_log_line_no_gateway_collection_and_no_provider(register_api, caplog):
+    client, db = register_api
+    base = f"/api/audits/{register_api_tests.AUDIT}"
+    with caplog.at_level(logging.DEBUG):
+        _with_the_analysts_inputs(client, db)
+        for url in ("/verdict", "/memo.md", "/claims.csv", "/claims", "/blockers"):
+            client.get(base + url)
+    memo = client.get(f"{base}/memo.md")
+    assert memo.status_code == 200 and IC_SENTINELS[3] in memo.text, "fixture: the memo is built from the inputs and returned, not logged"
+    for needle in IC_SENTINELS:
+        assert needle not in caplog.text, f"{needle!r} reached a log line"
+    stored = {name: json.dumps(col.docs, default=str) for name, col in db._cols.items()}
+    for name, blob in stored.items():
+        if name not in ("audits", decks.CANDIDATES_COLLECTION):
+            for needle in IC_SENTINELS:
+                assert needle not in blob, f"{needle!r} was stored in {name}"
+    assert IC_SENTINELS[2] in stored["audits"] and IC_SENTINELS[1] in stored[decks.CANDIDATES_COLLECTION], "fixture: they are stored where they belong"
+    assert not db["llm_calls"].docs
+
+
+def test_the_gateway_reads_no_ic_inputs_and_the_provider_payload_holds_none(register_api):
+    db, reads = _recording_db()
+    db["audits"].docs[0]["ic_inputs"] = {"thesis": {"plan": IC_SENTINELS[2]}, "ratings": {"growth_engine": "Weak"},
+                                         "top5": {"claim_ids": ["c1"], "set_at": "x"}, "first_quarterly_review": "2031-04-05"}
+    db[decks.CANDIDATES_COLLECTION].docs[0]["claim_inputs"] = {"c1": {"gate_metric_name": IC_SENTINELS[1], "key_gate": True,
+                                                                      "gate_direction": "at most"}}
+    adapter = t.FakeAdapter(replies=[json.dumps(NARRATIVE)])
+    asyncio.run(gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=adapter, sleep=t._noop_sleep))
+    asyncio.run(gateway.narratives_for_run(db, RUN_ID))
+    asyncio.run(gateway.usage_for_run(db, RUN_ID))
+    returned = json.dumps([doc for name, _, doc in reads if name in ("audits", decks.CANDIDATES_COLLECTION)], default=str)
+    for needle in (*IC_SENTINELS[1:3], "ic_inputs", "2031-04-05", "gate_metric_name", "key_gate"):
+        assert needle not in returned, f"{needle!r} was read by the gateway"
+        assert needle not in adapter.payloads[0], f"{needle!r} reached the provider"

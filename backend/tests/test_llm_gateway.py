@@ -835,6 +835,31 @@ def test_usage_endpoint_totals():
     assert usage.call_cap == guards.MAX_CALLS_PER_RUN
 
 
+def test_usage_by_step_splits_the_narrative_steps_deck_reading_and_column_mapping_and_adds_up_to_the_totals():
+    """docs/specs/verdict-and-memo.md section 8: each narrative step by name, `structures` split by deck_id, steps = totals."""
+    async def run():
+        db = make_db()
+        await gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=FakeAdapter(), sleep=_noop_sleep)
+        await gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=FakeAdapter(), sleep=_noop_sleep)   # a cache hit
+        for deck_id, hit, tokens in (("deck-1", False, 800), ("deck-1", True, 0), (None, False, 300), (None, False, 150)):
+            await gateway.log_call(db, run_id=RUN_ID, step=guards.STRUCTURE_STEP, prompt_version="v1", model="claude-sonnet-5-5",
+                                   input_tokens=tokens, output_tokens=tokens // 4, estimated_cost_usd=tokens / 100000,
+                                   cache_hit=hit, status="ok", deck_id=deck_id)
+        return await gateway.usage_for_run(db, RUN_ID)
+
+    usage = asyncio.run(run())
+    assert set(usage.by_step) == {"growth_engine", "deck_structure", "column_mapping"}
+    assert (usage.by_step["deck_structure"].calls, usage.by_step["deck_structure"].cache_hits) == (1, 1)
+    assert (usage.by_step["column_mapping"].calls, usage.by_step["column_mapping"].input_tokens) == (2, 450)
+    assert (usage.by_step["growth_engine"].calls, usage.by_step["growth_engine"].cache_hits) == (1, 1)
+    steps = usage.by_step.values()
+    assert sum(u.calls for u in steps) == usage.calls + usage.structure_calls
+    assert sum(u.cache_hits for u in steps) == usage.cache_hits
+    assert sum(u.input_tokens for u in steps) == usage.input_tokens
+    assert sum(u.output_tokens for u in steps) == usage.output_tokens
+    assert round(sum(u.estimated_cost_usd for u in steps), 6) == usage.estimated_cost_usd
+
+
 def test_purge_run_removes_every_artefact():
     async def run():
         db = make_db()

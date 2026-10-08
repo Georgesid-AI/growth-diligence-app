@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   AreaChart, Area, LineChart, Line, BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid,
@@ -11,10 +11,13 @@ import { Provenance } from "@/components/Provenance";
 import { Gloss } from "@/components/Gloss";
 import { Narrative } from "@/components/Narrative";
 import { NarrativeControl } from "@/components/NarrativeControl";
-import { getAudit, getResults, exportUrl, readNarrative, generateNarrative, getDisclosure, reportUsage, NARRATIVE_TIMEOUT_MS } from "@/lib/api";
+import { getAudit, getResults, getVerdict, exportUrl, readNarrative, generateNarrative, getDisclosure, reportUsage, NARRATIVE_TIMEOUT_MS } from "@/lib/api";
 import { GLOSSARY } from "@/lib/glossary";
 import { SegmentPaths } from "@/components/SegmentPaths";
 import ClaimRegister from "@/components/ClaimRegister";
+import DataGaps from "@/components/DataGaps";
+import UsagePanel from "@/components/UsagePanel";
+import Verdict from "@/components/Verdict";
 import { describeRequestError, logRequestFailure } from "@/lib/requestError";
 import { metricLabel, metricQualifier, bracketed } from "@/lib/metricNames";
 import { ANOMALIES_NOT_COMPUTED, NONE, anomalyFlags, missingRows, questionRows, questionsEmptyText } from "@/lib/gapLists";
@@ -43,6 +46,15 @@ export default function Dashboard() {
   const [narrative, setNarrative] = useState(null);
   const [generating, setGenerating] = useState(false);
   const [disclosure, setDisclosure] = useState(null);
+  // The verdict, the data gaps and the analyst's inputs: read again whenever a gate, a mark or an input changes.
+  const [verdict, setVerdict] = useState(null);
+  const [verdictTick, setVerdictTick] = useState(0);
+  const refreshVerdict = useCallback(() => setVerdictTick((n) => n + 1), []);
+  useEffect(() => {
+    let cancelled = false;
+    getVerdict(id).then((v) => { if (!cancelled) setVerdict(v); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [id, verdictTick]);
 
   useEffect(() => {
     reportUsage(id, { screen: "dashboard" });
@@ -267,7 +279,12 @@ export default function Dashboard() {
       </div>
 
       {/* Claim register: approved deck claims tested against the computed metrics (docs/specs/claim-matching.md section 8) */}
-      <ClaimRegister auditId={id} results={r} />
+      <ClaimRegister auditId={id} results={r} onChanged={refreshVerdict} />
+
+      {/* Data gaps, the verdict and the AI usage and cost (docs/specs/verdict-and-memo.md sections 4, 6.4 and 8) */}
+      <DataGaps auditId={id} verdict={verdict} onChanged={refreshVerdict} />
+      <Verdict auditId={id} verdict={verdict} onChanged={refreshVerdict} />
+      <UsagePanel auditId={id} refresh={verdictTick} />
 
       {/* Narrative — status tells the reader which figures were verified */}
       <Narrative state={generating ? { loading: true } : narrative} />
