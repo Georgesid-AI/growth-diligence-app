@@ -664,3 +664,20 @@ def test_the_counters_hold_counts_and_codes_and_the_totals_hold_no_name_and_no_p
 def test_an_audit_listing_and_an_audit_read_do_not_carry_the_counters(api):
     assert all("usage" not in a for a in api.get("/api/audits").json())
     assert "usage" not in api.get(f"/api/audits/{AUDIT}").json()
+
+
+# ---------------------------------------------------------------------------
+# The demo audits: one reconciles, one keeps a deliberate 5% gap so the banner shows
+# ---------------------------------------------------------------------------
+def test_the_demo_audits_reconcile_within_2_percent_except_the_one_with_a_deliberate_5_percent_gap(monkeypatch):
+    db = t.FakeDB()
+    monkeypatch.setattr(server, "db", db)
+    asyncio.run(server.seed_demo())
+    client = TestClient(server.app, raise_server_exceptions=False)
+    found = {}
+    for audit in db["audits"].docs:
+        rec = audit["results"]["revenue_reconciliation"]
+        kinds = [b["kind"] for b in client.get(f"/api/audits/{audit['id']}/blockers").json()["blockers"]]
+        found[audit["company_name"].split()[0]] = (rec["gap_pct"], rec["blocker"], kinds)
+    assert found["Apex"] == (0.0, False, [])
+    assert found["OmniData"] == (5.0, True, ["revenue_reconciliation"])
