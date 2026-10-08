@@ -114,12 +114,14 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
   held by another column is disabled and names that column) and a reason dropdown (S11, a fixed list). The chosen
   reason stays selected for the next correction on the page until it is changed.
 - "Other" also opens a text box (S20) for an optional note of at most 60 characters. The note is cleared after
-  each correction; the code stays. The server trims the note and drops control characters. It refuses the note,
-  with a 400 and S21, when it holds any of these: a digit; a file name of the audit, with or without its extension;
-  a column header or cell text of an uploaded file of the audit (a whole word, any case, 4 or more characters, the
-  same boundaries as the redaction rules); the company name, client name or engagement reference. A refused note
-  saves nothing. A kept note goes only to the usage counters (§7). The mapping version keeps the code "other" and
-  not the note.
+  each correction; the code stays. The server trims the note and drops control characters. Column header text is
+  allowed: each header of the audit's uploaded files (the header stack's cells, whole, any case) is set aside
+  before the other checks, so a header that contains a cell word still passes. The server refuses the rest of the
+  note, with a 400 and S21, when it holds any of these: a digit (also inside a header, so "Revenue 2024" cannot be
+  quoted); a file name of the audit, with or without its extension; a cell text from the data rows of an uploaded
+  file of the audit (a whole word, any case, 4 or more characters, the same boundaries as the redaction rules);
+  the company name, client name or engagement reference. A refused note saves nothing. A kept note goes only to
+  the usage counters (§7). The mapping version keeps the code "other" and not the note.
 - "Needs your decision" rows show the field dropdown, preset to "Not used".
 - Compute waits for two things: no AI or unsure row left unconfirmed in any uploaded file, and every required
   field of each file mapped. Until then, the Compute button is disabled, the status line shows S13, and the
@@ -200,9 +202,10 @@ deck_text, column_mappings (every saved version) and the rest. There is no mappi
 - Delete audit removes the counters with the audit (§6.3).
 
 ## 8. Privacy
-There is no admin view of files, audits or results. Logs carry model JSON output and metadata only: never raw
-rows, sample text, header text, file names, company names, typed text or "Other" notes. New log lines carry codes
-only (type, status, error type, reason code).
+There is no admin view of files, audits or results. An "Other" note may contain column header text (§4.3); it is
+kept only in `audits.usage.other_notes` and shown only in the usage totals. Logs carry model JSON output and
+metadata only: never raw rows, sample text, header text, file names, company names, typed text or "Other" notes,
+whether or not the note quotes a header. New log lines carry codes only (type, status, error type, reason code).
 
 ## 9. Data boundary (rule 14)
 `test_gateway_data_boundary.py` gains these assertions, and each new test is first shown failing on a deliberate
@@ -212,11 +215,14 @@ violation:
 - A customer-alias column sends a profile only, numeric IDs included. No fixture customer name and no text cell
   value appears in the text.
 - No collection holds the sent text after an upload with consent.
-- `audits.usage`, the totals response and every new log line hold no file name, header, cell value or company
-  name. A reason code outside the fixed list is refused.
-- An "Other" note is refused when it holds a digit, a file name, a header, a cell text, the company or client name
-  or the engagement reference, or more than 60 characters. A kept note is found only in `audits.usage.other_notes`
-  and the totals response: never in a log line, `llm_calls`, `column_mappings` or a model call.
+- Every new log line holds no file name, header, cell value, company name or note. `audits.usage` and the totals
+  response hold no file name, cell value or company name, and hold header text only inside a kept note. A reason
+  code outside the fixed list is refused.
+- An "Other" note is refused when, after its headers are set aside, it holds a digit, a file name, a cell text from
+  a data row, the company or client name or the engagement reference, or when it is over 60 characters. A note
+  that quotes a header is kept, including a header that contains a cell word; a header with a digit is refused. A
+  kept note is found only in `audits.usage.other_notes` and the totals response: never in a log line,
+  `llm_calls`, `column_mappings` or a model call.
 - `revenue_reconciliation` is absent from every narrative slice.
 
 ## 10. Tests
@@ -242,9 +248,10 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 8. Banner: only the three kinds; each appears and clears on its rule.
 9. Reconciliation: the window total decides the blocker. A month above 2%, with the total under 2%, is in the
    evidence table and not in the banner. Every row cites its rows. With no P&L there is no section and no blocker.
-10. "Other" note: each refusal case in §9 and one kept note. The code stays selected and the note clears.
+10. "Other" note: each refusal case in §9; a kept note that quotes a header, and one whose header contains a cell
+    word; a note quoting a header with a digit refused. The code stays selected and the note clears.
 
-## 11. Screen wording (S1–S19 approved 2026-10-08; S19's last item and S20–S22 added with the decisions, to approve)
+## 11. Screen wording (S1–S22 approved 2026-10-08)
 | Id | Where | Text |
 |---|---|---|
 | S1 | text reply | This window accepts files and mapping confirmations. (as given) |
@@ -281,6 +288,7 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 | Q4 | Banner rules | The window total of file against P&L, at most the last 12 months, above 2%; the revenue file is the required file; a beat counts as Contradicted. Per-month gaps are shown in the reconciliation evidence table, never as a blocker (§6.2) |
 | Q5 | The model's own confidence on screen | No: the schema is unchanged |
 | Q6 | Wording | S1–S19 approved, with S2 as proposed and the existing S17. "Other" gets a free-text box of up to 60 characters, kept with the counters, with no file names or values (§4.3, §7) |
+| — | Follow-up the same day | Approved: the reconciliation section on Diagnostics, with the banner link; the S19 extension; S20–S22. Column headers are allowed in "Other" notes; digits, cell text, file names, the company and client names and the engagement reference stay refused; logs still never hold header text or notes (§4.3, §8, §9) |
 
 ## 13. Decided (engineering, rule 19)
 - Detection is Python only.
@@ -289,9 +297,8 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 - Typed text never leaves the browser.
 - Unused columns need no click; only a column mapped into the engine needs rules confidence or a click.
 - The reason stays selected for the page session; an "Other" note clears after each correction.
-- "No file names or values" in an "Other" note is enforced on the server by refusal, not by rewriting. Headers count
-  as values, in line with §8.
-- The reconciliation evidence table sits on Diagnostics (the forensic page), and S16c links to it.
+- "No file names or values" in an "Other" note is enforced on the server by refusal, not by rewriting. Headers are
+  set aside before the cell-text check, so quoting a header never trips it; a digit is refused everywhere.
 - The model budget is 20 s.
 - The header row is found in the first 10 rows, and rows above it are dropped.
 - Duplicate headers tie.
