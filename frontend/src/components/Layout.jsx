@@ -1,6 +1,7 @@
 import { useNavigate, useLocation } from "react-router-dom";
 import { Activity, Terminal } from "lucide-react";
 import { fmtCurrency } from "@/lib/format";
+import BlockerBanner from "@/components/BlockerBanner";
 
 export function Layout({ audit, children }) {
   const nav = useNavigate();
@@ -73,6 +74,7 @@ export function Layout({ audit, children }) {
             </div>
           </div>
         </div>
+        {id && <BlockerBanner key={`${id}-${loc.pathname}`} auditId={id} />}
       </header>
       <main className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-6">{children}</main>
     </div>

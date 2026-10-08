@@ -35,9 +35,9 @@
 
 ## Finishing a task
 7. A task is finished when the change is committed and pushed. Then create
-   docs/session-log/YYYY-MM-DD-<branch>.md (-2, -3, ... if the name exists) with five lines: date
-   and branch; deleted; decided (what and why, optimizations included); slow or unclear; one
-   process change to propose. Run figures go to docs/test-runs or the PR, never the log. Commit
+   docs/session-log/YYYY-MM-DD-<branch>.md (-2, -3, ... if the name exists) with six lines: date
+   and branch; deleted; decided (what and why, optimizations included); slow or unclear; root cause
+   and the rule that prevents it next time; one process change to propose. Run figures go to docs/test-runs or the PR, never the log. Commit
    and push the log. Neither the log nor a spec wording edit applied as given is a task: the
    edit rides the next commit on its branch and that task's log.
 8. Never write client names or data into the log.
@@ -61,3 +61,10 @@
 
     When you ask, put the question first, in one sentence, then the options with your
     recommendation. One message, all open decisions together, not one at a time.
+20. Degrade, don't die: if the LLM gateway fails or times out anywhere, every computed metric still renders
+    with its citation and a 'narrative unavailable' note.
+21. Three hard blockers, and nothing else, render at the top of every audit view: the revenue file Missing,
+    a top-5 claim Contradicted (a miss or a beat), and a revenue reconciliation gap above 2% over the window of
+    docs/specs/chat-upload.md §6.2. Per-month gaps go in the reconciliation evidence table, never in the banner.
+22. Delete audit requires typing the company name and removes every document of the audit in every
+    collection, saved mappings and stored files included.

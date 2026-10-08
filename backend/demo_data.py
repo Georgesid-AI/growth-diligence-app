@@ -16,7 +16,9 @@ DEMO_AUDITS = [
     {"company_name": "OmniData Systems — Growth Buyout Review", "reporting_currency": "USD",
      "target_arr": 25_000_000, "target_date": "2027-06-30", "seed": 21,
      "n_customers": 52, "months": 24, "start": "2023-03", "multi_ccy": False,
-     "client_name": "Demo Buyout Fund", "engagement_reference": "DEMO-ENG-002", "fiscal_year_end": 12},
+     "client_name": "Demo Buyout Fund", "engagement_reference": "DEMO-ENG-002", "fiscal_year_end": 12,
+     # The P&L revenue is the revenue file's own, less a deliberate 5% gap: this audit shows the reconciliation banner.
+     "pnl_gap": 0.05},
 ]
 
 SEGMENTS = [
@@ -96,14 +98,19 @@ def build(spec):
     crm = pd.DataFrame(crm_rows)
 
     # ---- P&L ----
-    rev_by_month = rev[rev["Revenue Type"] == "recurring"].copy()
+    # P&L revenue reconciles with the revenue file: every line in the reporting currency, one-off services included.
+    # A spec with "pnl_gap" g reports file / (1 + g), so the file is g above the P&L (chat-upload.md section 6.2).
+    fx = {"USD": 0.92} if spec["multi_ccy"] else {}
+    rev_by_month = rev.copy()
     rev_by_month["m"] = pd.to_datetime(rev_by_month["Invoice Date"]).dt.to_period("M").astype(str)
-    monthly_rev = rev_by_month.groupby("m")["Amount"].sum()
+    rev_by_month["reporting"] = rev_by_month["Amount"] * rev_by_month["Currency"].map(lambda c: fx.get(c, 1.0))
+    monthly_file = rev_by_month.groupby("m")["reporting"].sum()
+    monthly_rec = rev_by_month[rev_by_month["Revenue Type"] == "recurring"].groupby("m")["Amount"].sum()
     pnl_rows = []
     for m in months:
         key = str(m)
-        rec_rev = float(monthly_rev.get(key, 0.0))
-        total_rev = rec_rev * 1.15  # incl services
+        rec_rev = float(monthly_rec.get(key, 0.0))
+        total_rev = float(monthly_file.get(key, 0.0)) / (1 + spec.get("pnl_gap", 0.0))
         pnl_rows.append({
             "Month": m.to_timestamp().date().isoformat(),
             "S&M Expense": round(rec_rev * float(rng.uniform(0.45, 0.75)), 2),

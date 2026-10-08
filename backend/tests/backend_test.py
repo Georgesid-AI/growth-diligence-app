@@ -151,6 +151,12 @@ def test_demo_audit_get_returns_200_with_datasets(session):
             f"demo {a['id']} missing datasets: keys={list(body.keys())}"
 
 
+def delete_audit(session, aid):
+    """Delete an audit the way the app does: the company name in the body (CLAUDE.md rule 22)."""
+    name = session.get(f"{API}/audits/{aid}", timeout=30).json().get("company_name", "")
+    return session.request("DELETE", f"{API}/audits/{aid}", json={"confirm": name}, timeout=30)
+
+
 # --- CRUD ---
 @pytest.fixture(scope="module")
 def new_audit(session):
@@ -161,7 +167,7 @@ def new_audit(session):
     a = r.json()
     assert a["status"] == "draft" and a["company_name"] == "TEST_Acme"
     yield a
-    session.delete(f"{API}/audits/{a['id']}", timeout=30)
+    delete_audit(session, a['id'])
 
 
 def test_get_audit_has_datasets_field(session, new_audit):
@@ -262,7 +268,7 @@ def bt_audit(session):
         up = session.post(f"{API}/audits/{a['id']}/datasets/revenue/upload",
                           files={"file": ("revenue.csv", f, "text/csv")}, timeout=60).json()
     yield a, up
-    session.delete(f"{API}/audits/{a['id']}", timeout=30)
+    delete_audit(session, a['id'])
 
 
 def test_revenue_customers_endpoint_no_service_dates(session, bt_audit):
@@ -311,7 +317,7 @@ def test_mrr_spread_by_billing_term(session, term, expected_months, expected_per
         for row in series:
             assert abs(row["total"] - expected_per_month) < 0.01, f"month {row['month']} total={row['total']} expected {expected_per_month}"
     finally:
-        session.delete(f"{API}/audits/{aid}", timeout=30)
+        delete_audit(session, aid)
 
 
 def test_mrr_spread_defaults_to_monthly_when_absent(session):
@@ -327,7 +333,7 @@ def test_mrr_spread_defaults_to_monthly_when_absent(session):
         assert len(series) == 1
         assert abs(series[0]["total"] - 1200.0) < 0.01
     finally:
-        session.delete(f"{API}/audits/{aid}", timeout=30)
+        delete_audit(session, aid)
 
 
 # --- ITEM 1: as-of month ---
@@ -346,7 +352,7 @@ def asof_computed_audit(session):
         session.put(f"{API}/audits/{aid}/datasets/{dtype}/mapping",
                     json={"mapping": up["suggested_mapping"], "fx": {}, "billing_terms": {}}, timeout=30)
     yield aid
-    session.delete(f"{API}/audits/{aid}", timeout=30)
+    delete_audit(session, aid)
 
 
 def test_asof_defaults_to_last_pnl_month(session, asof_computed_audit):
@@ -414,7 +420,7 @@ def test_win_rate_excludes_close_before_created(session):
         assert abs(wr["win_rate_pct"] - 60.0) < 0.01, f"win_rate_pct={wr['win_rate_pct']}"
         assert wr.get("excluded_invalid") == 2, f"excluded_invalid={wr.get('excluded_invalid')}"
     finally:
-        session.delete(f"{API}/audits/{aid}", timeout=30)
+        delete_audit(session, aid)
 
 
 # --- ITEM 5: export xlsx ---
@@ -447,7 +453,7 @@ def test_export_409_when_not_computed(session):
         rr = session.get(f"{API}/audits/{aid}/export", timeout=30)
         assert rr.status_code == 409, f"expected 409 got {rr.status_code}"
     finally:
-        session.delete(f"{API}/audits/{aid}", timeout=30)
+        delete_audit(session, aid)
 
 
 # --- Target date validation ---
@@ -459,7 +465,7 @@ def test_create_audit_rejects_bad_target_date_year(session):
 def test_create_audit_accepts_valid_target_date(session):
     r = session.post(f"{API}/audits", json={**ENGAGEMENT, "company_name": "TEST_GoodDate", "target_date": "2027-01-01"}, timeout=30)
     assert r.status_code == 200, r.text
-    session.delete(f"{API}/audits/{r.json()['id']}", timeout=30)
+    delete_audit(session, r.json()['id'])
 
 
 # --- Stale metrics: setup changes must recompute automatically ---
@@ -486,7 +492,7 @@ def test_fx_change_triggers_recompute(session):
         assert got["audit"]["metrics_stale"] is False, "metrics_stale should clear after auto-recompute"
         assert got["results"]["arr"]["mrr"] == 1450.0, f"v2 mrr should include the USD row: {got['results']['arr']['mrr']}"
     finally:
-        session.delete(f"{API}/audits/{aid}", timeout=30)
+        delete_audit(session, aid)
 
 
 # --- Overall ACV band summary line ---
@@ -518,7 +524,7 @@ def test_delete_audit_cleans_datasets(session):
     with open(SAMPLES["revenue"], "rb") as f:
         session.post(f"{API}/audits/{aid}/datasets/revenue/upload",
                      files={"file": ("revenue.csv", f, "text/csv")}, timeout=30)
-    d = session.delete(f"{API}/audits/{aid}", timeout=30)
+    d = delete_audit(session, aid)
     assert d.status_code == 200
     g = session.get(f"{API}/audits/{aid}", timeout=30)
     assert g.status_code == 404

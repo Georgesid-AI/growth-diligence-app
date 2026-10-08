@@ -1127,7 +1127,7 @@ def test_a_cap_refusal_logs_a_not_read_line(monkeypatch, caplog):
     import logging
     from datetime import datetime, timezone
     db = _db()
-    db["llm_calls"].docs.append({"run_id": AUDIT, "step": "structures", "cache_hit": False, "input_tokens": 394000,
+    db["llm_calls"].docs.append({"run_id": AUDIT, "step": "structures", "cache_hit": False, "input_tokens": 395500,
                                  "output_tokens": 4000, "estimated_cost_usd": 0.0, "timestamp": "2026-10-05T00:00:00"})
     with caplog.at_level(logging.INFO):
         result, adapter = _read(db)
@@ -1297,7 +1297,8 @@ def test_one_click_confirms_and_the_confirmed_mapping_is_reused_for_the_same_hea
     assert adapter.calls == 1, "the stored correction is used: no second model call"
     assert {f: again["suggested_mapping"][f] for f in mapping} == mapping
     assert set(again["mapping_source"].values()) == {"stored"}
-    client.delete(f"/api/audits/{AUDIT}")
+    assert again["status"] == "same_file", "the same bytes: the saved mapping is applied, no prompt"
+    client.request("DELETE", f"/api/audits/{AUDIT}", json={"confirm": AUDIT_DOC["company_name"]})
     assert db[structures.COLUMN_MAPPINGS_COLLECTION].docs == [], "Delete audit removes the stored mapping"
 
 
@@ -1501,7 +1502,7 @@ def test_a_deck_waits_for_the_mapped_revenue_file_and_is_read_once_it_is(monkeyp
     assert adapter.calls == 0, "nothing is sent before the customers are in the mapping"
     assert not [c for c in listed["candidates"] if c.get("origin") == "ai"]
     _map_revenue(client)
-    calls_for_mapping = 1                    # the revenue upload's column-mapping call is not queued
+    calls_for_mapping = 0                    # the rules map every column of the revenue upload: no column-mapping call
     assert adapter.calls == calls_for_mapping + upload["structures"], "every structure read once"
     deck = _deck(client)["decks"][0]
     assert deck["ai_status"] == "read" and deck["sent_pages"] == [11, 17, 19, 22]
@@ -1728,7 +1729,7 @@ def test_uploading_the_same_deck_again_is_served_from_the_cache_and_lists_no_row
 def test_the_token_cap_stops_the_remaining_structures_and_the_deck_says_so(monkeypatch):
     client, db, adapter = _deck_api(monkeypatch)
     _map_revenue(client)
-    db["llm_calls"].docs.append({"run_id": AUDIT, "step": "structures", "cache_hit": False, "input_tokens": 394000,
+    db["llm_calls"].docs.append({"run_id": AUDIT, "step": "structures", "cache_hit": False, "input_tokens": 395500,
                                  "output_tokens": 0, "estimated_cost_usd": 0.0, "timestamp": "2026-10-05T00:00:00"})
     before = adapter.calls
     _upload_deck(client)
@@ -1855,7 +1856,7 @@ def test_delete_audit_removes_model_outputs_cache_and_mapping(monkeypatch):
     _upload_deck(client)
     assert db[gateway.STRUCTURES_COLLECTION].docs and db["pseudonym_map"].docs and db["column_mappings"].docs
     assert all(doc.get("items") for doc in db[gateway.STRUCTURES_COLLECTION].docs if "labels" in doc["output"])
-    purged = client.delete(f"/api/audits/{AUDIT}").json()
+    purged = client.request("DELETE", f"/api/audits/{AUDIT}", json={"confirm": AUDIT_DOC["company_name"]}).json()
     assert purged["llm_purged"]["llm_structures"] > 0, "the replies and their item lists go with the audit"
     for name in (gateway.STRUCTURES_COLLECTION, "pseudonym_map", "column_mappings", "llm_calls", "deck_candidates",
                  "deck_text"):

@@ -1,4 +1,4 @@
-from fastapi import BackgroundTasks, FastAPI, APIRouter, HTTPException, UploadFile, File
+from fastapi import BackgroundTasks, Body, FastAPI, APIRouter, HTTPException, UploadFile, File
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -7,6 +7,8 @@ import os
 import io
 import csv
 import re
+import asyncio
+import hashlib
 import logging
 import uuid
 from pathlib import Path
@@ -25,6 +27,8 @@ from app import narrative_export
 from app import claim_matching
 from app import decks
 from app import structures
+from app import column_rules as cr
+from app import usage as usage_mod
 from app.decks import claims as deck_claims
 from app.decks import parser as deck_parser
 from app.llm import gateway as llm_gateway
@@ -46,86 +50,14 @@ logger = logging.getLogger("growth")
 logging.basicConfig(level=logging.INFO)
 
 # ---------------------------------------------------------------------------
-# Dataset field definitions (normalized names + fuzzy-match aliases)
+# Dataset field definitions (normalized names + fuzzy-match aliases): app/column_rules.py
 # ---------------------------------------------------------------------------
-FIELD_DEFS = {
-    "revenue": {
-        "required": {
-            "customer_id": ["customer", "customer id", "account", "client", "cust"],
-            "invoice_date": ["invoice date", "date", "billing date", "posted"],
-            "amount": ["amount", "value", "revenue", "total", "arr", "mrr"],
-            "currency": ["currency", "ccy", "curr"],
-        },
-        "optional": {
-            "service_start": ["service start", "start date", "period start", "term start"],
-            "service_end": ["service end", "end date", "period end", "term end"],
-            "segment": ["segment", "tier", "size", "band"],
-            "revenue_type": ["revenue type", "type", "recurring", "rec/one-off"],
-        },
-        "dates": ["invoice_date", "service_start", "service_end"],
-        "numeric": ["amount"],
-    },
-    "crm": {
-        "required": {
-            "deal_id": ["deal id", "opportunity id", "deal", "id"],
-            "created_date": ["created", "create date", "created date", "open date"],
-            "close_date": ["close date", "closed", "won date", "close"],
-            "stage": ["stage", "status", "outcome"],
-            "amount": ["amount", "value", "deal value", "acv"],
-        },
-        "optional": {
-            "segment": ["segment", "tier", "size"],
-            "founder_involved": ["founder", "founder involved", "founder-led", "exec involved"],
-        },
-        "dates": ["created_date", "close_date"],
-        "numeric": ["amount"],
-    },
-    "pnl": {
-        "required": {
-            "month": ["month", "period", "date", "fiscal month"],
-            "sm_expense": ["sales & marketing", "s&m", "sales and marketing", "marketing expense", "sm expense"],
-            "revenue": ["revenue", "total revenue", "sales", "turnover"],
-            "cost_of_revenue": ["cost of revenue", "cogs", "cost of sales", "cost"],
-        },
-        "optional": {},
-        "dates": ["month"],
-        "numeric": ["sm_expense", "revenue", "cost_of_revenue"],
-    },
-}
-
-
-def _score(field, alias, lc):
-    if lc == alias:
-        return 100
-    if lc.startswith(alias) or alias.startswith(lc):
-        return 80 if min(len(lc), len(alias)) >= 4 else 30
-    if alias in lc:  # alias is a substring of the column header
-        return 60
-    if lc in alias and len(lc) >= 4:  # column header is a substring of the alias
-        return 40
-    return 0
+FIELD_DEFS = cr.FIELD_DEFS
+_score = cr._score
 
 
 def suggest_mapping(dtype: str, columns: list) -> dict:
-    defs = FIELD_DEFS[dtype]
-    all_fields = {**defs["required"], **defs["optional"]}
-    lowered = {c.lower().strip(): c for c in columns}
-    # score every (field, column) pair
-    candidates = []
-    for field, aliases in all_fields.items():
-        for alias in [field.replace("_", " ")] + aliases:
-            for lc, orig in lowered.items():
-                s = _score(field, alias, lc)
-                if s:
-                    candidates.append((s, field, orig))
-    candidates.sort(reverse=True, key=lambda x: x[0])
-    mapping = {f: None for f in all_fields}
-    used_cols = set()
-    for s, field, col in candidates:
-        if mapping[field] is None and col not in used_cols:
-            mapping[field] = col
-            used_cols.add(col)
-    return mapping
+    return cr.suggest_mapping(dtype, columns)
 
 
 def parse_file(content: bytes, filename: str):
@@ -154,13 +86,15 @@ def df_to_records(df: pd.DataFrame):
     return recs
 
 
-def normalize(rows: list, dtype: str, mapping: dict) -> pd.DataFrame:
+def normalize(rows: list, dtype: str, mapping: dict, row_numbers: Optional[list] = None) -> pd.DataFrame:
+    """The stored rows read through a mapping. `_row` is the row's number in the sheet it came from
+    (`row_numbers`, kept at upload); without it the header is taken to be row 1 with no blank lines."""
     if not rows:
         return pd.DataFrame()
     raw = pd.DataFrame(rows)
     defs = FIELD_DEFS[dtype]
     out = pd.DataFrame()
-    out["_row"] = range(2, len(raw) + 2)
+    out["_row"] = list(row_numbers) if row_numbers is not None and len(row_numbers) == len(raw) else range(2, len(raw) + 2)
     for field, col in mapping.items():
         if col and col in raw.columns:
             out[field] = raw[col].values
@@ -224,7 +158,7 @@ def candidate_views(datasets: dict) -> dict:
         for as_type in FIELD_DEFS:
             mapping = (d.get("mapping") or {}) if as_type == dtype else suggest_mapping(as_type, d.get("columns") or [])
             mapping = {f: c for f, c in mapping.items() if c}
-            views[as_type] = {"mapping": mapping, "frame": normalize(d.get("rows") or [], as_type, mapping)}
+            views[as_type] = {"mapping": mapping, "frame": normalize(d.get("rows") or [], as_type, mapping, d.get("row_numbers"))}
         files[dtype] = {"file": d.get("file"), "sheet": d.get("sheet"), "views": views}
     return files
 
@@ -315,7 +249,7 @@ def _consent_entry(value: bool) -> dict:
 
 
 class MappingPayload(BaseModel):
-    mapping: dict
+    mapping: Optional[dict] = None          # omitted: the FX rates and billing terms only; the mapping is decided column by column
     fx: dict = Field(default_factory=dict)
     billing_terms: dict = Field(default_factory=dict)
 
@@ -334,6 +268,7 @@ def sanitize(obj):
 
 async def audit_public(a: dict) -> dict:
     a.pop("_id", None)
+    a.pop("usage", None)          # the counters, notes included, are read only through the usage totals
     ds = await db.datasets.find({"audit_id": a["id"]}, {"rows": 0, "_id": 0}).to_list(10)
     a["datasets"] = {
         d["dtype"]: {k: d.get(k) for k in ("file", "sheet", "columns", "mapping", "fx", "billing_terms", "preview", "row_count",
@@ -370,13 +305,13 @@ async def create_audit(payload: AuditCreate):
         "results": None,
         "metrics_stale": False,
     }
-    await db.audits.insert_one(dict(audit))
+    await db.audits.insert_one({**audit, "usage": usage_mod.empty()})
     return audit
 
 
 @api.get("/audits")
 async def list_audits():
-    return await db.audits.find({}, {"_id": 0, "results": 0}).sort("created_at", -1).to_list(200)
+    return await db.audits.find({}, {"_id": 0, "results": 0, "usage": 0}).sort("created_at", -1).to_list(200)
 
 
 @api.get("/audits/{audit_id}")
@@ -426,11 +361,21 @@ async def _remap_periods(audit_id: str, fiscal_year_end: int) -> None:
     await structures.reverify_audit(db, audit_id, fiscal_year_end)
 
 
+class DeleteConfirm(BaseModel):
+    confirm: str = ""
+
+
 @api.delete("/audits/{audit_id}")
-async def delete_audit(audit_id: str):
+async def delete_audit(audit_id: str, payload: Optional[DeleteConfirm] = Body(default=None)):
+    """Delete the audit and every document of it in every collection (CLAUDE.md rule 22). The company name
+    goes in the body, never the URL, so no access log holds it; it is matched exactly after trimming, ignoring
+    case. A wrong or missing name deletes nothing."""
     a = await db.audits.find_one({"id": audit_id})
     if not a:
         raise HTTPException(404, "Audit not found")
+    typed = ((payload.confirm if payload else "") or "").strip().lower()
+    if not typed or typed != str(a.get("company_name") or "").strip().lower():
+        raise HTTPException(400, "Type the company name to delete this audit")
     await db.audits.delete_one({"id": audit_id})
     await db.datasets.delete_many({"audit_id": audit_id})
     # Parsed deck text and claim candidates belong to the audit and go with it.
@@ -446,66 +391,294 @@ async def delete_audit(audit_id: str):
 
 
 # ---------------------------------------------------------------------------
-# Datasets: upload + mapping
+# Usage counters (docs/specs/chat-upload.md section 7): counts and codes, no file name, value or company name
 # ---------------------------------------------------------------------------
-@api.post("/audits/{audit_id}/datasets/{dtype}/upload")
-async def upload_dataset(audit_id: str, dtype: str, file: UploadFile = File(...)):
-    if dtype not in FIELD_DEFS:
+async def _usage_update(audit_id: str, change) -> None:
+    """Read the audit's counters, apply `change(usage)`, write them back."""
+    a = await db.audits.find_one({"id": audit_id}, {"id": 1, "usage": 1})
+    if not a:
+        return
+    counters = usage_mod.get(a)
+    change(counters)
+    await db.audits.update_one({"id": audit_id}, {"$set": {"usage": counters}})
+
+
+class UsageEvent(BaseModel):
+    """What the browser reports: the screen it is on, or the extension of a file it refused."""
+    model_config = {"extra": "forbid"}
+    screen: Optional[Literal["mapping", "dashboard", "diagnostics"]] = None
+    rejected_extension: Optional[str] = Field(default=None, max_length=12)
+
+
+@api.post("/audits/{audit_id}/usage")
+async def report_usage(audit_id: str, event: UsageEvent):
+    if not await db.audits.find_one({"id": audit_id}, {"id": 1}):
+        raise HTTPException(404, "Audit not found")
+
+    def change(u):
+        if event.screen:
+            u["last_screen"] = event.screen
+        if event.rejected_extension is not None:
+            usage_mod.record_rejected(u, usage_mod.extension_of("x." + event.rejected_extension.lower().lstrip(".")))
+    await _usage_update(audit_id, change)
+    return {"ok": True}
+
+
+@api.get("/usage/totals")
+async def usage_totals():
+    """Sums across audits, the median days from first upload to first export and the 50 newest "Other" notes. No
+    per-audit rows, names or ids (chat-upload.md section 7). Tokens and cost come from the call log; evidence
+    labels and analyst changes are computed on read from what the audits hold."""
+    audits = await db.audits.find({}, {"_id": 0}).to_list(100000)
+    calls = await db[llm_gateway.CALLS_COLLECTION].find({}, {"_id": 0}).to_list(1000000)
+    steps: dict = {}
+    for c in calls:
+        step = steps.setdefault(str(c.get("step") or "other"), {"calls": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0})
+        step["calls"] += 0 if c.get("cache_hit") else 1
+        step["input_tokens"] += int(c.get("input_tokens", 0))
+        step["output_tokens"] += int(c.get("output_tokens", 0))
+        step["cost_usd"] = round(step["cost_usd"] + float(c.get("estimated_cost_usd", 0.0)), 6)
+    labels, missing, changes = {}, 0, 0
+    for a in audits:
+        _, rows = await _claim_rows(a["id"], a)
+        for label, n in claim_matching.label_counts(rows).items():
+            labels[label] = labels.get(label, 0) + n
+        missing += len((a.get("results") or {}).get("missing_data") or [])
+        claims = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": a["id"]}, {"_id": 0, "status": 1, "claim_inputs": 1}).to_list(10000)
+        changes += sum(1 for c in claims if c.get("status") in ("edited", "rejected")) + \
+            sum(len(c.get("claim_inputs") or {}) for c in claims)
+        changes += usage_mod.get(a)["columns"]["corrected"]
+    return sanitize(usage_mod.totals([usage_mod.get(a) for a in audits], {
+        "tokens_and_cost_by_step": steps, "evidence_labels": labels, "metrics_missing": missing, "analyst_changes": changes}))
+
+
+# ---------------------------------------------------------------------------
+# Datasets: upload with type detection, the mapping rule, decisions, saved mappings
+# (docs/specs/chat-upload.md sections 3-5)
+# ---------------------------------------------------------------------------
+ALLOWED_EXTENSIONS = ("xlsx", "xls", "csv")
+MAPPING_AI_SECONDS = 20          # the model's budget for one column mapping (section 4.2)
+NOTE_REFUSED = "Leave out file names, figures and cell values: this note is kept with the usage counts."
+DTYPE_ORDER = ("revenue", "crm", "pnl")
+
+
+async def _versions(audit_id: str, dtype: str) -> list:
+    """The audit's saved mapping versions of one file type, oldest first (earlier versions are kept)."""
+    found = await db[structures.COLUMN_MAPPINGS_COLLECTION].find({"audit_id": audit_id, "dtype": dtype}, {"_id": 0}).to_list(100000)
+    return sorted(found, key=lambda v: v.get("version") or 0)
+
+
+def _saved_columns(version: dict) -> list:
+    """The columns of a saved version. One saved before versions existed holds only {field: column}."""
+    return version.get("columns") or [{"column": c, "field": f} for f, c in (version.get("mapping") or {}).items() if c]
+
+
+def _fingerprint(states: list) -> list:
+    return sorted((s["column"], s.get("field")) for s in states)
+
+
+async def _write_version(audit_id: str, dtype: str, ds: dict, states: list) -> Optional[int]:
+    """Write a mapping version unless the latest one for this file already says the same thing."""
+    versions = await _versions(audit_id, dtype)
+    same = [v for v in versions if v.get("file_hash") == ds.get("file_hash")]
+    if same and _fingerprint(_saved_columns(same[-1])) == _fingerprint(states):
+        return same[-1].get("version")
+    number = (versions[-1].get("version") or 0) + 1 if versions else 1
+    mapping = cr.mapping_of(dtype, states)
+    await db[structures.COLUMN_MAPPINGS_COLLECTION].insert_one({
+        "audit_id": audit_id, "dtype": dtype, "file_hash": ds.get("file_hash"),
+        "header_key": structures.header_key(dtype, ds.get("columns") or []), "version": number,
+        "mapping": mapping, "saved_at": usage_mod.now(),
+        "columns": [{k: s.get(k) for k in ("column", "field", "source", "confidence", "decision", "reason")} for s in states]})
+    return number
+
+
+def _source_map(states: list) -> dict:
+    """{field: "rules" | "ai" | "stored"} for the columns that are mapped (the older shape of the screen's data)."""
+    names = {"rules": "rules", "ai": "ai", "saved": "stored"}
+    return {s["field"]: names[s["source"]] for s in states
+            if s["state"] in cr.MAPPED and s.get("field") and s.get("source") in names}
+
+
+def _legacy_states(ds: dict) -> list:
+    """A dataset stored before the chat upload (or seeded) has a mapping and no column states: each mapped column
+    counts as confirmed by the analyst."""
+    held = {c: f for f, c in (ds.get("mapping") or {}).items() if c}
+    return [cr.new_state(c, held.get(c), "decision" if held.get(c) else None, "confirmed" if held.get(c) else "unused")
+            for c in ds.get("columns") or []]
+
+
+def _dataset_view(ds: dict, version: Optional[int] = None, status: str = "ok") -> dict:
+    """What the chat shows for one stored file: its bubble data and its mapping table. No rows (the preview
+    is the first 8)."""
+    dtype = ds["dtype"]
+    states = ds.get("columns_state") or _legacy_states(ds)
+    mapping = ds.get("mapping") or cr.mapping_of(dtype, states)
+    rows = []
+    for i, s in enumerate(states):
+        rows.append({**s, "position": i + 1, "pending": s["state"] in cr.PENDING})
+    return {
+        "status": status, "dtype": dtype, "file": ds.get("file"), "size_bytes": ds.get("size_bytes"),
+        "ext": usage_mod.extension_of(ds.get("file") or ""), "row_count": ds.get("row_count"),
+        "header_row": ds.get("header_row"), "months": ds.get("months"), "columns": rows,
+        "pending": cr.pending_count(states), "missing_required": cr.missing_required(dtype, states),
+        "version": version, "ai_reading": ds.get("ai_reading"), "uploaded_at": ds.get("uploaded_at"),
+        "fields": {"required": list(FIELD_DEFS[dtype]["required"]), "optional": list(FIELD_DEFS[dtype]["optional"])},
+        "mapping": mapping, "suggested_mapping": mapping, "mapping_source": ds.get("mapping_source") or _source_map(states),
+        "fx": ds.get("fx") or {}, "billing_terms": ds.get("billing_terms") or {}, "preview": ds.get("preview") or [],
+        "saved": bool(ds.get("mapped_at")), "sheet": ds.get("sheet"),
+    }
+
+
+def _months_for(dtype: str, states: list, columns: list, rows: list) -> Optional[dict]:
+    """The months of the date column, once that column is decided (S5: not before)."""
+    field = {"revenue": "invoice_date", "crm": "close_date", "pnl": "month"}[dtype]
+    state = next((s for s in states if s["field"] == field and s["state"] in ("auto", "confirmed", "corrected")), None)
+    return cr.months_of([r.get(state["column"]) for r in rows]) if state else None
+
+
+async def _ask_model(audit: dict, dtype: str, sheet: "cr.Sheet", rows: list, states: list, sent: list, proposals: list,
+                     open_fields: list):
+    """Step 2: the columns the rules could not decide go to the model, redacted, and nothing waits for it for
+    longer than MAPPING_AI_SECONDS. Returns (states, ai_reading)."""
+    if audit.get("structure_reading_consent") is not True:
+        return states, {"status": "no_consent", "reason": "AI-assisted reading is off for this audit"}
+    text = structures.column_mapping_text(
+        sheet.columns, rows, audit.get("company_name"), await llm_redaction.get_map(db, audit["id"]),
+        tuple(cr.customer_columns(sheet, proposals)), structures.redact.withheld_values(audit), only=tuple(sent))
+    try:
+        read = await asyncio.wait_for(llm_gateway.read_structure(db, audit["id"], text, "column_mapping"),
+                                      MAPPING_AI_SECONDS)
+    except asyncio.TimeoutError:
+        return cr.apply_model_failure(states, sent), {"status": "timeout", "reason": "AI reading unavailable"}
+    if read.status != "read":
+        return cr.apply_model_failure(states, sent), {"status": read.status, "reason": read.reason}
+    await llm_gateway.record_verification(db, audit["id"], read.key, ["suggestion"] * len(read.items))
+    proposed = structures.proposed_mapping(read.items, sheet.columns, open_fields)
+    proposed = {f: c for f, c in proposed.items() if c in sent}
+    return cr.apply_model(states, sent, proposed), {"status": "read", "reason": read.reason}
+
+
+async def _ingest(audit_id: str, upload: UploadFile, dtype: Optional[str], replace: bool, background: BackgroundTasks):
+    if dtype is not None and dtype not in FIELD_DEFS:
         raise HTTPException(400, "Unknown dataset type")
     a = await db.audits.find_one({"id": audit_id})
     if not a:
         raise HTTPException(404, "Audit not found")
-    content = await file.read()
-    df, sheet = parse_file(content, file.filename)
-    columns = list(df.columns)
-    rows = df_to_records(df)
-    mapping, source, ai_reading = await _prefill_mapping(a, dtype, columns, rows)
-    preview = rows[:8]
-    await db.datasets.replace_one(
-        {"audit_id": audit_id, "dtype": dtype},
-        {"audit_id": audit_id, "dtype": dtype, "file": file.filename, "sheet": sheet,
-         "columns": columns, "rows": rows, "row_count": len(rows), "mapping": mapping,
-         "fx": {}, "billing_terms": {}, "preview": preview, "mapping_source": source, "ai_reading": ai_reading},
-        upsert=True,
-    )
+    filename = upload.filename or ""
+    content = await upload.read()
+    ext = usage_mod.extension_of(filename)
+    if ext not in ALLOWED_EXTENSIONS:
+        await _usage_update(audit_id, lambda u: usage_mod.record_rejected(u, ext))
+        raise HTTPException(400, "Only .xlsx and .csv files are supported")
+    try:
+        sheet = await run_in_threadpool(cr.read_sheet, content, filename)
+    except cr.SheetError:
+        raise HTTPException(400, "This file could not be read as a sheet")
+    detected, _ = cr.detect_type(sheet)
+    chosen = dtype or detected
+    if chosen is None:
+        return {"status": "unknown_type", "file": filename, "size_bytes": len(content), "row_count": len(sheet.frame),
+                "ext": ext, "types": list(DTYPE_ORDER)}
+    digest = hashlib.sha256(content).hexdigest()
+    existing = await db.datasets.find_one({"audit_id": audit_id, "dtype": chosen}, {"_id": 0, "rows": 0})
+    versions = await _versions(audit_id, chosen)
+    if existing and existing.get("file_hash") == digest:
+        same = [v for v in versions if v.get("file_hash") == digest]
+        if same:        # the latest saved version is applied again: no rules, no model, no clicks
+            states = cr.states_from_saved(chosen, sheet, _saved_columns(same[-1]), scale=False)
+            existing = {**existing, "columns_state": states, "mapping": cr.mapping_of(chosen, states),
+                        "mapping_source": _source_map(states)}
+            await db.datasets.update_one({"audit_id": audit_id, "dtype": chosen}, {"$set": {
+                "columns_state": states, "mapping": existing["mapping"], "mapping_source": existing["mapping_source"]}})
+        return _dataset_view(existing, same[-1]["version"] if same else None, "same_file")
+    if existing and not replace:
+        raise HTTPException(409, {"code": "type_loaded", "dtype": chosen, "file": existing.get("file")})
+    rows = df_to_records(sheet.frame)
+    key = structures.header_key(chosen, sheet.columns)
+    same = [v for v in versions if v.get("file_hash") == digest]
+    headers = [v for v in versions if v.get("header_key") == key]
+    ai_reading = {"status": "rules", "reason": None}
+    if same or headers:      # a saved mapping: no rules run for the columns, no model call (section 5)
+        states = cr.states_from_saved(chosen, sheet, _saved_columns((same or headers)[-1]), scale=not same)
+        ai_reading = {"status": "stored", "reason": None}
+    else:
+        proposals, open_fields = cr.analyse(chosen, sheet)
+        states = cr.states_from_rules(proposals)
+        sent = cr.to_send(states)
+        if sent:
+            states, ai_reading = await _ask_model(a, chosen, sheet, rows, states, sent, proposals, open_fields)
+            await _usage_update(audit_id, lambda u: u["steps"]["mapping_ai"].__setitem__(
+                ai_reading["status"], u["steps"]["mapping_ai"].get(ai_reading["status"], 0) + 1))
+    mapping = cr.mapping_of(chosen, states)
+    doc = {"audit_id": audit_id, "dtype": chosen, "file": filename, "sheet": sheet.sheet, "columns": sheet.columns,
+           "headers": sheet.headers, "header_row": sheet.header_row, "rows": rows, "row_numbers": sheet.row_numbers,
+           "row_count": len(rows), "mapping": mapping, "fx": {}, "billing_terms": {}, "preview": rows[:8],
+           "mapping_source": _source_map(states), "ai_reading": ai_reading, "columns_state": states,
+           "months": _months_for(chosen, states, sheet.columns, rows), "file_hash": digest, "size_bytes": len(content),
+           "uploaded_at": usage_mod.now(), "mapped_at": None}
+    await db.datasets.replace_one({"audit_id": audit_id, "dtype": chosen}, doc, upsert=True)
+
+    def count(u):
+        usage_mod.record_upload(u, chosen)
+        for s in states:
+            kind = {"rules": "rules", "saved": "saved", "ai": "ai"}.get(s.get("source"))
+            if kind and s["state"] in cr.MAPPED:
+                usage_mod.record_columns(u, kind)
+    await _usage_update(audit_id, count)
+    version = await _commit_mapping(audit_id, chosen, background)
     await _mark_stale_and_maybe_recompute(audit_id)
-    return {
-        "dtype": dtype, "file": file.filename, "sheet": sheet, "columns": columns,
-        "row_count": len(rows), "suggested_mapping": mapping, "preview": preview,
-        "mapping_source": source, "ai_reading": ai_reading,
-        "fields": {"required": list(FIELD_DEFS[dtype]["required"]), "optional": list(FIELD_DEFS[dtype]["optional"])},
-    }
+    logger.info("upload: run_id=%s type=%s detected=%s pending=%d ai=%s", audit_id, chosen, detected == chosen,
+                cr.pending_count(states), ai_reading["status"])
+    stored = await db.datasets.find_one({"audit_id": audit_id, "dtype": chosen}, {"_id": 0, "rows": 0})
+    return _dataset_view(stored, version)
 
 
-async def _prefill_mapping(audit: dict, dtype: str, columns: list, rows: list):
-    """(mapping, source per field, AI reading) to pre-fill the mapping screen; the analyst confirms it.
+async def _commit_mapping(audit_id: str, dtype: str, background: Optional[BackgroundTasks]) -> Optional[int]:
+    """When the file has nothing pending the mapping saves: a version is written, the file is marked mapped, its
+    customers join the pseudonym map and decks that waited for the revenue file are read. Returns the version."""
+    ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype})
+    if not ds:
+        return None
+    states = ds.get("columns_state")
+    if states is None or cr.pending_count(states):
+        return None
+    version = await _write_version(audit_id, dtype, ds, states)
+    await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype},
+                                 {"$set": {"mapped_at": usage_mod.now(), "mapping": cr.mapping_of(dtype, states)}})
+    await _add_customers(audit_id, {**ds, "mapping": cr.mapping_of(dtype, states)})
+    if dtype == "revenue" and background is not None:
+        background.add_task(structures.process_waiting_decks_safely, db, audit_id)
+    return version
 
-    A mapping the analyst confirmed for the same header set is reused and no model is asked. Otherwise
-    the column aliases map what they can and, with consent, the model proposes the rest from the
-    header stack, samples and profiles (llm-structure-reading.md section 1): those fields are marked
-    "ai" and shown as "AI suggestion, not verified". Column-mapping calls are not queued.
-    """
-    fields = list(FIELD_DEFS[dtype]["required"]) + list(FIELD_DEFS[dtype]["optional"])
-    mapping = suggest_mapping(dtype, columns)
-    stored = await db[structures.COLUMN_MAPPINGS_COLLECTION].find_one(
-        {"audit_id": audit["id"], "dtype": dtype, "header_key": structures.header_key(dtype, columns)}, {"_id": 0})
-    if stored:
-        kept = {f: c for f, c in (stored.get("mapping") or {}).items() if f in mapping and c in columns}
-        return {f: kept.get(f) for f in mapping}, {f: "stored" for f, c in kept.items() if c}, {"status": "stored"}
-    source = {f: "rules" for f, c in mapping.items() if c}
-    customers = tuple(c for c in [suggest_mapping("revenue", columns).get("customer_id")] if c)
-    text = structures.column_mapping_text(columns, rows, audit.get("company_name"),
-                                          await llm_redaction.get_map(db, audit["id"]), customers,
-                                          structures.redact.withheld_values(audit))
-    read = await llm_gateway.read_structure(db, audit["id"], text, "column_mapping")
-    if read.status == "read":
-        await llm_gateway.record_verification(db, audit["id"], read.key, ["suggestion"] * len(read.items))
-        used = {c for c in mapping.values() if c}
-        for field, col in structures.proposed_mapping(read.items, columns, fields).items():
-            if mapping.get(field) is None and col not in used:
-                mapping[field], source[field] = col, "ai"
-                used.add(col)
-    return mapping, source, {"status": read.status, "reason": read.reason}
+
+@api.post("/audits/{audit_id}/datasets/upload")
+async def upload_chat_file(audit_id: str, background: BackgroundTasks, file: UploadFile = File(...),
+                           dtype: Optional[str] = None, replace: bool = False):
+    """One file of the chat: its type is detected unless `dtype` is given. Unknown: nothing is stored. A type
+    already loaded with other bytes: 409 unless `replace` (docs/specs/chat-upload.md section 3)."""
+    return await _ingest(audit_id, file, dtype, replace, background)
+
+
+@api.post("/audits/{audit_id}/datasets/{dtype}/upload")
+async def upload_dataset(audit_id: str, dtype: str, background: BackgroundTasks, file: UploadFile = File(...)):
+    """The typed upload, for the demo seed and the tests: the same path, a loaded file of the type is replaced."""
+    view = await _ingest(audit_id, file, dtype, True, background)
+    return view
+
+
+@api.get("/audits/{audit_id}/datasets")
+async def list_datasets(audit_id: str):
+    """One view per stored file, for rebuilding the chat on reload."""
+    if not await db.audits.find_one({"id": audit_id}, {"id": 1}):
+        raise HTTPException(404, "Audit not found")
+    found = await db.datasets.find({"audit_id": audit_id}, {"_id": 0, "rows": 0}).to_list(10)
+    found.sort(key=lambda d: DTYPE_ORDER.index(d["dtype"]) if d["dtype"] in DTYPE_ORDER else 9)
+    views = []
+    for d in found:
+        same = [v for v in await _versions(audit_id, d["dtype"]) if v.get("file_hash") == d.get("file_hash")]
+        views.append(_dataset_view(d, same[-1]["version"] if same else None))
+    return sanitize({"datasets": views})
 
 
 @api.get("/fields")
@@ -529,29 +702,130 @@ async def revenue_customers(audit_id: str, customer_col: Optional[str] = None):
     return {"customers": sorted(custs), "has_service_dates": has_service, "billing_terms": ds.get("billing_terms", {})}
 
 
+class Decision(BaseModel):
+    """One analyst decision on one column (section 4.3). `note` rides only with the reason "other"."""
+    model_config = {"extra": "forbid"}
+    column: str
+    action: Literal["confirm", "correct"]
+    field: Optional[str] = None
+    reason: Optional[str] = None
+    note: Optional[str] = Field(default=None, max_length=2000)
+
+
+async def _check_notes(audit_id: str, audit: dict, notes: list) -> list:
+    """The notes that may be kept, cleaned; HTTP 400 with S21 for the first that may not (nothing is saved)."""
+    cleaned = [usage_mod.clean_note(n) for n in notes]
+    cleaned = [n for n in cleaned if n]
+    if not cleaned:
+        return []
+    files = await db.datasets.find({"audit_id": audit_id}, {"_id": 0}).to_list(10)
+    deck_files = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, {"_id": 0, "file": 1}).to_list(1000)
+    headers, cells = [], []
+    for d in files:
+        headers += [str(h) for h in d.get("headers") or []] + [str(c) for c in d.get("columns") or []]
+        headers += [c["text"] for c in structures.column_mapping_input(d.get("columns") or [], d.get("rows") or [], (), None, 0)[0]]
+        cells += [v for r in d.get("rows") or [] for v in r.values() if isinstance(v, str)]
+    try:
+        for n in cleaned:
+            usage_mod.check_note(n, headers=headers, file_names=[d.get("file") for d in files] + [d.get("file") for d in deck_files],
+                                 cell_texts=cells, names=[audit.get("company_name"), audit.get("client_name"),
+                                                          audit.get("engagement_reference")])
+    except usage_mod.NoteRefused:
+        raise HTTPException(400, NOTE_REFUSED)
+    return cleaned
+
+
+@api.post("/audits/{audit_id}/datasets/{dtype}/decisions")
+async def decide_columns(audit_id: str, dtype: str, decisions: List[Decision], background: BackgroundTasks):
+    """Apply the analyst's decisions to one file's mapping table. The server works out what is still pending and
+    saves a mapping version when nothing is, and again on every later change."""
+    audit = await db.audits.find_one({"id": audit_id})
+    ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype})
+    if not audit or not ds:
+        raise HTTPException(404, "Dataset not uploaded")
+    raw = [d.model_dump() for d in decisions]
+    for d in raw:
+        if d["action"] == "correct" and d.get("reason") not in cr.REASONS:
+            raise HTTPException(400, "Choose one of the listed reasons")
+    kept_notes = await _check_notes(audit_id, audit, [d.get("note") for d in raw
+                                                      if d["action"] == "correct" and d.get("reason") == "other"])
+    return await _apply_decisions(audit_id, dtype, ds, raw, kept_notes, background)
+
+
+async def _apply_decisions(audit_id: str, dtype: str, ds: dict, raw: list, kept_notes: list, background):
+    before = ds.get("columns_state") or _legacy_states(ds)
+    try:
+        states = cr.apply_decisions(dtype, before, raw)
+    except cr.DecisionError as exc:
+        status = 409 if exc.code == "field_held" else 400
+        raise HTTPException(status, {"code": exc.code, "column": exc.column})
+    mapping = cr.mapping_of(dtype, states)
+    await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype}, {"$set": {
+        "columns_state": states, "mapping": mapping, "mapping_source": _source_map(states),
+        "months": _months_for(dtype, states, ds.get("columns") or [], ds.get("rows") or [])}})
+    changed = [s for s, b in zip(states, before) if (s["state"], s["field"]) != (b["state"], b["field"]) or s["decision"] != b["decision"]]
+
+    def count(u):
+        for s in changed:
+            if s["decision"] in ("confirm", "correct"):
+                usage_mod.record_columns(u, "confirmed" if s["decision"] == "confirm" else "corrected")
+            if s["decision"] == "correct" and s.get("reason") in cr.REASONS:
+                usage_mod.record_reason(u, s["reason"])
+        for n in kept_notes:
+            usage_mod.keep_note(u, n)
+    await _usage_update(audit_id, count)
+    version = await _commit_mapping(audit_id, dtype, background)
+    await _mark_stale_and_maybe_recompute(audit_id)
+    logger.info("decisions: run_id=%s type=%s columns=%d pending=%d", audit_id, dtype, len(changed), cr.pending_count(states))
+    stored = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype}, {"_id": 0, "rows": 0})
+    return sanitize(_dataset_view(stored, version))
+
+
+def _decisions_from_mapping(states: list, mapping: dict) -> list:
+    """The older whole-mapping save as decisions: what the mapping keeps is confirmed or corrected, a mapped or
+    pending column it leaves out is not used. Not-used first, so a field changes hands without a clash."""
+    want = {c: f for f, c in mapping.items() if c}
+    drop, keep = [], []
+    for s in states:
+        field = want.get(s["column"])
+        if field is None and (s["state"] in cr.MAPPED or s["state"] == "needs"):
+            drop.append({"column": s["column"], "action": "confirm" if s["state"] == "needs" else "correct",
+                         "field": None, "reason": "not_needed"})
+        elif field is not None and s["field"] == field and s["state"] in cr.PENDING:
+            keep.append({"column": s["column"], "action": "confirm", "field": field})
+        elif field is not None and s["field"] != field:
+            keep.append({"column": s["column"], "action": "confirm" if s["state"] == "needs" else "correct",
+                         "field": field, "reason": "other_column_right"})
+    return drop + keep
+
+
 @api.put("/audits/{audit_id}/datasets/{dtype}/mapping")
 async def save_mapping(audit_id: str, dtype: str, payload: MappingPayload, background: BackgroundTasks):
+    """Save the FX rates and billing terms, and (the older whole-mapping save) the mapping as decisions."""
     ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype})
     if not ds:
         raise HTTPException(404, "Dataset not uploaded")
-    await db.datasets.update_one(
-        {"audit_id": audit_id, "dtype": dtype},
-        {"$set": {"mapping": payload.mapping, "fx": payload.fx, "billing_terms": payload.billing_terms,
-                  "mapped_at": datetime.now(timezone.utc).isoformat(), "mapping_source": {}}},
-    )
-    # The analyst's confirmed mapping is kept for this header set and reused on the next upload.
-    await db[structures.COLUMN_MAPPINGS_COLLECTION].update_one(
-        {"audit_id": audit_id, "dtype": dtype, "header_key": structures.header_key(dtype, ds.get("columns") or [])},
-        {"$set": {"audit_id": audit_id, "dtype": dtype,
-                  "header_key": structures.header_key(dtype, ds.get("columns") or []),
-                  "mapping": payload.mapping, "saved_at": datetime.now(timezone.utc).isoformat()}},
-        upsert=True,
-    )
-    await _add_customers(audit_id, {**ds, "mapping": payload.mapping})
-    await _mark_stale_and_maybe_recompute(audit_id)
-    if dtype == "revenue":
-        # Decks that waited for the revenue file are read now that its customers are in the mapping.
-        background.add_task(structures.process_waiting_decks_safely, db, audit_id)
+    await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype},
+                                 {"$set": {"fx": payload.fx, "billing_terms": payload.billing_terms}})
+    if payload.mapping is None:
+        await _mark_stale_and_maybe_recompute(audit_id)
+        return {"ok": True}
+    if ds.get("columns_state") is None:       # stored before the chat upload: the mapping is the analyst's, as before
+        await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype}, {"$set": {
+            "mapping": payload.mapping, "mapped_at": usage_mod.now(), "mapping_source": {}}})
+        await db[structures.COLUMN_MAPPINGS_COLLECTION].insert_one({
+            "audit_id": audit_id, "dtype": dtype, "file_hash": ds.get("file_hash"),
+            "header_key": structures.header_key(dtype, ds.get("columns") or []),
+            "version": len(await _versions(audit_id, dtype)) + 1, "mapping": payload.mapping, "saved_at": usage_mod.now(),
+            "columns": [{"column": c, "field": f, "source": "decision", "confidence": None, "decision": "confirm", "reason": None}
+                        for f, c in payload.mapping.items() if c]})
+        await _add_customers(audit_id, {**ds, "mapping": payload.mapping})
+        await _mark_stale_and_maybe_recompute(audit_id)
+        if dtype == "revenue":
+            background.add_task(structures.process_waiting_decks_safely, db, audit_id)
+        return {"ok": True}
+    decisions = _decisions_from_mapping(ds["columns_state"], payload.mapping)
+    await _apply_decisions(audit_id, dtype, ds, decisions, [], background)
     return {"ok": True}
 
 
@@ -889,6 +1163,53 @@ async def update_claim_inputs(audit_id: str, claim_id: str, payload: ClaimInputs
 
 
 # ---------------------------------------------------------------------------
+# Blockers: three kinds, and nothing else, at the top of every audit view (CLAUDE.md rule 21)
+# ---------------------------------------------------------------------------
+BLOCKER_KINDS = ("revenue_file_missing", "claim_contradicted", "revenue_reconciliation")
+TOP_CLAIMS = 5
+
+
+def _figure(value, unit, currency) -> str:
+    """A claimed or observed figure for the banner: 1,200,000 EUR, 35%, 12 months."""
+    if value is None:
+        return "—"
+    text = f"{value:,.2f}".rstrip("0").rstrip(".") if isinstance(value, float) else f"{value:,}"
+    if unit == "%":
+        return f"{text}%"
+    return f"{text} {currency or unit}".strip() if (currency or unit) else text
+
+
+@api.get("/audits/{audit_id}/blockers")
+async def audit_blockers(audit_id: str):
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
+    if not audit:
+        raise HTTPException(404, "Audit not found")
+    out = []
+    revenue = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"}, {"_id": 0, "mapped_at": 1})
+    if not revenue or not revenue.get("mapped_at"):
+        out.append({"kind": "revenue_file_missing", "text": "Revenue file missing: upload and map it to compute metrics."})
+    if audit.get("results"):
+        _, rows = await _claim_rows(audit_id, audit)
+        for r in rows:
+            if r["rank"] is not None and r["rank"] <= TOP_CLAIMS and r["evidence_label"] == "Contradicted":
+                claimed = _figure(r["claimed_value"], r["unit"], r["currency"])
+                if r.get("claimed_high") is not None:
+                    claimed = f"{claimed}–{_figure(r['claimed_high'], r['unit'], r['currency'])}"
+                out.append({"kind": "claim_contradicted", "citation": r["observed_source"], "claim_id": r["claim_id"],
+                            "text": f"Top-5 claim contradicted: {r['claim_type']} {claimed} vs "
+                                    f"{_figure(r['observed_value'], r['unit'], r['currency'])} observed "
+                                    f"({r['deck_file']}, {r['page_ref']})."})
+    rec = (audit.get("results") or {}).get("revenue_reconciliation")
+    if rec and rec.get("available") and rec.get("blocker"):
+        pct = "—" if rec["gap_pct"] is None else f"{abs(rec['gap_pct']):g}"
+        ccy = audit.get("reporting_currency") or ""
+        out.append({"kind": "revenue_reconciliation", "citation": rec["source"], "link": f"/audit/{audit_id}/diagnostics",
+                    "text": f"Revenue file and P&L differ by {pct}% over {rec['first']}–{rec['last']} "
+                            f"({rec['file_total']:,.0f} {ccy} vs {rec['pnl_total']:,.0f} {ccy})."})
+    return sanitize({"blockers": out})
+
+
+# ---------------------------------------------------------------------------
 # Compute
 # ---------------------------------------------------------------------------
 # Setup inputs that change what a computed audit's metrics should be. A change
@@ -904,10 +1225,16 @@ async def _run_compute(audit_id: str) -> dict:
     ds = {d["dtype"]: d for d in await db.datasets.find({"audit_id": audit_id}).to_list(10)}
     if "revenue" not in ds:
         raise HTTPException(409, "Revenue lines are required before compute")
+    for d in ds.values():          # a file read by the chat upload waits for the analyst (chat-upload.md section 4.3)
+        states = d.get("columns_state")
+        if states is not None and cr.pending_count(states):
+            raise HTTPException(409, "Columns wait for your decision before compute")
+        if states is not None and cr.missing_required(d["dtype"], states):
+            raise HTTPException(409, "A required field is not mapped")
 
-    rev = normalize(ds["revenue"]["rows"], "revenue", ds["revenue"]["mapping"])
-    crm = normalize(ds["crm"]["rows"], "crm", ds["crm"]["mapping"]) if "crm" in ds else pd.DataFrame()
-    pnl = normalize(ds["pnl"]["rows"], "pnl", ds["pnl"]["mapping"]) if "pnl" in ds else pd.DataFrame()
+    rev = normalize(ds["revenue"]["rows"], "revenue", ds["revenue"]["mapping"], ds["revenue"].get("row_numbers"))
+    crm = normalize(ds["crm"]["rows"], "crm", ds["crm"]["mapping"], ds["crm"].get("row_numbers")) if "crm" in ds else pd.DataFrame()
+    pnl = normalize(ds["pnl"]["rows"], "pnl", ds["pnl"]["mapping"], ds["pnl"].get("row_numbers")) if "pnl" in ds else pd.DataFrame()
 
     fx = {k.upper(): float(v) for k, v in ds["revenue"].get("fx", {}).items()}
     fx[a["reporting_currency"].upper()] = 1.0
@@ -918,8 +1245,17 @@ async def _run_compute(audit_id: str) -> dict:
         "as_of_month": a.get("as_of_month"),
     }
     sources = {t: {"file": ds[t]["file"], "sheet": ds[t]["sheet"]} for t in ds}
-    results = sanitize(ge.compute_all(rev, crm, pnl, config, sources, files=candidate_views(ds),
-                                      on_error=lambda exc: _log_metric_error(exc, audit_id)))
+    failures = []
+
+    def on_error(exc):
+        failures.append(type(exc).__name__)
+        _log_metric_error(exc, audit_id)
+    try:
+        results = sanitize(ge.compute_all(rev, crm, pnl, config, sources, files=candidate_views(ds), on_error=on_error))
+    except Exception as exc:
+        await _usage_update(audit_id, lambda u: usage_mod.record_compute(u, failures + [type(exc).__name__]))
+        raise
+    await _usage_update(audit_id, lambda u: usage_mod.record_compute(u, failures))
     await db.audits.update_one(
         {"id": audit_id},
         {"$set": {"results": results, "status": "computed", "computed_at": datetime.now(timezone.utc).isoformat(),
@@ -1326,6 +1662,7 @@ async def export_audit(audit_id: str):
     except Exception:  # the export never depends on the narrative service
         narratives = []
     block = llm_gateway.disclosure_from(narratives)
+    await _usage_update(audit_id, lambda u: u.__setitem__("first_export_at", u["first_export_at"] or usage_mod.now()))
     buf = build_export_workbook(a, a["results"], block["text"] if block else None, narratives)
     safe = "".join(c for c in (a.get("company_name") or "audit") if c.isalnum() or c in " -_").strip().replace(" ", "_")
     fname = f"{safe or 'audit'}_growth_diligence.xlsx"
@@ -1432,7 +1769,8 @@ app.add_middleware(
 
 
 # 4: demo audits carry a client name, an engagement reference, consent and a fiscal year-end.
-SEED_VERSION = 4
+# 5: demo P&L revenue reconciles with the revenue file (one demo audit keeps a deliberate 5% gap).
+SEED_VERSION = 5
 
 
 @app.on_event("startup")
@@ -1440,7 +1778,7 @@ async def seed_demo():
     if await db.audits.count_documents({"seed_version": SEED_VERSION}) > 0:
         return
     demo_ids = {"audit_id": {"$in": [a["id"] for a in await db.audits.find({"demo": True}, {"id": 1}).to_list(50)]}}
-    for name in ("datasets", decks.TEXT_COLLECTION, decks.CANDIDATES_COLLECTION):
+    for name in ("datasets", decks.TEXT_COLLECTION, decks.CANDIDATES_COLLECTION, structures.COLUMN_MAPPINGS_COLLECTION):
         await db[name].delete_many(demo_ids)
     for audit in demo_ids["audit_id"]["$in"]:
         await llm_gateway.purge_run(db, audit)
@@ -1480,7 +1818,7 @@ async def seed_demo():
             "consent_log": [_consent_entry(True)],
             "created_at": datetime.now(timezone.utc).isoformat(), "status": "computed",
             "computed_at": datetime.now(timezone.utc).isoformat(), "results": sanitize(results), "demo": True,
-            "seed_version": SEED_VERSION,
+            "seed_version": SEED_VERSION, "usage": usage_mod.empty(),
         })
     logger.info("Seeded demo audits")
 
