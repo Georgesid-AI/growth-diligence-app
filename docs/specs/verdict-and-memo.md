@@ -225,7 +225,7 @@ stored claims and results; (d) a stored structured analyst input (thresholds, da
 budget decision or gate metric name, which are the analyst's deal terms and are cited "set by the analyst"; (e) tokens
 and cost from `llm_calls`; (f) a count of (c)–(e) the memo states (labels, files, gates, categories); (g) the fixed
 numerals 5 (top 5), 7 (categories) and 12 (12-month). A number in a thesis sentence must be one of (a)–(c) or (e).
-Any other number refuses the export. The refusal lists each such number for the analyst; the log line holds only
+A table cell of Appendix C that the stored data does not hold passes only as the sum or the difference of two other cells of its row that it does hold (the export's totals and changes); a ratio or any other derived figure refuses the export. Any other number refuses the export. The refusal lists each such number for the analyst; the log line holds only
 their count.
 
 ### 7.5 Word count
@@ -285,7 +285,7 @@ until it has a gate); runs C and D give Re-plan. The outcome tests use subsets o
 | W5 | key gate | checkbox "Key gate"; a sixth: At most 5 key gates. |
 | W6 | gate sentence, no observed figure | Before {decision}, {metric} must be at least (at most) {threshold} by {date}. Not yet observed: {reason}; claimed {value} ({period}). |
 | W7 | data gaps | Title: Data gaps · columns: What the company cannot measure · Why it matters · Requested · Target date · field: First quarterly review · why: Blocks {analysis}; claims #{ranks}. {engine reason} · refusals: The target date must be on or before the first quarterly review ({date}). / Set the first quarterly review first. / The first quarterly review cannot be before a gap's target date ({date}). |
-| W8 | verdict | Title: Verdict · Underwrite: All top-5 claims are Verified. · Underwrite with gates: No top-5 claim is Contradicted; {n} are Unverified or Unsupported. · Re-plan: {n} top-5 claim(s) Contradicted. / {n} top-5 claims Unsupported (3 or more). · fewer rows: Top {n} (the register has {n} claims). |
+| W8 | verdict | Title: Verdict · Underwrite: All top-5 claims are Verified. · Underwrite with gates: No top-5 claim is Contradicted; {n} is (1) or are (2 or more) Unverified or Unsupported. · Re-plan: {n} top-5 claim(s) Contradicted. / {n} top-5 claims Unsupported (3 or more). · fewer rows: Top {n} (the register has {n} claims). |
 | W9 | blocked | Verdict blocked: set a gate on #{ranks} (top-5 claims that are not Verified). |
 | W10 | no verdict | No verdict: the register has no claims. / No verdict: compute the audit first. |
 | W11 | reason | #{rank} {claim}: {label}, {observed} against {claimed} ({gap in app format}). Evidence: {analysis} · {source key} ({file} · {sheet} · {rows}). Unsupported: #{rank} {claim}: Unsupported, {reason}. No figure in the supplied files. |

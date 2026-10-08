@@ -438,3 +438,33 @@ def test_the_export_log_line_holds_a_code_and_counts_only(api, caplog):
                      f"memo export: run_id={AUDIT} status=refused reason=numbers words=0 unmatched=1"]
     for needle in ("Falcon", "37", "Grow", "Reach the target", "TestCo", "testco_board", "Before "):
         assert needle not in " ".join(lines), needle
+
+
+# --- Appendix C: derived cells are sums and differences of stored cells only ----------------------------------------------------------
+
+def _table(*row):
+    return [{"sheet": "Headline", "rows": [["Metric", "A", "B", "C"], list(row)]}]
+
+
+def test_a_table_cell_that_is_the_sum_or_difference_of_two_stored_cells_of_its_row_passes():
+    assert im.build_memo(**inputs(tables=_table("Total", "202,125", "81,431", "283,556")))
+    assert im.build_memo(**inputs(tables=_table("Change", "283,556", "202,125", "81,431")))
+
+
+@pytest.mark.parametrize("cells", [("Ratio", "283,556", "202,125", "1.4"), ("Product", "202,125", "81,431", "16,459,000,000"),
+                                   ("Share", "81,431", "202,125", "40.29"), ("Alone", "81,431", "", "")])
+def test_a_ratio_or_any_other_derived_figure_in_a_table_refuses(cells):
+    exc = refusal(tables=_table(*cells))
+    assert exc.code == "numbers" and exc.unmatched
+
+
+def test_w8_says_is_for_one_open_claim_and_are_for_more():
+    v, _ = verdict_of_labels(["Verified", "Unverified", "Verified", "Verified", "Verified"], gates={2})
+    assert v["rule"] == "No top-5 claim is Contradicted; 1 is Unverified or Unsupported."
+    v, _ = verdict_of_labels(["Unverified", "Unsupported", "Verified", "Verified", "Verified"], gates={1, 2})
+    assert v["rule"] == "No top-5 claim is Contradicted; 2 are Unverified or Unsupported."
+
+
+def verdict_of_labels(labels, gates):
+    from test_verdict import verdict_of
+    return verdict_of(labels, gates=gates)

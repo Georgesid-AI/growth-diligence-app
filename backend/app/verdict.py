@@ -195,7 +195,7 @@ def verdict(rows: List[dict], results: Optional[dict], stored_top5: Optional[dic
         code, rule, lead = "underwrite", W8_UNDERWRITE, [r for r in five if r["evidence_label"] == "Verified"]
     else:
         code, lead = "underwrite_with_gates", open_
-        rule = f"No top-5 claim is Contradicted; {len(open_)} are Unverified or Unsupported."
+        rule = f"No top-5 claim is Contradicted; {len(open_)} {'is' if len(open_) == 1 else 'are'} Unverified or Unsupported."
     fewer = None
     if len(rows) < TOP_N:
         fewer = f"Top {len(rows)} (the register has {len(rows)} claims)."

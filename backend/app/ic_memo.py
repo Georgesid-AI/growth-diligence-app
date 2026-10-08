@@ -176,6 +176,24 @@ class Allowed:
         elif isinstance(node, str):
             self.text(node)
 
+    def derived_cells(self, rows: List[List[str]]) -> "Allowed":
+        """Allow a cell that is a sum or a difference of two stored cells of the same row (one unit of the last place of slack
+        per operand, since the cells are rounded)."""
+        for row in rows:
+            tokens = [t for cell in row for t in _tokens(str(cell))]
+            stored = [t for t in tokens if self.ok(t)]
+            for token in tokens:
+                if token in stored or self.ok(token):
+                    continue
+                d = _decimal(token)
+                places = max(0, -d.as_tuple().exponent)
+                slack = 2 * Decimal(1).scaleb(-places)
+                values = [_decimal(t) for t in stored]
+                if any(abs(a + b - d) < slack or abs(abs(a - b) - d) < slack for i, a in enumerate(values) for b in values[i + 1:]):
+                    self.words.add(token.replace(",", "").lstrip("-"))
+                    self.words.add(token)
+        return self
+
     def ok(self, token: str) -> bool:
         clean = token.replace(",", "").lstrip("-")
         if clean in self.words or token in self.words:
@@ -520,9 +538,9 @@ def allowed_numbers(audit: dict, results: dict, rows: List[dict], gaps: List[dic
     for n in range(0, max(len(rows), len(gaps), len(files) + len(decks), 8) + 1):
         allowed.number(n)                                   # counts of rows, gaps, files, categories and gates the memo states
     if not thesis:
-        # Appendix C's cells are the export's own rows: figures it derives from the stored results (a total, a change) in the
-        # same code as the workbook. They are Python's arithmetic on stored data, not text from anywhere else.
-        allowed.tree([row for t in tables or () for row in t["rows"]])
+        # Appendix C's cells are the export's own rows. A cell the stored data does not hold is allowed only when it is the sum or
+        # the difference of two other cells of its row that it does hold; a ratio or any other derived figure is refused.
+        allowed.derived_cells([row for t in tables or () for row in t["rows"]])
         allowed.tree(ic.get("gap_target_dates") or {}).tree(ic.get("first_quarterly_review"))
     return allowed
 
