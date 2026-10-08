@@ -652,35 +652,152 @@ def test_of_two_overlapping_keywords_the_longer_one_counts(text, families):
 
 
 # ---------------------------------------------------------------------------
+# One heading, an unknown type and the confidence of a claim (docs/specs/deck-parser.md sections 2 and 6)
+# ---------------------------------------------------------------------------
+def test_label_from_is_the_one_heading_that_names_the_type_not_every_heading_of_its_box():
+    long_box = "Regions and territories we serve today\nCustomers\nStages of the sales process we follow"
+    found = _found(_slide([(long_box, 1, 3), ("5,000", 3.5, 3)]))
+    five, = _by_value(found, 5000)
+    assert (five["claim_type"], five["label_from"]) == ("customers", "Customers"), "a box of several headings gives one"
+    titled = _found(_slide([("5,000", 8, 6.5)], title="Our plan for the coming years and what follows\nPaying users\nHow we get there"))
+    assert [(c["claim_type"], c["label_from"]) for c in _by_value(titled, 5000)] == [("customers", "Paying users")]
+    wrapped = _found(_slide([("Our plan for the coming years and what follows\nMARKET\nSIZE\nHow we get there", 1, 3), ("$2.5B", 3.5, 3)]))
+    assert _by_value(wrapped, 2500000000)[0]["label_from"] == "MARKET SIZE", "a keyword that wraps keeps both lines"
+
+
+def test_a_box_short_enough_to_be_one_label_stays_whole_even_when_it_wraps():
+    found = _found(_slide([("Spend as\n% of revenue", 1, 3), ("12%", 3.5, 3)]))
+    assert [(c["claim_type"], c["label_from"]) for c in _by_value(found, 12)] == [("revenue", "Spend as % of revenue")]
+
+
+def test_a_figure_no_heading_names_a_type_for_is_unknown_not_guessed_as_product():
+    found = _found(_slide([("120 in Q3 2025", 1, 3)]))
+    one, = _by_value(found, 120)
+    assert (one["claim_type"], one["type_from"], one["label_from"]) == ("unknown", None, None)
+    dated = _found(_slide([("Q3 2025", 1, 3)]))
+    assert [(c["claim_type"], c["target_date"]) for c in dated] == [("unknown", "2025-Q3")]
+    named = _found(_slide([("Launch the API Q3 2025", 1, 3)]))
+    assert [(c["claim_type"], c["type_from"]) for c in named] == [("product", "line")]
+    under = _found(_slide([("Roadmap", 1, 2), ("Q3 2025", 1, 3)]))
+    assert [(c["claim_type"], c["type_from"]) for c in under] == [("product", "heading")]
+
+
+def test_an_unknown_date_is_the_product_claim_with_the_same_date_when_there_is_one():
+    blocks = [{"slide": 1, "kind": "text", "text": "Launch the API Q3 2025"}, {"slide": 2, "kind": "text", "text": "Q3 2025"}]
+    found = claims.detect_candidates(blocks, "d.pptx")
+    assert [(c["claim_type"], c["target_date"], c["type_from"], [s["slide"] for s in c["sources"]]) for c in found] == \
+        [("product", "2025-Q3", "line", [1, 2])], "no row appears or disappears: both were product and merged"
+    alone = claims.detect_candidates(blocks[1:], "d.pptx")
+    assert [(c["claim_type"], c["target_date"]) for c in alone] == [("unknown", "2025-Q3")]
+
+
+def _claim(**fields):
+    return {"claim_type": "revenue", "value": 100, "value_high": None, "unit": None, "currency": "EUR",
+            "target_date": "2025", "type_from": "line", "sources": [{"file": "d.pptx", "slide": 2, "kind": "text"}], **fields}
+
+
+@pytest.mark.parametrize("fields, level, failed", [
+    ({"sources": [{"slide": 2, "kind": "text"}, {"slide": 9, "kind": "text"}]}, "High", []),
+    ({}, "Medium", ["not corroborated"]),
+    ({"target_date": None, "sources": [{"slide": 2}, {"slide": 5}]}, "Medium", ["no date"]),
+    ({"currency": None, "sources": [{"slide": 2}, {"slide": 5}]}, "Medium", ["no unit"]),
+    ({"claim_type": "unknown", "type_from": None, "sources": [{"slide": 2}, {"slide": 5}]}, "Medium", ["no heading"]),
+    ({"target_date": None, "claim_type": "unknown", "type_from": None, "sources": [{"slide": 2}, {"slide": 5}]},
+     "Low", ["no date", "no heading"]),
+    ({"target_date": None, "currency": None}, "Low", ["no date", "no unit", "not corroborated"]),
+    ({"value": None, "target_date": "2025-Q3", "claim_type": "product"}, "High", []),
+    ({"value": None, "target_date": None, "claim_type": "unknown", "type_from": None}, "Low", ["no date", "no heading"]),
+])
+def test_confidence_counts_the_failed_checks_never_a_model_score(fields, level, failed):
+    got = claims.confidence(_claim(**fields), [])
+    assert (got["level"], got["failed"]) == (level, failed)
+    assert got["text"] == level + (" – " + ", ".join(failed) if failed else "")
+
+
+def test_a_value_is_corroborated_by_another_candidate_of_the_deck_at_another_place_and_a_table_row_is_one_place():
+    one, same, other_value = _claim(), _claim(sources=[{"slide": 7, "kind": "text"}]), _claim(value=5, sources=[{"slide": 7}])
+    assert claims.confidence(one, [one, same])["failed"] == []
+    assert claims.confidence(one, [one, other_value])["failed"] == ["not corroborated"]
+    assert claims.confidence(one, [one, _claim(claim_type="costs", sources=[{"slide": 7}])])["failed"] == \
+        ["not corroborated"], "the same number under another type is a coincidence"
+    row = _claim(value=None, target_date=None, by_period=[
+        {"value": 100, "value_high": None, "target_date": "2024", "source": {"slide": 3, "kind": "table", "table": 1, "row": 2, "col": c}}
+        for c in (2, 3)], sources=[{"slide": 3, "kind": "table", "table": 1, "row": 2, "col": c} for c in (2, 3)])
+    assert claims.confidence(row, [row])["failed"] == ["not corroborated"], "two cells of one row are not two places"
+
+
+def test_a_claim_stored_before_the_confidence_has_no_type_from_and_counts_as_named_unless_its_type_is_unknown():
+    old = _claim()
+    del old["type_from"]
+    assert "no heading" not in claims.confidence(old, [])["failed"]
+    assert "no heading" in claims.confidence({**old, "claim_type": "unknown"}, [])["failed"]
+
+
+def test_an_edited_claim_names_its_type_whatever_the_parser_found(api):
+    edited = _claim(claim_type="revenue", type_from=None, parsed={"claim_type": "unknown"})
+    assert "no heading" not in claims.confidence(edited, [])["failed"]
+
+
+def test_an_unknown_claim_is_approved_only_once_its_type_is_chosen(api):
+    client, _ = api
+    _upload(client, "audit-1", "02-moz.pdf", (DECKS / "02-moz.pdf").read_bytes())
+    unknown = next(c for c in client.get("/api/audits/audit-1/decks").json()["candidates"] if c["claim_type"] == "unknown")
+    url = f"/api/audits/audit-1/decks/candidates/{unknown['id']}"
+    assert client.put(url, json={"status": "approved"}).status_code == 400
+    assert client.put(url, json={"target_date": "2011-07"}).status_code == 400, "an edit approves, so it needs the type too"
+    done = client.put(url, json={"claim_type": "product"})
+    assert done.status_code == 200 and done.json()["status"] == "edited"
+    assert client.put(url, json={"claim_type": "market"}).status_code == 200
+
+
+# ---------------------------------------------------------------------------
 # Several decks per audit: removal and order
 # ---------------------------------------------------------------------------
 def _page(c):
     return min(s.get("slide", s.get("page")) for s in c["sources"])
 
 
-def test_decks_list_newest_first_and_within_a_deck_to_review_first_then_by_slide(api):
+def test_decks_list_newest_first_and_claims_ascend_by_page_across_decks_then_reading_order(api):
     client, db = api
     old = _upload(client, "audit-1", "03-buffer.pptx", (DECKS / "03-buffer.pptx").read_bytes()).json()
-    new = _upload(client, "audit-1", "09-genesisai-2024.pdf", (DECKS / "09-genesisai-2024.pdf").read_bytes()).json()
+    new = _upload(client, "audit-1", "02-moz.pdf", (DECKS / "02-moz.pdf").read_bytes()).json()
     old_claims = [c for c in db[decks.CANDIDATES_COLLECTION].docs if c["deck_id"] == old["deck_id"]]
     late = max(old_claims, key=_page)
     client.put(f"/api/audits/audit-1/decks/candidates/{late['id']}", json={"status": "approved"})
     # A kept or merged claim can carry an early "order"; the slide still decides its place.
-    last_pending = max((c for c in old_claims if c["id"] != late["id"]), key=_page)
-    last_pending["order"] = -1
+    last = max((c for c in old_claims if c["id"] != late["id"]), key=_page)
+    last["order"] = -1
 
     listed = client.get("/api/audits/audit-1/decks").json()
     assert [d["deck_id"] for d in listed["decks"]] == [new["deck_id"], old["deck_id"]], "most recent deck first"
-    order = [c["deck_id"] for c in listed["candidates"]]
-    assert order == sorted(order, key=lambda d: d != new["deck_id"]), "grouped by deck, most recent first"
-    in_old = [c for c in listed["candidates"] if c["deck_id"] == old["deck_id"]]
-    keys = [(c["status"] != "pending", _page(c)) for c in in_old]
-    assert keys == sorted(keys), "to review first, then by slide"
-    assert in_old[-1]["id"] == late["id"], "the reviewed claim moves below the ones to review"
-    at = next(i for i, c in enumerate(in_old) if c["id"] == last_pending["id"])
-    assert all(_page(c) <= _page(last_pending) for c in in_old[:at] if c["status"] == "pending")
-    assert all(_page(c) >= _page(last_pending) for c in in_old[at + 1:] if c["status"] == "pending"), \
-        "the slide, not the parse order, places a claim"
+    rows = listed["candidates"]
+    assert {c["deck_id"] for c in rows} == {new["deck_id"], old["deck_id"]}
+    pages = [_page(c) for c in rows]
+    assert pages == sorted(pages), "ascending by slide or page across all decks, not grouped by deck"
+    assert len({c["deck_id"] for c in rows[:len(rows) // 2]}) == 2, "the decks interleave"
+    for deck in (old, new):
+        mine = [_page(c) for c in rows if c["deck_id"] == deck["deck_id"]]
+        assert mine == sorted(mine), "and within each deck"
+    assert [c["id"] for c in rows if _page(c) == _page(late)].count(late["id"]) == 1
+    assert [_page(c) for c in rows].index(_page(late)) <= [c["id"] for c in rows].index(late["id"]), \
+        "a reviewed claim keeps the place its page gives it: it does not move below the others"
+    page_two = [c for c in rows if c["deck_id"] == new["deck_id"] and _page(c) == 2 and c.get("reading")]
+    assert len(page_two) > 3
+    keys = [(round(c["reading"][0] / 0.02), c["reading"][1]) for c in page_two]
+    assert keys == sorted(keys), "within a page: top to bottom, then left to right"
+
+
+def test_a_claim_of_a_deck_shows_its_confidence_and_the_checks_it_failed(api):
+    client, _ = api
+    _upload(client, "audit-1", "02-moz.pdf", (DECKS / "02-moz.pdf").read_bytes())
+    rows = client.get("/api/audits/audit-1/decks").json()["candidates"]
+    seen = {c["confidence"]["level"] for c in rows}
+    assert seen == {"High", "Medium", "Low"}, "the 46 moz claims use all three levels"
+    for c in rows:
+        conf = c["confidence"]
+        assert conf["text"] == conf["level"] + (" – " + ", ".join(conf["failed"]) if conf["failed"] else "")
+        assert len(conf["failed"]) == {"High": 0, "Medium": 1, "Low": len(conf["failed"])}[conf["level"]]
+        assert conf["level"] != "Low" or len(conf["failed"]) >= 2
 
 
 def test_remove_deck_deletes_its_text_and_all_its_claims_including_reviewed(api):

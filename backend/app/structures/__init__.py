@@ -203,7 +203,7 @@ async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None
                                                        "structure_reading_consent": 1, "client_name": 1,
                                                        "engagement_reference": 1})
     deck = await db[TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id},
-                                              {"_id": 0, "structures": 1, "file": 1, "page_unit": 1})
+                                              {"_id": 0, "structures": 1, "file": 1, "page_unit": 1, "blocks": 1})
     if not audit or not deck:
         return NOT_READ
     found = deck.get("structures") or []
@@ -396,6 +396,9 @@ def candidate_from_item(item: Dict, structure: Dict, deck: Dict, model_type: Opt
         "date_from": stated if target and stated != cell.get("text") else None, "sources": [source],
         "inconsistent_dates": [], "origin": "ai", "cell": item["value_cell"], "position": item.get("position"),
         "item": item.get("item"), "readings": item["values"] if len(item.get("values") or ()) > 1 else [],
+        "type_from": "heading" if label and label != cell.get("text") else
+                     "line" if claims._keywords(cell.get("text") or "") else None,
+        "reading": _reading(deck.get("blocks") or (), structure, cell),
         "ai_status": item["status"],
         "ai_label": verify.label(item["status"]),
         "ai_checks": item.get("checks"), "period_cells": list(item.get("period_cells") or []),
@@ -405,6 +408,24 @@ def candidate_from_item(item: Dict, structure: Dict, deck: Dict, model_type: Opt
     found = claims.period_range(item.get("period"), fiscal_year_end) if item.get("period") else None
     candidate["period_start"], candidate["period_end"] = found or (None, None)
     return candidate
+
+
+def _reading(blocks, structure: Dict, cell: Dict) -> Optional[List[float]]:
+    """[top, left] of a cell's text on its page, from the deck's parsed lines (the reading order of the approval list);
+    None when the page has no layout or the line is not found."""
+    page = {k: structure[k] for k in ("slide", "page") if structure.get(k) is not None}
+    text = cell.get("text") or ""
+    for b in blocks:
+        if not b.get("bbox") or any(b.get(k) != v for k, v in page.items()):
+            continue
+        if structure.get("table") is not None:
+            same = b.get("kind") == "table" and (b.get("table"), b.get("row"), b.get("col")) == \
+                (structure["table"], cell.get("row"), cell.get("col"))
+        else:
+            same = b.get("kind") == "text" and bool(text) and text.startswith(b["text"])
+        if same:
+            return [round(b["bbox"][1], 3), round(b["bbox"][0], 3)]
+    return None
 
 
 def _target_date(period: Optional[str]) -> Optional[str]:

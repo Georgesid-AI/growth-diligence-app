@@ -26,24 +26,28 @@ export const CLAIMS_CHOICES = [
   ["✕ Reject:", "Exclude items that are not company claims, such as another company's figures, funds raised or chart axis labels. Rejected items remain in the record but are not used."],
 ];
 
+// A figure no heading names a type for (docs/specs/deck-parser.md section 2): not guessed, the analyst chooses.
+export const UNKNOWN_TYPE_LABEL = "Unknown – choose type";
+
 // Labels for every type a stored claim may carry; "usage" only on claims parsed before it was dropped; "other" on an
 // item the model labelled other (docs/specs/structure-labelling.md section 4).
 export const TYPE_LABELS = {
   revenue: "Revenue", revenue_growth: "Revenue growth", growth: "Growth", retention: "Retention", sales: "Sales",
   customers: "Customers", users: "Users", user_growth: "User growth", gross_margin: "Gross margin",
   gross_profit: "Gross profit", costs: "Costs", ebitda: "EBITDA", net_profit: "Net profit", usage: "Usage",
-  people: "People", product: "Product", market: "Market", cash: "Cash", burn: "Burn", runway: "Runway", ltv: "LTV",
+  people: "People", product: "Product", market: "Market size", cash: "Cash", burn: "Burn", runway: "Runway", ltv: "LTV",
   cac: "CAC", customer_lifetime: "Customer lifetime", ltv_cac: "LTV/CAC", trials_per_day: "Trials per day",
   months_to_profitability: "Months to profitability", use_of_funds: "Use of funds", other: "Other",
+  unknown: UNKNOWN_TYPE_LABEL,
 };
 // The types an analyst can choose: same order and names as backend app/decks/claims.py CLAIM_TYPES.
 // "Use of funds" is a type the model may read from a structure, not one the parser gives.
-export const CLAIM_TYPES = Object.keys(TYPE_LABELS).filter((t) => !["usage", "use_of_funds", "other"].includes(t));
+export const CLAIM_TYPES = Object.keys(TYPE_LABELS).filter((t) => !["usage", "use_of_funds", "other", "unknown"].includes(t));
 // Suggestions for the unit field; a count's unit is the noun it counts ("paying users").
 export const CLAIM_UNITS = ["%", "x", "months", "years", "weeks", "days", "hours", "customers", "users"];
 
 // One header per column of the approval list, in column order.
-export const COLUMNS = ["Type", "Value", "Date", "Claim in the deck", "Source", "Status", "Action"];
+export const COLUMNS = ["Type", "Value", "Date", "Confidence", "Claim in the deck", "Source", "Status", "Action"];
 
 export const typeLabel = (t) => TYPE_LABELS[t] || t;
 
@@ -133,10 +137,14 @@ export function readingChoices(c) {
   }));
 }
 
-// An item the model labelled "other" is listed as type Other; the server approves it only once its type is
-// edited to a claim type.
+// An item the model labelled "other", or a figure no heading names a type for ("unknown"), is listed under that type;
+// the server approves it only once its type is edited to a claim type.
 export const OTHER_TYPE_NOTE = "Choose a claim type, then approve.";
-export const needsType = (c) => c?.claim_type === "other";
+export const needsType = (c) => c?.claim_type === "other" || c?.claim_type === "unknown";
+
+/** The Confidence column: "High", "Medium – not corroborated", "Low – no date, no heading". The server derives it from
+ *  the checks the parser runs (never a model's own score); a row from an older server shows the placeholder. */
+export const confidenceText = (c) => c?.confidence?.text || PLACEHOLDER;
 
 // The deck panel's run log (docs/specs/llm-structure-reading.md sections 3, 4 and 9).
 export const DECK_AI_STATUS = {
@@ -180,7 +188,8 @@ export function deckTabs(decks, candidates) {
     ...ordered.map((d) => ({ id: d.deck_id, label: d.file, count: count(d.deck_id) }))];
 }
 
-/** The claims shown under a tab, in the order the server sent them (to review first, then slide or page). */
+/** The claims shown under a tab, in the order the server sent them: ascending by slide or page, across all decks under
+ *  "All", and within a page in reading order. A reviewed claim keeps its place. */
 export function claimsForDeck(candidates, deckId) {
   return deckId === ALL_DECKS ? candidates || [] : (candidates || []).filter((c) => c.deck_id === deckId);
 }

@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { listAudits, createAudit, deleteAudit, getUsageTotals } from "@/lib/api";
-import { S18_DELETE, S19_USAGE_TOTALS } from "@/lib/chatUpload";
+import { S18_TITLE, S18_BODY, S18_MISMATCH, S19_USAGE_TOTALS } from "@/lib/chatUpload";
 import { fmtCurrency } from "@/lib/format";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -289,12 +289,20 @@ export default function AuditHub() {
   );
 }
 
-/** S18: Delete is enabled only when the typed name matches the company (trimmed, any case); the name goes in the body. */
-export const nameMatches = (typed, company) => !!typed.trim() && typed.trim().toLowerCase() === (company || "").trim().toLowerCase();
+/** S18: Delete is enabled only when the typed text, trimmed, is the company name exactly, case included; the name goes in the body. */
+export const nameMatches = (typed, company) => !!typed.trim() && typed.trim() === (company || "").trim();
+export const MISMATCH_DELAY_MS = 1000;
 
 function DeleteAudit({ audit, onDelete }) {
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState("");
+  const [settled, setSettled] = useState(false);       // S18b waits for a pause in typing, or for the box to lose focus
+  useEffect(() => {
+    setSettled(false);
+    const timer = setTimeout(() => setSettled(true), MISMATCH_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [typed]);
+  const mismatch = settled && typed.trim() !== "" && !nameMatches(typed, audit.company_name);
   return (
     <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) setTyped(""); }}>
       <DialogTrigger asChild>
@@ -304,11 +312,14 @@ function DeleteAudit({ audit, onDelete }) {
       </DialogTrigger>
       <DialogContent className="bg-white border-[#E5E7EB] text-slate-900">
         <DialogHeader>
-          <DialogTitle>Delete this audit?</DialogTitle>
-          <DialogDescription data-testid="delete-dialog-text" className="text-slate-600">{S18_DELETE}</DialogDescription>
+          <DialogTitle data-testid="delete-dialog-title">{S18_TITLE(audit.company_name)}</DialogTitle>
+          <DialogDescription data-testid="delete-dialog-text" className="text-slate-600">
+            {S18_BODY[0]}<strong className="font-semibold text-slate-900" data-testid="delete-dialog-name">{audit.company_name}</strong>{S18_BODY[1]}
+          </DialogDescription>
         </DialogHeader>
-        <Input data-testid={`delete-name-${audit.id}`} value={typed} onChange={(e) => setTyped(e.target.value)}
-          autoComplete="off" className="bg-white border-[#E5E7EB]" />
+        <Input data-testid={`delete-name-${audit.id}`} value={typed} onChange={(e) => setTyped(e.target.value)} onBlur={() => setSettled(true)}
+          autoComplete="off" aria-invalid={mismatch} className="bg-white border-[#E5E7EB]" />
+        {mismatch && <p role="alert" className="text-xs text-rose-700 -mt-2" data-testid="delete-mismatch">{S18_MISMATCH}</p>}
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)} className="bg-transparent border-[#E5E7EB] text-slate-700">Cancel</Button>
           <Button data-testid={`confirm-delete-${audit.id}`} disabled={!nameMatches(typed, audit.company_name)}

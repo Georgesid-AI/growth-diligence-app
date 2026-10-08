@@ -7,7 +7,7 @@ import { getDecks, removeDeck, updateCandidate, uploadDeck } from "@/lib/api";
 import {
   ALL_DECKS, CLAIM_TYPES, CLAIM_UNITS, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
   DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, INCONSISTENCY_LABEL, OTHER_TYPE_NOTE, PLACEHOLDER, STATUS_LABELS, VERIFIED_LABEL, claimDate, claimValue, deckRunLog,
-  needsType, readingChoices, rowEdit, sourceRef, statusCounts, typeLabel,
+  confidenceText, needsType, readingChoices, rowEdit, sourceRef, statusCounts, typeLabel,
 } from "@/lib/deckClaims";
 
 const STATUS_STYLE = {
@@ -16,6 +16,7 @@ const STATUS_STYLE = {
   rejected: "text-rose-700 border-rose-500/40",
   edited: "text-sky-700 border-sky-500/40",
 };
+const CONFIDENCE_STYLE = { High: "text-emerald-700", Medium: "text-amber-800", Low: "text-rose-700" };
 const selectClass = "h-8 rounded-md border border-[#E5E7EB] bg-white px-2 text-xs";
 
 /** Board deck or growth plan: the scope message, the upload, and the candidate approval list. */
@@ -206,7 +207,7 @@ function CandidateRow({ candidate: c, onSave }) {
         <>
           <td className="py-2 pr-3">
             <select value={draft.claim_type} onChange={set("claim_type")} className={selectClass} data-testid="edit-claim-type">
-              {needsType(draft) && <option value={draft.claim_type} disabled>{typeLabel(draft.claim_type)}: choose a type</option>}
+              {needsType(draft) && <option value={draft.claim_type} disabled>{typeLabel(draft.claim_type)}{draft.claim_type === "unknown" ? "" : ": choose a type"}</option>}
               {CLAIM_TYPES.map((t) => <option key={t} value={t}>{typeLabel(t)}</option>)}
             </select>
           </td>
@@ -252,6 +253,9 @@ function CandidateRow({ candidate: c, onSave }) {
           <td className="py-2 pr-3 font-mono text-slate-700 whitespace-nowrap">{claimDate(c)}</td>
         </>
       )}
+      <td className="py-2 pr-3 whitespace-nowrap" data-testid="candidate-confidence">
+        <span className={CONFIDENCE_STYLE[c.confidence?.level] || "text-slate-500"}>{confidenceText(c)}</span>
+      </td>
       <td className="py-2 pr-3 text-slate-700 max-w-md">
         <div>{c.snippet}</div>
         {c.label_from && <div className="text-slate-400 mt-0.5" data-testid="candidate-label">Label from: {c.label_from}</div>}

@@ -1,5 +1,6 @@
 # Spec: Chat-style upload and column mapping
-Status: Final (2026-10-08); decisions applied (§12). Location: docs/specs/chat-upload.md.
+Status: Final (2026-10-08); decisions applied (§12); amended 2026-10-08 for the mapping-screen wording, the delete dialog
+and the banner (§12, §13, S5, S9, S15, S16a, S16d, S18, S18b, S23–S25). Location: docs/specs/chat-upload.md.
 Replaces the content of the MappingWizard page. Supersedes in part docs/specs/llm-structure-reading.md §1 for
 the column-mapping path only: which columns are sent and from how many rows (§4.2). Everything else in that spec
 stands, including the rule-16 shape of what is sent and §9 (sent text is never stored).
@@ -42,12 +43,15 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
   the creation screen, so this panel only shows its state. When ticked, the panel shows explainer S2; when unticked,
   S3 (§11).
 - Analyst bubble, one per file: file name, size, and a type icon (xlsx or csv).
-- System bubble, one per file: the detected type, rows and months found (S5), then the mapping table (§4). For a
-  revenue file, the existing FX editor and billing-terms block follow the table unchanged. A status line ends the
-  bubble (S13).
-- Mapping table columns: Column · Field · Confidence · Source · action. Source is one of: Rules, Saved mapping,
-  AI suggestion, not verified (the existing label), Needs your decision. Columns left unused are folded into one
-  "Not used (n)" row that opens to show them, each with Correct.
+- System bubble, one per file: the detected type, rows and months found (S5), then the info box "Why this step
+  matters" (S25, above the first mapping table of the page only), then the mapping table (§4). For a revenue file,
+  the existing FX editor and billing-terms block follow the table unchanged. A status line ends the bubble (S13).
+- Mapping table columns (S23): In your file · Means · Confidence · Mapped by · action. "Mapped by" is one of the four
+  values of S24: Rules, AI suggestion – confirm, You, Saved from earlier upload (a column with no proposal yet reads
+  "You – choose"). There is no "Your decision" label. Confidence is never a dash (S9). Rows are ordered by §4.4.
+  Columns left unused are folded into one "Not used (n)" row that opens to show them, each with Correct.
+- The month range of the detected line (S5) shows once the date column is confirmed (decided by the analyst, or
+  accepted by the rules); before that the line ends on the row count, with no text in place of the months.
 - On reload, the panel rebuilds one analyst bubble and one system bubble per stored dataset. Text replies and
   refused files are not kept.
 
@@ -131,6 +135,12 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
   file has nothing pending and on every later change. The existing mapping endpoint keeps saving FX rates and
   billing terms. The pseudonym map is filled when the mapping saves, as today.
 
+### 4.4 Row order
+Rows that need a click come first (unsure, AI suggestion, no proposal), then the rest by ascending confidence, so the
+auto-accepted 100s come last. A row with no score (an AI suggestion, a column with no proposal, a row the analyst
+decided) counts as the lowest. Rows of equal confidence keep the order of the file. The order follows the state, so a
+row moves down when its click is made. Unused columns stay in the "Not used" fold.
+
 ## 5. Saved mapping
 - A version is stored in `column_mappings` with: audit id, type, file hash (sha256 of the bytes), header key (as
   today), version number, field→column mapping, and per column its source, confidence, decision and reason code.
@@ -153,7 +163,7 @@ top of every audit view (Mapping, Dashboard, Diagnostics). The audit list has no
 the banner: a test checks the kinds.
 | Kind | Rule (decided 2026-10-08, Q4) | Text |
 |---|---|---|
-| required file missing | the revenue file (the only file marked required) is not uploaded, or its mapping is not saved | S16a |
+| required file missing | the revenue file (the only file marked required) is not uploaded (S16a), or is uploaded and its mapping is not confirmed (S16d); one blocker of this kind, with the text of the case that applies | S16a or S16d |
 | top-5 claim contradicted | a claim-register row ranked 1–5 has evidence label Contradicted, whether a miss or a beat (the label as claim-matching.md §4 defines it) | S16b, with the row's citation |
 | revenue reconciliation | new engine result `revenue_reconciliation`: the revenue file's monthly revenue (`revenue_series`, reporting currency) against the P&L revenue column, summed over the window (the months both files cover up to the as-of month, at most the last 12); gap = abs(file − P&L) ÷ P&L; a blocker above 2%; no check without a P&L | S16c, with both files' rows as its citation; it links to the evidence table |
 
@@ -167,8 +177,11 @@ boundary test is extended for it (rule 14).
 
 ### 6.3 Delete audit
 `DELETE /api/audits/{id}` takes the JSON body `{"confirm": "<company name>"}`. The name goes in the body, never
-the URL, so no access log holds it. Matching is exact after trimming, ignoring case. A wrong or missing name gets a
-400 and deletes nothing. The dialog (S18) enables Delete only when the typed name matches. A test asserts that no
+the URL, so no access log holds it. Matching trims leading and trailing whitespace, then is exact and case-sensitive (amended 2026-10-08; it was
+exact after trimming, ignoring case): the server and the dialog use the same rule. A wrong or missing name gets a
+400 and deletes nothing. The dialog (S18) enables Delete only when the typed text is the company name exactly (after trimming), and
+shows S18b under the box once the typed text is not empty, does not match, and either about one second has passed
+without typing or the box has lost focus (not on every keystroke). A test asserts that no
 document with the audit id remains in any collection: datasets (the stored rows, i.e. the raw file content),
 deck_text, column_mappings (every saved version) and the rest. There is no mapping_sample collection to remove
 (§1). The demo seed and the tests that delete pass the name.
@@ -250,34 +263,48 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
    evidence table and not in the banner. Every row cites its rows. With no P&L there is no section and no blocker.
 10. "Other" note: each refusal case in §9; a kept note that quotes a header, and one whose header contains a cell
     word; a note quoting a header with a digit refused. The code stays selected and the note clears.
+11. Mapping table (MappingWizard.test.jsx): the headers of S23 and no "Your decision"; "Mapped by" has the values of
+    S24; the confidence cell is never a dash (rule row, AI, saved, no proposal, decided, unused: S9); the rows come in
+    the order of §4.4; the detected line has no months text before the date column is confirmed (S5); the info box
+    S25 is open, holds the four paragraphs word for word, sits above the first table and is one box for several files.
+12. Delete dialog (AuditHub.test.jsx; test_chat_upload.py): title and body of S18 with the name in bold; Delete stays
+    disabled for another case and a partial name, enabled with surrounding spaces; S18b shows under the box on a
+    mismatch only after a pause of about a second or on blur, never while typing, and not on an empty box; the server refuses the same texts and deletes nothing.
+13. Banner (test_chat_upload.py): S16a with no revenue file, S16d with a revenue file whose mapping is not confirmed,
+    nothing once it is; one blocker of the kind, never two.
 
-## 11. Screen wording (S1–S22 approved 2026-10-08)
+## 11. Screen wording (S1–S22 approved 2026-10-08; S5, S9, S15, S16a, S18 amended and S16d, S18b, S23–S25 added the same day)
 | Id | Where | Text |
 |---|---|---|
 | S1 | text reply | This window accepts files and mapping confirmations. (as given) |
 | S2 | explainer, consent ticked | Mapping is done by rules first. Where rules cannot decide, the AI sees only those columns' headers, up to 3 example numbers or dates per column and a pattern for text columns – never your full file and never a name – and you confirm those columns. |
 | S3 | explainer, consent unticked | Mapping is done by rules only: AI-assisted reading is off for this audit. You map the columns the rules cannot decide. |
 | S4 | drop zone | Drop .xlsx or .csv files here, or use the paperclip. |
-| S5 | bubble head | Detected: Revenue lines · 1,240 rows · 24 months (Jan 2023 – Dec 2024). Before the date column is decided: "months: after the date column is confirmed". |
+| S5 | bubble head | Detected: Revenue lines · 1,240 rows · 24 months (Jan 2023 – Dec 2024). Before the date column is confirmed the months are left out: "Detected: Revenue lines · 1,240 rows". |
 | S6 | unknown type | Could not tell what this file holds. Pick its type: Revenue lines / CRM deals / P&L (monthly). |
 | S7 | refused file | This window takes .xlsx and .csv files. Decks go in the deck panel below. |
 | S8 | replace | A revenue file is already loaded ({file}). Replace it? [Replace] [Keep current] |
-| S9 | confidence cell | 100 · or, when the fit lowers it: 0 · 0 of 20 values are numbers |
+| S9 | confidence cell | A rule row: its number, 100 · or, when the fit lowers it: 0 · 0 of 20 values are numbers. An AI suggestion, or a column with no proposal, until decided: needs confirmation (decided: confirmed). A saved mapping: reused. A column the rules found no field for: 0. Never a dash. |
 | S10 | buttons | Confirm · Correct · Not used (n) |
 | S11 | reason codes | Header is misleading · Another column is the right one · Values do not fit this field · Wrong kind of date · Column not needed · Other (opens S20) |
 | S12 | model failed | AI reading unavailable – these columns need your decision. |
 | S13 | status line | Ready for compute · {n} columns wait for your decision · Required field not mapped: {field} |
 | S14 | same file | Same file as before: saved mapping v{n} applied. |
-| S15 | AI row | AI suggestion, not verified (existing label) |
-| S16a | banner | Revenue file missing: upload and map it to compute metrics. |
+| S15 | AI row | AI suggestion – confirm (the column "Mapped by", S24; amended 2026-10-08, it was "AI suggestion, not verified"). The label "AI suggestion, not verified" stays on model-read claim values, rule 18. |
+| S16a | banner | Revenue file missing: upload and map it to compute metrics. (Only when no revenue file exists.) |
+| S16d | banner | Revenue file uploaded – confirm the mapping to compute metrics. (A revenue file exists and its mapping is not confirmed.) |
 | S16b | banner | Top-5 claim contradicted: {claim type} {claimed} vs {observed} observed ({deck}, {page}). |
 | S16c | banner | Revenue file and P&L differ by {x}% over {first}–{last} ({file total} vs {P&L total}). |
 | S17 | narrative failed | Today's text, unchanged: "Narrative could not be generated. The computed metrics below are unaffected — they come from the calculation engine, not the narrative." |
-| S18 | delete dialog | Type the company name to delete this audit with its files, mappings and results. This cannot be undone. |
+| S18 | delete dialog | Title: Delete {company name}? Body: Type **{company name}** to delete this audit with its files, mappings and results. This cannot be undone. (the name in bold, in both) |
+| S18b | delete dialog | Name does not match (under the box, after about a second without typing or when the box loses focus, while the trimmed text is not empty and is not the name exactly) |
 | S19 | audit list | Usage totals (folded): files uploaded and refused by type; columns by rules, saved, AI, corrected (by reason); compute runs and failures; evidence labels; analyst changes; median days from first upload to export; tokens and cost by step; "Other" notes, newest first (at most 50). |
 | S20 | "Other" box placeholder | Why? Up to 60 characters; no file names, figures or names. |
 | S21 | "Other" note refused | Leave out file names, figures and cell values: this note is kept with the usage counts. |
 | S22 | Diagnostics section | Revenue reconciliation · columns: Month · Revenue file · P&L · Gap · Gap % · last row: Window total |
+| S23 | mapping table headers | In your file · Means · Confidence · Mapped by (the fifth column, the buttons, has no header). The label "Your decision" is removed. |
+| S24 | "Mapped by" values | Rules · AI suggestion – confirm · You · Saved from earlier upload. A column the rules and the model left without a proposal reads "You – choose" until the analyst decides it. A row the analyst confirmed or corrected reads "You". |
+| S25 | info box | Title: Why this step matters. A collapsible box, open by default, above the first mapping table of the page (one box, not one per file). Text, word for word, four paragraphs: "Every figure in this audit depends on how the columns are interpreted. If a column is mapped incorrectly—for example, bookings are treated as revenue, or an invoice date as a service date—the resulting calculations may look correct but be wrong." / "The app suggests a mapping for each column and indicates its confidence level. High-confidence mappings are accepted automatically, but you can change them. Low-confidence mappings appear at the top of the table and require your review." / "No calculations begin until all required columns are confirmed." / "Your choices are saved with the audit and automatically reused if you upload the same file again." |
 
 ## 12. Decisions of 2026-10-08
 | Q | Question | Decision |
@@ -288,6 +315,7 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 | Q4 | Banner rules | The window total of file against P&L, at most the last 12 months, above 2%; the revenue file is the required file; a beat counts as Contradicted. Per-month gaps are shown in the reconciliation evidence table, never as a blocker (§6.2) |
 | Q5 | The model's own confidence on screen | No: the schema is unchanged |
 | Q6 | Wording | S1–S19 approved, with S2 as proposed and the existing S17. "Other" gets a free-text box of up to 60 characters, kept with the counters, with no file names or values (§4.3, §7) |
+| — | Amendment the same day (UI and labelling, George) | Delete dialog with the name in the title and in bold, exact case-sensitive match, S18b; mapping table headers and "Mapped by" (S23, S24), no "Your decision"; confidence cell never a dash (S9); row order (§4.4); the banner says what is left to do when the file is uploaded (S16d); months of the detected line only once the date column is confirmed (S5); the info box S25. The wording not given in the request was chosen under rule 19 (§13) |
 | — | Follow-up the same day | Approved: the reconciliation section on Diagnostics, with the banner link; the S19 extension; S20–S22. Column headers are allowed in "Other" notes; digits, cell text, file names, the company and client names and the engagement reference stay refused; logs still never hold header text or notes (§4.3, §8, §9). S21 reworded to match ("…file names, figures and cell values…"); spec final |
 
 ## 13. Decided (engineering, rule 19)
@@ -307,6 +335,12 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 - Usage figures that already exist (tokens, cost, labels, changes) are read, not copied.
 - Totals have no per-audit rows.
 - The CLAUDE.md lines are final in §6.4 and go in, word for word, with the first implementation commit.
+- Amendment of 2026-10-08 (rule 19, engineering): a column with no proposal reads "You – choose" in "Mapped by" and
+  "needs confirmation" in Confidence until decided; a decided AI suggestion or no-proposal column reads "confirmed" in
+  Confidence; a rules-unused column scores 0, not a dash; a saved mapping reads "reused" even when the new data lowered
+  it and it waits for a click; the info box is one per page, above the first table; the delete match trims surrounding
+  whitespace first (George, later the same day), and S18b waits for a one-second pause or blur; the banner keeps one kind
+  (`revenue_file_missing`) with the text of the case that applies, so the three-kind rule of §6.2 holds.
 
 ## 14. Files
 - New: `backend/app/column_rules.py` (header row, value fit, confidence, detection; pure),

@@ -7,7 +7,7 @@ import { uploadChatFile, getDatasets, decideColumns, reportUsage } from "@/lib/a
 import {
   S1_TEXT_REPLY, S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE, S6_UNKNOWN_TYPE, S7_REFUSED, S12_MODEL_FAILED,
   S20_NOTE_PLACEHOLDER, S21_NOTE_REFUSED, NOTE_MAX, ALLOWED_EXTENSIONS, REASONS, TYPE_LABELS, S5_head, S8_replace,
-  S9_confidence, S13_status, S14_same, SOURCE_LABELS, fieldName, fmtBytes, extensionOf, heldFields,
+  S9_confidence, S13_status, S14_same, MAPPING_HEADERS, S25_TITLE, S25_PARAGRAPHS, mappedBy, sortColumns, fieldName, fmtBytes, extensionOf, heldFields,
 } from "@/lib/chatUpload";
 
 const NONE = "";
@@ -29,6 +29,7 @@ export default function UploadChat({ audit, extras, onViews }) {
   const picker = useRef(null);
   const queue = useRef(Promise.resolve());
   const consent = audit.structure_reading_consent === true;
+  const firstTable = messages.find((m) => m.kind === "system" && m.view)?.id;       // the info box sits above the first table
 
   const push = useCallback((m) => setMessages((all) => [...all, { id: uid(), ...m }]), []);
   const announce = () => window.dispatchEvent(new Event(BLOCKERS_CHANGED));
@@ -130,7 +131,7 @@ export default function UploadChat({ audit, extras, onViews }) {
         )}
         {messages.map((m) => (
           <Message key={m.id} m={m} audit={audit} extras={extras} lastReason={lastReason} setLastReason={setLastReason}
-            decide={decide}
+            decide={decide} showInfo={m.id === firstTable}
             onType={(file, dtype) => { setMessages((all) => all.filter((x) => x.id !== m.id)); send(file, { dtype }, m.bubble); }}
             onReplace={(file, dtype) => { setMessages((all) => all.filter((x) => x.id !== m.id)); send(file, { dtype, replace: true }, m.bubble); }}
             onKeep={() => setMessages((all) => all.filter((x) => x.id !== m.id && x.id !== m.bubble))} />
@@ -150,7 +151,7 @@ export default function UploadChat({ audit, extras, onViews }) {
   );
 }
 
-function Message({ m, audit, extras, lastReason, setLastReason, decide, onType, onReplace, onKeep }) {
+function Message({ m, audit, extras, lastReason, setLastReason, decide, showInfo, onType, onReplace, onKeep }) {
   if (m.kind === "analyst") return <AnalystBubble m={m} />;
   if (m.kind === "text") {
     return m.role === "analyst"
@@ -180,7 +181,7 @@ function Message({ m, audit, extras, lastReason, setLastReason, decide, onType, 
       </Bubble>
     );
   }
-  return <SystemBubble view={m.view} audit={audit} extras={extras} lastReason={lastReason} setLastReason={setLastReason} decide={decide} />;
+  return <SystemBubble view={m.view} audit={audit} extras={extras} lastReason={lastReason} setLastReason={setLastReason} decide={decide} showInfo={showInfo} />;
 }
 
 function Bubble({ side, children, testid }) {
@@ -202,9 +203,9 @@ function AnalystBubble({ m }) {
   );
 }
 
-function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide }) {
+function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide, showInfo }) {
   const [openUnused, setOpenUnused] = useState(false);
-  const shown = view.columns.filter((c) => c.state !== "unused");
+  const shown = sortColumns(view.columns.filter((c) => c.state !== "unused"));
   const unused = view.columns.filter((c) => c.state === "unused");
   const modelFailed = AI_FAILED.includes(view.ai_reading?.status);
   const status = S13_status(view);
@@ -216,11 +217,12 @@ function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide }
         <p className="text-xs text-slate-600 mt-1" data-testid="bubble-same">{S14_same(view.version)}</p>
       )}
       {modelFailed && <p className="text-xs text-amber-700 mt-1" data-testid="bubble-ai-failed">{S12_MODEL_FAILED}</p>}
+      {showInfo && <WhyThisMatters />}
       <div className="overflow-x-auto mt-3">
         <table className="w-full text-xs" data-testid={`mapping-table-${view.dtype}`}>
           <thead>
             <tr className="text-left text-slate-500 border-b border-[#E5E7EB]">
-              {["Column", "Field", "Confidence", "Source", ""].map((h, i) => <th key={i} className="py-1.5 pr-3 font-medium">{h}</th>)}
+              {MAPPING_HEADERS.map((h, i) => <th key={i} className="py-1.5 pr-3 font-medium">{h}</th>)}
             </tr>
           </thead>
           <tbody>
@@ -244,6 +246,18 @@ function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide }
         {status}
       </div>
     </Bubble>
+  );
+}
+
+/** S25: why the mapping step matters; one box above the first mapping table, open until the analyst folds it. */
+function WhyThisMatters() {
+  return (
+    <details open data-testid="why-this-matters" className="mt-3 rounded-md border border-sky-200 bg-sky-50/60 px-3 py-2 text-xs text-slate-700">
+      <summary className="cursor-pointer font-medium text-slate-900" data-testid="why-this-matters-title">{S25_TITLE}</summary>
+      <div className="mt-2 space-y-2">
+        {S25_PARAGRAPHS.map((p) => <p key={p}>{p}</p>)}
+      </div>
+    </details>
   );
 }
 
@@ -292,8 +306,8 @@ function ColumnRow({ row, view, decide, lastReason, setLastReason }) {
           {needs ? fieldSelect(field, setField, `needs-field-${row.column}`) : fieldName(row.field)}
         </td>
         <td className="py-1.5 pr-3" data-testid={`confidence-${row.column}`}>{S9_confidence(row)}</td>
-        <td className={`py-1.5 pr-3 ${row.source === "ai" ? "text-amber-700" : needs ? "text-amber-700" : ""}`} data-testid={`source-${row.column}`}>
-          {row.source ? SOURCE_LABELS[row.source] : "—"}
+        <td className={`py-1.5 pr-3 ${pending ? "text-amber-700" : ""}`} data-testid={`source-${row.column}`}>
+          {mappedBy(row)}
         </td>
         <td className="py-1.5 whitespace-nowrap">
           {(pending && !needs) && (

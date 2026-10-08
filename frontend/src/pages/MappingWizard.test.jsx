@@ -5,6 +5,7 @@ import MappingWizard from "./MappingWizard";
 import * as api from "@/lib/api";
 import {
   S1_TEXT_REPLY, S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE, S7_REFUSED, S12_MODEL_FAILED, S21_NOTE_REFUSED, REASONS,
+  S5_head, S9_confidence, mappedBy, sortColumns, S25_PARAGRAPHS,
 } from "@/lib/chatUpload";
 
 jest.mock("@/lib/api", () => ({
@@ -132,7 +133,8 @@ describe("a file", () => {
     expect(analyst.textContent).toContain("2.0 KB");
     expect(q("bubble-head").textContent).toBe("Detected: Revenue lines · 1,240 rows · 24 months (Jan 2023 – Dec 2024)");
     const table = q("mapping-table-revenue");
-    expect([...table.querySelectorAll("thead th")].map((th) => th.textContent)).toEqual(["Column", "Field", "Confidence", "Source", ""]);
+    expect([...table.querySelectorAll("thead th")].map((th) => th.textContent)).toEqual(["In your file", "Means", "Confidence", "Mapped by", ""]);
+    expect(table.textContent).not.toContain("Your decision");
     expect(q("source-Customer").textContent).toBe("Rules");
     expect(q("confidence-Customer").textContent).toBe("100");
     expect(q("column-row-Memo")).toBeNull();
@@ -233,6 +235,7 @@ describe("the revenue settings", () => {
 });
 
 describe("the mapping table", () => {
+  const dash = /^[\s—–-]*$/;
   const mountPending = async () => {
     api.uploadChatFile.mockResolvedValue(PENDING_VIEW());
     await mount();
@@ -243,15 +246,97 @@ describe("the mapping table", () => {
     await mountPending();
     expect(q("status-revenue").textContent).toBe("2 columns wait for your decision");
     expect(q("compute-button").disabled).toBe(true);
-    expect(q("bubble-head").textContent).toContain("months: after the date column is confirmed");
-    expect(q("source-Adj").textContent).toBe("AI suggestion, not verified");
+    expect(q("bubble-head").textContent).toBe("Detected: Revenue lines · 1,240 rows");
+    expect(q("bubble-head").textContent).not.toContain("confirmed");
+    expect(q("source-Adj").textContent).toBe("AI suggestion – confirm");
+    expect(q("confidence-Adj").textContent).toBe("needs confirmation");
     expect(q("confidence-Amount").textContent).toBe("30");
-    expect(q("source-Notes").textContent).toBe("Needs your decision");
+    expect(q("source-Amount").textContent).toBe("Rules");
+    expect(q("source-Notes").textContent).toBe("You – choose");
+    expect(q("confidence-Notes").textContent).toBe("needs confirmation");
     expect(q("needs-field-Notes").value).toBe("");
     expect(q("needs-field-Notes").selectedOptions[0].textContent).toBe("Not used");
     expect(q("confirm-Amount")).not.toBeNull();
     expect(q("correct-Customer")).not.toBeNull();
     expect(q("confirm-Customer")).toBeNull();
+  });
+
+  test("rows that need a click come first, then ascending confidence, the auto-accepted 100s last", async () => {
+    api.uploadChatFile.mockResolvedValue(VIEW({
+      pending: 3, months: null,
+      columns: [
+        row("Auto100a", { field: "customer_id" }),
+        row("Auto90", { field: "invoice_date", confidence: 90 }),
+        row("Needs", { state: "needs", source: "needs", confidence: null, pending: true }),
+        row("Unsure50", { field: "amount", state: "unsure", confidence: 50, pending: true }),
+        row("Auto100b", { field: "currency" }),
+        row("Ai", { field: "segment", state: "ai", source: "ai", confidence: null, pending: true }),
+        row("Unsure20", { field: "revenue_type", state: "unsure", confidence: 20, pending: true }),
+        row("Done", { field: "service_start", state: "corrected", source: "ai", confidence: null, decision: "correct" }),
+      ],
+    }));
+    await mount();
+    await pick([file("rev.csv")]);
+    const order = [...q("mapping-table-revenue").querySelectorAll("tbody tr[data-testid^='column-row-']")]
+      .map((tr) => tr.getAttribute("data-testid").replace("column-row-", ""));
+    expect(order).toEqual(["Needs", "Ai", "Unsure20", "Unsure50", "Done", "Auto90", "Auto100a", "Auto100b"]);
+    expect(sortColumns([row("b", { confidence: 100 }), row("a", { confidence: 100 })]).map((c) => c.column)).toEqual(["b", "a"]);
+  });
+
+  test("the confidence cell is never a dash: the number, needs confirmation, or reused", async () => {
+    api.uploadChatFile.mockResolvedValue(VIEW({
+      pending: 2, columns: [
+        row("Rule", { field: "customer_id" }),
+        row("Ai", { field: "segment", state: "ai", source: "ai", confidence: null, pending: true }),
+        row("Saved", { field: "amount", source: "saved", confidence: 100 }),
+        row("SavedLow", { field: "currency", source: "saved", state: "unsure", confidence: 60, pending: true }),
+        row("Needs", { state: "needs", source: "needs", confidence: null, pending: true }),
+        row("Chosen", { field: "revenue_type", state: "confirmed", source: "decision", confidence: null, decision: "confirm" }),
+        row("Memo", { state: "unused", source: null, confidence: null }),
+      ],
+    }));
+    await mount();
+    await pick([file("rev.csv")]);
+    await click(q("unused-toggle-revenue"));
+    const cells = Object.fromEntries(["Rule", "Ai", "Saved", "SavedLow", "Needs", "Chosen", "Memo"].map((c) => [c, q(`confidence-${c}`).textContent]));
+    expect(cells).toEqual({ Rule: "100", Ai: "needs confirmation", Saved: "reused", SavedLow: "reused", Needs: "needs confirmation",
+                            Chosen: "confirmed", Memo: "0" });
+    Object.values(cells).forEach((text) => expect(text).not.toMatch(dash));
+    const by = Object.fromEntries(["Rule", "Ai", "Saved", "Needs", "Chosen"].map((c) => [c, q(`source-${c}`).textContent]));
+    expect(by).toEqual({ Rule: "Rules", Ai: "AI suggestion – confirm", Saved: "Saved from earlier upload", Needs: "You – choose", Chosen: "You" });
+  });
+
+  test("a rule row the analyst confirmed or corrected is now the analyst's", () => {
+    expect(mappedBy(row("a", { state: "confirmed", decision: "confirm" }))).toBe("You");
+    expect(mappedBy(row("a", { state: "corrected", decision: "correct", source: "ai" }))).toBe("You");
+    expect(S9_confidence(row("a", { state: "confirmed", decision: "confirm", confidence: 30 }))).toBe("30");
+  });
+
+  test("the month range shows once the date column is confirmed, and no text stands in for it before", () => {
+    expect(S5_head(VIEW())).toBe("Detected: Revenue lines · 1,240 rows · 24 months (Jan 2023 – Dec 2024)");
+    expect(S5_head(VIEW({ months: null }))).toBe("Detected: Revenue lines · 1,240 rows");
+  });
+
+  test("a collapsible box 'Why this step matters' sits above the mapping table, open, with the agreed text", async () => {
+    api.uploadChatFile.mockResolvedValueOnce(VIEW()).mockResolvedValueOnce(VIEW({ dtype: "pnl", file: "pnl.csv" }));
+    await mount();
+    await pick([file("rev.csv"), file("pnl.csv")]);
+    const box = q("why-this-matters");
+    expect(all("why-this-matters").length).toBe(1);
+    expect(box.tagName).toBe("DETAILS");
+    expect(box.open).toBe(true);
+    expect(q("why-this-matters-title").textContent).toBe("Why this step matters");
+    expect(box.compareDocumentPosition(q("mapping-table-revenue")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(box.contains(q("mapping-table-revenue"))).toBe(false);
+    expect([...box.querySelectorAll("p")].map((p) => p.textContent)).toEqual([
+      "Every figure in this audit depends on how the columns are interpreted. If a column is mapped incorrectly—for example, bookings are treated as revenue, or an invoice date as a service date—the resulting calculations may look correct but be wrong.",
+      "The app suggests a mapping for each column and indicates its confidence level. High-confidence mappings are accepted automatically, but you can change them. Low-confidence mappings appear at the top of the table and require your review.",
+      "No calculations begin until all required columns are confirmed.",
+      "Your choices are saved with the audit and automatically reused if you upload the same file again.",
+    ]);
+    expect(S25_PARAGRAPHS).toHaveLength(4);
+    await act(async () => { box.open = false; });
+    expect(box.open).toBe(false);
   });
 
   test("a confidence lowered by the values says why (S9)", async () => {

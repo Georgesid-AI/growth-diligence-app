@@ -368,13 +368,13 @@ class DeleteConfirm(BaseModel):
 @api.delete("/audits/{audit_id}")
 async def delete_audit(audit_id: str, payload: Optional[DeleteConfirm] = Body(default=None)):
     """Delete the audit and every document of it in every collection (CLAUDE.md rule 22). The company name
-    goes in the body, never the URL, so no access log holds it; it is matched exactly after trimming, ignoring
-    case. A wrong or missing name deletes nothing."""
+    goes in the body, never the URL, so no access log holds it; it is matched after trimming leading and trailing whitespace,
+    exactly and case-sensitively, as the dialog does. A wrong or missing name deletes nothing."""
     a = await db.audits.find_one({"id": audit_id})
     if not a:
         raise HTTPException(404, "Audit not found")
-    typed = ((payload.confirm if payload else "") or "").strip().lower()
-    if not typed or typed != str(a.get("company_name") or "").strip().lower():
+    typed = ((payload.confirm if payload else "") or "").strip()
+    if not typed or typed != str(a.get("company_name") or "").strip():
         raise HTTPException(400, "Type the company name to delete this audit")
     await db.audits.delete_one({"id": audit_id})
     await db.datasets.delete_many({"audit_id": audit_id})
@@ -954,8 +954,14 @@ async def list_deck_candidates(audit_id: str):
             d.get("ai_status") in (None, structures.PYTHON_ONLY)
     rank = {d["deck_id"]: i for i, d in enumerate(found)}
     candidates = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0}).to_list(10000)
-    candidates.sort(key=lambda c: (rank.get(c.get("deck_id"), len(rank)), c.get("status") != "pending",
-                                   _first_page(c), c.get("order", 0)))
+    # Ascending by slide or page across all decks (a tie goes to the more recent deck), then reading order on the page:
+    # top to bottom in bands of 2% of the height, then left to right, then the order the parser found them in.
+    candidates.sort(key=lambda c: (_first_page(c), rank.get(c.get("deck_id"), len(rank)), *_reading(c), c.get("order", 0)))
+    peers = {}
+    for c in candidates:
+        peers.setdefault(c.get("deck_id"), []).append(c)
+    for c in candidates:
+        c["confidence"] = deck_claims.confidence(c, peers[c.get("deck_id")])
     return sanitize({"decks": found, "candidates": candidates})
 
 
@@ -972,6 +978,13 @@ def _edited_period(value: dict, before: dict, fiscal_year_end: int) -> dict:
 
 def _period_fields(value: dict) -> dict:
     return {k: value.get(k) for k in ("period_text", "period_start", "period_end")}
+
+
+def _reading(candidate: dict) -> tuple:
+    """(band, left) of a candidate's first line on its page; (inf, inf) when the page has no layout, so those keep the
+    order the parser found them in."""
+    top, left = candidate.get("reading") or (None, None)
+    return (float("inf"), float("inf")) if top is None else (round(top / 0.02), left)
 
 
 def _first_page(candidate: dict) -> int:
@@ -1015,10 +1028,11 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
         raise HTTPException(400, "Edit the row's values by period")
     if "target_date" in edits:
         edits.update(_period_fields(_edited_period({"target_date": edits["target_date"]}, current, year_end)))
-    if current.get("claim_type") == structures.verify.OTHER and "parsed" not in current and \
+    if current.get("claim_type") in (structures.verify.OTHER, deck_claims.UNKNOWN) and "parsed" not in current and \
             (payload.status == "approved" or (edits and "claim_type" not in edits)):
-        # An item the model labelled "other" is listed as type Other; it is approved only once its type is edited
-        # to a claim type (structure-labelling.md section 4). An edit approves, so it needs the type too.
+        # An item the model labelled "other" is listed as type Other, a figure no heading names a type for as type
+        # Unknown; either is approved only once its type is edited to a claim type (structure-labelling.md section 4,
+        # deck-parser.md section 2). An edit approves, so it needs the type too.
         raise HTTPException(400, "Choose a claim type for this item before approving it")
     if edits:
         changes = {**edits, "status": "edited"}
@@ -1186,8 +1200,11 @@ async def audit_blockers(audit_id: str):
         raise HTTPException(404, "Audit not found")
     out = []
     revenue = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"}, {"_id": 0, "mapped_at": 1})
-    if not revenue or not revenue.get("mapped_at"):
+    if not revenue:
         out.append({"kind": "revenue_file_missing", "text": "Revenue file missing: upload and map it to compute metrics."})
+    elif not revenue.get("mapped_at"):
+        # The file is there; its mapping waits for the analyst. Still the same hard blocker, worded as what is left to do.
+        out.append({"kind": "revenue_file_missing", "text": "Revenue file uploaded – confirm the mapping to compute metrics."})
     if audit.get("results"):
         _, rows = await _claim_rows(audit_id, audit)
         for r in rows:

@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 import AuditHub from "./AuditHub";
 import * as api from "@/lib/api";
 import { CONSENT_EXPLAINER, CONSENT_LABEL } from "@/lib/auditForm";
-import { S18_DELETE, S19_USAGE_TOTALS } from "@/lib/chatUpload";
+import { S18_MISMATCH, S19_USAGE_TOTALS } from "@/lib/chatUpload";
 
 jest.mock("@/lib/api", () => ({
   listAudits: jest.fn(),
@@ -105,15 +105,40 @@ describe("delete audit and the usage totals", () => {
     el.dispatchEvent(new Event("input", { bubbles: true }));
   });
 
-  test("the dialog says S18 and Delete is enabled only when the typed name matches, trimmed and in any case", async () => {
+  test("the dialog is titled with the company, names it in bold in the body, and Delete waits for an exact, case-sensitive match", async () => {
     await act(async () => { q("delete-audit-a1").click(); });
-    expect(q("delete-dialog-text").textContent).toBe(S18_DELETE);
+    expect(q("delete-dialog-title").textContent).toBe("Delete Acme SaaS Inc.?");
+    expect(q("delete-dialog-text").textContent).toBe(
+      "Type Acme SaaS Inc. to delete this audit with its files, mappings and results. This cannot be undone.");
+    expect(q("delete-dialog-name").tagName).toBe("STRONG");
+    expect(q("delete-dialog-name").textContent).toBe("Acme SaaS Inc.");
     const button = q("confirm-delete-a1");
     expect(button.disabled).toBe(true);
-    await type(q("delete-name-a1"), "Acme SaaS");
-    expect(button.disabled).toBe(true);
-    await type(q("delete-name-a1"), "  acme saas inc.  ");
-    expect(button.disabled).toBe(false);
+    expect(q("delete-mismatch")).toBeNull();
+    jest.useFakeTimers();
+    try {
+      for (const wrong of ["Acme SaaS", "acme saas inc.", "ACME SAAS INC."]) {
+        await type(q("delete-name-a1"), wrong);
+        expect(button.disabled).toBe(true);
+        expect(q("delete-mismatch")).toBeNull();                    // not while typing
+        await act(async () => { jest.advanceTimersByTime(900); });
+        expect(q("delete-mismatch")).toBeNull();
+        await act(async () => { jest.advanceTimersByTime(200); });  // about a second without typing
+        expect(q("delete-mismatch").textContent).toBe(S18_MISMATCH);
+        await type(q("delete-name-a1"), wrong + "x");               // typing again hides it
+        expect(q("delete-mismatch")).toBeNull();
+      }
+      await type(q("delete-name-a1"), "Acme");                      // blur shows it at once
+      await act(async () => { q("delete-name-a1").dispatchEvent(new FocusEvent("focusout", { bubbles: true })); });
+      expect(q("delete-mismatch").textContent).toBe(S18_MISMATCH);
+      expect(S18_MISMATCH).toBe("Name does not match");
+      await type(q("delete-name-a1"), "  Acme SaaS Inc.  ");        // surrounding spaces are trimmed
+      expect(button.disabled).toBe(false);
+      await act(async () => { jest.advanceTimersByTime(1200); });
+      expect(q("delete-mismatch")).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   test("Delete sends the name in the call, never in a URL, and nothing is sent before it matches", async () => {
@@ -121,7 +146,7 @@ describe("delete audit and the usage totals", () => {
     await type(q("delete-name-a1"), "wrong");
     await act(async () => { q("confirm-delete-a1").click(); });
     expect(api.deleteAudit).not.toHaveBeenCalled();
-    await type(q("delete-name-a1"), "Acme SaaS Inc.");
+    await type(q("delete-name-a1"), " Acme SaaS Inc. ");
     await act(async () => { q("confirm-delete-a1").click(); });
     expect(api.deleteAudit).toHaveBeenCalledWith("a1", "Acme SaaS Inc.");
   });

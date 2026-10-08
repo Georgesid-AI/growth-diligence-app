@@ -102,6 +102,9 @@ CLAIM_TYPES = ("revenue", "revenue_growth", "growth", "retention", "sales", "cus
                "gross_margin", "gross_profit", "costs", "ebitda", "net_profit", "people", "product", "market",
                "cash", "burn", "runway", "ltv", "cac", "customer_lifetime", "ltv_cac", "trials_per_day",
                "months_to_profitability")
+# A figure no line and no heading names a type for: listed as "unknown" and approved only once the analyst chooses a
+# type (docs/specs/deck-parser.md section 2), like the model's "other" (structure-labelling.md section 4).
+UNKNOWN = "unknown"
 # A net loss is a negative net profit: "Net loss of $2M" is stored as -2,000,000.
 _NET_LOSS = re.compile(r"(?i)\bnet loss(?:es)?\b")
 # A gross margin given as an amount ("Gross margin £1.2M") is gross profit.
@@ -500,12 +503,42 @@ def _label(text: str) -> str:
     return text if len(text) <= _LABEL_MAX else text[:_LABEL_MAX - 1] + "…"
 
 
-def _borrow_keyword(texts: Iterable[str]) -> Optional[Tuple[str, str]]:
-    """(family, text) of the first text that holds a claim keyword."""
+class _Text(str):
+    """The joined text of a text box (or of a slide title) that keeps its lines, so a label can name the one line that
+    holds the keyword (docs/specs/deck-parser.md section 2: "Label from" is a single heading)."""
+
+    def __new__(cls, lines: Iterable[str]):
+        lines = list(lines)
+        text = super().__new__(cls, " ".join(lines))
+        text.lines = lines
+        return text
+
+
+HEADING_MAX = 59       # the label length of deck-parser.md section 7: a box this short is one (wrapped) heading
+
+
+def _heading(text: str, start: int, end: int) -> str:
+    """The heading that holds the keyword at start..end. A box or title that fits HEADING_MAX is one heading, wrapped
+    over its lines ("Spend as" / "% of revenue"); a longer one holds several, and the heading is the line the keyword
+    sits on (the lines it runs over, if it wraps: "MARKET" / "SIZE")."""
+    lines = getattr(text, "lines", None)
+    if not lines or len(lines) < 2 or len(text) <= HEADING_MAX:
+        return str(text)
+    held, at = [], 0
+    for line in lines:
+        if at < end and start < at + len(line):
+            held.append(line)
+        at += len(line) + 1
+    return " ".join(held) or str(text)
+
+
+def _borrow_keyword(texts: Iterable[str]) -> Optional[Tuple[str, str, str]]:
+    """(family, text, heading) of the first text that holds a claim keyword; the heading is the one line of the text
+    that holds it (the text itself when it is one line)."""
     for text in texts:
         found = _keywords(text)
         if found:
-            return _type(found[0], found), text
+            return _type(found[0], found), text, _heading(text, found[0]["start"], found[0]["end"])
     return None
 
 
@@ -539,14 +572,14 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
         return next((r for s, e, r in refs if s <= pos < e), refs[0][2])
 
     def claim(pos, family, value=None, high=None, unit=None, currency=None, date=None, label=None, date_from=None,
-              stated=False, period_text=None):
+              stated=False, period_text=None, type_from="line"):
         # "_stated": the date is the figure's own, its column header's or its box's period, not one
         # borrowed by position; only stated periods are compared for a deck inconsistency.
         return {"claim_type": family, "value": value, "value_high": high, "unit": unit, "currency": currency,
                 "target_date": date, "period_text": period_text if date else None, "snippet": _snippet(line, pos),
                 "label_from": label and _label(label),
                 "date_from": date_from and date_from != label and _label(date_from) or None, "sources": [ref_at(pos)],
-                "_stated": stated}
+                "type_from": None if family == UNKNOWN else type_from, "_stated": stated}
 
     out = []
     for n in numbers:
@@ -559,7 +592,7 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
         elif borrowed:
             family = borrowed[0]
         elif date_words:
-            family = "product"
+            family = UNKNOWN          # only a date word: no line and no heading names a type, so it is not guessed
         else:
             continue
         if family == "gross_margin" and n["currency"] and _GROSS_MARGIN.search(borrowed[1] if borrowed else line):
@@ -583,8 +616,9 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
             stated = date is not None
         out.append(claim(n["pos"], family, n["value"], n["value_high"], n["unit"], n["currency"],
                          own_date["date"] if own_date else date and date[0],
-                         label=borrowed and borrowed[1], date_from=date and date[1], stated=stated,
-                         period_text=own_date["text"] if own_date else date and date[2]))
+                         label=borrowed and borrowed[2], date_from=date and date[1], stated=stated,
+                         period_text=own_date["text"] if own_date else date and date[2],
+                         type_from="line" if own else "heading"))
     if numbers:
         return out
     if dates:
@@ -596,8 +630,11 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
                 return []
         # A bare date under a milestone ("Positive EBITDA" / "Q2 2024") takes the milestone's type.
         family = "ebitda" if not keywords and (borrowed or [None])[0] == "ebitda" else "product"
+        if not keywords and not borrowed:
+            family = UNKNOWN              # a date word alone names no type
         return [claim(d["start"], _type(_nearest(keywords, d), keywords) if keywords else family, date=d["date"],
-                      label=family != "product" and borrowed[1] or None, stated=True, period_text=d["text"])
+                      label=family not in ("product", UNKNOWN) and borrowed[2] or None, stated=True, period_text=d["text"],
+                      type_from="line" if keywords else "heading")
                 for d in dates if d["kind"] != "year" or keywords]
     # No figure at all: a product line ("Launch the API", a roadmap bullet) or a break-even
     # milestone ("Positive EBITDA") takes a nearby date.
@@ -609,7 +646,8 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
     date = _borrow_date(context)
     if not date:
         return []
-    return [claim(0, family, date=date[0], label=borrowed and borrowed[1], date_from=date[1], period_text=date[2])]
+    return [claim(0, family, date=date[0], label=borrowed and borrowed[2], date_from=date[1], period_text=date[2],
+                  type_from="line" if own else "heading")]
 
 
 # ---------------------------------------------------------------------------
@@ -740,10 +778,10 @@ def _contexts(units: List[Dict]) -> Dict[int, List[str]]:
         placed = [m["bbox"] for m in members if m["bbox"]]
         bbox = [min(b[0] for b in placed), min(b[1] for b in placed), max(b[2] for b in placed),
                 max(b[3] for b in placed)] if placed else None
-        shapes[key] = (" ".join(m["text"] for m in members), bbox)
+        shapes[key] = (_Text(m["text"] for m in members), bbox)
     out = {}
     for page, members in pages.items():
-        title = " ".join(m["text"] for m in members if m["title"])
+        title = _Text(m["text"] for m in members if m["title"])
         for u in members:
             texts = []
             if u["box"] is not None and not u.get("table_row"):
@@ -927,7 +965,9 @@ def detect_candidates(blocks: List[Dict], file: str, fiscal_year_end: int = 12) 
             found.append(resolve_period(c, fiscal_year_end))
         if u.get("table_row"):
             found = _row_series(found, u["headers"])
+        box = u.get("bbox")
         for c in found:
+            c["reading"] = [round(box[1], 3), round(box[0], 3)] if box else None      # top, left: the reading order
             key = (c["claim_type"], c["value"], c["value_high"], c["unit"], c["currency"], c["target_date"],
                    c["period_start"], c["period_end"],
                    tuple((i["value"], i["value_high"], i["target_date"], i["period_start"], i["period_end"])
@@ -940,9 +980,31 @@ def detect_candidates(blocks: List[Dict], file: str, fiscal_year_end: int = 12) 
                 kept["_stated"] = kept["_stated"] or c["_stated"]
                 for a, b in zip(kept.get("by_period") or (), c.get("by_period") or ()):
                     a["_stated"] = a["_stated"] or b["_stated"]
-    found = list(merged.values())
+    found = _merge_unknown(list(merged.values()))
     _flag_inconsistencies(found)
     return found
+
+
+def _merge_unknown(found: List[Dict]) -> List[Dict]:
+    """A date-only claim typed Unknown that gives the same figure and period as a Product claim is that claim: its
+    sources join it (before issue "Unknown type" both were Product and merged, so no row appears)."""
+    def rest(c):
+        return (c["value"], c["value_high"], c["unit"], c["currency"], c["target_date"], c["period_start"], c["period_end"],
+                tuple((i["value"], i["value_high"], i["target_date"], i["period_start"], i["period_end"])
+                      for i in c.get("by_period") or ()))
+    product = {}
+    for c in found:
+        if c["claim_type"] == "product":
+            product.setdefault(rest(c), c)
+    out = []
+    for c in found:
+        into = product.get(rest(c)) if c["claim_type"] == UNKNOWN else None
+        if into is None:
+            out.append(c)
+            continue
+        into["sources"] += [s for s in c["sources"] if s not in into["sources"]]
+        into["_stated"] = into["_stated"] or c["_stated"]
+    return out
 
 
 def _header_like(cells: List[Dict]) -> bool:
@@ -1026,3 +1088,47 @@ def claim_values(candidate: Dict) -> List[Dict]:
                  "sources": [i["source"]], "_stated": i.get("_stated")} for i in candidate["by_period"]]
     return [{k: candidate.get(k) for k in ("value", "value_high", "target_date", "period_start", "period_end",
                                            "sources", "_stated")}]
+
+
+# ---------------------------------------------------------------------------
+# Confidence of a candidate (docs/specs/deck-parser.md section 6)
+# ---------------------------------------------------------------------------
+def _place(source: Dict) -> Tuple:
+    return tuple(source.get(k) for k in ("slide", "page", "kind", "table", "row", "col", "cell"))
+
+
+def _value_keys(candidate: Dict) -> set:
+    return {(candidate["claim_type"], v["value"], v["value_high"], candidate.get("unit"), candidate.get("currency"))
+            for v in claim_values(candidate) if v["value"] is not None}
+
+
+def _corroborated(candidate: Dict, peers: List[Dict]) -> bool:
+    """The value is stated at another place of the deck: a duplicate merged into this candidate from another slide or
+    page, or another candidate of the deck with the same type, value, unit and currency. The cells of one table row
+    are one place."""
+    keys = _value_keys(candidate)
+    if not candidate.get("by_period") and len({_place(s) for s in candidate.get("sources") or ()}) > 1:
+        return True
+    mine = {_place(s) for s in candidate.get("sources") or ()}
+    return any(other is not candidate and keys & _value_keys(other) and not mine & {_place(s) for s in other.get("sources") or ()}
+               for other in peers)
+
+
+def confidence(candidate: Dict, peers: List[Dict]) -> Dict:
+    """High, Medium or Low from the checks the parser already runs, never from a model's own score: the claim has a
+    date, a unit (or currency), a heading or line that names its type, and its value is corroborated elsewhere in the
+    deck. No failed check is High, one is Medium, two or more Low. A check that cannot apply to a claim with no
+    value (unit, corroboration) is skipped. `peers` are the candidates of the same deck."""
+    values = claim_values(candidate)
+    has_value = any(v["value"] is not None for v in values)
+    named = candidate.get("claim_type") not in (UNKNOWN, "other") and \
+        bool(candidate.get("type_from", "line") or "parsed" in candidate)
+    checks = [("no date", all(v["target_date"] for v in values))]
+    if has_value:
+        checks.append(("no unit", bool(candidate.get("unit") or candidate.get("currency"))))
+    checks.append(("no heading", named))
+    if has_value:
+        checks.append(("not corroborated", _corroborated(candidate, peers)))
+    failed = [name for name, ok in checks if not ok]
+    level = "High" if not failed else "Medium" if len(failed) == 1 else "Low"
+    return {"level": level, "failed": failed, "text": level + (" – " + ", ".join(failed) if failed else "")}

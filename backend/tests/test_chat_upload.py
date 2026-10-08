@@ -439,7 +439,9 @@ def _full_audit(api):
 def test_delete_needs_the_company_name_in_the_body_and_a_wrong_name_deletes_nothing(api):
     _full_audit(api)
     before = _remaining(api.db, AUDIT)
-    for body in (None, {"confirm": ""}, {"confirm": "Other Company"}, {"confirm": COMPANY + "x"}):
+    # Exact and case-sensitive after trimming, as the dialog is: another case and a partial name delete nothing.
+    for body in (None, {"confirm": ""}, {"confirm": "Other Company"}, {"confirm": COMPANY + "x"}, {"confirm": COMPANY.upper()},
+                 {"confirm": COMPANY.lower()}, {"confirm": COMPANY[:-1]}):
         r = api.request("DELETE", f"/api/audits/{AUDIT}", json=body) if body is not None else api.delete(f"/api/audits/{AUDIT}")
         assert r.status_code == 400
     assert _remaining(api.db, AUDIT) == before
@@ -450,7 +452,7 @@ def test_the_right_name_leaves_no_document_with_the_audit_id_in_any_collection(a
     other = {**AUDIT_DOC, "id": "other", "company_name": "Other"}
     api.db["audits"].docs.append(other)
     assert "column_mappings" in _remaining(api.db, AUDIT) and "datasets" in _remaining(api.db, AUDIT)
-    r = api.request("DELETE", f"/api/audits/{AUDIT}", json={"confirm": f"  {COMPANY.upper()} "})
+    r = api.request("DELETE", f"/api/audits/{AUDIT}", json={"confirm": f"  {COMPANY}  "})
     assert r.status_code == 200, r.text
     assert _remaining(api.db, AUDIT) == {}
     assert [a["id"] for a in api.db["audits"].docs] == ["other"]
@@ -535,10 +537,17 @@ def _kinds(api):
     return [b["kind"] for b in r.json()["blockers"]]
 
 
+def _texts(api):
+    return [b["text"] for b in api.get(f"/api/audits/{AUDIT}/blockers").json()["blockers"]]
+
+
 def test_the_banner_shows_the_revenue_file_missing_until_it_is_mapped_and_clears(api):
     assert _kinds(api) == ["revenue_file_missing"]
+    assert _texts(api) == ["Revenue file missing: upload and map it to compute metrics."], "no revenue file at all"
     api.db["datasets"].docs.append({"audit_id": AUDIT, "dtype": "revenue", "mapped_at": None})
     assert _kinds(api) == ["revenue_file_missing"], "uploaded but its mapping is not saved"
+    assert _texts(api) == ["Revenue file uploaded – confirm the mapping to compute metrics."], \
+        "the file exists: the banner says what is left to do, not that the file is missing"
     api.db["datasets"].docs[0]["mapped_at"] = "2026-10-08T00:00:00"
     assert _kinds(api) == []
 

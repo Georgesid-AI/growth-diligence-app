@@ -59,8 +59,10 @@ hired, launches; of two overlapping keywords the longer one counts):
 - Net profit: net profit, net income, net loss. A net loss is stored as a negative net profit
   ("Net loss of $2M" → -2,000,000).
 - People: hires, headcount, team, recruitment, attrition
-- Product: launch, release, roadmap, ship, milestone, Q1–Q4, month names
-- Market: TAM, SAM, SOM, addressable market, market size. The bare word "market" does not count.
+- Product: launch, release, roadmap, ship, milestone. Q1–Q4 and month names give a date, and a line or box that holds
+  one of the product words gives the Product type; a date word alone names no type (Unknown type, below).
+- Market size (stored as `market`; shown as "Market size" since 2026-10-08, it was "Market"): TAM, SAM, SOM,
+  addressable market, market size. The bare word "market" does not count.
 - Claim types of issue #45 (decisions of 2026-10-06). The keywords of LTV, CAC and customer life move here from
   Sales and Retention, and "profitable" with a figure in months from EBITDA:
   - LTV: LTV, (customer) lifetime value (a lifetime value, in a currency)
@@ -84,6 +86,19 @@ hired, launches; of two overlapping keywords the longer one counts):
   Three of them also borrow their label from the right box: "$7m left" from "Cash on hand" (was "Seed to Series
   A …"), "18 months" from "Runway *" (was "“Default alive” † Profitable in 10 months") and moz p20 "~100" from "# of
   New Free Trials / Day" (was "Number of PRO Subscribers"). 236 candidates before and after.
+Unknown type (2026-10-08, George): the type is never guessed. A figure whose own line has no claim keyword, and which
+finds none in the text it may borrow from, takes the type Unknown ("Unknown – choose type") when its line holds a date
+word (Q1–Q4, a month name); without a date word it is not a candidate, as before. A line whose only figures are dates
+takes the same type when it has no keyword and borrows none ("Q3 2025" alone); with a borrowed keyword it keeps the
+type it had. An Unknown claim is listed, cannot be approved as it stands, and is approved by an Edit that chooses a
+type (the server answers 400 otherwise, as for the model's "other", structure-labelling.md §4). A date-only Unknown
+claim with the same date as a Product claim of the deck is merged into it, as both were Product before, so no row
+appears or disappears. Each candidate also stores `type_from`: "line" (its own line holds the keyword), "heading" (the
+keyword came from borrowed text) or none (Unknown); the Confidence column reads it (§6). On the 10 test decks (measured
+over `detect_candidates`, no network): 225 candidates before and after, recall 121 of
+124 (98%) and precision 109 of 225 (48.4%) unchanged; 8 candidates change from Product to Unknown: front-b p11 "Q3 14"
+and "Q3 15", moz p1 "July 2011" and p2 "Sept. 2010", clevergig p3 "The Economist, January 2015", uber p21
+"SmartPhones, Aug2008", tea p12 "Completed May, 2021" and "Completed April, 2022". No other type changes.
 The unit of a count is the noun it counts: "800 paying users". If a Customers or Users keyword
 appears within the next 4 words after the number, it is the unit (">50 Dutch temporary work
 agencies" → agencies); otherwise the word right after the number. The search stops at the next
@@ -118,7 +133,14 @@ A date is taken first from the figure's column header, then from a period line a
 its text box ("23 Y/E" over "Gross Profit £150K" and "5K Users"), then as above. The box period
 dates figures only; the period line itself is never a candidate.
 The snippet is the figure's own line. A borrowed label is kept apart and shown below the
-snippet as "Label from: <text>"; a borrowed date as "Date from: <text>".
+snippet as "Label from: <text>"; a borrowed date as "Date from: <text>". "Label from" is the single heading that names
+the type, not every heading of the box or of the slide title (2026-10-08, George). A box or title of at most 59
+characters (the label length of §7) is one heading, wrapped over its lines ("Spend as" / "% of revenue"); a longer
+one holds several, and the heading is the line that holds the keyword (the lines it runs over, if the keyword wraps:
+"MARKET" / "SIZE"). The search order is unchanged, so no type changes. On the 10 test decks 22 of the 225 candidates
+show a shorter "Label from", and the labels of 40 characters or more go from 31 to 17 (moz p2 "SEOmoz launches its first
+subscription software product, …" → "SEOmoz launches its"; tea p11 three bullets → the one line with the keyword; the
+front-b tag list "Tech Media Travel Client Services …" → "Client Services Ecommerce …").
 A line with no figure becomes a candidate only if it is a product line (launch, release, ship,
 roadmap or milestone, its own or borrowed) or an EBITDA line ("Positive EBITDA") and it can
 borrow a date: a roadmap bullet, a break-even milestone. A bare date under an EBITDA line
@@ -193,6 +215,8 @@ These figures may inform the growth plan. They were identified automatically and
 ✎ Edit: Correct the figure, type, unit or date, then approve the claim. It will be added to the claim register and tested against the data.
 ✕ Reject: Exclude items that are not company claims, such as another company's figures, funds raised or chart axis labels. Rejected items remain in the record but are not used."
 - Approve: status "approved".
+- The type list the analyst chooses from is the plan claim types of §2 with "Market size" for `market`; "Unknown –
+  choose type" and the model's "Other" are listed but are not choices.
 - Edit: corrects type, value (low and high), unit, currency or date and approves the claim:
   status "edited", the parser's original values kept next to the edit. Approving an edited
   claim keeps it "edited". The snippet, borrowed label and sources cannot be edited.
@@ -207,8 +231,22 @@ These figures may inform the growth plan. They were identified automatically and
 - Every column of the approval list has a header; the value shows its unit or currency.
 - A deck selector sits above the claims table: one tab per deck, plus "All". Each tab shows the
   deck name and its claim count. It opens on the most recently uploaded deck.
-- Within a deck, claims to review come first, then the rest, each by slide or page. The order
-  is set when the list loads, so a row does not move while it is being reviewed.
+- Order (amended 2026-10-08, George): the claims table lists claims ascending by slide or page number: under "All"
+  across all decks (a tie goes to the more recent deck), and within each deck tab. Within a page the order is reading
+  order: top to bottom in bands of 2% of the page height, then left to right, then the order the parser found them in
+  (a claim with no layout, as in a .docx, keeps that order). A claim with several sources sits at its first page. To
+  review no longer comes first, and a reviewed claim does not move. The server sorts; each candidate stores `reading`
+  (top, left of its first line; for a model row, of the parsed line it cites), layout only, never sent to a model.
+- Confidence column (2026-10-08, George), after Date: High, Medium or Low, computed on read from checks Python
+  already runs, never from a model's own score: (1) a date is present; (2) a unit or currency is present; (3) a line
+  or heading names the type (`type_from`; for a model row a header cell or a keyword in its own text; an edited claim
+  counts as named; a claim stored before this column has no `type_from` and counts as named unless Unknown or Other);
+  (4) the value is corroborated elsewhere in the deck: another source of the merged claim on another slide or page,
+  or another candidate of the deck with the same type, value, unit and currency at another place (the cells of one
+  table row are one place). A claim with no value skips (2) and (4). No failed check is High, one Medium, two or more
+  Low, and the failed checks are named: "High", "Medium – not corroborated", "Low – no date, no heading". The names
+  are "no date", "no unit", "no heading", "not corroborated". The column is not an input to claim matching, and
+  nothing of it reaches the gateway (test_gateway_data_boundary.py names `confidence`, `type_from` and `reading`).
 
 ## 7. Structure detection (Python only, no LLM)
 Finds the structures that CLAUDE.md rule 16 lets the gateway read (docs/specs/llm-structure-reading.md). Every structure
