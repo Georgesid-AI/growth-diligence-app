@@ -714,6 +714,25 @@ def test_an_ambiguous_figure_reaches_its_row_with_both_readings_and_the_default_
     assert [r["ai_label"] for r in rows] == ["Verified"] * 3
 
 
+def test_a_model_row_records_where_its_type_came_from_and_where_it_sits_for_the_confidence_and_the_order():
+    """A header cell names the type of a model row ("heading"); with none, a keyword in the cell's own text does
+    ("line"); otherwise nothing does and the row shows "no heading". Its place on the page comes from the parsed line
+    (top, left), for the reading order of the approval list; without layout it is None."""
+    structure = v._struct([["", "FY2025"], ["Revenue", "£1,200,000"], ["", "£300"]])
+    blocks = [{"slide": 1, "kind": "table", "table": 1, "row": r, "col": c, "text": t, "bbox": [0.1 * c, 0.2 * r, 0.2, 0.3]}
+              for (r, c, t) in ((2, 2, "£1,200,000"), (3, 2, "£300"))]
+    listed = structure_items.list_items(structure)
+    checked = verify.verify(structure, listed, [_label("i1", "revenue"), _label("i2", "revenue")], ())
+    items = structures.approval_items(checked["items"])
+    labelled = structures.candidate_from_item(items[0], {**structure, "slide": 1, "table": 1}, {"file": "p.pdf", "blocks": blocks}, None, 12)
+    assert (labelled["label_from"], labelled["type_from"], labelled["reading"]) == ("Revenue", "heading", [0.4, 0.2])
+    bare = structures.candidate_from_item(items[1], {**structure, "slide": 1, "table": 1}, {"file": "p.pdf"}, None, 12)
+    assert (bare["label_from"], bare["type_from"], bare["reading"]) == (None, None, None)
+    from app.decks import claims
+    assert "no heading" in claims.confidence(bare, [bare])["failed"]
+    assert "no heading" not in claims.confidence(labelled, [labelled])["failed"]
+
+
 def test_a_ranges_two_items_make_one_approval_row_low_and_high():
     """A range is one row, its value the low end and value_high the high end, from the low end's label. It is Verified
     only when both ends are labelled with the same metric and Verified."""

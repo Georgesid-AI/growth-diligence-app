@@ -626,8 +626,10 @@ def test_the_deck_parser_never_imports_or_calls_the_gateway():
 def test_the_gateway_names_no_deck_text_snippet_or_source_field():
     """Static: no gateway module imports the deck package, or names the parsed-text collection
     or the parsed-text, snippet, borrowed-label or source-reference fields, or a table row's values
-    by period (each keeps its column header's text and its cell)."""
-    forbidden = {decks.TEXT_COLLECTION, "blocks", "snippet", "label_from", "date_from", "sources", "by_period"}
+    by period (each keeps its column header's text and its cell), or a claim's confidence, where its type came from
+    or where it sits on the page (layout and parser checks, computed in Python and shown to the analyst only)."""
+    forbidden = {decks.TEXT_COLLECTION, "blocks", "snippet", "label_from", "date_from", "sources", "by_period",
+                 "confidence", "type_from", "reading"}
     offenders = []
     for path in sorted((BACKEND / "app" / "llm").glob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
