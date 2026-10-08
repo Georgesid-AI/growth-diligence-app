@@ -1,5 +1,5 @@
 # Spec: Chat-style upload and column mapping
-Status: Draft; decisions of 2026-10-08 applied (§12). Location: docs/specs/chat-upload.md.
+Status: Final (2026-10-08); decisions applied (§12). Location: docs/specs/chat-upload.md.
 Replaces the content of the MappingWizard page. Supersedes in part docs/specs/llm-structure-reading.md §1 for
 the column-mapping path only: which columns are sent and from how many rows (§4.2). Everything else in that spec
 stands, including the rule-16 shape of what is sent and §9 (sent text is never stored).
@@ -276,7 +276,7 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 | S18 | delete dialog | Type the company name to delete this audit with its files, mappings and results. This cannot be undone. |
 | S19 | audit list | Usage totals (folded): files uploaded and refused by type; columns by rules, saved, AI, corrected (by reason); compute runs and failures; evidence labels; analyst changes; median days from first upload to export; tokens and cost by step; "Other" notes, newest first (at most 50). |
 | S20 | "Other" box placeholder | Why? Up to 60 characters; no file names, figures or names. |
-| S21 | "Other" note refused | Leave out file names, figures and anything copied from the file: this note is kept with the usage counts. |
+| S21 | "Other" note refused | Leave out file names, figures and cell values: this note is kept with the usage counts. |
 | S22 | Diagnostics section | Revenue reconciliation · columns: Month · Revenue file · P&L · Gap · Gap % · last row: Window total |
 
 ## 12. Decisions of 2026-10-08
@@ -288,7 +288,7 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 | Q4 | Banner rules | The window total of file against P&L, at most the last 12 months, above 2%; the revenue file is the required file; a beat counts as Contradicted. Per-month gaps are shown in the reconciliation evidence table, never as a blocker (§6.2) |
 | Q5 | The model's own confidence on screen | No: the schema is unchanged |
 | Q6 | Wording | S1–S19 approved, with S2 as proposed and the existing S17. "Other" gets a free-text box of up to 60 characters, kept with the counters, with no file names or values (§4.3, §7) |
-| — | Follow-up the same day | Approved: the reconciliation section on Diagnostics, with the banner link; the S19 extension; S20–S22. Column headers are allowed in "Other" notes; digits, cell text, file names, the company and client names and the engagement reference stay refused; logs still never hold header text or notes (§4.3, §8, §9) |
+| — | Follow-up the same day | Approved: the reconciliation section on Diagnostics, with the banner link; the S19 extension; S20–S22. Column headers are allowed in "Other" notes; digits, cell text, file names, the company and client names and the engagement reference stay refused; logs still never hold header text or notes (§4.3, §8, §9). S21 reworded to match ("…file names, figures and cell values…"); spec final |
 
 ## 13. Decided (engineering, rule 19)
 - Detection is Python only.
