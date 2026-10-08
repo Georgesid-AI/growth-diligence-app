@@ -25,6 +25,11 @@ rest is computed on read by a pure module.
 
 A table row candidate gives one claim per value by period, id `<candidate id>#<n>`, n counted from 1.
 
+Not inputs (2026-10-08): the Confidence column of the deck list (deck-parser.md §6) and a candidate's `type_from` and
+`reading` are not read here, so a claim's confidence changes no metric, gap or label. A candidate of type Unknown
+(deck-parser.md §2) or Other cannot be approved without a type, so it never reaches the register; "Market size" is the
+label of the claim type `market`, and its row is Unsupported (table 2a: every other claim type) as before.
+
 ## 2. Matching
 Python proposes the metric from the claim type, a keyword in its snippet or borrowed label, and its unit
 (table 2a); with none the row is Unsupported unless the analyst picks one. A segment is proposed when the snippet
