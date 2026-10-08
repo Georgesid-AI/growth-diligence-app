@@ -21,6 +21,7 @@ from starlette.concurrency import run_in_threadpool
 
 import growth_engine as ge
 import demo_data
+from schemas import metrics as contract
 from app import formatting as fmt
 from app import disclosure as disclosure_mod
 from app import narrative_export
@@ -1056,6 +1057,7 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
 async def _claim_rows(audit_id: str, audit: dict) -> tuple:
     """(register candidates, register rows in rank order). The rows are computed on read from the stored results and
     the analyst's inputs on the candidates (docs/specs/claim-matching.md section 6); nothing is sent to a model."""
+    audit = await _current_audit(audit_id, audit, strict=False)
     claims = await db[decks.CANDIDATES_COLLECTION].find(
         {"audit_id": audit_id, "status": {"$in": list(REGISTER_STATUSES)}}, {"_id": 0}).to_list(10000)
     claims.sort(key=lambda c: (c.get("file") or "", c.get("order", 0)))
@@ -1198,6 +1200,7 @@ async def audit_blockers(audit_id: str):
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
     if not audit:
         raise HTTPException(404, "Audit not found")
+    audit = await _current_audit(audit_id, audit, strict=False)
     out = []
     revenue = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"}, {"_id": 0, "mapped_at": 1})
     if not revenue:
@@ -1218,7 +1221,7 @@ async def audit_blockers(audit_id: str):
                                     f"({r['deck_file']}, {r['page_ref']})."})
     rec = (audit.get("results") or {}).get("revenue_reconciliation")
     if rec and rec.get("available") and rec.get("blocker"):
-        pct = "—" if rec["gap_pct"] is None else f"{abs(rec['gap_pct']):g}"
+        pct = "—" if rec["gap_pct"] is None else f"{abs(rec['gap_pct']) * 100:g}"    # a fraction, shown as a percent
         ccy = audit.get("reporting_currency") or ""
         out.append({"kind": "revenue_reconciliation", "citation": rec["source"], "link": f"/audit/{audit_id}/diagnostics",
                     "text": f"Revenue file and P&L differ by {pct}% over {rec['first']}–{rec['last']} "
@@ -1281,6 +1284,33 @@ async def _run_compute(audit_id: str) -> dict:
     return results
 
 
+async def _current_audit(audit_id: str, audit: dict, strict: bool = True) -> dict:
+    """The audit with results of the current engine contract (schemas/metrics.py). Results stored before it hold
+    whole-number percents, which every reader would show 100 times too large; they are recomputed from the stored files
+    on first read (deterministic Python, no model, no cost). If that is not possible the read fails (409), or with
+    strict=False the audit is returned without results: they are never shown, and a caller that must keep working (the
+    banner, the usage totals) reads "not computed" instead of a figure 100 times too large."""
+    results = audit.get("results")
+    if not results or results.get("contract_version") == contract.CONTRACT_VERSION:
+        return audit
+    try:
+        results = await _run_compute(audit_id)
+    except HTTPException:
+        if strict:
+            raise HTTPException(409, "Results predate the current engine contract; recompute needed")
+        return {**audit, "results": None}
+    return {**audit, "results": results, "metrics_stale": False}
+
+
+async def _recompute_if_old(audit_id: str) -> None:
+    """Results stored before the engine contract are recomputed before the gateway reads them, so a narrative is never
+    refused for a payload the dashboard is about to replace. A recompute that is not possible is left to the gateway,
+    which refuses the old payload."""
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "id": 1, "results": 1})
+    if audit and audit.get("results"):
+        await _current_audit(audit_id, audit, strict=False)
+
+
 @api.post("/audits/{audit_id}/compute")
 async def compute_audit(audit_id: str):
     return await _run_compute(audit_id)
@@ -1335,6 +1365,7 @@ async def get_results(audit_id: str):
         raise HTTPException(404, "Audit not found")
     if not a.get("results"):
         raise HTTPException(409, "Audit not computed yet")
+    a = await _current_audit(audit_id, a)
     keys = ("id", "company_name", "reporting_currency", "target_arr", "target_date", "as_of_month", "status", "computed_at",
             "metrics_stale")
     return sanitize({"audit": {k: a.get(k) for k in keys}, "results": a["results"]})
@@ -1344,6 +1375,7 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
                           narratives: Optional[list] = None) -> io.BytesIO:
     """Numeric cells with Excel number formats (see app/formatting.py), so the
     display follows the formatting rules while analysts can still sum and sort."""
+    contract.validate_for_export(r)    # schema, then the unit check; ContractError before any cell is written
     ccy = r.get("reporting_currency", "")
     cur = ccy or None                  # the currency code is a unit: last in the label's one bracket
     lab = fmt.label_with               # the shared label builder - one bracket, fixed order
@@ -1674,13 +1706,22 @@ async def export_audit(audit_id: str):
         raise HTTPException(404, "Audit not found")
     if not a.get("results"):
         raise HTTPException(409, "Audit not computed yet")
+    a = await _current_audit(audit_id, a)
     try:
         narratives = await llm_gateway.narratives_for_run(db, audit_id)
     except Exception:  # the export never depends on the narrative service
         narratives = []
     block = llm_gateway.disclosure_from(narratives)
+    try:
+        buf = build_export_workbook(a, a["results"], block["text"] if block else None, narratives)
+    except contract.ContractError as exc:
+        safe = exc.log_text                  # field names and counts only (schemas/metrics.py), never a value
+        logger.error("export blocked: run_id=%s: %s", audit_id, safe)
+        raise HTTPException(500, f"Export blocked, no file written: {exc}")
+    except fmt.UnitError:
+        logger.error("export blocked: run_id=%s: a cell does not fit its unit", audit_id)
+        raise HTTPException(500, "Export blocked, no file written: a cell does not fit its unit")
     await _usage_update(audit_id, lambda u: u.__setitem__("first_export_at", u["first_export_at"] or usage_mod.now()))
-    buf = build_export_workbook(a, a["results"], block["text"] if block else None, narratives)
     safe = "".join(c for c in (a.get("company_name") or "audit") if c.isalnum() or c in " -_").strip().replace(" ", "_")
     fname = f"{safe or 'audit'}_growth_diligence.xlsx"
     return StreamingResponse(
@@ -1700,6 +1741,7 @@ async def generate_narrative(run_id: str, step: str):
     Returns 200 with narrative_status="unavailable" on any LLM-side failure -
     the computed metrics still come back, so the dashboard is never blocked.
     """
+    await _recompute_if_old(run_id)
     try:
         result = await llm_gateway.generate_narrative(db, run_id, step)
     except llm_gateway.GatewayError as exc:
@@ -1718,6 +1760,7 @@ async def read_narrative(run_id: str, step: str):
     Never calls a provider, so a dashboard load can never spend. Generation is
     the POST below, which is the only path that can.
     """
+    await _recompute_if_old(run_id)
     try:
         result = await llm_gateway.read_cached_narrative(db, run_id, step)
     except llm_gateway.GatewayError as exc:
@@ -1787,7 +1830,8 @@ app.add_middleware(
 
 # 4: demo audits carry a client name, an engagement reference, consent and a fiscal year-end.
 # 5: demo P&L revenue reconciles with the revenue file (one demo audit keeps a deliberate 5% gap).
-SEED_VERSION = 5
+# 6: results carry contract_version 1 (percents as fractions, whole counts and days).
+SEED_VERSION = 6
 
 
 @app.on_event("startup")

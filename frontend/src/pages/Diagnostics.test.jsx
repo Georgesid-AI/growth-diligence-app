@@ -12,7 +12,7 @@ jest.mock("@/components/Layout", () => ({ Layout: ({ children }) => <div>{childr
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const src = (file, rows) => ({ file, sheet: "CSV", rows, row_numbers: [2] });
-const month = (m, file, pnl) => ({ month: m, revenue_file: file, pnl, gap: file - pnl, gap_pct: pnl ? Math.round(((file - pnl) / pnl) * 10000) / 100 : null,
+const month = (m, file, pnl) => ({ month: m, revenue_file: file, pnl, gap: file - pnl, gap_pct: pnl ? Math.round(((file - pnl) / pnl) * 10000) / 10000 : null,
   source: { revenue_file: src("rev.csv", "row 2"), pnl: src("pnl.csv", "row 2") } });
 const REC = { available: true, first: "2024-01", last: "2024-02", file_total: 2000, pnl_total: 2000, gap: 0, gap_pct: 0, blocker: false,
   by_month: [month("2024-01", 1100, 1000), month("2024-02", 900, 1000)] };

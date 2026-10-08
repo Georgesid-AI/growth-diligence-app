@@ -27,10 +27,10 @@ const tooltipStyle = { backgroundColor: "#FFFFFF", border: "1px solid #E5E7EB", 
 
 function cohortTier(v) {
   if (v === null || v === undefined) return "bg-slate-50 text-slate-600";
-  if (v >= 100) return "bg-emerald-700 text-white";
-  if (v >= 90) return "bg-emerald-200 text-emerald-900";
-  if (v >= 80) return "bg-emerald-100 text-emerald-900";
-  if (v >= 70) return "bg-amber-100 text-amber-900";
+  if (v >= 1) return "bg-emerald-700 text-white";           // retention is a fraction: 1 is 100%
+  if (v >= 0.9) return "bg-emerald-200 text-emerald-900";
+  if (v >= 0.8) return "bg-emerald-100 text-emerald-900";
+  if (v >= 0.7) return "bg-amber-100 text-amber-900";
   return "bg-rose-100 text-rose-900";
 }
 
@@ -181,8 +181,8 @@ export default function Dashboard() {
     }
   }
 
-  const nrrStatus = r.nrr ? (r.nrr.overall_pct >= 100 ? "growth_positive" : "warning") : "neutral";
-  const churnStatus = r.gross_churn ? (r.gross_churn.overall_pct <= 8 ? "growth_positive" : r.gross_churn.overall_pct <= 15 ? "warning" : "critical") : "neutral";
+  const nrrStatus = r.nrr ? (r.nrr.overall_pct >= 1 ? "growth_positive" : "warning") : "neutral";
+  const churnStatus = r.gross_churn ? (r.gross_churn.overall_pct <= 0.08 ? "growth_positive" : r.gross_churn.overall_pct <= 0.15 ? "warning" : "critical") : "neutral";
 
   return (
     <Layout audit={audit}>
@@ -298,7 +298,7 @@ export default function Dashboard() {
                 <XAxis dataKey="month" {...chartAxis} minTickGap={30} />
                 <YAxis {...chartAxis} domain={["auto", "auto"]} tickFormatter={fmtPct} width={52} />
                 <RTooltip contentStyle={tooltipStyle} formatter={(v) => [fmtPct(v), "NRR"]} />
-                <ReferenceLine y={100} stroke="#64748B" strokeDasharray="4 4" />
+                <ReferenceLine y={1} stroke="#64748B" strokeDasharray="4 4" />
                 <Line type="monotone" dataKey="nrr_pct" stroke="#34D399" strokeWidth={2} dot={false} isAnimationActive={false} />
               </LineChart>
             </ResponsiveContainer>

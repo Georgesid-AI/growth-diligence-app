@@ -10,7 +10,7 @@
  *   countUp   required / implied count, rounds up   128.3 -> "129"
  *   days      rounds up, "days" suffix              42.1  -> "43 days"
  *   months    one decimal, nearest                  12.24 -> "12.2 months"
- *   pct       whole number, nearest                 106.41 -> "106%"
+ *   pct       a fraction as a whole percent, nearest 1.0641 -> "106%"
  *   ratio     always two decimals, "x"              1.28  -> "1.28x"
  */
 export const PLACEHOLDER = "—";
@@ -54,7 +54,9 @@ export const fmtDays = (v) => {
 };
 // CAC payback is a duration in months: one decimal, nearest - not rounded up.
 export const fmtMonths = (v) => (missing(v) ? PLACEHOLDER : `${roundHalfUp(v, 1).toFixed(1)} months`);
-export const fmtPct = (v) => (missing(v) ? PLACEHOLDER : `${group(roundHalfUp(v))}%`);
+// A percent is held as its fraction (1.0641 is 106.41%); reading it for display means times 100. toPrecision drops the
+// binary noise of the product (0.085 * 100 is 8.500000000000002), so a .5 rounds up as in the backend.
+export const fmtPct = (v) => (missing(v) ? PLACEHOLDER : `${group(roundHalfUp(Number((Number(v) * 100).toPrecision(12))))}%`);
 export const fmtRatio = (v) => (missing(v) ? PLACEHOLDER : `${roundHalfUp(v, 2).toFixed(2)}x`);
 
 const BY_KIND = {

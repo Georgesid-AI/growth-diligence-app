@@ -36,7 +36,7 @@ No other function here touches Mongo for audit data, and no module in this packa
 
 Order of operations for a generation request:
 
-    step config -> load computed results -> build payload -> allowlist
+    step config -> load computed results -> validate against MetricsPayload -> build payload -> allowlist
     -> pseudonymise segments + identifiers -> cache lookup -> advisory lock
     -> guards -> provider -> strict parse
     -> numeric guard -> re-identify -> cache -> log
@@ -51,6 +51,8 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Tuple
 
+from schemas.metrics import safe_problems
+
 from .. import disclosure, formatting
 from ..structures import redact as structure_redact
 from . import cache, guards, prompt_store, redaction, schemas
@@ -61,6 +63,9 @@ logger = logging.getLogger("growth.llm")
 
 CALLS_COLLECTION = guards.CALLS_COLLECTION
 RESULTS_COLLECTION = "audits"
+
+# Shown when the stored metrics do not match the contract (schemas/metrics.py): no prompt is built, no model is called.
+NARRATIVE_NOT_GENERATED = "Narrative could not be generated. The computed metrics below are unaffected."
 
 REQUEST_TIMEOUT_SECONDS = 60.0
 MAX_PROVIDER_RETRIES = 2          # network, 408/409/429 and 5xx (529 overloaded included) only
@@ -161,7 +166,25 @@ class GatewayError(Exception):
 # The single data accessor
 # ---------------------------------------------------------------------------
 async def load_computed_results(db, run_id: str, step: str) -> dict:
-    """Read ONLY the calc engine's computed output for this run.
+    """`load_checked_results` without the contract verdict."""
+    return (await load_checked_results(db, run_id, step))[0]
+
+
+def contract_problems(results: Any) -> List[str]:
+    """Where `results` does not match MetricsPayload or breaks a unit; empty when it is sound. Paths and error types only:
+    a value can be a segment name or a reason text that quotes the upload, and this goes to a log line."""
+    return safe_problems(results)
+
+
+def contract_failed(run_id: str, step: str, problems: List[str], metrics: dict) -> NarrativeResponse:
+    """No model call: log the problems, say so, and hand back the metrics so the dashboard still renders them."""
+    logger.error("metrics contract violated for run %s step %s: %d problem(s), no model call: %s",
+                 run_id, step, len(problems), "; ".join(problems[:20]))
+    return _unavailable(run_id, step, NARRATIVE_NOT_GENERATED, metrics)
+
+
+async def load_checked_results(db, run_id: str, step: str) -> Tuple[dict, List[str]]:
+    """Read ONLY the calc engine's computed output for this run, and check it against the contract.
 
     The projection is the enforcement: `results` and the run's own identifiers
     are the only fields fetched. `datasets` (uploaded rows and file bytes) lives
@@ -182,7 +205,7 @@ async def load_computed_results(db, run_id: str, step: str) -> dict:
 
     results = doc["results"]
     slice_ = _slice_for_step(results, step)
-    return {
+    return ({
         "run_id": run_id,
         "reporting_currency": doc.get("reporting_currency"),
         "target_arr": doc.get("target_arr"),
@@ -190,7 +213,7 @@ async def load_computed_results(db, run_id: str, step: str) -> dict:
         "as_of_month": doc.get("as_of_month") or results.get("as_of_month"),
         "computed_at": doc.get("computed_at"),
         "metrics": slice_,
-    }
+    }, contract_problems(results))
 
 
 # Provenance row references: which spreadsheet rows fed a figure. Useful on the
@@ -832,7 +855,7 @@ async def generate_narrative(
 
     # Data load is outside the try: a missing run is a real 404, not a
     # narrative-unavailable case.
-    computed = await load_computed_results(db, run_id, step)
+    computed, problems = await load_checked_results(db, run_id, step)
     metrics = computed["metrics"]
 
     if not config.get("enabled"):
@@ -840,6 +863,8 @@ async def generate_narrative(
             run_id=run_id, step=step, narrative_status="unavailable",
             reason=f"step {step!r} is scaffolded but has no prompt yet", metrics=metrics,
         )
+    if problems:                      # before any prompt is loaded or built
+        return contract_failed(run_id, step, problems, metrics)
 
     try:
         prompt = prompt_store.load(config["prompt"])
@@ -1107,8 +1132,10 @@ async def read_cached_narrative(db, run_id: str, step: str) -> NarrativeResponse
             reason=f"unknown step {step!r}", metrics={},
         )
 
-    computed = await load_computed_results(db, run_id, step)
+    computed, problems = await load_checked_results(db, run_id, step)
     metrics = computed["metrics"]
+    if problems:
+        return contract_failed(run_id, step, problems, metrics)
 
     try:
         prompt = prompt_store.load(config["prompt"])

@@ -15,6 +15,7 @@ pytest.importorskip("motor")
 from fastapi.testclient import TestClient  # noqa: E402
 
 import server  # noqa: E402
+import contract_fixtures as cf  # noqa: E402
 import test_llm_gateway as t  # noqa: E402
 import growth_engine as ge  # noqa: E402
 import pandas as pd  # noqa: E402
@@ -491,7 +492,7 @@ def test_the_window_total_decides_and_a_single_month_above_2_percent_is_only_in_
     rec = _reconcile(file, pnl)
     assert rec["available"] and rec["gap"] == 0 and rec["blocker"] is False
     april = next(r for r in rec["by_month"] if r["month"] == "2024-04")
-    assert (april["gap"], april["gap_pct"]) == (100.0, 11.11), "the month shows in the evidence table"
+    assert (april["gap"], april["gap_pct"]) == (100.0, 0.1111), "the month shows in the evidence table"
     assert len(rec["by_month"]) == 12 and all(r["source"]["revenue_file"]["row_numbers"] and r["source"]["pnl"]["row_numbers"]
                                               for r in rec["by_month"]), "every row cites its rows"
     assert rec["by_month"][0]["source"]["revenue_file"]["row_numbers"] == [10]
@@ -501,9 +502,9 @@ def test_the_window_total_decides_and_a_single_month_above_2_percent_is_only_in_
 def test_a_total_gap_above_2_percent_is_a_blocker_and_exactly_2_is_not():
     pnl = [(m, 1000.0) for m in MONTHS]
     over = _reconcile([(m, 1030.0) for m in MONTHS], pnl)
-    assert over["blocker"] is True and over["gap_pct"] == 3.0
+    assert over["blocker"] is True and over["gap_pct"] == 0.03
     edge = _reconcile([(m, 1020.0) for m in MONTHS], pnl)
-    assert edge["blocker"] is False and edge["gap_pct"] == 2.0
+    assert edge["blocker"] is False and edge["gap_pct"] == 0.02
     beat = _reconcile([(m, 970.0) for m in MONTHS], pnl)
     assert beat["blocker"] is True, "a gap in either direction counts"
 
@@ -525,7 +526,7 @@ def test_without_a_pnl_there_is_no_check_no_section_and_no_blocker():
 
 
 def _banner_audit(api, results, mapped=True):
-    api.db["audits"].docs[0]["results"] = results
+    api.db["audits"].docs[0]["results"] = cf.stored(**results)
     api.db["audits"].docs[0]["status"] = "computed"
     if mapped:
         api.db["datasets"].docs.append({"audit_id": AUDIT, "dtype": "revenue", "mapped_at": "2026-10-08T00:00:00"})
@@ -560,7 +561,7 @@ def test_the_banner_shows_a_reconciliation_gap_above_2_percent_with_its_citation
     assert body[0]["text"] == ("Revenue file and P&L differ by 10% over 2024-01–2024-12 (13,200 EUR vs 12,000 EUR).")
     assert body[0]["citation"]["revenue_file"]["row_numbers"] and body[0]["link"] == f"/audit/{AUDIT}/diagnostics"
     small = _reconcile([(m, 1010.0) for m in MONTHS], [(m, 1000.0) for m in MONTHS])
-    api.db["audits"].docs[0]["results"] = {"revenue_reconciliation": small}
+    api.db["audits"].docs[0]["results"] = cf.stored(revenue_reconciliation=small)
     assert _kinds(api) == []
 
 
@@ -689,4 +690,4 @@ def test_the_demo_audits_reconcile_within_2_percent_except_the_one_with_a_delibe
         kinds = [b["kind"] for b in client.get(f"/api/audits/{audit['id']}/blockers").json()["blockers"]]
         found[audit["company_name"].split()[0]] = (rec["gap_pct"], rec["blocker"], kinds)
     assert found["Apex"] == (0.0, False, [])
-    assert found["OmniData"] == (5.0, True, ["revenue_reconciliation"])
+    assert found["OmniData"] == (0.05, True, ["revenue_reconciliation"])

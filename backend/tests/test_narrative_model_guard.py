@@ -28,7 +28,7 @@ def test_narrative_model_is_read_from_narrative_model_env(monkeypatch):
 # --- numeric guard -----------------------------------------------------------
 # The engine's segment projection for a shrinking segment, as the model receives it.
 COMPUTED = {"metrics": {"segment_paths": {
-    "stage_one": {"segments": {"SMB": {"nrr_pct": 76.0, "nrr_base_customers": 65, "start_arr": 324_787.5,
+    "stage_one": {"segments": {"SMB": {"nrr_pct": 0.76, "nrr_base_customers": 65, "start_arr": 324_787.5,
                                        "projected_arr": 246_838.13, "change_arr": -77_949.37}}},
     "landed": {"12": {"segments": {"SMB": {"new_customers": 89}}}},
 }}}
