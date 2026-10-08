@@ -28,20 +28,29 @@ export default function DeckPanel({ auditId }) {
   const [confirming, setConfirming] = useState(null);
 
   // After a load, keep the chosen tab if its deck still exists; otherwise show the most recent deck.
-  const load = useCallback((select) => getDecks(auditId).then((d) => {
+  // A background poll (silent) that meets an error, a 404 included, stops for good and shows nothing; so does a
+  // reply that lands after the panel is left or the audit is deleted.
+  const alive = useRef(true);
+  const stopped = useRef(false);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  const load = useCallback((select, silent = false) => getDecks(auditId).then((d) => {
+    if (!alive.current) return;
     setData(d);
     setTab((current) => {
       const wanted = select || current;
       return wanted && (wanted === ALL_DECKS || d.decks.some((x) => x.deck_id === wanted)) ? wanted : defaultDeck(d.decks);
     });
-  }).catch(() => toast.error("Could not load deck claims")), [auditId]);
+  }).catch(() => {
+    if (silent) { stopped.current = true; return; }
+    if (alive.current) toast.error("Could not load deck claims");
+  }), [auditId]);
   useEffect(() => { load(); }, [load]);
 
   // A deck's structures are read after its upload returns: check back while one is still being read.
   const polls = useRef(0);
   useEffect(() => {
-    if (!data.decks.some((d) => d.ai_status === "reading") || polls.current >= 24) return undefined;
-    const timer = setTimeout(() => { polls.current += 1; load(); }, 5000);
+    if (!data.decks.some((d) => d.ai_status === "reading") || polls.current >= 24 || stopped.current) return undefined;
+    const timer = setTimeout(() => { polls.current += 1; load(undefined, true); }, 5000);
     return () => clearTimeout(timer);
   }, [data, load]);
 

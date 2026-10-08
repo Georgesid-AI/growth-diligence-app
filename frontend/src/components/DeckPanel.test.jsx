@@ -75,3 +75,45 @@ test("Label from shows the one heading the server found", async () => {
   await act(async () => { q("deck-tab-d2").click(); });
   expect(q("candidate-label").textContent).toBe("Label from: MARKET SIZE");
 });
+
+describe("the AI reading poll", () => {
+  const notFound = Object.assign(new Error("404"), { response: { status: 404 } });
+  const reading = { decks: [{ ...DECKS[0], ai_status: "reading" }], candidates: [] };
+  const unhandled = jest.fn();
+  beforeEach(() => { process.on("unhandledRejection", unhandled); unhandled.mockClear(); });
+  afterEach(() => { process.off("unhandledRejection", unhandled); jest.useRealTimers(); });
+
+  const remount = async () => {
+    await act(async () => { root.unmount(); });
+    host.remove();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    jest.useFakeTimers();
+    await act(async () => { root.render(<DeckPanel auditId="a1" />); });
+  };
+
+  test("an audit deleted mid-poll: the 404 is caught, the poll stops, nothing is shown or thrown", async () => {
+    api.getDecks.mockReset();
+    api.getDecks.mockResolvedValueOnce(reading).mockRejectedValue(notFound);
+    await remount();
+    expect(api.getDecks).toHaveBeenCalledTimes(1);
+    await act(async () => { jest.advanceTimersByTime(5000); });
+    expect(api.getDecks).toHaveBeenCalledTimes(2);
+    await act(async () => { jest.advanceTimersByTime(60000); });
+    expect(api.getDecks).toHaveBeenCalledTimes(2);          // stopped
+    expect(require("sonner").toast.error).not.toHaveBeenCalled();
+    expect(unhandled).not.toHaveBeenCalled();
+  });
+
+  test("leaving the page mid-poll: no further request and no state set after unmount", async () => {
+    api.getDecks.mockReset();
+    api.getDecks.mockResolvedValue(reading);
+    await remount();
+    await act(async () => { root.unmount(); });
+    await act(async () => { jest.advanceTimersByTime(60000); });
+    expect(api.getDecks).toHaveBeenCalledTimes(1);
+    expect(unhandled).not.toHaveBeenCalled();
+    root = createRoot(host);                                  // afterEach unmounts
+  });
+});

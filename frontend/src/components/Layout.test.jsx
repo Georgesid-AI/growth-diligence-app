@@ -57,3 +57,15 @@ test("the audit list has no banner and asks for none", async () => {
   expect(q("blocker-banner")).toBeNull();
   expect(api.getBlockers).not.toHaveBeenCalled();
 });
+
+test("an audit deleted while its banner is up: the 404 is caught, the banner clears, and later events ask nothing", async () => {
+  api.getBlockers.mockResolvedValue(BLOCKERS.slice(0, 1));
+  await mount(AUDIT);
+  expect(q("blocker-revenue_file_missing")).not.toBeNull();
+  api.getBlockers.mockRejectedValue(Object.assign(new Error("404"), { response: { status: 404 } }));
+  await act(async () => { window.dispatchEvent(new Event(BLOCKERS_CHANGED)); });
+  expect(q("blocker-banner")).toBeNull();
+  const calls = api.getBlockers.mock.calls.length;
+  await act(async () => { window.dispatchEvent(new Event(BLOCKERS_CHANGED)); });
+  expect(api.getBlockers.mock.calls.length).toBe(calls);
+});

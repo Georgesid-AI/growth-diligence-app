@@ -14,10 +14,12 @@ export default function BlockerBanner({ auditId }) {
 
   useEffect(() => {
     let live = true;
-    const load = () => getBlockers(auditId).then((b) => live && setBlockers(b || [])).catch(() => live && setBlockers([]));
+    const stop = () => { live = false; window.removeEventListener(BLOCKERS_CHANGED, load); };
+    // A failed read, a 404 after the audit is deleted included, empties the banner and ends the listening.
+    const load = () => getBlockers(auditId).then((b) => live && setBlockers(b || [])).catch(() => { if (live) setBlockers([]); stop(); });
     load();
     window.addEventListener(BLOCKERS_CHANGED, load);
-    return () => { live = false; window.removeEventListener(BLOCKERS_CHANGED, load); };
+    return stop;
   }, [auditId]);
 
   if (!blockers.length) return null;
