@@ -97,25 +97,35 @@ def header_key(dtype: str, columns: List[str]) -> str:
     return hashlib.sha256(("\x00".join([dtype] + names)).encode("utf-8")).hexdigest()
 
 
-def column_mapping_input(columns: List[str], rows: List[Dict], customer_columns: Tuple[str, ...] = ()
+MAPPING_SAMPLE_ROWS = 20          # a column mapping is read from the first 20 data rows (chat-upload.md section 4.2)
+
+
+def column_mapping_input(columns: List[str], rows: List[Dict], customer_columns: Tuple[str, ...] = (),
+                         only: Optional[Tuple[str, ...]] = None, max_rows: int = MAPPING_SAMPLE_ROWS
                          ) -> Tuple[List[Dict], Dict[int, List[str]], Dict[int, Dict]]:
     """(header cells, samples, profiles) for a sheet stored as `columns` and `rows`.
 
     The header stack is the column names and the rows below them that hold no number other than a
     year, capped at the 3 rows nearest the data. A column whose values are numbers or dates
     (SAMPLE_SHARE of them) sends up to 3 samples; any other column, and a customer column whatever
-    its values, sends a profile only. No text cell value is ever returned.
+    its values, sends a profile only. No text cell value is ever returned. `only` limits all three to
+    those columns (the ones the rules could not decide); positions stay the columns' sheet positions.
+    Values come from the first `max_rows` data rows.
     """
     stack = [[_header_text(c) for c in columns]]
     body = list(rows)
     while body and _header_like([body[0].get(c) for c in columns]) and len(stack) < len(rows):
         stack.append([_header_text(body[0].get(c)) for c in columns])
         body = body[1:]
+    body = body[:max_rows]
     stack = stack[-redact.MAX_HEADER_ROWS:]
+    keep = set(columns) if only is None else set(only)
     headers = [{"row": r, "col": c, "text": text} for r, row in enumerate(stack, 1)
-               for c, text in enumerate(row, 1) if text]
+               for c, text in enumerate(row, 1) if text and columns[c - 1] in keep]
     samples, profiles = {}, {}
     for c, name in enumerate(columns, 1):
+        if name not in keep:
+            continue
         values = [row.get(name) for row in body if row.get(name) is not None and str(row.get(name)).strip()]
         if not values and not _header_text(name):
             continue                       # an empty column with no header says nothing
@@ -129,10 +139,11 @@ def column_mapping_input(columns: List[str], rows: List[Dict], customer_columns:
 
 
 def column_mapping_text(columns: List[str], rows: List[Dict], company_name: Optional[str], mapping: Dict[str, str],
-                        customer_columns: Tuple[str, ...] = (), withheld: Tuple[str, ...] = ()) -> str:
+                        customer_columns: Tuple[str, ...] = (), withheld: Tuple[str, ...] = (),
+                        only: Optional[Tuple[str, ...]] = None) -> str:
     """The redacted column-mapping text the model reads (`withheld`: the client name and engagement
-    reference, see redact.withheld_values)."""
-    headers, samples, profiles = column_mapping_input(columns, rows, customer_columns)
+    reference, see redact.withheld_values; `only`: the undecided columns, see column_mapping_input)."""
+    headers, samples, profiles = column_mapping_input(columns, rows, customer_columns, only)
     headers, _ = redact.redact_structure(headers, company_name, mapping, withheld)
     return redact.column_text(headers, samples, profiles)
 

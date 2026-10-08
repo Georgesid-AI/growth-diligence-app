@@ -274,7 +274,7 @@ def api(monkeypatch):
     import server
     import test_llm_gateway as t
     db = t.FakeDB()
-    db["audits"].docs += [{"id": "audit-1", "results": None}, {"id": "audit-2", "results": None}]
+    db["audits"].docs += [{"id": "audit-1", "company_name": "Testco", "results": None}, {"id": "audit-2", "company_name": "Other Co", "results": None}]
     monkeypatch.setattr(server, "db", db)
     return TestClient(server.app, raise_server_exceptions=False), db
 
@@ -340,7 +340,7 @@ def test_delete_audit_removes_its_parsed_text_and_candidates_only(api):
     client, db = api
     for audit in ("audit-1", "audit-2"):
         assert _upload(client, audit, "03-buffer.pptx", (DECKS / "03-buffer.pptx").read_bytes()).status_code == 200
-    r = client.delete("/api/audits/audit-1")
+    r = client.request("DELETE", "/api/audits/audit-1", json={"confirm": "Testco"})
     assert r.status_code == 200, r.text
     assert r.json()["decks_purged"]["deck_text"] == 1 and r.json()["decks_purged"]["deck_candidates"] > 0
     for name in (decks.TEXT_COLLECTION, decks.CANDIDATES_COLLECTION):

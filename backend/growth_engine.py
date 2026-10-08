@@ -708,7 +708,7 @@ def compute_revenue_series(rev: pd.DataFrame, billing_terms: dict, fx: dict, as_
     has_service = "service_start" in rev.columns and "service_end" in rev.columns
     has_rtype = "revenue_type" in rev.columns
     has_seg = "segment" in rev.columns
-    records, seg_map, one_off_seg, rows = [], {}, {}, []
+    records, seg_map, one_off_seg, rows, month_rows = [], {}, {}, [], {}
     for _, row in rev.iterrows():
         cust = row.get("customer_id")
         if cust is None or (isinstance(cust, float) and pd.isna(cust)) or str(cust).strip() == "":
@@ -738,6 +738,8 @@ def compute_revenue_series(rev: pd.DataFrame, billing_terms: dict, fx: dict, as_
             records.append((cust, m, amount / len(months)))
         if row.get("_row") is not None and not pd.isna(row.get("_row")):
             rows.append(int(row["_row"]))
+            for m in months:
+                month_rows.setdefault(_period_str(m), []).append(int(row["_row"]))
         seg = row.get("segment") if has_seg else None
         if seg is not None and not (isinstance(seg, float) and pd.isna(seg)) and str(seg).strip():
             (one_off_seg if one_off else seg_map).setdefault(cust, str(seg).strip())
@@ -752,7 +754,70 @@ def compute_revenue_series(rev: pd.DataFrame, billing_terms: dict, fx: dict, as_
         return empty
     months = pd.period_range(first, last, freq="M")
     by_cust = df.groupby(["customer_id", "month"])["amount"].sum().unstack(fill_value=0.0).reindex(columns=months, fill_value=0.0)
-    return {**_monthly_by_segment(by_cust, seg_map), "rows": sorted(set(rows))}
+    return {**_monthly_by_segment(by_cust, seg_map), "rows": sorted(set(rows)),
+            "month_rows": {m: sorted(set(r)) for m, r in month_rows.items()}}
+
+
+
+RECONCILIATION_TOLERANCE_PCT = 2.0     # a window gap above this is a blocker (chat-upload.md section 6.2)
+RECONCILIATION_MAX_MONTHS = 12
+
+
+def compute_revenue_reconciliation(series: dict, month_rows: dict, pnl: pd.DataFrame, rev_src: dict, pnl_src: dict):
+    """The revenue file's monthly revenue against the P&L revenue column (chat-upload.md section 6.2).
+
+    The window is the months both files cover up to the as-of month (`series` and `pnl` are already cut there), at
+    most the last 12. Only the window total decides `blocker`: gap = abs(file - P&L) / P&L above 2%. A single
+    month above 2% shows in `by_month` and nowhere else. Every row cites its revenue-file rows and its P&L rows.
+    None without a P&L. Server-only: it is in no narrative slice."""
+    if pnl is None or pnl.empty or "month" not in pnl.columns or "revenue" not in pnl.columns:
+        return None
+    file_by_month = {r["month"]: float(r["total"]) for r in (series or {}).get("data", [])}
+    pnl_by_month, pnl_rows = {}, {}
+    for _, r in pnl.iterrows():
+        m, v = _month_of(r.get("month")), r.get("revenue")
+        if m is None or v is None or pd.isna(v):
+            continue
+        key = _period_str(m)
+        pnl_by_month[key] = pnl_by_month.get(key, 0.0) + float(v)
+        if r.get("_row") is not None and not pd.isna(r.get("_row")):
+            pnl_rows.setdefault(key, []).append(int(r["_row"]))
+    window = sorted(set(file_by_month) & set(pnl_by_month))[-RECONCILIATION_MAX_MONTHS:]
+    if not window:
+        return {"available": False, "reason": "The revenue file and the P&L have no month in common up to the as-of month",
+                "by_month": []}
+
+    def ref(base, rows, rule):
+        s = SourceRef(base.get("file", "?"), base.get("sheet"))
+        s.add_rows(rows)
+        return s.to_dict(rule)
+
+    def pct(gap, base):
+        return None if not base else _round(gap / base * 100, 2)
+
+    by_month = []
+    for m in window:
+        gap = file_by_month[m] - pnl_by_month[m]
+        by_month.append({
+            "month": m, "revenue_file": _round(file_by_month[m]), "pnl": _round(pnl_by_month[m]), "gap": _round(gap),
+            "gap_pct": pct(gap, pnl_by_month[m]),
+            "source": {"revenue_file": ref(rev_src, (month_rows or {}).get(m, []), "Revenue by month, as in the revenue series"),
+                       "pnl": ref(pnl_src, pnl_rows.get(m, []), "P&L revenue column")}})
+    file_total = sum(file_by_month[m] for m in window)
+    pnl_total = sum(pnl_by_month[m] for m in window)
+    gap = file_total - pnl_total
+    gap_pct = pct(gap, pnl_total)
+    # A P&L total of 0 has no percentage ("—"); a file total against it is still a mismatch.
+    blocker = (abs(gap) / abs(pnl_total) * 100 > RECONCILIATION_TOLERANCE_PCT) if pnl_total else bool(round(file_total, 2))
+    all_file = sorted({r for m in window for r in (month_rows or {}).get(m, [])})
+    all_pnl = sorted({r for m in window for r in pnl_rows.get(m, [])})
+    return {
+        "available": True, "first": window[0], "last": window[-1], "tolerance_pct": RECONCILIATION_TOLERANCE_PCT,
+        "file_total": _round(file_total), "pnl_total": _round(pnl_total), "gap": _round(gap), "gap_pct": gap_pct,
+        "blocker": blocker, "by_month": by_month,
+        "source": {"revenue_file": ref(rev_src, all_file, "Revenue by month, summed over the window"),
+                   "pnl": ref(pnl_src, all_pnl, "P&L revenue column, summed over the window")},
+    }
 
 
 def _monthly_by_segment(frame: pd.DataFrame, seg_map: dict, count: bool = False) -> dict:
@@ -1647,9 +1712,14 @@ def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, confi
     revenue_series = guarded("Revenue by month", rev_src.get("file"), {"months": [], "segments": [], "data": [], "rows": []},
                              compute_revenue_series, rev, billing_terms, fx, as_of)
     rows = revenue_series.pop("rows", [])
+    month_rows = revenue_series.pop("month_rows", {})
     revenue_series["source"] = src(rev_src, rows, "Revenue = recurring lines spread over their service months as for MRR; "
                                                   "one-off lines in their invoice month")
     results["revenue_series"] = revenue_series
+    # Server-only like the two series: the revenue file against the P&L, window total and evidence table.
+    results["revenue_reconciliation"] = guarded("Revenue reconciliation", pnl_src.get("file"), None,
+                                                compute_revenue_reconciliation, revenue_series, month_rows, pnl,
+                                                rev_src, pnl_src)
     customers_series = guarded("Customers by month", rev_src.get("file"), {"months": [], "segments": [], "data": []},
                                compute_customers_series, mrr, seg_map)
     customers_series["source"] = src(rev_src, contrib_rows, "Customers = customers with MRR above 0 in the month")
