@@ -439,9 +439,9 @@ def _full_audit(api):
 def test_delete_needs_the_company_name_in_the_body_and_a_wrong_name_deletes_nothing(api):
     _full_audit(api)
     before = _remaining(api.db, AUDIT)
-    # Exact and case-sensitive, as the dialog is: another case, a trailing space and a partial name delete nothing.
+    # Exact and case-sensitive after trimming, as the dialog is: another case and a partial name delete nothing.
     for body in (None, {"confirm": ""}, {"confirm": "Other Company"}, {"confirm": COMPANY + "x"}, {"confirm": COMPANY.upper()},
-                 {"confirm": COMPANY.lower()}, {"confirm": COMPANY + " "}, {"confirm": COMPANY[:-1]}):
+                 {"confirm": COMPANY.lower()}, {"confirm": COMPANY[:-1]}):
         r = api.request("DELETE", f"/api/audits/{AUDIT}", json=body) if body is not None else api.delete(f"/api/audits/{AUDIT}")
         assert r.status_code == 400
     assert _remaining(api.db, AUDIT) == before
@@ -452,7 +452,7 @@ def test_the_right_name_leaves_no_document_with_the_audit_id_in_any_collection(a
     other = {**AUDIT_DOC, "id": "other", "company_name": "Other"}
     api.db["audits"].docs.append(other)
     assert "column_mappings" in _remaining(api.db, AUDIT) and "datasets" in _remaining(api.db, AUDIT)
-    r = api.request("DELETE", f"/api/audits/{AUDIT}", json={"confirm": COMPANY})
+    r = api.request("DELETE", f"/api/audits/{AUDIT}", json={"confirm": f"  {COMPANY}  "})
     assert r.status_code == 200, r.text
     assert _remaining(api.db, AUDIT) == {}
     assert [a["id"] for a in api.db["audits"].docs] == ["other"]

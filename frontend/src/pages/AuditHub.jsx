@@ -289,13 +289,20 @@ export default function AuditHub() {
   );
 }
 
-/** S18: Delete is enabled only when the typed text is the company name exactly, case included; the name goes in the body. */
-export const nameMatches = (typed, company) => !!typed && typed === (company || "");
+/** S18: Delete is enabled only when the typed text, trimmed, is the company name exactly, case included; the name goes in the body. */
+export const nameMatches = (typed, company) => !!typed.trim() && typed.trim() === (company || "").trim();
+export const MISMATCH_DELAY_MS = 1000;
 
 function DeleteAudit({ audit, onDelete }) {
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState("");
-  const mismatch = typed !== "" && !nameMatches(typed, audit.company_name);
+  const [settled, setSettled] = useState(false);       // S18b waits for a pause in typing, or for the box to lose focus
+  useEffect(() => {
+    setSettled(false);
+    const timer = setTimeout(() => setSettled(true), MISMATCH_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [typed]);
+  const mismatch = settled && typed.trim() !== "" && !nameMatches(typed, audit.company_name);
   return (
     <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) setTyped(""); }}>
       <DialogTrigger asChild>
@@ -310,13 +317,13 @@ function DeleteAudit({ audit, onDelete }) {
             {S18_BODY[0]}<strong className="font-semibold text-slate-900" data-testid="delete-dialog-name">{audit.company_name}</strong>{S18_BODY[1]}
           </DialogDescription>
         </DialogHeader>
-        <Input data-testid={`delete-name-${audit.id}`} value={typed} onChange={(e) => setTyped(e.target.value)}
+        <Input data-testid={`delete-name-${audit.id}`} value={typed} onChange={(e) => setTyped(e.target.value)} onBlur={() => setSettled(true)}
           autoComplete="off" aria-invalid={mismatch} className="bg-white border-[#E5E7EB]" />
         {mismatch && <p role="alert" className="text-xs text-rose-700 -mt-2" data-testid="delete-mismatch">{S18_MISMATCH}</p>}
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)} className="bg-transparent border-[#E5E7EB] text-slate-700">Cancel</Button>
           <Button data-testid={`confirm-delete-${audit.id}`} disabled={!nameMatches(typed, audit.company_name)}
-            onClick={() => { setOpen(false); onDelete(audit.id, typed); }} className="bg-rose-600 hover:bg-rose-500">Delete</Button>
+            onClick={() => { setOpen(false); onDelete(audit.id, typed.trim()); }} className="bg-rose-600 hover:bg-rose-500">Delete</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

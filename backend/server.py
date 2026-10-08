@@ -368,13 +368,13 @@ class DeleteConfirm(BaseModel):
 @api.delete("/audits/{audit_id}")
 async def delete_audit(audit_id: str, payload: Optional[DeleteConfirm] = Body(default=None)):
     """Delete the audit and every document of it in every collection (CLAUDE.md rule 22). The company name
-    goes in the body, never the URL, so no access log holds it; it is matched exactly, case included, as the dialog
-    does. A wrong or missing name deletes nothing."""
+    goes in the body, never the URL, so no access log holds it; it is matched after trimming leading and trailing whitespace,
+    exactly and case-sensitively, as the dialog does. A wrong or missing name deletes nothing."""
     a = await db.audits.find_one({"id": audit_id})
     if not a:
         raise HTTPException(404, "Audit not found")
-    typed = (payload.confirm if payload else "") or ""
-    if not typed or typed != str(a.get("company_name") or ""):
+    typed = ((payload.confirm if payload else "") or "").strip()
+    if not typed or typed != str(a.get("company_name") or "").strip():
         raise HTTPException(400, "Type the company name to delete this audit")
     await db.audits.delete_one({"id": audit_id})
     await db.datasets.delete_many({"audit_id": audit_id})

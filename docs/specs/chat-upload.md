@@ -177,10 +177,11 @@ boundary test is extended for it (rule 14).
 
 ### 6.3 Delete audit
 `DELETE /api/audits/{id}` takes the JSON body `{"confirm": "<company name>"}`. The name goes in the body, never
-the URL, so no access log holds it. Matching is exact and case-sensitive, with no trimming (amended 2026-10-08; it was
+the URL, so no access log holds it. Matching trims leading and trailing whitespace, then is exact and case-sensitive (amended 2026-10-08; it was
 exact after trimming, ignoring case): the server and the dialog use the same rule. A wrong or missing name gets a
-400 and deletes nothing. The dialog (S18) enables Delete only when the typed text is the company name exactly, and
-shows S18b under the box while the typed text is not empty and does not match. A test asserts that no
+400 and deletes nothing. The dialog (S18) enables Delete only when the typed text is the company name exactly (after trimming), and
+shows S18b under the box once the typed text is not empty, does not match, and either about one second has passed
+without typing or the box has lost focus (not on every keystroke). A test asserts that no
 document with the audit id remains in any collection: datasets (the stored rows, i.e. the raw file content),
 deck_text, column_mappings (every saved version) and the rest. There is no mapping_sample collection to remove
 (§1). The demo seed and the tests that delete pass the name.
@@ -267,8 +268,8 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
     the order of §4.4; the detected line has no months text before the date column is confirmed (S5); the info box
     S25 is open, holds the four paragraphs word for word, sits above the first table and is one box for several files.
 12. Delete dialog (AuditHub.test.jsx; test_chat_upload.py): title and body of S18 with the name in bold; Delete stays
-    disabled for another case, a trailing or leading space and a partial name; S18b shows under the box on a mismatch
-    and not on an empty box; the server refuses the same texts and deletes nothing.
+    disabled for another case and a partial name, enabled with surrounding spaces; S18b shows under the box on a
+    mismatch only after a pause of about a second or on blur, never while typing, and not on an empty box; the server refuses the same texts and deletes nothing.
 13. Banner (test_chat_upload.py): S16a with no revenue file, S16d with a revenue file whose mapping is not confirmed,
     nothing once it is; one blocker of the kind, never two.
 
@@ -296,7 +297,7 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 | S16c | banner | Revenue file and P&L differ by {x}% over {first}–{last} ({file total} vs {P&L total}). |
 | S17 | narrative failed | Today's text, unchanged: "Narrative could not be generated. The computed metrics below are unaffected — they come from the calculation engine, not the narrative." |
 | S18 | delete dialog | Title: Delete {company name}? Body: Type **{company name}** to delete this audit with its files, mappings and results. This cannot be undone. (the name in bold, in both) |
-| S18b | delete dialog | Name does not match (under the box, while the typed text is not empty and is not the name exactly) |
+| S18b | delete dialog | Name does not match (under the box, after about a second without typing or when the box loses focus, while the trimmed text is not empty and is not the name exactly) |
 | S19 | audit list | Usage totals (folded): files uploaded and refused by type; columns by rules, saved, AI, corrected (by reason); compute runs and failures; evidence labels; analyst changes; median days from first upload to export; tokens and cost by step; "Other" notes, newest first (at most 50). |
 | S20 | "Other" box placeholder | Why? Up to 60 characters; no file names, figures or names. |
 | S21 | "Other" note refused | Leave out file names, figures and cell values: this note is kept with the usage counts. |
@@ -337,8 +338,8 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 - Amendment of 2026-10-08 (rule 19, engineering): a column with no proposal reads "You – choose" in "Mapped by" and
   "needs confirmation" in Confidence until decided; a decided AI suggestion or no-proposal column reads "confirmed" in
   Confidence; a rules-unused column scores 0, not a dash; a saved mapping reads "reused" even when the new data lowered
-  it and it waits for a click; the info box is one per page, above the first table; the delete match has no trimming
-  (a pasted trailing space shows S18b); S18b shows while typing a partial name; the banner keeps one kind
+  it and it waits for a click; the info box is one per page, above the first table; the delete match trims surrounding
+  whitespace first (George, later the same day), and S18b waits for a one-second pause or blur; the banner keeps one kind
   (`revenue_file_missing`) with the text of the case that applies, so the three-kind rule of §6.2 holds.
 
 ## 14. Files

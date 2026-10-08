@@ -115,15 +115,30 @@ describe("delete audit and the usage totals", () => {
     const button = q("confirm-delete-a1");
     expect(button.disabled).toBe(true);
     expect(q("delete-mismatch")).toBeNull();
-    for (const wrong of ["Acme SaaS", "acme saas inc.", "ACME SAAS INC.", "Acme SaaS Inc. ", " Acme SaaS Inc."]) {
-      await type(q("delete-name-a1"), wrong);
-      expect(button.disabled).toBe(true);
+    jest.useFakeTimers();
+    try {
+      for (const wrong of ["Acme SaaS", "acme saas inc.", "ACME SAAS INC."]) {
+        await type(q("delete-name-a1"), wrong);
+        expect(button.disabled).toBe(true);
+        expect(q("delete-mismatch")).toBeNull();                    // not while typing
+        await act(async () => { jest.advanceTimersByTime(900); });
+        expect(q("delete-mismatch")).toBeNull();
+        await act(async () => { jest.advanceTimersByTime(200); });  // about a second without typing
+        expect(q("delete-mismatch").textContent).toBe(S18_MISMATCH);
+        await type(q("delete-name-a1"), wrong + "x");               // typing again hides it
+        expect(q("delete-mismatch")).toBeNull();
+      }
+      await type(q("delete-name-a1"), "Acme");                      // blur shows it at once
+      await act(async () => { q("delete-name-a1").dispatchEvent(new FocusEvent("focusout", { bubbles: true })); });
       expect(q("delete-mismatch").textContent).toBe(S18_MISMATCH);
+      expect(S18_MISMATCH).toBe("Name does not match");
+      await type(q("delete-name-a1"), "  Acme SaaS Inc.  ");        // surrounding spaces are trimmed
+      expect(button.disabled).toBe(false);
+      await act(async () => { jest.advanceTimersByTime(1200); });
+      expect(q("delete-mismatch")).toBeNull();
+    } finally {
+      jest.useRealTimers();
     }
-    expect(S18_MISMATCH).toBe("Name does not match");
-    await type(q("delete-name-a1"), "Acme SaaS Inc.");
-    expect(button.disabled).toBe(false);
-    expect(q("delete-mismatch")).toBeNull();
   });
 
   test("Delete sends the name in the call, never in a URL, and nothing is sent before it matches", async () => {
@@ -131,7 +146,7 @@ describe("delete audit and the usage totals", () => {
     await type(q("delete-name-a1"), "wrong");
     await act(async () => { q("confirm-delete-a1").click(); });
     expect(api.deleteAudit).not.toHaveBeenCalled();
-    await type(q("delete-name-a1"), "Acme SaaS Inc.");
+    await type(q("delete-name-a1"), " Acme SaaS Inc. ");
     await act(async () => { q("confirm-delete-a1").click(); });
     expect(api.deleteAudit).toHaveBeenCalledWith("a1", "Acme SaaS Inc.");
   });
