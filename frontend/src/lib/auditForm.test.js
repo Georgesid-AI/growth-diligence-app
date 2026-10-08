@@ -6,6 +6,13 @@ test("target 2027-12-31 after as-of 2026-06-30 passes", () => {
   expect(targetDateError("2027-12-31", "2026-06-30")).toBeNull();
 });
 
+test("a year outside 2000 to 2100 is refused for the target date and the as-of date", () => {
+  expect(targetDateError("0027-01-01", "")).toBe("Target date year must be between 2000 and 2100");
+  expect(targetDateError("2101-01-01", "")).toBe("Target date year must be between 2000 and 2100");
+  expect(targetDateError("2027-01-01", "0001-01-01")).toBe("As-of month year must be between 2000 and 2100");
+  expect(targetDateError("2027-01-01", "1999-12-31")).toBe("As-of month year must be between 2000 and 2100");
+});
+
 test("target before the as-of month is refused", () => {
   expect(targetDateError("2026-03-31", "2026-06-30")).toBe("Target date must be after the as-of month");
 });
@@ -48,10 +55,9 @@ test("the consent explainer and label are the spec's words", () => {
   expect(CONSENT_LABEL).toBe("AI-assisted reading enabled per engagement terms. Uncheck if the client requires code-based extraction only; this may identify fewer findings.");
 });
 
-test("a client name and an engagement reference are required", () => {
-  const form = { company_name: "Acme", client_name: "Northbridge Capital", engagement_reference: "ENG-1" };
+test("a company name and a client name are required, and there is no engagement reference", () => {
+  const form = { company_name: "Acme", client_name: "Northbridge Capital" };
   expect(requiredFieldError(form)).toBeNull();
   expect(requiredFieldError({ ...form, client_name: " " })).toBe("Client name is required");
-  expect(requiredFieldError({ ...form, engagement_reference: "" })).toBe("Engagement reference is required");
   expect(requiredFieldError({ ...form, company_name: "" })).toBe("Company name is required");
 });

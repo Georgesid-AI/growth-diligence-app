@@ -5,6 +5,8 @@
  * A candidate's value is a figure as the deck wrote it, not a computed metric, so it keeps
  * its decimals ("2.5", "13.72%") instead of going through format.js rounding.
  */
+import { displayDate } from "./datePicker";
+
 export const PLACEHOLDER = "—";
 
 export const DECK_ACCEPT = ".pptx,.pdf,.docx";
@@ -47,7 +49,7 @@ export const CLAIM_TYPES = Object.keys(TYPE_LABELS).filter((t) => !["usage", "us
 export const CLAIM_UNITS = ["%", "x", "months", "years", "weeks", "days", "hours", "customers", "users"];
 
 // One header per column of the approval list, in column order.
-export const COLUMNS = ["Type", "Value", "Date", "Confidence", "Claim in the deck", "Source", "Status", "Action"];
+export const COLUMNS = ["Type", "Value", "Period", "Confidence", "Claim in the deck", "Source", "Status", "Action"];
 
 export const typeLabel = (t) => TYPE_LABELS[t] || t;
 
@@ -77,13 +79,27 @@ export function sourceRef(ref) {
 const figure = (v) => Number(v).toLocaleString("en-US", { maximumFractionDigits: 2 });
 const present = (v) => v !== null && v !== undefined && Number.isFinite(Number(v));
 
-function amount(c, value, high) {
+function amount(c, value, high, rate) {
   if (!present(value)) return PLACEHOLDER;
-  const n = present(high) ? `${figure(value)}–${figure(high)}` : figure(value);
+  const scale = rate ? Number(rate) : 1;
+  const n = present(high) ? `${figure(value * scale)}–${figure(high * scale)}` : figure(value * scale);
   if (c.unit === "%") return `${n}%`;
   if (c.unit === "x") return `${n}x`;
   if (c.unit) return `${n} ${c.unit}`;
-  return c.currency ? `${n} ${c.currency}` : n;
+  return c.currency ? `${n} ${rate ? c.fx.currency : c.currency}` : n;
+}
+
+// A direction the deck states with no figure ("Positive EBITDA"): shown as such, never as a dash.
+export const directionText = (direction) => `${direction} (no figure)`;
+export const FX_NEEDED = "FX rate needed";
+
+/** The claim's figure in the audit's currency, when it is stated in another one: "150,000 GBP (171,000 EUR at 1.14, 30 Jun 2026)".
+ *  No saved rate: "150,000 GBP (FX rate needed)". `fx` comes from the server with the claim. */
+function withConversion(c, text, value, high) {
+  if (!c.fx || !c.currency || c.unit || !present(value)) return text;
+  if (c.fx.rate == null) return `${text} (${FX_NEEDED})`;
+  const on = displayDate(c.fx.date);
+  return `${text} (${amount(c, value, high, c.fx.rate)} at ${figure(c.fx.rate)}${on ? `, ${on}` : ""})`;
 }
 
 /** "3,600,000 USD", "15%", "4.9x", "24 months", "2.5", "12,000,000–13,000,000 USD" for a range;
@@ -91,18 +107,40 @@ function amount(c, value, high) {
  *  "200 (Y/E 22) · 5,000 (Y/E 23) · …". */
 export function claimValue(c) {
   if (c?.by_period?.length) {
-    return c.by_period.map((i) => `${amount(c, i.value, i.value_high)} (${i.period || i.target_date || PLACEHOLDER})`).join(" · ");
+    return c.by_period.map((i) => `${withConversion(c, amount(c, i.value, i.value_high), i.value, i.value_high)} (${periodLabel(i, c) || PLACEHOLDER})`).join(" · ");
   }
-  return amount(c || {}, c?.value, c?.value_high);
+  if (!present(c?.value) && c?.claim_direction) return directionText(c.claim_direction);
+  return withConversion(c || {}, amount(c || {}, c?.value, c?.value_high), c?.value, c?.value_high);
 }
 
-/** The Date column: a table row's first to last period, else the claim's date, each as the deck
- *  states it ("FY25", "Y/E 22") when it does; the date range behind it stays server-side. */
-export function claimDate(c) {
-  const shown = (v) => v?.period_text || v?.target_date;
-  const dates = (c?.by_period || []).map(shown).filter(Boolean);
-  if (dates.length) return dates.length > 1 ? `${dates[0]}–${dates[dates.length - 1]}` : dates[0];
-  return shown(c) || PLACEHOLDER;
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** One period in the formats of the Period column: "FY2023", "Q2 2024", "H1 2024", "Jun 2024", "30 Jun 2024". `target` is the
+ *  stored target date ("2023", "2024-Q2", "2024-H1", "2024-06"); a month under a fiscal year ("FY2025-04") reads from
+ *  the period's start date. Anything else is shown as the deck states it. */
+export function periodLabel(v, c) {
+  const target = v?.target_date || c?.target_date;
+  if (!target) return v?.period_text || v?.period || "";
+  const t = String(target);
+  let m;
+  if ((m = /^(\d{4})$/.exec(t))) return `FY${m[1]}`;
+  if ((m = /^(\d{4})-Q([1-4])$/.exec(t))) return `Q${m[2]} ${m[1]}`;
+  if ((m = /^(\d{4})-H([12])$/.exec(t))) return `H${m[2]} ${m[1]}`;
+  if ((m = /^(\d{4})-(\d{2})$/.exec(t)) && Number(m[2]) >= 1 && Number(m[2]) <= 12) return `${MONTH_SHORT[Number(m[2]) - 1]} ${m[1]}`;
+  if (/^FY\d{4}-\d{2}$/.test(t) && /^\d{4}-\d{2}/.test(v?.period_start || "")) {
+    return `${MONTH_SHORT[Number(v.period_start.slice(5, 7)) - 1]} ${v.period_start.slice(0, 4)}`;
+  }
+  // A full date; one outside the range is never shown (no year 0001): the deck's own wording, else nothing.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return displayDate(t) || v?.period_text || "";
+  return v?.period_text || t;
+}
+
+/** The Period column: a table row's first to last period, else the claim's period, each in one format
+ *  ("FY2023", "Q2 2024", "Jun 2024"); "—" only when the deck gives no period. The deck's own wording stays in the claim. */
+export function claimPeriod(c) {
+  const periods = (c?.by_period || []).map((v) => periodLabel(v, c)).filter(Boolean);
+  if (periods.length) return periods.length > 1 ? `${periods[0]}–${periods[periods.length - 1]}` : periods[0];
+  return periodLabel(c, c) || PLACEHOLDER;
 }
 
 /** The edit sent for a table row: one value per period, in the row's order; dates stay. */
@@ -166,7 +204,7 @@ export function deckRunLog(deck) {
   if (deck.ai_status === "stopped" && deck.ai_message) lines.push(deck.ai_message);
   if (deck.sent_pages?.length) lines.push(`Sent to the model: ${deck.page_unit || "slide"}s ${deck.sent_pages.join(", ")}`);
   if (deck.periods_corrected) lines.push(`Periods corrected from the header cells: ${deck.periods_corrected}`);
-  if (deck.ai_cost_usd) lines.push(`Cost: $${Number(deck.ai_cost_usd).toFixed(4)}`);
+  if (deck.ai_cost_usd) lines.push(`Cost: $${Number(deck.ai_cost_usd).toFixed(2)}`);
   return lines;
 }
 
@@ -192,6 +230,21 @@ export function deckTabs(decks, candidates) {
  *  "All", and within a page in reading order. A reviewed claim keeps its place. */
 export function claimsForDeck(candidates, deckId) {
   return deckId === ALL_DECKS ? candidates || [] : (candidates || []).filter((c) => c.deck_id === deckId);
+}
+
+// The order of the claims table (docs/specs/deck-parser.md section 6): the group of the claim's type, set by the server, then
+// slide or page. Groups 6 and 7 start collapsed under a header with their count.
+export const CLAIM_GROUPS = [
+  [1, "Revenue, ARR, MRR and bookings"], [2, "P&L items"], [3, "Customers, users, usage, retention and sales"],
+  [4, "Hiring and roadmap"], [5, "Market size"], [6, UNKNOWN_TYPE_LABEL], [7, "Other"],
+];
+export const COLLAPSED_BY_DEFAULT = [6, 7];
+
+/** [{group, title, claims, collapsed}] for the groups that hold a claim, in group order; the claims keep the server's order. */
+export function claimSections(claims) {
+  return CLAIM_GROUPS.map(([group, title]) => ({
+    group, title, claims: (claims || []).filter((c) => (c.group ?? 7) === group), collapsed: COLLAPSED_BY_DEFAULT.includes(group),
+  })).filter((s) => s.claims.length > 0);
 }
 
 /** Counts per status, for the list header. */

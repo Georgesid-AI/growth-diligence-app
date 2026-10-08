@@ -4,6 +4,7 @@ import { Download, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Provenance } from "@/components/Provenance";
+import DateField from "@/components/DateField";
 import { claimsCsvUrl, getClaimRegister, updateClaimInputs } from "@/lib/api";
 import {
   DOWNLOAD_LABEL, GATE_BUDGET_MAX, GATE_DIRECTIONS, GATE_METRIC_MAX, GATE_METRIC_PLACEHOLDER, GATE_NEEDED, KEY_GATE_LABEL, NO_METRIC,
@@ -59,7 +60,8 @@ function GateCell({ row, ccy, onSave }) {
       )}
       <Input value={draft.threshold} onChange={set("threshold")} placeholder="Threshold" inputMode="decimal" className="h-7 text-xs font-mono" data-testid="register-gate-threshold" />
       <Input value={draft.budget} onChange={set("budget")} maxLength={GATE_BUDGET_MAX} placeholder="Budget decision (max 200 characters)" className="h-7 text-xs" data-testid="register-gate-budget" />
-      <Input type="date" value={draft.date} onChange={set("date")} className="h-7 text-xs font-mono" data-testid="register-gate-date" />
+      <DateField testId="register-gate-date" value={draft.date} onChange={(v) => setDraft((d) => ({ ...d, date: v }))}
+        placeholder="Gate date" className="!mt-0 h-7 text-xs" />
       <Button size="sm" onClick={save} className="h-7 bg-sky-600 hover:bg-sky-500" data-testid="register-gate-save">Save gate</Button>
       <label className="flex items-center gap-1.5 text-slate-700">
         <input type="checkbox" checked={!!row.key_gate} disabled={!row.gate_saved} data-testid="register-key-gate"
@@ -115,7 +117,7 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
                 return (
                   <tr key={row.claim_id} className="border-b border-[#F1F5F9] align-top" data-testid="claim-register-row">
                     <td className="py-2 px-3 font-mono text-slate-700">{row.rank}</td>
-                    <td className="py-2 px-3 text-slate-900 min-w-[10rem]">{claimText(row)}</td>
+                    <td className="py-2 px-3 text-slate-900 min-w-[10rem]">{claimText(row, ccy)}</td>
                     <td className="py-2 px-3 font-mono text-slate-700 whitespace-nowrap">
                       {row.period || "—"}
                       {row.period_note && <div className="text-[10px] text-slate-500">{row.period_note}</div>}

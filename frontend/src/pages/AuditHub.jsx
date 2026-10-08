@@ -14,6 +14,7 @@ import { listAudits, createAudit, deleteAudit, getUsageTotals } from "@/lib/api"
 import { S18_TITLE, S18_BODY, S18_MISMATCH, S19_USAGE_TOTALS, S19_USAGE_EXPLAINER } from "@/lib/chatUpload";
 import { fmtCurrency } from "@/lib/format";
 import { Checkbox } from "@/components/ui/checkbox";
+import DateField from "@/components/DateField";
 import {
   targetDateError, plainNumber, groupThousands, MONTHS, DEFAULT_FISCAL_YEAR_END, CONSENT_EXPLAINER, CONSENT_LABEL,
   requiredFieldError,
@@ -26,7 +27,7 @@ export default function AuditHub() {
   const [saving, setSaving] = useState(false);
   const [explainerOpen, setExplainerOpen] = useState(false);
   const blank = { company_name: "", reporting_currency: "EUR", target_arr: "", target_date: "", as_of_month: "",
-    fiscal_year_end: DEFAULT_FISCAL_YEAR_END, client_name: "", engagement_reference: "", structure_reading_consent: true };
+    fiscal_year_end: DEFAULT_FISCAL_YEAR_END, client_name: "", structure_reading_consent: true };
   const [form, setForm] = useState(blank);
 
   const load = () => listAudits().then(setAudits);
@@ -47,7 +48,6 @@ export default function AuditHub() {
         as_of_month: form.as_of_month || null,
         fiscal_year_end: form.fiscal_year_end,
         client_name: form.client_name.trim(),
-        engagement_reference: form.engagement_reference.trim(),
         structure_reading_consent: form.structure_reading_consent,
       });
       toast.success("Audit created");
@@ -148,26 +148,18 @@ export default function AuditHub() {
               </div>
               <div>
                 <Label className="text-slate-700">Target date</Label>
-                <Input
-                  data-testid="audit-target-date-input"
-                  type="date"
-                  min="2000-01-01"
-                  max="2100-12-31"
+                <DateField
+                  testId="audit-target-date-input"
                   value={form.target_date}
-                  onChange={(e) => setForm({ ...form, target_date: e.target.value })}
-                  className="mt-1.5 bg-white border-[#E5E7EB] font-mono"
+                  onChange={(v) => setForm({ ...form, target_date: v })}
                 />
               </div>
               <div>
                 <Label className="text-slate-700">As-of month <span className="text-slate-500 text-xs">(optional — defaults to last P&L month)</span></Label>
-                <Input
-                  data-testid="audit-asof-month-input"
-                  type="date"
-                  min="2000-01-01"
-                  max="2100-12-31"
+                <DateField
+                  testId="audit-asof-month-input"
                   value={form.as_of_month}
-                  onChange={(e) => setForm({ ...form, as_of_month: e.target.value })}
-                  className="mt-1.5 bg-white border-[#E5E7EB] font-mono"
+                  onChange={(v) => setForm({ ...form, as_of_month: v })}
                 />
               </div>
               <div>
@@ -180,15 +172,6 @@ export default function AuditHub() {
                     {MONTHS.map((m, i) => <SelectItem key={m} value={String(i + 1)}>{m}</SelectItem>)}
                   </SelectContent>
                 </Select>
-              </div>
-              <div>
-                <Label className="text-slate-700">Engagement reference</Label>
-                <Input
-                  data-testid="audit-engagement-input"
-                  value={form.engagement_reference}
-                  onChange={(e) => setForm({ ...form, engagement_reference: e.target.value })}
-                  className="mt-1.5 bg-white border-[#E5E7EB] font-mono"
-                />
               </div>
               <div className="rounded-md border border-[#E5E7EB] bg-slate-50 p-3 space-y-2" data-testid="audit-consent">
                 <label className="flex items-start gap-2 text-xs text-slate-800 cursor-pointer">

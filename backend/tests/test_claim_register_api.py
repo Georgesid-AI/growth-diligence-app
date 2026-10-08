@@ -139,7 +139,7 @@ def test_a_gate_is_not_saved_without_its_date(api):
     assert (row["gate_saved"], row["gate_sentence"], row["gate_date"]) == (False, None, None)
 
 
-@pytest.mark.parametrize("body", [{"gate_budget_decision": "x" * 201}, {"gate_date": "next quarter"}, {"gate_date": "2024-13-40"},
+@pytest.mark.parametrize("body", [{"gate_budget_decision": "x" * 201}, {"gate_date": "next quarter"}, {"gate_date": "2024-13-40"}, {"gate_date": "0001-01-01"}, {"gate_date": "2101-01-01"},
                                   {"gate_threshold": "lots"}, {}, {"unknown_field": 1}])
 def test_a_gate_or_input_that_is_not_valid_is_refused(api, body):
     client, db = api

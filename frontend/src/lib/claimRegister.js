@@ -6,6 +6,7 @@
 import metricUnits from "./claim_metrics.json";
 import { PLACEHOLDER, fmtCount, fmtCurrency } from "./format";
 import { typeLabel } from "./deckClaims";
+import { dateRangeError, displayDate } from "./datePicker";
 
 export const REGISTER_HEADING = "Claim register";
 export const DOWNLOAD_LABEL = "Download baseline (CSV)";
@@ -91,10 +92,27 @@ export function evidenceLines(row) {
 
 const trimmed = (v, dp) => String(Number(Number(v).toFixed(dp)));
 
-/** "200,000 EUR", "41%", "4 customers": the claimed figure in the claim's own unit. */
-export function claimFigure(row) {
+/** "positive (no figure)": a direction the deck states with no figure (docs/specs/claim-matching.md section 2). */
+export const directionText = (direction) => `${direction} (no figure)`;
+
+/** "(171,000 EUR at 1.14, 30 Jun 2026)": a claim in another currency, converted at the saved rate before it is matched. */
+export function conversionText(row, ccy) {
+  if (row.claimed_converted == null || row.fx_rate == null) return "";
+  const range = row.claimed_converted_high == null ? fmtCurrency(row.claimed_converted, ccy)
+    : `${fmtCurrency(row.claimed_converted)}–${fmtCurrency(row.claimed_converted_high, ccy)}`;
+  const at = displayDate(row.fx_date);
+  return ` (${range} at ${trimmed(row.fx_rate, 6)}${at ? `, ${at}` : ""})`;
+}
+
+/** "200,000 EUR", "41%", "4 customers": the claimed figure in the claim's own unit; in another currency than the audit's,
+ *  both figures: "150,000 GBP (171,000 EUR at 1.14, 30 Jun 2026)"; a direction with no figure: "positive (no figure)". */
+export function claimFigure(row, ccy) {
   const lo = row.claimed_value;
   const hi = row.claimed_high;
+  if (lo == null && row.claim_direction) return directionText(row.claim_direction);
+  if (row.currency && row.claimed_converted != null) {
+    return (hi == null ? fmtCurrency(lo, row.currency) : `${fmtCurrency(lo)}–${fmtCurrency(hi, row.currency)}`) + conversionText(row, ccy);
+  }
   if (row.currency) return hi == null ? fmtCurrency(lo, row.currency) : `${fmtCurrency(lo)}–${fmtCurrency(hi, row.currency)}`;
   if (row.unit === "%") return hi == null ? `${trimmed(lo, 4)}%` : `${trimmed(lo, 4)}–${trimmed(hi, 4)}%`;
   const num = (v) => (DURATIONS.includes(claimUnit(row)) ? trimmed(v, 4) : fmtCount(v));
@@ -102,7 +120,7 @@ export function claimFigure(row) {
 }
 
 /** "Revenue · 200,000 EUR": the claim's type and its figure. */
-export const claimText = (row) => `${typeLabel(row.claim_type)} · ${claimFigure(row)}`;
+export const claimText = (row, ccy) => `${typeLabel(row.claim_type)} · ${claimFigure(row, ccy)}`;
 
 /** The figure in the metric's unit, as the backend's gloss rounds it. */
 function inUnit(metric, value, ccy) {
@@ -149,6 +167,8 @@ export function gateEdit(row, draft) {
   if (budget.length > GATE_BUDGET_MAX) throw new Error(`The budget decision is at most ${GATE_BUDGET_MAX} characters`);
   if ((budget || null) !== (row.gate_budget_decision ?? null)) out.gate_budget_decision = budget || null;
   const date = String(draft.date ?? "").trim();
+  const dateError = dateRangeError("The gate date", date);
+  if (dateError) throw new Error(dateError);
   if ((date || null) !== (row.gate_date ?? null)) out.gate_date = date || null;
   if (needsMetricName(row)) {
     const name = String(draft.metricName ?? "").trim();
@@ -162,7 +182,7 @@ export function gateEdit(row, draft) {
 
 /** What the analyst sees beside the empty gate fields: the claimed and the observed figure. No threshold is proposed. */
 export function gateContext(row, ccy) {
-  const claimed = `Claimed ${claimFigure(row)} (${row.period || row.period_note || PLACEHOLDER})`;
+  const claimed = `Claimed ${claimFigure(row, ccy)} (${row.period || row.period_note || PLACEHOLDER})`;
   if (row.observed_value == null) return claimed;
   const observed = observedText(row, ccy);
   return `${claimed} · Observed ${observed.value} (${observed.at})`;

@@ -1,5 +1,5 @@
 import {
-  ALL_DECKS, AI_SUGGESTION_LABEL, CLAIM_TYPES, INCONSISTENCY_LABEL, UPLOADED_BEFORE_CONSENT, VERIFIED_LABEL, deckRunLog, REMOVE_DECK_CONFIRM, claimDate, claimsForDeck, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, sourceRef, statusCounts, typeLabel,
+  ALL_DECKS, AI_SUGGESTION_LABEL, CLAIM_TYPES, INCONSISTENCY_LABEL, UPLOADED_BEFORE_CONSENT, VERIFIED_LABEL, deckRunLog, REMOVE_DECK_CONFIRM, claimPeriod, claimSections, claimsForDeck, periodLabel, directionText, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, sourceRef, statusCounts, typeLabel,
   DECK_SCOPE_CANNOT, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, OTHER_TYPE_NOTE, needsType, readingChoices, confidenceText, UNKNOWN_TYPE_LABEL,
 } from "./deckClaims";
 
@@ -54,7 +54,7 @@ test("type labels", () => {
 });
 
 test("every column has a header", () => {
-  expect(COLUMNS).toEqual(["Type", "Value", "Date", "Confidence", "Claim in the deck", "Source", "Status", "Action"]);
+  expect(COLUMNS).toEqual(["Type", "Value", "Period", "Confidence", "Claim in the deck", "Source", "Status", "Action"]);
 });
 
 test("instruction text is word for word", () => {
@@ -121,16 +121,16 @@ describe("a table row is one claim with its values by period (zero2hero page 19)
   };
 
   test("value and date columns", () => {
-    expect(claimValue(row)).toBe("200 (Y/E 22) · 5,000 (Y/E 23) · 20,000 (Y/E 24)");
-    expect(claimValue({ currency: "GBP", by_period: [{ value: 42638, period: "Y/E 22" }, { value: 50000, period: "Y/E 23" }] }))
-      .toBe("42,638 GBP (Y/E 22) · 50,000 GBP (Y/E 23)");
-    expect(claimDate(row)).toBe("2022–2024");
-    expect(claimDate({ target_date: "2024-Q2" })).toBe("2024-Q2");
-    expect(claimDate({ target_date: null })).toBe("—");
-    // A fiscal year shows as the deck states it, not as its end year.
-    expect(claimDate({ target_date: "2025", period_text: "FY25" })).toBe("FY25");
-    expect(claimDate({ by_period: [{ target_date: "2022", period_text: "Y/E 22" }, { target_date: "2023", period_text: "Y/E 23" }] }))
-      .toBe("Y/E 22–Y/E 23");
+    expect(claimValue(row)).toBe("200 (FY2022) · 5,000 (FY2023) · 20,000 (FY2024)");
+    expect(claimValue({ currency: "GBP", by_period: [{ value: 42638, target_date: "2022", period: "Y/E 22" }, { value: 50000, target_date: "2023" }] }))
+      .toBe("42,638 GBP (FY2022) · 50,000 GBP (FY2023)");
+    expect(claimPeriod(row)).toBe("FY2022–FY2024");
+    expect(claimPeriod({ target_date: "2024-Q2" })).toBe("Q2 2024");
+    expect(claimPeriod({ target_date: null })).toBe("—");
+    // The deck's own wording ("FY25", "Y/E 22") stays in the claim; the column has one format.
+    expect(claimPeriod({ target_date: "2025", period_text: "FY25" })).toBe("FY2025");
+    expect(claimPeriod({ by_period: [{ target_date: "2022", period_text: "Y/E 22" }, { target_date: "2023", period_text: "Y/E 23" }] }))
+      .toBe("FY2022–FY2023");
   });
 
   test("editing one value sends every period, the others unchanged", () => {
@@ -164,7 +164,7 @@ describe("model readings in the approval list (docs/specs/llm-structure-reading.
   test("the deck panel shows the status, the slides sent and the cost", () => {
     expect(deckRunLog({ ai_status: "waiting" })).toEqual(["AI reading: waiting for revenue file"]);
     expect(deckRunLog({ ai_status: "read", page_unit: "slide", sent_pages: [4, 7, 12], ai_cost_usd: 0.0123 }))
-      .toEqual(["AI reading: read", "Sent to the model: slides 4, 7, 12", "Cost: $0.0123"]);
+      .toEqual(["AI reading: read", "Sent to the model: slides 4, 7, 12", "Cost: $0.01"]);
     expect(deckRunLog({ ai_status: "stopped", ai_message: "AI reading stopped: this audit reached its 400,000-token limit. The remaining structures were read by Python only." }))
       .toEqual(["AI reading: not read", "AI reading stopped: this audit reached its 400,000-token limit. The remaining structures were read by Python only."]);
     expect(deckRunLog({})).toEqual([]);
@@ -234,5 +234,45 @@ describe("structure labelling in the approval list (docs/specs/structure-labelli
     expect(confidenceText({ confidence: { level: "Low", failed: ["no date", "no heading"], text: "Low – no date, no heading" } })).toBe("Low – no date, no heading");
     expect(confidenceText({ confidence: { level: "High", failed: [], text: "High" } })).toBe("High");
     expect(confidenceText({})).toBe("—");
+  });
+});
+
+describe("2026-10-08: the Period column, groups, a direction with no figure and a claim in another currency", () => {
+  test.each([
+    [{ target_date: "2023" }, "FY2023"], [{ target_date: "2024-Q2" }, "Q2 2024"], [{ target_date: "2024-H1" }, "H1 2024"],
+    [{ target_date: "2024-06" }, "Jun 2024"], [{ target_date: "2024-06-30" }, "30 Jun 2024"],
+    [{ target_date: "FY2025-04", period_start: "2024-04-01" }, "Apr 2024"],
+  ])("%j reads %s", (claim, label) => expect(claimPeriod(claim)).toBe(label));
+
+  test("a dash only when the deck gives no period", () => {
+    expect(claimPeriod({ target_date: null })).toBe("—");
+    expect(claimPeriod({})).toBe("—");
+    expect(periodLabel({ target_date: "0001-01-01" })).toBe("", "a date outside the range is never shown");
+  });
+
+  test("the groups, in order; Unknown and Other are collapsed; an empty group is not listed", () => {
+    const claims = ["c", "a", "b"].map((id, i) => ({ id, group: [5, 1, 6][i] }));
+    expect(claimSections(claims).map((s) => [s.group, s.title, s.claims.map((c) => c.id), s.collapsed])).toEqual([
+      [1, "Revenue, ARR, MRR and bookings", ["a"], false], [5, "Market size", ["c"], false], [6, "Unknown – choose type", ["b"], true]]);
+    expect(claimSections([{ id: "z" }])[0]).toMatchObject({ group: 7, title: "Other", collapsed: true });
+    expect(claimSections([{ id: "p", group: 4 }])[0]).toMatchObject({ title: "Hiring and roadmap", collapsed: false });
+    expect(claimSections([{ id: "p", group: 3 }])[0].title).toBe("Customers, users, usage, retention and sales");
+    expect(claimSections([]).length).toBe(0);
+  });
+
+  test("a direction with no figure reads positive (no figure); a figure typed over it reads as a figure", () => {
+    expect(directionText("negative")).toBe("negative (no figure)");
+    expect(claimValue({ value: null, claim_direction: "positive" })).toBe("positive (no figure)");
+    expect(claimValue({ value: 3, unit: "%", claim_direction: null })).toBe("3%");
+    expect(claimValue({ value: null })).toBe("—");
+  });
+
+  test("both figures for another currency; no saved rate says so; the audit's own currency is unchanged", () => {
+    const fx = { rate: 1.14, date: "2026-06-30", currency: "EUR" };
+    expect(claimValue({ value: 150000, currency: "GBP", fx })).toBe("150,000 GBP (171,000 EUR at 1.14, 30 Jun 2026)");
+    expect(claimValue({ value: 150000, value_high: 160000, currency: "GBP", fx })).toBe("150,000–160,000 GBP (171,000–182,400 EUR at 1.14, 30 Jun 2026)");
+    expect(claimValue({ value: 150000, currency: "GBP", fx: { ...fx, rate: null } })).toBe("150,000 GBP (FX rate needed)");
+    expect(claimValue({ value: 150000, currency: "EUR", fx: null })).toBe("150,000 EUR");
+    expect(claimValue({ value: 15, unit: "%", currency: null, fx: null })).toBe("15%");
   });
 });

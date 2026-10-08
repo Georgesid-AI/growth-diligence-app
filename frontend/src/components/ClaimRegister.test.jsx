@@ -56,7 +56,7 @@ test("the section has its title, the download button and one row per claim with 
   expect(row.querySelector('[data-testid="register-value-at-stake"]').textContent).toBe("not yet computed");
   expect(row.querySelector('[data-testid="register-overlaps"]').textContent).toBe("—");
   expect(row.querySelector('[data-testid="register-evidence-source"]').textContent).toBe("Monthly MRR by Segment · mrr_series.data.total (2024-02)");
-  expect(row.querySelector('[data-testid="register-gate-date"]').value).toBe("", "the gate date starts empty");
+  expect(row.querySelector('[data-testid="register-gate-date"]').textContent).toBe("Gate date", "the gate date starts empty");
   expect(row.querySelector('[data-testid="register-gate-needed"]')).toBeNull();
   expect(row.querySelector('[data-testid="register-gate-context"]').textContent).toBe("Claimed 200,000 EUR (Feb 2024) · Observed 202,125 EUR (2024-02)");
   expect(row.querySelector('[data-testid="register-gate-threshold"]').value).toBe("");

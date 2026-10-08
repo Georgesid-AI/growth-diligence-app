@@ -1,7 +1,9 @@
 # Spec: Claim matching: approved claims tested against the computed metrics
 Status: Draft; decisions of 2026-10-07 applied (§10). Location: docs/specs/claim-matching.md.
 Follows deck-parser.md §6.
-Amended 2026-10-08 by verdict-and-memo.md: the default gate date and "every row with an observed value" (§5), the register-only CSV
+Amended 2026-10-08 (UI and claims fixes from live testing, George): a claim in another currency shows both figures and a
+missing rate reads "FX rate needed" (§2, §4, §6); a direction with no figure is Unverified (§2, §4, §6). Amended the same
+day by verdict-and-memo.md: the default gate date and "every row with an observed value" (§5), the register-only CSV
 (§7) and "Not shown: value at stake" (§8) are replaced there.
 
 ## Goal
@@ -28,7 +30,7 @@ rest is computed on read by a pure module.
 A table row candidate gives one claim per value by period, id `<candidate id>#<n>`, n counted from 1.
 
 Not inputs (2026-10-08): the Confidence column of the deck list (deck-parser.md §6) and a candidate's `type_from` and
-`reading` are not read here, so a claim's confidence changes no metric, gap or label. A candidate of type Unknown
+`reading` and its `group` are not read here, so a claim's confidence changes no metric, gap or label. A candidate of type Unknown
 (deck-parser.md §2) or Other cannot be approved without a type, so it never reaches the register; "Market size" is the
 label of the claim type `market`, and its row is Unsupported (table 2a: every other claim type) as before.
 
@@ -62,7 +64,8 @@ the whole-company figure and marked "whole company".
 | As-of | the period ends in the as-of month |
 | Period ends after the as-of month | forecast; observed is the as-of figure, for a sum the period's months up to the as-of month ("to date"; none yet: "—"), for a quarter metric the latest complete quarter (CAC payback: its headline quarter) |
 | No period | the as-of figure (a quarter metric: the latest complete quarter; CAC payback: the headline quarter), marked "no period stated"; revenue, a sum, has no as-of figure: Unverified, reason "no period stated" |
-| Other currency | converted at the audit's FX rate |
+| Other currency | converted at the saved FX rate before matching (the rate to the reporting currency, from the revenue file's FX editor). The row shows both figures, "150,000 GBP (171,000 EUR at 1.14, 30 Jun 2026)": the claimed amount, the converted amount, the rate and the date it applies at, the as-of month's last day. A range converts at both ends. With no rate saved the row is Unverified, reason "FX rate needed", before any observed figure is read, whatever the period |
+| Direction with no figure | "Positive EBITDA" (deck-parser.md §2): no value, `claim_direction` "positive" or "negative". No metric is read and no gap is computed: the row is Unverified, reason "direction only: the claim states no figure to test", whatever the claim type. A figure typed over it by an edit ends the direction and the claim is tested as any other |
 | Duration | 7 days a week, 30.44 a month, 12 months a year; hours stay unmatched, and so does a claim with no unit its metric measures (a sales cycle, ACV or ARR figure without a unit or currency) |
 | Range | tested at the end nearest the observed value; inside it the gap is 0 |
 
@@ -92,7 +95,7 @@ Untested rows stay listed with a reason and observed "—" (a forecast shows its
 |---|---|
 | Verified | Tested and within tolerance: ±5% of the claimed value for amounts, counts and durations; ±1 percentage point for rates. The boundary is Verified. |
 | Contradicted | Tested and outside tolerance: a miss, or a beat. |
-| Unverified | Not testable yet; the reason names what would test it: a Missing file (the engine's `unlocked_by`), a forecast period, a period before the metric's first month, no FX rate for the claim's currency, a revenue claim with no period ("no period stated"), months of the period missing from the data (named), or a deck reading "AI suggestion, not verified" (until the analyst edits the claim, even unchanged): a claim that would otherwise be Verified or Contradicted; any other reason stands. |
+| Unverified | Not testable yet; the reason names what would test it: a Missing file (the engine's `unlocked_by`), a forecast period, a period before the metric's first month, no saved FX rate for the claim's currency ("FX rate needed"), a direction with no figure, a revenue claim with no period ("no period stated"), months of the period missing from the data (named), or a deck reading "AI suggestion, not verified" (until the analyst edits the claim, even unchanged): a claim that would otherwise be Verified or Contradicted; any other reason stands. |
 | Unsupported | The app gives no figure: no metric proposed or picked, the metric not computed for that period or by segment, the segment not in the data, or the engine's "not computable" reason. |
 
 ## 5. Gate
@@ -113,7 +116,10 @@ under `register`, beside today's `claims`; `register` is empty when the audit ha
 | `claim_type`, `status` | str | CLAIM_TYPES; approved, edited |
 | `deck_reading` | str | §1 |
 | `claimed_value`, `claimed_high` | float, float or null | in the claim's currency |
+| `claim_direction` | str or null | "positive" or "negative" for a claim with no figure; else null |
 | `unit`, `currency` | str or null | |
+| `claimed_converted`, `claimed_converted_high` | float or null | the claimed figure at the saved rate, in the reporting currency; null for a claim in the reporting currency or with no rate |
+| `fx_rate`, `fx_date` | float, date; or null | the saved rate and the as-of month's last day; null as above |
 | `period`, `period_start`, `period_end`, `period_note` | str, date, date, str; or null | note: "no period stated" |
 | `segment`, `segment_set_by` | str | "Whole company", a data segment, "Not in the data"; python, analyst |
 | `metric`, `metric_set_by` | str or null | table 2a; python, analyst |
@@ -174,7 +180,7 @@ in each label class at least for revenue, ARR and customer count. Public decks h
 | 9 | ARR €5,000,000, FY2026 | 202,125.48 (as-of) | to go 4,797,874.52, 96.0% | Unverified: forecast | 20 |
 | 10 | NRR 115%, FY2023 | — | — | Unverified: before NRR's first month, 2024-01 | 21 |
 | 11 | Run B: win rate 40%, no period | — | — | Unverified: Missing, "Upload CRM deals with …" | 1 (run B) |
-| 12 | ARR $210,000, Feb 2024 | — | — | Unverified: no FX rate for USD | 22 |
+| 12 | ARR $210,000, Feb 2024 | — | — | Unverified: FX rate needed | 22 |
 | 13 | NRR 112%, Feb 2024, reading "AI suggestion, not verified" | 112.68% | beat 0.68 pp, 0.6% | Unverified: deck reading | 15 |
 | 14 | TAM €2bn | — | — | Unsupported: no metric | 23 |
 | 15 | 10,000 users | — | — | Unsupported: no metric | 24 |
@@ -199,6 +205,11 @@ in each label class at least for revenue, ARR and customer count. Public decks h
 | 34 | "Public sector: 3 customers", Feb 2024, analyst sets "Not in the data" | — | — | Unsupported: segment not in the data | 33 |
 | 35 | Run C: revenue €190,000, FY2023 (Apr 2022–Mar 2023) | — | — | Unverified: months missing, 2022-04 to 2022-12 | 2 (run C) |
 | 36 | Run D: revenue €190,000, no period | — | — | Unverified: no period stated | 11 (run D) |
+
+Unit-tested outside the fixture (test_claim_matching.py): ARR £150,000–160,000, Feb 2024 at a saved GBP rate of 1.14 reads
+171,000–182,400 EUR at 1.14, 29 Feb 2024, and is tested at the converted figures; the same claim with no rate, for a period of
+Feb 2024, FY2026 or none, is Unverified "FX rate needed"; "Positive EBITDA" and "Negative EBITDA" (Q2 2024) are Unverified
+"direction only", also where the type has a metric, and a figure typed over the direction is tested.
 
 Run D is run A's data with eleven more claims: one for each metric of table 2a that run A does not cover (MRR, New MRR,
 gross revenue churn, ACV), figures by segment, and row 36. Its ranks stand on their own; the test file lists them.

@@ -4,7 +4,7 @@ Spec: docs/specs/llm-structure-reading.md section 3; CLAUDE.md rule 16. Nothing 
 database or a file, and nothing here calls a model: the gateway runs these same functions again
 on the text it is given and refuses the call if anything changes. Names are matched as whole
 words, in any case; a word ends at a space, punctuation, a hyphen or a change of case. The client
-name and the engagement reference become [redacted]; customer names their pseudonyms.
+name becomes [redacted]; customer names their pseudonyms.
 
 The text is one line per cell, `r<row>c<col>: <cell text>`, with no file name, slide number or
 prose. A merged cell carries its span after its text, `r1c3: FY2025 (r1c3:r1c14)`, so the model
@@ -426,14 +426,13 @@ def pseudonymise_cells(cells: List[Dict], mapping: Dict[str, str], company_name:
 
 
 def withheld_values(audit: Dict) -> Tuple[str, ...]:
-    """The audit's client name and engagement reference: never sent to the model, so a cell holding
-    one is sent with [redacted] in its place."""
-    return tuple(str(audit.get(k)).strip() for k in ("client_name", "engagement_reference")
+    """The audit's client name: never sent to the model, so a cell holding it is sent with [redacted] in its place."""
+    return tuple(str(audit.get(k)).strip() for k in ("client_name",)
                  if audit.get(k) is not None and str(audit.get(k)).strip())
 
 
 def withhold_cells(cells: List[Dict], withheld: Tuple[str, ...]) -> Tuple[List[Dict], int]:
-    """(cells, count): each withheld value (the client name, the engagement reference) becomes
+    """(cells, count): each withheld value (the client name) becomes
     [redacted] wherever it stands as a whole word, in any case. The target's own name does not shield
     it; placeholders and pseudonyms are left alone."""
     words = [(w, REDACTED) for w in withheld if w and w.strip()]
@@ -447,7 +446,7 @@ def withhold_cells(cells: List[Dict], withheld: Tuple[str, ...]) -> Tuple[List[D
 
 def redact_structure(cells: List[Dict], company_name: Optional[str], mapping: Dict[str, str],
                      withheld: Tuple[str, ...] = ()) -> Tuple[List[Dict], Dict[str, int]]:
-    """Every redaction rule on a structure's cells: the client name and the engagement reference
+    """Every redaction rule on a structure's cells: the client name
     (`withheld`, see withheld_values), then emails and phone numbers, then customer names, then
     personal names. What the gateway runs again before a call."""
     # The withheld values go first, so no other rule can split one; emails and phones next, so a

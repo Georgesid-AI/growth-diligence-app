@@ -445,7 +445,7 @@ async def run(decks, passes, db, adapter=None, pause=0.0, sleep=None, diagnostic
         deck = parser.parse_deck((DECKS / file).read_bytes(), file)
         audit_id = f"consistency-{Path(file).stem}"
         audit = {"id": audit_id, "company_name": Path(file).stem, "client_name": "Consistency run",
-                 "engagement_reference": "CONSISTENCY", "structure_reading_consent": True}
+                 "structure_reading_consent": True}
         await db["audits"].insert_one(dict(audit))
         usage = per_deck.setdefault(file, {"structures": len(deck["structures"]), "input_tokens": 0, "output_tokens": 0,
                                            "cost_usd": 0.0})
@@ -782,7 +782,7 @@ async def probe(decks, pages=None, out=print):
     for file in decks:
         deck = parser.parse_deck((DECKS / file).read_bytes(), file)
         audit = {"id": f"probe-{Path(file).stem}", "company_name": Path(file).stem, "client_name": "Probe",
-                 "engagement_reference": "PROBE", "structure_reading_consent": True}
+                 "structure_reading_consent": True}
         await db["audits"].insert_one(dict(audit))
         for structure in deck["structures"]:
             page = structure.get("slide") or structure.get("page")

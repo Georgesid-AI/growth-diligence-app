@@ -420,7 +420,7 @@
      "analyst": {},
      "expect": {
       "label": "Unverified",
-      "reason": "no FX rate for USD",
+      "reason": "FX rate needed",
       "metric": "ARR",
       "observed": null,
       "rank": 22

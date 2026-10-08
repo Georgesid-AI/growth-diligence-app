@@ -84,18 +84,18 @@ Customer names are pseudonymised (Customer_01, Customer_02…) through the narra
   Once the revenue file is mapped, queued decks are processed. Column-mapping calls are not queued. A deck already
   read is not re-sent when a CRM file is mapped later.
 
-The client name and the engagement reference are replaced with "[redacted]" wherever they appear as a whole word,
-case-insensitive, in any text cell sent to the model, and the structure is still read. The gateway refuses a text in
-which either still stands as a whole word, with the same boundaries.
+The client name is replaced with "[redacted]" wherever it appears as a whole word, case-insensitive, in any text cell
+sent to the model, and the structure is still read. The gateway refuses a text in which it still stands as a whole word,
+with the same boundaries. (The engagement reference was removed on 2026-10-08: no audit field holds one.)
 
 The mapping stays server-side and is removed by Delete audit. The gateway runs redaction again and refuses the call if
 anything changes.
 
 **4. Consent.** `structure_reading_consent` is one checkbox per audit, ticked by default. It covers decks and spreadsheets.
-It sits on the audit creation screen, directly above the Create audit button, next to the engagement reference field.
-Audit creation requires a client name (a new field: the investor commissioning the audit) and an engagement reference.
-The company name stays the target company. The basis for sending is the engagement terms, recorded by this per-audit
-checkbox (CLAUDE.md rule 16).
+It sits on the audit creation screen, directly above the Create audit button. Audit creation requires a client name (a
+field: the investor commissioning the audit). The company name stays the target company. The basis for sending is the
+engagement terms, recorded by this per-audit checkbox (CLAUDE.md rule 16). The engagement reference field was removed on
+2026-10-08; ticking the box needs no reference.
 - Explainer above the checkbox, word for word: "This app reads tables and charts in the uploaded decks with an AI model. Every
   number is checked by code against its source cell; anything that does not match is marked as unverified. Emails, phone
   numbers, personal names and the customers named in the uploaded data files are replaced before anything is sent."
@@ -103,7 +103,7 @@ checkbox (CLAUDE.md rule 16).
   extraction only; this may identify fewer findings."
 - Every change to the checkbox, including the value at creation, is logged with its time. The user field is added when
   user accounts exist (Phase 2); until then there is no user to record.
-- Audits created before this change have no engagement reference, so they stay unticked.
+- Audits created before the checkbox existed have no consent field, so they stay unticked.
 - Unticked means the Python-only path: no `read_structure` call is made. Stored results stay until Delete audit.
 - Each structure sent is recorded with its deck, page, type and time (no text). The deck panel shows "Sent to the model: slides 4, 7, 12".
 
@@ -150,7 +150,7 @@ corrected and cost. `scripts/consistency_run.py` reports the periods corrected t
 - It must pass when redacted structure cells reach the provider, and when a column-mapping text within the §1 limits does.
 - It must fail on raw bytes, a full page, a prose snippet, a cell over 200 characters, one more header row, sample or
   text cell value than §1 allows on the column-mapping path, a file name, an unredacted email, phone number, name or customer name, the
-  client name or engagement reference, any call without consent, sent text in a log or in `llm_structures`, and
+  client name, any call without consent, sent text in a log or in `llm_structures`, and
   anything but an ISO code in `unit_other`.
 
 The docstrings in `gateway.py`, `decks/__init__.py` and `prompt_store.py` restate rules 16–18.

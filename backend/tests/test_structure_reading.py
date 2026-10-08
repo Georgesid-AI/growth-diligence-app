@@ -27,7 +27,7 @@ REPLIES = BACKEND / "tests" / "fixtures" / "structure_replies"
 DECKS = BACKEND.parent / "tests" / "fixtures" / "decks" / "decks"
 AUDIT = "audit-s"
 AUDIT_DOC = {"id": AUDIT, "company_name": "Zero2Hero", "client_name": "Northbridge Capital",
-             "engagement_reference": "ENG-2026-041", "structure_reading_consent": True, "fiscal_year_end": 12,
+             "structure_reading_consent": True, "fiscal_year_end": 12,
              "results": None}
 # A structure as the model reads it: its cells, then the items Python listed (docs/specs/structure-labelling.md).
 TEXT = ('r1c2: FY2025\nr1c3: FY2026\nr2c1: Revenue\nr2c2: £1,200,000\nr2c3: £1,500,000\nitems:\n'
@@ -801,9 +801,9 @@ def test_an_other_item_is_listed_as_type_other_and_approved_only_once_its_type_i
     _map_revenue(client)
     _upload_deck(client, "02-moz.pdf")
     ai = [c for c in _deck(client)["candidates"] if c.get("origin") == "ai"]
-    ranged, = [c for c in ai if c["sources"][0].get("page") == 20 and c["sources"][0]["cell"] == "r1c2"]
-    assert (ranged["value"], ranged["value_high"], ranged["ai_label"]) == (12000000, 13000000, "Verified"), \
-        "moz p20 \"$12 -$13 million\": one row, twelve to thirteen million"
+    ranged, = [c for c in _deck(client)["candidates"] if c["value"] == 12000000 and c["value_high"] == 13000000]
+    assert ranged.get("origin") != "ai" and [s.get("cell") for s in ranged["sources"]] == [None, "r1c2"], \
+        "moz p20 \"$12 -$13 million\": the parser's row and the model's reading are one row with both sources"
     assert not [c for c in ai if c["sources"][0].get("page") == 20 and c.get("claim_type") == "other"], \
         "prompt v5 (issue #45): the months figure is a customer lifetime"
     other, = [c for c in ai if c["sources"][0].get("page") == 2 and c["sources"][0]["cell"] == "r4c3"
@@ -1351,7 +1351,7 @@ def test_the_aliases_keep_their_fields_and_the_model_fills_the_rest(monkeypatch)
 # ---------------------------------------------------------------------------
 # Consent (spec section 4)
 # ---------------------------------------------------------------------------
-NEW_AUDIT = {"company_name": "Zero2Hero", "client_name": "Northbridge Capital", "engagement_reference": "ENG-2026-041"}
+NEW_AUDIT = {"company_name": "Zero2Hero", "client_name": "Northbridge Capital"}
 
 
 def test_consent_is_ticked_at_creation_by_default_and_every_change_is_logged_with_its_time(monkeypatch):
@@ -1359,7 +1359,7 @@ def test_consent_is_ticked_at_creation_by_default_and_every_change_is_logged_wit
     created = client.post("/api/audits", json=NEW_AUDIT).json()
     assert created["structure_reading_consent"] is True
     assert [e["value"] for e in created["consent_log"]] == [True] and created["consent_log"][0]["at"]
-    assert (created["client_name"], created["engagement_reference"]) == ("Northbridge Capital", "ENG-2026-041")
+    assert created["client_name"] == "Northbridge Capital" and "engagement_reference" not in created
     client.put(f"/api/audits/{created['id']}", json={"structure_reading_consent": False})
     client.put(f"/api/audits/{created['id']}", json={"structure_reading_consent": False})      # no change: no entry
     stored = next(a for a in db["audits"].docs if a["id"] == created["id"])
@@ -1368,21 +1368,19 @@ def test_consent_is_ticked_at_creation_by_default_and_every_change_is_logged_wit
     assert unticked["structure_reading_consent"] is False and [e["value"] for e in unticked["consent_log"]] == [False]
 
 
-@pytest.mark.parametrize("missing", ["client_name", "engagement_reference"])
-def test_audit_creation_refuses_a_missing_client_name_or_engagement_reference(monkeypatch, missing):
+def test_audit_creation_refuses_a_missing_client_name(monkeypatch):
     client, _, _ = _api(monkeypatch, [])
-    assert client.post("/api/audits", json={k: v for k, v in NEW_AUDIT.items() if k != missing}).status_code == 422
-    assert client.post("/api/audits", json={**NEW_AUDIT, missing: " "}).status_code == 422
+    assert client.post("/api/audits", json={"company_name": "Zero2Hero"}).status_code == 422
+    assert client.post("/api/audits", json={**NEW_AUDIT, "client_name": " "}).status_code == 422
 
 
-def test_an_audit_created_before_consent_stays_unticked_until_it_has_an_engagement_reference(monkeypatch):
+def test_an_audit_created_before_consent_stays_unticked_until_consent_is_ticked(monkeypatch):
     client, db, adapter = _api(monkeypatch, [REPLY])
     db["audits"].docs.append({"id": "old", "company_name": "Old Co", "results": None})
     result = asyncio.run(gateway.read_structure(db, "old", TEXT, "table", adapter=adapter, sleep=t._noop_sleep))
     assert result.status == "no_consent" and adapter.calls == 0, "no field means unticked"
-    assert client.put("/api/audits/old", json={"structure_reading_consent": True}).status_code == 400
-    assert client.put("/api/audits/old", json={"structure_reading_consent": True,
-                                              "engagement_reference": "ENG-9"}).status_code == 200
+    assert client.put("/api/audits/old", json={"structure_reading_consent": True}).status_code == 200, \
+        "no engagement reference is needed"
 
 
 # ---------------------------------------------------------------------------
@@ -1440,14 +1438,14 @@ def _deck(client):
     return client.get(f"/api/audits/{AUDIT}/decks").json()
 
 
-def test_a_client_name_or_engagement_reference_in_a_deck_cell_goes_out_as_redacted_and_the_structure_is_read():
+def test_a_client_name_in_a_deck_cell_goes_out_as_redacted_and_the_structure_is_read():
     from app import structures
     from app.decks import TEXT_COLLECTION
     db = _db()
     db["datasets"].docs.append({"audit_id": AUDIT, "dtype": "revenue", "mapping": REVENUE_MAPPING,
                                 "mapped_at": "2026-10-05T00:00:00"})
     cells = [{"row": 1, "col": 1, "text": "Prepared for Northbridge Capital"}, {"row": 1, "col": 2, "text": "FY2025"},
-             {"row": 2, "col": 1, "text": "Revenue (eng-2026-041)"}, {"row": 2, "col": 2, "text": "£1,200,000"}]
+             {"row": 2, "col": 1, "text": "Revenue (northbridge capital)"}, {"row": 2, "col": 2, "text": "£1,200,000"}]
     db[TEXT_COLLECTION].docs.append({"audit_id": AUDIT, "deck_id": "d1", "file": "plan.pptx", "page_unit": "slide",
                                      "structures": [{"type": "table", "slide": 1, "header_rows": 1, "cells": cells}]})
     adapter = RecordedAdapter()
@@ -1537,14 +1535,31 @@ def test_results_show_in_the_approval_list_labelled_and_citing_their_cell(monkey
     _upload_deck(client)
     ai = [c for c in _deck(client)["candidates"] if c.get("origin") == "ai"]
     panel = [c for c in ai if c["sources"][0]["structure"] == "kpi_panel" and c["sources"][0]["page"] == 19]
-    assert sorted((c["claim_type"], c["value"], c["ai_label"], c["sources"][0]["cell"]) for c in panel) == [
-        ("gross_profit", 150000, "Verified", "r2c1"), ("users", 5000, "Verified", "r3c1")]
-    assert panel[0]["period_text"] == "23 Y/E" and panel[0]["target_date"] == "2023"
+    assert panel == [], "page 19's panel values are the parser's own (gross profit £150K, 5K users): listed once, with both sources"
+    assert ai == [], "every value the model read on zero2hero is one the parser lists: no AI row is left"
     table = [c for c in ai if c["sources"][0]["structure"] == "table"]
     assert table == [], "the 24 table values Python already lists in the same cells are not listed twice"
     stored = next(s["ai"] for s in db["deck_text"].docs[0]["structures"] if s["type"] == "table")
     assert (stored["status"], stored["not_a_metric"]) == ("read", 0)
     assert all(c["status"] == "pending" for c in ai)
+
+
+def test_zero2hero_page_19_gross_profit_150000_is_one_row_with_both_sources(monkeypatch):
+    """2026-10-08: "Gross Profit £150K" (23 Y/E) read by the parser from the slide text and again by the model from the KPI
+    panel is one row listing both sources, not a Deck inconsistency row and a Verified row. The mark stays only because the
+    page's table gives a different value (£ 50,000) for the same period."""
+    client, db, adapter = _deck_api(monkeypatch)
+    _map_revenue(client)
+    _upload_deck(client)
+    rows = _deck(client)["candidates"]
+    same = [c for c in rows if c["claim_type"] == "gross_profit" and c["value"] == 150000 and c["target_date"] == "2023"]
+    assert len(same) == 1, [(c.get("origin"), c["ai_label"] if "ai_label" in c else None) for c in same]
+    row, = same
+    assert [(s["kind"], s.get("structure"), s.get("cell")) for s in row["sources"]] == [("text", None, None), ("structure", "kpi_panel", "r2c1")]
+    assert row["inconsistent_dates"] == ["2023"], "the table's £ 50,000 differs"
+    users = [c for c in rows if c["claim_type"] == "users" and c["value"] == 5000 and c["target_date"] == "2023"]
+    assert len(users) == 1 and len(users[0]["sources"]) == 2 and users[0]["inconsistent_dates"] == [], "the same figure: no mark"
+    assert [c for c in rows if c.get("origin") == "ai" and c["sources"][0].get("page") == 19 and c["sources"][0]["structure"] == "kpi_panel"] == []
 
 
 def test_a_roadmaps_pairs_become_milestone_rows_dated_by_their_date_cells(monkeypatch):
@@ -1733,12 +1748,12 @@ def test_a_deck_already_read_is_not_sent_again_when_the_crm_file_is_mapped_later
 def test_uploading_the_same_deck_again_is_served_from_the_cache_and_lists_no_row_twice(monkeypatch):
     client, db, adapter = _deck_api(monkeypatch)
     _map_revenue(client)
-    _upload_deck(client)
+    _upload_deck(client, "01-front-b.pptx")
     first = [c for c in _deck(client)["candidates"] if c.get("origin") == "ai"]
     approved = first[0]
     client.put(f"/api/audits/{AUDIT}/decks/candidates/{approved['id']}", json={"status": "approved"})
     before = adapter.calls
-    _upload_deck(client)
+    _upload_deck(client, "01-front-b.pptx")
     again = [c for c in _deck(client)["candidates"] if c.get("origin") == "ai"]
     assert adapter.calls == before, "every structure is a cache hit"
     assert len(again) == len(first), "the approved row is kept and not added again"
@@ -1761,16 +1776,17 @@ def test_the_token_cap_stops_the_remaining_structures_and_the_deck_says_so(monke
 
 
 def test_a_new_fiscal_year_end_re_verifies_the_model_readings(monkeypatch):
-    client, db, adapter = _deck_api(monkeypatch)
-    _map_revenue(client)
-    _upload_deck(client)
-    panel = [c for c in db["deck_candidates"].docs if c.get("origin") == "ai" and c["claim_type"] == "gross_profit"
-             and c["sources"][0]["structure"] == "kpi_panel"]
-    assert panel[0]["ai_label"] == "Verified"
-    client.put(f"/api/audits/{AUDIT}/decks/candidates/{panel[0]['id']}", json={"status": "pending"})
+    import server
+    from app.decks import CANDIDATES_COLLECTION
+    cells = [{"row": 1, "col": 1, "text": "Metric"}, {"row": 1, "col": 2, "text": "23 Y/E"},
+             {"row": 2, "col": 1, "text": "Gross Profit"}, {"row": 2, "col": 2, "text": "£150K"}]
+    db = _processed(cells, [_label("i1", "gross_profit", period="FY2023", unit="GBP")])
+    row, = db[CANDIDATES_COLLECTION].docs
+    assert row["ai_label"] == "Verified"
     # The recorded reading cites "23 Y/E" as FY2023: it stays verified under any year-end, its range moves.
-    client.put(f"/api/audits/{AUDIT}", json={"fiscal_year_end": 3})
-    after = next(c for c in db["deck_candidates"].docs if c["id"] == panel[0]["id"])
+    monkeypatch.setattr(server, "db", db)
+    asyncio.run(server._remap_periods(AUDIT, 3))
+    after, = db[CANDIDATES_COLLECTION].docs
     assert after["ai_label"] == "Verified" and (after["period_start"], after["period_end"]) == ("2022-04-01", "2023-03-31")
 
 
@@ -2629,10 +2645,10 @@ def test_a_background_failure_marks_the_deck_not_read_and_logs_the_error_type_on
     assert "Jane Doe" not in caplog.text
 
 
-def test_a_short_engagement_reference_is_withheld_as_a_word_and_never_inside_one():
-    db = _db(engagement_reference="E7")
+def test_a_short_client_name_is_withheld_as_a_word_and_never_inside_one():
+    db = _db(client_name="E7")
     result, adapter = _read(db, "r1c1: Plan E7\nr1c2: £1M")
-    assert (result.reason, adapter.calls) == ("refused: engagement_reference", 0), "sent as written, it is refused"
+    assert (result.reason, adapter.calls) == ("refused: client_name", 0), "sent as written, it is refused"
     cells, _ = redact.redact_structure([{"row": 1, "col": 1, "text": "Plan E7"}, {"row": 1, "col": 2, "text": "£1M"}],
                                        "Zero2Hero", {}, redact.withheld_values(db["audits"].docs[0]))
     result, adapter = _read(db, redact.structure_text(cells), replies=[NOTHING])
@@ -2664,7 +2680,7 @@ def test_a_metric_must_belong_to_the_kind_of_structure_read():
 def test_an_edited_ai_row_keeps_the_label_under_parsed_never_next_to_the_analysts_value(monkeypatch):
     client, db, adapter = _deck_api(monkeypatch)
     _map_revenue(client)
-    _upload_deck(client)
+    _upload_deck(client, "01-front-b.pptx")
     row = next(c for c in _deck(client)["candidates"] if c.get("ai_label") == "Verified")
     edited = client.put(f"/api/audits/{AUDIT}/decks/candidates/{row['id']}", json={"value": 1}).json()
     assert edited["status"] == "edited" and edited["ai_label"] is None
@@ -2681,5 +2697,4 @@ def test_every_structure_refusal_reason_in_the_code_is_declared_in_the_boundary_
         body = next(n for n in _ast.walk(tree) if isinstance(n, _ast.FunctionDef) and n.name == function)
         found |= {n.value.value for n in _ast.walk(body) if isinstance(n, _ast.Return)
                   and isinstance(n.value, _ast.Constant) and isinstance(n.value.value, str)}
-        found |= {"client_name", "engagement_reference"} if function == "structure_text_problem" else set()
     assert found == boundary.STRUCTURE_REFUSALS, "a new refusal reason is declared in test_gateway_data_boundary.py"

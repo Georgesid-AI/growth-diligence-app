@@ -70,9 +70,12 @@ def claim_name(row: dict) -> str:
     return name
 
 
-def claimed_text(row: dict) -> str:
-    return cm._claimed_text({"unit": row.get("unit"), "currency": row.get("currency"),
+def claimed_text(row: dict, reporting_currency: Optional[str] = None) -> str:
+    """The claimed figure as the register words it: in a currency other than the audit's, both figures; a direction with no
+    figure as such (claim-matching.md section 2)."""
+    text = cm._claimed_text({"unit": row.get("unit"), "currency": row.get("currency"), "claim_direction": row.get("claim_direction"),
                              "value": row.get("claimed_value"), "value_high": row.get("claimed_high")})
+    return text + cm.converted_note(row, lambda v: cm._money(v, reporting_currency))
 
 
 def observed_text(row: dict, reporting_currency: Optional[str]) -> str:
@@ -91,7 +94,7 @@ def reason_text(row: dict, reporting_currency: Optional[str]) -> str:
         text = f"{head}, {row['reason']}."
         return f"{text} No figure in the supplied files." if row["evidence_label"] == "Unsupported" else text
     gap = f" ({row['gloss']})" if row.get("gloss") else ""
-    text = f"{head}, {observed_text(row, reporting_currency)} against {claimed_text(row)}{gap}."
+    text = f"{head}, {observed_text(row, reporting_currency)} against {claimed_text(row, reporting_currency)}{gap}."
     src = row.get("observed_source") or {}
     if row.get("evidence_analysis") and src:
         text += f" Evidence: {row['evidence_analysis']} · {row['evidence_source_key']} ({src.get('file')} · {src.get('sheet')} · {src.get('rows')})."

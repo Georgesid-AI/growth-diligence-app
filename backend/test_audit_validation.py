@@ -9,8 +9,8 @@ from pydantic import ValidationError
 
 import server
 
-# Every audit names its client (the investor) and the engagement reference (llm-structure-reading.md section 4).
-REQUIRED = {"company_name": "Acme", "client_name": "Northbridge Capital", "engagement_reference": "ENG-1"}
+# Every audit names its client (the investor) (llm-structure-reading.md section 4).
+REQUIRED = {"company_name": "Acme", "client_name": "Northbridge Capital"}
 
 
 @pytest.mark.parametrize("bad_date", [
@@ -83,12 +83,13 @@ def test_fiscal_year_end_outside_1_to_12_is_refused(bad):
 
 
 # Consent and the names it rests on (llm-structure-reading.md section 4).
-@pytest.mark.parametrize("missing", ["client_name", "engagement_reference"])
-def test_audit_creation_requires_a_client_name_and_an_engagement_reference(missing):
+def test_audit_creation_requires_a_client_name_and_has_no_engagement_reference():
     with pytest.raises(ValidationError):
-        server.AuditCreate(**{k: v for k, v in REQUIRED.items() if k != missing})
+        server.AuditCreate(**{k: v for k, v in REQUIRED.items() if k != "client_name"})
     with pytest.raises(ValidationError):
-        server.AuditCreate(**{**REQUIRED, missing: "   "})
+        server.AuditCreate(**{**REQUIRED, "client_name": "   "})
+    assert "engagement_reference" not in server.AuditCreate.model_fields
+    assert "engagement_reference" not in server.AuditUpdate.model_fields
 
 
 def test_consent_is_ticked_by_default_and_can_be_unticked():

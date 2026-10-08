@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Loader2, Plus, X, Play, Search } from "lucide-react";
 import { Layout } from "@/components/Layout";
 import DeckPanel from "@/components/DeckPanel";
+import DateField from "@/components/DateField";
 import UploadChat from "@/components/UploadChat";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -74,14 +75,9 @@ export default function MappingWizard() {
           </div>
           <div>
             <label className="text-[11px] font-mono uppercase tracking-wider text-slate-600 block mb-1">As-of month</label>
-            <Input
-              data-testid="asof-month-input"
-              type="date"
-              value={asOf}
-              onChange={(e) => setAsOf(e.target.value)}
-              className="h-9 w-40 bg-white border-[#E5E7EB] font-mono"
-              placeholder="last P&L month"
-            />
+            <div className="w-40">
+              <DateField testId="asof-month-input" value={asOf} onChange={setAsOf} placeholder="last P&L month" />
+            </div>
           </div>
           <Button data-testid="compute-button" onClick={runCompute} disabled={!ready || computing}
             className="bg-sky-600 hover:bg-sky-500 gap-2">
