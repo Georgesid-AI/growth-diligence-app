@@ -24,7 +24,7 @@ from typing import Annotated, Any, Dict, Iterator, List, Literal, Optional, Tupl
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, ValidationInfo
 
-CONTRACT_VERSION = 1
+CONTRACT_VERSION = 2
 
 # Display kinds: the same names app/formatting.py and frontend/src/lib/format.js use.
 CURRENCY, COUNT, COUNT_UP, DAYS, MONTHS, PCT, RATIO, PLAIN = (
@@ -365,6 +365,7 @@ class SegmentPaths(Block):
     landed: Optional[Dict[str, Landed]] = None
     reverse_solve: Optional[Dict[str, ReverseSolve]] = None
     reconciliation: Optional[Dict[str, Reconciliation]] = None
+    source: Citation
 
 
 # ---------------------------------------------------------------------------
@@ -399,6 +400,8 @@ class Anomalies(Block):
     revenue_missing_amount: RowCount
     deals_close_before_created: DealsExcluded
     date_order_from_data: List[DateOrder]
+    source: Citation                                # the revenue file: MRR flags and excluded revenue lines
+    deals_source: Optional[Citation] = None         # the CRM file: deals closing before they were created; absent without a CRM
 
 
 class AmountRow(BaseModel):
@@ -420,10 +423,11 @@ class MrrSeries(Block):
     months: List[str]
     segments: List[str]
     data: List[AmountRow]
+    source: Citation
 
 
 class RevenueSeries(MrrSeries):
-    source: Citation
+    pass
 
 
 class CustomersSeries(Block):
@@ -473,6 +477,7 @@ class CohortRetention(Block):
     cohorts: List[str]
     max_offset: Plain
     data: List[CohortRow]
+    source: Citation
 
 
 # ---------------------------------------------------------------------------
@@ -503,13 +508,14 @@ class Question(Block):
 # ---------------------------------------------------------------------------
 class MetricsPayload(Block):
     """The full engine output. A block the engine could not compute is null; the reason is in `missing_data`."""
-    contract_version: Literal[1]
+    contract_version: Literal[2]
     reporting_currency: str                         # the one currency code; no value repeats it
     as_of_month: Optional[str]
     arr: Optional[Arr]
     nrr: Optional[Nrr]
     gross_churn: Optional[GrossChurn]
     new_mrr_by_quarter: Dict[str, NewMrrQuarter]
+    new_mrr_by_quarter_source: Citation             # beside the block: its keys are quarters
     cac_payback: Optional[CacPayback]
     sales_cycle: Optional[SalesCycle]
     win_rate: Optional[WinRate]

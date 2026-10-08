@@ -1604,6 +1604,8 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
 
     new_mrr_q = guarded("New MRR by quarter", rev_src.get("file"), {}, compute_new_mrr_by_quarter, mrr, first_month)
     results["new_mrr_by_quarter"] = new_mrr_q
+    # The block is a dict keyed by quarter, so its citation sits beside it (docs/specs/interface-contracts.md section 1).
+    results["new_mrr_by_quarter_source"] = src(rev_src, contrib_rows, "New MRR = MRR of customers in their first month, summed by calendar quarter")
 
     if pnl.empty:
         results["cac_payback"] = None
@@ -1695,6 +1697,8 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
         {"available": False, "assumption": CONSTANT_NRR_ASSUMPTION, "missing_inputs": []},
         compute_segment_paths, mrr, seg_map, first_month, nrr, acv, target_arr, target_date)
     sp = results["segment_paths"]
+    sp["source"] = src(rev_src, contrib_rows, "Segment paths = segment start ARR held at the current NRR, plus new customers at landed ACV, "
+                                              "against the target ARR and date set on the audit")
     if not sp["available"] and sp["missing_inputs"]:
         missing_data.append({
             "metric": "Segment paths to target ARR",
@@ -1708,8 +1712,17 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
                                    compute_anomalies, mrr, rev, deals, mrr_notes)
     if results["anomalies"] is not None:
         results["anomalies"]["date_order_from_data"] = date_order_notes
+        flagged = [r for k in ("rows_missing_customer", "rows_missing_fx", "rows_missing_amount") for r in mrr_notes.get(k, [])]
+        results["anomalies"]["source"] = src(rev_src, [*contrib_rows, *flagged],
+                                             "Flags = months with negative MRR, customers with a revenue gap over 2 months, "
+                                             "and revenue lines excluded for a missing customer ID, FX rate or amount")
+        if not deals.empty:
+            results["anomalies"]["deals_source"] = src(
+                crm_src, deals.get("_row", []).tolist() if "_row" in deals.columns else [],
+                "Deals with a close date before the created date are flagged and excluded")
     results["mrr_series"] = guarded("MRR by segment", rev_src.get("file"), {"months": [], "segments": [], "data": []},
                                     compute_mrr_series, mrr, seg_map)
+    results["mrr_series"]["source"] = src(rev_src, contrib_rows, "MRR = recurring MRR per customer in the month, summed by segment")
     # Two monthly series that only the claim-matching module reads: never in a narrative payload.
     revenue_series = guarded("Revenue by month", rev_src.get("file"), {"months": [], "segments": [], "data": [], "rows": []},
                              compute_revenue_series, rev, billing_terms, fx, as_of)
@@ -1728,6 +1741,8 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
     results["customers_series"] = customers_series
     results["cohort_retention"] = guarded("Cohort retention", rev_src.get("file"), {"cohorts": [], "max_offset": 0, "data": []},
                                           compute_cohort_retention, mrr, first_month)
+    results["cohort_retention"]["source"] = src(rev_src, contrib_rows, "Retention = cohort MRR in month N ÷ the cohort's starting MRR, "
+                                                                       "cohort = first month with MRR")
     results["missing_data"], results["questions_for_management"] = resolve_missing(
         missing_data, results, files, as_of=as_of, fx=fx, new_mrr_q=new_mrr_q,
         default_l=config.get("default_l", 1))

@@ -1,3 +1,4 @@
+import { Provenance } from "@/components/Provenance";
 import { AlertTriangle } from "lucide-react";
 import {
   fmtCurrency, fmtCount, fmtCountUp, fmtPct, fmtRatio, fmtMonths,
@@ -25,7 +26,7 @@ export function SegmentPaths({ sp, ccy }) {
     <div data-testid="segment-paths-panel" className="bg-white border border-[#E5E7EB] rounded-lg p-5 mb-6">
       <div className="flex items-baseline justify-between mb-3 flex-wrap gap-2">
         <h3 className="font-heading font-semibold text-slate-900 text-sm">
-          Constant-NRR projection (not a forecast)
+          <Provenance source={sp.source} id="segment-paths">Constant-NRR projection (not a forecast)</Provenance>
         </h3>
         <span className="text-[10px] font-mono text-slate-500">segments only · ACV bands are a separate cut</span>
       </div>

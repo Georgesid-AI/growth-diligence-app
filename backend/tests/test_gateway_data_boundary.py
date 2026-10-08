@@ -46,11 +46,14 @@ RESULTS = cf.stored(
                                        "rule": "Median days from created to close", "dataset": "revenue",
                                        "columns": {"created_date": HEADERS[0], "close_date": HEADERS[1]}}),
     segment_paths=cf.segment_paths(
-        available=True,
+        available=True, source={**SOURCE, "rule": "Segment paths = start ARR at the current NRR"},
         stage_one={"segments": {"Enterprise": cf.seg_base(2000000.0, 40), "Mid-Market": cf.seg_base(1129600.0, 70)},
                    "start_arr_total": 3129600.0},
         reverse_solve={"12": {"window_months": 12, "computable": True, "reachable": None, "best_segment": "Enterprise",
                               "reason": "no landed ACV for Mid-Market"}}),
+    cohort_retention={"cohorts": [], "max_offset": 0, "data": [],
+                      "source": {**SOURCE, "rule": "Retention = cohort MRR ÷ starting MRR"}},
+    new_mrr_by_quarter_source=SOURCE,
     missing_data=[{"metric": "CRM rows with unrecognized founder-involved value", "status": "Missing",
                    "reason": f"1 row(s) have a founder-involved value that isn't yes/no-like ({PERSON})",
                    "unlocked_by": "Use a yes/no style value", "file": "CRM_Deals.csv"}],
@@ -111,11 +114,20 @@ def test_outbound_payload_has_no_file_sheet_header_or_raw_cell_value():
     assert "values" not in sent["metrics"]["win_rate"]["founder_involved_excluded"]
     # What the model needs is still there.
     assert sent["metrics"]["arr"]["source"] == {"rule": "ARR = current-month recurring MRR × 12"}
+    # The citations added to segment_paths and cohort_retention go out as the rule only, like every other block's.
+    assert sent["metrics"]["segment_paths"]["source"] == {"rule": "Segment paths = start ARR at the current NRR"}
+    assert not {"new_mrr_by_quarter_source", "mrr_series", "anomalies"} & set(sent["metrics"])
     assert sent["metrics"]["win_rate"]["founder_involved_excluded"]["count"] == "1"
     question = sent["metrics"]["questions_for_management"][0]["question"]
     assert "close_date, created_date" in question and "revenue upload" in question
     assert sent["metrics"]["missing_data"][0]["reason"] == (
         "1 row(s) have a founder_involved value that isn't yes/no-like — excluded from the founder split, not guessed")
+
+
+def test_the_cohort_retention_citation_goes_out_as_the_rule_only():
+    out = gateway.build_outbound({"metrics": gateway._slice_for_step(RESULTS, "cohort_retention")}, {})
+    assert out["metrics"]["cohort_retention"]["source"] == {"rule": "Retention = cohort MRR ÷ starting MRR"}
+    assert FILE not in json.dumps(out, ensure_ascii=False)
 
 
 def test_full_versions_stay_in_mongo_for_the_dashboard():
@@ -261,7 +273,7 @@ HEADER_SENTINEL = "Jane Doe"    # every mapped column header is renamed to carry
 # neither this set nor gateway.OUTBOUND_FIELDS fails test_every_results_key_is_
 # allowlisted_or_declared_server_only: decide where it belongs when you add it.
 SERVER_ONLY_TOP_LEVEL = frozenset({"contract_version",                   # interface-contracts.md: the version the stored payload was built under
-                                   "anomalies", "mrr_series", "new_mrr_by_quarter",
+                                   "anomalies", "mrr_series", "new_mrr_by_quarter", "new_mrr_by_quarter_source",
                                    "revenue_series", "customers_series",    # claim-matching.md table 2a
                                    "revenue_reconciliation"})               # chat-upload.md section 6.2
 SERVER_ONLY_FIELDS = frozenset({

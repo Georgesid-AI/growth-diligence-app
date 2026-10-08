@@ -1831,7 +1831,8 @@ app.add_middleware(
 # 4: demo audits carry a client name, an engagement reference, consent and a fiscal year-end.
 # 5: demo P&L revenue reconciles with the revenue file (one demo audit keeps a deliberate 5% gap).
 # 6: results carry contract_version 1 (percents as fractions, whole counts and days).
-SEED_VERSION = 6
+# 7: results carry contract_version 2 (a citation on every result block).
+SEED_VERSION = 7
 
 
 @app.on_event("startup")

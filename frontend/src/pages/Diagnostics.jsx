@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Loader2, ShieldAlert, CheckCircle2, ArrowRight } from "lucide-react";
 import { Layout } from "@/components/Layout";
+import { Provenance } from "@/components/Provenance";
 import { getAudit, getResults, reportUsage } from "@/lib/api";
 import { S22_RECONCILIATION } from "@/lib/chatUpload";
 import { fmtCurrency } from "@/lib/format";
@@ -69,7 +70,9 @@ export default function Diagnostics() {
 
         <div className="lg:col-span-5 space-y-6">
           <div className="bg-white border border-[#E5E7EB] rounded-lg p-5">
-            <h3 className="font-heading font-semibold text-slate-900 text-sm mb-4">Anomaly Flags</h3>
+            <h3 className="font-heading font-semibold text-slate-900 text-sm mb-4">
+              <Provenance source={r.anomalies?.source} id="diagnostics-anomalies">Anomaly Flags</Provenance>
+            </h3>
             {!anomalies ? <div className="text-sm text-slate-600">{ANOMALIES_NOT_COMPUTED}</div> : (
             <div className="space-y-4">
               {anomalies.map((a) => (

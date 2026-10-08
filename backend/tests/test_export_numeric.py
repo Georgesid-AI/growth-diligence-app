@@ -39,7 +39,7 @@ def _partial_only_cac():
 
 
 def _with_segment_paths(sp):
-    return {**RESULTS, "segment_paths": cf.conformed(SegmentPaths, sp)}
+    return {**RESULTS, "segment_paths": cf.conformed(SegmentPaths, {**sp, "source": cf.cite()})}
 
 
 def _cell(ws, label):
