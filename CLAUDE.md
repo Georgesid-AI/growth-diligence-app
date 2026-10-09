@@ -64,9 +64,10 @@
 20. Degrade, don't die: if the LLM gateway fails or times out anywhere, every computed metric still renders
     with its citation and a 'narrative unavailable' note.
 21. Three hard blockers, and nothing else, render at the top of every audit view: the revenue file Missing
-    (from the first press of Calculate; not when the screen opens, docs/specs/chat-upload.md §14),
-    a top-5 claim Contradicted (a miss or a beat), and a revenue reconciliation gap above 2% over the window of
-    docs/specs/chat-upload.md §6.2. Per-month gaps go in the reconciliation evidence table, never in the banner.
+    (S16a, from the first Calculate; a revenue file uploaded with its mapping unconfirmed, S16d, always;
+    docs/specs/chat-upload.md §16), a top-5 claim Contradicted (a miss or a beat), and a revenue reconciliation gap
+    above 2% over the window of docs/specs/chat-upload.md §6.2. Per-month gaps go in the reconciliation evidence
+    table, never in the banner.
 22. Delete audit requires typing the company name and removes every document of the audit in every
     collection, saved mappings and stored files included.
 23. Any change to engine output fields changes backend/schemas/metrics.py and the contract test

@@ -196,15 +196,6 @@ test("a tag never shows without its explanation", async () => {
   expect(q("candidate-inconsistency")).toBeNull();
 });
 
-test("when the values match, the explanation says whether the currency, the unit or the date differs", async () => {
-  const { inconsistencyText } = require("@/lib/deckClaims");
-  const text = (a, b) => inconsistencyText({ inconsistencies: [{ this: a, other: b }] });
-  expect(text(fig(5, 1, { currency: "EUR", unit: null }), fig(5, 4, { currency: "USD", unit: null }))).toContain("with a different currency (EUR against USD): 5 EUR at older.pptx · slide 1 and 5 USD at older.pptx · slide 4.");
-  expect(text(fig(5, 1), fig(5, 4, { unit: "users" }))).toContain("a different unit (customers against users)");
-  expect(text(fig(5, 1), fig(5, 4, { date: "2025" }))).toContain("a different date (2024 against 2025)");
-  expect(text(fig(5, 1, { currency: "EUR", date: "2024" }), fig(5, 4, { currency: "USD", date: "2025" }))).toContain("a different currency (EUR against USD) and date (2024 against 2025)");
-});
-
 test("a claim in another currency with no rate names the pair and links to the FX settings", async () => {
   await reload([claim("u", "d1", 2, { group: 5, claim_type: "market", currency: "USD", value: 5e9,
     fx: { rate: null, date: "2026-06-30", currency: "EUR" } })]);
@@ -289,4 +280,15 @@ describe("an approved claim that moves to another category (item 8)", () => {
     await edit("revenue_growth");
     expect(require("sonner").toast.message).not.toHaveBeenCalled();
   });
+});
+
+test("a rate saved on the page reloads the claims, so the converted figures replace 'FX rate needed' with the tab kept", async () => {
+  await act(async () => { q("deck-tab-d1").click(); });
+  api.getDecks.mockClear();
+  api.getDecks.mockResolvedValue({ decks: DECKS, candidates: [claim("u", "d1", 2, { group: 5, claim_type: "market", currency: "USD", value: 5e9,
+    fx: { rate: 0.9, date: "2026-06-30", currency: "EUR" } })] });
+  await act(async () => { root.render(<DeckPanel auditId="a1" reloadKey={1} />); });
+  expect(api.getDecks).toHaveBeenCalledTimes(1);
+  expect(rows()[0].textContent).toContain("5,000,000,000 USD (4,500,000,000 EUR at 0.9, 30 Jun 2026)");
+  expect(rows()[0].textContent).not.toContain("FX rate needed");
 });

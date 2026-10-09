@@ -1,4 +1,4 @@
-"""Amount columns named turnover, volume, GMV or TPV ask once: revenue or volume? (docs/specs/chat-upload.md section 13)"""
+"""Amount columns named turnover, volume, GMV or TPV ask once: revenue or volume? (docs/specs/chat-upload.md section 15)"""
 import pytest
 
 import test_chat_upload as chat
@@ -64,3 +64,42 @@ def test_a_bad_answer_or_a_column_that_does_not_ask_is_refused(api):
     assert money(api, "volume", "Amount").status_code == 400
     assert api.post(f"/api/audits/{AUDIT}/datasets/revenue/decisions",
                     json=[{"column": "Amount", "action": "confirm", "money_kind": "gross"}]).status_code == 422
+
+
+# The question also covers the P&L "revenue" field and the CRM "amount" field (MONEY_FIELDS), not only the revenue file's.
+PNL = ("Month,Sales & Marketing,{revenue},Cost of revenue\n"
+       + "\n".join(f"2024-{m:02d}-01,{1000 + m},{9000 + m},{3000 + m}" for m in range(1, 7)) + "\n").encode()
+CRM = ("Deal ID,Created,Close Date,Stage,{amount}\n"
+       + "\n".join(f"D{i},2024-01-{i + 1:02d},2024-02-{i + 1:02d},Won,{500 + i}" for i in range(8)) + "\n").encode()
+
+
+def decide(client, dtype, kind, column):
+    return client.post(f"/api/audits/{AUDIT}/datasets/{dtype}/decisions",
+                       json=[{"column": column, "action": "confirm", "money_kind": kind}])
+
+
+@pytest.mark.parametrize("dtype,field,header", [("pnl", "revenue", "Total Turnover"), ("crm", "amount", "Deal Volume")])
+def test_the_question_covers_the_pnl_revenue_and_the_crm_amount_fields(dtype, field, header):
+    assert cr.asks_money(cr.new_state(header, field, "rules", "auto", 100))
+    assert not cr.asks_money(cr.new_state("Amount" if dtype == "crm" else "Revenue", field, "rules", "auto", 100))
+
+
+def test_a_pnl_turnover_column_holds_the_mapping_until_answered_and_a_volume_answer_drops_it(api):
+    body = chat.upload(api, "pnl.csv", PNL.replace(b"{revenue}", b"Turnover")).json()
+    assert body["dtype"] == "pnl"
+    col = chat.by_column(body)["Turnover"]
+    assert col["field"] == "revenue" and col["money_ask"] and col["pending"] and not body["saved"]
+    kept = decide(api, "pnl", "revenue", "Turnover").json()
+    assert kept["pending"] == 0 and kept["mapping"]["revenue"] == "Turnover"
+    chat.upload(api, "pnl.csv", PNL.replace(b"{revenue}", b"Turnover"), replace="true")
+    dropped = decide(api, "pnl", "volume", "Turnover").json()
+    assert dropped["pending"] == 0 and dropped["mapping"]["revenue"] is None and "revenue" in dropped["missing_required"]
+
+
+def test_a_crm_deal_volume_column_asks_and_a_volume_answer_keeps_it_out_of_the_mapping(api):
+    body = chat.upload(api, "crm.csv", CRM.replace(b"{amount}", b"Value (GMV)")).json()
+    assert body["dtype"] == "crm"
+    col = chat.by_column(body)["Value (GMV)"]
+    assert col["field"] == "amount" and col["money_ask"] and col["pending"]
+    dropped = decide(api, "crm", "volume", "Value (GMV)").json()
+    assert dropped["mapping"]["amount"] is None and "amount" in dropped["missing_required"]

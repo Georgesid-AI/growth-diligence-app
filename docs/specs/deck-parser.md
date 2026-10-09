@@ -412,9 +412,9 @@ Fixed on the 10 test decks (2026-10-05):
 ## Amended 2026-10-09 (George): explanation, label brackets, count unit, moved claims
 - Deck inconsistency: every flagged claim carries `inconsistencies`, the two figures compared (value, currency, unit, date and
   place of each). The tag shows "The deck gives different figures for this metric: [value A] at [location A] and [value B] at
-  [location B]." on hover and in the opened row; two figures with the same value say whether the currency, the unit or the
-  date differs. The tag is never shown without it. The parser still compares only figures with the same type, currency and
-  period, so the same-value wording is not produced by it today. Decks parsed before this change have no pairs and show no tag
+  [location B]." on hover and in the opened row. The tag is never shown without it. The parser compares only figures with the
+  same type, currency and period and different values, so a pair always has two different values (the same-value wording was
+  deleted 2026-10-09: it could not be reached). Decks parsed before this change have no pairs and show no tag
   until they are uploaded again.
 - Confidence: a currency or period in a label's brackets ("Turnover (£/year)") is read before scoring: the currency fills an
   empty currency field (GBP) and the period goes to `period_basis` ("per year", "per month", "per quarter"), shown beside the

@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Literal, Optional
 
 import pandas as pd
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from starlette.concurrency import run_in_threadpool
 
 import growth_engine as ge
@@ -709,7 +709,7 @@ class Decision(BaseModel):
     field: Optional[str] = None
     reason: Optional[str] = None
     note: Optional[str] = Field(default=None, max_length=2000)
-    money_kind: Optional[Literal["revenue", "volume"]] = None       # the answer to "revenue or volume?" (chat-upload.md section 13)
+    money_kind: Optional[Literal["revenue", "volume"]] = None       # the answer to "revenue or volume?" (chat-upload.md section 15)
 
 
 async def _check_notes(audit_id: str, audit: dict, notes: list) -> list:
@@ -1102,11 +1102,14 @@ class FxPayload(BaseModel):
 
 @api.put("/audits/{audit_id}/fx")
 async def save_fx(audit_id: str, payload: FxPayload):
-    """Save the audit's FX rates. They need no file: they apply to the uploaded files and to the deck claims alike."""
+    """Save the audit's FX rates: the whole set, as the screen shows it. They need no file: they apply to the uploaded files
+    and to the deck claims alike. Rates an older version saved with the revenue file are in that set (the screen merges
+    them), so they move to the audit here and the file's copy is cleared: a rate the analyst removes stays removed."""
     a = await db.audits.find_one({"id": audit_id})
     if not a:
         raise HTTPException(404, "Audit not found")
     await db.audits.update_one({"id": audit_id}, {"$set": {"fx": payload.fx}})
+    await db.datasets.update_many({"audit_id": audit_id, "dtype": "revenue"}, {"$set": {"fx": {}}})
     await _mark_stale_and_maybe_recompute(audit_id)
     return {"fx": payload.fx}
 
@@ -1118,7 +1121,7 @@ def _register_settings(audit: dict, fx: dict, deck_take_rate: bool = False) -> d
 
 
 async def _deck_take_rate(audit_id: str) -> bool:
-    """Whether any parsed deck of the audit says take rate, commission, spread or fees (claim-matching.md section 11).
+    """Whether any parsed deck of the audit says "take rate" (claim-matching.md section 11).
     Python reads the stored deck text; only the yes or no is used."""
     decks_found = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, {"_id": 0, "blocks": 1}).to_list(1000)
     return claim_matching.mentions_take_rate(decks_found)
@@ -1282,6 +1285,12 @@ class TurnoverAnswer(BaseModel):
     model_config = {"extra": "forbid"}
     answer: Literal["revenue", "volume"] = Field(alias="as")
     reason: Literal[claim_matching.TURNOVER_REASONS]
+
+    @model_validator(mode="after")
+    def _reason_fits_the_answer(self):
+        if (self.answer, self.reason) in claim_matching.CONTRADICTORY_ANSWERS:
+            raise ValueError("The reason contradicts the answer")
+        return self
 
 
 @api.put("/audits/{audit_id}/claims/{claim_id}/turnover")

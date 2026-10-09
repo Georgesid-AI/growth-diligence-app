@@ -148,19 +148,30 @@ test("no claim yet gives a line that says so", async () => {
   expect(host.querySelector("table")).toBeNull();
 });
 
+async function pick(row, code) {
+  const select = row.querySelector('[data-testid="register-turnover-reason"]');
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(select, code);
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+
 const TURNOVER = { ...ROW, claim_id: "t1", metric: null, observed_value: null, evidence_label: "Unverified", evidence_analysis: null,
-  reason: "Looks like transaction volume, not revenue: confirm Revenue or Volume", turnover_state: "ask",
-  turnover_note: "Looks like transaction volume, not revenue", turnover_set_by: "python", turnover_reason: null };
+  reason: "turnover or volume: confirm Revenue or Volume", turnover_state: "ask",
+  turnover_note: "Turnover or volume?", turnover_set_by: "python", turnover_reason: null };
 
 test("a turnover row shows its label, the question and one click Revenue or Volume with a reason code", async () => {
   const { host } = await mount([TURNOVER, ROW]);
   const rows = host.querySelectorAll('[data-testid="claim-register-row"]');
-  expect(rows[0].querySelector('[data-testid="register-turnover-note"]').textContent).toBe("Looks like transaction volume, not revenue");
+  expect(rows[0].querySelector('[data-testid="register-turnover-note"]').textContent).toBe("Turnover or volume?");
   expect(rows[0].textContent).toContain("Revenue or transaction volume?");
   expect(rows[1].querySelector('[data-testid="register-turnover"]')).toBeNull();
   api.answerTurnover.mockResolvedValue({ register: [{ ...TURNOVER, turnover_state: "volume", turnover_note: "Transaction volume", turnover_set_by: "analyst" }] });
   await act(async () => { rows[0].querySelector('[data-testid="register-turnover-volume"]').click(); });
-  expect(api.answerTurnover).toHaveBeenCalledWith("a1", "t1", { as: "volume", reason: "deck_says_gross_revenue" });
+  expect(api.answerTurnover).not.toHaveBeenCalled();           // no reason chosen yet: nothing is sent
+  await pick(rows[0], "deck_says_processed_volume");
+  await act(async () => { rows[0].querySelector('[data-testid="register-turnover-volume"]').click(); });
+  expect(api.answerTurnover).toHaveBeenCalledWith("a1", "t1", { as: "volume", reason: "deck_says_processed_volume" });
   expect(host.querySelector('[data-testid="register-turnover-note"]').textContent).toContain("Transaction volume");
 });
 
@@ -172,7 +183,24 @@ test("a confirmed row can be switched back, and the implied take rate shows both
   expect(host.querySelector('[data-testid="register-take-rate-source"]').textContent).toContain("deck.pptx");
   api.answerTurnover.mockResolvedValue({ register: [{ ...volume, turnover_state: "revenue" }] });
   await act(async () => { host.querySelector('[data-testid="register-turnover-revenue"]').click(); });
-  expect(api.answerTurnover).toHaveBeenLastCalledWith("a1", "t1", { as: "revenue", reason: "deck_says_gross_revenue" });
+  expect(api.answerTurnover).not.toHaveBeenCalled();           // the reason is empty again for the new answer
+  await pick(host, "file_confirms");
+  await act(async () => { host.querySelector('[data-testid="register-turnover-revenue"]').click(); });
+  expect(api.answerTurnover).toHaveBeenLastCalledWith("a1", "t1", { as: "revenue", reason: "file_confirms" });
+});
+
+test("there is no default reason: the buttons are disabled until one is chosen and for a contradicting pair", async () => {
+  const { host } = await mount([TURNOVER]);
+  const reason = host.querySelector('[data-testid="register-turnover-reason"]');
+  const btn = (v) => host.querySelector(`[data-testid="register-turnover-${v}"]`);
+  expect(reason.value).toBe("");
+  expect([btn("revenue").disabled, btn("volume").disabled]).toEqual([true, true]);
+  await pick(host, "deck_says_gross_revenue");
+  expect([btn("revenue").disabled, btn("volume").disabled]).toEqual([false, true]);
+  await pick(host, "deck_says_processed_volume");
+  expect([btn("revenue").disabled, btn("volume").disabled]).toEqual([true, false]);
+  await pick(host, "other");
+  expect([btn("revenue").disabled, btn("volume").disabled]).toEqual([false, false]);
 });
 
 test("a row with no rate names the pair and links to the FX settings", async () => {

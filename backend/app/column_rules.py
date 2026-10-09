@@ -457,7 +457,7 @@ def months_of(values: list) -> Optional[Dict]:
 REASONS = ("header_misleading", "other_column_right", "values_do_not_fit", "wrong_kind_of_date", "not_needed", "other")
 PENDING = ("unsure", "ai", "needs")           # states that wait for a click
 MAPPED = ("auto", "unsure", "ai", "confirmed", "corrected")
-# Amount columns named turnover, volume, GMV or TPV: revenue or value of transactions processed? (chat-upload.md section 13)
+# Amount columns named turnover, volume, GMV or TPV: revenue or value of transactions processed? (chat-upload.md section 15)
 MONEY_FIELDS = ("amount", "revenue")
 MONEY_KINDS = ("revenue", "volume")
 _MONEY_HEADER = re.compile(r"(?i)turnover|volume|gmv|tpv")
@@ -574,7 +574,7 @@ def apply_decisions(dtype: str, states: List[Dict], decisions: List[Dict]) -> Li
         state = next((s for s in states if s["column"] == d.get("column")), None)
         if state is None:
             raise DecisionError("unknown_column")
-        if d.get("money_kind") is not None:                     # the answer to the money question (section 13)
+        if d.get("money_kind") is not None:                     # the answer to the money question (section 15)
             if d["money_kind"] not in MONEY_KINDS or not asks_money(state):
                 raise DecisionError("bad_money_kind", state["column"])
             state["money_kind"] = d["money_kind"]

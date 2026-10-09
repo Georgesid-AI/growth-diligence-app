@@ -20,12 +20,13 @@ const uid = () => `m${nextId++}`;
  * system bubble per file, the mapping table in the system bubble. Typed text is answered on the page (S1) and goes
  * nowhere else. `extras(view)` renders what follows the table of a revenue file (FX rates, billing terms).
  */
-export default function UploadChat({ audit, extras, onViews, onCalculate }) {
+export default function UploadChat({ audit, extras, onViews, onCalculate, calculateRef, onStaged }) {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(0);
   const [dragging, setDragging] = useState(false);
   const staged = useRef(new Map());                   // bubble id -> File: attached, not yet read (nothing runs until Calculate)
+  const openPrompts = useRef(new Set());              // bubbles whose file waits for a type or a replace answer
   const [calculating, setCalculating] = useState(false);
   const [lastReason, setLastReason] = useState("header_misleading");   // stays for the next correction on this page
   const picker = useRef(null);
@@ -51,27 +52,31 @@ export default function UploadChat({ audit, extras, onViews, onCalculate }) {
   }, [messages]); // eslint-disable-line
 
   // `bubble` is the id of the analyst bubble the file already has (it shows a spinner until the file is read).
-  const send = async (file, options = {}, bubble = null) => {
+  // `quiet`: the caller refreshes the blocker banner itself once, after the last file (Calculate does).
+  const send = async (file, options = {}, bubble = null, quiet = false) => {
     setBusy((n) => n + 1);
     const settle = (patch) => setMessages((all) => all.map((m) => (m.id === bubble ? { ...m, pending: false, ...patch } : m)));
     try {
       const res = await uploadChatFile(audit.id, file, options);
       if (res.status === "unknown_type") {
         settle({});
+        if (bubble) openPrompts.current.add(bubble);
         push({ kind: "unknown", file, bubble });
       } else {
+        if (bubble) openPrompts.current.delete(bubble);
         // A file of a loaded type replaces that type's bubbles: one analyst and one system bubble per file.
         setMessages((all) => {
           const kept = all.filter((m) => !(m.dtype === res.dtype && m.kind !== "text") && m.id !== bubble);
           const analyst = { id: bubble || uid(), kind: "analyst", dtype: res.dtype, file: res.file, size: res.size_bytes ?? file.size, ext: res.ext };
           return [...kept, analyst, { id: uid(), kind: "system", dtype: res.dtype, view: res }];
         });
-        announce();
+        if (!quiet) announce();
       }
     } catch (err) {
       settle({});
       const detail = err.response?.data?.detail;
       if (err.response?.status === 409 && detail?.code === "type_loaded") {
+        if (bubble) openPrompts.current.add(bubble);
         push({ kind: "replace", file, dtype: detail.dtype, loaded: detail.file, bubble });
       } else {
         push({ kind: "text", role: "system", text: typeof detail === "string" ? detail : "The file could not be read." });
@@ -101,26 +106,29 @@ export default function UploadChat({ audit, extras, onViews, onCalculate }) {
     staged.current.delete(id);
     setMessages((all) => all.filter((m) => m.id !== id));
   };
+  useEffect(() => { onStaged?.(messages.filter((m) => m.staged).length); }, [messages]); // eslint-disable-line
 
   // Calculate: read the attached files one at a time, in drop order, then hand the loaded files to the page, which computes
   // when nothing waits. Pressing it with nothing attached is allowed: it is how the page learns the revenue file is missing.
+  // The banner is refreshed once, after the last file, and not while a file still waits for its type or a replace answer:
+  // "Revenue file missing" would then show while that file is being asked about.
   const calculate = async () => {
     setCalculating(true);
-    setCalculatePressed(audit.id);
     try {
       for (const [bubble, file] of [...staged.current]) {
         staged.current.delete(bubble);
         setMessages((all) => all.map((m) => (m.id === bubble ? { ...m, staged: false, pending: true } : m)));
-        queue.current = queue.current.then(() => send(file, {}, bubble));
+        queue.current = queue.current.then(() => send(file, {}, bubble, true));
         await queue.current;
       }
-      announce();
+      if (openPrompts.current.size === 0) { setCalculatePressed(audit.id); announce(); }
       const views = await getDatasets(audit.id).catch(() => []);
       await onCalculate?.(views);
     } finally {
       setCalculating(false);
     }
   };
+  if (calculateRef) calculateRef.current = calculate;
 
   const submitText = (e) => {
     e.preventDefault();
@@ -160,7 +168,7 @@ export default function UploadChat({ audit, extras, onViews, onCalculate }) {
             decide={decide} showInfo={m.id === firstTable}
             onType={(file, dtype) => { setMessages((all) => all.filter((x) => x.id !== m.id)); send(file, { dtype }, m.bubble); }}
             onReplace={(file, dtype) => { setMessages((all) => all.filter((x) => x.id !== m.id)); send(file, { dtype, replace: true }, m.bubble); }}
-            onKeep={() => setMessages((all) => all.filter((x) => x.id !== m.id && x.id !== m.bubble))} />
+            onKeep={() => { openPrompts.current.delete(m.bubble); setMessages((all) => all.filter((x) => x.id !== m.id && x.id !== m.bubble)); }} />
         ))}
         {busy > 0 && <div className="text-xs text-slate-500 flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Reading…</div>}
       </div>

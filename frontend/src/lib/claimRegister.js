@@ -36,6 +36,10 @@ const METRIC_UNIT = metricUnits.metrics;
 const DURATIONS = ["days", "weeks", "months", "years"];
 
 // Section 11 of docs/specs/claim-matching.md: the one-click answer to "revenue or volume?" and its reason codes.
+/** The two pairs the server refuses: a reason that says the opposite of the answer. */
+export const contradicts = (answer, reason) => (answer === "volume" && reason === "deck_says_gross_revenue")
+  || (answer === "revenue" && reason === "deck_says_processed_volume");
+
 export const TURNOVER_REASONS = [
   ["deck_says_gross_revenue", "Deck says gross revenue"], ["deck_says_processed_volume", "Deck says processed volume"],
   ["file_confirms", "File confirms"], ["other", "Other"],

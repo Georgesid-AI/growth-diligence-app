@@ -29,20 +29,49 @@ def test_turnover_within_tolerance_of_the_file_revenue_is_gross_revenue_matched_
     assert r["turnover_set_by"] == "python" and r["observed_source"]
 
 
-def test_turnover_above_three_times_the_file_revenue_asks_instead_of_contradicting():
-    r = row("GMV €900,000 in FY2023", value=900000)
-    assert (r["metric"], r["evidence_label"], r["turnover_state"]) == (None, "Unverified", "ask")
-    assert r["turnover_note"] == "Looks like transaction volume, not revenue" and "confirm Revenue or Volume" in r["reason"]
+def test_a_turnover_figure_above_tolerance_of_the_file_revenue_asks_instead_of_contradicting():
+    for value in (900_000, 280_000, 3 * 187701.05):       # 4.8x, 1.5x and 3x: the 3x threshold is gone
+        r = row("GMV €900,000 in FY2023", value=value)
+        assert (r["metric"], r["evidence_label"], r["turnover_state"]) == (None, "Unverified", "ask"), value
+        assert r["turnover_note"] == "Turnover or volume?" and "confirm Revenue or Volume" in r["reason"]
 
 
-def test_turnover_between_tolerance_and_three_times_is_an_ordinary_revenue_claim_with_the_control():
-    r = row("Turnover €280,000 in FY2023", value=280000)       # 1.5x
+def test_a_turnover_figure_below_tolerance_is_an_ordinary_revenue_claim_with_the_control():
+    r = row("Turnover €100,000 in FY2023", value=100000)
     assert (r["metric"], r["evidence_label"], r["turnover_state"]) == ("Revenue", "Contradicted", "revenue")
 
 
-def test_exactly_three_times_is_not_flagged():
-    r = row("Turnover", value=3 * 187701.05)
-    assert r["turnover_state"] == "revenue"
+def test_a_range_is_tested_at_the_end_nearest_the_file_revenue():
+    above = row("GMV €900,000–1,000,000 FY2023", value=900_000, value_high=1_000_000)     # reproduced: was Revenue, Contradicted
+    assert (above["metric"], above["evidence_label"], above["turnover_state"]) == (None, "Unverified", "ask")
+    inside = row("GMV €150,000–250,000 FY2023", value=150_000, value_high=250_000)
+    assert (inside["metric"], inside["turnover_state"]) == ("Revenue", "revenue")
+    within = row("GMV €100,000–190,000 FY2023", value=100_000, value_high=190_000)         # the top end is within tolerance
+    assert (within["evidence_label"], within["turnover_note"]) == ("Verified", "Gross revenue (turnover)")
+    below = row("GMV €50,000–100,000 FY2023", value=50_000, value_high=100_000)
+    assert (below["metric"], below["evidence_label"], below["turnover_state"]) == ("Revenue", "Contradicted", "revenue")
+
+
+def test_the_test_uses_the_segment_the_claim_names():
+    r = row("SMB turnover €190,000 FY2023", value=190_000)        # within tolerance of the whole company, 50x SMB (3,804.76)
+    assert (r["segment"], r["metric"], r["turnover_state"], r["evidence_label"]) == ("SMB", None, "ask", "Unverified")
+    r = row("SMB turnover €500,000 FY2023", value=500_000)        # reproduced: was Revenue, Contradicted, rank 1
+    assert (r["metric"], r["turnover_state"], r["evidence_label"]) == (None, "ask", "Unverified")
+    r = row("SMB turnover €3,800 FY2023", value=3_800)
+    assert (r["metric"], r["turnover_note"], r["evidence_label"]) == ("Revenue", "Gross revenue (turnover)", "Verified")
+
+
+def test_a_turnover_claim_in_another_currency_with_no_rate_says_fx_rate_needed():
+    fx = {"EUR": 1.0}
+    for text in ("GMV $900,000 FY2023", "GMV $190,000 FY2023"):
+        r = row(text, value=900_000 if "900" in text else 190_000, currency="USD", extra_settings={"fx": fx, "deck_take_rate": True})
+        assert (r["turnover_state"], r["evidence_label"], r["reason"]) == ("ask", "Unverified", "FX rate needed: USD→EUR"), text
+    # no file covers the period: the take-rate default still applies
+    r = row("GMV $900,000", value=900_000, currency="USD", extra_settings={"fx": fx, "deck_take_rate": True}, **NO_FILE)
+    assert r["turnover_state"] == "volume"
+    # with a rate the claim converts and the same test runs
+    r = row("GMV $210,000 FY2023", value=210_000, currency="USD", extra_settings={"fx": {"EUR": 1.0, "USD": 0.9}})
+    assert (r["turnover_state"], r["evidence_label"]) == ("revenue", "Verified")
 
 
 @pytest.mark.parametrize("term", ["TPV", "GMV", "trading volume", "payment volume", "Transaction volume", "turnover"])
@@ -68,6 +97,8 @@ def test_the_analyst_answer_wins_over_the_file_and_over_the_deck():
         ("Transaction volume", "analyst", "deck_says_processed_volume", "Unsupported")
     r = row("GMV €900,000", value=900000, inputs={"turnover_as": "revenue", "turnover_reason": "deck_says_gross_revenue"})
     assert (r["metric"], r["evidence_label"], r["turnover_set_by"]) == ("Revenue", "Contradicted", "analyst")
+    r = row("GMV €900,000–1,000,000", value=900000, value_high=1_000_000, inputs={"turnover_as": "revenue", "turnover_reason": "file_confirms"})
+    assert (r["metric"], r["evidence_label"]) == ("Revenue", "Contradicted")
 
 
 def test_an_audit_answer_is_reused_for_the_same_term_and_period_only():
@@ -98,11 +129,18 @@ def test_plain_revenue_arr_and_mrr_claims_are_not_turnover_claims():
         assert r["turnover_state"] is None and r["turnover_note"] is None
 
 
-def test_take_rate_words_in_a_deck():
+def test_only_take_rate_counts_as_the_volume_default():
     assert cm.mentions_take_rate({"blocks": [{"text": "Our Take Rate is 2%"}]})
-    assert cm.mentions_take_rate([{"cells": ["Commission", "1%"]}])
-    assert cm.mentions_take_rate(["spread"]) and cm.mentions_take_rate(["fees"])
-    assert not cm.mentions_take_rate(["feeds the pipeline", "revenue"])
+    assert cm.mentions_take_rate([{"cells": ["take-rates", "1%"]}])
+    for text in ("Commission", "spread", "fees", "subscription fees", "sales commission", "feeds the pipeline", "revenue"):
+        assert not cm.mentions_take_rate([text]), text
+
+
+def test_a_saas_deck_with_fees_or_commission_does_not_turn_turnover_into_volume():
+    """Reproduced: 'Turnover €5M FY2027' read Unsupported (Volume) on any deck that said fees, commission or spread."""
+    r = row("Turnover €5M FY2027", value=5_000_000, target_date="2027", period_text="FY2027",
+            extra_settings={"deck_take_rate": cm.mentions_take_rate(["subscription fees", "sales commission", "spread"])})
+    assert (r["turnover_state"], r["evidence_label"]) == ("ask", "Unverified")
 
 
 @pytest.mark.parametrize("text", ["GMV €5M", "TPV $2bn", "Payment volume €1M", "Trading volume €1M", "Transaction volume €1M", "Turnover €1M"])

@@ -23,9 +23,10 @@ export default function BlockerBanner({ auditId }) {
     return stop;
   }, [auditId]);
 
-  // The revenue file blocker is shown only once Calculate has been pressed (task of 2026-10-09, item 2); the other two kinds always.
+  // "Revenue file missing" (S16a) waits for the first Calculate; "revenue file uploaded – confirm the mapping" (S16d) and the
+  // other two kinds always show: a stored file means Calculate was pressed, in this tab or another.
   const pressed = calculatePressed(auditId);
-  const shown = blockers.filter((b) => b.kind !== "revenue_file_missing" || pressed);
+  const shown = blockers.filter((b) => b.text !== S16a_MISSING || pressed);
   if (!shown.length) return null;
   return (
     <div data-testid="blocker-banner" role="alert" className="border-b border-rose-300 bg-rose-50">

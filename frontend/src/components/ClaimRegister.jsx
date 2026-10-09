@@ -8,7 +8,7 @@ import DateField from "@/components/DateField";
 import { answerTurnover, claimsCsvUrl, getClaimRegister, updateClaimInputs } from "@/lib/api";
 import {
   DOWNLOAD_LABEL, GATE_BUDGET_MAX, GATE_DIRECTIONS, GATE_METRIC_MAX, GATE_METRIC_PLACEHOLDER, GATE_NEEDED, KEY_GATE_LABEL, NO_METRIC,
-  REGISTER_COLUMNS, REGISTER_HEADING, TURNOVER_QUESTION, TURNOVER_REASONS, claimText, takeRateText, evidenceLines, gapText, gateContext, gateEdit, metricOptions, needsMetricName,
+  REGISTER_COLUMNS, REGISTER_HEADING, TURNOVER_QUESTION, TURNOVER_REASONS, contradicts, claimText, takeRateText, evidenceLines, gapText, gateContext, gateEdit, metricOptions, needsMetricName,
   observedText, overlapsText, readingText, registerRows, segmentOptions, valueAtStakeText,
 } from "@/lib/claimRegister";
 import { describeRequestError } from "@/lib/requestError";
@@ -75,7 +75,7 @@ function GateCell({ row, ccy, onSave }) {
 /** A turnover claim (claim-matching.md section 11): the label or the question, and one click, Revenue or Volume, with a reason
  *  code. It is shown on every turnover row, so an answer can be changed. */
 function TurnoverCell({ row, onAnswer }) {
-  const [reason, setReason] = useState(row.turnover_reason || TURNOVER_REASONS[0][0]);
+  const [reason, setReason] = useState(row.turnover_reason || "");     // no default: the analyst picks the reason
   const take = takeRateText(row);
   return (
     <div className="mt-1 space-y-1" data-testid="register-turnover">
@@ -91,11 +91,12 @@ function TurnoverCell({ row, onAnswer }) {
       <div className="text-[10px] text-slate-500">{TURNOVER_QUESTION}</div>
       <div className="flex flex-wrap items-center gap-1">
         <select value={reason} onChange={(e) => setReason(e.target.value)} className={selectClass} data-testid="register-turnover-reason">
+          <option value="">Reason…</option>
           {TURNOVER_REASONS.map(([code, label]) => <option key={code} value={code}>{label}</option>)}
         </select>
         {[["revenue", "Revenue"], ["volume", "Volume"]].map(([value, label]) => (
           <Button key={value} size="sm" variant={row.turnover_state === value ? "default" : "outline"} className="h-7"
-            data-testid={`register-turnover-${value}`} onClick={() => onAnswer(row, { as: value, reason }).catch(() => {})}>{label}</Button>
+            data-testid={`register-turnover-${value}`} disabled={!reason || contradicts(value, reason)} onClick={() => onAnswer(row, { as: value, reason }).catch(() => {})}>{label}</Button>
         ))}
       </div>
     </div>

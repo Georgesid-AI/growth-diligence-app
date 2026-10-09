@@ -1412,16 +1412,17 @@ def test_the_fx_reason_names_two_currency_codes_and_the_new_candidate_fields_are
 def test_the_turnover_fields_hold_closed_words_figures_and_sources_never_deck_text():
     """The row of a turnover claim whose snippet holds a sentinel: the sentinel is in no register field, the audit's stored
     answer is keyed by a hash, and the take-rate scan yields a yes or no."""
-    sentinel = "Zephyr Holdings pays us 2.5% commission"
+    sentinel = "Zephyr Holdings take rate is 2.5%"
     row = {"id": "x1", "status": "approved", "claim_type": "revenue", "value": 5e6, "currency": "EUR", "target_date": "2021",
            "period_text": "FY2021", "snippet": f"GMV EUR 5M. {sentinel}", "label_from": None, "file": "deck.pptx", "order": 0,
            "sources": [{"file": "deck.pptx", "slide": 3}]}
     out = claim_matching.build_register([row], RESULTS, {"fiscal_year_end": 12, "reporting_currency": "EUR", "fx": {"EUR": 1.0},
                                                          "deck_take_rate": claim_matching.mentions_take_rate(sentinel)})[0]
-    assert "Zephyr" not in json.dumps(out, default=str) and "commission" not in json.dumps(out, default=str)
+    assert "Zephyr" not in json.dumps(out, default=str) and "take rate" not in json.dumps(out, default=str)
     assert out["turnover_state"] == "volume" and out["turnover_note"] in ("Transaction volume",)
     key = claim_matching.turnover_key(row)
-    assert len(key) == 16 and "GMV" not in key and sentinel not in key
+    assert len(key) == 16 and re.fullmatch(r"[0-9a-f]{16}", key)         # the stored answer's whole key; the endpoint test in
+    # test_turnover_api.py checks the stored audit and candidate documents for deck text
     assert claim_matching.mentions_take_rate(sentinel) is True
 
 

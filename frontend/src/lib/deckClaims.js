@@ -165,7 +165,6 @@ export function rowEdit(row, values) {
 // Shown on both claims when one deck gives the same type and period different values.
 export const INCONSISTENCY_LABEL = "Deck inconsistency";
 
-const sameFigure = (a, b) => a.value === b.value && (a.value_high ?? null) === (b.value_high ?? null);
 const figureText = (f) => {
   const n = present(f.value_high) ? `${figure(f.value)}–${figure(f.value_high)}` : figure(f.value);
   if (f.unit === "%") return `${n}%`;
@@ -174,29 +173,14 @@ const figureText = (f) => {
 };
 const placeText = (f) => sourceRef(f.source);
 
-/** What differs between two stated figures when their values match: currency, unit or date. */
-function differences(a, b) {
-  const out = [];
-  if ((a.currency || null) !== (b.currency || null)) out.push(`currency (${a.currency || "none"} against ${b.currency || "none"})`);
-  if ((a.unit || null) !== (b.unit || null)) out.push(`unit (${a.unit || "none"} against ${b.unit || "none"})`);
-  if ((a.date || null) !== (b.date || null)) out.push(`date (${a.date || "none"} against ${b.date || "none"})`);
-  return out;
-}
-
 /** The sentence under the "Deck inconsistency" tag, built from the two figures the server compared:
  *  "The deck gives different figures for this metric: 5 at deck.pptx · slide 1 and 6 at deck.pptx · slide 4."
- *  Two figures with the same value say which of currency, unit or date differs. Null when the server sent no pair, and
+ *  The parser pairs only figures whose values differ. Null when the server sent no pair, and
  *  then no tag is shown: a tag never stands without its explanation. */
 export function inconsistencyText(c) {
   const pairs = c?.inconsistencies || [];
   if (!pairs.length) return null;
-  return pairs.map(({ this: a, other: b }) => {
-    if (sameFigure(a, b)) {
-      const diff = differences(a, b);
-      return `The deck gives the same value, ${figureText({ ...a, currency: null, unit: null })}, with a different ${diff.join(" and ") || "currency, unit or date"}: ${figureText(a)} at ${placeText(a)} and ${figureText(b)} at ${placeText(b)}.`;
-    }
-    return `The deck gives different figures for this metric: ${figureText(a)} at ${placeText(a)} and ${figureText(b)} at ${placeText(b)}.`;
-  }).join(" ");
+  return pairs.map(({ this: a, other: b }) => `The deck gives different figures for this metric: ${figureText(a)} at ${placeText(a)} and ${figureText(b)} at ${placeText(b)}.`).join(" ");
 }
 
 // Model reading (docs/specs/llm-structure-reading.md): every row the model read carries one of these,

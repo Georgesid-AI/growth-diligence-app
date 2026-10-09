@@ -15,7 +15,7 @@ jest.mock("@/lib/api", () => ({
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
 jest.mock("react-router-dom", () => ({ useParams: () => ({ id: "a1" }), useNavigate: () => jest.fn() }), { virtual: true });
 jest.mock("@/components/Layout", () => ({ Layout: ({ children }) => <div>{children}</div> }));
-jest.mock("@/components/DeckPanel", () => () => <div data-testid="deck-panel" />);
+jest.mock("@/components/DeckPanel", () => ({ reloadKey = 0 }) => <div data-testid="deck-panel" data-reload={reloadKey} />);
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -239,6 +239,23 @@ describe("the FX settings", () => {
     expect(api.saveFx).toHaveBeenCalledWith("a1", { USD: 0.9 });
     expect(api.saveMapping).not.toHaveBeenCalled();
     expect(q("fx-settings").textContent).toContain("1 USD = 0.9 EUR");
+  });
+
+  test("a saved rate makes the deck panel read the claims again; a refused save does not", async () => {
+    api.saveFx.mockResolvedValue({ fx: { USD: 0.9 } });
+    await mount();
+    expect(q("deck-panel").getAttribute("data-reload")).toBe("0");
+    await change(q("fx-ccy-input"), "usd");
+    await change(q("fx-rate-input"), "0.9");
+    await click([...q("fx-settings").querySelectorAll("button")].find((b) => b.textContent.includes("Add")));
+    await flush();
+    expect(q("deck-panel").getAttribute("data-reload")).toBe("1");
+    api.saveFx.mockRejectedValue(new Error("x"));
+    await change(q("fx-ccy-input"), "gbp");
+    await change(q("fx-rate-input"), "1.14");
+    await click([...q("fx-settings").querySelectorAll("button")].find((b) => b.textContent.includes("Add")));
+    await flush();
+    expect(q("deck-panel").getAttribute("data-reload")).toBe("1");
   });
 
   test("a rate that cannot be saved is taken back and says so", async () => {
@@ -529,5 +546,89 @@ describe("the mapping table", () => {
     await pickAndCalc([file("rev.csv")]);
     expect(q("status-revenue").textContent).toBe("Required field not mapped: currency");
     expect(q("compute-button").disabled).toBe(true);
+  });
+});
+
+describe("the header Compute button is the Calculate path (decision C)", () => {
+  test("with a revenue file loaded and a new one attached, it reads the new file first, then computes on the new one", async () => {
+    const order = [];
+    api.uploadChatFile.mockImplementation(async () => { order.push("read"); return VIEW({ file: "new.csv" }); });
+    api.updateAudit.mockResolvedValue({});
+    api.computeAudit.mockImplementation(async () => { order.push("compute"); return {}; });
+    await mount({ datasets: [VIEW({ file: "old.csv" })] });
+    await flush();
+    expect(q("compute-button").disabled).toBe(false);          // ready on the old file
+    await pick([file("new.csv")]);
+    expect(q("compute-button").disabled).toBe(false);
+    api.getDatasets.mockResolvedValue([VIEW({ file: "new.csv" })]);
+    await act(async () => { q("compute-button").click(); });
+    for (let i = 0; i < 5; i += 1) await flush();
+    expect(order).toEqual(["read", "compute"]);
+    expect(q("bubble-status-staged")).toBeNull();
+  });
+
+  test("it is enabled while a file is attached even when nothing is ready, and disabled again once nothing waits and nothing is loaded", async () => {
+    await mount();
+    expect(q("compute-button").disabled).toBe(true);
+    await pick([file("rev.csv")]);
+    expect(q("compute-button").disabled).toBe(false);
+  });
+});
+
+describe("the revenue banner timing (decision D)", () => {
+  const { calculatePressed } = require("@/lib/chatUpload");
+  const counted = async (run) => {
+    const seen = jest.fn();
+    window.addEventListener("blockers:changed", seen);
+    await run();
+    window.removeEventListener("blockers:changed", seen);
+    return seen.mock.calls.length;
+  };
+  beforeEach(() => window.sessionStorage.clear());
+
+  test("computing does not reset the Calculate flag", async () => {
+    api.uploadChatFile.mockResolvedValue(VIEW());
+    api.updateAudit.mockResolvedValue({});
+    api.computeAudit.mockResolvedValue({});
+    await mount();
+    api.getDatasets.mockResolvedValue([VIEW()]);
+    await pickAndCalc([file("rev.csv")]);
+    for (let i = 0; i < 5; i += 1) await flush();
+    expect(api.computeAudit).toHaveBeenCalled();
+    expect(calculatePressed("a1")).toBe(true);
+  });
+
+  test("the banner is refreshed once after the last file, not after each", async () => {
+    api.uploadChatFile.mockResolvedValueOnce(VIEW({ dtype: "pnl", file: "pnl.csv" })).mockResolvedValueOnce(VIEW());
+    await mount();
+    const n = await counted(async () => {
+      await pick([file("pnl.csv"), file("rev.csv")]);
+      await act(async () => { q("chat-calculate").click(); });
+      for (let i = 0; i < 5; i += 1) await flush();
+    });
+    expect(api.uploadChatFile).toHaveBeenCalledTimes(2);
+    expect(n).toBe(1);
+  });
+
+  test("a file that waits for its type neither refreshes the banner nor releases 'Revenue file missing'", async () => {
+    api.uploadChatFile.mockResolvedValueOnce({ status: "unknown_type", file: "mystery.csv", size_bytes: 5, ext: "csv" });
+    await mount();
+    const n = await counted(async () => { await pickAndCalc([file("mystery.csv")]); });
+    expect(q("chat-unknown")).not.toBeNull();
+    expect(n).toBe(0);
+    expect(calculatePressed("a1")).toBe(false);
+    expect(api.computeAudit).not.toHaveBeenCalled();
+    // once its type is picked the file is read and the banner refreshes
+    api.uploadChatFile.mockResolvedValueOnce(VIEW({ dtype: "crm", file: "mystery.csv" }));
+    const after = await counted(async () => { await click(q("pick-type-crm")); await flush(); });
+    expect(after).toBe(1);
+  });
+
+  test("a file that waits for a replace answer does the same", async () => {
+    api.uploadChatFile.mockRejectedValueOnce({ response: { status: 409, data: { detail: { code: "type_loaded", dtype: "revenue", file: "old.csv" } } } });
+    await mount();
+    const n = await counted(async () => { await pickAndCalc([file("new.csv")]); });
+    expect(q("chat-replace")).not.toBeNull();
+    expect([n, calculatePressed("a1")]).toEqual([0, false]);
   });
 });

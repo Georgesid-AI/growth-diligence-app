@@ -61,11 +61,15 @@ test("only the revenue file missing: no banner until Calculate is pressed, then 
   await act(async () => { window.dispatchEvent(new Event(BLOCKERS_CHANGED)); });
   expect(q("blocker-revenue_file_missing").textContent).toContain("Revenue file missing: upload and map it to compute metrics.");
   expect(q("blocker-revenue-note").textContent).toBe(REVENUE_REQUIRED_NOTE);
-  expect(REVENUE_REQUIRED_NOTE).toBe("The revenue file is the only required file. Every metric in the audit (ARR, NRR, churn, CAC payback) is computed from it; without it nothing can be calculated or verified.");
 });
 
-test("a revenue file that is uploaded and not confirmed shows its own wording, with no required-file line", async () => {
-  setCalculatePressed("a1");
+test("the one-line reason under S16a is the sentence the spec gives (chat-upload.md)", () => {
+  const spec = require("fs").readFileSync(require("path").join(__dirname, "../../../docs/specs/chat-upload.md"), "utf8").replace(/\s+/g, " ");
+  expect(spec).toContain(REVENUE_REQUIRED_NOTE);
+});
+
+test("a revenue file that is uploaded and not confirmed shows its own wording in a fresh tab, with no required-file line", async () => {
+  window.sessionStorage.clear();                  // another tab, another analyst, the next day: Calculate was never pressed here
   api.getBlockers.mockResolvedValue([{ kind: "revenue_file_missing", text: "Revenue file uploaded – confirm the mapping to compute metrics." }]);
   await mount(AUDIT);
   expect(q("blocker-revenue_file_missing")).not.toBeNull();

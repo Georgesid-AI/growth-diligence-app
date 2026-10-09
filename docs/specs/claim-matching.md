@@ -67,8 +67,8 @@ the whole-company figure and marked "whole company".
 | As-of | the period ends in the as-of month |
 | Period ends after the as-of month | forecast; observed is the as-of figure, for a sum the period's months up to the as-of month ("to date"; none yet: "—"), for a quarter metric the latest complete quarter (CAC payback: its headline quarter) |
 | No period | the as-of figure (a quarter metric: the latest complete quarter; CAC payback: the headline quarter), marked "no period stated"; revenue, a sum, has no as-of figure: Unverified, reason "no period stated" |
-| Other currency | converted at the saved FX rate before matching (the rate to the reporting currency, from the revenue file's FX editor). The row shows both figures, "150,000 GBP (171,000 EUR at 1.14, 30 Jun 2026)": the claimed amount, the converted amount, the rate and the date it applies at, the as-of month's last day. A range converts at both ends. With no rate saved the row is Unverified, reason "FX rate needed", before any observed figure is read, whatever the period |
-| No saved rate (2026-10-09) | the reason names the pair, "FX rate needed: GBP→EUR" (claim currency, reporting currency), and the screens link to the FX settings (chat-upload.md §14) |
+| Other currency | converted at the saved FX rate before matching (the rate to the reporting currency, from the audit's FX settings on the mapping screen, chat-upload.md §16). The row shows both figures, "150,000 GBP (171,000 EUR at 1.14, 30 Jun 2026)": the claimed amount, the converted amount, the rate and the date it applies at, the as-of month's last day. A range converts at both ends. With no rate saved the row is Unverified, reason "FX rate needed", before any observed figure is read, whatever the period |
+| No saved rate (2026-10-09) | the reason names the pair, "FX rate needed: GBP→EUR" (claim currency, reporting currency), and the screens link to the FX settings (chat-upload.md §16) |
 | Direction with no figure | "Positive EBITDA" (deck-parser.md §2): no value, `claim_direction` "positive" or "negative". No metric is read and no gap is computed: the row is Unverified, reason "direction only: the claim states no figure to test", whatever the claim type. A figure typed over it by an edit ends the direction and the claim is tested as any other |
 | Duration | 7 days a week, 30.44 a month, 12 months a year; hours stay unmatched, and so does a claim with no unit its metric measures (a sales cycle, ACV or ARR figure without a unit or currency) |
 | Range | tested at the end nearest the observed value; inside it the gap is 0 |
@@ -248,15 +248,22 @@ ARR, MRR or "new MRR", is a turnover claim. Resolution, in this order:
 2. The analyst's answer, one click Revenue or Volume with a reason code: stored on the claim and on the audit under
    a hash of the term and the period (no deck text), so the same term and period in another claim reuses it.
    Reason codes: `deck_says_gross_revenue`, `deck_says_processed_volume`, `file_confirms`, `other`. The control is shown
-   on every turnover row, so the analyst can change Revenue to Volume and back, a 1.5x case included.
-3. A revenue file covers the claim period (revenue is read for every month, not a forecast): claimed within tolerance
-   of the file revenue: Revenue, tested as today, shown as "Gross revenue (turnover)"; claimed above 3x the file
-   revenue: Unverified, "Looks like transaction volume, not revenue: confirm Revenue or Volume"; anything between:
-   Revenue, tested as today (Contradicted if outside tolerance).
+   on every turnover row, so the analyst can change Revenue to Volume and back. No reason is preselected: the Revenue and
+   Volume buttons stay disabled until one is chosen, and the server refuses the contradictory pairs (Volume with
+   `deck_says_gross_revenue`, Revenue with `deck_says_processed_volume`) with 422.
+3. A revenue file covers the claim period (revenue is read for every month, not a forecast). The file revenue is that of
+   the segment the claim names (the whole company when it names none). A single figure is compared with it: within
+   tolerance (§4): Revenue, tested as today, shown as "Gross revenue (turnover)"; above tolerance, whatever the multiple:
+   Unverified, the question "Turnover or volume?", reason "turnover or volume: confirm Revenue or Volume", until the
+   analyst answers (amended 2026-10-09, George: the 3x threshold is dropped); below tolerance: Revenue, the ordinary
+   revenue rule (Contradicted, a miss). A range is compared at the end nearest the file revenue (inside the range: within
+   tolerance), and the same three cases apply. The claim is converted at the saved rate first; with no rate saved the row
+   is Unverified, "FX rate needed: USD→EUR", before the question is asked.
 4. No file covers the period (no revenue file, months missing, no period, a forecast): the question is asked. If the
-   deck mentions take rate, commission, spread or fees anywhere (read by Python from the parsed deck; only the yes or
-   no is kept) the row reads as Volume until the analyst answers; otherwise it is Unverified, "turnover or volume:
-   confirm Revenue or Volume".
+   deck says "take rate" anywhere (any case, hyphen or space, singular or plural; read by Python from the parsed deck;
+   only the yes or no is kept) the row reads as Volume until the analyst answers; otherwise it is Unverified, "turnover
+   or volume: confirm Revenue or Volume". Fees, commission and spread no longer count (amended 2026-10-09, George: they
+   are in most decks that have a subscription or a sales team).
 5. Volume is never matched to engine revenue: Unsupported, "no engine volume source for transaction volume", until
    an engine volume source exists.
 6. Implied take rate = file revenue for the claim period ÷ claimed volume (in the reporting currency), on a Volume row

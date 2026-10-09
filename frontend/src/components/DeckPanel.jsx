@@ -21,7 +21,7 @@ export const MOVE_NOTICE_MS = 4000;
 const selectClass = "h-8 rounded-md border border-[#E5E7EB] bg-white px-2 text-xs";
 
 /** Board deck or growth plan: the scope message, the upload, and the candidate approval list. */
-export default function DeckPanel({ auditId }) {
+export default function DeckPanel({ auditId, reloadKey = 0 }) {
   const [data, setData] = useState({ decks: [], candidates: [] });
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState(null);
@@ -49,6 +49,9 @@ export default function DeckPanel({ auditId }) {
     return undefined;
   }), [auditId]);
   useEffect(() => { load(); }, [load]);
+  // A rate saved on the page changes every claim's converted figure: read the claims again, keeping the open tab.
+  const first = useRef(true);
+  useEffect(() => { if (first.current) { first.current = false; return; } load(undefined, true); }, [reloadKey]); // eslint-disable-line
 
   // A deck's structures are read after its upload returns: check back while one is still being read.
   const polls = useRef(0);

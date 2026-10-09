@@ -10,8 +10,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getAudit, saveMapping, computeAudit, getRevenueCustomers, updateAudit, reportUsage, saveFx } from "@/lib/api";
-import { setCalculatePressed } from "@/lib/chatUpload";
-import { BLOCKERS_CHANGED } from "@/components/BlockerBanner";
 import { asOfInputValue, MONTHS, DEFAULT_FISCAL_YEAR_END } from "@/lib/auditForm";
 
 export default function MappingWizard() {
@@ -21,6 +19,9 @@ export default function MappingWizard() {
   const [views, setViews] = useState([]);
   const [computing, setComputing] = useState(false);
   const [asOf, setAsOf] = useState("");
+  const [attached, setAttached] = useState(0);        // files attached in the chat and not read yet
+  const calculateRef = useRef(null);                  // UploadChat's Calculate: the header button runs the same path
+  const [fxVersion, setFxVersion] = useState(0);      // bumped when a rate is saved: the deck panel reloads
 
   const load = useCallback(() => getAudit(id).then((a) => { setAudit(a); setAsOf(asOfInputValue(a.as_of_month)); }), [id]);
   useEffect(() => { load(); reportUsage(id, { screen: "mapping" }); }, [load, id]);
@@ -38,6 +39,9 @@ export default function MappingWizard() {
   // Compute waits for the analyst: no AI or unsure row left, every required field of each file mapped (section 4.3).
   const hasRevenue = views.some((v) => v.dtype === "revenue");
   const ready = hasRevenue && views.every((v) => v.pending === 0 && v.missing_required.length === 0);
+  // The header button is Calculate: it reads whatever is attached first, so a new file is never left "attached – not read yet"
+  // while the old one is computed.
+  const headerCompute = () => (calculateRef.current ? calculateRef.current() : runCompute());
 
   const runCompute = async () => {
     setComputing(true);
@@ -45,7 +49,6 @@ export default function MappingWizard() {
       await updateAudit(id, { as_of_month: asOf || null });
       await computeAudit(id);
       toast.success("Metrics computed");
-      setCalculatePressed(id, false);
       nav(`/audit/${id}/dashboard`);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Compute failed — check required fields are mapped");
@@ -57,7 +60,6 @@ export default function MappingWizard() {
   // Calculate (UploadChat has read the attached files): with no revenue file the page stops and the banner says why; with
   // a revenue file whose columns all have a decision, the metrics are computed.
   const onCalculate = async (loaded) => {
-    window.dispatchEvent(new Event(BLOCKERS_CHANGED));
     if (!loaded.some((v) => v.dtype === "revenue")) return;
     if (!loaded.every((v) => v.pending === 0 && v.missing_required.length === 0)) {
       toast.error("Some columns still wait for your decision");
@@ -94,7 +96,7 @@ export default function MappingWizard() {
               <DateField testId="asof-month-input" value={asOf} onChange={setAsOf} placeholder="last P&L month" />
             </div>
           </div>
-          <Button data-testid="compute-button" onClick={runCompute} disabled={!ready || computing}
+          <Button data-testid="compute-button" onClick={headerCompute} disabled={(!ready && attached === 0) || computing}
             className="bg-sky-600 hover:bg-sky-500 gap-2">
             {computing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />} Compute Metrics
           </Button>
@@ -102,10 +104,10 @@ export default function MappingWizard() {
       </div>
 
       <div className="space-y-5">
-        <UploadChat audit={audit} onViews={setViews} onCalculate={onCalculate}
+        <UploadChat audit={audit} onViews={setViews} onCalculate={onCalculate} calculateRef={calculateRef} onStaged={setAttached}
           extras={(view) => <RevenueSettings key={`${view.file}-${view.uploaded_at}`} audit={audit} view={view} />} />
-        <FxSettings audit={audit} />
-        <DeckPanel auditId={audit.id} />
+        <FxSettings audit={audit} onSaved={() => setFxVersion((n) => n + 1)} />
+        <DeckPanel auditId={audit.id} reloadKey={fxVersion} />
       </div>
     </Layout>
   );
@@ -140,12 +142,12 @@ function RevenueSettings({ audit, view }) {
 }
 
 /** The audit's FX rates: one set for the uploaded files and the deck claims, needing no file. Saved as they change. */
-function FxSettings({ audit }) {
+function FxSettings({ audit, onSaved }) {
   const [fx, setFx] = useState({ ...(audit.datasets?.revenue?.fx || {}), ...(audit.fx || {}) });
   const change = async (next) => {
     const before = fx;
     setFx(next);
-    try { await saveFx(audit.id, next); } catch (e) { setFx(before); toast.error("Save failed"); }
+    try { await saveFx(audit.id, next); onSaved?.(); } catch (e) { setFx(before); toast.error("Save failed"); }
   };
   return (
     <section id="fx-settings" data-testid="fx-settings" className="bg-white border border-[#E5E7EB] rounded-lg px-5 pb-5">
