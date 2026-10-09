@@ -63,7 +63,8 @@
     recommendation. One message, all open decisions together, not one at a time.
 20. Degrade, don't die: if the LLM gateway fails or times out anywhere, every computed metric still renders
     with its citation and a 'narrative unavailable' note.
-21. Three hard blockers, and nothing else, render at the top of every audit view: the revenue file Missing,
+21. Three hard blockers, and nothing else, render at the top of every audit view: the revenue file Missing
+    (from the first press of Calculate; not when the screen opens, docs/specs/chat-upload.md §14),
     a top-5 claim Contradicted (a miss or a beat), and a revenue reconciliation gap above 2% over the window of
     docs/specs/chat-upload.md §6.2. Per-month gaps go in the reconciliation evidence table, never in the banner.
 22. Delete audit requires typing the company name and removes every document of the audit in every
