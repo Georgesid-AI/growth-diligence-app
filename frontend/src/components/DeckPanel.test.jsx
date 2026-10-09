@@ -278,6 +278,97 @@ describe("a turnover claim asks Revenue or Volume in its own row (05-zero2hero.p
     expect([...q("candidate-row-r").querySelectorAll("[data-testid='turnover-confirm']")].map((n) => n.textContent)).toEqual([
       "Y/E 22 · Turnover – confirm:", "Y/E 23 · Turnover – confirm:"]);
   });
+
+  describe("the edit form opens on the stored answer (task of 2026-10-09, items 8 and 9)", () => {
+    const answered = (kind, reason = "deck_says_processed_volume", over = {}) => bar("t23", 550508, "2023", view("t23", "2023", {
+      turnover_state: kind, turnover_note: kind === "volume" ? "Transaction volume" : "Gross revenue (turnover)", turnover_set_by: "analyst",
+      turnover_reason: reason, ...over }));
+    const openEdit = async (id) => { await act(async () => { cell(id, "candidate-edit").click(); }); };
+    const setSelect = async (el, value) => act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(el, value);
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const options = () => [...q("edit-claim-type").querySelectorAll("option")].map((o) => o.textContent);
+
+    test("a Transaction volume claim opens with Transaction volume selected, not the first item, and saves unchanged without a new answer", async () => {
+      await reload([answered("volume")]);
+      api.updateCandidate.mockResolvedValue({ id: "t23", status: "edited" });
+      await openEdit("t23");
+      const select = q("edit-claim-type");
+      expect(select.value).toBe("transaction_volume");
+      expect(select.selectedOptions[0].textContent).toBe("Transaction volume");
+      expect(options()[0]).not.toBe("Transaction volume");
+      expect(options()).toContain("Revenue");
+      expect(q("edit-turnover-reason")).toBeNull();                      // nothing changed: no reason asked
+      expect(q("edit-save").disabled).toBe(false);
+      expect(q("edit-value").value).toBe("550508");                      // every other field is prefilled from the stored claim
+      expect(q("edit-target-date").value).toBe("2023");
+      await act(async () => { q("edit-save").click(); });
+      expect(api.updateCandidate).toHaveBeenCalledTimes(1);
+      expect(api.updateCandidate.mock.calls[0][2].claim_type).toBe("revenue");
+      expect(api.answerTurnover).not.toHaveBeenCalled();                 // the answer is untouched
+      await openEdit("t23");
+      expect(q("edit-claim-type").value).toBe("transaction_volume");     // still Transaction volume
+    });
+
+    test("a claim answered Revenue opens on Revenue; a claim not yet answered opens on 'Turnover – choose', never on Revenue", async () => {
+      await reload([answered("revenue", "deck_says_gross_revenue")]);
+      await openEdit("t23");
+      expect(q("edit-claim-type").value).toBe("revenue");
+      await reload(ZERO2HERO);
+      await openEdit("t21");
+      expect(q("edit-claim-type").value).toBe("turnover_ask");
+      expect(q("edit-claim-type").selectedOptions[0].textContent).toBe("Turnover – choose");
+      expect(q("edit-save").disabled).toBe(false);                       // a figure can still be corrected without answering
+    });
+
+    test("changing a Transaction volume claim to Revenue asks for a reason; Save and approve waits for it, then records it as the button does", async () => {
+      await reload([answered("volume")]);
+      api.updateCandidate.mockResolvedValue({ id: "t23", status: "edited" });
+      api.answerTurnover.mockResolvedValue({ register: [] });
+      await openEdit("t23");
+      await setSelect(q("edit-claim-type"), "revenue");
+      expect(q("edit-turnover-reason")).not.toBeNull();
+      expect([...q("edit-turnover-reason").querySelectorAll("option")].map((o) => o.textContent)).toEqual(
+        ["Reason…", "Deck says gross revenue", "Deck says processed volume", "Revenue file confirms"]);
+      expect(q("edit-save").disabled).toBe(true);
+      await setSelect(q("edit-turnover-reason"), "deck_says_processed_volume");       // contradicts Revenue: the server refuses it
+      expect(q("edit-save").disabled).toBe(true);
+      await setSelect(q("edit-turnover-reason"), "deck_says_gross_revenue");
+      expect(q("edit-save").disabled).toBe(false);
+      await act(async () => { q("edit-save").click(); });
+      expect(api.answerTurnover).toHaveBeenCalledWith("a1", "t23", { as: "revenue", reason: "deck_says_gross_revenue" });
+    });
+
+    test("changing a Revenue claim to Transaction volume uses the Volume path", async () => {
+      await reload([answered("revenue", "deck_says_gross_revenue")]);
+      api.updateCandidate.mockResolvedValue({ id: "t23", status: "edited" });
+      api.answerTurnover.mockResolvedValue({ register: [] });
+      await openEdit("t23");
+      await setSelect(q("edit-claim-type"), "transaction_volume");
+      expect(q("edit-save").disabled).toBe(true);
+      await setSelect(q("edit-turnover-reason"), "deck_says_processed_volume");
+      await act(async () => { q("edit-save").click(); });
+      expect(api.answerTurnover).toHaveBeenCalledWith("a1", "t23", { as: "volume", reason: "deck_says_processed_volume" });
+    });
+
+    test("the edit form offers the same three reasons, and hides 'Revenue file confirms' when no revenue-file period exists", async () => {
+      await reload([answered("volume", "deck_says_processed_volume", { file_note: "No revenue-file period to compare" })]);
+      await openEdit("t23");
+      await setSelect(q("edit-claim-type"), "revenue");
+      expect([...q("edit-turnover-reason").querySelectorAll("option")].map((o) => o.textContent)).toEqual(
+        ["Reason…", "Deck says gross revenue", "Deck says processed volume"]);
+    });
+
+    test("a claim that is not a turnover claim has no Transaction volume entry and asks for no reason", async () => {
+      await reload([claim("c", "d1", 2, { group: 1 })]);
+      await openEdit("c");
+      expect(options()).not.toContain("Transaction volume");
+      expect(q("edit-claim-type").value).toBe("revenue");
+      await setSelect(q("edit-claim-type"), "customers");
+      expect(q("edit-turnover-reason")).toBeNull();
+    });
+  });
 });
 
 test("To review is a status label, not a control: plain text with no border, chip or button around it (George, 2026-10-09)", async () => {

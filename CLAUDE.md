@@ -64,7 +64,7 @@
 20. Degrade, don't die: if the LLM gateway fails or times out anywhere, every computed metric still renders
     with its citation and a 'narrative unavailable' note.
 21. Three hard blockers, and nothing else, render at the top of every audit view: the revenue file Missing
-    (S16a, from the first Calculate; a revenue file uploaded with its mapping unconfirmed, S16d, always;
+    (S16a, from the first Map; a revenue file uploaded with its mapping unconfirmed, S16d, always;
     docs/specs/chat-upload.md §16), a top-5 claim Contradicted (a miss or a beat), and a revenue reconciliation gap
     above 2% over the window of docs/specs/chat-upload.md §6.2. Per-month gaps go in the reconciliation evidence
     table, never in the banner.

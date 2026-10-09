@@ -66,10 +66,10 @@ async function pick(files) {
   await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); });
   await flush();
 }
-// Dropping or picking a file only attaches it; nothing is read until Calculate is pressed.
-async function pickAndCalc(files) {
+// Dropping or picking a file only attaches it; nothing is read until Map is pressed.
+async function pickAndMap(files) {
   await pick(files);
-  await act(async () => { q("chat-calculate").click(); });
+  await act(async () => { q("chat-map").click(); });
   await flush();
 }
 const file = (name, size = 10) => new File(["x".repeat(size)], name);
@@ -196,36 +196,57 @@ describe("the screen", () => {
     expect(q("chat-explainer").textContent).toBe(S3_EXPLAINER_NO_CONSENT);
   });
 
-  test("the header button and the chat button both read Calculate, look the same and share one tooltip", async () => {
+  test("the chat has Map and Calculate, the header has Calculate; the Calculate buttons look the same and share one tooltip", async () => {
     await mount();
     const header = q("compute-button"), chat = q("chat-calculate");
+    expect(q("chat-map").textContent).toBe("Map");
     expect(header.textContent).toBe("Calculate");
     expect(chat.textContent).toBe("Calculate");
-    expect(header.title).toBe("Attach the revenue file first. It is the only required file.");
     expect(chat.title).toBe(header.title);
     expect(header.className).toBe(chat.className);
+    expect(q("chat-map").className).toBe(chat.className);
   });
 
-  test("both Calculate buttons are disabled with the same tooltip while no file is attached and none is loaded", async () => {
+  test("with no file attached and none loaded, Map is off with its tooltip and Calculate is off with its own", async () => {
     await mount();
+    expect(q("chat-map").disabled).toBe(true);
+    expect(q("chat-map").title).toBe("Attach the revenue file first. It is the only required file.");
+    expect(q("chat-map-wrap").title).toBe(q("chat-map").title);
     expect(q("compute-button").disabled).toBe(true);
     expect(q("chat-calculate").disabled).toBe(true);
-    expect(q("compute-button").title).toBe("Attach the revenue file first. It is the only required file.");
+    expect(q("compute-button").title).toBe("Map the revenue file and confirm every column that waits for you first.");
     expect(q("compute-button-wrap").title).toBe(q("compute-button").title);
     expect(q("chat-calculate-wrap").title).toBe(q("compute-button").title);
   });
 
-  test("attaching a file enables both buttons together; so does a loaded file, and a file removed from the chat disables them again", async () => {
+  test("Map is on with a file attached; Calculate stays off until the mapping is saved, in the header and the chat alike", async () => {
+    api.uploadChatFile.mockResolvedValue(PENDING_VIEW());
+    api.decideColumns.mockResolvedValue(VIEW());
     await mount();
     await pick([file("rev.csv")]);
-    expect([q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([false, false]);
-    expect(q("compute-button").title).toBe("Reads the attached files and computes the metrics.");
-    expect(q("chat-calculate").title).toBe(q("compute-button").title);
-    await click(q("unstage-rev.csv"));
+    expect(q("chat-map").disabled).toBe(false);
     expect([q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([true, true]);
+    await act(async () => { q("chat-map").click(); });
+    await flush();
+    expect(q("chat-map").disabled).toBe(false);                 // a file is loaded
+    expect([q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([true, true]);      // two columns still wait
+    await click(q("confirm-Amount"));
+    await flush();
+    expect([q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([false, false]);    // mapping saved
+    expect(q("compute-button").title).toBe("Computes the metrics from the mapped files.");
+    expect(q("chat-calculate").title).toBe(q("compute-button").title);
+  });
+
+  test("a file removed from the chat switches Map off again; a loaded file keeps it on", async () => {
+    await mount();
+    await pick([file("rev.csv")]);
+    expect(q("chat-map").disabled).toBe(false);
+    await click(q("unstage-rev.csv"));
+    expect(q("chat-map").disabled).toBe(true);
     await act(async () => { root.unmount(); }); host.remove();
     await mount({ datasets: [VIEW()] });
-    expect([q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([false, false]);
+    expect(q("chat-map").disabled).toBe(false);
+    expect([q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([false, false]);     // stored mapping is complete
   });
 
   test("Send is greyed out while the text box is empty and carries its tooltip", async () => {
@@ -273,7 +294,7 @@ describe("a file", () => {
   test("gets an analyst bubble (name, size, icon) and a system bubble with the detected type, the months and the table", async () => {
     api.uploadChatFile.mockResolvedValue(VIEW());
     await mount();
-    await pickAndCalc([file("rev.csv", 2048)]);
+    await pickAndMap([file("rev.csv", 2048)]);
     expect(api.uploadChatFile).toHaveBeenCalledWith("a1", expect.any(File), {});
     const analyst = q("chat-analyst-bubble");
     expect(analyst.textContent).toContain("rev.csv");
@@ -289,7 +310,7 @@ describe("a file", () => {
     await click(q("unused-toggle-revenue"));
     expect(q("column-row-Memo")).not.toBeNull();
     expect(q("correct-Memo")).not.toBeNull();
-    expect(q("status-revenue").textContent).toBe("Ready for compute");
+    expect(q("status-revenue").textContent).toBe("Ready for calculation");
     expect(q("revenue-settings")).not.toBeNull();
   });
 
@@ -299,7 +320,7 @@ describe("a file", () => {
     api.uploadChatFile.mockImplementationOnce((id, f) => { order.push(f.name); return new Promise((r) => { release = () => r(VIEW()); }); });
     api.uploadChatFile.mockImplementationOnce((id, f) => { order.push(f.name); return Promise.resolve(VIEW({ dtype: "crm", file: "crm.csv" })); });
     await mount();
-    await pickAndCalc([file("first.csv"), file("second.csv")]);
+    await pickAndMap([file("first.csv"), file("second.csv")]);
     expect(order).toEqual(["first.csv"]);
     await act(async () => { release(); });
     await flush();
@@ -308,7 +329,7 @@ describe("a file", () => {
 
   test("anything but xlsx or csv is refused in the browser with S7 and counted by extension", async () => {
     await mount();
-    await pickAndCalc([file("board.pptx")]);
+    await pickAndMap([file("board.pptx")]);
     expect(api.uploadChatFile).not.toHaveBeenCalled();
     expect(q("chat-text-system").textContent).toBe(S7_REFUSED);
     expect(api.reportUsage).toHaveBeenCalledWith("a1", { rejected_extension: "pptx" });
@@ -316,7 +337,7 @@ describe("a file", () => {
 
   test("an old .xls file is refused with 'Save as .xlsx or .csv and upload again.' and counted", async () => {
     await mount();
-    await pickAndCalc([file("old.xls")]);
+    await pickAndMap([file("old.xls")]);
     expect(api.uploadChatFile).not.toHaveBeenCalled();
     expect(S7B_XLS_REFUSED).toBe("Save as .xlsx or .csv and upload again.");
     expect(q("chat-text-system").textContent).toBe(S7B_XLS_REFUSED);
@@ -329,7 +350,7 @@ describe("a file", () => {
     api.uploadChatFile.mockResolvedValueOnce(VIEW({ dtype: "crm", file: "mystery.csv" }));
     await mount();
     const f = file("mystery.csv");
-    await pickAndCalc([f]);
+    await pickAndMap([f]);
     expect(q("chat-unknown").textContent).toContain("Could not tell what this file holds. Pick its type:");
     expect(["Revenue lines", "CRM deals", "P&L (monthly)"].every((t) => q("chat-unknown").textContent.includes(t))).toBe(true);
     await click(q("pick-type-crm"));
@@ -345,13 +366,13 @@ describe("a file", () => {
     api.uploadChatFile.mockResolvedValueOnce(VIEW());
     await mount();
     const f = file("new.csv");
-    await pickAndCalc([f]);
+    await pickAndMap([f]);
     expect(q("chat-replace").textContent).toContain("A revenue file is already loaded (old.csv). Replace it?");
     await click(q("replace-yes"));
     await flush();
     expect(api.uploadChatFile).toHaveBeenLastCalledWith("a1", f, { dtype: "revenue", replace: true });
     api.uploadChatFile.mockRejectedValueOnce(conflict);
-    await pickAndCalc([file("again.csv")]);
+    await pickAndMap([file("again.csv")]);
     await click(q("replace-no"));
     expect(q("chat-replace")).toBeNull();
     expect(api.uploadChatFile).toHaveBeenCalledTimes(3);      // Keep current sent nothing more
@@ -360,7 +381,7 @@ describe("a file", () => {
   test("the same file again says S14", async () => {
     api.uploadChatFile.mockResolvedValue(VIEW({ status: "same_file", version: 3 }));
     await mount();
-    await pickAndCalc([file("rev.csv")]);
+    await pickAndMap([file("rev.csv")]);
     expect(q("bubble-same").textContent).toBe("Same file as before: saved mapping v3 applied.");
   });
 });
@@ -411,8 +432,8 @@ describe("the FX settings", () => {
   });
 });
 
-describe("Calculate (items 1 and 2)", () => {
-  test("a dropped file is only attached: nothing is read, the box stays usable, and Calculate reads the files in drop order", async () => {
+describe("Map and Calculate", () => {
+  test("a dropped file is only attached: nothing is read, the box stays usable, and Map reads the files in drop order without computing", async () => {
     api.uploadChatFile.mockResolvedValue(VIEW());
     api.getDatasets.mockResolvedValue([VIEW()]);
     await mount();
@@ -425,50 +446,58 @@ describe("Calculate (items 1 and 2)", () => {
     expect(all("chat-analyst-bubble").length).toBe(2);
     expect(api.uploadChatFile).not.toHaveBeenCalled();
     expect(api.computeAudit).not.toHaveBeenCalled();
-    await act(async () => { q("chat-calculate").click(); });
+    await act(async () => { q("chat-map").click(); });
     await flush();
     expect(api.uploadChatFile.mock.calls.map((c) => c[1].name)).toEqual(["a.csv", "b.csv"]);
+    for (let i = 0; i < 5; i += 1) await flush();
+    expect(api.computeAudit).not.toHaveBeenCalled();         // Map never computes
   });
 
-  test("an attachment can be taken off before Calculate", async () => {
+  test("an attachment can be taken off before Map", async () => {
     await mount();
     await pick([file("a.csv")]);
     await click(q("unstage-a.csv"));
     expect(all("chat-analyst-bubble").length).toBe(0);
-    api.getDatasets.mockResolvedValue([]);
-    await act(async () => { q("chat-calculate").click(); });
-    await flush();
+    expect(q("chat-map").disabled).toBe(true);
     expect(api.uploadChatFile).not.toHaveBeenCalled();
   });
 
-  test("with a revenue file whose columns all have a decision, Calculate computes the metrics", async () => {
+  test("with a revenue file whose columns all have a decision, Calculate computes the metrics, from the chat and from the header", async () => {
     api.uploadChatFile.mockResolvedValue(VIEW());
     api.updateAudit.mockResolvedValue({});
     api.computeAudit.mockResolvedValue({});
     await mount();
-    api.getDatasets.mockResolvedValue([VIEW()]);       // what Calculate reads back after the file is loaded
-    await pickAndCalc([file("rev.csv")]);
+    await pickAndMap([file("rev.csv")]);
     for (let i = 0; i < 5; i += 1) await flush();
+    expect(api.computeAudit).not.toHaveBeenCalled();
+    await act(async () => { q("chat-calculate").click(); });
+    for (let i = 0; i < 5; i += 1) await flush();
+    expect(api.computeAudit).toHaveBeenCalledTimes(1);
     expect(api.computeAudit).toHaveBeenCalledWith("a1");
+    await act(async () => { q("compute-button").click(); });
+    for (let i = 0; i < 5; i += 1) await flush();
+    expect(api.computeAudit).toHaveBeenCalledTimes(2);
   });
 
-  test("with a column still waiting, Calculate reads the file but does not compute", async () => {
+  test("with a column still waiting, Map reads the file and Calculate stays off", async () => {
     api.uploadChatFile.mockResolvedValue(PENDING_VIEW());
     await mount();
-    api.getDatasets.mockResolvedValue([PENDING_VIEW()]);
-    await pickAndCalc([file("rev.csv")]);
+    await pickAndMap([file("rev.csv")]);
+    expect(q("chat-calculate").disabled).toBe(true);
+    await act(async () => { q("chat-calculate").click(); q("compute-button").click(); });
     expect(api.computeAudit).not.toHaveBeenCalled();
   });
 
-  test("Calculate with no revenue file attached computes nothing and releases the revenue banner; before the press it is held back", async () => {
+  test("Map with no revenue file loaded computes nothing and releases the revenue banner; before the press it is held back", async () => {
     const { calculatePressed } = require("@/lib/chatUpload");
     window.sessionStorage.clear();
     const seen = jest.fn();
     window.addEventListener("blockers:changed", seen);
     await mount({ datasets: [VIEW({ dtype: "crm", file: "crm.csv" })] });      // a file is loaded, but not the revenue file
     expect(calculatePressed("a1")).toBe(false);
-    expect(q("chat-calculate").disabled).toBe(false);
-    await act(async () => { q("chat-calculate").click(); });
+    expect(q("chat-map").disabled).toBe(false);
+    expect(q("chat-calculate").disabled).toBe(true);           // no revenue file: nothing to calculate
+    await act(async () => { q("chat-map").click(); });
     await flush();
     window.removeEventListener("blockers:changed", seen);
     expect(calculatePressed("a1")).toBe(true);
@@ -483,14 +512,13 @@ describe("the mapping table", () => {
   const mountPending = async () => {
     api.uploadChatFile.mockResolvedValue(PENDING_VIEW());
     await mount();
-    await pickAndCalc([file("rev.csv")]);
+    await pickAndMap([file("rev.csv")]);
   };
 
-  test("AI, unsure and undecided rows wait for a click; the status says how many and Calculate does not compute", async () => {
+  test("AI, unsure and undecided rows wait for a click; the status says how many and Calculate stays off", async () => {
     await mountPending();
     expect(q("status-revenue").textContent).toBe("2 columns wait for your decision");
-    expect(q("compute-button").disabled).toBe(false);          // a file is loaded: the button only waits for a file (pressing it reads, then stops)
-    expect(q("compute-button").disabled).toBe(q("chat-calculate").disabled);
+    expect([q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([true, true]);
     expect(api.computeAudit).not.toHaveBeenCalled();
     expect(q("bubble-head").textContent).toBe("Detected: Revenue lines · 1,240 rows");
     expect(q("bubble-head").textContent).not.toContain("confirmed");
@@ -522,7 +550,7 @@ describe("the mapping table", () => {
       ],
     }));
     await mount();
-    await pickAndCalc([file("rev.csv")]);
+    await pickAndMap([file("rev.csv")]);
     const order = [...q("mapping-table-revenue").querySelectorAll("tbody tr[data-testid^='column-row-']")]
       .map((tr) => tr.getAttribute("data-testid").replace("column-row-", ""));
     expect(order).toEqual(["Needs", "Ai", "Unsure20", "Unsure50", "Done", "Auto90", "Auto100a", "Auto100b"]);
@@ -542,7 +570,7 @@ describe("the mapping table", () => {
       ],
     }));
     await mount();
-    await pickAndCalc([file("rev.csv")]);
+    await pickAndMap([file("rev.csv")]);
     await click(q("unused-toggle-revenue"));
     const cells = Object.fromEntries(["Rule", "Ai", "Saved", "SavedLow", "Needs", "Chosen", "Memo"].map((c) => [c, q(`confidence-${c}`).textContent]));
     expect(cells).toEqual({ Rule: "100", Ai: "needs confirmation", Saved: "reused", SavedLow: "reused", Needs: "needs confirmation",
@@ -566,7 +594,7 @@ describe("the mapping table", () => {
   test("a collapsible box 'Why this step matters' sits above the mapping table, open, with the agreed text", async () => {
     api.uploadChatFile.mockResolvedValueOnce(VIEW()).mockResolvedValueOnce(VIEW({ dtype: "pnl", file: "pnl.csv" }));
     await mount();
-    await pickAndCalc([file("rev.csv"), file("pnl.csv")]);
+    await pickAndMap([file("rev.csv"), file("pnl.csv")]);
     const box = q("why-this-matters");
     expect(all("why-this-matters").length).toBe(1);
     expect(box.tagName).toBe("DETAILS");
@@ -588,17 +616,17 @@ describe("the mapping table", () => {
   test("a confidence lowered by the values says why (S9)", async () => {
     api.uploadChatFile.mockResolvedValue(VIEW({ columns: [row("Amount", { field: "amount", state: "unsure", confidence: 0, fit_note: "0 of 20 values are numbers", pending: true })], pending: 1 }));
     await mount();
-    await pickAndCalc([file("rev.csv")]);
+    await pickAndMap([file("rev.csv")]);
     expect(q("confidence-Amount").textContent).toBe("0 · 0 of 20 values are numbers");
   });
 
-  test("Confirm sends one decision and the new state replaces the bubble; Compute enables once nothing waits", async () => {
+  test("Confirm sends one decision and the new state replaces the bubble; Calculate enables once nothing waits", async () => {
     await mountPending();
     api.decideColumns.mockResolvedValue(VIEW());
     await click(q("confirm-Amount"));
     await flush();
     expect(api.decideColumns).toHaveBeenCalledWith("a1", "revenue", [{ column: "Amount", action: "confirm", field: "amount" }]);
-    expect(q("status-revenue").textContent).toBe("Ready for compute");
+    expect(q("status-revenue").textContent).toBe("Ready for calculation");
     expect(q("compute-button").disabled).toBe(false);
   });
 
@@ -609,7 +637,7 @@ describe("the mapping table", () => {
     ] });
     api.uploadChatFile.mockResolvedValue(asking);
     await mount();
-    await pickAndCalc([file("rev.csv")]);
+    await pickAndMap([file("rev.csv")]);
     expect(q("money-ask-Total Turnover").textContent).toContain("Is this money the company earned (revenue) or the value of transactions processed (volume)?");
     expect(q("confirm-Total Turnover")).toBeNull();
     api.decideColumns.mockResolvedValue(VIEW());
@@ -678,22 +706,22 @@ describe("the mapping table", () => {
   test("when the model failed the bubble says S12", async () => {
     api.uploadChatFile.mockResolvedValue(VIEW({ ai_reading: { status: "timeout" } }));
     await mount();
-    await pickAndCalc([file("rev.csv")]);
+    await pickAndMap([file("rev.csv")]);
     expect(q("bubble-ai-failed").textContent).toBe(S12_MODEL_FAILED);
   });
 
   test("a required field that is not mapped is named in the status line", async () => {
     api.uploadChatFile.mockResolvedValue(VIEW({ missing_required: ["currency"] }));
     await mount();
-    await pickAndCalc([file("rev.csv")]);
+    await pickAndMap([file("rev.csv")]);
     expect(q("status-revenue").textContent).toBe("Required field not mapped: currency");
-    expect(q("compute-button").disabled).toBe(q("chat-calculate").disabled);
+    expect([q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([true, true]);
     expect(api.computeAudit).not.toHaveBeenCalled();
   });
 });
 
-describe("the header Compute button is the Calculate path (decision C)", () => {
-  test("with a revenue file loaded and a new one attached, it reads the new file first, then computes on the new one", async () => {
+describe("the header Calculate button is the chat's Calculate (always the same state)", () => {
+  test("with a revenue file loaded and a new one attached, Calculate waits for Map, then computes on the new file", async () => {
     const order = [];
     api.uploadChatFile.mockImplementation(async () => { order.push("read"); return VIEW({ file: "new.csv" }); });
     api.updateAudit.mockResolvedValue({});
@@ -702,19 +730,20 @@ describe("the header Compute button is the Calculate path (decision C)", () => {
     await flush();
     expect(q("compute-button").disabled).toBe(false);          // ready on the old file
     await pick([file("new.csv")]);
-    expect(q("compute-button").disabled).toBe(false);
-    api.getDatasets.mockResolvedValue([VIEW({ file: "new.csv" })]);
+    expect([q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([true, true]);    // an unread file: map it first
+    await act(async () => { q("chat-map").click(); });
+    for (let i = 0; i < 5; i += 1) await flush();
+    expect([q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([false, false]);
     await act(async () => { q("compute-button").click(); });
     for (let i = 0; i < 5; i += 1) await flush();
     expect(order).toEqual(["read", "compute"]);
-    expect(q("bubble-status-staged")).toBeNull();
   });
 
-  test("it is enabled while a file is attached even when nothing is ready, and disabled again once nothing waits and nothing is loaded", async () => {
+  test("the two Calculate buttons never differ, and Map is only on with a file attached or loaded", async () => {
     await mount();
-    expect(q("compute-button").disabled).toBe(true);
+    expect([q("chat-map").disabled, q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([true, true, true]);
     await pick([file("rev.csv")]);
-    expect(q("compute-button").disabled).toBe(false);
+    expect([q("chat-map").disabled, q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([false, true, true]);
   });
 });
 
@@ -729,13 +758,13 @@ describe("the revenue banner timing (decision D)", () => {
   };
   beforeEach(() => window.sessionStorage.clear());
 
-  test("computing does not reset the Calculate flag", async () => {
+  test("computing does not reset the flag that Map set", async () => {
     api.uploadChatFile.mockResolvedValue(VIEW());
     api.updateAudit.mockResolvedValue({});
     api.computeAudit.mockResolvedValue({});
     await mount();
-    api.getDatasets.mockResolvedValue([VIEW()]);
-    await pickAndCalc([file("rev.csv")]);
+    await pickAndMap([file("rev.csv")]);
+    await act(async () => { q("chat-calculate").click(); });
     for (let i = 0; i < 5; i += 1) await flush();
     expect(api.computeAudit).toHaveBeenCalled();
     expect(calculatePressed("a1")).toBe(true);
@@ -746,7 +775,7 @@ describe("the revenue banner timing (decision D)", () => {
     await mount();
     const n = await counted(async () => {
       await pick([file("pnl.csv"), file("rev.csv")]);
-      await act(async () => { q("chat-calculate").click(); });
+      await act(async () => { q("chat-map").click(); });
       for (let i = 0; i < 5; i += 1) await flush();
     });
     expect(api.uploadChatFile).toHaveBeenCalledTimes(2);
@@ -756,7 +785,7 @@ describe("the revenue banner timing (decision D)", () => {
   test("a file that waits for its type neither refreshes the banner nor releases 'Revenue file missing'", async () => {
     api.uploadChatFile.mockResolvedValueOnce({ status: "unknown_type", file: "mystery.csv", size_bytes: 5, ext: "csv" });
     await mount();
-    const n = await counted(async () => { await pickAndCalc([file("mystery.csv")]); });
+    const n = await counted(async () => { await pickAndMap([file("mystery.csv")]); });
     expect(q("chat-unknown")).not.toBeNull();
     expect(n).toBe(0);
     expect(calculatePressed("a1")).toBe(false);
@@ -771,7 +800,7 @@ describe("the revenue banner timing (decision D)", () => {
   test("a file that waits for a replace answer does the same", async () => {
     api.uploadChatFile.mockRejectedValueOnce({ response: { status: 409, data: { detail: { code: "type_loaded", dtype: "revenue", file: "old.csv" } } } });
     await mount();
-    const n = await counted(async () => { await pickAndCalc([file("new.csv")]); });
+    const n = await counted(async () => { await pickAndMap([file("new.csv")]); });
     expect(q("chat-replace")).not.toBeNull();
     expect([n, calculatePressed("a1")]).toEqual([0, false]);
     api.uploadChatFile.mockResolvedValueOnce(VIEW({ dtype: "crm", file: "new.csv" }));
@@ -781,8 +810,8 @@ describe("the revenue banner timing (decision D)", () => {
   });
 });
 
-describe("one Calculate at a time", () => {
-  test("while files are being read the header button is disabled and a second Calculate press reads nothing again", async () => {
+describe("one press at a time", () => {
+  test("while files are being read Map and both Calculate buttons are off and nothing is read twice; Calculate then computes once", async () => {
     let release;
     api.uploadChatFile.mockImplementation(() => new Promise((resolve) => { release = () => resolve(VIEW()); }));
     api.updateAudit.mockResolvedValue({});
@@ -790,14 +819,16 @@ describe("one Calculate at a time", () => {
     await mount({ datasets: [VIEW()] });
     await flush();
     await pick([file("rev.csv")]);
-    expect(q("compute-button").disabled).toBe(false);
-    await act(async () => { q("compute-button").click(); });
-    expect(q("compute-button").disabled).toBe(true);
-    await act(async () => { q("compute-button").click(); q("chat-calculate").click(); });     // a second click and a second Calculate
-    api.getDatasets.mockResolvedValue([VIEW()]);
+    expect(q("chat-map").disabled).toBe(false);
+    await act(async () => { q("chat-map").click(); });
+    expect([q("chat-map").disabled, q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([true, true, true]);
+    await act(async () => { q("chat-map").click(); q("compute-button").click(); q("chat-calculate").click(); });     // second presses do nothing
     await act(async () => { release(); });
     for (let i = 0; i < 6; i += 1) await flush();
     expect(api.uploadChatFile).toHaveBeenCalledTimes(1);
+    expect(api.computeAudit).not.toHaveBeenCalled();
+    await act(async () => { q("compute-button").click(); q("chat-calculate").click(); });
+    for (let i = 0; i < 6; i += 1) await flush();
     expect(api.computeAudit).toHaveBeenCalledTimes(1);
   });
 });

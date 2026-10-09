@@ -222,8 +222,41 @@ test("there is no default reason: the buttons are disabled until one is chosen a
   expect([btn("revenue").disabled, btn("volume").disabled]).toEqual([false, true]);
   await pick(host, "deck_says_processed_volume");
   expect([btn("revenue").disabled, btn("volume").disabled]).toEqual([true, false]);
-  await pick(host, "other");
-  expect([btn("revenue").disabled, btn("volume").disabled]).toEqual([false, false]);
+  await pick(host, "file_confirms");
+  expect([btn("revenue").disabled, btn("volume").disabled]).toEqual([false, false]);      // no note step: a reason is enough
+});
+
+test("the dropdown offers exactly three reasons, and 'Revenue file confirms' is hidden when no revenue-file period exists to compare", async () => {
+  const { host } = await mount([TURNOVER, { ...TURNOVER, claim_id: "t2", file_note: "No revenue-file period to compare" }]);
+  const options = (row) => [...row.querySelectorAll('[data-testid="register-turnover-reason"] option')].map((o) => o.textContent);
+  const rows = host.querySelectorAll('[data-testid="claim-register-row"]');
+  expect(options(rows[0])).toEqual(["Reason…", "Deck says gross revenue", "Deck says processed volume", "Revenue file confirms"]);
+  expect(options(rows[1])).toEqual(["Reason…", "Deck says gross revenue", "Deck says processed volume"]);
+  expect(host.textContent).not.toContain("Other");
+  expect(host.querySelector('[data-testid="register-turnover-reason-note"]')).toBeNull();
+});
+
+test("a stored 'Revenue file confirms' on a row with no revenue-file period shows no reason and keeps the buttons off", async () => {
+  const { host } = await mount([{ ...TURNOVER, turnover_reason: "file_confirms", file_note: "No revenue-file period to compare" }]);
+  expect(host.querySelector('[data-testid="register-turnover-reason"]').value).toBe("");
+  expect(host.querySelector('[data-testid="register-turnover-revenue"]').disabled).toBe(true);
+});
+
+test("the reason, Revenue and Volume sit on one line in that order; the answered button is blue and both buttons keep one size", async () => {
+  const { host } = await mount([{ ...TURNOVER, turnover_state: "volume", turnover_note: "Transaction volume", turnover_set_by: "analyst",
+    turnover_reason: "deck_says_processed_volume" }]);
+  const reason = host.querySelector('[data-testid="register-turnover-reason"]');
+  const revenue = host.querySelector('[data-testid="register-turnover-revenue"]');
+  const volume = host.querySelector('[data-testid="register-turnover-volume"]');
+  const line = reason.parentElement;
+  expect([...line.children].map((n) => n.tagName)).toEqual(["SELECT", "BUTTON", "BUTTON"]);
+  expect([...line.children].map((n) => n.getAttribute("data-testid"))).toEqual(
+    ["register-turnover-reason", "register-turnover-revenue", "register-turnover-volume"]);
+  expect(line.className).toContain("flex-nowrap");
+  expect(line.className).not.toContain("flex-wrap");
+  expect(volume.className).toContain("bg-sky-600");
+  expect(revenue.className).not.toContain("bg-sky-600");
+  expect(revenue.className.match(/\bh-\d+\b/)[0]).toBe(volume.className.match(/\bh-\d+\b/)[0]);
 });
 
 test("a row with no rate names the pair and links to the FX settings", async () => {

@@ -7,7 +7,7 @@ import { uploadChatFile, getDatasets, decideColumns, reportUsage } from "@/lib/a
 import {
   S1_TEXT_REPLY, S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE, S6_UNKNOWN_TYPE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED,
   S20_NOTE_PLACEHOLDER, S21_NOTE_REFUSED, NOTE_MAX, ALLOWED_EXTENSIONS, REASONS, TYPE_LABELS, S5_head, S8_replace,
-  S9_confidence, S13_status, CALCULATE_LABEL, CALCULATE_TOOLTIP, CALCULATE_CLASS, SEND_TOOLTIP, setCalculatePressed, S14_same, MAPPING_HEADERS, S25_TITLE, S25_PARAGRAPHS, mappedBy, sortColumns, fieldName, fmtBytes, extensionOf, heldFields,
+  S9_confidence, S13_status, MAP_LABEL, CALCULATE_LABEL, CALCULATE_CLASS, SEND_TOOLTIP, setCalculatePressed, S14_same, MAPPING_HEADERS, S25_TITLE, S25_PARAGRAPHS, mappedBy, sortColumns, fieldName, fmtBytes, extensionOf, heldFields,
 } from "@/lib/chatUpload";
 
 const NONE = "";
@@ -20,15 +20,15 @@ const uid = () => `m${nextId++}`;
  * system bubble per file, the mapping table in the system bubble. Typed text is answered on the page (S1) and goes
  * nowhere else. `extras(view)` renders what follows the table of a revenue file (FX rates, billing terms).
  */
-export default function UploadChat({ audit, extras, onViews, onCalculate, calculateRef, onStaged, onCalculating, calculateButton: state }) {
+export default function UploadChat({ audit, extras, onViews, onCalculate, onStaged, onMapping, mapButton, calculateButton, computing }) {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(0);
   const [dragging, setDragging] = useState(false);
-  const staged = useRef(new Map());                   // bubble id -> File: attached, not yet read (nothing runs until Calculate)
+  const staged = useRef(new Map());                   // bubble id -> File: attached, not yet read (nothing runs until Map)
   const openPrompts = useRef(new Set());              // bubbles whose file waits for a type or a replace answer
-  const [calculating, setCalculating] = useState(false);
-  const calculatingRef = useRef(false);
+  const [mapping, setMapping] = useState(false);
+  const mappingRef = useRef(false);
   const [lastReason, setLastReason] = useState("header_misleading");   // stays for the next correction on this page
   const picker = useRef(null);
   const queue = useRef(Promise.resolve());
@@ -53,7 +53,7 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, calcul
   }, [messages]); // eslint-disable-line
 
   // `bubble` is the id of the analyst bubble the file already has (it shows a spinner until the file is read).
-  // `quiet`: the caller refreshes the blocker banner itself once, after the last file (Calculate does).
+  // `quiet`: the caller refreshes the blocker banner itself once, after the last file (Map does).
   const send = async (file, options = {}, bubble = null, quiet = false) => {
     setBusy((n) => n + 1);
     const settle = (patch) => setMessages((all) => all.map((m) => (m.id === bubble ? { ...m, pending: false, ...patch } : m)));
@@ -71,7 +71,7 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, calcul
           const analyst = { id: bubble || uid(), kind: "analyst", dtype: res.dtype, file: res.file, size: res.size_bytes ?? file.size, ext: res.ext };
           return [...kept, analyst, { id: uid(), kind: "system", dtype: res.dtype, view: res }];
         });
-        // An answer to a type or replace prompt (Calculate was pressed to get here): the flag is set once nothing else waits,
+        // An answer to a type or replace prompt (Map was pressed to get here): the flag is set once nothing else waits,
         // so "Revenue file missing" shows without a second press.
         if (!quiet) { if (openPrompts.current.size === 0) setCalculatePressed(audit.id); announce(); }
       }
@@ -111,15 +111,14 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, calcul
   };
   useEffect(() => { onStaged?.(messages.filter((m) => m.staged).length); }, [messages]); // eslint-disable-line
 
-  // Calculate: read the attached files one at a time, in drop order, then hand the loaded files to the page, which computes
-  // when nothing waits. Pressing it with nothing attached is allowed: it is how the page learns the revenue file is missing.
+  // Map: read the attached files one at a time, in drop order; each loads with its mapping table and confirmation list.
   // The banner is refreshed once, after the last file, and not while a file still waits for its type or a replace answer:
-  // "Revenue file missing" would then show while that file is being asked about.
-  const calculate = async () => {
-    if (calculatingRef.current) return;                 // a second press while files are being read does nothing
-    calculatingRef.current = true;
-    setCalculating(true);
-    onCalculating?.(true);
+  // "Revenue file missing" would then show while that file is being asked about. Computing is Calculate's job, not this one's.
+  const map = async () => {
+    if (mappingRef.current) return;                     // a second press while files are being read does nothing
+    mappingRef.current = true;
+    setMapping(true);
+    onMapping?.(true);
     try {
       for (const [bubble, file] of [...staged.current]) {
         staged.current.delete(bubble);
@@ -128,15 +127,12 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, calcul
         await queue.current;
       }
       if (openPrompts.current.size === 0) { setCalculatePressed(audit.id); announce(); }
-      const views = await getDatasets(audit.id).catch(() => []);
-      await onCalculate?.(views);
     } finally {
-      calculatingRef.current = false;
-      setCalculating(false);
-      onCalculating?.(false);
+      mappingRef.current = false;
+      setMapping(false);
+      onMapping?.(false);
     }
   };
-  if (calculateRef) calculateRef.current = calculate;
 
   const submitText = (e) => {
     e.preventDefault();
@@ -167,7 +163,7 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, calcul
         {consent ? S2_EXPLAINER_CONSENT : S3_EXPLAINER_NO_CONSENT}
       </p>
       <div data-testid="chat-messages" className="px-5 py-4 space-y-3 min-h-[240px]">
-        {/* The drop zone stays after a drop: more files can be attached until Calculate is pressed. */}
+        {/* The drop zone stays after a drop: more files can be attached until Map is pressed. */}
         <div data-testid="chat-drop-zone" className={`border border-dashed rounded-lg text-center text-slate-500 ${messages.length === 0 ? "py-14 text-sm" : "py-3 text-xs"} ${dragging ? "border-sky-500 bg-sky-50" : "border-[#D1D5DB]"}`}>
           {S4_DROP_ZONE}
         </div>
@@ -191,10 +187,16 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, calcul
         <span title={SEND_TOOLTIP} data-testid="chat-send-wrap">
           <Button type="submit" size="sm" aria-label="Send" data-testid="chat-send" variant="outline" disabled={!text.trim()} title={SEND_TOOLTIP}><Send className="h-4 w-4" /></Button>
         </span>
-        <span title={state?.tooltip ?? CALCULATE_TOOLTIP} data-testid="chat-calculate-wrap">
-          <Button type="button" size="sm" data-testid="chat-calculate" disabled={state ? state.disabled : calculating} onClick={calculate}
-            className={CALCULATE_CLASS} title={state?.tooltip ?? CALCULATE_TOOLTIP}>
-            {calculating ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{CALCULATE_LABEL}
+        <span title={mapButton.tooltip} data-testid="chat-map-wrap">
+          <Button type="button" size="sm" data-testid="chat-map" disabled={mapButton.disabled} onClick={map}
+            className={CALCULATE_CLASS} title={mapButton.tooltip}>
+            {mapping ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{MAP_LABEL}
+          </Button>
+        </span>
+        <span title={calculateButton.tooltip} data-testid="chat-calculate-wrap">
+          <Button type="button" size="sm" data-testid="chat-calculate" disabled={calculateButton.disabled} onClick={onCalculate}
+            className={CALCULATE_CLASS} title={calculateButton.tooltip}>
+            {computing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{CALCULATE_LABEL}
           </Button>
         </span>
       </form>
@@ -300,7 +302,7 @@ function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide, 
         </table>
       </div>
       {view.dtype === "revenue" && extras?.(view)}
-      <div className={`mt-3 text-xs font-mono ${status === "Ready for compute" ? "text-emerald-700" : "text-amber-700"}`} data-testid={`status-${view.dtype}`}>
+      <div className={`mt-3 text-xs font-mono ${status === "Ready for calculation" ? "text-emerald-700" : "text-amber-700"}`} data-testid={`status-${view.dtype}`}>
         {status}
       </div>
     </Bubble>

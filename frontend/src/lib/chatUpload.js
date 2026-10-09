@@ -93,7 +93,7 @@ export const S25_PARAGRAPHS = [
 export const S13_status = (view) => {
   if (view.pending > 0) return `${view.pending} columns wait for your decision`;
   if (view.missing_required.length > 0) return `Required field not mapped: ${view.missing_required.map(fieldName).join(", ")}`;
-  return "Ready for compute";
+  return "Ready for calculation";
 };
 export const S14_same = (version) => `Same file as before: saved mapping v${version} applied.`;
 export const S16a_MISSING = "Revenue file missing: upload and map it to compute metrics.";
@@ -128,18 +128,31 @@ export function heldFields(columns, except) {
   return out;
 }
 
-// Calculate (task of 2026-10-09, items 1 and 2): files dropped in the chat are only attached; nothing is read until the
-// analyst presses Calculate. The "revenue file missing" banner appears only after that press.
+// Map and Calculate (task of 2026-10-09): files dropped in the chat are only attached; nothing is read until the analyst
+// presses Map, which reads them and maps their columns (rules, then the AI for what is left, then the confirmation list).
+// Calculate computes the metrics and waits until the mapping is complete. The "revenue file missing" banner appears
+// only after Map has been pressed.
+export const MAP_LABEL = "Map";
+export const MAP_TOOLTIP = "Reads the attached files and maps their columns. Calculate follows once every column is confirmed.";
+export const MAP_NO_FILE_TOOLTIP = "Attach the revenue file first. It is the only required file.";
 export const CALCULATE_LABEL = "Calculate";
-export const CALCULATE_TOOLTIP = "Reads the attached files and computes the metrics.";
-export const CALCULATE_NO_FILE_TOOLTIP = "Attach the revenue file first. It is the only required file.";
-/** Both Calculate buttons (header and chat) show this one state: off while nothing is attached and nothing is loaded, or
- *  while a press is being worked. Pressing an enabled one with no revenue file still shows "Revenue file missing". */
-export const calculateState = ({ attached, loaded, busy }) => {
+export const CALCULATE_TOOLTIP = "Computes the metrics from the mapped files.";
+export const CALCULATE_NOT_MAPPED_TOOLTIP = "Map the revenue file and confirm every column that waits for you first.";
+/** Map: off while nothing is attached and nothing is loaded, or while a press is being worked. */
+export const mapState = ({ attached, loaded, busy }) => {
   const noFile = attached === 0 && loaded === 0;
-  return { disabled: noFile || busy, tooltip: noFile ? CALCULATE_NO_FILE_TOOLTIP : CALCULATE_TOOLTIP };
+  return { disabled: noFile || busy, tooltip: noFile ? MAP_NO_FILE_TOOLTIP : MAP_TOOLTIP };
 };
-export const CALCULATE_CLASS = "bg-sky-600 hover:bg-sky-500 gap-2";      // the header button and the chat button look the same
+/** The mapping is complete when a revenue file is loaded, no file waits unread, and every loaded file has no column left for
+ *  the analyst's decision and no required field unmapped (section 4.3). */
+export const mappingComplete = ({ attached, views }) => attached === 0 && views.some((v) => v.dtype === "revenue")
+  && views.every((v) => v.pending === 0 && v.missing_required.length === 0);
+/** Both Calculate buttons (header and chat) show this one state: on only when the mapping is complete and nothing is running. */
+export const calculateState = ({ attached, views, busy }) => {
+  const ready = mappingComplete({ attached, views });
+  return { disabled: !ready || busy, tooltip: ready ? CALCULATE_TOOLTIP : CALCULATE_NOT_MAPPED_TOOLTIP };
+};
+export const CALCULATE_CLASS = "bg-sky-600 hover:bg-sky-500 gap-2";      // the header button and the chat buttons look the same
 export const SEND_TOOLTIP = "Send a message (for answering the chat's questions)";
 export const REVENUE_REQUIRED_NOTE = seeGlossary("The revenue file is the only required file. Every metric in the audit – ARR, NRR, churn, CAC payback – is computed from it; without it nothing can be calculated or verified.");
 const pressedKey = (auditId) => `calculate-pressed:${auditId}`;

@@ -248,7 +248,10 @@ ARR, MRR or "new MRR", is a turnover claim. Resolution, in this order:
 1. The analyst's metric for the claim, if set, stands (§8).
 2. The analyst's answer, one click Revenue or Volume with a reason code: stored on the claim and on the audit under
    a hash of the term and the period (no deck text), so the same term and period in another claim reuses it.
-   Reason codes: `deck_says_gross_revenue`, `deck_says_processed_volume`, `file_confirms`, `other`. The control is shown
+   Reason codes: `deck_says_gross_revenue`, `deck_says_processed_volume`, `file_confirms`; the screen offers exactly
+   these three, labelled "Deck says gross revenue", "Deck says processed volume", "Revenue file confirms" (the last is hidden on a
+   row that shows "No revenue-file period to compare"). `other` was removed from the screen on 2026-10-09 (George); the server
+   still accepts it, so an answer saved earlier with it still loads. The control is shown
    on every turnover row, so the analyst can change Revenue to Volume and back. No reason is preselected: the Revenue and
    Volume buttons stay disabled until one is chosen, and the server refuses the contradictory pairs (Volume with
    `deck_says_gross_revenue`, Revenue with `deck_says_processed_volume`) with 422.

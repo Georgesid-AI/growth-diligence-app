@@ -43,8 +43,15 @@ export const contradicts = (answer, reason) => (answer === "volume" && reason ==
 
 export const TURNOVER_REASONS = [
   ["deck_says_gross_revenue", "Deck says gross revenue"], ["deck_says_processed_volume", "Deck says processed volume"],
-  ["file_confirms", "File confirms"], ["other", "Other"],
+  ["file_confirms", "Revenue file confirms"],
 ];
+/** The row's own note when no revenue file covers the claim's period (backend NO_FILE_PERIOD). */
+export const NO_FILE_PERIOD = "No revenue-file period to compare";
+/** The reason codes a row offers: "Revenue file confirms" has nothing to confirm with when no revenue file covers the period. */
+export const reasonsFor = (view) => TURNOVER_REASONS.filter(([code]) => !(code === "file_confirms" && view?.file_note === NO_FILE_PERIOD));
+/** Whether an answer may be sent: a reason that is offered on this row and does not contradict the answer. */
+export const answerReady = (answer, reason, view) =>
+  Boolean(reason) && reasonsFor(view).some(([code]) => code === reason) && !contradicts(answer, reason);
 export const TURNOVER_QUESTION = "Revenue or transaction volume?";
 // The deck list (section 11 point 8): a turnover claim never reads "Revenue" before the analyst confirms it.
 export const TURNOVER_CONFIRM = "Turnover – confirm:";
