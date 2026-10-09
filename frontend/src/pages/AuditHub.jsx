@@ -9,16 +9,11 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger,
 } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { listAudits, createAudit, deleteAudit, getUsageTotals } from "@/lib/api";
 import { S18_TITLE, S18_BODY, S18_MISMATCH, S19_USAGE_TOTALS, S19_USAGE_EXPLAINER } from "@/lib/chatUpload";
 import { fmtCurrency } from "@/lib/format";
 import { Checkbox } from "@/components/ui/checkbox";
-import DateField from "@/components/DateField";
-import {
-  targetDateError, plainNumber, groupThousands, MONTHS, DEFAULT_FISCAL_YEAR_END, CONSENT_EXPLAINER, CONSENT_LABEL,
-  requiredFieldError,
-} from "@/lib/auditForm";
+import { DEFAULT_FISCAL_YEAR_END, CONSENT_EXPLAINER, CONSENT_LABEL, requiredFieldError } from "@/lib/auditForm";
 
 export default function AuditHub() {
   const nav = useNavigate();
@@ -26,8 +21,7 @@ export default function AuditHub() {
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [explainerOpen, setExplainerOpen] = useState(false);
-  const blank = { company_name: "", reporting_currency: "EUR", target_arr: "", target_date: "", as_of_month: "",
-    fiscal_year_end: DEFAULT_FISCAL_YEAR_END, client_name: "", structure_reading_consent: true };
+  const blank = { company_name: "", client_name: "", structure_reading_consent: true };
   const [form, setForm] = useState(blank);
 
   const load = () => listAudits().then(setAudits);
@@ -36,17 +30,16 @@ export default function AuditHub() {
   const submit = async () => {
     const missing = requiredFieldError(form);
     if (missing) return toast.error(missing);
-    const dateError = targetDateError(form.target_date, form.as_of_month);
-    if (dateError) return toast.error(dateError);
     setSaving(true);
     try {
       const a = await createAudit({
         company_name: form.company_name.trim(),
-        reporting_currency: form.reporting_currency,
-        target_arr: parseFloat(form.target_arr) || 0,
-        target_date: form.target_date || null,
-        as_of_month: form.as_of_month || null,
-        fiscal_year_end: form.fiscal_year_end,
+        // The set-up fields are filled in at the top of the next page (docs/specs/chat-upload.md section 2).
+        reporting_currency: "EUR",
+        target_arr: 0,
+        target_date: null,
+        as_of_month: null,
+        fiscal_year_end: DEFAULT_FISCAL_YEAR_END,
         client_name: form.client_name.trim(),
         structure_reading_consent: form.structure_reading_consent,
       });
@@ -96,7 +89,7 @@ export default function AuditHub() {
             <DialogHeader className="shrink-0">
               <DialogTitle className="font-heading">Create Growth Audit</DialogTitle>
               <DialogDescription className="text-slate-600">
-                Set the company, reporting currency and plan target. You'll add data next.
+                Name the company and the client. The plan target and dates are set at the top of the next page.
               </DialogDescription>
             </DialogHeader>
             <div data-testid="audit-dialog-body" className="space-y-4 py-2 flex-1 min-h-0 overflow-y-auto">
@@ -118,60 +111,6 @@ export default function AuditHub() {
                   onChange={(e) => setForm({ ...form, client_name: e.target.value })}
                   className="mt-1.5 bg-white border-[#E5E7EB]"
                 />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-slate-700">Reporting currency</Label>
-                  <Select value={form.reporting_currency} onValueChange={(v) => setForm({ ...form, reporting_currency: v })}>
-                    <SelectTrigger data-testid="reporting-currency-select" className="mt-1.5 bg-white border-[#E5E7EB]">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent className="bg-white border-[#E5E7EB] text-slate-900">
-                      {["EUR", "USD", "GBP", "JPY"].map((c) => (
-                        <SelectItem key={c} value={c}>{c}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label className="text-slate-700">Target ARR</Label>
-                  <Input
-                    data-testid="audit-target-arr-input"
-                    type="text"
-                    inputMode="decimal"
-                    value={groupThousands(form.target_arr)}
-                    onChange={(e) => setForm({ ...form, target_arr: plainNumber(e.target.value) })}
-                    placeholder="40,000,000"
-                    className="mt-1.5 bg-white border-[#E5E7EB] font-mono"
-                  />
-                </div>
-              </div>
-              <div>
-                <Label className="text-slate-700">Target date</Label>
-                <DateField
-                  testId="audit-target-date-input"
-                  value={form.target_date}
-                  onChange={(v) => setForm({ ...form, target_date: v })}
-                />
-              </div>
-              <div>
-                <Label className="text-slate-700">As-of month <span className="text-slate-500 text-xs">(optional — defaults to last P&L month)</span></Label>
-                <DateField
-                  testId="audit-asof-month-input"
-                  value={form.as_of_month}
-                  onChange={(v) => setForm({ ...form, as_of_month: v })}
-                />
-              </div>
-              <div>
-                <Label className="text-slate-700">Fiscal year-end <span className="text-slate-500 text-xs">(FY25 is the fiscal year that ends in 2025)</span></Label>
-                <Select value={String(form.fiscal_year_end)} onValueChange={(v) => setForm({ ...form, fiscal_year_end: Number(v) })}>
-                  <SelectTrigger data-testid="audit-fiscal-year-end-select" className="mt-1.5 bg-white border-[#E5E7EB]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="bg-white border-[#E5E7EB] text-slate-900">
-                    {MONTHS.map((m, i) => <SelectItem key={m} value={String(i + 1)}>{m}</SelectItem>)}
-                  </SelectContent>
-                </Select>
               </div>
               <div className="rounded-md border border-[#E5E7EB] bg-slate-50 p-3 space-y-2" data-testid="audit-consent">
                 <label className="flex items-start gap-2 text-xs text-slate-800 cursor-pointer">

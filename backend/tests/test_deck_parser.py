@@ -1038,7 +1038,9 @@ def test_zero2hero_page_19_reads_as_one_candidate_per_row_and_flags_the_panel():
     assert panel == [("ebitda", None, "2024-Q2", []), ("gross_profit", 150000, "2023", ["2023"]),
                      ("users", 5000, "2023", [])], "23 Y/E is a period, never a value"
     assert rows["Gross Profit"]["inconsistent_dates"] == ["2023"]
-    assert all(not c["inconsistent_dates"] for k, c in rows.items() if k != "Gross Profit")
+    # The page-17 bars (dated 2022 and 2023 by the year under each bar) differ from this table's Revenue for the same years.
+    assert rows["Revenue"]["inconsistent_dates"] == ["2022", "2023"]
+    assert all(not c["inconsistent_dates"] for k, c in rows.items() if k not in ("Gross Profit", "Revenue"))
 
 
 @pytest.mark.parametrize("text, date", [
@@ -1930,3 +1932,77 @@ def test_structures_are_stored_with_the_parsed_text_and_never_listed(api):
     assert "structures" not in listed and "blocks" not in listed, "cells are deck text: never in a listing"
     client.delete(f"/api/audits/audit-1/decks/{stored['deck_id']}")
     assert db[decks.TEXT_COLLECTION].docs == [], "removed with the deck"
+
+
+def test_bars_with_a_year_label_under_each_take_that_label_as_their_date():
+    # Three bars: the value above each, the year under it, the bars' heights set by where the value sits.
+    bars = _slide([("Revenue (£/year)", 1, 0.5), ("Revenue £1.2M", 1, 3), ("Revenue £2.4M", 3.5, 2.2),
+                   ("Revenue £4.1M", 6, 1.4), ("FY2023", 1, 5), ("FY2024", 3.5, 5), ("FY2025", 6, 5)])
+    found = sorted(_found(bars), key=lambda c: c["value"])
+    assert [(c["value"], c["target_date"], c["period_text"], c["date_from"]) for c in found] == [
+        (1200000, "2023", "FY2023", "FY2023"), (2400000, "2024", "FY2024", "FY2024"), (4100000, "2025", "FY2025", "FY2025")]
+    assert all(c["currency"] == "GBP" for c in found)
+    assert [c["period_start"] for c in found] == ["2023-01-01", "2024-01-01", "2025-01-01"]
+    # Confidence is scored with the date attached: no "no date" check fails.
+    assert all("no date" not in claims.confidence(c, found)["failed"] for c in found)
+
+    # No label under the bars: no date, as before.
+    bare = sorted(_found(_slide([("Revenue (£/year)", 1, 0.5), ("Revenue £1.2M", 1, 3), ("Revenue £2.4M", 3.5, 2.2),
+                         ("Revenue £4.1M", 6, 1.4)])),
+                  key=lambda c: c["value"])
+    assert [c["target_date"] for c in bare] == [None, None, None]
+    assert all("no date" in claims.confidence(c, bare)["failed"] for c in bare)
+
+    # A year that stands alone under one figure is not an axis: two or more labels on one row make one.
+    lone = _found(_slide([("Revenue £1.2M", 1, 3), ("2023", 1, 5)]))
+    assert [c["target_date"] for c in lone] == [None]
+
+
+def test_every_refused_save_names_the_rejected_field_and_the_reason(api):
+    client, db = api
+    _upload(client, "audit-1", "fy.pptx", _slide([("FY25 ARR €3M", 1, 2)]))
+    arr, = db[decks.CANDIDATES_COLLECTION].docs
+    url = f"/api/audits/audit-1/decks/candidates/{arr['id']}"
+
+    def reasons(r):
+        detail = r.json()["detail"]
+        return [f"{d['loc'][-1]}: {d['msg']}" for d in detail] if isinstance(detail, list) else detail
+
+    # a claim changed to a count type with no unit and a currency still saves; the form sends unit "count" and no currency
+    assert client.put(url, json={"claim_type": "users", "unit": "count", "currency": None}).status_code == 200
+    # a refusal by the field validators names the field (the screen shows "unit: ...", not "Could not save")
+    r = client.put(url, json={"unit": ""})
+    assert r.status_code == 422 and reasons(r) == ["unit: String should have at least 1 character"]
+    r = client.put(url, json={"currency": "EURO"})
+    assert r.status_code == 422 and reasons(r)[0].startswith("currency: ")
+    r = client.put(url, json={"target_date": "June"})
+    assert r.status_code == 422 and reasons(r)[0].startswith("target_date: ")
+    # a refusal by the route's own rules names the field in the same form
+    r = client.put(url, json={"status": "approved", "value": 1})
+    assert r.status_code == 400 and reasons(r).startswith("status: ")
+    r = client.put(url, json={"by_period": [{"value": 1}]})
+    assert r.status_code == 400 and reasons(r).startswith("by_period: ")
+    other = {k: v for k, v in arr.items() if k != "parsed"} | {"id": "u1", "claim_type": "unknown", "status": "pending"}
+    db[decks.CANDIDATES_COLLECTION].docs.append(other)
+    r = client.put("/api/audits/audit-1/decks/candidates/u1", json={"status": "approved"})
+    assert r.status_code == 400 and reasons(r).startswith("claim_type: ")
+
+
+def test_zero2hero_page_17_bars_take_the_year_under_each_bar_and_are_compared_with_other_pages():
+    file = "05-zero2hero.pdf"
+    deck = parser.parse_deck((DECKS / file).read_bytes(), file)
+    found = claims.detect_candidates(deck["blocks"], file)
+    bars = sorted((c["value"], c["target_date"], c["date_from"], c["period_basis"]) for c in found if _page(c) == 17 and c["claim_type"] == "revenue")
+    assert bars == [(278085, "2021", "2021", "per year"), (415107, "2022", "2022", "per year"), (550508, "2023", "2023", "per year")]
+    flagged = {c["value"]: c["inconsistent_dates"] for c in found if _page(c) == 17 and c["claim_type"] == "revenue"}
+    assert flagged == {278085: [], 415107: ["2022"], 550508: ["2023"]}, "the bar's year is a real date: compared with page 19"
+    assert all("no date" not in claims.confidence(c, found)["failed"] for c in found if _page(c) == 17 and c["claim_type"] == "revenue")
+
+
+def test_an_explicit_null_clears_the_as_of_month_and_an_absent_field_leaves_it(api):
+    client, db = api
+    assert client.put("/api/audits/audit-1", json={"as_of_month": "2026-06-30"}).json()["as_of_month"] == "2026-06-30"
+    assert client.put("/api/audits/audit-1", json={"fiscal_year_end": 3}).json()["as_of_month"] == "2026-06-30"
+    assert client.put("/api/audits/audit-1", json={"as_of_month": None}).json()["as_of_month"] is None
+    client.put("/api/audits/audit-1", json={"target_date": "2028-12-31"})
+    assert client.put("/api/audits/audit-1", json={"target_date": None}).json()["target_date"] == "2028-12-31", "never cleared"

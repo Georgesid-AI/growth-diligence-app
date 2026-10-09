@@ -73,15 +73,26 @@ describe("new-audit dates and fields", () => {
     expect(q("audit-dialog").textContent).not.toMatch(/engagement reference/i);
   });
 
-  test("the target date and the as-of month use the date picker with month and year arrows, not the browser's date input", async () => {
-    expect(q("audit-dialog").querySelector('input[type="date"]')).toBeNull();
-    for (const field of ["audit-target-date-input", "audit-asof-month-input"]) {
-      await act(async () => { q(field).click(); });
-      for (const part of ["month-prev", "month-next", "year-prev", "year-next", "year"]) expect(q(`${field}-${part}`)).not.toBeNull();
-      await act(async () => { q(`${field}-day-1`).click(); });
-      expect(q(field).textContent).toMatch(/^1 \w{3} \d{4}$/);
-      expect(q(field).textContent).not.toContain("0001");
-    }
+  test("the dialog asks for the names and the consent only: the set-up fields are at the top of the mapping page", () => {
+    for (const gone of ["reporting-currency-select", "audit-target-arr-input", "audit-target-date-input", "audit-asof-month-input",
+      "audit-fiscal-year-end-select"]) expect(q(gone)).toBeNull();
+    expect(q("audit-dialog-body").querySelectorAll("input:not([type=checkbox])").length).toBe(2);   // company, client
+    expect(q("audit-dialog").textContent).not.toMatch(/Reporting currency|Target ARR|Target date|As-of month|Fiscal year-end/);
+  });
+
+  test("a new audit is created with the defaults for the set-up fields, to be set on the next page", async () => {
+    api.createAudit.mockResolvedValue({ id: "new1" });
+    const set = async (id, value) => act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(q(id), value);
+      q(id).dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await set("audit-company-input", "TestCo");
+    await set("audit-client-input", "Fund");
+    await act(async () => { q("submit-audit-button").click(); });
+    expect(api.createAudit).toHaveBeenCalledWith({
+      company_name: "TestCo", client_name: "Fund", reporting_currency: "EUR", target_arr: 0, target_date: null, as_of_month: null,
+      fiscal_year_end: 12, structure_reading_consent: true,
+    });
   });
 });
 
@@ -131,7 +142,7 @@ describe("delete audit and the usage totals", () => {
     await act(async () => { q("delete-audit-a1").click(); });
     expect(q("delete-dialog-title").textContent).toBe("Delete Acme SaaS Inc.?");
     expect(q("delete-dialog-text").textContent).toBe(
-      "Type Acme SaaS Inc. to delete this audit with its files, mappings and results. This cannot be undone.");
+      "Deleting this audit with its files, mappings and results cannot be undone. Type Acme SaaS Inc. to confirm.");
     expect(q("delete-dialog-name").tagName).toBe("STRONG");
     expect(q("delete-dialog-name").textContent).toBe("Acme SaaS Inc.");
     const button = q("confirm-delete-a1");

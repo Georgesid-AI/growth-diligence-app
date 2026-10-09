@@ -143,6 +143,14 @@ Borrowing: a figure without a keyword or a date in its own line takes them from 
 first match wins: the table column header, the other lines of its text box (nearest first),
 the text on the same row or above it, never below, within a quarter of the slide or page
 (nearest first), the slide title. A month or quarter is preferred over a bare year.
+Bars (2026-10-09, George): a figure that sits above a bar with a year label under it ("2021", "FY2022"; two or more such
+labels on one line make the axis, each nothing but a year, the figure overlapping one of them from side to side, at most 0.6 of
+the page above it) takes that label as its date, after the figure's own date, its column header and its box period and before
+any text further away. It is a real date ("stated", George 2026-10-09), so it is compared for a Deck inconsistency with other pages;
+confidence is scored with the date attached ("no date" no longer fails). Measured on the 10 public test decks
+(2026-10-09, `detect_candidates` with and without the rule): 3 of 225 candidates change, all zero2hero p17 (Turnover (£/year):
+278,085 → 2021, 415,107 → 2022, 550,508 → 2023, shown "2021"… instead of "per year"); no other deck changes. Compared with page 19's table, the 2022 and 2023 bars (415,107, 550,508) are flagged and page 19's Revenue row gains the dates 2022 and 2023. The p17 bars
+for 2019 and 2020 (49,284, 181,193) are not candidates, being too far from the heading to take its type, before and after.
 A date is taken first from the figure's column header, then from a period line at the top of
 its text box ("23 Y/E" over "Gross Profit £150K" and "5K Users"), then as above. The box period
 dates figures only; the period line itself is never a candidate.
@@ -277,12 +285,13 @@ These figures may inform the growth plan. They were identified automatically and
   model.
 - Period column (2026-10-08, George): the column "Date" is "Period". Every value reads in one format from the stored target
   date, whatever the deck's wording: a year "FY2023", a quarter "Q2 2024", a half "H1 2024", a month "Jun 2024"; a table row
-  shows its first to last period ("FY2022–FY2026"). "—" only when the deck gives no period. The deck's own wording ("Y/E 22",
+  shows its first to last period ("FY2022–FY2026"). "no date" only when the deck gives no period (2026-10-09, George; it was "—"). The deck's own wording ("Y/E 22",
   "FY25") stays in the snippet and the "Date from" line.
 - Value column and currency (2026-10-08, George): a claim in a currency other than the audit's shows both figures, the claim
-  converted at the saved FX rate, with the rate and the date it applies at (the as-of date): "150,000 GBP (171,000 EUR at
-  1.14, 30 Jun 2026)". With no rate saved it reads "150,000 GBP (FX rate needed)" and the claim is Unverified in the register
-  (claim-matching.md §2). A direction with no figure reads "positive (no figure)".
+  converted at the saved FX rate, in whole units: "150,000 GBP (171,000 EUR)". The rate and the date it applies at (the as-of
+  date) are on hover, never in the row, and stay in the stored citation and the memo (2026-10-09, George). With no rate saved it
+  reads "150,000 BRL (BRL→EUR rate missing – enter it in FX settings at the top of the page)", "FX settings" being the link, and
+  the claim is Unverified in the register (claim-matching.md §2). A direction with no figure reads "positive (no figure)".
 - Cost (2026-10-08): the deck panel's "Cost" line shows dollars to 2 decimals ("Cost: $0.01"). The server sorts; each candidate stores `reading`
   (top, left of its first line; for a model row, of the parsed line it cites), layout only, never sent to a model.
 - Confidence column (2026-10-08, George), after Period: High, Medium or Low, computed on read from checks Python
@@ -418,7 +427,7 @@ Fixed on the 10 test decks (2026-10-05):
   until they are uploaded again.
 - Confidence: a currency or period in a label's brackets ("Turnover (£/year)") is read before scoring: the currency fills an
   empty currency field (GBP) and the period goes to `period_basis` ("per year", "per month", "per quarter"), shown beside the
-  date. Scale brackets ("(€m)") are not read. The date stays missing when no year is given. The reason lists only what is
+  date, except "per year" beside a year, which adds nothing (2026-10-09): "per year" shows only when no year is found. Scale brackets ("(€m)") are not read. The date stays missing when no year is given. The reason lists only what is
   still missing.
 - Unit: "count" joins the unit suggestions (customers, headcount, deals); currency stays its own field.
 - A claim that is approved or edited and moves to another category (by a changed type) shows "Claim moved to [category]" with

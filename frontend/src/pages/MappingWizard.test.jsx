@@ -3,6 +3,8 @@ import { createRoot } from "react-dom/client";
 
 import MappingWizard from "./MappingWizard";
 import * as api from "@/lib/api";
+import { toast } from "sonner";
+import { SETUP_HELP } from "@/lib/auditForm";
 import {
   S1_TEXT_REPLY, S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S21_NOTE_REFUSED, REASONS,
   S5_head, S9_confidence, mappedBy, sortColumns, S25_PARAGRAPHS,
@@ -95,6 +97,62 @@ describe("the screen", () => {
     expect(S4_DROP_ZONE).toBe("Drop files here or use the paperclip. Required: revenue by customer (monthly, 24–36 months). Also useful: CRM export, P&L. Board decks go to the Deck panel. .xlsx or .csv only.");
     expect(q("chat-paperclip")).not.toBeNull();
     expect(q("chat-file-input").multiple).toBe(true);
+  });
+
+  test("the set-up fields are at the top, above the chat, each with its one line of help", async () => {
+    await mount({ audit: { ...AUDIT, target_arr: 40000000, target_date: "2028-12-31", as_of_month: "2026-06" } });
+    const setup = q("audit-setup");
+    expect(setup.compareDocumentPosition(q("upload-chat")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(setup.compareDocumentPosition(q("fx-settings")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(q("fx-settings").compareDocumentPosition(q("upload-chat")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(SETUP_HELP).toEqual({
+      reporting_currency: "All figures are converted to this currency. Use the company's home currency; the verdict and memo use it.",
+      target_arr: "The plan figure the audit tests. Every claim's value at stake is measured against it.",
+      target_date: "When the plan says Target ARR is reached. Sets the forecast horizon.",
+      as_of_month: "Last month of actual data. Metrics are computed up to this month. Defaults to the last P&L month.",
+      fiscal_year_end: "Maps FY labels in the deck to months. A wrong setting shifts every FY claim.",
+    });
+    for (const [field, text] of Object.entries(SETUP_HELP)) expect(q(`setup-help-${field}`).textContent).toBe(text);
+    expect(setup.contains(q("setup-currency-select")) && setup.contains(q("setup-target-arr-input")) && setup.contains(q("fiscal-year-end-select"))).toBe(true);
+    expect(q("setup-target-arr-input").value).toBe("40,000,000");
+    expect(q("setup-target-date-input").value).toBe("31 Dec 2028");
+    expect(q("asof-month-input").value).toBe("30 Jun 2026");
+  });
+
+  test("each set-up field saves as it changes; a refused save names the field and the reason", async () => {
+    api.updateAudit.mockResolvedValue({});
+    await mount();
+    await act(async () => { q("setup-target-arr-input").focus(); });
+    await change(q("setup-target-arr-input"), "12500000");
+    await act(async () => { q("setup-target-arr-input").blur(); });
+    expect(api.updateAudit).toHaveBeenLastCalledWith("a1", { target_arr: 12500000 });
+    // a typed target date, 30.06.2028
+    await act(async () => { q("setup-target-date-input").focus(); });
+    await change(q("setup-target-date-input"), "30.06.2028");
+    await act(async () => { q("setup-target-date-input").blur(); });
+    expect(api.updateAudit).toHaveBeenLastCalledWith("a1", { target_date: "2028-06-30" });
+    // clearing the as-of month sends an explicit null: back to the default
+    await act(async () => { q("asof-month-input").focus(); });
+    await change(q("asof-month-input"), "2026-06-15");
+    await act(async () => { q("asof-month-input").blur(); });
+    expect(api.updateAudit).toHaveBeenLastCalledWith("a1", { as_of_month: "2026-06-15" });
+    await act(async () => { q("asof-month-input").focus(); });
+    await change(q("asof-month-input"), "");
+    await act(async () => { q("asof-month-input").blur(); });
+    expect(api.updateAudit).toHaveBeenLastCalledWith("a1", { as_of_month: null });
+    // a target date not after the as-of month is refused before anything is sent
+    api.updateAudit.mockClear();
+    await act(async () => { q("asof-month-input").focus(); });
+    await change(q("asof-month-input"), "2028-06-15");
+    await act(async () => { q("asof-month-input").blur(); });
+    expect(api.updateAudit).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenLastCalledWith("Target date must be after the as-of month");
+    // a server refusal names the field
+    api.updateAudit.mockRejectedValue({ response: { status: 422, statusText: "", data: { detail: [{ loc: ["body", "target_arr"], msg: "Input should be a valid number" }] } } });
+    await act(async () => { q("setup-target-arr-input").focus(); });
+    await change(q("setup-target-arr-input"), "7");
+    await act(async () => { q("setup-target-arr-input").blur(); });
+    expect(toast.error).toHaveBeenLastCalledWith("Target ARR could not be saved: HTTP 422 — target_arr: Input should be a valid number");
   });
 
   test("the explainer follows the audit's consent: S2 when ticked, S3 when not", async () => {

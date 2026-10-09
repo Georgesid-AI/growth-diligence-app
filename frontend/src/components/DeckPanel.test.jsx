@@ -77,10 +77,10 @@ test("Unknown and Other start collapsed under a header with their count; the oth
   expect(rows().map((tr) => /snippet-(\w)/.exec(text(tr))[1])).toEqual(["b"]);
 });
 
-test("the Period column reads FY2025 for the year 2025 and a dash only when the deck gives no period", async () => {
+test("the Period column reads FY2025 for the year 2025 and no date when the deck gives no period", async () => {
   await act(async () => { q("deck-tab-all").click(); });
   await open(6);
-  expect(rows().map((tr) => tr.querySelectorAll("td")[2].textContent)).toEqual(["FY2025", "FY2025", "FY2025", "—"]);
+  expect(rows().map((tr) => tr.querySelectorAll("td")[2].textContent)).toEqual(["FY2025", "FY2025", "FY2025", "no date"]);
 });
 
 test("a figure in another currency shows both figures, and a direction with no figure says so", async () => {
@@ -98,7 +98,10 @@ test("a figure in another currency shows both figures, and a direction with no f
   await act(async () => { root.render(<DeckPanel auditId="a1" />); });
   await act(async () => { q("deck-tab-all").click(); });
   expect(rows().map((tr) => tr.querySelectorAll("td")[1].textContent)).toEqual([
-    "150,000 GBP (171,000 EUR at 1.14, 30 Jun 2026)", "1,000 USD (FX rate needed: USD→EUR)FX settings", "positive (no figure)"]);
+    "150,000 GBP (171,000 EUR)", "1,000 USD (USD→EUR rate missing – enter it in FX settings at the top of the page)", "positive (no figure)"]);
+  // the rate and its date are on hover, not in the row
+  expect(rows()[0].querySelector("[data-testid='candidate-value']").getAttribute("title")).toBe("Rate used: 1 GBP = 1.14 EUR on 30 Jun 2026");
+  expect(rows()[0].textContent).not.toMatch(/1\.14|30 Jun 2026/);
   expect(rows()[2].querySelectorAll("td")[2].textContent).toBe("Q2 2024");
   expect(rows()[2].querySelector("[data-testid='candidate-confidence']").textContent).toBe("Medium – no figure");
 });
@@ -199,7 +202,7 @@ test("a tag never shows without its explanation", async () => {
 test("a claim in another currency with no rate names the pair and links to the FX settings", async () => {
   await reload([claim("u", "d1", 2, { group: 5, claim_type: "market", currency: "USD", value: 5e9,
     fx: { rate: null, date: "2026-06-30", currency: "EUR" } })]);
-  expect(rows()[0].textContent).toContain("(FX rate needed: USD→EUR)");
+  expect(rows()[0].textContent).toContain("(USD→EUR rate missing – enter it in FX settings at the top of the page)");
   const link = q("fx-settings-link");
   expect(link.getAttribute("href")).toBe("#fx-settings");
   expect(link.textContent).toBe("FX settings");
@@ -222,6 +225,8 @@ test("a period read from the label's brackets shows beside the date, or alone wh
   await reload([claim("p", "d1", 2, { group: 1, target_date: null, period_basis: "per year", currency: "GBP" }),
     claim("q", "d1", 3, { group: 1, target_date: "2024", period_basis: "per month" })]);
   expect(rows().map((tr) => tr.querySelectorAll("td")[2].textContent)).toEqual(["per year", "FY2024 · per month"]);
+  await reload([claim("p", "d1", 2, { group: 1, target_date: "2023", period_basis: "per year", currency: "GBP" })]);
+  expect(rows().map((tr) => tr.querySelectorAll("td")[2].textContent)).toEqual(["FY2023"]);
 });
 
 describe("an approved claim that moves to another category (item 8)", () => {
@@ -282,13 +287,87 @@ describe("an approved claim that moves to another category (item 8)", () => {
   });
 });
 
-test("a rate saved on the page reloads the claims, so the converted figures replace 'FX rate needed' with the tab kept", async () => {
+test("a rate saved on the page reloads the claims, so the converted figures replace the missing-rate note with the tab kept", async () => {
   await act(async () => { q("deck-tab-d1").click(); });
   api.getDecks.mockClear();
   api.getDecks.mockResolvedValue({ decks: DECKS, candidates: [claim("u", "d1", 2, { group: 5, claim_type: "market", currency: "USD", value: 5e9,
     fx: { rate: 0.9, date: "2026-06-30", currency: "EUR" } })] });
   await act(async () => { root.render(<DeckPanel auditId="a1" reloadKey={1} />); });
   expect(api.getDecks).toHaveBeenCalledTimes(1);
-  expect(rows()[0].textContent).toContain("5,000,000,000 USD (4,500,000,000 EUR at 0.9, 30 Jun 2026)");
-  expect(rows()[0].textContent).not.toContain("FX rate needed");
+  expect(rows()[0].textContent).toContain("5,000,000,000 USD (4,500,000,000 EUR)");
+  expect(rows()[0].textContent).not.toMatch(/rate missing|0\.9|30 Jun 2026/);
+});
+
+test("a market-size row: the value, the converted value, FY2028 from the deck, and no rate date anywhere on the row", async () => {
+  api.getDecks.mockResolvedValue({ decks: DECKS, candidates: [
+    claim("m", "d1", 5, { group: 5, claim_type: "market", currency: "USD", value: 2.5e9, target_date: "2028", period_text: "FY2028",
+      fx: { rate: 0.9, date: "2026-06-30", currency: "EUR" } }),
+    claim("n", "d1", 6, { group: 5, claim_type: "market", currency: "USD", value: 1e9, target_date: null,
+      fx: { rate: 0.9, date: "2026-06-30", currency: "EUR" } }),
+  ] });
+  await act(async () => { root.unmount(); });
+  host.remove();
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  await act(async () => { root.render(<DeckPanel auditId="a1" />); });
+  await act(async () => { q("deck-tab-all").click(); });
+  const [dated, undated] = rows();
+  const cells = (tr) => [...tr.querySelectorAll("td")].slice(1, 3).map((td) => td.textContent);
+  expect(cells(dated)).toEqual(["2,500,000,000 USD (2,250,000,000 EUR)", "FY2028"]);
+  expect(cells(undated)).toEqual(["1,000,000,000 USD (900,000,000 EUR)", "no date"]);
+  for (const tr of [dated, undated]) expect(tr.textContent).not.toMatch(/30 Jun 2026|0\.9|Jun/);
+  expect(dated.querySelector("[data-testid='candidate-value']").getAttribute("title")).toBe("Rate used: 1 USD = 0.9 EUR on 30 Jun 2026");
+});
+
+describe("a claim changed to a count type (Users), and a refused save", () => {
+  const toastError = () => require("sonner").toast.error;
+  let started = false;
+  beforeEach(() => { started = false; });
+  const choose = async (type) => {
+    if (!started) {
+      started = true;
+      await act(async () => { q("deck-tab-all").click(); });
+      await act(async () => { q("candidate-row-c").querySelector("[data-testid='candidate-edit']").click(); });
+    }
+    const select = q("edit-claim-type");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(select, type);
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  };
+
+  test("choosing a count type clears the currency and sets the unit to count; the save sends exactly that", async () => {
+    await choose("revenue");                                           // revenue stays: currency EUR, no unit
+    expect([q("edit-currency").value, q("edit-unit").value]).toEqual(["EUR", ""]);
+    await choose("users");
+    expect([q("edit-currency").value, q("edit-unit").value]).toEqual(["", "count"]);
+    api.updateCandidate.mockResolvedValue({ id: "c", status: "edited" });
+    await act(async () => { q("edit-save").click(); });
+    expect(api.updateCandidate).toHaveBeenCalledWith("a1", "c", expect.objectContaining({ claim_type: "users", unit: "count", currency: null }));
+  });
+
+  test("a type that is not a count leaves the currency and the unit alone; a count type already chosen keeps the noun typed", async () => {
+    await choose("costs");
+    expect([q("edit-currency").value, q("edit-unit").value]).toEqual(["EUR", ""]);
+    await choose("customers");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(q("edit-unit"), "paying users");
+      q("edit-unit").dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await choose("users");                                             // count to count: nothing is reset
+    expect(q("edit-unit").value).toBe("paying users");
+  });
+
+  test("a refused save says which field was rejected and why, never only that it could not be saved", async () => {
+    api.updateCandidate.mockRejectedValue({ response: { status: 422, statusText: "Unprocessable Entity",
+      data: { detail: [{ loc: ["body", "unit"], msg: "String should have at least 1 character", type: "string_too_short" }] } } });
+    await choose("users");
+    await act(async () => { q("edit-save").click(); });
+    expect(toastError()).toHaveBeenLastCalledWith("HTTP 422 Unprocessable Entity — unit: String should have at least 1 character");
+    api.updateCandidate.mockRejectedValue({ response: { status: 400, statusText: "", data: { detail: "claim_type: choose a claim type for this item before approving it" } } });
+    await act(async () => { q("edit-save").click(); });
+    expect(toastError()).toHaveBeenLastCalledWith("HTTP 400 — claim_type: choose a claim type for this item before approving it");
+    for (const [message] of toastError().mock.calls) expect(message).not.toMatch(/^Could not save$/i);
+  });
 });

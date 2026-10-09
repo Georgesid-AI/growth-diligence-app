@@ -595,13 +595,15 @@ def _borrow_date(texts: Iterable[str]) -> Optional[Tuple[str, str, str]]:
 
 
 def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), headers: Optional[Dict] = None,
-                    box_period: Optional[str] = None, column_periods: Optional[Dict] = None) -> List[Dict]:
+                    box_period: Optional[str] = None, column_periods: Optional[Dict] = None,
+                    bar_label: Optional[str] = None) -> List[Dict]:
     """Candidates in one line. `refs` gives each figure's source reference: a list of
     (start, end, ref) spans, so a table row cites the cell a figure sits in. `context` is the
     nearby text to borrow from, most relevant first; `headers` maps a table column to its header;
     `box_period` is the period line at the top of the line's text box ("23 Y/E"). `column_periods`
     maps a table column to the period its header stack states, or NO_PERIOD (see column_periods);
-    a table row is read with the table period rules."""
+    a table row is read with the table period rules. `bar_label` is the year label under the figure's bar (see
+    _bar_labels)."""
     refs, context, headers, column_periods = list(refs), list(context), headers or {}, column_periods
     table = column_periods is not None
     keywords = _keywords(line)
@@ -649,7 +651,10 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
         own_date = _nearest(dates, n)
         stacked = (column_periods or {}).get(ref_at(n["pos"]).get("col"))
         if own_date or stacked is None:
-            date = None if own_date else _borrow_date(nearby) or _borrow_date([box_period] if box_period else [])
+            # The year label under a bar is the figure's own date: taken after its own date, column header and box period, before
+            # any text further away, and "stated", so it is compared for a deck inconsistency (docs/specs/deck-parser.md section 2).
+            date = None if own_date else _borrow_date(nearby) or _borrow_date([box_period] if box_period else []) \
+                or _borrow_date([bar_label] if bar_label else [])
             stated = bool(own_date or date)
             date = date or (None if own_date else _borrow_date(context))
         else:
@@ -806,6 +811,37 @@ def _box_periods(units: List[Dict]) -> Dict[int, str]:
         if len(members) > 1 and _period_only(top["text"]):
             out.update((id(m), top["text"]) for m in members if m is not top)
             out[id(top)] = None         # the period line itself is never a candidate
+    return out
+
+
+BAR_ROW = 0.02      # the year labels of one chart axis share a line: their tops differ by less than this (page fraction)
+BAR_REACH = 0.6     # a bar's value sits at most this far above its label (page fraction): the bar itself fills the gap
+
+
+def _bar_labels(units: List[Dict]) -> Dict[int, str]:
+    """id(unit) -> the year label under the figure's bar. A bar chart read from the page's text has its values above the
+    bars and one year or FY label under each ("FY2023", "2024"); the labels are two or more lines on one row, each
+    nothing but a year. A figure takes the nearest such label below it that overlaps it from side to side; with no
+    such row, or no label under the figure, it has none (docs/specs/deck-parser.md section 2)."""
+    out = {}
+    pages = {}
+    for u in units:
+        if u["bbox"] and not u.get("table_row") and not u["title"]:
+            pages.setdefault(u["page"], []).append(u)
+    for members in pages.values():
+        labels = [u for u in members if _period_only(u["text"]) and find_dates(u["text"])[0]["kind"] == "year"]
+        rows = [[l for l in labels if abs(l["bbox"][1] - top["bbox"][1]) < BAR_ROW] for top in labels]
+        axis = [l for row in rows if len(row) >= 2 for l in row]
+        for u in members:
+            if u in labels or not find_numbers(u["text"], find_dates(u["text"])):
+                continue
+            x0, y0, x1, y1 = u["bbox"]
+            under = [l for l in axis if l["bbox"][1] >= y1 - 0.005 and l["bbox"][1] - y1 <= BAR_REACH
+                     and l["bbox"][0] < x1 and x0 < l["bbox"][2]]
+            if under:
+                centre = (x0 + x1) / 2
+                best = min(under, key=lambda l: (abs((l["bbox"][0] + l["bbox"][2]) / 2 - centre), l["bbox"][1]))
+                out[id(u)] = best["text"]
     return out
 
 
@@ -1060,6 +1096,7 @@ def detect_candidates(blocks: List[Dict], file: str, fiscal_year_end: int = 12) 
     skipped = _axis_ticks(units) | _not_plan(units)
     tick_cells = _tick_cells(blocks)
     periods = _box_periods(units)
+    bars = _bar_labels(units)
     merged = {}
     for u in units:
         if id(u) in skipped or (u.get("header_row") or u.get("table_row") and _in_stack(u)) and _period_header(u["text"]) \
@@ -1067,7 +1104,7 @@ def detect_candidates(blocks: List[Dict], file: str, fiscal_year_end: int = 12) 
             continue
         found = []
         for c in line_candidates(u["text"], u["spans"], contexts[id(u)], u["headers"], periods.get(id(u)),
-                                 u.get("column_periods") if u.get("table_row") else None):
+                                 u.get("column_periods") if u.get("table_row") else None, bars.get(id(u))):
             s = c["sources"][0]
             if s["kind"] == "table" and (s.get("slide") or s.get("page"), s["table"], s["row"], s["col"]) in tick_cells:
                 continue

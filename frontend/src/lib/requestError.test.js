@@ -58,3 +58,13 @@ test("logging writes the description only", () => {
   expect(spy).toHaveBeenCalledWith("[generate narrative] HTTP 500 — boom");
   spy.mockRestore();
 });
+
+test("a validation error names each rejected field, from the last name in its location, and the reason", () => {
+  const err = { response: { status: 422, statusText: "", data: { detail: [
+    { loc: ["body", "unit"], msg: "String should have at least 1 character" },
+    { loc: ["body", "by_period", 0, "target_date"], msg: "String should match pattern" },
+    { loc: ["body"], msg: "Field required" },
+  ] } } };
+  expect(describeRequestError(err).message).toBe(
+    "HTTP 422 — unit: String should have at least 1 character; target_date: String should match pattern; Field required");
+});

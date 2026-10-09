@@ -5,7 +5,7 @@
  */
 import metricUnits from "./claim_metrics.json";
 import { PLACEHOLDER, fmtCount, fmtCurrency } from "./format";
-import { typeLabel } from "./deckClaims";
+import { NO_DATE, rateMissingText, typeLabel } from "./deckClaims";
 import { dateRangeError, displayDate } from "./datePicker";
 
 export const REGISTER_HEADING = "Claim register";
@@ -110,17 +110,29 @@ const trimmed = (v, dp) => String(Number(Number(v).toFixed(dp)));
 /** "positive (no figure)": a direction the deck states with no figure (docs/specs/claim-matching.md section 2). */
 export const directionText = (direction) => `${direction} (no figure)`;
 
-/** "(171,000 EUR at 1.14, 30 Jun 2026)": a claim in another currency, converted at the saved rate before it is matched. */
+/** " (171,000 EUR)": a claim in another currency, converted at the saved rate before it is matched, in whole units. The rate and
+ *  the date it applies at are on hover (rateHover) and in the stored row; they never stand in the claim's text. */
 export function conversionText(row, ccy) {
   if (row.claimed_converted == null || row.fx_rate == null) return "";
   const range = row.claimed_converted_high == null ? fmtCurrency(row.claimed_converted, ccy)
     : `${fmtCurrency(row.claimed_converted)}–${fmtCurrency(row.claimed_converted_high, ccy)}`;
-  const at = displayDate(row.fx_date);
-  return ` (${range} at ${trimmed(row.fx_rate, 6)}${at ? `, ${at}` : ""})`;
+  return ` (${range})`;
 }
 
+/** "Rate used: 1 GBP = 1.14 EUR on 30 Jun 2026", or null for a claim that is not converted. */
+export function rateHover(row, ccy) {
+  if (row.claimed_converted == null || row.fx_rate == null || !row.currency) return null;
+  const at = displayDate(row.fx_date);
+  return `Rate used: 1 ${row.currency} = ${trimmed(row.fx_rate, 6)} ${ccy}${at ? ` on ${at}` : ""}`;
+}
+
+/** "GBP→EUR": the pair a claim in another currency has no saved rate for; null when it has a rate or needs none. */
+export const missingRatePair = (row, ccy) =>
+  (row.currency && ccy && row.currency !== ccy && row.claimed_value != null && row.claimed_converted == null && row.fx_rate == null
+    ? `${row.currency}→${ccy}` : null);
+
 /** "200,000 EUR", "41%", "4 customers": the claimed figure in the claim's own unit; in another currency than the audit's,
- *  both figures: "150,000 GBP (171,000 EUR at 1.14, 30 Jun 2026)"; a direction with no figure: "positive (no figure)". */
+ *  both figures: "150,000 GBP (171,000 EUR)"; a direction with no figure: "positive (no figure)". */
 export function claimFigure(row, ccy) {
   const lo = row.claimed_value;
   const hi = row.claimed_high;
@@ -136,6 +148,13 @@ export function claimFigure(row, ccy) {
 
 /** "Revenue · 200,000 EUR": the claim's type and its figure. */
 export const claimText = (row, ccy) => `${typeLabel(row.claim_type)} · ${claimFigure(row, ccy)}`;
+
+/** The claim cell: the type and the figure, and with no saved rate "(GBP→EUR rate missing – enter it in FX settings at the top of
+ *  the page)", whose "FX settings" the screen shows as a link. */
+export function claimCellText(row, ccy) {
+  const pair = missingRatePair(row, ccy);
+  return claimText(row, ccy) + (pair ? ` (${rateMissingText(pair)})` : "");
+}
 
 /** The figure in the metric's unit, as the backend's gloss rounds it. */
 function inUnit(metric, value, ccy) {

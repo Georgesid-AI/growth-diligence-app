@@ -33,9 +33,18 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
 | Usage log as its own collection; a totals page | The Storage row (every collection is listed) and the Frontend row (four pages) | Usage counters on the audit document (`audits.usage`), tokens and cost read from `llm_calls`, and totals as a section of the audit list (AuditHub) |
 
 ## 2. Screen
-- The MappingWizard page keeps its route, its title and the header bar (fiscal year-end, as-of month, Compute
-  Metrics). Below the header is one panel: a pure white message list with the input bar at the bottom. The deck
-  panel stays below the chat panel, unchanged. The page uses the existing light theme.
+- The MappingWizard page keeps its route, its title and the header bar (Compute Metrics). Below the header, at the top of
+  the page, sit the audit's set-up fields (2026-10-09, George): Reporting currency, Target ARR, Target date, As-of month and
+  Fiscal year-end, each with one line of help under it, then the FX settings (§16), then the chat panel: a pure white message
+  list with the input bar at the bottom. The deck panel stays below the chat panel, unchanged. The page uses the existing
+  light theme. The set-up fields save as they change (PUT /audits/{id}); clearing the As-of month sends an explicit null and returns it to the default, the Target date cannot be cleared; a refused save names the field and the reason.
+  Help lines, word for word: Reporting currency "All figures are converted to this currency. Use the company's home
+  currency; the verdict and memo use it." · Target ARR "The plan figure the audit tests. Every claim's value at stake is
+  measured against it." · Target date "When the plan says Target ARR is reached. Sets the forecast horizon." · As-of month
+  "Last month of actual data. Metrics are computed up to this month. Defaults to the last P&L month." · Fiscal year-end
+  "Maps FY labels in the deck to months. A wrong setting shifts every FY claim." The creation dialog asks for the company
+  (audit) name and the client, and holds the consent tick; the five fields start at EUR, 0, no date, no as-of month and
+  December.
 - Input bar: a paperclip (a file picker that accepts several files), a drop zone over the whole panel, and a text
   field. Text sent from the field gets a system reply, word for word: "This window accepts files and mapping
   confirmations." The text is never sent to the server, stored or logged.
@@ -51,15 +60,18 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
   values of S24: Rules, AI suggestion – confirm, You, Saved from earlier upload (a column with no proposal yet reads
   "You – choose"). There is no "Your decision" label. Confidence is never a dash (S9). Rows are ordered by §4.4.
   Columns left unused are folded into one "Not used (n)" row that opens to show them, each with Correct.
-- Dates (amended 2026-10-08, George): every date the analyst sets (the creation screen's target date and as-of date, the
-  header bar's as-of date, the gate date of the claim register) uses the app's own date picker, not the browser's
+- Dates (amended 2026-10-08 and 2026-10-09, George): every date the analyst sets (the set-up fields' target date and as-of
+  date, the gate date of the claim register) uses the app's own date picker, not the browser's
   date input: a calendar with month arrows and year arrows and a year the analyst can type. Years run from 2000 to
   2100. A year typed outside is rejected with "Year must be between 2000 and 2100" and the calendar stays where it
   was; the arrows stop at January 2000 and December 2100; a stored value outside the range is shown empty, so year 0001
   never appears. The value stays an ISO date (YYYY-MM-DD). The server holds the same range for the target date, the
   as-of date and the gate date. The engagement reference field is gone from the creation screen, the audit record, the
   memo, the CSV and the "Other" note check (llm-structure-reading.md §4); an audit stored with one has it removed
-  when the server starts.
+  when the server starts. Typing (2026-10-09): the date box also takes a typed date, as 2026-06-30 or 30.06.2026 and no other
+  form (06/07/2026 is June in one locale and July in another); a text that is not a real date inside the range is refused
+  with "Type the date as 2026-06-30 or 30.06.2026" and the value stays. The calendar opens below the box when it fits, else
+  above; it keeps that side until it closes, and always shows six week rows, so it never jumps. Tested in DateField.test.jsx.
 - The month range of the detected line (S5) shows once the date column is confirmed (decided by the analyst, or
   accepted by the rules); before that the line ends on the row count, with no text in place of the months.
 - On reload, the panel rebuilds one analyst bubble and one system bubble per stored dataset. Text replies and
@@ -310,7 +322,7 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 | S16b | banner | Top-5 claim contradicted: {claim type} {claimed} vs {observed} observed ({deck}, {page}). |
 | S16c | banner | Revenue file and P&L differ by {x}% over {first}–{last} ({file total} vs {P&L total}). |
 | S17 | narrative failed | Today's text, unchanged: "Narrative could not be generated. The computed metrics below are unaffected — they come from the calculation engine, not the narrative." |
-| S18 | delete dialog | Title: Delete {company name}? Body: Type **{company name}** to delete this audit with its files, mappings and results. This cannot be undone. (the name in bold, in both) |
+| S18 | delete dialog | Title: Delete {company name}? Body: Deleting this audit with its files, mappings and results cannot be undone. Type **{company name}** to confirm. (the name in bold, in both; body reworded 2026-10-09, George) |
 | S18b | delete dialog | Name does not match (under the box, after about a second without typing or when the box loses focus, while the trimmed text is not empty and is not the name exactly) |
 | S19 | audit list | Title: Usage totals (all audits) (folded). Explainer under the title: "Totals across all audits on this server since counting began. Counts and costs only — no file names, figures or company names. Kept to improve the app." Content: files uploaded and refused by type; columns by rules, saved, AI, corrected (by reason); compute runs and failures; evidence labels as five named counts in a row, Verified · Unverified · Unsupported · Contradicted · Metrics missing; analyst changes; median days from first upload to export; tokens and cost by step (cost to 2 decimals); "Other" notes, newest first (at most 50). |
 | S20 | "Other" box placeholder | Why? Up to 60 characters; no file names, figures or names. |
@@ -332,6 +344,7 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 | — | Amendment the same day (UI and labelling, George) | Delete dialog with the name in the title and in bold, exact case-sensitive match, S18b; mapping table headers and "Mapped by" (S23, S24), no "Your decision"; confidence cell never a dash (S9); row order (§4.4); the banner says what is left to do when the file is uploaded (S16d); months of the detected line only once the date column is confirmed (S5); the info box S25. The wording not given in the request was chosen under rule 19 (§13) |
 | — | Follow-up the same day | Approved: the reconciliation section on Diagnostics, with the banner link; the S19 extension; S20–S22. Column headers are allowed in "Other" notes; digits, cell text, file names, the company and client names stay refused (the engagement reference was removed on 2026-10-08); logs still never hold header text or notes (§4.3, §8, §9). S21 reworded to match ("…file names, figures and cell values…"); spec final |
 | — | UI and claims fixes from live testing (2026-10-08, George) | S4 reads: "Drop files here or use the paperclip. Required: revenue by customer (monthly, 24–36 months). Also useful: CRM export, P&L. Board decks go to the Deck panel. .xlsx or .csv only."; own date picker for every date, 2000 to 2100 (§2); the engagement reference is removed (§2); the deck panel's changes are in deck-parser.md §2 and §6 and claim-matching.md §2 and §6 |
+| — | UI and parser fixes from the Zero2Hero audit (2026-10-09, George) | S18 body reworded; the five set-up fields move from the creation dialog to the top of the mapping page with one help line each (§2); typed dates and a calendar that keeps its side (§2); claim rows show the converted figure only, the rate and its date on hover (deck-parser.md §6, claim-matching.md §2); "no date" in the Period column; bars take the year label under them (deck-parser.md §2); every refused save names the field and the reason |
 
 ## 13. Decided (engineering, rule 19)
 - Every background request (the deck AI-reading status, the blockers, the usage totals) stops when the audit is deleted

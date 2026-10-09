@@ -22,6 +22,15 @@ export function redactSecrets(text) {
 const MAX_TEXT = 300;
 const clip = (s) => (s.length > MAX_TEXT ? `${s.slice(0, MAX_TEXT)}…` : s);
 
+// A rejected field of a validated body: "unit: String should have at least 1 character". The field is the last name in its
+// location (["body", "unit"], or ["body", "by_period", 0, "target_date"]); a location with none gives the reason alone.
+function validationText(d) {
+  if (!d || typeof d !== "object") return JSON.stringify(d);
+  const field = [...(Array.isArray(d.loc) ? d.loc : [])].reverse().find((part) => typeof part === "string" && part !== "body");
+  const reason = d.msg ?? JSON.stringify(d);
+  return field ? `${field}: ${reason}` : reason;
+}
+
 // FastAPI sends {"detail": "text"} or {"detail": [{"msg": ...}]}; a proxy sends an HTML page.
 function serverText(data) {
   if (data == null || data === "") return "";
@@ -30,7 +39,7 @@ function serverText(data) {
   }
   const detail = data.detail ?? data.message ?? data.error;
   if (detail == null) return "";
-  if (Array.isArray(detail)) return detail.map((d) => d?.msg ?? JSON.stringify(d)).join("; ");
+  if (Array.isArray(detail)) return detail.map(validationText).join("; ");
   return typeof detail === "string" ? detail : JSON.stringify(detail);
 }
 

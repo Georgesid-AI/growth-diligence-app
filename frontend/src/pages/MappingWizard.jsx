@@ -4,13 +4,13 @@ import { toast } from "sonner";
 import { Loader2, Plus, X, Play, Search } from "lucide-react";
 import { Layout } from "@/components/Layout";
 import DeckPanel from "@/components/DeckPanel";
-import DateField from "@/components/DateField";
+import AuditSetup from "@/components/AuditSetup";
 import UploadChat from "@/components/UploadChat";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getAudit, saveMapping, computeAudit, getRevenueCustomers, updateAudit, reportUsage, saveFx } from "@/lib/api";
-import { asOfInputValue, MONTHS, DEFAULT_FISCAL_YEAR_END } from "@/lib/auditForm";
+import { asOfInputValue } from "@/lib/auditForm";
 
 export default function MappingWizard() {
   const { id } = useParams();
@@ -26,16 +26,6 @@ export default function MappingWizard() {
 
   const load = useCallback(() => getAudit(id).then((a) => { setAudit(a); setAsOf(asOfInputValue(a.as_of_month)); }), [id]);
   useEffect(() => { load(); reportUsage(id, { screen: "mapping" }); }, [load, id]);
-
-  // The fiscal year-end stays editable after creation; saving it re-runs period mapping on the server.
-  const saveYearEnd = async (month) => {
-    try {
-      setAudit(await updateAudit(id, { fiscal_year_end: Number(month) }));
-      toast.success("Fiscal year-end saved; claim periods re-mapped");
-    } catch (e) {
-      toast.error("Could not save the fiscal year-end");
-    }
-  };
 
   // Compute waits for the analyst: no AI or unsure row left, every required field of each file mapped (section 4.3).
   const hasRevenue = views.some((v) => v.dtype === "revenue");
@@ -80,23 +70,6 @@ export default function MappingWizard() {
           <h1 className="font-heading text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">Upload & Column Mapping</h1>
         </div>
         <div className="flex items-end gap-3">
-          <div>
-            <label className="text-[11px] font-mono uppercase tracking-wider text-slate-600 block mb-1">Fiscal year-end</label>
-            <Select value={String(audit.fiscal_year_end || DEFAULT_FISCAL_YEAR_END)} onValueChange={saveYearEnd}>
-              <SelectTrigger data-testid="fiscal-year-end-select" className="h-9 w-36 bg-white border-[#E5E7EB]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="bg-white border-[#E5E7EB] text-slate-900">
-                {MONTHS.map((m, i) => <SelectItem key={m} value={String(i + 1)}>{m}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <label className="text-[11px] font-mono uppercase tracking-wider text-slate-600 block mb-1">As-of month</label>
-            <div className="w-40">
-              <DateField testId="asof-month-input" value={asOf} onChange={setAsOf} placeholder="last P&L month" />
-            </div>
-          </div>
           <Button data-testid="compute-button" onClick={headerCompute} disabled={(!ready && attached === 0) || computing || reading}
             className="bg-sky-600 hover:bg-sky-500 gap-2">
             {computing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />} Compute Metrics
@@ -104,10 +77,12 @@ export default function MappingWizard() {
         </div>
       </div>
 
+      <AuditSetup audit={audit} setAudit={setAudit} asOf={asOf} setAsOf={setAsOf} />
+
       <div className="space-y-5">
+        <FxSettings audit={audit} onSaved={() => setFxVersion((n) => n + 1)} />
         <UploadChat audit={audit} onViews={setViews} onCalculate={onCalculate} calculateRef={calculateRef} onStaged={setAttached} onCalculating={setReading}
           extras={(view) => <RevenueSettings key={`${view.file}-${view.uploaded_at}`} audit={audit} view={view} />} />
-        <FxSettings audit={audit} onSaved={() => setFxVersion((n) => n + 1)} />
         <DeckPanel auditId={audit.id} reloadKey={fxVersion} />
       </div>
     </Layout>

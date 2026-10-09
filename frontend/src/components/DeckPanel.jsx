@@ -3,9 +3,11 @@ import { toast } from "sonner";
 import { Check, ChevronDown, ChevronRight, FileText, Loader2, Pencil, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import FxText from "@/components/FxText";
 import { getDecks, removeDeck, updateCandidate, uploadDeck } from "@/lib/api";
+import { describeRequestError } from "@/lib/requestError";
 import {
-  ALL_DECKS, CLAIM_GROUPS, CLAIM_TYPES, CLAIM_UNITS, COUNT_UNIT_HINT, FX_SETTINGS_ANCHOR, FX_SETTINGS_LABEL, fxNeededText, fxPair, inconsistencyText, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
+  ALL_DECKS, CLAIM_GROUPS, CLAIM_TYPES, CLAIM_UNITS, COUNT_UNIT_HINT, COUNT_TYPES, COUNT_UNIT, FX_SETTINGS_ANCHOR, FX_SETTINGS_LABEL, conversionHover, inconsistencyText, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
   DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, INCONSISTENCY_LABEL, OTHER_TYPE_NOTE, PLACEHOLDER, STATUS_LABELS, VERIFIED_LABEL, claimPeriod, claimSections, claimValue, deckRunLog,
   confidenceText, needsType, readingChoices, rowEdit, sourceRef, statusCounts, typeLabel,
 } from "@/lib/deckClaims";
@@ -107,7 +109,7 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
       }
       return true;
     } catch (err) {
-      toast.error(typeof err.response?.data?.detail === "string" ? err.response.data.detail : "Could not save");
+      toast.error(describeRequestError(err).message);      // names the rejected field and the reason: "HTTP 422 — unit: ..."
       return false;
     }
   };
@@ -257,6 +259,12 @@ function CandidateRow({ candidate: c, onSave, highlight }) {
     if (await onSave(c, payload)) setDraft(null);
   };
   const set = (k) => (e) => setDraft((d) => ({ ...d, [k]: e.target.value }));
+  // A claim changed to a count type is a count: no currency, and the unit "count" (the analyst may type the noun counted).
+  const setType = (e) => {
+    const claim_type = e.target.value;
+    setDraft((d) => (COUNT_TYPES.includes(claim_type) && !COUNT_TYPES.includes(d.claim_type)
+      ? { ...d, claim_type, currency: "", unit: COUNT_UNIT } : { ...d, claim_type }));
+  };
   const setValue = (k) => (e) => setDraft((d) => ({ ...d, values: d.values.map((v, i) => (i === k ? e.target.value : v)) }));
 
   return (
@@ -265,7 +273,7 @@ function CandidateRow({ candidate: c, onSave, highlight }) {
       {draft ? (
         <>
           <td className="py-2 pr-3">
-            <select value={draft.claim_type} onChange={set("claim_type")} className={selectClass} data-testid="edit-claim-type">
+            <select value={draft.claim_type} onChange={setType} className={selectClass} data-testid="edit-claim-type">
               {needsType(draft) && <option value={draft.claim_type} disabled>{typeLabel(draft.claim_type)}{draft.claim_type === "unknown" ? "" : ": choose a type"}</option>}
               {CLAIM_TYPES.map((t) => <option key={t} value={t}>{typeLabel(t)}</option>)}
             </select>
@@ -300,18 +308,14 @@ function CandidateRow({ candidate: c, onSave, highlight }) {
             {typeLabel(c.claim_type)}
             {needsType(c) && <div className="text-[10px] text-amber-800 mt-0.5" data-testid="candidate-needs-type">{OTHER_TYPE_NOTE}</div>}
           </td>
-          <td className={`py-2 pr-3 font-mono text-slate-900 ${isRow ? "" : "whitespace-nowrap"}`}>
+          <td className={`py-2 pr-3 font-mono text-slate-900 ${isRow || claimValue(c).includes(FX_SETTINGS_LABEL) ? "" : "whitespace-nowrap"}`}>
             {choices.length ? (
               <select value={0} onChange={(e) => Number(e.target.value) && startEdit(choices[Number(e.target.value)].value)}
                 className={selectClass} title="This figure reads two ways. Approve the first reading, or choose the other to edit the claim."
                 data-testid="candidate-readings">
                 {choices.map((r, i) => <option key={i} value={i}>{r.label}</option>)}
               </select>
-            ) : claimValue(c)}
-            {fxPair(c) && (
-              <a href={`#${FX_SETTINGS_ANCHOR}`} className="ml-2 text-[10px] font-sans text-sky-700 underline" title={fxNeededText(c)}
-                data-testid="fx-settings-link">{FX_SETTINGS_LABEL}</a>
-            )}
+            ) : <span title={conversionHover(c) || undefined} data-testid="candidate-value"><FxText text={claimValue(c)} href={`#${FX_SETTINGS_ANCHOR}`} testId="fx-settings-link" /></span>}
           </td>
           <td className="py-2 pr-3 font-mono text-slate-700 whitespace-nowrap">{claimPeriod(c)}</td>
         </>

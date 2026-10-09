@@ -16,7 +16,7 @@ export const S12_MODEL_FAILED = "AI reading unavailable – these columns need y
 export const S17_NARRATIVE_FAILED_TITLE = "Narrative could not be generated.";
 // S18: the delete dialog. The name in the body is shown in bold by the dialog; the text around it is here.
 export const S18_TITLE = (company) => `Delete ${company}?`;
-export const S18_BODY = ["Type ", " to delete this audit with its files, mappings and results. This cannot be undone."];
+export const S18_BODY = ["Deleting this audit with its files, mappings and results cannot be undone. Type ", " to confirm."];
 export const S18_MISMATCH = "Name does not match";
 export const S19_USAGE_TOTALS = "Usage totals (all audits)";
 export const S19_USAGE_EXPLAINER = "Totals across all audits on this server since counting began. Counts and costs only — no file names, figures or company names. Kept to improve the app.";

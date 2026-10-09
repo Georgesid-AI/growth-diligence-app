@@ -1,5 +1,5 @@
 import {
-  ALL_DECKS, AI_SUGGESTION_LABEL, CLAIM_TYPES, INCONSISTENCY_LABEL, UPLOADED_BEFORE_CONSENT, VERIFIED_LABEL, deckRunLog, REMOVE_DECK_CONFIRM, claimPeriod, claimSections, claimsForDeck, periodLabel, directionText, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, sourceRef, statusCounts, typeLabel,
+  ALL_DECKS, AI_SUGGESTION_LABEL, CLAIM_TYPES, INCONSISTENCY_LABEL, UPLOADED_BEFORE_CONSENT, VERIFIED_LABEL, deckRunLog, REMOVE_DECK_CONFIRM, claimPeriod, conversionHover, claimSections, claimsForDeck, periodLabel, directionText, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, sourceRef, statusCounts, typeLabel,
   DECK_SCOPE_CANNOT, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, OTHER_TYPE_NOTE, needsType, readingChoices, confidenceText, UNKNOWN_TYPE_LABEL,
 } from "./deckClaims";
 
@@ -126,7 +126,7 @@ describe("a table row is one claim with its values by period (zero2hero page 19)
       .toBe("42,638 GBP (FY2022) · 50,000 GBP (FY2023)");
     expect(claimPeriod(row)).toBe("FY2022–FY2024");
     expect(claimPeriod({ target_date: "2024-Q2" })).toBe("Q2 2024");
-    expect(claimPeriod({ target_date: null })).toBe("—");
+    expect(claimPeriod({ target_date: null })).toBe("no date");
     // The deck's own wording ("FY25", "Y/E 22") stays in the claim; the column has one format.
     expect(claimPeriod({ target_date: "2025", period_text: "FY25" })).toBe("FY2025");
     expect(claimPeriod({ by_period: [{ target_date: "2022", period_text: "Y/E 22" }, { target_date: "2023", period_text: "Y/E 23" }] }))
@@ -244,9 +244,16 @@ describe("2026-10-08: the Period column, groups, a direction with no figure and 
     [{ target_date: "FY2025-04", period_start: "2024-04-01" }, "Apr 2024"],
   ])("%j reads %s", (claim, label) => expect(claimPeriod(claim)).toBe(label));
 
-  test("a dash only when the deck gives no period", () => {
-    expect(claimPeriod({ target_date: null })).toBe("—");
-    expect(claimPeriod({})).toBe("—");
+  test("a year label found under a bar replaces \"per year\"; it stays only when no label is found", () => {
+    expect(claimPeriod({ target_date: "2023", period_basis: "per year" })).toBe("FY2023");
+    expect(claimPeriod({ target_date: null, period_basis: "per year" })).toBe("per year");
+    expect(claimPeriod({ target_date: "2024", period_basis: "per month" })).toBe("FY2024 · per month");
+    expect(claimPeriod({ by_period: [{ target_date: "2023" }, { target_date: "2025" }], period_basis: "per year" })).toBe("FY2023–FY2025");
+  });
+
+  test("\"no date\" only when the deck gives no period", () => {
+    expect(claimPeriod({ target_date: null })).toBe("no date");
+    expect(claimPeriod({})).toBe("no date");
     expect(periodLabel({ target_date: "0001-01-01" })).toBe("", "a date outside the range is never shown");
   });
 
@@ -269,9 +276,16 @@ describe("2026-10-08: the Period column, groups, a direction with no figure and 
 
   test("both figures for another currency; no saved rate says so; the audit's own currency is unchanged", () => {
     const fx = { rate: 1.14, date: "2026-06-30", currency: "EUR" };
-    expect(claimValue({ value: 150000, currency: "GBP", fx })).toBe("150,000 GBP (171,000 EUR at 1.14, 30 Jun 2026)");
-    expect(claimValue({ value: 150000, value_high: 160000, currency: "GBP", fx })).toBe("150,000–160,000 GBP (171,000–182,400 EUR at 1.14, 30 Jun 2026)");
-    expect(claimValue({ value: 150000, currency: "GBP", fx: { ...fx, rate: null } })).toBe("150,000 GBP (FX rate needed: GBP→EUR)");
+    // Whole units, no rate and no rate date in the text: they are on hover.
+    expect(claimValue({ value: 150000, currency: "GBP", fx })).toBe("150,000 GBP (171,000 EUR)");
+    expect(claimValue({ value: 550508, currency: "GBP", fx: { ...fx, rate: 1.15 } })).toBe("550,508 GBP (633,084 EUR)");
+    expect(claimValue({ value: 100, currency: "GBP", fx: { ...fx, rate: 1.1349 } })).toBe("100 GBP (113 EUR)");
+    expect(claimValue({ value: 150000, value_high: 160000, currency: "GBP", fx })).toBe("150,000–160,000 GBP (171,000–182,400 EUR)");
+    expect(conversionHover({ currency: "GBP", fx })).toBe("Rate used: 1 GBP = 1.14 EUR on 30 Jun 2026");
+    expect(conversionHover({ currency: "GBP", fx: { ...fx, rate: null } })).toBeNull();
+    expect(conversionHover({ currency: "EUR", fx: null })).toBeNull();
+    expect(claimValue({ value: 150000, currency: "BRL", fx: { ...fx, rate: null } }))
+      .toBe("150,000 BRL (BRL→EUR rate missing – enter it in FX settings at the top of the page)");
     expect(claimValue({ value: 150000, currency: "EUR", fx: null })).toBe("150,000 EUR");
     expect(claimValue({ value: 15, unit: "%", currency: null, fx: null })).toBe("15%");
   });
