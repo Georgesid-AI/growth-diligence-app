@@ -4,7 +4,8 @@ import { createRoot } from "react-dom/client";
 import DeckPanel from "./DeckPanel";
 import * as api from "@/lib/api";
 
-jest.mock("@/lib/api", () => ({ getDecks: jest.fn(), removeDeck: jest.fn(), updateCandidate: jest.fn(), uploadDeck: jest.fn(), addClaim: jest.fn() }));
+jest.mock("@/lib/api", () => ({ getDecks: jest.fn(), removeDeck: jest.fn(), updateCandidate: jest.fn(), uploadDeck: jest.fn(), addClaim: jest.fn(),
+  answerTurnover: jest.fn() }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn(), message: jest.fn() } }));
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -201,6 +202,93 @@ test("a turnover figure and a revenue figure name their deck labels, each at its
     inconsistencies: [{ this: money("Turnover", 550508, 17), other: money("Revenue", 150000, 19) }] })]);
   expect(q("candidate-inconsistency").getAttribute("title")).toBe(
     "The deck gives different figures for this metric: Turnover 550,508 GBP at d.pdf · page 17 and Revenue 150,000 GBP at d.pdf · page 19.");
+});
+
+describe("a turnover claim asks Revenue or Volume in its own row (05-zero2hero.pdf, claim-matching.md section 11 point 8)", () => {
+  // As GET /decks sends p17's three bars, all to review: the revenue file starts in 2023, p19's pending table gives
+  // Revenue 130,550 (FY2022) and 150,000 (FY2023).
+  const view = (id, period, over = {}) => [{ claim_id: id, period, turnover_state: "ask", turnover_note: "Revenue or volume? Confirm below",
+    turnover_set_by: "python", turnover_reason: null, turnover_suggested: null, deck_revenue_note: null, implied_take_rate: null,
+    implied_take_rate_source: null, file_note: null, ...over }];
+  const bar = (id, value, year, turnover) => claim(id, "d2", 17, { group: 1, value, currency: "GBP", target_date: year,
+    snippet: value.toLocaleString("en-US"), label_from: "Turnover(£/year)", turnover });
+  const ZERO2HERO = [
+    bar("t21", 278085, "2021", view("t21", "2021", { file_note: "No revenue-file period to compare" })),
+    bar("t22", 415107, "2022", view("t22", "2022", { turnover_suggested: "volume", file_note: "No revenue-file period to compare",
+      deck_revenue_note: "Deck revenue for the same period: 130,550 GBP (page 19); implied take rate 31%, derived, not verified" })),
+    bar("t23", 550508, "2023", view("t23", "2023", { turnover_suggested: "volume",
+      deck_revenue_note: "Deck revenue for the same period: 150,000 GBP (page 19); implied take rate 27%, derived, not verified" })),
+  ];
+  const cell = (id, testid) => q(`candidate-row-${id}`).querySelector(`[data-testid='${testid}']`);
+
+  test("the metric cell reads Turnover – confirm: with Revenue and Volume, never Revenue, and the row is Unverified", async () => {
+    await reload(ZERO2HERO);
+    for (const id of ["t21", "t22", "t23"]) {
+      expect(cell(id, "turnover-confirm").textContent).toBe("Turnover – confirm:");
+      expect(cell(id, "candidate-type").textContent).not.toMatch(/^Revenue/);
+      expect(cell(id, "register-turnover-revenue").textContent).toBe("Revenue");
+      expect(cell(id, "register-turnover-volume").textContent).toBe("Volume");
+      expect(cell(id, "candidate-turnover-label").textContent).toBe("Unverified");
+      expect(q(`candidate-row-${id}`).textContent).toContain("To review");
+    }
+  });
+
+  test("deck revenue below turnover pre-selects Volume and shows the deck revenue and the implied take rate", async () => {
+    await reload(ZERO2HERO);
+    expect(cell("t23", "register-turnover-volume").getAttribute("aria-pressed")).toBe("true");
+    expect(cell("t23", "register-turnover-revenue").getAttribute("aria-pressed")).toBeNull();
+    expect(cell("t23", "register-deck-revenue").textContent).toBe(
+      "Deck revenue for the same period: 150,000 GBP (page 19); implied take rate 27%, derived, not verified");
+    expect(cell("t21", "register-turnover-volume").getAttribute("aria-pressed")).toBeNull();
+  });
+
+  test("a period the revenue file does not cover says so in the row", async () => {
+    await reload(ZERO2HERO);
+    expect(cell("t21", "turnover-file-note").textContent).toBe("No revenue-file period to compare");
+    expect(cell("t22", "turnover-file-note").textContent).toBe("No revenue-file period to compare");
+    expect(cell("t23", "turnover-file-note")).toBeNull();
+  });
+
+  test("Volume, with a reason, is saved for the pending claim and the list is read again", async () => {
+    await reload(ZERO2HERO);
+    api.answerTurnover.mockResolvedValue({ register: [] });
+    const select = cell("t23", "register-turnover-reason");
+    expect(cell("t23", "register-turnover-volume").disabled).toBe(true);
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(select, "deck_says_processed_volume");
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const reads = api.getDecks.mock.calls.length;
+    await act(async () => { cell("t23", "register-turnover-volume").click(); });
+    expect(api.answerTurnover).toHaveBeenCalledWith("a1", "t23", { as: "volume", reason: "deck_says_processed_volume" });
+    expect(api.getDecks.mock.calls.length).toBe(reads + 1);
+  });
+
+  test("once the analyst confirms, the row shows the answer and is no longer Unverified", async () => {
+    await reload([bar("t23", 550508, "2023", view("t23", "2023", { turnover_state: "volume", turnover_note: "Transaction volume",
+      turnover_set_by: "analyst", turnover_reason: "deck_says_processed_volume" }))]);
+    expect(cell("t23", "turnover-confirm")).toBeNull();
+    expect(cell("t23", "register-turnover-note").textContent).toBe("Transaction volume · set by you");
+    expect(cell("t23", "candidate-turnover-label")).toBeNull();
+  });
+
+  test("a value of a turnover table row names its period", async () => {
+    await reload([claim("r", "d2", 19, { group: 1, currency: "GBP", by_period: [{ value: 1, target_date: "2022" }, { value: 2, target_date: "2023" }],
+      turnover: [...view("r#1", "Y/E 22"), ...view("r#2", "Y/E 23")] })]);
+    expect([...q("candidate-row-r").querySelectorAll("[data-testid='turnover-confirm']")].map((n) => n.textContent)).toEqual([
+      "Y/E 22 · Turnover – confirm:", "Y/E 23 · Turnover – confirm:"]);
+  });
+});
+
+test("To review is a status label, not a control: plain text with no border, chip or button around it (George, 2026-10-09)", async () => {
+  await reload([claim("c", "d1", 2, { group: 1 }), claim("e", "d1", 3, { group: 1, status: "approved" })]);
+  for (const [id, label] of [["c", "To review"], ["e", "Approved"]]) {
+    const status = q(`candidate-row-${id}`).querySelector("[data-testid='candidate-status']");
+    expect(status.textContent).toBe(label);
+    expect(status.tagName).toBe("SPAN");
+    expect(status.className.split(/\s+/).filter((c) => /^(border|rounded|px-|py-|bg-)/.test(c))).toEqual([]);
+    expect(status.closest("button, a, [role='button']")).toBeNull();
+  }
 });
 
 test("the upload help, the Confidence hover are shown word for word", async () => {

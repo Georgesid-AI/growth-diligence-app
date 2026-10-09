@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { AlertOctagon } from "lucide-react";
 import { getBlockers } from "@/lib/api";
 import { REVENUE_REQUIRED_NOTE, S16a_MISSING, calculatePressed } from "@/lib/chatUpload";
+import { seeGlossary } from "@/lib/glossary";
 
 export const BLOCKERS_CHANGED = "blockers:changed";
 
@@ -35,7 +36,7 @@ export default function BlockerBanner({ auditId }) {
           <li key={`${b.kind}-${i}`} data-testid={`blocker-${b.kind}`} className="flex items-start gap-2 text-sm text-rose-900">
             <AlertOctagon className="h-4 w-4 mt-0.5 shrink-0 text-rose-700" />
             <span>
-              {b.text}
+              {seeGlossary(b.text)}
               {b.kind === "revenue_file_missing" && b.text === S16a_MISSING && (
                 <span className="block text-xs text-rose-800 mt-0.5" data-testid="blocker-revenue-note">{REVENUE_REQUIRED_NOTE}</span>
               )}

@@ -292,6 +292,9 @@ These figures were extracted automatically and inform the growth plan. While err
   another group. Groups 6 and 7 are collapsed by default under a header with their count ("Unknown – choose type (12)"); the
   analyst opens them. The server sorts and sends `group` (1 to 7) with each candidate; it is layout only, never sent to a
   model.
+- Status column (2026-10-09, George): the status (To review, Approved, Edited, Rejected) is a label, not a control: plain
+  coloured text with no border or chip, so it never reads as a button. Approve, Reject and Edit are the buttons of the
+  Action column; a turnover claim asks Revenue or Volume in its row (claim-matching.md §11 point 8).
 - Period column (2026-10-08, George): the column "Date" is "Period". Every value reads in one format from the stored target
   date, whatever the deck's wording: a year "FY2023", a quarter "Q2 2024", a half "H1 2024", a month "Jun 2024"; a table row
   shows its first to last period ("FY2022–FY2026"). "no date" only when the deck gives no period (2026-10-09, George; it was "—"). The deck's own wording ("Y/E 22",

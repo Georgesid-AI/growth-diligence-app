@@ -107,8 +107,8 @@ describe("the screen", () => {
     expect(q("fx-settings").compareDocumentPosition(q("upload-chat")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(SETUP_HELP).toEqual({
       reporting_currency: "All figures are converted to this currency. Use the company's home currency; the verdict and memo use it.",
-      target_arr: "The plan figure the audit tests. Every claim's value at stake is measured against it.",
-      target_date: "When the plan says Target ARR is reached. Sets the forecast horizon.",
+      target_arr: "The plan figure the audit tests. Every claim's VaS (see glossary) is measured against it.",
+      target_date: "When the plan says Target ARR (see glossary) is reached. Sets the forecast horizon.",
       as_of_month: "Last month of actual data. Metrics are computed up to this month. Defaults to the last P&L month.",
       fiscal_year_end: "Maps FY labels in the deck to months. A wrong setting shifts every FY claim.",
     });

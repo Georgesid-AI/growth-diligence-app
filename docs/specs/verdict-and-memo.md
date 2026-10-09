@@ -198,8 +198,8 @@ ingests four types, so x is at most 4 today. Where a category is only partly met
 | 7 | Roadmap and hiring budget by segment/product | not ingested by the app |
 
 Appendices:
-- A. Claim register and gates. Every row, with value at stake, overlaps, evidence, its gate and the key-gate mark,
-  and the top-5 mark.
+- A. Claim register and gates. Every row, with value at stake (column "VaS"), overlaps, evidence, its gate and the
+  key-gate mark, and the top-5 mark.
 - B. Data gaps and data request list. Every gap with its target date and the first quarterly review. Then the
   requests: each gap's `unlocked_by`, the management questions, and each Missing Data item that is not a gap, with
   its `unlocked_by`.
@@ -207,7 +207,8 @@ Appendices:
   row code, plus revenue reconciliation by month when a P&L exists. Each table's caption carries its block's footnote.
 - D. Source key list and value-at-risk de-duplication. Files reviewed, by evidence category, with the notes of the
   table above. Every footnote: analysis · source key · file · sheet · rows · rule. The overlap groups (§2.2) and the
-  de-duplication method (W16). Then the AI usage and cost table (§8) and the disclosure block (`app/disclosure.py`).
+  de-duplication method (W16). Then the AI usage and cost table (§8), the disclosure block (`app/disclosure.py`) and the
+  glossary (`formatting.GLOSSARY`, as on the screen and in the export), which the "(see glossary)" pointers name.
 
 ### 7.3 Numbers and citations
 - Format: `app/formatting.py` by the field's kind in the schema. Currency is whole with separators and the code,
@@ -237,7 +238,8 @@ words pass; 1,501 are refused, and the refusal shows the count (W19).
 `GET /runs/{id}/llm-usage` gains `by_step`. Each step has billed calls, cache hits, input tokens, output tokens and
 cost. The steps are each narrative step by name, plus `structures` split into deck reading (`deck_id` set) and column
 mapping (no `deck_id`). The steps sum to the existing totals. The Dashboard section "AI usage and cost" and Appendix D
-show the same table (W20). The memo makes no call.
+show the same table (W20). The memo makes no call. On the Dashboard the section is the very end of the page, after every
+analysis, the memo section (Verdict), the glossary and the disclosure (George, 2026-10-09).
 
 ## 9. Contract and data boundary
 - MetricsPayload (H2 of interface-contracts.md): the verdict and the memo validate `audits.results` with
@@ -276,6 +278,12 @@ run A gives Re-plan (rows 1–5 all Contradicted); run B gives Underwrite with g
 until it has a gate); runs C and D give Re-plan. The outcome tests use subsets of the fixture's claims.
 
 ## 11. Screen wording (approved 2026-10-08: W1–W23 and W25 as drafted, W15's appendix titles per Q1, W24 as given)
+Abbreviations (George, 2026-10-09): "Value at stake" reads "VaS" on the screen and in the memo (the register column, the
+glossary). The first use of VaS, ARR, MRR, NRR or CAC in a text block (a help text, a note, a sentence, a memo paragraph
+or list item) reads "ARR (see glossary)"; later uses in that block are plain. Labels, headings, column headers, table
+cells, figures and footnotes are not text blocks and stay as they are. One helper on each side applies it at display
+(`formatting.see_glossary`, `seeGlossary` in `frontend/src/lib/glossary.js`); the stored rows, the register and the CSV
+are unchanged. So W16 and W24 below read "ARR (see glossary)" at their first ARR.
 | Id | Where | Text |
 |---|---|---|
 | W1 | value at stake | not yet computed · shortfall {x}% (no shortfall: "not yet computed") |

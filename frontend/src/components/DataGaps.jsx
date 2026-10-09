@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { putIcInputs } from "@/lib/api";
 import { describeRequestError } from "@/lib/requestError";
+import { seeGlossary } from "@/lib/glossary";
 import { GAPS_HEADING, GAP_COLUMNS, REVIEW_LABEL } from "@/lib/verdict";
 
 /** What the company cannot measure (docs/specs/verdict-and-memo.md section 4): the gaps, why each matters, what is requested,
@@ -45,8 +46,8 @@ export default function DataGaps({ auditId, verdict, onChanged }) {
               {gaps.map((g) => (
                 <tr key={g.item} className="border-b border-[#F1F5F9] align-top" data-testid="data-gap-row">
                   <td className="py-2 px-3 text-slate-900 min-w-[10rem]">{g.item}</td>
-                  <td className="py-2 px-3 text-slate-700 min-w-[16rem]" data-testid="data-gap-why">{g.why}</td>
-                  <td className="py-2 px-3 text-slate-700 min-w-[12rem]">{g.requested}</td>
+                  <td className="py-2 px-3 text-slate-700 min-w-[16rem]" data-testid="data-gap-why">{seeGlossary(g.why)}</td>
+                  <td className="py-2 px-3 text-slate-700 min-w-[12rem]">{seeGlossary(g.requested)}</td>
                   <td className="py-2 px-3">
                     <Input type="date" value={g.target_date ?? ""} disabled={busy} className="h-7 text-xs font-mono w-36" data-testid="data-gap-date"
                       onChange={(e) => save({ gap_target_dates: { [g.item]: e.target.value || null } })} />

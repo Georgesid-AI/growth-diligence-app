@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, Loader2, FileText } from "lucide-react";
 import { NARRATIVE_EXPECTED_SECONDS, NARRATIVE_TIMEOUT_MS } from "@/lib/api";
+import { seeGlossary } from "@/lib/glossary";
 
 /**
  * Renders a generated narrative and, more importantly, how much of it is
@@ -65,10 +66,10 @@ export function Narrative({ state }) {
       )}
 
       <h3 className="font-heading text-base font-semibold text-slate-900">
-        {narrative.headline}
+        {seeGlossary(narrative.headline)}
       </h3>
       <p className="mt-2 text-sm leading-relaxed text-slate-700">
-        {narrative.what_this_means}
+        {seeGlossary(narrative.what_this_means)}
       </p>
 
       {narrative.table_rows?.length > 0 && (
@@ -133,7 +134,7 @@ function Section({ title, items }) {
         {items.map((item, i) => (
           <li key={i} className="flex gap-2 text-sm text-slate-700">
             <span className="text-slate-500">·</span>
-            {item}
+            {seeGlossary(item)}
           </li>
         ))}
       </ul>

@@ -406,8 +406,9 @@ Revenue: the column maps as before. Volume: the column is Not used and the engin
   or in another tab. The flag is set after the last attached file is read, and not while a file still waits for its type or a
   replace answer, so "missing" never shows while a file is being asked about; the banner is refreshed once after the last file
   and again when that answer is read. With no revenue file, one line follows S16a: "The
-  revenue file is the only required file. Every metric in the audit (ARR, NRR, churn, CAC payback) is computed from it; without
-  it nothing can be calculated or verified." The other two kinds are unchanged. The server's `/blockers` is unchanged.
+  revenue file is the only required file. Every metric in the audit – ARR (see glossary), NRR (see glossary), churn, CAC (see
+  glossary) payback – is computed from it; without it nothing can be calculated or verified." (The abbreviations point to
+  the glossary at their first use, George 2026-10-09.) The other two kinds are unchanged. The server's `/blockers` is unchanged.
 - FX rates belong to the audit (`audits.fx`, PUT /api/audits/{id}/fx), not to the revenue file. They apply to the uploaded files
   and to the deck claims, need no file, and survive a replaced revenue file. Rates saved with a revenue file before this change
   are still read, under the audit's own rates. Cause found: a re-upload wrote `fx: {}` over the saved rates, and rates could

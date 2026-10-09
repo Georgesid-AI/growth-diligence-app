@@ -2,6 +2,8 @@
  * Chat upload and column mapping: the approved wording (docs/specs/chat-upload.md section 11, S1-S22) and the small
  * pure helpers the screen uses. The wording lives here once so the components and their tests read the same text.
  */
+import { seeGlossary } from "./glossary";
+
 export const S1_TEXT_REPLY = "This window accepts files and mapping confirmations.";
 export const S2_EXPLAINER_CONSENT =
   "Mapping is done by rules first. Where rules cannot decide, the AI sees only those columns' headers, up to 3 example numbers or dates per column and a pattern for text columns – never your full file and never a name – and you confirm those columns.";
@@ -139,7 +141,7 @@ export const calculateState = ({ attached, loaded, busy }) => {
 };
 export const CALCULATE_CLASS = "bg-sky-600 hover:bg-sky-500 gap-2";      // the header button and the chat button look the same
 export const SEND_TOOLTIP = "Send a message (for answering the chat's questions)";
-export const REVENUE_REQUIRED_NOTE = "The revenue file is the only required file. Every metric in the audit (ARR, NRR, churn, CAC payback) is computed from it; without it nothing can be calculated or verified.";
+export const REVENUE_REQUIRED_NOTE = seeGlossary("The revenue file is the only required file. Every metric in the audit – ARR, NRR, churn, CAC payback – is computed from it; without it nothing can be calculated or verified.");
 const pressedKey = (auditId) => `calculate-pressed:${auditId}`;
 export function calculatePressed(auditId) {
   try { return window.sessionStorage.getItem(pressedKey(auditId)) === "1"; } catch (e) { return false; }

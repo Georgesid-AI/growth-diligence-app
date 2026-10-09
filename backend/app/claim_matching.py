@@ -473,48 +473,44 @@ def _is_turnover_claim(c: dict, text: str) -> bool:
         _NEW_MRR.search(text) or _MRR.search(text) or _ARR.search(text))
 
 
+def _file_revenue(results: dict, segment: str, start: Optional[int], end: Optional[int],
+                  as_of_i: Optional[int]) -> Tuple[Optional[float], Optional[dict]]:
+    """(the revenue file's revenue for the claim period and segment, its source), or (None, None) when no file covers the
+    period: no revenue file, months missing, no period, or a forecast (section 11 point 4)."""
+    forecast = end is not None and as_of_i is not None and end > as_of_i
+    if as_of_i is None or start is None or end is None or forecast:
+        return None, None
+    got, _, src, _ = _observe(_Figures(results, "Revenue", segment), METRICS["Revenue"], "Revenue", start, end, as_of_i)
+    return (float(got), src) if isinstance(got, (int, float)) else (None, None)
+
+
 def _turnover(c: dict, inputs: dict, results: dict, settings: dict, rate: Optional[float], start: Optional[int],
               end: Optional[int], as_of_i: Optional[int], segment: str = WHOLE) -> dict:
-    """Section 11: whether a turnover claim is revenue, transaction volume or still a question. Returns state, metric,
-    note, set_by, reason, an optional verdict (label, reason), `fx_needed` and the file revenue for the period (of the
+    """Section 11: whether a turnover claim is revenue, transaction volume or still a question. Only the analyst's answer
+    makes it revenue or volume (amended 2026-10-09, George): until then it asks, whatever the revenue file or the deck
+    says. Returns state, metric, note, set_by, reason, an optional verdict (label, reason), `fx_needed`, `suggested`
+    ("volume" when no file covers the period and the deck says "take rate") and the file revenue for the period (of the
     claim's segment) when one covers it. `rate` is None when the claim's currency has no saved rate."""
-    low, high = c.get("value"), c.get("value_high")
-    forecast = end is not None and as_of_i is not None and end > as_of_i
-    file_revenue = source = None
-    if as_of_i is not None and start is not None and end is not None and not forecast:
-        got, _, src, _ = _observe(_Figures(results, "Revenue", segment), METRICS["Revenue"], "Revenue", start, end, as_of_i)
-        if isinstance(got, (int, float)):
-            file_revenue, source = float(got), src
+    low = c.get("value")
+    file_revenue, source = _file_revenue(results, segment, start, end, as_of_i)
     choice, reason, by = inputs.get("turnover_as"), inputs.get("turnover_reason"), "analyst"
     if choice not in TURNOVER_CHOICES:
         saved = (settings.get("turnover_choices") or {}).get(turnover_key(c)) or {}
         choice, reason = (saved.get("as"), saved.get("reason")) if saved.get("as") in TURNOVER_CHOICES else (None, None)
     out = dict(state=None, metric=None, note=None, set_by="python", reason=reason, verdict=None, fx_needed=False,
-               file_revenue=file_revenue, source=source)
-    ask = (ASK_NOTE, ("Unverified", ASK_REASON))
+               suggested=None, file_revenue=file_revenue, source=source)
     if choice:
         out.update(set_by=by)
     elif file_revenue is not None and low is not None and rate is None:
         out.update(fx_needed=True)      # the file covers the period but the claim cannot be compared yet
-    elif file_revenue is not None and low is not None:
-        # a range is tested at the end nearest the file revenue; a figure above tolerance asks, one below is a revenue claim
-        top = high if high is not None else low
-        nearest = file_revenue / rate if low <= file_revenue / rate <= top else (low if file_revenue / rate < low else top)
-        claimed = nearest * rate
-        if within_tolerance("Revenue", claimed - file_revenue, claimed):
-            choice = "revenue"
-        elif claimed > file_revenue:
-            pass                        # above tolerance: ask
-        else:
-            choice = "revenue"          # below tolerance: the ordinary revenue rule
-    elif settings.get("deck_take_rate"):
-        choice = "volume"               # no file covers the period and the deck says "take rate"
+    elif file_revenue is None and settings.get("deck_take_rate"):
+        out.update(suggested=VOLUME_CHOICE)     # no file covers the period and the deck says "take rate": pre-selected only
     if choice == "revenue":
         out.update(state="revenue", metric="Revenue", note=GROSS_REVENUE_NOTE)
     elif choice == "volume":
         out.update(state="volume", metric=VOLUME, note=VOLUME)
     else:
-        out.update(state="ask", note=ask[0], verdict=ask[1])
+        out.update(state="ask", note=ASK_NOTE, verdict=("Unverified", ASK_REASON))
     return out
 
 
@@ -610,7 +606,7 @@ def deck_revenue_hint(c: dict, peers: List[dict]) -> Optional[dict]:
     low = c.get("value")
     if low is None or c.get("value_high") is not None or not c.get("period_start"):
         return None
-    found = [p for p in peers if p is not c and deck_label(p) == "Revenue" and p.get("value") is not None
+    found = [p for p in peers if p.get("claim_id") != c.get("claim_id") and deck_label(p) == "Revenue" and p.get("value") is not None
              and p.get("value_high") is None and p.get("currency") == c.get("currency") and p.get("file") == c.get("file")
              and (p.get("period_start"), p.get("period_end")) == (c.get("period_start"), c.get("period_end"))]
     if len({p["value"] for p in found}) != 1:
@@ -654,6 +650,7 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
             turn["verdict"] = ("Unverified", f"{FX_NEEDED}: {currency}→{fx0['currency']}")
         metric, metric_by = turn["metric"], turn["set_by"]
         hint = deck_revenue_hint(c, peers or []) if turn["state"] == "ask" else None
+        suggested = VOLUME_CHOICE if hint or turn["suggested"] else None
     spec = METRICS.get(metric) if metric else None
 
     period = c.get("period_text") or c.get("target_date") or None
@@ -675,8 +672,8 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
     if turn:
         out.update(turnover_state=turn["state"], turnover_note=turn["note"], turnover_set_by=turn["set_by"],
                    turnover_reason=turn["reason"])
-        if hint:        # Volume is pre-selected in the question; the analyst's confirmation is still required
-            out.update(turnover_suggested=VOLUME_CHOICE, deck_revenue_note=hint["note"])
+        # Volume is pre-selected in the question; the analyst's confirmation is still required
+        out.update(turnover_suggested=suggested, deck_revenue_note=hint["note"] if hint else None)
     shown_claim: List[Optional[float]] = [None]         # the claimed figure the gate sentence names, once it is known
 
     def finish(label: str, reason: str) -> dict:
@@ -952,16 +949,46 @@ def _rank(rows: List[dict]) -> List[dict]:
     return ordered
 
 
-def build_register(candidates: List[dict], results: Optional[dict], settings: dict) -> List[dict]:
+def build_register(candidates: List[dict], results: Optional[dict], settings: dict,
+                   peers: Optional[List[dict]] = None) -> List[dict]:
     """The claim register: one row per claim, in rank order. `candidates` are the approved and edited rows in register
     order; `settings` carries fiscal_year_end, as_of_month (as set on the audit, None when defaulted),
-    reporting_currency and fx. Nothing is read from a model and nothing is changed."""
+    reporting_currency and fx. `peers` are the candidates the deck hint of section 11 point 7 reads: every one not
+    rejected, pending ones included (None: the register's own). Nothing is read from a model and nothing is changed."""
     if not results:
         return []
     claims = _expand(candidates)
-    rows = _rank([_row(c, results, settings, claims) for c in claims])
+    others = _expand(peers) if peers is not None else claims
+    rows = _rank([_row(c, results, settings, others) for c in claims])
     _overlaps(rows)
     return rows
+
+
+# Section 11 point 8: what the deck list shows of a turnover claim, before it is approved.
+NO_FILE_PERIOD = "No revenue-file period to compare"
+TURNOVER_VIEW_FIELDS = ("claim_id", "period", "turnover_state", "turnover_note", "turnover_set_by", "turnover_reason",
+                        "turnover_suggested", "deck_revenue_note", "implied_take_rate", "implied_take_rate_source")
+
+
+def turnover_views(candidates: List[dict], results: Optional[dict], settings: dict) -> Dict[str, List[dict]]:
+    """For each candidate that holds a turnover claim: one view per claim (one per value of a table row), keyed by candidate
+    id, with the register's turnover fields, computed by the register's own code, and `file_note`: "No revenue-file period
+    to compare" when no revenue file covers the claim's period. Every candidate not rejected is read, pending ones included,
+    and before the first Calculate (no results: no file covers any period). Nothing is read from a model."""
+    results = results or {}
+    as_of = results.get("as_of_month")
+    as_of_i = _mi(as_of) if as_of else None
+    claims = _expand([c for c in candidates if c.get("status") != "rejected"])
+    out: Dict[str, List[dict]] = {}
+    for c in claims:
+        row = _row(c, results, settings, claims)
+        if row["turnover_state"] is None:
+            continue
+        covered, _ = _file_revenue(results, row["segment"], _month_of(c.get("period_start")), _month_of(c.get("period_end")),
+                                   as_of_i)
+        out.setdefault(c["id"], []).append({**{k: row[k] for k in TURNOVER_VIEW_FIELDS},
+                                            "file_note": None if covered is not None else NO_FILE_PERIOD})
+    return out
 
 
 def label_counts(rows: List[dict]) -> Dict[str, int]:

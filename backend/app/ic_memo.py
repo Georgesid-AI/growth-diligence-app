@@ -455,7 +455,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, us
     if len(gaps) > 5:
         out += [f"and {len(gaps) - 5} more in Appendix B{notes.source('Missing Data', 'missing_data')}"]
     out += [f"- {q}{notes.source('Questions for management', 'questions_for_management')}" for q in vd.management_questions(results)]
-    head = "\n".join(out).rstrip() + "\n"
+    head = "\n".join(_glossed(out)).rstrip() + "\n"
 
     # Appendices
     app: List[str] = []
@@ -468,7 +468,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, us
             r["gate_sentence"] or (vd.W4_GATE_NEEDED if r["gate_needed"] else "—"),
             "key" if r["claim_id"] in {g["claim_id"] for g in key["gates"]} else "", "top 5" if r["claim_id"] in {f["claim_id"] for f in ver["five"]} else ""]
            for r in rows]
-    app += [_table(["#", "Claim", "Label", "Value at stake", "Overlaps with", "Evidence", "Gate", "Key gate", "Top 5"], reg), ""]
+    app += [_table(["#", "Claim", "Label", "VaS", "Overlaps with", "Evidence", "Gate", "Key gate", "Top 5"], reg), ""]
 
     review = ic.get("first_quarterly_review")
     app += [f"## {APPENDICES[1]}", f"First quarterly review: {review or '—'}", ""]
@@ -508,8 +508,18 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, us
                                          for n in narratives or ()])
     if block:
         app += [block["text"], ""]
+    app = [_glossed([line])[0] if line.startswith("- ") or line == W16_VALUE_AT_RISK else line for line in app]
+    # The glossary the "(see glossary)" pointers name: the terms of the screen and the export, as they define them.
+    app += ["Glossary", *(f"- {term}: {definition}" for term, definition in fmt.GLOSSARY.items()), ""]
     app += ["Footnotes", notes.definitions()]
     return head, head + "\n" + "\n".join(app) + "\n"
+
+
+def _glossed(lines: List[str]) -> List[str]:
+    """Each prose line (a paragraph or a list item) with VaS, ARR, MRR, NRR and CAC pointing to the glossary at their first
+    use in it (George, 2026-10-09). Headings, tables and footnotes are not text blocks: a sheet name or a source reference
+    is never changed."""
+    return [fmt.see_glossary(line) if line and not line.startswith(("#", "|", "[^")) else line for line in lines]
 
 
 def _usage_table(usage: dict) -> str:

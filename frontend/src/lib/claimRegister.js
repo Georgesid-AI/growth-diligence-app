@@ -10,8 +10,9 @@ import { dateRangeError, displayDate } from "./datePicker";
 
 export const REGISTER_HEADING = "Claim register";
 export const DOWNLOAD_LABEL = "Download baseline (CSV)";
-// docs/specs/verdict-and-memo.md section 2.1: value at stake, overlaps and evidence join the columns of claim-matching.md section 8.
-export const REGISTER_COLUMNS = ["#", "Claim", "Period", "Segment", "Page", "Read from deck", "Observed", "Gap", "Gloss", "Value at stake",
+// docs/specs/verdict-and-memo.md section 2.1: value at stake ("VaS", in the glossary), overlaps and evidence join the columns of
+// claim-matching.md section 8.
+export const REGISTER_COLUMNS = ["#", "Claim", "Period", "Segment", "Page", "Read from deck", "Observed", "Gap", "Gloss", "VaS",
   "Overlaps with", "Evidence", "Gate"];
 // Only these are editable (section 3 adds the gate's metric name and direction on a row with no app metric, and the key mark).
 export const EDITABLE_FIELDS = ["segment", "metric", "gate_threshold", "gate_budget_decision", "gate_date", "gate_metric_name",
@@ -45,6 +46,20 @@ export const TURNOVER_REASONS = [
   ["file_confirms", "File confirms"], ["other", "Other"],
 ];
 export const TURNOVER_QUESTION = "Revenue or transaction volume?";
+// The deck list (section 11 point 8): a turnover claim never reads "Revenue" before the analyst confirms it.
+export const TURNOVER_CONFIRM = "Turnover – confirm:";
+export const UNVERIFIED = "Unverified";
+
+/** The turnover views of a deck-list claim (one per value of a table row) and whether one still waits for the analyst. */
+export function turnoverOf(candidate) {
+  const views = candidate?.turnover || [];
+  return { views, open: views.some((v) => v.turnover_set_by !== "analyst") };
+}
+
+/** "Turnover – confirm:" for a claim the analyst has not confirmed, with its period for a value of a table row
+ *  ("FY2022 · Turnover – confirm:"); undefined once confirmed (the control then shows the answer). */
+export const turnoverHeading = (view, multi) => (view.turnover_set_by === "analyst" ? undefined
+  : `${multi && view.period ? `${view.period} · ` : ""}${TURNOVER_CONFIRM}`);
 
 /** "Implied take rate 10.0% (derived, not verified)": revenue ÷ volume, or null. */
 export const takeRateText = (row) => (row.implied_take_rate == null ? null
@@ -146,8 +161,10 @@ export function claimFigure(row, ccy) {
   return `${hi == null ? num(lo) : `${num(lo)}–${num(hi)}`}${row.unit ? ` ${row.unit}` : ""}`;
 }
 
-/** "Revenue · 200,000 EUR": the claim's type and its figure. */
-export const claimText = (row, ccy) => `${typeLabel(row.claim_type)} · ${claimFigure(row, ccy)}`;
+/** "Revenue · 200,000 EUR": the claim's type and its figure. A turnover claim reads "Turnover · 550,508 GBP" until the analyst
+ *  confirms it (claim-matching.md section 11 point 8): it never reads Revenue before. */
+export const claimText = (row, ccy) => `${row.turnover_state && row.turnover_set_by !== "analyst" ? "Turnover"
+  : typeLabel(row.claim_type)} · ${claimFigure(row, ccy)}`;
 
 /** The claim cell: the type and the figure, and with no saved rate "(GBP→EUR rate missing – enter it in FX settings at the top of
  *  the page)", whose "FX settings" the screen shows as a link. */

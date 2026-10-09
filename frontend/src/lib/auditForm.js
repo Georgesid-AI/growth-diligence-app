@@ -6,6 +6,7 @@
  * another.
  */
 import { dateRangeError } from "./datePicker";
+import { seeGlossary } from "./glossary";
 
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
@@ -79,8 +80,8 @@ export function requiredFieldError(form) {
 // one line of help. The creation dialog asks for the audit name only (and the client and the consent, which are not set-up).
 export const SETUP_HELP = {
   reporting_currency: "All figures are converted to this currency. Use the company's home currency; the verdict and memo use it.",
-  target_arr: "The plan figure the audit tests. Every claim's value at stake is measured against it.",
-  target_date: "When the plan says Target ARR is reached. Sets the forecast horizon.",
+  target_arr: seeGlossary("The plan figure the audit tests. Every claim's VaS is measured against it."),
+  target_date: seeGlossary("When the plan says Target ARR is reached. Sets the forecast horizon."),
   as_of_month: "Last month of actual data. Metrics are computed up to this month. Defaults to the last P&L month.",
   fiscal_year_end: "Maps FY labels in the deck to months. A wrong setting shifts every FY claim.",
 };

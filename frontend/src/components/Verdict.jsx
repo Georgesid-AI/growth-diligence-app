@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { getMemo, putIcInputs } from "@/lib/api";
 import { describeRequestError } from "@/lib/requestError";
+import { seeGlossary } from "@/lib/glossary";
 import {
   CONFIRM, MEMO_BUTTON, OTHER_GATES, PART_FIVE, PART_GAPS, PART_INPUTS, PART_KEY_GATES, PART_REASONS, PROPOSED, REPLACE, REVIEW_LABEL,
   THESIS_MAX, TOP5_HEADING, TOP5_STATEMENT, VERDICT_HEADING, RATING_OPTIONS, candidateText, initialPicks, refusalText, replacePick, samePicks,
@@ -120,11 +121,11 @@ export default function Verdict({ auditId, verdict, onChanged }) {
     <section className="mb-6 rounded-md border border-[#E5E7EB] bg-white p-4" data-testid="verdict">
       <h2 className="font-heading text-lg font-semibold text-slate-900 mb-3">{VERDICT_HEADING}</h2>
       {v.status !== "no_verdict" && <TopFive verdict={v} candidates={verdict.candidates || []} onConfirm={confirm} busy={busy} />}
-      {v.message && <p className="text-sm text-slate-800 mb-3" data-testid="verdict-message">{v.message}</p>}
+      {v.message && <p className="text-sm text-slate-800 mb-3" data-testid="verdict-message">{seeGlossary(v.message)}</p>}
       {v.status === "ok" && (
         <div className="mb-4" data-testid="verdict-outcome">
           <p className="text-base font-semibold text-slate-900">{v.outcome}</p>
-          <p className="text-sm text-slate-700" data-testid="verdict-rule">{v.rule}</p>
+          <p className="text-sm text-slate-700" data-testid="verdict-rule">{seeGlossary(v.rule)}</p>
         </div>
       )}
       {v.five?.length > 0 && (
@@ -145,17 +146,17 @@ export default function Verdict({ auditId, verdict, onChanged }) {
         <>
           <div className="mb-4" data-testid="verdict-reasons">
             <h3 className="text-sm font-semibold text-slate-900 mb-1">{PART_REASONS}</h3>
-            <ol className="list-decimal pl-5 space-y-1 text-xs text-slate-800">{v.reasons.map((r) => <li key={r}>{r}</li>)}</ol>
+            <ol className="list-decimal pl-5 space-y-1 text-xs text-slate-800">{v.reasons.map((r) => <li key={r}>{seeGlossary(r)}</li>)}</ol>
           </div>
           <div className="mb-4" data-testid="verdict-key-gates">
             <h3 className="text-sm font-semibold text-slate-900 mb-1">{PART_KEY_GATES}</h3>
-            {key.note && <p className="text-xs text-slate-600">{key.note}</p>}
-            <ul className="space-y-1 text-xs text-slate-800">{key.sentences.map((s) => <li key={s.claim_id}>{s.sentence}</li>)}</ul>
+            {key.note && <p className="text-xs text-slate-600">{seeGlossary(key.note)}</p>}
+            <ul className="space-y-1 text-xs text-slate-800">{key.sentences.map((s) => <li key={s.claim_id}>{seeGlossary(s.sentence)}</li>)}</ul>
           </div>
           <p className="text-xs text-slate-700 mb-4" data-testid="verdict-deal-terms">{verdict.deal_terms}</p>
           <div className="mb-4" data-testid="verdict-top-gaps">
             <h3 className="text-sm font-semibold text-slate-900 mb-1">{PART_GAPS}</h3>
-            <ul className="space-y-1 text-xs text-slate-800">{verdict.top_gaps.map((g) => <li key={g.item}>{g.item} · {g.why}</li>)}</ul>
+            <ul className="space-y-1 text-xs text-slate-800">{verdict.top_gaps.map((g) => <li key={g.item}>{g.item} · {seeGlossary(g.why)}</li>)}</ul>
           </div>
           {verdict.gates_still_needed > 0 && <p className="text-xs text-slate-700 mb-4" data-testid="verdict-other-gates">{OTHER_GATES(verdict.gates_still_needed)}</p>}
         </>
