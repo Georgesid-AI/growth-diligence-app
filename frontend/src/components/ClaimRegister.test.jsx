@@ -160,6 +160,19 @@ const TURNOVER = { ...ROW, claim_id: "t1", metric: null, observed_value: null, e
   reason: "turnover or volume: confirm Revenue or Volume", turnover_state: "ask",
   turnover_note: "Revenue or volume? Confirm below", turnover_set_by: "python", turnover_reason: null };
 
+test("a deck revenue below the turnover pre-selects Volume, shows the deck figure and still needs the analyst's answer", async () => {
+  const note = "Deck revenue for the same period: 150,000 GBP (page 19); implied take rate 27%, derived, not verified";
+  const { host } = await mount([{ ...TURNOVER, turnover_suggested: "volume", deck_revenue_note: note }, TURNOVER]);
+  const rows = host.querySelectorAll('[data-testid="claim-register-row"]');
+  expect(rows[0].querySelector('[data-testid="register-deck-revenue"]').textContent).toBe(note);
+  expect(rows[0].querySelector('[data-testid="register-turnover-volume"]').getAttribute("aria-pressed")).toBe("true");
+  expect(rows[0].querySelector('[data-testid="register-turnover-revenue"]').getAttribute("aria-pressed")).toBeNull();
+  expect(rows[0].querySelector('[data-testid="register-turnover-volume"]').disabled).toBe(true);       // a reason is still required
+  expect(rows[0].querySelector('[data-testid="register-turnover-note"]').textContent).toBe("Revenue or volume? Confirm below");
+  expect(rows[1].querySelector('[data-testid="register-deck-revenue"]')).toBeNull();
+  expect(rows[1].querySelector('[data-testid="register-turnover-volume"]').getAttribute("aria-pressed")).toBeNull();
+});
+
 test("a turnover row shows its label, the question and one click Revenue or Volume with a reason code", async () => {
   const { host } = await mount([TURNOVER, ROW]);
   const rows = host.querySelectorAll('[data-testid="claim-register-row"]');

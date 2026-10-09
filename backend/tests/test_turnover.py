@@ -147,3 +147,42 @@ def test_a_saas_deck_with_fees_or_commission_does_not_turn_turnover_into_volume(
 def test_the_deck_parser_reads_every_turnover_term_as_a_revenue_family_claim(text):
     families = {family for family, rx in deck_claims._KEYWORDS if rx.search(text)}
     assert "revenue" in families
+
+
+# --- the deck's own revenue figure for the same period (claim-matching.md section 11, deck hint) ---------------------
+
+def _pair(turnover=550508, revenue=150000, revenue_currency="EUR", revenue_label="Revenue", **settings):
+    def claim(id, snippet, value, currency, page):
+        c = {"id": id, "status": "approved", "claim_type": "revenue", "value": value, "value_high": None, "unit": None,
+             "currency": currency, "snippet": snippet, "label_from": None, "file": "deck.pdf", "order": 0,
+             "target_date": "2027", "period_text": "FY2027", "sources": [{"file": "deck.pdf", "page": page}]}
+        deck_claims.resolve_period(c, 12)
+        return c
+    claims = [claim("t", "Turnover", turnover, "EUR", 17), claim("r", revenue_label, revenue, revenue_currency, 19)]
+    s = {"fiscal_year_end": 12, "as_of_month": None, "reporting_currency": "EUR", "fx": {"EUR": 1.0}, **settings}
+    rows = cm.build_register(claims, engine_results(tuple(RUN["files"]), RUN["as_of_month"]), s)
+    return {r["claim_id"]: r for r in rows}
+
+
+def test_revenue_below_turnover_in_the_deck_preselects_volume_and_still_asks():
+    t = _pair()["t"]
+    assert t["turnover_suggested"] == "volume"
+    assert t["deck_revenue_note"] == "Deck revenue for the same period: 150,000 EUR (page 19); implied take rate 27%, derived, not verified"
+    assert (t["turnover_state"], t["turnover_note"], t["evidence_label"]) == ("ask", "Revenue or volume? Confirm below", "Unverified")
+    assert t["metric"] is None and t["implied_take_rate"] is None
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"revenue": 540000},                       # within tolerance of the turnover figure
+    {"revenue": 600000},                       # above it
+    {"revenue_currency": "USD"},               # another currency is never compared
+    {"revenue_label": "Turnover"},             # turnover is not revenue
+])
+def test_no_deck_hint_without_a_single_lower_revenue_figure_in_the_same_currency(kwargs):
+    t = _pair(**kwargs)["t"]
+    assert (t["turnover_suggested"], t["deck_revenue_note"]) == (None, None)
+
+
+def test_the_revenue_row_never_gets_the_suggestion():
+    rows = _pair()
+    assert rows["r"]["turnover_suggested"] is None and rows["r"]["deck_revenue_note"] is None

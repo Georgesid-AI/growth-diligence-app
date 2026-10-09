@@ -7,7 +7,7 @@ import { uploadChatFile, getDatasets, decideColumns, reportUsage } from "@/lib/a
 import {
   S1_TEXT_REPLY, S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE, S6_UNKNOWN_TYPE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED,
   S20_NOTE_PLACEHOLDER, S21_NOTE_REFUSED, NOTE_MAX, ALLOWED_EXTENSIONS, REASONS, TYPE_LABELS, S5_head, S8_replace,
-  S9_confidence, S13_status, CALCULATE_LABEL, setCalculatePressed, S14_same, MAPPING_HEADERS, S25_TITLE, S25_PARAGRAPHS, mappedBy, sortColumns, fieldName, fmtBytes, extensionOf, heldFields,
+  S9_confidence, S13_status, CALCULATE_LABEL, CALCULATE_TOOLTIP, CALCULATE_CLASS, SEND_TOOLTIP, setCalculatePressed, S14_same, MAPPING_HEADERS, S25_TITLE, S25_PARAGRAPHS, mappedBy, sortColumns, fieldName, fmtBytes, extensionOf, heldFields,
 } from "@/lib/chatUpload";
 
 const NONE = "";
@@ -166,7 +166,7 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, calcul
       <p data-testid="chat-explainer" className="px-5 pt-4 text-xs text-slate-600">
         {consent ? S2_EXPLAINER_CONSENT : S3_EXPLAINER_NO_CONSENT}
       </p>
-      <div data-testid="chat-messages" className="px-5 py-4 space-y-3 min-h-[240px] max-h-[640px] overflow-y-auto">
+      <div data-testid="chat-messages" className="px-5 py-4 space-y-3 min-h-[240px]">
         {/* The drop zone stays after a drop: more files can be attached until Calculate is pressed. */}
         <div data-testid="chat-drop-zone" className={`border border-dashed rounded-lg text-center text-slate-500 ${messages.length === 0 ? "py-14 text-sm" : "py-3 text-xs"} ${dragging ? "border-sky-500 bg-sky-50" : "border-[#D1D5DB]"}`}>
           {S4_DROP_ZONE}
@@ -187,9 +187,12 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, calcul
           className="p-2 rounded-md text-slate-600 hover:bg-slate-100"><Paperclip className="h-4 w-4" /></button>
         <Input data-testid="chat-text-input" value={text} onChange={(e) => setText(e.target.value)} placeholder={S4_DROP_ZONE}
           className="h-9 bg-white border-[#E5E7EB]" />
-        <Button type="submit" size="sm" aria-label="Send" data-testid="chat-send" variant="outline"><Send className="h-4 w-4" /></Button>
+        {/* A disabled button shows no tooltip of its own, so the wrapper carries it. */}
+        <span title={SEND_TOOLTIP} data-testid="chat-send-wrap">
+          <Button type="submit" size="sm" aria-label="Send" data-testid="chat-send" variant="outline" disabled={!text.trim()} title={SEND_TOOLTIP}><Send className="h-4 w-4" /></Button>
+        </span>
         <Button type="button" size="sm" data-testid="chat-calculate" disabled={calculating} onClick={calculate}
-          className="bg-sky-600 hover:bg-sky-500 gap-1.5">
+          className={CALCULATE_CLASS} title={CALCULATE_TOOLTIP}>
           {calculating ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{CALCULATE_LABEL}
         </Button>
       </form>

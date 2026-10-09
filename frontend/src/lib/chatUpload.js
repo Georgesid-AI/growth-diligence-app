@@ -129,6 +129,9 @@ export function heldFields(columns, except) {
 // Calculate (task of 2026-10-09, items 1 and 2): files dropped in the chat are only attached; nothing is read until the
 // analyst presses Calculate. The "revenue file missing" banner appears only after that press.
 export const CALCULATE_LABEL = "Calculate";
+export const CALCULATE_TOOLTIP = "Reads the attached files and computes the metrics.";
+export const CALCULATE_CLASS = "bg-sky-600 hover:bg-sky-500 gap-2";      // the header button and the chat button look the same
+export const SEND_TOOLTIP = "Send a message (for answering the chat's questions)";
 export const REVENUE_REQUIRED_NOTE = "The revenue file is the only required file. Every metric in the audit (ARR, NRR, churn, CAC payback) is computed from it; without it nothing can be calculated or verified.";
 const pressedKey = (auditId) => `calculate-pressed:${auditId}`;
 export function calculatePressed(auditId) {

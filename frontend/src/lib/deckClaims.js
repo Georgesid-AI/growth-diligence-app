@@ -12,6 +12,12 @@ export const NO_DATE = "no date";        // the Period column of a claim that st
 
 export const DECK_ACCEPT = ".pptx,.pdf,.docx";
 
+// Hover on the Confidence column, word for word.
+export const CONFIDENCE_HOVER = "Confidence shows how well this figure was read from the deck, not whether it is true. High: value, date and unit were all found and the figure appears in more than one place in the deck. Medium: value found with a date or a unit, but one detail is missing or the figure appears once. Low: value found, date and unit missing. 'Not corroborated' means the figure appears only once in the deck. 'No date' or 'no unit' names the detail that was not found; you can add it in the row. Whether the figure is true is shown by the evidence label after the data files are calculated.";
+
+// Shown above the upload button, word for word.
+export const DECK_UPLOAD_HELP = "Board deck or growth plan: the company's board decks, investor updates, growth model or business plan, as PDF or PowerPoint. Up to 8 documents per audit. The audit reads the claims from them and tests each against the data files.";
+
 // Shown on the upload screen, word for word from the spec.
 export const DECK_SCOPE_INTRO = "We read text from PowerPoint, Word and text-based PDF files.";
 export const DECK_SCOPE_CANNOT = [
@@ -184,16 +190,18 @@ export function rowEdit(row, values) {
 // Shown on both claims when one deck gives the same type and period different values.
 export const INCONSISTENCY_LABEL = "Deck inconsistency";
 
+// The word the deck uses for the figure ("Turnover", "Revenue"), shown before it so two figures are never mistaken for one metric.
 const figureText = (f) => {
   const n = present(f.value_high) ? `${figure(f.value)}–${figure(f.value_high)}` : figure(f.value);
-  if (f.unit === "%") return `${n}%`;
-  if (f.unit === "x") return `${n}x`;
-  return [n, f.currency || f.unit].filter(Boolean).join(" ");
+  if (f.unit === "%") return `${f.label ? `${f.label} ` : ""}${n}%`;
+  if (f.unit === "x") return `${f.label ? `${f.label} ` : ""}${n}x`;
+  return [f.label, n, f.currency || f.unit].filter(Boolean).join(" ");
 };
 const placeText = (f) => sourceRef(f.source);
 
 /** The sentence under the "Deck inconsistency" tag, built from the two figures the server compared:
  *  "The deck gives different figures for this metric: 5 at deck.pptx · slide 1 and 6 at deck.pptx · slide 4."
+ *  A revenue-type figure names its deck label: "Turnover 550,508 GBP at deck.pdf · page 17 and Revenue 150,000 GBP at deck.pdf · page 19."
  *  The parser pairs only figures whose values differ. Null when the server sent no pair, and
  *  then no tag is shown: a tag never stands without its explanation. */
 export function inconsistencyText(c) {

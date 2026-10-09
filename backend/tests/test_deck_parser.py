@@ -1038,8 +1038,8 @@ def test_zero2hero_page_19_reads_as_one_candidate_per_row_and_flags_the_panel():
     assert panel == [("ebitda", None, "2024-Q2", []), ("gross_profit", 150000, "2023", ["2023"]),
                      ("users", 5000, "2023", [])], "23 Y/E is a period, never a value"
     assert rows["Gross Profit"]["inconsistent_dates"] == ["2023"]
-    # The page-17 bars (dated 2022 and 2023 by the year under each bar) differ from this table's Revenue for the same years.
-    assert rows["Revenue"]["inconsistent_dates"] == ["2022", "2023"]
+    # The page-17 bars are labelled Turnover (see the page-17 test): a turnover figure is not compared with Revenue.
+    assert rows["Revenue"]["inconsistent_dates"] == [], "page 17 is Turnover: never compared with this Revenue row"
     assert all(not c["inconsistent_dates"] for k, c in rows.items() if k not in ("Gross Profit", "Revenue"))
 
 
@@ -1988,14 +1988,16 @@ def test_every_refused_save_names_the_rejected_field_and_the_reason(api):
     assert r.status_code == 400 and reasons(r).startswith("claim_type: ")
 
 
-def test_zero2hero_page_17_bars_take_the_year_under_each_bar_and_are_compared_with_other_pages():
+def test_zero2hero_page_17_bars_take_the_year_under_each_bar_and_are_never_compared_with_page_19_revenue():
     file = "05-zero2hero.pdf"
     deck = parser.parse_deck((DECKS / file).read_bytes(), file)
     found = claims.detect_candidates(deck["blocks"], file)
     bars = sorted((c["value"], c["target_date"], c["date_from"], c["period_basis"]) for c in found if _page(c) == 17 and c["claim_type"] == "revenue")
     assert bars == [(278085, "2021", "2021", "per year"), (415107, "2022", "2022", "per year"), (550508, "2023", "2023", "per year")]
     flagged = {c["value"]: c["inconsistent_dates"] for c in found if _page(c) == 17 and c["claim_type"] == "revenue"}
-    assert flagged == {278085: [], 415107: ["2022"], 550508: ["2023"]}, "the bar's year is a real date: compared with page 19"
+    assert flagged == {278085: [], 415107: [], 550508: []}, "Turnover (page 17) is never compared with Revenue (page 19)"
+    assert {c["value"]: claims.deck_label(c) for c in found if _page(c) == 17 and c["claim_type"] == "revenue"} == \
+        {278085: "Turnover", 415107: "Turnover", 550508: "Turnover"}
     assert all("no date" not in claims.confidence(c, found)["failed"] for c in found if _page(c) == 17 and c["claim_type"] == "revenue")
 
 
@@ -2006,3 +2008,26 @@ def test_an_explicit_null_clears_the_as_of_month_and_an_absent_field_leaves_it(a
     assert client.put("/api/audits/audit-1", json={"as_of_month": None}).json()["as_of_month"] is None
     client.put("/api/audits/audit-1", json={"target_date": "2028-12-31"})
     assert client.put("/api/audits/audit-1", json={"target_date": None}).json()["target_date"] == "2028-12-31", "never cleared"
+
+
+def _revenue_figure(snippet, value, page, label_from=None, date="2023"):
+    return {"claim_type": "revenue", "value": value, "value_high": None, "unit": None, "currency": "GBP", "snippet": snippet,
+            "label_from": label_from, "target_date": date, "period_start": f"{date}-01-01", "period_end": f"{date}-12-31",
+            "sources": [{"file": "d.pdf", "page": page}], "_stated": True}
+
+
+def test_turnover_is_compared_with_turnover_and_revenue_with_revenue_only():
+    def flagged(*figures):
+        found = [dict(f) for f in figures]
+        claims._flag_inconsistencies(found)
+        return [c["inconsistent_dates"] for c in found]
+    turn1, turn2 = _revenue_figure("550,508", 550508, 17, "Turnover(£/year)"), _revenue_figure("GMV 600,000", 600000, 18)
+    rev1, rev2 = _revenue_figure("Revenue 150,000", 150000, 19), _revenue_figure("Revenue 160,000", 160000, 20)
+    assert flagged(turn1, rev1) == [[], []], "turnover against revenue is never an inconsistency"
+    assert flagged(turn1, turn2) == [["2023"], ["2023"]]
+    assert flagged(rev1, rev2) == [["2023"], ["2023"]]
+    found = [dict(f) for f in (turn1, turn2)]
+    claims._flag_inconsistencies(found)
+    pair = found[0]["inconsistencies"][0]
+    assert (pair["this"]["label"], pair["other"]["label"]) == ("Turnover", "Turnover")
+    assert claims.deck_label(_revenue_figure("ARR 100", 100, 3, "Turnover")) == "Revenue", "ARR is never turnover"

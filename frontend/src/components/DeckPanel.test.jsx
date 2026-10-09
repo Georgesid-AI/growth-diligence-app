@@ -194,6 +194,21 @@ test("the Deck inconsistency tag has its explanation on hover and in the opened 
   expect(q("candidate-inconsistency-text").textContent).toBe(sentence);
 });
 
+test("a turnover figure and a revenue figure name their deck labels, each at its own page", async () => {
+  const money = (label, value, page) => ({ value, value_high: null, currency: "GBP", unit: null, date: "2023", claim_type: "revenue", label,
+    source: { file: "d.pdf", page, kind: "text" } });
+  await reload([claim("c", "d1", 2, { group: 3, claim_type: "revenue", inconsistent_dates: ["2023"],
+    inconsistencies: [{ this: money("Turnover", 550508, 17), other: money("Revenue", 150000, 19) }] })]);
+  expect(q("candidate-inconsistency").getAttribute("title")).toBe(
+    "The deck gives different figures for this metric: Turnover 550,508 GBP at d.pdf · page 17 and Revenue 150,000 GBP at d.pdf · page 19.");
+});
+
+test("the upload help, the Confidence hover are shown word for word", async () => {
+  await reload([claim("c", "d1", 2, { group: 1 })]);
+  expect(q("deck-upload-help").textContent).toMatch(/^Board deck or growth plan: the company's board decks, investor updates.* Up to 8 documents per audit\./);
+  expect(q("candidate-confidence-text").title).toMatch(/^Confidence shows how well this figure was read from the deck, not whether it is true\. High:/);
+});
+
 test("a tag never shows without its explanation", async () => {
   await reload([claim("c", "d1", 2, { group: 1, inconsistent_dates: ["2024"], inconsistencies: [] })]);
   expect(q("candidate-inconsistency")).toBeNull();

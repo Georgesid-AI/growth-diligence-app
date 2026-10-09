@@ -8,7 +8,7 @@ import { getDecks, removeDeck, updateCandidate, uploadDeck } from "@/lib/api";
 import { describeRequestError } from "@/lib/requestError";
 import {
   ALL_DECKS, CLAIM_GROUPS, CLAIM_TYPES, CLAIM_UNITS, COUNT_UNIT_HINT, COUNT_TYPES, COUNT_UNIT, FX_SETTINGS_ANCHOR, FX_SETTINGS_LABEL, conversionHover, inconsistencyText, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
-  DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, INCONSISTENCY_LABEL, OTHER_TYPE_NOTE, PLACEHOLDER, STATUS_LABELS, VERIFIED_LABEL, claimPeriod, claimSections, claimValue, deckRunLog,
+  DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, CONFIDENCE_HOVER, DECK_UPLOAD_HELP, INCONSISTENCY_LABEL, OTHER_TYPE_NOTE, PLACEHOLDER, STATUS_LABELS, VERIFIED_LABEL, claimPeriod, claimSections, claimValue, deckRunLog,
   confidenceText, needsType, readingChoices, rowEdit, sourceRef, statusCounts, typeLabel,
 } from "@/lib/deckClaims";
 
@@ -131,6 +131,7 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
 
   return (
     <div className="bg-white border border-[#E5E7EB] rounded-lg p-5" data-testid="deck-panel">
+      <p className="mb-3 text-xs text-slate-600 max-w-3xl" data-testid="deck-upload-help">{DECK_UPLOAD_HELP}</p>
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="flex items-start gap-3">
           <div className="h-9 w-9 rounded-md flex items-center justify-center bg-sky-50 border border-[#E5E7EB]">
@@ -321,7 +322,7 @@ function CandidateRow({ candidate: c, onSave, highlight }) {
         </>
       )}
       <td className="py-2 pr-3 whitespace-nowrap" data-testid="candidate-confidence">
-        <span className={CONFIDENCE_STYLE[c.confidence?.level] || "text-slate-500"}>{confidenceText(c)}</span>
+        <span className={CONFIDENCE_STYLE[c.confidence?.level] || "text-slate-500"} title={CONFIDENCE_HOVER} data-testid="candidate-confidence-text">{confidenceText(c)}</span>
       </td>
       <td className="py-2 pr-3 text-slate-700 max-w-md">
         <div>{c.snippet}</div>

@@ -140,6 +140,7 @@ under `register`, beside today's `claims`; `register` is empty when the audit ha
 | `as_of_month`, `as_of_defaulted` | str, bool | |
 | `turnover_state`, `turnover_note`, `turnover_set_by`, `turnover_reason` | str or null | §11: null, ask, revenue, volume; the label or question; python, analyst; reason code |
 | `implied_take_rate`, `implied_take_rate_source` | float or null, str or null | §11: a fraction; "revenue: file · sheet · rows; volume: deck file · page" |
+| `turnover_suggested`, `deck_revenue_note` | str or null, str or null | §11 point 7: "volume" and "Deck revenue for the same period: 150,000 GBP (page 19); implied take rate 27%, derived, not verified"; both null unless the question is asked and the deck holds that revenue figure |
 
 ## 7. Monitoring baseline
 GET /api/audits/{id}/claims.csv: the register rows in rank order as one CSV (the method's A9). Header = §6 field
@@ -270,8 +271,19 @@ ARR, MRR or "new MRR", is a turnover claim. Resolution, in this order:
    when the revenue file covers the period: `implied_take_rate` (fraction) and `implied_take_rate_source` ("revenue:
    file · sheet · rows; volume: deck file · page"). It is derived, never Verified. A volume figure from a column
    marked Volume in the upload is not read (it needs an engine field, contract change): decision pending.
+7. Deck revenue for the same period (amended 2026-10-09, George): a turnover figure is never compared with a revenue
+   figure for a deck inconsistency (deck-parser.md §2), whatever the deck's labels, until the analyst has confirmed the
+   turnover claim as Revenue; turnover is compared with turnover and revenue with revenue. When the claims of the register
+   hold, for a turnover claim that asks, one single revenue figure (deck label Revenue, same file, same currency, same
+   period, one value) below the turnover figure beyond tolerance (§4), Volume is pre-selected in the question "Revenue or
+   volume? Confirm below" and the row shows "Deck revenue for the same period: 150,000 GBP (page 19); implied take rate
+   27%, derived, not verified" (revenue ÷ turnover, no currency conversion, never Verified, never stored). The state stays
+   `ask` and the row stays Unverified: the Revenue and Volume buttons still need a reason and the analyst's click. Only
+   the register's own claims are read: an unapproved revenue figure gives no hint. No comparison is made after the
+   analyst confirms Revenue (decision pending: a deck inconsistency is flagged when the deck is parsed).
 New register fields: `turnover_state` (null; ask; revenue; volume), `turnover_note` (the label or question),
-`turnover_set_by` (python, analyst), `turnover_reason`, `implied_take_rate`, `implied_take_rate_source`.
+`turnover_set_by` (python, analyst), `turnover_reason`, `implied_take_rate`, `implied_take_rate_source`,
+`turnover_suggested` (null; volume), `deck_revenue_note`.
 PUT /api/audits/{id}/claims/{claim_id}/turnover {as, reason}.
 
 ## Done when

@@ -1266,7 +1266,7 @@ MATCHING_SERVER_ONLY = ("revenue_series", "customers_series")
 REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decision", "gate_threshold", "gate_date",
                             "observed_source", "evidence_label", "value_at_stake_arr", "claim_matching",
                             "turnover_choices", "turnover_as", "turnover_reason", "turnover_state", "deck_take_rate",
-                            "implied_take_rate", "implied_take_rate_source", "period_basis", "inconsistencies",
+                            "implied_take_rate", "implied_take_rate_source", "turnover_suggested", "deck_revenue_note", "period_basis", "inconsistencies",
                             "inconsistent_dates", *MATCHING_SERVER_ONLY})
 # The functions that log about the register, and the only things their log calls may name.
 REGISTER_LOGGERS = frozenset({"_claim_rows", "claim_register", "claim_register_csv", "update_claim_inputs", "answer_turnover"})

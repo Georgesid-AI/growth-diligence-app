@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Loader2, Plus, X, Play, Search } from "lucide-react";
+import { Loader2, Plus, X, Search } from "lucide-react";
 import { Layout } from "@/components/Layout";
 import DeckPanel from "@/components/DeckPanel";
 import AuditSetup from "@/components/AuditSetup";
@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getAudit, saveMapping, computeAudit, getRevenueCustomers, updateAudit, reportUsage, saveFx } from "@/lib/api";
 import { asOfInputValue } from "@/lib/auditForm";
+import { CALCULATE_CLASS, CALCULATE_LABEL, CALCULATE_TOOLTIP } from "@/lib/chatUpload";
 
 export default function MappingWizard() {
   const { id } = useParams();
@@ -70,9 +71,9 @@ export default function MappingWizard() {
           <h1 className="font-heading text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">Upload & Column Mapping</h1>
         </div>
         <div className="flex items-end gap-3">
-          <Button data-testid="compute-button" onClick={headerCompute} disabled={(!ready && attached === 0) || computing || reading}
-            className="bg-sky-600 hover:bg-sky-500 gap-2">
-            {computing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />} Compute Metrics
+          <Button size="sm" data-testid="compute-button" onClick={headerCompute} disabled={(!ready && attached === 0) || computing || reading}
+            className={CALCULATE_CLASS} title={CALCULATE_TOOLTIP}>
+            {computing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{CALCULATE_LABEL}
           </Button>
         </div>
       </div>

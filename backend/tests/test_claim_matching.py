@@ -526,7 +526,7 @@ def test_a_register_row_has_exactly_the_fields_of_section_6_and_the_verdict_spec
                  "value_at_stake_arr shortfall overlaps_with evidence_analysis evidence_source_key gate_sentence gate_threshold "
                  "gate_budget_decision gate_date gate_saved gate_metric_name gate_direction key_gate gate_needed as_of_month "
                  "as_of_defaulted turnover_state turnover_note turnover_set_by turnover_reason implied_take_rate "
-                 "implied_take_rate_source").split()
+                 "implied_take_rate_source turnover_suggested deck_revenue_note").split()
     assert list(register(RUNS["A"])[0]) == section_6 == list(cm.FIELDS)
 
 
