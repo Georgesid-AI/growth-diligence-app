@@ -5,7 +5,7 @@ import DeckPanel from "./DeckPanel";
 import * as api from "@/lib/api";
 
 jest.mock("@/lib/api", () => ({ getDecks: jest.fn(), removeDeck: jest.fn(), updateCandidate: jest.fn(), uploadDeck: jest.fn() }));
-jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
+jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn(), message: jest.fn() } }));
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -98,7 +98,7 @@ test("a figure in another currency shows both figures, and a direction with no f
   await act(async () => { root.render(<DeckPanel auditId="a1" />); });
   await act(async () => { q("deck-tab-all").click(); });
   expect(rows().map((tr) => tr.querySelectorAll("td")[1].textContent)).toEqual([
-    "150,000 GBP (171,000 EUR at 1.14, 30 Jun 2026)", "1,000 USD (FX rate needed)", "positive (no figure)"]);
+    "150,000 GBP (171,000 EUR at 1.14, 30 Jun 2026)", "1,000 USD (FX rate needed: USD→EUR)FX settings", "positive (no figure)"]);
   expect(rows()[2].querySelectorAll("td")[2].textContent).toBe("Q2 2024");
   expect(rows()[2].querySelector("[data-testid='candidate-confidence']").textContent).toBe("Medium – no figure");
 });
@@ -163,4 +163,132 @@ describe("the AI reading poll", () => {
     expect(unhandled).not.toHaveBeenCalled();
     root = createRoot(host);                                  // afterEach unmounts
   });
+});
+
+
+// --- the task of 2026-10-09: items 4, 6b, 7, 8 and the period of item 5 ---------------------------------------------------
+const reload = async (candidates) => {
+  await act(async () => { root.unmount(); });
+  host.remove();
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  api.getDecks.mockResolvedValue({ decks: DECKS, candidates });
+  await act(async () => { root.render(<DeckPanel auditId="a1" />); });
+  await act(async () => { q("deck-tab-all").click(); });
+};
+const fig = (value, slide, over = {}) => ({ value, value_high: null, currency: null, unit: "customers", date: "2024", claim_type: "customers",
+  source: { file: "older.pptx", slide, kind: "text" }, ...over });
+
+test("the Deck inconsistency tag has its explanation on hover and in the opened row, built from the two figures", async () => {
+  await reload([claim("c", "d1", 2, { group: 3, claim_type: "customers", inconsistent_dates: ["2024"],
+    inconsistencies: [{ this: fig(5, 1), other: fig(6, 4) }] })]);
+  const tag = q("candidate-inconsistency");
+  const sentence = "The deck gives different figures for this metric: 5 customers at older.pptx · slide 1 and 6 customers at older.pptx · slide 4.";
+  expect(tag.getAttribute("title")).toBe(sentence);
+  expect(q("candidate-inconsistency-text")).toBeNull();
+  await act(async () => { tag.click(); });
+  expect(q("candidate-inconsistency-text").textContent).toBe(sentence);
+});
+
+test("a tag never shows without its explanation", async () => {
+  await reload([claim("c", "d1", 2, { group: 1, inconsistent_dates: ["2024"], inconsistencies: [] })]);
+  expect(q("candidate-inconsistency")).toBeNull();
+});
+
+test("a claim in another currency with no rate names the pair and links to the FX settings", async () => {
+  await reload([claim("u", "d1", 2, { group: 5, claim_type: "market", currency: "USD", value: 5e9,
+    fx: { rate: null, date: "2026-06-30", currency: "EUR" } })]);
+  expect(rows()[0].textContent).toContain("(FX rate needed: USD→EUR)");
+  const link = q("fx-settings-link");
+  expect(link.getAttribute("href")).toBe("#fx-settings");
+  expect(link.textContent).toBe("FX settings");
+});
+
+test("a claim with its rate shows no FX link", async () => {
+  await reload([claim("u", "d1", 2, { group: 1, currency: "USD", fx: { rate: 0.9, date: "2026-06-30", currency: "EUR" } })]);
+  expect(q("fx-settings-link")).toBeNull();
+});
+
+test("the unit list offers count, with what it counts", async () => {
+  await act(async () => { q("deck-tab-all").click(); });
+  await act(async () => { q("candidate-row-c").querySelector("[data-testid='candidate-edit']").click(); });
+  const option = [...document.body.querySelectorAll("#claim-units option")].find((o) => o.value === "count");
+  expect(option).toBeDefined();
+  expect(option.getAttribute("label")).toBe("customers, headcount, deals");
+});
+
+test("a period read from the label's brackets shows beside the date, or alone when the deck gives no year", async () => {
+  await reload([claim("p", "d1", 2, { group: 1, target_date: null, period_basis: "per year", currency: "GBP" }),
+    claim("q", "d1", 3, { group: 1, target_date: "2024", period_basis: "per month" })]);
+  expect(rows().map((tr) => tr.querySelectorAll("td")[2].textContent)).toEqual(["per year", "FY2024 · per month"]);
+});
+
+describe("an approved claim that moves to another category (item 8)", () => {
+  const moved = (over = {}) => [claim("c", "d1", 2, { group: 3, claim_type: "customers", status: "edited", ...over })];
+  const edit = async (type) => {
+    await act(async () => { q("candidate-row-c").querySelector("[data-testid='candidate-edit']").click(); });
+    const select = q("edit-claim-type");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(select, type);
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => { q("edit-save").click(); });
+    await act(async () => { await Promise.resolve(); });
+  };
+
+  test("a toast names the new category with Undo for 4 seconds, and the row is highlighted for the same time", async () => {
+    jest.useFakeTimers();
+    try {
+      await reload([claim("c", "d1", 2, { group: 1, status: "approved" })]);
+      api.updateCandidate.mockResolvedValue({ id: "c", status: "edited", claim_type: "customers" });
+      api.getDecks.mockResolvedValue({ decks: DECKS, candidates: moved() });
+      await edit("customers");
+      const [message, options] = require("sonner").toast.message.mock.calls[0];
+      expect(message).toBe("Claim moved to Customers, users, usage, retention and sales");
+      expect(options.duration).toBe(4000);
+      expect(options.action.label).toBe("Undo");
+      expect(q("candidate-row-c").getAttribute("data-highlight")).toBe("true");
+      await act(async () => { jest.advanceTimersByTime(3900); });
+      expect(q("candidate-row-c").getAttribute("data-highlight")).toBe("true");
+      await act(async () => { jest.advanceTimersByTime(200); });
+      expect(q("candidate-row-c").getAttribute("data-highlight")).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test("Undo puts the claim back in its category and shows no second notice", async () => {
+    await reload([claim("c", "d1", 2, { group: 1, status: "approved" })]);
+    api.updateCandidate.mockResolvedValue({ id: "c", status: "edited", claim_type: "customers" });
+    api.getDecks.mockResolvedValue({ decks: DECKS, candidates: moved() });
+    await edit("customers");
+    const { action } = require("sonner").toast.message.mock.calls[0][1];
+    api.updateCandidate.mockClear();
+    api.getDecks.mockResolvedValue({ decks: DECKS, candidates: [claim("c", "d1", 2, { group: 1, status: "edited" })] });
+    await act(async () => { action.onClick(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(api.updateCandidate).toHaveBeenCalledWith("a1", "c", { claim_type: "revenue" });
+    expect(require("sonner").toast.message).toHaveBeenCalledTimes(1);
+    expect(q("candidate-row-c").getAttribute("data-highlight")).toBeNull();
+  });
+
+  test("a change inside the same category, or a claim not yet approved, shows no toast", async () => {
+    await reload([claim("c", "d1", 2, { group: 1, status: "approved" })]);
+    api.updateCandidate.mockResolvedValue({ id: "c", status: "edited", claim_type: "revenue_growth" });
+    api.getDecks.mockResolvedValue({ decks: DECKS, candidates: [claim("c", "d1", 2, { group: 1, claim_type: "revenue_growth", status: "edited" })] });
+    await edit("revenue_growth");
+    expect(require("sonner").toast.message).not.toHaveBeenCalled();
+  });
+});
+
+test("a rate saved on the page reloads the claims, so the converted figures replace 'FX rate needed' with the tab kept", async () => {
+  await act(async () => { q("deck-tab-d1").click(); });
+  api.getDecks.mockClear();
+  api.getDecks.mockResolvedValue({ decks: DECKS, candidates: [claim("u", "d1", 2, { group: 5, claim_type: "market", currency: "USD", value: 5e9,
+    fx: { rate: 0.9, date: "2026-06-30", currency: "EUR" } })] });
+  await act(async () => { root.render(<DeckPanel auditId="a1" reloadKey={1} />); });
+  expect(api.getDecks).toHaveBeenCalledTimes(1);
+  expect(rows()[0].textContent).toContain("5,000,000,000 USD (4,500,000,000 EUR at 0.9, 30 Jun 2026)");
+  expect(rows()[0].textContent).not.toContain("FX rate needed");
 });

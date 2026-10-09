@@ -125,3 +125,17 @@ export function heldFields(columns, except) {
   });
   return out;
 }
+
+// Calculate (task of 2026-10-09, items 1 and 2): files dropped in the chat are only attached; nothing is read until the
+// analyst presses Calculate. The "revenue file missing" banner appears only after that press.
+export const CALCULATE_LABEL = "Calculate";
+export const REVENUE_REQUIRED_NOTE = "The revenue file is the only required file. Every metric in the audit (ARR, NRR, churn, CAC payback) is computed from it; without it nothing can be calculated or verified.";
+const pressedKey = (auditId) => `calculate-pressed:${auditId}`;
+export function calculatePressed(auditId) {
+  try { return window.sessionStorage.getItem(pressedKey(auditId)) === "1"; } catch (e) { return false; }
+}
+export function setCalculatePressed(auditId, on = true) {
+  try {
+    if (on) window.sessionStorage.setItem(pressedKey(auditId), "1"); else window.sessionStorage.removeItem(pressedKey(auditId));
+  } catch (e) { /* storage may be blocked: the banner then follows the next press */ }
+}

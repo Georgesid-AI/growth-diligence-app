@@ -145,11 +145,12 @@ export default function Dashboard() {
   // the datasets (and so the FX rates); `data.audit` is the subset the results
   // endpoint echoes back, and stands in until getAudit resolves.
   const por = audit ?? data.audit;
-  // FX rates are entered per revenue dataset as {CCY: rate}. The reporting currency
+  // FX rates are the audit's ({CCY: rate}, entered on the mapping screen); rates saved with the revenue file by an older
+  // version still read, the audit's winning. The reporting currency
   // maps to itself at 1.0, so it is not a consolidated foreign entity. Only the
   // getAudit payload carries datasets — until it lands, show nothing rather than
   // assert single-currency for a company that may well consolidate a foreign entity.
-  const fxRates = Object.entries(audit?.datasets?.revenue?.fx ?? {}).filter(
+  const fxRates = Object.entries({ ...(audit?.datasets?.revenue?.fx ?? {}), ...(audit?.fx ?? {}) }).filter(
     ([c]) => c.toUpperCase() !== ccy.toUpperCase()
   );
   const fxDisplay = !audit?.datasets

@@ -8,6 +8,7 @@ import * as api from "@/lib/api";
 jest.mock("@/lib/api", () => ({
   getClaimRegister: jest.fn(),
   updateClaimInputs: jest.fn(),
+  answerTurnover: jest.fn(),
   claimsCsvUrl: (id) => `http://api/api/audits/${id}/claims.csv`,
 }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
@@ -77,7 +78,7 @@ test("the segment and metric are selects of the right options; the rest is text"
   expect([...segment.options].map((o) => o.value)).toEqual(["Whole company", "Enterprise", "SMB", "Not in the data"]);
   const metric = host.querySelector('[data-testid="register-metric"]');
   expect(metric.value).toBe("ARR");
-  expect([...metric.options].map((o) => o.value)).toEqual(["Revenue", "ARR", "MRR", "New MRR", "ACV", "none"]);
+  expect([...metric.options].map((o) => o.value)).toEqual(["Revenue", "ARR", "MRR", "New MRR", "ACV", "Transaction volume", "none"]);
   expect(host.querySelectorAll("select").length).toBe(2);
 });
 
@@ -145,4 +146,69 @@ test("no claim yet gives a line that says so", async () => {
   const { host } = await mount([]);
   expect(host.querySelector('[data-testid="claim-register-empty"]')).not.toBeNull();
   expect(host.querySelector("table")).toBeNull();
+});
+
+async function pick(row, code) {
+  const select = row.querySelector('[data-testid="register-turnover-reason"]');
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(select, code);
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+
+const TURNOVER = { ...ROW, claim_id: "t1", metric: null, observed_value: null, evidence_label: "Unverified", evidence_analysis: null,
+  reason: "turnover or volume: confirm Revenue or Volume", turnover_state: "ask",
+  turnover_note: "Revenue or volume? Confirm below", turnover_set_by: "python", turnover_reason: null };
+
+test("a turnover row shows its label, the question and one click Revenue or Volume with a reason code", async () => {
+  const { host } = await mount([TURNOVER, ROW]);
+  const rows = host.querySelectorAll('[data-testid="claim-register-row"]');
+  expect(rows[0].querySelector('[data-testid="register-turnover-note"]').textContent).toBe("Revenue or volume? Confirm below");
+  expect(rows[0].textContent).toContain("Revenue or transaction volume?");
+  expect(rows[1].querySelector('[data-testid="register-turnover"]')).toBeNull();
+  api.answerTurnover.mockResolvedValue({ register: [{ ...TURNOVER, turnover_state: "volume", turnover_note: "Transaction volume", turnover_set_by: "analyst" }] });
+  await act(async () => { rows[0].querySelector('[data-testid="register-turnover-volume"]').click(); });
+  expect(api.answerTurnover).not.toHaveBeenCalled();           // no reason chosen yet: nothing is sent
+  await pick(rows[0], "deck_says_processed_volume");
+  await act(async () => { rows[0].querySelector('[data-testid="register-turnover-volume"]').click(); });
+  expect(api.answerTurnover).toHaveBeenCalledWith("a1", "t1", { as: "volume", reason: "deck_says_processed_volume" });
+  expect(host.querySelector('[data-testid="register-turnover-note"]').textContent).toContain("Transaction volume");
+});
+
+test("a confirmed row can be switched back, and the implied take rate shows both sources as derived", async () => {
+  const volume = { ...TURNOVER, turnover_state: "volume", turnover_note: "Transaction volume", turnover_set_by: "analyst",
+    implied_take_rate: 0.1, implied_take_rate_source: "revenue: revenue.csv · CSV · rows 2–71; volume: deck.pptx · slide 3" };
+  const { host } = await mount([volume]);
+  expect(host.querySelector('[data-testid="register-take-rate"]').textContent).toContain("Implied take rate 10.00% (derived, not verified)");
+  expect(host.querySelector('[data-testid="register-take-rate-source"]').textContent).toContain("deck.pptx");
+  api.answerTurnover.mockResolvedValue({ register: [{ ...volume, turnover_state: "revenue" }] });
+  await act(async () => { host.querySelector('[data-testid="register-turnover-revenue"]').click(); });
+  expect(api.answerTurnover).not.toHaveBeenCalled();           // the reason is empty again for the new answer
+  await pick(host, "file_confirms");
+  await act(async () => { host.querySelector('[data-testid="register-turnover-revenue"]').click(); });
+  expect(api.answerTurnover).toHaveBeenLastCalledWith("a1", "t1", { as: "revenue", reason: "file_confirms" });
+});
+
+test("there is no default reason: the buttons are disabled until one is chosen and for a contradicting pair", async () => {
+  const { host } = await mount([TURNOVER]);
+  const reason = host.querySelector('[data-testid="register-turnover-reason"]');
+  const btn = (v) => host.querySelector(`[data-testid="register-turnover-${v}"]`);
+  expect(reason.value).toBe("");
+  expect([btn("revenue").disabled, btn("volume").disabled]).toEqual([true, true]);
+  await pick(host, "deck_says_gross_revenue");
+  expect([btn("revenue").disabled, btn("volume").disabled]).toEqual([false, true]);
+  await pick(host, "deck_says_processed_volume");
+  expect([btn("revenue").disabled, btn("volume").disabled]).toEqual([true, false]);
+  await pick(host, "other");
+  expect([btn("revenue").disabled, btn("volume").disabled]).toEqual([false, false]);
+});
+
+test("a row with no rate names the pair and links to the FX settings", async () => {
+  const needs = { ...ROW, metric: "Revenue", observed_value: null, evidence_label: "Unverified", evidence_analysis: null,
+    reason: "FX rate needed: GBP→EUR" };
+  const { host } = await mount([needs, ROW]);
+  const rows = host.querySelectorAll('[data-testid="claim-register-row"]');
+  expect(rows[0].querySelector('[data-testid="register-evidence-reason"]').textContent).toBe("· FX rate needed: GBP→EUR");
+  expect(rows[0].querySelector('[data-testid="register-fx-link"]').getAttribute("href")).toBe("/audit/a1/mapping#fx-settings");
+  expect(rows[1].querySelector('[data-testid="register-fx-link"]')).toBeNull();
 });

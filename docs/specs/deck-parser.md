@@ -408,3 +408,18 @@ Fixed on the 10 test decks (2026-10-05):
 - Isolation test passes.
 - Approval list in the frontend shows candidates with their source reference.
 - Upload screen shows the scope message.
+
+## Amended 2026-10-09 (George): explanation, label brackets, count unit, moved claims
+- Deck inconsistency: every flagged claim carries `inconsistencies`, the two figures compared (value, currency, unit, date and
+  place of each). The tag shows "The deck gives different figures for this metric: [value A] at [location A] and [value B] at
+  [location B]." on hover and in the opened row. The tag is never shown without it. The parser compares only figures with the
+  same type, currency and period and different values, so a pair always has two different values (the same-value wording was
+  deleted 2026-10-09: it could not be reached). Decks parsed before this change have no pairs and show no tag
+  until they are uploaded again.
+- Confidence: a currency or period in a label's brackets ("Turnover (£/year)") is read before scoring: the currency fills an
+  empty currency field (GBP) and the period goes to `period_basis` ("per year", "per month", "per quarter"), shown beside the
+  date. Scale brackets ("(€m)") are not read. The date stays missing when no year is given. The reason lists only what is
+  still missing.
+- Unit: "count" joins the unit suggestions (customers, headcount, deals); currency stays its own field.
+- A claim that is approved or edited and moves to another category (by a changed type) shows "Claim moved to [category]" with
+  Undo for 4 seconds and its row is highlighted for the same time; Undo restores the previous type.

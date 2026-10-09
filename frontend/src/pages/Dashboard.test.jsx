@@ -73,8 +73,8 @@ test("when the narrative cannot be generated the metrics render with their sourc
 
 const CITED_BLOCKS = ["mrr-by-segment-chart", "cohort-retention", "anomaly-flags", "segment-paths", "new-mrr-by-quarter"];
 
-async function mountDashboard(results, verdict = VERDICT_NONE) {
-  api.getAudit.mockResolvedValue(sample.audit);
+async function mountDashboard(results, verdict = VERDICT_NONE, audit = sample.audit) {
+  api.getAudit.mockResolvedValue(audit);
   api.getResults.mockResolvedValue(results);
   api.readNarrative.mockResolvedValue({ narrative_status: "unavailable", reason: "x" });
   api.getDisclosure.mockResolvedValue(null);
@@ -104,6 +104,20 @@ test("a block stored without its citation shows no source trigger (the contract 
   expect(host.querySelector('[data-testid="provenance-hover-mrr-by-segment-chart"]')).toBeNull();
   expect(host.querySelector('[data-testid="provenance-hover-cohort-retention"]')).not.toBeNull();
   await unmount();
+});
+
+
+test("the FX line shows the audit's rates, the audit's winning over those saved with an older revenue file", async () => {
+  const withFx = async (audit) => {
+    const { host, unmount } = await mountDashboard(sample, VERDICT_NONE, audit);
+    const text = host.textContent;
+    await unmount();
+    return text;
+  };
+  expect(await withFx({ ...sample.audit, datasets: {} })).toContain("FX: N/A (single-currency reporting)");
+  expect(await withFx({ ...sample.audit, datasets: {}, fx: { EUR: 1, USD: 0.9 } })).toContain("FX: 1 USD = 0.9 EUR");
+  const both = await withFx({ ...sample.audit, datasets: { revenue: { fx: { USD: 0.5, GBP: 1.2 } } }, fx: { EUR: 1, USD: 0.9 } });
+  expect(both).toContain("FX: 1 USD = 0.9 EUR · 1 GBP = 1.2 EUR");
 });
 
 

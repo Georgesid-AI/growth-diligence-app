@@ -130,8 +130,7 @@ def test_a_beat_beyond_tolerance_is_contradicted_but_never_ranks_as_a_miss():
 
 @pytest.mark.parametrize("claim, metric", [
     ({"claim_type": "revenue", "snippet": "Revenue of €1M"}, "Revenue"),
-    ({"claim_type": "revenue", "snippet": "Turnover of €1M"}, "Revenue"),
-    ({"claim_type": "revenue", "snippet": "TURNOVER €1M"}, "Revenue"),
+    # Turnover, GMV and TPV are not proposed as revenue: section 11 asks (tests/test_turnover.py)
     ({"claim_type": "revenue", "label_from": "Revenue"}, "Revenue"),
     ({"claim_type": "revenue", "snippet": "Recurring revenue €1M"}, None),
     ({"claim_type": "revenue", "snippet": "Bookings €1M"}, None),
@@ -526,7 +525,8 @@ def test_a_register_row_has_exactly_the_fields_of_section_6_and_the_verdict_spec
                  "observed_at observed_source gap gap_normalised gap_kind gloss evidence_label reason tolerance rank "
                  "value_at_stake_arr shortfall overlaps_with evidence_analysis evidence_source_key gate_sentence gate_threshold "
                  "gate_budget_decision gate_date gate_saved gate_metric_name gate_direction key_gate gate_needed as_of_month "
-                 "as_of_defaulted").split()
+                 "as_of_defaulted turnover_state turnover_note turnover_set_by turnover_reason implied_take_rate "
+                 "implied_take_rate_source").split()
     assert list(register(RUNS["A"])[0]) == section_6 == list(cm.FIELDS)
 
 
@@ -677,7 +677,7 @@ def test_a_claim_in_another_currency_is_converted_at_the_saved_rate_and_shows_bo
 def test_a_claim_with_no_saved_rate_is_unverified_with_fx_rate_needed_whatever_its_period(period):
     row = run_claim({"claim_type": "revenue", "snippet": "ARR $210,000", "currency": "USD", "value": 210000,
                      "target_date": period})
-    assert (row["evidence_label"], row["reason"]) == ("Unverified", "FX rate needed")
+    assert (row["evidence_label"], row["reason"]) == ("Unverified", "FX rate needed: USD→EUR")
     assert (row["fx_rate"], row["claimed_converted"], row["observed_value"]) == (None, None, None)
 
 

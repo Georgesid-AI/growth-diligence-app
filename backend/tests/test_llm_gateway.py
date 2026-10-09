@@ -63,6 +63,16 @@ def _project(doc, projection):
     return {k: doc[k] for k in include if k in doc}
 
 
+def _set_paths(doc, values):
+    """Mongo's $set: a dotted key sets a nested field, as the real database does."""
+    for key, value in values.items():
+        parts = key.split(".")
+        target = doc
+        for part in parts[:-1]:
+            target = target.setdefault(part, {})
+        target[parts[-1]] = value
+
+
 class FakeResult:
     def __init__(self, modified_count=0, deleted_count=0, upserted_id=None):
         self.modified_count = modified_count
@@ -108,14 +118,14 @@ class FakeCollection:
     async def update_one(self, flt, update, upsert=False):
         for d in self.docs:
             if _matches(d, flt):
-                d.update(update.get("$set", {}))
+                _set_paths(d, update.get("$set", {}))
                 return FakeResult(modified_count=1)
         if upsert:
             # Like Mongo: an upsert seeds the new document from the filter's
             # equality fields, then applies $setOnInsert and $set.
             new = {k: v for k, v in flt.items() if not k.startswith("$") and not isinstance(v, dict)}
             new.update(update.get("$setOnInsert", {}))
-            new.update(update.get("$set", {}))
+            _set_paths(new, update.get("$set", {}))
             self.docs.append(new)
             return FakeResult(modified_count=0, upserted_id=len(self.docs))
         return FakeResult(modified_count=0)
@@ -124,7 +134,7 @@ class FakeCollection:
         n = 0
         for d in self.docs:
             if _matches(d, flt):
-                d.update(update.get("$set", {}))
+                _set_paths(d, update.get("$set", {}))
                 for k in update.get("$unset", {}):
                     d.pop(k, None)
                 n += 1

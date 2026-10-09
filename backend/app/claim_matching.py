@@ -21,10 +21,11 @@ FIELDS = (
     "gap_kind", "gloss", "evidence_label", "reason", "tolerance", "rank", "value_at_stake_arr", "shortfall",
     "overlaps_with", "evidence_analysis", "evidence_source_key", "gate_sentence", "gate_threshold",
     "gate_budget_decision", "gate_date", "gate_saved", "gate_metric_name", "gate_direction", "key_gate", "gate_needed",
-    "as_of_month", "as_of_defaulted",
+    "as_of_month", "as_of_defaulted", "turnover_state", "turnover_note", "turnover_set_by", "turnover_reason",
+    "implied_take_rate", "implied_take_rate_source",
 )
 # How the baseline CSV reads each field back (verdict-and-memo.md section 5); a field not listed is text.
-FLOAT_FIELDS = frozenset({"claimed_value", "claimed_high", "claimed_converted", "claimed_converted_high", "fx_rate",
+FLOAT_FIELDS = frozenset({"implied_take_rate", "claimed_value", "claimed_high", "claimed_converted", "claimed_converted_high", "fx_rate",
                           "observed_value", "gap", "gap_normalised", "value_at_stake_arr",
                           "shortfall", "gate_threshold"})
 INT_FIELDS = frozenset({"rank"})
@@ -60,7 +61,17 @@ METRICS: Dict[str, dict] = {
     "Win rate": dict(kind="asof", unit="%", direction="higher", seg=False, missing=("win rate",)),
     "Gross margin": dict(kind="quarter", unit="%", direction="higher", seg=False, missing=("cac payback",)),
     "CAC payback": dict(kind="quarter", unit="months", direction="lower", seg=False, missing=("cac payback",)),
+    # Section 11: no engine source exists, so a claim measured here is always Unsupported.
+    "Transaction volume": dict(kind="sum", unit="currency", direction="higher", seg=False, missing=()),
 }
+VOLUME = "Transaction volume"
+VOLUME_REASON = "no engine volume source for transaction volume"
+TURNOVER_REASONS = ("deck_says_gross_revenue", "deck_says_processed_volume", "file_confirms", "other")
+TURNOVER_CHOICES = ("revenue", "volume")
+CONTRADICTORY_ANSWERS = (("volume", "deck_says_gross_revenue"), ("revenue", "deck_says_processed_volume"))
+GROSS_REVENUE_NOTE = "Gross revenue (turnover)"
+ASK_NOTE = "Revenue or volume? Confirm below"
+ASK_REASON = "turnover or volume: confirm Revenue or Volume"
 NO_METRIC = "none"                      # what the analyst picks to say "no metric fits"
 
 _DURATIONS = ("days", "weeks", "months", "years")
@@ -69,7 +80,9 @@ _CURRENCY_SYMBOLS = {"EUR": "€", "USD": "$", "GBP": "£"}
 _NEW_MRR = re.compile(r"(?i)\bnew mrr\b")
 _MRR = re.compile(r"\bMRR\b|(?i:\bmonthly recurring revenue\b)")
 _ARR = re.compile(r"\bARR\b|(?i:\bannual recurring revenue\b)")
-_REVENUE = re.compile(r"(?i)\b(?:revenue|turnover)\b")
+_REVENUE = re.compile(r"(?i)\brevenue\b")
+_TURNOVER = re.compile(r"(?i)\b(?:turnover|GMV|TPV|gross merchandise (?:value|volume)|(?:total )?(?:trading|payment|transaction) volume)\b")
+_TAKE_RATE = re.compile(r"(?i)\btake[- ]rates?\b")
 _RECURRING = re.compile(r"(?i)\b(?:annual|monthly) recurring revenue\b")
 _NRR = re.compile(r"\bNRR\b|(?i:\bnet (?:revenue )?retention\b)")
 _CHURN = re.compile(r"(?i)\b(?:revenue|gross) churn\b")
@@ -430,6 +443,79 @@ def _is_saved(inputs: dict, needs_name: bool) -> bool:
     return saved
 
 
+# --- turnover and transaction volume (spec section 11) ------------------------------------------------------------
+
+def mentions_take_rate(deck) -> bool:
+    """Whether a parsed deck (any nesting of dicts, lists and strings) says "take rate" anywhere. Python reads the stored deck text; only this yes or no is used and nothing is stored or sent."""
+    if isinstance(deck, str):
+        return bool(_TAKE_RATE.search(deck))
+    if isinstance(deck, dict):
+        return any(mentions_take_rate(v) for v in deck.values())
+    if isinstance(deck, (list, tuple)):
+        return any(mentions_take_rate(v) for v in deck)
+    return False
+
+
+def turnover_key(c: dict) -> str:
+    """What an audit answer to the turnover question is kept under: the turnover term and the period, hashed. No deck text."""
+    import hashlib
+    text = f"{c.get('snippet') or ''} {c.get('label_from') or ''}"
+    found = _TURNOVER.search(text)
+    term = re.sub(r"\s+", " ", found.group(0).lower()) if found else ""
+    raw = f"{term}|{c.get('period_start') or ''}|{c.get('period_end') or ''}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _is_turnover_claim(c: dict, text: str) -> bool:
+    return c.get("claim_type") == "revenue" and bool(_TURNOVER.search(text)) and not (
+        _NEW_MRR.search(text) or _MRR.search(text) or _ARR.search(text))
+
+
+def _turnover(c: dict, inputs: dict, results: dict, settings: dict, rate: Optional[float], start: Optional[int],
+              end: Optional[int], as_of_i: Optional[int], segment: str = WHOLE) -> dict:
+    """Section 11: whether a turnover claim is revenue, transaction volume or still a question. Returns state, metric,
+    note, set_by, reason, an optional verdict (label, reason), `fx_needed` and the file revenue for the period (of the
+    claim's segment) when one covers it. `rate` is None when the claim's currency has no saved rate."""
+    low, high = c.get("value"), c.get("value_high")
+    forecast = end is not None and as_of_i is not None and end > as_of_i
+    file_revenue = source = None
+    if as_of_i is not None and start is not None and end is not None and not forecast:
+        got, _, src, _ = _observe(_Figures(results, "Revenue", segment), METRICS["Revenue"], "Revenue", start, end, as_of_i)
+        if isinstance(got, (int, float)):
+            file_revenue, source = float(got), src
+    choice, reason, by = inputs.get("turnover_as"), inputs.get("turnover_reason"), "analyst"
+    if choice not in TURNOVER_CHOICES:
+        saved = (settings.get("turnover_choices") or {}).get(turnover_key(c)) or {}
+        choice, reason = (saved.get("as"), saved.get("reason")) if saved.get("as") in TURNOVER_CHOICES else (None, None)
+    out = dict(state=None, metric=None, note=None, set_by="python", reason=reason, verdict=None, fx_needed=False,
+               file_revenue=file_revenue, source=source)
+    ask = (ASK_NOTE, ("Unverified", ASK_REASON))
+    if choice:
+        out.update(set_by=by)
+    elif file_revenue is not None and low is not None and rate is None:
+        out.update(fx_needed=True)      # the file covers the period but the claim cannot be compared yet
+    elif file_revenue is not None and low is not None:
+        # a range is tested at the end nearest the file revenue; a figure above tolerance asks, one below is a revenue claim
+        top = high if high is not None else low
+        nearest = file_revenue / rate if low <= file_revenue / rate <= top else (low if file_revenue / rate < low else top)
+        claimed = nearest * rate
+        if within_tolerance("Revenue", claimed - file_revenue, claimed):
+            choice = "revenue"
+        elif claimed > file_revenue:
+            pass                        # above tolerance: ask
+        else:
+            choice = "revenue"          # below tolerance: the ordinary revenue rule
+    elif settings.get("deck_take_rate"):
+        choice = "volume"               # no file covers the period and the deck says "take rate"
+    if choice == "revenue":
+        out.update(state="revenue", metric="Revenue", note=GROSS_REVENUE_NOTE)
+    elif choice == "volume":
+        out.update(state="volume", metric=VOLUME, note=VOLUME)
+    else:
+        out.update(state="ask", note=ask[0], verdict=ask[1])
+    return out
+
+
 # --- one claim ------------------------------------------------------------------------------------------------------------
 
 def _segments(results: dict) -> Tuple[List[str], set]:
@@ -531,9 +617,16 @@ def _row(c: dict, results: dict, settings: dict) -> dict:
     else:
         named = [s for s in revenue_segments if re.search(rf"(?i)(?<!\w){re.escape(s)}(?!\w)", text)]
         segment, segment_by = (named[0] if len(named) == 1 else WHOLE), "python"
+    start, end = _month_of(c.get("period_start")), _month_of(c.get("period_end"))
+    turn = None
+    if metric_by == "python" and _is_turnover_claim(c, text):       # section 11: never revenue or volume by default
+        fx0 = fx_view(c, settings, as_of)
+        turn = _turnover(c, inputs, results, settings, fx0["rate"] if fx0 else 1.0, start, end, as_of_i, segment)
+        if turn["fx_needed"]:
+            turn["verdict"] = ("Unverified", f"{FX_NEEDED}: {currency}→{fx0['currency']}")
+        metric, metric_by = turn["metric"], turn["set_by"]
     spec = METRICS.get(metric) if metric else None
 
-    start, end = _month_of(c.get("period_start")), _month_of(c.get("period_end"))
     period = c.get("period_text") or c.get("target_date") or None
     low, high = c.get("value"), c.get("value_high")
     out = dict.fromkeys(FIELDS)
@@ -550,6 +643,9 @@ def _row(c: dict, results: dict, settings: dict) -> dict:
         as_of_defaulted=not settings.get("as_of_month"), overlaps_with=[], gate_date=inputs.get("gate_date"),
         gate_threshold=inputs.get("gate_threshold"), gate_budget_decision=inputs.get("gate_budget_decision"),
         gate_metric_name=inputs.get("gate_metric_name"), gate_direction=inputs.get("gate_direction"))
+    if turn:
+        out.update(turnover_state=turn["state"], turnover_note=turn["note"], turnover_set_by=turn["set_by"],
+                   turnover_reason=turn["reason"])
     shown_claim: List[Optional[float]] = [None]         # the claimed figure the gate sentence names, once it is known
 
     def finish(label: str, reason: str) -> dict:
@@ -568,8 +664,19 @@ def _row(c: dict, results: dict, settings: dict) -> dict:
                    claimed_converted_high=high * fx["rate"] if high is not None else None)
     if out["claim_direction"]:                  # "Positive EBITDA": never Verified or Contradicted
         return finish("Unverified", DIRECTION_ONLY)
+    if turn and turn["verdict"]:
+        return finish(*turn["verdict"])
     if not spec:
         return finish("Unsupported", "no metric")
+    if metric == VOLUME:                        # never matched to engine revenue; the take rate is derived, never Verified
+        if turn and turn["file_revenue"] is not None and low and not c.get("value_high"):
+            claimed_volume = low * (fx["rate"] if fx and fx["rate"] else 1.0)
+            if fx is None or fx["rate"]:
+                src = turn["source"] or {}
+                out.update(implied_take_rate=round(turn["file_revenue"] / claimed_volume, 6),
+                           implied_take_rate_source=(f"revenue: {src.get('file')} · {src.get('sheet')} · {src.get('rows')}; "
+                                                     f"volume: {out['deck_file']} · {out['page_ref']}"))
+        return finish("Unsupported", VOLUME_REASON)
     if not _fits(spec["unit"], claim_unit):
         return finish("Unsupported", "metric does not fit the claim's unit")
     if segment == NOT_IN_DATA or (segment != WHOLE and segment not in data_segments):
@@ -580,7 +687,7 @@ def _row(c: dict, results: dict, settings: dict) -> dict:
         return finish("Unsupported", "period not readable")
 
     if fx and fx["rate"] is None:
-        return finish("Unverified", FX_NEEDED)
+        return finish("Unverified", f"{FX_NEEDED}: {currency}→{fx['currency']}")       # names the pair (the rate to set)
     figures = _Figures(results, metric, segment)
     observed, observed_at, source, why = _observe(figures, spec, metric, start, end, as_of_i)
     if isinstance(observed, str):                       # a verdict instead of a figure

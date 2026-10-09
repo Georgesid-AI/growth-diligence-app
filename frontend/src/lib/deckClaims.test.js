@@ -271,7 +271,7 @@ describe("2026-10-08: the Period column, groups, a direction with no figure and 
     const fx = { rate: 1.14, date: "2026-06-30", currency: "EUR" };
     expect(claimValue({ value: 150000, currency: "GBP", fx })).toBe("150,000 GBP (171,000 EUR at 1.14, 30 Jun 2026)");
     expect(claimValue({ value: 150000, value_high: 160000, currency: "GBP", fx })).toBe("150,000–160,000 GBP (171,000–182,400 EUR at 1.14, 30 Jun 2026)");
-    expect(claimValue({ value: 150000, currency: "GBP", fx: { ...fx, rate: null } })).toBe("150,000 GBP (FX rate needed)");
+    expect(claimValue({ value: 150000, currency: "GBP", fx: { ...fx, rate: null } })).toBe("150,000 GBP (FX rate needed: GBP→EUR)");
     expect(claimValue({ value: 150000, currency: "EUR", fx: null })).toBe("150,000 EUR");
     expect(claimValue({ value: 15, unit: "%", currency: null, fx: null })).toBe("15%");
   });

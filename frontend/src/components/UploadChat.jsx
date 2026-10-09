@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Paperclip, FileSpreadsheet, FileText, Loader2, Send, ChevronRight, ChevronDown } from "lucide-react";
+import { Paperclip, FileSpreadsheet, FileText, Loader2, Send, ChevronRight, ChevronDown, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { BLOCKERS_CHANGED } from "@/components/BlockerBanner";
@@ -7,7 +7,7 @@ import { uploadChatFile, getDatasets, decideColumns, reportUsage } from "@/lib/a
 import {
   S1_TEXT_REPLY, S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE, S6_UNKNOWN_TYPE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED,
   S20_NOTE_PLACEHOLDER, S21_NOTE_REFUSED, NOTE_MAX, ALLOWED_EXTENSIONS, REASONS, TYPE_LABELS, S5_head, S8_replace,
-  S9_confidence, S13_status, S14_same, MAPPING_HEADERS, S25_TITLE, S25_PARAGRAPHS, mappedBy, sortColumns, fieldName, fmtBytes, extensionOf, heldFields,
+  S9_confidence, S13_status, CALCULATE_LABEL, setCalculatePressed, S14_same, MAPPING_HEADERS, S25_TITLE, S25_PARAGRAPHS, mappedBy, sortColumns, fieldName, fmtBytes, extensionOf, heldFields,
 } from "@/lib/chatUpload";
 
 const NONE = "";
@@ -20,11 +20,15 @@ const uid = () => `m${nextId++}`;
  * system bubble per file, the mapping table in the system bubble. Typed text is answered on the page (S1) and goes
  * nowhere else. `extras(view)` renders what follows the table of a revenue file (FX rates, billing terms).
  */
-export default function UploadChat({ audit, extras, onViews }) {
+export default function UploadChat({ audit, extras, onViews, onCalculate, calculateRef, onStaged, onCalculating }) {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(0);
   const [dragging, setDragging] = useState(false);
+  const staged = useRef(new Map());                   // bubble id -> File: attached, not yet read (nothing runs until Calculate)
+  const openPrompts = useRef(new Set());              // bubbles whose file waits for a type or a replace answer
+  const [calculating, setCalculating] = useState(false);
+  const calculatingRef = useRef(false);
   const [lastReason, setLastReason] = useState("header_misleading");   // stays for the next correction on this page
   const picker = useRef(null);
   const queue = useRef(Promise.resolve());
@@ -49,27 +53,33 @@ export default function UploadChat({ audit, extras, onViews }) {
   }, [messages]); // eslint-disable-line
 
   // `bubble` is the id of the analyst bubble the file already has (it shows a spinner until the file is read).
-  const send = async (file, options = {}, bubble = null) => {
+  // `quiet`: the caller refreshes the blocker banner itself once, after the last file (Calculate does).
+  const send = async (file, options = {}, bubble = null, quiet = false) => {
     setBusy((n) => n + 1);
     const settle = (patch) => setMessages((all) => all.map((m) => (m.id === bubble ? { ...m, pending: false, ...patch } : m)));
     try {
       const res = await uploadChatFile(audit.id, file, options);
       if (res.status === "unknown_type") {
         settle({});
+        if (bubble) openPrompts.current.add(bubble);
         push({ kind: "unknown", file, bubble });
       } else {
+        if (bubble) openPrompts.current.delete(bubble);
         // A file of a loaded type replaces that type's bubbles: one analyst and one system bubble per file.
         setMessages((all) => {
           const kept = all.filter((m) => !(m.dtype === res.dtype && m.kind !== "text") && m.id !== bubble);
           const analyst = { id: bubble || uid(), kind: "analyst", dtype: res.dtype, file: res.file, size: res.size_bytes ?? file.size, ext: res.ext };
           return [...kept, analyst, { id: uid(), kind: "system", dtype: res.dtype, view: res }];
         });
-        announce();
+        // An answer to a type or replace prompt (Calculate was pressed to get here): the flag is set once nothing else waits,
+        // so "Revenue file missing" shows without a second press.
+        if (!quiet) { if (openPrompts.current.size === 0) setCalculatePressed(audit.id); announce(); }
       }
     } catch (err) {
       settle({});
       const detail = err.response?.data?.detail;
       if (err.response?.status === 409 && detail?.code === "type_loaded") {
+        if (bubble) openPrompts.current.add(bubble);
         push({ kind: "replace", file, dtype: detail.dtype, loaded: detail.file, bubble });
       } else {
         push({ kind: "text", role: "system", text: typeof detail === "string" ? detail : "The file could not be read." });
@@ -90,10 +100,43 @@ export default function UploadChat({ audit, extras, onViews }) {
         continue;
       }
       const bubble = uid();
-      setMessages((all) => [...all, { id: bubble, kind: "analyst", file: file.name, size: file.size, ext, pending: true }]);
-      queue.current = queue.current.then(() => send(file, {}, bubble));
+      staged.current.set(bubble, file);
+      setMessages((all) => [...all, { id: bubble, kind: "analyst", file: file.name, size: file.size, ext, staged: true }]);
     }
   };
+
+  const unstage = (id) => {
+    staged.current.delete(id);
+    setMessages((all) => all.filter((m) => m.id !== id));
+  };
+  useEffect(() => { onStaged?.(messages.filter((m) => m.staged).length); }, [messages]); // eslint-disable-line
+
+  // Calculate: read the attached files one at a time, in drop order, then hand the loaded files to the page, which computes
+  // when nothing waits. Pressing it with nothing attached is allowed: it is how the page learns the revenue file is missing.
+  // The banner is refreshed once, after the last file, and not while a file still waits for its type or a replace answer:
+  // "Revenue file missing" would then show while that file is being asked about.
+  const calculate = async () => {
+    if (calculatingRef.current) return;                 // a second press while files are being read does nothing
+    calculatingRef.current = true;
+    setCalculating(true);
+    onCalculating?.(true);
+    try {
+      for (const [bubble, file] of [...staged.current]) {
+        staged.current.delete(bubble);
+        setMessages((all) => all.map((m) => (m.id === bubble ? { ...m, staged: false, pending: true } : m)));
+        queue.current = queue.current.then(() => send(file, {}, bubble, true));
+        await queue.current;
+      }
+      if (openPrompts.current.size === 0) { setCalculatePressed(audit.id); announce(); }
+      const views = await getDatasets(audit.id).catch(() => []);
+      await onCalculate?.(views);
+    } finally {
+      calculatingRef.current = false;
+      setCalculating(false);
+      onCalculating?.(false);
+    }
+  };
+  if (calculateRef) calculateRef.current = calculate;
 
   const submitText = (e) => {
     e.preventDefault();
@@ -124,17 +167,16 @@ export default function UploadChat({ audit, extras, onViews }) {
         {consent ? S2_EXPLAINER_CONSENT : S3_EXPLAINER_NO_CONSENT}
       </p>
       <div data-testid="chat-messages" className="px-5 py-4 space-y-3 min-h-[240px] max-h-[640px] overflow-y-auto">
-        {messages.length === 0 && (
-          <div data-testid="chat-drop-zone" className={`border border-dashed rounded-lg py-14 text-center text-sm text-slate-500 ${dragging ? "border-sky-500 bg-sky-50" : "border-[#D1D5DB]"}`}>
-            {S4_DROP_ZONE}
-          </div>
-        )}
+        {/* The drop zone stays after a drop: more files can be attached until Calculate is pressed. */}
+        <div data-testid="chat-drop-zone" className={`border border-dashed rounded-lg text-center text-slate-500 ${messages.length === 0 ? "py-14 text-sm" : "py-3 text-xs"} ${dragging ? "border-sky-500 bg-sky-50" : "border-[#D1D5DB]"}`}>
+          {S4_DROP_ZONE}
+        </div>
         {messages.map((m) => (
-          <Message key={m.id} m={m} audit={audit} extras={extras} lastReason={lastReason} setLastReason={setLastReason}
+          <Message key={m.id} m={m} audit={audit} unstage={unstage} extras={extras} lastReason={lastReason} setLastReason={setLastReason}
             decide={decide} showInfo={m.id === firstTable}
             onType={(file, dtype) => { setMessages((all) => all.filter((x) => x.id !== m.id)); send(file, { dtype }, m.bubble); }}
             onReplace={(file, dtype) => { setMessages((all) => all.filter((x) => x.id !== m.id)); send(file, { dtype, replace: true }, m.bubble); }}
-            onKeep={() => setMessages((all) => all.filter((x) => x.id !== m.id && x.id !== m.bubble))} />
+            onKeep={() => { openPrompts.current.delete(m.bubble); setMessages((all) => all.filter((x) => x.id !== m.id && x.id !== m.bubble)); }} />
         ))}
         {busy > 0 && <div className="text-xs text-slate-500 flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Reading…</div>}
       </div>
@@ -145,14 +187,18 @@ export default function UploadChat({ audit, extras, onViews }) {
           className="p-2 rounded-md text-slate-600 hover:bg-slate-100"><Paperclip className="h-4 w-4" /></button>
         <Input data-testid="chat-text-input" value={text} onChange={(e) => setText(e.target.value)} placeholder={S4_DROP_ZONE}
           className="h-9 bg-white border-[#E5E7EB]" />
-        <Button type="submit" size="sm" aria-label="Send" data-testid="chat-send" className="bg-sky-600 hover:bg-sky-500"><Send className="h-4 w-4" /></Button>
+        <Button type="submit" size="sm" aria-label="Send" data-testid="chat-send" variant="outline"><Send className="h-4 w-4" /></Button>
+        <Button type="button" size="sm" data-testid="chat-calculate" disabled={calculating} onClick={calculate}
+          className="bg-sky-600 hover:bg-sky-500 gap-1.5">
+          {calculating ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{CALCULATE_LABEL}
+        </Button>
       </form>
     </section>
   );
 }
 
-function Message({ m, audit, extras, lastReason, setLastReason, decide, showInfo, onType, onReplace, onKeep }) {
-  if (m.kind === "analyst") return <AnalystBubble m={m} />;
+function Message({ m, audit, unstage, extras, lastReason, setLastReason, decide, showInfo, onType, onReplace, onKeep }) {
+  if (m.kind === "analyst") return <AnalystBubble m={m} unstage={unstage} />;
   if (m.kind === "text") {
     return m.role === "analyst"
       ? <Bubble side="right" testid="chat-text-analyst">{m.text}</Bubble>
@@ -192,13 +238,20 @@ function Bubble({ side, children, testid }) {
   );
 }
 
-function AnalystBubble({ m }) {
+function AnalystBubble({ m, unstage }) {
   const Icon = m.ext === "csv" ? FileText : FileSpreadsheet;
   return (
     <Bubble side="right" testid="chat-analyst-bubble">
       <span className="inline-flex items-center gap-2"><Icon className="h-4 w-4 text-slate-600" data-testid={`type-icon-${m.ext}`} />
         <span className="font-mono text-xs">{m.file}</span><span className="text-xs text-slate-500">{fmtBytes(m.size)}</span>
-        {m.pending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}</span>
+        {m.pending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+        {m.staged && (
+          <>
+            <span className="text-[10px] font-mono text-slate-500" data-testid="attachment-note">attached – not read yet</span>
+            <button type="button" aria-label={`Remove ${m.file}`} data-testid={`unstage-${m.file}`} onClick={() => unstage(m.id)}
+              className="text-slate-500 hover:text-rose-700"><X className="h-3.5 w-3.5" /></button>
+          </>
+        )}</span>
     </Bubble>
   );
 }
@@ -261,6 +314,8 @@ function WhyThisMatters() {
   );
 }
 
+const MONEY_QUESTION = "Is this money the company earned (revenue) or the value of transactions processed (volume)?";
+
 function ColumnRow({ row, view, decide, lastReason, setLastReason }) {
   const [editing, setEditing] = useState(false);
   const [field, setField] = useState(row.field || NONE);
@@ -310,7 +365,7 @@ function ColumnRow({ row, view, decide, lastReason, setLastReason }) {
           {mappedBy(row)}
         </td>
         <td className="py-1.5 whitespace-nowrap">
-          {(pending && !needs) && (
+          {(pending && !needs && ["unsure", "ai"].includes(row.state)) && (
             <Button size="sm" variant="outline" data-testid={`confirm-${row.column}`} disabled={saving}
               onClick={() => send({ column: row.column, action: "confirm", field: row.field })} className="h-7 mr-1.5">Confirm</Button>
           )}
@@ -320,6 +375,16 @@ function ColumnRow({ row, view, decide, lastReason, setLastReason }) {
           )}
           {!needs && (
             <Button size="sm" variant="ghost" data-testid={`correct-${row.column}`} onClick={() => setEditing((v) => !v)} className="h-7">Correct</Button>
+          )}
+          {row.money_ask && (
+            <div className="mt-1 whitespace-normal max-w-xs" data-testid={`money-ask-${row.column}`}>
+              <div className="text-xs text-slate-700">{MONEY_QUESTION}</div>
+              {[["revenue", "Revenue"], ["volume", "Volume"]].map(([kind, label]) => (
+                <Button key={kind} size="sm" variant={row.money_kind === kind ? "default" : "outline"} disabled={saving} className="h-7 mr-1.5 mt-1"
+                  data-testid={`money-${kind}-${row.column}`}
+                  onClick={() => send({ column: row.column, action: "confirm", money_kind: kind })}>{label}</Button>
+              ))}
+            </div>
           )}
           {(row.decision === "confirm" || row.decision === "correct") && !pending && (
             <span className="ml-2 text-[10px] text-slate-500">{row.decision === "confirm" ? "Confirmed" : "Corrected"}</span>
