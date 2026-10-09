@@ -892,6 +892,7 @@ _EDITABLE = ("claim_type", "value", "value_high", "unit", "currency", "target_da
 _ROW_FIELDS = ("value", "value_high", "target_date")     # held per period on a table row candidate
 # Approved and edited claims make up the claim register; rejected ones stay on record, unused.
 REGISTER_STATUSES = ("approved", "edited")
+ADDED_BY_ANALYST = "Added by analyst"
 
 
 def _claim_key(c: dict) -> tuple:
@@ -1021,6 +1022,50 @@ async def remove_deck(audit_id: str, deck_id: str):
     candidates = await db[decks.CANDIDATES_COLLECTION].delete_many(
         {"audit_id": audit_id, "$or": [{"deck_id": deck_id}, {"file": deck["file"]}]})
     return {"removed": deck_id, "deck_text": text.deleted_count, "deck_candidates": candidates.deleted_count}
+
+
+class AnalystClaim(BaseModel):
+    """A claim the analyst adds from a slide or page the parser could not read (docs/specs/deck-parser.md section 6): the
+    metric, a value or a range, the unit, the currency and the period, and where in which deck it is stated."""
+    model_config = {"extra": "forbid"}
+    claim_type: Literal[deck_claims.CLAIM_TYPES]
+    value: float = Field(allow_inf_nan=False)
+    value_high: Optional[float] = Field(default=None, allow_inf_nan=False)
+    unit: Optional[str] = Field(default=None, min_length=1, max_length=40)
+    currency: Optional[str] = Field(default=None, pattern=r"^[A-Z]{3}$")
+    target_date: Optional[str] = Field(default=None, pattern=_TARGET_DATE.pattern)
+    deck_id: str
+    page: int = Field(ge=1)
+
+
+@api.post("/audits/{audit_id}/decks/candidates")
+async def add_analyst_claim(audit_id: str, payload: AnalystClaim):
+    """Add a claim by hand. It is approved at once (it is the analyst's own), tagged origin "analyst", and sits in the
+    register like any other claim: matched and labelled by the same code. Its source is the deck and page the analyst cites."""
+    audit = await db.audits.find_one({"id": audit_id}, {"id": 1, "fiscal_year_end": 1})
+    if not audit:
+        raise HTTPException(404, "Audit not found")
+    deck = await db[decks.TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": payload.deck_id},
+                                                    {"_id": 0, "file": 1, "page_unit": 1, "pages": 1})
+    if not deck:
+        raise _rejected("deck_id", "choose one of the uploaded documents")
+    if deck.get("pages") and payload.page > deck["pages"]:
+        raise _rejected("page", f"this document has {deck['pages']} {deck.get('page_unit') or 'page'}s")
+    if payload.value_high is not None and payload.value_high < payload.value:
+        raise _rejected("value_high", "the high end of a range is not below the low end")
+    page_key = "slide" if deck.get("page_unit") == "slide" else "page"
+    existing = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0, "order": 1}).to_list(10000)
+    candidate = {
+        "claim_type": payload.claim_type, "value": payload.value, "value_high": payload.value_high, "unit": payload.unit,
+        "currency": payload.currency, "target_date": payload.target_date, "snippet": ADDED_BY_ANALYST, "label_from": None,
+        "date_from": None, "sources": [{"file": deck["file"], page_key: payload.page, "kind": "analyst"}],
+        "inconsistent_dates": [], "origin": "analyst", "claim_direction": None,
+        **_period_fields(_edited_period({"target_date": payload.target_date}, {}, _fiscal_year_end(audit))),
+        "audit_id": audit_id, "deck_id": payload.deck_id, "file": deck["file"], "id": str(uuid.uuid4()),
+        "order": max((c.get("order", 0) for c in existing), default=-1) + 1, "status": "approved",
+    }
+    await db[decks.CANDIDATES_COLLECTION].insert_one(candidate)
+    return sanitize(await db[decks.CANDIDATES_COLLECTION].find_one({"audit_id": audit_id, "id": candidate["id"]}, {"_id": 0}))
 
 
 @api.put("/audits/{audit_id}/decks/candidates/{candidate_id}")

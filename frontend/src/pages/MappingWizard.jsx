@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getAudit, saveMapping, computeAudit, getRevenueCustomers, updateAudit, reportUsage, saveFx } from "@/lib/api";
 import { asOfInputValue } from "@/lib/auditForm";
-import { CALCULATE_CLASS, CALCULATE_LABEL, CALCULATE_TOOLTIP } from "@/lib/chatUpload";
+import { CALCULATE_CLASS, CALCULATE_LABEL, calculateState } from "@/lib/chatUpload";
 
 export default function MappingWizard() {
   const { id } = useParams();
@@ -29,8 +29,9 @@ export default function MappingWizard() {
   useEffect(() => { load(); reportUsage(id, { screen: "mapping" }); }, [load, id]);
 
   // Compute waits for the analyst: no AI or unsure row left, every required field of each file mapped (section 4.3).
+  // One state for both Calculate buttons (this header one and the chat's): off while no file is attached or loaded.
+  const calc = calculateState({ attached, loaded: views.length, busy: computing || reading });
   const hasRevenue = views.some((v) => v.dtype === "revenue");
-  const ready = hasRevenue && views.every((v) => v.pending === 0 && v.missing_required.length === 0);
   // The header button is Calculate: it reads whatever is attached first, so a new file is never left "attached – not read yet"
   // while the old one is computed.
   const headerCompute = () => (calculateRef.current ? calculateRef.current() : runCompute());
@@ -71,10 +72,13 @@ export default function MappingWizard() {
           <h1 className="font-heading text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">Upload & Column Mapping</h1>
         </div>
         <div className="flex items-end gap-3">
-          <Button size="sm" data-testid="compute-button" onClick={headerCompute} disabled={(!ready && attached === 0) || computing || reading}
-            className={CALCULATE_CLASS} title={CALCULATE_TOOLTIP}>
-            {computing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{CALCULATE_LABEL}
-          </Button>
+          {/* A disabled button shows no tooltip of its own, so the wrapper carries it. */}
+          <span title={calc.tooltip} data-testid="compute-button-wrap">
+            <Button size="sm" data-testid="compute-button" onClick={headerCompute} disabled={calc.disabled}
+              className={CALCULATE_CLASS} title={calc.tooltip}>
+              {computing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{CALCULATE_LABEL}
+            </Button>
+          </span>
         </div>
       </div>
 
@@ -82,7 +86,7 @@ export default function MappingWizard() {
 
       <div className="space-y-5">
         <FxSettings audit={audit} onSaved={() => setFxVersion((n) => n + 1)} />
-        <UploadChat audit={audit} onViews={setViews} onCalculate={onCalculate} calculateRef={calculateRef} onStaged={setAttached} onCalculating={setReading}
+        <UploadChat audit={audit} onViews={setViews} onCalculate={onCalculate} calculateRef={calculateRef} onStaged={setAttached} onCalculating={setReading} calculateButton={calc}
           extras={(view) => <RevenueSettings key={`${view.file}-${view.uploaded_at}`} audit={audit} view={view} />} />
         <DeckPanel auditId={audit.id} reloadKey={fxVersion} />
       </div>

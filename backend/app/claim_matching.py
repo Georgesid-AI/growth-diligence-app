@@ -38,6 +38,7 @@ NO_PERIOD = "no period stated"
 FX_NEEDED = "FX rate needed"
 DIRECTION_ONLY = "direction only: the claim states no figure to test"
 SUGGESTION = "AI suggestion, not verified"
+ANALYST_ENTERED = "analyst-entered"
 DAYS_PER_WEEK, DAYS_PER_MONTH = 7.0, 30.44
 RATE_TOLERANCE_PP, AMOUNT_TOLERANCE = 1.0, 0.05
 BUDGET_DECISION_MAX = 200
@@ -575,6 +576,8 @@ def _page_ref(sources: list) -> str:
 
 
 def _deck_reading(c: dict) -> str:
+    if c.get("origin") == "analyst":
+        return ANALYST_ENTERED                          # kept after a later edit: the claim never came from the deck
     if c.get("status") == "edited":
         return "edited"                                 # an edit clears the AI label (deck-parser.md section 6)
     if c.get("origin") == "ai":

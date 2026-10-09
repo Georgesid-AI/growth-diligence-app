@@ -1309,7 +1309,10 @@ def confidence(candidate: Dict, peers: List[Dict]) -> Dict:
     """High, Medium or Low from the checks the parser already runs, never from a model's own score: the claim has a
     date, a unit (or currency), a heading or line that names its type, and its value is corroborated elsewhere in the
     deck. No failed check is High, one is Medium, two or more Low. A check that cannot apply to a claim with no
-    value (unit, corroboration) is skipped. `peers` are the candidates of the same deck."""
+    value (unit, corroboration) is skipped. `peers` are the candidates of the same deck. A claim the analyst added is
+    not scored: its confidence reads "Analyst-entered"."""
+    if candidate.get("origin") == "analyst":
+        return {"level": None, "failed": [], "text": "Analyst-entered"}
     values = claim_values(candidate)
     has_value = any(v["value"] is not None for v in values)
     named = candidate.get("claim_type") not in (UNKNOWN, "other") and \

@@ -15,7 +15,7 @@ Message shown to the user on the upload screen:
 We cannot read:
 - Scanned PDFs, images or charts saved as pictures. There is no text in them to read, only pixels.
 - Keynote files or Google Slides links. Please export them as PowerPoint or PDF first.
-If a number you need sits in a picture, add it as text or send the source spreadsheet."
+If a number you need sits in a picture, use Add claim and cite the page, or upload the source spreadsheet."
 
 If a file has no readable text, show: "No readable text found in this file. It may be scanned or made of images. Please upload a text-based version." Do not guess.
 
@@ -250,12 +250,16 @@ by position and from the slide title.
   reviewed ones included (DELETE /api/audits/{id}/decks/{deck_id}).
 
 ## 6. Approval
-Shown above the approval list, word for word:
-"Claims found in the deck
-These figures may inform the growth plan. They were identified automatically and may contain errors. Check each claim against its source slide, then choose:
-✓ Approve: Confirm this is a claim the company makes. It will be added to the claim register and tested against the data.
-✎ Edit: Correct the figure, type, unit or date, then approve the claim. It will be added to the claim register and tested against the data.
-✕ Reject: Exclude items that are not company claims, such as another company's figures, funds raised or chart axis labels. Rejected items remain in the record but are not used."
+Shown above the approval list, word for word (amended 2026-10-09, George; the Approve, Edit and Reject lines are gone):
+"Claims found in the uploaded documents
+These figures were extracted automatically and inform the growth plan. While errors are possible, you only need to check claims that look incorrect or implausible against their source slides before making your selection."
+- Add claim (2026-10-09, George): a button beside that text opens one row: metric (the type list below), value or range, unit,
+  currency, date or period, source document (a dropdown of the audit's uploaded documents) and page number. Source document and
+  page are required, and so is the value. POST /api/audits/{id}/decks/candidates stores it approved, with `origin` "analyst", the
+  snippet "Added by analyst", the source {file, slide or page, kind "analyst"} and the confidence "Analyst-entered" (not scored).
+  It is in the register at once and is matched and labelled by the same code as every other claim; it proposes a metric from its
+  type and its snippet like any claim whose line names none, so the analyst sets the metric in the register. In the register and the CSV
+  its `deck_reading` is "analyst-entered" (also after an edit). Removing its deck removes it.
 - Approve: status "approved".
 - The type list the analyst chooses from is the plan claim types of §2 with "Market size" for `market`; "Unknown –
   choose type" and the model's "Other" are listed but are not choices.

@@ -168,9 +168,31 @@ describe("the screen", () => {
     const header = q("compute-button"), chat = q("chat-calculate");
     expect(header.textContent).toBe("Calculate");
     expect(chat.textContent).toBe("Calculate");
-    expect(header.title).toBe("Reads the attached files and computes the metrics.");
+    expect(header.title).toBe("Attach the revenue file first. It is the only required file.");
     expect(chat.title).toBe(header.title);
     expect(header.className).toBe(chat.className);
+  });
+
+  test("both Calculate buttons are disabled with the same tooltip while no file is attached and none is loaded", async () => {
+    await mount();
+    expect(q("compute-button").disabled).toBe(true);
+    expect(q("chat-calculate").disabled).toBe(true);
+    expect(q("compute-button").title).toBe("Attach the revenue file first. It is the only required file.");
+    expect(q("compute-button-wrap").title).toBe(q("compute-button").title);
+    expect(q("chat-calculate-wrap").title).toBe(q("compute-button").title);
+  });
+
+  test("attaching a file enables both buttons together; so does a loaded file, and a file removed from the chat disables them again", async () => {
+    await mount();
+    await pick([file("rev.csv")]);
+    expect([q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([false, false]);
+    expect(q("compute-button").title).toBe("Reads the attached files and computes the metrics.");
+    expect(q("chat-calculate").title).toBe(q("compute-button").title);
+    await click(q("unstage-rev.csv"));
+    expect([q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([true, true]);
+    await act(async () => { root.unmount(); }); host.remove();
+    await mount({ datasets: [VIEW()] });
+    expect([q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([false, false]);
   });
 
   test("Send is greyed out while the text box is empty and carries its tooltip", async () => {
@@ -408,11 +430,11 @@ describe("Calculate (items 1 and 2)", () => {
   test("Calculate with no revenue file attached computes nothing and releases the revenue banner; before the press it is held back", async () => {
     const { calculatePressed } = require("@/lib/chatUpload");
     window.sessionStorage.clear();
-    api.getDatasets.mockResolvedValue([]);
     const seen = jest.fn();
     window.addEventListener("blockers:changed", seen);
-    await mount();
+    await mount({ datasets: [VIEW({ dtype: "crm", file: "crm.csv" })] });      // a file is loaded, but not the revenue file
     expect(calculatePressed("a1")).toBe(false);
+    expect(q("chat-calculate").disabled).toBe(false);
     await act(async () => { q("chat-calculate").click(); });
     await flush();
     window.removeEventListener("blockers:changed", seen);
@@ -431,10 +453,12 @@ describe("the mapping table", () => {
     await pickAndCalc([file("rev.csv")]);
   };
 
-  test("AI, unsure and undecided rows wait for a click; Compute is disabled and the status says how many", async () => {
+  test("AI, unsure and undecided rows wait for a click; the status says how many and Calculate does not compute", async () => {
     await mountPending();
     expect(q("status-revenue").textContent).toBe("2 columns wait for your decision");
-    expect(q("compute-button").disabled).toBe(true);
+    expect(q("compute-button").disabled).toBe(false);          // a file is loaded: the button only waits for a file (pressing it reads, then stops)
+    expect(q("compute-button").disabled).toBe(q("chat-calculate").disabled);
+    expect(api.computeAudit).not.toHaveBeenCalled();
     expect(q("bubble-head").textContent).toBe("Detected: Revenue lines · 1,240 rows");
     expect(q("bubble-head").textContent).not.toContain("confirmed");
     expect(q("source-Adj").textContent).toBe("AI suggestion – confirm");
@@ -630,7 +654,8 @@ describe("the mapping table", () => {
     await mount();
     await pickAndCalc([file("rev.csv")]);
     expect(q("status-revenue").textContent).toBe("Required field not mapped: currency");
-    expect(q("compute-button").disabled).toBe(true);
+    expect(q("compute-button").disabled).toBe(q("chat-calculate").disabled);
+    expect(api.computeAudit).not.toHaveBeenCalled();
   });
 });
 

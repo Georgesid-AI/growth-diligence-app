@@ -130,6 +130,13 @@ export function heldFields(columns, except) {
 // analyst presses Calculate. The "revenue file missing" banner appears only after that press.
 export const CALCULATE_LABEL = "Calculate";
 export const CALCULATE_TOOLTIP = "Reads the attached files and computes the metrics.";
+export const CALCULATE_NO_FILE_TOOLTIP = "Attach the revenue file first. It is the only required file.";
+/** Both Calculate buttons (header and chat) show this one state: off while nothing is attached and nothing is loaded, or
+ *  while a press is being worked. Pressing an enabled one with no revenue file still shows "Revenue file missing". */
+export const calculateState = ({ attached, loaded, busy }) => {
+  const noFile = attached === 0 && loaded === 0;
+  return { disabled: noFile || busy, tooltip: noFile ? CALCULATE_NO_FILE_TOOLTIP : CALCULATE_TOOLTIP };
+};
 export const CALCULATE_CLASS = "bg-sky-600 hover:bg-sky-500 gap-2";      // the header button and the chat button look the same
 export const SEND_TOOLTIP = "Send a message (for answering the chat's questions)";
 export const REVENUE_REQUIRED_NOTE = "The revenue file is the only required file. Every metric in the audit (ARR, NRR, churn, CAC payback) is computed from it; without it nothing can be calculated or verified.";
