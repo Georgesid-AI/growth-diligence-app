@@ -651,11 +651,12 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
         own_date = _nearest(dates, n)
         stacked = (column_periods or {}).get(ref_at(n["pos"]).get("col"))
         if own_date or stacked is None:
-            date = None if own_date else _borrow_date(nearby) or _borrow_date([box_period] if box_period else [])
+            # The year label under a bar is the figure's own date: taken after its own date, column header and box period, before
+            # any text further away, and "stated", so it is compared for a deck inconsistency (docs/specs/deck-parser.md section 2).
+            date = None if own_date else _borrow_date(nearby) or _borrow_date([box_period] if box_period else []) \
+                or _borrow_date([bar_label] if bar_label else [])
             stated = bool(own_date or date)
-            # The year label under a bar dates it, before any text further away; like every date taken by position it is
-            # not "stated", so it is never compared for a deck inconsistency (docs/specs/deck-parser.md section 2).
-            date = date or (None if own_date else _borrow_date([bar_label] if bar_label else []) or _borrow_date(context))
+            date = date or (None if own_date else _borrow_date(context))
         else:
             # The header stack states the column's period, or says it has none (a month or quarter
             # with no year above it, a relative column): never borrowed from anywhere else.

@@ -37,7 +37,7 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
   the page, sit the audit's set-up fields (2026-10-09, George): Reporting currency, Target ARR, Target date, As-of month and
   Fiscal year-end, each with one line of help under it, then the FX settings (§16), then the chat panel: a pure white message
   list with the input bar at the bottom. The deck panel stays below the chat panel, unchanged. The page uses the existing
-  light theme. The set-up fields save as they change (PUT /audits/{id}); a refused save names the field and the reason.
+  light theme. The set-up fields save as they change (PUT /audits/{id}); clearing the As-of month sends an explicit null and returns it to the default, the Target date cannot be cleared; a refused save names the field and the reason.
   Help lines, word for word: Reporting currency "All figures are converted to this currency. Use the company's home
   currency; the verdict and memo use it." · Target ARR "The plan figure the audit tests. Every claim's value at stake is
   measured against it." · Target date "When the plan says Target ARR is reached. Sets the forecast horizon." · As-of month

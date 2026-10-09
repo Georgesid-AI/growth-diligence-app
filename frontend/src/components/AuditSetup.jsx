@@ -43,7 +43,7 @@ export default function AuditSetup({ audit, setAudit, asOf, setAsOf }) {
       if (nextTarget) await save(field, { target_date: nextTarget });
     } else {
       setAsOf(nextAsOf);
-      if (nextAsOf) await save(field, { as_of_month: nextAsOf });
+      await save(field, { as_of_month: nextAsOf || null });      // cleared: back to the default, the last P&L month
     }
   };
   const saveArr = () => {

@@ -146,10 +146,10 @@ the text on the same row or above it, never below, within a quarter of the slide
 Bars (2026-10-09, George): a figure that sits above a bar with a year label under it ("2021", "FY2022"; two or more such
 labels on one line make the axis, each nothing but a year, the figure overlapping one of them from side to side, at most 0.6 of
 the page above it) takes that label as its date, after the figure's own date, its column header and its box period and before
-any text further away. Like every date taken by position it is not "stated", so it is never compared for a Deck inconsistency;
+any text further away. It is a real date ("stated", George 2026-10-09), so it is compared for a Deck inconsistency with other pages;
 confidence is scored with the date attached ("no date" no longer fails). Measured on the 10 public test decks
 (2026-10-09, `detect_candidates` with and without the rule): 3 of 225 candidates change, all zero2hero p17 (Turnover (£/year):
-278,085 → 2021, 415,107 → 2022, 550,508 → 2023, shown "2021"… instead of "per year"); no other deck changes. The p17 bars
+278,085 → 2021, 415,107 → 2022, 550,508 → 2023, shown "2021"… instead of "per year"); no other deck changes. Compared with page 19's table, the 2022 and 2023 bars (415,107, 550,508) are flagged and page 19's Revenue row gains the dates 2022 and 2023. The p17 bars
 for 2019 and 2020 (49,284, 181,193) are not candidates, being too far from the heading to take its type, before and after.
 A date is taken first from the figure's column header, then from a period line at the top of
 its text box ("23 Y/E" over "Gross Profit £150K" and "5K Users"), then as above. The box period

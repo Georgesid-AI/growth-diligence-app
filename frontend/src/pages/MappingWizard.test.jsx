@@ -131,6 +131,15 @@ describe("the screen", () => {
     await change(q("setup-target-date-input"), "30.06.2028");
     await act(async () => { q("setup-target-date-input").blur(); });
     expect(api.updateAudit).toHaveBeenLastCalledWith("a1", { target_date: "2028-06-30" });
+    // clearing the as-of month sends an explicit null: back to the default
+    await act(async () => { q("asof-month-input").focus(); });
+    await change(q("asof-month-input"), "2026-06-15");
+    await act(async () => { q("asof-month-input").blur(); });
+    expect(api.updateAudit).toHaveBeenLastCalledWith("a1", { as_of_month: "2026-06-15" });
+    await act(async () => { q("asof-month-input").focus(); });
+    await change(q("asof-month-input"), "");
+    await act(async () => { q("asof-month-input").blur(); });
+    expect(api.updateAudit).toHaveBeenLastCalledWith("a1", { as_of_month: null });
     // a target date not after the as-of month is refused before anything is sent
     api.updateAudit.mockClear();
     await act(async () => { q("asof-month-input").focus(); });

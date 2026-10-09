@@ -1038,7 +1038,9 @@ def test_zero2hero_page_19_reads_as_one_candidate_per_row_and_flags_the_panel():
     assert panel == [("ebitda", None, "2024-Q2", []), ("gross_profit", 150000, "2023", ["2023"]),
                      ("users", 5000, "2023", [])], "23 Y/E is a period, never a value"
     assert rows["Gross Profit"]["inconsistent_dates"] == ["2023"]
-    assert all(not c["inconsistent_dates"] for k, c in rows.items() if k != "Gross Profit")
+    # The page-17 bars (dated 2022 and 2023 by the year under each bar) differ from this table's Revenue for the same years.
+    assert rows["Revenue"]["inconsistent_dates"] == ["2022", "2023"]
+    assert all(not c["inconsistent_dates"] for k, c in rows.items() if k not in ("Gross Profit", "Revenue"))
 
 
 @pytest.mark.parametrize("text, date", [
@@ -1986,11 +1988,21 @@ def test_every_refused_save_names_the_rejected_field_and_the_reason(api):
     assert r.status_code == 400 and reasons(r).startswith("claim_type: ")
 
 
-def test_zero2hero_page_17_bars_take_the_year_under_each_bar_without_a_new_deck_inconsistency():
+def test_zero2hero_page_17_bars_take_the_year_under_each_bar_and_are_compared_with_other_pages():
     file = "05-zero2hero.pdf"
     deck = parser.parse_deck((DECKS / file).read_bytes(), file)
     found = claims.detect_candidates(deck["blocks"], file)
     bars = sorted((c["value"], c["target_date"], c["date_from"], c["period_basis"]) for c in found if _page(c) == 17 and c["claim_type"] == "revenue")
     assert bars == [(278085, "2021", "2021", "per year"), (415107, "2022", "2022", "per year"), (550508, "2023", "2023", "per year")]
-    assert all(not c["inconsistent_dates"] for c in found if _page(c) == 17), "a date taken by position is not compared"
+    flagged = {c["value"]: c["inconsistent_dates"] for c in found if _page(c) == 17 and c["claim_type"] == "revenue"}
+    assert flagged == {278085: [], 415107: ["2022"], 550508: ["2023"]}, "the bar's year is a real date: compared with page 19"
     assert all("no date" not in claims.confidence(c, found)["failed"] for c in found if _page(c) == 17 and c["claim_type"] == "revenue")
+
+
+def test_an_explicit_null_clears_the_as_of_month_and_an_absent_field_leaves_it(api):
+    client, db = api
+    assert client.put("/api/audits/audit-1", json={"as_of_month": "2026-06-30"}).json()["as_of_month"] == "2026-06-30"
+    assert client.put("/api/audits/audit-1", json={"fiscal_year_end": 3}).json()["as_of_month"] == "2026-06-30"
+    assert client.put("/api/audits/audit-1", json={"as_of_month": None}).json()["as_of_month"] is None
+    client.put("/api/audits/audit-1", json={"target_date": "2028-12-31"})
+    assert client.put("/api/audits/audit-1", json={"target_date": None}).json()["target_date"] == "2028-12-31", "never cleared"

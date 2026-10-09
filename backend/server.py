@@ -327,6 +327,8 @@ async def update_audit(audit_id: str, payload: AuditUpdate):
     if not a:
         raise HTTPException(404, "Audit not found")
     updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if "as_of_month" in payload.model_fields_set and payload.as_of_month is None:
+        updates["as_of_month"] = None       # an explicit null clears the as-of month back to the default (last P&L month)
     consent = updates.get("structure_reading_consent")
     if consent is not None and consent != (a.get("structure_reading_consent") is True):
         await db.audits.update_one({"id": audit_id},
