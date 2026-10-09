@@ -352,11 +352,11 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight }) {
   const startEdit = (value) => setDraft({
     claim_type: c.claim_type, value: value ?? c.value ?? "", value_high: c.value_high ?? "", unit: c.unit ?? "", currency: c.currency ?? "", target_date: c.target_date ?? "",
     values: (c.by_period || []).map((i) => i.value ?? ""),
-    answer: turnover.views.length ? initialAnswer : null, reason: "", note: "",
+    answer: turnover.views.length ? initialAnswer : null, reason: "",
   });
   // The answer to send: only a turnover claim that stays a revenue-type claim, whose Revenue / Transaction volume was changed.
   const newAnswer = (d) => (turnover.views.length && d.claim_type === "revenue" && d.answer !== initialAnswer && ["revenue", "volume"].includes(d.answer) ? d.answer : null);
-  const answerBlocked = (d) => { const a = newAnswer(d); return a !== null && !answerReady(a, d.reason, d.note, reasonRow); };
+  const answerBlocked = (d) => { const a = newAnswer(d); return a !== null && !answerReady(a, d.reason, reasonRow); };
   const saveEdit = async () => {
     const common = {
       claim_type: draft.claim_type,
@@ -406,7 +406,7 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight }) {
             {newAnswer(draft) ? (
               <div className="mt-1 min-w-[16rem]">
                 <TurnoverReason row={reasonRow} reason={draft.reason} setReason={(reason) => setDraft((d) => ({ ...d, reason }))}
-                  note={draft.note} setNote={(note) => setDraft((d) => ({ ...d, note }))} testId="edit-turnover-reason" />
+                  testId="edit-turnover-reason" />
               </div>
             ) : null}
           </td>

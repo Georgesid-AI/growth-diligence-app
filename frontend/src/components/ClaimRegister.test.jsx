@@ -222,48 +222,18 @@ test("there is no default reason: the buttons are disabled until one is chosen a
   expect([btn("revenue").disabled, btn("volume").disabled]).toEqual([false, true]);
   await pick(host, "deck_says_processed_volume");
   expect([btn("revenue").disabled, btn("volume").disabled]).toEqual([true, false]);
-  await pick(host, "other");
-  expect([btn("revenue").disabled, btn("volume").disabled]).toEqual([true, true]);        // "Other" needs its note first
+  await pick(host, "file_confirms");
+  expect([btn("revenue").disabled, btn("volume").disabled]).toEqual([false, false]);      // no note step: a reason is enough
 });
 
-async function typeNote(host, value) {
-  const input = host.querySelector('[data-testid="register-turnover-reason-note"]');
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, value);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-}
-
-test("Other opens a note box of at most 60 characters; the buttons stay off until it is filled, and a digit keeps them off", async () => {
-  const { host } = await mount([TURNOVER]);
-  const btn = (v) => host.querySelector(`[data-testid="register-turnover-${v}"]`);
-  const noteBox = () => host.querySelector('[data-testid="register-turnover-reason-note"]');
-  expect(noteBox()).toBeNull();
-  await pick(host, "deck_says_gross_revenue");
-  expect(noteBox()).toBeNull();                                // only "Other" asks for a note
-  await pick(host, "other");
-  expect(noteBox()).not.toBeNull();
-  expect(noteBox().maxLength).toBe(60);
-  expect([btn("revenue").disabled, btn("volume").disabled]).toEqual([true, true]);
-  await typeNote(host, "   ");
-  expect([btn("revenue").disabled, btn("volume").disabled]).toEqual([true, true]);        // blanks are not a note
-  await typeNote(host, "Revenue 2024");
-  expect([btn("revenue").disabled, btn("volume").disabled]).toEqual([true, true]);        // digits are refused
-  expect(host.textContent).toContain("Leave out file names, figures and cell values.");
-  await typeNote(host, "Founder said so on the call");
-  expect([btn("revenue").disabled, btn("volume").disabled]).toEqual([false, false]);
-  api.answerTurnover.mockResolvedValue({ register: [{ ...TURNOVER, turnover_state: "volume", turnover_note: "Transaction volume", turnover_set_by: "analyst" }] });
-  await act(async () => { btn("volume").click(); });
-  expect(api.answerTurnover).toHaveBeenCalledWith("a1", "t1", { as: "volume", reason: "other" });      // the note is not sent
-});
-
-test("the reason code reads 'Revenue file confirms' and is hidden when no revenue-file period exists to compare", async () => {
+test("the dropdown offers exactly three reasons, and 'Revenue file confirms' is hidden when no revenue-file period exists to compare", async () => {
   const { host } = await mount([TURNOVER, { ...TURNOVER, claim_id: "t2", file_note: "No revenue-file period to compare" }]);
   const options = (row) => [...row.querySelectorAll('[data-testid="register-turnover-reason"] option')].map((o) => o.textContent);
   const rows = host.querySelectorAll('[data-testid="claim-register-row"]');
-  expect(options(rows[0])).toEqual(["Reason…", "Deck says gross revenue", "Deck says processed volume", "Revenue file confirms", "Other"]);
-  expect(options(rows[1])).toEqual(["Reason…", "Deck says gross revenue", "Deck says processed volume", "Other"]);
-  expect(host.textContent).not.toContain("File confirms");
+  expect(options(rows[0])).toEqual(["Reason…", "Deck says gross revenue", "Deck says processed volume", "Revenue file confirms"]);
+  expect(options(rows[1])).toEqual(["Reason…", "Deck says gross revenue", "Deck says processed volume"]);
+  expect(host.textContent).not.toContain("Other");
+  expect(host.querySelector('[data-testid="register-turnover-reason-note"]')).toBeNull();
 });
 
 test("a stored 'Revenue file confirms' on a row with no revenue-file period shows no reason and keeps the buttons off", async () => {

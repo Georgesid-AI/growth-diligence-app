@@ -33,7 +33,7 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
 | Usage log as its own collection; a totals page | The Storage row (every collection is listed) and the Frontend row (four pages) | Usage counters on the audit document (`audits.usage`), tokens and cost read from `llm_calls`, and totals as a section of the audit list (AuditHub) |
 
 ## 2. Screen
-- The MappingWizard page keeps its route, its title and the header bar (Compute Metrics). Below the header, at the top of
+- The MappingWizard page keeps its route, its title and the header bar (Calculate). Below the header, at the top of
   the page, sit the audit's set-up fields (2026-10-09, George): Reporting currency, Target ARR, Target date, As-of month and
   Fiscal year-end, each with one line of help under it, then the FX settings (§16), then the chat panel: a pure white message
   list with the input bar at the bottom. The deck panel stays below the chat panel, unchanged. The page uses the existing
@@ -183,7 +183,7 @@ forces each failure.
 `GET /api/audits/{id}/blockers` returns at most three kinds of blocker. The `Layout` header renders them at the
 top of every audit view (Mapping, Dashboard, Diagnostics). The audit list has no banner. Nothing else may enter
 the banner: a test checks the kinds. One exception to "every audit view" (2026-10-09, §16): the S16a wording ("Revenue
-file missing") is held back until the first Calculate; S16d and the other two kinds show whenever the server reports them.
+file missing") is held back until the first Map; S16d and the other two kinds show whenever the server reports them.
 | Kind | Rule (decided 2026-10-08, Q4) | Text |
 |---|---|---|
 | required file missing | the revenue file (the only file marked required) is not uploaded (S16a), or is uploaded and its mapping is not confirmed (S16d); one blocker of this kind, with the text of the case that applies | S16a or S16d |
@@ -219,8 +219,8 @@ deck_text, column_mappings (every saved version) and the rest. There is no mappi
 - Rule 21: "Three hard blockers, and nothing else, render at the top of every audit view: the revenue file Missing,
   a top-5 claim Contradicted (a miss or a beat), and a revenue reconciliation gap above 2% over the window of
   docs/specs/chat-upload.md §6.2. Per-month gaps go in the reconciliation evidence table, never in the banner."
-  Amended 2026-10-09 (§16): the revenue-file blocker reads S16a from the first Calculate and S16d at all times; the line in
-  CLAUDE.md carries that wording.
+  Amended 2026-10-09 (§16): the revenue-file blocker reads S16a from the first Map (§16; before, the first Calculate) and S16d at all times; the line in
+  CLAUDE.md still says "Calculate" and needs the same edit.
 - Rule 22: "Delete audit requires typing the company name and removes every document of the audit in every
   collection, saved mappings and stored files included."
 
@@ -314,11 +314,11 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 | S10 | buttons | Confirm · Correct · Not used (n) |
 | S11 | reason codes | Header is misleading · Another column is the right one · Values do not fit this field · Wrong kind of date · Column not needed · Other (opens S20) |
 | S12 | model failed | AI reading unavailable – these columns need your decision. |
-| S13 | status line | Ready for compute · {n} columns wait for your decision · Required field not mapped: {field} |
+| S13 | status line | Ready for calculation · {n} columns wait for your decision · Required field not mapped: {field} |
 | S14 | same file | Same file as before: saved mapping v{n} applied. |
 | S15 | AI row | AI suggestion – confirm (the column "Mapped by", S24; amended 2026-10-08, it was "AI suggestion, not verified"). The label "AI suggestion, not verified" stays on model-read claim values, rule 18. |
-| S16a | banner | Revenue file missing: upload and map it to compute metrics. (Only when no revenue file exists; shown from the first Calculate, §16.) |
-| S16d | banner | Revenue file uploaded – confirm the mapping to compute metrics. (A revenue file exists and its mapping is not confirmed; always shown, in every tab and on every day: a stored file means Calculate was pressed.) |
+| S16a | banner | Revenue file missing: upload and map it to compute metrics. (Only when no revenue file exists; shown from the first Map, §16.) |
+| S16d | banner | Revenue file uploaded – confirm the mapping to compute metrics. (A revenue file exists and its mapping is not confirmed; always shown, in every tab and on every day: a stored file means Map was pressed.) |
 | S16b | banner | Top-5 claim contradicted: {claim type} {claimed} vs {observed} observed ({deck}, {page}). |
 | S16c | banner | Revenue file and P&L differ by {x}% over {first}–{last} ({file total} vs {P&L total}). |
 | S17 | narrative failed | Today's text, unchanged: "Narrative could not be generated. The computed metrics below are unaffected — they come from the calculation engine, not the narrative." |
@@ -394,15 +394,22 @@ Revenue: the column maps as before. Volume: the column is Not used and the engin
 (`money_kind`) is saved with the mapping version and reused for the same file and the same headers. Closed codes only
 (revenue, volume): no free text. Decision `{column, action: "confirm", money_kind}`.
 
-## 16. Calculate, the revenue banner and the FX rates (amended 2026-10-09, George)
+## 16. Map, Calculate, the revenue banner and the FX rates (amended 2026-10-09, George)
 - A file dropped in the chat (or picked with the paperclip) is only attached: it shows as an attachment, "attached – not read
-  yet", with a remove button. Nothing is read, mapped, stored or computed until the analyst presses Calculate. The drop
-  zone stays after a drop. Calculate reads the attached files one at a time in drop order, then, if a revenue file is loaded
-  and no column waits for a decision, computes the metrics; otherwise it stops and the page says what is left.
+  yet", with a remove button. Nothing is read, mapped, stored or computed until the analyst presses Map. The drop zone stays
+  after a drop.
+- **Map** reads the attached files one at a time in drop order and maps them (rules, then the AI for the columns the rules
+  cannot decide, then the confirmation list of §4). It never computes. It is enabled when at least one file is attached or
+  loaded, and not while a press is being worked.
+- **Calculate** computes the metrics. It is enabled only when the mapping is complete: a revenue file is loaded, no attached
+  file is unread, and no column of any loaded file waits for a decision or has a required field unmapped. Otherwise it is
+  disabled with the tooltip "Map the revenue file and confirm every column that waits for you first." The header button and the
+  chat button are both Calculate and share one state: they are always both enabled or both disabled. A second press while a
+  press is being worked does nothing.
 - Banner (supersedes the "every audit view" timing of §6.2 and rule 21 for the S16a wording only): "Revenue file missing" (S16a)
-  is not shown when the screen opens. It shows after Calculate has been pressed (kept per audit for the browser tab's session;
+  is not shown when the screen opens. It shows after Map has been pressed (kept per audit for the browser tab's session;
   it is never reset by a compute) and the server still reports it, on every audit view, until a file is uploaded. "Revenue file
-  uploaded – confirm the mapping" (S16d) always shows when the server reports it: a stored file means Calculate was pressed, here
+  uploaded – confirm the mapping" (S16d) always shows when the server reports it: a stored file means Map was pressed, here
   or in another tab. The flag is set after the last attached file is read, and not while a file still waits for its type or a
   replace answer, so "missing" never shows while a file is being asked about; the banner is refreshed once after the last file
   and again when that answer is read. With no revenue file, one line follows S16a: "The
@@ -413,10 +420,8 @@ Revenue: the column maps as before. Volume: the column is Not used and the engin
   and to the deck claims, need no file, and survive a replaced revenue file. Rates saved with a revenue file before this change
   are still read, under the audit's own rates. Cause found: a re-upload wrote `fx: {}` over the saved rates, and rates could
   only be entered once a revenue file was loaded.
-- The header Compute Metrics button is Calculate: it reads the attached files first, then computes under the same conditions. It is
-  enabled while a file is attached.
 - Saving the FX rates marks a computed audit's metrics stale and recomputes it, as the existing rule does for any input the engine
-  reads (PUT /fx). This is the one computation that does not wait for Calculate; "nothing is computed until Calculate" covers files
+  reads (PUT /fx). This is the one computation that does not wait for Calculate; "nothing is read until Map" covers files
   attached in the chat. The deck panel reads the claims again after a save, so converted figures replace "FX rate needed". PUT /fx
   saves the whole set the screen shows: rates an older version saved with the revenue file move to the audit and the file's copy
   is cleared, so a removed rate stays removed.

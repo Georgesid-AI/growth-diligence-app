@@ -288,11 +288,6 @@ describe("a turnover claim asks Revenue or Volume in its own row (05-zero2hero.p
       Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(el, value);
       el.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    const typeNote = async (value) => act(async () => {
-      const input = q("edit-turnover-reason-note");
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, value);
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
     const options = () => [...q("edit-claim-type").querySelectorAll("option")].map((o) => o.textContent);
 
     test("a Transaction volume claim opens with Transaction volume selected, not the first item, and saves unchanged without a new answer", async () => {
@@ -334,6 +329,8 @@ describe("a turnover claim asks Revenue or Volume in its own row (05-zero2hero.p
       await openEdit("t23");
       await setSelect(q("edit-claim-type"), "revenue");
       expect(q("edit-turnover-reason")).not.toBeNull();
+      expect([...q("edit-turnover-reason").querySelectorAll("option")].map((o) => o.textContent)).toEqual(
+        ["Reason…", "Deck says gross revenue", "Deck says processed volume", "Revenue file confirms"]);
       expect(q("edit-save").disabled).toBe(true);
       await setSelect(q("edit-turnover-reason"), "deck_says_processed_volume");       // contradicts Revenue: the server refuses it
       expect(q("edit-save").disabled).toBe(true);
@@ -355,31 +352,12 @@ describe("a turnover claim asks Revenue or Volume in its own row (05-zero2hero.p
       expect(api.answerTurnover).toHaveBeenCalledWith("a1", "t23", { as: "volume", reason: "deck_says_processed_volume" });
     });
 
-    test("Other opens the note box and blocks Save and approve until it is filled; a digit keeps it blocked", async () => {
-      await reload([answered("volume")]);
-      api.updateCandidate.mockResolvedValue({ id: "t23", status: "edited" });
-      api.answerTurnover.mockResolvedValue({ register: [] });
-      await openEdit("t23");
-      await setSelect(q("edit-claim-type"), "revenue");
-      expect(q("edit-turnover-reason-note")).toBeNull();
-      await setSelect(q("edit-turnover-reason"), "other");
-      expect(q("edit-turnover-reason-note")).not.toBeNull();
-      expect(q("edit-turnover-reason-note").maxLength).toBe(60);
-      expect(q("edit-save").disabled).toBe(true);
-      await typeNote("Revenue 2023");
-      expect(q("edit-save").disabled).toBe(true);
-      await typeNote("Analyst call with the CFO");
-      expect(q("edit-save").disabled).toBe(false);
-      await act(async () => { q("edit-save").click(); });
-      expect(api.answerTurnover).toHaveBeenCalledWith("a1", "t23", { as: "revenue", reason: "other" });
-    });
-
-    test("an answer in the edit form hides 'Revenue file confirms' when no revenue-file period exists", async () => {
+    test("the edit form offers the same three reasons, and hides 'Revenue file confirms' when no revenue-file period exists", async () => {
       await reload([answered("volume", "deck_says_processed_volume", { file_note: "No revenue-file period to compare" })]);
       await openEdit("t23");
       await setSelect(q("edit-claim-type"), "revenue");
       expect([...q("edit-turnover-reason").querySelectorAll("option")].map((o) => o.textContent)).toEqual(
-        ["Reason…", "Deck says gross revenue", "Deck says processed volume", "Other"]);
+        ["Reason…", "Deck says gross revenue", "Deck says processed volume"]);
     });
 
     test("a claim that is not a turnover claim has no Transaction volume entry and asks for no reason", async () => {
