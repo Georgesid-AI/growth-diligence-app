@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getAudit, saveMapping, computeAudit, getRevenueCustomers, updateAudit, reportUsage, saveFx } from "@/lib/api";
 import { asOfInputValue } from "@/lib/auditForm";
-import { CALCULATE_CLASS, CALCULATE_LABEL, calculateState } from "@/lib/chatUpload";
+import { CALCULATE_CLASS, CALCULATE_LABEL, calculateState, mapState } from "@/lib/chatUpload";
 import { seeGlossary } from "@/lib/glossary";
 
 export default function MappingWizard() {
@@ -21,45 +21,35 @@ export default function MappingWizard() {
   const [views, setViews] = useState([]);
   const [computing, setComputing] = useState(false);
   const [asOf, setAsOf] = useState("");
-  const [reading, setReading] = useState(false);        // Calculate is reading files: the header button waits
+  const computingRef = useRef(false);
+  const [mapping, setMapping] = useState(false);        // Map is reading files: both buttons wait
   const [attached, setAttached] = useState(0);        // files attached in the chat and not read yet
-  const calculateRef = useRef(null);                  // UploadChat's Calculate: the header button runs the same path
   const [fxVersion, setFxVersion] = useState(0);      // bumped when a rate is saved: the deck panel reloads
 
   const load = useCallback(() => getAudit(id).then((a) => { setAudit(a); setAsOf(asOfInputValue(a.as_of_month)); }), [id]);
   useEffect(() => { load(); reportUsage(id, { screen: "mapping" }); }, [load, id]);
 
-  // Compute waits for the analyst: no AI or unsure row left, every required field of each file mapped (section 4.3).
-  // One state for both Calculate buttons (this header one and the chat's): off while no file is attached or loaded.
-  const calc = calculateState({ attached, loaded: views.length, busy: computing || reading });
-  const hasRevenue = views.some((v) => v.dtype === "revenue");
-  // The header button is Calculate: it reads whatever is attached first, so a new file is never left "attached – not read yet"
-  // while the old one is computed.
-  const headerCompute = () => (calculateRef.current ? calculateRef.current() : runCompute());
+  // Calculate waits for the analyst: no AI or unsure row left, every required field of each file mapped (section 4.3).
+  // One state for both Calculate buttons (this header one and the chat's); Map is on whenever a file is attached or loaded.
+  const busy = computing || mapping;
+  const map = mapState({ attached, loaded: views.length, busy });
+  const calc = calculateState({ attached, views, busy });
 
   const runCompute = async () => {
+    if (calc.disabled || computingRef.current) return;       // a second press in the same tick finds the state not yet re-rendered
+    computingRef.current = true;
     setComputing(true);
     try {
       await updateAudit(id, { as_of_month: asOf || null });
       await computeAudit(id);
-      toast.success("Metrics computed");
+      toast.success("Metrics calculated");
       nav(`/audit/${id}/dashboard`);
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Compute failed — check required fields are mapped");
+      toast.error(e.response?.data?.detail || "Calculation failed — check required fields are mapped");
     } finally {
+      computingRef.current = false;
       setComputing(false);
     }
-  };
-
-  // Calculate (UploadChat has read the attached files): with no revenue file the page stops and the banner says why; with
-  // a revenue file whose columns all have a decision, the metrics are computed.
-  const onCalculate = async (loaded) => {
-    if (!loaded.some((v) => v.dtype === "revenue")) return;
-    if (!loaded.every((v) => v.pending === 0 && v.missing_required.length === 0)) {
-      toast.error("Some columns still wait for your decision");
-      return;
-    }
-    await runCompute();
   };
 
   if (!audit) {
@@ -75,7 +65,7 @@ export default function MappingWizard() {
         <div className="flex items-end gap-3">
           {/* A disabled button shows no tooltip of its own, so the wrapper carries it. */}
           <span title={calc.tooltip} data-testid="compute-button-wrap">
-            <Button size="sm" data-testid="compute-button" onClick={headerCompute} disabled={calc.disabled}
+            <Button size="sm" data-testid="compute-button" onClick={runCompute} disabled={calc.disabled}
               className={CALCULATE_CLASS} title={calc.tooltip}>
               {computing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{CALCULATE_LABEL}
             </Button>
@@ -87,7 +77,8 @@ export default function MappingWizard() {
 
       <div className="space-y-5">
         <FxSettings audit={audit} onSaved={() => setFxVersion((n) => n + 1)} />
-        <UploadChat audit={audit} onViews={setViews} onCalculate={onCalculate} calculateRef={calculateRef} onStaged={setAttached} onCalculating={setReading} calculateButton={calc}
+        <UploadChat audit={audit} onViews={setViews} onCalculate={runCompute} onStaged={setAttached} onMapping={setMapping}
+          mapButton={map} calculateButton={calc} computing={computing}
           extras={(view) => <RevenueSettings key={`${view.file}-${view.uploaded_at}`} audit={audit} view={view} />} />
         <DeckPanel auditId={audit.id} reloadKey={fxVersion} />
       </div>

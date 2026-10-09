@@ -43,8 +43,22 @@ export const contradicts = (answer, reason) => (answer === "volume" && reason ==
 
 export const TURNOVER_REASONS = [
   ["deck_says_gross_revenue", "Deck says gross revenue"], ["deck_says_processed_volume", "Deck says processed volume"],
-  ["file_confirms", "File confirms"], ["other", "Other"],
+  ["file_confirms", "Revenue file confirms"], ["other", "Other"],
 ];
+/** The row's own note when no revenue file covers the claim's period (backend NO_FILE_PERIOD). */
+export const NO_FILE_PERIOD = "No revenue-file period to compare";
+/** The reason codes a row offers: "Revenue file confirms" has nothing to confirm with when no revenue file covers the period. */
+export const reasonsFor = (view) => TURNOVER_REASONS.filter(([code]) => !(code === "file_confirms" && view?.file_note === NO_FILE_PERIOD));
+/** The note beside the reason "Other" (chat-upload.md S20): at most 60 characters, no digits. Cell text, file names and the
+ *  company name cannot be told apart here. */
+export const TURNOVER_NOTE_MAX = 60;
+export const TURNOVER_NOTE_PLACEHOLDER = "Why? Up to 60 characters; no file names, figures or names.";
+export const TURNOVER_NOTE_REFUSED = "Leave out file names, figures and cell values.";
+export const noteRefused = (note) => /\d/.test(note) || note.length > TURNOVER_NOTE_MAX;
+/** Whether an answer may be sent: a reason that fits, offered on this row, and for "Other" a filled note. */
+export const answerReady = (answer, reason, note, view) =>
+  Boolean(reason) && reasonsFor(view).some(([code]) => code === reason) && !contradicts(answer, reason)
+  && (reason !== "other" || (note.trim() !== "" && !noteRefused(note)));
 export const TURNOVER_QUESTION = "Revenue or transaction volume?";
 // The deck list (section 11 point 8): a turnover claim never reads "Revenue" before the analyst confirms it.
 export const TURNOVER_CONFIRM = "Turnover – confirm:";

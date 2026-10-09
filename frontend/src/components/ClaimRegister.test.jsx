@@ -223,7 +223,70 @@ test("there is no default reason: the buttons are disabled until one is chosen a
   await pick(host, "deck_says_processed_volume");
   expect([btn("revenue").disabled, btn("volume").disabled]).toEqual([true, false]);
   await pick(host, "other");
+  expect([btn("revenue").disabled, btn("volume").disabled]).toEqual([true, true]);        // "Other" needs its note first
+});
+
+async function typeNote(host, value) {
+  const input = host.querySelector('[data-testid="register-turnover-reason-note"]');
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+test("Other opens a note box of at most 60 characters; the buttons stay off until it is filled, and a digit keeps them off", async () => {
+  const { host } = await mount([TURNOVER]);
+  const btn = (v) => host.querySelector(`[data-testid="register-turnover-${v}"]`);
+  const noteBox = () => host.querySelector('[data-testid="register-turnover-reason-note"]');
+  expect(noteBox()).toBeNull();
+  await pick(host, "deck_says_gross_revenue");
+  expect(noteBox()).toBeNull();                                // only "Other" asks for a note
+  await pick(host, "other");
+  expect(noteBox()).not.toBeNull();
+  expect(noteBox().maxLength).toBe(60);
+  expect([btn("revenue").disabled, btn("volume").disabled]).toEqual([true, true]);
+  await typeNote(host, "   ");
+  expect([btn("revenue").disabled, btn("volume").disabled]).toEqual([true, true]);        // blanks are not a note
+  await typeNote(host, "Revenue 2024");
+  expect([btn("revenue").disabled, btn("volume").disabled]).toEqual([true, true]);        // digits are refused
+  expect(host.textContent).toContain("Leave out file names, figures and cell values.");
+  await typeNote(host, "Founder said so on the call");
   expect([btn("revenue").disabled, btn("volume").disabled]).toEqual([false, false]);
+  api.answerTurnover.mockResolvedValue({ register: [{ ...TURNOVER, turnover_state: "volume", turnover_note: "Transaction volume", turnover_set_by: "analyst" }] });
+  await act(async () => { btn("volume").click(); });
+  expect(api.answerTurnover).toHaveBeenCalledWith("a1", "t1", { as: "volume", reason: "other" });      // the note is not sent
+});
+
+test("the reason code reads 'Revenue file confirms' and is hidden when no revenue-file period exists to compare", async () => {
+  const { host } = await mount([TURNOVER, { ...TURNOVER, claim_id: "t2", file_note: "No revenue-file period to compare" }]);
+  const options = (row) => [...row.querySelectorAll('[data-testid="register-turnover-reason"] option')].map((o) => o.textContent);
+  const rows = host.querySelectorAll('[data-testid="claim-register-row"]');
+  expect(options(rows[0])).toEqual(["Reason…", "Deck says gross revenue", "Deck says processed volume", "Revenue file confirms", "Other"]);
+  expect(options(rows[1])).toEqual(["Reason…", "Deck says gross revenue", "Deck says processed volume", "Other"]);
+  expect(host.textContent).not.toContain("File confirms");
+});
+
+test("a stored 'Revenue file confirms' on a row with no revenue-file period shows no reason and keeps the buttons off", async () => {
+  const { host } = await mount([{ ...TURNOVER, turnover_reason: "file_confirms", file_note: "No revenue-file period to compare" }]);
+  expect(host.querySelector('[data-testid="register-turnover-reason"]').value).toBe("");
+  expect(host.querySelector('[data-testid="register-turnover-revenue"]').disabled).toBe(true);
+});
+
+test("the reason, Revenue and Volume sit on one line in that order; the answered button is blue and both buttons keep one size", async () => {
+  const { host } = await mount([{ ...TURNOVER, turnover_state: "volume", turnover_note: "Transaction volume", turnover_set_by: "analyst",
+    turnover_reason: "deck_says_processed_volume" }]);
+  const reason = host.querySelector('[data-testid="register-turnover-reason"]');
+  const revenue = host.querySelector('[data-testid="register-turnover-revenue"]');
+  const volume = host.querySelector('[data-testid="register-turnover-volume"]');
+  const line = reason.parentElement;
+  expect([...line.children].map((n) => n.tagName)).toEqual(["SELECT", "BUTTON", "BUTTON"]);
+  expect([...line.children].map((n) => n.getAttribute("data-testid"))).toEqual(
+    ["register-turnover-reason", "register-turnover-revenue", "register-turnover-volume"]);
+  expect(line.className).toContain("flex-nowrap");
+  expect(line.className).not.toContain("flex-wrap");
+  expect(volume.className).toContain("bg-sky-600");
+  expect(revenue.className).not.toContain("bg-sky-600");
+  expect(revenue.className.match(/\bh-\d+\b/)[0]).toBe(volume.className.match(/\bh-\d+\b/)[0]);
 });
 
 test("a row with no rate names the pair and links to the FX settings", async () => {

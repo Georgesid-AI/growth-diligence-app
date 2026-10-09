@@ -4,8 +4,8 @@ import { Check, ChevronDown, ChevronRight, FileText, Loader2, Pencil, Plus, Uplo
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import FxText from "@/components/FxText";
-import { TurnoverCell } from "@/components/ClaimRegister";
-import { UNVERIFIED, metricOptions, turnoverHeading, turnoverOf } from "@/lib/claimRegister";
+import { TurnoverCell, TurnoverReason } from "@/components/ClaimRegister";
+import { NO_FILE_PERIOD, UNVERIFIED, answerReady, metricOptions, turnoverHeading, turnoverOf } from "@/lib/claimRegister";
 import { addClaim, answerTurnover, getDecks, removeDeck, updateCandidate, uploadDeck } from "@/lib/api";
 import { describeRequestError } from "@/lib/requestError";
 import {
@@ -25,6 +25,13 @@ const STATUS_STYLE = {
 const CONFIDENCE_STYLE = { High: "text-emerald-700", Medium: "text-amber-800", Low: "text-rose-700" };
 export const MOVE_NOTICE_MS = 4000;
 const selectClass = "h-8 rounded-md border border-[#E5E7EB] bg-white px-2 text-xs";
+// The edit form's metric list holds one entry that is not a claim type: a turnover claim answered Transaction volume.
+const VOLUME_OPTION = "transaction_volume";
+const VOLUME_LABEL = "Transaction volume";
+const ASK_OPTION = "turnover_ask";
+/** What the edit form's metric dropdown shows: the stored answer of a turnover claim, else its type. */
+const typeValue = (d) => (d.claim_type !== "revenue" || !d.answer ? d.claim_type
+  : d.answer === "volume" ? VOLUME_OPTION : d.answer === "ask" ? ASK_OPTION : d.claim_type);
 
 /** Board deck or growth plan: the scope message, the upload, and the candidate approval list. */
 export default function DeckPanel({ auditId, reloadKey = 0 }) {
@@ -337,10 +344,19 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight }) {
   const turnover = turnoverOf(c);                  // a turnover claim never reads "Revenue" before the analyst confirms it
   const choices = readingChoices(c);               // a figure that reads two ways: the default is pre-selected
   // Edit, optionally starting from the other reading of an ambiguous figure.
+  // A turnover claim's metric is what the analyst answered: Revenue, Transaction volume, or nothing yet ("ask"). The edit form
+  // opens on that answer; changing it is answering "Revenue or volume?" and needs a reason, as the row's buttons do.
+  const answered = turnover.views.map((v) => (v.turnover_set_by === "analyst" ? v.turnover_state : "ask"));
+  const initialAnswer = answered.length && answered.every((a) => a === answered[0]) ? answered[0] : "ask";
+  const reasonRow = { file_note: turnover.views.length && turnover.views.every((v) => v.file_note === NO_FILE_PERIOD) ? NO_FILE_PERIOD : null };
   const startEdit = (value) => setDraft({
     claim_type: c.claim_type, value: value ?? c.value ?? "", value_high: c.value_high ?? "", unit: c.unit ?? "", currency: c.currency ?? "", target_date: c.target_date ?? "",
     values: (c.by_period || []).map((i) => i.value ?? ""),
+    answer: turnover.views.length ? initialAnswer : null, reason: "", note: "",
   });
+  // The answer to send: only a turnover claim that stays a revenue-type claim, whose Revenue / Transaction volume was changed.
+  const newAnswer = (d) => (turnover.views.length && d.claim_type === "revenue" && d.answer !== initialAnswer && ["revenue", "volume"].includes(d.answer) ? d.answer : null);
+  const answerBlocked = (d) => { const a = newAnswer(d); return a !== null && !answerReady(a, d.reason, d.note, reasonRow); };
   const saveEdit = async () => {
     const common = {
       claim_type: draft.claim_type,
@@ -353,14 +369,25 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight }) {
       value_high: draft.value_high === "" ? null : Number(draft.value_high),
       target_date: draft.target_date.trim() || null,
     };
-    if (await onSave(c, payload)) setDraft(null);
+    if (!(await onSave(c, payload))) return;
+    const as = newAnswer(draft);
+    if (as) {
+      try {
+        for (const view of turnover.views) await onAnswer(view, { as, reason: draft.reason });     // as the Revenue / Volume buttons record it
+      } catch (e) { return; }                                  // the toast names the refusal; the form stays open
+    }
+    setDraft(null);
   };
   const set = (k) => (e) => setDraft((d) => ({ ...d, [k]: e.target.value }));
   // A claim changed to a count type is a count: no currency, and the unit "count" (the analyst may type the noun counted).
   const setType = (e) => {
     const claim_type = e.target.value;
-    setDraft((d) => (COUNT_TYPES.includes(claim_type) && !COUNT_TYPES.includes(d.claim_type)
-      ? { ...d, claim_type, currency: "", unit: COUNT_UNIT } : { ...d, claim_type }));
+    if (turnover.views.length && claim_type === VOLUME_OPTION) { setDraft((d) => ({ ...d, answer: "volume" })); return; }
+    setDraft((d) => {
+      const answer = turnover.views.length ? (claim_type === "revenue" ? "revenue" : initialAnswer) : d.answer;    // another type is not an answer
+      return COUNT_TYPES.includes(claim_type) && !COUNT_TYPES.includes(d.claim_type)
+        ? { ...d, claim_type, answer, currency: "", unit: COUNT_UNIT } : { ...d, claim_type, answer };
+    });
   };
   const setValue = (k) => (e) => setDraft((d) => ({ ...d, values: d.values.map((v, i) => (i === k ? e.target.value : v)) }));
 
@@ -370,10 +397,18 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight }) {
       {draft ? (
         <>
           <td className="py-2 pr-3">
-            <select value={draft.claim_type} onChange={setType} className={selectClass} data-testid="edit-claim-type">
+            <select value={typeValue(draft)} onChange={setType} className={selectClass} data-testid="edit-claim-type">
               {needsType(draft) && <option value={draft.claim_type} disabled>{typeLabel(draft.claim_type)}{draft.claim_type === "unknown" ? "" : ": choose a type"}</option>}
-              {CLAIM_TYPES.map((t) => <option key={t} value={t}>{typeLabel(t)}</option>)}
+              {turnover.views.length > 0 && draft.claim_type === "revenue" && draft.answer === "ask" && <option value={ASK_OPTION} disabled>Turnover – choose</option>}
+              {CLAIM_TYPES.flatMap((t) => (t === "revenue" && turnover.views.length ? [t, VOLUME_OPTION] : [t])).map((t) => (
+                <option key={t} value={t}>{t === VOLUME_OPTION ? VOLUME_LABEL : typeLabel(t)}</option>))}
             </select>
+            {newAnswer(draft) ? (
+              <div className="mt-1 min-w-[16rem]">
+                <TurnoverReason row={reasonRow} reason={draft.reason} setReason={(reason) => setDraft((d) => ({ ...d, reason }))}
+                  note={draft.note} setNote={(note) => setDraft((d) => ({ ...d, note }))} testId="edit-turnover-reason" />
+              </div>
+            ) : null}
           </td>
           <td className="py-2 pr-3">
             <div className="flex gap-1 flex-wrap">
@@ -461,7 +496,7 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight }) {
       <td className="py-2 whitespace-nowrap">
         {draft ? (
           <div className="flex gap-1">
-            <Button size="sm" onClick={saveEdit} disabled={needsType(draft)} className="h-7 bg-sky-600 hover:bg-sky-500" data-testid="edit-save">Save and approve</Button>
+            <Button size="sm" onClick={saveEdit} disabled={needsType(draft) || answerBlocked(draft)} title={answerBlocked(draft) ? "Choose a reason for the answer first." : undefined} className="h-7 bg-sky-600 hover:bg-sky-500" data-testid="edit-save">Save and approve</Button>
             <Button size="sm" variant="outline" onClick={() => setDraft(null)} className="h-7">Cancel</Button>
           </div>
         ) : (

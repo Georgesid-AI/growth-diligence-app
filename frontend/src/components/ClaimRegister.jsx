@@ -8,7 +8,7 @@ import DateField from "@/components/DateField";
 import { answerTurnover, claimsCsvUrl, getClaimRegister, updateClaimInputs } from "@/lib/api";
 import {
   DOWNLOAD_LABEL, GATE_BUDGET_MAX, GATE_DIRECTIONS, GATE_METRIC_MAX, GATE_METRIC_PLACEHOLDER, GATE_NEEDED, KEY_GATE_LABEL, NO_METRIC,
-  REGISTER_COLUMNS, REGISTER_HEADING, TURNOVER_QUESTION, TURNOVER_REASONS, contradicts, claimCellText, rateHover, takeRateText, evidenceLines, gapText, gateContext, gateEdit, metricOptions, needsMetricName,
+  REGISTER_COLUMNS, REGISTER_HEADING, TURNOVER_NOTE_MAX, TURNOVER_NOTE_PLACEHOLDER, TURNOVER_NOTE_REFUSED, TURNOVER_QUESTION, answerReady, noteRefused, reasonsFor, claimCellText, rateHover, takeRateText, evidenceLines, gapText, gateContext, gateEdit, metricOptions, needsMetricName,
   observedText, overlapsText, readingText, registerRows, segmentOptions, valueAtStakeText,
 } from "@/lib/claimRegister";
 import { describeRequestError } from "@/lib/requestError";
@@ -75,11 +75,36 @@ function GateCell({ row, ccy, onSave }) {
   );
 }
 
+/** The reason code of a turnover answer, then `children` (the Revenue and Volume buttons) on the same line, and for "Other" its
+ *  note under that line (max 60 characters, no digits). The deck list's edit form uses the same control, so an answer there is
+ *  recorded as the buttons record it. */
+export function TurnoverReason({ row, reason, setReason, note, setNote, testId = "register-turnover-reason", children }) {
+  const options = reasonsFor(row);
+  const shown = options.some(([code]) => code === reason) ? reason : "";      // a stored code this row no longer offers shows blank
+  return (
+    <div className="space-y-1">
+      <div className="flex flex-nowrap items-center gap-1">
+        <select value={shown} onChange={(e) => setReason(e.target.value)} className={`${selectClass} shrink-0`} data-testid={testId}>
+          <option value="">Reason…</option>
+          {options.map(([code, label]) => <option key={code} value={code}>{label}</option>)}
+        </select>
+        {children}
+      </div>
+      {shown === "other" && (
+        <Input value={note} maxLength={TURNOVER_NOTE_MAX} placeholder={TURNOVER_NOTE_PLACEHOLDER} onChange={(e) => setNote(e.target.value)}
+          className="h-7 text-xs" data-testid={`${testId}-note`} />
+      )}
+      {shown === "other" && noteRefused(note) && <div className="text-[10px] text-rose-700">{TURNOVER_NOTE_REFUSED}</div>}
+    </div>
+  );
+}
+
 /** A turnover claim (claim-matching.md section 11): the label or the question, and one click, Revenue or Volume, with a reason
  *  code. It is shown on every turnover row, so an answer can be changed. The deck list passes `heading` ("Turnover – confirm:")
  *  for a claim the analyst has not confirmed: it stands in place of the label and the question. */
 export function TurnoverCell({ row, onAnswer, heading }) {
   const [reason, setReason] = useState(row.turnover_reason || "");     // no default: the analyst picks the reason
+  const [note, setNote] = useState("");                                 // for "Other" only; asked for, never sent
   const take = takeRateText(row);
   const suggested = row.turnover_state === "ask" ? row.turnover_suggested : null;      // pre-selected, still to be confirmed
   return (
@@ -98,17 +123,15 @@ export function TurnoverCell({ row, onAnswer, heading }) {
       {row.deck_revenue_note && <div className="font-mono text-[11px] text-slate-700" data-testid="register-deck-revenue">{row.deck_revenue_note}</div>}
       {row.file_note && <div className="text-[11px] text-slate-600" data-testid="turnover-file-note">{row.file_note}</div>}
       {!heading && <div className="text-[10px] text-slate-500">{TURNOVER_QUESTION}</div>}
-      <div className="flex flex-wrap items-center gap-1">
-        <select value={reason} onChange={(e) => setReason(e.target.value)} className={selectClass} data-testid="register-turnover-reason">
-          <option value="">Reason…</option>
-          {TURNOVER_REASONS.map(([code, label]) => <option key={code} value={code}>{label}</option>)}
-        </select>
+      <TurnoverReason row={row} reason={reason} setReason={setReason} note={note} setNote={setNote}>
         {[["revenue", "Revenue"], ["volume", "Volume"]].map(([value, label]) => (
           <Button key={value} size="sm" variant={row.turnover_state === value ? "default" : suggested === value ? "secondary" : "outline"}
-            className={`h-7 ${suggested === value ? "ring-2 ring-sky-400" : ""}`} aria-pressed={suggested === value ? true : undefined}
-            data-testid={`register-turnover-${value}`} disabled={!reason || contradicts(value, reason)} onClick={() => onAnswer(row, { as: value, reason }).catch(() => {})}>{label}</Button>
+            className={`h-7 ${row.turnover_state === value ? "bg-sky-600 text-white hover:bg-sky-500" : ""} ${suggested === value ? "ring-2 ring-sky-400" : ""}`}
+            aria-pressed={suggested === value ? true : undefined}
+            data-testid={`register-turnover-${value}`} disabled={!answerReady(value, reason, note, row)}
+            onClick={() => onAnswer(row, { as: value, reason }).then(() => setNote("")).catch(() => {})}>{label}</Button>
         ))}
-      </div>
+      </TurnoverReason>
     </div>
   );
 }
