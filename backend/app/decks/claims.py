@@ -1002,6 +1002,56 @@ def _period_header(text: str) -> bool:
     return (bool(dates) or bool(parts)) and _header_like([{"text": c} for c in cells])
 
 
+_BRACKET = re.compile(r"[(\[]([^()\[\]]{1,30})[)\]]")
+_BRACKET_SCALE = re.compile(r"(?i)(?<![a-z])(?:k|m|mm|mn|bn|b|million|thousand|billion)(?![a-z])")
+_BRACKET_CURRENCY = re.compile(r"US\$|[$€£]|(?<![A-Za-z])(?:USD|EUR|GBP)(?![A-Za-z])")
+_BRACKET_BASIS = (
+    (re.compile(r"(?i)/\s*(?:year|yr|annum|a)\b|\bper\s+(?:year|yr|annum)\b|\bp\.?a\.?(?![a-z])|\bannual(?:ly)?\b|\byearly\b"), "per year"),
+    (re.compile(r"(?i)/\s*(?:month|mo)\b|\bper\s+month\b|\bmonthly\b"), "per month"),
+    (re.compile(r"(?i)/\s*(?:quarter|qtr)\b|\bper\s+quarter\b|\bquarterly\b"), "per quarter"),
+)
+
+
+def bracket_units(text: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+    """(currency, period basis) a label states in brackets: "Turnover (£/year)" -> ("GBP", "per year"). A bracket that
+    scales the figure ("(€m)", "($k)") is not read: the value would be wrong by the scale. Nothing is guessed: no
+    symbol, code or period word, no answer."""
+    currency = basis = None
+    for m in _BRACKET.finditer(text or ""):
+        inner = m.group(1)
+        if _BRACKET_SCALE.search(inner):
+            continue
+        found = _BRACKET_CURRENCY.search(inner)
+        if found and not currency:
+            currency = _CURRENCY[found.group(0)]
+        if not basis:
+            basis = next((name for rx, name in _BRACKET_BASIS if rx.search(inner)), None)
+    return currency, basis
+
+
+def label_units(candidate: Dict) -> Tuple[Optional[str], Optional[str]]:
+    """The currency and period basis a candidate's label (the heading it borrowed, else its own line) states in brackets."""
+    for text in (candidate.get("label_from"), candidate.get("snippet")):
+        currency, basis = bracket_units(text)
+        if currency or basis:
+            return currency, basis
+    return None, None
+
+
+def _apply_label_units(found: List[Dict]) -> None:
+    """Before scoring: the currency and period basis a label states fill what the figure itself leaves empty. A figure
+    with its own currency or unit keeps it. The date is never taken from here: "per year" is not a year."""
+    for c in found:
+        c.setdefault("period_basis", None)
+        if c.get("value") is None:
+            continue
+        currency, basis = label_units(c)
+        if not c.get("currency") and not c.get("unit") and currency:
+            c["currency"] = currency
+        if basis:
+            c["period_basis"] = basis
+
+
 def detect_candidates(blocks: List[Dict], file: str, fiscal_year_end: int = 12) -> List[Dict]:
     """Every candidate in a parsed deck, duplicates merged in order of first appearance. Each value's
     period resolves to a date range under the audit's fiscal year-end (1-12, default December)."""
@@ -1040,6 +1090,7 @@ def detect_candidates(blocks: List[Dict], file: str, fiscal_year_end: int = 12) 
                 for a, b in zip(kept.get("by_period") or (), c.get("by_period") or ()):
                     a["_stated"] = a["_stated"] or b["_stated"]
     found = _merge_unknown(list(merged.values()))
+    _apply_label_units(found)
     _flag_inconsistencies(found)
     return found
 
@@ -1095,6 +1146,12 @@ def _in_stack(unit: Dict) -> bool:
     return _header_like([{"text": t} for t in unit["text"].split(" | ")])
 
 
+def _figure_of(c: Dict, v: Dict) -> Dict:
+    """One stated figure with what the explanation of a deck inconsistency compares: value, currency, unit, date and place."""
+    return {"value": v["value"], "value_high": v["value_high"], "currency": c.get("currency"), "unit": c.get("unit"),
+            "date": v["target_date"], "source": (v.get("sources") or [None])[0], "claim_type": c.get("claim_type")}
+
+
 def _flag_inconsistencies(candidates: List[Dict]) -> None:
     """Deck inconsistency: one deck gives the same type and period different values ("Gross Profit
     £150K" for Y/E 23 on a panel, £ 50,000 in the table). Every candidate holding one of them gets
@@ -1107,15 +1164,19 @@ def _flag_inconsistencies(candidates: List[Dict]) -> None:
             if v["value"] is not None and v["target_date"] and v["_stated"]:
                 key = (c["claim_type"], v["target_date"], (v["period_start"], v["period_end"]), c["currency"],
                        c["unit"] if c["unit"] in ("%", "x") else None)
-                seen.setdefault(key, []).append((i, (v["value"], v["value_high"])))
+                seen.setdefault(key, []).append((i, (v["value"], v["value_high"]), _figure_of(c, v)))
     for (_, stated, _, _, _), found in seen.items():
-        if len({value for _, value in found}) > 1:
-            for i, _ in found:
+        if len({value for _, value, _ in found}) > 1:
+            for i, value, mine in found:
                 dates = candidates[i].setdefault("inconsistent_dates", [])
                 if stated not in dates:
                     dates.append(stated)
+                # The explanation is built from the two figures themselves: this one and the first that differs from it.
+                other = next(fig for _, v2, fig in found if v2 != value)
+                candidates[i].setdefault("inconsistencies", []).append({"this": mine, "other": other})
     for c in candidates:
         c.setdefault("inconsistent_dates", [])
+        c.setdefault("inconsistencies", [])
         c["inconsistent_dates"].sort()
         c.pop("_stated", None)
         for i in c.get("by_period") or ():
@@ -1203,7 +1264,9 @@ def confidence(candidate: Dict, peers: List[Dict]) -> Dict:
     if candidate.get("claim_direction") and not has_value:
         checks.append(("no figure", False))          # a direction is never better than Medium
     if has_value:
-        checks.append(("no unit", bool(candidate.get("unit") or candidate.get("currency"))))
+        # A label that states the currency in brackets ("Turnover (£/year)") counts, also on a candidate stored before the
+        # label was read into its currency field: only what is still missing after that is listed.
+        checks.append(("no unit", bool(candidate.get("unit") or candidate.get("currency") or label_units(candidate)[0])))
     checks.append(("no heading", named))
     if has_value:
         checks.append(("not corroborated", _corroborated(candidate, peers)))

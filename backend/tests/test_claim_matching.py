@@ -677,7 +677,7 @@ def test_a_claim_in_another_currency_is_converted_at_the_saved_rate_and_shows_bo
 def test_a_claim_with_no_saved_rate_is_unverified_with_fx_rate_needed_whatever_its_period(period):
     row = run_claim({"claim_type": "revenue", "snippet": "ARR $210,000", "currency": "USD", "value": 210000,
                      "target_date": period})
-    assert (row["evidence_label"], row["reason"]) == ("Unverified", "FX rate needed")
+    assert (row["evidence_label"], row["reason"]) == ("Unverified", "FX rate needed: USD→EUR")
     assert (row["fx_rate"], row["claimed_converted"], row["observed_value"]) == (None, None, None)
 
 

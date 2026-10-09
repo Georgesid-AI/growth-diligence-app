@@ -174,3 +174,13 @@ test("a confirmed row can be switched back, and the implied take rate shows both
   await act(async () => { host.querySelector('[data-testid="register-turnover-revenue"]').click(); });
   expect(api.answerTurnover).toHaveBeenLastCalledWith("a1", "t1", { as: "revenue", reason: "deck_says_gross_revenue" });
 });
+
+test("a row with no rate names the pair and links to the FX settings", async () => {
+  const needs = { ...ROW, metric: "Revenue", observed_value: null, evidence_label: "Unverified", evidence_analysis: null,
+    reason: "FX rate needed: GBP→EUR" };
+  const { host } = await mount([needs, ROW]);
+  const rows = host.querySelectorAll('[data-testid="claim-register-row"]');
+  expect(rows[0].querySelector('[data-testid="register-evidence-reason"]').textContent).toBe("· FX rate needed: GBP→EUR");
+  expect(rows[0].querySelector('[data-testid="register-fx-link"]').getAttribute("href")).toBe("/audit/a1/mapping#fx-settings");
+  expect(rows[1].querySelector('[data-testid="register-fx-link"]')).toBeNull();
+});

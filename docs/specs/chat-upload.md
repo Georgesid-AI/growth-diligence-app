@@ -376,3 +376,18 @@ or the value of transactions processed (volume)?" Until answered it counts as pe
 Revenue: the column maps as before. Volume: the column is Not used and the engine never reads it; the answer
 (`money_kind`) is saved with the mapping version and reused for the same file and the same headers. Closed codes only
 (revenue, volume): no free text. Decision `{column, action: "confirm", money_kind}`.
+
+## 14. Calculate, the revenue banner and the FX rates (amended 2026-10-09, George)
+- A file dropped in the chat (or picked with the paperclip) is only attached: it shows as an attachment, "attached – not read
+  yet", with a remove button. Nothing is read, mapped, stored or computed until the analyst presses Calculate. The drop
+  zone stays after a drop. Calculate reads the attached files one at a time in drop order, then, if a revenue file is loaded
+  and no column waits for a decision, computes the metrics; otherwise it stops and the page says what is left.
+- Banner (supersedes the "every audit view" timing of §6.2 and rule 21 for the revenue kind only): the revenue-file blocker is
+  not shown when the screen opens. It shows after Calculate has been pressed (kept for the browser session, per audit) and the
+  server still reports it, on every audit view, until the file is mapped. With no revenue file, one line follows S16a: "The
+  revenue file is the only required file. Every metric in the audit (ARR, NRR, churn, CAC payback) is computed from it; without
+  it nothing can be calculated or verified." The other two kinds are unchanged. The server's `/blockers` is unchanged.
+- FX rates belong to the audit (`audits.fx`, PUT /api/audits/{id}/fx), not to the revenue file. They apply to the uploaded files
+  and to the deck claims, need no file, and survive a replaced revenue file. Rates saved with a revenue file before this change
+  are still read, under the audit's own rates. Cause found: a re-upload wrote `fx: {}` over the saved rates, and rates could
+  only be entered once a revenue file was loaded.

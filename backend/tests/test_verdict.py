@@ -242,9 +242,9 @@ def test_a_no_metric_row_needs_the_metric_name_and_the_direction():
 
 def test_an_untested_row_with_an_app_metric_gets_w6_with_the_apps_metric_and_direction():
     r = run_row({"currency": "USD", "value": 210000}, GATE)
-    assert r["evidence_label"] == "Unverified" and r["reason"] == "FX rate needed"
+    assert r["evidence_label"] == "Unverified" and r["reason"] == "FX rate needed: USD→EUR"
     assert r["gate_sentence"] == ("Before the Series B hiring plan, ARR must be at least €150,000 by 2024-06-30. "
-                                  "Not yet observed: FX rate needed; claimed $210,000 (Feb 2024).")
+                                  "Not yet observed: FX rate needed: USD→EUR; claimed $210,000 (Feb 2024).")
 
 
 def test_with_fewer_than_three_saved_gates_every_saved_gate_is_key_and_the_note_says_so():

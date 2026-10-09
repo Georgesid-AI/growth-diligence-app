@@ -46,7 +46,9 @@ export const TYPE_LABELS = {
 // "Use of funds" is a type the model may read from a structure, not one the parser gives.
 export const CLAIM_TYPES = Object.keys(TYPE_LABELS).filter((t) => !["usage", "use_of_funds", "other", "unknown"].includes(t));
 // Suggestions for the unit field; a count's unit is the noun it counts ("paying users").
-export const CLAIM_UNITS = ["%", "x", "months", "years", "weeks", "days", "hours", "customers", "users"];
+export const CLAIM_UNITS = ["%", "x", "months", "years", "weeks", "days", "hours", "count", "customers", "users"];
+// What the unit "count" stands for, shown beside it in the unit list; a currency stays in its own field.
+export const COUNT_UNIT_HINT = "customers, headcount, deals";
 
 // One header per column of the approval list, in column order.
 export const COLUMNS = ["Type", "Value", "Period", "Confidence", "Claim in the deck", "Source", "Status", "Action"];
@@ -92,12 +94,19 @@ function amount(c, value, high, rate) {
 // A direction the deck states with no figure ("Positive EBITDA"): shown as such, never as a dash.
 export const directionText = (direction) => `${direction} (no figure)`;
 export const FX_NEEDED = "FX rate needed";
+export const FX_SETTINGS_LABEL = "FX settings";
+export const FX_SETTINGS_ANCHOR = "fx-settings";
+
+/** "USD→EUR": the pair a claim in another currency needs a rate for, or null when it has none or needs none. */
+export const fxPair = (c) => (c?.fx && c.currency && !c.unit && c.fx.rate == null && c.fx.currency ? `${c.currency}→${c.fx.currency}` : null);
+/** "FX rate needed: GBP→EUR" (the pair is named so the analyst knows which rate to enter). */
+export const fxNeededText = (c) => `${FX_NEEDED}: ${fxPair(c) || c?.currency || ""}`.replace(/: $/, "");
 
 /** The claim's figure in the audit's currency, when it is stated in another one: "150,000 GBP (171,000 EUR at 1.14, 30 Jun 2026)".
  *  No saved rate: "150,000 GBP (FX rate needed)". `fx` comes from the server with the claim. */
 function withConversion(c, text, value, high) {
   if (!c.fx || !c.currency || c.unit || !present(value)) return text;
-  if (c.fx.rate == null) return `${text} (${FX_NEEDED})`;
+  if (c.fx.rate == null) return `${text} (${fxNeededText(c)})`;
   const on = displayDate(c.fx.date);
   return `${text} (${amount(c, value, high, c.fx.rate)} at ${figure(c.fx.rate)}${on ? `, ${on}` : ""})`;
 }
@@ -139,8 +148,9 @@ export function periodLabel(v, c) {
  *  ("FY2023", "Q2 2024", "Jun 2024"); "—" only when the deck gives no period. The deck's own wording stays in the claim. */
 export function claimPeriod(c) {
   const periods = (c?.by_period || []).map((v) => periodLabel(v, c)).filter(Boolean);
-  if (periods.length) return periods.length > 1 ? `${periods[0]}–${periods[periods.length - 1]}` : periods[0];
-  return periodLabel(c, c) || PLACEHOLDER;
+  const date = periods.length ? (periods.length > 1 ? `${periods[0]}–${periods[periods.length - 1]}` : periods[0]) : periodLabel(c, c);
+  // "per year" read from a label's brackets ("Turnover (£/year)"): shown beside the date, or alone when the deck gives no year.
+  return [date, c?.period_basis].filter(Boolean).join(" · ") || PLACEHOLDER;
 }
 
 /** The edit sent for a table row: one value per period, in the row's order; dates stay. */
@@ -154,6 +164,40 @@ export function rowEdit(row, values) {
 
 // Shown on both claims when one deck gives the same type and period different values.
 export const INCONSISTENCY_LABEL = "Deck inconsistency";
+
+const sameFigure = (a, b) => a.value === b.value && (a.value_high ?? null) === (b.value_high ?? null);
+const figureText = (f) => {
+  const n = present(f.value_high) ? `${figure(f.value)}–${figure(f.value_high)}` : figure(f.value);
+  if (f.unit === "%") return `${n}%`;
+  if (f.unit === "x") return `${n}x`;
+  return [n, f.currency || f.unit].filter(Boolean).join(" ");
+};
+const placeText = (f) => sourceRef(f.source);
+
+/** What differs between two stated figures when their values match: currency, unit or date. */
+function differences(a, b) {
+  const out = [];
+  if ((a.currency || null) !== (b.currency || null)) out.push(`currency (${a.currency || "none"} against ${b.currency || "none"})`);
+  if ((a.unit || null) !== (b.unit || null)) out.push(`unit (${a.unit || "none"} against ${b.unit || "none"})`);
+  if ((a.date || null) !== (b.date || null)) out.push(`date (${a.date || "none"} against ${b.date || "none"})`);
+  return out;
+}
+
+/** The sentence under the "Deck inconsistency" tag, built from the two figures the server compared:
+ *  "The deck gives different figures for this metric: 5 at deck.pptx · slide 1 and 6 at deck.pptx · slide 4."
+ *  Two figures with the same value say which of currency, unit or date differs. Null when the server sent no pair, and
+ *  then no tag is shown: a tag never stands without its explanation. */
+export function inconsistencyText(c) {
+  const pairs = c?.inconsistencies || [];
+  if (!pairs.length) return null;
+  return pairs.map(({ this: a, other: b }) => {
+    if (sameFigure(a, b)) {
+      const diff = differences(a, b);
+      return `The deck gives the same value, ${figureText({ ...a, currency: null, unit: null })}, with a different ${diff.join(" and ") || "currency, unit or date"}: ${figureText(a)} at ${placeText(a)} and ${figureText(b)} at ${placeText(b)}.`;
+    }
+    return `The deck gives different figures for this metric: ${figureText(a)} at ${placeText(a)} and ${figureText(b)} at ${placeText(b)}.`;
+  }).join(" ");
+}
 
 // Model reading (docs/specs/llm-structure-reading.md): every row the model read carries one of these,
 // and so does every mapping field it proposed. Python checked a Verified value against its source cell.

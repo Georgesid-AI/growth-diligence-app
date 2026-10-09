@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { Layout } from "./Layout";
 import { BLOCKERS_CHANGED } from "./BlockerBanner";
 import * as api from "@/lib/api";
+import { REVENUE_REQUIRED_NOTE, setCalculatePressed } from "@/lib/chatUpload";
 
 jest.mock("@/lib/api", () => ({ getBlockers: jest.fn() }));
 jest.mock("react-router-dom", () => ({
@@ -29,9 +30,10 @@ async function mount(audit) {
   root = createRoot(host);
   await act(async () => { root.render(<Layout audit={audit}><div data-testid="page" /></Layout>); });
 }
-afterEach(async () => { await act(async () => { root.unmount(); }); host.remove(); jest.clearAllMocks(); });
+afterEach(async () => { await act(async () => { root.unmount(); }); host.remove(); jest.clearAllMocks(); window.sessionStorage.clear(); });
 
 test("an audit view shows the blockers the server returns, in the header, with the evidence link", async () => {
+  setCalculatePressed("a1");
   api.getBlockers.mockResolvedValue(BLOCKERS);
   await mount(AUDIT);
   const banner = q("blocker-banner");
@@ -43,7 +45,35 @@ test("an audit view shows the blockers the server returns, in the header, with t
   expect(api.getBlockers).toHaveBeenCalledWith("a1");
 });
 
+test("the revenue file blocker is not shown when the screen opens; the other two are", async () => {
+  api.getBlockers.mockResolvedValue(BLOCKERS);
+  await mount(AUDIT);
+  expect(q("blocker-revenue_file_missing")).toBeNull();
+  expect(q("blocker-claim_contradicted")).not.toBeNull();
+  expect(q("blocker-banner").querySelectorAll("li").length).toBe(2);
+});
+
+test("only the revenue file missing: no banner until Calculate is pressed, then the banner with the one-line reason under it", async () => {
+  api.getBlockers.mockResolvedValue(BLOCKERS.slice(0, 1));
+  await mount(AUDIT);
+  expect(q("blocker-banner")).toBeNull();
+  setCalculatePressed("a1");
+  await act(async () => { window.dispatchEvent(new Event(BLOCKERS_CHANGED)); });
+  expect(q("blocker-revenue_file_missing").textContent).toContain("Revenue file missing: upload and map it to compute metrics.");
+  expect(q("blocker-revenue-note").textContent).toBe(REVENUE_REQUIRED_NOTE);
+  expect(REVENUE_REQUIRED_NOTE).toBe("The revenue file is the only required file. Every metric in the audit (ARR, NRR, churn, CAC payback) is computed from it; without it nothing can be calculated or verified.");
+});
+
+test("a revenue file that is uploaded and not confirmed shows its own wording, with no required-file line", async () => {
+  setCalculatePressed("a1");
+  api.getBlockers.mockResolvedValue([{ kind: "revenue_file_missing", text: "Revenue file uploaded – confirm the mapping to compute metrics." }]);
+  await mount(AUDIT);
+  expect(q("blocker-revenue_file_missing")).not.toBeNull();
+  expect(q("blocker-revenue-note")).toBeNull();
+});
+
 test("no blocker, no banner; and it clears when the server stops returning one", async () => {
+  setCalculatePressed("a1");
   api.getBlockers.mockResolvedValue(BLOCKERS.slice(0, 1));
   await mount(AUDIT);
   expect(q("blocker-revenue_file_missing")).not.toBeNull();
@@ -59,6 +89,7 @@ test("the audit list has no banner and asks for none", async () => {
 });
 
 test("an audit deleted while its banner is up: the 404 is caught, the banner clears, and later events ask nothing", async () => {
+  setCalculatePressed("a1");
   api.getBlockers.mockResolvedValue(BLOCKERS.slice(0, 1));
   await mount(AUDIT);
   expect(q("blocker-revenue_file_missing")).not.toBeNull();

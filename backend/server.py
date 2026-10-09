@@ -13,7 +13,7 @@ import logging
 import uuid
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 import pandas as pd
 from pydantic import BaseModel, Field, field_validator
@@ -611,7 +611,8 @@ async def _ingest(audit_id: str, upload: UploadFile, dtype: Optional[str], repla
     mapping = cr.mapping_of(chosen, states)
     doc = {"audit_id": audit_id, "dtype": chosen, "file": filename, "sheet": sheet.sheet, "columns": sheet.columns,
            "headers": sheet.headers, "header_row": sheet.header_row, "rows": rows, "row_numbers": sheet.row_numbers,
-           "row_count": len(rows), "mapping": mapping, "fx": {}, "billing_terms": {}, "preview": rows[:8],
+           "row_count": len(rows), "mapping": mapping, "fx": (existing or {}).get("fx") or {},
+           "billing_terms": {}, "preview": rows[:8],
            "mapping_source": _source_map(states), "ai_reading": ai_reading, "columns_state": states,
            "months": _months_for(chosen, states, sheet.columns, rows), "file_hash": digest, "size_bytes": len(content),
            "uploaded_at": usage_mod.now(), "mapped_at": None}
@@ -803,8 +804,10 @@ async def save_mapping(audit_id: str, dtype: str, payload: MappingPayload, backg
     ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype})
     if not ds:
         raise HTTPException(404, "Dataset not uploaded")
-    await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype},
-                                 {"$set": {"fx": payload.fx, "billing_terms": payload.billing_terms}})
+    saved = {"billing_terms": payload.billing_terms}
+    if "fx" in payload.model_fields_set:       # the rates live on the audit now (PUT /fx); an older client may still send them
+        saved["fx"] = payload.fx
+    await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype}, {"$set": saved})
     if payload.mapping is None:
         await _mark_stale_and_maybe_recompute(audit_id)
         return {"ok": True}
@@ -935,7 +938,7 @@ async def list_deck_candidates(audit_id: str):
     """The audit's decks (no parsed text), most recently uploaded first, and their candidates:
     grouped by deck in that order; within a deck the ones to review first, then by slide or page."""
     audit = await db.audits.find_one({"id": audit_id}, {"id": 1, "structure_reading_consent": 1, "reporting_currency": 1,
-                                                         "as_of_month": 1, "results.as_of_month": 1})
+                                                         "as_of_month": 1, "results.as_of_month": 1, "fx": 1})
     if not audit:
         raise HTTPException(404, "Audit not found")
     deck_fields = {"_id": 0, "deck_id": 1, "file": 1, "format": 1, "page_unit": 1, "pages": 1, "uploaded_at": 1,
@@ -1064,12 +1067,48 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
     return sanitize(await db[decks.CANDIDATES_COLLECTION].find_one(where, {"_id": 0}))
 
 
-async def _fx(audit_id: str, audit: dict) -> dict:
-    """The audit's FX rates, upper-cased, with the reporting currency at 1."""
-    revenue = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"}, {"fx": 1}) or {}
-    fx = {k.upper(): float(v) for k, v in (revenue.get("fx") or {}).items()}
+def merged_fx(audit: dict, file_fx: Optional[dict]) -> dict:
+    """The audit's FX rates, upper-cased, with the reporting currency at 1: the rates saved with the revenue file (older
+    audits) under the audit's own rates, which win. One set of rates serves the uploaded files and the deck claims."""
+    fx = {str(k).upper(): float(v) for k, v in (file_fx or {}).items()}
+    fx.update({str(k).upper(): float(v) for k, v in (audit.get("fx") or {}).items()})
     fx[(audit.get("reporting_currency") or "EUR").upper()] = 1.0
     return fx
+
+
+async def _fx(audit_id: str, audit: dict) -> dict:
+    revenue = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"}, {"fx": 1}) or {}
+    return merged_fx(audit, revenue.get("fx"))
+
+
+class FxPayload(BaseModel):
+    """The audit's FX rates: currency code to the rate into the reporting currency (docs/specs/claim-matching.md section 2)."""
+    model_config = {"extra": "forbid"}
+    fx: Dict[str, float]
+
+    @field_validator("fx")
+    @classmethod
+    def _rates(cls, v):
+        out = {}
+        for code, rate in v.items():
+            code = code.strip().upper()
+            if not re.fullmatch(r"[A-Z]{3}", code):
+                raise ValueError("a currency is a 3-letter code")
+            if not (rate > 0 and rate < float("inf")):
+                raise ValueError("a rate is a positive number")
+            out[code] = float(rate)
+        return out
+
+
+@api.put("/audits/{audit_id}/fx")
+async def save_fx(audit_id: str, payload: FxPayload):
+    """Save the audit's FX rates. They need no file: they apply to the uploaded files and to the deck claims alike."""
+    a = await db.audits.find_one({"id": audit_id})
+    if not a:
+        raise HTTPException(404, "Audit not found")
+    await db.audits.update_one({"id": audit_id}, {"$set": {"fx": payload.fx}})
+    await _mark_stale_and_maybe_recompute(audit_id)
+    return {"fx": payload.fx}
 
 
 def _register_settings(audit: dict, fx: dict, deck_take_rate: bool = False) -> dict:
@@ -1508,8 +1547,7 @@ async def _run_compute(audit_id: str) -> dict:
     crm = normalize(ds["crm"]["rows"], "crm", ds["crm"]["mapping"], ds["crm"].get("row_numbers")) if "crm" in ds else pd.DataFrame()
     pnl = normalize(ds["pnl"]["rows"], "pnl", ds["pnl"]["mapping"], ds["pnl"].get("row_numbers")) if "pnl" in ds else pd.DataFrame()
 
-    fx = {k.upper(): float(v) for k, v in ds["revenue"].get("fx", {}).items()}
-    fx[a["reporting_currency"].upper()] = 1.0
+    fx = merged_fx(a, ds["revenue"].get("fx"))
     config = {
         "reporting_currency": a["reporting_currency"], "target_arr": a["target_arr"],
         "target_date": a["target_date"], "fx": fx,

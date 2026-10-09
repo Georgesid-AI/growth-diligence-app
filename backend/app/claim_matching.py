@@ -681,7 +681,7 @@ def _row(c: dict, results: dict, settings: dict) -> dict:
         return finish("Unsupported", "period not readable")
 
     if fx and fx["rate"] is None:
-        return finish("Unverified", FX_NEEDED)
+        return finish("Unverified", f"{FX_NEEDED}: {currency}→{fx['currency']}")       # names the pair (the rate to set)
     figures = _Figures(results, metric, segment)
     observed, observed_at, source, why = _observe(figures, spec, metric, start, end, as_of_i)
     if isinstance(observed, str):                       # a verdict instead of a figure

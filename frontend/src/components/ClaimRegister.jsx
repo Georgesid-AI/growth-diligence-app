@@ -184,6 +184,9 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
                         {row.evidence_label}
                       </span>
                       <span className="ml-1 text-slate-600" data-testid="register-evidence-reason">· {row.reason}</span>
+                      {String(row.reason || "").startsWith("FX rate needed") && (
+                        <a href={`/audit/${auditId}/mapping#fx-settings`} className="ml-1 text-sky-700 underline" data-testid="register-fx-link">FX settings</a>
+                      )}
                       {row.turnover_state && <TurnoverCell row={row} onAnswer={answer} />}
                       {evidenceLines(row).second && (
                         <div className="mt-1 font-mono text-[11px] text-slate-700" data-testid="register-evidence-source">

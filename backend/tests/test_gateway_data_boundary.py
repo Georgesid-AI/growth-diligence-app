@@ -1266,7 +1266,8 @@ MATCHING_SERVER_ONLY = ("revenue_series", "customers_series")
 REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decision", "gate_threshold", "gate_date",
                             "observed_source", "evidence_label", "value_at_stake_arr", "claim_matching",
                             "turnover_choices", "turnover_as", "turnover_reason", "turnover_state", "deck_take_rate",
-                            "implied_take_rate", "implied_take_rate_source", *MATCHING_SERVER_ONLY})
+                            "implied_take_rate", "implied_take_rate_source", "period_basis", "inconsistencies",
+                            "inconsistent_dates", *MATCHING_SERVER_ONLY})
 # The functions that log about the register, and the only things their log calls may name.
 REGISTER_LOGGERS = frozenset({"_claim_rows", "claim_register", "claim_register_csv", "update_claim_inputs", "answer_turnover"})
 REGISTER_LOG_ARGS = frozenset({"audit_id", "counts", "len(rows)"})      # exactly these expressions, as format arguments
@@ -1393,6 +1394,19 @@ def test_the_register_log_lines_name_counts_per_label_and_the_run_only():
     module = ast.parse((BACKEND / "app" / "claim_matching.py").read_text(encoding="utf-8"))
     assert not [n for n in ast.walk(module) if isinstance(n, ast.Name) and n.id in ("logger", "logging", "log", "print")], \
         "the matching module logs and prints nothing"
+
+
+def test_the_fx_reason_names_two_currency_codes_and_the_new_candidate_fields_are_not_readable():
+    """The reason of a claim with no rate holds the claim's currency code and the reporting currency, nothing from the deck;
+    period_basis and the inconsistency pairs (values and places) stay out of what the gateway may read."""
+    import re
+    row = {"id": "x1", "status": "approved", "claim_type": "revenue", "value": 5e6, "currency": "GBP", "target_date": "2021",
+           "period_text": "FY2021", "snippet": "Zephyr ARR GBP 5M", "file": "deck.pptx", "order": 0, "sources": [{"file": "deck.pptx", "slide": 3}]}
+    from app.decks import claims as deck_claims
+    deck_claims.resolve_period(row, 12)
+    out = claim_matching.build_register([row], RESULTS, {"fiscal_year_end": 12, "reporting_currency": "EUR", "fx": {"EUR": 1.0}})[0]
+    assert re.fullmatch(r"FX rate needed: [A-Z]{3}→[A-Z]{3}", out["reason"]), out["reason"]
+    assert not {"period_basis", "inconsistencies", "inconsistent_dates"} & decks.GATEWAY_READABLE_FIELDS
 
 
 def test_the_turnover_fields_hold_closed_words_figures_and_sources_never_deck_text():

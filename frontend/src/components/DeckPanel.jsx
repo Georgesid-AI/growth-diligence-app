@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { getDecks, removeDeck, updateCandidate, uploadDeck } from "@/lib/api";
 import {
-  ALL_DECKS, CLAIM_TYPES, CLAIM_UNITS, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
+  ALL_DECKS, CLAIM_GROUPS, CLAIM_TYPES, CLAIM_UNITS, COUNT_UNIT_HINT, FX_SETTINGS_ANCHOR, FX_SETTINGS_LABEL, fxNeededText, fxPair, inconsistencyText, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
   DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, INCONSISTENCY_LABEL, OTHER_TYPE_NOTE, PLACEHOLDER, STATUS_LABELS, VERIFIED_LABEL, claimPeriod, claimSections, claimValue, deckRunLog,
   confidenceText, needsType, readingChoices, rowEdit, sourceRef, statusCounts, typeLabel,
 } from "@/lib/deckClaims";
@@ -17,6 +17,7 @@ const STATUS_STYLE = {
   edited: "text-sky-700 border-sky-500/40",
 };
 const CONFIDENCE_STYLE = { High: "text-emerald-700", Medium: "text-amber-800", Low: "text-rose-700" };
+export const MOVE_NOTICE_MS = 4000;
 const selectClass = "h-8 rounded-md border border-[#E5E7EB] bg-white px-2 text-xs";
 
 /** Board deck or growth plan: the scope message, the upload, and the candidate approval list. */
@@ -35,15 +36,17 @@ export default function DeckPanel({ auditId }) {
   const stopped = useRef(false);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const load = useCallback((select, silent = false) => getDecks(auditId).then((d) => {
-    if (!alive.current) return;
+    if (!alive.current) return undefined;
     setData(d);
     setTab((current) => {
       const wanted = select || current;
       return wanted && (wanted === ALL_DECKS || d.decks.some((x) => x.deck_id === wanted)) ? wanted : defaultDeck(d.decks);
     });
+    return d;
   }).catch(() => {
-    if (silent) { stopped.current = true; return; }
+    if (silent) { stopped.current = true; return undefined; }
     if (alive.current) toast.error("Could not load deck claims");
+    return undefined;
   }), [auditId]);
   useEffect(() => { load(); }, [load]);
 
@@ -72,11 +75,33 @@ export default function DeckPanel({ auditId }) {
     }
   };
 
-  const save = async (candidate, payload) => {
+  // An approved claim that lands in another category: a toast with Undo and a highlight on its new row, both for 4 seconds.
+  const [flash, setFlash] = useState(null);
+  const flashTimer = useRef(null);
+  useEffect(() => () => clearTimeout(flashTimer.current), []);
+  const announceMove = (moved, previousType) => {
+    const title = (CLAIM_GROUPS.find(([group]) => group === moved.group) || [])[1] || typeLabel(moved.claim_type);
+    setExpanded((e) => ({ ...e, [moved.group]: true }));            // the new place is shown even if its group starts closed
+    setFlash(moved.id);
+    clearTimeout(flashTimer.current);
+    flashTimer.current = setTimeout(() => setFlash(null), MOVE_NOTICE_MS);
+    toast.message(`Claim moved to ${title}`, {
+      duration: MOVE_NOTICE_MS,
+      action: { label: "Undo", onClick: () => { clearTimeout(flashTimer.current); setFlash(null); save(moved, { claim_type: previousType }, true); } },
+    });
+  };
+
+  const save = async (candidate, payload, quiet = false) => {
     try {
       const updated = await updateCandidate(auditId, candidate.id, payload);
       setData((d) => ({ ...d, candidates: d.candidates.map((c) => (c.id === updated.id ? { ...c, ...updated } : c)) }));
-      load();            // the group, the order and the confidence follow the type and the figure: read them again
+      // the group, the order and the confidence follow the type and the figure: read them again
+      const fresh = await load();
+      const moved = fresh?.candidates.find((c) => c.id === updated.id);
+      if (!quiet && payload.claim_type && payload.claim_type !== candidate.claim_type && moved && moved.group !== candidate.group
+          && ["approved", "edited"].includes(moved.status)) {
+        announceMove(moved, candidate.claim_type);
+      }
       return true;
     } catch (err) {
       toast.error(typeof err.response?.data?.detail === "string" ? err.response.data.detail : "Could not save");
@@ -190,7 +215,7 @@ export default function DeckPanel({ auditId }) {
                           </button>
                         </td>
                       </tr>
-                      {open && section.claims.map((c) => <CandidateRow key={c.id} candidate={c} onSave={save} />)}
+                      {open && section.claims.map((c) => <CandidateRow key={c.id} candidate={c} onSave={save} highlight={flash === c.id} />)}
                     </Fragment>
                   );
                 })}
@@ -203,8 +228,10 @@ export default function DeckPanel({ auditId }) {
   );
 }
 
-function CandidateRow({ candidate: c, onSave }) {
+function CandidateRow({ candidate: c, onSave, highlight }) {
   const [draft, setDraft] = useState(null);
+  const [why, setWhy] = useState(false);
+  const explanation = inconsistencyText(c);
   const isRow = Boolean(c.by_period?.length);      // a table row: its values by period
   const choices = readingChoices(c);               // a figure that reads two ways: the default is pre-selected
   // Edit, optionally starting from the other reading of an ambiguous figure.
@@ -230,7 +257,8 @@ function CandidateRow({ candidate: c, onSave }) {
   const setValue = (k) => (e) => setDraft((d) => ({ ...d, values: d.values.map((v, i) => (i === k ? e.target.value : v)) }));
 
   return (
-    <tr className="border-b border-[#F1F5F9] align-top" data-testid={`candidate-row-${c.id}`}>
+    <tr className={`border-b border-[#F1F5F9] align-top transition-colors ${highlight ? "bg-amber-100" : ""}`}
+      data-testid={`candidate-row-${c.id}`} data-highlight={highlight ? "true" : undefined}>
       {draft ? (
         <>
           <td className="py-2 pr-3">
@@ -253,7 +281,7 @@ function CandidateRow({ candidate: c, onSave }) {
                 </>
               )}
               <Input value={draft.unit} onChange={set("unit")} list="claim-units" placeholder="unit" className="h-8 w-28 text-xs font-mono" data-testid="edit-unit" />
-              <datalist id="claim-units">{CLAIM_UNITS.map((u) => <option key={u} value={u} />)}</datalist>
+              <datalist id="claim-units">{CLAIM_UNITS.map((u) => <option key={u} value={u} label={u === "count" ? COUNT_UNIT_HINT : undefined} />)}</datalist>
               <Input value={draft.currency} onChange={set("currency")} placeholder="EUR" className="h-8 w-16 text-xs font-mono uppercase" data-testid="edit-currency" />
             </div>
           </td>
@@ -277,6 +305,10 @@ function CandidateRow({ candidate: c, onSave }) {
                 {choices.map((r, i) => <option key={i} value={i}>{r.label}</option>)}
               </select>
             ) : claimValue(c)}
+            {fxPair(c) && (
+              <a href={`#${FX_SETTINGS_ANCHOR}`} className="ml-2 text-[10px] font-sans text-sky-700 underline" title={fxNeededText(c)}
+                data-testid="fx-settings-link">{FX_SETTINGS_LABEL}</a>
+            )}
           </td>
           <td className="py-2 pr-3 font-mono text-slate-700 whitespace-nowrap">{claimPeriod(c)}</td>
         </>
@@ -303,11 +335,14 @@ function CandidateRow({ candidate: c, onSave }) {
             {c.ai_label}
           </div>
         )}
-        {c.inconsistent_dates?.length > 0 && (
-          <div className="mt-1 text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-nowrap text-amber-800 border-amber-500/50 bg-amber-50"
-            title={`This deck gives another value for the same type and period: ${c.inconsistent_dates.join(", ")}`}
-            data-testid="candidate-inconsistency">
-            {INCONSISTENCY_LABEL}
+        {explanation && (
+          <div className="mt-1">
+            <button type="button" aria-expanded={why} onClick={() => setWhy((v) => !v)} title={explanation}
+              className="text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-nowrap text-amber-800 border-amber-500/50 bg-amber-50"
+              data-testid="candidate-inconsistency">
+              {INCONSISTENCY_LABEL}
+            </button>
+            {why && <p className="mt-1 max-w-[16rem] whitespace-normal text-[11px] text-slate-700" data-testid="candidate-inconsistency-text">{explanation}</p>}
           </div>
         )}
       </td>
