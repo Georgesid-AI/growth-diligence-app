@@ -211,7 +211,9 @@ Deck inconsistency: when one deck gives the same type and period different value
 panel's Gross Profit £150K for Y/E 23, the table's £ 50,000), every candidate holding one of them
 is marked "Deck inconsistency" with that period. Only stated periods are compared: the figure's
 own date, its column header's or its box's period. A date borrowed by position or from the
-title is not, and neither are amounts in different currencies, or a rate and an amount. The
+title is not, and neither are amounts in different currencies, or a rate and an amount. A figure whose label or
+line holds a turnover term (turnover, GMV, TPV, volume; and no ARR or MRR) is "Turnover", any other revenue-type figure is
+"Revenue": the two are never compared with each other (amended 2026-10-09, George; claim-matching.md §11). The
 mark describes the deck and is set when it is read; an edit does not clear it.
 Tried and rejected: a bare number (no words of its own) borrowing only from its own text box,
 table header or a label right next to it. On the test set it lowered recall to 93.2% when
@@ -419,9 +421,11 @@ Fixed on the 10 test decks (2026-10-05):
 - Upload screen shows the scope message.
 
 ## Amended 2026-10-09 (George): explanation, label brackets, count unit, moved claims
-- Deck inconsistency: every flagged claim carries `inconsistencies`, the two figures compared (value, currency, unit, date and
-  place of each). The tag shows "The deck gives different figures for this metric: [value A] at [location A] and [value B] at
-  [location B]." on hover and in the opened row. The tag is never shown without it. The parser compares only figures with the
+- Deck inconsistency: every flagged claim carries `inconsistencies`, the two figures compared (value, currency, unit, date,
+  place and, for a revenue-type figure, the deck label "Turnover" or "Revenue" of each). The tag shows "The deck gives
+  different figures for this metric: [label] [value A] at [location A] and [label] [value B] at [location B]." (for example
+  "Turnover 550,508 GBP at d.pdf · page 17 and Revenue 150,000 GBP at d.pdf · page 19"; Turnover is compared with Turnover and
+  Revenue with Revenue only) on hover and in the opened row. The tag is never shown without it. The parser compares only figures with the
   same type, currency and period and different values, so a pair always has two different values (the same-value wording was
   deleted 2026-10-09: it could not be reached). Decks parsed before this change have no pairs and show no tag
   until they are uploaded again.

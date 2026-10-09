@@ -1183,10 +1183,26 @@ def _in_stack(unit: Dict) -> bool:
     return _header_like([{"text": t} for t in unit["text"].split(" | ")])
 
 
+_TURNOVER_TERM = re.compile(r"(?i)\b(?:turnover|GMV|TPV|gross merchandise (?:value|volume)|(?:total )?(?:trading|payment|transaction) volume)\b")
+_RECURRING_TERM = re.compile(r"\b(?:ARR|MRR)\b")
+
+
+def deck_label(c: Dict) -> Optional[str]:
+    """The word the deck uses for a revenue-type figure: "Turnover" when its label or line holds a turnover term (and no
+    ARR or MRR), else "Revenue". None for every other type. A turnover figure is never compared with a revenue figure
+    for a deck inconsistency (docs/specs/claim-matching.md section 11)."""
+    if c.get("claim_type") != "revenue":
+        return None
+    text = f"{c.get('label_from') or ''} {c.get('snippet') or ''}"
+    return "Turnover" if _TURNOVER_TERM.search(text) and not _RECURRING_TERM.search(text) else "Revenue"
+
+
 def _figure_of(c: Dict, v: Dict) -> Dict:
-    """One stated figure with what the explanation of a deck inconsistency compares: value, currency, unit, date and place."""
+    """One stated figure with what the explanation of a deck inconsistency compares: value, currency, unit, date, place
+    and the deck's own label."""
     return {"value": v["value"], "value_high": v["value_high"], "currency": c.get("currency"), "unit": c.get("unit"),
-            "date": v["target_date"], "source": (v.get("sources") or [None])[0], "claim_type": c.get("claim_type")}
+            "date": v["target_date"], "source": (v.get("sources") or [None])[0], "claim_type": c.get("claim_type"),
+            "label": deck_label(c)}
 
 
 def _flag_inconsistencies(candidates: List[Dict]) -> None:
@@ -1194,15 +1210,16 @@ def _flag_inconsistencies(candidates: List[Dict]) -> None:
     £150K" for Y/E 23 on a panel, £ 50,000 in the table). Every candidate holding one of them gets
     the period in "inconsistent_dates". Only stated periods are compared (the figure's own date,
     its column header's or its box's period), not a date borrowed by position; amounts in different
-    currencies, or a rate and an amount, are not compared."""
+    currencies, or a rate and an amount, are not compared. Turnover is compared with turnover and revenue with revenue,
+    never one with the other (claim-matching.md section 11)."""
     seen = {}
     for i, c in enumerate(candidates):
         for v in claim_values(c):
             if v["value"] is not None and v["target_date"] and v["_stated"]:
-                key = (c["claim_type"], v["target_date"], (v["period_start"], v["period_end"]), c["currency"],
+                key = (c["claim_type"], deck_label(c), v["target_date"], (v["period_start"], v["period_end"]), c["currency"],
                        c["unit"] if c["unit"] in ("%", "x") else None)
                 seen.setdefault(key, []).append((i, (v["value"], v["value_high"]), _figure_of(c, v)))
-    for (_, stated, _, _, _), found in seen.items():
+    for (_, _, stated, _, _, _), found in seen.items():
         if len({value for _, value, _ in found}) > 1:
             for i, value, mine in found:
                 dates = candidates[i].setdefault("inconsistent_dates", [])

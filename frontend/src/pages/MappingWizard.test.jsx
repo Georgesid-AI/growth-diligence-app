@@ -163,6 +163,33 @@ describe("the screen", () => {
     expect(q("chat-explainer").textContent).toBe(S3_EXPLAINER_NO_CONSENT);
   });
 
+  test("the header button and the chat button both read Calculate, look the same and share one tooltip", async () => {
+    await mount();
+    const header = q("compute-button"), chat = q("chat-calculate");
+    expect(header.textContent).toBe("Calculate");
+    expect(chat.textContent).toBe("Calculate");
+    expect(header.title).toBe("Reads the attached files and computes the metrics.");
+    expect(chat.title).toBe(header.title);
+    expect(header.className).toBe(chat.className);
+  });
+
+  test("Send is greyed out while the text box is empty and carries its tooltip", async () => {
+    await mount();
+    const send = q("chat-send");
+    expect(send.disabled).toBe(true);
+    expect(send.title).toBe("Send a message (for answering the chat's questions)");
+    expect(q("chat-send-wrap").title).toBe(send.title);          // a disabled button shows no tooltip of its own
+    await change(q("chat-text-input"), "   ");
+    expect(send.disabled).toBe(true);
+    await change(q("chat-text-input"), "hello");
+    expect(send.disabled).toBe(false);
+  });
+
+  test("the mapping panel has no scroll of its own: the page scrolls as one", async () => {
+    await mount();
+    expect(q("chat-messages").className).not.toMatch(/overflow|max-h/);
+  });
+
   test("typed text gets the system reply and causes no API call", async () => {
     await mount();
     const calls = Object.values(api).flatMap((f) => (f.mock ? f.mock.calls.length : 0)).reduce((a, b) => a + b, 0);

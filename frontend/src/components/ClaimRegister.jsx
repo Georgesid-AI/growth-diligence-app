@@ -79,6 +79,7 @@ function GateCell({ row, ccy, onSave }) {
 function TurnoverCell({ row, onAnswer }) {
   const [reason, setReason] = useState(row.turnover_reason || "");     // no default: the analyst picks the reason
   const take = takeRateText(row);
+  const suggested = row.turnover_state === "ask" ? row.turnover_suggested : null;      // pre-selected, still to be confirmed
   return (
     <div className="mt-1 space-y-1" data-testid="register-turnover">
       <div className="text-slate-800" data-testid="register-turnover-note">{row.turnover_note}
@@ -90,6 +91,7 @@ function TurnoverCell({ row, onAnswer }) {
           <div className="text-[10px] text-slate-500" data-testid="register-take-rate-source">{row.implied_take_rate_source}</div>
         </div>
       )}
+      {row.deck_revenue_note && <div className="font-mono text-[11px] text-slate-700" data-testid="register-deck-revenue">{row.deck_revenue_note}</div>}
       <div className="text-[10px] text-slate-500">{TURNOVER_QUESTION}</div>
       <div className="flex flex-wrap items-center gap-1">
         <select value={reason} onChange={(e) => setReason(e.target.value)} className={selectClass} data-testid="register-turnover-reason">
@@ -97,7 +99,8 @@ function TurnoverCell({ row, onAnswer }) {
           {TURNOVER_REASONS.map(([code, label]) => <option key={code} value={code}>{label}</option>)}
         </select>
         {[["revenue", "Revenue"], ["volume", "Volume"]].map(([value, label]) => (
-          <Button key={value} size="sm" variant={row.turnover_state === value ? "default" : "outline"} className="h-7"
+          <Button key={value} size="sm" variant={row.turnover_state === value ? "default" : suggested === value ? "secondary" : "outline"}
+            className={`h-7 ${suggested === value ? "ring-2 ring-sky-400" : ""}`} aria-pressed={suggested === value ? true : undefined}
             data-testid={`register-turnover-${value}`} disabled={!reason || contradicts(value, reason)} onClick={() => onAnswer(row, { as: value, reason }).catch(() => {})}>{label}</Button>
         ))}
       </div>

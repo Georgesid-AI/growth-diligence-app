@@ -22,7 +22,7 @@ FIELDS = (
     "overlaps_with", "evidence_analysis", "evidence_source_key", "gate_sentence", "gate_threshold",
     "gate_budget_decision", "gate_date", "gate_saved", "gate_metric_name", "gate_direction", "key_gate", "gate_needed",
     "as_of_month", "as_of_defaulted", "turnover_state", "turnover_note", "turnover_set_by", "turnover_reason",
-    "implied_take_rate", "implied_take_rate_source",
+    "implied_take_rate", "implied_take_rate_source", "turnover_suggested", "deck_revenue_note",
 )
 # How the baseline CSV reads each field back (verdict-and-memo.md section 5); a field not listed is text.
 FLOAT_FIELDS = frozenset({"implied_take_rate", "claimed_value", "claimed_high", "claimed_converted", "claimed_converted_high", "fx_rate",
@@ -68,6 +68,7 @@ VOLUME = "Transaction volume"
 VOLUME_REASON = "no engine volume source for transaction volume"
 TURNOVER_REASONS = ("deck_says_gross_revenue", "deck_says_processed_volume", "file_confirms", "other")
 TURNOVER_CHOICES = ("revenue", "volume")
+VOLUME_CHOICE = "volume"
 CONTRADICTORY_ANSWERS = (("volume", "deck_says_gross_revenue"), ("revenue", "deck_says_processed_volume"))
 GROSS_REVENUE_NOTE = "Gross revenue (turnover)"
 ASK_NOTE = "Revenue or volume? Confirm below"
@@ -598,7 +599,31 @@ def _expand(candidates: List[dict]) -> List[dict]:
     return out
 
 
-def _row(c: dict, results: dict, settings: dict) -> dict:
+def deck_revenue_hint(c: dict, peers: List[dict]) -> Optional[dict]:
+    """Section 11, deck hint: the deck's own revenue figure for the period of a turnover claim, when it is a single figure
+    in the same currency and file, one value only, and below the turnover figure beyond tolerance. {"note", "take_rate"} or
+    None. Derived from two deck figures, so never Verified."""
+    from .decks.claims import deck_label
+    low = c.get("value")
+    if low is None or c.get("value_high") is not None or not c.get("period_start"):
+        return None
+    found = [p for p in peers if p is not c and deck_label(p) == "Revenue" and p.get("value") is not None
+             and p.get("value_high") is None and p.get("currency") == c.get("currency") and p.get("file") == c.get("file")
+             and (p.get("period_start"), p.get("period_end")) == (c.get("period_start"), c.get("period_end"))]
+    if len({p["value"] for p in found}) != 1:
+        return None
+    revenue = found[0]
+    if revenue["value"] >= low or within_tolerance("Revenue", revenue["value"] - low, low):
+        return None
+    src = (revenue.get("sources") or [{}])[0]
+    where = f"slide {src['slide']}" if src.get("slide") is not None else f"page {src['page']}" if src.get("page") is not None else ""
+    rate = revenue["value"] / low
+    currency = f" {revenue['currency']}" if revenue.get("currency") else ""
+    return {"take_rate": rate, "note": f"Deck revenue for the same period: {revenue['value']:,.0f}{currency}"
+                                       f"{f' ({where})' if where else ''}; implied take rate {rate:.0%}, derived, not verified"}
+
+
+def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = None) -> dict:
     inputs = (c.get("claim_inputs") or {}).get(c["claim_id"]) or {}
     as_of = results.get("as_of_month")
     as_of_i = _mi(as_of) if as_of else None
@@ -625,6 +650,7 @@ def _row(c: dict, results: dict, settings: dict) -> dict:
         if turn["fx_needed"]:
             turn["verdict"] = ("Unverified", f"{FX_NEEDED}: {currency}→{fx0['currency']}")
         metric, metric_by = turn["metric"], turn["set_by"]
+        hint = deck_revenue_hint(c, peers or []) if turn["state"] == "ask" else None
     spec = METRICS.get(metric) if metric else None
 
     period = c.get("period_text") or c.get("target_date") or None
@@ -646,6 +672,8 @@ def _row(c: dict, results: dict, settings: dict) -> dict:
     if turn:
         out.update(turnover_state=turn["state"], turnover_note=turn["note"], turnover_set_by=turn["set_by"],
                    turnover_reason=turn["reason"])
+        if hint:        # Volume is pre-selected in the question; the analyst's confirmation is still required
+            out.update(turnover_suggested=VOLUME_CHOICE, deck_revenue_note=hint["note"])
     shown_claim: List[Optional[float]] = [None]         # the claimed figure the gate sentence names, once it is known
 
     def finish(label: str, reason: str) -> dict:
@@ -927,7 +955,8 @@ def build_register(candidates: List[dict], results: Optional[dict], settings: di
     reporting_currency and fx. Nothing is read from a model and nothing is changed."""
     if not results:
         return []
-    rows = _rank([_row(c, results, settings) for c in _expand(candidates)])
+    claims = _expand(candidates)
+    rows = _rank([_row(c, results, settings, claims) for c in claims])
     _overlaps(rows)
     return rows
 
