@@ -3,12 +3,14 @@
  * The wording is W7, W8, W20, W21, W23 and W24 as approved; the part names are those of section 6.4. Everything shown is a
  * register row, a gap row, a stored input or a count from the server; nothing is rated, ranked or tested here.
  */
+import { seeGlossary } from "./glossary";
+
 export const VERDICT_HEADING = "Verdict";
 export const TOP5_HEADING = "Top 5";
 export const PROPOSED = "Proposed by shortfall – confirm or replace.";
 export const REPLACE = "Replace with…";
 export const CONFIRM = "Confirm top 5";
-export const TOP5_STATEMENT = "Top 5 set by the analyst pending ARR bridge.";
+export const TOP5_STATEMENT = seeGlossary("Top 5 set by the analyst pending ARR bridge.");
 export const MEMO_BUTTON = "Download IC memo (Markdown)";
 export const PART_FIVE = "Five claims";
 export const PART_REASONS = "Three reasons";

@@ -7,6 +7,7 @@ import { getAudit, getResults, reportUsage } from "@/lib/api";
 import { S22_RECONCILIATION } from "@/lib/chatUpload";
 import { fmtCurrency } from "@/lib/format";
 import { ANOMALIES_NOT_COMPUTED } from "@/lib/gapLists";
+import { seeGlossary } from "@/lib/glossary";
 
 export default function Diagnostics() {
   const { id } = useParams();
@@ -25,7 +26,7 @@ export default function Diagnostics() {
 
   const r = data.results;
   const anomalies = r.anomalies && [
-    { label: "Months with negative MRR", items: r.anomalies.negative_mrr_months, note: "Refunds/credits pushed a month's total MRR below zero." },
+    { label: "Months with negative MRR", items: r.anomalies.negative_mrr_months, note: seeGlossary("Refunds/credits pushed a month's total MRR below zero.") },
     { label: "Customers with revenue gaps > 2 months that later resume", items: r.anomalies.revenue_gap_then_resume, note: "May indicate a churn-and-return or a billing gap." },
   ];
 
@@ -55,7 +56,7 @@ export default function Diagnostics() {
                     <ShieldAlert className="h-4 w-4 text-amber-700 mt-0.5 shrink-0" />
                     <div>
                       <div className="text-slate-900 font-medium text-sm">{m.metric}</div>
-                      <div className="text-xs text-slate-600 mt-1">{m.reason}</div>
+                      <div className="text-xs text-slate-600 mt-1">{seeGlossary(m.reason)}</div>
                       <div className="text-[11px] text-sky-700 mt-2 flex items-center gap-1.5">
                         <ArrowRight className="h-3 w-3" /> {m.unlocked_by}
                       </div>
@@ -112,7 +113,7 @@ export function ReconciliationTable({ rec, currency }) {
   return (
     <section data-testid="reconciliation" className="bg-white border border-[#E5E7EB] rounded-lg p-5 mb-6">
       <h3 className="font-heading font-semibold text-slate-900 text-sm mb-4">{S22_RECONCILIATION}</h3>
-      {!rec.available ? <p className="text-xs text-slate-600">{rec.reason}</p> : (
+      {!rec.available ? <p className="text-xs text-slate-600">{seeGlossary(rec.reason)}</p> : (
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>

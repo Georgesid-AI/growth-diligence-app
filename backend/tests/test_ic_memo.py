@@ -16,6 +16,7 @@ from test_claim_register_api import AUDIT, _get, _put, api  # noqa: E402,F401  (
 
 from app import claim_matching as cm  # noqa: E402
 from app import decks  # noqa: E402
+from app import formatting as fmt  # noqa: E402
 from app import ic_memo as im  # noqa: E402
 from app import verdict as vd  # noqa: E402
 
@@ -86,8 +87,8 @@ def test_the_memo_is_built_from_the_run_a_fixture_in_the_order_of_w15_with_the_f
                         "Appendix D – Source key list and value-at-risk de-duplication"]
     assert text.startswith("# Investment committee memo: TestCo\nDate: 2026-10-08\n")
     assert "Verdict: Re-plan – 5 top-5 claims Contradicted." in text
-    assert text.count("Top 5 set by the analyst pending ARR bridge.") == 1
-    assert head_of(text).index("Top 5 set by the analyst pending ARR bridge.") < head_of(text).index("## Deal thesis")
+    assert text.count("Top 5 set by the analyst pending ARR (see glossary) bridge.") == 1
+    assert head_of(text).index("Top 5 set by the analyst pending ARR (see glossary) bridge.") < head_of(text).index("## Deal thesis")
 
 
 def test_the_run_a_memo_fits_1500_words_and_every_number_in_sections_1_to_6_has_a_footnote_resolved_in_appendix_d():
@@ -327,7 +328,7 @@ def test_partial_coverage_is_noted_in_appendix_d_not_counted_as_half():
 
 def test_value_at_risk_reads_not_yet_computed_in_the_summary_and_appendix_d_with_the_method():
     text = memo()
-    line = ("Value at risk: ARR not yet computed (ARR bridge not run); cash not yet computed (no cash analysis). "
+    line = ("Value at risk: ARR (see glossary) not yet computed (ARR bridge not run); cash not yet computed (no cash analysis). "
             "Overlapping claims are counted once, at the largest value in their group.")
     assert head_of(text).count(line) == 1 and text.count(line) == 2
     assert "Overlap groups: #1, #12;" in text
@@ -468,3 +469,24 @@ def test_w8_says_is_for_one_open_claim_and_are_for_more():
 def verdict_of_labels(labels, gates):
     from test_verdict import verdict_of
     return verdict_of(labels, gates=gates)
+
+
+# --- abbreviations (George, 2026-10-09): Value at stake reads VaS; the first use in a text block points to the glossary ----------
+
+def test_value_at_stake_reads_vas_and_each_abbreviation_points_to_the_glossary_once_per_text_block():
+    text = memo(narratives=[narrative()])
+    assert "| VaS |" in text and "Value at stake" not in text
+    body, glossary = text.split("\nGlossary\n")
+    for line in body.split("\n"):
+        if line.startswith("|") or line.startswith("#") or line.startswith("[^"):
+            assert "(see glossary)" not in line, f"a table, a heading or a footnote is not a text block: {line!r}"
+            continue
+        for term in fmt.GLOSSED:
+            uses = re.findall(rf"(?<![\w-]){term}(?![\w-])( \(see glossary\))?", line)
+            if uses:
+                assert uses[0] == " (see glossary)" and all(u == "" for u in uses[1:]), (term, line)
+    glossary = glossary.split("\n\n")[0].split("\n")       # the glossary's own entries define the terms, unchanged
+    assert glossary == [f"- {term}: {definition}" for term, definition in fmt.GLOSSARY.items()]
+    assert "- VaS: value at stake: " in text
+    # a source reference keeps its own words (the footnotes hold MRR, never with the pointer: checked above)
+    assert [line for line in text.split("\n") if line.startswith("[^") and " MRR" in line]

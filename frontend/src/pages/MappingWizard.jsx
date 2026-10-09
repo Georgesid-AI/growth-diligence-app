@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { getAudit, saveMapping, computeAudit, getRevenueCustomers, updateAudit, reportUsage, saveFx } from "@/lib/api";
 import { asOfInputValue } from "@/lib/auditForm";
 import { CALCULATE_CLASS, CALCULATE_LABEL, calculateState } from "@/lib/chatUpload";
+import { seeGlossary } from "@/lib/glossary";
 
 export default function MappingWizard() {
   const { id } = useParams();
@@ -192,7 +193,7 @@ function BillingTerms({ auditId, customerCol, hasServiceDates, billingTerms, set
       <div className="mt-5 pt-5 border-t border-[#E5E7EB]">
         <div className="text-xs text-slate-700 mb-1">Billing terms</div>
         <p className="text-[11px] text-slate-500">
-          Service start & end dates are mapped — MRR is spread across the exact service months, so per-customer billing terms aren't needed.
+          {seeGlossary("Service start & end dates are mapped — MRR is spread across the exact service months, so per-customer billing terms aren't needed.")}
         </p>
       </div>
     );

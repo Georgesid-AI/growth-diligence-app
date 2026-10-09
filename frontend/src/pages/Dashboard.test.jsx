@@ -170,12 +170,12 @@ test("a pick replaces a row with another register row and Confirm sends the five
 test("a confirmed top 5 shows W24, the outcome with its rule, the five claims, three reasons, key gates, deal terms and top gaps (W8, W11-W14)", async () => {
   const { host, unmount } = await mountDashboard(sample, OK);
   const section = host.querySelector('[data-testid="verdict"]');
-  expect(section.querySelector('[data-testid="verdict-top5-note"]').textContent).toBe("Top 5 set by the analyst pending ARR bridge.");
+  expect(section.querySelector('[data-testid="verdict-top5-note"]').textContent).toBe("Top 5 set by the analyst pending ARR (see glossary) bridge.");
   expect(section.querySelector('[data-testid="verdict-outcome"]').textContent).toContain("Re-plan");
   expect(section.querySelector('[data-testid="verdict-rule"]').textContent).toBe("2 top-5 claims Contradicted.");
   expect(section.querySelectorAll('[data-testid="verdict-five-row"]').length).toBe(2);
-  expect(section.querySelector('[data-testid="verdict-reasons"]').textContent).toContain("#1 ARR, FY2023: Contradicted, €198,143 against €240,000");
-  expect(section.querySelector('[data-testid="verdict-key-gates"]').textContent).toContain("Before the plan, ARR must be at least €100 by 2024-06-30.");
+  expect(section.querySelector('[data-testid="verdict-reasons"]').textContent).toContain("#1 ARR (see glossary), FY2023: Contradicted, €198,143 against €240,000");
+  expect(section.querySelector('[data-testid="verdict-key-gates"]').textContent).toContain("Before the plan, ARR (see glossary) must be at least €100 by 2024-06-30.");
   expect(section.querySelector('[data-testid="verdict-deal-terms"]').textContent).toBe("Deal terms: not available – the execution capacity review has not been run.");
   expect(section.querySelector('[data-testid="verdict-top-gaps"]').textContent).toContain("NRR (12-month)");
   expect(section.querySelector('[data-testid="verdict-other-gates"]').textContent).toBe("3 other claims still need a gate.");
@@ -247,7 +247,7 @@ test("Data gaps: the columns of W7, the gap with why it matters and what is requ
   expect([...section.querySelectorAll("th")].map((th) => th.textContent)).toEqual(["What the company cannot measure", "Why it matters", "Requested", "Target date"]);
   expect(section.textContent).toContain("First quarterly review");
   const row = section.querySelector('[data-testid="data-gap-row"]');
-  expect(row.querySelector('[data-testid="data-gap-why"]').textContent).toBe("Blocks NRR; claims #4. Needs 12+ months of history.");
+  expect(row.querySelector('[data-testid="data-gap-why"]').textContent).toBe("Blocks NRR (see glossary); claims #4. Needs 12+ months of history.");
   expect(row.textContent).toContain("Provide at least 13 months of revenue lines");
   await type(row.querySelector('[data-testid="data-gap-date"]'), "2024-08-31");
   expect(api.putIcInputs).toHaveBeenCalledWith("a1", { gap_target_dates: { "NRR (12-month)": "2024-08-31" } });
@@ -275,6 +275,18 @@ test("AI usage and cost (this audit): one row per step, then the total, cost wit
     ["Column mapping", "1", "0", "300", "30", "0.00"],
     ["Total", "3", "1", "2,300", "410", "0.06"],
   ]);
+  await unmount();
+});
+
+test("the AI usage and cost table is the very end of the page: after every analysis, the memo section and the glossary", async () => {
+  const { host, unmount } = await mountDashboard(sample, OK);
+  const usage = host.querySelector('[data-testid="usage-panel"]');
+  const after = [...host.querySelectorAll("[data-testid]")].filter((el) => !usage.contains(el)
+    && (usage.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING));
+  expect(after.map((el) => el.getAttribute("data-testid"))).toEqual([]);
+  for (const id of ["verdict", "verdict-memo", "claim-register", "glossary", "mrr-by-segment-chart"]) {
+    expect(host.querySelector(`[data-testid="${id}"]`).compareDocumentPosition(usage) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  }
   await unmount();
 });
 

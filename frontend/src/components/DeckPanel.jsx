@@ -4,8 +4,9 @@ import { Check, ChevronDown, ChevronRight, FileText, Loader2, Pencil, Plus, Uplo
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import FxText from "@/components/FxText";
-import { metricOptions } from "@/lib/claimRegister";
-import { addClaim, getDecks, removeDeck, updateCandidate, uploadDeck } from "@/lib/api";
+import { TurnoverCell } from "@/components/ClaimRegister";
+import { UNVERIFIED, metricOptions, turnoverHeading, turnoverOf } from "@/lib/claimRegister";
+import { addClaim, answerTurnover, getDecks, removeDeck, updateCandidate, uploadDeck } from "@/lib/api";
 import { describeRequestError } from "@/lib/requestError";
 import {
   ALL_DECKS, CLAIM_GROUPS, CLAIM_TYPES, CLAIM_UNITS, COUNT_UNIT_HINT, COUNT_TYPES, COUNT_UNIT, FX_SETTINGS_ANCHOR, FX_SETTINGS_LABEL, conversionHover, inconsistencyText, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, ADD_CLAIM_LABEL, ADD_CLAIM_NEEDS_SOURCE, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, newClaimPayload, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
@@ -113,6 +114,17 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
     } catch (err) {
       toast.error(describeRequestError(err).message);      // names the rejected field and the reason: "HTTP 422 — unit: ..."
       return false;
+    }
+  };
+
+  // Revenue or Volume for a turnover claim, answered in its row before it is approved (claim-matching.md section 11 point 8).
+  const answer = async (row, payload) => {
+    try {
+      await answerTurnover(auditId, row.claim_id, payload);
+      await load();
+    } catch (err) {
+      toast.error(describeRequestError(err).message);
+      throw err;
     }
   };
 
@@ -243,7 +255,7 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
                           </button>
                         </td>
                       </tr>
-                      {open && section.claims.map((c) => <CandidateRow key={c.id} candidate={c} onSave={save} highlight={flash === c.id} />)}
+                      {open && section.claims.map((c) => <CandidateRow key={c.id} candidate={c} onSave={save} onAnswer={answer} highlight={flash === c.id} />)}
                     </Fragment>
                   );
                 })}
@@ -315,11 +327,12 @@ function AddClaimRow({ decks, initialDeck, onSave, onCancel }) {
   );
 }
 
-function CandidateRow({ candidate: c, onSave, highlight }) {
+function CandidateRow({ candidate: c, onSave, onAnswer, highlight }) {
   const [draft, setDraft] = useState(null);
   const [why, setWhy] = useState(false);
   const explanation = inconsistencyText(c);
   const isRow = Boolean(c.by_period?.length);      // a table row: its values by period
+  const turnover = turnoverOf(c);                  // a turnover claim never reads "Revenue" before the analyst confirms it
   const choices = readingChoices(c);               // a figure that reads two ways: the default is pre-selected
   // Edit, optionally starting from the other reading of an ambiguous figure.
   const startEdit = (value) => setDraft({
@@ -386,8 +399,10 @@ function CandidateRow({ candidate: c, onSave, highlight }) {
         </>
       ) : (
         <>
-          <td className="py-2 pr-3 text-slate-800 whitespace-nowrap">
-            {typeLabel(c.claim_type)}
+          <td className={`py-2 pr-3 text-slate-800 ${turnover.views.length ? "min-w-[14rem]" : "whitespace-nowrap"}`} data-testid="candidate-type">
+            {turnover.views.length ? turnover.views.map((v) => (
+              <TurnoverCell key={v.claim_id} row={v} onAnswer={onAnswer} heading={turnoverHeading(v, isRow)} />
+            )) : typeLabel(c.claim_type)}
             {needsType(c) && <div className="text-[10px] text-amber-800 mt-0.5" data-testid="candidate-needs-type">{OTHER_TYPE_NOTE}</div>}
           </td>
           <td className={`py-2 pr-3 font-mono text-slate-900 ${isRow || claimValue(c).includes(FX_SETTINGS_LABEL) ? "" : "whitespace-nowrap"}`}>
@@ -417,6 +432,12 @@ function CandidateRow({ candidate: c, onSave, highlight }) {
         <span className={`text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-nowrap ${STATUS_STYLE[c.status] || ""}`}>
           {STATUS_LABELS[c.status] || c.status}
         </span>
+        {turnover.open && (
+          <div className="mt-1 text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-nowrap text-amber-800 border-amber-500/50 bg-amber-50"
+            data-testid="candidate-turnover-label">
+            {UNVERIFIED}
+          </div>
+        )}
         {c.ai_label && (
           <div className={`mt-1 text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-nowrap ${c.ai_label === VERIFIED_LABEL
             ? "text-emerald-800 border-emerald-500/50 bg-emerald-50" : "text-amber-800 border-amber-500/50 bg-amber-50"}`}

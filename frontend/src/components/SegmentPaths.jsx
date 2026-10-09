@@ -4,6 +4,7 @@ import {
   fmtCurrency, fmtCount, fmtCountUp, fmtPct, fmtRatio, fmtMonths,
 } from "@/lib/format";
 import { metricLabel, metricQualifier, bracketed } from "@/lib/metricNames";
+import { seeGlossary } from "@/lib/glossary";
 
 /**
  * Segment mix paths to target ARR.
@@ -44,8 +45,8 @@ export function SegmentPaths({ sp, ccy }) {
       >
         <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
         <span>
-          {sp.assumption} Nothing here says NRR will hold; it shows what the existing base is worth if it does,
-          so the size of the gap left for new customers can be read against that.
+          {seeGlossary([sp.assumption, "Nothing here says NRR will hold; it shows what the existing base is worth if it does, "
+            + "so the size of the gap left for new customers can be read against that."].filter(Boolean).join(" "))}
         </span>
       </div>
 
@@ -119,8 +120,8 @@ function Reconciliation({ sp }) {
         );
       })}
       <div className="text-[11px] text-slate-500">
-        Below 1.00x, the observed rate is more than enough to reach the target; above 1.00x, it is not. Both views hold
-        their rates and NRR flat, so both are arithmetic, not forecasts.
+        {seeGlossary("Below 1.00x, the observed rate is more than enough to reach the target; above 1.00x, it is not. Both views hold "
+          + "their rates and NRR flat, so both are arithmetic, not forecasts.")}
       </div>
     </div>
   );
@@ -161,7 +162,7 @@ function StageOne({ sp, ccy }) {
                   </div>
                   {v.small_base && (
                     <div data-testid={`small-base-${seg}`} className="text-[10px] text-amber-700">
-                      small base (fewer than 10 customers) — this NRR moves a lot on one customer
+                      {seeGlossary("small base (fewer than 10 customers) — this NRR moves a lot on one customer")}
                     </div>
                   )}
                 </td>
@@ -197,8 +198,8 @@ function StageOne({ sp, ccy }) {
       </div>
       {sp.unsegmented_customers > 0 && (
         <div className="mt-1 text-[11px] text-amber-700">
-          {fmtCount(sp.unsegmented_customers)} active customers with {fmtCurrency(sp.unsegmented_arr, ccy)} ARR have no segment
-          and are left out of this analysis — map a segment for them to include them.
+          {seeGlossary(`${fmtCount(sp.unsegmented_customers)} active customers with ${fmtCurrency(sp.unsegmented_arr, ccy)} ARR have no segment `
+            + "and are left out of this analysis — map a segment for them to include them.")}
         </div>
       )}
     </div>
@@ -213,7 +214,7 @@ function Gap({ sp, ccy }) {
       </div>
       {sp.target_met_by_base ? (
         <div className="text-sm text-slate-800">
-          The projected base alone reaches the target ARR of {fmtCurrency(sp.target_arr, ccy)}, so no new customers are required.
+          {seeGlossary(`The projected base alone reaches the target ARR of ${fmtCurrency(sp.target_arr, ccy)}, so no new customers are required.`)}
         </div>
       ) : (
         <div className="text-sm text-slate-800">
@@ -302,8 +303,8 @@ function ReverseSolve({ sp, w, ccy, primary }) {
       {primary && (
         <div className="mt-2 text-[11px] text-slate-500">
           Gross new customers count everyone who landed, including any who have since left. The Path to Plan panel above
-          counts <span className="font-medium">net</span> new customers (after those who left), so the two rates differ.
-          New customers are valued at landed ACV — first-month ARR, no expansion applied.
+          counts <span className="font-medium">net</span>{seeGlossary(" new customers (after those who left), so the two rates differ. "
+            + "New customers are valued at landed ACV — first-month ARR, no expansion applied.")}
         </div>
       )}
     </div>

@@ -12,6 +12,7 @@ import {
   observedText, overlapsText, readingText, registerRows, segmentOptions, valueAtStakeText,
 } from "@/lib/claimRegister";
 import { describeRequestError } from "@/lib/requestError";
+import { seeGlossary } from "@/lib/glossary";
 import FxText from "@/components/FxText";
 import { NO_DATE } from "@/lib/deckClaims";
 
@@ -49,7 +50,7 @@ function GateCell({ row, ccy, onSave }) {
     <div className="max-w-xs space-y-1">
       {row.gate_needed && <div className="text-[10px] font-mono text-amber-800" data-testid="register-gate-needed">{GATE_NEEDED}</div>}
       <div className="text-slate-600" data-testid="register-gate-context">{context}</div>
-      {row.gate_sentence && <div className="text-slate-800" data-testid="register-gate-sentence">{row.gate_sentence}</div>}
+      {row.gate_sentence && <div className="text-slate-800" data-testid="register-gate-sentence">{seeGlossary(row.gate_sentence)}</div>}
       {row.gate_saved && <div className="text-[10px] font-mono text-emerald-700" data-testid="register-gate-saved">Gate saved</div>}
       {named && (
         <div className="flex gap-1">
@@ -75,16 +76,19 @@ function GateCell({ row, ccy, onSave }) {
 }
 
 /** A turnover claim (claim-matching.md section 11): the label or the question, and one click, Revenue or Volume, with a reason
- *  code. It is shown on every turnover row, so an answer can be changed. */
-function TurnoverCell({ row, onAnswer }) {
+ *  code. It is shown on every turnover row, so an answer can be changed. The deck list passes `heading` ("Turnover – confirm:")
+ *  for a claim the analyst has not confirmed: it stands in place of the label and the question. */
+export function TurnoverCell({ row, onAnswer, heading }) {
   const [reason, setReason] = useState(row.turnover_reason || "");     // no default: the analyst picks the reason
   const take = takeRateText(row);
   const suggested = row.turnover_state === "ask" ? row.turnover_suggested : null;      // pre-selected, still to be confirmed
   return (
     <div className="mt-1 space-y-1" data-testid="register-turnover">
-      <div className="text-slate-800" data-testid="register-turnover-note">{row.turnover_note}
-        {row.turnover_set_by === "analyst" && <span className="text-[10px] text-slate-500"> · set by you</span>}
-      </div>
+      {heading ? <div className="font-semibold text-slate-900" data-testid="turnover-confirm">{heading}</div> : (
+        <div className="text-slate-800" data-testid="register-turnover-note">{row.turnover_note}
+          {row.turnover_set_by === "analyst" && <span className="text-[10px] text-slate-500"> · set by you</span>}
+        </div>
+      )}
       {take && (
         <div className="font-mono text-[11px] text-slate-700" data-testid="register-take-rate">
           {take}
@@ -92,7 +96,8 @@ function TurnoverCell({ row, onAnswer }) {
         </div>
       )}
       {row.deck_revenue_note && <div className="font-mono text-[11px] text-slate-700" data-testid="register-deck-revenue">{row.deck_revenue_note}</div>}
-      <div className="text-[10px] text-slate-500">{TURNOVER_QUESTION}</div>
+      {row.file_note && <div className="text-[11px] text-slate-600" data-testid="turnover-file-note">{row.file_note}</div>}
+      {!heading && <div className="text-[10px] text-slate-500">{TURNOVER_QUESTION}</div>}
       <div className="flex flex-wrap items-center gap-1">
         <select value={reason} onChange={(e) => setReason(e.target.value)} className={selectClass} data-testid="register-turnover-reason">
           <option value="">Reason…</option>
@@ -148,7 +153,8 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
           <table className="w-full text-xs" data-testid="claim-register-table">
             <thead>
               <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500 border-b border-[#E5E7EB]">
-                {REGISTER_COLUMNS.map((c) => <th key={c} className="py-2 px-3 font-medium whitespace-nowrap">{c}</th>)}
+                {/* the headers are set in capitals; "VaS" keeps its own case, as the glossary writes it */}
+                {REGISTER_COLUMNS.map((c) => <th key={c} className={`py-2 px-3 font-medium whitespace-nowrap ${c === "VaS" ? "normal-case" : ""}`}>{c}</th>)}
               </tr>
             </thead>
             <tbody>

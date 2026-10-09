@@ -945,8 +945,7 @@ async def upload_deck(audit_id: str, background: BackgroundTasks, file: UploadFi
 async def list_deck_candidates(audit_id: str):
     """The audit's decks (no parsed text), most recently uploaded first, and their candidates:
     grouped by deck in that order; within a deck the ones to review first, then by slide or page."""
-    audit = await db.audits.find_one({"id": audit_id}, {"id": 1, "structure_reading_consent": 1, "reporting_currency": 1,
-                                                         "as_of_month": 1, "results.as_of_month": 1, "fx": 1})
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
     if not audit:
         raise HTTPException(404, "Audit not found")
     deck_fields = {"_id": 0, "deck_id": 1, "file": 1, "format": 1, "page_unit": 1, "pages": 1, "uploaded_at": 1,
@@ -964,6 +963,12 @@ async def list_deck_candidates(audit_id: str):
             d.get("ai_status") in (None, structures.PYTHON_ONLY)
     rank = {d["deck_id"]: i for i, d in enumerate(found)}
     candidates = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0}).to_list(10000)
+    fx = await _fx(audit_id, audit)
+    settings = _register_settings(audit, fx, await _deck_take_rate(audit_id))
+    # A turnover claim asks "Revenue or Volume?" in its own row, before it is approved (claim-matching.md section 11
+    # point 8), from the register's own code: read before the list adds its display fields to the candidates.
+    current = await _current_audit(audit_id, audit, strict=False)
+    turnover = claim_matching.turnover_views(candidates, current.get("results"), settings)
     # By the group of the claim type (revenue, P&L, customers and sales, market size, Unknown, Other), then ascending by
     # slide or page across all decks (a tie goes to the more recent deck), then reading order on the page: top to bottom
     # in bands of 2% of the height, then left to right, then the order the parser found them in.
@@ -972,11 +977,10 @@ async def list_deck_candidates(audit_id: str):
     candidates.sort(key=lambda c: (c["group"], _first_page(c), rank.get(c.get("deck_id"), len(rank)), *_reading(c),
                                    c.get("order", 0)))
     # A claim in another currency than the audit's, with the rate it is converted at (None: "FX rate needed").
-    fx = await _fx(audit_id, audit)
-    settings = _register_settings(audit, fx)
     as_of = audit.get("as_of_month") or (audit.get("results") or {}).get("as_of_month")
     for c in candidates:
         c["fx"] = claim_matching.fx_view(c, settings, as_of)
+        c["turnover"] = turnover.get(c["id"])
     peers = {}
     for c in candidates:
         peers.setdefault(c.get("deck_id"), []).append(c)
@@ -1187,11 +1191,15 @@ async def _claim_rows(audit_id: str, audit: dict) -> tuple:
     """(register candidates, register rows in rank order). The rows are computed on read from the stored results and
     the analyst's inputs on the candidates (docs/specs/claim-matching.md section 6); nothing is sent to a model."""
     audit = await _current_audit(audit_id, audit, strict=False)
-    claims = await db[decks.CANDIDATES_COLLECTION].find(
-        {"audit_id": audit_id, "status": {"$in": list(REGISTER_STATUSES)}}, {"_id": 0}).to_list(10000)
+    # Every candidate not rejected: the register holds the approved and edited ones; the deck hint (claim-matching.md
+    # section 11 point 7) reads the pending ones too.
+    found = await db[decks.CANDIDATES_COLLECTION].find(
+        {"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
+    claims = [c for c in found if c.get("status") in REGISTER_STATUSES]
     claims.sort(key=lambda c: (c.get("file") or "", c.get("order", 0)))
     rows = claim_matching.build_register(
-        claims, audit.get("results"), _register_settings(audit, await _fx(audit_id, audit), await _deck_take_rate(audit_id)))
+        claims, audit.get("results"), _register_settings(audit, await _fx(audit_id, audit), await _deck_take_rate(audit_id)),
+        peers=found)
     # Counts per label only: a value, a gate sentence or a deck file name never reaches a log line.
     counts = claim_matching.label_counts(rows)
     logger.info("claim register: run_id=%s rows=%d labels=%s", audit_id, len(rows), counts)
@@ -1352,19 +1360,21 @@ class TurnoverAnswer(BaseModel):
 @api.put("/audits/{audit_id}/claims/{claim_id}/turnover")
 async def answer_turnover(audit_id: str, claim_id: str, payload: TurnoverAnswer):
     """Save the analyst's Revenue or Volume answer for a turnover claim, on the claim and on the audit (under a hash of the
-    term and the period, no deck text) so the same term and period reuse it. Gives the register back."""
+    term and the period, no deck text) so the same term and period reuse it. Gives the register back. The claim may still
+    be pending (the deck list asks in its row, section 11 point 8) and the audit not yet computed: the answer needs neither."""
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
     if not audit:
         raise HTTPException(404, "Audit not found")
-    if not audit.get("results"):
-        raise HTTPException(409, "Audit not computed yet")
-    claims, rows = await _claim_rows(audit_id, audit)
-    row = next((r for r in rows if r["claim_id"] == claim_id), None)
-    if row is None:
-        raise HTTPException(404, "Claim not in the register")
-    if row.get("turnover_state") is None:
+    claims = await db[decks.CANDIDATES_COLLECTION].find(
+        {"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
+    candidate = next((c for c in claims if c["id"] == claim_id.split("#")[0]), None)
+    if candidate is None or not any(c["claim_id"] == claim_id for c in claim_matching._expand([candidate])):
+        raise HTTPException(404, "Claim not found")
+    current = await _current_audit(audit_id, audit, strict=False)
+    views = claim_matching.turnover_views(claims, current.get("results"), _register_settings(
+        audit, await _fx(audit_id, audit), await _deck_take_rate(audit_id)))
+    if not any(v["claim_id"] == claim_id for v in views.get(candidate["id"]) or ()):
         raise HTTPException(400, "This claim is not a turnover claim")
-    candidate = next(c for c in claims if c["id"] == claim_id.split("#")[0])
     expanded = next(c for c in claim_matching._expand([candidate]) if c["claim_id"] == claim_id)
     inputs = {**(candidate.get("claim_inputs") or {})}
     inputs[claim_id] = {**inputs.get(claim_id, {}), "turnover_as": payload.answer, "turnover_reason": payload.reason}

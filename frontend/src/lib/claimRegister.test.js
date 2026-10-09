@@ -20,7 +20,7 @@ describe("the Claim register section of the Dashboard (spec section 8)", () => {
   test("its title, its download button and its columns are those of the spec", () => {
     expect(REGISTER_HEADING).toBe("Claim register");
     expect(DOWNLOAD_LABEL).toBe("Download baseline (CSV)");
-    expect(REGISTER_COLUMNS).toEqual(["#", "Claim", "Period", "Segment", "Page", "Read from deck", "Observed", "Gap", "Gloss", "Value at stake",
+    expect(REGISTER_COLUMNS).toEqual(["#", "Claim", "Period", "Segment", "Page", "Read from deck", "Observed", "Gap", "Gloss", "VaS",
       "Overlaps with", "Evidence", "Gate"]);
   });
 

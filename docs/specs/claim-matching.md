@@ -278,13 +278,25 @@ ARR, MRR or "new MRR", is a turnover claim. Resolution, in this order:
    period, one value) below the turnover figure beyond tolerance (§4), Volume is pre-selected in the question "Revenue or
    volume? Confirm below" and the row shows "Deck revenue for the same period: 150,000 GBP (page 19); implied take rate
    27%, derived, not verified" (revenue ÷ turnover, no currency conversion, never Verified, never stored). The state stays
-   `ask` and the row stays Unverified: the Revenue and Volume buttons still need a reason and the analyst's click. Only
-   the register's own claims are read: an unapproved revenue figure gives no hint. No comparison is made after the
-   analyst confirms Revenue (decision pending: a deck inconsistency is flagged when the deck is parsed).
+   `ask` and the row stays Unverified: the Revenue and Volume buttons still need a reason and the analyst's click. Every
+   claim not rejected is read, pending ones included (amended 2026-10-09, George; before, an unapproved revenue figure
+   gave no hint); a rejected revenue figure gives none. No comparison is made after the analyst confirms Revenue
+   (decision pending: a deck inconsistency is flagged when the deck is parsed).
+8. The deck list (2026-10-09, George): a turnover claim never reads "Revenue" before the analyst confirms it. Until then,
+   pending or approved, its metric cell reads "Turnover – confirm:" with the reason codes and the Revenue and Volume
+   buttons of point 2 in the row, its status cell carries the label Unverified, and the row shows the deck hint of point 7
+   and, when no revenue file covers the claim's period (point 4), "No revenue-file period to compare". A value of a table
+   row asks once per period, its period first ("Y/E 22 · Turnover – confirm:"). Once answered the cell shows the answer
+   ("Transaction volume · set by you") with the buttons, so it can be changed. In the register its Claim cell reads
+   "Turnover · 550,508 GBP" until then. GET /api/audits/{id}/decks gives each
+   candidate `turnover`: null, or one view per claim (`claim_id`, `period`, the turnover fields of §6 and `file_note`),
+   computed by the register's own code over every candidate not rejected, before the first Calculate too. The answer is
+   stored as in point 2; the claim may be pending and the audit not yet computed.
 New register fields: `turnover_state` (null; ask; revenue; volume), `turnover_note` (the label or question),
 `turnover_set_by` (python, analyst), `turnover_reason`, `implied_take_rate`, `implied_take_rate_source`,
 `turnover_suggested` (null; volume), `deck_revenue_note`.
-PUT /api/audits/{id}/claims/{claim_id}/turnover {as, reason}.
+PUT /api/audits/{id}/claims/{claim_id}/turnover {as, reason}: any claim not rejected, approved or not; 404 for an unknown or
+rejected claim, 400 for a claim that is not a turnover claim.
 
 ## Done when
 - Every fixture row gives its label, gap, gloss and rank (`backend/tests/test_claim_matching.py`).

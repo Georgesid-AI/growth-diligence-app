@@ -241,9 +241,23 @@ GLOSSARY = {
     "MRR": "monthly recurring revenue",
     "NRR": "net revenue retention",
     "CAC": "customer acquisition cost",
-    "Value at stake": (
-        "The amount of ARR or cash that depends on this claim being true. ARR and cash are stated separately and never added together. Where several claims drive the same ARR or cash, the register shows the overlap, and the memo gives either a de-duplicated total or the largest single exposure and says which. Until the ARR bridge exists, ARR value at stake is not computed and claims are ranked by the size of the gap to the data."),
+    "VaS": (
+        "value at stake: the amount of ARR or cash that depends on this claim being true. ARR and cash are stated separately and never added together. Where several claims drive the same ARR or cash, the register shows the overlap, and the memo gives either a de-duplicated total or the largest single exposure and says which. Until the ARR bridge exists, ARR VaS is not computed and claims are ranked by the size of the gap to the data."),
 }
+# The abbreviations whose first use in a text block points to the glossary (George, 2026-10-09). Mirrors seeGlossary in
+# frontend/src/lib/glossary.js.
+GLOSSED = ("VaS", "ARR", "MRR", "NRR", "CAC")
+SEE_GLOSSARY = "(see glossary)"
+_GLOSSED = {term: re.compile(rf"(?<![\w-]){term}(?![\w-])( \(see glossary\))?") for term in GLOSSED}
+
+
+def see_glossary(text: str) -> str:
+    """One text block with each abbreviation of GLOSSED followed by "(see glossary)" at its first use; later uses stay
+    plain. A term inside a compound ("NRR-compounded") is not a use. Idempotent. Not for labels, headings, table cells
+    or source references."""
+    for rx in _GLOSSED.values():
+        text = rx.sub(lambda m: m.group(0) if m.group(1) else f"{m.group(0)} {SEE_GLOSSARY}", text, count=1)
+    return text
 ACV_DEFINITION = f"ACV ({GLOSSARY['ACV']})"
 
 _ACV = re.compile(r"\bACV\b")

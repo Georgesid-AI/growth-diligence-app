@@ -12,7 +12,7 @@ import { Gloss } from "@/components/Gloss";
 import { Narrative } from "@/components/Narrative";
 import { NarrativeControl } from "@/components/NarrativeControl";
 import { getAudit, getResults, getVerdict, exportUrl, readNarrative, generateNarrative, getDisclosure, reportUsage, NARRATIVE_TIMEOUT_MS } from "@/lib/api";
-import { GLOSSARY } from "@/lib/glossary";
+import { GLOSSARY, seeGlossary } from "@/lib/glossary";
 import { SegmentPaths } from "@/components/SegmentPaths";
 import ClaimRegister from "@/components/ClaimRegister";
 import DataGaps from "@/components/DataGaps";
@@ -282,10 +282,9 @@ export default function Dashboard() {
       {/* Claim register: approved deck claims tested against the computed metrics (docs/specs/claim-matching.md section 8) */}
       <ClaimRegister auditId={id} results={r} onChanged={refreshVerdict} />
 
-      {/* Data gaps, the verdict and the AI usage and cost (docs/specs/verdict-and-memo.md sections 4, 6.4 and 8) */}
+      {/* Data gaps and the verdict (docs/specs/verdict-and-memo.md sections 4 and 6.4) */}
       <DataGaps auditId={id} verdict={verdict} onChanged={refreshVerdict} />
       <Verdict auditId={id} verdict={verdict} onChanged={refreshVerdict} />
-      <UsagePanel auditId={id} refresh={verdictTick} />
 
       {/* Narrative — status tells the reader which figures were verified */}
       <Narrative state={generating ? { loading: true } : narrative} />
@@ -534,7 +533,7 @@ export default function Dashboard() {
               {missing.slice(0, 5).map((m, i) => (
                 <div key={i} data-testid={`missing-data-item-${i}`} className="text-sm">
                   <div className="text-slate-800">{m.metric}</div>
-                  <div className="text-[11px] text-slate-500">{m.reason}</div>
+                  <div className="text-[11px] text-slate-500">{seeGlossary(m.reason)}</div>
                   {m.absent && <div className="text-[11px] text-slate-600 mt-0.5">Absent fields — {m.absent}</div>}
                 </div>
               ))}
@@ -585,6 +584,9 @@ export default function Dashboard() {
           {disclosure.text}
         </p>
       )}
+
+      {/* AI usage and cost (section 8): the very end of the page, after every analysis and the memo section */}
+      <UsagePanel auditId={id} refresh={verdictTick} />
     </Layout>
   );
 }

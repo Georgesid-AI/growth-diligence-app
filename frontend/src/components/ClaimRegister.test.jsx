@@ -104,8 +104,11 @@ test("every row has a gate: Gate needed until it is saved, then its sentence; a 
   expect(rows[0].querySelector('[data-testid="register-gate-context"]').textContent).toBe("Claimed 200,000 EUR (Feb 2024)");
   expect(rows[0].querySelector('[data-testid="register-gate-needed"]').textContent).toBe("Gate needed");
   expect(rows[1].querySelector('[data-testid="register-gate-needed"]')).toBeNull();
-  expect(rows[1].querySelector('[data-testid="register-gate-sentence"]').textContent).toContain("Before the plan");
+  expect(rows[1].querySelector('[data-testid="register-gate-sentence"]').textContent).toBe(
+    "Before the plan, ARR (see glossary) must be at least €195,000 by 2024-06-30. Observed €202,125 (2024-02); claimed €200,000 (Feb 2024).");
   expect(rows[1].querySelector('[data-testid="register-gate-saved"]').textContent).toBe("Gate saved");
+  const vas = [...host.querySelectorAll("thead th")].find((th) => th.textContent === "VaS");
+  expect(vas.className).toContain("normal-case");          // the header row is in capitals; VaS keeps its case
 });
 
 test("the key gate checkbox is off until the gate is saved, saves on a click and sends false to clear it", async () => {
@@ -171,6 +174,13 @@ test("a deck revenue below the turnover pre-selects Volume, shows the deck figur
   expect(rows[0].querySelector('[data-testid="register-turnover-note"]').textContent).toBe("Revenue or volume? Confirm below");
   expect(rows[1].querySelector('[data-testid="register-deck-revenue"]')).toBeNull();
   expect(rows[1].querySelector('[data-testid="register-turnover-volume"]').getAttribute("aria-pressed")).toBeNull();
+});
+
+test("a turnover claim reads Turnover, never Revenue, in the Claim cell until the analyst confirms it (section 11 point 8)", async () => {
+  const { host } = await mount([TURNOVER, { ...TURNOVER, claim_id: "t2", turnover_state: "volume", turnover_note: "Transaction volume",
+    turnover_set_by: "analyst" }, ROW]);
+  const cells = [...host.querySelectorAll('[data-testid="register-claim"]')].map((td) => td.textContent);
+  expect(cells).toEqual(["Turnover · 200,000 EUR", "Revenue · 200,000 EUR", "Revenue · 200,000 EUR"]);
 });
 
 test("a turnover row shows its label, the question and one click Revenue or Volume with a reason code", async () => {
