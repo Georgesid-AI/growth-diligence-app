@@ -29,19 +29,24 @@ export const DECK_SCOPE_OUTRO = "If a number you need sits in a picture, use Add
 // Shown above the approval list, word for word.
 export const CLAIMS_HEADING = "Claims found in the uploaded documents";
 export const CLAIMS_INTRO = "These figures were extracted automatically and inform the growth plan. While errors are possible, you only need to check claims that look incorrect or implausible against their source slides before making your selection.";
+export const CLAIMS_CHOICES = [
+  ["✓ Approve:", "Confirm this is a claim the company makes. It will be added to the claim register and tested against the data."],
+  ["✎ Edit:", "Correct the figure, type, unit or date, then approve the claim. It will be added to the claim register and tested against the data."],
+  ["✕ Reject:", "Exclude items that are not company claims, such as another company's figures, funds raised or chart axis labels. Rejected items remain in the record but are not used."],
+];
 
 // Add claim: a figure the analyst reads off a slide or page the parser could not read. The server tags it origin "analyst".
 export const ADD_CLAIM_LABEL = "Add claim";
-export const ADD_CLAIM_NEEDS_SOURCE = "Choose the source document and enter the page number.";
+export const ADD_CLAIM_NEEDS_SOURCE = "Enter the value, choose the metric and the source document, and enter the page number.";
 export const ANALYST_ADDED_TAG = "Added by analyst";
 export const ANALYST_CONFIDENCE = "Analyst-entered";
 
 /** The POST body of Add claim from the form draft, or null while the source document or the page is missing, or the value is. */
 export function newClaimPayload(draft) {
   const page = Number(draft.page);
-  if (!draft.deck_id || !Number.isInteger(page) || page < 1 || draft.value === "" || !draft.claim_type) return null;
+  if (!draft.deck_id || !Number.isInteger(page) || page < 1 || draft.value === "" || !draft.claim_type || !draft.metric) return null;
   return {
-    claim_type: draft.claim_type, deck_id: draft.deck_id, page,
+    claim_type: draft.claim_type, metric: draft.metric, deck_id: draft.deck_id, page,
     value: Number(draft.value), value_high: draft.value_high === "" ? null : Number(draft.value_high),
     unit: draft.unit.trim() || null, currency: draft.currency.trim() ? draft.currency.trim().toUpperCase() : null,
     target_date: draft.target_date.trim() || null,

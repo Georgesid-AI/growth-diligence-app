@@ -397,10 +397,11 @@ describe("Add claim", () => {
   };
   const openRow = async () => act(async () => { q("add-claim").click(); });
 
-  test("the claims text is the agreed wording and the Approve, Edit and Reject lines are gone", () => {
-    expect(q("claims-instructions").textContent).toBe(
-      "Claims found in the uploaded documents" +
-      "These figures were extracted automatically and inform the growth plan. While errors are possible, you only need to check claims that look incorrect or implausible against their source slides before making your selection.");
+  test("the claims text is the agreed wording, with the Approve, Edit and Reject lines below it", () => {
+    const lines = [...q("claims-instructions").querySelectorAll("h4, p")].map((n) => n.textContent);
+    expect(lines[0]).toBe("Claims found in the uploaded documents");
+    expect(lines[1]).toBe("These figures were extracted automatically and inform the growth plan. While errors are possible, you only need to check claims that look incorrect or implausible against their source slides before making your selection.");
+    expect(lines.slice(2).map((l) => l.split(":")[0])).toEqual(["✓ Approve", "✎ Edit", "✕ Reject"]);
     expect(q("deck-scope-message").textContent).toContain("If a number you need sits in a picture, use Add claim and cite the page, or upload the source spreadsheet.");
   });
 
@@ -414,13 +415,24 @@ describe("Add claim", () => {
     for (const id of ["add-claim-value", "add-claim-value-high", "add-claim-unit", "add-claim-currency", "add-claim-date", "add-claim-page"]) expect(q(id)).not.toBeNull();
   });
 
-  test("Save stays off until the value and the page are filled; the source document is always one of the decks", async () => {
+  test("the metric has no default and lists only metrics in the claim's unit; Save stays off until value, metric and page are filled", async () => {
     await openRow();
+    expect(q("add-claim-metric").value).toBe("");
+    expect([...q("add-claim-metric").options].map((o) => o.value)).not.toContain("none");
+    await change(q("add-claim-currency"), "EUR");
+    expect([...q("add-claim-metric").options].map((o) => o.value)).toEqual(expect.arrayContaining(["ARR", "MRR", "Revenue"]));
+    expect([...q("add-claim-metric").options].map((o) => o.value)).not.toContain("Win rate");
     expect(q("add-claim-save").disabled).toBe(true);
     await change(q("add-claim-value"), "5");
-    expect(q("add-claim-save").disabled).toBe(true);          // no page yet
     await change(q("add-claim-page"), "3");
+    expect(q("add-claim-save").disabled).toBe(true);          // no metric yet
+    await change(q("add-claim-metric"), "ARR");
     expect(q("add-claim-save").disabled).toBe(false);
+    await change(q("add-claim-currency"), "");               // ARR no longer fits: the choice is dropped, not sent
+    expect(q("add-claim-metric").value).toBe("");
+    expect(q("add-claim-save").disabled).toBe(true);
+    await change(q("add-claim-currency"), "EUR");
+    await change(q("add-claim-metric"), "ARR");
     await change(q("add-claim-page"), "");
     expect(q("add-claim-save").disabled).toBe(true);
   });
@@ -431,11 +443,12 @@ describe("Add claim", () => {
     await change(q("add-claim-deck"), "d1");
     await change(q("add-claim-value"), "3600000");
     await change(q("add-claim-currency"), "usd");
+    await change(q("add-claim-metric"), "ARR");
     await change(q("add-claim-date"), "2025");
     await change(q("add-claim-page"), "4");
     await act(async () => { q("add-claim-save").click(); });
     expect(api.addClaim).toHaveBeenCalledWith("a1", {
-      claim_type: "revenue", deck_id: "d1", page: 4, value: 3600000, value_high: null, unit: null, currency: "USD", target_date: "2025" });
+      claim_type: "revenue", metric: "ARR", deck_id: "d1", page: 4, value: 3600000, value_high: null, unit: null, currency: "USD", target_date: "2025" });
     expect(q("add-claim-row")).toBeNull();
     expect(api.getDecks).toHaveBeenCalledTimes(2);
   });

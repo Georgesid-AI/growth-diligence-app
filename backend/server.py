@@ -1036,6 +1036,7 @@ class AnalystClaim(BaseModel):
     target_date: Optional[str] = Field(default=None, pattern=_TARGET_DATE.pattern)
     deck_id: str
     page: int = Field(ge=1)
+    metric: str          # the register metric the claim is tested against (claim-matching.md table 2a); required, no default
 
 
 @api.post("/audits/{audit_id}/decks/candidates")
@@ -1051,6 +1052,8 @@ async def add_analyst_claim(audit_id: str, payload: AnalystClaim):
         raise _rejected("deck_id", "choose one of the uploaded documents")
     if deck.get("pages") and payload.page > deck["pages"]:
         raise _rejected("page", f"this document has {deck['pages']} {deck.get('page_unit') or 'page'}s")
+    if not claim_matching.fits_metric(payload.metric, payload.unit, payload.currency):
+        raise _rejected("metric", "choose a metric in the claim's unit")
     if payload.value_high is not None and payload.value_high < payload.value:
         raise _rejected("value_high", "the high end of a range is not below the low end")
     page_key = "slide" if deck.get("page_unit") == "slide" else "page"
@@ -1064,6 +1067,7 @@ async def add_analyst_claim(audit_id: str, payload: AnalystClaim):
         "audit_id": audit_id, "deck_id": payload.deck_id, "file": deck["file"], "id": str(uuid.uuid4()),
         "order": max((c.get("order", 0) for c in existing), default=-1) + 1, "status": "approved",
     }
+    candidate["claim_inputs"] = {candidate["id"]: {"metric": payload.metric}}      # the analyst's metric, as the register stores it
     await db[decks.CANDIDATES_COLLECTION].insert_one(candidate)
     return sanitize(await db[decks.CANDIDATES_COLLECTION].find_one({"audit_id": audit_id, "id": candidate["id"]}, {"_id": 0}))
 

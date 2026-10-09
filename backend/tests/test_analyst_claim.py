@@ -23,7 +23,8 @@ from app import decks  # noqa: E402
 AUDIT, DECK = "audit-ac", "deck-1"
 RUN = RUNS["A"]
 # The figures of the parser's claim c01 (Revenue 200,000 EUR in Feb 2024), typed in by hand.
-BODY = {"claim_type": "revenue", "value": 200000, "currency": "EUR", "target_date": "2024-02", "deck_id": DECK, "page": 3}
+BODY = {"claim_type": "revenue", "value": 200000, "currency": "EUR", "target_date": "2024-02", "deck_id": DECK, "page": 3,
+        "metric": "ARR"}
 
 
 @pytest.fixture()
@@ -66,8 +67,12 @@ def test_the_source_document_and_the_page_are_required_and_must_exist(api):
     before = len(db[decks.CANDIDATES_COLLECTION].docs)
     no_page = {k: v for k, v in BODY.items() if k != "page"}
     no_deck = {k: v for k, v in BODY.items() if k != "deck_id"}
+    no_metric = {k: v for k, v in BODY.items() if k != "metric"}
     assert client.post(f"/api/audits/{AUDIT}/decks/candidates", json=no_page).status_code == 422
     assert client.post(f"/api/audits/{AUDIT}/decks/candidates", json=no_deck).status_code == 422
+    assert client.post(f"/api/audits/{AUDIT}/decks/candidates", json=no_metric).status_code == 422, "no default metric"
+    assert _add(client, metric="Win rate").status_code == 400, "a % metric for an amount"
+    assert _add(client, metric="Net happiness").status_code == 400
     assert _add(client, page=0).status_code == 422
     assert _add(client, page=13).status_code == 400, "the deck has 12 slides"
     assert _add(client, deck_id="not-a-deck").status_code == 400
@@ -79,8 +84,8 @@ def test_the_source_document_and_the_page_are_required_and_must_exist(api):
 def test_it_is_matched_and_labelled_by_the_same_code_as_a_parser_claim_with_the_same_fields(api):
     client, db = api
     new = _add(client).json()
-    twin = {k: v for k, v in new.items() if k not in ("origin", "id")}      # the same claim as the parser would store it
-    db[decks.CANDIDATES_COLLECTION].docs.append({**twin, "id": "twin"})
+    twin = {k: v for k, v in new.items() if k not in ("origin", "id", "claim_inputs")}      # as the parser would store it
+    db[decks.CANDIDATES_COLLECTION].docs.append({**twin, "id": "twin", "claim_inputs": {"twin": {"metric": "ARR"}}})
     rows = {r["claim_id"]: r for r in _register(client)}
     mine, parsers = rows[new["id"]], rows["twin"]
     assert (mine["deck_reading"], parsers["deck_reading"]) == ("analyst-entered", "parser")
@@ -89,14 +94,10 @@ def test_it_is_matched_and_labelled_by_the_same_code_as_a_parser_claim_with_the_
     assert mine["page_ref"] == "slide 3" and mine["deck_file"] == "testco_board.pptx"
 
 
-def test_with_a_metric_chosen_in_the_register_it_is_tested_like_the_parsers_c01(api):
+def test_the_chosen_metric_is_the_analysts_and_the_claim_is_tested_like_the_parsers_c01_at_once(api):
     client, _ = api
     new = _add(client).json()
-    # Metric proposal reads deck keywords (claim-matching.md section 2); an added claim has none, so the analyst picks it
-    # in the register, as for a parser claim whose line names no metric.
-    r = client.put(f"/api/audits/{AUDIT}/claims/{new['id']}", json={"metric": "ARR"})
-    assert r.status_code == 200, r.text
-    rows = {x["claim_id"]: x for x in r.json()["register"]}
+    rows = {x["claim_id"]: x for x in _register(client)}
     mine, c01 = rows[new["id"]], rows["c01"]
     assert (mine["metric"], mine["metric_set_by"]) == ("ARR", "analyst")
     for field in ("evidence_label", "gap", "gap_kind", "observed_value", "observed_source", "tolerance", "period_start", "period_end"):
