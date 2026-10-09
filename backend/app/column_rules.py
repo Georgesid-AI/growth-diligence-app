@@ -457,6 +457,23 @@ def months_of(values: list) -> Optional[Dict]:
 REASONS = ("header_misleading", "other_column_right", "values_do_not_fit", "wrong_kind_of_date", "not_needed", "other")
 PENDING = ("unsure", "ai", "needs")           # states that wait for a click
 MAPPED = ("auto", "unsure", "ai", "confirmed", "corrected")
+# Amount columns named turnover, volume, GMV or TPV: revenue or value of transactions processed? (chat-upload.md section 13)
+MONEY_FIELDS = ("amount", "revenue")
+MONEY_KINDS = ("revenue", "volume")
+_MONEY_HEADER = re.compile(r"(?i)turnover|volume|gmv|tpv")
+
+
+def asks_money(state: Dict) -> bool:
+    """A mapped amount column whose header says turnover, volume, GMV or TPV: the analyst is asked once what the money is."""
+    return state.get("state") in MAPPED and state.get("field") in MONEY_FIELDS and bool(_MONEY_HEADER.search(str(state.get("column"))))
+
+
+def needs_money(state: Dict) -> bool:
+    return asks_money(state) and state.get("money_kind") not in MONEY_KINDS
+
+
+def _is_volume(state: Dict) -> bool:
+    return state.get("money_kind") == "volume"
 
 
 class DecisionError(Exception):
@@ -470,7 +487,7 @@ class DecisionError(Exception):
 def new_state(column: str, field: Optional[str], source: Optional[str], state: str, confidence: Optional[int] = None,
               fit_note: Optional[str] = None) -> Dict:
     return {"column": column, "field": field, "source": source, "state": state, "confidence": confidence,
-            "fit_note": fit_note, "decision": None, "reason": None}
+            "fit_note": fit_note, "decision": None, "reason": None, "money_kind": None}
 
 
 def states_from_rules(proposals: List[Proposal]) -> List[Dict]:
@@ -524,7 +541,8 @@ def states_from_saved(dtype: str, sheet: Sheet, saved: List[Dict], scale: bool) 
             kind = field_kind(dtype, field)
             fit, ok, total = value_fit(kind, sheet.frame[col].tolist())
             conf, note = round(100 * fit), fit_note(kind, ok, total)
-        out.append(new_state(col, field, "saved", "auto" if conf >= MAPPING_THRESHOLD else "unsure", conf, note))
+        out.append({**new_state(col, field, "saved", "auto" if conf >= MAPPING_THRESHOLD else "unsure", conf, note),
+                    "money_kind": entry.get("money_kind") if entry.get("money_kind") in MONEY_KINDS else None})
     return out
 
 
@@ -532,13 +550,13 @@ def mapping_of(dtype: str, states: List[Dict]) -> Dict[str, Optional[str]]:
     """{field: column} of every mapped column, pending proposals included (they are shown, not yet confirmed)."""
     mapping = {f: None for f in _all_fields(dtype)}
     for s in states:
-        if s["state"] in MAPPED and s["field"]:
+        if s["state"] in MAPPED and s["field"] and not _is_volume(s):       # only revenue columns feed the engine
             mapping[s["field"]] = s["column"]
     return mapping
 
 
 def pending_count(states: List[Dict]) -> int:
-    return sum(1 for s in states if s["state"] in PENDING)
+    return sum(1 for s in states if s["state"] in PENDING or needs_money(s))
 
 
 def missing_required(dtype: str, states: List[Dict]) -> List[str]:
@@ -556,6 +574,11 @@ def apply_decisions(dtype: str, states: List[Dict], decisions: List[Dict]) -> Li
         state = next((s for s in states if s["column"] == d.get("column")), None)
         if state is None:
             raise DecisionError("unknown_column")
+        if d.get("money_kind") is not None:                     # the answer to the money question (section 13)
+            if d["money_kind"] not in MONEY_KINDS or not asks_money(state):
+                raise DecisionError("bad_money_kind", state["column"])
+            state["money_kind"] = d["money_kind"]
+            continue
         action, field = d.get("action"), (d.get("field") or None)
         if action not in ("confirm", "correct"):
             raise DecisionError("bad_action", state["column"])
@@ -570,7 +593,7 @@ def apply_decisions(dtype: str, states: List[Dict], decisions: List[Dict]) -> Li
                 field = state["field"]
         if field:
             holder = next((s for s in states if s["field"] == field and s["column"] != state["column"]
-                           and s["state"] in MAPPED), None)
+                           and s["state"] in MAPPED and not _is_volume(s)), None)
             if holder:
                 raise DecisionError("field_held", holder["column"])
         was_needs = state["state"] == "needs"

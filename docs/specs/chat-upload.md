@@ -368,3 +368,11 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
   (reconciliation section), `frontend/src/lib/api.js`, CLAUDE.md
   (§6.4), the demo seed and the tests that delete audits.
 - Unchanged: docs/architecture.md.
+
+## 13. Amount columns named turnover or volume (amended 2026-10-09, George)
+If the header of a column mapped to an amount field (revenue file `amount`, P&L `revenue`, CRM `amount`) contains
+turnover, volume, GMV or TPV, the column waits for one answer, asked once: "Is this money the company earned (revenue)
+or the value of transactions processed (volume)?" Until answered it counts as pending, so the mapping does not save.
+Revenue: the column maps as before. Volume: the column is Not used and the engine never reads it; the answer
+(`money_kind`) is saved with the mapping version and reused for the same file and the same headers. Closed codes only
+(revenue, volume): no free text. Decision `{column, action: "confirm", money_kind}`.

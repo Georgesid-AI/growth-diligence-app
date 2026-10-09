@@ -69,7 +69,7 @@ _LABEL_MAX = SNIPPET_MAX
 # "customer lifetime value" is ltv, not customers or customer_lifetime; "LTV / CAC", "LTV:CAC" is ltv_cac.
 _FAMILIES = [
     ("growth", r"\bCAGR\b|(?i:\bgrowth\b|\bgr(?:ow|ows|owing|own|ew)\b)"),
-    ("revenue", r"\b(?:ARR|MRR)\b|(?i:\brevenues?\b|\bbookings?\b|\bturnover\b)"),
+    ("revenue", r"\b(?:ARR|MRR)\b|(?i:\brevenues?\b|\bbookings?\b|\bturnover\b|\bGMV\b|\bTPV\b|\b(?:trading|payment|transaction) volume\b)"),
     ("retention", r"\bNRR\b|(?i:\bchurn(?:s|ed|ing)?\b|\bretention\b|\bretain(?:s|ed|ing)?\b)"),
     ("sales", r"\bACVs?\b|(?i:\bsales cycles?\b|\bwin rates?\b|\bpipelines?\b|\bpayback\b"
               r"|\bacqui(?:re|res|red|ring|sition)\b|\bconver(?:t|ts|ted|ting|sion|sions)\b|\bleads\b)"),

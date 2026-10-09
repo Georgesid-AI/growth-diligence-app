@@ -5,10 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Provenance } from "@/components/Provenance";
 import DateField from "@/components/DateField";
-import { claimsCsvUrl, getClaimRegister, updateClaimInputs } from "@/lib/api";
+import { answerTurnover, claimsCsvUrl, getClaimRegister, updateClaimInputs } from "@/lib/api";
 import {
   DOWNLOAD_LABEL, GATE_BUDGET_MAX, GATE_DIRECTIONS, GATE_METRIC_MAX, GATE_METRIC_PLACEHOLDER, GATE_NEEDED, KEY_GATE_LABEL, NO_METRIC,
-  REGISTER_COLUMNS, REGISTER_HEADING, claimText, evidenceLines, gapText, gateContext, gateEdit, metricOptions, needsMetricName,
+  REGISTER_COLUMNS, REGISTER_HEADING, TURNOVER_QUESTION, TURNOVER_REASONS, claimText, takeRateText, evidenceLines, gapText, gateContext, gateEdit, metricOptions, needsMetricName,
   observedText, overlapsText, readingText, registerRows, segmentOptions, valueAtStakeText,
 } from "@/lib/claimRegister";
 import { describeRequestError } from "@/lib/requestError";
@@ -72,6 +72,36 @@ function GateCell({ row, ccy, onSave }) {
   );
 }
 
+/** A turnover claim (claim-matching.md section 11): the label or the question, and one click, Revenue or Volume, with a reason
+ *  code. It is shown on every turnover row, so an answer can be changed. */
+function TurnoverCell({ row, onAnswer }) {
+  const [reason, setReason] = useState(row.turnover_reason || TURNOVER_REASONS[0][0]);
+  const take = takeRateText(row);
+  return (
+    <div className="mt-1 space-y-1" data-testid="register-turnover">
+      <div className="text-slate-800" data-testid="register-turnover-note">{row.turnover_note}
+        {row.turnover_set_by === "analyst" && <span className="text-[10px] text-slate-500"> · set by you</span>}
+      </div>
+      {take && (
+        <div className="font-mono text-[11px] text-slate-700" data-testid="register-take-rate">
+          {take}
+          <div className="text-[10px] text-slate-500" data-testid="register-take-rate-source">{row.implied_take_rate_source}</div>
+        </div>
+      )}
+      <div className="text-[10px] text-slate-500">{TURNOVER_QUESTION}</div>
+      <div className="flex flex-wrap items-center gap-1">
+        <select value={reason} onChange={(e) => setReason(e.target.value)} className={selectClass} data-testid="register-turnover-reason">
+          {TURNOVER_REASONS.map(([code, label]) => <option key={code} value={code}>{label}</option>)}
+        </select>
+        {[["revenue", "Revenue"], ["volume", "Volume"]].map(([value, label]) => (
+          <Button key={value} size="sm" variant={row.turnover_state === value ? "default" : "outline"} className="h-7"
+            data-testid={`register-turnover-${value}`} onClick={() => onAnswer(row, { as: value, reason }).catch(() => {})}>{label}</Button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** The claim register of one audit, in the order the server ranks it (docs/specs/claim-matching.md section 8). */
 export default function ClaimRegister({ auditId, results, onChanged }) {
   const [rows, setRows] = useState(null);
@@ -87,6 +117,10 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
   }, [auditId]);
 
   const save = useCallback((row, edit) => updateClaimInputs(auditId, row.claim_id, edit)
+    .then((d) => { setRows(registerRows(d)); if (onChanged) onChanged(); })
+    .catch((e) => { toast.error(describeRequestError(e).message); throw e; }), [auditId, onChanged]);
+
+  const answer = useCallback((row, payload) => answerTurnover(auditId, row.claim_id, payload)
     .then((d) => { setRows(registerRows(d)); if (onChanged) onChanged(); })
     .catch((e) => { toast.error(describeRequestError(e).message); throw e; }), [auditId, onChanged]);
 
@@ -150,6 +184,7 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
                         {row.evidence_label}
                       </span>
                       <span className="ml-1 text-slate-600" data-testid="register-evidence-reason">· {row.reason}</span>
+                      {row.turnover_state && <TurnoverCell row={row} onAnswer={answer} />}
                       {evidenceLines(row).second && (
                         <div className="mt-1 font-mono text-[11px] text-slate-700" data-testid="register-evidence-source">
                           <Provenance source={row.observed_source}>{evidenceLines(row).second}</Provenance>

@@ -12,6 +12,7 @@
     "Median sales cycle": "days",
     "Win rate": "%",
     "Gross margin": "%",
-    "CAC payback": "months"
+    "CAC payback": "months",
+    "Transaction volume": "currency"
   }
 }

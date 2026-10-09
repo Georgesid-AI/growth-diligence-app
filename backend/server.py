@@ -471,7 +471,7 @@ def _saved_columns(version: dict) -> list:
 
 
 def _fingerprint(states: list) -> list:
-    return sorted((s["column"], s.get("field")) for s in states)
+    return sorted((s["column"], s.get("field"), s.get("money_kind")) for s in states)
 
 
 async def _write_version(audit_id: str, dtype: str, ds: dict, states: list) -> Optional[int]:
@@ -486,7 +486,7 @@ async def _write_version(audit_id: str, dtype: str, ds: dict, states: list) -> O
         "audit_id": audit_id, "dtype": dtype, "file_hash": ds.get("file_hash"),
         "header_key": structures.header_key(dtype, ds.get("columns") or []), "version": number,
         "mapping": mapping, "saved_at": usage_mod.now(),
-        "columns": [{k: s.get(k) for k in ("column", "field", "source", "confidence", "decision", "reason")} for s in states]})
+        "columns": [{k: s.get(k) for k in ("column", "field", "source", "confidence", "decision", "reason", "money_kind")} for s in states]})
     return number
 
 
@@ -513,7 +513,8 @@ def _dataset_view(ds: dict, version: Optional[int] = None, status: str = "ok") -
     mapping = ds.get("mapping") or cr.mapping_of(dtype, states)
     rows = []
     for i, s in enumerate(states):
-        rows.append({**s, "position": i + 1, "pending": s["state"] in cr.PENDING})
+        rows.append({**s, "position": i + 1, "pending": s["state"] in cr.PENDING or cr.needs_money(s),
+                     "money_ask": cr.asks_money(s)})
     return {
         "status": status, "dtype": dtype, "file": ds.get("file"), "size_bytes": ds.get("size_bytes"),
         "ext": usage_mod.extension_of(ds.get("file") or ""), "row_count": ds.get("row_count"),
@@ -707,6 +708,7 @@ class Decision(BaseModel):
     field: Optional[str] = None
     reason: Optional[str] = None
     note: Optional[str] = Field(default=None, max_length=2000)
+    money_kind: Optional[Literal["revenue", "volume"]] = None       # the answer to "revenue or volume?" (chat-upload.md section 13)
 
 
 async def _check_notes(audit_id: str, audit: dict, notes: list) -> list:
@@ -1070,9 +1072,17 @@ async def _fx(audit_id: str, audit: dict) -> dict:
     return fx
 
 
-def _register_settings(audit: dict, fx: dict) -> dict:
+def _register_settings(audit: dict, fx: dict, deck_take_rate: bool = False) -> dict:
     return {"fiscal_year_end": _fiscal_year_end(audit), "as_of_month": audit.get("as_of_month"),
-            "reporting_currency": audit.get("reporting_currency") or "EUR", "fx": fx}
+            "reporting_currency": audit.get("reporting_currency") or "EUR", "fx": fx,
+            "turnover_choices": audit.get("turnover_choices") or {}, "deck_take_rate": deck_take_rate}
+
+
+async def _deck_take_rate(audit_id: str) -> bool:
+    """Whether any parsed deck of the audit says take rate, commission, spread or fees (claim-matching.md section 11).
+    Python reads the stored deck text; only the yes or no is used."""
+    decks_found = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, {"_id": 0, "blocks": 1}).to_list(1000)
+    return claim_matching.mentions_take_rate(decks_found)
 
 
 async def _claim_rows(audit_id: str, audit: dict) -> tuple:
@@ -1082,7 +1092,8 @@ async def _claim_rows(audit_id: str, audit: dict) -> tuple:
     claims = await db[decks.CANDIDATES_COLLECTION].find(
         {"audit_id": audit_id, "status": {"$in": list(REGISTER_STATUSES)}}, {"_id": 0}).to_list(10000)
     claims.sort(key=lambda c: (c.get("file") or "", c.get("order", 0)))
-    rows = claim_matching.build_register(claims, audit.get("results"), _register_settings(audit, await _fx(audit_id, audit)))
+    rows = claim_matching.build_register(
+        claims, audit.get("results"), _register_settings(audit, await _fx(audit_id, audit), await _deck_take_rate(audit_id)))
     # Counts per label only: a value, a gate sentence or a deck file name never reaches a log line.
     counts = claim_matching.label_counts(rows)
     logger.info("claim register: run_id=%s rows=%d labels=%s", audit_id, len(rows), counts)
@@ -1215,7 +1226,7 @@ async def update_claim_inputs(audit_id: str, claim_id: str, payload: ClaimInputs
         # would read after this change, before anything is written.
         trial = [{**c, "claim_inputs": inputs} if c["id"] == candidate["id"] else c for c in claims]
         current = await _current_audit(audit_id, audit, strict=False)
-        after = claim_matching.build_register(trial, current.get("results"), _register_settings(audit, await _fx(audit_id, audit)))
+        after = claim_matching.build_register(trial, current.get("results"), _register_settings(audit, await _fx(audit_id, audit), await _deck_take_rate(audit_id)))
         after_row = next(r for r in after if r["claim_id"] == claim_id)
         if not after_row["gate_saved"]:
             raise HTTPException(400, "A key gate needs a saved gate")
@@ -1223,6 +1234,42 @@ async def update_claim_inputs(audit_id: str, claim_id: str, payload: ClaimInputs
             raise HTTPException(400, verdict_mod.W5_SIXTH)
     await db[decks.CANDIDATES_COLLECTION].update_one({"audit_id": audit_id, "id": candidate["id"]},
                                                     {"$set": {"claim_inputs": inputs}})
+    _, rows = await _claim_rows(audit_id, audit)
+    return sanitize({"register": rows})
+
+
+class TurnoverAnswer(BaseModel):
+    """The one-click answer to the turnover question (claim-matching.md section 11): closed words only."""
+    model_config = {"extra": "forbid"}
+    answer: Literal["revenue", "volume"] = Field(alias="as")
+    reason: Literal[claim_matching.TURNOVER_REASONS]
+
+
+@api.put("/audits/{audit_id}/claims/{claim_id}/turnover")
+async def answer_turnover(audit_id: str, claim_id: str, payload: TurnoverAnswer):
+    """Save the analyst's Revenue or Volume answer for a turnover claim, on the claim and on the audit (under a hash of the
+    term and the period, no deck text) so the same term and period reuse it. Gives the register back."""
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
+    if not audit:
+        raise HTTPException(404, "Audit not found")
+    if not audit.get("results"):
+        raise HTTPException(409, "Audit not computed yet")
+    claims, rows = await _claim_rows(audit_id, audit)
+    row = next((r for r in rows if r["claim_id"] == claim_id), None)
+    if row is None:
+        raise HTTPException(404, "Claim not in the register")
+    if row.get("turnover_state") is None:
+        raise HTTPException(400, "This claim is not a turnover claim")
+    candidate = next(c for c in claims if c["id"] == claim_id.split("#")[0])
+    expanded = next(c for c in claim_matching._expand([candidate]) if c["claim_id"] == claim_id)
+    inputs = {**(candidate.get("claim_inputs") or {})}
+    inputs[claim_id] = {**inputs.get(claim_id, {}), "turnover_as": payload.answer, "turnover_reason": payload.reason}
+    await db[decks.CANDIDATES_COLLECTION].update_one({"audit_id": audit_id, "id": candidate["id"]},
+                                                    {"$set": {"claim_inputs": inputs}})
+    await db.audits.update_one({"id": audit_id}, {"$set": {f"turnover_choices.{claim_matching.turnover_key(expanded)}": {
+        "as": payload.answer, "reason": payload.reason, "saved_at": usage_mod.now()}}})
+    logger.info("turnover answer: run_id=%s as=%s reason=%s", audit_id, payload.answer, payload.reason)
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
     _, rows = await _claim_rows(audit_id, audit)
     return sanitize({"register": rows})
 

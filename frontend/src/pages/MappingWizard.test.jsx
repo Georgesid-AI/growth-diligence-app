@@ -367,6 +367,22 @@ describe("the mapping table", () => {
     expect(q("compute-button").disabled).toBe(false);
   });
 
+  test("an amount column named turnover or volume asks once, revenue or volume, and sends the closed answer", async () => {
+    const asking = VIEW({ pending: 1, saved: false, columns: [
+      row("Customer", { field: "customer_id" }),
+      row("Total Turnover", { field: "amount", pending: true, money_ask: true }),
+    ] });
+    api.uploadChatFile.mockResolvedValue(asking);
+    await mount();
+    await pick([file("rev.csv")]);
+    expect(q("money-ask-Total Turnover").textContent).toContain("Is this money the company earned (revenue) or the value of transactions processed (volume)?");
+    expect(q("confirm-Total Turnover")).toBeNull();
+    api.decideColumns.mockResolvedValue(VIEW());
+    await click(q("money-volume-Total Turnover"));
+    await flush();
+    expect(api.decideColumns).toHaveBeenCalledWith("a1", "revenue", [{ column: "Total Turnover", action: "confirm", money_kind: "volume" }]);
+  });
+
   test("a row that needs a decision sends the field chosen, or Not used", async () => {
     await mountPending();
     api.decideColumns.mockResolvedValue(PENDING_VIEW());

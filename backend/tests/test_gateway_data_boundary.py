@@ -1265,10 +1265,13 @@ MATCHING_SERVER_ONLY = ("revenue_series", "customers_series")
 # Names of the register that the gateway must never mention: the analyst's inputs, the row's fields, the series.
 REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decision", "gate_threshold", "gate_date",
                             "observed_source", "evidence_label", "value_at_stake_arr", "claim_matching",
-                            *MATCHING_SERVER_ONLY})
+                            "turnover_choices", "turnover_as", "turnover_reason", "turnover_state", "deck_take_rate",
+                            "implied_take_rate", "implied_take_rate_source", *MATCHING_SERVER_ONLY})
 # The functions that log about the register, and the only things their log calls may name.
-REGISTER_LOGGERS = frozenset({"_claim_rows", "claim_register", "claim_register_csv", "update_claim_inputs"})
+REGISTER_LOGGERS = frozenset({"_claim_rows", "claim_register", "claim_register_csv", "update_claim_inputs", "answer_turnover"})
 REGISTER_LOG_ARGS = frozenset({"audit_id", "counts", "len(rows)"})      # exactly these expressions, as format arguments
+# The turnover answer logs two closed words (Literal fields of the request), never a claim or a figure.
+TURNOVER_LOG_ARGS = frozenset({"audit_id", "payload.answer", "payload.reason"})
 
 
 def _results_with_the_series():
@@ -1384,11 +1387,28 @@ def test_the_register_log_lines_name_counts_per_label_and_the_run_only():
                 found.append((fn.name, ast.unparse(node)))
                 assert not node.keywords and isinstance(node.args[0], ast.Constant) and "{" not in node.args[0].value, ast.unparse(node)
                 for arg in node.args[1:]:
-                    assert ast.unparse(arg) in REGISTER_LOG_ARGS, f"{fn.name}: {ast.unparse(node)} logs {ast.unparse(arg)}"
+                    allowed = TURNOVER_LOG_ARGS if fn.name == "answer_turnover" else REGISTER_LOG_ARGS
+                    assert ast.unparse(arg) in allowed, f"{fn.name}: {ast.unparse(node)} logs {ast.unparse(arg)}"
     assert found, "the register logs its label counts"
     module = ast.parse((BACKEND / "app" / "claim_matching.py").read_text(encoding="utf-8"))
     assert not [n for n in ast.walk(module) if isinstance(n, ast.Name) and n.id in ("logger", "logging", "log", "print")], \
         "the matching module logs and prints nothing"
+
+
+def test_the_turnover_fields_hold_closed_words_figures_and_sources_never_deck_text():
+    """The row of a turnover claim whose snippet holds a sentinel: the sentinel is in no register field, the audit's stored
+    answer is keyed by a hash, and the take-rate scan yields a yes or no."""
+    sentinel = "Zephyr Holdings pays us 2.5% commission"
+    row = {"id": "x1", "status": "approved", "claim_type": "revenue", "value": 5e6, "currency": "EUR", "target_date": "2021",
+           "period_text": "FY2021", "snippet": f"GMV EUR 5M. {sentinel}", "label_from": None, "file": "deck.pptx", "order": 0,
+           "sources": [{"file": "deck.pptx", "slide": 3}]}
+    out = claim_matching.build_register([row], RESULTS, {"fiscal_year_end": 12, "reporting_currency": "EUR", "fx": {"EUR": 1.0},
+                                                         "deck_take_rate": claim_matching.mentions_take_rate(sentinel)})[0]
+    assert "Zephyr" not in json.dumps(out, default=str) and "commission" not in json.dumps(out, default=str)
+    assert out["turnover_state"] == "volume" and out["turnover_note"] in ("Transaction volume",)
+    key = claim_matching.turnover_key(row)
+    assert len(key) == 16 and "GMV" not in key and sentinel not in key
+    assert claim_matching.mentions_take_rate(sentinel) is True
 
 
 # ---------------------------------------------------------------------------

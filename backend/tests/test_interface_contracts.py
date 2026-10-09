@@ -607,7 +607,7 @@ def test_every_source_key_of_the_memos_evidence_table_is_a_path_the_model_declar
     for metric, (_, whole, by_segment) in cm.EVIDENCE.items():
         for key in filter(None, (whole, by_segment)):
             assert _declared(MetricsPayload, _pattern(key).split(".")), f"{metric}: {key} is not declared by MetricsPayload"
-    assert set(cm.EVIDENCE) == set(cm.METRICS), "every metric of the register has an evidence row"
+    assert set(cm.EVIDENCE) == set(cm.METRICS) - {cm.VOLUME}, "every metric of the register has an evidence row, but transaction volume (no engine source)"
 
 
 def test_a_wrong_source_key_is_caught_by_the_declared_path_check():

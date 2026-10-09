@@ -261,6 +261,8 @@ function WhyThisMatters() {
   );
 }
 
+const MONEY_QUESTION = "Is this money the company earned (revenue) or the value of transactions processed (volume)?";
+
 function ColumnRow({ row, view, decide, lastReason, setLastReason }) {
   const [editing, setEditing] = useState(false);
   const [field, setField] = useState(row.field || NONE);
@@ -310,7 +312,7 @@ function ColumnRow({ row, view, decide, lastReason, setLastReason }) {
           {mappedBy(row)}
         </td>
         <td className="py-1.5 whitespace-nowrap">
-          {(pending && !needs) && (
+          {(pending && !needs && ["unsure", "ai"].includes(row.state)) && (
             <Button size="sm" variant="outline" data-testid={`confirm-${row.column}`} disabled={saving}
               onClick={() => send({ column: row.column, action: "confirm", field: row.field })} className="h-7 mr-1.5">Confirm</Button>
           )}
@@ -320,6 +322,16 @@ function ColumnRow({ row, view, decide, lastReason, setLastReason }) {
           )}
           {!needs && (
             <Button size="sm" variant="ghost" data-testid={`correct-${row.column}`} onClick={() => setEditing((v) => !v)} className="h-7">Correct</Button>
+          )}
+          {row.money_ask && (
+            <div className="mt-1 whitespace-normal max-w-xs" data-testid={`money-ask-${row.column}`}>
+              <div className="text-xs text-slate-700">{MONEY_QUESTION}</div>
+              {[["revenue", "Revenue"], ["volume", "Volume"]].map(([kind, label]) => (
+                <Button key={kind} size="sm" variant={row.money_kind === kind ? "default" : "outline"} disabled={saving} className="h-7 mr-1.5 mt-1"
+                  data-testid={`money-${kind}-${row.column}`}
+                  onClick={() => send({ column: row.column, action: "confirm", money_kind: kind })}>{label}</Button>
+              ))}
+            </div>
           )}
           {(row.decision === "confirm" || row.decision === "correct") && !pending && (
             <span className="ml-2 text-[10px] text-slate-500">{row.decision === "confirm" ? "Confirmed" : "Corrected"}</span>
