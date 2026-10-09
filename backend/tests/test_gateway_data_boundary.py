@@ -1420,7 +1420,9 @@ def test_the_turnover_fields_hold_closed_words_figures_and_sources_never_deck_te
     out = claim_matching.build_register([row], RESULTS, {"fiscal_year_end": 12, "reporting_currency": "EUR", "fx": {"EUR": 1.0},
                                                          "deck_take_rate": claim_matching.mentions_take_rate(sentinel)})[0]
     assert "Zephyr" not in json.dumps(out, default=str) and "take rate" not in json.dumps(out, default=str)
-    assert out["turnover_state"] == "volume" and out["turnover_note"] in ("Transaction volume",)
+    # the take-rate scan pre-selects Volume; the row asks until the analyst answers (claim-matching.md section 11 point 4)
+    assert (out["turnover_state"], out["turnover_suggested"]) == ("ask", "volume")
+    assert out["turnover_note"] == "Revenue or volume? Confirm below" and out["deck_revenue_note"] is None
     key = claim_matching.turnover_key(row)
     assert len(key) == 16 and re.fullmatch(r"[0-9a-f]{16}", key)         # the stored answer's whole key; the endpoint test in
     # test_turnover_api.py checks the stored audit and candidate documents for deck text

@@ -22,43 +22,46 @@ def row(snippet="Turnover", value=190000, results=None, extra_settings=None, inp
     return cm.build_register([c], results or engine_results(tuple(run["files"]), run["as_of_month"]), s)[0]
 
 
-def test_turnover_within_tolerance_of_the_file_revenue_is_gross_revenue_matched_as_before():
-    r = row("Turnover €190,000 in FY2023")
-    assert (r["metric"], r["evidence_label"], r["turnover_state"], r["turnover_note"]) == \
-        ("Revenue", "Verified", "revenue", "Gross revenue (turnover)")
-    assert r["turnover_set_by"] == "python" and r["observed_source"]
+ASKS = (None, "ask", "python", "Unverified", cm.ASK_REASON)
 
 
-def test_a_turnover_figure_above_tolerance_of_the_file_revenue_asks_instead_of_contradicting():
-    for value in (900_000, 280_000, 3 * 187701.05):       # 4.8x, 1.5x and 3x: the 3x threshold is gone
-        r = row("GMV €900,000 in FY2023", value=value)
-        assert (r["metric"], r["evidence_label"], r["turnover_state"]) == (None, "Unverified", "ask"), value
-        assert r["turnover_note"] == "Revenue or volume? Confirm below" and "confirm Revenue or Volume" in r["reason"]
+def _asks(r):
+    return (r["metric"], r["turnover_state"], r["turnover_set_by"], r["evidence_label"], r["reason"])
 
 
-def test_a_turnover_figure_below_tolerance_is_an_ordinary_revenue_claim_with_the_control():
-    r = row("Turnover €100,000 in FY2023", value=100000)
-    assert (r["metric"], r["evidence_label"], r["turnover_state"]) == ("Revenue", "Contradicted", "revenue")
+@pytest.mark.parametrize("snippet, value, extra", [
+    ("Turnover €190,000 in FY2023", 190_000, {}),                                      # within tolerance of the file (187,701)
+    ("GMV €900,000 in FY2023", 900_000, {}), ("GMV €280,000 in FY2023", 280_000, {}),  # above tolerance: 4.8x, 1.5x
+    ("Turnover €100,000 in FY2023", 100_000, {}),                                      # below tolerance
+    ("GMV €900,000–1,000,000 FY2023", 900_000, {"value_high": 1_000_000}),             # a range above, inside, within, below
+    ("GMV €150,000–250,000 FY2023", 150_000, {"value_high": 250_000}),
+    ("GMV €100,000–190,000 FY2023", 100_000, {"value_high": 190_000}),
+    ("GMV €50,000–100,000 FY2023", 50_000, {"value_high": 100_000}),
+    ("SMB turnover €3,800 FY2023", 3_800, {}),                                         # within tolerance of the SMB segment
+    ("SMB turnover €500,000 FY2023", 500_000, {}),
+    ("GMV $210,000 FY2023", 210_000, {"currency": "USD", "extra_settings": {"fx": {"EUR": 1.0, "USD": 0.9}}}),
+])
+def test_no_turnover_claim_is_revenue_before_the_analyst_answers_whatever_the_revenue_file_says(snippet, value, extra):
+    """Amended 2026-10-09 (George, decision 2): the register asks too. Before, a figure within tolerance of the file was
+    Revenue and Verified, one below it Revenue and Contradicted; now every turnover claim is Unverified until the click."""
+    r = row(snippet, value=value, **extra)
+    assert _asks(r) == ASKS, snippet
+    assert r["turnover_note"] == "Revenue or volume? Confirm below" and r["observed_value"] is None and r["gap"] is None
+    assert r["turnover_suggested"] is None, "the file never pre-selects an answer"
 
 
-def test_a_range_is_tested_at_the_end_nearest_the_file_revenue():
-    above = row("GMV €900,000–1,000,000 FY2023", value=900_000, value_high=1_000_000)     # reproduced: was Revenue, Contradicted
-    assert (above["metric"], above["evidence_label"], above["turnover_state"]) == (None, "Unverified", "ask")
-    inside = row("GMV €150,000–250,000 FY2023", value=150_000, value_high=250_000)
-    assert (inside["metric"], inside["turnover_state"]) == ("Revenue", "revenue")
-    within = row("GMV €100,000–190,000 FY2023", value=100_000, value_high=190_000)         # the top end is within tolerance
-    assert (within["evidence_label"], within["turnover_note"]) == ("Verified", "Gross revenue (turnover)")
-    below = row("GMV €50,000–100,000 FY2023", value=50_000, value_high=100_000)
-    assert (below["metric"], below["evidence_label"], below["turnover_state"]) == ("Revenue", "Contradicted", "revenue")
-
-
-def test_the_test_uses_the_segment_the_claim_names():
-    r = row("SMB turnover €190,000 FY2023", value=190_000)        # within tolerance of the whole company, 50x SMB (3,804.76)
-    assert (r["segment"], r["metric"], r["turnover_state"], r["evidence_label"]) == ("SMB", None, "ask", "Unverified")
-    r = row("SMB turnover €500,000 FY2023", value=500_000)        # reproduced: was Revenue, Contradicted, rank 1
-    assert (r["metric"], r["turnover_state"], r["evidence_label"]) == (None, "ask", "Unverified")
-    r = row("SMB turnover €3,800 FY2023", value=3_800)
-    assert (r["metric"], r["turnover_note"], r["evidence_label"]) == ("Revenue", "Gross revenue (turnover)", "Verified")
+def test_once_the_analyst_answers_revenue_the_claim_is_tested_as_revenue_against_the_file():
+    answer = {"turnover_as": "revenue", "turnover_reason": "file_confirms"}
+    within = row("Turnover €190,000 in FY2023", inputs=answer)
+    assert (within["metric"], within["evidence_label"], within["turnover_note"], within["turnover_set_by"]) == \
+        ("Revenue", "Verified", "Gross revenue (turnover)", "analyst")
+    assert within["observed_source"]
+    below = row("Turnover €100,000 in FY2023", value=100_000, inputs=answer)
+    assert (below["metric"], below["evidence_label"]) == ("Revenue", "Contradicted")
+    rng = row("GMV €100,000–190,000 FY2023", value=100_000, value_high=190_000, inputs=answer)     # tested at the nearest end
+    assert rng["evidence_label"] == "Verified"
+    segment = row("SMB turnover €3,800 FY2023", value=3_800, inputs=answer)
+    assert (segment["segment"], segment["evidence_label"]) == ("SMB", "Verified")
 
 
 def test_a_turnover_claim_in_another_currency_with_no_rate_says_fx_rate_needed():
@@ -66,12 +69,10 @@ def test_a_turnover_claim_in_another_currency_with_no_rate_says_fx_rate_needed()
     for text in ("GMV $900,000 FY2023", "GMV $190,000 FY2023"):
         r = row(text, value=900_000 if "900" in text else 190_000, currency="USD", extra_settings={"fx": fx, "deck_take_rate": True})
         assert (r["turnover_state"], r["evidence_label"], r["reason"]) == ("ask", "Unverified", "FX rate needed: USD→EUR"), text
-    # no file covers the period: the take-rate default still applies
+        assert r["turnover_suggested"] is None, "a file covers the period: the take rate pre-selects nothing"
+    # no file covers the period: the take-rate pre-selection still applies, the row still asks
     r = row("GMV $900,000", value=900_000, currency="USD", extra_settings={"fx": fx, "deck_take_rate": True}, **NO_FILE)
-    assert r["turnover_state"] == "volume"
-    # with a rate the claim converts and the same test runs
-    r = row("GMV $210,000 FY2023", value=210_000, currency="USD", extra_settings={"fx": {"EUR": 1.0, "USD": 0.9}})
-    assert (r["turnover_state"], r["evidence_label"]) == ("revenue", "Verified")
+    assert (r["turnover_state"], r["turnover_suggested"], r["evidence_label"]) == ("ask", "volume", "Unverified")
 
 
 @pytest.mark.parametrize("term", ["TPV", "GMV", "trading volume", "payment volume", "Transaction volume", "turnover"])
@@ -85,10 +86,12 @@ def test_no_period_asks_even_with_a_file():
     assert (r["metric"], r["turnover_state"], r["evidence_label"]) == (None, "ask", "Unverified")
 
 
-def test_deck_take_rate_mention_reads_the_row_as_volume_until_answered():
+def test_deck_take_rate_mention_pre_selects_volume_and_the_row_still_asks():
+    """Amended 2026-10-09 (George, decision 2): before, the row read as Volume until answered; now Volume is only
+    pre-selected and the row is Unverified until the analyst clicks."""
     r = row("GMV €5M", value=5_000_000, extra_settings={"deck_take_rate": True}, **NO_FILE)
-    assert (r["metric"], r["turnover_state"], r["turnover_set_by"]) == ("Transaction volume", "volume", "python")
-    assert (r["evidence_label"], r["observed_value"]) == ("Unsupported", None) and "no engine volume source" in r["reason"]
+    assert _asks(r) == ASKS and r["turnover_suggested"] == "volume" and r["deck_revenue_note"] is None
+    assert row("GMV €5M", value=5_000_000, **NO_FILE)["turnover_suggested"] is None
 
 
 def test_the_analyst_answer_wins_over_the_file_and_over_the_deck():

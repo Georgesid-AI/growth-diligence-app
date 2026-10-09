@@ -140,7 +140,7 @@ under `register`, beside today's `claims`; `register` is empty when the audit ha
 | `as_of_month`, `as_of_defaulted` | str, bool | |
 | `turnover_state`, `turnover_note`, `turnover_set_by`, `turnover_reason` | str or null | §11: null, ask, revenue, volume; the label or question; python, analyst; reason code |
 | `implied_take_rate`, `implied_take_rate_source` | float or null, str or null | §11: a fraction; "revenue: file · sheet · rows; volume: deck file · page" |
-| `turnover_suggested`, `deck_revenue_note` | str or null, str or null | §11 point 7: "volume" and "Deck revenue for the same period: 150,000 GBP (page 19); implied take rate 27%, derived, not verified"; both null unless the question is asked and the deck holds that revenue figure |
+| `turnover_suggested`, `deck_revenue_note` | str or null, str or null | §11 points 4 and 7: "volume" and "Deck revenue for the same period: 150,000 GBP (page 19); implied take rate 27%, derived, not verified"; both null unless the question is asked; the note only when the deck holds that revenue figure, "volume" also when no file covers the period and the deck says "take rate" |
 
 ## 7. Monitoring baseline
 GET /api/audits/{id}/claims.csv: the register rows in rank order as one CSV (the method's A9). Header = §6 field
@@ -252,19 +252,21 @@ ARR, MRR or "new MRR", is a turnover claim. Resolution, in this order:
    on every turnover row, so the analyst can change Revenue to Volume and back. No reason is preselected: the Revenue and
    Volume buttons stay disabled until one is chosen, and the server refuses the contradictory pairs (Volume with
    `deck_says_gross_revenue`, Revenue with `deck_says_processed_volume`) with 422.
-3. A revenue file covers the claim period (revenue is read for every month, not a forecast). The file revenue is that of
-   the segment the claim names (the whole company when it names none). A single figure is compared with it: within
-   tolerance (§4): Revenue, tested as today, shown as "Gross revenue (turnover)"; above tolerance, whatever the multiple:
-   Unverified, the question "Revenue or volume? Confirm below", reason "turnover or volume: confirm Revenue or Volume", until the
-   analyst answers (amended 2026-10-09, George: the 3x threshold is dropped); below tolerance: Revenue, the ordinary
-   revenue rule (Contradicted, a beat). A range is compared at the end nearest the file revenue (inside the range: within
-   tolerance), and the same three cases apply. The claim is converted at the saved rate first; with no rate saved the row
-   is Unverified, "FX rate needed: USD→EUR", before the question is asked.
+3. Until the analyst answers (point 2), a turnover claim is never Revenue or Volume, in the register or in the deck
+   list: it is Unverified, the question "Revenue or volume? Confirm below", reason "turnover or volume: confirm Revenue
+   or Volume", whatever the revenue file or the deck says (amended 2026-10-09, George, decision 2; before, a figure within
+   tolerance of the file revenue was tested as Revenue and shown as "Gross revenue (turnover)", one below it as Revenue,
+   Contradicted). The file revenue (that of the segment the claim names, the whole company when it names none; revenue
+   read for every month, not a forecast) pre-selects nothing. Once the analyst answers Revenue the claim is tested as
+   Revenue as today, shown as "Gross revenue (turnover)", a range at the end nearest the file revenue. The claim is
+   converted at the saved rate first; with a file covering the period and no rate saved the row is Unverified, "FX rate
+   needed: USD→EUR", before the question is asked.
 4. No file covers the period (no revenue file, months missing, no period, a forecast): the question is asked. If the
    deck says "take rate" anywhere (any case, hyphen or space, singular or plural; read by Python from the parsed deck;
-   only the yes or no is kept) the row reads as Volume until the analyst answers; otherwise it is Unverified, "turnover
-   or volume: confirm Revenue or Volume". Fees, commission and spread no longer count (amended 2026-10-09, George: they
-   are in most decks that have a subscription or a sales team).
+   only the yes or no is kept) Volume is pre-selected in the question (`turnover_suggested` "volume", as in point 7) and
+   the row stays Unverified until the analyst answers (amended 2026-10-09, George, decision 2; before, the row read as
+   Volume). Fees, commission and spread no longer count (amended 2026-10-09, George: they are in most decks that have a
+   subscription or a sales team).
 5. Volume is never matched to engine revenue: Unsupported, "no engine volume source for transaction volume", until
    an engine volume source exists.
 6. Implied take rate = file revenue for the claim period ÷ claimed volume (in the reporting currency), on a Volume row
@@ -282,7 +284,8 @@ ARR, MRR or "new MRR", is a turnover claim. Resolution, in this order:
    claim not rejected is read, pending ones included (amended 2026-10-09, George; before, an unapproved revenue figure
    gave no hint); a rejected revenue figure gives none. No comparison is made after the analyst confirms Revenue
    (decision pending: a deck inconsistency is flagged when the deck is parsed).
-8. The deck list (2026-10-09, George): a turnover claim never reads "Revenue" before the analyst confirms it. Until then,
+8. The deck list (2026-10-09, George): a turnover claim never reads "Revenue" before the analyst confirms it (point 3
+   applies the same rule to the register). Until then,
    pending or approved, its metric cell reads "Turnover – confirm:" with the reason codes and the Revenue and Volume
    buttons of point 2 in the row, its status cell carries the label Unverified, and the row shows the deck hint of point 7
    and, when no revenue file covers the claim's period (point 4), "No revenue-file period to compare". A value of a table

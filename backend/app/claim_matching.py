@@ -486,41 +486,31 @@ def _file_revenue(results: dict, segment: str, start: Optional[int], end: Option
 
 def _turnover(c: dict, inputs: dict, results: dict, settings: dict, rate: Optional[float], start: Optional[int],
               end: Optional[int], as_of_i: Optional[int], segment: str = WHOLE) -> dict:
-    """Section 11: whether a turnover claim is revenue, transaction volume or still a question. Returns state, metric,
-    note, set_by, reason, an optional verdict (label, reason), `fx_needed` and the file revenue for the period (of the
+    """Section 11: whether a turnover claim is revenue, transaction volume or still a question. Only the analyst's answer
+    makes it revenue or volume (amended 2026-10-09, George): until then it asks, whatever the revenue file or the deck
+    says. Returns state, metric, note, set_by, reason, an optional verdict (label, reason), `fx_needed`, `suggested`
+    ("volume" when no file covers the period and the deck says "take rate") and the file revenue for the period (of the
     claim's segment) when one covers it. `rate` is None when the claim's currency has no saved rate."""
-    low, high = c.get("value"), c.get("value_high")
+    low = c.get("value")
     file_revenue, source = _file_revenue(results, segment, start, end, as_of_i)
     choice, reason, by = inputs.get("turnover_as"), inputs.get("turnover_reason"), "analyst"
     if choice not in TURNOVER_CHOICES:
         saved = (settings.get("turnover_choices") or {}).get(turnover_key(c)) or {}
         choice, reason = (saved.get("as"), saved.get("reason")) if saved.get("as") in TURNOVER_CHOICES else (None, None)
     out = dict(state=None, metric=None, note=None, set_by="python", reason=reason, verdict=None, fx_needed=False,
-               file_revenue=file_revenue, source=source)
-    ask = (ASK_NOTE, ("Unverified", ASK_REASON))
+               suggested=None, file_revenue=file_revenue, source=source)
     if choice:
         out.update(set_by=by)
     elif file_revenue is not None and low is not None and rate is None:
         out.update(fx_needed=True)      # the file covers the period but the claim cannot be compared yet
-    elif file_revenue is not None and low is not None:
-        # a range is tested at the end nearest the file revenue; a figure above tolerance asks, one below is a revenue claim
-        top = high if high is not None else low
-        nearest = file_revenue / rate if low <= file_revenue / rate <= top else (low if file_revenue / rate < low else top)
-        claimed = nearest * rate
-        if within_tolerance("Revenue", claimed - file_revenue, claimed):
-            choice = "revenue"
-        elif claimed > file_revenue:
-            pass                        # above tolerance: ask
-        else:
-            choice = "revenue"          # below tolerance: the ordinary revenue rule
-    elif settings.get("deck_take_rate"):
-        choice = "volume"               # no file covers the period and the deck says "take rate"
+    elif file_revenue is None and settings.get("deck_take_rate"):
+        out.update(suggested=VOLUME_CHOICE)     # no file covers the period and the deck says "take rate": pre-selected only
     if choice == "revenue":
         out.update(state="revenue", metric="Revenue", note=GROSS_REVENUE_NOTE)
     elif choice == "volume":
         out.update(state="volume", metric=VOLUME, note=VOLUME)
     else:
-        out.update(state="ask", note=ask[0], verdict=ask[1])
+        out.update(state="ask", note=ASK_NOTE, verdict=("Unverified", ASK_REASON))
     return out
 
 
@@ -660,6 +650,7 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
             turn["verdict"] = ("Unverified", f"{FX_NEEDED}: {currency}→{fx0['currency']}")
         metric, metric_by = turn["metric"], turn["set_by"]
         hint = deck_revenue_hint(c, peers or []) if turn["state"] == "ask" else None
+        suggested = VOLUME_CHOICE if hint or turn["suggested"] else None
     spec = METRICS.get(metric) if metric else None
 
     period = c.get("period_text") or c.get("target_date") or None
@@ -681,8 +672,8 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
     if turn:
         out.update(turnover_state=turn["state"], turnover_note=turn["note"], turnover_set_by=turn["set_by"],
                    turnover_reason=turn["reason"])
-        if hint:        # Volume is pre-selected in the question; the analyst's confirmation is still required
-            out.update(turnover_suggested=VOLUME_CHOICE, deck_revenue_note=hint["note"])
+        # Volume is pre-selected in the question; the analyst's confirmation is still required
+        out.update(turnover_suggested=suggested, deck_revenue_note=hint["note"] if hint else None)
     shown_claim: List[Optional[float]] = [None]         # the claimed figure the gate sentence names, once it is known
 
     def finish(label: str, reason: str) -> dict:

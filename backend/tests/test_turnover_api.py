@@ -144,9 +144,10 @@ def test_get_claims_reads_the_deck_for_take_rate_only(api):
     deck_claims.resolve_period(db[decks.CANDIDATES_COLLECTION].docs[0], RUN["fiscal_year_end"])
     decks_coll = db[decks.TEXT_COLLECTION]
     assert row(client.get(f"/api/audits/{AUDIT}/claims").json())["turnover_state"] == "ask"
-    for text, expected in (("We earn fees and sales commission", "ask"), ("Our take rate is 2%", "volume")):
+    for text, expected in (("We earn fees and sales commission", None), ("Our take rate is 2%", "volume")):
         decks_coll.docs[:] = [{"audit_id": AUDIT, "id": "d1", "blocks": [{"text": text}]}]
-        assert row(client.get(f"/api/audits/{AUDIT}/claims").json())["turnover_state"] == expected, text
+        got = row(client.get(f"/api/audits/{AUDIT}/claims").json())
+        assert (got["turnover_state"], got["turnover_suggested"]) == ("ask", expected), text
 
 
 # --- the reported case: 05-zero2hero.pdf, every claim still to review (claim-matching.md section 11 points 7 and 8) -------

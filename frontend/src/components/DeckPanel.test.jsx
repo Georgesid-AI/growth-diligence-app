@@ -280,6 +280,17 @@ describe("a turnover claim asks Revenue or Volume in its own row (05-zero2hero.p
   });
 });
 
+test("To review is a status label, not a control: plain text with no border, chip or button around it (George, 2026-10-09)", async () => {
+  await reload([claim("c", "d1", 2, { group: 1 }), claim("e", "d1", 3, { group: 1, status: "approved" })]);
+  for (const [id, label] of [["c", "To review"], ["e", "Approved"]]) {
+    const status = q(`candidate-row-${id}`).querySelector("[data-testid='candidate-status']");
+    expect(status.textContent).toBe(label);
+    expect(status.tagName).toBe("SPAN");
+    expect(status.className.split(/\s+/).filter((c) => /^(border|rounded|px-|py-|bg-)/.test(c))).toEqual([]);
+    expect(status.closest("button, a, [role='button']")).toBeNull();
+  }
+});
+
 test("the upload help, the Confidence hover are shown word for word", async () => {
   await reload([claim("c", "d1", 2, { group: 1 })]);
   expect(q("deck-upload-help").textContent).toMatch(/^Board deck or growth plan: the company's board decks, investor updates.* Up to 8 documents per audit\./);

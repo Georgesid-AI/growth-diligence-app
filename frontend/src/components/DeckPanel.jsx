@@ -14,11 +14,13 @@ import {
   confidenceText, needsType, readingChoices, rowEdit, sourceRef, statusCounts, typeLabel,
 } from "@/lib/deckClaims";
 
+// The status is a label, not a control: plain coloured text, no border or chip, so it never reads as a button (George,
+// 2026-10-09). Approve, Reject and Edit are the buttons of the Action column.
 const STATUS_STYLE = {
-  pending: "text-slate-600 border-[#D1D5DB]",
-  approved: "text-emerald-700 border-emerald-500/40",
-  rejected: "text-rose-700 border-rose-500/40",
-  edited: "text-sky-700 border-sky-500/40",
+  pending: "text-slate-600",
+  approved: "text-emerald-700",
+  rejected: "text-rose-700",
+  edited: "text-sky-700",
 };
 const CONFIDENCE_STYLE = { High: "text-emerald-700", Medium: "text-amber-800", Low: "text-rose-700" };
 export const MOVE_NOTICE_MS = 4000;
@@ -429,7 +431,7 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight }) {
         {c.sources.map((s, i) => <div key={i}>{sourceRef(s)}</div>)}
       </td>
       <td className="py-2 pr-3">
-        <span className={`text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-nowrap ${STATUS_STYLE[c.status] || ""}`}>
+        <span className={`text-[10px] font-mono whitespace-nowrap cursor-default ${STATUS_STYLE[c.status] || ""}`} data-testid="candidate-status">
           {STATUS_LABELS[c.status] || c.status}
         </span>
         {turnover.open && (
