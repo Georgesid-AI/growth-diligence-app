@@ -220,7 +220,7 @@ deck_text, column_mappings (every saved version) and the rest. There is no mappi
   a top-5 claim Contradicted (a miss or a beat), and a revenue reconciliation gap above 2% over the window of
   docs/specs/chat-upload.md §6.2. Per-month gaps go in the reconciliation evidence table, never in the banner."
   Amended 2026-10-09 (§16): the revenue-file blocker reads S16a from the first Map (§16; before, the first Calculate) and S16d at all times; the line in
-  CLAUDE.md still says "Calculate" and needs the same edit.
+  CLAUDE.md carries that wording.
 - Rule 22: "Delete audit requires typing the company name and removes every document of the audit in every
   collection, saved mappings and stored files included."
 
