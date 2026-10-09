@@ -16,7 +16,7 @@ jest.mock("@/lib/api", () => ({
 }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
 jest.mock("react-router-dom", () => ({ useParams: () => ({ id: "a1" }), useNavigate: () => jest.fn() }), { virtual: true });
-jest.mock("@/components/Layout", () => ({ Layout: ({ children }) => <div>{children}</div> }));
+jest.mock("@/components/Layout", () => ({ Layout: ({ audit, children }) => <div><span data-testid="header-target">{audit ? String(audit.target_arr) : ""}</span>{children}</div> }));
 jest.mock("@/components/DeckPanel", () => ({ reloadKey = 0 }) => <div data-testid="deck-panel" data-reload={reloadKey} />);
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -153,6 +153,39 @@ describe("the screen", () => {
     await change(q("setup-target-arr-input"), "7");
     await act(async () => { q("setup-target-arr-input").blur(); });
     expect(toast.error).toHaveBeenLastCalledWith("Target ARR could not be saved: HTTP 422 — target_arr: Input should be a valid number");
+  });
+
+  test("Target ARR: a stored 0 shows an empty box, a digit replaces it, clearing leaves it empty", async () => {
+    api.updateAudit.mockResolvedValue({});
+    await mount({ audit: { ...AUDIT, target_arr: 0 } });
+    expect(q("setup-target-arr-input").value).toBe("");
+    await change(q("setup-target-arr-input"), "05");
+    expect(q("setup-target-arr-input").value).toBe("5");
+    await change(q("setup-target-arr-input"), "");
+    expect(q("setup-target-arr-input").value).toBe("");
+  });
+
+  test("the header target follows a saved Target ARR without a reload", async () => {
+    api.updateAudit.mockResolvedValue({ target_arr: 12500000 });
+    await mount({ audit: { ...AUDIT, target_arr: 0 } });
+    await act(async () => { q("setup-target-arr-input").focus(); });
+    await change(q("setup-target-arr-input"), "12500000");
+    api.getAudit.mockResolvedValue({ ...AUDIT, target_arr: 12500000 });
+    await act(async () => { q("setup-target-arr-input").blur(); });
+    await flush();
+    expect(q("header-target").textContent).toBe("12500000");
+    expect(api.getAudit).toHaveBeenCalledTimes(2);        // the page's own load, then the refetch after the save
+  });
+
+  test("a 502 or 503 on a set-up save reads 'Server is restarting', not the proxy's page", async () => {
+    await mount();
+    for (const status of [502, 503]) {
+      api.updateAudit.mockRejectedValue({ response: { status, statusText: "Bad Gateway", data: "<html><body>Cloudflare Error 502</body></html>" } });
+      await act(async () => { q("setup-target-arr-input").focus(); });
+      await change(q("setup-target-arr-input"), String(status));
+      await act(async () => { q("setup-target-arr-input").blur(); });
+      expect(toast.error).toHaveBeenLastCalledWith("Target ARR could not be saved: Server is restarting – try again in a few seconds");
+    }
   });
 
   test("the explainer follows the audit's consent: S2 when ticked, S3 when not", async () => {

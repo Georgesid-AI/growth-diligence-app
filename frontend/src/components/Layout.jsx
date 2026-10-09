@@ -62,8 +62,8 @@ export function Layout({ audit, children }) {
             {audit && (
               <div className="hidden sm:block text-right">
                 <div className="text-xs font-medium text-slate-800 truncate max-w-[220px]">{audit.company_name}</div>
-                <div className="text-[10px] font-mono text-slate-500">
-                  {audit.reporting_currency} · target {fmtCurrency(audit.target_arr, audit.reporting_currency)} ARR
+                <div className="text-[10px] font-mono text-slate-500" data-testid="header-target-line">
+                  {audit.reporting_currency} · {Number(audit.target_arr) ? `target ${fmtCurrency(audit.target_arr, audit.reporting_currency)} ARR` : "target not set"}
                   {audit.as_of_month ? ` · as of ${audit.as_of_month}` : ""}
                 </div>
               </div>

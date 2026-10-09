@@ -1,4 +1,4 @@
-import { isIsoDate, asOfInputValue, targetDateError, plainNumber, groupThousands, CONSENT_EXPLAINER, CONSENT_LABEL,
+import { isIsoDate, asOfInputValue, targetDateError, plainNumber, groupThousands, storedNumberInput, CONSENT_EXPLAINER, CONSENT_LABEL,
   requiredFieldError } from "./auditForm";
 
 // The reported case: target 31/12/2027, as-of 30/06/2026, as the date inputs deliver them.
@@ -47,6 +47,19 @@ test("Target ARR shows 6,000,000 and stays a plain number", () => {
   expect(parseFloat(plainNumber("6,000,000"))).toBe(6000000);
   expect(groupThousands(plainNumber("1,234.5.6"))).toBe("1,234.56");
   expect(groupThousands("")).toBe("");
+});
+
+test("Target ARR never keeps a leading zero; a stored 0 or an empty value shows an empty box", () => {
+  expect(plainNumber("05")).toBe("5");
+  expect(plainNumber("0,005")).toBe("5");
+  expect(plainNumber("0.5")).toBe("0.5");
+  expect(plainNumber("0")).toBe("0");
+  expect(groupThousands(plainNumber("0012345"))).toBe("12,345");
+  expect(plainNumber("")).toBe("");
+  expect(storedNumberInput(0)).toBe("");
+  expect(storedNumberInput(null)).toBe("");
+  expect(storedNumberInput(undefined)).toBe("");
+  expect(storedNumberInput(40000000)).toBe("40000000");
 });
 
 // docs/specs/llm-structure-reading.md section 4, word for word.
