@@ -254,7 +254,7 @@ ARR, MRR or "new MRR", is a turnover claim. Resolution, in this order:
 3. A revenue file covers the claim period (revenue is read for every month, not a forecast). The file revenue is that of
    the segment the claim names (the whole company when it names none). A single figure is compared with it: within
    tolerance (§4): Revenue, tested as today, shown as "Gross revenue (turnover)"; above tolerance, whatever the multiple:
-   Unverified, the question "Turnover or volume?", reason "turnover or volume: confirm Revenue or Volume", until the
+   Unverified, the question "Revenue or volume? Confirm below", reason "turnover or volume: confirm Revenue or Volume", until the
    analyst answers (amended 2026-10-09, George: the 3x threshold is dropped); below tolerance: Revenue, the ordinary
    revenue rule (Contradicted, a miss). A range is compared at the end nearest the file revenue (inside the range: within
    tolerance), and the same three cases apply. The claim is converted at the saved rate first; with no rate saved the row

@@ -33,7 +33,7 @@ def test_a_turnover_figure_above_tolerance_of_the_file_revenue_asks_instead_of_c
     for value in (900_000, 280_000, 3 * 187701.05):       # 4.8x, 1.5x and 3x: the 3x threshold is gone
         r = row("GMV €900,000 in FY2023", value=value)
         assert (r["metric"], r["evidence_label"], r["turnover_state"]) == (None, "Unverified", "ask"), value
-        assert r["turnover_note"] == "Turnover or volume?" and "confirm Revenue or Volume" in r["reason"]
+        assert r["turnover_note"] == "Revenue or volume? Confirm below" and "confirm Revenue or Volume" in r["reason"]
 
 
 def test_a_turnover_figure_below_tolerance_is_an_ordinary_revenue_claim_with_the_control():

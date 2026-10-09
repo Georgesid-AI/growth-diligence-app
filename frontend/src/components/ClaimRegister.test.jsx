@@ -158,12 +158,12 @@ async function pick(row, code) {
 
 const TURNOVER = { ...ROW, claim_id: "t1", metric: null, observed_value: null, evidence_label: "Unverified", evidence_analysis: null,
   reason: "turnover or volume: confirm Revenue or Volume", turnover_state: "ask",
-  turnover_note: "Turnover or volume?", turnover_set_by: "python", turnover_reason: null };
+  turnover_note: "Revenue or volume? Confirm below", turnover_set_by: "python", turnover_reason: null };
 
 test("a turnover row shows its label, the question and one click Revenue or Volume with a reason code", async () => {
   const { host } = await mount([TURNOVER, ROW]);
   const rows = host.querySelectorAll('[data-testid="claim-register-row"]');
-  expect(rows[0].querySelector('[data-testid="register-turnover-note"]').textContent).toBe("Turnover or volume?");
+  expect(rows[0].querySelector('[data-testid="register-turnover-note"]').textContent).toBe("Revenue or volume? Confirm below");
   expect(rows[0].textContent).toContain("Revenue or transaction volume?");
   expect(rows[1].querySelector('[data-testid="register-turnover"]')).toBeNull();
   api.answerTurnover.mockResolvedValue({ register: [{ ...TURNOVER, turnover_state: "volume", turnover_note: "Transaction volume", turnover_set_by: "analyst" }] });

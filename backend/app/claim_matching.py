@@ -70,7 +70,7 @@ TURNOVER_REASONS = ("deck_says_gross_revenue", "deck_says_processed_volume", "fi
 TURNOVER_CHOICES = ("revenue", "volume")
 CONTRADICTORY_ANSWERS = (("volume", "deck_says_gross_revenue"), ("revenue", "deck_says_processed_volume"))
 GROSS_REVENUE_NOTE = "Gross revenue (turnover)"
-ASK_NOTE = "Turnover or volume?"
+ASK_NOTE = "Revenue or volume? Confirm below"
 ASK_REASON = "turnover or volume: confirm Revenue or Volume"
 NO_METRIC = "none"                      # what the analyst picks to say "no metric fits"
 
