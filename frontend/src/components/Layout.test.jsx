@@ -104,3 +104,12 @@ test("an audit deleted while its banner is up: the 404 is caught, the banner cle
   await act(async () => { window.dispatchEvent(new Event(BLOCKERS_CHANGED)); });
   expect(api.getBlockers.mock.calls.length).toBe(calls);
 });
+
+test.each([0, null, undefined])("the header reads 'target not set' when Target ARR is %p, and the figure once it is set", async (value) => {
+  api.getBlockers.mockResolvedValue([]);
+  await mount({ ...AUDIT, target_arr: value });
+  expect(q("header-target-line").textContent).toBe("EUR · target not set");
+  await act(async () => { root.unmount(); }); host.remove();
+  await mount(AUDIT);
+  expect(q("header-target-line").textContent).toMatch(/^EUR · target .*1,?000,?000.* ARR$/);
+});
