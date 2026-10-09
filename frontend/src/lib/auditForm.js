@@ -39,8 +39,14 @@ export function targetDateError(targetDate, asOf) {
 
 // Keep Target ARR as plain digits (one optional decimal point) in state...
 export function plainNumber(text) {
-  const [int, ...dec] = String(text ?? "").replace(/[^\d.]/g, "").split(".");
+  const [raw, ...dec] = String(text ?? "").replace(/[^\d.]/g, "").split(".");
+  const int = raw.replace(/^0+(?=\d)/, "");          // no leading zeros: typing 5 over "0" gives 5, not 05
   return dec.length ? `${int}.${dec.join("")}` : int;
+}
+
+// A stored 0 or an empty value is "not set": the box shows empty, never "0".
+export function storedNumberInput(v) {
+  return Number(v) ? plainNumber(String(v)) : "";
 }
 
 // ...and show it with comma thousands: "6000000" -> "6,000,000".

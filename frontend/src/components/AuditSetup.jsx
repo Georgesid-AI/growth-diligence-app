@@ -3,10 +3,10 @@ import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import DateField from "@/components/DateField";
-import { updateAudit } from "@/lib/api";
+import { getAudit, updateAudit } from "@/lib/api";
 import { describeRequestError } from "@/lib/requestError";
 import {
-  DEFAULT_FISCAL_YEAR_END, MONTHS, REPORTING_CURRENCIES, SETUP_HELP, SETUP_LABELS, asOfInputValue, groupThousands, plainNumber,
+  DEFAULT_FISCAL_YEAR_END, MONTHS, REPORTING_CURRENCIES, SETUP_HELP, SETUP_LABELS, asOfInputValue, groupThousands, plainNumber, storedNumberInput,
   targetDateError,
 } from "@/lib/auditForm";
 
@@ -19,14 +19,16 @@ const help = "mt-1 text-[11px] leading-snug text-slate-500";
  * the server's reason. The as-of month is held by the page (`asOf`, `setAsOf`), which also sends it when it computes.
  */
 export default function AuditSetup({ audit, setAudit, asOf, setAsOf }) {
-  const [arr, setArr] = useState(plainNumber(String(audit.target_arr ?? "")));
+  const [arr, setArr] = useState(storedNumberInput(audit.target_arr));
   const [targetDate, setTargetDate] = useState(audit.target_date || "");
-  useEffect(() => { setArr(plainNumber(String(audit.target_arr ?? ""))); setTargetDate(audit.target_date || ""); }, [audit.target_arr, audit.target_date]);
+  useEffect(() => { setArr(storedNumberInput(audit.target_arr)); setTargetDate(audit.target_date || ""); }, [audit.target_arr, audit.target_date]);
 
   const save = async (field, patch, success) => {
     try {
       const saved = await updateAudit(audit.id, patch);
       setAudit((a) => ({ ...a, ...patch, ...(saved || {}) }));
+      // Refetch so the header (and anything else the audit feeds) shows what the server holds, with no reload.
+      try { setAudit(await getAudit(audit.id)); } catch { /* the merge above stands */ }
       if (success) toast.success(success);
       return true;
     } catch (e) {

@@ -47,6 +47,10 @@ function serverText(data) {
 export function describeRequestError(err, { timeoutMs } = {}) {
   const res = err?.response;
   if (res) {
+    // A backend restart shows as the proxy's own page (Cloudflare): say what it means, not its HTML.
+    if (res.status === 502 || res.status === 503) {
+      return { kind: "http", status: res.status, message: "Server is restarting – try again in a few seconds" };
+    }
     const text = clip(redactSecrets(serverText(res.data)));
     const head = `HTTP ${res.status}${res.statusText ? ` ${res.statusText}` : ""}`;
     return { kind: "http", status: res.status, message: text ? `${head} — ${text}` : head };
