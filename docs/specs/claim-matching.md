@@ -25,7 +25,7 @@ rest is computed on read by a pure module.
 | Claim type, value (low, high), unit, currency | the candidate; an edited claim gives the analyst's values |
 | Period: target date, start, end | the candidate (`resolve_period`, the audit's fiscal year-end) |
 | Page reference | `sources`: file, slide or page |
-| Deck reading | `parser` (Python read the text), `Verified`, `AI suggestion, not verified`, `edited` (an edit clears the AI label) |
+| Deck reading | `parser` (Python read the text), `Verified`, `AI suggestion, not verified`, `edited` (an edit clears the AI label), `analyst-entered` (a claim added by the analyst with Add claim, deck-parser.md §6; it stays so after an edit) |
 | Segment, metric | §2; the analyst may set either (§8) |
 | Computed figure and its source | `audits.results` (file, sheet, rows, rule); the as-of month and whether it was defaulted |
 

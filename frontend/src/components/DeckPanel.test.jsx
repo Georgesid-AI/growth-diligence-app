@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 import DeckPanel from "./DeckPanel";
 import * as api from "@/lib/api";
 
-jest.mock("@/lib/api", () => ({ getDecks: jest.fn(), removeDeck: jest.fn(), updateCandidate: jest.fn(), uploadDeck: jest.fn() }));
+jest.mock("@/lib/api", () => ({ getDecks: jest.fn(), removeDeck: jest.fn(), updateCandidate: jest.fn(), uploadDeck: jest.fn(), addClaim: jest.fn() }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn(), message: jest.fn() } }));
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -384,5 +384,82 @@ describe("a claim changed to a count type (Users), and a refused save", () => {
     await act(async () => { q("edit-save").click(); });
     expect(toastError()).toHaveBeenLastCalledWith("HTTP 400 — claim_type: choose a claim type for this item before approving it");
     for (const [message] of toastError().mock.calls) expect(message).not.toMatch(/^Could not save$/i);
+  });
+});
+
+describe("Add claim", () => {
+  const change = async (el, value) => {
+    const proto = el.tagName === "SELECT" ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(proto, "value").set.call(el, value);
+      el.dispatchEvent(new Event(el.tagName === "SELECT" ? "change" : "input", { bubbles: true }));
+    });
+  };
+  const openRow = async () => act(async () => { q("add-claim").click(); });
+
+  test("the claims text is the agreed wording, with the Approve, Edit and Reject lines below it", () => {
+    const lines = [...q("claims-instructions").querySelectorAll("h4, p")].map((n) => n.textContent);
+    expect(lines[0]).toBe("Claims found in the uploaded documents");
+    expect(lines[1]).toBe("These figures were extracted automatically and inform the growth plan. While errors are possible, you only need to check claims that look incorrect or implausible against their source slides before making your selection.");
+    expect(lines.slice(2).map((l) => l.split(":")[0])).toEqual(["✓ Approve", "✎ Edit", "✕ Reject"]);
+    expect(q("deck-scope-message").textContent).toContain("If a number you need sits in a picture, use Add claim and cite the page, or upload the source spreadsheet.");
+  });
+
+  test("one row opens with the metric list of the other rows and a dropdown of the uploaded decks", async () => {
+    await openRow();
+    const typeOptions = [...q("add-claim-type").options].map((o) => o.textContent);
+    expect(typeOptions).toContain("Revenue");
+    expect(typeOptions).toContain("Market size");
+    expect(typeOptions).not.toContain("Unknown – choose type");
+    expect([...q("add-claim-deck").options].map((o) => o.textContent).sort()).toEqual(["newer.pdf", "older.pptx"]);
+    for (const id of ["add-claim-value", "add-claim-value-high", "add-claim-unit", "add-claim-currency", "add-claim-date", "add-claim-page"]) expect(q(id)).not.toBeNull();
+  });
+
+  test("the metric has no default and lists only metrics in the claim's unit; Save stays off until value, metric and page are filled", async () => {
+    await openRow();
+    expect(q("add-claim-metric").value).toBe("");
+    expect([...q("add-claim-metric").options].map((o) => o.value)).not.toContain("none");
+    await change(q("add-claim-currency"), "EUR");
+    expect([...q("add-claim-metric").options].map((o) => o.value)).toEqual(expect.arrayContaining(["ARR", "MRR", "Revenue"]));
+    expect([...q("add-claim-metric").options].map((o) => o.value)).not.toContain("Win rate");
+    expect(q("add-claim-save").disabled).toBe(true);
+    await change(q("add-claim-value"), "5");
+    await change(q("add-claim-page"), "3");
+    expect(q("add-claim-save").disabled).toBe(true);          // no metric yet
+    await change(q("add-claim-metric"), "ARR");
+    expect(q("add-claim-save").disabled).toBe(false);
+    await change(q("add-claim-currency"), "");               // ARR no longer fits: the choice is dropped, not sent
+    expect(q("add-claim-metric").value).toBe("");
+    expect(q("add-claim-save").disabled).toBe(true);
+    await change(q("add-claim-currency"), "EUR");
+    await change(q("add-claim-metric"), "ARR");
+    await change(q("add-claim-page"), "");
+    expect(q("add-claim-save").disabled).toBe(true);
+  });
+
+  test("Save sends the claim with its deck and page, closes the row and reloads the list on that deck", async () => {
+    api.addClaim.mockResolvedValue({ id: "n1", deck_id: "d1" });
+    await openRow();
+    await change(q("add-claim-deck"), "d1");
+    await change(q("add-claim-value"), "3600000");
+    await change(q("add-claim-currency"), "usd");
+    await change(q("add-claim-metric"), "ARR");
+    await change(q("add-claim-date"), "2025");
+    await change(q("add-claim-page"), "4");
+    await act(async () => { q("add-claim-save").click(); });
+    expect(api.addClaim).toHaveBeenCalledWith("a1", {
+      claim_type: "revenue", metric: "ARR", deck_id: "d1", page: 4, value: 3600000, value_high: null, unit: null, currency: "USD", target_date: "2025" });
+    expect(q("add-claim-row")).toBeNull();
+    expect(api.getDecks).toHaveBeenCalledTimes(2);
+  });
+
+  test("an analyst-entered claim shows its tag and the confidence Analyst-entered", async () => {
+    api.getDecks.mockResolvedValue({ decks: DECKS, candidates: [
+      claim("n1", "d1", 4, { group: 1, status: "approved", origin: "analyst", snippet: "Added by analyst", confidence: { level: null, failed: [], text: "Analyst-entered" } })] });
+    await act(async () => { q("deck-tab-all").click(); });
+    await act(async () => { root.render(<DeckPanel auditId="a1" reloadKey={1} />); });
+    const tr = rows()[0];
+    expect(tr.querySelector("[data-testid='candidate-confidence']").textContent).toBe("Analyst-entered");
+    expect(tr.textContent).toContain("Added by analyst");
   });
 });

@@ -20,7 +20,7 @@ const uid = () => `m${nextId++}`;
  * system bubble per file, the mapping table in the system bubble. Typed text is answered on the page (S1) and goes
  * nowhere else. `extras(view)` renders what follows the table of a revenue file (FX rates, billing terms).
  */
-export default function UploadChat({ audit, extras, onViews, onCalculate, calculateRef, onStaged, onCalculating }) {
+export default function UploadChat({ audit, extras, onViews, onCalculate, calculateRef, onStaged, onCalculating, calculateButton: state }) {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(0);
@@ -191,10 +191,12 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, calcul
         <span title={SEND_TOOLTIP} data-testid="chat-send-wrap">
           <Button type="submit" size="sm" aria-label="Send" data-testid="chat-send" variant="outline" disabled={!text.trim()} title={SEND_TOOLTIP}><Send className="h-4 w-4" /></Button>
         </span>
-        <Button type="button" size="sm" data-testid="chat-calculate" disabled={calculating} onClick={calculate}
-          className={CALCULATE_CLASS} title={CALCULATE_TOOLTIP}>
-          {calculating ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{CALCULATE_LABEL}
-        </Button>
+        <span title={state?.tooltip ?? CALCULATE_TOOLTIP} data-testid="chat-calculate-wrap">
+          <Button type="button" size="sm" data-testid="chat-calculate" disabled={state ? state.disabled : calculating} onClick={calculate}
+            className={CALCULATE_CLASS} title={state?.tooltip ?? CALCULATE_TOOLTIP}>
+            {calculating ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{CALCULATE_LABEL}
+          </Button>
+        </span>
       </form>
     </section>
   );

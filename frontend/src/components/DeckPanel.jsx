@@ -1,13 +1,14 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Check, ChevronDown, ChevronRight, FileText, Loader2, Pencil, Upload, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, FileText, Loader2, Pencil, Plus, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import FxText from "@/components/FxText";
-import { getDecks, removeDeck, updateCandidate, uploadDeck } from "@/lib/api";
+import { metricOptions } from "@/lib/claimRegister";
+import { addClaim, getDecks, removeDeck, updateCandidate, uploadDeck } from "@/lib/api";
 import { describeRequestError } from "@/lib/requestError";
 import {
-  ALL_DECKS, CLAIM_GROUPS, CLAIM_TYPES, CLAIM_UNITS, COUNT_UNIT_HINT, COUNT_TYPES, COUNT_UNIT, FX_SETTINGS_ANCHOR, FX_SETTINGS_LABEL, conversionHover, inconsistencyText, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
+  ALL_DECKS, CLAIM_GROUPS, CLAIM_TYPES, CLAIM_UNITS, COUNT_UNIT_HINT, COUNT_TYPES, COUNT_UNIT, FX_SETTINGS_ANCHOR, FX_SETTINGS_LABEL, conversionHover, inconsistencyText, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, ADD_CLAIM_LABEL, ADD_CLAIM_NEEDS_SOURCE, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, newClaimPayload, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
   DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, CONFIDENCE_HOVER, DECK_UPLOAD_HELP, INCONSISTENCY_LABEL, OTHER_TYPE_NOTE, PLACEHOLDER, STATUS_LABELS, VERIFIED_LABEL, claimPeriod, claimSections, claimValue, deckRunLog,
   confidenceText, needsType, readingChoices, rowEdit, sourceRef, statusCounts, typeLabel,
 } from "@/lib/deckClaims";
@@ -29,6 +30,7 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
   const [error, setError] = useState(null);
   const [tab, setTab] = useState(null);            // deck id or ALL_DECKS; null until the first load
   const [confirming, setConfirming] = useState(null);
+  const [adding, setAdding] = useState(false);       // the Add claim row is open
   const [expanded, setExpanded] = useState({});     // group -> opened or closed by the analyst; groups 5 and 6 start closed
 
   // After a load, keep the chosen tab if its deck still exists; otherwise show the most recent deck.
@@ -114,6 +116,19 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
     }
   };
 
+  const add = async (payload) => {
+    try {
+      const created = await addClaim(auditId, payload);
+      setAdding(false);
+      toast.success("Claim added");
+      await load(created.deck_id);
+      return true;
+    } catch (err) {
+      toast.error(describeRequestError(err).message);
+      return false;
+    }
+  };
+
   const remove = async (deckId) => {
     try {
       await removeDeck(auditId, deckId);
@@ -161,13 +176,20 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
 
       {data.decks.length > 0 && (
         <div className="mt-5 pt-5 border-t border-[#E5E7EB]" data-testid="deck-candidates">
-          <div className="text-xs text-slate-700 mb-3 max-w-3xl space-y-1" data-testid="claims-instructions">
-            <h4 className="font-heading font-semibold text-sm text-slate-900">{CLAIMS_HEADING}</h4>
-            <p>{CLAIMS_INTRO}</p>
-            {CLAIMS_CHOICES.map(([choice, text]) => (
-              <p key={choice}><span className="font-semibold">{choice}</span> {text}</p>
-            ))}
+          <div className="flex items-start justify-between gap-4 flex-wrap mb-3">
+            <div className="text-xs text-slate-700 max-w-3xl space-y-1" data-testid="claims-instructions">
+              <h4 className="font-heading font-semibold text-sm text-slate-900">{CLAIMS_HEADING}</h4>
+              <p>{CLAIMS_INTRO}</p>
+              {CLAIMS_CHOICES.map(([choice, text]) => (
+                <p key={choice}><span className="font-semibold">{choice}</span> {text}</p>
+              ))}
+            </div>
+            <Button size="sm" variant="outline" onClick={() => setAdding(true)} disabled={adding} className="h-8" data-testid="add-claim">
+              <Plus className="h-3.5 w-3.5 mr-1" />{ADD_CLAIM_LABEL}
+            </Button>
           </div>
+          {adding && <AddClaimRow decks={data.decks} initialDeck={data.decks.some((d) => d.deck_id === tab) ? tab : data.decks[0].deck_id}
+            onSave={add} onCancel={() => setAdding(false)} />}
           <div className="flex flex-wrap gap-1 border-b border-[#E5E7EB] mb-3" role="tablist" data-testid="deck-tabs">
             {deckTabs(data.decks, data.candidates).map((t) => (
               <button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => { setTab(t.id); setConfirming(null); }}
@@ -230,6 +252,65 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Add claim: one row with the metric (the same list as the other rows), a value or a range, unit, currency, period, the
+ *  source document and the page. Source document and page are required: Save stays off until both are filled. */
+function AddClaimRow({ decks, initialDeck, onSave, onCancel }) {
+  const [draft, setDraft] = useState({ claim_type: CLAIM_TYPES[0], value: "", value_high: "", unit: "", currency: "", target_date: "", deck_id: initialDeck, page: "", metric: "" });
+  const [saving, setSaving] = useState(false);
+  const set = (k) => (e) => setDraft((d) => ({ ...d, [k]: e.target.value }));
+  const setType = (e) => {
+    const claim_type = e.target.value;
+    setDraft((d) => (COUNT_TYPES.includes(claim_type) && !COUNT_TYPES.includes(d.claim_type)
+      ? { ...d, claim_type, currency: "", unit: COUNT_UNIT } : { ...d, claim_type }));
+  };
+  // The register metrics that measure this claim's unit; the analyst chooses one, none is preselected.
+  const metrics = metricOptions(draft).filter((m) => m !== "none");
+  const metric = metrics.includes(draft.metric) ? draft.metric : "";
+  const payload = newClaimPayload({ ...draft, metric });
+  const save = async () => { setSaving(true); await onSave(payload); setSaving(false); };
+  return (
+    <div className="mb-3 p-3 border border-[#E5E7EB] rounded-md bg-slate-50 flex flex-wrap items-end gap-2" data-testid="add-claim-row">
+      <label className="flex flex-col text-[10px] font-mono text-slate-500">Metric
+        <select value={draft.claim_type} onChange={setType} className={selectClass} data-testid="add-claim-type">
+          {CLAIM_TYPES.map((t) => <option key={t} value={t}>{typeLabel(t)}</option>)}
+        </select>
+      </label>
+      <label className="flex flex-col text-[10px] font-mono text-slate-500">Value
+        <Input value={draft.value} onChange={set("value")} type="number" className="h-8 w-28 text-xs font-mono" data-testid="add-claim-value" />
+      </label>
+      <label className="flex flex-col text-[10px] font-mono text-slate-500">To (range)
+        <Input value={draft.value_high} onChange={set("value_high")} type="number" className="h-8 w-28 text-xs font-mono" data-testid="add-claim-value-high" />
+      </label>
+      <label className="flex flex-col text-[10px] font-mono text-slate-500">Unit
+        <Input value={draft.unit} onChange={set("unit")} list="add-claim-units" className="h-8 w-28 text-xs font-mono" data-testid="add-claim-unit" />
+        <datalist id="add-claim-units">{CLAIM_UNITS.map((u) => <option key={u} value={u} label={u === "count" ? COUNT_UNIT_HINT : undefined} />)}</datalist>
+      </label>
+      <label className="flex flex-col text-[10px] font-mono text-slate-500">Currency
+        <Input value={draft.currency} onChange={set("currency")} placeholder="EUR" className="h-8 w-16 text-xs font-mono uppercase" data-testid="add-claim-currency" />
+      </label>
+      <label className="flex flex-col text-[10px] font-mono text-slate-500">Date or period
+        <Input value={draft.target_date} onChange={set("target_date")} placeholder="2025-Q4" className="h-8 w-24 text-xs font-mono" data-testid="add-claim-date" />
+      </label>
+      <label className="flex flex-col text-[10px] font-mono text-slate-500">Metric tested (required)
+        <select value={metric} onChange={set("metric")} className={selectClass} data-testid="add-claim-metric">
+          <option value="" disabled>Choose a metric</option>
+          {metrics.map((m) => <option key={m} value={m}>{m}</option>)}
+        </select>
+      </label>
+      <label className="flex flex-col text-[10px] font-mono text-slate-500">Source document (required)
+        <select value={draft.deck_id} onChange={set("deck_id")} className={selectClass} data-testid="add-claim-deck">
+          {decks.map((d) => <option key={d.deck_id} value={d.deck_id}>{d.file}</option>)}
+        </select>
+      </label>
+      <label className="flex flex-col text-[10px] font-mono text-slate-500">Page (required)
+        <Input value={draft.page} onChange={set("page")} type="number" min="1" className="h-8 w-20 text-xs font-mono" data-testid="add-claim-page" />
+      </label>
+      <Button size="sm" onClick={save} disabled={!payload || saving} title={payload ? undefined : ADD_CLAIM_NEEDS_SOURCE} className="h-8 bg-sky-600 hover:bg-sky-500" data-testid="add-claim-save">Save</Button>
+      <Button size="sm" variant="outline" onClick={onCancel} className="h-8" data-testid="add-claim-cancel">Cancel</Button>
     </div>
   );
 }

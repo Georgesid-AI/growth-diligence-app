@@ -1,5 +1,5 @@
 import {
-  ALL_DECKS, AI_SUGGESTION_LABEL, CLAIM_TYPES, INCONSISTENCY_LABEL, UPLOADED_BEFORE_CONSENT, VERIFIED_LABEL, deckRunLog, REMOVE_DECK_CONFIRM, claimPeriod, conversionHover, claimSections, claimsForDeck, periodLabel, directionText, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, sourceRef, statusCounts, typeLabel,
+  ALL_DECKS, AI_SUGGESTION_LABEL, CLAIM_TYPES, INCONSISTENCY_LABEL, UPLOADED_BEFORE_CONSENT, VERIFIED_LABEL, deckRunLog, REMOVE_DECK_CONFIRM, claimPeriod, conversionHover, claimSections, claimsForDeck, periodLabel, directionText, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, newClaimPayload, sourceRef, statusCounts, typeLabel,
   DECK_SCOPE_CANNOT, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, OTHER_TYPE_NOTE, needsType, readingChoices, confidenceText, UNKNOWN_TYPE_LABEL,
 } from "./deckClaims";
 
@@ -42,7 +42,7 @@ test("scope message is the spec text", () => {
     "We cannot read:\n" +
     "- Scanned PDFs, images or charts saved as pictures. There is no text in them to read, only pixels.\n" +
     "- Keynote files or Google Slides links. Please export them as PowerPoint or PDF first.\n" +
-    "If a number you need sits in a picture, add it as text or send the source spreadsheet.",
+    "If a number you need sits in a picture, use Add claim and cite the page, or upload the source spreadsheet.",
   );
 });
 
@@ -59,12 +59,28 @@ test("every column has a header", () => {
 
 test("instruction text is word for word", () => {
   expect([CLAIMS_HEADING, CLAIMS_INTRO, ...CLAIMS_CHOICES.map(([a, b]) => `${a} ${b}`)].join("\n")).toBe(
-    "Claims found in the deck\n" +
-    "These figures may inform the growth plan. They were identified automatically and may contain errors. Check each claim against its source slide, then choose:\n" +
+    "Claims found in the uploaded documents\n" +
+    "These figures were extracted automatically and inform the growth plan. While errors are possible, you only need to check claims that look incorrect or implausible against their source slides before making your selection.\n" +
     "✓ Approve: Confirm this is a claim the company makes. It will be added to the claim register and tested against the data.\n" +
     "✎ Edit: Correct the figure, type, unit or date, then approve the claim. It will be added to the claim register and tested against the data.\n" +
     "✕ Reject: Exclude items that are not company claims, such as another company's figures, funds raised or chart axis labels. Rejected items remain in the record but are not used.",
   );
+});
+
+describe("Add claim form", () => {
+  const draft = { claim_type: "revenue", value: "3600000", value_high: "", unit: "", currency: "usd", target_date: "2025", deck_id: "d1", page: "4", metric: "ARR" };
+  test("source document and page are required, and so is the value", () => {
+    expect(newClaimPayload(draft)).toEqual({ claim_type: "revenue", metric: "ARR", deck_id: "d1", page: 4, value: 3600000, value_high: null, unit: null, currency: "USD", target_date: "2025" });
+    expect(newClaimPayload({ ...draft, page: "" })).toBeNull();
+    expect(newClaimPayload({ ...draft, page: "0" })).toBeNull();
+    expect(newClaimPayload({ ...draft, page: "1.5" })).toBeNull();
+    expect(newClaimPayload({ ...draft, deck_id: "" })).toBeNull();
+    expect(newClaimPayload({ ...draft, value: "" })).toBeNull();
+    expect(newClaimPayload({ ...draft, metric: "" })).toBeNull();
+  });
+  test("a range keeps both ends", () => {
+    expect(newClaimPayload({ ...draft, value: "2", value_high: "3" })).toMatchObject({ value: 2, value_high: 3 });
+  });
 });
 
 describe("deck selector", () => {

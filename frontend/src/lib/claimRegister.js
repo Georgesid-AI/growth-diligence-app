@@ -184,7 +184,7 @@ export function gapText(row, ccy) {
   return `${prefix}${native}${share}`;
 }
 
-const READINGS = { parser: "Read by the parser", edited: "Edited by the analyst" };
+const READINGS = { parser: "Read by the parser", edited: "Edited by the analyst", "analyst-entered": "Analyst-entered" };
 export const readingText = (reading) => READINGS[reading] || reading;
 
 export const segmentEdit = (segment) => ({ segment });
