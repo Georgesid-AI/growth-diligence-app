@@ -256,7 +256,7 @@ ARR, MRR or "new MRR", is a turnover claim. Resolution, in this order:
    tolerance (§4): Revenue, tested as today, shown as "Gross revenue (turnover)"; above tolerance, whatever the multiple:
    Unverified, the question "Revenue or volume? Confirm below", reason "turnover or volume: confirm Revenue or Volume", until the
    analyst answers (amended 2026-10-09, George: the 3x threshold is dropped); below tolerance: Revenue, the ordinary
-   revenue rule (Contradicted, a miss). A range is compared at the end nearest the file revenue (inside the range: within
+   revenue rule (Contradicted, a beat). A range is compared at the end nearest the file revenue (inside the range: within
    tolerance), and the same three cases apply. The claim is converted at the saved rate first; with no rate saved the row
    is Unverified, "FX rate needed: USD→EUR", before the question is asked.
 4. No file covers the period (no revenue file, months missing, no period, a forecast): the question is asked. If the

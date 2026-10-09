@@ -20,7 +20,7 @@ const uid = () => `m${nextId++}`;
  * system bubble per file, the mapping table in the system bubble. Typed text is answered on the page (S1) and goes
  * nowhere else. `extras(view)` renders what follows the table of a revenue file (FX rates, billing terms).
  */
-export default function UploadChat({ audit, extras, onViews, onCalculate, calculateRef, onStaged }) {
+export default function UploadChat({ audit, extras, onViews, onCalculate, calculateRef, onStaged, onCalculating }) {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(0);
@@ -28,6 +28,7 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, calcul
   const staged = useRef(new Map());                   // bubble id -> File: attached, not yet read (nothing runs until Calculate)
   const openPrompts = useRef(new Set());              // bubbles whose file waits for a type or a replace answer
   const [calculating, setCalculating] = useState(false);
+  const calculatingRef = useRef(false);
   const [lastReason, setLastReason] = useState("header_misleading");   // stays for the next correction on this page
   const picker = useRef(null);
   const queue = useRef(Promise.resolve());
@@ -70,7 +71,9 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, calcul
           const analyst = { id: bubble || uid(), kind: "analyst", dtype: res.dtype, file: res.file, size: res.size_bytes ?? file.size, ext: res.ext };
           return [...kept, analyst, { id: uid(), kind: "system", dtype: res.dtype, view: res }];
         });
-        if (!quiet) announce();
+        // An answer to a type or replace prompt (Calculate was pressed to get here): the flag is set once nothing else waits,
+        // so "Revenue file missing" shows without a second press.
+        if (!quiet) { if (openPrompts.current.size === 0) setCalculatePressed(audit.id); announce(); }
       }
     } catch (err) {
       settle({});
@@ -113,7 +116,10 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, calcul
   // The banner is refreshed once, after the last file, and not while a file still waits for its type or a replace answer:
   // "Revenue file missing" would then show while that file is being asked about.
   const calculate = async () => {
+    if (calculatingRef.current) return;                 // a second press while files are being read does nothing
+    calculatingRef.current = true;
     setCalculating(true);
+    onCalculating?.(true);
     try {
       for (const [bubble, file] of [...staged.current]) {
         staged.current.delete(bubble);
@@ -125,7 +131,9 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, calcul
       const views = await getDatasets(audit.id).catch(() => []);
       await onCalculate?.(views);
     } finally {
+      calculatingRef.current = false;
       setCalculating(false);
+      onCalculating?.(false);
     }
   };
   if (calculateRef) calculateRef.current = calculate;

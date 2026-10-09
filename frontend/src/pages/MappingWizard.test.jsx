@@ -622,6 +622,7 @@ describe("the revenue banner timing (decision D)", () => {
     api.uploadChatFile.mockResolvedValueOnce(VIEW({ dtype: "crm", file: "mystery.csv" }));
     const after = await counted(async () => { await click(q("pick-type-crm")); await flush(); });
     expect(after).toBe(1);
+    expect(calculatePressed("a1")).toBe(true);        // set on the answer path: "Revenue file missing" shows without a second press
   });
 
   test("a file that waits for a replace answer does the same", async () => {
@@ -630,5 +631,30 @@ describe("the revenue banner timing (decision D)", () => {
     const n = await counted(async () => { await pickAndCalc([file("new.csv")]); });
     expect(q("chat-replace")).not.toBeNull();
     expect([n, calculatePressed("a1")]).toEqual([0, false]);
+    api.uploadChatFile.mockResolvedValueOnce(VIEW({ dtype: "crm", file: "new.csv" }));
+    await click(q("replace-yes"));
+    await flush();
+    expect(calculatePressed("a1")).toBe(true);
+  });
+});
+
+describe("one Calculate at a time", () => {
+  test("while files are being read the header button is disabled and a second Calculate press reads nothing again", async () => {
+    let release;
+    api.uploadChatFile.mockImplementation(() => new Promise((resolve) => { release = () => resolve(VIEW()); }));
+    api.updateAudit.mockResolvedValue({});
+    api.computeAudit.mockResolvedValue({});
+    await mount({ datasets: [VIEW()] });
+    await flush();
+    await pick([file("rev.csv")]);
+    expect(q("compute-button").disabled).toBe(false);
+    await act(async () => { q("compute-button").click(); });
+    expect(q("compute-button").disabled).toBe(true);
+    await act(async () => { q("compute-button").click(); q("chat-calculate").click(); });     // a second click and a second Calculate
+    api.getDatasets.mockResolvedValue([VIEW()]);
+    await act(async () => { release(); });
+    for (let i = 0; i < 6; i += 1) await flush();
+    expect(api.uploadChatFile).toHaveBeenCalledTimes(1);
+    expect(api.computeAudit).toHaveBeenCalledTimes(1);
   });
 });

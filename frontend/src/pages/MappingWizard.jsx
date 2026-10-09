@@ -19,6 +19,7 @@ export default function MappingWizard() {
   const [views, setViews] = useState([]);
   const [computing, setComputing] = useState(false);
   const [asOf, setAsOf] = useState("");
+  const [reading, setReading] = useState(false);        // Calculate is reading files: the header button waits
   const [attached, setAttached] = useState(0);        // files attached in the chat and not read yet
   const calculateRef = useRef(null);                  // UploadChat's Calculate: the header button runs the same path
   const [fxVersion, setFxVersion] = useState(0);      // bumped when a rate is saved: the deck panel reloads
@@ -96,7 +97,7 @@ export default function MappingWizard() {
               <DateField testId="asof-month-input" value={asOf} onChange={setAsOf} placeholder="last P&L month" />
             </div>
           </div>
-          <Button data-testid="compute-button" onClick={headerCompute} disabled={(!ready && attached === 0) || computing}
+          <Button data-testid="compute-button" onClick={headerCompute} disabled={(!ready && attached === 0) || computing || reading}
             className="bg-sky-600 hover:bg-sky-500 gap-2">
             {computing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />} Compute Metrics
           </Button>
@@ -104,7 +105,7 @@ export default function MappingWizard() {
       </div>
 
       <div className="space-y-5">
-        <UploadChat audit={audit} onViews={setViews} onCalculate={onCalculate} calculateRef={calculateRef} onStaged={setAttached}
+        <UploadChat audit={audit} onViews={setViews} onCalculate={onCalculate} calculateRef={calculateRef} onStaged={setAttached} onCalculating={setReading}
           extras={(view) => <RevenueSettings key={`${view.file}-${view.uploaded_at}`} audit={audit} view={view} />} />
         <FxSettings audit={audit} onSaved={() => setFxVersion((n) => n + 1)} />
         <DeckPanel auditId={audit.id} reloadKey={fxVersion} />
