@@ -695,3 +695,15 @@ def test_a_direction_with_no_figure_is_unverified_and_never_verified_or_contradi
     typed = run_claim({"claim_type": "revenue", "snippet": "ARR", "currency": "EUR", "value": 200000,
                        "claim_direction": "positive", "target_date": "2024-02"})
     assert typed["claim_direction"] is None and typed["evidence_label"] == "Verified"
+
+
+def test_a_market_size_claim_keeps_the_decks_date_and_the_rate_date_is_a_separate_field():
+    """A claim's period is the deck's (FY2028); the date its rate applies at is the as-of month's last day and lives in fx_date
+    only. The two are never mixed: the period never reads as the rate date, and a claim with no date has none."""
+    market = {"claim_type": "market", "snippet": "Market size $2.5B", "currency": "USD", "value": 2.5e9, "target_date": "2028",
+              "period_text": "FY2028"}
+    row = run_claim(market, fx={"EUR": 1.0, "USD": 0.9})
+    assert (row["claimed_value"], row["claimed_converted"], row["period"], row["period_note"]) == (2.5e9, pytest.approx(2.25e9), "FY2028", None)
+    assert row["fx_rate"] == 0.9 and row["fx_date"] != row["period"] and row["fx_date"] == cm.as_of_date(row["as_of_month"])
+    undated = run_claim({**market, "target_date": None, "period_text": None}, fx={"EUR": 1.0, "USD": 0.9})
+    assert (undated["period"], undated["period_note"], undated["fx_date"]) == (None, "no period stated", row["fx_date"])

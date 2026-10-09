@@ -1,5 +1,5 @@
 import {
-  MAX_YEAR, MIN_YEAR, YEAR_ERROR, dateRangeError, displayDate, openingView, parseIso, parseYear, shiftMonth, shiftYear, toIso, weeks,
+  MAX_YEAR, MIN_YEAR, YEAR_ERROR, dateRangeError, displayDate, openingView, parseIso, parseTyped, parseYear, pickSide, CALENDAR_HEIGHT, shiftMonth, shiftYear, toIso, weeks,
 } from "./datePicker";
 
 test("the years run from 2000 to 2100 and a year outside is rejected", () => {
@@ -52,4 +52,18 @@ test("every date field refuses a year outside 2000 to 2100 and a date that is no
   expect(dateRangeError("Gate date", "2101-01-01")).toBe("Gate date year must be between 2000 and 2100");
   expect(dateRangeError("Gate date", "2026-02-30")).toBe("Gate date must be a real date");
   expect(dateRangeError("Gate date", "30/06/2026")).toBe("Gate date must be a full date (YYYY-MM-DD)");
+});
+
+test("a typed date is read as year-month-day with dashes or day.month.year with dots, and nothing else", () => {
+  expect(["2026-06-30", "30.06.2026", "1.2.2028", "2028-2-1", " 30.06.2026 "].map(parseTyped))
+    .toEqual(["2026-06-30", "2026-06-30", "2028-02-01", "2028-02-01", "2026-06-30"]);
+  expect(["06/07/2026", "30-06-2026", "2026.06.30", "2026-02-30", "31.04.2026", "30.06.1999", "2101-01-01", "30.06.26", "", null, "2026-06"]
+    .map(parseTyped)).toEqual(Array(11).fill(null));
+});
+
+test("the calendar goes below the field when it fits and above when it does not", () => {
+  expect(pickSide({ bottom: 200 }, 900)).toBe("bottom");
+  expect(pickSide({ bottom: 900 - CALENDAR_HEIGHT }, 900)).toBe("bottom");
+  expect(pickSide({ bottom: 900 - CALENDAR_HEIGHT + 1 }, 900)).toBe("top");
+  expect(pickSide({ bottom: 880 }, 900)).toBe("top");
 });

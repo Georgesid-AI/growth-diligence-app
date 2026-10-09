@@ -68,3 +68,18 @@ export function requiredFieldError(form) {
   if (!form.client_name?.trim()) return "Client name is required";
   return null;
 }
+
+// The audit's set-up fields sit at the top of the upload and mapping page (docs/specs/chat-upload.md section 2), each with
+// one line of help. The creation dialog asks for the audit name only (and the client and the consent, which are not set-up).
+export const SETUP_HELP = {
+  reporting_currency: "All figures are converted to this currency. Use the company's home currency; the verdict and memo use it.",
+  target_arr: "The plan figure the audit tests. Every claim's value at stake is measured against it.",
+  target_date: "When the plan says Target ARR is reached. Sets the forecast horizon.",
+  as_of_month: "Last month of actual data. Metrics are computed up to this month. Defaults to the last P&L month.",
+  fiscal_year_end: "Maps FY labels in the deck to months. A wrong setting shifts every FY claim.",
+};
+export const SETUP_LABELS = {
+  reporting_currency: "Reporting currency", target_arr: "Target ARR", target_date: "Target date", as_of_month: "As-of month",
+  fiscal_year_end: "Fiscal year-end",
+};
+export const REPORTING_CURRENCIES = ["EUR", "USD", "GBP", "JPY"];

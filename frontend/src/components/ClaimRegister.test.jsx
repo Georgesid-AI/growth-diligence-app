@@ -57,7 +57,7 @@ test("the section has its title, the download button and one row per claim with 
   expect(row.querySelector('[data-testid="register-value-at-stake"]').textContent).toBe("not yet computed");
   expect(row.querySelector('[data-testid="register-overlaps"]').textContent).toBe("—");
   expect(row.querySelector('[data-testid="register-evidence-source"]').textContent).toBe("Monthly MRR by Segment · mrr_series.data.total (2024-02)");
-  expect(row.querySelector('[data-testid="register-gate-date"]').textContent).toBe("Gate date", "the gate date starts empty");
+  expect(row.querySelector('[data-testid="register-gate-date"]').placeholder).toBe("Gate date", "the gate date starts empty");
   expect(row.querySelector('[data-testid="register-gate-needed"]')).toBeNull();
   expect(row.querySelector('[data-testid="register-gate-context"]').textContent).toBe("Claimed 200,000 EUR (Feb 2024) · Observed 202,125 EUR (2024-02)");
   expect(row.querySelector('[data-testid="register-gate-threshold"]').value).toBe("");
@@ -211,4 +211,27 @@ test("a row with no rate names the pair and links to the FX settings", async () 
   expect(rows[0].querySelector('[data-testid="register-evidence-reason"]').textContent).toBe("· FX rate needed: GBP→EUR");
   expect(rows[0].querySelector('[data-testid="register-fx-link"]').getAttribute("href")).toBe("/audit/a1/mapping#fx-settings");
   expect(rows[1].querySelector('[data-testid="register-fx-link"]')).toBeNull();
+});
+
+test("a market-size row: the value, the converted value, FY2028 from the deck, and no rate date on the row", async () => {
+  const market = { ...ROW, claim_id: "m01", claim_type: "market", currency: "USD", claimed_value: 2.5e9, period: "FY2028",
+    claimed_converted: 2.25e9, fx_rate: 0.9, fx_date: "2026-06-30" };
+  const undated = { ...market, claim_id: "m02", claimed_value: 1e9, claimed_converted: 9e8, period: null, period_note: "no period stated" };
+  const { host } = await mount([market, undated]);
+  const [a, b] = host.querySelectorAll('[data-testid="claim-register-row"]');
+  const cells = (tr) => [...tr.querySelectorAll("td")].slice(1, 3).map((td) => td.textContent);
+  expect(cells(a)).toEqual(["Market size · 2,500,000,000 USD (2,250,000,000 EUR)", "FY2028"]);
+  expect(cells(b)).toEqual(["Market size · 1,000,000,000 USD (900,000,000 EUR)", "no date"]);
+  expect(a.textContent).not.toMatch(/30 Jun 2026|Jun 2026|0\.9\b/);
+  expect(a.querySelector('[data-testid="register-claim"] span').getAttribute("title")).toBe("Rate used: 1 USD = 0.9 EUR on 30 Jun 2026");
+});
+
+test("a row with no saved rate says which rate is missing, and FX settings in it is the link", async () => {
+  const brl = { ...ROW, currency: "BRL", claimed_value: 150000, claimed_converted: null, fx_rate: null, fx_date: null,
+    evidence_label: "Unverified", reason: "FX rate needed: BRL→EUR", observed_value: null, evidence_analysis: null };
+  const { host } = await mount([brl]);
+  const cell = host.querySelector('[data-testid="register-claim"]');
+  expect(cell.textContent).toBe("Revenue · 150,000 BRL (BRL→EUR rate missing – enter it in FX settings at the top of the page)");
+  const link = cell.querySelector("a");
+  expect([link.textContent, link.getAttribute("href")]).toEqual(["FX settings", "/audit/a1/mapping#fx-settings"]);
 });

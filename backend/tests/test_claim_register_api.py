@@ -270,3 +270,11 @@ def test_the_screens_metric_table_is_pinned_to_the_matching_module():
     shown = json.loads(path.read_text(encoding="utf-8"))["metrics"]
     assert shown == {name: spec["unit"] for name, spec in cm.METRICS.items()}
     assert list(shown) == list(cm.METRICS), "same order: the select lists them in it"
+
+
+def test_a_refused_claim_input_names_the_field(api):
+    client, _ = api
+    r = _put(client, "c01", {"metric": "Customer count"})
+    assert r.status_code == 400 and r.json()["detail"].startswith("metric: "), r.text
+    r = _put(client, "c01", {"segment": "No such segment"})
+    assert r.status_code == 400 and r.json()["detail"].startswith("segment: "), r.text

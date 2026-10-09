@@ -8,6 +8,7 @@
 import { displayDate } from "./datePicker";
 
 export const PLACEHOLDER = "—";
+export const NO_DATE = "no date";        // the Period column of a claim that states no date
 
 export const DECK_ACCEPT = ".pptx,.pdf,.docx";
 
@@ -50,6 +51,10 @@ export const CLAIM_UNITS = ["%", "x", "months", "years", "weeks", "days", "hours
 // What the unit "count" stands for, shown beside it in the unit list; a currency stays in its own field.
 export const COUNT_UNIT_HINT = "customers, headcount, deals";
 
+// Types whose figure counts things: they carry the unit "count" (or the noun counted) and never a currency.
+export const COUNT_TYPES = ["customers", "users", "people", "trials_per_day"];
+export const COUNT_UNIT = "count";
+
 // One header per column of the approval list, in column order.
 export const COLUMNS = ["Type", "Value", "Period", "Confidence", "Claim in the deck", "Source", "Status", "Action"];
 
@@ -79,12 +84,15 @@ export function sourceRef(ref) {
 }
 
 const figure = (v) => Number(v).toLocaleString("en-US", { maximumFractionDigits: 2 });
+// A converted figure is in whole units of the reporting currency: the rate and the date it applies at are on hover.
+const whole = (v) => Number(v).toLocaleString("en-US", { maximumFractionDigits: 0 });
 const present = (v) => v !== null && v !== undefined && Number.isFinite(Number(v));
 
 function amount(c, value, high, rate) {
   if (!present(value)) return PLACEHOLDER;
   const scale = rate ? Number(rate) : 1;
-  const n = present(high) ? `${figure(value * scale)}–${figure(high * scale)}` : figure(value * scale);
+  const fmt = rate ? whole : figure;
+  const n = present(high) ? `${fmt(value * scale)}–${fmt(high * scale)}` : fmt(value * scale);
   if (c.unit === "%") return `${n}%`;
   if (c.unit === "x") return `${n}x`;
   if (c.unit) return `${n} ${c.unit}`;
@@ -99,16 +107,25 @@ export const FX_SETTINGS_ANCHOR = "fx-settings";
 
 /** "USD→EUR": the pair a claim in another currency needs a rate for, or null when it has none or needs none. */
 export const fxPair = (c) => (c?.fx && c.currency && !c.unit && c.fx.rate == null && c.fx.currency ? `${c.currency}→${c.fx.currency}` : null);
-/** "FX rate needed: GBP→EUR" (the pair is named so the analyst knows which rate to enter). */
-export const fxNeededText = (c) => `${FX_NEEDED}: ${fxPair(c) || c?.currency || ""}`.replace(/: $/, "");
 
-/** The claim's figure in the audit's currency, when it is stated in another one: "150,000 GBP (171,000 EUR at 1.14, 30 Jun 2026)".
- *  No saved rate: "150,000 GBP (FX rate needed)". `fx` comes from the server with the claim. */
+/** What the missing-rate note says, "BRL→EUR rate missing – enter it in FX settings at the top of the page": the words
+ *  "FX settings" are shown as a link to the audit's FX settings (FX_SETTINGS_LABEL). */
+export const rateMissingText = (pair) => `${pair} rate missing – enter it in ${FX_SETTINGS_LABEL} at the top of the page`;
+
+/** The rate behind a converted figure, for hover: "1 GBP = 1.14 EUR on 30 Jun 2026". Null when the claim is not converted. */
+export function conversionHover(c) {
+  if (!c?.fx || !c.currency || c.unit || c.fx.rate == null) return null;
+  const on = displayDate(c.fx.date);
+  return `Rate used: 1 ${c.currency} = ${figure(c.fx.rate)} ${c.fx.currency}${on ? ` on ${on}` : ""}`;
+}
+
+/** The claim's figure in the audit's currency, when it is stated in another one: "150,000 GBP (171,000 EUR)", whole units. The
+ *  rate and its date are on hover (conversionHover), never in the row. No saved rate: "150,000 BRL (BRL→EUR rate missing – enter
+ *  it in FX settings at the top of the page)". `fx` comes from the server with the claim. */
 function withConversion(c, text, value, high) {
   if (!c.fx || !c.currency || c.unit || !present(value)) return text;
-  if (c.fx.rate == null) return `${text} (${fxNeededText(c)})`;
-  const on = displayDate(c.fx.date);
-  return `${text} (${amount(c, value, high, c.fx.rate)} at ${figure(c.fx.rate)}${on ? `, ${on}` : ""})`;
+  if (c.fx.rate == null) return `${text} (${rateMissingText(fxPair(c) || c.currency)})`;
+  return `${text} (${amount(c, value, high, c.fx.rate)})`;
 }
 
 /** "3,600,000 USD", "15%", "4.9x", "24 months", "2.5", "12,000,000–13,000,000 USD" for a range;
@@ -145,12 +162,14 @@ export function periodLabel(v, c) {
 }
 
 /** The Period column: a table row's first to last period, else the claim's period, each in one format
- *  ("FY2023", "Q2 2024", "Jun 2024"); "—" only when the deck gives no period. The deck's own wording stays in the claim. */
+ *  ("FY2023", "Q2 2024", "Jun 2024"); "no date" only when the deck gives no period. The deck's own wording stays in the claim. */
 export function claimPeriod(c) {
   const periods = (c?.by_period || []).map((v) => periodLabel(v, c)).filter(Boolean);
   const date = periods.length ? (periods.length > 1 ? `${periods[0]}–${periods[periods.length - 1]}` : periods[0]) : periodLabel(c, c);
   // "per year" read from a label's brackets ("Turnover (£/year)"): shown beside the date, or alone when the deck gives no year.
-  return [date, c?.period_basis].filter(Boolean).join(" · ") || PLACEHOLDER;
+  // A basis of "per year" next to a year adds nothing; it stays only when no year is found.
+  const basis = c?.period_basis === "per year" && date ? null : c?.period_basis;
+  return [date, basis].filter(Boolean).join(" · ") || NO_DATE;
 }
 
 /** The edit sent for a table row: one value per period, in the row's order; dates stay. */

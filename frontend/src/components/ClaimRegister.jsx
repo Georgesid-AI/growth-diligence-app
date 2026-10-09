@@ -8,10 +8,12 @@ import DateField from "@/components/DateField";
 import { answerTurnover, claimsCsvUrl, getClaimRegister, updateClaimInputs } from "@/lib/api";
 import {
   DOWNLOAD_LABEL, GATE_BUDGET_MAX, GATE_DIRECTIONS, GATE_METRIC_MAX, GATE_METRIC_PLACEHOLDER, GATE_NEEDED, KEY_GATE_LABEL, NO_METRIC,
-  REGISTER_COLUMNS, REGISTER_HEADING, TURNOVER_QUESTION, TURNOVER_REASONS, contradicts, claimText, takeRateText, evidenceLines, gapText, gateContext, gateEdit, metricOptions, needsMetricName,
+  REGISTER_COLUMNS, REGISTER_HEADING, TURNOVER_QUESTION, TURNOVER_REASONS, contradicts, claimCellText, rateHover, takeRateText, evidenceLines, gapText, gateContext, gateEdit, metricOptions, needsMetricName,
   observedText, overlapsText, readingText, registerRows, segmentOptions, valueAtStakeText,
 } from "@/lib/claimRegister";
 import { describeRequestError } from "@/lib/requestError";
+import FxText from "@/components/FxText";
+import { NO_DATE } from "@/lib/deckClaims";
 
 const selectClass = "h-8 rounded-md border border-[#E5E7EB] bg-white px-2 text-xs max-w-[11rem]";
 const LABEL_STYLE = {
@@ -152,10 +154,13 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
                 return (
                   <tr key={row.claim_id} className="border-b border-[#F1F5F9] align-top" data-testid="claim-register-row">
                     <td className="py-2 px-3 font-mono text-slate-700">{row.rank}</td>
-                    <td className="py-2 px-3 text-slate-900 min-w-[10rem]">{claimText(row, ccy)}</td>
+                    <td className="py-2 px-3 text-slate-900 min-w-[10rem]" data-testid="register-claim">
+                      <span title={rateHover(row, ccy) || undefined}>
+                        <FxText text={claimCellText(row, ccy)} href={`/audit/${auditId}/mapping#fx-settings`} testId="register-claim-fx-link" />
+                      </span>
+                    </td>
                     <td className="py-2 px-3 font-mono text-slate-700 whitespace-nowrap">
-                      {row.period || "—"}
-                      {row.period_note && <div className="text-[10px] text-slate-500">{row.period_note}</div>}
+                      {row.period || NO_DATE}
                     </td>
                     <td className="py-2 px-3">
                       <select value={row.segment} onChange={(e) => save(row, { segment: e.target.value }).catch(() => {})} className={selectClass} data-testid="register-segment">

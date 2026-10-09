@@ -1,6 +1,6 @@
 import {
   DOWNLOAD_LABEL, EDITABLE_FIELDS, GATE_BUDGET_MAX, NOT_IN_DATA, NO_METRIC, READ_ONLY_FIELDS, REGISTER_COLUMNS, REGISTER_HEADING, WHOLE_COMPANY,
-  claimFigure, claimText, claimUnit, csvUrl, evidenceLines, gateContext, needsMetricName, overlapsText, valueAtStakeText, dataSegments, gapText, gateEdit, metricOptions, observedText, readingText, registerRows, segmentOptions,
+  claimCellText, claimFigure, claimText, claimUnit, rateHover, csvUrl, evidenceLines, gateContext, needsMetricName, overlapsText, valueAtStakeText, dataSegments, gapText, gateEdit, metricOptions, observedText, readingText, registerRows, segmentOptions,
 } from "./claimRegister";
 
 const ARR_ROW = {
@@ -128,13 +128,18 @@ describe("what the analyst may set", () => {
 
   test("a claim in another currency shows both figures; a direction with no figure says so", () => {
     const gbp = { ...ARR_ROW, currency: "GBP", claimed_value: 150000, claimed_converted: 171000, fx_rate: 1.14, fx_date: "2026-06-30" };
-    expect(claimFigure(gbp, "EUR")).toBe("150,000 GBP (171,000 EUR at 1.14, 30 Jun 2026)");
-    expect(claimText(gbp, "EUR")).toBe("Revenue · 150,000 GBP (171,000 EUR at 1.14, 30 Jun 2026)");
+    expect(claimFigure(gbp, "EUR")).toBe("150,000 GBP (171,000 EUR)");
+    expect(claimText(gbp, "EUR")).toBe("Revenue · 150,000 GBP (171,000 EUR)");
+    expect(claimFigure({ ...gbp, claimed_value: 550508, claimed_converted: 633084.2, fx_rate: 1.15 }, "EUR")).toBe("550,508 GBP (633,084 EUR)");
     expect(claimFigure({ ...gbp, claimed_high: 160000, claimed_converted_high: 182400 }, "EUR"))
-      .toBe("150,000–160,000 GBP (171,000–182,400 EUR at 1.14, 30 Jun 2026)");
+      .toBe("150,000–160,000 GBP (171,000–182,400 EUR)");
+    expect(rateHover(gbp, "EUR")).toBe("Rate used: 1 GBP = 1.14 EUR on 30 Jun 2026");
+    expect(claimCellText({ ...gbp, claimed_converted: null, fx_rate: null, currency: "BRL" }, "EUR"))
+      .toBe("Revenue · 150,000 BRL (BRL→EUR rate missing – enter it in FX settings at the top of the page)");
+    expect(claimCellText(gbp, "EUR")).toBe("Revenue · 150,000 GBP (171,000 EUR)");
     expect(claimFigure({ ...gbp, claimed_converted: null, fx_rate: null, fx_date: "2026-06-30" }, "EUR")).toBe("150,000 GBP");
     expect(claimFigure({ ...ARR_ROW, claimed_value: null, currency: null, claim_direction: "negative" })).toBe("negative (no figure)");
-    expect(gateContext(gbp, "EUR")).toContain("Claimed 150,000 GBP (171,000 EUR at 1.14, 30 Jun 2026)");
+    expect(gateContext(gbp, "EUR")).toContain("Claimed 150,000 GBP (171,000 EUR)");
   });
 
   test("a threshold that is not a number is not sent, and a budget decision stops at 200 characters", () => {

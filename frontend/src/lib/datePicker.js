@@ -80,3 +80,24 @@ export function dateRangeError(label, iso) {
   if (year < MIN_YEAR || year > MAX_YEAR) return `${label} year must be between ${MIN_YEAR} and ${MAX_YEAR}`;
   return parseIso(iso) ? null : `${label} must be a real date`;
 }
+
+export const TYPED_ERROR = "Type the date as 2026-06-30 or 30.06.2026";
+
+/** The ISO date a typed text names, or null. Two forms are read, and no other, because 06/07/2026 is June in one locale
+ *  and July in another: year-month-day with dashes ("2026-06-30") and day.month.year with dots ("30.06.2026"). A date
+ *  that does not exist, or lies outside MIN_YEAR to MAX_YEAR, is null. */
+export function parseTyped(text) {
+  const t = String(text ?? "").trim();
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(t);
+  const [year, month, day] = m ? [m[1], m[2], m[3]] : (m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(t)) ? [m[3], m[2], m[1]] : [];
+  if (year === undefined) return null;
+  const iso = toIso(Number(year), Number(month) - 1, Number(day));
+  return parseIso(iso) ? iso : null;
+}
+
+/** Room the calendar needs: its height in pixels, with a margin. */
+export const CALENDAR_HEIGHT = 340;
+
+/** "bottom" when the calendar fits below the field, else "top". Decided once, when the calendar opens, and kept until it
+ *  closes: the calendar never jumps from one side to the other. `rect` is the field's bounding box. */
+export const pickSide = (rect, viewportHeight, needed = CALENDAR_HEIGHT) => (viewportHeight - rect.bottom >= needed ? "bottom" : "top");

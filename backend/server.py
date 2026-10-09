@@ -860,6 +860,11 @@ async def _add_customers(audit_id: str, dataset: dict) -> None:
 _TARGET_DATE = re.compile(r"^(\d{4}(-(0[1-9]|1[0-2])|-Q[1-4]|-H[12])?|FY\d{4}-(0[1-9]|1[0-2]))$")
 
 
+def _rejected(field: str, reason: str) -> HTTPException:
+    """A 400 that names the field the server refused and why ("unit: ..."), so the screen never says only that a save failed."""
+    return HTTPException(400, f"{field}: {reason}")
+
+
 class PeriodValue(BaseModel):
     """One value of a table row candidate, as the analyst corrects it; its period and its cell stay."""
     value: Optional[float] = None
@@ -1027,17 +1032,17 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
     if not edits and "status" not in sent:
         raise HTTPException(400, "Nothing to change")
     if edits and "status" in sent:
-        raise HTTPException(400, "Edit the fields or change the status, not both at once")
+        raise _rejected("status", "edit the fields or change the status, not both at once")
     rows = current.get("by_period") or []
     year_end = _fiscal_year_end(await db.audits.find_one({"id": audit_id}, {"fiscal_year_end": 1}))
     if "by_period" in edits:
         # One value of a row can be corrected; the row keeps its periods and cells.
         if not rows or edits["by_period"] is None or len(edits["by_period"]) != len(rows):
-            raise HTTPException(400, "Send one value per period of the row")
+            raise _rejected("by_period", "send one value per period of the row")
         edits["by_period"] = [_edited_period({**old, **new.model_dump()}, old, year_end)
                               for old, new in zip(rows, edits["by_period"])]
     if rows and set(edits) & set(_ROW_FIELDS):
-        raise HTTPException(400, "Edit the row's values by period")
+        raise _rejected("value", "this claim is a table row; edit its values in by_period")
     if "target_date" in edits:
         edits.update(_period_fields(_edited_period({"target_date": edits["target_date"]}, current, year_end)))
     if current.get("claim_type") in (structures.verify.OTHER, deck_claims.UNKNOWN) and "parsed" not in current and \
@@ -1045,7 +1050,7 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
         # An item the model labelled "other" is listed as type Other, a figure no heading names a type for as type
         # Unknown; either is approved only once its type is edited to a claim type (structure-labelling.md section 4,
         # deck-parser.md section 2). An edit approves, so it needs the type too.
-        raise HTTPException(400, "Choose a claim type for this item before approving it")
+        raise _rejected("claim_type", "choose a claim type for this item before approving it")
     if edits:
         changes = {**edits, "status": "edited"}
         if current.get("claim_direction") and (edits.get("value") is not None or edits.get("by_period")):
@@ -1059,7 +1064,7 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
                 changes.update(ai_status=None, ai_label=None)
     else:
         if payload.status is None:
-            raise HTTPException(400, "status cannot be empty")
+            raise _rejected("status", "cannot be empty")
         # Approving an edited claim keeps it "edited": it is approved with the analyst's corrections.
         status = "edited" if payload.status == "approved" and "parsed" in current else payload.status
         changes = {"status": status}
@@ -1249,10 +1254,10 @@ async def update_claim_inputs(audit_id: str, claim_id: str, payload: ClaimInputs
     metric, segment = values.get("metric"), values.get("segment")
     if metric is not None and metric != claim_matching.NO_METRIC and \
             not claim_matching.fits_metric(metric, row["unit"], row["currency"]):
-        raise HTTPException(400, "Choose a metric in the claim's unit, or none")
+        raise _rejected("metric", "choose a metric in the claim's unit, or none")
     if segment is not None and segment not in (claim_matching.WHOLE, claim_matching.NOT_IN_DATA,
                                                *claim_matching.data_segments(audit["results"])):
-        raise HTTPException(400, "Choose a segment of the data, Whole company or Not in the data")
+        raise _rejected("segment", "choose a segment of the data, Whole company or Not in the data")
     candidate = next(c for c in claims if c["id"] == claim_id.split("#")[0])
     inputs = {**(candidate.get("claim_inputs") or {})}
     kept = {**inputs.get(claim_id, {}), **{k: v for k, v in values.items() if v is not None}}
@@ -1271,7 +1276,7 @@ async def update_claim_inputs(audit_id: str, claim_id: str, payload: ClaimInputs
         after = claim_matching.build_register(trial, current.get("results"), _register_settings(audit, await _fx(audit_id, audit), await _deck_take_rate(audit_id)))
         after_row = next(r for r in after if r["claim_id"] == claim_id)
         if not after_row["gate_saved"]:
-            raise HTTPException(400, "A key gate needs a saved gate")
+            raise _rejected("key_gate", "a key gate needs a saved gate")
         if sum(1 for r in after if r["key_gate"]) > verdict_mod.MAX_KEY_GATES:
             raise HTTPException(400, verdict_mod.W5_SIXTH)
     await db[decks.CANDIDATES_COLLECTION].update_one({"audit_id": audit_id, "id": candidate["id"]},
