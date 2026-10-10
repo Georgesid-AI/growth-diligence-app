@@ -973,7 +973,7 @@ def build_register(candidates: List[dict], results: Optional[dict], settings: di
 
 
 # Section 11 point 8: what the deck list shows of a turnover claim, before it is approved.
-NO_FILE_PERIOD = "No revenue-file period to compare"
+NO_FILE_PERIOD = "Revenue file does not cover this period"
 TURNOVER_VIEW_FIELDS = ("claim_id", "period", "turnover_state", "turnover_note", "turnover_set_by", "turnover_reason",
                         "turnover_suggested", "deck_revenue_note", "implied_take_rate", "implied_take_rate_source")
 

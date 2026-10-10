@@ -228,7 +228,7 @@ test("there is no default reason: the buttons are disabled until one is chosen a
 });
 
 test("the dropdown offers exactly three reasons, and 'Revenue file confirms' is hidden when no revenue-file period exists to compare", async () => {
-  const { host } = await mount([TURNOVER, { ...TURNOVER, claim_id: "t2", file_note: "No revenue-file period to compare" }]);
+  const { host } = await mount([TURNOVER, { ...TURNOVER, claim_id: "t2", file_note: "Revenue file does not cover this period" }]);
   const options = (row) => [...row.querySelectorAll('[data-testid="register-turnover-reason"] option')].map((o) => o.textContent);
   const rows = host.querySelectorAll('[data-testid="claim-register-row"]');
   expect(options(rows[0])).toEqual(["Reason…", "Deck says gross revenue", "Deck says processed volume", "Revenue file confirms"]);
@@ -238,7 +238,7 @@ test("the dropdown offers exactly three reasons, and 'Revenue file confirms' is 
 });
 
 test("a stored 'Revenue file confirms' on a row with no revenue-file period shows no reason and keeps the buttons off", async () => {
-  const { host } = await mount([{ ...TURNOVER, turnover_reason: "file_confirms", file_note: "No revenue-file period to compare" }]);
+  const { host } = await mount([{ ...TURNOVER, turnover_reason: "file_confirms", file_note: "Revenue file does not cover this period" }]);
   expect(host.querySelector('[data-testid="register-turnover-reason"]').value).toBe("");
   expect(host.querySelector('[data-testid="register-turnover-revenue"]').disabled).toBe(true);
 });
