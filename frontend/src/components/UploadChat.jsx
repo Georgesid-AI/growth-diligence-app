@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { BLOCKERS_CHANGED } from "@/components/BlockerBanner";
 import { uploadChatFile, getDatasets, decideColumns, reportUsage } from "@/lib/api";
 import {
-  S1_TEXT_REPLY, S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE, S6_UNKNOWN_TYPE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED,
+  S1_TEXT_REPLY, S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE, S6_UNKNOWN_TYPE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S_UPLOAD_RETRY,
   S20_NOTE_PLACEHOLDER, S21_NOTE_REFUSED, NOTE_MAX, ALLOWED_EXTENSIONS, REASONS, TYPE_LABELS, S5_head, S8_replace,
   S9_confidence, S13_status, MAP_LABEL, CALCULATE_LABEL, CALCULATE_CLASS, SEND_TOOLTIP, setCalculatePressed, S14_same, MAPPING_HEADERS, S25_TITLE, S25_PARAGRAPHS, mappedBy, sortColumns, fieldName, fmtBytes, extensionOf, heldFields,
 } from "@/lib/chatUpload";
@@ -81,6 +81,12 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, onStag
       if (err.response?.status === 409 && detail?.code === "type_loaded") {
         if (bubble) openPrompts.current.add(bubble);
         push({ kind: "replace", file, dtype: detail.dtype, loaded: detail.file, bubble });
+      } else if (!err.response && bubble) {
+        // No answer (timeout or network error): the file goes back to "attached", so Map sends it again.
+        openPrompts.current.delete(bubble);
+        staged.current.set(bubble, file);
+        settle({ staged: true });
+        push({ kind: "text", role: "system", text: S_UPLOAD_RETRY });
       } else {
         push({ kind: "text", role: "system", text: typeof detail === "string" ? detail : "The file could not be read." });
       }

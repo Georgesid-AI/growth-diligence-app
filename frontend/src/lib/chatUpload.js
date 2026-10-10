@@ -14,6 +14,7 @@ export const S4_DROP_ZONE =
 export const S6_UNKNOWN_TYPE = "Could not tell what this file holds. Pick its type:";
 export const S7_REFUSED = "This window takes .xlsx and .csv files. Decks go in the deck panel below.";
 export const S7B_XLS_REFUSED = "Save as .xlsx or .csv and upload again.";
+export const S_UPLOAD_RETRY = "The file could not be read. Press Map to try again.";   // no answer from the server (timeout or network error)
 export const S12_MODEL_FAILED = "AI reading unavailable – these columns need your decision.";
 export const S17_NARRATIVE_FAILED_TITLE = "Narrative could not be generated.";
 // S18: the delete dialog. The name in the body is shown in bold by the dialog; the text around it is here.
