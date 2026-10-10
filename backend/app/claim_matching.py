@@ -973,15 +973,15 @@ def build_register(candidates: List[dict], results: Optional[dict], settings: di
 
 
 # Section 11 point 8: what the deck list shows of a turnover claim, before it is approved.
-NO_FILE_PERIOD = "No revenue-file period to compare"
+NO_FILE_PERIOD = "Revenue file does not cover this period"
 TURNOVER_VIEW_FIELDS = ("claim_id", "period", "turnover_state", "turnover_note", "turnover_set_by", "turnover_reason",
                         "turnover_suggested", "deck_revenue_note", "implied_take_rate", "implied_take_rate_source")
 
 
 def turnover_views(candidates: List[dict], results: Optional[dict], settings: dict) -> Dict[str, List[dict]]:
     """For each candidate that holds a turnover claim: one view per claim (one per value of a table row), keyed by candidate
-    id, with the register's turnover fields, computed by the register's own code, and `file_note`: "No revenue-file period
-    to compare" when no revenue file covers the claim's period. Every candidate not rejected is read, pending ones included,
+    id, with the register's turnover fields, computed by the register's own code, and `file_note`: "Revenue file does not
+    cover this period" when no revenue file covers the claim's period. Every candidate not rejected is read, pending ones included,
     and before the first Calculate (no results: no file covers any period). Nothing is read from a model."""
     results = results or {}
     as_of = results.get("as_of_month")

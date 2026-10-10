@@ -250,7 +250,7 @@ ARR, MRR or "new MRR", is a turnover claim. Resolution, in this order:
    a hash of the term and the period (no deck text), so the same term and period in another claim reuses it.
    Reason codes: `deck_says_gross_revenue`, `deck_says_processed_volume`, `file_confirms`; the screen offers exactly
    these three, labelled "Deck says gross revenue", "Deck says processed volume", "Revenue file confirms" (the last is hidden on a
-   row that shows "No revenue-file period to compare"). `other` was removed from the screen on 2026-10-09 (George); the server
+   row that shows "Revenue file does not cover this period"). `other` was removed from the screen on 2026-10-09 (George); the server
    still accepts it, so an answer saved earlier with it still loads. The control is shown
    on every turnover row, so the analyst can change Revenue to Volume and back. No reason is preselected: the Revenue and
    Volume buttons stay disabled until one is chosen, and the server refuses the contradictory pairs (Volume with
@@ -291,7 +291,7 @@ ARR, MRR or "new MRR", is a turnover claim. Resolution, in this order:
    applies the same rule to the register). Until then,
    pending or approved, its metric cell reads "Turnover – confirm:" with the reason codes and the Revenue and Volume
    buttons of point 2 in the row, its status cell carries the label Unverified, and the row shows the deck hint of point 7
-   and, when no revenue file covers the claim's period (point 4), "No revenue-file period to compare". A value of a table
+   and, when no revenue file covers the claim's period (point 4), "Revenue file does not cover this period". A value of a table
    row asks once per period, its period first ("Y/E 22 · Turnover – confirm:"). Once answered the cell shows the answer
    ("Transaction volume · set by you") with the buttons, so it can be changed. In the register its Claim cell reads
    "Turnover · 550,508 GBP" until then. GET /api/audits/{id}/decks gives each

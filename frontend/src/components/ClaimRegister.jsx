@@ -120,7 +120,7 @@ export function TurnoverCell({ row, onAnswer, heading }) {
       <TurnoverReason row={row} reason={reason} setReason={setReason}>
         {[["revenue", "Revenue"], ["volume", "Volume"]].map(([value, label]) => (
           <Button key={value} size="sm"
-            className={`${CALCULATE_CLASS} ${ACTIVE_REASON[reason] === value ? "" : "opacity-50"} ${suggested === value ? "ring-2 ring-sky-400" : ""}`}
+            className={`${CALCULATE_CLASS} ${ACTIVE_REASON[reason] === value ? "" : "opacity-50"}`}
             aria-pressed={suggested === value ? true : undefined}
             data-testid={`register-turnover-${value}`} disabled={!answerReady(value, reason, row)}
             onClick={() => onAnswer(row, { as: value, reason }).catch(() => {})}>{label}</Button>

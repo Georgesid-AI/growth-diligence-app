@@ -46,7 +46,7 @@ export const TURNOVER_REASONS = [
   ["file_confirms", "Revenue file confirms"],
 ];
 /** The row's own note when no revenue file covers the claim's period (backend NO_FILE_PERIOD). */
-export const NO_FILE_PERIOD = "No revenue-file period to compare";
+export const NO_FILE_PERIOD = "Revenue file does not cover this period";
 /** The reason codes a row offers: "Revenue file confirms" has nothing to confirm with when no revenue file covers the period. */
 export const reasonsFor = (view) => TURNOVER_REASONS.filter(([code]) => !(code === "file_confirms" && view?.file_note === NO_FILE_PERIOD));
 /** Whether an answer may be sent: a reason that is offered on this row and does not contradict the answer. */

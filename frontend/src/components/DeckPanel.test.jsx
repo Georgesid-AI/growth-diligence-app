@@ -244,8 +244,8 @@ describe("a turnover claim asks Revenue or Volume in its own row (05-zero2hero.p
   const bar = (id, value, year, turnover) => claim(id, "d2", 17, { group: 1, value, currency: "GBP", target_date: year,
     snippet: value.toLocaleString("en-US"), label_from: "Turnover(£/year)", turnover });
   const ZERO2HERO = [
-    bar("t21", 278085, "2021", view("t21", "2021", { file_note: "No revenue-file period to compare" })),
-    bar("t22", 415107, "2022", view("t22", "2022", { turnover_suggested: "volume", file_note: "No revenue-file period to compare",
+    bar("t21", 278085, "2021", view("t21", "2021", { file_note: "Revenue file does not cover this period" })),
+    bar("t22", 415107, "2022", view("t22", "2022", { turnover_suggested: "volume", file_note: "Revenue file does not cover this period",
       deck_revenue_note: "Deck revenue for the same period: 130,550 GBP (page 19); implied take rate 31%, derived, not verified" })),
     bar("t23", 550508, "2023", view("t23", "2023", { turnover_suggested: "volume",
       deck_revenue_note: "Deck revenue for the same period: 150,000 GBP (page 19); implied take rate 27%, derived, not verified" })),
@@ -275,8 +275,8 @@ describe("a turnover claim asks Revenue or Volume in its own row (05-zero2hero.p
 
   test("a period the revenue file does not cover says so in the row", async () => {
     await reload(ZERO2HERO);
-    expect(cell("t21", "turnover-file-note").textContent).toBe("No revenue-file period to compare");
-    expect(cell("t22", "turnover-file-note").textContent).toBe("No revenue-file period to compare");
+    expect(cell("t21", "turnover-file-note").textContent).toBe("Revenue file does not cover this period");
+    expect(cell("t22", "turnover-file-note").textContent).toBe("Revenue file does not cover this period");
     expect(cell("t23", "turnover-file-note")).toBeNull();
   });
 
@@ -384,7 +384,7 @@ describe("a turnover claim asks Revenue or Volume in its own row (05-zero2hero.p
     });
 
     test("the edit form offers the same three reasons, and hides 'Revenue file confirms' when no revenue-file period exists", async () => {
-      await reload([answered("volume", "deck_says_processed_volume", { file_note: "No revenue-file period to compare" })]);
+      await reload([answered("volume", "deck_says_processed_volume", { file_note: "Revenue file does not cover this period" })]);
       await openEdit("t23");
       await setSelect(q("edit-claim-type"), "revenue");
       expect([...q("edit-turnover-reason").querySelectorAll("option")].map((o) => o.textContent)).toEqual(
