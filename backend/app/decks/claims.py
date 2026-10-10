@@ -108,6 +108,8 @@ CLAIM_TYPES = ("revenue", "revenue_growth", "growth", "retention", "sales", "cus
 # A figure no line and no heading names a type for: listed as "unknown" and approved only once the analyst chooses a
 # type (docs/specs/deck-parser.md section 2), like the model's "other" (structure-labelling.md section 4).
 UNKNOWN = "unknown"
+# An allocation share on a raise slide (deck-parser.md section 2, "Use of funds"): unit %, no engine metric, never Sales or Revenue.
+USE_OF_FUNDS = "use_of_funds"
 
 # The order of the claims table (deck-parser.md section 6): the group of a type, then slide or page. Revenue covers ARR,
 # MRR and bookings; P&L items and unit economics are listed with their neighbours, and the types no group names
@@ -1094,6 +1096,7 @@ def detect_candidates(blocks: List[Dict], file: str, fiscal_year_end: int = 12) 
     units = _units(blocks, file)
     contexts = _contexts(units)
     skipped = _axis_ticks(units) | _not_plan(units)
+    funds = _funds_units(units)
     tick_cells = _tick_cells(blocks)
     periods = _box_periods(units)
     bars = _bar_labels(units)
@@ -1111,6 +1114,13 @@ def detect_candidates(blocks: List[Dict], file: str, fiscal_year_end: int = 12) 
             found.append(resolve_period(c, fiscal_year_end))
         if u.get("table_row"):
             found = _row_series(found, u["headers"])
+        for c in found:
+            if id(u) in funds and c["unit"] == "%":
+                # A share of the raise is not a plan claim: whatever keyword the category name holds ("Acquisition"),
+                # it is never Sales or Revenue, and the heading it borrowed no longer names it.
+                c.update(claim_type=USE_OF_FUNDS, type_from="heading", label_from=None)
+                if not c.get("by_period"):
+                    c["_funds"] = {"form": funds[id(u)], "category": _category(u["text"])}
         box = u.get("bbox")
         for c in found:
             c["reading"] = [round(box[1], 3), round(box[0], 3)] if box else None      # top, left: the reading order
@@ -1129,6 +1139,9 @@ def detect_candidates(blocks: List[Dict], file: str, fiscal_year_end: int = 12) 
     found = _merge_unknown(list(merged.values()))
     _apply_label_units(found)
     _flag_inconsistencies(found)
+    _flag_funds_inconsistencies(found)
+    for c in found:
+        c.pop("_funds", None)
     return found
 
 
@@ -1235,6 +1248,107 @@ def _flag_inconsistencies(candidates: List[Dict]) -> None:
         c.pop("_stated", None)
         for i in c.get("by_period") or ():
             i.pop("_stated", None)
+
+
+# ---------------------------------------------------------------------------
+# Use of funds (deck-parser.md section 2)
+# ---------------------------------------------------------------------------
+FUNDS_SUM = (95, 105)           # percentages that sum to this much, with a raise amount on the slide, are an allocation
+_FUNDS_CUE = re.compile(r"(?i)\b(?:use of (?:funds|proceeds)|the ask|investor proposition|raise)\b")
+# A percentage on a line with one of these words is a rate ("15% MoM growth", "retention 90%"), not a share of the raise.
+_RATE_WORDS = re.compile(dict(_FAMILIES)["growth"] + "|" + dict(_FAMILIES)["retention"] + "|" + dict(_FAMILIES)["gross_margin"])
+_SHARE = re.compile(r"\s*[(\[]?\s*\d+(?:[.,]\d+)?\s*%\s*[)\]]?\s*")
+
+
+def _percentages(text: str) -> List[float]:
+    return [n["value"] for n in find_numbers(text, find_dates(text)) if n["unit"] == "%" and n["value"] is not None]
+
+
+def _funds_units(units: List[Dict]) -> Dict[int, str]:
+    """id() of the lines whose percentages are a use of funds, with their form: "text" (a line that names its category,
+    "Marketing (25%)") or "chart" (a figure alone, a pie's data label). A page qualifies when a title or a heading holds
+    a cue ("use of funds", "use of proceeds", "the ask", "investor proposition", "raise"): then every percentage on it
+    is one. Otherwise it qualifies when it shows a raise amount (any currency figure) and a set of percentages (the text
+    lines, the figures alone, or both) sums to FUNDS_SUM; only the sets that do are use of funds."""
+    pages = {}
+    for u in units:
+        pages.setdefault(u["page"], []).append(u)
+    out = {}
+    for members in pages.values():
+        shares = [(u, _percentages(u["text"])) for u in members
+                  if not u.get("header_row") and not _RATE_WORDS.search(u["text"])]
+        shares = [(u, v) for u, v in shares if v]
+        if not shares:
+            continue
+        form = {id(u): "text" if _WORD.search(u["text"]) else "chart" for u, _ in shares}
+        if any(_FUNDS_CUE.search(m["text"]) and (m["title"] or _is_heading(m["text"])) for m in members):
+            out.update(form)
+            continue
+        if not any(n["currency"] for m in members for n in find_numbers(m["text"], find_dates(m["text"]))):
+            continue
+        for wanted in ("text", "chart", None):
+            chosen = [(u, v) for u, v in shares if wanted in (None, form[id(u)])]
+            total = sum(x for _, v in chosen for x in v)
+            if len(chosen) >= 2 and FUNDS_SUM[0] <= total <= FUNDS_SUM[1]:
+                out.update({id(u): form[id(u)] for u, _ in chosen})
+    return out
+
+
+def _category(text: str) -> str:
+    return re.sub(r"\s+", " ", _SHARE.sub(" ", text)).strip(" :-–—,;")
+
+
+def _rescale_note(text: List[Dict], chart: List[Dict]) -> Tuple[Optional[str], Optional[int], bool]:
+    """(note, dropped, paired): the text figures and the chart's, in value order, are the same shares when the chart has one value
+    fewer and each text value, rescaled to 100 after dropping one category, rounds to the chart's: then the note
+    "chart excludes <category>, rescaled" (paired is False if two different categories would fit); or they are the same count
+    and are paired in value order, with no note. Anything else is not paired: two sets of shares with no names on
+    one side are never matched by guess."""
+    t = sorted(text, key=lambda c: -c["value"])
+    ch = sorted(chart, key=lambda c: -c["value"])
+    if len(ch) == len(t) - 1 and ch:
+        fits = []
+        for k in range(len(t)):
+            rest = [c["value"] for i, c in enumerate(t) if i != k]
+            if sum(rest) and all(abs(v * 100 / sum(rest) - c["value"]) <= 0.5 for v, c in zip(rest, ch)):
+                fits.append(k)
+        names = {t[k]["_funds"]["category"] for k in fits}
+        if len(names) == 1:
+            return f"chart excludes {names.pop()}, rescaled", fits[0], True
+        return None, None, False
+    return None, None, len(ch) == len(t)
+
+
+def _flag_funds_inconsistencies(candidates: List[Dict]) -> None:
+    """Deck inconsistency on a use-of-funds slide: the narrative text and the chart give different percentages for the
+    same categories (deck-parser.md section 2). Both figures of each pair carry it, labelled "text" and "chart", and
+    the note "chart excludes <category>, rescaled" when the chart's values are the text's rescaled without one
+    category. Never Contradicted: the label stays Unverified."""
+    pages = {}
+    for c in candidates:
+        if c.get("_funds"):
+            pages.setdefault(min((s.get("slide") or s.get("page") or 0) for s in c["sources"]), []).append(c)
+    for members in pages.values():
+        text = [c for c in members if c["_funds"]["form"] == "text"]
+        chart = [c for c in members if c["_funds"]["form"] == "chart"]
+        if not text or not chart or sorted(c["value"] for c in text) == sorted(c["value"] for c in chart):
+            continue
+        note, dropped, paired = _rescale_note(text, chart)
+        if not paired:
+            continue
+        t = sorted(text, key=lambda c: -c["value"])
+        ch = sorted(chart, key=lambda c: -c["value"])
+        if dropped is not None:
+            t = t[:dropped] + t[dropped + 1:]
+        for a, b in zip(t, ch):
+            if a["value"] == b["value"]:
+                continue
+            for mine, theirs in ((a, b), (b, a)):
+                pair = {"this": {**_figure_of(mine, mine), "label": mine["_funds"]["form"]},
+                        "other": {**_figure_of(theirs, theirs), "label": theirs["_funds"]["form"]}}
+                if note:
+                    pair["note"] = note
+                mine.setdefault("inconsistencies", []).append(pair)
 
 
 def _row_series(found: List[Dict], headers: Dict) -> List[Dict]:

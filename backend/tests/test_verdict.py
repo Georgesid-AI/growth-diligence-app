@@ -497,3 +497,18 @@ def test_a_claim_in_another_currency_is_worded_with_both_figures_in_the_verdict_
     assert vd.claimed_text({**row, "currency": "EUR", "claimed_converted": None, "fx_rate": None, "fx_date": None}, "EUR") == "€150,000"
     assert vd.claimed_text({**row, "claimed_value": None, "currency": None, "claimed_converted": None, "claim_direction": "positive"},
                            "EUR") == "positive (no figure)"
+
+
+# --- Use of funds is not one of the top 5 ----------------------------------------------------------------------------------------
+
+def test_a_use_of_funds_row_is_never_in_the_proposal_the_top_5_or_the_verdict():
+    funds = row(1, "Unverified", claim_type="use_of_funds", metric=None)
+    rows = [funds, *[row(i + 2, "Verified") for i in range(5)]]
+    assert vd.proposal(rows) == [f"r{i}" for i in range(2, 7)] and vd.banner_ids(rows) == vd.proposal(rows)
+    v = vd.verdict(rows, {"reporting_currency": "EUR"}, {"claim_ids": vd.proposal(rows)})
+    assert (v["status"], v["outcome"]) == ("ok", "Underwrite") and "r1" not in [f["claim_id"] for f in v["five"]]
+    with pytest.raises(ValueError):
+        vd.check_top5(rows, ["r1", *vd.proposal(rows)[:4]])
+    only = [funds]
+    assert vd.proposal(only) == [] and vd.top5_state(only, None)["in_force"] == []
+    assert vd.verdict(only, {"reporting_currency": "EUR"}, None)["message"] == vd.W10_NO_CLAIMS

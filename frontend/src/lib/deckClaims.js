@@ -220,12 +220,14 @@ const placeText = (f) => sourceRef(f.source);
 /** The sentence under the "Deck inconsistency" tag, built from the two figures the server compared:
  *  "The deck gives different figures for this metric: 5 at deck.pptx · slide 1 and 6 at deck.pptx · slide 4."
  *  A revenue-type figure names its deck label: "Turnover 550,508 GBP at deck.pdf · page 17 and Revenue 150,000 GBP at deck.pdf · page 19."
+ *  A use-of-funds figure names its source, "text" or "chart", and a pair may carry a note, appended after a semicolon:
+ *  "... text 40% at deck.pdf · page 22 and chart 42% at deck.pdf · page 22; chart excludes Marketing, rescaled."
  *  The parser pairs only figures whose values differ. Null when the server sent no pair, and
  *  then no tag is shown: a tag never stands without its explanation. */
 export function inconsistencyText(c) {
   const pairs = c?.inconsistencies || [];
   if (!pairs.length) return null;
-  return pairs.map(({ this: a, other: b }) => `The deck gives different figures for this metric: ${figureText(a)} at ${placeText(a)} and ${figureText(b)} at ${placeText(b)}.`).join(" ");
+  return pairs.map(({ this: a, other: b, note }) => `The deck gives different figures for this metric: ${figureText(a)} at ${placeText(a)} and ${figureText(b)} at ${placeText(b)}${note ? `; ${note}` : ""}.`).join(" ");
 }
 
 // Model reading (docs/specs/llm-structure-reading.md): every row the model read carries one of these,

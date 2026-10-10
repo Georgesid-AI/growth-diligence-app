@@ -111,7 +111,7 @@ figure whose only keyword is further away stays a candidate (type Unknown, no "L
 not a candidate, as before. The same rule types a date-only line and a figure-less milestone line. On the 10 test decks
 (measured over `detect_candidates`, no network): 225 candidates before and after, recall 121 of 124 (98%) and precision
 109 of 225 (48.4%) unchanged; 31 more candidates are Unknown (8 before, 39 after), among them front-b p14 "Team growth is built upon solid foundations" 5.0 and 100%, moz p21 "~$180K / Month"
-(was Costs), zero2hero p11 "($52 B)" and "($374B)" and p22 "21%" and "11%" (Sales), uber p11 "Car services require 1-3 hours
+(was Costs), zero2hero p11 "($52 B)" and "($374B)" and p22 "21%" and "11%" (Sales; Use of funds since 2026-10-10, below), uber p11 "Car services require 1-3 hours
 notice" (Users). `type_from` is "line", "heading" (the nearest heading named it) or none (Unknown).
 The unit of a count is the noun it counts: "800 paying users". If a Customers or Users keyword
 appears within the next 4 words after the number, it is the unit (">50 Dutch temporary work
@@ -446,3 +446,37 @@ Fixed on the 10 test decks (2026-10-05):
 - Unit: "count" joins the unit suggestions (customers, headcount, deals); currency stays its own field.
 - A claim that is approved or edited and moves to another category (by a changed type) shows "Claim moved to [category]" with
   Undo for 4 seconds and its row is highlighted for the same time; Undo restores the previous type.
+
+## Amended 2026-10-10: Use of funds (bug: zero2hero p22 "Investor Proposition")
+- Cause. On p22 the use-of-funds percentages were typed Sales by the keyword rule of §2, not by any of the three suspects: the
+  Sales family holds "acquisition", and the category names "Content Acquisition & Development" and "Operational Expenses &
+  Talent Acquisition" carry it; the pie's labels 42% and 26% then borrowed the nearest heading, "Content Acquisition &
+  Development (20%)" (Sales), and 21% and 11% were left Unknown. There is no rule that reads a money figure plus percentages
+  summing to 100 as revenue by segment; `use_of_funds` was already in the structure reading's metric list; and the funding
+  cue words only drop lines about funds raised (§2, "Dropped") and type structures (§7), they never typed a claim.
+- Claim type **Use of funds** (stored `use_of_funds`): an allocation share of a raise. Unit %, no engine metric, listed under
+  Other, never Sales or Revenue. In the claim register it is Unverified (reason: "use of funds: an allocation share of the
+  raise, no engine metric to test it against"), has no gap and no value at stake, needs no gate, ranks after every other
+  claim, and is left out of the top 5 (the proposal, the banner's rows 1-5, the confirmed set and the verdict).
+- Trigger, per slide or page. A percentage is a use of funds when its slide or page (a) has a title, or a heading (a short
+  line with no figure), that holds "use of funds", "use of proceeds", "the ask", "investor proposition" or "raise": then every
+  percentage on it is, whatever they sum to; or (b) shows a raise amount (any figure with a currency on the slide or page,
+  in the title too) and a set of percentages summing to 95-105: the lines that name a category ("Marketing (25%)"), the
+  figures alone (a pie's data labels), or both together; each set that sums to 95-105 is a use of funds and no other. A
+  percentage on a line with a growth, retention or margin word ("15% MoM growth") is a rate, never a share, and is left out
+  of both. The figure's "Label from" is cleared; its type comes from the slide ("heading"). No row appears or disappears:
+  only figures that were already candidates change type. On the 10 test decks only zero2hero p22 is affected: 9 candidates,
+  Sales or Unknown before (Unknown 39 → 37). The sum rule alone puts clevergig p6 ("15% MoM growth", "50%", "30% of our
+  leads", beside "€15K in MRR") at 95, hence the rate-word rule.
+- Deck inconsistency, text against chart. On a use-of-funds slide, when the text lines and the chart's labels give different
+  percentages, each figure of the pair carries the tag with `inconsistencies` = `{this, other, note}`: `this` and `other`
+  hold the figure with its deck label "text" or "chart" ("text 40% at d.pdf · page 22 and chart 42% at d.pdf · page 22").
+  The chart's labels carry no category names, so the two sets are paired in order of value, and only when the chart has
+  the same number of figures or one fewer. With one fewer, if every text value rescaled to 100 after dropping one category
+  rounds to the chart's value (p22: 40/20/25/10/5 and 42/21/26/11, 40/95 = 42%), `note` is "chart excludes <category>,
+  rescaled" and the tag text ends "...; chart excludes <category>, rescaled." The dropped category's own figure carries no
+  tag. If two different categories would fit, or the counts differ by more, nothing is paired and nothing is tagged.
+  Equal sets are not an inconsistency. The label stays Unverified: never Contradicted. Native pptx charts are structures
+  (§7), not candidates, so this compares text and chart labels the parser reads as text (pdf, docx).
+- Tests: `test_deck_parser.py` (p22 on the test deck, and built slides with the figures text 40/20/25/10/5, chart
+  42/21/26/11), `test_claim_matching.py` and `test_verdict.py` (register and top 5), `DeckPanel.test.jsx` (tag text).

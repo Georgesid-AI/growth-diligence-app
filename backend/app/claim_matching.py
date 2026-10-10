@@ -36,6 +36,8 @@ SOURCE_FIELDS = frozenset({"observed_source"})
 WHOLE, NOT_IN_DATA = "Whole company", "Not in the data"
 NO_PERIOD = "no period stated"
 FX_NEEDED = "FX rate needed"
+USE_OF_FUNDS = "use_of_funds"
+USE_OF_FUNDS_NOTE = "use of funds: an allocation share of the raise, no engine metric to test it against"
 DIRECTION_ONLY = "direction only: the claim states no figure to test"
 SUGGESTION = "AI suggestion, not verified"
 ANALYST_ENTERED = "analyst-entered"
@@ -694,6 +696,10 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         return finish("Unverified", DIRECTION_ONLY)
     if turn and turn["verdict"]:
         return finish(*turn["verdict"])
+    if out["claim_type"] == USE_OF_FUNDS:       # never matched, never ranked, never gated: not a claim about the business
+        finish("Unverified", USE_OF_FUNDS_NOTE)
+        out["gate_needed"] = False
+        return out
     if not spec:
         return finish("Unsupported", "no metric")
     if metric == VOLUME:                        # never matched to engine revenue; the take rate is derived, never Verified
@@ -935,15 +941,17 @@ def _overlaps(rows: List[dict]) -> None:
 # --- the register -----------------------------------------------------------------------------------------------------
 
 def _rank(rows: List[dict]) -> List[dict]:
-    """Rows with a gap other than "to go" by normalised gap, largest first (a beat counts as 0); then the rest in register order."""
+    """Rows with a gap other than "to go" by normalised gap, largest first (a beat counts as 0); then the rest in register order,
+    then the use-of-funds rows."""
     def key(r):
         norm = r["gap_normalised"]
         if r["gap_kind"] == "beat" or norm is None and r["gap"] == 0:
             return 0.0
         return float("inf") if norm is None else max(norm, 0.0)
     ranked = [r for r in rows if r["gap"] is not None and r["gap_kind"] != "to go"]
-    rest = [r for r in rows if r not in ranked]
-    ordered = sorted(ranked, key=key, reverse=True) + rest
+    funds = [r for r in rows if r["claim_type"] == USE_OF_FUNDS]
+    rest = [r for r in rows if r not in ranked and r not in funds]
+    ordered = sorted(ranked, key=key, reverse=True) + rest + funds         # use of funds last: no claim's rank depends on it
     for rank, row in enumerate(ordered, 1):
         row["rank"] = rank
     return ordered

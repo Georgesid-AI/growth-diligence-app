@@ -712,7 +712,7 @@ def test_the_ten_test_decks_keep_225_candidates_and_the_nearest_heading_leaves_3
         found = claims.detect_candidates(parser.parse_deck((DECKS / file).read_bytes(), file)["blocks"], file)
         counts += len(found)
         unknown += sum(c["claim_type"] == "unknown" for c in found)
-    assert (counts, unknown) == (225, 39), "8 before the rule, 31 more after it; no row appears or disappears"
+    assert (counts, unknown) == (225, 37), "8 before the rule, 31 more after it, 2 of them (zero2hero p22) Use of funds since; no row appears or disappears"
 
 
 def test_the_same_figure_on_one_page_is_one_row_and_never_a_deck_inconsistency():
@@ -2031,3 +2031,101 @@ def test_turnover_is_compared_with_turnover_and_revenue_with_revenue_only():
     pair = found[0]["inconsistencies"][0]
     assert (pair["this"]["label"], pair["other"]["label"]) == ("Turnover", "Turnover")
     assert claims.deck_label(_revenue_figure("ARR 100", 100, 3, "Turnover")) == "Revenue", "ARR is never turnover"
+
+
+# ---------------------------------------------------------------------------
+# Use of funds (zero2hero p22 "Investor Proposition", £250K raise, pie chart "Use of Funds")
+# ---------------------------------------------------------------------------
+P22_TEXT = [("Metaverse Development & Enhancement", 40), ("Content Acquisition & Development", 20),
+            ("Marketing & Brand Awareness", 25), ("Strategic Partnerships & Collaborations", 10),
+            ("Operational Expenses & Talent Acquisition", 5)]
+KEYWORDED = ["Customer acquisition", "Team hiring", "Product launch", "Cost control", "Win rate"]     # each line names a type
+P22_CHART = [42, 21, 26, 11]
+
+
+def _funds_slide(text=P22_TEXT, chart=P22_CHART, head=("£250K",)):
+    """One slide: a raise figure, the use of funds as text lines ("Category (40%)") and the pie's data labels as boxes,
+    under a heading that gives them a type to borrow (the real p22's legend does)."""
+    return [*head, *[f"{name} ({pct}%)" for name, pct in text], *(["Customer acquisition"] if chart else []),
+            *[f"{v}%" for v in chart]]
+
+
+def _funds_candidates(slides):
+    deck = parser.parse_deck(_pptx(slides), "deck.pptx")
+    return claims.detect_candidates(deck["blocks"], "deck.pptx")
+
+
+def test_zero2hero_page_22_percentages_are_use_of_funds_and_never_sales():
+    """The text keyword "Acquisition" typed 40/20/25/10/5 and the pie's 42/26 Sales, and the pie's 21/11 Unknown."""
+    file = "05-zero2hero.pdf"
+    deck = parser.parse_deck((DECKS / file).read_bytes(), file)
+    page = [c for c in claims.detect_candidates(deck["blocks"], file) if _page(c) == 22 and c["unit"] == "%"]
+    assert sorted(c["value"] for c in page) == [5, 10, 11, 20, 21, 25, 26, 40, 42]
+    assert {c["claim_type"] for c in page} == {"use_of_funds"}
+    funds = {c["value"]: c for c in page}
+    assert funds[40]["inconsistencies"][0]["other"]["value"] == 42, "the text 40 is paired with the chart's 42"
+    assert funds[5]["inconsistencies"] == [], "the dropped category has no chart value"
+
+
+def test_a_raise_amount_with_percentages_summing_to_about_100_is_use_of_funds_without_a_cue_word():
+    for pcts in ([40, 20, 25, 10, 5], [50, 30, 20], [48, 30, 20], [52, 30, 22]):       # 100, 100, 98, 104
+        found = _funds_candidates([_funds_slide([(f"Sales and acquisition {n}", p) for n, p in enumerate(pcts)], [])])
+        assert found and {c["claim_type"] for c in found if c["unit"] == "%"} == {"use_of_funds"}, pcts
+    assert not any(c["claim_type"] in ("sales", "revenue") for c in found if c["unit"] == "%")
+
+
+@pytest.mark.parametrize("pcts, head", [([50, 30, 10], "£250K"), ([50, 30, 26], "£250K"), ([50, 30, 20], "ARR is growing")])
+def test_percentages_outside_95_to_105_or_without_a_money_figure_are_not_use_of_funds(pcts, head):
+    found = _funds_candidates([[head, *[f"Customer acquisition {n} ({p}%)" for n, p in enumerate(pcts)]]])
+    assert found and "use_of_funds" not in {c["claim_type"] for c in found}
+
+
+@pytest.mark.parametrize("title", ["Use of funds", "Use of proceeds", "The Ask", "Investor Proposition", "Raise"])
+def test_a_funds_cue_in_the_title_makes_the_percentages_use_of_funds_whatever_they_sum_to(title):
+    slide = [title, "Customer acquisition (30%)", "Product (15%)"]
+    deck = parser.parse_deck(_pptx([slide]), "deck.pptx")
+    for b in deck["blocks"]:
+        b["title"] = b["text"] == title                    # the builder has no title placeholder: mark the first box
+    found = claims.detect_candidates(deck["blocks"], "deck.pptx")
+    assert {(c["value"], c["claim_type"]) for c in found if c["unit"] == "%"} == {(30, "use_of_funds"), (15, "use_of_funds")}
+
+
+def test_a_page_without_a_raise_amount_or_cue_keeps_its_types():
+    found = _funds_candidates([["Win rate (60%)", "Customers (40%)"]])
+    assert {c["claim_type"] for c in found} == {"sales", "customers"}
+
+
+def test_text_and_chart_percentages_that_differ_are_tagged_on_each_figure_with_the_dropped_category():
+    """The p22 shape (the real page is tested above): the chart drops the smallest category and rescales the rest to 100."""
+    text = list(zip(KEYWORDED, (50, 30, 20)))
+    found = [c for c in _funds_candidates([_funds_slide(text, [63, 38])]) if c["unit"] == "%"]
+    by_value = {c["value"]: c for c in found}
+    assert sorted(by_value) == [20, 30, 38, 50, 63]
+    note = "chart excludes Product launch, rescaled"
+    for t_value, c_value in ((50, 63), (30, 38)):
+        mine, theirs = by_value[t_value]["inconsistencies"][0], by_value[c_value]["inconsistencies"][0]
+        assert (mine["this"]["value"], mine["this"]["label"], mine["other"]["value"], mine["other"]["label"]) == \
+            (t_value, "text", c_value, "chart")
+        assert (theirs["this"]["value"], theirs["this"]["label"], theirs["other"]["value"], theirs["other"]["label"]) == \
+            (c_value, "chart", t_value, "text")
+        assert mine["note"] == theirs["note"] == note
+    assert by_value[20]["inconsistencies"] == []
+    assert all(c["claim_type"] == "use_of_funds" for c in found), "a deck inconsistency is never Contradicted"
+
+
+def test_chart_values_that_are_not_the_text_rescaled_are_tagged_without_a_rescale_note_and_equal_values_are_not_tagged():
+    text = list(zip(KEYWORDED, (60, 40)))
+    other = [c for c in _funds_candidates([_funds_slide(text, [65, 35])]) if c["unit"] == "%"]
+    assert len(other) == 4 and all(c["inconsistencies"] and c["claim_type"] == "use_of_funds" for c in other)
+    assert all("note" not in p for c in other for p in c["inconsistencies"])
+    same = [c for c in _funds_candidates([_funds_slide(list(zip(KEYWORDED, (60, 40))), [40, 60])]) if c["unit"] == "%"]
+    assert same and all(c["inconsistencies"] == [] for c in same)
+    unpaired = [c for c in _funds_candidates([_funds_slide(text, [60, 30, 10])]) if c["unit"] == "%"]
+    assert unpaired and all(c["inconsistencies"] == [] for c in unpaired), "no pairing is guessed"
+
+
+def test_rates_on_a_slide_with_a_money_figure_are_not_a_use_of_funds_even_when_they_sum_to_about_100():
+    """04-clevergig.docx page 6: 15% MoM growth, 50% and 30% of leads sum to 95 beside "€15K in MRR"."""
+    found = _funds_candidates([["€15K in MRR, 15% MoM growth over last 15 months", "€260 MRR per client, MRR expands by 50%",
+                                "30% of our leads come via worker referrals"]])
+    assert [c for c in found if c["unit"] == "%"] and "use_of_funds" not in {c["claim_type"] for c in found}

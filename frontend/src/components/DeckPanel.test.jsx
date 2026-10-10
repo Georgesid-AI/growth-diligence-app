@@ -204,6 +204,17 @@ test("a turnover figure and a revenue figure name their deck labels, each at its
     "The deck gives different figures for this metric: Turnover 550,508 GBP at d.pdf · page 17 and Revenue 150,000 GBP at d.pdf · page 19.");
 });
 
+test("a use-of-funds text figure and its chart figure show text and chart with the dropped category, and no Contradicted", async () => {
+  const share = (label, value) => ({ value, value_high: null, currency: null, unit: "%", date: null, claim_type: "use_of_funds", label,
+    source: { file: "d.pdf", page: 22, kind: "text" } });
+  await reload([claim("c", "d1", 22, { group: 7, claim_type: "use_of_funds", value: 40, unit: "%", inconsistent_dates: [],
+    inconsistencies: [{ this: share("text", 40), other: share("chart", 42), note: "chart excludes Operational Expenses & Talent Acquisition, rescaled" }] })]);
+  await open(7);                                   // Other holds Use of funds and starts collapsed
+  expect(q("candidate-inconsistency").getAttribute("title")).toBe(
+    "The deck gives different figures for this metric: text 40% at d.pdf · page 22 and chart 42% at d.pdf · page 22; chart excludes Operational Expenses & Talent Acquisition, rescaled.");
+  expect(document.body.textContent).not.toMatch(/Contradicted/);
+});
+
 describe("a turnover claim asks Revenue or Volume in its own row (05-zero2hero.pdf, claim-matching.md section 11 point 8)", () => {
   // As GET /decks sends p17's three bars, all to review: the revenue file starts in 2023, p19's pending table gives
   // Revenue 130,550 (FY2022) and 150,000 (FY2023).
