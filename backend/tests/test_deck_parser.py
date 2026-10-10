@@ -2116,14 +2116,80 @@ def test_a_funds_cue_in_the_title_makes_the_percentages_use_of_funds_whatever_th
     assert {(c["value"], c["claim_type"]) for c in found if c["unit"] == "%"} == {(30, "use_of_funds"), (15, "use_of_funds")}
 
 
-@pytest.mark.parametrize("word", BLOCKED_WORDS + ["2022 2023 2024"])
-def test_a_cue_phrase_with_a_block_word_leaves_the_figures_unknown_and_tags_the_slide_mixed(word):
-    found = _funds_candidates([["Use of funds", "£250K", f"Team hiring {word} (60%)", f"Product launch {word} (40%)"]])
+CUE_PHRASES = ["use of funds", "use of proceeds", "the ask", "our ask", "funding ask", "investment ask", "funding request",
+               "capital raise", "raise", "funding round", "financing", "proposed financing", "round details", "round size",
+               "raise size", "funding requirements", "capital requirements", "capital sought", "funding sought",
+               "sources & uses", "sources and uses", "investor proposition", "investment opportunity"]
+
+
+def test_the_cue_list_is_the_one_george_gave():
+    assert list(claims.FUNDS_CUES) == CUE_PHRASES
+
+
+@pytest.mark.parametrize("phrase", CUE_PHRASES)
+@pytest.mark.parametrize("case", [str, str.upper, str.title])
+def test_each_cue_phrase_in_a_heading_triggers_use_of_funds_in_any_case(phrase, case):
+    found = _funds_candidates([[case(phrase), "Team hiring (60%)", "Product launch (40%)"]])
+    assert _types(found) == {"use_of_funds"}, phrase
+
+
+@pytest.mark.parametrize("phrase", CUE_PHRASES)
+def test_each_cue_phrase_in_a_slide_title_triggers_use_of_funds(phrase):
+    deck = parser.parse_deck(_pptx([[phrase, "Team hiring (60%)", "Product launch (40%)"]]), "deck.pptx")
+    for b in deck["blocks"]:
+        b["title"] = b["text"] == phrase
+    assert _types(claims.detect_candidates(deck["blocks"], "deck.pptx")) == {"use_of_funds"}, phrase
+
+
+@pytest.mark.parametrize("body", ["We raised prices", "raised Series A in 2023", "Prices raised twice", "refinancing done",
+                                  "In the next year we plan to raise prices on every plan we sell", "Our asking price"])
+def test_a_cue_word_in_body_text_or_a_longer_word_does_not_trigger_use_of_funds(body):
+    found = _funds_candidates([["Team plan", body, "Team hiring (60%)", "Product launch (40%)"]])
+    assert _types(found) and "use_of_funds" not in _types(found), body
+
+
+@pytest.mark.parametrize("heading", ["Revenue by region", "Sales split", "Turnover", "ARR mix", "MRR", "Bookings", "Customers",
+                                     "Segment mix", "By geography", "Country split", "Region", "By product line", "Split by year",
+                                     "2022 2023 2024"])
+def test_a_cue_phrase_with_a_block_word_in_a_heading_leaves_the_figures_unknown_and_tags_the_slide_mixed(heading):
+    found = _funds_candidates([["Use of funds", heading, "£250K", "Team hiring (60%)", "Product launch (40%)"]])
     pct = [c for c in found if c["unit"] == "%"]
-    assert pct and {c["claim_type"] for c in pct} == {"unknown"} and all(c["mixed_slide"] for c in pct), word
-    assert claims.MIXED_SLIDE == "mixed slide – check"
+    assert pct and {c["claim_type"] for c in pct} == {"unknown"} and all(c["mixed_slide"] for c in pct), heading
     plain = _funds_candidates([["Use of funds", "£250K", "Team hiring (60%)", "Product launch (40%)"]])
     assert not any(c.get("mixed_slide") for c in plain) and _types(plain) == {"use_of_funds"}
+    assert claims.MIXED_SLIDE == "mixed slide – check"
+
+
+def test_a_block_word_in_a_slide_title_or_a_table_header_leaves_the_figures_unknown_and_tags_the_slide_mixed():
+    deck = parser.parse_deck(_pptx([["Use of funds", "Revenue by region", "Team hiring (60%)", "Product launch (40%)"]]), "deck.pptx")
+    for b in deck["blocks"]:
+        b["title"] = b["text"] == "Revenue by region"
+    pct = [c for c in claims.detect_candidates(deck["blocks"], "deck.pptx") if c["unit"] == "%"]
+    assert pct and {c["claim_type"] for c in pct} == {"unknown"} and all(c["mixed_slide"] for c in pct)
+    table = _funds_candidates_with_table(["Use of funds"], [["Region", "Revenue %"], ["UK", "60%"], ["Germany", "40%"]])
+    pct = [c for c in table if c["unit"] == "%"]
+    assert pct and all(c["claim_type"] == "unknown" and c["mixed_slide"] for c in pct)
+    ok = _funds_candidates_with_table(["Use of funds"], [["Use", "Share of raise %"], ["Hiring", "60%"], ["Product", "40%"]])
+    assert not any(c.get("mixed_slide") for c in ok)
+
+
+def _funds_candidates_with_table(texts, rows):
+    deck = parser.parse_deck(_pptx([texts], tables={0: rows}), "deck.pptx")
+    return claims.detect_candidates(deck["blocks"], "deck.pptx")
+
+
+@pytest.mark.parametrize("label", ["Sales & Marketing", "Customer success", "Revenue operations", "Regional expansion",
+                                   "Country launch", "Segment research", "Product line extension", "Turnover reduction"])
+def test_a_block_word_in_the_label_of_a_percentage_does_not_block_a_cue_slide(label):
+    found = _funds_candidates([["Use of funds", "£250K", f"{label} (30%)", "Team hiring (70%)"]])
+    assert _types(found) == {"use_of_funds"} and not any(c.get("mixed_slide") for c in found), label
+
+
+def test_a_legend_label_beside_or_below_the_percentages_is_a_label_and_a_heading_above_them_blocks():
+    legend = _funds_candidates([["Use of funds", "£250K", "Team hiring (60%)", "Product launch (40%)", "Sales & Marketing"]])
+    assert _types(legend) == {"use_of_funds"}
+    heading = _funds_candidates([["Use of funds", "Sales & Marketing", "£250K", "Team hiring (60%)", "Product launch (40%)"]])
+    assert _types(heading) == {"unknown"}
 
 
 def test_a_page_without_a_raise_amount_or_cue_keeps_its_types():

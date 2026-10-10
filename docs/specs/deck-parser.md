@@ -458,19 +458,24 @@ Fixed on the 10 test decks (2026-10-05):
   Other, never Sales or Revenue. In the claim register it is Unverified (reason: "use of funds: an allocation share of the
   raise, no engine metric to test it against"), has no gap and no value at stake, needs no gate, ranks after every other
   claim, and is left out of the top 5 (the proposal, the banner's rows 1-5, the confirmed set and the verdict).
-- Trigger, per slide or page (changed 2026-10-10, George). A cue phrase is required: "use of funds", "use of proceeds", "the
-  ask", "investor proposition" or "raise" in the slide's title, in a heading (a short line with no figure) or in the chart's
-  title. Without one nothing is a use of funds, whatever the percentages sum to and whatever amount the slide shows; a raise
-  amount (a figure with a currency) and percentages summing to 95-105 may only confirm a cue and change nothing. With a cue,
-  every percentage on the slide is a use of funds and is listed as one, also when no keyword or heading names it (p22's nine
-  percentages stay candidates after "acquisition" left the Sales list; no row appears or disappears on the 10 test decks).
-  A percentage on a line with a growth, retention or margin word ("retention 90%") is a rate, never a share.
-- Block rule. If the same slide holds revenue, sales, turnover, ARR, MRR, bookings, customers, segment, geography, country,
-  region, product line, "by year", or a run of 3 or more different year labels (2022, 2023E, FY24), the percentages are a
-  split of something else and are never typed Use of funds. Without a cue they keep the type they had before. With a cue
-  as well (both appear) the slide is "mixed": its percentages are typed Unknown, carry `mixed_slide` and show the tag "mixed
-  slide – check" in the claims list. The analyst chooses the type. A block word in a category name ("Sales & Marketing 30%")
-  counts: that slide is mixed.
+- Trigger, per slide or page (changed 2026-10-10, George; the cue list replaced the same day). A cue phrase is required, as
+  whole words in any case, in the slide's title, in a heading (a short line with no figure), in a chart's title or in a
+  table's header row, never in body text: use of funds, use of proceeds, the ask, our ask, funding ask, investment ask, funding
+  request, capital raise, raise, funding round, financing, proposed financing, round details, round size, raise size, funding
+  requirements, capital requirements, capital sought, funding sought, sources & uses, sources and uses, investor proposition,
+  investment opportunity ("raised prices", "refinancing" and "We raised Series A in 2023" are no cue). Without a cue nothing is a
+  use of funds, whatever the percentages sum to and whatever amount the slide shows; a raise amount (a figure with a currency) and
+  percentages summing to 95-105 may only confirm a cue and change nothing. With a cue, every percentage on the slide is a use of
+  funds and is listed as one, also when no keyword or heading names it (p22's nine percentages stay candidates after "acquisition"
+  left the Sales list). A percentage on a line with a growth, retention or margin word ("retention 90%") is a rate, never a share.
+- Block rule. If the slide's title, a heading or a table's header row holds revenue, sales, turnover, ARR, MRR, bookings,
+  customers, segment, geography, country, region, product line or "by year", or the slide holds a run of 3 or more different year
+  labels (2022, 2023E, FY24; the labels of the percentages count here), the percentages are a split of something else and are
+  never typed Use of funds. Without a cue they keep the type they had before. With a cue as well (both appear) the slide is "mixed":
+  its percentages are typed Unknown, carry `mixed_slide` and show the tag "mixed slide – check" in the claims list. The analyst
+  chooses the type. The label attached to a percentage is not a heading and never blocks: "Sales & Marketing 30%" on a cue slide
+  stays a use of funds, and so does a legend entry beside or below the percentages. A heading counts only above the first
+  percentage on the slide ("Revenue by geography" over the chart blocks; the same words in the legend do not).
 - On the 10 test decks only zero2hero p22 is affected by this section: its 9 percentages (Sales or Unknown before) are Use of
   funds, Unknown 39 → 37, 225 candidates before and after. Removing "acquisition" from Sales changes no other candidate.
 - Deck inconsistency, text against chart. On a use-of-funds slide, when the text lines and the chart's labels give different

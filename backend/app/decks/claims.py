@@ -1258,7 +1258,12 @@ def _flag_inconsistencies(candidates: List[Dict]) -> None:
 # ---------------------------------------------------------------------------
 # Use of funds (deck-parser.md section 2)
 # ---------------------------------------------------------------------------
-_FUNDS_CUE = re.compile(r"(?i)\b(?:use of (?:funds|proceeds)|the ask|investor proposition|raise)\b")
+# The phrases that make a slide a raise (George, 2026-10-10): whole words, any case, in a slide title, a heading or a chart title.
+FUNDS_CUES = ("use of funds", "use of proceeds", "the ask", "our ask", "funding ask", "investment ask", "funding request",
+              "capital raise", "raise", "funding round", "financing", "proposed financing", "round details", "round size",
+              "raise size", "funding requirements", "capital requirements", "capital sought", "funding sought",
+              "sources & uses", "sources and uses", "investor proposition", "investment opportunity")
+_FUNDS_CUE = re.compile(r"(?i)\b(?:" + "|".join(re.escape(c).replace(r"\ ", r"\s+") for c in FUNDS_CUES) + r")\b")
 # Words that make a slide's percentages a split of something else (revenue by region, by year, ...). Acronyms in capitals only.
 _NOT_FUNDS = re.compile(r"\b(?:ARR|MRR)\b|(?i:\b(?:revenues?|sales|turnover|bookings?|customers?|segments?|geograph(?:y|ies|ic|ical)"
                         r"|countr(?:y|ies)|regions?|product lines?|by years?)\b)")
@@ -1274,24 +1279,42 @@ def _percentages(text: str) -> List[float]:
     return [n["value"] for n in find_numbers(text, find_dates(text)) if n["unit"] == "%" and n["value"] is not None]
 
 
+def _heading_unit(u: Dict) -> bool:
+    """A slide title, a table's header row, or a line that is a heading (a word, no figure, at most HEADING_MAX characters)."""
+    return bool(u["title"] or u.get("header_row") or _is_heading(u["text"]))
+
+
 def _funds_units(units: List[Dict]) -> Tuple[Dict[int, str], set]:
     """(funds, mixed): `funds` maps id() of the lines whose percentages are a use of funds to their form, "text" (a line that
     names its category, "Marketing (25%)") or "chart" (a figure alone, a pie's data label); `mixed` holds id() of the
-    percentage lines of a slide that is both. A cue phrase ("use of funds", "use of proceeds", "the ask", "investor
-    proposition", "raise") in the slide's title or in a heading is required; without one nothing is a use of funds, whatever
-    the percentages sum to or the slide shows (a raise amount and a sum of 95-105 only confirm a cue, and change nothing).
-    A slide that also holds a word of _NOT_FUNDS or a run of year labels is a split of something else: with a cue it is
-    "mixed" (the figures stay Unknown), without one it is not looked at."""
+    percentage lines of a slide that is both. A cue phrase (FUNDS_CUES) in the slide's title, a heading or a table's header row
+    is required; without one nothing is a use of funds, whatever the percentages sum to or the slide shows (a raise amount
+    and a sum of 95-105 only confirm a cue, and change nothing). A slide whose title, headings (a heading line above the
+    first percentage; a legend beside or below it is a label) or table headers hold a word of _NOT_FUNDS, or whose text holds
+    a run of year labels, is a split of something else: with a cue it is "mixed" (the figures stay Unknown), without one it
+    is not looked at. The label attached to a percentage is no heading: "Sales & Marketing 30%" stays a use of funds."""
     pages = {}
     for u in units:
         pages.setdefault(u["page"], []).append(u)
     funds, mixed = {}, set()
     for members in pages.values():
-        if not any(_FUNDS_CUE.search(m["text"]) and (m["title"] or _is_heading(m["text"])) for m in members):
+        if not any(_FUNDS_CUE.search(m["text"]) for m in members if _heading_unit(m)):
             continue
         shares = [u for u in members if not u.get("header_row") and not _RATE_WORDS.search(u["text"]) and _percentages(u["text"])]
+        if not shares:
+            continue
+        first = min(members.index(u) for u in shares)
+        tops = [u["bbox"][1] for u in shares if u.get("bbox")]
+
+        def above(m):
+            if m.get("bbox") and tops and len(tops) == len(shares):
+                return m["bbox"][1] < min(tops)
+            return members.index(m) < first
+
+        heads = " ".join(m["text"] for m in members if m not in shares and
+                         (m["title"] or m.get("header_row") or (_is_heading(m["text"]) and above(m))))
         text = " ".join(m["text"] for m in members)
-        if _NOT_FUNDS.search(text) or len(set(_YEAR_LABEL.findall(text))) >= YEAR_RUN:
+        if _NOT_FUNDS.search(heads) or len(set(_YEAR_LABEL.findall(text))) >= YEAR_RUN:
             mixed.update(id(u) for u in shares)
         else:
             funds.update({id(u): "text" if _WORD.search(u["text"]) else "chart" for u in shares})
