@@ -707,3 +707,18 @@ def test_a_market_size_claim_keeps_the_decks_date_and_the_rate_date_is_a_separat
     assert row["fx_rate"] == 0.9 and row["fx_date"] != row["period"] and row["fx_date"] == cm.as_of_date(row["as_of_month"])
     undated = run_claim({**market, "target_date": None, "period_text": None}, fx={"EUR": 1.0, "USD": 0.9})
     assert (undated["period"], undated["period_note"], undated["fx_date"]) == (None, "no period stated", row["fx_date"])
+
+
+# --- Use of funds (deck-parser.md section 2): an allocation share, no engine metric ----------------------------------------------
+
+def test_a_use_of_funds_claim_is_unverified_with_no_metric_no_gap_no_gate_and_ranks_after_every_other_claim():
+    funds = run_claim({"id": "f1", "claim_type": "use_of_funds", "value": 40, "unit": "%", "currency": None})
+    assert (funds["evidence_label"], funds["reason"], funds["metric"]) == ("Unverified", cm.USE_OF_FUNDS_NOTE, None)
+    assert (funds["gap"], funds["value_at_stake_arr"], funds["gate_needed"], funds["gate_saved"]) == (None, None, False, False)
+    run = RUNS["A"]
+    cands = candidates_for(run)
+    share = {**copy.deepcopy(cands[0]), "id": "f1", "claim_type": "use_of_funds", "value": 40, "unit": "%", "currency": None,
+             "by_period": None, "claim_inputs": {}}
+    rows = cm.build_register([share, *cands], results_for(run), settings(run))
+    assert rows[-1]["claim_id"] == "f1" and rows[-1]["rank"] == len(rows)
+    assert [r["claim_id"] for r in rows[:-1]] == [r["claim_id"] for r in register(run)], "no other claim's rank moves"

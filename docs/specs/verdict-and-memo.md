@@ -112,7 +112,8 @@ again gives the same bytes.
 ## 6. Verdict (A10)
 ### 6.1 Top 5 (decision of 2026-10-08)
 - The app pre-sorts by shortfall, which is the register's rank (claim-matching §3). It proposes rows 1–5 as the top 5,
-  or every row when there are fewer than 5.
+  or every row when there are fewer than 5. Use of funds rows (deck-parser.md, amended 2026-10-10) rank last and are left out:
+  they are not among the rows the top 5 counts, the banner reads or the verdict tests.
 - The analyst confirms the proposal, or replaces any of its rows with another register row, and confirms. The set
   always holds min(5, register rows) claims. It is stored as an analyst decision in `audits.ic_inputs.top5`: the claim
   ids, in pre-sort order, and when they were set.

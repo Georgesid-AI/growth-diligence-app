@@ -497,3 +497,51 @@ def test_a_claim_in_another_currency_is_worded_with_both_figures_in_the_verdict_
     assert vd.claimed_text({**row, "currency": "EUR", "claimed_converted": None, "fx_rate": None, "fx_date": None}, "EUR") == "€150,000"
     assert vd.claimed_text({**row, "claimed_value": None, "currency": None, "claimed_converted": None, "claim_direction": "positive"},
                            "EUR") == "positive (no figure)"
+
+
+# --- Use of funds is not one of the top 5 ----------------------------------------------------------------------------------------
+
+def test_a_use_of_funds_row_is_never_in_the_proposal_the_top_5_or_the_verdict():
+    funds = row(1, "Unverified", claim_type="use_of_funds", metric=None)
+    rows = [funds, *[row(i + 2, "Verified") for i in range(5)]]
+    assert vd.proposal(rows) == [f"r{i}" for i in range(2, 7)] and vd.banner_ids(rows) == vd.proposal(rows)
+    v = vd.verdict(rows, {"reporting_currency": "EUR"}, {"claim_ids": vd.proposal(rows)})
+    assert (v["status"], v["outcome"]) == ("ok", "Underwrite") and "r1" not in [f["claim_id"] for f in v["five"]]
+    with pytest.raises(ValueError):
+        vd.check_top5(rows, ["r1", *vd.proposal(rows)[:4]])
+    only = [funds]
+    assert vd.proposal(only) == [] and vd.top5_state(only, None)["in_force"] == []
+    assert vd.verdict(only, {"reporting_currency": "EUR"}, None)["message"] == vd.W10_NO_CLAIMS
+
+
+# --- Use of funds through the API (deck-parser.md section 2, review of PR 86) -----------------------------------------------
+
+def _add_funds(db):
+    db[decks.CANDIDATES_COLLECTION].docs.append(
+        {"audit_id": AUDIT, "id": "funds1", "status": "approved", "claim_type": "use_of_funds", "value": 40, "unit": "%",
+         "file": "testco_board.pptx", "order": 99, "sources": [{"file": "testco_board.pptx", "slide": 22, "kind": "text"}]})
+
+
+def test_the_top_5_replace_list_holds_no_use_of_funds_row(api):
+    client, db = api
+    before = len(_verdict(client)["candidates"])
+    _add_funds(db)
+    body = _verdict(client)
+    assert len(body["candidates"]) == before, "the replace dropdown offers no Use of funds row"
+    ranked = [r["claim_id"] for r in _get(client)["register"] if r["claim_type"] == "use_of_funds"]
+    assert ranked and not {c["claim_id"] for c in body["candidates"]} & set(ranked)
+    assert not set(ranked) & set(body["verdict"]["top5"]["proposed"])
+    assert _inputs(client, {"top5": [*body["verdict"]["top5"]["proposed"][:4], ranked[0]]}).status_code == 400
+
+
+def test_correcting_a_use_of_funds_figure_keeps_its_type_and_the_row_stays_out_of_the_top_5(api):
+    client, db = api
+    _add_funds(db)
+    r = client.put(f"/api/audits/{AUDIT}/decks/candidates/funds1", json={"claim_type": "use_of_funds", "value": 42})
+    assert r.status_code == 200, r.text
+    assert (r.json()["claim_type"], r.json()["value"], r.json()["status"]) == ("use_of_funds", 42, "edited")
+    body = _verdict(client)
+    assert not [c for c in body["candidates"] if "funds" in str(c.get("claim", "")).lower()]
+    assert "use_of_funds" not in {c["claim_type"] for c in _get(client)["register"] if c["claim_id"] in body["verdict"]["top5"]["proposed"]}
+    # a bad type name is still refused
+    assert client.put(f"/api/audits/{AUDIT}/decks/candidates/funds1", json={"claim_type": "nonsense"}).status_code == 422

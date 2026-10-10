@@ -125,9 +125,14 @@ def marked_count_after(rows: List[dict], claim_id: str) -> int:
 
 # --- the top 5 ------------------------------------------------------------------------------------------------------------
 
+def sortable(rows: List[dict]) -> List[dict]:
+    """The rows the top 5 is taken from: a use-of-funds row is an allocation share of the raise, never one of them."""
+    return [r for r in rows if r.get("claim_type") != "use_of_funds"]
+
+
 def proposal(rows: List[dict]) -> List[str]:
-    """Rows 1 to 5 of the pre-sort, or every row when there are fewer than 5 (decision of 2026-10-08)."""
-    return [r["claim_id"] for r in rows[:TOP_N]]
+    """Rows 1 to 5 of the pre-sort, or every row when there are fewer than 5 (decision of 2026-10-08). Use of funds is left out."""
+    return [r["claim_id"] for r in sortable(rows)[:TOP_N]]
 
 
 def banner_ids(rows: List[dict]) -> List[str]:
@@ -139,6 +144,7 @@ def top5_state(rows: List[dict], stored: Optional[dict]) -> dict:
     """The top 5 in force. Confirmed when the analyst has stored a set that holds min(5, rows) claims, all in the register. Void
     when a stored claim has left the register (or the size no longer fits); a new rank order alone does not void it."""
     proposed = proposal(rows)
+    rows = sortable(rows)
     present = {r["claim_id"] for r in rows}
     ids = list((stored or {}).get("claim_ids") or [])
     void = bool(ids) and (not set(ids) <= present or len(ids) != min(TOP_N, len(rows)))
@@ -150,7 +156,8 @@ def top5_state(rows: List[dict], stored: Optional[dict]) -> dict:
 
 
 def check_top5(rows: List[dict], ids: List[str]) -> None:
-    """Refuse a set that is not min(5, rows) distinct register claims."""
+    """Refuse a set that is not min(5, rows) distinct register claims (use of funds is none of them)."""
+    rows = sortable(rows)
     if len(set(ids)) != len(ids) or len(ids) != min(TOP_N, len(rows)) or not set(ids) <= {r["claim_id"] for r in rows}:
         raise ValueError(f"The top 5 holds {min(TOP_N, len(rows))} different claims of the register")
 
@@ -164,6 +171,7 @@ def _plural(n: int, one: str, many: str) -> str:
 def verdict(rows: List[dict], results: Optional[dict], stored_top5: Optional[dict]) -> dict:
     """The verdict of the confirmed top 5 (section 6). `status`: no_verdict (W10), unconfirmed or void (W23), blocked (W9), ok."""
     state = top5_state(rows, stored_top5)
+    rows = sortable(rows)
     reporting = (results or {}).get("reporting_currency")
     base = {"top5": state, "outcome": None, "outcome_code": None, "rule": None, "message": None, "blocked": [], "five": [],
             "reasons": [], "fewer": None}

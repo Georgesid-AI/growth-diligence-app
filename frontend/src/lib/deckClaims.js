@@ -208,6 +208,9 @@ export function rowEdit(row, values) {
 // Shown on both claims when one deck gives the same type and period different values.
 export const INCONSISTENCY_LABEL = "Deck inconsistency";
 
+// A slide with a funds cue phrase and a word of another split (revenue, region, a run of years): its percentages stay Unknown.
+export const MIXED_SLIDE_LABEL = "mixed slide – check";
+
 // The word the deck uses for the figure ("Turnover", "Revenue"), shown before it so two figures are never mistaken for one metric.
 const figureText = (f) => {
   const n = present(f.value_high) ? `${figure(f.value)}–${figure(f.value_high)}` : figure(f.value);
@@ -220,12 +223,14 @@ const placeText = (f) => sourceRef(f.source);
 /** The sentence under the "Deck inconsistency" tag, built from the two figures the server compared:
  *  "The deck gives different figures for this metric: 5 at deck.pptx · slide 1 and 6 at deck.pptx · slide 4."
  *  A revenue-type figure names its deck label: "Turnover 550,508 GBP at deck.pdf · page 17 and Revenue 150,000 GBP at deck.pdf · page 19."
+ *  A use-of-funds figure names its source, "text" or "chart", and a pair may carry a note, appended after a semicolon:
+ *  "... text 40% at deck.pdf · page 22 and chart 42% at deck.pdf · page 22; chart excludes Marketing, rescaled."
  *  The parser pairs only figures whose values differ. Null when the server sent no pair, and
  *  then no tag is shown: a tag never stands without its explanation. */
 export function inconsistencyText(c) {
   const pairs = c?.inconsistencies || [];
   if (!pairs.length) return null;
-  return pairs.map(({ this: a, other: b }) => `The deck gives different figures for this metric: ${figureText(a)} at ${placeText(a)} and ${figureText(b)} at ${placeText(b)}.`).join(" ");
+  return pairs.map(({ this: a, other: b, note }) => `The deck gives different figures for this metric: ${figureText(a)} at ${placeText(a)} and ${figureText(b)} at ${placeText(b)}${note ? `; ${note}` : ""}.`).join(" ");
 }
 
 // Model reading (docs/specs/llm-structure-reading.md): every row the model read carries one of these,

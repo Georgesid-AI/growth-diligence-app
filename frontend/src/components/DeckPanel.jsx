@@ -9,7 +9,7 @@ import { NO_FILE_PERIOD, UNVERIFIED, answerReady, metricOptions, turnoverHeading
 import { addClaim, answerTurnover, getDecks, removeDeck, updateCandidate, uploadDeck } from "@/lib/api";
 import { describeRequestError } from "@/lib/requestError";
 import {
-  ALL_DECKS, CLAIM_GROUPS, CLAIM_TYPES, CLAIM_UNITS, COUNT_UNIT_HINT, COUNT_TYPES, COUNT_UNIT, FX_SETTINGS_ANCHOR, FX_SETTINGS_LABEL, conversionHover, inconsistencyText, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, ADD_CLAIM_LABEL, ADD_CLAIM_NEEDS_SOURCE, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, newClaimPayload, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
+  ALL_DECKS, CLAIM_GROUPS, CLAIM_TYPES, CLAIM_UNITS, COUNT_UNIT_HINT, COUNT_TYPES, COUNT_UNIT, FX_SETTINGS_ANCHOR, FX_SETTINGS_LABEL, conversionHover, inconsistencyText, MIXED_SLIDE_LABEL, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, ADD_CLAIM_LABEL, ADD_CLAIM_NEEDS_SOURCE, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, newClaimPayload, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
   DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, CONFIDENCE_HOVER, DECK_UPLOAD_HELP, INCONSISTENCY_LABEL, OTHER_TYPE_NOTE, PLACEHOLDER, STATUS_LABELS, VERIFIED_LABEL, claimPeriod, claimSections, claimValue, deckRunLog,
   confidenceText, needsType, readingChoices, rowEdit, sourceRef, statusCounts, typeLabel,
 } from "@/lib/deckClaims";
@@ -399,6 +399,7 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight }) {
           <td className="py-2 pr-3">
             <select value={typeValue(draft)} onChange={setType} className={selectClass} data-testid="edit-claim-type">
               {needsType(draft) && <option value={draft.claim_type} disabled>{typeLabel(draft.claim_type)}{draft.claim_type === "unknown" ? "" : ": choose a type"}</option>}
+              {draft.claim_type === "use_of_funds" && <option value="use_of_funds">{typeLabel("use_of_funds")}</option>}
               {turnover.views.length > 0 && draft.claim_type === "revenue" && draft.answer === "ask" && <option value={ASK_OPTION} disabled>Turnover – choose</option>}
               {CLAIM_TYPES.flatMap((t) => (t === "revenue" && turnover.views.length ? [t, VOLUME_OPTION] : [t])).map((t) => (
                 <option key={t} value={t}>{t === VOLUME_OPTION ? VOLUME_LABEL : typeLabel(t)}</option>))}
@@ -480,6 +481,14 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight }) {
             ? "text-emerald-800 border-emerald-500/50 bg-emerald-50" : "text-amber-800 border-amber-500/50 bg-amber-50"}`}
             data-testid="candidate-ai-label">
             {c.ai_label}
+          </div>
+        )}
+        {c.mixed_slide && (
+          <div className="mt-1">
+            <span className="text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-nowrap text-amber-800 border-amber-500/50 bg-amber-50"
+              data-testid="candidate-mixed-slide">
+              {MIXED_SLIDE_LABEL}
+            </span>
           </div>
         )}
         {explanation && (

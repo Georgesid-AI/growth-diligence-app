@@ -644,7 +644,8 @@ def test_the_gateway_names_no_deck_text_snippet_or_source_field():
     or where it sits on the page, its direction with no figure, its type group and its FX rate (layout, parser checks and
     the saved rate, computed in Python and shown to the analyst only)."""
     forbidden = {decks.TEXT_COLLECTION, "blocks", "snippet", "label_from", "date_from", "sources", "by_period",
-                 "confidence", "type_from", "reading", "claim_direction", "group", "fx", "fx_rate", "fx_date"}
+                 "confidence", "type_from", "reading", "claim_direction", "group", "fx", "fx_rate", "fx_date",
+                 "mixed_slide", "inconsistencies"}
     offenders = []
     for path in sorted((BACKEND / "app" / "llm").glob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -1268,7 +1269,7 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             "turnover_choices", "turnover_as", "turnover_reason", "turnover_state", "deck_take_rate",
                             "implied_take_rate", "implied_take_rate_source", "turnover_suggested", "deck_revenue_note", "period_basis", "inconsistencies",
                             "turnover_views", "file_note", "NO_FILE_PERIOD",
-                            "inconsistent_dates", *MATCHING_SERVER_ONLY})
+                            "inconsistent_dates", "mixed_slide", "USE_OF_FUNDS_NOTE", "MIXED_SLIDE", *MATCHING_SERVER_ONLY})
 # The functions that log about the register, and the only things their log calls may name.
 REGISTER_LOGGERS = frozenset({"_claim_rows", "claim_register", "claim_register_csv", "update_claim_inputs", "answer_turnover"})
 REGISTER_LOG_ARGS = frozenset({"audit_id", "counts", "len(rows)"})      # exactly these expressions, as format arguments
@@ -1408,6 +1409,40 @@ def test_the_fx_reason_names_two_currency_codes_and_the_new_candidate_fields_are
     out = claim_matching.build_register([row], RESULTS, {"fiscal_year_end": 12, "reporting_currency": "EUR", "fx": {"EUR": 1.0}})[0]
     assert re.fullmatch(r"FX rate needed: [A-Z]{3}→[A-Z]{3}", out["reason"]), out["reason"]
     assert not {"period_basis", "inconsistencies", "inconsistent_dates"} & decks.GATEWAY_READABLE_FIELDS
+
+
+def test_the_use_of_funds_reason_is_a_closed_sentence_and_mixed_slide_and_the_note_never_reach_the_gateway_or_a_log(caplog):
+    """Use of funds (deck-parser.md section 2): the register reason is one fixed sentence, `mixed_slide` is a layout flag of the
+    parser, and the inconsistency note holds a category name from the deck. None of them is gateway-readable; run over a
+    database holding a use-of-funds slide with a sentinel category, nothing the gateway reads, sends or logs carries it."""
+    import logging
+    import test_deck_parser as dp
+    sentinel = "Zephyr Holdings Marketing"
+    assert not {"mixed_slide", "inconsistencies", "note"} & decks.GATEWAY_READABLE_FIELDS
+    slide = dp._funds_slide([("Cost control", 50), ("Team hiring", 30), (sentinel, 20)], [63, 38])
+    found = [c for c in dp._funds_candidates([slide]) if c["unit"] == "%"]
+    assert any(sentinel in json.dumps(c["inconsistencies"]) for c in found), "fixture: the note holds the deck's category"
+    mixed = [c for c in dp._funds_candidates([["Use of funds", "Revenue by region", sentinel + " (60%)", "Cost control (40%)"]])
+             if c["unit"] == "%"]
+    assert mixed and all(c["mixed_slide"] for c in mixed), "fixture: a mixed slide"
+    # the register row: the fixed sentence, no deck text
+    row = {"id": "x1", "status": "approved", "claim_type": "use_of_funds", "value": 20, "unit": "%", "currency": None,
+           "target_date": None, "snippet": f"{sentinel} (20%)", "label_from": sentinel, "file": "deck.pptx", "order": 0,
+           "sources": [{"file": "deck.pptx", "slide": 22}]}
+    out = claim_matching.build_register([row], RESULTS, {"fiscal_year_end": 12, "reporting_currency": "EUR", "fx": {"EUR": 1.0}})[0]
+    assert out["reason"] == claim_matching.USE_OF_FUNDS_NOTE and sentinel not in json.dumps(out, default=str)
+    # the gateway over a database that holds them
+    db, reads = _recording_db()
+    for i, c in enumerate([*found, *mixed]):
+        db[decks.CANDIDATES_COLLECTION].docs.append({**c, "audit_id": RUN_ID, "id": f"u{i}", "status": "approved"})
+    adapter = t.FakeAdapter(replies=[json.dumps(NARRATIVE)])
+    with caplog.at_level(logging.DEBUG):
+        asyncio.run(gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=adapter, sleep=t._noop_sleep))
+    returned = json.dumps([doc for _, _, doc in reads], ensure_ascii=False, default=str)
+    logs = caplog.text + "".join(r.getMessage() for r in caplog.records)
+    for where, text in (("read by the gateway", returned), ("sent to the provider", adapter.payloads[0]), ("logged", logs)):
+        assert sentinel not in text, f"the deck's category was {where}"
+        assert claim_matching.USE_OF_FUNDS_NOTE not in text and "mixed slide" not in text, f"the register reason or tag was {where}"
 
 
 def test_the_turnover_fields_hold_closed_words_figures_and_sources_never_deck_text():

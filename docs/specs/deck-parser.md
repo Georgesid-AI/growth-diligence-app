@@ -47,7 +47,7 @@ hired, launches; of two overlapping keywords the longer one counts):
   default. An amount or a count beside a growth word takes the noun's own type ("ARR grew to
   $3.6M" is Revenue).
 - Retention: NRR, churn, retention
-- Sales: sales cycle, win rate, pipeline, ACV, payback, acquisition, conversion, leads
+- Sales: sales cycle, win rate, pipeline, ACV, payback, conversion, leads, and the verbs acquire, acquired, acquiring (the noun "acquisition" is no keyword since 2026-10-10: category names such as "Talent Acquisition" made Sales claims; "acquisition cost" and "cost of acquisition" stay CAC)
 - Customers: customers, clients, paying users, accounts, companies, agencies, subscribers,
   institutions
 - Users: users
@@ -111,7 +111,7 @@ figure whose only keyword is further away stays a candidate (type Unknown, no "L
 not a candidate, as before. The same rule types a date-only line and a figure-less milestone line. On the 10 test decks
 (measured over `detect_candidates`, no network): 225 candidates before and after, recall 121 of 124 (98%) and precision
 109 of 225 (48.4%) unchanged; 31 more candidates are Unknown (8 before, 39 after), among them front-b p14 "Team growth is built upon solid foundations" 5.0 and 100%, moz p21 "~$180K / Month"
-(was Costs), zero2hero p11 "($52 B)" and "($374B)" and p22 "21%" and "11%" (Sales), uber p11 "Car services require 1-3 hours
+(was Costs), zero2hero p11 "($52 B)" and "($374B)" and p22 "21%" and "11%" (Sales; Use of funds since 2026-10-10, below), uber p11 "Car services require 1-3 hours
 notice" (Users). `type_from` is "line", "heading" (the nearest heading named it) or none (Unknown).
 The unit of a count is the noun it counts: "800 paying users". If a Customers or Users keyword
 appears within the next 4 words after the number, it is the unit (">50 Dutch temporary work
@@ -446,3 +446,58 @@ Fixed on the 10 test decks (2026-10-05):
 - Unit: "count" joins the unit suggestions (customers, headcount, deals); currency stays its own field.
 - A claim that is approved or edited and moves to another category (by a changed type) shows "Claim moved to [category]" with
   Undo for 4 seconds and its row is highlighted for the same time; Undo restores the previous type.
+
+## Amended 2026-10-10: Use of funds (bug: zero2hero p22 "Investor Proposition")
+- Cause. On p22 the use-of-funds percentages were typed Sales by the keyword rule of §2, not by any of the three suspects: the
+  Sales family holds "acquisition", and the category names "Content Acquisition & Development" and "Operational Expenses &
+  Talent Acquisition" carry it; the pie's labels 42% and 26% then borrowed the nearest heading, "Content Acquisition &
+  Development (20%)" (Sales), and 21% and 11% were left Unknown. There is no rule that reads a money figure plus percentages
+  summing to 100 as revenue by segment; `use_of_funds` was already in the structure reading's metric list; and the funding
+  cue words only drop lines about funds raised (§2, "Dropped") and type structures (§7), they never typed a claim.
+- Claim type **Use of funds** (stored `use_of_funds`): an allocation share of a raise. Unit %, no engine metric, listed under
+  Other, never Sales or Revenue. In the claim register it is Unverified (reason: "use of funds: an allocation share of the
+  raise, no engine metric to test it against"), has no gap and no value at stake, needs no gate, ranks after every other
+  claim, and is left out of the top 5 (the proposal, the banner's rows 1-5, the confirmed set and the verdict).
+- Trigger, per slide or page (changed 2026-10-10, George; the cue list replaced the same day, and again after the review of PR 86). A
+  cue phrase is required, as whole words in any case. Phrases of several words: use of funds, use of proceeds, the ask, our ask,
+  funding ask, investment ask, funding request, capital raise, funding round, proposed financing, round details, round size, raise
+  size, funding requirements, capital requirements, capital sought, funding sought, sources & uses, sources and uses, investor
+  proposition. They count in the slide's title, in a heading or in a table's header row. The single word
+  "raise" counts only in the slide's title, never in a heading or a table's header row (a table's merged title row is a heading). "Investment opportunity" and "financing" are
+  not cues (they name slides that are often not raises). A heading is a short line (at most 59 characters) with no figure that sits
+  ABOVE the first percentage of the slide, does not start with a bullet, dash or asterisk, and holds the cue phrase and at most 3
+  other words ("Use of funds - Series A"; "The ask from users is simple" is not one). Body text and footnotes never carry a cue:
+  "We plan to raise prices next year", "Raise brand awareness in Europe" below the figures, "* post-raise runway", "raised prices",
+  "refinancing" and "We raised Series A in 2023" are no cue. Without a cue nothing is a
+  use of funds, whatever the percentages sum to and whatever amount the slide shows; a raise amount (a figure with a currency) and
+  percentages summing to 95-105 may only confirm a cue and change nothing. With a cue, every percentage on the slide is a use of
+  funds and is listed as one, also when no keyword or heading names it (p22's nine percentages stay candidates after "acquisition"
+  left the Sales list). A percentage on a line with a growth, retention or margin word ("retention 90%") is a rate, never a share.
+- On screen (2026-10-10, George). The edit form's type select shows "Use of funds" for these claims and the server accepts the
+  type on save, so correcting a value (text 40% against chart 42%) keeps the type and the claim stays out of the top 5, the banner,
+  value at stake and the verdict. "Use of funds" is not offered as a type to choose for another claim. The top-5 replace dropdown
+  (`candidates` of GET /verdict) lists no Use of funds row.
+- Block rule. If the slide's title, a heading or a table's header row holds revenue, sales, turnover, ARR, MRR, bookings,
+  customers, segment, geography, country, region, product line or "by year", or the slide holds a run of 3 or more different year
+  labels (2022, 2023E, FY24; the labels of the percentages count here), the percentages are a split of something else and are
+  never typed Use of funds. Without a cue they keep the type they had before. With a cue as well (both appear) the slide is "mixed":
+  its percentages are typed Unknown, carry `mixed_slide` and show the tag "mixed slide – check" in the claims list. The analyst
+  chooses the type. The label attached to a percentage is not a heading and never blocks: "Sales & Marketing 30%" on a cue slide
+  stays a use of funds, and so does a legend entry beside or below the percentages. A heading counts only above the first
+  percentage on the slide ("Revenue by geography" over the chart blocks; the same words in the legend do not).
+- On the 10 test decks only zero2hero p22 is affected by this section: its 9 percentages (Sales or Unknown before) are Use of
+  funds, Unknown 39 → 37, 225 candidates before and after. Removing "acquisition" from Sales changes no other candidate.
+- Deck inconsistency, text against chart. On a use-of-funds slide, when the text lines and the chart's labels give different
+  percentages, each figure of the pair carries the tag with `inconsistencies` = `{this, other, note}`: `this` and `other`
+  hold the figure with its deck label "text" or "chart" ("text 40% at d.pdf · page 22 and chart 42% at d.pdf · page 22").
+  The chart's labels carry no category names, so the two sets are paired in order of value, and only when the chart has
+  the same number of figures or one fewer. With one fewer, if every text value rescaled to 100 after dropping one category
+  rounds to the chart's value (p22: 40/20/25/10/5 and 42/21/26/11, 40/95 = 42%), `note` is "chart excludes <category>,
+  rescaled" and the tag text ends "...; chart excludes <category>, rescaled." The dropped category's own figure carries no
+  tag. If two different categories would fit, or the counts differ by more, nothing is paired and nothing is tagged.
+  Equal sets are not an inconsistency. The label stays Unverified: never Contradicted. Native pptx charts are structures
+  (§7), not candidates, so this compares text and chart labels the parser reads as text (pdf, docx).
+- Tests: `test_deck_parser.py` (p22 on the test deck, built slides for the cue and where it counts (a sentence above the figures,
+  a bullet or footnote below them, a slide titled "Raise"), the block words, revenue by year and by geography
+  and "acquisition", and the text 40/20/25/10/5 against the chart 42/21/26/11), `test_claim_matching.py` and `test_verdict.py` (register and top 5),
+  `test_gateway_data_boundary.py` (the reason, `mixed_slide` and the note reach no gateway payload or log), `DeckPanel.test.jsx` (tag text, the edit form).

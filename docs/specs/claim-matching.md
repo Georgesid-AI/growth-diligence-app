@@ -99,7 +99,7 @@ Untested rows stay listed with a reason and observed "—" (a forecast shows its
 |---|---|
 | Verified | Tested and within tolerance: ±5% of the claimed value for amounts, counts and durations; ±1 percentage point for rates. The boundary is Verified. |
 | Contradicted | Tested and outside tolerance: a miss, or a beat. |
-| Unverified | Not testable yet; the reason names what would test it: a Missing file (the engine's `unlocked_by`), a forecast period, a period before the metric's first month, no saved FX rate for the claim's currency ("FX rate needed"), a direction with no figure, a revenue claim with no period ("no period stated"), months of the period missing from the data (named), or a deck reading "AI suggestion, not verified" (until the analyst edits the claim, even unchanged): a claim that would otherwise be Verified or Contradicted; any other reason stands. |
+| Unverified | Not testable yet; the reason names what would test it: a Missing file (the engine's `unlocked_by`), a forecast period, a period before the metric's first month, no saved FX rate for the claim's currency ("FX rate needed"), a direction with no figure, a revenue claim with no period ("no period stated"), months of the period missing from the data (named), or a deck reading "AI suggestion, not verified" (until the analyst edits the claim, even unchanged): a claim that would otherwise be Verified or Contradicted; any other reason stands. A Use of funds claim (deck-parser.md, amended 2026-10-10) is always Unverified, with no metric, gap, value at stake or gate. |
 | Unsupported | The app gives no figure: no metric proposed or picked, the metric not computed for that period or by segment, the segment not in the data, or the engine's "not computable" reason. |
 
 ## 5. Gate
