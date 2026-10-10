@@ -879,7 +879,9 @@ class CandidateUpdate(BaseModel):
     with the analyst's corrections: status "edited", the parser's values kept under "parsed".
     The snippet, the borrowed label and the source references are evidence and cannot be edited."""
     status: Optional[Literal["pending", "approved", "rejected"]] = None
-    claim_type: Optional[Literal[deck_claims.CLAIM_TYPES]] = None
+    # Use of funds is accepted so that correcting a figure of that type keeps the type (deck-parser.md section 2): the
+    # claim stays out of the top 5, the banner and the verdict. The analyst's list of types does not offer it.
+    claim_type: Optional[Literal[deck_claims.CLAIM_TYPES + (deck_claims.USE_OF_FUNDS,)]] = None
     value: Optional[float] = None
     value_high: Optional[float] = None          # the high end of a range
     unit: Optional[str] = Field(default=None, min_length=1, max_length=40)   # "%", "months", "paying users"
@@ -1477,7 +1479,7 @@ async def get_verdict(audit_id: str):
         "gates_still_needed": verdict_mod.gates_still_needed(rows, ver["top5"]["in_force"]),
         "deal_terms": verdict_mod.W13_DEAL_TERMS, "top5_statement": verdict_mod.W24_STATEMENT,
         "candidates": [{"claim_id": r["claim_id"], "rank": r["rank"], "claim": verdict_mod.claim_name(r),
-                        "evidence_label": r["evidence_label"], "reason": r["reason"]} for r in rows],
+                        "evidence_label": r["evidence_label"], "reason": r["reason"]} for r in verdict_mod.sortable(rows)],
         "ic_inputs": {k: ic.get(k) for k in ("first_quarterly_review", "ratings", "thesis")},
         "ratings": list(verdict_mod.RATINGS), "ratings_for": {k: ic_memo.RATING_LABELS[k] for k in verdict_mod.RATED_ROWS},
         "thesis_labels": ic_memo.THESIS_LABELS, "thesis_max": verdict_mod.THESIS_MAX,

@@ -1258,12 +1258,18 @@ def _flag_inconsistencies(candidates: List[Dict]) -> None:
 # ---------------------------------------------------------------------------
 # Use of funds (deck-parser.md section 2)
 # ---------------------------------------------------------------------------
-# The phrases that make a slide a raise (George, 2026-10-10): whole words, any case, in a slide title, a heading or a chart title.
+# The phrases that make a slide a raise (George, 2026-10-10): whole words, any case. A phrase of several words counts in a
+# slide title, a heading, a chart title or a table's header row; a single word ("raise") only in a slide title or a chart
+# title, being too common in body text and headings ("Raise brand awareness in Europe"). Body text and footnotes never carry a cue.
 FUNDS_CUES = ("use of funds", "use of proceeds", "the ask", "our ask", "funding ask", "investment ask", "funding request",
-              "capital raise", "raise", "funding round", "financing", "proposed financing", "round details", "round size",
+              "capital raise", "funding round", "proposed financing", "round details", "round size",
               "raise size", "funding requirements", "capital requirements", "capital sought", "funding sought",
-              "sources & uses", "sources and uses", "investor proposition", "investment opportunity")
+              "sources & uses", "sources and uses", "investor proposition")
+FUNDS_CUE_WORDS = ("raise",)
 _FUNDS_CUE = re.compile(r"(?i)\b(?:" + "|".join(re.escape(c).replace(r"\ ", r"\s+") for c in FUNDS_CUES) + r")\b")
+_FUNDS_CUE_WORD = re.compile(r"(?i)\b(?:" + "|".join(FUNDS_CUE_WORDS) + r")\b")
+_BULLET = re.compile(r"\s*[-–—*•·▪●◦‣■□►]")
+CUE_HEADING_EXTRA = 3           # a heading carries a cue phrase and at most this many other words ("Use of Funds - Series A")
 # Words that make a slide's percentages a split of something else (revenue by region, by year, ...). Acronyms in capitals only.
 _NOT_FUNDS = re.compile(r"\b(?:ARR|MRR)\b|(?i:\b(?:revenues?|sales|turnover|bookings?|customers?|segments?|geograph(?:y|ies|ic|ical)"
                         r"|countr(?:y|ies)|regions?|product lines?|by years?)\b)")
@@ -1279,15 +1285,27 @@ def _percentages(text: str) -> List[float]:
     return [n["value"] for n in find_numbers(text, find_dates(text)) if n["unit"] == "%" and n["value"] is not None]
 
 
-def _heading_unit(u: Dict) -> bool:
-    """A slide title, a table's header row, or a line that is a heading (a word, no figure, at most HEADING_MAX characters)."""
-    return bool(u["title"] or u.get("header_row") or _is_heading(u["text"]))
+def _cue_unit(u: Dict, above) -> bool:
+    """Whether the line carries a cue phrase where a cue counts. A slide title: any cue. A table's header row: a phrase of
+    several words, and the single word only when the row is one cell (a chart's title). A heading: a phrase of several
+    words in a short line with no figure that sits above the first percentage, does not start with a bullet, dash or
+    asterisk, and holds at most CUE_HEADING_EXTRA other words. Anywhere else (body text, a footnote, a bullet below the
+    figures) nothing counts."""
+    text = u["text"]
+    if u["title"]:
+        return bool(_FUNDS_CUE.search(text) or _FUNDS_CUE_WORD.search(text))
+    if u.get("header_row"):
+        return bool(_FUNDS_CUE.search(text) or len(u["spans"]) == 1 and _FUNDS_CUE_WORD.search(text))
+    found = _FUNDS_CUE.search(text)
+    if not found or not _is_heading(text) or _BULLET.match(text) or not above(u):
+        return False
+    return len(_WORD.findall(_FUNDS_CUE.sub(" ", text))) <= CUE_HEADING_EXTRA
 
 
 def _funds_units(units: List[Dict]) -> Tuple[Dict[int, str], set]:
     """(funds, mixed): `funds` maps id() of the lines whose percentages are a use of funds to their form, "text" (a line that
     names its category, "Marketing (25%)") or "chart" (a figure alone, a pie's data label); `mixed` holds id() of the
-    percentage lines of a slide that is both. A cue phrase (FUNDS_CUES) in the slide's title, a heading or a table's header row
+    percentage lines of a slide that is both. A cue phrase (FUNDS_CUES, see _cue_unit for where it counts)
     is required; without one nothing is a use of funds, whatever the percentages sum to or the slide shows (a raise amount
     and a sum of 95-105 only confirm a cue, and change nothing). A slide whose title, headings (a heading line above the
     first percentage; a legend beside or below it is a label) or table headers hold a word of _NOT_FUNDS, or whose text holds
@@ -1298,8 +1316,6 @@ def _funds_units(units: List[Dict]) -> Tuple[Dict[int, str], set]:
         pages.setdefault(u["page"], []).append(u)
     funds, mixed = {}, set()
     for members in pages.values():
-        if not any(_FUNDS_CUE.search(m["text"]) for m in members if _heading_unit(m)):
-            continue
         shares = [u for u in members if not u.get("header_row") and not _RATE_WORDS.search(u["text"]) and _percentages(u["text"])]
         if not shares:
             continue
@@ -1311,6 +1327,8 @@ def _funds_units(units: List[Dict]) -> Tuple[Dict[int, str], set]:
                 return m["bbox"][1] < min(tops)
             return members.index(m) < first
 
+        if not any(_cue_unit(m, above) for m in members):
+            continue
         heads = " ".join(m["text"] for m in members if m not in shares and
                          (m["title"] or m.get("header_row") or (_is_heading(m["text"]) and above(m))))
         text = " ".join(m["text"] for m in members)

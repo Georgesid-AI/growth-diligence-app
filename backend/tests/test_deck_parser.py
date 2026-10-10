@@ -2117,23 +2117,26 @@ def test_a_funds_cue_in_the_title_makes_the_percentages_use_of_funds_whatever_th
 
 
 CUE_PHRASES = ["use of funds", "use of proceeds", "the ask", "our ask", "funding ask", "investment ask", "funding request",
-               "capital raise", "raise", "funding round", "financing", "proposed financing", "round details", "round size",
+               "capital raise", "funding round", "proposed financing", "round details", "round size",
                "raise size", "funding requirements", "capital requirements", "capital sought", "funding sought",
-               "sources & uses", "sources and uses", "investor proposition", "investment opportunity"]
+               "sources & uses", "sources and uses", "investor proposition"]
+CUE_WORDS = ["raise"]           # a single word counts in a slide title or a chart title only
 
 
 def test_the_cue_list_is_the_one_george_gave():
-    assert list(claims.FUNDS_CUES) == CUE_PHRASES
+    """"investment opportunity" and "financing" were dropped on 2026-10-10: they name slides that are often not raises."""
+    assert list(claims.FUNDS_CUES) == CUE_PHRASES and list(claims.FUNDS_CUE_WORDS) == CUE_WORDS
+    assert "financing" not in CUE_PHRASES and "investment opportunity" not in CUE_PHRASES
 
 
-@pytest.mark.parametrize("phrase", CUE_PHRASES)
+@pytest.mark.parametrize("phrase", CUE_PHRASES)         # a single word is not a heading cue (see below)
 @pytest.mark.parametrize("case", [str, str.upper, str.title])
 def test_each_cue_phrase_in_a_heading_triggers_use_of_funds_in_any_case(phrase, case):
     found = _funds_candidates([[case(phrase), "Team hiring (60%)", "Product launch (40%)"]])
     assert _types(found) == {"use_of_funds"}, phrase
 
 
-@pytest.mark.parametrize("phrase", CUE_PHRASES)
+@pytest.mark.parametrize("phrase", CUE_PHRASES + CUE_WORDS)
 def test_each_cue_phrase_in_a_slide_title_triggers_use_of_funds(phrase):
     deck = parser.parse_deck(_pptx([[phrase, "Team hiring (60%)", "Product launch (40%)"]]), "deck.pptx")
     for b in deck["blocks"]:
@@ -2146,6 +2149,38 @@ def test_each_cue_phrase_in_a_slide_title_triggers_use_of_funds(phrase):
 def test_a_cue_word_in_body_text_or_a_longer_word_does_not_trigger_use_of_funds(body):
     found = _funds_candidates([["Team plan", body, "Team hiring (60%)", "Product launch (40%)"]])
     assert _types(found) and "use_of_funds" not in _types(found), body
+
+
+def _types_of(lines, title=None):
+    """Built slide, lines in order; `title` marks the box of that text as the slide title (the builder has no placeholder)."""
+    deck = parser.parse_deck(_pptx([lines]), "deck.pptx")
+    for b in deck["blocks"]:
+        b["title"] = b["text"] == title
+    return [(c["value"], c["claim_type"]) for c in claims.detect_candidates(deck["blocks"], "deck.pptx") if c["unit"] == "%"]
+
+
+# The review of PR 86 (2026-10-10): a short line is not a cue position. Each slide is a testable Sales / Customers claim.
+@pytest.mark.parametrize("lines", [
+    ["Pricing", "We plan to raise prices next year", "Win rate (60%)", "Conversion (40%)"],
+    ["Go to market", "Win rate 32%", "Conversion 4%", "Raise brand awareness in Europe"],
+    ["Go to market", "Win rate 32%", "Conversion 4%", "* post-raise runway"],
+    ["Go to market", "Raise", "Win rate 32%", "Conversion 4%"],                       # the word alone, as a heading
+    ["Customer feedback", "The ask from users is simple", "Win rate 32%", "Customers (40%)"],
+    ["Investment opportunity", "Recurring revenue 85% of total", "Win rate 32%"],
+    ["Embedded financing for SMEs", "Conversion 12%", "Win rate 32%"],
+    ["Go to market", "Win rate 32%", "- The ask is simple", "Conversion 4%"],        # a bullet is body text
+], ids=["raise-in-sentence-above", "raise-bullet-below", "post-raise-footnote", "raise-heading", "the-ask-sentence",
+        "investment-opportunity", "financing", "dash-bullet"])
+def test_a_cue_in_body_text_a_footnote_or_a_dropped_phrase_does_not_make_use_of_funds(lines):
+    assert {t for _, t in _types_of(lines)} <= {"sales", "customers", "revenue"}, lines     # typed as before: not Use of funds, not mixed
+
+
+def test_a_slide_titled_raise_makes_its_percentages_use_of_funds():
+    assert {t for _, t in _types_of(["Raise", "Team hiring (60%)", "Product launch (40%)"], title="Raise")} == {"use_of_funds"}
+
+
+def test_a_multi_word_cue_in_a_short_heading_above_the_percentages_still_triggers():
+    assert {t for _, t in _types_of(["Plan", "Use of funds - Series A", "Team hiring (60%)", "Product launch (40%)"])} == {"use_of_funds"}
 
 
 @pytest.mark.parametrize("heading", ["Revenue by region", "Sales split", "Turnover", "ARR mix", "MRR", "Bookings", "Customers",

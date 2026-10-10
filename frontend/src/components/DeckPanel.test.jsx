@@ -223,6 +223,18 @@ test("a percentage on a mixed slide is Unknown and says so: mixed slide – chec
   expect(q("candidate-mixed-slide").textContent).toBe("mixed slide – check");
 });
 
+test("the edit form of a Use of funds claim shows Use of funds, and correcting the value keeps the type", async () => {
+  await reload([claim("c", "d1", 22, { group: 7, claim_type: "use_of_funds", value: 40, unit: "%", inconsistent_dates: [] })]);
+  api.updateCandidate.mockResolvedValue({ id: "c", status: "edited" });
+  await open(7);
+  await act(async () => { q("candidate-row-c").querySelector("[data-testid='candidate-edit']").click(); });
+  const select = q("edit-claim-type");
+  expect(select.value).toBe("use_of_funds");
+  expect(select.selectedOptions[0].textContent).toBe("Use of funds");
+  await act(async () => { q("edit-save").click(); });
+  expect(api.updateCandidate.mock.calls.at(-1)[2].claim_type).toBe("use_of_funds");
+});
+
 describe("a turnover claim asks Revenue or Volume in its own row (05-zero2hero.pdf, claim-matching.md section 11 point 8)", () => {
   // As GET /decks sends p17's three bars, all to review: the revenue file starts in 2023, p19's pending table gives
   // Revenue 130,550 (FY2022) and 150,000 (FY2023).

@@ -458,16 +458,25 @@ Fixed on the 10 test decks (2026-10-05):
   Other, never Sales or Revenue. In the claim register it is Unverified (reason: "use of funds: an allocation share of the
   raise, no engine metric to test it against"), has no gap and no value at stake, needs no gate, ranks after every other
   claim, and is left out of the top 5 (the proposal, the banner's rows 1-5, the confirmed set and the verdict).
-- Trigger, per slide or page (changed 2026-10-10, George; the cue list replaced the same day). A cue phrase is required, as
-  whole words in any case, in the slide's title, in a heading (a short line with no figure), in a chart's title or in a
-  table's header row, never in body text: use of funds, use of proceeds, the ask, our ask, funding ask, investment ask, funding
-  request, capital raise, raise, funding round, financing, proposed financing, round details, round size, raise size, funding
-  requirements, capital requirements, capital sought, funding sought, sources & uses, sources and uses, investor proposition,
-  investment opportunity ("raised prices", "refinancing" and "We raised Series A in 2023" are no cue). Without a cue nothing is a
+- Trigger, per slide or page (changed 2026-10-10, George; the cue list replaced the same day, and again after the review of PR 86). A
+  cue phrase is required, as whole words in any case. Phrases of several words: use of funds, use of proceeds, the ask, our ask,
+  funding ask, investment ask, funding request, capital raise, funding round, proposed financing, round details, round size, raise
+  size, funding requirements, capital requirements, capital sought, funding sought, sources & uses, sources and uses, investor
+  proposition. They count in the slide's title, in a heading, in a chart's title or in a table's header row. The single word
+  "raise" counts only in the slide's title or a chart's title, never in a heading. "Investment opportunity" and "financing" are
+  not cues (they name slides that are often not raises). A heading is a short line (at most 59 characters) with no figure that sits
+  ABOVE the first percentage of the slide, does not start with a bullet, dash or asterisk, and holds the cue phrase and at most 3
+  other words ("Use of funds - Series A"; "The ask from users is simple" is not one). Body text and footnotes never carry a cue:
+  "We plan to raise prices next year", "Raise brand awareness in Europe" below the figures, "* post-raise runway", "raised prices",
+  "refinancing" and "We raised Series A in 2023" are no cue. Without a cue nothing is a
   use of funds, whatever the percentages sum to and whatever amount the slide shows; a raise amount (a figure with a currency) and
   percentages summing to 95-105 may only confirm a cue and change nothing. With a cue, every percentage on the slide is a use of
   funds and is listed as one, also when no keyword or heading names it (p22's nine percentages stay candidates after "acquisition"
   left the Sales list). A percentage on a line with a growth, retention or margin word ("retention 90%") is a rate, never a share.
+- On screen (2026-10-10, George). The edit form's type select shows "Use of funds" for these claims and the server accepts the
+  type on save, so correcting a value (text 40% against chart 42%) keeps the type and the claim stays out of the top 5, the banner,
+  value at stake and the verdict. "Use of funds" is not offered as a type to choose for another claim. The top-5 replace dropdown
+  (`candidates` of GET /verdict) lists no Use of funds row.
 - Block rule. If the slide's title, a heading or a table's header row holds revenue, sales, turnover, ARR, MRR, bookings,
   customers, segment, geography, country, region, product line or "by year", or the slide holds a run of 3 or more different year
   labels (2022, 2023E, FY24; the labels of the percentages count here), the percentages are a split of something else and are
@@ -488,5 +497,7 @@ Fixed on the 10 test decks (2026-10-05):
   tag. If two different categories would fit, or the counts differ by more, nothing is paired and nothing is tagged.
   Equal sets are not an inconsistency. The label stays Unverified: never Contradicted. Native pptx charts are structures
   (§7), not candidates, so this compares text and chart labels the parser reads as text (pdf, docx).
-- Tests: `test_deck_parser.py` (p22 on the test deck, built slides for the cue, the block words, revenue by year and by geography
-  and "acquisition", and the text 40/20/25/10/5 against the chart 42/21/26/11), `test_claim_matching.py` and `test_verdict.py` (register and top 5), `DeckPanel.test.jsx` (tag text).
+- Tests: `test_deck_parser.py` (p22 on the test deck, built slides for the cue and where it counts (a sentence above the figures,
+  a bullet or footnote below them, a slide titled "Raise"), the block words, revenue by year and by geography
+  and "acquisition", and the text 40/20/25/10/5 against the chart 42/21/26/11), `test_claim_matching.py` and `test_verdict.py` (register and top 5),
+  `test_gateway_data_boundary.py` (the reason, `mixed_slide` and the note reach no gateway payload or log), `DeckPanel.test.jsx` (tag text, the edit form).

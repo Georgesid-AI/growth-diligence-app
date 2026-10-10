@@ -399,6 +399,7 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight }) {
           <td className="py-2 pr-3">
             <select value={typeValue(draft)} onChange={setType} className={selectClass} data-testid="edit-claim-type">
               {needsType(draft) && <option value={draft.claim_type} disabled>{typeLabel(draft.claim_type)}{draft.claim_type === "unknown" ? "" : ": choose a type"}</option>}
+              {draft.claim_type === "use_of_funds" && <option value="use_of_funds">{typeLabel("use_of_funds")}</option>}
               {turnover.views.length > 0 && draft.claim_type === "revenue" && draft.answer === "ask" && <option value={ASK_OPTION} disabled>Turnover – choose</option>}
               {CLAIM_TYPES.flatMap((t) => (t === "revenue" && turnover.views.length ? [t, VOLUME_OPTION] : [t])).map((t) => (
                 <option key={t} value={t}>{t === VOLUME_OPTION ? VOLUME_LABEL : typeLabel(t)}</option>))}
