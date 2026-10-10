@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import ClaimRegister from "./ClaimRegister";
 import { REGISTER_COLUMNS } from "@/lib/claimRegister";
+import { CALCULATE_CLASS } from "@/lib/chatUpload";
 import * as api from "@/lib/api";
 
 jest.mock("@/lib/api", () => ({
@@ -254,9 +255,26 @@ test("the reason, Revenue and Volume sit on one line in that order; the answered
     ["register-turnover-reason", "register-turnover-revenue", "register-turnover-volume"]);
   expect(line.className).toContain("flex-nowrap");
   expect(line.className).not.toContain("flex-wrap");
-  expect(volume.className).toContain("bg-sky-600");
-  expect(revenue.className).not.toContain("bg-sky-600");
+  expect(volume.className).toContain(CALCULATE_CLASS);                 // active: the Map / Compute style
+  expect(revenue.className).toContain(CALCULATE_CLASS);                // inactive: the same style, paler
+  expect(volume.className.split(" ")).not.toContain("opacity-50");
+  expect(revenue.className.split(" ")).toContain("opacity-50");
   expect(revenue.className.match(/\bh-\d+\b/)[0]).toBe(volume.className.match(/\bh-\d+\b/)[0]);
+});
+
+test("the dropdown decides which button is active: gross revenue, processed volume, any other reason", async () => {
+  const { host } = await mount([{ ...TURNOVER, turnover_reason: "deck_says_gross_revenue" }]);
+  const b = (v) => host.querySelector(`[data-testid="register-turnover-${v}"]`);
+  const select = host.querySelector('[data-testid="register-turnover-reason"]');
+  const pale = (v) => b(v).className.split(" ").includes("opacity-50");
+  expect([pale("revenue"), pale("volume")]).toEqual([false, true]);
+  const choose = async (value) => { await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(select, value);
+    select.dispatchEvent(new Event("change", { bubbles: true })); }); };
+  await choose("deck_says_processed_volume");
+  expect([pale("revenue"), pale("volume")]).toEqual([true, false]);
+  await choose("file_confirms");
+  expect([pale("revenue"), pale("volume")]).toEqual([true, true]);
 });
 
 test("a row with no rate names the pair and links to the FX settings", async () => {
