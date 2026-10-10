@@ -72,3 +72,4 @@
     collection, saved mappings and stored files included.
 23. Any change to engine output fields changes backend/schemas/metrics.py and the contract test
     (backend/tests/test_interface_contracts.py) in the same PR. Spec: docs/specs/interface-contracts.md.
+24. A PR is not ready for review until the checks (.github/workflows/tests.yml) are green.
