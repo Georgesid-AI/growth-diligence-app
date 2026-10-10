@@ -6,7 +6,7 @@ import * as api from "@/lib/api";
 import { toast } from "sonner";
 import { SETUP_HELP } from "@/lib/auditForm";
 import {
-  S1_TEXT_REPLY, S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S21_NOTE_REFUSED, REASONS,
+  S1_TEXT_REPLY, S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S_UPLOAD_RETRY, S21_NOTE_REFUSED, REASONS,
   S5_head, S9_confidence, mappedBy, sortColumns, S25_PARAGRAPHS,
 } from "@/lib/chatUpload";
 
@@ -325,6 +325,26 @@ describe("a file", () => {
     await act(async () => { release(); });
     await flush();
     expect(order).toEqual(["first.csv", "second.csv"]);
+  });
+
+  test("a read that gets no answer puts the file back as attached; Map sends it again", async () => {
+    const timeout = Object.assign(new Error("timeout of 120000ms exceeded"), { code: "ECONNABORTED" });   // what axios raises; no response
+    api.uploadChatFile.mockImplementation(async (id, f) => VIEW({ dtype: f.name.split(".")[0] === "rev" ? "revenue" : f.name.split(".")[0], file: f.name }));
+    api.uploadChatFile.mockImplementationOnce(async (id, f) => VIEW({ dtype: "crm", file: f.name }));
+    api.uploadChatFile.mockImplementationOnce(() => Promise.reject(timeout));          // the second file hangs, then times out
+    await mount();
+    await pickAndMap([file("crm.csv"), file("pnl.csv"), file("rev.csv")]);
+    expect(api.uploadChatFile.mock.calls.map((c) => c[1].name)).toEqual(["crm.csv", "pnl.csv", "rev.csv"]);    // the loop went on
+    expect(q("chat-text-system").textContent).toBe(S_UPLOAD_RETRY);
+    expect(q("unstage-pnl.csv")).not.toBeNull();                                      // back with its "x"
+    expect(all("attachment-note").length).toBe(1);
+    expect(document.body.querySelectorAll('[data-testid="chat-analyst-bubble"] .animate-spin').length).toBe(0);
+    expect(q("chat-map").disabled).toBe(false);
+    await act(async () => { q("chat-map").click(); });
+    await flush();
+    expect(api.uploadChatFile.mock.calls.map((c) => c[1].name)).toEqual(["crm.csv", "pnl.csv", "rev.csv", "pnl.csv"]);
+    expect(all("attachment-note").length).toBe(0);
+    expect(q("mapping-table-pnl")).not.toBeNull();
   });
 
   test("anything but xlsx or csv is refused in the browser with S7 and counted by extension", async () => {

@@ -30,6 +30,8 @@ export const uploadDataset = (id, dtype, file) => {
 
 // Chat upload (docs/specs/chat-upload.md): one file at a time, its type detected unless dtype is given; a loaded
 // type with other bytes answers 409 unless replace is true.
+// A read that gets no answer for UPLOAD_TIMEOUT_MS is given up, so the file can be attached again (a hung request left it stuck).
+export const UPLOAD_TIMEOUT_MS = 120000;
 export const uploadChatFile = (id, file, { dtype, replace } = {}) => {
   const fd = new FormData();
   fd.append("file", file);
@@ -37,7 +39,7 @@ export const uploadChatFile = (id, file, { dtype, replace } = {}) => {
   if (dtype) params.dtype = dtype;
   if (replace) params.replace = true;
   return api
-    .post(`/audits/${id}/datasets/upload`, fd, { params, headers: { "Content-Type": "multipart/form-data" } })
+    .post(`/audits/${id}/datasets/upload`, fd, { params, timeout: UPLOAD_TIMEOUT_MS, headers: { "Content-Type": "multipart/form-data" } })
     .then((r) => r.data);
 };
 export const getDatasets = (id) => api.get(`/audits/${id}/datasets`).then((r) => r.data.datasets);
