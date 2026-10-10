@@ -2120,7 +2120,7 @@ CUE_PHRASES = ["use of funds", "use of proceeds", "the ask", "our ask", "funding
                "capital raise", "funding round", "proposed financing", "round details", "round size",
                "raise size", "funding requirements", "capital requirements", "capital sought", "funding sought",
                "sources & uses", "sources and uses", "investor proposition"]
-CUE_WORDS = ["raise"]           # a single word counts in a slide title or a chart title only
+CUE_WORDS = ["raise"]           # a single word counts in a slide title only
 
 
 def test_the_cue_list_is_the_one_george_gave():
@@ -2225,6 +2225,23 @@ def test_a_legend_label_beside_or_below_the_percentages_is_a_label_and_a_heading
     assert _types(legend) == {"use_of_funds"}
     heading = _funds_candidates([["Use of funds", "Sales & Marketing", "£250K", "Team hiring (60%)", "Product launch (40%)"]])
     assert _types(heading) == {"unknown"}
+
+
+def test_a_sales_table_whose_merged_title_row_says_raise_keeps_type_sales():
+    """A merged first row is a heading, not a chart title: the single word "raise" is no cue there."""
+    prs = pptx.Presentation()
+    from pptx.util import Inches
+    rows = [["Raise prices next year", ""], ["Win rate", "60%"], ["Sales conversion", "40%"]]
+    table = prs.slides.add_slide(prs.slide_layouts[6]).shapes.add_table(3, 2, Inches(1), Inches(3), Inches(6), Inches(2)).table
+    for r, row in enumerate(rows):
+        for c, text in enumerate(row):
+            table.cell(r, c).text = text
+    table.cell(0, 0).merge(table.cell(0, 1))
+    buf = io.BytesIO()
+    prs.save(buf)
+    found = [c for c in claims.detect_candidates(parser.parse_deck(buf.getvalue(), "deck.pptx")["blocks"], "deck.pptx")
+             if c["unit"] == "%"]
+    assert [c["claim_type"] for c in found] == ["sales", "sales"]
 
 
 def test_a_page_without_a_raise_amount_or_cue_keeps_its_types():

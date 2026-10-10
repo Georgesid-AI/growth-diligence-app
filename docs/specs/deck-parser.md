@@ -462,8 +462,8 @@ Fixed on the 10 test decks (2026-10-05):
   cue phrase is required, as whole words in any case. Phrases of several words: use of funds, use of proceeds, the ask, our ask,
   funding ask, investment ask, funding request, capital raise, funding round, proposed financing, round details, round size, raise
   size, funding requirements, capital requirements, capital sought, funding sought, sources & uses, sources and uses, investor
-  proposition. They count in the slide's title, in a heading, in a chart's title or in a table's header row. The single word
-  "raise" counts only in the slide's title or a chart's title, never in a heading. "Investment opportunity" and "financing" are
+  proposition. They count in the slide's title, in a heading or in a table's header row. The single word
+  "raise" counts only in the slide's title, never in a heading or a table's header row (a table's merged title row is a heading). "Investment opportunity" and "financing" are
   not cues (they name slides that are often not raises). A heading is a short line (at most 59 characters) with no figure that sits
   ABOVE the first percentage of the slide, does not start with a bullet, dash or asterisk, and holds the cue phrase and at most 3
   other words ("Use of funds - Series A"; "The ask from users is simple" is not one). Body text and footnotes never carry a cue:

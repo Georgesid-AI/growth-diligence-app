@@ -1259,8 +1259,8 @@ def _flag_inconsistencies(candidates: List[Dict]) -> None:
 # Use of funds (deck-parser.md section 2)
 # ---------------------------------------------------------------------------
 # The phrases that make a slide a raise (George, 2026-10-10): whole words, any case. A phrase of several words counts in a
-# slide title, a heading, a chart title or a table's header row; a single word ("raise") only in a slide title or a chart
-# title, being too common in body text and headings ("Raise brand awareness in Europe"). Body text and footnotes never carry a cue.
+# slide title, a heading, a chart title or a table's header row; a single word ("raise") only in a slide title,
+# being too common in body text and headings ("Raise brand awareness in Europe"). Body text and footnotes never carry a cue.
 FUNDS_CUES = ("use of funds", "use of proceeds", "the ask", "our ask", "funding ask", "investment ask", "funding request",
               "capital raise", "funding round", "proposed financing", "round details", "round size",
               "raise size", "funding requirements", "capital requirements", "capital sought", "funding sought",
@@ -1287,7 +1287,7 @@ def _percentages(text: str) -> List[float]:
 
 def _cue_unit(u: Dict, above) -> bool:
     """Whether the line carries a cue phrase where a cue counts. A slide title: any cue. A table's header row: a phrase of
-    several words, and the single word only when the row is one cell (a chart's title). A heading: a phrase of several
+    several words, never the single word (a merged title row is a heading). A heading: a phrase of several
     words in a short line with no figure that sits above the first percentage, does not start with a bullet, dash or
     asterisk, and holds at most CUE_HEADING_EXTRA other words. Anywhere else (body text, a footnote, a bullet below the
     figures) nothing counts."""
@@ -1295,7 +1295,7 @@ def _cue_unit(u: Dict, above) -> bool:
     if u["title"]:
         return bool(_FUNDS_CUE.search(text) or _FUNDS_CUE_WORD.search(text))
     if u.get("header_row"):
-        return bool(_FUNDS_CUE.search(text) or len(u["spans"]) == 1 and _FUNDS_CUE_WORD.search(text))
+        return bool(_FUNDS_CUE.search(text))
     found = _FUNDS_CUE.search(text)
     if not found or not _is_heading(text) or _BULLET.match(text) or not above(u):
         return False
