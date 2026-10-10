@@ -11,12 +11,15 @@ import {
   REGISTER_COLUMNS, REGISTER_HEADING, TURNOVER_QUESTION, answerReady, reasonsFor, claimCellText, rateHover, takeRateText, evidenceLines, gapText, gateContext, gateEdit, metricOptions, needsMetricName,
   observedText, overlapsText, readingText, registerRows, segmentOptions, valueAtStakeText,
 } from "@/lib/claimRegister";
+import { CALCULATE_CLASS } from "@/lib/chatUpload";
 import { describeRequestError } from "@/lib/requestError";
 import { seeGlossary } from "@/lib/glossary";
 import FxText from "@/components/FxText";
 import { NO_DATE } from "@/lib/deckClaims";
 
-const selectClass = "h-8 rounded-md border border-[#E5E7EB] bg-white px-2 text-xs max-w-[11rem]";
+// The button the dropdown points at is drawn like Map and Compute; the other is the same style, paler. Any other reason: both pale.
+const ACTIVE_REASON = { deck_says_gross_revenue: "revenue", deck_says_processed_volume: "volume" };
+const selectClass ="h-8 rounded-md border border-[#E5E7EB] bg-white px-2 text-xs max-w-[11rem]";
 const LABEL_STYLE = {
   Verified: "text-emerald-800 border-emerald-500/50 bg-emerald-50",
   Contradicted: "text-rose-800 border-rose-500/50 bg-rose-50",
@@ -116,8 +119,8 @@ export function TurnoverCell({ row, onAnswer, heading }) {
       {!heading && <div className="text-[10px] text-slate-500">{TURNOVER_QUESTION}</div>}
       <TurnoverReason row={row} reason={reason} setReason={setReason}>
         {[["revenue", "Revenue"], ["volume", "Volume"]].map(([value, label]) => (
-          <Button key={value} size="sm" variant={row.turnover_state === value ? "default" : suggested === value ? "secondary" : "outline"}
-            className={`h-7 ${row.turnover_state === value ? "bg-sky-600 text-white hover:bg-sky-500" : ""} ${suggested === value ? "ring-2 ring-sky-400" : ""}`}
+          <Button key={value} size="sm"
+            className={`${CALCULATE_CLASS} ${ACTIVE_REASON[reason] === value ? "" : "opacity-50"} ${suggested === value ? "ring-2 ring-sky-400" : ""}`}
             aria-pressed={suggested === value ? true : undefined}
             data-testid={`register-turnover-${value}`} disabled={!answerReady(value, reason, row)}
             onClick={() => onAnswer(row, { as: value, reason }).catch(() => {})}>{label}</Button>
