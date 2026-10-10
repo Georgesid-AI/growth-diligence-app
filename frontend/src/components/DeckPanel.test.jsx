@@ -215,6 +215,14 @@ test("a use-of-funds text figure and its chart figure show text and chart with t
   expect(document.body.textContent).not.toMatch(/Contradicted/);
 });
 
+test("a percentage on a mixed slide is Unknown and says so: mixed slide – check", async () => {
+  await reload([claim("c", "d1", 22, { group: 6, claim_type: "unknown", value: 60, unit: "%", mixed_slide: true }),
+    claim("d", "d1", 22, { group: 6, claim_type: "unknown", value: 40, unit: "%" })]);
+  await open(6);
+  expect(document.querySelectorAll("[data-testid=candidate-mixed-slide]").length).toBe(1);
+  expect(q("candidate-mixed-slide").textContent).toBe("mixed slide – check");
+});
+
 describe("a turnover claim asks Revenue or Volume in its own row (05-zero2hero.pdf, claim-matching.md section 11 point 8)", () => {
   // As GET /decks sends p17's three bars, all to review: the revenue file starts in 2023, p19's pending table gives
   // Revenue 130,550 (FY2022) and 150,000 (FY2023).

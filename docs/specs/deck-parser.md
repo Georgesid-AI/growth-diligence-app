@@ -47,7 +47,7 @@ hired, launches; of two overlapping keywords the longer one counts):
   default. An amount or a count beside a growth word takes the noun's own type ("ARR grew to
   $3.6M" is Revenue).
 - Retention: NRR, churn, retention
-- Sales: sales cycle, win rate, pipeline, ACV, payback, acquisition, conversion, leads
+- Sales: sales cycle, win rate, pipeline, ACV, payback, conversion, leads, and the verbs acquire, acquired, acquiring (the noun "acquisition" is no keyword since 2026-10-10: category names such as "Talent Acquisition" made Sales claims; "acquisition cost" and "cost of acquisition" stay CAC)
 - Customers: customers, clients, paying users, accounts, companies, agencies, subscribers,
   institutions
 - Users: users
@@ -458,16 +458,21 @@ Fixed on the 10 test decks (2026-10-05):
   Other, never Sales or Revenue. In the claim register it is Unverified (reason: "use of funds: an allocation share of the
   raise, no engine metric to test it against"), has no gap and no value at stake, needs no gate, ranks after every other
   claim, and is left out of the top 5 (the proposal, the banner's rows 1-5, the confirmed set and the verdict).
-- Trigger, per slide or page. A percentage is a use of funds when its slide or page (a) has a title, or a heading (a short
-  line with no figure), that holds "use of funds", "use of proceeds", "the ask", "investor proposition" or "raise": then every
-  percentage on it is, whatever they sum to; or (b) shows a raise amount (any figure with a currency on the slide or page,
-  in the title too) and a set of percentages summing to 95-105: the lines that name a category ("Marketing (25%)"), the
-  figures alone (a pie's data labels), or both together; each set that sums to 95-105 is a use of funds and no other. A
-  percentage on a line with a growth, retention or margin word ("15% MoM growth") is a rate, never a share, and is left out
-  of both. The figure's "Label from" is cleared; its type comes from the slide ("heading"). No row appears or disappears:
-  only figures that were already candidates change type. On the 10 test decks only zero2hero p22 is affected: 9 candidates,
-  Sales or Unknown before (Unknown 39 → 37). The sum rule alone puts clevergig p6 ("15% MoM growth", "50%", "30% of our
-  leads", beside "€15K in MRR") at 95, hence the rate-word rule.
+- Trigger, per slide or page (changed 2026-10-10, George). A cue phrase is required: "use of funds", "use of proceeds", "the
+  ask", "investor proposition" or "raise" in the slide's title, in a heading (a short line with no figure) or in the chart's
+  title. Without one nothing is a use of funds, whatever the percentages sum to and whatever amount the slide shows; a raise
+  amount (a figure with a currency) and percentages summing to 95-105 may only confirm a cue and change nothing. With a cue,
+  every percentage on the slide is a use of funds and is listed as one, also when no keyword or heading names it (p22's nine
+  percentages stay candidates after "acquisition" left the Sales list; no row appears or disappears on the 10 test decks).
+  A percentage on a line with a growth, retention or margin word ("retention 90%") is a rate, never a share.
+- Block rule. If the same slide holds revenue, sales, turnover, ARR, MRR, bookings, customers, segment, geography, country,
+  region, product line, "by year", or a run of 3 or more different year labels (2022, 2023E, FY24), the percentages are a
+  split of something else and are never typed Use of funds. Without a cue they keep the type they had before. With a cue
+  as well (both appear) the slide is "mixed": its percentages are typed Unknown, carry `mixed_slide` and show the tag "mixed
+  slide – check" in the claims list. The analyst chooses the type. A block word in a category name ("Sales & Marketing 30%")
+  counts: that slide is mixed.
+- On the 10 test decks only zero2hero p22 is affected by this section: its 9 percentages (Sales or Unknown before) are Use of
+  funds, Unknown 39 → 37, 225 candidates before and after. Removing "acquisition" from Sales changes no other candidate.
 - Deck inconsistency, text against chart. On a use-of-funds slide, when the text lines and the chart's labels give different
   percentages, each figure of the pair carries the tag with `inconsistencies` = `{this, other, note}`: `this` and `other`
   hold the figure with its deck label "text" or "chart" ("text 40% at d.pdf · page 22 and chart 42% at d.pdf · page 22").
@@ -478,5 +483,5 @@ Fixed on the 10 test decks (2026-10-05):
   tag. If two different categories would fit, or the counts differ by more, nothing is paired and nothing is tagged.
   Equal sets are not an inconsistency. The label stays Unverified: never Contradicted. Native pptx charts are structures
   (§7), not candidates, so this compares text and chart labels the parser reads as text (pdf, docx).
-- Tests: `test_deck_parser.py` (p22 on the test deck, and built slides with the figures text 40/20/25/10/5, chart
-  42/21/26/11), `test_claim_matching.py` and `test_verdict.py` (register and top 5), `DeckPanel.test.jsx` (tag text).
+- Tests: `test_deck_parser.py` (p22 on the test deck, built slides for the cue, the block words, revenue by year and by geography
+  and "acquisition", and the text 40/20/25/10/5 against the chart 42/21/26/11), `test_claim_matching.py` and `test_verdict.py` (register and top 5), `DeckPanel.test.jsx` (tag text).

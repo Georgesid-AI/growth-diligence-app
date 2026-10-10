@@ -694,11 +694,11 @@ def test_a_type_comes_from_the_nearest_heading_never_from_one_further_away():
 
 
 def test_the_nearest_heading_names_the_type_or_the_figure_has_none():
-    far = _found(_slide([("Content Acquisition", 1, 1.0), ("Market", 1, 2.6), ("($52 B)", 1, 3.2)]))
+    far = _found(_slide([("Sales pipeline", 1, 1.0), ("Market", 1, 2.6), ("($52 B)", 1, 3.2)]))
     assert [(c["claim_type"], c["type_from"], c["label_from"]) for c in _by_value(far, 52e9)] == [("unknown", None, None)], \
         "'Market' is nearer than the keyword and names no type"
-    near = _found(_slide([("Content Acquisition", 1, 2.6), ("($52 B)", 1, 3.2)]))
-    assert [(c["claim_type"], c["label_from"]) for c in _by_value(near, 52e9)] == [("sales", "Content Acquisition")]
+    near = _found(_slide([("Sales pipeline", 1, 2.6), ("($52 B)", 1, 3.2)]))
+    assert [(c["claim_type"], c["label_from"]) for c in _by_value(near, 52e9)] == [("sales", "Sales pipeline")]
     # A line of figures is not a heading: it is passed over to the label beyond it.
     passed = _found(_slide([("Spend as % of revenue", 1, 1.5), ("$5M $6M", 1, 2.2), ("12%", 1, 2.9)]))
     assert [c["claim_type"] for c in _by_value(passed, 12)] == ["revenue"]
@@ -1183,7 +1183,7 @@ def test_the_new_claim_types_and_their_keywords(text, family, value, unit, curre
 
 
 @pytest.mark.parametrize("text, family", [
-    ("Payback in 12 months", "sales"), ("Customer acquisition up 30%", "sales"), ("Win rate 25%", "sales"),
+    ("Payback in 12 months", "sales"), ("Customer acquisition up 30%", "customers"), ("Win rate 25%", "sales"),
     ("Churn of 5%", "retention"), ("Profitability of 12% by 2026", "ebitda"), ("Break-even in 18 months", "ebitda"),
 ])
 def test_the_keywords_left_behind_keep_their_type(text, family):
@@ -2039,20 +2039,26 @@ def test_turnover_is_compared_with_turnover_and_revenue_with_revenue_only():
 P22_TEXT = [("Metaverse Development & Enhancement", 40), ("Content Acquisition & Development", 20),
             ("Marketing & Brand Awareness", 25), ("Strategic Partnerships & Collaborations", 10),
             ("Operational Expenses & Talent Acquisition", 5)]
-KEYWORDED = ["Customer acquisition", "Team hiring", "Product launch", "Cost control", "Win rate"]     # each line names a type
 P22_CHART = [42, 21, 26, 11]
+KEYWORDED = ["Team hiring", "Product launch", "Cost control", "Cash reserve", "Burn buffer"]      # each line names a type
+BLOCKED_WORDS = ["revenue", "sales", "turnover", "ARR", "MRR", "bookings", "customers", "segment", "geography", "country",
+                 "region", "product line", "by year"]
 
 
-def _funds_slide(text=P22_TEXT, chart=P22_CHART, head=("£250K",)):
-    """One slide: a raise figure, the use of funds as text lines ("Category (40%)") and the pie's data labels as boxes,
-    under a heading that gives them a type to borrow (the real p22's legend does)."""
-    return [*head, *[f"{name} ({pct}%)" for name, pct in text], *(["Customer acquisition"] if chart else []),
+def _funds_slide(text=P22_TEXT, chart=P22_CHART, head=("Use of funds", "£250K")):
+    """One slide: a cue heading, a raise figure, the use of funds as text lines ("Category (40%)") and the pie's data labels
+    as boxes, under a heading that gives them a type to borrow (the real p22's legend does)."""
+    return [*head, *[f"{name} ({pct}%)" for name, pct in text], *(["Team hiring budget"] if chart else []),
             *[f"{v}%" for v in chart]]
 
 
 def _funds_candidates(slides):
     deck = parser.parse_deck(_pptx(slides), "deck.pptx")
     return claims.detect_candidates(deck["blocks"], "deck.pptx")
+
+
+def _types(found):
+    return {c["claim_type"] for c in found if c["unit"] == "%"}
 
 
 def test_zero2hero_page_22_percentages_are_use_of_funds_and_never_sales():
@@ -2067,27 +2073,57 @@ def test_zero2hero_page_22_percentages_are_use_of_funds_and_never_sales():
     assert funds[5]["inconsistencies"] == [], "the dropped category has no chart value"
 
 
-def test_a_raise_amount_with_percentages_summing_to_about_100_is_use_of_funds_without_a_cue_word():
-    for pcts in ([40, 20, 25, 10, 5], [50, 30, 20], [48, 30, 20], [52, 30, 22]):       # 100, 100, 98, 104
-        found = _funds_candidates([_funds_slide([(f"Sales and acquisition {n}", p) for n, p in enumerate(pcts)], [])])
-        assert found and {c["claim_type"] for c in found if c["unit"] == "%"} == {"use_of_funds"}, pcts
-    assert not any(c["claim_type"] in ("sales", "revenue") for c in found if c["unit"] == "%")
+@pytest.mark.parametrize("line", ["Content Acquisition & Development (20%)", "Operational Expenses & Talent Acquisition (5%)",
+                                  "Content Acquisition & Development 20%", "Talent Acquisition 5%"])
+def test_acquisition_is_not_a_sales_keyword(line):
+    """The Sales list no longer holds "acquisition" (deck-parser.md section 2): a category name never makes a Sales candidate."""
+    assert "sales" not in {c["claim_type"] for c in _funds_candidates([[line]])}
+    assert "sales" not in {c["claim_type"] for c in _funds_candidates([["Team hiring plan", line]])}
 
 
-@pytest.mark.parametrize("pcts, head", [([50, 30, 10], "£250K"), ([50, 30, 26], "£250K"), ([50, 30, 20], "ARR is growing")])
-def test_percentages_outside_95_to_105_or_without_a_money_figure_are_not_use_of_funds(pcts, head):
-    found = _funds_candidates([[head, *[f"Customer acquisition {n} ({p}%)" for n, p in enumerate(pcts)]]])
-    assert found and "use_of_funds" not in {c["claim_type"] for c in found}
+def test_a_cue_page_lists_its_percentages_as_use_of_funds_even_when_no_keyword_names_them():
+    found = _funds_candidates([_funds_slide(P22_TEXT, P22_CHART)])
+    assert sorted(c["value"] for c in found if c["unit"] == "%") == [5, 10, 11, 20, 21, 25, 26, 40, 42]
+    assert _types(found) == {"use_of_funds"}
+
+
+def test_a_raise_amount_with_percentages_summing_to_100_is_not_use_of_funds_without_a_cue_phrase():
+    for pcts in ([40, 20, 25, 10, 5], [50, 30, 20], [48, 30, 20]):
+        found = _funds_candidates([["£250K", *[f"{name} ({p}%)" for name, p in zip(KEYWORDED, pcts)]]])
+        assert found and "use_of_funds" not in _types(found), pcts
+
+
+def test_revenue_split_by_year_summing_to_100_with_a_pound_figure_is_not_use_of_funds():
+    found = _funds_candidates([["Revenue split by year", "£1.2M", "2022 revenue (20%)", "2023 revenue (30%)", "2024 revenue (50%)"]])
+    assert _types(found) and "use_of_funds" not in _types(found)
+    assert _types(found) <= {"revenue", "unknown"}, "typed as before"
+
+
+def test_revenue_by_geography_summing_to_100_is_not_use_of_funds():
+    found = _funds_candidates([["Revenue by geography", "£1.2M revenue", "UK revenue (50%)", "Germany revenue (30%)",
+                                "France revenue (20%)"]])
+    assert _types(found) and "use_of_funds" not in _types(found)
+    assert _types(found) <= {"revenue", "unknown"}, "typed as before"
 
 
 @pytest.mark.parametrize("title", ["Use of funds", "Use of proceeds", "The Ask", "Investor Proposition", "Raise"])
 def test_a_funds_cue_in_the_title_makes_the_percentages_use_of_funds_whatever_they_sum_to(title):
-    slide = [title, "Customer acquisition (30%)", "Product (15%)"]
+    slide = [title, "Team hiring (30%)", "Product launch (15%)"]
     deck = parser.parse_deck(_pptx([slide]), "deck.pptx")
     for b in deck["blocks"]:
         b["title"] = b["text"] == title                    # the builder has no title placeholder: mark the first box
     found = claims.detect_candidates(deck["blocks"], "deck.pptx")
     assert {(c["value"], c["claim_type"]) for c in found if c["unit"] == "%"} == {(30, "use_of_funds"), (15, "use_of_funds")}
+
+
+@pytest.mark.parametrize("word", BLOCKED_WORDS + ["2022 2023 2024"])
+def test_a_cue_phrase_with_a_block_word_leaves_the_figures_unknown_and_tags_the_slide_mixed(word):
+    found = _funds_candidates([["Use of funds", "£250K", f"Team hiring {word} (60%)", f"Product launch {word} (40%)"]])
+    pct = [c for c in found if c["unit"] == "%"]
+    assert pct and {c["claim_type"] for c in pct} == {"unknown"} and all(c["mixed_slide"] for c in pct), word
+    assert claims.MIXED_SLIDE == "mixed slide – check"
+    plain = _funds_candidates([["Use of funds", "£250K", "Team hiring (60%)", "Product launch (40%)"]])
+    assert not any(c.get("mixed_slide") for c in plain) and _types(plain) == {"use_of_funds"}
 
 
 def test_a_page_without_a_raise_amount_or_cue_keeps_its_types():
@@ -2101,7 +2137,7 @@ def test_text_and_chart_percentages_that_differ_are_tagged_on_each_figure_with_t
     found = [c for c in _funds_candidates([_funds_slide(text, [63, 38])]) if c["unit"] == "%"]
     by_value = {c["value"]: c for c in found}
     assert sorted(by_value) == [20, 30, 38, 50, 63]
-    note = "chart excludes Product launch, rescaled"
+    note = "chart excludes Cost control, rescaled"
     for t_value, c_value in ((50, 63), (30, 38)):
         mine, theirs = by_value[t_value]["inconsistencies"][0], by_value[c_value]["inconsistencies"][0]
         assert (mine["this"]["value"], mine["this"]["label"], mine["other"]["value"], mine["other"]["label"]) == \
@@ -2120,12 +2156,11 @@ def test_chart_values_that_are_not_the_text_rescaled_are_tagged_without_a_rescal
     assert all("note" not in p for c in other for p in c["inconsistencies"])
     same = [c for c in _funds_candidates([_funds_slide(list(zip(KEYWORDED, (60, 40))), [40, 60])]) if c["unit"] == "%"]
     assert same and all(c["inconsistencies"] == [] for c in same)
-    unpaired = [c for c in _funds_candidates([_funds_slide(text, [60, 30, 10])]) if c["unit"] == "%"]
+    unpaired = [c for c in _funds_candidates([_funds_slide(list(zip(KEYWORDED, (60, 40))), [55, 30, 15])]) if c["unit"] == "%"]
     assert unpaired and all(c["inconsistencies"] == [] for c in unpaired), "no pairing is guessed"
 
 
-def test_rates_on_a_slide_with_a_money_figure_are_not_a_use_of_funds_even_when_they_sum_to_about_100():
-    """04-clevergig.docx page 6: 15% MoM growth, 50% and 30% of leads sum to 95 beside "€15K in MRR"."""
-    found = _funds_candidates([["€15K in MRR, 15% MoM growth over last 15 months", "€260 MRR per client, MRR expands by 50%",
-                                "30% of our leads come via worker referrals"]])
-    assert [c for c in found if c["unit"] == "%"] and "use_of_funds" not in {c["claim_type"] for c in found}
+def test_a_rate_on_a_cue_slide_is_not_a_share_of_the_raise():
+    found = _funds_candidates([["The Ask", "£250K", "Team hiring (60%)", "Product launch (40%)", "Retention 90%"]])
+    assert {(c["value"], c["claim_type"]) for c in found if c["unit"] == "%"} == \
+        {(60, "use_of_funds"), (40, "use_of_funds"), (90, "retention")}

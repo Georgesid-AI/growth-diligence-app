@@ -208,6 +208,9 @@ export function rowEdit(row, values) {
 // Shown on both claims when one deck gives the same type and period different values.
 export const INCONSISTENCY_LABEL = "Deck inconsistency";
 
+// A slide with a funds cue phrase and a word of another split (revenue, region, a run of years): its percentages stay Unknown.
+export const MIXED_SLIDE_LABEL = "mixed slide – check";
+
 // The word the deck uses for the figure ("Turnover", "Revenue"), shown before it so two figures are never mistaken for one metric.
 const figureText = (f) => {
   const n = present(f.value_high) ? `${figure(f.value)}–${figure(f.value_high)}` : figure(f.value);
