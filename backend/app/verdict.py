@@ -9,7 +9,7 @@ from __future__ import annotations
 import csv
 import io
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from app import claim_matching as cm
@@ -56,6 +56,27 @@ def valid_date(value: Optional[str]) -> bool:
     except ValueError:
         return False
     return True
+
+
+REVIEW_DEFAULT_DAYS = 90
+
+
+def default_review(created_at: Optional[str]) -> Optional[str]:
+    """The first quarterly review when the analyst has not set one: the audit's creation date plus 90 days (an audit-set-up field)."""
+    try:
+        return (datetime.fromisoformat(str(created_at)).date() + timedelta(days=REVIEW_DEFAULT_DAYS)).isoformat()
+    except ValueError:
+        return None
+
+
+def with_review(audit: dict, ic: Optional[dict]) -> dict:
+    """The analyst's inputs with the first quarterly review always present: the stored date, else the default."""
+    ic = dict(ic or {})
+    if not ic.get("first_quarterly_review"):
+        default = default_review(audit.get("created_at"))
+        if default:
+            ic["first_quarterly_review"] = default
+    return ic
 
 
 # --- claim wording --------------------------------------------------------------------------------------------------------
@@ -116,6 +137,50 @@ def key_gates(rows: List[dict]) -> dict:
         note = None if marked else W12_NO_KEY_GATES
     return {"saved": len(saved), "marked": [r["claim_id"] for r in marked], "gates": effective, "all_key": all_key,
             "note": note, "ok": all_key or MIN_KEY_GATES <= len(marked) <= MAX_KEY_GATES}
+
+
+GATE_LABELS = ("Unverified", "Unsupported", "Contradicted")
+PREFILL_KEY_GATES = 3
+OTHER_DECISION = "Other"
+
+
+def gate_prefill(rows: List[dict], first_review: Optional[str]) -> Dict[str, dict]:
+    """What the gate fields start with on a row labelled Unverified, Unsupported or Contradicted whose gate is not saved: the
+    claim's stated value in its own unit, the end of its stated period capped at the first quarterly review (the review date when
+    the claim has no period), the metric name on a row with no app metric, and the key mark on the three rows with the highest
+    value at stake. Stored rows only, no model; the budget decision stays blank. Shown on the review screen, never written to a
+    row: the register, the CSV and the memo read the saved gate alone."""
+    out: Dict[str, dict] = {}
+    for row in rows:
+        if row.get("evidence_label") not in GATE_LABELS or row.get("gate_saved") or row.get("claim_type") in cm.UNTESTED_TYPES:
+            continue
+        fill: dict = {}
+        shown = row.get("claimed_converted") if row.get("claimed_converted") is not None else row.get("claimed_value")
+        if shown is not None:
+            fill["gate_threshold"] = shown
+        period_end = row.get("period_end") if valid_date(row.get("period_end")) else None
+        date = min(period_end, first_review) if period_end and valid_date(first_review) else (period_end or first_review)
+        if valid_date(date):
+            fill["gate_date"] = date
+        if row.get("reason") in cm.NO_APP_METRIC:
+            fill["gate_metric_name"] = claim_name(row)[:cm.GATE_METRIC_MAX]
+        out[row["claim_id"]] = fill
+    room = max(0, min(PREFILL_KEY_GATES, MAX_KEY_GATES - sum(1 for r in rows if r.get("key_gate"))))
+    ranked = sorted((r for r in rows if r["claim_id"] in out),
+                    key=lambda r: -(r.get("value_at_stake_arr") or 0))
+    for row in ranked[:room]:
+        out[row["claim_id"]]["key_gate"] = True
+    return out
+
+
+def budget_decisions(rows: List[dict]) -> List[str]:
+    """The budget decisions already saved in this audit, once each, in order of first use: the dropdown's list ("Other" follows)."""
+    seen: List[str] = []
+    for row in rows:
+        text = row.get("gate_budget_decision")
+        if text and text not in seen:
+            seen.append(text)
+    return seen
 
 
 def marked_count_after(rows: List[dict], claim_id: str) -> int:

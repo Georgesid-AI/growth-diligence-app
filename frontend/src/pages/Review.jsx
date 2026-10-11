@@ -15,6 +15,7 @@ import {
 } from "@/lib/api";
 import { claimPeriod, claimValue, sourceRef, typeLabel, CLAIM_GROUPS, approveAllToast } from "@/lib/deckClaims";
 import { turnoverHeading, turnoverOf, registerRows } from "@/lib/claimRegister";
+import { useGateEdits } from "@/lib/useGateEdits";
 import { S13_status, MAPPING_HEADERS, fieldName, sortColumns } from "@/lib/chatUpload";
 import { describeRequestError } from "@/lib/requestError";
 import { runAudit } from "@/lib/runAudit";
@@ -35,6 +36,7 @@ export default function Review() {
   const [views, setViews] = useState([]);
   const [deckData, setDeckData] = useState({ decks: [], candidates: [] });
   const [register, setRegister] = useState([]);
+  const [gateExtras, setGateExtras] = useState({ prefill: {}, budgets: [] });
   const [verdict, setVerdict] = useState(null);
   const [estimate, setEstimate] = useState(null);
   const [proceeding, setProceeding] = useState(false);
@@ -50,7 +52,7 @@ export default function Review() {
     if (s?.computed) {
       const [r, vd, est] = await Promise.all([safe(getClaimRegister(id), null), safe(getVerdict(id), null), safe(getNarrativeEstimate(id), null)]);
       if (!alive.current) return;
-      setRegister(registerRows(r)); setVerdict(vd); setEstimate(est);
+      setRegister(registerRows(r)); setGateExtras({ prefill: r?.gate_prefill || {}, budgets: r?.budget_decisions || [] }); setVerdict(vd); setEstimate(est);
     }
     window.dispatchEvent(new Event(BLOCKERS_CHANGED));
   }, [id]);
@@ -95,7 +97,7 @@ export default function Review() {
         <>
           <TopFiveSection auditId={id} verdict={verdict} reload={reload} />
           <ThesisSection verdict={verdict} save={saveIc} />
-          <GatesSection auditId={id} verdict={verdict} register={register} audit={audit} reload={reload} />
+          <GatesSection auditId={id} verdict={verdict} register={register} extras={gateExtras} audit={audit} reload={reload} />
           <RatingsSection verdict={verdict} save={saveIc} />
           <Finish auditId={id} verdict={verdict} summary={summary} estimate={estimate} reload={reload} />
         </>
@@ -257,20 +259,24 @@ function ThesisSection({ verdict, save }) {
   );
 }
 
-function GatesSection({ auditId, verdict, register, audit, reload }) {
+function GatesSection({ auditId, verdict, register, extras, audit, reload }) {
   const five = new Set((verdict.verdict.five || []).map((f) => f.claim_id));
   const rows = register.filter((r) => five.has(r.claim_id) && r.evidence_label !== "Verified");
-  const save = (row, edit) => updateClaimInputs(auditId, row.claim_id, edit).then(reload)
+  const { edits, onEdit, clear, saveAll } = useGateEdits({ auditId, rows, prefill: extras.prefill, afterSave: reload });
+  const save = (row, edit) => updateClaimInputs(auditId, row.claim_id, edit).then(() => { clear([row.claim_id]); return reload(); })
     .catch((e) => { toast.error(describeRequestError(e).message); throw e; });
   return (
     <section className={sectionClass} data-testid="review-gates">
       <Heading n="6">Gates</Heading>
+      {verdict.verdict.top5?.confirmed && rows.length > 0 && (
+        <Button size="sm" onClick={saveAll} className="h-8 bg-sky-600 hover:bg-sky-500" data-testid="review-gates-save-all">Save all gates</Button>
+      )}
       {!verdict.verdict.top5?.confirmed && <p className="text-sm text-slate-600" data-testid="review-gates-wait">Confirm the top 5 first: a gate is set on each top-5 claim that is not Verified.</p>}
       {verdict.verdict.top5?.confirmed && rows.length === 0 && <p className="text-sm text-slate-600" data-testid="review-gates-none">Every top-5 claim is Verified: no gate is needed.</p>}
       {verdict.verdict.top5?.confirmed && rows.map((row) => (
         <div key={row.claim_id} className="mt-2 text-xs border-t border-[#F1F5F9] pt-2" data-testid="review-gate-row">
           <div className="text-slate-900 mb-1">#{row.rank} {row.claim} <span className="text-slate-500">· {row.evidence_label}</span></div>
-          <GateCell row={row} ccy={audit.reporting_currency} onSave={save} />
+          <GateCell row={row} ccy={audit.reporting_currency} onSave={save} prefill={extras.prefill[row.claim_id]} budgets={extras.budgets} edits={edits[row.claim_id]} onEdit={onEdit} />
         </div>
       ))}
     </section>

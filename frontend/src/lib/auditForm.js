@@ -84,9 +84,10 @@ export const SETUP_HELP = {
   target_date: seeGlossary("When the plan says Target ARR is reached. Sets the forecast horizon."),
   as_of_month: "Last month of actual data. Metrics are computed up to this month. Defaults to the last P&L month.",
   fiscal_year_end: "Maps FY labels in the deck to months. A wrong setting shifts every FY claim.",
+  first_quarterly_review: "Gate dates are never later than this. Defaults to the audit's creation date plus 90 days.",
 };
 export const SETUP_LABELS = {
   reporting_currency: "Reporting currency", target_arr: "Target ARR", target_date: "Target date", as_of_month: "As-of month",
-  fiscal_year_end: "Fiscal year-end",
+  fiscal_year_end: "Fiscal year-end", first_quarterly_review: "First quarterly review",
 };
 export const REPORTING_CURRENCIES = ["EUR", "USD", "GBP", "JPY"];

@@ -12,7 +12,7 @@ import {
 
 jest.mock("@/lib/api", () => ({
   getAudit: jest.fn(), getDatasets: jest.fn(), uploadChatFile: jest.fn(), decideColumns: jest.fn(), reportUsage: jest.fn(),
-  saveMapping: jest.fn(), saveFx: jest.fn(), computeAudit: jest.fn(), getRevenueCustomers: jest.fn(), updateAudit: jest.fn(),
+  saveMapping: jest.fn(), saveFx: jest.fn(), computeAudit: jest.fn(), getRevenueCustomers: jest.fn(), updateAudit: jest.fn(), putIcInputs: jest.fn(),
 }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
 jest.mock("react-router-dom", () => ({ useParams: () => ({ id: "a1" }), useNavigate: () => jest.fn() }), { virtual: true });
@@ -111,12 +111,19 @@ describe("the screen", () => {
       target_date: "When the plan says Target ARR (see glossary) is reached. Sets the forecast horizon.",
       as_of_month: "Last month of actual data. Metrics are computed up to this month. Defaults to the last P&L month.",
       fiscal_year_end: "Maps FY labels in the deck to months. A wrong setting shifts every FY claim.",
+      first_quarterly_review: "Gate dates are never later than this. Defaults to the audit's creation date plus 90 days.",
     });
     for (const [field, text] of Object.entries(SETUP_HELP)) expect(q(`setup-help-${field}`).textContent).toBe(text);
     expect(setup.contains(q("setup-currency-select")) && setup.contains(q("setup-target-arr-input")) && setup.contains(q("fiscal-year-end-select"))).toBe(true);
     expect(q("setup-target-arr-input").value).toBe("40,000,000");
     expect(q("setup-target-date-input").value).toBe("31 Dec 2028");
     expect(q("asof-month-input").value).toBe("30 Jun 2026");
+  });
+
+  test("the first quarterly review is a set-up field with the server's default, and an edit saves through the inputs call", async () => {
+    await mount({ audit: { ...AUDIT, ic_inputs: { first_quarterly_review: "2026-01-09" } } });
+    expect(q("setup-review-date-input").value).toBe("9 Jan 2026");
+    expect(q("audit-setup").contains(q("setup-review-date-input"))).toBe(true);
   });
 
   test("each set-up field saves as it changes; a refused save names the field and the reason", async () => {

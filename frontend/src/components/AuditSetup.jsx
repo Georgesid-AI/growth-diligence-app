@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import DateField from "@/components/DateField";
-import { getAudit, updateAudit } from "@/lib/api";
+import { getAudit, putIcInputs, updateAudit } from "@/lib/api";
 import { describeRequestError } from "@/lib/requestError";
 import {
   DEFAULT_FISCAL_YEAR_END, MONTHS, REPORTING_CURRENCIES, SETUP_HELP, SETUP_LABELS, asOfInputValue, groupThousands, plainNumber, storedNumberInput,
@@ -46,6 +46,15 @@ export default function AuditSetup({ audit, setAudit, asOf, setAsOf }) {
     } else {
       setAsOf(nextAsOf);
       await save(field, { as_of_month: nextAsOf || null });      // cleared: back to the default, the last P&L month
+    }
+  };
+  // Required: the date is always there (default: creation date + 90 days); clearing it returns it to the default.
+  const saveReview = async (value) => {
+    try {
+      await putIcInputs(audit.id, { first_quarterly_review: value || null });
+      setAudit(await getAudit(audit.id));
+    } catch (e) {
+      toast.error(`${SETUP_LABELS.first_quarterly_review} could not be saved: ${describeRequestError(e).message}`);
     }
   };
   const saveArr = () => {
@@ -93,6 +102,11 @@ export default function AuditSetup({ audit, setAudit, asOf, setAsOf }) {
             </SelectContent>
           </Select>
           <p className={help} data-testid="setup-help-fiscal_year_end">{SETUP_HELP.fiscal_year_end}</p>
+        </div>
+        <div>
+          <label className={label}>{SETUP_LABELS.first_quarterly_review}</label>
+          <DateField testId="setup-review-date-input" value={audit.ic_inputs?.first_quarterly_review || ""} onChange={saveReview} className="!mt-1" />
+          <p className={help} data-testid="setup-help-first_quarterly_review">{SETUP_HELP.first_quarterly_review}</p>
         </div>
       </div>
     </section>
