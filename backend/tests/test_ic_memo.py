@@ -547,3 +547,12 @@ def test_without_a_current_a1_narrative_appendix_b_has_no_request_list(narrative
 def test_a_number_in_the_a2_headline_that_the_stored_results_do_not_hold_refuses_the_memo():
     exc = refusal(narratives=[data_step("data_integrity", headline="Material concerns: the files differ by 77.31%.")])
     assert exc.code == "numbers" and "77.31" in exc.unmatched
+
+
+@pytest.mark.parametrize("when", ["2026-10-08T14:43:00+00:00", "2026-10-08T09:57:12+00:00", "2026-10-08T23:59:00+00:00"])
+def test_the_time_in_the_ai_disclosure_is_not_a_number_the_memo_must_find_in_the_results(when):
+    """A narrative written at 14:43 UTC puts "14:43" in the disclosure block; its minutes are not a figure."""
+    n = narrative()
+    n["generated_at"] = when
+    text = memo(narratives=[n])
+    assert when[11:16] in text, "fixture: the time is in the memo"

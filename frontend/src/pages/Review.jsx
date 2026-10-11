@@ -1,0 +1,338 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useParams, useNavigate } from "react-router-dom";
+import { toast } from "sonner";
+import { Download, Loader2, Sparkles } from "lucide-react";
+import { Layout } from "@/components/Layout";
+import { BLOCKERS_CHANGED } from "@/components/BlockerBanner";
+import { ColumnRow } from "@/components/UploadChat";
+import { TurnoverCell, GateCell } from "@/components/ClaimRegister";
+import { TopFive, ThesisFields, RatingFields, downloadMemo, icSaver } from "@/components/Verdict";
+import { Button } from "@/components/ui/button";
+import * as apiModule from "@/lib/api";
+import {
+  answerTurnover, approveAll, decideColumns, generateNarrative, getAudit, getClaimRegister, getDatasets, getDecks, getNarrativeEstimate,
+  getReview, getVerdict, putIcInputs, reportUsage, updateCandidate, updateClaimInputs,
+} from "@/lib/api";
+import { claimPeriod, claimValue, sourceRef, typeLabel, CLAIM_GROUPS, approveAllToast } from "@/lib/deckClaims";
+import { turnoverHeading, turnoverOf, registerRows } from "@/lib/claimRegister";
+import { S13_status, MAPPING_HEADERS, fieldName, sortColumns } from "@/lib/chatUpload";
+import { describeRequestError } from "@/lib/requestError";
+import { runAudit } from "@/lib/runAudit";
+import { writeAllLabel, estimateText, WRITE_ALL_HELP, MEMO_LABEL, MEMO_WAITING, blockersNote } from "@/lib/review";
+
+const GROUP_TITLE = Object.fromEntries(CLAIM_GROUPS);
+
+/**
+ * The review screen: everything the analyst decides, in one place and in one order. Open mappings, open claims, Revenue / Volume
+ * answers, the top 5, the deal thesis, the gates and the ratings; then Write all narratives and Generate IC memo. Whatever
+ * the app could settle itself (columns above the mapping threshold, claims within tolerance) is a count with a Show link.
+ */
+export default function Review() {
+  const { id } = useParams();
+  const nav = useNavigate();
+  const [audit, setAudit] = useState(null);
+  const [summary, setSummary] = useState(null);
+  const [views, setViews] = useState([]);
+  const [deckData, setDeckData] = useState({ decks: [], candidates: [] });
+  const [register, setRegister] = useState([]);
+  const [verdict, setVerdict] = useState(null);
+  const [estimate, setEstimate] = useState(null);
+  const [proceeding, setProceeding] = useState(false);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+
+  const reload = useCallback(async () => {
+    const safe = (p, fallback) => p.catch(() => fallback);
+    const [a, s, v, d] = await Promise.all([
+      safe(getAudit(id), null), safe(getReview(id), null), safe(getDatasets(id), []), safe(getDecks(id), { decks: [], candidates: [] })]);
+    if (!alive.current) return;
+    setAudit(a); setSummary(s); setViews(v); setDeckData(d);
+    if (s?.computed) {
+      const [r, vd, est] = await Promise.all([safe(getClaimRegister(id), null), safe(getVerdict(id), null), safe(getNarrativeEstimate(id), null)]);
+      if (!alive.current) return;
+      setRegister(registerRows(r)); setVerdict(vd); setEstimate(est);
+    }
+    window.dispatchEvent(new Event(BLOCKERS_CHANGED));
+  }, [id]);
+  useEffect(() => { reload(); reportUsage(id, { screen: "review" }); }, [id, reload]);
+
+  // Once the last column is decided, the stages carry on by themselves: nothing more to press.
+  const carryOn = useCallback(async () => {
+    setProceeding(true);
+    try { await runAudit({ api: apiModule, auditId: id, from: "mapping" }); } finally { if (alive.current) setProceeding(false); }
+    await reload();
+  }, [id, reload]);
+
+  const decide = async (view, decisions) => {
+    const next = await decideColumns(id, view.dtype, decisions);
+    const fresh = await getDatasets(id).catch(() => []);
+    if (alive.current) setViews(fresh);
+    const waiting = fresh.some((x) => x.pending > 0 || x.missing_required.length > 0);
+    if (!waiting && !summary?.computed) await carryOn(); else await reload();
+    return next;
+  };
+
+  if (!audit || !summary) {
+    return <Layout audit={audit}><div className="flex justify-center py-32 text-slate-500"><Loader2 className="h-6 w-6 animate-spin" /></div></Layout>;
+  }
+  const saveIc = icSaver(id, reload);
+
+  return (
+    <Layout audit={audit}>
+      <div className="flex items-end justify-between flex-wrap gap-3 mb-6">
+        <div>
+          <h1 className="font-heading text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">Review</h1>
+          <p className="text-sm text-slate-600 mt-1 max-w-3xl">Only what needs a decision from you is open below. Everything else is a count you can open with Show.</p>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => nav(`/audit/${id}/run`)} data-testid="review-to-run">Back to Run audit</Button>
+      </div>
+      {proceeding && <p className="mb-4 flex items-center gap-2 text-sm text-slate-600" data-testid="review-continuing"><Loader2 className="h-4 w-4 animate-spin" /> Continuing the run…</p>}
+
+      <MappingsSection views={views} summary={summary} decide={decide} />
+      <ClaimsSection auditId={id} data={deckData} summary={summary} reload={reload} />
+      <TurnoverSection auditId={id} data={deckData} reload={reload} />
+      {summary.computed && verdict ? (
+        <>
+          <TopFiveSection auditId={id} verdict={verdict} reload={reload} />
+          <ThesisSection verdict={verdict} save={saveIc} />
+          <GatesSection auditId={id} verdict={verdict} register={register} audit={audit} reload={reload} />
+          <RatingsSection verdict={verdict} save={saveIc} />
+          <Finish auditId={id} verdict={verdict} summary={summary} estimate={estimate} reload={reload} />
+        </>
+      ) : (
+        <p className="text-sm text-slate-600 border border-dashed border-[#D1D5DB] rounded-md px-4 py-6" data-testid="review-not-computed">
+          The metrics are not calculated yet. Decide what is open above, or go back to Run audit.
+        </p>
+      )}
+    </Layout>
+  );
+}
+
+const sectionClass = "mb-6 rounded-md border border-[#E5E7EB] bg-white p-4";
+const Heading = ({ n, children }) => <h2 className="font-heading text-base font-semibold text-slate-900 mb-2"><span className="font-mono text-slate-500 mr-2">{n}</span>{children}</h2>;
+
+/** "12 claims within tolerance" with a Show link that opens the list. */
+function Counted({ testid, text, children }) {
+  return (
+    <details className="mt-3 text-xs text-slate-700" data-testid={testid}>
+      <summary className="cursor-pointer"><span data-testid={`${testid}-count`}>{text}</span> <span className="text-sky-700 underline underline-offset-2">Show</span></summary>
+      <div className="mt-2">{children}</div>
+    </details>
+  );
+}
+
+function MappingsSection({ views, summary, decide }) {
+  const [lastReason, setLastReason] = useState("header_misleading");
+  const open = views.filter((v) => v.pending > 0 || v.missing_required.length > 0);
+  const autoRows = views.flatMap((v) => v.columns.filter((c) => c.state === "auto").map((c) => ({ ...c, file: v.file })));
+  return (
+    <section className={sectionClass} data-testid="review-mappings">
+      <Heading n="1">Open mappings</Heading>
+      {open.length === 0 && <p className="text-sm text-slate-600" data-testid="review-mappings-none">No column waits for you.</p>}
+      {open.map((view) => {
+        const rows = view.missing_required.length ? view.columns : view.columns.filter((c) => c.pending);
+        return (
+          <div key={view.dtype} className="mt-2" data-testid={`review-mapping-${view.dtype}`}>
+            <div className="text-xs font-medium text-slate-900">{view.file} <span className="font-mono text-amber-700">· {S13_status(view)}</span></div>
+            <table className="w-full text-xs mt-1">
+              <thead><tr className="text-left text-slate-500 border-b border-[#E5E7EB]">{MAPPING_HEADERS.map((h, i) => <th key={i} className="py-1.5 pr-3 font-medium">{h}</th>)}</tr></thead>
+              <tbody>
+                {sortColumns(rows).map((c) => <ColumnRow key={c.column} row={c} view={view} decide={decide} lastReason={lastReason} setLastReason={setLastReason} />)}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+      <Counted testid="review-mappings-auto" text={`${summary.mappings.auto} column${summary.mappings.auto === 1 ? "" : "s"} mapped`}>
+        <ul className="space-y-0.5 font-mono">
+          {autoRows.map((c) => <li key={`${c.file}-${c.column}`}>{c.column} → {fieldName(c.field)} <span className="text-slate-500">({c.file}, confidence {c.confidence ?? "—"})</span></li>)}
+        </ul>
+      </Counted>
+    </section>
+  );
+}
+
+function ClaimsSection({ auditId, data, summary, reload }) {
+  const [busy, setBusy] = useState(null);
+  const open = data.candidates.filter((c) => c.status === "pending" && !turnoverOf(c).open);
+  const auto = data.candidates.filter((c) => c.auto_accepted && ["approved", "edited"].includes(c.status));
+  const groups = [...new Set(open.map((c) => c.group))].sort((a, b) => a - b);
+  const act = async (key, fn) => {
+    setBusy(key);
+    try { await fn(); await reload(); } catch (e) { toast.error(describeRequestError(e).message); } finally { setBusy(null); }
+  };
+  const needsType = (c) => ["other", "unknown"].includes(c.claim_type) && !c.parsed;
+  return (
+    <section className={sectionClass} data-testid="review-claims">
+      <Heading n="2">Open claims</Heading>
+      {open.length === 0 && <p className="text-sm text-slate-600" data-testid="review-claims-none">No claim waits for you.</p>}
+      {groups.map((g) => (
+        <div key={g} className="mt-2" data-testid={`review-claim-group-${g}`}>
+          <div className="flex items-center justify-between">
+            <div className="text-xs font-medium text-slate-900">{GROUP_TITLE[g] || "Other"}</div>
+            <Button size="sm" variant="outline" className="h-7" disabled={busy !== null} data-testid={`review-approve-all-${g}`}
+              onClick={() => act(`g${g}`, async () => { const done = await approveAll(auditId, g); toast.success(approveAllToast(done.approved, done.skipped)); })}>
+              Approve all ({open.filter((c) => c.group === g).length})
+            </Button>
+          </div>
+          <table className="w-full text-xs mt-1"><tbody>
+            {open.filter((c) => c.group === g).map((c) => (
+              <tr key={c.id} className="border-b border-[#F1F5F9] align-top" data-testid="review-claim-row">
+                <td className="py-1.5 pr-3 text-slate-900">{typeLabel(c.claim_type)}</td>
+                <td className="py-1.5 pr-3 font-mono">{claimValue(c)}</td>
+                <td className="py-1.5 pr-3 font-mono text-slate-600">{claimPeriod(c)}</td>
+                <td className="py-1.5 pr-3 font-mono text-slate-500">{sourceRef(c.sources?.[0])}</td>
+                <td className="py-1.5 whitespace-nowrap">
+                  {needsType(c) ? <span className="text-amber-800">Choose its type under Details, Upload &amp; Mapping.</span> : (
+                    <>
+                      <Button size="sm" variant="outline" className="h-7 mr-1.5" disabled={busy !== null} data-testid="review-approve"
+                        onClick={() => act(c.id, () => updateCandidate(auditId, c.id, { status: "approved" }))}>Approve</Button>
+                      <Button size="sm" variant="ghost" className="h-7" disabled={busy !== null} data-testid="review-reject"
+                        onClick={() => act(c.id, () => updateCandidate(auditId, c.id, { status: "rejected" }))}>Reject</Button>
+                    </>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody></table>
+        </div>
+      ))}
+      <Counted testid="review-claims-auto" text={`${summary.claims.auto_accepted} claim${summary.claims.auto_accepted === 1 ? "" : "s"} within tolerance`}>
+        <table className="w-full"><tbody>
+          {auto.map((c) => (
+            <tr key={c.id} className="border-b border-[#F1F5F9]" data-testid="review-auto-claim">
+              <td className="py-1 pr-3">{typeLabel(c.claim_type)}</td><td className="py-1 pr-3 font-mono">{claimValue(c)}</td>
+              <td className="py-1 pr-3 font-mono text-slate-600">{claimPeriod(c)}</td>
+              <td className="py-1"><Button size="sm" variant="ghost" className="h-6" disabled={busy !== null}
+                onClick={() => act(c.id, () => updateCandidate(auditId, c.id, { status: "rejected" }))}>Reject</Button></td>
+            </tr>
+          ))}
+        </tbody></table>
+      </Counted>
+    </section>
+  );
+}
+
+function TurnoverSection({ auditId, data, reload }) {
+  const waiting = data.candidates.filter((c) => c.status === "pending" && turnoverOf(c).open);
+  const answer = async (row, payload) => {
+    try { await answerTurnover(auditId, row.claim_id, payload); await reload(); } catch (e) { toast.error(describeRequestError(e).message); throw e; }
+  };
+  return (
+    <section className={sectionClass} data-testid="review-turnover">
+      <Heading n="3">Revenue / Volume answers</Heading>
+      {waiting.length === 0 && <p className="text-sm text-slate-600" data-testid="review-turnover-none">No claim asks Revenue or Volume.</p>}
+      {waiting.map((c) => (
+        <div key={c.id} className="mt-2 text-xs" data-testid="review-turnover-claim">
+          <div className="text-slate-900">{typeLabel(c.claim_type)} · <span className="font-mono">{claimValue(c)}</span> · <span className="font-mono">{claimPeriod(c)}</span></div>
+          {turnoverOf(c).views.map((v) => <TurnoverCell key={v.claim_id} row={v} onAnswer={answer} heading={turnoverHeading(v, Boolean(c.by_period?.length))} />)}
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function TopFiveSection({ auditId, verdict, reload }) {
+  const [busy, setBusy] = useState(false);
+  const v = verdict.verdict;
+  const confirm = (ids) => {
+    setBusy(true);
+    return putIcInputs(auditId, { top5: ids }).then(reload).catch((e) => toast.error(describeRequestError(e).message)).finally(() => setBusy(false));
+  };
+  return (
+    <section className={sectionClass} data-testid="review-top5">
+      <Heading n="4">Top 5 claims</Heading>
+      {v.status === "no_verdict" ? <p className="text-sm text-slate-600" data-testid="review-top5-none">{v.message}</p>
+        : <TopFive verdict={v} candidates={verdict.candidates || []} onConfirm={confirm} busy={busy} />}
+    </section>
+  );
+}
+
+function ThesisSection({ verdict, save }) {
+  return (
+    <section className={sectionClass} data-testid="review-thesis">
+      <Heading n="5">Deal thesis</Heading>
+      <div className="grid gap-3 md:grid-cols-2 text-xs"><ThesisFields verdict={verdict} save={save} /></div>
+    </section>
+  );
+}
+
+function GatesSection({ auditId, verdict, register, audit, reload }) {
+  const five = new Set((verdict.verdict.five || []).map((f) => f.claim_id));
+  const rows = register.filter((r) => five.has(r.claim_id) && r.evidence_label !== "Verified");
+  const save = (row, edit) => updateClaimInputs(auditId, row.claim_id, edit).then(reload)
+    .catch((e) => { toast.error(describeRequestError(e).message); throw e; });
+  return (
+    <section className={sectionClass} data-testid="review-gates">
+      <Heading n="6">Gates</Heading>
+      {!verdict.verdict.top5?.confirmed && <p className="text-sm text-slate-600" data-testid="review-gates-wait">Confirm the top 5 first: a gate is set on each top-5 claim that is not Verified.</p>}
+      {verdict.verdict.top5?.confirmed && rows.length === 0 && <p className="text-sm text-slate-600" data-testid="review-gates-none">Every top-5 claim is Verified: no gate is needed.</p>}
+      {verdict.verdict.top5?.confirmed && rows.map((row) => (
+        <div key={row.claim_id} className="mt-2 text-xs border-t border-[#F1F5F9] pt-2" data-testid="review-gate-row">
+          <div className="text-slate-900 mb-1">#{row.rank} {row.claim} <span className="text-slate-500">· {row.evidence_label}</span></div>
+          <GateCell row={row} ccy={audit.reporting_currency} onSave={save} />
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function RatingsSection({ verdict, save }) {
+  return (
+    <section className={sectionClass} data-testid="review-ratings">
+      <Heading n="7">Ratings</Heading>
+      <div className="grid gap-3 md:grid-cols-2 text-xs"><RatingFields verdict={verdict} save={save} /></div>
+    </section>
+  );
+}
+
+/** Write all narratives (with its cost estimate) and Generate IC memo (on once both ratings are entered). */
+function Finish({ auditId, verdict, summary, estimate, reload }) {
+  const [writing, setWriting] = useState(null);       // "2 of 3: Data inventory" while it runs
+  const [outcome, setOutcome] = useState({});
+  const [making, setMaking] = useState(false);
+  const ratings = verdict.ic_inputs?.ratings || {};
+  const rated = Object.keys(verdict.ratings_for || {}).every((row) => ratings[row]);
+  const steps = (estimate?.steps || []).filter((s) => s.available);
+
+  const writeAll = async () => {
+    const results = {};
+    for (let i = 0; i < steps.length; i += 1) {
+      setWriting(`${i + 1} of ${steps.length}: ${steps[i].label}`);
+      try {
+        const res = await generateNarrative(auditId, steps[i].step);
+        results[steps[i].step] = res.narrative_status;
+      } catch (e) {
+        results[steps[i].step] = "unavailable";            // the metrics stay; the step says it could not be written
+      }
+      setOutcome({ ...results });
+    }
+    setWriting(null);
+    await reload();
+  };
+  const makeMemo = async () => { setMaking(true); try { await downloadMemo(auditId); } finally { setMaking(false); } };
+  const blockers = summary.blockers || [];
+
+  return (
+    <section className={sectionClass} data-testid="review-finish">
+      <div className="flex flex-wrap items-center gap-3">
+        <Button data-testid="write-all-narratives" onClick={writeAll} disabled={writing !== null || steps.length === 0} className="gap-2 bg-white text-slate-900 border border-[#D1D5DB] hover:bg-slate-50">
+          {writing !== null ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4 text-sky-700" />}
+          {writeAllLabel(writing)}
+        </Button>
+        <span className="text-xs font-mono text-slate-700" data-testid="write-all-estimate">{estimateText(estimate)}</span>
+      </div>
+      <p className="mt-1.5 max-w-2xl text-xs text-slate-500" data-testid="write-all-help">{WRITE_ALL_HELP}</p>
+      {Object.entries(outcome).filter(([, status]) => status === "unavailable").map(([step]) => (
+        <p key={step} className="mt-1 text-xs text-slate-600" data-testid="write-all-unavailable">Narrative unavailable for {steps.find((s) => s.step === step)?.label}: the computed metrics are unaffected.</p>
+      ))}
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <Button data-testid="generate-memo" onClick={makeMemo} disabled={!rated || making} className="gap-2 bg-sky-600 hover:bg-sky-500">
+          {making ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}{MEMO_LABEL}
+        </Button>
+        {!rated && <span className="text-xs text-slate-600" data-testid="memo-waiting">{MEMO_WAITING}</span>}
+      </div>
+      {blockers.length > 0 && <p className="mt-2 text-xs text-rose-800" data-testid="memo-blockers">{blockersNote(blockers.length)}</p>}
+    </section>
+  );
+}

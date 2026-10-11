@@ -113,3 +113,16 @@ test.each([0, null, undefined])("the header reads 'target not set' when Target A
   await mount(AUDIT);
   expect(q("header-target-line").textContent).toMatch(/^EUR · target .*1,?000,?000.* ARR$/);
 });
+
+test("Run audit and Review are the tabs; every earlier page is under the Details menu, none removed", async () => {
+  api.getBlockers.mockResolvedValue([]);
+  await mount(AUDIT);
+  expect(q("nav-tab-run-audit").textContent).toBe("Run audit");
+  expect(q("nav-tab-review").textContent).toBe("Review");
+  expect(q("details-menu")).toBeNull();
+  await act(async () => { q("nav-details").click(); });
+  expect(["nav-tab-growth-dashboard", "nav-tab-mapping-wizard", "nav-tab-missing-data"].map((id) => q(id).textContent))
+    .toEqual(["Growth Dashboard", "Upload & Mapping", "Diagnostics"]);
+  await act(async () => { q("nav-details").click(); });
+  expect(q("details-menu")).toBeNull();
+});

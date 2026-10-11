@@ -46,7 +46,7 @@ export default function AuditHub() {
       toast.success("Audit created");
       setOpen(false);
       setForm(blank);
-      nav(`/audit/${a.id}/mapping`);
+      nav(`/audit/${a.id}/run`);
     } catch (e) {
       const detail = e.response?.data?.detail;
       const msg = Array.isArray(detail) ? detail.map((d) => d.msg).join("; ") : detail;
@@ -187,15 +187,15 @@ export default function AuditHub() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => nav(`/audit/${a.id}/mapping`)}
+                    onClick={() => nav(`/audit/${a.id}/run`)}
                     className="bg-transparent border-[#E5E7EB] text-slate-700 hover:bg-sky-50 hover:text-slate-900"
                   >
-                    Data
+                    Run audit
                   </Button>
                   <Button
                     data-testid={`open-dashboard-${a.id}`}
                     size="sm"
-                    onClick={() => nav(`/audit/${a.id}/dashboard`)}
+                    onClick={() => nav(`/audit/${a.id}/review`)}
                     className="bg-sky-600 hover:bg-sky-500 gap-1"
                   >
                     Open <ArrowRight className="h-3.5 w-3.5" />

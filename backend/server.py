@@ -25,6 +25,7 @@ from schemas import metrics as contract
 from app import formatting as fmt
 from app import disclosure as disclosure_mod
 from app import narrative_export
+from app import run_audit
 from app import claim_matching
 from app import ic_memo
 from app import verdict as verdict_mod
@@ -1188,6 +1189,121 @@ async def approve_all_candidates(audit_id: str, payload: ApproveAll):
     return {"approved": len(approved), "skipped": len(skipped), "approved_ids": approved, "skipped_ids": skipped}
 
 
+# ---------------------------------------------------------------------------
+# Run audit: three stages the analyst starts with one button, and the counts the review screen shows
+# ---------------------------------------------------------------------------
+async def _open_turnover_ids(audit_id: str, audit: dict, found: list) -> set:
+    current = await _current_audit(audit_id, audit, strict=False)
+    settings = _register_settings(audit, await _fx(audit_id, audit), await _deck_take_rate(audit_id))
+    return {cid for cid, views in claim_matching.turnover_views(found, current.get("results"), settings).items()
+            if any(v["turnover_set_by"] != "analyst" for v in views)}
+
+
+async def _accept_within_tolerance(audit_id: str, audit: dict) -> dict:
+    """Approve, as approve-all does, every pending claim the register would label Verified (within tolerance). A claim whose
+    Revenue / Volume question is open, whose type is still to be chosen, or that is not Verified stays pending for the review
+    screen. Each accepted claim is marked `auto_accepted`, so the review screen can list it and the analyst can still edit or
+    reject it. No threshold or tolerance is read or changed here."""
+    audit = await _current_audit(audit_id, audit, strict=False)
+    found = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
+    pending = [c for c in found if c.get("status") == "pending"]
+    skipped_turnover = await _open_turnover_ids(audit_id, audit, found)
+    decided = [c for c in pending if c["id"] not in skipped_turnover and not (
+        c.get("claim_type") in (structures.verify.OTHER, deck_claims.UNKNOWN) and "parsed" not in c)]
+    # The register as it would stand with these claims approved; the register's own code labels them.
+    trial = [{**c, "status": "edited" if "parsed" in c else "approved"} for c in decided]
+    kept = [c for c in found if c.get("status") in REGISTER_STATUSES]
+    rows = claim_matching.build_register(
+        sorted(kept + trial, key=lambda c: (c.get("file") or "", c.get("order", 0))), audit.get("results"),
+        _register_settings(audit, await _fx(audit_id, audit), await _deck_take_rate(audit_id)), peers=found)
+    ids = set(run_audit.within_tolerance_ids(rows, [c["id"] for c in decided]))
+    accepted = []
+    for c in decided:
+        if c["id"] not in ids:
+            continue
+        try:
+            await db[decks.CANDIDATES_COLLECTION].update_one(
+                {"audit_id": audit_id, "id": c["id"]},
+                {"$set": {"status": "edited" if "parsed" in c else "approved", "auto_accepted": True}})
+            accepted.append(c["id"])
+        except Exception:
+            continue
+    return {"accepted": len(accepted), "accepted_ids": accepted, "open": len(pending) - len(accepted),
+            "turnover_open": len(skipped_turnover & {c["id"] for c in pending})}
+
+
+@api.post("/audits/{audit_id}/run/{stage}")
+async def run_stage(audit_id: str, stage: str):
+    """One stage of Run audit, in order: mapping (checks the files are mapped), engine (the calculations), claims (the deck claims
+    within tolerance are accepted). It answers 200 with a status: done, needs_review (the analyst must decide something on the
+    review screen), waiting (an earlier stage is not done), running (the decks are still being read; ask again) or failed (a
+    plain-English message, no exception text). Existing endpoints do the work; nothing here is new logic for the engine."""
+    if stage not in run_audit.STAGES:
+        raise HTTPException(404, "Unknown stage")
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
+    if not audit:
+        raise HTTPException(404, "Audit not found")
+    datasets = await db.datasets.find({"audit_id": audit_id}, {"_id": 0, "rows": 0}).to_list(10)
+    counts = run_audit.mapping_counts(datasets)
+    mapped = bool(datasets) and any(d["dtype"] == "revenue" for d in datasets) and not counts["open"] and not counts["missing_required"]
+    result = None
+    try:
+        if stage == "mapping":
+            if not datasets:
+                result = run_audit.stage_result(stage, run_audit.FAILED, run_audit.NO_FILES, **counts)
+            elif not any(d["dtype"] == "revenue" for d in datasets):
+                result = run_audit.stage_result(stage, run_audit.FAILED, run_audit.NO_REVENUE, **counts)
+            elif not mapped:
+                result = run_audit.stage_result(stage, run_audit.NEEDS_REVIEW, None, **counts)
+            else:
+                result = run_audit.stage_result(stage, run_audit.DONE, None, **counts)
+        elif stage == "engine":
+            if not mapped:
+                result = run_audit.stage_result(stage, run_audit.WAITING, run_audit.WAIT_MAPPING)
+            else:
+                await _run_compute(audit_id)
+                result = run_audit.stage_result(stage, run_audit.DONE)
+        else:
+            if not audit.get("results"):
+                result = run_audit.stage_result(stage, run_audit.WAITING, run_audit.WAIT_ENGINE)
+            else:
+                deck_docs = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, {"_id": 0, "ai_status": 1}).to_list(100)
+                if not deck_docs:
+                    result = run_audit.stage_result(stage, run_audit.DONE, run_audit.NO_DECKS, accepted=0, open=0, turnover_open=0)
+                elif any(d.get("ai_status") in ("reading", structures.WAITING) for d in deck_docs):
+                    waiting = any(d.get("ai_status") == structures.WAITING for d in deck_docs)
+                    result = run_audit.stage_result(
+                        stage, run_audit.NEEDS_REVIEW if waiting else run_audit.RUNNING,
+                        structures.WAITING_TEXT if waiting else run_audit.DECKS_READING)
+                else:
+                    result = run_audit.stage_result(stage, run_audit.DONE, None, **(await _accept_within_tolerance(audit_id, audit)))
+    except Exception as exc:          # plain English to the analyst; the log has the stage and the error type, never the message
+        logger.error("run audit stage failed: run_id=%s stage=%s error=%s", audit_id, stage, type(exc).__name__)
+        result = run_audit.stage_result(stage, run_audit.FAILED, run_audit.ENGINE_FAILED if stage == "engine" else run_audit.CLAIMS_FAILED)
+    logger.info("run audit: run_id=%s stage=%s status=%s", audit_id, stage, result["status"])
+    return sanitize(result)
+
+
+@api.get("/audits/{audit_id}/review")
+async def review_summary(audit_id: str):
+    """What the review screen opens with: the columns accepted without a click and the ones waiting, the claims accepted within
+    tolerance (their ids, to show them) and the ones waiting, the Revenue / Volume questions open and the hard blockers."""
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
+    if not audit:
+        raise HTTPException(404, "Audit not found")
+    datasets = await db.datasets.find({"audit_id": audit_id}, {"_id": 0, "rows": 0}).to_list(10)
+    found = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
+    auto = [c["id"] for c in found if c.get("auto_accepted") and c.get("status") in REGISTER_STATUSES]
+    pending = [c for c in found if c.get("status") == "pending"]
+    open_turnover = await _open_turnover_ids(audit_id, audit, found) if pending else set()
+    return sanitize({
+        "mappings": run_audit.mapping_counts(datasets),
+        "claims": {"auto_accepted": len(auto), "auto_accepted_ids": auto, "open": len(pending),
+                   "turnover_open": len(open_turnover & {c["id"] for c in pending})},
+        "computed": bool(audit.get("results")),
+        "blockers": await _blocker_list(audit_id, audit)})
+
+
 def merged_fx(audit: dict, file_fx: Optional[dict]) -> dict:
     """The audit's FX rates, upper-cased, with the reporting currency at 1: the rates saved with the revenue file (older
     audits) under the audit's own rates, which win. One set of rates serves the uploaded files and the deck claims."""
@@ -2177,6 +2293,18 @@ async def generate_narrative(run_id: str, step: str):
             raise HTTPException(409, "Run not computed yet")
         raise HTTPException(500, exc.reason)
     return sanitize(result.model_dump())
+
+
+@api.get("/runs/{run_id}/narratives/estimate")
+async def narratives_estimate(run_id: str):
+    """The steps "Write all narratives" would run and what they would cost at most. Read-only: no provider call."""
+    await _recompute_if_old(run_id)
+    try:
+        return await llm_gateway.estimate_narratives(db, run_id)
+    except llm_gateway.GatewayError as exc:
+        if exc.reason in ("run_not_found", "not_computed"):
+            raise HTTPException(404 if exc.reason == "run_not_found" else 409, str(exc))
+        raise
 
 
 @api.get("/runs/{run_id}/narrative/{step}")

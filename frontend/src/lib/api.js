@@ -102,3 +102,10 @@ export const getLlmUsage = (id) => api.get(`/runs/${id}/llm-usage`).then((r) => 
 // AI-provenance block (model + generation time) for the foot of the analysis.
 // Read-only; the same text is written into the exports.
 export const getDisclosure = (id) => api.get(`/runs/${id}/disclosure`).then((r) => r.data.disclosure);
+
+// Run audit (one button): three stages in order, each answering done, needs_review, waiting, running or failed with a plain-English
+// message; and what the review screen opens with. The files themselves go through the endpoints above.
+export const runStage = (id, stage) => api.post(`/audits/${id}/run/${stage}`, null, { timeout: 120000 }).then((r) => r.data);
+export const getReview = (id) => api.get(`/audits/${id}/review`).then((r) => r.data);
+// What "Write all narratives" would run and its upper-bound cost; reads only, no provider call.
+export const getNarrativeEstimate = (id) => api.get(`/runs/${id}/narratives/estimate`).then((r) => r.data);
