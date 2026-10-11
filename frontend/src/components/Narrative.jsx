@@ -13,10 +13,11 @@ import { seeGlossary } from "@/lib/glossary";
  * "flagged" narrative is shown with the unverified figures named explicitly.
  * The reader should never have to guess which numbers were checked.
  */
-export function Narrative({ state }) {
+export function Narrative({ state, step, title = "Narrative", actionsTitle = "Next actions", ranked = false }) {
+  const id = (base) => (step ? `${base}-${step}` : base);
   if (state?.loading) {
     return (
-      <Card>
+      <Card title={title} testid={id("narrative-panel")}>
         <GeneratingProgress />
       </Card>
     );
@@ -27,9 +28,9 @@ export function Narrative({ state }) {
 
   if (status === "unavailable") {
     return (
-      <Card>
+      <Card title={title} testid={id("narrative-panel")}>
         <div
-          data-testid="narrative-unavailable"
+          data-testid={id("narrative-unavailable")}
           className="rounded-md border border-[#E5E7EB] bg-slate-50 px-4 py-3 text-sm text-slate-700"
         >
           <div className="font-medium text-slate-900">Narrative could not be generated.</div>
@@ -47,8 +48,14 @@ export function Narrative({ state }) {
 
   if (!narrative) return null;
 
+  const decisions = narrative.table_rows?.some((r) => r.decision_informed);
   return (
-    <Card>
+    <Card title={title} testid={id("narrative-panel")}>
+      {narrative.verdict && (
+        <div data-testid={id("narrative-verdict")} className="mb-3 text-xs font-mono uppercase tracking-wider text-slate-600">
+          Verdict: <span className="font-semibold text-slate-900">{narrative.verdict}</span>
+        </div>
+      )}
       {status === "flagged" && unmatched.length > 0 && (
         <div
           data-testid="narrative-flagged-banner"
@@ -74,6 +81,15 @@ export function Narrative({ state }) {
 
       {narrative.table_rows?.length > 0 && (
         <table className="mt-4 w-full text-sm">
+          {decisions && (
+            <thead>
+              <tr className="text-left text-[10px] font-mono uppercase tracking-wider text-slate-500">
+                <th className="pb-1 pr-3 font-normal">Evidence</th>
+                <th className="pb-1 text-right font-normal">Status</th>
+                <th className="pb-1 pl-3 font-normal">Decision informed</th>
+              </tr>
+            </thead>
+          )}
           <tbody>
             {narrative.table_rows.map((row, i) => (
               <tr key={`${row.source_key}-${i}`} className="border-t border-[#E5E7EB]">
@@ -88,6 +104,9 @@ export function Narrative({ state }) {
                   </div>
                 </td>
                 <td className="py-1.5 text-right font-mono text-slate-900">{row.value}</td>
+                {decisions && (
+                  <td data-testid="narrative-row-decision" className="py-1.5 pl-3 text-slate-700">{row.decision_informed}</td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -95,7 +114,7 @@ export function Narrative({ state }) {
       )}
 
       <Section title="Worth flagging" items={narrative.worth_flagging} />
-      <Section title="Next actions" items={narrative.next_actions} />
+      <Section title={actionsTitle} items={narrative.next_actions} ranked={ranked} />
     </Card>
   );
 }
@@ -125,7 +144,7 @@ function GeneratingProgress() {
   );
 }
 
-function Section({ title, items }) {
+function Section({ title, items, ranked = false }) {
   if (!items || items.length === 0) return null;
   return (
     <div className="mt-4">
@@ -133,7 +152,7 @@ function Section({ title, items }) {
       <ul className="mt-1 space-y-1">
         {items.map((item, i) => (
           <li key={i} className="flex gap-2 text-sm text-slate-700">
-            <span className="text-slate-500">·</span>
+            <span className="text-slate-500">{ranked ? `${i + 1}.` : "·"}</span>
             {seeGlossary(item)}
           </li>
         ))}
@@ -142,15 +161,15 @@ function Section({ title, items }) {
   );
 }
 
-function Card({ children }) {
+function Card({ children, title = "Narrative", testid = "narrative-panel" }) {
   return (
     <div
-      data-testid="narrative-panel"
+      data-testid={testid}
       className="bg-white border border-[#E5E7EB] rounded-lg p-5 mb-6"
     >
       <div className="mb-3 flex items-center gap-2">
         <FileText className="h-4 w-4 text-slate-500" />
-        <h3 className="font-heading text-sm font-semibold text-slate-900">Narrative</h3>
+        <h3 className="font-heading text-sm font-semibold text-slate-900">{title}</h3>
         <span className="text-[10px] font-mono text-slate-500">
           generated · figures verified against the engine
         </span>

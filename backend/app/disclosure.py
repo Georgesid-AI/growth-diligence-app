@@ -13,6 +13,8 @@ from typing import Any, Dict, List, Optional
 
 STEP_LABELS = {
     "growth_engine": "Growth engine",
+    "data_inventory": "Data inventory",
+    "data_integrity": "Data integrity",
     "cohort_retention": "Cohort retention",
     "cac_efficiency": "CAC efficiency",
     "path_to_plan": "Path to plan",

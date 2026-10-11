@@ -275,7 +275,7 @@ HEADER_SENTINEL = "Jane Doe"    # every mapped column header is renamed to carry
 SERVER_ONLY_TOP_LEVEL = frozenset({"contract_version",                   # interface-contracts.md: the version the stored payload was built under
                                    "anomalies", "mrr_series", "new_mrr_by_quarter", "new_mrr_by_quarter_source",
                                    "revenue_series", "customers_series",    # claim-matching.md table 2a
-                                   "revenue_reconciliation"})               # chat-upload.md section 6.2
+                                   "revenue_reconciliation"})               # chat-upload.md section 6.2; data_integrity reads a summary (step_payloads.py)
 SERVER_ONLY_FIELDS = frozenset({
     "file", "sheet", "columns", "rows", "row_numbers", "unlocked_by",
     "values",                       # founder_involved_excluded.values are raw cells (cohort `data.values` is allowed by parent)
@@ -1799,3 +1799,114 @@ def test_the_gateway_reads_no_ic_inputs_and_the_provider_payload_holds_none(regi
     for needle in (*IC_SENTINELS[1:3], "ic_inputs", "2031-04-05", "gate_metric_name", "key_gate"):
         assert needle not in returned, f"{needle!r} was read by the gateway"
         assert needle not in adapter.payloads[0], f"{needle!r} reached the provider"
+
+
+# ---------------------------------------------------------------------------
+# Data inventory and data integrity (A1, A2; CLAUDE.md rules 14 and 17). Their payload is built from the stored engine output
+# by app/llm/step_payloads.py: the audit's source keys with the engine's generic description, statuses, closed sentences and
+# display strings. No file or sheet name, header, cell, customer, segment or row number, and none of the server-only blocks
+# (anomalies, the monthly series, the reconciliation's by_month) as such. The new payload fields are in OUTBOUND_FIELDS; the
+# narratives add no results key, no log line and no guard word beyond the closed reasons of step_problem.
+# ---------------------------------------------------------------------------
+import test_step_payloads as steps  # noqa: E402
+
+NEW_STEPS = ("data_inventory", "data_integrity")
+STEP_FIELDS = frozenset({"source_list", "inventory", "integrity", "source_key", "description", "category", "in_request_list",
+                         "quality_issues", "analyses_blocked", "months_supplied", "months_required", "check", "first_month",
+                         "last_month", "revenue_file_total", "pnl_total", "gap", "gap_pct", "tolerance", "window_over_tolerance",
+                         "months_over_tolerance"})
+
+
+def _strings(node):
+    if isinstance(node, dict):
+        for v in node.values():
+            yield from _strings(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _strings(v)
+    elif isinstance(node, str):
+        yield node
+
+
+def test_the_step_payload_fields_are_allowlisted_and_not_server_only():
+    assert STEP_FIELDS <= gateway.OUTBOUND_FIELDS
+    assert not STEP_FIELDS & SERVER_ONLY_FIELDS, "a key cannot be both"
+    assert not {"anomalies", "revenue_reconciliation", "by_month", "mrr_series", "revenue_series"} & gateway.OUTBOUND_FIELDS
+
+
+@pytest.mark.parametrize("step", NEW_STEPS)
+def test_the_step_payload_holds_no_file_sheet_header_cell_customer_segment_or_row_number(step):
+    results = steps.full_results()
+    results["mrr_series"]["segments"] = ["Enterprise"]
+    results["anomalies"]["revenue_gap_then_resume"] = [steps.CUSTOMER]
+    results["missing_data"] = [{"metric": "m", "status": "Missing", "reason": f"{PERSON} left", "unlocked_by": "x",
+                                "file": steps.FILE_NAMES[0]}]
+    out = steps.payload_of(step, results)
+    blob = json.dumps(out, ensure_ascii=False)
+    for secret in (*steps.FILE_NAMES, *steps.SHEETS, steps.CUSTOMER, PERSON, "Enterprise", "row_numbers", "0.1", "0.0935"):
+        assert secret not in blob, f"{secret!r} reached the {step} payload"
+    assert "missing_data" not in out["metrics"] and "questions_for_management" not in out["metrics"], "no reason string leaves"
+    # Every string is one the builder wrote: a closed sentence, a status, a label, a key or a figure.
+    for text in _strings(out):
+        assert not re.search(r"\.(xlsx|csv|pptx)\b", text, re.I), text
+
+
+@pytest.mark.parametrize("step", NEW_STEPS)
+def test_the_step_payload_of_every_engine_run_holds_no_file_sheet_sentinel_or_stored_customer_id(step, engine_runs):
+    for spec, inject, results in engine_runs:
+        stored = json.dumps(results, ensure_ascii=False)
+        files = set(re.findall(r'"file": "([^"]+)"', stored))
+        sheets = set(re.findall(r'"sheet": "([^"]+)"', stored))
+        customers = set(results["anomalies"]["revenue_gap_then_resume"]) if results.get("anomalies") else set()
+        blob = json.dumps(gateway.build_outbound({"metrics": gateway._slice_for_step(results, step)}, {}), ensure_ascii=False)
+        for secret in (*files, *sheets, *customers, SENTINEL, HEADER_SENTINEL):
+            assert secret not in blob, f"{secret!r} reached the {step} payload of {spec['reporting_currency']}"
+
+
+def test_the_integrity_payload_holds_the_window_figures_as_display_strings_and_never_the_monthly_block():
+    results = steps.full_results()
+    for m in results["revenue_reconciliation"]["by_month"]:
+        m["revenue_file"], m["pnl"], m["gap"] = 123456.0, 111111.0, 12345.0      # figures only the monthly block holds
+    blob = json.dumps(steps.payload_of("data_integrity", results), ensure_ascii=False)
+    assert "1,100,000 EUR" in blob and "10%" in blob, "the stored window total and gap, as display strings"
+    for needle in ("revenue_reconciliation", "by_month", "123456", "123,456", "111,111", "12,345", "0.1"):
+        assert needle not in blob, f"{needle!r} (a month of the monthly block) reached the integrity payload"
+    inventory = json.dumps(steps.payload_of("data_inventory", results), ensure_ascii=False)
+    for needle in ("1,100,000", "1,000,000", "gap_pct", "window_over_tolerance"):
+        assert needle not in inventory, f"{needle!r} reached the inventory payload"
+
+
+@pytest.mark.parametrize("step", NEW_STEPS)
+def test_a_rejected_or_failed_step_logs_closed_reasons_and_stores_no_payload_text(step, caplog):
+    import logging
+    db = steps.db_for(steps.full_results())
+    reply = steps.GOOD[step](what_this_means="Tier 3 only")
+    with caplog.at_level(logging.DEBUG):
+        result, _ = steps.run(db, step, reply)
+    assert result.narrative_status == "unavailable"
+    stored = json.dumps([db["llm_calls"].docs, db["llm_narratives"].docs], default=str)
+    for text in (caplog.text, result.reason, stored):
+        for secret in (*steps.FILE_NAMES, *steps.SHEETS, steps.CUSTOMER):
+            assert secret not in text, f"{secret!r} reached a log line, a reason or a collection"
+    assert db["llm_narratives"].docs == [], "a rejected narrative is not stored"
+    assert all(set(c) <= {"run_id", "step", "prompt_version", "model", "input_tokens", "output_tokens", "estimated_cost_usd",
+                          "cache_hit", "status", "unmatched_numbers", "timestamp", "http_status", "error_type"}
+               for c in db["llm_calls"].docs)
+
+
+@pytest.mark.parametrize("step", NEW_STEPS)
+def test_the_stored_narrative_holds_model_output_only(step):
+    db = steps.db_for(steps.full_results())
+    steps.run(db, step, steps.GOOD[step]())
+    doc = db["llm_narratives"].docs[0]
+    assert doc["step"] == step and set(doc["narrative"]) >= {"headline", "table_rows", "next_actions"}
+    assert not {"payload", "outbound", "prompt", "system", "metrics"} & set(doc)
+    for secret in (*steps.FILE_NAMES, steps.CUSTOMER):
+        assert secret not in json.dumps(doc, default=str)
+
+
+def test_the_new_prompts_and_builder_name_no_deck_text_register_field_or_file():
+    for name in ("data_inventory.md", "data_integrity.md"):
+        text = (BACKEND / "app" / "llm" / "prompts" / name).read_text(encoding="utf-8")
+        for word in ("snippet", "deck", "claim_inputs", "gate_sentence", ".xlsx", ".csv"):
+            assert word not in text, f"{name} names {word!r}"

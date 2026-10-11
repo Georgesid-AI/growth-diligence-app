@@ -11,6 +11,7 @@ import { Provenance } from "@/components/Provenance";
 import { Gloss } from "@/components/Gloss";
 import { Narrative } from "@/components/Narrative";
 import { NarrativeControl } from "@/components/NarrativeControl";
+import StepNarrative from "@/components/StepNarrative";
 import { getAudit, getResults, getVerdict, exportUrl, readNarrative, generateNarrative, getDisclosure, reportUsage, NARRATIVE_TIMEOUT_MS } from "@/lib/api";
 import { GLOSSARY, seeGlossary } from "@/lib/glossary";
 import { SegmentPaths } from "@/components/SegmentPaths";
@@ -46,6 +47,9 @@ export default function Dashboard() {
   const [narrative, setNarrative] = useState(null);
   const [generating, setGenerating] = useState(false);
   const [disclosure, setDisclosure] = useState(null);
+  // The data inventory and data integrity narratives (A1, A2) change the disclosure block when one is written.
+  const [stepTick, setStepTick] = useState(0);
+  const stepWritten = useCallback(() => setStepTick((n) => n + 1), []);
   // The verdict, the data gaps and the analyst's inputs: read again whenever a gate, a mark or an input changes.
   const [verdict, setVerdict] = useState(null);
   const [verdictTick, setVerdictTick] = useState(0);
@@ -91,7 +95,7 @@ export default function Dashboard() {
       .then((d) => { if (!cancelled) setDisclosure(d); })
       .catch(() => { if (!cancelled) setDisclosure(null); });
     return () => { cancelled = true; };
-  }, [id, data, narrative]);
+  }, [id, data, narrative, stepTick]);
 
   // The only path that spends an AI request.
   const onGenerate = () => {
@@ -288,6 +292,10 @@ export default function Dashboard() {
 
       {/* Narrative — status tells the reader which figures were verified */}
       <Narrative state={generating ? { loading: true } : narrative} />
+
+      {/* Data inventory (A1) and data integrity (A2): one button each, costed like the growth-engine narrative. */}
+      <StepNarrative auditId={id} step="data_inventory" ready={!!data} onChanged={stepWritten} />
+      <StepNarrative auditId={id} step="data_integrity" ready={!!data} onChanged={stepWritten} />
 
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6">

@@ -55,7 +55,7 @@ from schemas.metrics import safe_problems
 
 from .. import disclosure, formatting
 from ..structures import redact as structure_redact
-from . import cache, guards, prompt_store, redaction, schemas
+from . import cache, guards, prompt_store, redaction, schemas, step_payloads
 from .schemas import (MAPPING_FIELDS, STRUCTURE_TYPES, DeckUsage, LabellingReply, Narrative, NarrativeResponse,
                       StructureRead, StructureReply, UsageResponse, narrative_output_schema)
 
@@ -116,6 +116,27 @@ STEP_CONFIG = {
         "windows": [12, 24],
         "max_tokens": 4000,
         "temperature": 0.2,
+        "enabled": True,
+    },
+    # The data inventory (A1) and data integrity (A2): written from the engine's stored output through
+    # step_payloads (source keys, statuses and closed sentences only), with the same guards as growth_engine plus the
+    # step guards of `step_problem`.
+    "data_inventory": {
+        "prompt": "data_inventory",
+        "windows": [],
+        "max_tokens": 3000,
+        "temperature": 0.2,
+        "max_words": 250,
+        "verdicts": (),
+        "enabled": True,
+    },
+    "data_integrity": {
+        "prompt": "data_integrity",
+        "windows": [],
+        "max_tokens": 3000,
+        "temperature": 0.2,
+        "max_words": 300,
+        "verdicts": step_payloads.DATA_INTEGRITY_VERDICTS,
         "enabled": True,
     },
     "cohort_retention": {
@@ -270,6 +291,10 @@ OUTBOUND_FIELDS = frozenset({
     "arr", "nrr", "gross_churn", "cac_payback", "sales_cycle", "win_rate", "founder_win_rate",
     "acv_path", "segment_paths", "cohort_retention", "as_of_month", "reporting_currency",
     "missing_data", "questions_for_management",
+    # data inventory and data integrity (step_payloads.py): source keys, statuses and closed sentences
+    "source_list", "inventory", "integrity", "source_key", "description", "category", "in_request_list", "quality_issues",
+    "analyses_blocked", "months_supplied", "months_required", "check", "first_month", "last_month", "revenue_file_total",
+    "pnl_total", "gap", "gap_pct", "tolerance", "window_over_tolerance", "months_over_tolerance",
     # shared
     "value", "mrr", "month", "series", "n", "status", "reason", "computable", "available",
     "source", "rule",
@@ -353,6 +378,8 @@ def build_outbound(computed: dict, mapping: dict) -> dict:
 
 def _slice_for_step(results: dict, step: str) -> dict:
     """Narrow computed results to what a step needs. Unknown keys are dropped."""
+    if step in step_payloads.STEPS:
+        return {**step_payloads.build(step, results), "as_of_month": results.get("as_of_month")}
     wanted = {
         "growth_engine": [
             "arr", "nrr", "gross_churn", "cac_payback", "sales_cycle",
@@ -673,6 +700,8 @@ def numeric_guard(
         hard |= _unmatched(f"{row.label}: {row.value}", allowed)  # the label carries the direction
 
     soft: set = set()
+    for row in narrative.table_rows:
+        soft |= _unmatched(row.decision_informed or "", allowed)
     for field in SOFT_FIELDS:
         value = getattr(narrative, field, None)
         for text in (value if isinstance(value, list) else [value or ""]):
@@ -711,15 +740,39 @@ def source_key_paths(node: Any) -> List[str]:
     return sorted(out)
 
 
+def source_key_values(payload: Any) -> set:
+    """The source keys (S1, S2 ...) a payload lists: the value of every `source_key` field (data inventory and data
+    integrity). Empty for a payload that has none."""
+    out: set = set()
+
+    def walk(n: Any) -> None:
+        if isinstance(n, dict):
+            for key, value in n.items():
+                if key == "source_key" and isinstance(value, str):
+                    out.add(value)
+                walk(value)
+        elif isinstance(n, list):
+            for item in n:
+                walk(item)
+
+    walk(payload)
+    return out
+
+
+def valid_source_keys(payload: Any) -> List[str]:
+    """What the model is told it may cite: the payload's dotted paths and its source keys."""
+    return sorted(set(source_key_paths(payload)) | source_key_values(payload))
+
+
 def accepted_source_keys(payload: Any) -> set:
-    """Dotted paths plus their bare leaf names.
+    """Dotted paths, their bare leaf names and the payload's source keys.
 
     The dotted path is what the model is told to use. Bare names stay accepted
     so a row citing `acv` is not thrown away over formatting - the point of the
     guard is that the figure is traceable, not that it is spelled one way.
     """
     full = source_key_paths(payload)
-    return set(full) | {p.rsplit(".", 1)[-1] for p in full}
+    return set(full) | {p.rsplit(".", 1)[-1] for p in full} | source_key_values(payload)
 
 
 def source_key_guard(narrative: Narrative, payload: Any) -> Optional[str]:
@@ -754,6 +807,29 @@ def views_guard(narrative: Narrative, payload: Any) -> Optional[str]:
         return (f"evidence table cites the {only} ratio without the {missing} ratio; "
                 "both views must be shown together")
     return None
+
+
+def step_problem(config: dict, narrative: Narrative, payload: Any) -> Optional[str]:
+    """The checks of the data inventory and data integrity steps; None for any other step.
+
+    Word limit of the narrative text (headline, what this means, worth flagging, next actions), a "decision informed" on
+    every evidence row, no tier code, no request for a category the app cannot ingest, and an integrity verdict that is one
+    of the three labels and agrees with the stored reconciliation. Each is a reason to drop the narrative: the figures
+    below it are unaffected.
+    """
+    if config.get("max_words") is None:
+        return None
+    prose = [narrative.headline, narrative.what_this_means, *narrative.worth_flagging, *narrative.next_actions]
+    words = sum(len(text.split()) for text in prose)
+    if words > config["max_words"]:
+        return f"narrative has {words} words; the limit is {config['max_words']}"
+    if any(not (row.decision_informed or "").strip() for row in narrative.table_rows):
+        return "an evidence row has no decision informed"
+    problem = step_payloads.tier_code_problem(prose + [t for r in narrative.table_rows for t in (r.label, r.decision_informed)])
+    problem = problem or step_payloads.request_list_problem(payload, narrative.next_actions)
+    if config.get("verdicts"):
+        problem = problem or step_payloads.verdict_problem(payload, narrative.verdict)
+    return problem
 
 
 _JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
@@ -924,12 +1000,13 @@ async def generate_narrative(
         guard = numeric_guard(narrative, outbound, config.get("windows", ()))
         bad_keys = source_key_guard(narrative, outbound)
         one_sided = views_guard(narrative, outbound)
+        step_bad = step_problem(config, narrative, outbound)
         cost = estimate_cost_usd(model, in_tok, out_tok)
 
         # Hard tier: a fabricated figure in the headline or a table row, or a
         # row citing a source key that does not exist. Drop the narrative.
-        if guard.hard or bad_keys or one_sided:
-            reason = bad_keys or one_sided or (
+        if guard.hard or bad_keys or one_sided or step_bad:
+            reason = bad_keys or one_sided or step_bad or (
                 "model produced number(s) absent from the computed results in "
                 f"headline/table rows: {', '.join(guard.hard[:8])}"
             )
@@ -939,7 +1016,8 @@ async def generate_narrative(
                 db, run_id=run_id, step=step, prompt_version=prompt.version, model=model,
                 input_tokens=in_tok, output_tokens=out_tok, estimated_cost_usd=cost,
                 cache_hit=False,
-                status="views_guard_rejected" if one_sided and not (guard.hard or bad_keys) else "numeric_guard_rejected",
+                status=("step_guard_rejected" if step_bad and not (guard.hard or bad_keys or one_sided) else
+                        "views_guard_rejected" if one_sided and not (guard.hard or bad_keys) else "numeric_guard_rejected"),
                 unmatched_numbers=guard.all,
             )
             logger.warning("narrative rejected for run %s step %s: %s", run_id, step, reason)
@@ -1029,14 +1107,14 @@ async def _call_with_retries(adapter, config, prompt, outbound, sleep):
     Malformed body: one reask (MAX_PARSE_RETRIES), then fail. A reask is a fresh
     provider call and is billed, which is why it is capped at one.
     """
-    schema = narrative_output_schema()
+    schema = narrative_output_schema(decision=config.get("max_words") is not None, verdicts=config.get("verdicts") or ())
     system = prompt.text
     # Hand the model the exact source keys it may cite, in the exact form the
     # guard accepts. Derived from the payload, so the two can never drift; sent
     # alongside the data rather than baked into the prompt, since it is
     # per-payload. The cache key is still computed from `outbound` alone.
     message = dict(outbound)
-    message["valid_source_keys"] = source_key_paths(outbound)
+    message["valid_source_keys"] = valid_source_keys(outbound)
     user_payload = cache.canonical_json(message)
     parse_attempts = 0
     network_attempts = 0

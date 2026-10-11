@@ -7,15 +7,17 @@ import { Loader2, Sparkles, RefreshCw } from "lucide-react";
  * already written (no AI request); this button is the only thing that costs one,
  * and the helper text says so before the reader commits to it rather than after.
  */
-export function NarrativeControl({ status, generatedAt, superseded, supersededReason, busy, onGenerate }) {
+export function NarrativeControl({ status, generatedAt, superseded, supersededReason, busy, onGenerate, step, label = "Generate narrative", busyLabel = "Generating…" }) {
   const hasNarrative = status === "ok" || status === "flagged";
+  // The growth-engine control keeps its test ids; a control of another step carries the step.
+  const id = (base) => (step ? `${base}-${step}` : base);
 
   if (hasNarrative) {
     return (
-      <div className="mb-6" data-testid="narrative-control">
+      <div className="mb-6" data-testid={id("narrative-control")}>
         <button
           type="button"
-          data-testid="narrative-regenerate"
+          data-testid={id("narrative-regenerate")}
           onClick={onGenerate}
           disabled={busy}
           className="inline-flex items-center gap-1.5 text-sm text-sky-700 underline underline-offset-2 hover:text-sky-800 disabled:cursor-not-allowed disabled:text-slate-400 disabled:no-underline"
@@ -32,18 +34,18 @@ export function NarrativeControl({ status, generatedAt, superseded, supersededRe
   }
 
   return (
-    <div className="mb-6" data-testid="narrative-control">
+    <div className="mb-6" data-testid={id("narrative-control")}>
       <button
         type="button"
-        data-testid="narrative-generate"
+        data-testid={id("narrative-generate")}
         onClick={onGenerate}
         disabled={busy}
         className="inline-flex items-center gap-2 rounded-md border border-[#D1D5DB] bg-white px-3.5 py-2 text-sm font-medium text-slate-900 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-400"
       >
         {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4 text-sky-700" />}
-        {busy ? "Generating…" : "Generate narrative"}
+        {busy ? busyLabel : label}
       </button>
-      <p data-testid="narrative-helper" className="mt-1.5 max-w-2xl text-xs text-slate-500">
+      <p data-testid={id("narrative-helper")} className="mt-1.5 max-w-2xl text-xs text-slate-500">
         {superseded ? (
           // One was written but is no longer shown. Say why: the reader may remember
           // reading it and wonder where it went, and "the data changed" is only true

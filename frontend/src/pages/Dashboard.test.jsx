@@ -71,6 +71,18 @@ test("when the narrative cannot be generated the metrics render with their sourc
   host.remove();
 });
 
+test("the dashboard offers one Write narrative button for the data inventory and one for the data integrity, and the metrics render when both fail", async () => {
+  const { host, unmount } = await mountDashboard(sample);
+  for (const step of ["data_inventory", "data_integrity"]) {
+    expect(host.querySelector(`[data-testid="narrative-generate-${step}"]`).textContent).toBe("Write narrative");
+    expect(api.readNarrative).toHaveBeenCalledWith("a1", step);
+    expect(host.querySelector(`[data-testid="narrative-unavailable-${step}"]`)).not.toBeNull();
+  }
+  expect(api.generateNarrative).not.toHaveBeenCalled();
+  expect(host.textContent).toContain("Ending ARR202,125 EUR");
+  await unmount();
+});
+
 const CITED_BLOCKS = ["mrr-by-segment-chart", "cohort-retention", "anomaly-flags", "segment-paths", "new-mrr-by-quarter"];
 
 async function mountDashboard(results, verdict = VERDICT_NONE, audit = sample.audit) {

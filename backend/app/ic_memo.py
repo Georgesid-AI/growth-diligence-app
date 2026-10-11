@@ -352,12 +352,17 @@ def anomaly_count(results: dict) -> Optional[int]:
             + len(a.get("date_order_from_data") or ()))
 
 
-def _growth_narrative(narratives: List[dict]) -> Optional[dict]:
+def _step_narrative(narratives: List[dict], step: str) -> Optional[dict]:
+    """The stored narrative of a step, when it is written and its figures all checked (status ok)."""
     for n in narratives or ():
         n = n if isinstance(n, dict) else n.model_dump()
-        if n.get("step") == "growth_engine" and n.get("narrative_status") == "ok" and n.get("narrative"):
+        if n.get("step") == step and n.get("narrative_status") == "ok" and n.get("narrative"):
             return n["narrative"]
     return None
+
+
+def _growth_narrative(narratives: List[dict]) -> Optional[dict]:
+    return _step_narrative(narratives, "growth_engine")
 
 
 def _needs(ic: dict, rows: List[dict], key: dict) -> None:
@@ -410,6 +415,12 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, us
     anomalies = (f"{flags} anomaly flags{notes.source('Anomaly Flags', 'anomalies', (results.get('anomalies') or {}).get('source'))}"
                  if flags is not None else "anomaly flags not computed")
     reliability = f"{recon}; {anomalies}; {verified} of {len(rows)} claims Verified{notes.register()}."
+    reliability_evidence = "revenue_reconciliation, anomalies, claim register"
+    integrity = _step_narrative(narratives, "data_integrity")
+    if integrity and integrity.get("verdict"):
+        # The data-integrity narrative (A2) writes the headline and the key evidence; the rating stays the analyst's.
+        reliability = f"{integrity['headline']}{notes.add('data-integrity narrative, AI call log')}"
+        reliability_evidence = f"Data integrity verdict: {integrity['verdict']}; {reliability_evidence}"
     if narrative:
         growth = f"{narrative['headline']}{notes.add('growth-engine narrative, AI call log')}"
     else:
@@ -419,7 +430,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, us
                   f"gross revenue churn {fmt.fmt_pct(churn.get('overall_pct'))}"
                   f"{notes.source('Gross revenue churn', 'gross_churn.overall_pct', churn.get('source'))}. {S17}")
     ratings = ic.get("ratings") or {}
-    score = [["Data reliability", ratings["data_reliability"], reliability, "revenue_reconciliation, anomalies, claim register"],
+    score = [["Data reliability", ratings["data_reliability"], reliability, reliability_evidence],
              ["Growth engine", ratings["growth_engine"], growth, "arr, nrr, gross_churn, cac_payback, acv_path"]]
     score += [[name, text, "", ""] for name, text in W17_NOT_ASSESSED]
     out += [f"## {HEADINGS[2]}", _table(["Area", "Rating", "Headline", "Key evidence"], score), ""]
@@ -477,6 +488,11 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, us
     asks = [f"- {g['requested']}" for g in gaps if g["requested"]] + [f"- {q}" for q in vd.management_questions(results)]
     asks += [f"- {o['item']}: {o['requested']}" for o in vd.other_requests(results) if o["requested"]]
     app += ["Requests", *asks, ""]
+    inventory = _step_narrative(narratives, "data_inventory")
+    if inventory and inventory.get("next_actions"):
+        # The data-inventory narrative (A1): its ranked data request list, most important first.
+        app += ["Data request list from the data inventory, most important first",
+                *[f"- {a}{notes.add('data-inventory narrative, AI call log')}" for a in inventory["next_actions"]], ""]
 
     app += [f"## {APPENDICES[2]}"]
     for t in tables:
