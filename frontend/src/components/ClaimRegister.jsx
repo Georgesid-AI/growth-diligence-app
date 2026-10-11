@@ -148,7 +148,6 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
   const [rows, setRows] = useState(null);
   const [prefill, setPrefill] = useState({});
   const [budgets, setBudgets] = useState([]);
-  const [edits, setEdits] = useState({});          // per claim, only what the analyst changed in the gate fields
   const [error, setError] = useState(null);
   const ccy = results?.reporting_currency;
 

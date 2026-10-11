@@ -335,7 +335,7 @@ test("a gate starts with the prefill, each prefilled field marked, and the budge
   const host = await mountGates([GATE_ROW("c01")], { c01: FILL });
   const row = host.querySelector('[data-testid="claim-register-row"]');
   expect(row.querySelector('[data-testid="register-gate-threshold"]').value).toBe("200000");
-  expect(row.querySelector('[data-testid="register-gate-date"]').value).toBe("2025-03-31");
+  expect(row.querySelector('[data-testid="register-gate-date"]').value).toBe("31 Mar 2025");
   expect(row.querySelector('[data-testid="register-key-gate"]').checked).toBe(true);
   for (const f of ["threshold", "date", "key"]) expect(row.querySelector(`[data-testid="register-gate-prefilled-${f}"]`).textContent).toBe("prefilled – confirm");
   expect(row.querySelector('[data-testid="register-gate-budget"]').value).toBe("");
