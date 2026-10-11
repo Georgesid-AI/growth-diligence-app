@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Literal, Optional
 
 import pandas as pd
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from starlette.concurrency import run_in_threadpool
 
 import growth_engine as ge
@@ -1392,7 +1392,10 @@ async def claim_register(audit_id: str):
     if not audit:
         raise HTTPException(404, "Audit not found")
     claims, rows = await _claim_rows(audit_id, audit)
-    return sanitize({"claims": claims, "register": rows})
+    review = (audit.get("ic_inputs") or {}).get("first_quarterly_review")
+    # The gate fields' starting values and the budget dropdown sit beside the register, never in it: the CSV and the memo read rows.
+    return sanitize({"claims": claims, "register": rows, "gate_prefill": verdict_mod.gate_prefill(rows, review),
+                     "budget_decisions": verdict_mod.budget_decisions(rows)})
 
 
 def _csv_cell(value) -> str:
@@ -1517,6 +1520,60 @@ async def update_claim_inputs(audit_id: str, claim_id: str, payload: ClaimInputs
             raise HTTPException(400, verdict_mod.W5_SIXTH)
     await db[decks.CANDIDATES_COLLECTION].update_one({"audit_id": audit_id, "id": candidate["id"]},
                                                     {"$set": {"claim_inputs": inputs}})
+    _, rows = await _claim_rows(audit_id, audit)
+    return sanitize({"register": rows})
+
+
+class GateBatch(BaseModel):
+    """Save all gates: the gates the analyst has filled, each with the fields of one claim, in one call."""
+    model_config = {"extra": "forbid"}
+    gates: List[dict] = Field(min_length=1, max_length=500)
+
+
+@api.put("/audits/{audit_id}/claim-gates")
+async def save_all_gates(audit_id: str, payload: GateBatch):
+    """Save every gate sent, together or not at all. Each entry is a claim_id and the gate fields of PUT /claims/{claim_id}; the
+    result is the register as it reads after the save. A gate that would not be complete, or a sixth key gate, refuses the lot."""
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
+    if not audit:
+        raise HTTPException(404, "Audit not found")
+    if not audit.get("results"):
+        raise HTTPException(409, "Audit not computed yet")
+    claims, rows = await _claim_rows(audit_id, audit)
+    by_id = {r["claim_id"]: r for r in rows}
+    by_candidate = {c["id"]: {**(c.get("claim_inputs") or {})} for c in claims}
+    for entry in payload.gates:
+        claim_id = entry.get("claim_id")
+        if claim_id not in by_id:
+            raise HTTPException(404, "Claim not in the register")
+        try:
+            values = ClaimInputs(**{k: v for k, v in entry.items() if k in ("gate_threshold", "gate_budget_decision", "gate_date",
+                                                                            "gate_metric_name", "gate_direction", "key_gate")}).model_dump(exclude_unset=True)
+        except ValidationError as exc:
+            raise HTTPException(400, f"{claim_id}: {exc.errors()[0]['msg']}")
+        for text_field in ("gate_budget_decision", "gate_metric_name"):
+            if isinstance(values.get(text_field), str):
+                values[text_field] = values[text_field].strip() or None
+        if values.get("key_gate") is False:
+            values["key_gate"] = None
+        inputs = by_candidate[claim_id.split("#")[0]]
+        kept = {**inputs.get(claim_id, {}), **{k: v for k, v in values.items() if v is not None}}
+        for k, v in values.items():
+            if v is None:
+                kept.pop(k, None)
+        inputs[claim_id] = kept
+    trial = [{**c, "claim_inputs": by_candidate[c["id"]]} for c in claims]
+    current = await _current_audit(audit_id, audit, strict=False)
+    after = claim_matching.build_register(trial, current.get("results"), _register_settings(audit, await _fx(audit_id, audit), await _deck_take_rate(audit_id)))
+    for r in after:
+        sent_key = any(e.get("claim_id") == r["claim_id"] and e.get("key_gate") for e in payload.gates)
+        if sent_key and not r["gate_saved"]:
+            raise _rejected("key_gate", "a key gate needs a saved gate")
+    if sum(1 for r in after if r["key_gate"]) > verdict_mod.MAX_KEY_GATES:
+        raise HTTPException(400, verdict_mod.W5_SIXTH)
+    for c in claims:
+        await db[decks.CANDIDATES_COLLECTION].update_one({"audit_id": audit_id, "id": c["id"]},
+                                                        {"$set": {"claim_inputs": by_candidate[c["id"]]}})
     _, rows = await _claim_rows(audit_id, audit)
     return sanitize({"register": rows})
 

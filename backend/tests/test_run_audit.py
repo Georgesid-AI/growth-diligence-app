@@ -433,6 +433,7 @@ def test_the_reconciliation_blocker_is_on_the_review_summary_and_in_the_memo_not
 
 # --- the click count: from upload to the memo download -------------------------------------------------------------------------
 MAX_CLICKS = 15
+MAX_CLICKS_FULL = 20
 
 
 def analyst_flow(client, only_verified):
@@ -463,18 +464,32 @@ def analyst_flow(client, only_verified):
     ids = client.get(f"/api/audits/{AUDIT}/verdict").json()["verdict"]["top5"]["proposed"]
     assert client.put(f"/api/audits/{AUDIT}/ic-inputs", json={"top5": ids}).status_code == 200
 
-    # A gate for each top-5 claim that is not Verified: threshold, budget decision and date typed, Save; then 3 key marks.
-    register = {r["claim_id"]: r for r in client.get(f"/api/audits/{AUDIT}/claims").json()["register"]}
+    # The gates of the claims that are not Verified, prefilled from stored data. The analyst picks the budget decision on each (the
+    # first one is typed, the next ones are picked from the audit's list), fills what the prefill leaves blank, and presses Save all.
+    reg = client.get(f"/api/audits/{AUDIT}/claims").json()
+    register = {r["claim_id"]: r for r in reg["register"]}
     gated = [cid for cid in ids if register[cid]["evidence_label"] != "Verified"]
+    batch = []
     for n, cid in enumerate(gated):
-        for what in ("threshold", "budget decision", "date", "Save gate"):
-            clicks(f"gate {what}")
-        body = {"gate_threshold": 100.0 + n, "gate_budget_decision": "the Series B hiring plan", "gate_date": "2024-06-30"}
-        assert client.put(f"/api/audits/{AUDIT}/claims/{cid}", json=body).status_code == 200
+        fill = {**reg["gate_prefill"][cid]}
+        clicks("gate budget decision: typed after Other" if n == 0 else "gate budget decision: picked from the list")
+        for blank in ("gate_threshold", "gate_date"):
+            if blank not in fill:
+                clicks(f"gate {blank} (not prefilled)")
+                fill[blank] = 100.0 if blank == "gate_threshold" else "2024-06-30"
+        if register[cid]["reason"] in server.claim_matching.NO_APP_METRIC:
+            clicks("gate direction: at least / at most")
+            fill["gate_direction"] = "at least"
+        batch.append({"claim_id": cid, **fill, "gate_budget_decision": "the Series B hiring plan"})
+    if gated:
+        clicks("Save all gates")
+        assert client.put(f"/api/audits/{AUDIT}/claim-gates", json={"gates": batch}).status_code == 200
+    marked = [e["claim_id"] for e in batch if e.get("key_gate")]
     if len(gated) >= 3:
         for cid in gated[:3]:
-            clicks("mark a key gate")
-            assert client.put(f"/api/audits/{AUDIT}/claims/{cid}", json={"key_gate": True}).status_code == 200
+            if cid not in marked:
+                clicks("mark a key gate")
+                assert client.put(f"/api/audits/{AUDIT}/claims/{cid}", json={"key_gate": True}).status_code == 200
 
     for part in ("plan", "evidence", "condition"):
         clicks(f"deal thesis: {part}")
@@ -508,7 +523,14 @@ def test_the_click_count_fails_above_15():
         assert spent.n <= MAX_CLICKS
 
 
-def test_the_full_testco_audit_with_contradicted_top_5_claims_needs_the_gates_the_analyst_must_decide(api):
+def test_the_full_testco_audit_with_contradicted_top_5_claims_needs_more_clicks_than_a_clean_one(api):
     clicks, gated = analyst_flow(api, only_verified=False)
     print(f"\nCLICKS full TestCo (33 claims, top 5 outside tolerance): {clicks.n}")
-    assert len(gated) == 5 and clicks.n > MAX_CLICKS, "every gate is a human decision: the limit is for a clean audit"
+    assert len(gated) == 5 and clicks.n > MAX_CLICKS, "the budget decision of each gate is the analyst's: more than the clean audit"
+
+
+@pytest.mark.xfail(strict=True, reason="measured 22, goal 20: five budget decisions cannot be prefilled (gate definition is out of scope); "
+                                       "waiting on George's decision, see docs/test-runs/run-audit-clicks_2026-10-11.md")
+def test_the_full_testco_audit_goes_from_upload_to_the_memo_in_no_more_than_20_clicks(api):
+    clicks, _ = analyst_flow(api, only_verified=False)
+    assert clicks.n <= MAX_CLICKS_FULL, f"{clicks.n} clicks: {clicks.log}"

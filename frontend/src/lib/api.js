@@ -72,6 +72,7 @@ export const updateCandidate = (id, candidateId, payload) =>
 export const getClaimRegister = (id) => api.get(`/audits/${id}/claims`).then((r) => r.data);
 export const updateClaimInputs = (id, claimId, payload) =>
   api.put(`/audits/${id}/claims/${encodeURIComponent(claimId)}`, payload).then((r) => r.data);
+export const saveAllGatesCall = (id, gates) => api.put(`/audits/${id}/claim-gates`, { gates }).then((r) => r.data);
 // The audit's FX rates: they apply to the uploaded files and to the deck claims alike.
 export const saveFx = (id, fx) => api.put(`/audits/${id}/fx`, { fx }).then((r) => r.data);
 

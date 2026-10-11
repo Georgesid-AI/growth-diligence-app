@@ -68,9 +68,17 @@ Source keys are paths that MetricsPayload declares. Lists are transparent, and `
 or a quarter). The contract test pins every key (§9).
 
 ## 3. Gates
-- A gate is a metric, a threshold, a date and a budget decision. The analyst sets the threshold, the date and the
-  decision; the app proposes nothing, so the date field also starts empty. A gate is saved when the threshold, the
-  decision (max 200 characters) and the date are all filled.
+- A gate is a metric, a threshold, a date and a budget decision. A gate is saved when the threshold, the decision (max 200
+  characters) and the date are all filled.
+- Prefill (2026-10-11): on a row labelled Unverified, Unsupported or Contradicted whose gate is not saved, the review screen and the
+  register start the fields from stored data, no model: the threshold is the claim's stated value in its own unit (the converted
+  figure when the claim is converted); the date is the end of the claim's stated period, or the first quarterly review when the claim
+  has none, and never later than the first quarterly review (with no review date set, the period end alone, else blank); a row with
+  no app metric gets the claim's name as the metric (the direction stays blank); the budget decision stays blank, with a dropdown of
+  the decisions already saved in this audit and "Other" (a text field). The three gates with the highest value at stake are pre-marked
+  key, within the limit of 5. Each prefilled field reads "prefilled – confirm" until the analyst edits it or saves. "Save all gates"
+  saves every gate that is filled (prefilled or edited) in one call, all or none; a gate still missing a field is left. The prefill is
+  returned beside the register (`gate_prefill`, `budget_decisions`), never in a row: the CSV and the memo show a gate as saved.
 - A row with no app metric (reason "no metric", or "metric does not fit the claim's unit") also needs the metric and
   the direction (W22, decision Q3). The analyst types the metric (max 100 characters) and picks at least or at most.
   The threshold is in the claim's unit. The metric name is stored beside the budget decision, never sent to a model
@@ -265,7 +273,7 @@ Every new test is first shown failing on a deliberate violation (rule 11).
 | Each outcome: Underwrite; Underwrite with gates; Re-plan by a Contradicted claim (a miss, and a beat); Re-plan by 3 Unsupported; 3 Unsupported and 1 Unverified gives Re-plan; fewer than 5 rows; no rows gives no verdict | `test_verdict.py` |
 | Top 5: no verdict before confirmation; the proposal is rows 1–5; a replaced row counts and the replaced one does not; a set of the wrong size is refused; a confirmed claim leaving the register voids the set; a new rank order does not; the banner still uses rows 1–5 after a replacement | `test_verdict.py`, `test_chat_upload.py` |
 | Blocked: a non-Verified top-5 claim without a gate blocks; saving its gate unblocks; a Verified top-5 claim without a gate does not block; the memo refuses while blocked | `test_verdict.py` |
-| Gate: the date starts empty and the gate is not saved without it; a no-metric row needs the metric name and direction; a sixth key gate is refused; a key gate on an unsaved gate is refused; with fewer than 3 saved gates every gate is key | `test_verdict.py` |
+| Gate: the gate is not saved without a date; a no-metric row needs the metric name and direction; a sixth key gate is refused; a key gate on an unsaved gate is refused; with fewer than 3 saved gates every gate is key | `test_verdict.py` |
 | Gaps: the gap list; an item computed from another file is a request, not a gap; the single-type table against `FIELD_DEFS`; a date after the review is refused | `test_verdict.py` |
 | The memo refuses a number absent from the stored results (a narrative paragraph and a thesis sentence carrying "37%") and lists it; a number in a budget decision passes, cited "set by the analyst" | `test_ic_memo.py` |
 | The memo refuses 1,501 words, shows the count and passes 1,500; appendices are not counted | `test_ic_memo.py` |

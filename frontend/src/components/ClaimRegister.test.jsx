@@ -10,6 +10,7 @@ jest.mock("@/lib/api", () => ({
   getClaimRegister: jest.fn(),
   updateClaimInputs: jest.fn(),
   answerTurnover: jest.fn(),
+  saveAllGatesCall: jest.fn(),
   claimsCsvUrl: (id) => `http://api/api/audits/${id}/claims.csv`,
 }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
@@ -308,4 +309,66 @@ test("a row with no saved rate says which rate is missing, and FX settings in it
   expect(cell.textContent).toBe("Revenue · 150,000 BRL (BRL→EUR rate missing – enter it in FX settings at the top of the page)");
   const link = cell.querySelector("a");
   expect([link.textContent, link.getAttribute("href")]).toEqual(["FX settings", "/audit/a1/mapping#fx-settings"]);
+});
+
+// --- gate prefill: marked until saved, one Save all --------------------------------------------------------------------------
+const GATE_ROW = (id, extra = {}) => ({ ...ROW, claim_id: id, observed_value: null, evidence_label: "Unverified", gate_needed: true, ...extra });
+const FILL = { gate_threshold: 200000, gate_date: "2025-03-31", key_gate: true };
+
+async function mountGates(rows, prefill, budgets = []) {
+  api.getClaimRegister.mockResolvedValue({ claims: [], register: rows, gate_prefill: prefill, budget_decisions: budgets });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  await act(async () => { createRoot(host).render(<ClaimRegister auditId="a1" results={RESULTS} />); });
+  return host;
+}
+
+async function choose(el, value) {
+  const proto = el.tagName === "SELECT" ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(proto, "value").set.call(el, value);
+    el.dispatchEvent(new Event(el.tagName === "SELECT" ? "change" : "input", { bubbles: true }));
+  });
+}
+
+test("a gate starts with the prefill, each prefilled field marked, and the budget decision blank", async () => {
+  const host = await mountGates([GATE_ROW("c01")], { c01: FILL });
+  const row = host.querySelector('[data-testid="claim-register-row"]');
+  expect(row.querySelector('[data-testid="register-gate-threshold"]').value).toBe("200000");
+  expect(row.querySelector('[data-testid="register-gate-date"]').value).toBe("2025-03-31");
+  expect(row.querySelector('[data-testid="register-key-gate"]').checked).toBe(true);
+  for (const f of ["threshold", "date", "key"]) expect(row.querySelector(`[data-testid="register-gate-prefilled-${f}"]`).textContent).toBe("prefilled – confirm");
+  expect(row.querySelector('[data-testid="register-gate-budget"]').value).toBe("");
+});
+
+test("editing a prefilled field removes its mark", async () => {
+  const host = await mountGates([GATE_ROW("c01")], { c01: FILL });
+  await choose(host.querySelector('[data-testid="register-gate-threshold"]'), "150000");
+  expect(host.querySelector('[data-testid="register-gate-prefilled-threshold"]')).toBeNull();
+  expect(host.querySelector('[data-testid="register-gate-prefilled-date"]')).not.toBeNull();
+});
+
+test("the budget dropdown lists the decisions already used and Other, which opens a text field", async () => {
+  const host = await mountGates([GATE_ROW("c01")], { c01: FILL }, ["Series B"]);
+  const pick = host.querySelector('[data-testid="register-gate-budget-pick"]');
+  expect([...pick.options].map((o) => o.textContent)).toEqual(["Budget decision…", "Series B", "Other"]);
+  expect(host.querySelector('[data-testid="register-gate-budget"]')).toBeNull();
+  await choose(pick, "Other");
+  expect(host.querySelector('[data-testid="register-gate-budget"]')).not.toBeNull();
+});
+
+test("Save all gates sends every gate with a budget decision, prefilled or edited, and leaves the unfilled ones", async () => {
+  const host = await mountGates([GATE_ROW("c01"), GATE_ROW("c02"), GATE_ROW("c03")],
+    { c01: FILL, c02: { ...FILL, key_gate: false }, c03: FILL }, ["Series B"]);
+  const picks = host.querySelectorAll('[data-testid="register-gate-budget-pick"]');
+  await choose(picks[0], "Series B");
+  await choose(picks[1], "Series B");
+  await choose(host.querySelectorAll('[data-testid="register-gate-threshold"]')[1], "150000");
+  api.saveAllGatesCall.mockResolvedValue({ register: [] });
+  await act(async () => { host.querySelector('[data-testid="register-gates-save-all"]').click(); });
+  expect(api.saveAllGatesCall).toHaveBeenCalledTimes(1);
+  expect(api.saveAllGatesCall).toHaveBeenCalledWith("a1", [
+    { claim_id: "c01", gate_threshold: 200000, gate_budget_decision: "Series B", gate_date: "2025-03-31", key_gate: true },
+    { claim_id: "c02", gate_threshold: 150000, gate_budget_decision: "Series B", gate_date: "2025-03-31" },
+  ]);
 });

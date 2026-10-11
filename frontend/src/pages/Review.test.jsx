@@ -8,7 +8,7 @@ jest.mock("@/lib/api", () => ({
   getAudit: jest.fn(), getReview: jest.fn(), getDatasets: jest.fn(), getDecks: jest.fn(), getClaimRegister: jest.fn(), getVerdict: jest.fn(),
   getNarrativeEstimate: jest.fn(), decideColumns: jest.fn(), updateCandidate: jest.fn(), approveAll: jest.fn(), answerTurnover: jest.fn(),
   putIcInputs: jest.fn(), updateClaimInputs: jest.fn(), generateNarrative: jest.fn(), getMemo: jest.fn(), reportUsage: jest.fn(),
-  getBlockers: jest.fn(), uploadChatFile: jest.fn(), uploadDeck: jest.fn(), runStage: jest.fn(),
+  getBlockers: jest.fn(), saveAllGatesCall: jest.fn(), uploadChatFile: jest.fn(), uploadDeck: jest.fn(), runStage: jest.fn(),
 }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
 jest.mock("react-router-dom", () => ({
@@ -149,6 +149,20 @@ test("gates are asked for the top-5 claims that are not Verified, and a gate sav
   await act(async () => { q("register-gate-save").click(); });
   await act(async () => { await Promise.resolve(); });
   expect(api.updateClaimInputs).toHaveBeenCalledWith("a1", "c1", expect.objectContaining({ gate_threshold: 100, gate_budget_decision: "the Series B hiring plan" }));
+});
+
+test("the review screen prefills the gate, marks it, and one Save all gates saves it once the budget decision is typed", async () => {
+  api.getClaimRegister.mockResolvedValue({ ...REGISTER, gate_prefill: { c1: { gate_threshold: 250, gate_date: "2025-03-31", key_gate: true } }, budget_decisions: [] });
+  api.saveAllGatesCall.mockResolvedValue({ register: [] });
+  await mount();
+  expect(q("register-gate-threshold").value).toBe("250");
+  expect(q("register-gate-prefilled-threshold").textContent).toBe("prefilled – confirm");
+  const type = async (id, v) => { const el = q(id); await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, v); el.dispatchEvent(new Event("input", { bubbles: true })); }); };
+  await act(async () => { q("review-gates-save-all").click(); });
+  expect(api.saveAllGatesCall).not.toHaveBeenCalled();                     // the budget decision is still blank
+  await type("register-gate-budget", "the Series B hiring plan");
+  await act(async () => { q("review-gates-save-all").click(); });
+  expect(api.saveAllGatesCall).toHaveBeenCalledWith("a1", [{ claim_id: "c1", gate_threshold: 250, gate_budget_decision: "the Series B hiring plan", gate_date: "2025-03-31", key_gate: true }]);
 });
 
 test("a top-5 claim that is Verified needs no gate", async () => {

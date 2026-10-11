@@ -14,3 +14,12 @@ ratings 2, Write all narratives 1, Generate IC memo 1.
 
 Full: as above, plus Approve all per category with claims left, and for each of five gates threshold, budget decision, date
 and Save (4), then three key marks.
+
+## After gate prefill (feat/gate-prefill)
+
+Fake provider, same fixture. Full TestCo: **22 clicks** (was 38); goal 20. Limit for the full run is `MAX_CLICKS_FULL = 20` in
+`test_run_audit.py`; the test that enforces it is `xfail(strict)` until the gap below is decided.
+
+Gates now: budget decision per gate (first typed after Other, the next four picked from the list) 5, the one gate whose claim
+has no period (no first quarterly review is set in this flow) needs its date 1, Save all gates 1. Key marks 0 (pre-marked).
+Gap: the floor with the date prefilled is 21: the other 15 clicks are unchanged and the five budget decisions cannot be prefilled.

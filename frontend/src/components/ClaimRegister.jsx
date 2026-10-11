@@ -7,11 +7,12 @@ import { Provenance } from "@/components/Provenance";
 import DateField from "@/components/DateField";
 import { answerTurnover, claimsCsvUrl, getClaimRegister, updateClaimInputs } from "@/lib/api";
 import {
-  DOWNLOAD_LABEL, GATE_BUDGET_MAX, GATE_DIRECTIONS, GATE_METRIC_MAX, GATE_METRIC_PLACEHOLDER, GATE_NEEDED, KEY_GATE_LABEL, NO_METRIC,
+  DOWNLOAD_LABEL, GATE_BUDGET_MAX, GATE_DIRECTIONS, GATE_METRIC_MAX, GATE_METRIC_PLACEHOLDER, GATE_NEEDED, KEY_GATE_LABEL, NO_METRIC, OTHER_DECISION, PREFILLED, gateDraft,
   REGISTER_COLUMNS, REGISTER_HEADING, TURNOVER_QUESTION, answerReady, reasonsFor, claimCellText, rateHover, takeRateText, evidenceLines, gapText, gateContext, gateEdit, metricOptions, needsMetricName,
   observedText, overlapsText, readingText, registerRows, segmentOptions, valueAtStakeText,
 } from "@/lib/claimRegister";
 import { CALCULATE_CLASS } from "@/lib/chatUpload";
+import { useGateEdits } from "@/lib/useGateEdits";
 import { describeRequestError } from "@/lib/requestError";
 import { seeGlossary } from "@/lib/glossary";
 import FxText from "@/components/FxText";
@@ -30,23 +31,23 @@ const LABEL_STYLE = {
 // The options of a select, with the stored choice kept in the list even when it is no longer offered.
 const withCurrent = (options, current) => (options.includes(current) ? options : [...options, current]);
 
-/** The gate: the claimed and observed figures beside an empty threshold, a budget decision and a date. Nothing is proposed and
- *  nothing is saved until the threshold, the decision and the date are all filled; a row with no metric of the app also
- *  needs the analyst's metric and its direction (docs/specs/verdict-and-memo.md section 3). */
-export function GateCell({ row, ccy, onSave }) {
-  const initial = {
-    threshold: row.gate_threshold ?? "", budget: row.gate_budget_decision ?? "", date: row.gate_date ?? "",
-    metricName: row.gate_metric_name ?? "", direction: row.gate_direction ?? "",
-  };
-  const [draft, setDraft] = useState(initial);
-  const key = JSON.stringify(initial);
-  useEffect(() => setDraft(JSON.parse(key)), [key]);
+/** The gate: the claimed and observed figures beside the threshold, the budget decision and the date. A gate not yet saved starts
+ *  with the server's prefill (docs/specs/verdict-and-memo.md section 3), each prefilled field marked until the analyst edits or saves
+ *  it; the budget decision starts blank. Nothing is saved until the threshold, the decision and the date are all filled; a row with
+ *  no metric of the app also needs the analyst's metric and its direction. `edits` holds only what the analyst changed. */
+export function GateCell({ row, ccy, onSave, prefill, budgets = [], edits, onEdit }) {
+  const { draft, prefilled } = gateDraft(row, prefill, edits);
   const context = gateContext(row, ccy);
   const named = needsMetricName(row);
-  const set = (k) => (e) => setDraft((d) => ({ ...d, [k]: e.target.value }));
+  const set = (k) => (e) => onEdit(row, { [k]: e.target.value });
+  const options = budgets.includes(row.gate_budget_decision) || !row.gate_budget_decision ? budgets : [...budgets, row.gate_budget_decision];
+  const other = edits?.budgetOther;
+  const pick = (value) => (value === OTHER_DECISION ? onEdit(row, { budgetOther: true, budget: "" }) : onEdit(row, { budgetOther: false, budget: value }));
+  const mark = (field) => prefilled.includes(field) && <span className="text-[10px] font-mono text-sky-700" data-testid={`register-gate-prefilled-${field}`}>{PREFILLED}</span>;
   const save = () => {
     let edit;
     try { edit = gateEdit(row, draft); } catch (e) { toast.error(e.message); return; }
+    if (draft.key && !row.key_gate && !row.gate_saved) edit.key_gate = true;
     if (Object.keys(edit).length) onSave(row, edit).catch(() => {});
   };
   return (
@@ -56,23 +57,35 @@ export function GateCell({ row, ccy, onSave }) {
       {row.gate_sentence && <div className="text-slate-800" data-testid="register-gate-sentence">{seeGlossary(row.gate_sentence)}</div>}
       {row.gate_saved && <div className="text-[10px] font-mono text-emerald-700" data-testid="register-gate-saved">Gate saved</div>}
       {named && (
-        <div className="flex gap-1">
+        <div className="flex gap-1 flex-wrap">
           <Input value={draft.metricName} onChange={set("metricName")} maxLength={GATE_METRIC_MAX} placeholder={GATE_METRIC_PLACEHOLDER} className="h-7 text-xs" data-testid="register-gate-metric-name" />
           <select value={draft.direction} onChange={set("direction")} className={selectClass} data-testid="register-gate-direction">
             <option value="" />
             {GATE_DIRECTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
+          {mark("metricName")}
         </div>
       )}
       <Input value={draft.threshold} onChange={set("threshold")} placeholder="Threshold" inputMode="decimal" className="h-7 text-xs font-mono" data-testid="register-gate-threshold" />
-      <Input value={draft.budget} onChange={set("budget")} maxLength={GATE_BUDGET_MAX} placeholder="Budget decision (max 200 characters)" className="h-7 text-xs" data-testid="register-gate-budget" />
-      <DateField testId="register-gate-date" value={draft.date} onChange={(v) => setDraft((d) => ({ ...d, date: v }))}
+      {mark("threshold")}
+      {options.length ? (
+        <select value={other ? OTHER_DECISION : draft.budget} onChange={(e) => pick(e.target.value)} className={`${selectClass} w-full`} data-testid="register-gate-budget-pick">
+          <option value="">Budget decision…</option>
+          {options.map((d) => <option key={d} value={d}>{d}</option>)}
+          <option value={OTHER_DECISION}>{OTHER_DECISION}</option>
+        </select>
+      ) : null}
+      {(other || !options.length) && (
+        <Input value={draft.budget} onChange={set("budget")} maxLength={GATE_BUDGET_MAX} placeholder="Budget decision (max 200 characters)" className="h-7 text-xs" data-testid="register-gate-budget" />
+      )}
+      <DateField testId="register-gate-date" value={draft.date} onChange={(v) => onEdit(row, { date: v })}
         placeholder="Gate date" className="!mt-0 h-7 text-xs" />
+      {mark("date")}
       <Button size="sm" onClick={save} className="h-7 bg-sky-600 hover:bg-sky-500" data-testid="register-gate-save">Save gate</Button>
       <label className="flex items-center gap-1.5 text-slate-700">
-        <input type="checkbox" checked={!!row.key_gate} disabled={!row.gate_saved} data-testid="register-key-gate"
-          onChange={(e) => onSave(row, { key_gate: e.target.checked }).catch(() => {})} />
-        {KEY_GATE_LABEL}
+        <input type="checkbox" checked={draft.key} disabled={!row.gate_saved && !row.gate_needed} data-testid="register-key-gate"
+          onChange={(e) => (row.gate_saved ? onSave(row, { key_gate: e.target.checked }).catch(() => {}) : onEdit(row, { key: e.target.checked }))} />
+        {KEY_GATE_LABEL} {mark("key")}
       </label>
     </div>
   );
@@ -133,20 +146,34 @@ export function TurnoverCell({ row, onAnswer, heading }) {
 /** The claim register of one audit, in the order the server ranks it (docs/specs/claim-matching.md section 8). */
 export default function ClaimRegister({ auditId, results, onChanged }) {
   const [rows, setRows] = useState(null);
+  const [prefill, setPrefill] = useState({});
+  const [budgets, setBudgets] = useState([]);
+  const [edits, setEdits] = useState({});          // per claim, only what the analyst changed in the gate fields
   const [error, setError] = useState(null);
   const ccy = results?.reporting_currency;
+
+  const load = useCallback((d) => { setRows(registerRows(d)); setPrefill(d.gate_prefill || {}); setBudgets(d.budget_decisions || []); }, []);
 
   useEffect(() => {
     let cancelled = false;
     getClaimRegister(auditId)
-      .then((d) => { if (!cancelled) setRows(registerRows(d)); })
+      .then((d) => { if (!cancelled) load(d); })
       .catch((e) => { if (!cancelled) setError(describeRequestError(e).message); });
     return () => { cancelled = true; };
-  }, [auditId]);
+  }, [auditId, load]);
+
+  // A save gives the register back; the prefill and the budget list are read again beside it, since a saved gate leaves them.
+  const afterSave = useCallback((d) => {
+    setRows(registerRows(d));
+    getClaimRegister(auditId).then((x) => { setPrefill(x.gate_prefill || {}); setBudgets(x.budget_decisions || []); }).catch(() => {});
+    if (onChanged) onChanged();
+  }, [auditId, onChanged]);
+
+  const { edits, onEdit, clear, saveAll } = useGateEdits({ auditId, rows: rows || [], prefill, afterSave });
 
   const save = useCallback((row, edit) => updateClaimInputs(auditId, row.claim_id, edit)
-    .then((d) => { setRows(registerRows(d)); if (onChanged) onChanged(); })
-    .catch((e) => { toast.error(describeRequestError(e).message); throw e; }), [auditId, onChanged]);
+    .then((d) => { clear([row.claim_id]); afterSave(d); })
+    .catch((e) => { toast.error(describeRequestError(e).message); throw e; }), [auditId, afterSave, clear]);
 
   const answer = useCallback((row, payload) => answerTurnover(auditId, row.claim_id, payload)
     .then((d) => { setRows(registerRows(d)); if (onChanged) onChanged(); })
@@ -156,9 +183,12 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
     <section className="mb-6" data-testid="claim-register">
       <div className="flex items-end justify-between flex-wrap gap-3 mb-3">
         <h2 className="font-heading text-lg font-semibold text-slate-900">{REGISTER_HEADING}</h2>
+        <div className="flex gap-2">
+        <Button size="sm" onClick={saveAll} className="h-8 bg-sky-600 hover:bg-sky-500" data-testid="register-gates-save-all">Save all gates</Button>
         <Button asChild variant="outline" size="sm" className="h-8">
           <a href={claimsCsvUrl(auditId)} data-testid="claim-register-csv"><Download className="h-3.5 w-3.5 mr-1.5" />{DOWNLOAD_LABEL}</a>
         </Button>
+        </div>
       </div>
       {error && <div className="text-xs text-rose-700" data-testid="claim-register-error">{error}</div>}
       {!rows && !error && <Loader2 className="h-4 w-4 animate-spin text-slate-500" />}
@@ -226,7 +256,7 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
                         </div>
                       )}
                     </td>
-                    <td className="py-2 px-3"><GateCell row={row} ccy={ccy} onSave={save} /></td>
+                    <td className="py-2 px-3"><GateCell row={row} ccy={ccy} onSave={save} prefill={prefill[row.claim_id]} budgets={budgets} edits={edits[row.claim_id]} onEdit={onEdit} /></td>
                   </tr>
                 );
               })}
