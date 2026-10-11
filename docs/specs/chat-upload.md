@@ -466,8 +466,9 @@ line shape, so no new matching code is written; nothing is deleted.
 - Glossary: "Acquisition channels – claims about how many users, visits or followers each channel brings (a social platform, a referral source), one
   claim per platform. They are not tested against the data: always Unverified, with no value at stake or gate, and never in the top 5." (frontend
   glossary.js and backend formatting.py, kept equal by a test).
-- Out of scope: the model's labelling (prompt, schema, cache keys) is untouched, so a funnel read from a chart or table structure still comes back
-  `other`; moving that to this type is a prompt change and a live run (rule 19, kind 2).
+- Out of scope (decided by George, 2026-10-11): the model's labelling (prompt, schema, cache keys) is untouched, so a funnel read from a chart or table
+  structure still comes back `other`. No prompt change now; George tests the real Zero2Hero deck after import and comes back if p17 lands in Other.
+- Decided (George, 2026-10-11): Use of funds, Acquisition channels and every other real category start open; only Other and Unknown start collapsed.
 - Tests: `test_approve_all.py` (the endpoint), `test_deck_parser.py` (the cues and the line shape), `test_claim_matching.py`, `test_verdict.py`,
   `test_analyst_claim.py` (register, top 5, Add claim), `test_gateway_data_boundary.py` (the reason, the platform name and the log line),
   `DeckPanel.test.jsx` and `deckClaims.test.js` (buttons, toast, sections, spacing, forms).
