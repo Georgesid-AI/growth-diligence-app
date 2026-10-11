@@ -433,6 +433,53 @@ def test_the_gateway_logs_the_violation_with_paths_and_types_and_no_value(caplog
     assert "Zeta" not in caplog.text and "4242" not in caplog.text and "secret" not in caplog.text
 
 
+# The data inventory and data integrity steps (A1, A2) read the same stored payload through the same check.
+NEW_STEPS = ("data_inventory", "data_integrity")
+
+
+@pytest.mark.parametrize("step", NEW_STEPS)
+def test_the_new_steps_do_not_call_the_model_on_a_payload_that_breaks_the_contract(step):
+    good = cf.stored(arr=cf.arr(), nrr=cf.nrr(1.042))
+    for broken in (cf.broken(good, "nrr.overall_pct", 104.2), cf.broken(good, "contract_version", drop=True)):
+        adapter = t.FakeAdapter()
+        result = asyncio.run(gateway.generate_narrative(_db_with(broken), t.RUN_ID, step, adapter=adapter, sleep=t._noop_sleep))
+        assert adapter.calls == 0
+        assert (result.narrative_status, result.reason) == ("unavailable", FIXED_SENTENCE)
+        read = asyncio.run(gateway.read_cached_narrative(_db_with(broken), t.RUN_ID, step))
+        assert (read.narrative_status, read.reason) == ("unavailable", FIXED_SENTENCE)
+
+
+@pytest.mark.parametrize("run", RUNS)
+def test_the_new_steps_build_their_payload_from_every_engine_run_with_only_allowlisted_fields(run):
+    stored = stored_form(all_raws()[run])
+    assert gateway.contract_problems(stored) == []
+    for step in NEW_STEPS:
+        computed = {"metrics": gateway._slice_for_step(stored, step)}
+        out = gateway.build_outbound(computed, {})
+        fields = set()
+
+        def walk(node):
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    fields.add(k)
+                    walk(v)
+            elif isinstance(node, list):
+                for i in node:
+                    walk(i)
+        walk(out["metrics"])
+        assert fields <= gateway.OUTBOUND_FIELDS, sorted(fields - gateway.OUTBOUND_FIELDS)
+
+
+def test_the_integrity_reconciliation_is_the_engines_own_with_no_second_calculation():
+    stored = stored_form(all_raws()["sample"])
+    rec = stored["revenue_reconciliation"]
+    assert rec and rec["available"], "fixture: the sample run reconciles"
+    check = next(c for c in gateway._slice_for_step(stored, "data_integrity")["integrity"] if c["check"] == "Revenue file against P&L")
+    assert check["gap_pct"] == fmt.fmt_pct(rec["gap_pct"]) and check["window_over_tolerance"] is bool(rec["blocker"])
+    over = [m["month"] for m in rec["by_month"] if m["gap_pct"] is not None and abs(m["gap_pct"]) > rec["tolerance_pct"]]
+    assert [m["month"] for m in check["months_over_tolerance"]] == over
+
+
 # ---------------------------------------------------------------------------
 # 6. Results stored before the contract are recomputed on read, never shown 100 times too large
 # ---------------------------------------------------------------------------

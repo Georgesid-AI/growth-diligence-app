@@ -490,3 +490,60 @@ def test_value_at_stake_reads_vas_and_each_abbreviation_points_to_the_glossary_o
     assert "- VaS: value at stake: " in text
     # a source reference keeps its own words (the footnotes hold MRR, never with the pointer: checked above)
     assert [line for line in text.split("\n") if line.startswith("[^") and " MRR" in line]
+
+
+# --- the data inventory (A1) and data integrity (A2) narratives ---------------------------------------------------------------
+
+def data_step(step, headline="Material concerns: the revenue file and the P&L differ by 69.61%.", verdict="Material concerns",
+              actions=(), status="ok"):
+    n = narrative(headline=headline, status=status)
+    n["step"] = step
+    n["narrative"].update(next_actions=list(actions), verdict=verdict if step == "data_integrity" else None)
+    return n
+
+
+def reliability_row(text):
+    return next(line for line in text.split("\n") if line.startswith("| Data reliability |"))
+
+
+def appendix_b(text):
+    return text.split("## Appendix B")[1].split("## Appendix C")[0]
+
+
+def test_the_data_reliability_headline_and_key_evidence_read_the_a2_verdict_and_the_rating_stays_the_analysts():
+    text = memo(narratives=[data_step("data_integrity")])
+    row = reliability_row(text).split("|")
+    assert row[2].strip() == "Adequate", "Strong / Adequate / Weak is entered by the analyst"
+    assert "Material concerns: the revenue file and the P&L differ by 69.61%." in row[3]
+    assert "Data integrity verdict: Material concerns" in row[4]
+    assert "10 of 33 claims Verified" not in row[3], "the computed line is replaced, not repeated"
+    assert "data-integrity narrative" in text.split("Footnotes")[1], "the headline carries its footnote"
+
+
+@pytest.mark.parametrize("narratives", [[], [data_step("data_integrity", status="flagged")], [data_step("data_integrity", status="unavailable")],
+                                        [data_step("data_integrity", verdict=None)], [data_step("data_inventory")]],
+                         ids=["none", "flagged", "unavailable", "no verdict", "other step"])
+def test_without_a_current_ok_a2_narrative_with_a_verdict_the_row_keeps_the_computed_line(narratives):
+    row = reliability_row(memo(narratives=narratives))
+    assert "Revenue file and P&L differ by 69.61% over 2023-03–2024-02" in row and "Data integrity verdict" not in row
+
+
+def test_appendix_b_takes_the_a1_data_request_list_in_its_order_and_the_other_appendices_do_not():
+    actions = ["Ask management for the missing P&L months.", "Ask management for the CRM export."]
+    text = memo(narratives=[data_step("data_inventory", actions=actions)])
+    b = appendix_b(text)
+    assert b.index(actions[0]) < b.index(actions[1])
+    assert "Data request list from the data inventory, most important first" in b
+    assert actions[0] not in head_of(text) and actions[0] not in text.split("## Appendix C")[1]
+
+
+@pytest.mark.parametrize("narratives", [[], [data_step("data_inventory", actions=["Ask for X."], status="flagged")],
+                                        [data_step("data_integrity", actions=["Ask for X."])]],
+                         ids=["none", "flagged", "other step"])
+def test_without_a_current_a1_narrative_appendix_b_has_no_request_list(narratives):
+    assert "Data request list from the data inventory" not in appendix_b(memo(narratives=narratives))
+
+
+def test_a_number_in_the_a2_headline_that_the_stored_results_do_not_hold_refuses_the_memo():
+    exc = refusal(narratives=[data_step("data_integrity", headline="Material concerns: the files differ by 77.31%.")])
+    assert exc.code == "numbers" and "77.31" in exc.unmatched

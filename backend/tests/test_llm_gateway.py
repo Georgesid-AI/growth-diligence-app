@@ -1184,7 +1184,8 @@ def test_output_schema_preserves_the_narrative_contract():
 
     sealed = narrative_output_schema()
     raw = Narrative.model_json_schema()
-    assert set(sealed["properties"]) == set(raw["properties"])
+    # The growth-engine schema is the narrative's, less the two fields only the data steps use (verdict, decision informed).
+    assert set(sealed["properties"]) == set(raw["properties"]) - {"verdict"}
     assert sealed["properties"].keys() >= {
         "headline", "what_this_means", "table_rows",
         "worth_flagging", "next_actions", "source_keys",
@@ -1486,13 +1487,15 @@ def test_baseline_release_keeps_the_cache_keys_that_existed_before_releases():
     assert prompt_store.tag_for(prompt_store.BASELINE_RELEASE, prompt.version) == prompt.version
 
 
-def test_the_shipped_release_is_r9_and_its_cache_tag_carries_it():
+def test_the_shipped_release_is_r10_and_its_cache_tag_carries_it():
     prompt = prompt_store.load("growth_engine")
-    assert prompt_store.release() == "r9" and prompt.version == "v7"
-    assert prompt_store.cache_tag(prompt) == "r9:v7", "narratives written under r8/v7 are not served under r9/v7"
+    assert prompt_store.release() == "r10" and prompt.version == "v7"
+    assert prompt_store.cache_tag(prompt) == "r10:v7", "narratives written under r9/v7 are not served under r10/v7"
     structure = prompt_store.load("structure_reading")
-    assert structure.version == "v6" and prompt_store.cache_tag(structure) == "r9:v6", \
-        "the tie-breaks of issue #58 are v6 of release r9, one bump; #55 changes the text sent, not the prompt"
+    assert structure.version == "v6" and prompt_store.cache_tag(structure) == "r10:v6", \
+        "the tie-breaks of issue #58 are v6; r10 adds the data inventory and data integrity prompts, v1 each"
+    for step in ("data_inventory", "data_integrity"):
+        assert prompt_store.load(step).version == "v1" and prompt_store.cache_tag(prompt_store.load(step)) == "r10:v1"
 
 
 def test_a_release_bump_makes_every_cached_narrative_unreachable_until_regenerated(monkeypatch):

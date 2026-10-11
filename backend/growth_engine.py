@@ -771,7 +771,8 @@ def compute_revenue_reconciliation(series: dict, month_rows: dict, pnl: pd.DataF
     The window is the months both files cover up to the as-of month (`series` and `pnl` are already cut there), at
     most the last 12. Only the window total decides `blocker`: gap = abs(file - P&L) / P&L above 2%. A single
     month above 2% shows in `by_month` and nowhere else. Every row cites its revenue-file rows and its P&L rows.
-    None without a P&L. Server-only: it is in no narrative slice."""
+    None without a P&L. Server-only as a block: the data_integrity narrative reads a summary of it
+    (app/llm/step_payloads.py: window total, months over the tolerance), no other slice does."""
     if pnl is None or pnl.empty or "month" not in pnl.columns or "revenue" not in pnl.columns:
         return None
     file_by_month = {r["month"]: float(r["total"]) for r in (series or {}).get("data", [])}

@@ -8,7 +8,7 @@ never the model's - see `gateway.numeric_guard`.
 import copy
 import math
 import re
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Sequence
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -26,6 +26,8 @@ class TableRow(BaseModel):
     label: str
     value: str
     source_key: str
+    # Data inventory and data integrity only: the IC decision this row informs. Absent from growth_engine's schema.
+    decision_informed: Optional[str] = None
 
 
 class Narrative(BaseModel):
@@ -39,6 +41,8 @@ class Narrative(BaseModel):
     worth_flagging: List[str] = Field(default_factory=list)
     next_actions: List[str] = Field(default_factory=list)
     source_keys: List[str] = Field(default_factory=list)
+    # Data integrity only: Reliable / Needs clarification / Material concerns. Absent from the other schemas.
+    verdict: Optional[str] = None
 
 
 # "flagged" means the narrative is shown but carries numbers the calc engine did
@@ -81,13 +85,28 @@ def _seal_objects(node: Any) -> Any:
     return node
 
 
-def narrative_output_schema() -> dict:
+def narrative_output_schema(decision: bool = False, verdicts: Sequence[str] = ()) -> dict:
     """The JSON schema to send as `output_config.format.schema`.
 
     Deep-copied before sealing so the contract above is described once and this
     transport detail never mutates what Pydantic hands back to other callers.
+
+    `decision` adds the required "decision informed" column to the evidence table and `verdicts` the required verdict
+    (data inventory and data integrity); without them the schema is the growth-engine one, unchanged.
     """
-    return _seal_objects(copy.deepcopy(Narrative.model_json_schema()))
+    schema = copy.deepcopy(Narrative.model_json_schema())
+    row = schema["$defs"]["TableRow"]
+    if decision:
+        row["properties"]["decision_informed"] = {"type": "string", "title": "Decision Informed"}
+        row["required"] = [*row["required"], "decision_informed"]
+    else:
+        row["properties"].pop("decision_informed", None)
+    if verdicts:
+        schema["properties"]["verdict"] = {"type": "string", "enum": list(verdicts), "title": "Verdict"}
+        schema["required"] = [*schema.get("required", []), "verdict"]
+    else:
+        schema["properties"].pop("verdict", None)
+    return _seal_objects(schema)
 
 
 class NarrativeResponse(BaseModel):
