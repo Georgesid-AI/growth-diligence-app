@@ -7,7 +7,7 @@ import { Loader2, Sparkles, RefreshCw } from "lucide-react";
  * already written (no AI request); this button is the only thing that costs one,
  * and the helper text says so before the reader commits to it rather than after.
  */
-export function NarrativeControl({ status, generatedAt, superseded, supersededReason, busy, onGenerate, step, label = "Generate narrative", busyLabel = "Generating…" }) {
+export function NarrativeControl({ status, generatedAt, superseded, supersededReason, busy, onGenerate, step, label = "Write narrative", busyLabel = "Writing…" }) {
   const hasNarrative = status === "ok" || status === "flagged";
   // The growth-engine control keeps its test ids; a control of another step carries the step.
   const id = (base) => (step ? `${base}-${step}` : base);

@@ -643,7 +643,7 @@ def test_the_gateway_names_no_deck_text_snippet_or_source_field():
     by period (each keeps its column header's text and its cell), or a claim's confidence, where its type came from
     or where it sits on the page, its direction with no figure, its type group and its FX rate (layout, parser checks and
     the saved rate, computed in Python and shown to the analyst only)."""
-    forbidden = {decks.TEXT_COLLECTION, "blocks", "snippet", "label_from", "date_from", "sources", "by_period",
+    forbidden = {"blocks", "snippet", "label_from", "date_from", "sources", "by_period",
                  "confidence", "type_from", "reading", "claim_direction", "group", "fx", "fx_rate", "fx_date",
                  "mixed_slide", "inconsistencies"}
     offenders = []
@@ -654,6 +654,12 @@ def test_the_gateway_names_no_deck_text_snippet_or_source_field():
         offenders += [f"{path.name}:{node.lineno}: {node.value!r}" for node in ast.walk(tree)
                       if isinstance(node, ast.Constant) and node.value in forbidden]
     assert not offenders, "the gateway names deck text:\n  " + "\n  ".join(offenders)
+    # The parsed-text collection is named once, to count the audit's decks for the data inventory (George, 2026-10-11).
+    named = [f"{p.name}:{n.lineno}" for p in sorted((BACKEND / "app" / "llm").glob("*.py"))
+             for n in ast.walk(ast.parse(p.read_text(encoding="utf-8")))
+             if isinstance(n, ast.Constant) and n.value == decks.TEXT_COLLECTION]
+    assert len(named) == 1 and named[0].startswith("gateway.py"), named
+    assert gateway.DECK_COUNT_COLLECTION == decks.TEXT_COLLECTION
 
 
 def _recording_db():
@@ -1910,3 +1916,47 @@ def test_the_new_prompts_and_builder_name_no_deck_text_register_field_or_file():
         text = (BACKEND / "app" / "llm" / "prompts" / name).read_text(encoding="utf-8")
         for word in ("snippet", "deck", "claim_inputs", "gate_sentence", ".xlsx", ".csv"):
             assert word not in text, f"{name} names {word!r}"
+
+
+# ---------------------------------------------------------------------------
+# Board decks in the data inventory (George, 2026-10-11): the payload carries the number of decks and nothing of them. The
+# gateway counts the audit's parsed decks with count_documents on the audit id; it reads no document, text, file name or field.
+# ---------------------------------------------------------------------------
+def _db_with_decks(n):
+    db, reads = _recording_db()
+    counts = []
+
+    async def count_documents(flt, _orig=db[decks.TEXT_COLLECTION].count_documents):
+        counts.append(flt)
+        return await _orig(flt)
+
+    db[decks.TEXT_COLLECTION].count_documents = count_documents
+    db[decks.TEXT_COLLECTION].docs.extend({"audit_id": RUN_ID, "file": f"{DECK_FILE}{i}", "blocks": [{"text": DECK_SENTINEL}]}
+                                          for i in range(n - 1))
+    return db, reads, counts
+
+
+def test_the_inventory_counts_decks_and_reads_none():
+    db, reads, counts = _db_with_decks(3)
+    adapter = t.FakeAdapter(replies=[json.dumps(steps.inventory_reply())])
+    result = asyncio.run(gateway.generate_narrative(db, RUN_ID, "data_inventory", adapter=adapter, sleep=t._noop_sleep))
+    asyncio.run(gateway.read_cached_narrative(db, RUN_ID, "data_inventory"))
+    asyncio.run(gateway.narratives_for_run(db, RUN_ID))
+    assert counts and all(c == {"audit_id": RUN_ID} for c in counts), counts
+    assert not [r for r in reads if r[0] == decks.TEXT_COLLECTION], "a document of the parsed-text collection was read"
+    sent = json.loads(adapter.payloads[0])
+    deck = next(r for r in sent["metrics"]["inventory"] if r["category"] == "Board decks")
+    assert deck == {"category": "Board decks", "status": "Provided", "in_request_list": False, "quality_issues": [],
+                    "analyses_blocked": [], "count": "3"}
+    assert len(sent["metrics"]["inventory"]) == 7, "all seven categories"
+    for needle in (DECK_SENTINEL, DECK_FILE):
+        assert needle not in adapter.payloads[0] and needle not in json.dumps(db["llm_narratives"].docs, default=str)
+    assert result.narrative_status == "ok", result.reason
+
+
+def test_no_deck_is_missing_and_on_the_request_list_and_an_unreadable_count_leaves_the_row_out():
+    from app.llm import step_payloads
+    none = step_payloads.build_inventory(steps.full_results(), 0)["inventory"]
+    deck = next(r for r in none if r["category"] == "Board decks")
+    assert deck["status"] == "Missing" and deck["in_request_list"] is True and "count" not in deck
+    assert len(none) == 7 and len(step_payloads.build_inventory(steps.full_results(), None)["inventory"]) == 6

@@ -51,8 +51,6 @@ export default function StepNarrative({ auditId, step, ready, onChanged }) {
       <h2 className="mb-2 font-heading text-base font-semibold text-slate-900">{copy.title}</h2>
       <NarrativeControl
         step={step}
-        label="Write narrative"
-        busyLabel="Writing…"
         status={state?.narrative_status}
         generatedAt={state?.generated_at}
         superseded={state?.superseded}

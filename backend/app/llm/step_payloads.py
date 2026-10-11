@@ -29,14 +29,16 @@ PROVIDED, PARTIAL, MISSING, NOT_INGESTED = "Provided", "Partial", "Missing", "No
 # One source key per file type the app ingests, fixed so a key means the same file in every narrative and in the memo.
 SOURCES = {"revenue": ("S1", "revenue by customer file"), "crm": ("S2", "CRM export"), "pnl": ("S3", "P&L file")}
 
-# (id, name the analyst reads, file type) of the evidence categories. Board decks are the app's structure path, not an
-# engine output, so the category is not in this payload (see the session log: decision for George).
+# (id, name the analyst reads, file type) of the evidence categories. Board decks are not engine output: their status comes
+# from the number of decks the audit holds (the gateway counts them; no deck text is read), and the row is left out when
+# that count is unavailable.
 CATEGORIES = (
     ("revenue", "Revenue by customer", "revenue"),
     ("crm", "CRM", "crm"),
     ("pnl", "P&L", "pnl"),
     ("headcount", "Headcount", None),
     ("usage", "Product usage", None),
+    ("decks", "Board decks", "decks"),
     ("roadmap", "Roadmap", None),
 )
 NOT_INGESTED_NAMES = tuple(name for _, name, kind in CATEGORIES if kind is None)
@@ -149,13 +151,26 @@ def _status(kind: str, results: dict, months: Optional[int], blocked: List[str])
     return PARTIAL if blocked or short else PROVIDED
 
 
-def build_inventory(results: dict) -> dict:
+def _deck_row(deck_count: int) -> dict:
+    missing = deck_count == 0
+    row: Dict[str, Any] = {"category": "Board decks", "status": MISSING if missing else PROVIDED, "in_request_list": missing,
+                           "quality_issues": [], "analyses_blocked": ["Claim register"] if missing else []}
+    if not missing:
+        row["count"] = _count(deck_count)
+    return row
+
+
+def build_inventory(results: dict, deck_count: Optional[int] = None) -> dict:
     """The data-inventory slice: per evidence category its status, months supplied against required, the quality issues
     the engine already detected and the analyses the category blocks. A category that is not ingested is marked so, and
     is not on the data request list."""
     keys = {kind: key for kind, (key, _) in SOURCES.items()}
     rows = []
     for ident, name, kind in CATEGORIES:
+        if kind == "decks":
+            if deck_count is not None:
+                rows.append(_deck_row(deck_count))
+            continue
         if kind is None:
             rows.append({"category": name, "status": NOT_INGESTED, "in_request_list": False,
                          "quality_issues": [], "analyses_blocked": []})
@@ -218,8 +233,10 @@ def build_integrity(results: dict) -> dict:
     return {"source_list": source_list(results), "integrity": checks}
 
 
-def build(step: str, results: dict) -> dict:
-    return {"data_inventory": build_inventory, "data_integrity": build_integrity}[step](results)
+def build(step: str, results: dict, deck_count: Optional[int] = None) -> dict:
+    if step == "data_inventory":
+        return build_inventory(results, deck_count)
+    return build_integrity(results)
 
 
 # --- guards that read the payload the model was sent ----------------------------------------------------------------------

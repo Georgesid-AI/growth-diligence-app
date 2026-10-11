@@ -63,6 +63,9 @@ logger = logging.getLogger("growth.llm")
 
 CALLS_COLLECTION = guards.CALLS_COLLECTION
 RESULTS_COLLECTION = "audits"
+# The data inventory counts the audit's parsed decks: a number, never a read of their text (CLAUDE.md rule 16; George, 2026-10-11).
+# The one place the gateway names this collection; test_gateway_data_boundary.py pins it to a count_documents on the audit id.
+DECK_COUNT_COLLECTION = "deck_text"
 
 # Shown when the stored metrics do not match the contract (schemas/metrics.py): no prompt is built, no model is called.
 NARRATIVE_NOT_GENERATED = "Narrative could not be generated. The computed metrics below are unaffected."
@@ -225,7 +228,7 @@ async def load_checked_results(db, run_id: str, step: str) -> Tuple[dict, List[s
         raise GatewayError("not_computed", f"run {run_id} has no computed results")
 
     results = doc["results"]
-    slice_ = _slice_for_step(results, step)
+    slice_ = _slice_for_step(results, step, await count_decks(db, run_id) if step == "data_inventory" else None)
     return ({
         "run_id": run_id,
         "reporting_currency": doc.get("reporting_currency"),
@@ -376,10 +379,19 @@ def build_outbound(computed: dict, mapping: dict) -> dict:
     return redaction.redact(allowlist_payload(formatted), mapping)
 
 
-def _slice_for_step(results: dict, step: str) -> dict:
-    """Narrow computed results to what a step needs. Unknown keys are dropped."""
+async def count_decks(db, run_id: str) -> Optional[int]:
+    """How many decks the audit holds: a count, no document is returned. None when the count cannot be read."""
+    try:
+        return int(await db[DECK_COUNT_COLLECTION].count_documents({"audit_id": run_id}))
+    except Exception:
+        return None
+
+
+def _slice_for_step(results: dict, step: str, deck_count: Optional[int] = None) -> dict:
+    """Narrow computed results to what a step needs. Unknown keys are dropped. `deck_count` is the data inventory's
+    only input that is not in the stored results."""
     if step in step_payloads.STEPS:
-        return {**step_payloads.build(step, results), "as_of_month": results.get("as_of_month")}
+        return {**step_payloads.build(step, results, deck_count), "as_of_month": results.get("as_of_month")}
     wanted = {
         "growth_engine": [
             "arr", "nrr", "gross_churn", "cac_payback", "sales_cycle",

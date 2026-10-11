@@ -173,8 +173,11 @@ number check skips.
 3. Scorecard. Six rows: data reliability, growth engine, strategic coherence, forecast track record, execution
    capacity, defensibility. Each has a rating, a headline and key evidence.
    - Data reliability (assessed). Rating set by the analyst: Strong, Adequate or Weak (decision Q5); Python never
-     rates. Headline: the revenue reconciliation gap and its window, the anomaly flag count, and Verified claims of
-     all claims (W17). Evidence: `revenue_reconciliation`, `anomalies`, the register.
+     rates. Headline and key evidence read the data-integrity narrative (A2) when it is current and ok and carries a
+     verdict: the headline is its headline (it opens with the verdict: Reliable, Needs clarification or Material
+     concerns) and the evidence cell names "Data integrity verdict: {verdict}" before the sources below. Otherwise the
+     headline is the revenue reconciliation gap and its window, the anomaly flag count, and Verified claims of all
+     claims (W17). Evidence: `revenue_reconciliation`, `anomalies`, the register.
    - Growth engine (assessed). Rating set by the analyst, as above. Headline: the growth-engine narrative's headline
      when it is current and ok. Otherwise ARR, NRR and gross churn with the S17 note (rule 20). Evidence: `arr`,
      `nrr`, `gross_churn`, `cac_payback`, `acv_path`.
@@ -303,7 +306,7 @@ are unchanged. So W16 and W24 below read "ARR (see glossary)" at their first ARR
 | W14 | other gates | {n} other claims still need a gate. |
 | W15 | memo | Investment committee memo: {company} · Date: {YYYY-MM-DD} · Verdict: {outcome} – {rule} · headings: Summary · Deal thesis · Scorecard · Key gates and deal terms · Worth flagging · Data gaps and requests · Appendix A – Claim register and gates · Appendix B – Data gaps and data request list · Appendix C – Detailed analysis tables · Appendix D – Source key list and value-at-risk de-duplication · thesis labels: Plan · Evidence · Condition · ratings: Strong · Adequate · Weak |
 | W16 | value at risk | Value at risk: ARR not yet computed (ARR bridge not run); cash not yet computed (no cash analysis). Overlapping claims are counted once, at the largest value in their group. |
-| W17 | scorecard | Data reliability: Revenue file and P&L differ by {x}% over {first}–{last}; {n} anomaly flags; {v} of {N} claims Verified. (no P&L: "no P&L to reconcile") · Not assessed – strategy documents not ingested · Not assessed – past budgets and forecasts not ingested · Not assessed – hiring plan and organisation data not ingested · Not assessed – market and competitor data not ingested |
+| W17 | scorecard | Data reliability headline, with a current A2 narrative: its headline, and key evidence "Data integrity verdict: {Reliable / Needs clarification / Material concerns}; revenue_reconciliation, anomalies, claim register". Without one: Data reliability: Revenue file and P&L differ by {x}% over {first}–{last}; {n} anomaly flags; {v} of {N} claims Verified. (no P&L: "no P&L to reconcile"). The rating stays Strong / Adequate / Weak, entered by the analyst. · Not assessed – strategy documents not ingested · Not assessed – past budgets and forecasts not ingested · Not assessed – hiring plan and organisation data not ingested · Not assessed – market and competitor data not ingested |
 | W18 | narrative missing | S17, unchanged |
 | W19 | memo refused | Memo not exported: {n} words; the limit is 1,500. / … {n} numbers are not in the stored results: {list}. / … the verdict is blocked. / … mark 3 to 5 key gates. / … rate {rows}. / … the stored results fail the contract: {fields}. |
 | W20 | cost panel | Title: AI usage and cost (this audit) · columns: Step · Calls · Cache hits · Input tokens · Output tokens · Cost (USD), 2 decimals · last row: Total · steps: Narrative – {step} · Deck structure reading · Column mapping |
