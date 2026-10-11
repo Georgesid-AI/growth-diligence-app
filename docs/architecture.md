@@ -43,6 +43,8 @@ What is stored (rule 17): model JSON output with cell references, the item list 
 model version, content hash, token counts and cost. Never deck text sent to the model. The boundary is enforced in
 `backend/tests/test_gateway_data_boundary.py` (rule 14), which must pass on every build.
 
+The narrative path may read a count of deck documents per audit (number only). It never reads deck text, titles or file names.
+
 ## The amendment of 2026-10-05
 
 Until 2026-10-05 the gateway read no parsed deck text at all (the former deck-parser.md §4). The amendment added

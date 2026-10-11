@@ -17,8 +17,9 @@ Location: docs/specs/verdict-and-memo.md. Follows claim-matching.md (the registe
 In: register columns for value at stake, overlaps and evidence; gates on every row that is not Verified; key gates;
 data gaps; the baseline CSV; the analyst's top 5; the verdict; the IC memo; the cost panel.
 Out: the ARR bridge (#6) and every value at stake or value at risk figure; cash analysis; the strategic coherence,
-forecast track record, execution capacity and defensibility analyses; ingesting categories 4, 5 and 7 of §7.2; any new
-prompt, step or model call; editing the memo in the app; PDF or docx output.
+forecast track record, execution capacity and defensibility analyses; ingesting categories 4, 5 and 7 of §7.2; editing the
+memo in the app; PDF or docx output.
+Out of scope: A5–A8 narratives, bank data, ARR bridge, changes to engine metrics.
 
 No architecture change:
 | Part | Where |
