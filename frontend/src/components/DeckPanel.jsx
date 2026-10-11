@@ -6,10 +6,10 @@ import { Input } from "@/components/ui/input";
 import FxText from "@/components/FxText";
 import { TurnoverCell, TurnoverReason } from "@/components/ClaimRegister";
 import { NO_FILE_PERIOD, UNVERIFIED, answerReady, metricOptions, turnoverHeading, turnoverOf } from "@/lib/claimRegister";
-import { addClaim, answerTurnover, getDecks, removeDeck, updateCandidate, uploadDeck } from "@/lib/api";
+import { addClaim, answerTurnover, approveAll, getDecks, removeDeck, updateCandidate, uploadDeck } from "@/lib/api";
 import { describeRequestError } from "@/lib/requestError";
 import {
-  ALL_DECKS, CLAIM_GROUPS, CLAIM_TYPES, CLAIM_UNITS, COUNT_UNIT_HINT, COUNT_TYPES, COUNT_UNIT, FX_SETTINGS_ANCHOR, FX_SETTINGS_LABEL, conversionHover, inconsistencyText, MIXED_SLIDE_LABEL, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, ADD_CLAIM_LABEL, ADD_CLAIM_NEEDS_SOURCE, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, newClaimPayload, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
+  ACQUISITION_CHANNELS, ADD_CLAIM_PLATFORM_LABEL, ALL_DECKS, APPROVE_ALL_LABEL, CLAIM_GROUPS, CLAIM_TYPES, approveAllToast, toReview, CLAIM_UNITS, COUNT_UNIT_HINT, COUNT_TYPES, COUNT_UNIT, FX_SETTINGS_ANCHOR, FX_SETTINGS_LABEL, conversionHover, inconsistencyText, MIXED_SLIDE_LABEL, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, ADD_CLAIM_LABEL, ADD_CLAIM_NEEDS_SOURCE, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, newClaimPayload, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
   DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, CONFIDENCE_HOVER, DECK_UPLOAD_HELP, INCONSISTENCY_LABEL, OTHER_TYPE_NOTE, PLACEHOLDER, STATUS_LABELS, VERIFIED_LABEL, claimPeriod, claimSections, claimValue, deckRunLog,
   confidenceText, needsType, readingChoices, rowEdit, sourceRef, statusCounts, typeLabel,
 } from "@/lib/deckClaims";
@@ -137,6 +137,23 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
     }
   };
 
+  // Approve all: one call for the section's claims to review (the deck tab's, under a deck tab). The server skips the ones that need a
+  // Revenue / Volume answer or a type and the ones whose save fails, and says how many; they stay "To review".
+  const [approving, setApproving] = useState(null);
+  const approveSection = async (section) => {
+    if (approving !== null) return;
+    setApproving(section.group);
+    try {
+      const done = await approveAll(auditId, section.group, tab && tab !== ALL_DECKS ? tab : undefined);
+      if (alive.current) toast.success(approveAllToast(done.approved, done.skipped));
+      await load();
+    } catch (err) {
+      if (alive.current) toast.error(describeRequestError(err).message);
+    } finally {
+      if (alive.current) setApproving(null);
+    }
+  };
+
   const add = async (payload) => {
     try {
       const created = await addClaim(auditId, payload);
@@ -250,21 +267,42 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
                 </tr>
               </thead>
               <tbody>
-                {claimSections(shown).map((section) => {
+                {claimSections(shown).map((section, index) => {
                   const open = expanded[section.group] ?? !section.collapsed;
+                  const waiting = toReview(section).length;
+                  const approveAllButton = (where) => (
+                    <Button type="button" size="sm" variant="outline" onClick={() => approveSection(section)} disabled={waiting === 0 || approving !== null}
+                      title={`Approve the ${waiting} claim${waiting === 1 ? "" : "s"} to review in ${section.title}`} className="h-7"
+                      data-testid={`approve-all-${where}-${section.group}`}>
+                      <Check className="h-3.5 w-3.5 mr-1 text-emerald-700" />{APPROVE_ALL_LABEL}
+                    </Button>
+                  );
                   return (
                     <Fragment key={section.group}>
+                      {index > 0 && (
+                        <tr aria-hidden="true" data-testid={`claim-group-gap-${section.group}`}>
+                          <td colSpan={COLUMNS.length} className="py-3.5"><div className="border-t border-[#E5E7EB]" /></td>
+                        </tr>
+                      )}
                       <tr className="bg-slate-50 border-b border-[#E5E7EB]" data-testid={`claim-group-${section.group}`}>
                         <td colSpan={COLUMNS.length} className="py-1.5 px-2">
-                          <button type="button" aria-expanded={open} data-testid={`claim-group-toggle-${section.group}`}
-                            onClick={() => setExpanded((e) => ({ ...e, [section.group]: !open }))}
-                            className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
-                            {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-                            {section.title} <span className="font-mono font-normal text-slate-500">({section.claims.length})</span>
-                          </button>
+                          <div className="flex items-center justify-between gap-3">
+                            <button type="button" aria-expanded={open} data-testid={`claim-group-toggle-${section.group}`}
+                              onClick={() => setExpanded((e) => ({ ...e, [section.group]: !open }))}
+                              className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
+                              {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                              {section.title} <span className="font-mono font-normal text-slate-500">({section.claims.length})</span>
+                            </button>
+                            {open && approveAllButton("top")}
+                          </div>
                         </td>
                       </tr>
                       {open && section.claims.map((c) => <CandidateRow key={c.id} candidate={c} onSave={save} onAnswer={answer} highlight={flash === c.id} />)}
+                      {open && (
+                        <tr data-testid={`claim-group-end-${section.group}`}>
+                          <td colSpan={COLUMNS.length} className="pt-2 pb-1 px-2 text-right">{approveAllButton("bottom")}</td>
+                        </tr>
+                      )}
                     </Fragment>
                   );
                 })}
@@ -280,7 +318,7 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
 /** Add claim: one row with the metric (the same list as the other rows), a value or a range, unit, currency, period, the
  *  source document and the page. Source document and page are required: Save stays off until both are filled. */
 function AddClaimRow({ decks, initialDeck, onSave, onCancel }) {
-  const [draft, setDraft] = useState({ claim_type: CLAIM_TYPES[0], value: "", value_high: "", unit: "", currency: "", target_date: "", deck_id: initialDeck, page: "", metric: "" });
+  const [draft, setDraft] = useState({ claim_type: CLAIM_TYPES[0], value: "", value_high: "", unit: "", currency: "", target_date: "", deck_id: initialDeck, page: "", metric: "", label: "" });
   const [saving, setSaving] = useState(false);
   const set = (k) => (e) => setDraft((d) => ({ ...d, [k]: e.target.value }));
   const setType = (e) => {
@@ -289,6 +327,7 @@ function AddClaimRow({ decks, initialDeck, onSave, onCancel }) {
       ? { ...d, claim_type, currency: "", unit: COUNT_UNIT } : { ...d, claim_type }));
   };
   // The register metrics that measure this claim's unit; the analyst chooses one, none is preselected.
+  const channel = draft.claim_type === ACQUISITION_CHANNELS;       // a platform, tested against no metric
   const metrics = metricOptions(draft).filter((m) => m !== "none");
   const metric = metrics.includes(draft.metric) ? draft.metric : "";
   const payload = newClaimPayload({ ...draft, metric });
@@ -316,12 +355,18 @@ function AddClaimRow({ decks, initialDeck, onSave, onCancel }) {
       <label className="flex flex-col text-[10px] font-mono text-slate-500">Date or period
         <Input value={draft.target_date} onChange={set("target_date")} placeholder="2025-Q4" className="h-8 w-24 text-xs font-mono" data-testid="add-claim-date" />
       </label>
-      <label className="flex flex-col text-[10px] font-mono text-slate-500">Metric tested (required)
-        <select value={metric} onChange={set("metric")} className={selectClass} data-testid="add-claim-metric">
-          <option value="" disabled>Choose a metric</option>
-          {metrics.map((m) => <option key={m} value={m}>{m}</option>)}
-        </select>
-      </label>
+      {channel ? (
+        <label className="flex flex-col text-[10px] font-mono text-slate-500">{ADD_CLAIM_PLATFORM_LABEL}
+          <Input value={draft.label} onChange={set("label")} maxLength={40} placeholder="Telegram" className="h-8 w-32 text-xs font-mono" data-testid="add-claim-platform" />
+        </label>
+      ) : (
+        <label className="flex flex-col text-[10px] font-mono text-slate-500">Metric tested (required)
+          <select value={metric} onChange={set("metric")} className={selectClass} data-testid="add-claim-metric">
+            <option value="" disabled>Choose a metric</option>
+            {metrics.map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </label>
+      )}
       <label className="flex flex-col text-[10px] font-mono text-slate-500">Source document (required)
         <select value={draft.deck_id} onChange={set("deck_id")} className={selectClass} data-testid="add-claim-deck">
           {decks.map((d) => <option key={d.deck_id} value={d.deck_id}>{d.file}</option>)}
@@ -441,6 +486,7 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight }) {
             {turnover.views.length ? turnover.views.map((v) => (
               <TurnoverCell key={v.claim_id} row={v} onAnswer={onAnswer} heading={turnoverHeading(v, isRow)} />
             )) : typeLabel(c.claim_type)}
+            {c.channel && <div className="text-[10px] text-slate-500 mt-0.5" data-testid="candidate-channel">{c.channel}</div>}
             {needsType(c) && <div className="text-[10px] text-amber-800 mt-0.5" data-testid="candidate-needs-type">{OTHER_TYPE_NOTE}</div>}
           </td>
           <td className={`py-2 pr-3 font-mono text-slate-900 ${isRow || claimValue(c).includes(FX_SETTINGS_LABEL) ? "" : "whitespace-nowrap"}`}>

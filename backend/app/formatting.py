@@ -243,6 +243,7 @@ GLOSSARY = {
     "CAC": "customer acquisition cost",
     "VaS": (
         "value at stake: the amount of ARR or cash that depends on this claim being true. ARR and cash are stated separately and never added together. Where several claims drive the same ARR or cash, the register shows the overlap, and the memo gives either a de-duplicated total or the largest single exposure and says which. Until the ARR bridge exists, ARR VaS is not computed and claims are ranked by the size of the gap to the data."),
+    "Acquisition channels": "claims about how many users, visits or followers each channel brings (a social platform, a referral source), one claim per platform. They are not tested against the data: always Unverified, with no value at stake or gate, and never in the top 5.",
 }
 # The abbreviations whose first use in a text block points to the glossary (George, 2026-10-09). Mirrors seeGlossary in
 # frontend/src/lib/glossary.js.

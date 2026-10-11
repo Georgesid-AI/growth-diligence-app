@@ -126,12 +126,12 @@ def marked_count_after(rows: List[dict], claim_id: str) -> int:
 # --- the top 5 ------------------------------------------------------------------------------------------------------------
 
 def sortable(rows: List[dict]) -> List[dict]:
-    """The rows the top 5 is taken from: a use-of-funds row is an allocation share of the raise, never one of them."""
-    return [r for r in rows if r.get("claim_type") != "use_of_funds"]
+    """The rows the top 5 is taken from: a use-of-funds row (an allocation share of the raise) or an acquisition-channels row (a count per platform) is never one of them."""
+    return [r for r in rows if r.get("claim_type") not in ("use_of_funds", "acquisition_channels")]
 
 
 def proposal(rows: List[dict]) -> List[str]:
-    """Rows 1 to 5 of the pre-sort, or every row when there are fewer than 5 (decision of 2026-10-08). Use of funds is left out."""
+    """Rows 1 to 5 of the pre-sort, or every row when there are fewer than 5 (decision of 2026-10-08). Use of funds and acquisition channels are left out."""
     return [r["claim_id"] for r in sortable(rows)[:TOP_N]]
 
 
@@ -156,7 +156,7 @@ def top5_state(rows: List[dict], stored: Optional[dict]) -> dict:
 
 
 def check_top5(rows: List[dict], ids: List[str]) -> None:
-    """Refuse a set that is not min(5, rows) distinct register claims (use of funds is none of them)."""
+    """Refuse a set that is not min(5, rows) distinct register claims (use of funds and acquisition channels are none of them)."""
     rows = sortable(rows)
     if len(set(ids)) != len(ids) or len(ids) != min(TOP_N, len(rows)) or not set(ids) <= {r["claim_id"] for r in rows}:
         raise ValueError(f"The top 5 holds {min(TOP_N, len(rows))} different claims of the register")

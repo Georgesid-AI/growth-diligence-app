@@ -501,3 +501,8 @@ Fixed on the 10 test decks (2026-10-05):
   a bullet or footnote below them, a slide titled "Raise"), the block words, revenue by year and by geography
   and "acquisition", and the text 40/20/25/10/5 against the chart 42/21/26/11), `test_claim_matching.py` and `test_verdict.py` (register and top 5),
   `test_gateway_data_boundary.py` (the reason, `mixed_slide` and the note reach no gateway payload or log), `DeckPanel.test.jsx` (tag text, the edit form).
+
+## Amended 2026-10-11: categories and Acquisition channels
+Use of funds is its own section on screen (group 8) and Acquisition channels a new one (group 7), both directly above Other (now group 9); Unknown (6)
+and Other (9) start collapsed, so "Groups 6 and 7 start collapsed" in section 6 reads "6 and 9". The new claim type, Approve all and the spacing are specified in
+docs/specs/chat-upload.md section 17.

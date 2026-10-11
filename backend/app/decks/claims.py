@@ -110,11 +110,15 @@ CLAIM_TYPES = ("revenue", "revenue_growth", "growth", "retention", "sales", "cus
 UNKNOWN = "unknown"
 # An allocation share on a raise slide (deck-parser.md section 2, "Use of funds"): unit %, no engine metric, never Sales or Revenue.
 USE_OF_FUNDS = "use_of_funds"
+# A per-platform figure on a user-acquisition slide (chat-upload.md section 17): count, no currency, no engine metric.
+ACQUISITION_CHANNELS = "acquisition_channels"
+COUNT = "count"         # the unit of an acquisition-channels figure
 
 # The order of the claims table (deck-parser.md section 6): the group of a type, then slide or page. Revenue covers ARR,
-# MRR and bookings; P&L items and unit economics are listed with their neighbours, and the types no group names
-# (use of funds, the model's "other") are Other.
-GROUPS = {1: "revenue", 2: "P&L", 3: "customers and sales", 4: "hiring and roadmap", 5: "market size", 6: "unknown", 7: "other"}
+# MRR and bookings; P&L items and unit economics are listed with their neighbours; acquisition channels and use of funds
+# have a group each, above Other (chat-upload.md section 17); the types no group names (the model's "other") are Other.
+GROUPS = {1: "revenue", 2: "P&L", 3: "customers and sales", 4: "hiring and roadmap", 5: "market size", 6: "unknown",
+          7: "acquisition channels", 8: "use of funds", 9: "other"}
 _GROUP_OF = {
     "revenue": 1, "revenue_growth": 1,
     "gross_profit": 2, "ebitda": 2, "burn": 2, "cash": 2, "runway": 2, "costs": 2, "net_profit": 2, "gross_margin": 2,
@@ -122,14 +126,15 @@ _GROUP_OF = {
     "customers": 3, "users": 3, "user_growth": 3, "growth": 3, "retention": 3, "sales": 3, "ltv": 3, "cac": 3, "ltv_cac": 3,
     "customer_lifetime": 3, "trials_per_day": 3, "usage": 3,
     "people": 4, "product": 4,
-    "market": 5, UNKNOWN: 6,
+    "market": 5, UNKNOWN: 6, ACQUISITION_CHANNELS: 7, USE_OF_FUNDS: 8,
 }
-COLLAPSED_GROUPS = (6, 7)
+OTHER_GROUP = 9
+COLLAPSED_GROUPS = (6, OTHER_GROUP)
 
 
 def type_group(claim_type: Optional[str]) -> int:
-    """1 to 7: the group a claim type sorts under."""
-    return _GROUP_OF.get(claim_type or "", 7)
+    """1 to 9: the group a claim type sorts under."""
+    return _GROUP_OF.get(claim_type or "", OTHER_GROUP)
 # A net loss is a negative net profit: "Net loss of $2M" is stored as -2,000,000.
 _DIRECTION = re.compile(r"(?i)\b(positive|negative)\b")
 _NET_LOSS = re.compile(r"(?i)\bnet loss(?:es)?\b")
@@ -1099,6 +1104,7 @@ def detect_candidates(blocks: List[Dict], file: str, fiscal_year_end: int = 12) 
     contexts = _contexts(units)
     skipped = _axis_ticks(units) | _not_plan(units)
     funds, mixed = _funds_units(units)
+    channels = _channel_units(units)
     tick_cells = _tick_cells(blocks)
     periods = _box_periods(units)
     bars = _bar_labels(units)
@@ -1108,9 +1114,10 @@ def detect_candidates(blocks: List[Dict], file: str, fiscal_year_end: int = 12) 
                 or id(u) in periods and periods[id(u)] is None:
             continue
         found = []
-        for c in line_candidates(u["text"], u["spans"], contexts[id(u)], u["headers"], periods.get(id(u)),
-                                 u.get("column_periods") if u.get("table_row") else None, bars.get(id(u)),
-                                 USE_OF_FUNDS if id(u) in funds else None):
+        for c in ([_channel_candidate(u, *channels[id(u)])] if id(u) in channels else
+                  line_candidates(u["text"], u["spans"], contexts[id(u)], u["headers"], periods.get(id(u)),
+                                  u.get("column_periods") if u.get("table_row") else None, bars.get(id(u)),
+                                  USE_OF_FUNDS if id(u) in funds else None)):
             s = c["sources"][0]
             if s["kind"] == "table" and (s.get("slide") or s.get("page"), s["table"], s["row"], s["col"]) in tick_cells:
                 continue
@@ -1130,7 +1137,7 @@ def detect_candidates(blocks: List[Dict], file: str, fiscal_year_end: int = 12) 
         for c in found:
             c["reading"] = [round(box[1], 3), round(box[0], 3)] if box else None      # top, left: the reading order
             key = (c["claim_type"], c["value"], c["value_high"], c["unit"], c["currency"], c["target_date"],
-                   c["period_start"], c["period_end"],
+                   c["period_start"], c["period_end"], c.get("channel"),
                    tuple((i["value"], i["value_high"], i["target_date"], i["period_start"], i["period_end"])
                          for i in c.get("by_period") or ()))
             if key not in merged:
@@ -1394,6 +1401,80 @@ def _flag_funds_inconsistencies(candidates: List[Dict]) -> None:
                 if note:
                     pair["note"] = note
                 mine.setdefault("inconsistencies", []).append(pair)
+
+
+# ---------------------------------------------------------------------------
+# Acquisition channels (chat-upload.md section 17)
+# ---------------------------------------------------------------------------
+# The cues that make a slide a user-acquisition slide: whole words, any case. They count in the slide's title, in a heading
+# or chart title (a short line with no figure and at most CUE_HEADING_EXTRA other words, above the first platform line, not a bullet) and in a table's header row.
+# Body text never carries a cue. Without one, "Telegram(30K)" is read as before (and is Other when no heading names a type).
+ACQUISITION_CUES = ("user acquisition", "acquisition channels", "acquisition channel", "acquisition", "channels",
+                    "traffic sources", "traffic source", "funnel")
+_ACQUISITION_CUE = re.compile(r"(?i)\b(?:" + "|".join(re.escape(c).replace(r"\ ", r"\s+") for c in ACQUISITION_CUES) + r")\b")
+CHANNEL_NAME_MAX = 40
+# One platform: its name, then the number in brackets ("Telegram(30K)", "Facebook (12,500)", "YouTube [1.2M]").
+_CHANNEL_LINE = re.compile(r"^\s*(?P<name>[^()\[\]%]*?[^\W\d_][^()\[\]%]*?)\s*[(\[](?P<inside>[^()\[\]]{1,20})[)\]]\s*$")
+_CHANNEL_APPROX = re.compile(r"^\s*(?:~|≈|approx\.?|c\.)\s*")
+
+
+def _channel_figure(text: str) -> Optional[Tuple[str, Dict]]:
+    """(platform name, number) when the whole line is a platform and a count in brackets; None otherwise. The bracket holds one
+    plain number, with or without a K, M or B: no currency, no percentage, no word after it, no date."""
+    m = _CHANNEL_LINE.match(text)
+    if not m:
+        return None
+    name, inside = m.group("name").strip(" :-–—,;"), _CHANNEL_APPROX.sub("", m.group("inside")).strip()
+    if not name or len(name) > CHANNEL_NAME_MAX or find_dates(name) or find_dates(inside):
+        return None
+    numbers = find_numbers(inside, [])
+    if len(numbers) != 1 or numbers[0]["start"] != 0 or numbers[0]["end"] != len(inside) or numbers[0]["value_high"] is not None \
+            or numbers[0]["unit"] or numbers[0]["currency"] or numbers[0]["value"] is None:
+        return None
+    return name, numbers[0]
+
+
+def _channel_cue_unit(u: Dict, above) -> bool:
+    text = u["text"]
+    if u["title"] or u.get("header_row"):
+        return bool(_ACQUISITION_CUE.search(text))
+    if not _ACQUISITION_CUE.search(text) or not _is_heading(text) or _BULLET.match(text) or not above(u):
+        return False
+    return len(_WORD.findall(_ACQUISITION_CUE.sub(" ", text))) <= CUE_HEADING_EXTRA       # a heading, not a sentence
+
+
+def _channel_units(units: List[Dict]) -> Dict[int, Tuple[str, Dict]]:
+    """id() of each line that is one platform's figure on a user-acquisition slide, mapped to (name, number). The slide needs a cue
+    (ACQUISITION_CUES) in its title, a heading or chart title, or a table's header row; a platform line is a text line, never a
+    table row."""
+    pages = {}
+    for u in units:
+        pages.setdefault(u["page"], []).append(u)
+    out = {}
+    for members in pages.values():
+        lines = {id(u): _channel_figure(u["text"]) for u in members if not u["title"] and not u.get("table_row")}
+        lines = {k: v for k, v in lines.items() if v}
+        if not lines:
+            continue
+        first = min(members.index(u) for u in members if id(u) in lines)
+        tops = [u["bbox"][1] for u in members if id(u) in lines and u.get("bbox")]
+
+        def above(m):
+            if m.get("bbox") and tops and len(tops) == len(lines):
+                return m["bbox"][1] < min(tops)
+            return members.index(m) < first
+
+        if any(_channel_cue_unit(m, above) for m in members if id(m) not in lines):
+            out.update(lines)
+    return out
+
+
+def _channel_candidate(u: Dict, name: str, number: Dict) -> Dict:
+    """One platform's claim: type Acquisition channels, the platform as its label (`channel`), the number in brackets as a count
+    with no currency. No period: a funnel figure is not dated by a heading, so nothing is borrowed."""
+    return {"claim_type": ACQUISITION_CHANNELS, "value": number["value"], "value_high": None, "unit": COUNT, "currency": None,
+            "target_date": None, "period_text": None, "snippet": _snippet(u["text"], 0), "label_from": None, "date_from": None,
+            "sources": [u["spans"][0][2]], "type_from": "heading", "claim_direction": None, "_stated": False, "channel": name}
 
 
 def _row_series(found: List[Dict], headers: Dict) -> List[Dict]:

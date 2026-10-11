@@ -1,6 +1,6 @@
 # Spec: Chat-style upload and column mapping
 Status: Final (2026-10-08); decisions applied (§12); amended 2026-10-08 for the mapping-screen wording, the delete dialog
-and the banner (§12, §13, S5, S9, S15, S16a, S16d, S18, S18b, S23–S25), and 2026-10-09 for §15 and §16. Location: docs/specs/chat-upload.md.
+and the banner (§12, §13, S5, S9, S15, S16a, S16d, S18, S18b, S23–S25), and 2026-10-09 for §15 and §16, and 2026-10-11 for §17 (claims list and parser). Location: docs/specs/chat-upload.md.
 Replaces the content of the MappingWizard page. Supersedes in part docs/specs/llm-structure-reading.md §1 for
 the column-mapping path only: which columns are sent and from how many rows (§4.2). Everything else in that spec
 stands, including the rule-16 shape of what is sent and §9 (sent text is never stored).
@@ -426,3 +426,48 @@ Revenue: the column maps as before. Volume: the column is Not used and the engin
   attached in the chat. The deck panel reads the claims again after a save, so converted figures replace "FX rate needed". PUT /fx
   saves the whole set the screen shows: rates an older version saved with the revenue file move to the audit and the file's copy
   is cleared, so a removed rate stays removed.
+
+## 17. Claims list and parser: Approve all, spacing, two categories, Acquisition channels (amended 2026-10-11, George)
+The claims list and the deck parser are specified in deck-parser.md and claim-matching.md; this section amends them. The architecture is
+unchanged. Challenge and deletions (rule 4): Approve all removes one click per claim, and nothing else is needed for it; the
+Acquisition channels type is a copy of the Use of funds rules (Unverified, no VaS, no gate, out of the top 5) with its own cue and
+line shape, so no new matching code is written; nothing is deleted.
+- **Categories on screen.** The list order is now: 1 Revenue, ARR, MRR and bookings · 2 P&L items · 3 Customers, users, usage,
+  retention and sales · 4 Hiring and roadmap · 5 Market size · 6 Unknown – choose type · **7 Acquisition channels · 8 Use of funds** · 9 Other.
+  Use of funds leaves Other and has its own section, directly above Other, with the rules of deck-parser.md "Use of funds" unchanged
+  (Unverified, no VaS, no gate, out of the top 5). Unknown (6) and Other (9) start collapsed; 7 and 8 start open.
+- **Spacing.** Between two sections, a gap of about twice the old one (28 px, was about 14) with a light divider line (`#E5E7EB`) in the
+  middle of it; none above the first section. The background stays white.
+- **Approve all.** A button "Approve all" in the header row of every open section and another after its last claim. It approves every
+  claim of that section with status "To review". It is off when the section has none. One call per click:
+  `POST /api/audits/{id}/decks/candidates/approve-all` `{group, deck_id?}` (`group` is the number above; `deck_id` is the deck tab, left out
+  under All). The server approves each claim as a single Approve does (status "approved", or "edited" for a claim that carries the parser's
+  values under `parsed`), so the register and the CSV record the same thing. It skips, and leaves "To review": a turnover claim whose Revenue /
+  Volume answer the analyst has not given, a claim whose type is still to be chosen (Other, Unknown: a single Approve refuses it too), and a
+  claim whose save fails. Reply: `{approved, skipped, approved_ids, skipped_ids}`. Toast, word for word: "Approved X claims, Y skipped (need
+  Revenue / Volume or failed to save)" ("1 claim" for one). The log line holds the run, the group number and two counts, nothing else
+  (boundary test, rule 14).
+- **Acquisition channels** (stored `acquisition_channels`): the figure per platform on a user-acquisition slide, such as a funnel listing social
+  platforms, each with a number in brackets. Parser trigger: the slide or page needs a cue, as whole words in any case: acquisition,
+  acquisition channel(s), channels, funnel, traffic source(s), user acquisition. It counts in the slide's title, in a heading or a chart title (a
+  short line with no figure and at most 3 other words, above the first platform line, not starting with a bullet, dash or asterisk) and in a table's
+  header row; body text and footnotes never carry a cue. Without a cue the platform counts stay as before (typed by their heading if it names a type,
+  else Other, and the model's reading keeps labelling them `other`). Each platform line is one claim: the whole line is a name and one plain
+  number in brackets ("Telegram(30K)", "Facebook (12,500)", "YouTube [1.2M]"), with or without K, M or B; a bracket holding a currency, a percentage,
+  a word, a date or a range is no channel figure. Metric "Acquisition channels", `channel` = the platform name (shown under the type in the
+  list), value = the number in brackets, unit "count", no currency, no period. Two platforms with the same number are two claims; the same
+  platform with the same number twice is one claim with both sources.
+- Acquisition channels in the register: Unverified, reason "acquisition channels: a count per platform, no engine metric to test it against",
+  no metric, gap, VaS or gate, ranked after every other claim (with Use of funds), and out of the top 5, the banner, the replace dropdown and the
+  verdict. The platform name is deck text: it stays on the candidate and in the list, and never reaches the register row, a log or the gateway.
+- Type dropdowns. "Acquisition channels" is in the Type list of the edit form and of Add claim (not Use of funds, as before). Choosing it makes the
+  figure a count with no currency. Add claim then asks for the platform (required, up to 40 characters) in place of the metric tested; the server
+  refuses a metric for this type and a platform for any other.
+- Glossary: "Acquisition channels – claims about how many users, visits or followers each channel brings (a social platform, a referral source), one
+  claim per platform. They are not tested against the data: always Unverified, with no value at stake or gate, and never in the top 5." (frontend
+  glossary.js and backend formatting.py, kept equal by a test).
+- Out of scope: the model's labelling (prompt, schema, cache keys) is untouched, so a funnel read from a chart or table structure still comes back
+  `other`; moving that to this type is a prompt change and a live run (rule 19, kind 2).
+- Tests: `test_approve_all.py` (the endpoint), `test_deck_parser.py` (the cues and the line shape), `test_claim_matching.py`, `test_verdict.py`,
+  `test_analyst_claim.py` (register, top 5, Add claim), `test_gateway_data_boundary.py` (the reason, the platform name and the log line),
+  `DeckPanel.test.jsx` and `deckClaims.test.js` (buttons, toast, sections, spacing, forms).

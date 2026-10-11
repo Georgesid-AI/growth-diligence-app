@@ -545,3 +545,30 @@ def test_correcting_a_use_of_funds_figure_keeps_its_type_and_the_row_stays_out_o
     assert "use_of_funds" not in {c["claim_type"] for c in _get(client)["register"] if c["claim_id"] in body["verdict"]["top5"]["proposed"]}
     # a bad type name is still refused
     assert client.put(f"/api/audits/{AUDIT}/decks/candidates/funds1", json={"claim_type": "nonsense"}).status_code == 422
+
+
+def test_an_acquisition_channels_row_is_never_in_the_proposal_the_top_5_or_the_verdict():
+    channel = row(1, "Unverified", claim_type="acquisition_channels", metric=None)
+    rows = [channel, *[row(i + 2, "Verified") for i in range(5)]]
+    assert vd.proposal(rows) == [f"r{i}" for i in range(2, 7)] and vd.banner_ids(rows) == vd.proposal(rows)
+    v = vd.verdict(rows, {"reporting_currency": "EUR"}, {"claim_ids": vd.proposal(rows)})
+    assert (v["status"], v["outcome"]) == ("ok", "Underwrite") and "r1" not in [f["claim_id"] for f in v["five"]]
+    with pytest.raises(ValueError):
+        vd.check_top5(rows, ["r1", *vd.proposal(rows)[:4]])
+    assert vd.proposal([channel]) == [] and vd.top5_state([channel], None)["in_force"] == []
+
+
+def test_the_top_5_replace_list_holds_no_acquisition_channels_row(api):
+    client, db = api
+    before = len(_verdict(client)["candidates"])
+    db[decks.CANDIDATES_COLLECTION].docs.append(
+        {"audit_id": AUDIT, "id": "chan1", "status": "approved", "claim_type": "acquisition_channels", "value": 30000, "unit": "count",
+         "channel": "Telegram", "file": "testco_board.pptx", "order": 99,
+         "sources": [{"file": "testco_board.pptx", "slide": 17, "kind": "text"}]})
+    body = _verdict(client)
+    ranked = [r["claim_id"] for r in _get(client)["register"] if r["claim_type"] == "acquisition_channels"]
+    assert ranked and len(body["candidates"]) == before
+    assert not set(ranked) & ({c["claim_id"] for c in body["candidates"]} | set(body["verdict"]["top5"]["proposed"]))
+    assert _inputs(client, {"top5": [*body["verdict"]["top5"]["proposed"][:4], ranked[0]]}).status_code == 400
+    kept = client.put(f"/api/audits/{AUDIT}/decks/candidates/chan1", json={"claim_type": "acquisition_channels", "value": 31000})
+    assert (kept.status_code, kept.json()["claim_type"], kept.json()["status"]) == (200, "acquisition_channels", "edited")
