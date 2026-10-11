@@ -169,3 +169,33 @@ def test_a_gate_saved_by_save_all_equals_the_same_gate_saved_alone(api):
     api.put(f"/api/audits/{AUDIT}/claims/{cid}", json=body)
     alone = next(x for x in api.get(f"/api/audits/{AUDIT}/claims").json()["register"] if x["claim_id"] == g["claim_id"])
     assert alone == via_all
+
+
+# --- the first quarterly review, an audit set-up field -------------------------------------------------------------------------
+
+def test_a_new_audit_has_a_first_quarterly_review_90_days_after_its_creation(api):
+    r = api.post("/api/audits", json={"company_name": "NewCo", "client_name": "Fund"})
+    assert r.status_code == 200
+    created = r.json()["created_at"][:10]
+    from datetime import date, timedelta
+    assert r.json()["ic_inputs"]["first_quarterly_review"] == (date.fromisoformat(created) + timedelta(days=90)).isoformat()
+
+
+def test_the_review_date_is_editable_and_clearing_it_returns_the_default(api):
+    ready_for_review(api)
+    assert api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"first_quarterly_review": "2027-03-31"}).status_code == 200
+    assert api.get(f"/api/audits/{AUDIT}").json()["ic_inputs"]["first_quarterly_review"] == "2027-03-31"
+    assert api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"first_quarterly_review": None}).status_code == 200
+    assert api.get(f"/api/audits/{AUDIT}").json()["ic_inputs"]["first_quarterly_review"] == "2027-01-09"
+
+
+def test_a_claim_without_a_period_is_dated_by_the_audits_review_date_and_no_period_goes_past_it(api):
+    ready_for_review(api)
+    for c in candidates(api):
+        if c["status"] == "pending":
+            api.put(f"/api/audits/{AUDIT}/decks/candidates/{c['id']}", json={"status": "approved"})
+    data = api.get(f"/api/audits/{AUDIT}/claims").json()
+    review = api.get(f"/api/audits/{AUDIT}").json()["ic_inputs"]["first_quarterly_review"]
+    assert data["gate_prefill"] and all(v.get("gate_date") for v in data["gate_prefill"].values()), "every gate has a date"
+    assert all(v["gate_date"] <= review for v in data["gate_prefill"].values())
+    assert any(v["gate_date"] == review for v in data["gate_prefill"].values())

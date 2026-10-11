@@ -9,7 +9,7 @@ from __future__ import annotations
 import csv
 import io
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from app import claim_matching as cm
@@ -56,6 +56,27 @@ def valid_date(value: Optional[str]) -> bool:
     except ValueError:
         return False
     return True
+
+
+REVIEW_DEFAULT_DAYS = 90
+
+
+def default_review(created_at: Optional[str]) -> Optional[str]:
+    """The first quarterly review when the analyst has not set one: the audit's creation date plus 90 days (an audit-set-up field)."""
+    try:
+        return (datetime.fromisoformat(str(created_at)).date() + timedelta(days=REVIEW_DEFAULT_DAYS)).isoformat()
+    except ValueError:
+        return None
+
+
+def with_review(audit: dict, ic: Optional[dict]) -> dict:
+    """The analyst's inputs with the first quarterly review always present: the stored date, else the default."""
+    ic = dict(ic or {})
+    if not ic.get("first_quarterly_review"):
+        default = default_review(audit.get("created_at"))
+        if default:
+            ic["first_quarterly_review"] = default
+    return ic
 
 
 # --- claim wording --------------------------------------------------------------------------------------------------------

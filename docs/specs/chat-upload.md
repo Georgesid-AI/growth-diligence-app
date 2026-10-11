@@ -34,8 +34,8 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
 
 ## 2. Screen
 - The MappingWizard page keeps its route, its title and the header bar (Calculate). Below the header, at the top of
-  the page, sit the audit's set-up fields (2026-10-09, George): Reporting currency, Target ARR, Target date, As-of month and
-  Fiscal year-end, each with one line of help under it, then the FX settings (§16), then the chat panel: a pure white message
+  the page, sit the audit's set-up fields (2026-10-09, George): Reporting currency, Target ARR, Target date, As-of month,
+  Fiscal year-end and First quarterly review (2026-10-11, George: required, default the audit's creation date plus 90 days, editable; clearing it returns the default; it is stored as the audit's `ic_inputs.first_quarterly_review` and gives the date of every gate prefill), each with one line of help under it, then the FX settings (§16), then the chat panel: a pure white message
   list with the input bar at the bottom. The deck panel stays below the chat panel, unchanged. The page uses the existing
   light theme. The set-up fields save as they change (PUT /audits/{id}); clearing the As-of month sends an explicit null and returns it to the default, the Target date cannot be cleared; a refused save names the field and the reason.
   Help lines, word for word: Reporting currency "All figures are converted to this currency. Use the company's home

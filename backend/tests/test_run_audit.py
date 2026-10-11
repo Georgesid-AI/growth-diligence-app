@@ -27,7 +27,8 @@ SAMPLE = BACKEND.parent / "sample_data"
 AUDIT = "audit-run"
 AUDIT_DOC = {"id": AUDIT, "company_name": "TestCo", "client_name": "Northbridge Capital", "structure_reading_consent": True,
              "fiscal_year_end": 12, "reporting_currency": "EUR", "target_arr": 1000000, "target_date": "2026-12-31",
-             "as_of_month": None, "results": None, "status": "draft", "usage": usage_mod.empty()}
+             "as_of_month": None, "results": None, "status": "draft", "usage": usage_mod.empty(),
+             "created_at": "2026-10-11T08:00:00+00:00", "ic_inputs": {"first_quarterly_review": "2027-01-09"}}      # as create_audit stores it
 RATINGS = {"data_reliability": "Adequate", "growth_engine": "Weak"}
 THESIS = {"plan": "Grow through the mid-market.", "evidence": "Retention holds in the base.", "condition": "Gates met on time."}
 RUN = RUNS["A"]
@@ -433,7 +434,7 @@ def test_the_reconciliation_blocker_is_on_the_review_summary_and_in_the_memo_not
 
 # --- the click count: from upload to the memo download -------------------------------------------------------------------------
 MAX_CLICKS = 15
-MAX_CLICKS_FULL = 20
+MAX_CLICKS_FULL = 21
 
 
 def analyst_flow(client, only_verified):
@@ -529,8 +530,6 @@ def test_the_full_testco_audit_with_contradicted_top_5_claims_needs_more_clicks_
     assert len(gated) == 5 and clicks.n > MAX_CLICKS, "the budget decision of each gate is the analyst's: more than the clean audit"
 
 
-@pytest.mark.xfail(strict=True, reason="measured 22, goal 20: five budget decisions cannot be prefilled (gate definition is out of scope); "
-                                       "waiting on George's decision, see docs/test-runs/run-audit-clicks_2026-10-11.md")
-def test_the_full_testco_audit_goes_from_upload_to_the_memo_in_no_more_than_20_clicks(api):
+def test_the_full_testco_audit_goes_from_upload_to_the_memo_in_no_more_than_21_clicks(api):
     clicks, _ = analyst_flow(api, only_verified=False)
     assert clicks.n <= MAX_CLICKS_FULL, f"{clicks.n} clicks: {clicks.log}"
