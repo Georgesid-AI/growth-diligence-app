@@ -33,7 +33,7 @@ const withCurrent = (options, current) => (options.includes(current) ? options :
 /** The gate: the claimed and observed figures beside an empty threshold, a budget decision and a date. Nothing is proposed and
  *  nothing is saved until the threshold, the decision and the date are all filled; a row with no metric of the app also
  *  needs the analyst's metric and its direction (docs/specs/verdict-and-memo.md section 3). */
-function GateCell({ row, ccy, onSave }) {
+export function GateCell({ row, ccy, onSave }) {
   const initial = {
     threshold: row.gate_threshold ?? "", budget: row.gate_budget_decision ?? "", date: row.gate_date ?? "",
     metricName: row.gate_metric_name ?? "", direction: row.gate_direction ?? "",

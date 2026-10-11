@@ -1312,6 +1312,46 @@ async def narratives_for_run(db, run_id: str) -> list:
     return found
 
 
+CHARS_PER_TOKEN = 4          # the estimate's rule of thumb; the real count is the provider's, on the call
+
+
+async def estimate_narratives(db, run_id: str) -> dict:
+    """What "Write all narratives" would spend: for each enabled step, whether a narrative is already stored (no call, no cost)
+    and otherwise an upper-bound estimate in USD: the prompt and the payload at about 4 characters a token, and the step's
+    whole output allowance. It reads the same payload a generation builds, from the stored results; it makes no call and
+    writes nothing but the pseudonym map a generation would also write. The real cost is logged per call as before."""
+    steps = []
+    model = None
+    try:
+        model = run_model()
+    except GatewayError:
+        pass
+    for step, config in STEP_CONFIG.items():
+        if not config.get("enabled"):
+            continue
+        entry = {"step": step, "label": disclosure.STEP_LABELS.get(step, step), "cached": False, "estimate_usd": 0.0,
+                 "available": True}
+        try:
+            computed, problems = await load_checked_results(db, run_id, step)
+            prompt = prompt_store.load(config["prompt"])
+            if problems or model is None:
+                raise GatewayError("unavailable")
+            outbound = build_outbound(computed, await redaction.get_or_create_map(db, run_id, computed))
+            key = cache.cache_key(run_id, step, prompt_store.cache_tag(prompt), model, outbound)
+            if await cache.get(db, key):
+                entry["cached"] = True
+            else:
+                tokens_in = (len(prompt.text) + len(cache.canonical_json(outbound))) // CHARS_PER_TOKEN
+                entry["estimate_usd"] = round(estimate_cost_usd(model, tokens_in, config["max_tokens"]), 4)
+        except GatewayError as exc:
+            if exc.reason in ("run_not_found", "not_computed"):
+                raise
+            entry.update(available=False)
+        steps.append(entry)
+    return {"model": model, "steps": steps, "total_usd": round(sum(s["estimate_usd"] for s in steps), 4),
+            "basis": "upper bound: the whole output allowance of each step that has no stored narrative"}
+
+
 def disclosure_from(narratives: list) -> Optional[dict]:
     """The provenance block for narratives already loaded."""
     return disclosure.build_disclosure([

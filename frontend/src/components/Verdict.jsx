@@ -20,7 +20,7 @@ const LABEL_STYLE = {
 };
 
 /** The top 5: the proposed or confirmed five, a pick per row from the register, and Confirm (verdict-and-memo.md section 6.1). */
-function TopFive({ verdict, candidates, onConfirm, busy }) {
+export function TopFive({ verdict, candidates, onConfirm, busy }) {
   const stored = initialPicks(verdict);
   const [picks, setPicks] = useState(stored);
   const key = stored.join("|");
@@ -51,23 +51,58 @@ function TopFive({ verdict, candidates, onConfirm, busy }) {
   );
 }
 
-function Inputs({ auditId, verdict, onChanged }) {
+/** The memo as a file: the server builds it from what is stored, or refuses and says why. */
+export async function downloadMemo(auditId) {
+  try {
+    const r = await getMemo(auditId);
+    const name = /filename="([^"]+)"/.exec(r.headers?.["content-disposition"] || "")?.[1] || "ic_memo.md";
+    const url = URL.createObjectURL(new Blob([r.data], { type: "text/markdown" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = name; a.click();
+    URL.revokeObjectURL(url);
+    return true;
+  } catch (e) { toast.error(refusalText(e)); return false; }
+}
+
+/** The ratings of the two assessed rows, one select each. `save` sends {ratings: {row: value}}. */
+export function RatingFields({ verdict, save }) {
+  const ic = verdict.ic_inputs || {};
+  return Object.entries(verdict.ratings_for || {}).map(([row, label]) => (
+    <label key={row} className="flex items-center gap-2 text-slate-700">
+      {label}
+      <select value={ic.ratings?.[row] ?? ""} className={selectClass} data-testid={`inputs-rating-${row}`}
+        onChange={(e) => save({ ratings: { [row]: e.target.value || null } })}>
+        <option value="" />
+        {RATING_OPTIONS.map((r) => <option key={r} value={r}>{r}</option>)}
+      </select>
+    </label>
+  ));
+}
+
+/** The three thesis sentences; each saves when the field loses focus with a changed text. */
+export function ThesisFields({ verdict, save }) {
   const ic = verdict.ic_inputs || {};
   const [thesis, setThesis] = useState(ic.thesis || {});
   const stored = JSON.stringify(ic.thesis || {});
   useEffect(() => setThesis(JSON.parse(stored)), [stored]);
-  const save = (body) => putIcInputs(auditId, body).then(() => onChanged && onChanged())
-    .catch((e) => { toast.error(describeRequestError(e).message); if (onChanged) onChanged(); });
-  const download = async () => {
-    try {
-      const r = await getMemo(auditId);
-      const name = /filename="([^"]+)"/.exec(r.headers?.["content-disposition"] || "")?.[1] || "ic_memo.md";
-      const url = URL.createObjectURL(new Blob([r.data], { type: "text/markdown" }));
-      const a = document.createElement("a");
-      a.href = url; a.download = name; a.click();
-      URL.revokeObjectURL(url);
-    } catch (e) { toast.error(refusalText(e)); }
-  };
+  return Object.entries(verdict.thesis_labels || {}).map(([part, label]) => (
+    <label key={part} className="flex flex-col gap-1 text-slate-700 md:col-span-2">
+      {label}
+      <textarea value={thesis[part] ?? ""} maxLength={THESIS_MAX} rows={2} data-testid={`inputs-thesis-${part}`}
+        className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1 text-xs"
+        onChange={(e) => setThesis((t) => ({ ...t, [part]: e.target.value }))}
+        onBlur={() => (thesis[part] ?? "") !== (ic.thesis?.[part] ?? "") && save({ thesis: { [part]: thesis[part] || null } })} />
+    </label>
+  ));
+}
+
+/** Saves an input of the IC memo and tells the parent to read the verdict again. */
+export const icSaver = (auditId, onChanged) => (body) => putIcInputs(auditId, body).then(() => onChanged && onChanged())
+  .catch((e) => { toast.error(describeRequestError(e).message); if (onChanged) onChanged(); });
+
+function Inputs({ auditId, verdict, onChanged }) {
+  const ic = verdict.ic_inputs || {};
+  const save = icSaver(auditId, onChanged);
   return (
     <div data-testid="verdict-inputs">
       <h3 className="text-sm font-semibold text-slate-900 mb-2">{PART_INPUTS}</h3>
@@ -77,27 +112,10 @@ function Inputs({ auditId, verdict, onChanged }) {
           <Input type="date" value={ic.first_quarterly_review ?? ""} className="h-8 text-xs font-mono w-40" data-testid="inputs-review-date"
             onChange={(e) => save({ first_quarterly_review: e.target.value || null })} />
         </label>
-        {Object.entries(verdict.ratings_for || {}).map(([row, label]) => (
-          <label key={row} className="flex items-center gap-2 text-slate-700">
-            {label}
-            <select value={ic.ratings?.[row] ?? ""} className={selectClass} data-testid={`inputs-rating-${row}`}
-              onChange={(e) => save({ ratings: { [row]: e.target.value || null } })}>
-              <option value="" />
-              {RATING_OPTIONS.map((r) => <option key={r} value={r}>{r}</option>)}
-            </select>
-          </label>
-        ))}
-        {Object.entries(verdict.thesis_labels || {}).map(([part, label]) => (
-          <label key={part} className="flex flex-col gap-1 text-slate-700 md:col-span-2">
-            {label}
-            <textarea value={thesis[part] ?? ""} maxLength={THESIS_MAX} rows={2} data-testid={`inputs-thesis-${part}`}
-              className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1 text-xs"
-              onChange={(e) => setThesis((t) => ({ ...t, [part]: e.target.value }))}
-              onBlur={() => (thesis[part] ?? "") !== (ic.thesis?.[part] ?? "") && save({ thesis: { [part]: thesis[part] || null } })} />
-          </label>
-        ))}
+        <RatingFields verdict={verdict} save={save} />
+        <ThesisFields verdict={verdict} save={save} />
       </div>
-      <Button size="sm" variant="outline" onClick={download} className="mt-3 h-8" data-testid="verdict-memo">
+      <Button size="sm" variant="outline" onClick={() => downloadMemo(auditId)} className="mt-3 h-8" data-testid="verdict-memo">
         <Download className="h-3.5 w-3.5 mr-1.5" />{MEMO_BUTTON}
       </Button>
     </div>

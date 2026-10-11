@@ -5,6 +5,8 @@ import AuditHub from "@/pages/AuditHub";
 import MappingWizard from "@/pages/MappingWizard";
 import Dashboard from "@/pages/Dashboard";
 import Diagnostics from "@/pages/Diagnostics";
+import RunAudit from "@/pages/RunAudit";
+import Review from "@/pages/Review";
 
 function App() {
   return (
@@ -12,6 +14,8 @@ function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<AuditHub />} />
+          <Route path="/audit/:id/run" element={<RunAudit />} />
+          <Route path="/audit/:id/review" element={<Review />} />
           <Route path="/audit/:id/mapping" element={<MappingWizard />} />
           <Route path="/audit/:id/dashboard" element={<Dashboard />} />
           <Route path="/audit/:id/diagnostics" element={<Diagnostics />} />

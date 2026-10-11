@@ -329,7 +329,7 @@ function WhyThisMatters() {
 
 const MONEY_QUESTION = "Is this money the company earned (revenue) or the value of transactions processed (volume)?";
 
-function ColumnRow({ row, view, decide, lastReason, setLastReason }) {
+export function ColumnRow({ row, view, decide, lastReason, setLastReason }) {
   const [editing, setEditing] = useState(false);
   const [field, setField] = useState(row.field || NONE);
   const reason = lastReason;                       // one reason for the whole page: it stays for the next correction

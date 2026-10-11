@@ -1276,7 +1276,7 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             "implied_take_rate", "implied_take_rate_source", "turnover_suggested", "deck_revenue_note", "period_basis", "inconsistencies",
                             "turnover_views", "file_note", "NO_FILE_PERIOD",
                             "inconsistent_dates", "mixed_slide", "USE_OF_FUNDS_NOTE", "MIXED_SLIDE", "ACQUISITION_NOTE", "ACQUISITION_CHANNELS",
-                            "UNTESTED_TYPES", "channel", *MATCHING_SERVER_ONLY})
+                            "UNTESTED_TYPES", "channel", "auto_accepted", *MATCHING_SERVER_ONLY})
 # The functions that log about the register, and the only things their log calls may name.
 REGISTER_LOGGERS = frozenset({"_claim_rows", "claim_register", "claim_register_csv", "update_claim_inputs", "answer_turnover",
                               "approve_all_candidates"})
@@ -1960,3 +1960,46 @@ def test_no_deck_is_missing_and_on_the_request_list_and_an_unreadable_count_leav
     deck = next(r for r in none if r["category"] == "Board decks")
     assert deck["status"] == "Missing" and deck["in_request_list"] is True and "count" not in deck
     assert len(none) == 7 and len(step_payloads.build_inventory(steps.full_results(), None)["inventory"]) == 6
+
+
+# ---------------------------------------------------------------------------
+# Run audit (CLAUDE.md rule 14): the stage endpoint adds two log lines, the claims it accepts carry one new stored flag, and the
+# narrative estimate reads the payload a generation builds. None of them sends or logs anything the gateway did not already.
+# ---------------------------------------------------------------------------
+import test_run_audit as run_tests  # noqa: E402
+from test_run_audit import api as run_api  # noqa: E402,F401  (the fixture)
+
+
+def test_the_run_audit_log_lines_hold_the_run_the_stage_the_status_and_an_error_type_only(run_api, monkeypatch, caplog):
+    import logging
+    run_tests.upload_files(run_api)
+    run_tests.confirm_open_columns(run_api)
+    run_tests.add_deck(run_api)
+
+    async def broken(audit_id):
+        raise ValueError(f"{PERSON} 4242.4242 {FILE}")
+    monkeypatch.setattr(run_tests.server, "_run_compute", broken)
+    with caplog.at_level(logging.DEBUG):
+        for stage in ("mapping", "engine", "claims"):
+            run_tests.stage(run_api, stage)
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("run audit")]
+    assert len(lines) == 4, lines
+    for line in lines:
+        assert re.fullmatch(r"run audit(?: stage failed)?: run_id=\S+ stage=(mapping|engine|claims) (status|error)=\w+", line), line
+    for secret in (PERSON, "4242.4242", FILE, "revenue.csv", "testco_board"):
+        assert secret not in caplog.text
+
+
+def test_the_auto_accepted_flag_is_a_register_name_the_gateway_never_mentions():
+    assert "auto_accepted" in REGISTER_NAMES
+    for path in sorted((BACKEND / "app" / "llm").glob("*.py")):
+        assert "auto_accepted" not in path.read_text(encoding="utf-8"), path.name
+
+
+def test_the_narrative_estimate_sends_nothing_and_names_no_file(run_api):
+    run_tests.ready_for_review(run_api)
+    sent_before = len(run_api.adapter.payloads)
+    body = run_api.get(f"/api/runs/{run_tests.AUDIT}/narratives/estimate").text
+    assert len(run_api.adapter.payloads) == sent_before, "an estimate is not a call"
+    for secret in ("revenue.csv", "crm.csv", "pnl.csv", "testco_board"):
+        assert secret not in body

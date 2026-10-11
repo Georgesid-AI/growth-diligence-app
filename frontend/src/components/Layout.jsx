@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Activity, Terminal } from "lucide-react";
+import { Activity, ChevronDown, Terminal } from "lucide-react";
 import { fmtCurrency } from "@/lib/format";
 import BlockerBanner from "@/components/BlockerBanner";
 
@@ -8,13 +9,22 @@ export function Layout({ audit, children }) {
   const loc = useLocation();
   const id = audit?.id;
 
+  // The flow: Run audit, then Review. Every earlier page stays reachable, step by step, under Details.
   const tabs = id
+    ? [
+        { key: "run", label: "Run audit", to: `/audit/${id}/run`, testid: "nav-tab-run-audit" },
+        { key: "review", label: "Review", to: `/audit/${id}/review`, testid: "nav-tab-review" },
+      ]
+    : [];
+  const details = id
     ? [
         { key: "dashboard", label: "Growth Dashboard", to: `/audit/${id}/dashboard`, testid: "nav-tab-growth-dashboard" },
         { key: "mapping", label: "Upload & Mapping", to: `/audit/${id}/mapping`, testid: "nav-tab-mapping-wizard" },
         { key: "diagnostics", label: "Diagnostics", to: `/audit/${id}/diagnostics`, testid: "nav-tab-missing-data" },
       ]
     : [];
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const inDetails = details.some((t) => t.to === loc.pathname);
 
   return (
     <div className="min-h-screen bg-white">
@@ -55,6 +65,34 @@ export function Layout({ audit, children }) {
                   </button>
                 );
               })}
+              <div className="relative">
+                <button
+                  data-testid="nav-details"
+                  aria-expanded={detailsOpen}
+                  aria-haspopup="menu"
+                  onClick={() => setDetailsOpen((v) => !v)}
+                  className={`inline-flex items-center gap-1 px-3.5 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                    inDetails ? "bg-sky-50 text-slate-900" : "text-slate-600 hover:text-slate-800 hover:bg-slate-50"
+                  }`}
+                >
+                  Details <ChevronDown className="h-3.5 w-3.5" />
+                </button>
+                {detailsOpen && (
+                  <div role="menu" data-testid="details-menu" className="absolute right-0 mt-1 w-52 rounded-md border border-[#E5E7EB] bg-white py-1 shadow-lg">
+                    {details.map((t) => (
+                      <button
+                        key={t.key}
+                        role="menuitem"
+                        data-testid={t.testid}
+                        onClick={() => { setDetailsOpen(false); nav(t.to); }}
+                        className={`block w-full text-left px-3.5 py-2 text-sm hover:bg-slate-50 ${loc.pathname === t.to ? "bg-sky-50 text-slate-900" : "text-slate-700"}`}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </nav>
           )}
 
