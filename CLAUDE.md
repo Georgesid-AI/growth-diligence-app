@@ -73,3 +73,7 @@
 23. Any change to engine output fields changes backend/schemas/metrics.py and the contract test
     (backend/tests/test_interface_contracts.py) in the same PR. Spec: docs/specs/interface-contracts.md.
 24. A PR is not ready for review until the checks (.github/workflows/tests.yml) are green.
+
+## Testing
+25. Frontend suite is run with --no-cache. Report the number of test files found and loaded, not only tests
+    passed. A test file that fails to load is a failure.
