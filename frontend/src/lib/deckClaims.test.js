@@ -1,6 +1,6 @@
 import {
   ALL_DECKS, AI_SUGGESTION_LABEL, CLAIM_TYPES, INCONSISTENCY_LABEL, UPLOADED_BEFORE_CONSENT, VERIFIED_LABEL, deckRunLog, REMOVE_DECK_CONFIRM, claimPeriod, conversionHover, claimSections, claimsForDeck, periodLabel, directionText, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, newClaimPayload, sourceRef, statusCounts, typeLabel,
-  DECK_SCOPE_CANNOT, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, OTHER_TYPE_NOTE, needsType, readingChoices, confidenceText, UNKNOWN_TYPE_LABEL,
+  approveAllToast, toReview, DECK_SCOPE_CANNOT, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, OTHER_TYPE_NOTE, needsType, readingChoices, confidenceText, UNKNOWN_TYPE_LABEL,
 } from "./deckClaims";
 
 describe("source reference", () => {
@@ -78,6 +78,13 @@ describe("Add claim form", () => {
     expect(newClaimPayload({ ...draft, value: "" })).toBeNull();
     expect(newClaimPayload({ ...draft, metric: "" })).toBeNull();
   });
+  test("acquisition channels need the platform, send a count with no currency and no metric", () => {
+    const channel = { ...draft, claim_type: "acquisition_channels", value: "30000", unit: "", currency: "usd", metric: "", target_date: "", label: " Telegram " };
+    expect(newClaimPayload(channel)).toEqual({ claim_type: "acquisition_channels", label: "Telegram", unit: "count", deck_id: "d1", page: 4,
+      value: 30000, value_high: null, currency: null, target_date: null });
+    expect(newClaimPayload({ ...channel, label: "  " })).toBeNull();
+    expect(newClaimPayload({ ...draft, label: "Telegram" })).toMatchObject({ metric: "ARR" });
+  });
   test("a range keeps both ends", () => {
     expect(newClaimPayload({ ...draft, value: "2", value_high: "3" })).toMatchObject({ value: 2, value_high: 3 });
   });
@@ -116,7 +123,9 @@ describe("deck selector", () => {
 test("the analyst chooses among plan claim types only; old usage claims keep their label", () => {
   expect(CLAIM_TYPES).toEqual(["revenue", "revenue_growth", "growth", "retention", "sales", "customers", "users",
     "user_growth", "gross_margin", "gross_profit", "costs", "ebitda", "net_profit", "people", "product", "market",
-    "cash", "burn", "runway", "ltv", "cac", "customer_lifetime", "ltv_cac", "trials_per_day", "months_to_profitability"]);
+    "cash", "burn", "runway", "ltv", "cac", "customer_lifetime", "ltv_cac", "trials_per_day", "months_to_profitability",
+    "acquisition_channels"]);
+  expect(typeLabel("acquisition_channels")).toBe("Acquisition channels");
   // Issue #45 (deck-parser.md section 2): the new claim types and their labels.
   expect(["cash", "burn", "runway", "ltv", "cac", "customer_lifetime", "ltv_cac", "trials_per_day",
     "months_to_profitability"].map(typeLabel)).toEqual(["Cash", "Burn", "Runway", "LTV", "CAC", "Customer lifetime",
@@ -277,7 +286,9 @@ describe("2026-10-08: the Period column, groups, a direction with no figure and 
     const claims = ["c", "a", "b"].map((id, i) => ({ id, group: [5, 1, 6][i] }));
     expect(claimSections(claims).map((s) => [s.group, s.title, s.claims.map((c) => c.id), s.collapsed])).toEqual([
       [1, "Revenue, ARR, MRR and bookings", ["a"], false], [5, "Market size", ["c"], false], [6, "Unknown – choose type", ["b"], true]]);
-    expect(claimSections([{ id: "z" }])[0]).toMatchObject({ group: 7, title: "Other", collapsed: true });
+    expect(claimSections([{ id: "z" }])[0]).toMatchObject({ group: 9, title: "Other", collapsed: true });
+    expect(claimSections([7, 9, 8].map((group) => ({ id: `g${group}`, group }))).map((s) => [s.group, s.title, s.collapsed])).toEqual([
+      [7, "Acquisition channels", false], [8, "Use of funds", false], [9, "Other", true]]);
     expect(claimSections([{ id: "p", group: 4 }])[0]).toMatchObject({ title: "Hiring and roadmap", collapsed: false });
     expect(claimSections([{ id: "p", group: 3 }])[0].title).toBe("Customers, users, usage, retention and sales");
     expect(claimSections([]).length).toBe(0);
@@ -304,5 +315,16 @@ describe("2026-10-08: the Period column, groups, a direction with no figure and 
       .toBe("150,000 BRL (BRL→EUR rate missing – enter it in FX settings at the top of the page)");
     expect(claimValue({ value: 150000, currency: "EUR", fx: null })).toBe("150,000 EUR");
     expect(claimValue({ value: 15, unit: "%", currency: null, fx: null })).toBe("15%");
+  });
+});
+
+
+describe("Approve all (docs/specs/chat-upload.md section 17)", () => {
+  test("the toast gives both counts", () => {
+    expect(approveAllToast(5, 2)).toBe("Approved 5 claims, 2 skipped (need Revenue / Volume or failed to save)");
+    expect(approveAllToast(1, 0)).toBe("Approved 1 claim, 0 skipped (need Revenue / Volume or failed to save)");
+  });
+  test("only a claim to review counts", () => {
+    expect(toReview({ claims: [{ id: 1, status: "pending" }, { id: 2, status: "approved" }, { id: 3, status: "rejected" }, { id: 4, status: "edited" }] }).map((c) => c.id)).toEqual([1]);
   });
 });

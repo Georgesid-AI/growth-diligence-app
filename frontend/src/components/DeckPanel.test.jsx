@@ -5,8 +5,9 @@ import DeckPanel from "./DeckPanel";
 import * as api from "@/lib/api";
 
 jest.mock("@/lib/api", () => ({ getDecks: jest.fn(), removeDeck: jest.fn(), updateCandidate: jest.fn(), uploadDeck: jest.fn(), addClaim: jest.fn(),
-  answerTurnover: jest.fn() }));
+  answerTurnover: jest.fn(), approveAll: jest.fn() }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn(), message: jest.fn() } }));
+const { toast } = require("sonner");
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -64,7 +65,7 @@ test("All lists the claims in the server's order, group by group; a deck tab kee
 
 test("Unknown and Other start collapsed under a header with their count; the other groups are open", async () => {
   await act(async () => { q("deck-tab-all").click(); });
-  expect(["claim-group-1", "claim-group-5", "claim-group-6"].map((id) => q(id).textContent)).toEqual([
+  expect(["claim-group-toggle-1", "claim-group-toggle-5", "claim-group-toggle-6"].map((id) => q(id).textContent)).toEqual([
     "Revenue, ARR, MRR and bookings (2)", "Market size (1)", "Unknown – choose type (1)"]);
   expect(q("claim-group-2")).toBeNull();
   expect(q("claim-group-toggle-6").getAttribute("aria-expanded")).toBe("false");
@@ -207,9 +208,8 @@ test("a turnover figure and a revenue figure name their deck labels, each at its
 test("a use-of-funds text figure and its chart figure show text and chart with the dropped category, and no Contradicted", async () => {
   const share = (label, value) => ({ value, value_high: null, currency: null, unit: "%", date: null, claim_type: "use_of_funds", label,
     source: { file: "d.pdf", page: 22, kind: "text" } });
-  await reload([claim("c", "d1", 22, { group: 7, claim_type: "use_of_funds", value: 40, unit: "%", inconsistent_dates: [],
+  await reload([claim("c", "d1", 22, { group: 8, claim_type: "use_of_funds", value: 40, unit: "%", inconsistent_dates: [],
     inconsistencies: [{ this: share("text", 40), other: share("chart", 42), note: "chart excludes Operational Expenses & Talent Acquisition, rescaled" }] })]);
-  await open(7);                                   // Other holds Use of funds and starts collapsed
   expect(q("candidate-inconsistency").getAttribute("title")).toBe(
     "The deck gives different figures for this metric: text 40% at d.pdf · page 22 and chart 42% at d.pdf · page 22; chart excludes Operational Expenses & Talent Acquisition, rescaled.");
   expect(document.body.textContent).not.toMatch(/Contradicted/);
@@ -224,9 +224,8 @@ test("a percentage on a mixed slide is Unknown and says so: mixed slide – chec
 });
 
 test("the edit form of a Use of funds claim shows Use of funds, and correcting the value keeps the type", async () => {
-  await reload([claim("c", "d1", 22, { group: 7, claim_type: "use_of_funds", value: 40, unit: "%", inconsistent_dates: [] })]);
+  await reload([claim("c", "d1", 22, { group: 8, claim_type: "use_of_funds", value: 40, unit: "%", inconsistent_dates: [] })]);
   api.updateCandidate.mockResolvedValue({ id: "c", status: "edited" });
-  await open(7);
   await act(async () => { q("candidate-row-c").querySelector("[data-testid='candidate-edit']").click(); });
   const select = q("edit-claim-type");
   expect(select.value).toBe("use_of_funds");
@@ -663,6 +662,23 @@ describe("Add claim", () => {
     expect(api.getDecks).toHaveBeenCalledTimes(2);
   });
 
+  test("Acquisition channels is in the Type list of Add claim, asks for the platform and no metric, and sends a count with no currency", async () => {
+    api.addClaim.mockResolvedValue({ id: "n2", deck_id: "d1" });
+    await openRow();
+    expect([...q("add-claim-type").options].map((o) => o.textContent)).toContain("Acquisition channels");
+    await change(q("add-claim-type"), "acquisition_channels");
+    expect(q("add-claim-metric")).toBeNull();
+    expect(q("add-claim-unit").value).toBe("count");
+    await change(q("add-claim-deck"), "d1");
+    await change(q("add-claim-value"), "30000");
+    await change(q("add-claim-page"), "17");
+    expect(q("add-claim-save").disabled).toBe(true);                       // the platform is required
+    await change(q("add-claim-platform"), " Telegram ");
+    await act(async () => { q("add-claim-save").click(); });
+    expect(api.addClaim).toHaveBeenCalledWith("a1", {
+      claim_type: "acquisition_channels", label: "Telegram", unit: "count", deck_id: "d1", page: 17, value: 30000, value_high: null, currency: null, target_date: null });
+  });
+
   test("an analyst-entered claim shows its tag and the confidence Analyst-entered", async () => {
     api.getDecks.mockResolvedValue({ decks: DECKS, candidates: [
       claim("n1", "d1", 4, { group: 1, status: "approved", origin: "analyst", snippet: "Added by analyst", confidence: { level: null, failed: [], text: "Analyst-entered" } })] });
@@ -671,5 +687,102 @@ describe("Add claim", () => {
     const tr = rows()[0];
     expect(tr.querySelector("[data-testid='candidate-confidence']").textContent).toBe("Analyst-entered");
     expect(tr.textContent).toContain("Added by analyst");
+  });
+});
+
+
+describe("Approve all and the category sections (docs/specs/chat-upload.md section 17)", () => {
+  const pending = (id, group, over = {}) => claim(id, "d1", 1, { group, ...over });
+  const LIST = [
+    pending("r1", 1), pending("r2", 1), pending("r3", 1, { status: "approved" }),
+    pending("a1", 7, { claim_type: "acquisition_channels", value: 30000, unit: "count", currency: null, channel: "Telegram", target_date: null }),
+    pending("f1", 8, { claim_type: "use_of_funds", value: 40, unit: "%", currency: null, target_date: null }),
+    claim("n1", "d2", 2, { group: 1 }),
+  ];
+
+  test("every open section has an Approve all at its top and at its bottom; Other and Unknown, collapsed, have none until opened", async () => {
+    await reload(LIST.concat([pending("o1", 9, { claim_type: "other" })]));
+    for (const group of [1, 7, 8]) {
+      expect(q(`approve-all-top-${group}`).textContent).toBe("Approve all");
+      expect(q(`approve-all-bottom-${group}`).textContent).toBe("Approve all");
+    }
+    expect(q("approve-all-top-9")).toBeNull();
+    await open(9);
+    expect(q("approve-all-top-9")).not.toBeNull();
+    expect(q("approve-all-bottom-9")).not.toBeNull();
+    // the top button sits in the section's header row, the bottom one after its last claim
+    expect(q("claim-group-1").contains(q("approve-all-top-1"))).toBe(true);
+    expect(q("claim-group-end-1").previousElementSibling.getAttribute("data-testid")).toMatch(/^candidate-row-/);
+  });
+
+  test("a click makes one call for the category, with the deck tab, shows the toast with both counts and reloads the list", async () => {
+    await reload(LIST);
+    api.approveAll.mockResolvedValue({ approved: 3, skipped: 1, approved_ids: [], skipped_ids: [] });
+    await act(async () => { q("deck-tab-d1").click(); });
+    api.getDecks.mockClear();
+    await act(async () => { q("approve-all-bottom-1").click(); });
+    expect(api.approveAll).toHaveBeenCalledTimes(1);
+    expect(api.approveAll).toHaveBeenCalledWith("a1", 1, "d1");
+    expect(api.updateCandidate).not.toHaveBeenCalled();                          // never one call per claim
+    expect(toast.success).toHaveBeenCalledWith("Approved 3 claims, 1 skipped (need Revenue / Volume or failed to save)");
+    expect(api.getDecks).toHaveBeenCalled();
+    await act(async () => { q("deck-tab-all").click(); });
+    await act(async () => { q("approve-all-top-7").click(); });
+    expect(api.approveAll).toHaveBeenLastCalledWith("a1", 7, undefined);
+  });
+
+  test("the toast says 'claim' for one, and a refused call shows the error and leaves the list", async () => {
+    await reload(LIST);
+    api.approveAll.mockResolvedValueOnce({ approved: 1, skipped: 0 });
+    await act(async () => { q("approve-all-top-8").click(); });
+    expect(toast.success).toHaveBeenCalledWith("Approved 1 claim, 0 skipped (need Revenue / Volume or failed to save)");
+    api.approveAll.mockRejectedValueOnce({ response: { status: 500, data: { detail: "boom" } } });
+    await act(async () => { q("approve-all-top-8").click(); });
+    expect(toast.error).toHaveBeenCalled();
+    expect(q("approve-all-top-8").disabled).toBe(false);
+  });
+
+  test("Approve all is off when the section has nothing to review", async () => {
+    await reload([pending("r3", 1, { status: "approved" }), pending("r4", 1, { status: "edited" }), pending("r5", 8, { claim_type: "use_of_funds" })]);
+    expect(q("approve-all-top-1").disabled).toBe(true);
+    expect(q("approve-all-bottom-1").disabled).toBe(true);
+    expect(q("approve-all-top-8").disabled).toBe(false);
+    await act(async () => { q("approve-all-top-1").click(); });
+    expect(api.approveAll).not.toHaveBeenCalled();
+  });
+
+  test("Acquisition channels and Use of funds are sections of their own, in that order, directly above Other", async () => {
+    await reload(LIST.concat([pending("o1", 9, { claim_type: "other" })]));
+    const titles = [...document.body.querySelectorAll("[data-testid^='claim-group-toggle-']")].map((b) => b.textContent.replace(/\s*\(\d+\)$/, ""));
+    expect(titles.slice(-3)).toEqual(["Acquisition channels", "Use of funds", "Other"]);
+    expect(q("claim-group-7").textContent).toContain("(1)");
+    expect(q("candidate-row-a1").querySelector("[data-testid='candidate-type']").textContent).toContain("Acquisition channels");
+    expect(q("candidate-row-a1").querySelector("[data-testid='candidate-channel']").textContent).toBe("Telegram");
+    expect(q("candidate-row-a1").querySelector("[data-testid='candidate-value']").textContent).toBe("30,000 count");
+  });
+
+  test("the edit form's Type list holds Acquisition channels, and choosing it makes the figure a count with no currency", async () => {
+    await reload([pending("r1", 1)]);
+    await act(async () => { q("candidate-row-r1").querySelector("[data-testid='candidate-edit']").click(); });
+    const select = q("edit-claim-type");
+    expect([...select.options].map((o) => o.textContent)).toContain("Acquisition channels");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(select, "acquisition_channels");
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(q("edit-unit").value).toBe("count");
+    expect(q("edit-currency").value).toBe("");
+  });
+
+  test("a light divider and a gap of about twice the old one sit between sections, and not above the first", async () => {
+    await reload(LIST);
+    expect(q("claim-group-gap-1")).toBeNull();
+    for (const group of [7, 8]) {
+      const gap = q(`claim-group-gap-${group}`);
+      expect(gap.getAttribute("aria-hidden")).toBe("true");
+      expect(gap.querySelector("td").className).toContain("py-3.5");                // 2 x 14 px of the old 8 + 6 px
+      expect(gap.querySelector("td > div").className).toContain("border-t");
+      expect(gap.nextElementSibling).toBe(q(`claim-group-${group}`));
+    }
   });
 });

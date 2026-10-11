@@ -38,6 +38,10 @@ NO_PERIOD = "no period stated"
 FX_NEEDED = "FX rate needed"
 USE_OF_FUNDS = "use_of_funds"
 USE_OF_FUNDS_NOTE = "use of funds: an allocation share of the raise, no engine metric to test it against"
+ACQUISITION_CHANNELS = "acquisition_channels"
+ACQUISITION_NOTE = "acquisition channels: a count per platform, no engine metric to test it against"
+# Claim types that are never matched, ranked, gated or put in the top 5, with the closed sentence each register row carries.
+UNTESTED_TYPES = {USE_OF_FUNDS: USE_OF_FUNDS_NOTE, ACQUISITION_CHANNELS: ACQUISITION_NOTE}
 DIRECTION_ONLY = "direction only: the claim states no figure to test"
 SUGGESTION = "AI suggestion, not verified"
 ANALYST_ENTERED = "analyst-entered"
@@ -696,8 +700,8 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         return finish("Unverified", DIRECTION_ONLY)
     if turn and turn["verdict"]:
         return finish(*turn["verdict"])
-    if out["claim_type"] == USE_OF_FUNDS:       # never matched, never ranked, never gated: not a claim about the business
-        finish("Unverified", USE_OF_FUNDS_NOTE)
+    if out["claim_type"] in UNTESTED_TYPES:     # never matched, never ranked, never gated: not a claim about the business
+        finish("Unverified", UNTESTED_TYPES[out["claim_type"]])
         out["gate_needed"] = False
         return out
     if not spec:
@@ -942,14 +946,14 @@ def _overlaps(rows: List[dict]) -> None:
 
 def _rank(rows: List[dict]) -> List[dict]:
     """Rows with a gap other than "to go" by normalised gap, largest first (a beat counts as 0); then the rest in register order,
-    then the use-of-funds rows."""
+    then the use-of-funds and acquisition-channel rows."""
     def key(r):
         norm = r["gap_normalised"]
         if r["gap_kind"] == "beat" or norm is None and r["gap"] == 0:
             return 0.0
         return float("inf") if norm is None else max(norm, 0.0)
     ranked = [r for r in rows if r["gap"] is not None and r["gap_kind"] != "to go"]
-    funds = [r for r in rows if r["claim_type"] == USE_OF_FUNDS]
+    funds = [r for r in rows if r["claim_type"] in UNTESTED_TYPES]
     rest = [r for r in rows if r not in ranked and r not in funds]
     ordered = sorted(ranked, key=key, reverse=True) + rest + funds         # use of funds last: no claim's rank depends on it
     for rank, row in enumerate(ordered, 1):

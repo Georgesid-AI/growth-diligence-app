@@ -768,14 +768,15 @@ def test_an_edit_that_types_a_figure_ends_the_direction_and_the_list_is_grouped_
 
 
 def test_every_claim_type_has_its_group():
-    groups = {t: claims.type_group(t) for t in (*claims.CLAIM_TYPES, "usage", "use_of_funds", "other", "unknown")}
-    assert {g: sorted(t for t, x in groups.items() if x == g) for g in range(1, 8)} == {
+    groups = {t: claims.type_group(t) for t in (*claims.CLAIM_TYPES, "usage", "use_of_funds", "acquisition_channels", "other", "unknown")}
+    assert {g: sorted(t for t, x in groups.items() if x == g) for g in range(1, 10)} == {
         1: ["revenue", "revenue_growth"],
         2: ["burn", "cash", "costs", "ebitda", "gross_margin", "gross_profit", "months_to_profitability", "net_profit", "runway"],
         3: ["cac", "customer_lifetime", "customers", "growth", "ltv", "ltv_cac", "retention", "sales", "trials_per_day", "usage",
             "user_growth", "users"],
-        4: ["people", "product"], 5: ["market"], 6: ["unknown"], 7: ["other", "use_of_funds"]}
-    assert claims.COLLAPSED_GROUPS == (6, 7)
+        4: ["people", "product"], 5: ["market"], 6: ["unknown"], 7: ["acquisition_channels"], 8: ["use_of_funds"], 9: ["other"]}
+    assert claims.COLLAPSED_GROUPS == (6, 9)
+    assert list(claims.GROUPS.values())[-3:] == ["acquisition channels", "use of funds", "other"], "Acquisition channels, then Use of funds, then Other"
 
 
 def test_the_parser_and_the_model_reading_the_same_value_are_one_claim_only_when_type_value_currency_and_period_agree():
@@ -2282,3 +2283,61 @@ def test_a_rate_on_a_cue_slide_is_not_a_share_of_the_raise():
     found = _funds_candidates([["The Ask", "£250K", "Team hiring (60%)", "Product launch (40%)", "Retention 90%"]])
     assert {(c["value"], c["claim_type"]) for c in found if c["unit"] == "%"} == \
         {(60, "use_of_funds"), (40, "use_of_funds"), (90, "retention")}
+
+
+# ---------------------------------------------------------------------------
+# Acquisition channels (docs/specs/chat-upload.md section 17)
+# ---------------------------------------------------------------------------
+FUNNEL = ["Telegram(30K)", "Facebook (12,500)", "Twitter(3K)", "YouTube [1.2M]"]
+
+
+def _channels(slides):
+    return [c for c in _funds_candidates(slides) if c["claim_type"] == "acquisition_channels"]
+
+
+def test_a_platform_with_a_number_in_brackets_on_a_user_acquisition_slide_is_one_acquisition_channels_claim_each():
+    found = _channels([["User acquisition funnel", *FUNNEL]])
+    assert [(c["channel"], c["value"]) for c in found] == [("Telegram", 30000), ("Facebook", 12500), ("Twitter", 3000), ("YouTube", 1200000)]
+    for c in found:
+        assert (c["unit"], c["currency"], c["claim_type"]) == ("count", None, "acquisition_channels")
+        assert c["target_date"] is None and c["inconsistencies"] == [] and c["sources"][0]["slide"] == 1
+
+
+@pytest.mark.parametrize("cue", ["Acquisition", "Acquisition channels", "Our acquisition channel mix", "Channels", "Funnel",
+                                 "Traffic sources", "Traffic source", "User acquisition", "USER ACQUISITION FUNNEL"])
+def test_each_cue_in_the_slide_title_makes_the_platforms_acquisition_channels(cue):
+    assert len(_channels([[cue, *FUNNEL]])) == 4, cue
+
+
+def test_the_cue_counts_in_a_heading_or_a_chart_title_above_the_platforms_and_in_a_table_header_row():
+    heading = _channels([["Our community", "Growth funnel 2024", *FUNNEL]])           # a short heading line
+    assert len(heading) == 4
+    table = parser.parse_deck(_pptx([FUNNEL], tables={0: [["Traffic sources", "Users"], ["Web", "12"]]}), "deck.pptx")
+    assert len([c for c in claims.detect_candidates(table["blocks"], "deck.pptx") if c["claim_type"] == "acquisition_channels"]) == 4
+
+
+@pytest.mark.parametrize("slide", [
+    ["Our community", *FUNNEL],                                                    # no cue: stays as the existing rules read it
+    ["Our community", "We will build a funnel for growth", *FUNNEL],               # a sentence is no heading
+    ["Our community", *FUNNEL, "Growth funnel 2024"],                              # a heading below the figures
+    ["Our community", *FUNNEL, "- more acquisition channels in 2025"],             # a bullet
+])
+def test_without_a_cue_where_a_cue_counts_nothing_is_an_acquisition_channels_claim(slide):
+    assert not _channels([slide])
+
+
+def test_only_a_platform_and_a_plain_count_in_brackets_is_a_channel_figure():
+    slide = ["User acquisition funnel", "Telegram(30K)", "Paid CAC ($45)", "Churn (12%)", "Launch (Q3 2024)", "Referral (30 users)",
+             "Revenue 2024 (5)", "(30K)", "Organic search (1,000) visits"]
+    assert [c["channel"] for c in _channels([slide])] == ["Telegram"]
+
+
+def test_two_platforms_with_the_same_number_are_two_claims_and_the_same_platform_twice_is_one():
+    found = _channels([["Acquisition channels", "Telegram(30K)", "Reddit (30K)"], ["Acquisition", "Telegram(30K)"]])
+    assert sorted(c["channel"] for c in found) == ["Reddit", "Telegram"]
+    assert len(next(c for c in found if c["channel"] == "Telegram")["sources"]) == 2, "the repeat joins its first"
+
+
+def test_acquisition_cues_do_not_change_a_use_of_funds_slide():
+    found = _funds_candidates([_funds_slide(P22_TEXT, P22_CHART)])
+    assert _types(found) == {"use_of_funds"} and not _channels([_funds_slide(P22_TEXT, P22_CHART)])

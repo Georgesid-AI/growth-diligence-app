@@ -880,8 +880,9 @@ class CandidateUpdate(BaseModel):
     The snippet, the borrowed label and the source references are evidence and cannot be edited."""
     status: Optional[Literal["pending", "approved", "rejected"]] = None
     # Use of funds is accepted so that correcting a figure of that type keeps the type (deck-parser.md section 2): the
-    # claim stays out of the top 5, the banner and the verdict. The analyst's list of types does not offer it.
-    claim_type: Optional[Literal[deck_claims.CLAIM_TYPES + (deck_claims.USE_OF_FUNDS,)]] = None
+    # claim stays out of the top 5, the banner and the verdict. The analyst's list of types does not offer it. Acquisition
+    # channels is accepted and offered (chat-upload.md section 17).
+    claim_type: Optional[Literal[deck_claims.CLAIM_TYPES + (deck_claims.USE_OF_FUNDS, deck_claims.ACQUISITION_CHANNELS)]] = None
     value: Optional[float] = None
     value_high: Optional[float] = None          # the high end of a range
     unit: Optional[str] = Field(default=None, min_length=1, max_length=40)   # "%", "months", "paying users"
@@ -901,7 +902,7 @@ def _claim_key(c: dict) -> tuple:
     """What the parser found, so a re-upload can tell an already reviewed claim."""
     found = c.get("parsed") or c
     return tuple(tuple(tuple(i.get(f) for f in _ROW_FIELDS) for i in found.get(k) or ()) if k == "by_period"
-                 else found.get(k) for k in _EDITABLE)
+                 else found.get(k) for k in _EDITABLE) + (c.get("channel"),)
 
 
 @api.post("/audits/{audit_id}/decks/upload")
@@ -1034,7 +1035,7 @@ class AnalystClaim(BaseModel):
     """A claim the analyst adds from a slide or page the parser could not read (docs/specs/deck-parser.md section 6): the
     metric, a value or a range, the unit, the currency and the period, and where in which deck it is stated."""
     model_config = {"extra": "forbid"}
-    claim_type: Literal[deck_claims.CLAIM_TYPES]
+    claim_type: Literal[deck_claims.CLAIM_TYPES + (deck_claims.ACQUISITION_CHANNELS,)]
     value: float = Field(allow_inf_nan=False)
     value_high: Optional[float] = Field(default=None, allow_inf_nan=False)
     unit: Optional[str] = Field(default=None, min_length=1, max_length=40)
@@ -1042,7 +1043,20 @@ class AnalystClaim(BaseModel):
     target_date: Optional[str] = Field(default=None, pattern=_TARGET_DATE.pattern)
     deck_id: str
     page: int = Field(ge=1)
-    metric: str          # the register metric the claim is tested against (claim-matching.md table 2a); required, no default
+    metric: Optional[str] = None    # the register metric the claim is tested against (claim-matching.md table 2a); required, no default,
+    #                                 except for acquisition channels, which no metric tests
+    label: Optional[str] = Field(default=None, min_length=1, max_length=deck_claims.CHANNEL_NAME_MAX)    # the platform (acquisition channels only)
+
+    @model_validator(mode="after")
+    def _metric_or_platform(self):
+        if self.claim_type == deck_claims.ACQUISITION_CHANNELS:
+            if self.metric is not None:
+                raise ValueError("acquisition channels are tested against no metric")
+            if not (self.label or "").strip():
+                raise ValueError("name the platform")
+        elif self.metric is None or self.label is not None:
+            raise ValueError("choose a metric" if self.metric is None else "a platform belongs to acquisition channels only")
+        return self
 
 
 @api.post("/audits/{audit_id}/decks/candidates")
@@ -1058,7 +1072,8 @@ async def add_analyst_claim(audit_id: str, payload: AnalystClaim):
         raise _rejected("deck_id", "choose one of the uploaded documents")
     if deck.get("pages") and payload.page > deck["pages"]:
         raise _rejected("page", f"this document has {deck['pages']} {deck.get('page_unit') or 'page'}s")
-    if not claim_matching.fits_metric(payload.metric, payload.unit, payload.currency):
+    acquisition = payload.claim_type == deck_claims.ACQUISITION_CHANNELS
+    if not acquisition and not claim_matching.fits_metric(payload.metric, payload.unit, payload.currency):
         raise _rejected("metric", "choose a metric in the claim's unit")
     if payload.value_high is not None and payload.value_high < payload.value:
         raise _rejected("value_high", "the high end of a range is not below the low end")
@@ -1073,7 +1088,10 @@ async def add_analyst_claim(audit_id: str, payload: AnalystClaim):
         "audit_id": audit_id, "deck_id": payload.deck_id, "file": deck["file"], "id": str(uuid.uuid4()),
         "order": max((c.get("order", 0) for c in existing), default=-1) + 1, "status": "approved",
     }
-    candidate["claim_inputs"] = {candidate["id"]: {"metric": payload.metric}}      # the analyst's metric, as the register stores it
+    if acquisition:
+        candidate.update(channel=payload.label.strip(), unit=deck_claims.COUNT, currency=None)    # a count per platform
+    else:
+        candidate["claim_inputs"] = {candidate["id"]: {"metric": payload.metric}}      # the analyst's metric, as the register stores it
     await db[decks.CANDIDATES_COLLECTION].insert_one(candidate)
     return sanitize(await db[decks.CANDIDATES_COLLECTION].find_one({"audit_id": audit_id, "id": candidate["id"]}, {"_id": 0}))
 
@@ -1127,6 +1145,47 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
         changes = {"status": status}
     await db[decks.CANDIDATES_COLLECTION].update_one(where, {"$set": changes})
     return sanitize(await db[decks.CANDIDATES_COLLECTION].find_one(where, {"_id": 0}))
+
+
+class ApproveAll(BaseModel):
+    """Approve every claim to review of one category of the list (chat-upload.md section 17): `group` is the category's number
+    (deck_claims.GROUPS), `deck_id` the deck tab the analyst is on (none: all decks)."""
+    model_config = {"extra": "forbid"}
+    group: int = Field(ge=1, le=max(deck_claims.GROUPS))
+    deck_id: Optional[str] = None
+
+
+@api.post("/audits/{audit_id}/decks/candidates/approve-all")
+async def approve_all_candidates(audit_id: str, payload: ApproveAll):
+    """One call, one category: every claim with status "pending" in the category is approved as a single Approve does it
+    ("edited" when it carries the parser's values under "parsed"). Left pending and counted as skipped: a turnover claim whose
+    Revenue / Volume question the analyst has not answered, a claim whose type still has to be chosen (Other, Unknown), and a claim
+    whose save fails. Nothing else changes."""
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
+    if not audit:
+        raise HTTPException(404, "Audit not found")
+    found = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0}).to_list(10000)
+    current = await _current_audit(audit_id, audit, strict=False)
+    settings = _register_settings(audit, await _fx(audit_id, audit), await _deck_take_rate(audit_id))
+    open_turnover = {cid for cid, views in claim_matching.turnover_views(found, current.get("results"), settings).items()
+                     if any(v["turnover_set_by"] != "analyst" for v in views)}
+    approved, skipped = [], []
+    for c in found:
+        if c.get("status") != "pending" or deck_claims.type_group(c.get("claim_type")) != payload.group \
+                or (payload.deck_id and c.get("deck_id") != payload.deck_id):
+            continue
+        needs_type = c.get("claim_type") in (structures.verify.OTHER, deck_claims.UNKNOWN) and "parsed" not in c
+        if c["id"] in open_turnover or needs_type:
+            skipped.append(c["id"])
+            continue
+        try:
+            await db[decks.CANDIDATES_COLLECTION].update_one(
+                {"audit_id": audit_id, "id": c["id"]}, {"$set": {"status": "edited" if "parsed" in c else "approved"}})
+            approved.append(c["id"])
+        except Exception:                      # a failed save leaves the claim to review and is counted; the rest go on
+            skipped.append(c["id"])
+    logger.info("approve all: run_id=%s group=%d approved=%d skipped=%d", audit_id, payload.group, len(approved), len(skipped))
+    return {"approved": len(approved), "skipped": len(skipped), "approved_ids": approved, "skipped_ids": skipped}
 
 
 def merged_fx(audit: dict, file_fx: Optional[dict]) -> dict:

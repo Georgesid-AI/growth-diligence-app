@@ -722,3 +722,20 @@ def test_a_use_of_funds_claim_is_unverified_with_no_metric_no_gap_no_gate_and_ra
     rows = cm.build_register([share, *cands], results_for(run), settings(run))
     assert rows[-1]["claim_id"] == "f1" and rows[-1]["rank"] == len(rows)
     assert [r["claim_id"] for r in rows[:-1]] == [r["claim_id"] for r in register(run)], "no other claim's rank moves"
+
+
+# --- Acquisition channels (chat-upload.md section 17): a count per platform, no engine metric -------------------------------------
+
+def test_an_acquisition_channels_claim_is_unverified_with_no_gap_no_vas_no_gate_and_ranks_after_every_other_claim():
+    channel = {"id": "a1", "claim_type": "acquisition_channels", "value": 30000, "unit": "count", "currency": None, "channel": "Telegram",
+               "target_date": None}
+    out = run_claim(channel)
+    assert (out["evidence_label"], out["reason"], out["metric"]) == ("Unverified", cm.ACQUISITION_NOTE, None)
+    assert (out["gap"], out["value_at_stake_arr"], out["gate_needed"], out["gate_saved"]) == (None, None, False, False)
+    run = RUNS["A"]
+    cands = candidates_for(run)
+    share = {**copy.deepcopy(cands[0]), **channel, "by_period": None, "claim_inputs": {}, "currency": None}
+    funds = {**share, "id": "f1", "claim_type": "use_of_funds", "unit": "%"}
+    rows = cm.build_register([share, funds, *cands], results_for(run), settings(run))
+    assert {r["claim_id"] for r in rows[-2:]} == {"a1", "f1"} and [r["rank"] for r in rows] == list(range(1, len(rows) + 1))
+    assert [r["claim_id"] for r in rows[:-2]] == [r["claim_id"] for r in register(run)], "no other claim's rank moves"

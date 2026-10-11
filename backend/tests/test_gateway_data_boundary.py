@@ -1269,12 +1269,16 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             "turnover_choices", "turnover_as", "turnover_reason", "turnover_state", "deck_take_rate",
                             "implied_take_rate", "implied_take_rate_source", "turnover_suggested", "deck_revenue_note", "period_basis", "inconsistencies",
                             "turnover_views", "file_note", "NO_FILE_PERIOD",
-                            "inconsistent_dates", "mixed_slide", "USE_OF_FUNDS_NOTE", "MIXED_SLIDE", *MATCHING_SERVER_ONLY})
+                            "inconsistent_dates", "mixed_slide", "USE_OF_FUNDS_NOTE", "MIXED_SLIDE", "ACQUISITION_NOTE", "ACQUISITION_CHANNELS",
+                            "UNTESTED_TYPES", "channel", *MATCHING_SERVER_ONLY})
 # The functions that log about the register, and the only things their log calls may name.
-REGISTER_LOGGERS = frozenset({"_claim_rows", "claim_register", "claim_register_csv", "update_claim_inputs", "answer_turnover"})
+REGISTER_LOGGERS = frozenset({"_claim_rows", "claim_register", "claim_register_csv", "update_claim_inputs", "answer_turnover",
+                              "approve_all_candidates"})
 REGISTER_LOG_ARGS = frozenset({"audit_id", "counts", "len(rows)"})      # exactly these expressions, as format arguments
 # The turnover answer logs two closed words (Literal fields of the request), never a claim or a figure.
 TURNOVER_LOG_ARGS = frozenset({"audit_id", "payload.answer", "payload.reason"})
+# Approve all logs the run, the category's number and two counts (chat-upload.md section 17), never a claim or an id.
+APPROVE_ALL_LOG_ARGS = frozenset({"audit_id", "payload.group", "len(approved)", "len(skipped)"})
 
 
 def _results_with_the_series():
@@ -1390,7 +1394,7 @@ def test_the_register_log_lines_name_counts_per_label_and_the_run_only():
                 found.append((fn.name, ast.unparse(node)))
                 assert not node.keywords and isinstance(node.args[0], ast.Constant) and "{" not in node.args[0].value, ast.unparse(node)
                 for arg in node.args[1:]:
-                    allowed = TURNOVER_LOG_ARGS if fn.name == "answer_turnover" else REGISTER_LOG_ARGS
+                    allowed = {"answer_turnover": TURNOVER_LOG_ARGS, "approve_all_candidates": APPROVE_ALL_LOG_ARGS}.get(fn.name, REGISTER_LOG_ARGS)
                     assert ast.unparse(arg) in allowed, f"{fn.name}: {ast.unparse(node)} logs {ast.unparse(arg)}"
     assert found, "the register logs its label counts"
     module = ast.parse((BACKEND / "app" / "claim_matching.py").read_text(encoding="utf-8"))
@@ -1443,6 +1447,33 @@ def test_the_use_of_funds_reason_is_a_closed_sentence_and_mixed_slide_and_the_no
     for where, text in (("read by the gateway", returned), ("sent to the provider", adapter.payloads[0]), ("logged", logs)):
         assert sentinel not in text, f"the deck's category was {where}"
         assert claim_matching.USE_OF_FUNDS_NOTE not in text and "mixed slide" not in text, f"the register reason or tag was {where}"
+
+
+def test_the_acquisition_channels_reason_is_a_closed_sentence_and_the_platform_name_never_reaches_the_gateway_or_a_log(caplog):
+    """Acquisition channels (chat-upload.md section 17): the register reason is one fixed sentence; the platform name is deck text
+    kept on the candidate as `channel`, which the gateway may not read. Run over a database holding a funnel slide with a
+    sentinel platform, nothing the gateway reads, sends or logs carries it."""
+    import logging
+    import test_deck_parser as dp
+    sentinel = "ZephyrChat"
+    assert "channel" not in decks.GATEWAY_READABLE_FIELDS
+    found = [c for c in dp._funds_candidates([["User acquisition funnel", f"{sentinel}(30K)", "Telegram(12K)"]])
+             if c["claim_type"] == "acquisition_channels"]
+    assert {c["channel"] for c in found} == {sentinel, "Telegram"}, "fixture: the candidate holds the deck's platform name"
+    row = {**next(c for c in found if c["channel"] == sentinel), "id": "x1", "status": "approved", "file": "deck.pptx", "order": 0}
+    out = claim_matching.build_register([row], RESULTS, {"fiscal_year_end": 12, "reporting_currency": "EUR", "fx": {"EUR": 1.0}})[0]
+    assert out["reason"] == claim_matching.ACQUISITION_NOTE and sentinel not in json.dumps(out, default=str)
+    db, reads = _recording_db()
+    for i, c in enumerate(found):
+        db[decks.CANDIDATES_COLLECTION].docs.append({**c, "audit_id": RUN_ID, "id": f"ch{i}", "status": "approved"})
+    adapter = t.FakeAdapter(replies=[json.dumps(NARRATIVE)])
+    with caplog.at_level(logging.DEBUG):
+        asyncio.run(gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=adapter, sleep=t._noop_sleep))
+    returned = json.dumps([doc for _, _, doc in reads], ensure_ascii=False, default=str)
+    logs = caplog.text + "".join(r.getMessage() for r in caplog.records)
+    for where, text in (("read by the gateway", returned), ("sent to the provider", adapter.payloads[0]), ("logged", logs)):
+        assert sentinel not in text, f"the deck's platform name was {where}"
+        assert claim_matching.ACQUISITION_NOTE not in text, f"the register reason was {where}"
 
 
 def test_the_turnover_fields_hold_closed_words_figures_and_sources_never_deck_text():

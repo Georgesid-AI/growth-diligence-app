@@ -41,14 +41,22 @@ export const ADD_CLAIM_NEEDS_SOURCE = "Enter the value, choose the metric and th
 export const ANALYST_ADDED_TAG = "Added by analyst";
 export const ANALYST_CONFIDENCE = "Analyst-entered";
 
-/** The POST body of Add claim from the form draft, or null while the source document or the page is missing, or the value is. */
+// Acquisition channels (docs/specs/chat-upload.md section 17): one platform per claim, tested against no metric, so Add claim
+// asks for the platform and not for a metric.
+export const ACQUISITION_CHANNELS = "acquisition_channels";
+export const ADD_CLAIM_PLATFORM_LABEL = "Platform (required)";
+
+/** The POST body of Add claim from the form draft, or null while the source document or the page is missing, or the value is
+ *  (the metric tested, or for acquisition channels the platform). */
 export function newClaimPayload(draft) {
   const page = Number(draft.page);
-  if (!draft.deck_id || !Number.isInteger(page) || page < 1 || draft.value === "" || !draft.claim_type || !draft.metric) return null;
+  const channel = draft.claim_type === ACQUISITION_CHANNELS;
+  if (!draft.deck_id || !Number.isInteger(page) || page < 1 || draft.value === "" || !draft.claim_type
+      || (channel ? !(draft.label || "").trim() : !draft.metric)) return null;
   return {
-    claim_type: draft.claim_type, metric: draft.metric, deck_id: draft.deck_id, page,
+    claim_type: draft.claim_type, ...(channel ? { label: draft.label.trim(), unit: "count" } : { metric: draft.metric }), deck_id: draft.deck_id, page,
     value: Number(draft.value), value_high: draft.value_high === "" ? null : Number(draft.value_high),
-    unit: draft.unit.trim() || null, currency: draft.currency.trim() ? draft.currency.trim().toUpperCase() : null,
+    ...(channel ? {} : { unit: draft.unit.trim() || null }), currency: channel || !draft.currency.trim() ? null : draft.currency.trim().toUpperCase(),
     target_date: draft.target_date.trim() || null,
   };
 }
@@ -64,7 +72,8 @@ export const TYPE_LABELS = {
   gross_profit: "Gross profit", costs: "Costs", ebitda: "EBITDA", net_profit: "Net profit", usage: "Usage",
   people: "People", product: "Product", market: "Market size", cash: "Cash", burn: "Burn", runway: "Runway", ltv: "LTV",
   cac: "CAC", customer_lifetime: "Customer lifetime", ltv_cac: "LTV/CAC", trials_per_day: "Trials per day",
-  months_to_profitability: "Months to profitability", use_of_funds: "Use of funds", other: "Other",
+  months_to_profitability: "Months to profitability", acquisition_channels: "Acquisition channels", use_of_funds: "Use of funds",
+  other: "Other",
   unknown: UNKNOWN_TYPE_LABEL,
 };
 // The types an analyst can choose: same order and names as backend app/decks/claims.py CLAIM_TYPES.
@@ -76,7 +85,7 @@ export const CLAIM_UNITS = ["%", "x", "months", "years", "weeks", "days", "hours
 export const COUNT_UNIT_HINT = "customers, headcount, deals";
 
 // Types whose figure counts things: they carry the unit "count" (or the noun counted) and never a currency.
-export const COUNT_TYPES = ["customers", "users", "people", "trials_per_day"];
+export const COUNT_TYPES = ["customers", "users", "people", "trials_per_day", "acquisition_channels"];
 export const COUNT_UNIT = "count";
 
 // One header per column of the approval list, in column order.
@@ -311,19 +320,33 @@ export function claimsForDeck(candidates, deckId) {
 }
 
 // The order of the claims table (docs/specs/deck-parser.md section 6): the group of the claim's type, set by the server, then
-// slide or page. Groups 6 and 7 start collapsed under a header with their count.
+// slide or page. Unknown and Other start collapsed under a header with their count.
+// Acquisition channels and Use of funds are sections of their own, directly above Other (chat-upload.md section 17).
+export const OTHER_GROUP = 9;
 export const CLAIM_GROUPS = [
   [1, "Revenue, ARR, MRR and bookings"], [2, "P&L items"], [3, "Customers, users, usage, retention and sales"],
-  [4, "Hiring and roadmap"], [5, "Market size"], [6, UNKNOWN_TYPE_LABEL], [7, "Other"],
+  [4, "Hiring and roadmap"], [5, "Market size"], [6, UNKNOWN_TYPE_LABEL], [7, "Acquisition channels"], [8, "Use of funds"],
+  [OTHER_GROUP, "Other"],
 ];
-export const COLLAPSED_BY_DEFAULT = [6, 7];
+export const COLLAPSED_BY_DEFAULT = [6, OTHER_GROUP];
 
 /** [{group, title, claims, collapsed}] for the groups that hold a claim, in group order; the claims keep the server's order. */
 export function claimSections(claims) {
   return CLAIM_GROUPS.map(([group, title]) => ({
-    group, title, claims: (claims || []).filter((c) => (c.group ?? 7) === group), collapsed: COLLAPSED_BY_DEFAULT.includes(group),
+    group, title, claims: (claims || []).filter((c) => (c.group ?? OTHER_GROUP) === group), collapsed: COLLAPSED_BY_DEFAULT.includes(group),
   })).filter((s) => s.claims.length > 0);
 }
+
+// Approve all (docs/specs/chat-upload.md section 17): one button at the top and one at the bottom of every category section.
+export const APPROVE_ALL_LABEL = "Approve all";
+
+/** The claims Approve all would approve: the section's claims with status "To review". The server skips, and counts, the ones that
+ *  still need a Revenue / Volume answer or a type, and the ones whose save fails. */
+export const toReview = (section) => section.claims.filter((c) => c.status === "pending");
+
+/** The toast after Approve all: "Approved 5 claims, 2 skipped (need Revenue / Volume or failed to save)". */
+export const approveAllToast = (approved, skipped) =>
+  `Approved ${approved} claim${approved === 1 ? "" : "s"}, ${skipped} skipped (need Revenue / Volume or failed to save)`;
 
 /** Counts per status, for the list header. */
 export function statusCounts(candidates) {

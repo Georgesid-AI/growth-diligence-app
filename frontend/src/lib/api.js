@@ -62,6 +62,9 @@ export const uploadDeck = (id, file) => {
 export const getDecks = (id) => api.get(`/audits/${id}/decks`).then((r) => r.data);
 export const removeDeck = (id, deckId) => api.delete(`/audits/${id}/decks/${deckId}`).then((r) => r.data);
 export const addClaim = (id, payload) => api.post(`/audits/${id}/decks/candidates`, payload).then((r) => r.data);
+// Approve every claim to review of one category in one call (docs/specs/chat-upload.md section 17); `deckId` limits it to a deck tab.
+export const approveAll = (id, group, deckId) =>
+  api.post(`/audits/${id}/decks/candidates/approve-all`, { group, ...(deckId ? { deck_id: deckId } : {}) }).then((r) => r.data);
 export const updateCandidate = (id, candidateId, payload) =>
   api.put(`/audits/${id}/decks/candidates/${candidateId}`, payload).then((r) => r.data);
 

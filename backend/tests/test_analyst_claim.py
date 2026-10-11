@@ -138,3 +138,19 @@ def test_removing_the_deck_removes_the_claims_added_from_it(api):
     new = _add(client).json()
     assert client.delete(f"/api/audits/{AUDIT}/decks/{DECK}").status_code == 200
     assert all(x["id"] != new["id"] for x in db[decks.CANDIDATES_COLLECTION].docs)
+
+
+def test_an_analyst_adds_an_acquisition_channels_claim_with_a_platform_and_no_metric(api):
+    client, db = api
+    body = {"claim_type": "acquisition_channels", "value": 30000, "deck_id": DECK, "page": 3, "label": " Telegram ", "unit": "customers"}
+    r = client.post(f"/api/audits/{AUDIT}/decks/candidates", json=body)
+    assert r.status_code == 200, r.text
+    c = r.json()
+    assert (c["claim_type"], c["channel"], c["unit"], c["currency"], c["status"], c["origin"]) == \
+        ("acquisition_channels", "Telegram", "count", None, "approved", "analyst")
+    assert "claim_inputs" not in c
+    row = next(x for x in _register(client) if x["claim_id"] == c["id"])
+    assert (row["evidence_label"], row["reason"], row["metric"], row["gate_needed"]) == ("Unverified", cm.ACQUISITION_NOTE, None, False)
+    for bad in ({"label": None}, {"label": ""}, {"metric": "ARR"}):
+        assert client.post(f"/api/audits/{AUDIT}/decks/candidates", json={**body, **bad}).status_code == 422, bad
+    assert _add(client, label="Telegram").status_code == 422, "a platform belongs to acquisition channels only"
