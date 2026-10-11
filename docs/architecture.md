@@ -45,6 +45,8 @@ model version, content hash, token counts and cost. Never deck text sent to the 
 
 The narrative path may read a count of deck documents per audit (number only). It never reads deck text, titles or file names.
 
+Claims within tolerance are approved by the analyst's Run audit press, listed under Show and rejectable one by one. Nothing is approved without that press.
+
 ## The amendment of 2026-10-05
 
 Until 2026-10-05 the gateway read no parsed deck text at all (the former deck-parser.md §4). The amendment added

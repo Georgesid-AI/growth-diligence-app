@@ -209,8 +209,9 @@ test("when every narrative is stored the estimate says there is no cost", async 
   expect(q("write-all-estimate").textContent).toBe("All narratives are written: no cost.");
 });
 
-test("the hard blockers still show in the header banner and the memo names them", async () => {
+test("a reconciliation gap is reported in the memo and does not block it", async () => {
   state.summary = { ...SUMMARY, blockers: [{ kind: "revenue_reconciliation", text: "Revenue file and P&L differ by 10%" }] };
   await mount();
-  expect(q("memo-blockers").textContent).toContain("1 hard blocker above is listed in the memo under Worth flagging.");
+  expect(q("memo-blockers").textContent).toBe("A reconciliation gap over 2% is reported in the memo; it does not block it.");
+  expect(q("generate-memo")).not.toBeNull();
 });

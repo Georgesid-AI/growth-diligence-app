@@ -18,7 +18,7 @@ import { turnoverHeading, turnoverOf, registerRows } from "@/lib/claimRegister";
 import { S13_status, MAPPING_HEADERS, fieldName, sortColumns } from "@/lib/chatUpload";
 import { describeRequestError } from "@/lib/requestError";
 import { runAudit } from "@/lib/runAudit";
-import { writeAllLabel, estimateText, WRITE_ALL_HELP, MEMO_LABEL, MEMO_WAITING, blockersNote } from "@/lib/review";
+import { writeAllLabel, estimateText, WRITE_ALL_HELP, MEMO_LABEL, MEMO_WAITING, RECONCILIATION_NOTE } from "@/lib/review";
 
 const GROUP_TITLE = Object.fromEntries(CLAIM_GROUPS);
 
@@ -332,7 +332,7 @@ function Finish({ auditId, verdict, summary, estimate, reload }) {
         </Button>
         {!rated && <span className="text-xs text-slate-600" data-testid="memo-waiting">{MEMO_WAITING}</span>}
       </div>
-      {blockers.length > 0 && <p className="mt-2 text-xs text-rose-800" data-testid="memo-blockers">{blockersNote(blockers.length)}</p>}
+      {blockers.some((b) => b.kind === "revenue_reconciliation") && <p className="mt-2 text-xs text-rose-800" data-testid="memo-blockers">{RECONCILIATION_NOTE}</p>}
     </section>
   );
 }

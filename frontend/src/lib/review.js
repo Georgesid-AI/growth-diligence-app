@@ -6,7 +6,7 @@ export const WRITE_ALL_HELP =
   "Costs one AI request per summary not yet written — after that you can open this audit as often as you like for free.";
 export const MEMO_LABEL = "Generate IC memo";
 export const MEMO_WAITING = "Enter both ratings to generate the memo.";
-export const blockersNote = (n) => `${n} hard blocker${n === 1 ? "" : "s"} above ${n === 1 ? "is" : "are"} listed in the memo under Worth flagging.`;
+export const RECONCILIATION_NOTE = "A reconciliation gap over 2% is reported in the memo; it does not block it.";
 
 const usd = (v) => `$${Number(v).toFixed(2)}`;
 
