@@ -7,7 +7,6 @@ pytest.importorskip("motor")
 
 from test_run_audit import AUDIT, RATINGS, THESIS, api, candidates, memo, ready_for_review  # noqa: E402,F401
 
-import server  # noqa: E402
 from app import claim_matching as cm  # noqa: E402
 from app import verdict  # noqa: E402
 
@@ -103,14 +102,14 @@ def prefilled_gates(data):
             for cid, v in data["gate_prefill"].items() if "gate_threshold" in v and "gate_date" in v]
 
 
-def test_the_claims_endpoint_carries_prefill_beside_the_register_not_in_it(api):
+def test_the_claims_endpoint_carries_prefill_beside_the_register_not_in_it(api):  # noqa: F811
     data = open_register(api)
     assert data["gate_prefill"] and all(set(r) <= set(cm.FIELDS) for r in data["register"])
     assert all(r["gate_threshold"] is None and not r["gate_saved"] for r in data["register"] if r["claim_id"] in data["gate_prefill"])
     assert all(v.get("gate_date", REVIEW) <= REVIEW for v in data["gate_prefill"].values())
 
 
-def test_save_all_saves_every_filled_gate_in_one_call_and_the_key_marks_ride_along(api):
+def test_save_all_saves_every_filled_gate_in_one_call_and_the_key_marks_ride_along(api):  # noqa: F811
     data = open_register(api)
     gates = prefilled_gates(data)
     assert len(gates) >= 3
@@ -121,7 +120,7 @@ def test_save_all_saves_every_filled_gate_in_one_call_and_the_key_marks_ride_alo
     assert sorted(c for c, x in saved.items() if x["key_gate"]) == sorted(g["claim_id"] for g in gates if g.get("key_gate"))
 
 
-def test_save_all_is_refused_as_a_whole_when_one_gate_is_incomplete_or_a_sixth_key_gate(api):
+def test_save_all_is_refused_as_a_whole_when_one_gate_is_incomplete_or_a_sixth_key_gate(api):  # noqa: F811
     data = open_register(api)
     gates = prefilled_gates(data)
     bad = [{**gates[0], "gate_budget_decision": None}, {"claim_id": gates[1]["claim_id"], "gate_threshold": 1.0, "key_gate": True}]
@@ -132,7 +131,7 @@ def test_save_all_is_refused_as_a_whole_when_one_gate_is_incomplete_or_a_sixth_k
         assert api.put(f"/api/audits/{AUDIT}/claim-gates", json={"gates": six}).status_code == 400
 
 
-def test_an_edited_gate_saves_with_the_same_call_and_keeps_the_analysts_value(api):
+def test_an_edited_gate_saves_with_the_same_call_and_keeps_the_analysts_value(api):  # noqa: F811
     data = open_register(api)
     gates = prefilled_gates(data)
     gates[0]["gate_threshold"] = 123.0
@@ -141,7 +140,7 @@ def test_an_edited_gate_saves_with_the_same_call_and_keeps_the_analysts_value(ap
     assert saved[gates[0]["claim_id"]]["gate_threshold"] == 123.0
 
 
-def test_the_csv_and_the_memo_show_a_gate_as_saved_with_no_trace_of_prefill(api):
+def test_the_csv_and_the_memo_show_a_gate_as_saved_with_no_trace_of_prefill(api):  # noqa: F811
     data = open_register(api)
     before = api.get(f"/api/audits/{AUDIT}/claims.csv").text
     assert api.get(f"/api/audits/{AUDIT}/claims").status_code == 200
@@ -158,7 +157,7 @@ def test_the_csv_and_the_memo_show_a_gate_as_saved_with_no_trace_of_prefill(api)
     assert DECISION in after
 
 
-def test_a_gate_saved_by_save_all_equals_the_same_gate_saved_alone(api):
+def test_a_gate_saved_by_save_all_equals_the_same_gate_saved_alone(api):  # noqa: F811
     data = open_register(api)
     g = prefilled_gates(data)[0]
     body = {k: v for k, v in g.items() if k != "claim_id"}
@@ -173,7 +172,7 @@ def test_a_gate_saved_by_save_all_equals_the_same_gate_saved_alone(api):
 
 # --- the first quarterly review, an audit set-up field -------------------------------------------------------------------------
 
-def test_a_new_audit_has_a_first_quarterly_review_90_days_after_its_creation(api):
+def test_a_new_audit_has_a_first_quarterly_review_90_days_after_its_creation(api):  # noqa: F811
     r = api.post("/api/audits", json={"company_name": "NewCo", "client_name": "Fund"})
     assert r.status_code == 200
     created = r.json()["created_at"][:10]
@@ -181,7 +180,7 @@ def test_a_new_audit_has_a_first_quarterly_review_90_days_after_its_creation(api
     assert r.json()["ic_inputs"]["first_quarterly_review"] == (date.fromisoformat(created) + timedelta(days=90)).isoformat()
 
 
-def test_the_review_date_is_editable_and_clearing_it_returns_the_default(api):
+def test_the_review_date_is_editable_and_clearing_it_returns_the_default(api):  # noqa: F811
     ready_for_review(api)
     assert api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"first_quarterly_review": "2027-03-31"}).status_code == 200
     assert api.get(f"/api/audits/{AUDIT}").json()["ic_inputs"]["first_quarterly_review"] == "2027-03-31"
@@ -189,7 +188,7 @@ def test_the_review_date_is_editable_and_clearing_it_returns_the_default(api):
     assert api.get(f"/api/audits/{AUDIT}").json()["ic_inputs"]["first_quarterly_review"] == "2027-01-09"
 
 
-def test_a_claim_without_a_period_is_dated_by_the_audits_review_date_and_no_period_goes_past_it(api):
+def test_a_claim_without_a_period_is_dated_by_the_audits_review_date_and_no_period_goes_past_it(api):  # noqa: F811
     ready_for_review(api)
     for c in candidates(api):
         if c["status"] == "pending":

@@ -5,7 +5,6 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import io
-import csv
 import re
 import asyncio
 import hashlib
@@ -37,6 +36,7 @@ from app.decks import claims as deck_claims
 from app.decks import parser as deck_parser
 from app.llm import gateway as llm_gateway
 from app.llm import redaction as llm_redaction
+from app.logsafety import install_secret_redaction
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -47,7 +47,6 @@ db = client[os.environ["DB_NAME"]]
 
 app = FastAPI(title="Growth Diligence Engine")
 api = APIRouter(prefix="/api")
-from app.logsafety import install_secret_redaction
 
 install_secret_redaction()      # no key can reach a log line, message or traceback
 logger = logging.getLogger("growth")
@@ -1879,7 +1878,8 @@ async def _run_compute(audit_id: str) -> dict:
     try:
         results = sanitize(ge.compute_all(rev, crm, pnl, config, sources, files=candidate_views(ds), on_error=on_error))
     except Exception as exc:
-        await _usage_update(audit_id, lambda u: usage_mod.record_compute(u, failures + [type(exc).__name__]))
+        failed = failures + [type(exc).__name__]        # bound before the lambda: `exc` is unbound once the block ends
+        await _usage_update(audit_id, lambda u: usage_mod.record_compute(u, failed))
         raise
     await _usage_update(audit_id, lambda u: usage_mod.record_compute(u, failures))
     await db.audits.update_one(

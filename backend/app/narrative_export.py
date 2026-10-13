@@ -8,7 +8,7 @@ the file. That link is decided here, from the cited path and the results, and on
 names a sheet that really carries the value.
 """
 import calendar
-from typing import Any, List, Optional
+from typing import List, Optional
 
 from . import disclosure, formatting
 

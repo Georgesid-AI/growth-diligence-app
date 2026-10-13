@@ -1,5 +1,6 @@
 """The xlsx export keeps cells numeric and formats them with Excel number formats."""
-import io
+
+import re as _re
 
 import pytest
 
@@ -172,8 +173,6 @@ def test_unavailable_segment_paths_name_what_would_resolve_them():
 # Label rule: a name is text plus, at most, brackets. No comma outside a bracket,
 # so none can sit before one ("CAC payback, months (2026-Q1)" was the offender).
 # ---------------------------------------------------------------------------
-import re as _re
-
 _KV_SHEETS = {"Headline", "Path to Plan", "Segment Mix"}
 _TITLE_ROW_SHEETS = {"ACV Bands", "Segment Base"}     # a title sentence sits in row 1, headers in row 2
 
@@ -209,9 +208,9 @@ def test_no_export_label_has_a_comma_outside_its_brackets():
 def test_no_export_label_breaks_the_rule_when_there_is_no_complete_cac_quarter():
     results = {**RESULTS, "cac_payback": _partial_only_cac()}
     wb = openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, results))
-    labels = [l for _, l in _export_labels(wb)]
+    labels = [name for _, name in _export_labels(wb)]
     assert "CAC payback (no complete quarter, months)" in labels
-    assert [l for l in labels if _breaks_label_rule(l)] == []
+    assert [name for name in labels if _breaks_label_rule(name)] == []
 
 
 def test_headline_cac_label_and_its_lag_row():
@@ -384,7 +383,7 @@ def test_a_currency_or_unit_in_an_export_label_is_the_last_part_of_its_bracket()
             if ccy in parts and parts[-1] != ccy:
                 bad.append((sheet, label))
     assert bad == []
-    labels = [l for _, l in _export_labels(_rich_export())]
+    labels = [name for _, name in _export_labels(_rich_export())]
     assert "Projected ARR (at constant NRR, EUR)" in labels
     assert "Required blended landed ACV (12-month window, EUR)" in labels
     assert "Total mix moved (12-month window, percentage points)" in labels
@@ -392,9 +391,9 @@ def test_a_currency_or_unit_in_an_export_label_is_the_last_part_of_its_bracket()
 
 
 def test_no_export_label_carries_the_acv_definition():
-    labels = [l for _, l in _export_labels(_rich_export())]
-    assert [l for l in labels if "average contract value" in l] == []
-    assert any(l.startswith("ACV (") for l in labels)
+    labels = [name for _, name in _export_labels(_rich_export())]
+    assert [name for name in labels if "average contract value" in name] == []
+    assert any(name.startswith("ACV (") for name in labels)
 
 
 def test_the_glossary_sheet_is_in_every_export_and_defines_acv():

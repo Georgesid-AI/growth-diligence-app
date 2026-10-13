@@ -7,7 +7,6 @@ test in this file can reach a real model provider.
 import asyncio
 import copy
 import json
-import os
 import re
 import sys
 from pathlib import Path
@@ -1451,7 +1450,7 @@ def test_release_manifest_matches_the_prompt_files():
 def _prompt_dir(tmp_path, monkeypatch, text, manifest_lines):
     monkeypatch.setattr(prompt_store, "PROMPTS_DIR", tmp_path)
     (tmp_path / "demo.md").write_text(text, encoding="utf-8")
-    (tmp_path / "RELEASE.md").write_text("<!-- release: r8 -->\n" + "".join(l + "\n" for l in manifest_lines),
+    (tmp_path / "RELEASE.md").write_text("<!-- release: r8 -->\n" + "".join(line + "\n" for line in manifest_lines),
                                          encoding="utf-8")
 
 
@@ -1478,7 +1477,8 @@ def test_release_stamp_is_part_of_the_cache_key():
     prompt = prompt_store.load("growth_engine")
     assert prompt_store.tag_for("r2", prompt.version) == f"r2:{prompt.version}"
     assert prompt_store.tag_for("r3", prompt.version) != prompt_store.tag_for("r2", prompt.version)
-    key = lambda tag: cache.cache_key(RUN_ID, "growth_engine", tag, "claude-opus-5", {"a": 1})
+    def key(tag):
+        return cache.cache_key(RUN_ID, "growth_engine", tag, "claude-opus-5", {"a": 1})
     assert key(prompt_store.tag_for("r2", prompt.version)) != key(prompt_store.tag_for("r3", prompt.version))
 
 
@@ -1597,7 +1597,8 @@ def test_nothing_stored_means_no_superseded_reason():
 # Partial CAC quarters are shown on the dashboard but not given to the model
 # ---------------------------------------------------------------------------
 def _cac_computed():
-    L = lambda m: {"months": m, "sm_expense": 9000.0, "reason": None}
+    def L(m):
+        return {"months": m, "sm_expense": 9000.0, "reason": None}
     return {"reporting_currency": "EUR", "metrics": {"cac_payback": {
         "default_l": 1, "headline_quarter": "2024-Q3", "partial_quarter_excluded": "2025-Q1",
         "quarters": {

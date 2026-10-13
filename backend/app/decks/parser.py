@@ -746,7 +746,7 @@ def _band_cells(boxes: List[List[Dict]], others=None, date_box=None) -> List[Dic
     box), each line of a box that is none also keeps "date_box": the number of the one date box directly next to its
     box, box to box (_next_to), when exactly one is."""
     def extent(lines):
-        placed = [l["bbox"] for l in lines if l.get("bbox")]
+        placed = [line["bbox"] for line in lines if line.get("bbox")]
         return (min(b[1] for b in placed), max(b[3] for b in placed), min(b[0] for b in placed)) if placed else None
 
     placed = sorted((b for b in boxes if extent(b)), key=lambda b: (extent(b)[0], extent(b)[2]))
@@ -787,7 +787,7 @@ def _band_cells(boxes: List[List[Dict]], others=None, date_box=None) -> List[Dic
 
 def _extent(box: List[Dict]):
     """(left, top, right, bottom) of a text box, or None when its lines have no position."""
-    placed = [l["bbox"] for l in box if l.get("bbox")]
+    placed = [line["bbox"] for line in box if line.get("bbox")]
     return (min(b[0] for b in placed), min(b[1] for b in placed), max(b[2] for b in placed),
             max(b[3] for b in placed)) if placed else None
 
@@ -813,16 +813,16 @@ def _next_to(a, b, others) -> bool:
 
 
 def _kpi_box(box: List[Dict], claims) -> bool:
-    return len(box) <= KPI_MAX_LINES and all(len(l["text"]) <= KPI_LINE_MAX for l in box) \
-        and any(_figures(l["text"], claims) for l in box) and any(_WORD.search(l["text"]) for l in box) \
+    return len(box) <= KPI_MAX_LINES and all(len(line["text"]) <= KPI_LINE_MAX for line in box) \
+        and any(_figures(line["text"], claims) for line in box) and any(_WORD.search(line["text"]) for line in box) \
         and not _wrapped(box)
 
 
 def _value_box(box: List[Dict], ticks: set, claims) -> bool:
     """One figure that is not a date and no word outside it ("~13,500", "$12 -$13 million"); never an axis tick."""
-    if any(id(l) in ticks for l in box):
+    if any(id(line) in ticks for line in box):
         return False
-    texts = [_LIST_NUMBER.sub("", l["text"]) for l in box]
+    texts = [_LIST_NUMBER.sub("", line["text"]) for line in box]
     found = [(i, f) for i, text in enumerate(texts) for f in claims.figures(text)]
     if len(found) != 1:
         return False
@@ -834,8 +834,8 @@ def _value_box(box: List[Dict], ticks: set, claims) -> bool:
 def _label_box(box: List[Dict], claims) -> bool:
     """A word and no figure other than a date, at most LABEL_MAX characters read as one line (a label wrapped over
     two lines counts; a longer wrapped sentence is prose)."""
-    return len(box) <= KPI_MAX_LINES and not any(_figures(l["text"], claims) for l in box) \
-        and any(_WORD.search(l["text"]) for l in box) and len(" ".join(l["text"] for l in box)) <= LABEL_MAX
+    return len(box) <= KPI_MAX_LINES and not any(_figures(line["text"], claims) for line in box) \
+        and any(_WORD.search(line["text"]) for line in box) and len(" ".join(line["text"] for line in box)) <= LABEL_MAX
 
 
 def _kpi_panel(boxes: List[List[Dict]], title: List[Dict], ticks: set, claims) -> List[List[Dict]]:
@@ -880,15 +880,15 @@ def _box_structures(blocks: List[Dict], excluded: set, claims) -> List[Dict]:
         axis = _axis_lines(lines, claims)
         labels = [line for line in lines if id(line) not in axis and _date_labels(line["text"], claims)]
         titled = [t["text"] for t in titles.get(page, ())]
-        if len(labels) >= TIMELINE_MIN_DATES and any(claims.has_product_keyword(t) for t in titled + [l["text"] for l in lines]):
+        if len(labels) >= TIMELINE_MIN_DATES and any(claims.has_product_keyword(t) for t in titled + [line["text"] for line in lines]):
             kind = "roadmap"
             kept = [_paragraph(box, claims) for box in boxes.values()
-                    if all(len(l["text"]) <= TIMELINE_LINE_MAX for l in box)
-                    and not all(id(l) in axis for l in box)]
+                    if all(len(line["text"]) <= TIMELINE_LINE_MAX for line in box)
+                    and not all(id(line) in axis for line in box)]
         else:
             kind = "kpi_panel"
             kept = _kpi_panel(list(boxes.values()), titles.get(page), ticks, claims)
-        if not kept or not any(_has_figure(l["text"], claims) for box in kept for l in box):
+        if not kept or not any(_has_figure(line["text"], claims) for box in kept for line in box):
             continue
         first = kept[0][0]
         page_boxes = list(boxes.values()) + ([titles[page]] if page in titles else [])

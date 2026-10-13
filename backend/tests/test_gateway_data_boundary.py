@@ -1560,7 +1560,6 @@ import logging  # noqa: E402
 
 import test_chat_upload as chat  # noqa: E402
 from test_chat_upload import api  # noqa: E402,F401  (the fixture)
-from app import column_rules, usage as usage_mod  # noqa: E402
 
 FIXTURE_CELLS = ("Alder Works", "Birch Labs", "Cedar Foods", "Dune Print", "Elm Studio", "Fern Tools", "Birch Labs Ltd",
                  "C-100", "C-101", "C-102", "C-103", "C-104", "Quarterly revenue export", "Large", "Small", "Gold", "Silver")
@@ -1571,7 +1570,7 @@ def _all_documents(db):
     return {name: json.dumps(col.docs, default=str) for name, col in db._cols.items()}
 
 
-def test_chat_the_mapping_text_holds_only_the_columns_the_rules_could_not_decide_from_at_most_20_rows(api):
+def test_chat_the_mapping_text_holds_only_the_columns_the_rules_could_not_decide_from_at_most_20_rows(api):  # noqa: F811
     rows = "\n".join(f"Customer {i},2024-01-{i % 27 + 1:02d},{100 + i},EUR,note {i} {chr(97 + i % 26)}" for i in range(60))
     chat.upload(api, "wide.csv", ("Customer ID,Invoice Date,Amount,Currency,Remarks\n" + rows + "\n").encode())
     text = chat.model_text(api)
@@ -1584,7 +1583,7 @@ def test_chat_the_mapping_text_holds_only_the_columns_the_rules_could_not_decide
 
 
 @pytest.mark.parametrize("name", ["duplicate_ids_header_row3.csv", "blank_vs_zero.csv", "mixed_currency.csv"])
-def test_chat_no_fixture_customer_name_and_no_text_cell_reaches_the_model(api, name):
+def test_chat_no_fixture_customer_name_and_no_text_cell_reaches_the_model(api, name):  # noqa: F811
     chat.upload(api, name)
     text = chat.model_text(api)
     assert structure_redact.column_text_problem(text) is None
@@ -1592,7 +1591,7 @@ def test_chat_no_fixture_customer_name_and_no_text_cell_reaches_the_model(api, n
         assert cell.lower() not in text.lower(), cell
 
 
-def test_chat_a_customer_alias_column_sends_a_profile_only_even_when_its_values_are_numbers(api):
+def test_chat_a_customer_alias_column_sends_a_profile_only_even_when_its_values_are_numbers(api):  # noqa: F811
     csv = "Date,Amount,Currency,Customer ID,Customer ID\n" + "\n".join(
         f"2024-01-{i + 1:02d},{50 + i},EUR,{70000 + i},{81000 + i}" for i in range(8)) + "\n"
     chat.upload(api, "numeric_ids.csv", csv.encode())
@@ -1603,7 +1602,7 @@ def test_chat_a_customer_alias_column_sends_a_profile_only_even_when_its_values_
 
 
 @pytest.mark.parametrize("name", [n + ".csv" for n in FIXTURE_FILES])
-def test_chat_no_collection_holds_the_sent_text_after_an_upload_with_consent(api, name):
+def test_chat_no_collection_holds_the_sent_text_after_an_upload_with_consent(api, name):  # noqa: F811
     chat.upload(api, name)
     texts = [json.loads(p)["text"] for p in api.state["adapter"].payloads]
     assert texts, "the model was asked"
@@ -1618,7 +1617,7 @@ def test_chat_no_collection_holds_the_sent_text_after_an_upload_with_consent(api
                           "error_type"} for c in calls)
 
 
-def test_chat_log_lines_hold_no_file_name_header_cell_value_company_name_or_note(api, caplog):
+def test_chat_log_lines_hold_no_file_name_header_cell_value_company_name_or_note(api, caplog):  # noqa: F811
     caplog.set_level(logging.INFO)
     note = "Adj is not the type"
     for name in FIXTURE_FILES:
@@ -1639,7 +1638,7 @@ def test_chat_log_lines_hold_no_file_name_header_cell_value_company_name_or_note
         assert secret not in log, f"{secret!r} reached a log line"
 
 
-def test_chat_the_counters_and_the_totals_hold_no_file_name_cell_value_or_company_name_and_header_text_only_in_a_note(api):
+def test_chat_the_counters_and_the_totals_hold_no_file_name_cell_value_or_company_name_and_header_text_only_in_a_note(api):  # noqa: F811
     note = "Adj is not the type"
     chat.upload(api, "blank_vs_zero.csv")
     api.post(f"/api/audits/{chat.AUDIT}/datasets/revenue/decisions", json=[
@@ -1664,14 +1663,14 @@ def test_chat_the_counters_and_the_totals_hold_no_file_name_cell_value_or_compan
     ("see blank_vs_zero", True), ("see blank_vs_zero.csv", True), ("Alder is wrong", True),
     ("Fixture Target Ltd", True), ("Northbridge Capital", True), ("ENG-2026-041", True),
 ])
-def test_chat_an_other_note_is_refused_for_a_digit_a_file_name_a_cell_text_a_name_or_length(api, note, refused):
+def test_chat_an_other_note_is_refused_for_a_digit_a_file_name_a_cell_text_a_name_or_length(api, note, refused):  # noqa: F811
     chat.upload(api, "blank_vs_zero.csv")
     r = api.post(f"/api/audits/{chat.AUDIT}/datasets/revenue/decisions", json=[
         {"column": "Adj", "action": "correct", "field": "revenue_type", "reason": "other", "note": note}])
     assert (r.status_code == 400) is refused, r.text
 
 
-def test_chat_a_note_that_quotes_a_header_is_kept_including_a_header_holding_a_cell_word_and_one_with_a_digit_is_refused(api):
+def test_chat_a_note_that_quotes_a_header_is_kept_including_a_header_holding_a_cell_word_and_one_with_a_digit_is_refused(api):  # noqa: F811
     head = "Customer ID,Invoice Date,Amount,Currency,Segment,Large Account Flag,Plan 2024\nAlder Works,2024-01-01,5,EUR,Large,x,y\n"
     chat.upload(api, "h.csv", head.encode())
     ok = lambda note, col: api.post(f"/api/audits/{chat.AUDIT}/datasets/revenue/decisions", json=[  # noqa: E731
@@ -1681,7 +1680,7 @@ def test_chat_a_note_that_quotes_a_header_is_kept_including_a_header_holding_a_c
     assert ok("Segment is not needed", "Large Account Flag").status_code == 200, "a quoted header with no digit"
 
 
-def test_chat_a_kept_note_is_found_only_in_the_usage_counters_and_the_totals(api, caplog):
+def test_chat_a_kept_note_is_found_only_in_the_usage_counters_and_the_totals(api, caplog):  # noqa: F811
     caplog.set_level(logging.INFO)
     note = "Adj is not the type"
     chat.upload(api, "blank_vs_zero.csv")
@@ -1748,7 +1747,6 @@ def test_a_payload_that_breaks_the_contract_reaches_no_provider_and_no_log_line_
 # ---------------------------------------------------------------------------
 import test_claim_register_api as register_api_tests  # noqa: E402
 from test_claim_register_api import api as register_api  # noqa: E402,F401  (the fixture)
-from app import verdict as verdict_module, ic_memo as memo_module  # noqa: E402
 
 IC_SENTINELS = ("the Falcon hiring plan", "Zephyr pipeline cover", "Quartz thesis plan", "Basalt thesis evidence", "Opal thesis condition")
 VERDICT_LOGGERS = frozenset({"get_verdict", "export_memo"})
@@ -1822,7 +1820,7 @@ def _with_the_analysts_inputs(client, db):
     assert r.status_code == 200, r.text
 
 
-def test_the_analysts_inputs_reach_no_log_line_no_gateway_collection_and_no_provider(register_api, caplog):
+def test_the_analysts_inputs_reach_no_log_line_no_gateway_collection_and_no_provider(register_api, caplog):  # noqa: F811
     client, db = register_api
     base = f"/api/audits/{register_api_tests.AUDIT}"
     with caplog.at_level(logging.DEBUG):
@@ -1842,7 +1840,7 @@ def test_the_analysts_inputs_reach_no_log_line_no_gateway_collection_and_no_prov
     assert not db["llm_calls"].docs
 
 
-def test_the_gateway_reads_no_ic_inputs_and_the_provider_payload_holds_none(register_api):
+def test_the_gateway_reads_no_ic_inputs_and_the_provider_payload_holds_none(register_api):  # noqa: F811
     db, reads = _recording_db()
     db["audits"].docs[0]["ic_inputs"] = {"thesis": {"plan": IC_SENTINELS[2]}, "ratings": {"growth_engine": "Weak"},
                                          "top5": {"claim_ids": ["c1"], "set_at": "x"}, "first_quarterly_review": "2031-04-05"}
@@ -2021,7 +2019,7 @@ import test_run_audit as run_tests  # noqa: E402
 from test_run_audit import api as run_api  # noqa: E402,F401  (the fixture)
 
 
-def test_the_run_audit_log_lines_hold_the_run_the_stage_the_status_and_an_error_type_only(run_api, monkeypatch, caplog):
+def test_the_run_audit_log_lines_hold_the_run_the_stage_the_status_and_an_error_type_only(run_api, monkeypatch, caplog):  # noqa: F811
     import logging
     run_tests.upload_files(run_api)
     run_tests.confirm_open_columns(run_api)
@@ -2047,7 +2045,7 @@ def test_the_auto_accepted_flag_is_a_register_name_the_gateway_never_mentions():
         assert "auto_accepted" not in path.read_text(encoding="utf-8"), path.name
 
 
-def test_the_narrative_estimate_sends_nothing_and_names_no_file(run_api):
+def test_the_narrative_estimate_sends_nothing_and_names_no_file(run_api):  # noqa: F811
     run_tests.ready_for_review(run_api)
     sent_before = len(run_api.adapter.payloads)
     body = run_api.get(f"/api/runs/{run_tests.AUDIT}/narratives/estimate").text

@@ -494,20 +494,29 @@ def scope_for(source_key: str) -> list:
     while i < len(segs):
         s, nxt = segs[i], (segs[i + 1] if i + 1 < len(segs) else None)
         if s in ("by_segment", "segments") and nxt:
-            scope.append(nxt); i += 2; continue
+            scope.append(nxt)
+            i += 2
+            continue
         if s == "by_cohort" and nxt:
-            scope.append(f"{nxt} cohort"); i += 2; continue
+            scope.append(f"{nxt} cohort")
+            i += 2
+            continue
         if s == "by_founder" and nxt:
-            scope.append(_FOUNDER.get(nxt, nxt)); i += 2; continue
+            scope.append(_FOUNDER.get(nxt, nxt))
+            i += 2
+            continue
         if s == "quarters" and nxt and _QUARTER.match(nxt):
-            scope.append(nxt); i += 2
+            scope.append(nxt)
+            i += 2
             if i < len(segs) and _LAG.match(segs[i]):
-                scope.append(f"S&M lag {segs[i]}"); i += 1
+                scope.append(f"S&M lag {segs[i]}")
+                i += 1
             continue
         if s in ("landed", "reverse_solve", "reconciliation") and nxt and nxt.isdigit():
             if segs[-1] != "window_months":          # a window's own length needs no window scope
                 scope.append(f"{nxt}-month window")
-            i += 2; continue
+            i += 2
+            continue
         if s == "series":
             scope.append("monthly series")
         i += 1

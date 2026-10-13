@@ -827,7 +827,7 @@ def _observe(figures: "_Figures", spec: dict, metric: str, start: Optional[int],
     """(observed, observed_at, source, reason) read as table 2b says. `observed` is a number, None, or a
     "Label|reason" verdict string when the claim cannot be tested; None with observed_at "missing" when the engine
     holds no figure for the metric at all."""
-    results, kind = figures.results, spec["kind"]
+    kind = spec["kind"]
     if as_of_i is None:
         return None, "missing", None, None
     forecast = end is not None and end > as_of_i

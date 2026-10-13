@@ -14,7 +14,6 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import server  # noqa: E402
 import test_llm_gateway as t  # noqa: E402
-from claim_matching_support import fixture  # noqa: E402
 from test_claim_matching import RUNS, candidates_for, results_for, settings  # noqa: E402
 
 from app import claim_matching as cm  # noqa: E402

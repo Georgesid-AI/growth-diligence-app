@@ -252,7 +252,7 @@ def test_saving_fx_rates_without_a_mapping_confirms_nothing(api):
 
 
 def test_correct_takes_a_field_and_a_listed_reason_and_a_held_field_is_refused(api):
-    body = upload(api, "blank_vs_zero.csv").json()
+    upload(api, "blank_vs_zero.csv").json()
     url = f"/api/audits/{AUDIT}/datasets/revenue/decisions"
     bad = api.post(url, json=[{"column": "Adj", "action": "correct", "field": "revenue_type", "reason": "because"}])
     assert bad.status_code == 400

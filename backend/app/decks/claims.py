@@ -883,17 +883,17 @@ def _bar_labels(units: List[Dict]) -> Dict[int, str]:
             pages.setdefault(u["page"], []).append(u)
     for members in pages.values():
         labels = [u for u in members if _period_only(u["text"]) and find_dates(u["text"])[0]["kind"] == "year"]
-        rows = [[l for l in labels if abs(l["bbox"][1] - top["bbox"][1]) < BAR_ROW] for top in labels]
-        axis = [l for row in rows if len(row) >= 2 for l in row]
+        rows = [[label for label in labels if abs(label["bbox"][1] - top["bbox"][1]) < BAR_ROW] for top in labels]
+        axis = [label for row in rows if len(row) >= 2 for label in row]
         for u in members:
             if u in labels or not find_numbers(u["text"], find_dates(u["text"])):
                 continue
             x0, y0, x1, y1 = u["bbox"]
-            under = [l for l in axis if l["bbox"][1] >= y1 - 0.005 and l["bbox"][1] - y1 <= BAR_REACH
-                     and l["bbox"][0] < x1 and x0 < l["bbox"][2]]
+            under = [label for label in axis if label["bbox"][1] >= y1 - 0.005 and label["bbox"][1] - y1 <= BAR_REACH
+                     and label["bbox"][0] < x1 and x0 < label["bbox"][2]]
             if under:
                 centre = (x0 + x1) / 2
-                best = min(under, key=lambda l: (abs((l["bbox"][0] + l["bbox"][2]) / 2 - centre), l["bbox"][1]))
+                best = min(under, key=lambda label: (abs((label["bbox"][0] + label["bbox"][2]) / 2 - centre), label["bbox"][1]))
                 out[id(u)] = best["text"]
     return out
 
