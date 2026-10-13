@@ -119,11 +119,17 @@ def test_forecasts_and_untested_rows_rank_after_every_row_with_a_gap_and_keep_re
         "c09", "c10", "c12", "c14", "c15", "c16", "c17", "c18", "c19#1", "c26", "c29", "c30", "c33", "c34"]
 
 
-def test_a_beat_beyond_tolerance_is_contradicted_but_never_ranks_as_a_miss():
+def test_a_beat_beyond_tolerance_is_verified_and_never_ranks_as_a_miss():
     rows = register(RUNS["A"])
     beat = row_of(rows, "c08")
-    assert (beat["evidence_label"], beat["gap_kind"], beat["gap_normalised"]) == ("Contradicted", "beat", -0.25)
+    assert (beat["evidence_label"], beat["gap_kind"], beat["gap_normalised"]) == ("Verified", "beat", -0.25)
     assert beat["rank"] > row_of(rows, "c27")["rank"]          # a 1.2% miss ranks above a 25% beat
+    # amended 2026-10-13 (George): the beat keeps its gap and gloss, needs no gate and is marked (beat) in its reason
+    assert (beat["gap"], beat["gloss"], beat["shortfall"]) == (-1.0, "1 customer more (beat)", None)
+    assert beat["reason"] == "beat: observed exceeds the claim by 1 customer more (beat)" and cm.is_beat(beat)
+    assert beat["gate_needed"] is False
+    assert not cm.is_beat(row_of(rows, "c01")), "a beat within tolerance is plain Verified"
+    assert row_of(rows, "c06")["reason"] == "outside ±5%: a miss"
 
 
 # --- section 2: matching ---------------------------------------------------------------------------------------------
@@ -372,7 +378,7 @@ def test_another_currency_is_converted_at_the_audits_fx_rate():
                     fx={"EUR": 1.0, "USD": 0.9})
     assert row["claimed_value"] == 210000 and row["currency"] == "USD"
     assert row["gap"] == pytest.approx(189000 - 202125.48, abs=0.005) and row["gap_kind"] == "beat"
-    assert row["evidence_label"] == "Contradicted" and row["gloss"] == "€13,125 higher (beat)"
+    assert row["evidence_label"] == "Verified" and row["gloss"] == "€13,125 higher (beat)"
 
 
 # --- section 3 and 4: gap, gloss, tolerance --------------------------------------------------------------------------
@@ -396,7 +402,8 @@ def test_tolerance_is_five_percent_of_the_claim_or_one_point_and_the_boundary_is
 def test_a_range_is_tested_at_the_end_nearest_the_observed_value():
     base = {"claim_type": "revenue", "snippet": "ARR", "target_date": "2024-02"}
     outside_high = run_claim({**base, "value": 150000, "value_high": 180000})
-    assert outside_high["gap"] == pytest.approx(180000 - 202125.48, abs=0.005) and outside_high["evidence_label"] == "Contradicted"
+    assert outside_high["gap"] == pytest.approx(180000 - 202125.48, abs=0.005) and outside_high["evidence_label"] == "Verified"
+    assert outside_high["gap_kind"] == "beat" and cm.is_beat(outside_high), "observed above the whole range: a beat"
     outside_low = run_claim({**base, "value": 210000, "value_high": 230000})
     assert outside_low["gap"] == pytest.approx(210000 - 202125.48, abs=0.005) and outside_low["evidence_label"] == "Verified"
     inside = run_claim({**base, "value": 190000, "value_high": 210000})

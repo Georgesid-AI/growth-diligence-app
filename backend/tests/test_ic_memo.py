@@ -264,7 +264,7 @@ def test_the_two_assessed_rows_carry_the_analysts_rating_and_the_w17_headline():
     reliability = next(line for line in text.split("\n") if line.startswith("| Data reliability |"))
     assert "| Adequate |" in reliability
     assert "Revenue file and P&L differ by 69.61% over 2023-03–2024-02" in reliability
-    assert "0 anomaly flags" in reliability and "10 of 33 claims Verified" in reliability
+    assert "0 anomaly flags" in reliability and "11 of 33 claims Verified" in reliability
     assert next(line for line in text.split("\n") if line.startswith("| Growth engine |")).split("|")[2].strip() == "Weak"
 
 
@@ -293,6 +293,21 @@ def test_without_a_narrative_the_memo_carries_every_figure_with_its_footnote_and
     assert re.search(r"ARR 202,125 EUR\[\^\d+\], NRR 113%\[\^\d+\], gross revenue churn 0%\[\^\d+\]", growth)
     assert im.S17 in growth and im.S17 in head.split("## Worth flagging")[1]
     assert "The growth engine is steady." not in text
+
+
+def test_worth_flagging_lists_every_verified_beat_with_its_gloss_after_the_blockers():
+    """Amended 2026-10-13 (George): a beat outside tolerance is Verified, so Worth flagging lists it to keep a large beat visible.
+    A beat within tolerance is plain Verified and is not listed."""
+    blocker = {"kind": "revenue_file_missing", "text": "Revenue file missing: upload and map it to compute metrics."}
+    text = memo(narratives=[narrative()], blockers=[blocker])
+    section = head_of(text).split("## Worth flagging")[1].split("## Data gaps")[0]
+    items = [line for line in section.split("\n") if line.startswith("- ")]
+    assert items[0] == f"- {blocker['text']}"
+    assert re.fullmatch(r"- #14 Customer count, Feb 2024: Verified, 1 customer more \(beat\)\.\[\^\d+\]", items[1])
+    assert items[2].startswith("- Win rate is below the claim."), "the narrative's items follow"
+    assert len(items) == 3, "c01, a beat within tolerance, is not listed"
+    marker = re.search(r"\[\^(\d+)\]$", items[1]).group(1)
+    assert f"[^{marker}]: claim register, #14" in text
 
 
 def test_the_memo_never_generates_a_narrative_or_reads_the_model():
@@ -516,7 +531,7 @@ def test_the_data_reliability_headline_and_key_evidence_read_the_a2_verdict_and_
     assert row[2].strip() == "Adequate", "Strong / Adequate / Weak is entered by the analyst"
     assert "Material concerns: the revenue file and the P&L differ by 69.61%." in row[3]
     assert "Data integrity verdict: Material concerns" in row[4]
-    assert "10 of 33 claims Verified" not in row[3], "the computed line is replaced, not repeated"
+    assert "11 of 33 claims Verified" not in row[3], "the computed line is replaced, not repeated"
     assert "data-integrity narrative" in text.split("Footnotes")[1], "the headline carries its footnote"
 
 

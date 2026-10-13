@@ -43,6 +43,7 @@ ACQUISITION_NOTE = "acquisition channels: a count per platform, no engine metric
 # Claim types that are never matched, ranked, gated or put in the top 5, with the closed sentence each register row carries.
 UNTESTED_TYPES = {USE_OF_FUNDS: USE_OF_FUNDS_NOTE, ACQUISITION_CHANNELS: ACQUISITION_NOTE}
 DIRECTION_ONLY = "direction only: the claim states no figure to test"
+BEAT_PREFIX = "beat: observed exceeds the claim by "     # the reason of a Verified beat outside tolerance, its gloss follows
 SUGGESTION = "AI suggestion, not verified"
 ANALYST_ENTERED = "analyst-entered"
 DAYS_PER_WEEK, DAYS_PER_MONTH = 7.0, 30.44
@@ -779,7 +780,9 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         return finish("Unverified", "deck reading: AI suggestion, not verified until the analyst edits the claim")
     if verified:
         return finish("Verified", f"within {out['tolerance']} of the claim")
-    return finish("Contradicted", f"outside {out['tolerance']}: a {'miss' if kind == 'miss' else 'beat'}")
+    if kind == "beat":                          # amended 2026-10-13 (George): a beat is Verified, marked (beat), not Contradicted
+        return finish("Verified", f"{BEAT_PREFIX}{out['gloss']}")
+    return finish("Contradicted", f"outside {out['tolerance']}: a miss")
 
 
 def _gate(out: dict, c: dict, inputs: dict, spec: Optional[dict], claim_unit: Optional[str], results: dict,
@@ -1001,6 +1004,11 @@ def turnover_views(candidates: List[dict], results: Optional[dict], settings: di
         out.setdefault(c["id"], []).append({**{k: row[k] for k in TURNOVER_VIEW_FIELDS},
                                             "file_note": None if covered is not None else NO_FILE_PERIOD})
     return out
+
+
+def is_beat(row: dict) -> bool:
+    """A Verified row whose observed figure beat the claim beyond tolerance (section 4): listed under Worth flagging."""
+    return row.get("evidence_label") == "Verified" and str(row.get("reason") or "").startswith(BEAT_PREFIX)
 
 
 def label_counts(rows: List[dict]) -> Dict[str, int]:

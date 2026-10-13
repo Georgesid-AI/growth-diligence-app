@@ -1276,7 +1276,8 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             "implied_take_rate", "implied_take_rate_source", "turnover_suggested", "deck_revenue_note", "period_basis", "inconsistencies",
                             "turnover_views", "file_note", "NO_FILE_PERIOD",
                             "inconsistent_dates", "mixed_slide", "USE_OF_FUNDS_NOTE", "MIXED_SLIDE", "ACQUISITION_NOTE", "ACQUISITION_CHANNELS",
-                            "UNTESTED_TYPES", "channel", "auto_accepted", *MATCHING_SERVER_ONLY})
+                            "UNTESTED_TYPES", "channel", "auto_accepted", "BEAT_PREFIX", "is_beat", "beat_text",
+                            *MATCHING_SERVER_ONLY})
 # The functions that log about the register, and the only things their log calls may name.
 REGISTER_LOGGERS = frozenset({"_claim_rows", "claim_register", "claim_register_csv", "update_claim_inputs", "answer_turnover",
                               "approve_all_candidates"})
@@ -1419,6 +1420,24 @@ def test_the_fx_reason_names_two_currency_codes_and_the_new_candidate_fields_are
     out = claim_matching.build_register([row], RESULTS, {"fiscal_year_end": 12, "reporting_currency": "EUR", "fx": {"EUR": 1.0}})[0]
     assert re.fullmatch(r"FX rate needed: [A-Z]{3}→[A-Z]{3}", out["reason"]), out["reason"]
     assert not {"period_basis", "inconsistencies", "inconsistent_dates"} & decks.GATEWAY_READABLE_FIELDS
+
+
+def test_the_beat_reason_is_the_closed_prefix_and_the_gloss_and_holds_no_deck_text():
+    """A beat outside tolerance (claim-matching.md section 4, 2026-10-13) is Verified with reason "beat: observed exceeds the claim
+    by {gloss}": the gloss is a figure and closed words (section 3), so a sentinel in the snippet or the label reaches no field."""
+    sentinel = "Zephyr Holdings"
+    row = {"id": "x1", "status": "approved", "claim_type": "revenue", "value": 100.0, "currency": "EUR", "target_date": "2026-12",
+           "period_text": "Dec 2026", "snippet": f"{sentinel} ARR EUR 100", "label_from": f"{sentinel} ARR", "file": "deck.pptx",
+           "order": 0, "sources": [{"file": "deck.pptx", "slide": 3}]}
+    from app.decks import claims as deck_claims
+    deck_claims.resolve_period(row, 12)
+    results = {**_results_with_the_series(), "mrr_series": {"months": ["2026-12"], "segments": [], "source": SOURCE,
+                                                            "data": [{"month": "2026-12", "total": 500.0}]}}
+    out = claim_matching.build_register([row], results, {"fiscal_year_end": 12, "reporting_currency": "EUR", "fx": {"EUR": 1.0}})[0]
+    assert (out["evidence_label"], out["gap_kind"]) == ("Verified", "beat"), out["reason"]
+    assert out["reason"] == claim_matching.BEAT_PREFIX + out["gloss"]
+    assert re.fullmatch(r"€[\d,]+ higher \(beat\)", out["gloss"]), out["gloss"]
+    assert sentinel not in json.dumps(out, default=str)
 
 
 def test_the_use_of_funds_reason_is_a_closed_sentence_and_mixed_slide_and_the_note_never_reach_the_gateway_or_a_log(caplog):

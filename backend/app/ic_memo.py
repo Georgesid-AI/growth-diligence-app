@@ -452,6 +452,8 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, us
             flagged.append(f"{b['text']}{notes.source('Revenue reconciliation', 'revenue_reconciliation', (b.get('citation') or {}).get('revenue_file'))}")
         else:
             flagged.append(b["text"])
+    # Every Verified beat outside tolerance, so a large beat stays visible (amended 2026-10-13, George)
+    flagged += [f"{vd.beat_text(r)}{notes.register([r['rank']])}" for r in rows if cm.is_beat(r)]
     if narrative:
         flagged += [f"{item}{notes.add('growth-engine narrative, AI call log')}" for item in narrative.get("worth_flagging") or ()]
     elif not narrative:

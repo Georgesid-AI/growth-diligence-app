@@ -57,7 +57,7 @@ def test_once_the_analyst_answers_revenue_the_claim_is_tested_as_revenue_against
         ("Revenue", "Verified", "Gross revenue (turnover)", "analyst")
     assert within["observed_source"]
     below = row("Turnover €100,000 in FY2023", value=100_000, inputs=answer)
-    assert (below["metric"], below["evidence_label"]) == ("Revenue", "Contradicted")
+    assert (below["metric"], below["evidence_label"], below["gap_kind"]) == ("Revenue", "Verified", "beat"), "a beat (2026-10-13)"
     rng = row("GMV €100,000–190,000 FY2023", value=100_000, value_high=190_000, inputs=answer)     # tested at the nearest end
     assert rng["evidence_label"] == "Verified"
     segment = row("SMB turnover €3,800 FY2023", value=3_800, inputs=answer)

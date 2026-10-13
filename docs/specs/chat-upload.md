@@ -187,7 +187,7 @@ file missing") is held back until the first Map; S16d and the other two kinds sh
 | Kind | Rule (decided 2026-10-08, Q4) | Text |
 |---|---|---|
 | required file missing | the revenue file (the only file marked required) is not uploaded (S16a), or is uploaded and its mapping is not confirmed (S16d); one blocker of this kind, with the text of the case that applies | S16a or S16d |
-| top-5 claim contradicted | a claim-register row ranked 1–5 has evidence label Contradicted, whether a miss or a beat (the label as claim-matching.md §4 defines it) | S16b, with the row's citation |
+| top-5 claim contradicted | a claim-register row ranked 1–5 has evidence label Contradicted, a miss (the label as claim-matching.md §4 defines it; a beat is Verified since 2026-10-13, George) | S16b, with the row's citation |
 | revenue reconciliation | new engine result `revenue_reconciliation`: the revenue file's monthly revenue (`revenue_series`, reporting currency) against the P&L revenue column, summed over the window (the months both files cover up to the as-of month, at most the last 12); gap = abs(file − P&L) ÷ P&L; a blocker above 2%; no check without a P&L | S16c, with both files' rows as its citation; it links to the evidence table |
 
 Evidence table (never a blocker). `revenue_reconciliation.by_month` holds one row per month of the window: the
@@ -220,7 +220,8 @@ deck_text, column_mappings (every saved version) and the rest. There is no mappi
   a top-5 claim Contradicted (a miss or a beat), and a revenue reconciliation gap above 2% over the window of
   docs/specs/chat-upload.md §6.2. Per-month gaps go in the reconciliation evidence table, never in the banner."
   Amended 2026-10-09 (§16): the revenue-file blocker reads S16a from the first Map (§16; before, the first Calculate) and S16d at all times; the line in
-  CLAUDE.md carries that wording.
+  CLAUDE.md carries that wording. Amended 2026-10-13 (claim-matching.md §4, George): a beat outside tolerance is Verified, so
+  the claim blocker is a miss only; the line in CLAUDE.md reads "(a miss)".
 - Rule 22: "Delete audit requires typing the company name and removes every document of the audit in every
   collection, saved mappings and stored files included."
 
@@ -339,7 +340,7 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 | Q1 | What the model sees for mapping, and where it is kept | A: the rule-16 shape for the undecided columns, built from the first 20 rows, handed over in memory; nothing stored but the hash (§4.2) |
 | Q2 | Usage store and totals | A: counters on the audit document; totals as a section of the audit list (§7) |
 | Q3 | `MAPPING_THRESHOLD` | 80 |
-| Q4 | Banner rules | The window total of file against P&L, at most the last 12 months, above 2%; the revenue file is the required file; a beat counts as Contradicted. Per-month gaps are shown in the reconciliation evidence table, never as a blocker (§6.2) |
+| Q4 | Banner rules | The window total of file against P&L, at most the last 12 months, above 2%; the revenue file is the required file; a beat counts as Contradicted (superseded 2026-10-13, George: a beat is Verified, claim-matching.md §4). Per-month gaps are shown in the reconciliation evidence table, never as a blocker (§6.2) |
 | Q5 | The model's own confidence on screen | No: the schema is unchanged |
 | Q6 | Wording | S1–S19 approved, with S2 as proposed and the existing S17. "Other" gets a free-text box of up to 60 characters, kept with the counters, with no file names or values (§4.3, §7) |
 | — | Amendment the same day (UI and labelling, George) | Delete dialog with the name in the title and in bold, exact case-sensitive match, S18b; mapping table headers and "Mapped by" (S23, S24), no "Your decision"; confidence cell never a dash (S9); row order (§4.4); the banner says what is left to do when the file is uploaded (S16d); months of the detected line only once the date column is confirmed (S5); the info box S25. The wording not given in the request was chosen under rule 19 (§13) |

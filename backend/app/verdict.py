@@ -122,6 +122,13 @@ def reason_text(row: dict, reporting_currency: Optional[str]) -> str:
     return text
 
 
+def beat_text(row: dict) -> str:
+    """A Verified row that beat its claim beyond tolerance, for Worth flagging (claim-matching.md section 4), with its gloss:
+    "#14 Customer count, Feb 2024: Verified, 1 customer more (beat).". The gloss is the register's own text, so the memo's number
+    check reads its figures as stored."""
+    return f"#{row['rank']} {claim_name(row)}: Verified, {row['gloss']}."
+
+
 # --- gates ----------------------------------------------------------------------------------------------------------------
 
 def key_gates(rows: List[dict]) -> dict:

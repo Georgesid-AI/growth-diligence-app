@@ -308,7 +308,7 @@
      },
      "analyst": {},
      "expect": {
-      "label": "Contradicted",
+      "label": "Verified",
       "metric": "Customer count",
       "observed": 5,
       "observed_at": "2024-02",
@@ -1649,7 +1649,7 @@
      },
      "analyst": {},
      "expect": {
-      "label": "Contradicted",
+      "label": "Verified",
       "metric": "ACV",
       "segment": "Enterprise",
       "observed": 75114.18,
@@ -1723,7 +1723,7 @@
      },
      "analyst": {},
      "expect": {
-      "label": "Contradicted",
+      "label": "Verified",
       "metric": "NRR (12-month)",
       "segment": "Enterprise",
       "observed": 112.68,

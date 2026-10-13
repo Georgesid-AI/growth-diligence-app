@@ -53,15 +53,25 @@ def test_underwrite_with_gates_when_nothing_is_contradicted_and_at_most_two_are_
     assert (v["outcome"], v["rule"]) == ("Underwrite with gates", "No top-5 claim is Contradicted; 3 are Unverified or Unsupported.")
 
 
-@pytest.mark.parametrize("kind", ["miss", "beat"])
-def test_replan_when_a_top_5_claim_is_contradicted_a_miss_or_a_beat(kind):
+def test_replan_when_a_top_5_claim_is_contradicted_a_miss():
     rows = register(RUNS["A"])
-    miss, beat = row_of(rows, "c06"), row_of(rows, "c08")
-    assert (miss["gap_kind"], beat["gap_kind"]) == ("miss", "beat") and beat["evidence_label"] == "Contradicted"
+    miss = row_of(rows, "c06")
+    assert (miss["gap_kind"], miss["evidence_label"]) == ("miss", "Contradicted")
     verified = [r for r in rows if r["evidence_label"] == "Verified"][:4]
-    five = [miss if kind == "miss" else beat, *verified]
+    five = [miss, *verified]
     v = vd.verdict(gated(rows), results_for(RUNS["A"]), {"claim_ids": [r["claim_id"] for r in five]})
     assert (v["status"], v["outcome"], v["rule"]) == ("ok", "Re-plan", "1 top-5 claim Contradicted.")
+
+
+def test_a_top_5_beat_beyond_tolerance_is_verified_so_it_neither_replans_nor_blocks():
+    """Amended 2026-10-13 (George): a beat outside tolerance is Verified, marked (beat); it needs no gate."""
+    rows = register(RUNS["A"])
+    beat = row_of(rows, "c08")
+    assert (beat["gap_kind"], beat["evidence_label"], beat["gate_needed"]) == ("beat", "Verified", False)
+    verified = [r for r in rows if r["evidence_label"] == "Verified" and r is not beat][:4]
+    five = [beat, *verified]
+    v = vd.verdict(rows, results_for(RUNS["A"]), {"claim_ids": [r["claim_id"] for r in five]})
+    assert (v["status"], v["outcome"], v["rule"]) == ("ok", "Underwrite", "All top-5 claims are Verified.")
 
 
 def test_replan_when_three_top_5_claims_are_unsupported():
