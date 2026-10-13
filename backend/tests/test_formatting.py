@@ -1,5 +1,7 @@
 """Display formatting: the rules, the shared vectors, and the gateway boundary."""
+import itertools as _it
 import json
+import re as _re2
 from pathlib import Path
 
 import pytest
@@ -469,9 +471,6 @@ def test_no_shared_label_or_qualifier_wraps_a_comma_outside_a_bracket():
 # ---------------------------------------------------------------------------
 # The label convention, held by the shared builder
 # ---------------------------------------------------------------------------
-import itertools as _it
-import re as _re2
-
 _GROUP = _re2.compile(r"\([^)]*\)")
 
 

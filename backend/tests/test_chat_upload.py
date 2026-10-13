@@ -252,7 +252,7 @@ def test_saving_fx_rates_without_a_mapping_confirms_nothing(api):
 
 
 def test_correct_takes_a_field_and_a_listed_reason_and_a_held_field_is_refused(api):
-    body = upload(api, "blank_vs_zero.csv").json()
+    upload(api, "blank_vs_zero.csv").json()
     url = f"/api/audits/{AUDIT}/datasets/revenue/decisions"
     bad = api.post(url, json=[{"column": "Adj", "action": "correct", "field": "revenue_type", "reason": "because"}])
     assert bad.status_code == 400
@@ -573,19 +573,21 @@ def test_the_banner_shows_a_reconciliation_gap_above_2_percent_with_its_citation
     assert _kinds(api) == []
 
 
-def test_only_a_top_5_contradicted_claim_reaches_the_banner_and_a_beat_counts(api, monkeypatch):
+def test_only_a_top_5_contradicted_claim_reaches_the_banner_and_a_beat_does_not(api, monkeypatch):
+    """Amended 2026-10-13 (George): a beat outside tolerance is Verified, marked (beat), so it never reaches the banner."""
     rows = [{"claim_id": f"c{i}", "rank": i, "evidence_label": label, "claim_type": "revenue", "claimed_value": 100.0,
              "claimed_high": None, "unit": None, "currency": "EUR", "observed_value": obs, "observed_source": {"file": "r.csv"},
-             "deck_file": "board.pptx", "page_ref": "slide 4"}
-            for i, (label, obs) in enumerate([("Verified", 100.0), ("Contradicted", 80.0), ("Contradicted", 140.0),
-                                              ("Unverified", None), ("Contradicted", 10.0), ("Contradicted", 5.0)], 1)]
+             "deck_file": "board.pptx", "page_ref": "slide 4", "gap_kind": kind}
+            for i, (label, obs, kind) in enumerate([("Verified", 100.0, None), ("Contradicted", 80.0, "miss"),
+                                                    ("Verified", 140.0, "beat"), ("Unverified", None, None),
+                                                    ("Contradicted", 10.0, "miss"), ("Contradicted", 5.0, "miss")], 1)]
 
     async def fake_rows(audit_id, audit):
         return [], rows
     monkeypatch.setattr(server, "_claim_rows", fake_rows)
     _banner_audit(api, {"arr": None})
     blockers = api.get(f"/api/audits/{AUDIT}/blockers").json()["blockers"]
-    assert [b["claim_id"] for b in blockers] == ["c2", "c3", "c5"], "rank 6 is not top-5; a beat (c3) is Contradicted"
+    assert [b["claim_id"] for b in blockers] == ["c2", "c5"], "rank 6 is not top-5; a beat (c3) is Verified"
     assert blockers[0]["text"] == "Top-5 claim contradicted: revenue 100 EUR vs 80 EUR observed (board.pptx, slide 4)."
     rows[1]["evidence_label"] = rows[2]["evidence_label"] = rows[4]["evidence_label"] = "Verified"
     assert _kinds(api) == []

@@ -41,7 +41,7 @@ def build(spec):
     start = pd.Period(spec["start"], freq="M")
     months = [start + i for i in range(n_months)]
 
-    rev_rows, pnl_new_mrr = [], {}
+    rev_rows = []
     seg_pick = rng.choice(len(SEGMENTS), size=spec["n_customers"], p=[0.25, 0.4, 0.35])
 
     for ci in range(spec["n_customers"]):

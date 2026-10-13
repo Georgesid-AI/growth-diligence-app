@@ -10,12 +10,10 @@ import pytest
 pytest.importorskip("fastapi")
 pytest.importorskip("motor")
 
-from claim_matching_support import engine_results  # noqa: E402
 from test_claim_matching import RUNS, candidates_for, results_for, settings  # noqa: E402
 from test_claim_register_api import AUDIT, _get, _put, api  # noqa: E402,F401  (the fixture)
 
 from app import claim_matching as cm  # noqa: E402
-from app import decks  # noqa: E402
 from app import formatting as fmt  # noqa: E402
 from app import ic_memo as im  # noqa: E402
 from app import verdict as vd  # noqa: E402
@@ -264,7 +262,7 @@ def test_the_two_assessed_rows_carry_the_analysts_rating_and_the_w17_headline():
     reliability = next(line for line in text.split("\n") if line.startswith("| Data reliability |"))
     assert "| Adequate |" in reliability
     assert "Revenue file and P&L differ by 69.61% over 2023-03–2024-02" in reliability
-    assert "0 anomaly flags" in reliability and "10 of 33 claims Verified" in reliability
+    assert "0 anomaly flags" in reliability and "11 of 33 claims Verified" in reliability
     assert next(line for line in text.split("\n") if line.startswith("| Growth engine |")).split("|")[2].strip() == "Weak"
 
 
@@ -293,6 +291,21 @@ def test_without_a_narrative_the_memo_carries_every_figure_with_its_footnote_and
     assert re.search(r"ARR 202,125 EUR\[\^\d+\], NRR 113%\[\^\d+\], gross revenue churn 0%\[\^\d+\]", growth)
     assert im.S17 in growth and im.S17 in head.split("## Worth flagging")[1]
     assert "The growth engine is steady." not in text
+
+
+def test_worth_flagging_lists_every_verified_beat_with_its_gloss_after_the_blockers():
+    """Amended 2026-10-13 (George): a beat outside tolerance is Verified, so Worth flagging lists it to keep a large beat visible.
+    A beat within tolerance is plain Verified and is not listed."""
+    blocker = {"kind": "revenue_file_missing", "text": "Revenue file missing: upload and map it to compute metrics."}
+    text = memo(narratives=[narrative()], blockers=[blocker])
+    section = head_of(text).split("## Worth flagging")[1].split("## Data gaps")[0]
+    items = [line for line in section.split("\n") if line.startswith("- ")]
+    assert items[0] == f"- {blocker['text']}"
+    assert re.fullmatch(r"- #14 Customer count, Feb 2024: Verified, 1 customer more \(beat\)\.\[\^\d+\]", items[1])
+    assert items[2].startswith("- Win rate is below the claim."), "the narrative's items follow"
+    assert len(items) == 3, "c01, a beat within tolerance, is not listed"
+    marker = re.search(r"\[\^(\d+)\]$", items[1]).group(1)
+    assert f"[^{marker}]: claim register, #14" in text
 
 
 def test_the_memo_never_generates_a_narrative_or_reads_the_model():
@@ -363,7 +376,7 @@ def _ready(client, decision=GATE_DECISION):
     assert ok.status_code == 200, ok.text
 
 
-def test_the_endpoint_downloads_the_memo_as_markdown_named_after_the_company(api):
+def test_the_endpoint_downloads_the_memo_as_markdown_named_after_the_company(api):  # noqa: F811
     client, db = api
     db["audits"].docs[0]["company_name"] = "Test Co / Ltd"
     _ready(client)
@@ -376,7 +389,7 @@ def test_the_endpoint_downloads_the_memo_as_markdown_named_after_the_company(api
     assert im.word_count_of(r.text) <= 1500 and "## Appendix D" in r.text
 
 
-def test_the_memo_is_built_on_request_and_never_stored_and_no_model_is_called(api):
+def test_the_memo_is_built_on_request_and_never_stored_and_no_model_is_called(api):  # noqa: F811
     client, db = api
     _ready(client)
     before = {name: copy.deepcopy(col.docs) for name, col in db._cols.items()}
@@ -390,7 +403,7 @@ def test_the_memo_is_built_on_request_and_never_stored_and_no_model_is_called(ap
 @pytest.mark.parametrize("step, message", [
     ("none", "Memo not exported: confirm the top 5."),
 ])
-def test_the_endpoint_refuses_and_names_the_reason_without_writing(api, step, message):
+def test_the_endpoint_refuses_and_names_the_reason_without_writing(api, step, message):  # noqa: F811
     client, db = api
     before = copy.deepcopy([col.docs for col in db._cols.values()])
     r = client.get(f"/api/audits/{AUDIT}/memo.md")
@@ -398,7 +411,7 @@ def test_the_endpoint_refuses_and_names_the_reason_without_writing(api, step, me
     assert before == [col.docs for col in db._cols.values()][:len(before)]
 
 
-def test_the_endpoint_refuses_a_blocked_verdict_missing_key_gates_ratings_and_a_bad_number(api):
+def test_the_endpoint_refuses_a_blocked_verdict_missing_key_gates_ratings_and_a_bad_number(api):  # noqa: F811
     client, db = api
     ids = client.get(f"/api/audits/{AUDIT}/verdict").json()["verdict"]["top5"]["proposed"]
     client.put(f"/api/audits/{AUDIT}/ic-inputs", json={"top5": ids})
@@ -420,14 +433,14 @@ def test_the_endpoint_refuses_a_blocked_verdict_missing_key_gates_ratings_and_a_
     assert detail.startswith("Memo not exported: the stored results fail the contract: ") and "106" not in detail
 
 
-def test_an_audit_with_no_results_refuses_with_the_compute_first_reason(api):
+def test_an_audit_with_no_results_refuses_with_the_compute_first_reason(api):  # noqa: F811
     client, db = api
     db["audits"].docs[0]["results"] = None
     r = client.get(f"/api/audits/{AUDIT}/memo.md")
     assert r.status_code == 409 and "compute the audit first" in r.json()["detail"]
 
 
-def test_the_export_log_line_holds_a_code_and_counts_only(api, caplog):
+def test_the_export_log_line_holds_a_code_and_counts_only(api, caplog):  # noqa: F811
     client, _ = api
     _ready(client, decision="the Falcon hiring plan")
     with caplog.at_level(logging.DEBUG):
@@ -516,7 +529,7 @@ def test_the_data_reliability_headline_and_key_evidence_read_the_a2_verdict_and_
     assert row[2].strip() == "Adequate", "Strong / Adequate / Weak is entered by the analyst"
     assert "Material concerns: the revenue file and the P&L differ by 69.61%." in row[3]
     assert "Data integrity verdict: Material concerns" in row[4]
-    assert "10 of 33 claims Verified" not in row[3], "the computed line is replaced, not repeated"
+    assert "11 of 33 claims Verified" not in row[3], "the computed line is replaced, not repeated"
     assert "data-integrity narrative" in text.split("Footnotes")[1], "the headline carries its footnote"
 
 

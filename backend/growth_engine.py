@@ -456,11 +456,11 @@ def compute_win_rate(deals: pd.DataFrame, founder_available: bool):
         for key, matches in (("with_founder", yes_like), ("without_founder", no_like)):
             sub = d[d["founder_l"].isin(matches)]
             w = sub["stage_l"].isin(WON_ALIASES).sum()
-            l = sub["stage_l"].isin(LOST_ALIASES).sum()
-            t = w + l
+            lost = sub["stage_l"].isin(LOST_ALIASES).sum()
+            t = w + lost
             split[key] = {
                 "won": int(w),
-                "lost": int(l),
+                "lost": int(lost),
                 "win_rate_pct": _round(w / t, 4) if t else None,
                 "n": int(t),
                 "small_sample": bool(t < 20),

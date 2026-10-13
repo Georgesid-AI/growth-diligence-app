@@ -1,6 +1,9 @@
 # Spec: Claim matching: approved claims tested against the computed metrics
 Status: Draft; decisions of 2026-10-07 applied (§10). Location: docs/specs/claim-matching.md.
 Follows deck-parser.md §6.
+Amended 2026-10-13 (George): a beat outside tolerance is Verified, marked (beat), not Contradicted (§4, D2); it never reaches the
+banner and the IC memo lists it under Worth flagging (verdict-and-memo.md §7.2). A Users claim the parser typed from a qualified
+customers noun ("Registered Institutions", deck-parser.md §2) is Unsupported with its own reason (§4).
 Amended 2026-10-09 (George): turnover, GMV, TPV and volume are ambiguous and are no longer revenue by default; new metric
 "Transaction volume" and §11. This supersedes decision R2.
 Amended 2026-10-08 (UI and claims fixes from live testing, George): a claim in another currency shows both figures and a
@@ -97,10 +100,10 @@ Untested rows stay listed with a reason and observed "—" (a forecast shows its
 
 | Label | Rule |
 |---|---|
-| Verified | Tested and within tolerance: ±5% of the claimed value for amounts, counts and durations; ±1 percentage point for rates. The boundary is Verified. |
-| Contradicted | Tested and outside tolerance: a miss, or a beat. |
+| Verified | Tested and within tolerance: ±5% of the claimed value for amounts, counts and durations; ±1 percentage point for rates. The boundary is Verified. Or a beat outside tolerance (observed better than the claim: above it, or below it where lower is better), reason "beat: observed beats the claim by {gloss}", marked (beat). |
+| Contradicted | Tested and outside tolerance: a miss. |
 | Unverified | Not testable yet; the reason names what would test it: a Missing file (the engine's `unlocked_by`), a forecast period, a period before the metric's first month, no saved FX rate for the claim's currency ("FX rate needed"), a direction with no figure, a revenue claim with no period ("no period stated"), months of the period missing from the data (named), or a deck reading "AI suggestion, not verified" (until the analyst edits the claim, even unchanged): a claim that would otherwise be Verified or Contradicted; any other reason stands. A Use of funds claim (deck-parser.md, amended 2026-10-10) and an Acquisition channels claim (chat-upload.md section 17, 2026-10-11) are always Unverified, with no metric, gap, value at stake or gate. |
-| Unsupported | The app gives no figure: no metric proposed or picked, the metric not computed for that period or by segment, the segment not in the data, or the engine's "not computable" reason. |
+| Unsupported | The app gives no figure: no metric proposed or picked, the metric not computed for that period or by segment, the segment not in the data, or the engine's "not computable" reason. A Users claim with a `qualifier` (deck-parser.md §2) and no metric picked reads "deck label '{qualifier} {noun}' is not paying customers; the analyst can edit the type to Customers to test it" (2026-10-13, George). |
 
 ## 5. Gate
 No gate is proposed and no threshold has a default. For every row with an observed value the screen shows the claimed
@@ -183,7 +186,7 @@ in each label class at least for revenue, ARR and customer count. Public decks h
 | 5 | ARR €240,000, FY2023 | 198,142.68 | 41,857.32, 17.4% | Contradicted | 3 |
 | 6 | Sales cycle 45 days, no period | 58.5 | 13.5 days, 30.0% | Contradicted | 1 |
 | 7 | Gross margin 85%, Q4 2023 | 78.0% | 7.0 pp, 8.2% | Contradicted | 5 |
-| 8 | 4 customers, Feb 2024 | 5 | beat 1, 25.0% | Contradicted (a beat) | 14 |
+| 8 | 4 customers, Feb 2024 | 5 | beat 1, 25.0% | Verified (a beat) | 14 |
 | 9 | ARR €5,000,000, FY2026 | 202,125.48 (as-of) | to go 4,797,874.52, 96.0% | Unverified: forecast | 20 |
 | 10 | NRR 115%, FY2023 | — | — | Unverified: before NRR's first month, 2024-01 | 21 |
 | 11 | Run B: win rate 40%, no period | — | — | Unverified: Missing, "Upload CRM deals with …" | 1 (run B) |
@@ -225,7 +228,7 @@ gross revenue churn, ACV), figures by segment, and row 36. Its ranks stand on th
 | # | Question | Decision of 2026-10-07 |
 |---|---|---|
 | D1 | Tolerance between Verified and Contradicted | ±5% for amounts, counts, durations; ±1 pp for rates; the gap in native units and % shown on every row, Verified rows included |
-| D2 | A beat beyond tolerance | Contradicted, ranked after every miss |
+| D2 | A beat beyond tolerance | Contradicted, ranked after every miss; amended 2026-10-13 (George): Verified, marked (beat), still ranked after every miss |
 | D3 | An unedited "AI suggestion, not verified" claim | Unverified until the analyst edits it |
 | D4 | A claim with no period | tested at the as-of figure, marked "no period stated" |
 | D5 | Metric list | table 2a, adding revenue, ARR and customer count by period; growth rates, users and bare retention or churn stay unmatched |

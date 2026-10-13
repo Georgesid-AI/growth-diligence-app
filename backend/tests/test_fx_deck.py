@@ -12,7 +12,6 @@ import test_chat_upload as chat  # noqa: E402
 import test_llm_gateway as t  # noqa: E402
 from test_chat_upload import api as chat_api, AUDIT as CHAT_AUDIT  # noqa: E402,F401
 
-from app import claim_matching as cm  # noqa: E402
 from app import decks  # noqa: E402
 
 AUDIT = "audit-fx"
@@ -69,7 +68,7 @@ def test_a_rate_saved_with_the_revenue_file_still_applies_and_the_audit_rate_win
     assert claim(client)["fx"]["rate"] == 0.9
 
 
-def test_replacing_the_revenue_file_does_not_wipe_the_rates(chat_api):
+def test_replacing_the_revenue_file_does_not_wipe_the_rates(chat_api):  # noqa: F811
     """The cause found: a re-upload wrote fx: {} over the saved rates, so a deck claim in USD read 'FX rate needed' again."""
     chat.upload(chat_api, "blank_vs_zero.csv")
     chat_api.put(f"/api/audits/{CHAT_AUDIT}/datasets/revenue/mapping", json={"fx": {"USD": 0.9}, "billing_terms": {}})
@@ -105,7 +104,7 @@ def test_item6_artefact_usd_market_size_is_converted_at_the_rate_saved_with_the_
     assert row["value"] * row["fx"]["rate"] == pytest.approx(46_800_000_000)
 
 
-def test_item6_artefact_the_converted_market_size_survives_replacing_the_revenue_file(chat_api):
+def test_item6_artefact_the_converted_market_size_survives_replacing_the_revenue_file(chat_api):  # noqa: F811
     """Same row after the analyst replaces the revenue file: the rate saved at the mapping step must still convert it."""
     chat.upload(chat_api, "blank_vs_zero.csv")
     chat_api.db["audits"].docs[0]["as_of_month"] = "2026-06"

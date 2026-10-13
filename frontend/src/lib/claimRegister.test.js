@@ -178,4 +178,16 @@ describe("the columns and the gate of verdict-and-memo.md sections 2 and 3", () 
     expect(() => gateEdit(none, { threshold: "", budget: "", date: "", metricName: "x".repeat(101), direction: "" })).toThrow("at most 100");
     expect(gateEdit(ARR_ROW, { threshold: "", budget: "", date: "", metricName: "ignored", direction: "at most" })).toEqual({});
   });
+
+  test("the metric and direction are asked wherever the server needs them for the gate: every row with no metric of the app", () => {
+    const qualified = { ...ARR_ROW, claim_type: "users", metric: null, evidence_label: "Unsupported", observed_value: null,
+      reason: "deck label 'registered institutions' is not paying customers; the analyst can edit the type to Customers to test it" };
+    expect(needsMetricName(qualified)).toBe(true);
+    expect(needsMetricName({ ...qualified, reason: "direction only: the claim states no figure to test" })).toBe(true);
+    expect(needsMetricName({ ...qualified, reason: "turnover or volume: confirm Revenue or Volume" })).toBe(true);
+    expect(needsMetricName({ ...ARR_ROW, evidence_label: "Unverified", reason: "FX rate needed: GBP→EUR" })).toBe(false);
+    expect(gateEdit(qualified, { threshold: "40", budget: "the plan", date: "2024-06-30", metricName: "Registered institutions", direction: "at least" }))
+      .toEqual({ gate_threshold: 40, gate_budget_decision: "the plan", gate_date: "2024-06-30", gate_metric_name: "Registered institutions",
+        gate_direction: "at least" });
+  });
 });

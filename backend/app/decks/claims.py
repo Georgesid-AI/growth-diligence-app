@@ -97,6 +97,13 @@ _FAMILIES = [
     ("ltv_cac", r"\bLTV\s*(?:/|:|\bto\b)\s*CAC\b"),
     ("trials_per_day", r"(?i:\btrials?\s*(?:per|/)\s*day\b)"),
 ]
+# A customers noun that one of these words precedes, in its own cell or phrase, within QUALIFIER_REACH words and with no figure
+# between them, counts people who are not paying customers ("Registered Institutions", "40 trial accounts"): the figure is Users,
+# and the word, lower case, is kept as the candidate's "qualifier" (George, 2026-10-13). "Target 500 customers" is a plan target:
+# the qualifier is the figure's, not the noun's, and the claim stays Customers.
+QUALIFIERS = ("registered", "signed-up", "sign-ups", "signups", "onboarded", "waitlist", "waitlisted", "pipeline", "target",
+              "targeted", "addressable", "potential", "prospective", "trial", "free")
+QUALIFIER_REACH = 3
 _KEYWORDS = [(family, re.compile(rx)) for family, rx in _FAMILIES]
 _NOUN_KEYWORDS = [(family, rx) for family, rx in _KEYWORDS if family in ("customers", "users")]
 _GROWTH_OF = {"revenue": "revenue_growth", "users": "user_growth"}
@@ -515,6 +522,49 @@ def _type(keyword: Dict, keywords: List[Dict], unit: Optional[str] = "%") -> str
     return noun["family"] if noun else "growth"
 
 
+_PHRASE_BREAK = re.compile(r"[|;:,.()\[\]•·\n]")      # a table cell or a phrase ends here
+
+
+def _qualifier(text: str, noun: Dict) -> Optional[str]:
+    """The QUALIFIERS word nearest before a customers noun, in the noun's own cell or phrase, within QUALIFIER_REACH words and
+    with no figure between them."""
+    phrase = _PHRASE_BREAK.split(text[:noun["start"]])[-1]
+    for word in reversed(phrase.split()[-QUALIFIER_REACH:]):
+        if any(ch.isdigit() for ch in word):
+            return None
+        word = word.strip("\"'“”‘’*-–—/").lower()
+        if word in QUALIFIERS:
+            return word
+    return None
+
+
+def _typed(text: str, keyword: Dict, keywords: List[Dict], unit: Optional[str] = "%") -> Tuple[str, Optional[str]]:
+    """(claim type, qualifier) of a keyword in `text`: its type, but Users and the qualifier when the customers noun that types
+    it is qualified ("Registered Institutions")."""
+    family = _type(keyword, keywords, unit)
+    if family != "customers":
+        return family, None
+    noun = keyword if keyword["family"] == "customers" else \
+        _nearest([k for k in keywords if k["family"] in ("revenue", "users", "customers")], keyword)
+    qualifier = _qualifier(text, noun)
+    return ("users", qualifier) if qualifier else (family, None)
+
+
+def qualifier_of(text: str) -> Optional[str]:
+    """The qualifier of the first qualified customers noun in `text` ("Registered Institutions": "registered"); None if none. How
+    a model-read claim of type Customers is checked (deck-parser.md section 2, amended 2026-10-13)."""
+    return next((q for k in _keywords(text) if k["family"] == "customers" for q in [_qualifier(text, k)] if q), None)
+
+
+def qualified_label(text: str, qualifier: str) -> str:
+    """'registered institutions': the qualifier and the customers noun it qualifies in `text`, lower case; the qualifier alone when
+    the text no longer holds the pair. Both words come from closed lists (QUALIFIERS and the customers keywords)."""
+    for k in _keywords(text):
+        if k["family"] == "customers" and _qualifier(text, k) == qualifier:
+            return f"{qualifier} {' '.join(text[k['start']:k['end']].lower().split())}"
+    return qualifier
+
+
 def _distance(a: Dict, b: Dict) -> int:
     return max(0, a["start"] - b["end"], b["start"] - a["end"])
 
@@ -571,8 +621,8 @@ def _is_heading(text: str) -> bool:
     return bool(_WORD.search(text)) and len(text) <= HEADING_MAX and not find_numbers(text, find_dates(text))
 
 
-def _borrow_keyword(texts: Iterable[str], nearest: bool = True) -> Optional[Tuple[str, str, str]]:
-    """(family, text, heading) of the heading that names the type; the heading is the one line of the text that holds
+def _borrow_keyword(texts: Iterable[str], nearest: bool = True) -> Optional[Tuple[str, str, str, Optional[str]]]:
+    """(family, text, heading, qualifier) of the heading that names the type; the heading is the one line of the text that holds
     the keyword (the text itself when it is one line). With `nearest` only the nearest heading counts (docs/specs/
     deck-parser.md section 2): the closest text on the page that is a heading or holds a keyword (the first in the
     order given when the file has no layout); when it names no type the figure has none. Without it the first text
@@ -586,7 +636,8 @@ def _borrow_keyword(texts: Iterable[str], nearest: bool = True) -> Optional[Tupl
     for text in texts[:1]:
         found = _keywords(text)
         if found:
-            return _type(found[0], found), text, _heading(text, found[0]["start"], found[0]["end"])
+            family, qualifier = _typed(text, found[0], found)
+            return family, text, _heading(text, found[0]["start"], found[0]["end"]), qualifier
     return None
 
 
@@ -622,14 +673,15 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
         return next((r for s, e, r in refs if s <= pos < e), refs[0][2])
 
     def claim(pos, family, value=None, high=None, unit=None, currency=None, date=None, label=None, date_from=None,
-              stated=False, period_text=None, type_from="line", direction=None):
+              stated=False, period_text=None, type_from="line", direction=None, qualifier=None):
         # "_stated": the date is the figure's own, its column header's or its box's period, not one
         # borrowed by position; only stated periods are compared for a deck inconsistency.
         return {"claim_type": family, "value": value, "value_high": high, "unit": unit, "currency": currency,
                 "target_date": date, "period_text": period_text if date else None, "snippet": _snippet(line, pos),
                 "label_from": label and _label(label),
                 "date_from": date_from and date_from != label and _label(date_from) or None, "sources": [ref_at(pos)],
-                "type_from": None if family == UNKNOWN else type_from, "claim_direction": direction, "_stated": stated}
+                "type_from": None if family == UNKNOWN else type_from, "claim_direction": direction, "_stated": stated,
+                **({"qualifier": qualifier} if qualifier else {})}
 
     out = []
     for n in numbers:
@@ -637,10 +689,11 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
         header = headers.get(ref_at(n["pos"]).get("col"))
         nearby = [header] if header else []
         borrowed = None if own else _borrow_keyword(nearby, nearest=False) or _borrow_keyword(context)
+        qualifier = None
         if own:
-            family = _type(own, keywords, n["unit"])
+            family, qualifier = _typed(line, own, keywords, n["unit"])
         elif borrowed:
-            family = borrowed[0]
+            family, qualifier = borrowed[0], borrowed[3]
         elif date_words or _borrow_keyword(nearby + context, nearest=False):
             # No line and no nearest heading names a type: not guessed. A date word, or a keyword only further away,
             # keeps the figure as a candidate.
@@ -675,7 +728,7 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
                          own_date["date"] if own_date else date and date[0],
                          label=borrowed and borrowed[2], date_from=date and date[1], stated=stated,
                          period_text=own_date["text"] if own_date else date and date[2],
-                         type_from="line" if own else "heading"))
+                         type_from="line" if own else "heading", qualifier=qualifier))
     if numbers:
         return out
     if dates:
@@ -692,10 +745,11 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
         # "Positive EBITDA" above or beside a date: a direction, and no figure.
         said = _DIRECTION.search(line if keywords else borrowed[2] if borrowed else "") \
             if "ebitda" in (family, *(k["family"] for k in keywords)) else None
-        return [claim(d["start"], _type(_nearest(keywords, d), keywords) if keywords else family, date=d["date"],
+        typed = [_typed(line, _nearest(keywords, d), keywords) if keywords else (family, None) for d in dates]
+        return [claim(d["start"], kind, date=d["date"],
                       label=family not in ("product", UNKNOWN) and borrowed[2] or None, stated=True, period_text=d["text"],
-                      type_from="line" if keywords else "heading", direction=said and said.group(1).lower())
-                for d in dates if d["kind"] != "year" or keywords]
+                      type_from="line" if keywords else "heading", direction=said and said.group(1).lower(), qualifier=qualifier)
+                for d, (kind, qualifier) in zip(dates, typed) if d["kind"] != "year" or keywords]
     # No figure at all: a product line ("Launch the API", a roadmap bullet) or a break-even
     # milestone ("Positive EBITDA") takes a nearby date.
     own = _nearest(keywords, {"start": 0, "end": len(line)})
@@ -839,17 +893,17 @@ def _bar_labels(units: List[Dict]) -> Dict[int, str]:
             pages.setdefault(u["page"], []).append(u)
     for members in pages.values():
         labels = [u for u in members if _period_only(u["text"]) and find_dates(u["text"])[0]["kind"] == "year"]
-        rows = [[l for l in labels if abs(l["bbox"][1] - top["bbox"][1]) < BAR_ROW] for top in labels]
-        axis = [l for row in rows if len(row) >= 2 for l in row]
+        rows = [[label for label in labels if abs(label["bbox"][1] - top["bbox"][1]) < BAR_ROW] for top in labels]
+        axis = [label for row in rows if len(row) >= 2 for label in row]
         for u in members:
             if u in labels or not find_numbers(u["text"], find_dates(u["text"])):
                 continue
             x0, y0, x1, y1 = u["bbox"]
-            under = [l for l in axis if l["bbox"][1] >= y1 - 0.005 and l["bbox"][1] - y1 <= BAR_REACH
-                     and l["bbox"][0] < x1 and x0 < l["bbox"][2]]
+            under = [label for label in axis if label["bbox"][1] >= y1 - 0.005 and label["bbox"][1] - y1 <= BAR_REACH
+                     and label["bbox"][0] < x1 and x0 < label["bbox"][2]]
             if under:
                 centre = (x0 + x1) / 2
-                best = min(under, key=lambda l: (abs((l["bbox"][0] + l["bbox"][2]) / 2 - centre), l["bbox"][1]))
+                best = min(under, key=lambda label: (abs((label["bbox"][0] + label["bbox"][2]) / 2 - centre), label["bbox"][1]))
                 out[id(u)] = best["text"]
     return out
 
@@ -1137,7 +1191,7 @@ def detect_candidates(blocks: List[Dict], file: str, fiscal_year_end: int = 12) 
         for c in found:
             c["reading"] = [round(box[1], 3), round(box[0], 3)] if box else None      # top, left: the reading order
             key = (c["claim_type"], c["value"], c["value_high"], c["unit"], c["currency"], c["target_date"],
-                   c["period_start"], c["period_end"], c.get("channel"),
+                   c["period_start"], c["period_end"], c.get("channel"), c.get("qualifier"),
                    tuple((i["value"], i["value_high"], i["target_date"], i["period_start"], i["period_end"])
                          for i in c.get("by_period") or ()))
             if key not in merged:
@@ -1241,10 +1295,11 @@ def _flag_inconsistencies(candidates: List[Dict]) -> None:
     for i, c in enumerate(candidates):
         for v in claim_values(c):
             if v["value"] is not None and v["target_date"] and v["_stated"]:
-                key = (c["claim_type"], deck_label(c), v["target_date"], (v["period_start"], v["period_end"]), c["currency"],
-                       c["unit"] if c["unit"] in ("%", "x") else None)
+                # a qualified count ("Registered Institutions") is never compared with plain users
+                key = (c["claim_type"], deck_label(c), c.get("qualifier"), v["target_date"], (v["period_start"], v["period_end"]),
+                       c["currency"], c["unit"] if c["unit"] in ("%", "x") else None)
                 seen.setdefault(key, []).append((i, (v["value"], v["value_high"]), _figure_of(c, v)))
-    for (_, _, stated, _, _, _), found in seen.items():
+    for (_, _, _, stated, _, _, _), found in seen.items():
         if len({value for _, value, _ in found}) > 1:
             for i, value, mine in found:
                 dates = candidates[i].setdefault("inconsistent_dates", [])

@@ -714,6 +714,18 @@ def test_an_ambiguous_figure_reaches_its_row_with_both_readings_and_the_default_
     assert [r["ai_label"] for r in rows] == ["Verified"] * 3
 
 
+def test_a_model_read_customers_figure_with_a_qualified_label_is_users_as_the_parser_reads_it():
+    """George, 2026-10-13: the qualifier rule of deck-parser.md section 2 applies to model-read claims too, on the row's header
+    cell and on the figure's own cell. "Paying customers" and a plan target ("Target 500 customers") stay Customers."""
+    table = v._struct([["", "Y/E 23", "Y/E 24"], ["Registered Institutions", "2", "25"], ["Paying customers", "10", "20"]])
+    labels = [_label(f"i{n}", "customers", unit="count", period=p) for n, p in zip(range(1, 5), ["Y/E 23", "Y/E 24"] * 2)]
+    assert [(r["value"], r["claim_type"], r.get("qualifier")) for r in _rows(table, labels)] == [
+        (2, "users", "registered"), (25, "users", "registered"), (10, "customers", None), (20, "customers", None)]
+    cells = v._struct([["", "Plan"], ["Partners", "25 onboarded institutions"], ["Goal", "Target 500 customers"]])
+    found = _rows(cells, [_label("i1", "customers", unit="count"), _label("i2", "customers", unit="count")])
+    assert [(r["value"], r["claim_type"], r.get("qualifier")) for r in found] == [(25, "users", "onboarded"), (500, "customers", None)]
+
+
 def test_a_model_row_records_where_its_type_came_from_and_where_it_sits_for_the_confidence_and_the_order():
     """A header cell names the type of a model row ("heading"); with none, a keyword in the cell's own text does
     ("line"); otherwise nothing does and the row shows "no heading". Its place on the page comes from the parsed line

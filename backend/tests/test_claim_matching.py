@@ -119,11 +119,17 @@ def test_forecasts_and_untested_rows_rank_after_every_row_with_a_gap_and_keep_re
         "c09", "c10", "c12", "c14", "c15", "c16", "c17", "c18", "c19#1", "c26", "c29", "c30", "c33", "c34"]
 
 
-def test_a_beat_beyond_tolerance_is_contradicted_but_never_ranks_as_a_miss():
+def test_a_beat_beyond_tolerance_is_verified_and_never_ranks_as_a_miss():
     rows = register(RUNS["A"])
     beat = row_of(rows, "c08")
-    assert (beat["evidence_label"], beat["gap_kind"], beat["gap_normalised"]) == ("Contradicted", "beat", -0.25)
+    assert (beat["evidence_label"], beat["gap_kind"], beat["gap_normalised"]) == ("Verified", "beat", -0.25)
     assert beat["rank"] > row_of(rows, "c27")["rank"]          # a 1.2% miss ranks above a 25% beat
+    # amended 2026-10-13 (George): the beat keeps its gap and gloss, needs no gate and is marked (beat) in its reason
+    assert (beat["gap"], beat["gloss"], beat["shortfall"]) == (-1.0, "1 customer more (beat)", None)
+    assert beat["reason"] == "beat: observed beats the claim by 1 customer more (beat)" and cm.is_beat(beat)
+    assert beat["gate_needed"] is False
+    assert not cm.is_beat(row_of(rows, "c01")), "a beat within tolerance is plain Verified"
+    assert row_of(rows, "c06")["reason"] == "outside ±5%: a miss"
 
 
 # --- section 2: matching ---------------------------------------------------------------------------------------------
@@ -372,7 +378,60 @@ def test_another_currency_is_converted_at_the_audits_fx_rate():
                     fx={"EUR": 1.0, "USD": 0.9})
     assert row["claimed_value"] == 210000 and row["currency"] == "USD"
     assert row["gap"] == pytest.approx(189000 - 202125.48, abs=0.005) and row["gap_kind"] == "beat"
-    assert row["evidence_label"] == "Contradicted" and row["gloss"] == "€13,125 higher (beat)"
+    assert row["evidence_label"] == "Verified" and row["gloss"] == "€13,125 higher (beat)"
+
+
+def _table_rows(rows, cid):
+    """The approved candidates a deck table gives (the parser's own code, deck-parser.md section 2), and their register rows on
+    run A's data."""
+    dp = pytest.importorskip("test_deck_parser")
+    found = [{**c, "id": f"{cid}{n}", "status": "approved", "file": "deck.pptx", "order": n}
+             for n, c in enumerate(dp._found(dp._slide([], table=(rows, 1, 2))))]
+    return found, cm.build_register(found, results_for(RUNS["A"]), settings(RUNS["A"]))
+
+
+QUALIFIED = "deck label 'registered institutions' is not paying customers; the analyst can edit the type to Customers to test it"
+
+
+def test_registered_institutions_are_users_not_paying_customers_and_every_value_is_unsupported_with_the_reason():
+    """George, 2026-10-13: the deck row "Registered Institutions | - | 1 | 2 | 25 | 50" under Y/E headers."""
+    found, rows = _table_rows([["", "Y/E 21", "Y/E 22", "Y/E 23", "Y/E 24", "Y/E 25"],
+                               ["Registered Institutions", "-", "1", "2", "25", "50"]], "r")
+    assert [(c["claim_type"], c["qualifier"], [i["value"] for i in c["by_period"]]) for c in found] == \
+        [("users", "registered", [1, 2, 25, 50])]
+    assert [(r["claim_id"], r["evidence_label"], r["reason"], r["metric"]) for r in rows] == \
+        [(f"r0#{n}", "Unsupported", QUALIFIED, None) for n in range(1, 5)]
+
+
+def test_a_qualified_users_gate_is_saved_only_with_the_analysts_metric_and_direction():
+    """Like every row with no app metric (verdict-and-memo.md section 3); the screen shows those fields for it (2026-10-13)."""
+    claim = {"claim_type": "users", "unit": None, "currency": None, "value": 40, "target_date": "2024-02",
+             "snippet": "Registered Institutions 40", "qualifier": "registered"}
+    gate = {"gate_threshold": 40.0, "gate_budget_decision": "the plan", "gate_date": "2024-06-30"}
+    bare = run_claim({**claim, "claim_inputs": {"x1": gate}})
+    assert (bare["reason"], bare["gate_saved"], bare["gate_needed"], cm.needs_metric_name(bare)) == (QUALIFIED, False, True, True)
+    named = run_claim({**claim, "claim_inputs": {"x1": {**gate, "gate_metric_name": "Registered institutions",
+                                                        "gate_direction": "at least"}}})
+    assert named["gate_saved"] and named["gate_sentence"].startswith(
+        "Before the plan, Registered institutions must be at least 40 by 2024-06-30. Not yet observed: deck label")
+
+
+def test_paying_customers_are_still_tested_against_the_customer_count():
+    found, rows = _table_rows([["", "Y/E 22", "Y/E 23"], ["Paying customers", "10", "20"]], "p")
+    assert [(c["claim_type"], c.get("qualifier")) for c in found] == [("customers", None)]
+    y22, y23 = row_of(rows, "p0#1"), row_of(rows, "p0#2")
+    assert (y22["metric"], y22["evidence_label"], y22["reason"]) == \
+        ("Customer count", "Unverified", "before Customer count's first month, 2023-01")
+    assert (y23["metric"], y23["observed_value"], y23["gap_kind"], y23["evidence_label"]) == ("Customer count", 5, "miss", "Contradicted")
+
+
+def test_the_qualified_reason_is_only_for_users_with_a_qualifier_and_an_edit_to_customers_tests_the_claim():
+    base = {"claim_type": "users", "unit": None, "currency": None, "value": 40, "target_date": "2024-02",
+            "snippet": "Registered Institutions 40"}
+    assert run_claim({**base, "qualifier": "registered"})["reason"] == QUALIFIED
+    assert run_claim(base)["reason"] == "no metric", "a users claim with no qualifier is unchanged"
+    edited = run_claim({**base, "claim_type": "customers", "qualifier": "registered", "status": "edited"})
+    assert (edited["metric"], edited["observed_value"], edited["evidence_label"]) == ("Customer count", 5, "Contradicted")
 
 
 # --- section 3 and 4: gap, gloss, tolerance --------------------------------------------------------------------------
@@ -396,7 +455,8 @@ def test_tolerance_is_five_percent_of_the_claim_or_one_point_and_the_boundary_is
 def test_a_range_is_tested_at_the_end_nearest_the_observed_value():
     base = {"claim_type": "revenue", "snippet": "ARR", "target_date": "2024-02"}
     outside_high = run_claim({**base, "value": 150000, "value_high": 180000})
-    assert outside_high["gap"] == pytest.approx(180000 - 202125.48, abs=0.005) and outside_high["evidence_label"] == "Contradicted"
+    assert outside_high["gap"] == pytest.approx(180000 - 202125.48, abs=0.005) and outside_high["evidence_label"] == "Verified"
+    assert outside_high["gap_kind"] == "beat" and cm.is_beat(outside_high), "observed above the whole range: a beat"
     outside_low = run_claim({**base, "value": 210000, "value_high": 230000})
     assert outside_low["gap"] == pytest.approx(210000 - 202125.48, abs=0.005) and outside_low["evidence_label"] == "Verified"
     inside = run_claim({**base, "value": 190000, "value_high": 210000})

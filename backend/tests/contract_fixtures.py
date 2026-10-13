@@ -6,7 +6,6 @@ A fixture that breaks the contract is a test of the contract; build it with `bro
 import copy
 from typing import Any, Dict, Optional
 
-from schemas import metrics
 from schemas.metrics import CONTRACT_VERSION
 
 

@@ -65,7 +65,7 @@
     with its citation and a 'narrative unavailable' note.
 21. Three hard blockers, and nothing else, render at the top of every audit view: the revenue file Missing
     (S16a, from the first Map; a revenue file uploaded with its mapping unconfirmed, S16d, always;
-    docs/specs/chat-upload.md §16), a top-5 claim Contradicted (a miss or a beat), and a revenue reconciliation gap
+    docs/specs/chat-upload.md §16), a top-5 claim Contradicted (a miss), and a revenue reconciliation gap
     above 2% over the window of docs/specs/chat-upload.md §6.2. Per-month gaps go in the reconciliation evidence
     table, never in the banner.
 22. Delete audit requires typing the company name and removes every document of the audit in every

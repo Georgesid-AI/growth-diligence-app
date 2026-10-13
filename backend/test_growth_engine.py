@@ -89,13 +89,17 @@ def _winrate():
     rows = []
     rid = 1
     for _ in range(8):
-        rows.append({"deal_id": rid, "stage": "won", "founder_involved": "yes", "_row": rid}); rid += 1
+        rows.append({"deal_id": rid, "stage": "won", "founder_involved": "yes", "_row": rid})
+        rid += 1
     for _ in range(2):
-        rows.append({"deal_id": rid, "stage": "lost", "founder_involved": "yes", "_row": rid}); rid += 1
+        rows.append({"deal_id": rid, "stage": "lost", "founder_involved": "yes", "_row": rid})
+        rid += 1
     for _ in range(22):
-        rows.append({"deal_id": rid, "stage": "won", "founder_involved": "no", "_row": rid}); rid += 1
+        rows.append({"deal_id": rid, "stage": "won", "founder_involved": "no", "_row": rid})
+        rid += 1
     for _ in range(68):
-        rows.append({"deal_id": rid, "stage": "lost", "founder_involved": "no", "_row": rid}); rid += 1
+        rows.append({"deal_id": rid, "stage": "lost", "founder_involved": "no", "_row": rid})
+        rid += 1
     res = ge.compute_win_rate(pd.DataFrame(rows), True)
     return 0.3, res["win_rate_pct"]
 
@@ -105,13 +109,17 @@ def _winrate_flag():
     rows = []
     rid = 1
     for _ in range(8):
-        rows.append({"deal_id": rid, "stage": "won", "founder_involved": "yes", "_row": rid}); rid += 1
+        rows.append({"deal_id": rid, "stage": "won", "founder_involved": "yes", "_row": rid})
+        rid += 1
     for _ in range(2):
-        rows.append({"deal_id": rid, "stage": "lost", "founder_involved": "yes", "_row": rid}); rid += 1
+        rows.append({"deal_id": rid, "stage": "lost", "founder_involved": "yes", "_row": rid})
+        rid += 1
     for _ in range(22):
-        rows.append({"deal_id": rid, "stage": "won", "founder_involved": "no", "_row": rid}); rid += 1
+        rows.append({"deal_id": rid, "stage": "won", "founder_involved": "no", "_row": rid})
+        rid += 1
     for _ in range(68):
-        rows.append({"deal_id": rid, "stage": "lost", "founder_involved": "no", "_row": rid}); rid += 1
+        rows.append({"deal_id": rid, "stage": "lost", "founder_involved": "no", "_row": rid})
+        rid += 1
     res = ge.compute_win_rate(pd.DataFrame(rows), True)
     return True, res["by_founder"]["with_founder"]["small_sample"]
 
@@ -562,8 +570,8 @@ def _sp_current_mix():
 @case("24-month window not computable on 14 months of history: stated, not omitted")
 def _sp_24_missing():
     sp, _, _ = _seg_paths(target_arr=1_000_000)
-    l, r = sp["landed"]["24"], sp["reverse_solve"]["24"]
-    return (False, True, False, True), (l["computable"], "24 months" in l["reason"], r["computable"], "24 months" in r["reason"])
+    landed, r = sp["landed"]["24"], sp["reverse_solve"]["24"]
+    return (False, True, False, True), (landed["computable"], "24 months" in landed["reason"], r["computable"], "24 months" in r["reason"])
 
 
 @case("24-month window computable on 26 months of history: gross rate is 3 landings / 2 years")
@@ -789,9 +797,11 @@ def _path_scenario():
     rows = []
     r = 1
     for c in ("B1", "B2", "B3", "B4"):
-        rows += monthly_lines(c, {i: 1000 for i in range(0, 25)}, start_row=r); r += 40
+        rows += monthly_lines(c, {i: 1000 for i in range(0, 25)}, start_row=r)
+        r += 40
     for c in ("L1", "L2", "L3", "L4", "L5", "L6"):
-        rows += monthly_lines(c, {i: 1000 for i in range(18, 25)}, start_row=r); r += 40
+        rows += monthly_lines(c, {i: 1000 for i in range(18, 25)}, start_row=r)
+        r += 40
     mrr, seg, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
     return ge.compute_acv_path(mrr, seg, fm, target_arr=1_200_000, target_date="2027-01-01")
 
@@ -852,7 +862,8 @@ def _path_obs_insufficient_history():
     rows = []
     r = 1
     for c in ("A", "B", "C"):
-        rows += monthly_lines(c, {i: 1000 for i in range(0, 6)}, start_row=r); r += 40
+        rows += monthly_lines(c, {i: 1000 for i in range(0, 6)}, start_row=r)
+        r += 40
     mrr, seg, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
     acv = ge.compute_acv_path(mrr, seg, fm, target_arr=1_200_000, target_date="2027-01-01")
     return (None, None), (acv["observed_net_new_per_year_12m"], acv["observed_net_new_per_year_24m"])
@@ -887,7 +898,8 @@ def _path_target_before_asof():
     rows = []
     r = 1
     for c in ("B1", "B2", "B3", "B4"):
-        rows += monthly_lines(c, {i: 1000 for i in range(0, 25)}, start_row=r); r += 40
+        rows += monthly_lines(c, {i: 1000 for i in range(0, 25)}, start_row=r)
+        r += 40
     mrr, seg, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
     acv = ge.compute_acv_path(mrr, seg, fm, target_arr=1_200_000, target_date="2025-01-15")
     ok = acv["required_net_new_per_year"] is None and acv["target_date_error"] is not None
@@ -922,13 +934,17 @@ def _path_overall_band():
 def _founder_deals():
     rows, rid = [], 1
     for _ in range(8):
-        rows.append({"deal_id": rid, "stage": "won", "founder_involved": "yes", "_row": rid}); rid += 1
+        rows.append({"deal_id": rid, "stage": "won", "founder_involved": "yes", "_row": rid})
+        rid += 1
     for _ in range(2):
-        rows.append({"deal_id": rid, "stage": "lost", "founder_involved": "yes", "_row": rid}); rid += 1
+        rows.append({"deal_id": rid, "stage": "lost", "founder_involved": "yes", "_row": rid})
+        rid += 1
     for _ in range(22):
-        rows.append({"deal_id": rid, "stage": "won", "founder_involved": "no", "_row": rid}); rid += 1
+        rows.append({"deal_id": rid, "stage": "won", "founder_involved": "no", "_row": rid})
+        rid += 1
     for _ in range(68):
-        rows.append({"deal_id": rid, "stage": "lost", "founder_involved": "no", "_row": rid}); rid += 1
+        rows.append({"deal_id": rid, "stage": "lost", "founder_involved": "no", "_row": rid})
+        rid += 1
     return pd.DataFrame(rows)
 
 
@@ -970,8 +986,10 @@ def _cycle_iqr():
 
 # --- NRR by segment / cohort + new MRR per quarter --------------------------
 def _nrr_scenario():
-    e = {i: 100 for i in range(16)}; e[15] = 120
-    s = {i: 100 for i in range(3, 16)}; s[15] = 80
+    e = {i: 100 for i in range(16)}
+    e[15] = 120
+    s = {i: 100 for i in range(3, 16)}
+    s[15] = 80
     rows = monthly_lines("E", e, segment="Ent")
     rows += monthly_lines("S", s, segment="SMB", start_row=100)
     mrr, seg, fm, _, _ = ge.build_mrr_matrix(rev_df(rows), {}, {"EUR": 1.0})
@@ -1193,7 +1211,8 @@ def _reconciliation_directions():
 @case("Reconciliation: unavailable, with the reason, when active customers have no segment (the views differ in ARR)")
 def _reconciliation_unsegmented():
     mrr, sm, fm = _seg_scenario()
-    sm = dict(sm); sm.pop("A2")                               # one active customer loses its segment
+    sm = dict(sm)
+    sm.pop("A2")                               # one active customer loses its segment
     nrr = ge.compute_nrr(mrr, sm, fm)
     acv = ge.compute_acv_path(mrr, sm, fm, 1_000_000, "2026-03-15")
     rc = ge.compute_segment_paths(mrr, sm, fm, nrr, acv, 1_000_000, "2026-03-15")["reconciliation"]["12"]

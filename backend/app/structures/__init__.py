@@ -414,6 +414,12 @@ def candidate_from_item(item: Dict, structure: Dict, deck: Dict, model_type: Opt
     }
     found = claims.period_range(item.get("period"), fiscal_year_end) if item.get("period") else None
     candidate["period_start"], candidate["period_end"] = found or (None, None)
+    if candidate["claim_type"] == "customers":
+        # A qualified customers noun in the row's header or the figure's own cell is Users, as the parser reads it
+        # (deck-parser.md section 2, George, 2026-10-13): "Registered Institutions" are not paying customers.
+        qualifier = claims.qualifier_of(label or "") or claims.qualifier_of(cell.get("text") or "")
+        if qualifier:
+            candidate.update(claim_type="users", qualifier=qualifier)
     return candidate
 
 

@@ -74,13 +74,14 @@ or a quarter). The contract test pins every key (§9).
   register start the fields from stored data, no model: the threshold is the claim's stated value in its own unit (the converted
   figure when the claim is converted); the date is the end of the claim's stated period, or the first quarterly review when the claim
   has none, and never later than the first quarterly review (with no review date set, the period end alone, else blank); a row with
-  no app metric gets the claim's name as the metric (the direction stays blank); the budget decision stays blank, with a dropdown of
+  no app metric (as defined below) gets the claim's name as the metric (the direction stays blank); the budget decision stays blank, with a dropdown of
   the decisions already saved in this audit and "Other" (a text field). The three gates with the highest value at stake are pre-marked
   key, within the limit of 5. Each prefilled field reads "prefilled – confirm" until the analyst edits it or saves. "Save all gates"
   saves every gate that is filled (prefilled or edited) in one call, all or none; a gate still missing a field is left. The prefill is
   returned beside the register (`gate_prefill`, `budget_decisions`), never in a row: the CSV and the memo show a gate as saved.
-- A row with no app metric (reason "no metric", or "metric does not fit the claim's unit") also needs the metric and
-  the direction (W22, decision Q3). The analyst types the metric (max 100 characters) and picks at least or at most.
+- A row with no app metric (no metric set, or reason "metric does not fit the claim's unit"; amended 2026-10-13, George: a
+  direction only, a turnover question and a qualified Users count are such rows too, and the screen shows them the two fields)
+  also needs the metric and the direction (W22, decision Q3). The analyst types the metric (max 100 characters) and picks at least or at most.
   The threshold is in the claim's unit. The metric name is stored beside the budget decision, never sent to a model
   or written to a log, and deleted with the audit.
 - `gate_needed` is true on every row labelled Unverified, Unsupported or Contradicted until its gate is saved (W4). A
@@ -135,7 +136,8 @@ again gives the same bytes.
 
 ### 6.2 Rule
 The outcomes are checked in this order over the confirmed top 5, and the first that matches wins:
-1. Re-plan: a top-5 claim is Contradicted (a miss or a beat), or 3 or more top-5 claims are Unsupported.
+1. Re-plan: a top-5 claim is Contradicted (a miss; a beat is Verified since 2026-10-13, claim-matching.md §4), or 3 or more
+   top-5 claims are Unsupported.
 2. Underwrite: every top-5 claim is Verified.
 3. Underwrite with gates: anything else. No top-5 claim is Contradicted, at least one is Unverified or Unsupported,
    and at most two are Unsupported.
@@ -193,8 +195,9 @@ number check skips.
    - The other four: "Not assessed – {data not ingested}" (W17) in the rating column; the headline and evidence cells
      stay empty, and no rating is ever shown, even if one is stored.
 4. Key gates and deal terms. The key gates' sentences (or W25), then W13.
-5. Worth flagging. The banner's hard blockers when present, in their S16a–d texts. Then the `worth_flagging` items of
-   the growth-engine narrative when it is current and ok, or the S17 note.
+5. Worth flagging. The banner's hard blockers when present, in their S16a–d texts. Then every Verified row that beat its
+   claim beyond tolerance, by rank, with its gloss (amended 2026-10-13, George: a large beat stays visible).
+   Then the `worth_flagging` items of the growth-engine narrative when it is current and ok, or the S17 note.
 6. Data gaps and requests. Up to five gap rows ("and {n} more in Appendix B"), then the management questions (V6
    requests).
 
@@ -270,7 +273,7 @@ analysis, the memo section (Verdict), the glossary and the disclosure (George, 2
 Every new test is first shown failing on a deliberate violation (rule 11).
 | Test | File |
 |---|---|
-| Each outcome: Underwrite; Underwrite with gates; Re-plan by a Contradicted claim (a miss, and a beat); Re-plan by 3 Unsupported; 3 Unsupported and 1 Unverified gives Re-plan; fewer than 5 rows; no rows gives no verdict | `test_verdict.py` |
+| Each outcome: Underwrite; Underwrite with gates; Re-plan by a Contradicted claim (a miss; a beat is Verified and does not); Re-plan by 3 Unsupported; 3 Unsupported and 1 Unverified gives Re-plan; fewer than 5 rows; no rows gives no verdict | `test_verdict.py` |
 | Top 5: no verdict before confirmation; the proposal is rows 1–5; a replaced row counts and the replaced one does not; a set of the wrong size is refused; a confirmed claim leaving the register voids the set; a new rank order does not; the banner still uses rows 1–5 after a replacement | `test_verdict.py`, `test_chat_upload.py` |
 | Blocked: a non-Verified top-5 claim without a gate blocks; saving its gate unblocks; a Verified top-5 claim without a gate does not block; the memo refuses while blocked | `test_verdict.py` |
 | Gate: the gate is not saved without a date; a no-metric row needs the metric name and direction; a sixth key gate is refused; a key gate on an unsaved gate is refused; with fewer than 3 saved gates every gate is key | `test_verdict.py` |
@@ -359,8 +362,8 @@ are unchanged. So W16 and W24 below read "ARR (see glossary)" at their first ARR
 
 ## 14. Consequences to know
 - The pre-sort puts every row with a gap first, so Unsupported rows and forecasts ("to go") rank after every tested
-  row. Measured: run A without its 8 Contradicted rows proposes a top 5 that is all Verified. Its 7 Unverified rows
-  (the FY2026 ARR forecast among them) and 8 Unsupported rows rank 12 to 25. They reach the top 5 only through the
+  row. Measured: run A without its 7 Contradicted rows proposes a top 5 that is all Verified. Its 7 Unverified rows
+  (the FY2026 ARR forecast among them) and 8 Unsupported rows rank 13 to 26 (2026-10-13: a beat is Verified). They reach the top 5 only through the
   analyst's replacement (§6.1).
 - Every memo reads "not yet computed" for value at risk until #6, "Not assessed" on 4 of the 6 scorecard rows, and
   at most 4 of 7 evidence categories.

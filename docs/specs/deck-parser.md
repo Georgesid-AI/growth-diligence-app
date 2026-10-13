@@ -49,7 +49,11 @@ hired, launches; of two overlapping keywords the longer one counts):
 - Retention: NRR, churn, retention
 - Sales: sales cycle, win rate, pipeline, ACV, payback, conversion, leads, and the verbs acquire, acquired, acquiring (the noun "acquisition" is no keyword since 2026-10-10: category names such as "Talent Acquisition" made Sales claims; "acquisition cost" and "cost of acquisition" stay CAC)
 - Customers: customers, clients, paying users, accounts, companies, agencies, subscribers,
-  institutions
+  institutions. A customers noun preceded, in its own cell or phrase, within 3 words and with no figure between them, by
+  registered, signed-up, sign-ups, signups, onboarded, waitlist, waitlisted, pipeline, target, targeted, addressable,
+  potential, prospective, trial or free (any case) is Users, and the word is kept lower case as the candidate's
+  `qualifier` ("Registered Institutions": Users, qualifier "registered"; "Target 500 customers by 2025", a plan target,
+  stays Customers; 2026-10-13, George, see the amendment at the end)
 - Users: users
 - Gross margin: margin, margins
 - Gross profit: gross profit; also a gross margin given as an amount ("Gross margin £1.2M")
@@ -506,3 +510,16 @@ Fixed on the 10 test decks (2026-10-05):
 Use of funds is its own section on screen (group 8) and Acquisition channels a new one (group 7), both directly above Other (now group 9); Unknown (6)
 and Other (9) start collapsed, so "Groups 6 and 7 start collapsed" in section 6 reads "6 and 9". The new claim type, Approve all and the spacing are specified in
 docs/specs/chat-upload.md section 17.
+
+## Amended 2026-10-13 (George): non-paying customer labels
+A customers noun that a qualifier precedes with no figure between them (section 2: "Registered Institutions", "40 trial accounts",
+"pipeline companies"; not "Target 500 customers") counts people who are not paying customers: the figure is typed Users and keeps the qualifier as `qualifier` (one word of the closed
+list, never other deck text; not gateway-readable). Two figures that differ only by the qualifier are neither merged nor compared
+for a deck inconsistency. In the register a Users claim with a qualifier is Unsupported, reason "deck label '{qualifier} {noun}'
+is not paying customers; the analyst can edit the type to Customers to test it" (claim-matching.md section 4); an edit to
+Customers tests it as any customers claim. A claim with no qualifier is unchanged. Tests: `test_deck_parser.py` (each qualifier,
+the 3-word reach, the phrase break, a column header, zero2hero p19), `test_claim_matching.py` (the row "Registered Institutions |
+- | 1 | 2 | 25 | 50" and "Paying customers | 10 | 20"), `test_gateway_data_boundary.py` (the reason holds two closed words; the
+qualifier reaches no gateway read, payload or log).
+The same rule applies to a model-read claim (structure-labelling.md): one the model labels `customers` whose row header or own
+cell holds a qualified customers noun is Users with its `qualifier`, so it is tested like the parser's and merges with it.

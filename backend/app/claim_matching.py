@@ -43,6 +43,10 @@ ACQUISITION_NOTE = "acquisition channels: a count per platform, no engine metric
 # Claim types that are never matched, ranked, gated or put in the top 5, with the closed sentence each register row carries.
 UNTESTED_TYPES = {USE_OF_FUNDS: USE_OF_FUNDS_NOTE, ACQUISITION_CHANNELS: ACQUISITION_NOTE}
 DIRECTION_ONLY = "direction only: the claim states no figure to test"
+BEAT_PREFIX = "beat: observed beats the claim by "       # the reason of a Verified beat outside tolerance, its gloss follows
+# A Users claim the parser typed from a qualified customers noun (deck-parser.md section 2, George, 2026-10-13); the label is
+# two words of closed lists: the qualifier and the customers keyword.
+QUALIFIED_REASON = "deck label '{label}' is not paying customers; the analyst can edit the type to Customers to test it"
 SUGGESTION = "AI suggestion, not verified"
 ANALYST_ENTERED = "analyst-entered"
 DAYS_PER_WEEK, DAYS_PER_MONTH = 7.0, 30.44
@@ -443,6 +447,12 @@ def _claimed_text(c: dict) -> str:
     return text
 
 
+def needs_metric_name(row: dict) -> bool:
+    """Whether a row's gate is saved only with the analyst's metric name and direction: the row has no app metric (none set, or
+    one that does not fit the claim's unit). The screen asks for the two fields by the same rule."""
+    return row.get("metric") not in METRICS or row.get("reason") in NO_APP_METRIC
+
+
 def _is_saved(inputs: dict, needs_name: bool) -> bool:
     """Threshold, budget decision and date are all filled; a row with no app metric also needs the metric and the direction."""
     saved = inputs.get("gate_threshold") is not None and bool(inputs.get("gate_budget_decision")) and bool(inputs.get("gate_date"))
@@ -705,6 +715,9 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         out["gate_needed"] = False
         return out
     if not spec:
+        from .decks.claims import QUALIFIERS, qualified_label
+        if out["claim_type"] == "users" and c.get("qualifier") in QUALIFIERS:
+            return finish("Unsupported", QUALIFIED_REASON.format(label=qualified_label(text, c["qualifier"])))
         return finish("Unsupported", "no metric")
     if metric == VOLUME:                        # never matched to engine revenue; the take rate is derived, never Verified
         if turn and turn["file_revenue"] is not None and low and not c.get("value_high"):
@@ -779,7 +792,9 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         return finish("Unverified", "deck reading: AI suggestion, not verified until the analyst edits the claim")
     if verified:
         return finish("Verified", f"within {out['tolerance']} of the claim")
-    return finish("Contradicted", f"outside {out['tolerance']}: a {'miss' if kind == 'miss' else 'beat'}")
+    if kind == "beat":                          # amended 2026-10-13 (George): a beat is Verified, marked (beat), not Contradicted
+        return finish("Verified", f"{BEAT_PREFIX}{out['gloss']}")
+    return finish("Contradicted", f"outside {out['tolerance']}: a miss")
 
 
 def _gate(out: dict, c: dict, inputs: dict, spec: Optional[dict], claim_unit: Optional[str], results: dict,
@@ -787,7 +802,7 @@ def _gate(out: dict, c: dict, inputs: dict, spec: Optional[dict], claim_unit: Op
     """The gate of a row (verdict-and-memo.md section 3): saved when threshold, budget decision and date are filled (and, for a
     row with no app metric, the metric name and the direction). Nothing is proposed. Sets gate_saved, gate_sentence,
     gate_needed and key_gate; reads the label and the reason `finish` has just set."""
-    app_metric = out["reason"] not in NO_APP_METRIC and spec is not None
+    app_metric = not needs_metric_name(out)
     saved = _is_saved(inputs, needs_name=not app_metric)
     out["gate_saved"] = saved
     out["key_gate"] = bool(inputs.get("key_gate")) and saved
@@ -818,7 +833,7 @@ def _observe(figures: "_Figures", spec: dict, metric: str, start: Optional[int],
     """(observed, observed_at, source, reason) read as table 2b says. `observed` is a number, None, or a
     "Label|reason" verdict string when the claim cannot be tested; None with observed_at "missing" when the engine
     holds no figure for the metric at all."""
-    results, kind = figures.results, spec["kind"]
+    kind = spec["kind"]
     if as_of_i is None:
         return None, "missing", None, None
     forecast = end is not None and end > as_of_i
@@ -1001,6 +1016,11 @@ def turnover_views(candidates: List[dict], results: Optional[dict], settings: di
         out.setdefault(c["id"], []).append({**{k: row[k] for k in TURNOVER_VIEW_FIELDS},
                                             "file_note": None if covered is not None else NO_FILE_PERIOD})
     return out
+
+
+def is_beat(row: dict) -> bool:
+    """A Verified row whose observed figure beat the claim beyond tolerance (section 4): listed under Worth flagging."""
+    return row.get("evidence_label") == "Verified" and str(row.get("reason") or "").startswith(BEAT_PREFIX)
 
 
 def label_counts(rows: List[dict]) -> Dict[str, int]:

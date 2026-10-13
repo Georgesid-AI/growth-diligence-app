@@ -1276,7 +1276,8 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             "implied_take_rate", "implied_take_rate_source", "turnover_suggested", "deck_revenue_note", "period_basis", "inconsistencies",
                             "turnover_views", "file_note", "NO_FILE_PERIOD",
                             "inconsistent_dates", "mixed_slide", "USE_OF_FUNDS_NOTE", "MIXED_SLIDE", "ACQUISITION_NOTE", "ACQUISITION_CHANNELS",
-                            "UNTESTED_TYPES", "channel", "auto_accepted", *MATCHING_SERVER_ONLY})
+                            "UNTESTED_TYPES", "channel", "auto_accepted", "BEAT_PREFIX", "is_beat", "beat_text",
+                            "qualifier", "QUALIFIERS", "QUALIFIED_REASON", "qualified_label", *MATCHING_SERVER_ONLY})
 # The functions that log about the register, and the only things their log calls may name.
 REGISTER_LOGGERS = frozenset({"_claim_rows", "claim_register", "claim_register_csv", "update_claim_inputs", "answer_turnover",
                               "approve_all_candidates"})
@@ -1421,6 +1422,56 @@ def test_the_fx_reason_names_two_currency_codes_and_the_new_candidate_fields_are
     assert not {"period_basis", "inconsistencies", "inconsistent_dates"} & decks.GATEWAY_READABLE_FIELDS
 
 
+def test_the_beat_reason_is_the_closed_prefix_and_the_gloss_and_holds_no_deck_text():
+    """A beat outside tolerance (claim-matching.md section 4, 2026-10-13) is Verified with reason "beat: observed beats the claim
+    by {gloss}": the gloss is a figure and closed words (section 3), so a sentinel in the snippet or the label reaches no field."""
+    sentinel = "Zephyr Holdings"
+    row = {"id": "x1", "status": "approved", "claim_type": "revenue", "value": 100.0, "currency": "EUR", "target_date": "2026-12",
+           "period_text": "Dec 2026", "snippet": f"{sentinel} ARR EUR 100", "label_from": f"{sentinel} ARR", "file": "deck.pptx",
+           "order": 0, "sources": [{"file": "deck.pptx", "slide": 3}]}
+    from app.decks import claims as deck_claims
+    deck_claims.resolve_period(row, 12)
+    results = {**_results_with_the_series(), "mrr_series": {"months": ["2026-12"], "segments": [], "source": SOURCE,
+                                                            "data": [{"month": "2026-12", "total": 500.0}]}}
+    out = claim_matching.build_register([row], results, {"fiscal_year_end": 12, "reporting_currency": "EUR", "fx": {"EUR": 1.0}})[0]
+    assert (out["evidence_label"], out["gap_kind"]) == ("Verified", "beat"), out["reason"]
+    assert out["reason"] == claim_matching.BEAT_PREFIX + out["gloss"]
+    assert re.fullmatch(r"€[\d,]+ higher \(beat\)", out["gloss"]), out["gloss"]
+    assert sentinel not in json.dumps(out, default=str)
+
+
+def test_the_qualified_users_reason_holds_two_closed_words_and_the_qualifier_never_reaches_the_gateway_or_a_log(caplog):
+    """A customers noun with a qualifier is Users (deck-parser.md section 2, George, 2026-10-13). The register reason names the
+    qualifier and the noun, both from closed lists (QUALIFIERS, the customers keywords); the rest of the row label (a sentinel
+    here) reaches no register field. `qualifier` is not gateway-readable: run over a database holding the candidate, nothing
+    the gateway reads, sends or logs carries the sentinel or the reason."""
+    import logging
+    from app.decks import claims as deck_claims
+    sentinel = "Zephyr"
+    assert "qualifier" not in decks.GATEWAY_READABLE_FIELDS
+    found, = deck_claims.line_candidates(f"{sentinel} registered institutions 40", [(0, 40, {"file": "deck.pptx", "slide": 3,
+                                                                                              "kind": "text"})])
+    assert (found["claim_type"], found["qualifier"]) == ("users", "registered") and sentinel in found["snippet"], "fixture"
+    row = {**found, "id": "x1", "status": "approved", "file": "deck.pptx", "order": 0, "target_date": "2026-12"}
+    deck_claims.resolve_period(row, 12)
+    out = claim_matching.build_register([row], RESULTS, {"fiscal_year_end": 12, "reporting_currency": "EUR", "fx": {"EUR": 1.0}})[0]
+    nouns = r"customers?|clients?|paying users?|accounts?|compan(?:y|ies)|agenc(?:y|ies)|subscribers?|institutions?"
+    words = "|".join(re.escape(q) for q in deck_claims.QUALIFIERS)
+    closed = re.escape(claim_matching.QUALIFIED_REASON).replace(re.escape("{label}"), f"(?:{words}) (?:{nouns})")
+    assert re.fullmatch(closed, out["reason"]), out["reason"]
+    assert out["evidence_label"] == "Unsupported" and sentinel not in json.dumps(out, default=str)
+    db, reads = _recording_db()
+    db[decks.CANDIDATES_COLLECTION].docs.append({**row, "audit_id": RUN_ID})
+    adapter = t.FakeAdapter(replies=[json.dumps(NARRATIVE)])
+    with caplog.at_level(logging.DEBUG):
+        asyncio.run(gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=adapter, sleep=t._noop_sleep))
+    returned = json.dumps([doc for _, _, doc in reads], ensure_ascii=False, default=str)
+    logs = caplog.text + "".join(r.getMessage() for r in caplog.records)
+    for where, text in (("read by the gateway", returned), ("sent to the provider", adapter.payloads[0]), ("logged", logs)):
+        assert sentinel not in text and '"qualifier"' not in text, f"the row label or its qualifier was {where}"
+        assert "is not paying customers" not in text, f"the register reason was {where}"
+
+
 def test_the_use_of_funds_reason_is_a_closed_sentence_and_mixed_slide_and_the_note_never_reach_the_gateway_or_a_log(caplog):
     """Use of funds (deck-parser.md section 2): the register reason is one fixed sentence, `mixed_slide` is a layout flag of the
     parser, and the inconsistency note holds a category name from the deck. None of them is gateway-readable; run over a
@@ -1509,7 +1560,6 @@ import logging  # noqa: E402
 
 import test_chat_upload as chat  # noqa: E402
 from test_chat_upload import api  # noqa: E402,F401  (the fixture)
-from app import column_rules, usage as usage_mod  # noqa: E402
 
 FIXTURE_CELLS = ("Alder Works", "Birch Labs", "Cedar Foods", "Dune Print", "Elm Studio", "Fern Tools", "Birch Labs Ltd",
                  "C-100", "C-101", "C-102", "C-103", "C-104", "Quarterly revenue export", "Large", "Small", "Gold", "Silver")
@@ -1520,7 +1570,7 @@ def _all_documents(db):
     return {name: json.dumps(col.docs, default=str) for name, col in db._cols.items()}
 
 
-def test_chat_the_mapping_text_holds_only_the_columns_the_rules_could_not_decide_from_at_most_20_rows(api):
+def test_chat_the_mapping_text_holds_only_the_columns_the_rules_could_not_decide_from_at_most_20_rows(api):  # noqa: F811
     rows = "\n".join(f"Customer {i},2024-01-{i % 27 + 1:02d},{100 + i},EUR,note {i} {chr(97 + i % 26)}" for i in range(60))
     chat.upload(api, "wide.csv", ("Customer ID,Invoice Date,Amount,Currency,Remarks\n" + rows + "\n").encode())
     text = chat.model_text(api)
@@ -1533,7 +1583,7 @@ def test_chat_the_mapping_text_holds_only_the_columns_the_rules_could_not_decide
 
 
 @pytest.mark.parametrize("name", ["duplicate_ids_header_row3.csv", "blank_vs_zero.csv", "mixed_currency.csv"])
-def test_chat_no_fixture_customer_name_and_no_text_cell_reaches_the_model(api, name):
+def test_chat_no_fixture_customer_name_and_no_text_cell_reaches_the_model(api, name):  # noqa: F811
     chat.upload(api, name)
     text = chat.model_text(api)
     assert structure_redact.column_text_problem(text) is None
@@ -1541,7 +1591,7 @@ def test_chat_no_fixture_customer_name_and_no_text_cell_reaches_the_model(api, n
         assert cell.lower() not in text.lower(), cell
 
 
-def test_chat_a_customer_alias_column_sends_a_profile_only_even_when_its_values_are_numbers(api):
+def test_chat_a_customer_alias_column_sends_a_profile_only_even_when_its_values_are_numbers(api):  # noqa: F811
     csv = "Date,Amount,Currency,Customer ID,Customer ID\n" + "\n".join(
         f"2024-01-{i + 1:02d},{50 + i},EUR,{70000 + i},{81000 + i}" for i in range(8)) + "\n"
     chat.upload(api, "numeric_ids.csv", csv.encode())
@@ -1552,7 +1602,7 @@ def test_chat_a_customer_alias_column_sends_a_profile_only_even_when_its_values_
 
 
 @pytest.mark.parametrize("name", [n + ".csv" for n in FIXTURE_FILES])
-def test_chat_no_collection_holds_the_sent_text_after_an_upload_with_consent(api, name):
+def test_chat_no_collection_holds_the_sent_text_after_an_upload_with_consent(api, name):  # noqa: F811
     chat.upload(api, name)
     texts = [json.loads(p)["text"] for p in api.state["adapter"].payloads]
     assert texts, "the model was asked"
@@ -1567,7 +1617,7 @@ def test_chat_no_collection_holds_the_sent_text_after_an_upload_with_consent(api
                           "error_type"} for c in calls)
 
 
-def test_chat_log_lines_hold_no_file_name_header_cell_value_company_name_or_note(api, caplog):
+def test_chat_log_lines_hold_no_file_name_header_cell_value_company_name_or_note(api, caplog):  # noqa: F811
     caplog.set_level(logging.INFO)
     note = "Adj is not the type"
     for name in FIXTURE_FILES:
@@ -1588,7 +1638,7 @@ def test_chat_log_lines_hold_no_file_name_header_cell_value_company_name_or_note
         assert secret not in log, f"{secret!r} reached a log line"
 
 
-def test_chat_the_counters_and_the_totals_hold_no_file_name_cell_value_or_company_name_and_header_text_only_in_a_note(api):
+def test_chat_the_counters_and_the_totals_hold_no_file_name_cell_value_or_company_name_and_header_text_only_in_a_note(api):  # noqa: F811
     note = "Adj is not the type"
     chat.upload(api, "blank_vs_zero.csv")
     api.post(f"/api/audits/{chat.AUDIT}/datasets/revenue/decisions", json=[
@@ -1613,14 +1663,14 @@ def test_chat_the_counters_and_the_totals_hold_no_file_name_cell_value_or_compan
     ("see blank_vs_zero", True), ("see blank_vs_zero.csv", True), ("Alder is wrong", True),
     ("Fixture Target Ltd", True), ("Northbridge Capital", True), ("ENG-2026-041", True),
 ])
-def test_chat_an_other_note_is_refused_for_a_digit_a_file_name_a_cell_text_a_name_or_length(api, note, refused):
+def test_chat_an_other_note_is_refused_for_a_digit_a_file_name_a_cell_text_a_name_or_length(api, note, refused):  # noqa: F811
     chat.upload(api, "blank_vs_zero.csv")
     r = api.post(f"/api/audits/{chat.AUDIT}/datasets/revenue/decisions", json=[
         {"column": "Adj", "action": "correct", "field": "revenue_type", "reason": "other", "note": note}])
     assert (r.status_code == 400) is refused, r.text
 
 
-def test_chat_a_note_that_quotes_a_header_is_kept_including_a_header_holding_a_cell_word_and_one_with_a_digit_is_refused(api):
+def test_chat_a_note_that_quotes_a_header_is_kept_including_a_header_holding_a_cell_word_and_one_with_a_digit_is_refused(api):  # noqa: F811
     head = "Customer ID,Invoice Date,Amount,Currency,Segment,Large Account Flag,Plan 2024\nAlder Works,2024-01-01,5,EUR,Large,x,y\n"
     chat.upload(api, "h.csv", head.encode())
     ok = lambda note, col: api.post(f"/api/audits/{chat.AUDIT}/datasets/revenue/decisions", json=[  # noqa: E731
@@ -1630,7 +1680,7 @@ def test_chat_a_note_that_quotes_a_header_is_kept_including_a_header_holding_a_c
     assert ok("Segment is not needed", "Large Account Flag").status_code == 200, "a quoted header with no digit"
 
 
-def test_chat_a_kept_note_is_found_only_in_the_usage_counters_and_the_totals(api, caplog):
+def test_chat_a_kept_note_is_found_only_in_the_usage_counters_and_the_totals(api, caplog):  # noqa: F811
     caplog.set_level(logging.INFO)
     note = "Adj is not the type"
     chat.upload(api, "blank_vs_zero.csv")
@@ -1697,7 +1747,6 @@ def test_a_payload_that_breaks_the_contract_reaches_no_provider_and_no_log_line_
 # ---------------------------------------------------------------------------
 import test_claim_register_api as register_api_tests  # noqa: E402
 from test_claim_register_api import api as register_api  # noqa: E402,F401  (the fixture)
-from app import verdict as verdict_module, ic_memo as memo_module  # noqa: E402
 
 IC_SENTINELS = ("the Falcon hiring plan", "Zephyr pipeline cover", "Quartz thesis plan", "Basalt thesis evidence", "Opal thesis condition")
 VERDICT_LOGGERS = frozenset({"get_verdict", "export_memo"})
@@ -1771,7 +1820,7 @@ def _with_the_analysts_inputs(client, db):
     assert r.status_code == 200, r.text
 
 
-def test_the_analysts_inputs_reach_no_log_line_no_gateway_collection_and_no_provider(register_api, caplog):
+def test_the_analysts_inputs_reach_no_log_line_no_gateway_collection_and_no_provider(register_api, caplog):  # noqa: F811
     client, db = register_api
     base = f"/api/audits/{register_api_tests.AUDIT}"
     with caplog.at_level(logging.DEBUG):
@@ -1791,7 +1840,7 @@ def test_the_analysts_inputs_reach_no_log_line_no_gateway_collection_and_no_prov
     assert not db["llm_calls"].docs
 
 
-def test_the_gateway_reads_no_ic_inputs_and_the_provider_payload_holds_none(register_api):
+def test_the_gateway_reads_no_ic_inputs_and_the_provider_payload_holds_none(register_api):  # noqa: F811
     db, reads = _recording_db()
     db["audits"].docs[0]["ic_inputs"] = {"thesis": {"plan": IC_SENTINELS[2]}, "ratings": {"growth_engine": "Weak"},
                                          "top5": {"claim_ids": ["c1"], "set_at": "x"}, "first_quarterly_review": "2031-04-05"}
@@ -1970,7 +2019,7 @@ import test_run_audit as run_tests  # noqa: E402
 from test_run_audit import api as run_api  # noqa: E402,F401  (the fixture)
 
 
-def test_the_run_audit_log_lines_hold_the_run_the_stage_the_status_and_an_error_type_only(run_api, monkeypatch, caplog):
+def test_the_run_audit_log_lines_hold_the_run_the_stage_the_status_and_an_error_type_only(run_api, monkeypatch, caplog):  # noqa: F811
     import logging
     run_tests.upload_files(run_api)
     run_tests.confirm_open_columns(run_api)
@@ -1996,7 +2045,7 @@ def test_the_auto_accepted_flag_is_a_register_name_the_gateway_never_mentions():
         assert "auto_accepted" not in path.read_text(encoding="utf-8"), path.name
 
 
-def test_the_narrative_estimate_sends_nothing_and_names_no_file(run_api):
+def test_the_narrative_estimate_sends_nothing_and_names_no_file(run_api):  # noqa: F811
     run_tests.ready_for_review(run_api)
     sent_before = len(run_api.adapter.payloads)
     body = run_api.get(f"/api/runs/{run_tests.AUDIT}/narratives/estimate").text
