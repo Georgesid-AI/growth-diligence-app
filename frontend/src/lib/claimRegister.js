@@ -105,8 +105,9 @@ export function dataSegments(results) {
 
 export const segmentOptions = (results) => [WHOLE_COMPANY, ...dataSegments(results), NOT_IN_DATA];
 
-/** Whether the gate of a row also needs the analyst's metric name and direction: the row has no metric of the app. */
-export const needsMetricName = (row) => NO_APP_METRIC.includes(row.reason);
+/** Whether the gate of a row also needs the analyst's metric name and direction: the row has no metric of the app (none set, or
+ *  one that does not fit the claim's unit). The server saves the gate by the same rule (claim_matching.needs_metric_name). */
+export const needsMetricName = (row) => row.metric == null || NO_APP_METRIC.includes(row.reason);
 
 /** W1: "not yet computed · shortfall 18.3%"; a row with no shortfall reads "not yet computed". */
 export function valueAtStakeText(row) {

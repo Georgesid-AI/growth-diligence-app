@@ -74,13 +74,14 @@ or a quarter). The contract test pins every key (§9).
   register start the fields from stored data, no model: the threshold is the claim's stated value in its own unit (the converted
   figure when the claim is converted); the date is the end of the claim's stated period, or the first quarterly review when the claim
   has none, and never later than the first quarterly review (with no review date set, the period end alone, else blank); a row with
-  no app metric gets the claim's name as the metric (the direction stays blank); the budget decision stays blank, with a dropdown of
+  no app metric (as defined below) gets the claim's name as the metric (the direction stays blank); the budget decision stays blank, with a dropdown of
   the decisions already saved in this audit and "Other" (a text field). The three gates with the highest value at stake are pre-marked
   key, within the limit of 5. Each prefilled field reads "prefilled – confirm" until the analyst edits it or saves. "Save all gates"
   saves every gate that is filled (prefilled or edited) in one call, all or none; a gate still missing a field is left. The prefill is
   returned beside the register (`gate_prefill`, `budget_decisions`), never in a row: the CSV and the memo show a gate as saved.
-- A row with no app metric (reason "no metric", or "metric does not fit the claim's unit") also needs the metric and
-  the direction (W22, decision Q3). The analyst types the metric (max 100 characters) and picks at least or at most.
+- A row with no app metric (no metric set, or reason "metric does not fit the claim's unit"; amended 2026-10-13, George: a
+  direction only, a turnover question and a qualified Users count are such rows too, and the screen shows them the two fields)
+  also needs the metric and the direction (W22, decision Q3). The analyst types the metric (max 100 characters) and picks at least or at most.
   The threshold is in the claim's unit. The metric name is stored beside the budget decision, never sent to a model
   or written to a log, and deleted with the audit.
 - `gate_needed` is true on every row labelled Unverified, Unsupported or Contradicted until its gate is saved (W4). A

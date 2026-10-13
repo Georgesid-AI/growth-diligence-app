@@ -269,3 +269,7 @@ are dated by position where they can be (§2, issue #47).
 `frontend/src/lib/deckClaims.js`, `backend/tests/test_structure_{verifier,reading}.py`,
 `backend/tests/test_gateway_data_boundary.py`, `backend/tests/fixtures/structure_replies/*.json`,
 `scripts/consistency_run.py`, and `docs/specs/llm-structure-reading.md` (a pointer at each replaced section).
+
+Amended 2026-10-13 (George): an approval row the model labels `customers` is typed `users`, with the candidate field `qualifier`,
+when its header cell or its own cell holds a qualified customers noun ("Registered Institutions"), by the parser's rule
+(deck-parser.md section 2). Python applies it after the reply; the model's labels and the prompt are unchanged.

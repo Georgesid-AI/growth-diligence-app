@@ -169,7 +169,7 @@ def gate_prefill(rows: List[dict], first_review: Optional[str]) -> Dict[str, dic
         date = min(period_end, first_review) if period_end and valid_date(first_review) else (period_end or first_review)
         if valid_date(date):
             fill["gate_date"] = date
-        if row.get("reason") in cm.NO_APP_METRIC:
+        if cm.needs_metric_name(row):
             fill["gate_metric_name"] = claim_name(row)[:cm.GATE_METRIC_MAX]
         out[row["claim_id"]] = fill
     room = max(0, min(PREFILL_KEY_GATES, MAX_KEY_GATES - sum(1 for r in rows if r.get("key_gate"))))

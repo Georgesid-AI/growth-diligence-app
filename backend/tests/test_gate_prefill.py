@@ -55,6 +55,22 @@ def test_date_stays_blank_when_there_is_neither_a_period_nor_a_review():
     assert verdict.gate_prefill([row("a", period_end="2025-03-31")], None)["a"]["gate_date"] == "2025-03-31"
 
 
+def test_metric_name_is_prefilled_on_every_row_whose_gate_the_server_saves_only_with_the_analysts_metric():
+    """2026-10-13 (George): the screen asks for the metric and its direction wherever the server needs them, and the prefill follows
+    the same rule (claim_matching.needs_metric_name): no metric set (a direction only, a turnover question, a qualified Users
+    count) or one that does not fit the claim's unit."""
+    qualified = cm.QUALIFIED_REASON.format(label="registered institutions")
+    rows = [row("q", "Unsupported", reason=qualified, claim_type="users", period="Y/E 24"),
+            row("d", "Unverified", reason=cm.DIRECTION_ONLY, claim_type="ebitda", period="Q2 2024"),
+            row("f", "Unsupported", reason="metric does not fit the claim's unit", metric="ARR", period="2025"),
+            row("m", metric="ARR", reason="outside ±5%: a miss")]
+    out = verdict.gate_prefill(rows, REVIEW)
+    assert (out["q"]["gate_metric_name"], out["d"]["gate_metric_name"], out["f"]["gate_metric_name"]) == \
+        ("Users, Y/E 24", "Ebitda, Q2 2024", "ARR, 2025")
+    assert "gate_metric_name" not in out["m"]
+    assert [cm.needs_metric_name(r) for r in rows] == [True, True, True, False]
+
+
 def test_metric_name_is_prefilled_only_where_the_gate_needs_the_analysts_metric():
     out = verdict.gate_prefill([row("a", reason="no metric", claim_type="nps", period="2025"), row("b", metric="ARR")], REVIEW)
     assert out["a"]["gate_metric_name"] == "Nps, 2025" and "gate_metric_name" not in out["b"]

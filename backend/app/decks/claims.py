@@ -97,9 +97,10 @@ _FAMILIES = [
     ("ltv_cac", r"\bLTV\s*(?:/|:|\bto\b)\s*CAC\b"),
     ("trials_per_day", r"(?i:\btrials?\s*(?:per|/)\s*day\b)"),
 ]
-# A customers noun that one of these words precedes, in its own cell or phrase and within QUALIFIER_REACH words, counts people
-# who are not paying customers ("Registered Institutions", "trial accounts"): the figure is Users, and the word, lower case, is
-# kept as the candidate's "qualifier" (George, 2026-10-13).
+# A customers noun that one of these words precedes, in its own cell or phrase, within QUALIFIER_REACH words and with no figure
+# between them, counts people who are not paying customers ("Registered Institutions", "40 trial accounts"): the figure is Users,
+# and the word, lower case, is kept as the candidate's "qualifier" (George, 2026-10-13). "Target 500 customers" is a plan target:
+# the qualifier is the figure's, not the noun's, and the claim stays Customers.
 QUALIFIERS = ("registered", "signed-up", "sign-ups", "signups", "onboarded", "waitlist", "waitlisted", "pipeline", "target",
               "targeted", "addressable", "potential", "prospective", "trial", "free")
 QUALIFIER_REACH = 3
@@ -525,9 +526,12 @@ _PHRASE_BREAK = re.compile(r"[|;:,.()\[\]•·\n]")      # a table cell or a phr
 
 
 def _qualifier(text: str, noun: Dict) -> Optional[str]:
-    """The QUALIFIERS word nearest before a customers noun, in the noun's own cell or phrase and within QUALIFIER_REACH words."""
+    """The QUALIFIERS word nearest before a customers noun, in the noun's own cell or phrase, within QUALIFIER_REACH words and
+    with no figure between them."""
     phrase = _PHRASE_BREAK.split(text[:noun["start"]])[-1]
     for word in reversed(phrase.split()[-QUALIFIER_REACH:]):
+        if any(ch.isdigit() for ch in word):
+            return None
         word = word.strip("\"'“”‘’*-–—/").lower()
         if word in QUALIFIERS:
             return word
@@ -544,6 +548,12 @@ def _typed(text: str, keyword: Dict, keywords: List[Dict], unit: Optional[str] =
         _nearest([k for k in keywords if k["family"] in ("revenue", "users", "customers")], keyword)
     qualifier = _qualifier(text, noun)
     return ("users", qualifier) if qualifier else (family, None)
+
+
+def qualifier_of(text: str) -> Optional[str]:
+    """The qualifier of the first qualified customers noun in `text` ("Registered Institutions": "registered"); None if none. How
+    a model-read claim of type Customers is checked (deck-parser.md section 2, amended 2026-10-13)."""
+    return next((q for k in _keywords(text) if k["family"] == "customers" for q in [_qualifier(text, k)] if q), None)
 
 
 def qualified_label(text: str, qualifier: str) -> str:

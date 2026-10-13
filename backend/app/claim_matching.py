@@ -43,7 +43,7 @@ ACQUISITION_NOTE = "acquisition channels: a count per platform, no engine metric
 # Claim types that are never matched, ranked, gated or put in the top 5, with the closed sentence each register row carries.
 UNTESTED_TYPES = {USE_OF_FUNDS: USE_OF_FUNDS_NOTE, ACQUISITION_CHANNELS: ACQUISITION_NOTE}
 DIRECTION_ONLY = "direction only: the claim states no figure to test"
-BEAT_PREFIX = "beat: observed exceeds the claim by "     # the reason of a Verified beat outside tolerance, its gloss follows
+BEAT_PREFIX = "beat: observed beats the claim by "       # the reason of a Verified beat outside tolerance, its gloss follows
 # A Users claim the parser typed from a qualified customers noun (deck-parser.md section 2, George, 2026-10-13); the label is
 # two words of closed lists: the qualifier and the customers keyword.
 QUALIFIED_REASON = "deck label '{label}' is not paying customers; the analyst can edit the type to Customers to test it"
@@ -447,6 +447,12 @@ def _claimed_text(c: dict) -> str:
     return text
 
 
+def needs_metric_name(row: dict) -> bool:
+    """Whether a row's gate is saved only with the analyst's metric name and direction: the row has no app metric (none set, or
+    one that does not fit the claim's unit). The screen asks for the two fields by the same rule."""
+    return row.get("metric") not in METRICS or row.get("reason") in NO_APP_METRIC
+
+
 def _is_saved(inputs: dict, needs_name: bool) -> bool:
     """Threshold, budget decision and date are all filled; a row with no app metric also needs the metric and the direction."""
     saved = inputs.get("gate_threshold") is not None and bool(inputs.get("gate_budget_decision")) and bool(inputs.get("gate_date"))
@@ -796,7 +802,7 @@ def _gate(out: dict, c: dict, inputs: dict, spec: Optional[dict], claim_unit: Op
     """The gate of a row (verdict-and-memo.md section 3): saved when threshold, budget decision and date are filled (and, for a
     row with no app metric, the metric name and the direction). Nothing is proposed. Sets gate_saved, gate_sentence,
     gate_needed and key_gate; reads the label and the reason `finish` has just set."""
-    app_metric = out["reason"] not in NO_APP_METRIC and spec is not None
+    app_metric = not needs_metric_name(out)
     saved = _is_saved(inputs, needs_name=not app_metric)
     out["gate_saved"] = saved
     out["key_gate"] = bool(inputs.get("key_gate")) and saved

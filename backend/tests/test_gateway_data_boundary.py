@@ -1423,7 +1423,7 @@ def test_the_fx_reason_names_two_currency_codes_and_the_new_candidate_fields_are
 
 
 def test_the_beat_reason_is_the_closed_prefix_and_the_gloss_and_holds_no_deck_text():
-    """A beat outside tolerance (claim-matching.md section 4, 2026-10-13) is Verified with reason "beat: observed exceeds the claim
+    """A beat outside tolerance (claim-matching.md section 4, 2026-10-13) is Verified with reason "beat: observed beats the claim
     by {gloss}": the gloss is a figure and closed words (section 3), so a sentinel in the snippet or the label reaches no field."""
     sentinel = "Zephyr Holdings"
     row = {"id": "x1", "status": "approved", "claim_type": "revenue", "value": 100.0, "currency": "EUR", "target_date": "2026-12",

@@ -126,7 +126,7 @@ def test_a_beat_beyond_tolerance_is_verified_and_never_ranks_as_a_miss():
     assert beat["rank"] > row_of(rows, "c27")["rank"]          # a 1.2% miss ranks above a 25% beat
     # amended 2026-10-13 (George): the beat keeps its gap and gloss, needs no gate and is marked (beat) in its reason
     assert (beat["gap"], beat["gloss"], beat["shortfall"]) == (-1.0, "1 customer more (beat)", None)
-    assert beat["reason"] == "beat: observed exceeds the claim by 1 customer more (beat)" and cm.is_beat(beat)
+    assert beat["reason"] == "beat: observed beats the claim by 1 customer more (beat)" and cm.is_beat(beat)
     assert beat["gate_needed"] is False
     assert not cm.is_beat(row_of(rows, "c01")), "a beat within tolerance is plain Verified"
     assert row_of(rows, "c06")["reason"] == "outside ±5%: a miss"
@@ -401,6 +401,19 @@ def test_registered_institutions_are_users_not_paying_customers_and_every_value_
         [("users", "registered", [1, 2, 25, 50])]
     assert [(r["claim_id"], r["evidence_label"], r["reason"], r["metric"]) for r in rows] == \
         [(f"r0#{n}", "Unsupported", QUALIFIED, None) for n in range(1, 5)]
+
+
+def test_a_qualified_users_gate_is_saved_only_with_the_analysts_metric_and_direction():
+    """Like every row with no app metric (verdict-and-memo.md section 3); the screen shows those fields for it (2026-10-13)."""
+    claim = {"claim_type": "users", "unit": None, "currency": None, "value": 40, "target_date": "2024-02",
+             "snippet": "Registered Institutions 40", "qualifier": "registered"}
+    gate = {"gate_threshold": 40.0, "gate_budget_decision": "the plan", "gate_date": "2024-06-30"}
+    bare = run_claim({**claim, "claim_inputs": {"x1": gate}})
+    assert (bare["reason"], bare["gate_saved"], bare["gate_needed"], cm.needs_metric_name(bare)) == (QUALIFIED, False, True, True)
+    named = run_claim({**claim, "claim_inputs": {"x1": {**gate, "gate_metric_name": "Registered institutions",
+                                                        "gate_direction": "at least"}}})
+    assert named["gate_saved"] and named["gate_sentence"].startswith(
+        "Before the plan, Registered institutions must be at least 40 by 2024-06-30. Not yet observed: deck label")
 
 
 def test_paying_customers_are_still_tested_against_the_customer_count():

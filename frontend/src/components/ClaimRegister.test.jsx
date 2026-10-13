@@ -147,6 +147,15 @@ test("a row with no metric of the app asks for the metric (max 100 characters) a
   expect(rows[1].querySelector('[data-testid="register-gate-metric-name"]')).toBeNull();
 });
 
+test("a qualified Users row asks for the metric and its direction too, as the server needs them to save its gate", async () => {
+  const qualified = { ...ROW, claim_type: "users", metric: null, reason: "deck label 'registered institutions' is not paying customers; the analyst can edit the type to Customers to test it",
+    observed_value: null, evidence_label: "Unsupported", evidence_analysis: null, gate_needed: true };
+  const { host } = await mount([qualified]);
+  const row = host.querySelector('[data-testid="claim-register-row"]');
+  expect(row.querySelector('[data-testid="register-gate-metric-name"]')).not.toBeNull();
+  expect(row.querySelector('[data-testid="register-gate-direction"]')).not.toBeNull();
+});
+
 test("no claim yet gives a line that says so", async () => {
   const { host } = await mount([]);
   expect(host.querySelector('[data-testid="claim-register-empty"]')).not.toBeNull();

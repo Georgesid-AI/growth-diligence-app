@@ -1150,6 +1150,7 @@ def test_a_qualified_customers_noun_is_users_and_keeps_its_qualifier(qualifier):
     ("Registered office, 40 institutions", "customers", None),                     # another phrase
     ("40 paying customers", "customers", None),
     ("Registered users 200", "users", None),                                       # users already: no qualifier recorded
+    ("Target 500 customers by 2025", "customers", None),                           # a figure between: a plan target (2026-10-13)
 ])
 def test_a_qualifier_counts_only_before_the_noun_in_its_own_phrase_within_three_words(text, family, qualifier):
     assert [(c["claim_type"], c.get("qualifier")) for c in _line(text)] == [(family, qualifier)]
