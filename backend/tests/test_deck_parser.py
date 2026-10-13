@@ -1028,7 +1028,7 @@ def test_zero2hero_page_19_reads_as_one_candidate_per_row_and_flags_the_panel():
     rows = {c["snippet"].split(" | ")[0]: c for c in page if c.get("by_period")}
     assert {k: (c["claim_type"], [i["value"] for i in c["by_period"]]) for k, c in rows.items()} == {
         "Registered Users": ("users", [200, 5000, 20000, 30000, 50000]),
-        "Registered Institutions": ("customers", [1, 2, 25, 50]),
+        "Registered Institutions": ("users", [1, 2, 25, 50]),          # not paying customers (George, 2026-10-13)
         "Revenue": ("revenue", [130550, 150000, 250000, 1000000, 2500000]),
         "Direct Costs": ("costs", [83403, 100000, 150000, 500000, 1000000]),
         "Gross Profit": ("gross_profit", [42638, 50000, 100000, 500000, 1500000])}
@@ -1039,6 +1039,7 @@ def test_zero2hero_page_19_reads_as_one_candidate_per_row_and_flags_the_panel():
     assert panel == [("ebitda", None, "2024-Q2", []), ("gross_profit", 150000, "2023", ["2023"]),
                      ("users", 5000, "2023", [])], "23 Y/E is a period, never a value"
     assert rows["Gross Profit"]["inconsistent_dates"] == ["2023"]
+    assert (rows["Registered Institutions"]["qualifier"], rows["Registered Users"].get("qualifier")) == ("registered", None)
     # The page-17 bars are labelled Turnover (see the page-17 test): a turnover figure is not compared with Revenue.
     assert rows["Revenue"]["inconsistent_dates"] == [], "page 17 is Turnover: never compared with this Revenue row"
     assert all(not c["inconsistent_dates"] for k, c in rows.items() if k not in ("Gross Profit", "Revenue"))
@@ -1130,6 +1131,40 @@ def test_a_period_at_the_top_of_a_text_box_dates_every_figure_in_it():
 ])
 def test_gross_profit_costs_ebitda_and_institutions(text, family):
     assert [c["claim_type"] for c in _line(text)] == [family]
+
+
+@pytest.mark.parametrize("qualifier", claims.QUALIFIERS)
+def test_a_qualified_customers_noun_is_users_and_keeps_its_qualifier(qualifier):
+    """George, 2026-10-13: "Registered Institutions" are not paying customers. Any case; the word is kept lower case."""
+    found = _line(f"{qualifier.title()} institutions 40")
+    assert [(c["claim_type"], c.get("qualifier")) for c in found] == [("users", qualifier)]
+
+
+@pytest.mark.parametrize("text, family, qualifier", [
+    ("Number of registered partner institutions: 40", "users", "registered"),      # up to 3 words before the noun
+    ("Free trial accounts 300", "users", "trial"),                                 # the nearest qualifier
+    ("40 onboarded companies", "users", "onboarded"),
+    ("Onboarded agencies grew to 50", "users", "onboarded"),                       # a count beside a growth word: the noun's type
+    ("Registered across the three partner institutions 40", "customers", None),    # 4 words before
+    ("Institutions registered 40", "customers", None),                             # after the noun
+    ("Registered office, 40 institutions", "customers", None),                     # another phrase
+    ("40 paying customers", "customers", None),
+    ("Registered users 200", "users", None),                                       # users already: no qualifier recorded
+])
+def test_a_qualifier_counts_only_before_the_noun_in_its_own_phrase_within_three_words(text, family, qualifier):
+    assert [(c["claim_type"], c.get("qualifier")) for c in _line(text)] == [(family, qualifier)]
+
+
+def test_a_qualified_count_and_a_plain_users_count_with_the_same_figure_and_date_stay_two_claims():
+    found = _found(_slide([("Registered users 50 in 2024", 1, 1), ("Registered institutions 50 in 2024", 1, 3)]))
+    assert sorted((c["claim_type"], c.get("qualifier") or "", c["value"]) for c in found) == \
+        [("users", "", 50), ("users", "registered", 50)]
+
+
+def test_a_qualified_column_header_types_the_figures_it_labels_as_users():
+    found = _found(_slide([], table=([["Year", "Waitlisted companies"], ["2024", "120"], ["2025", "300"]], 1, 2)))
+    assert sorted((c["value"], c["claim_type"], c.get("qualifier")) for c in found) == \
+        [(120, "users", "waitlisted"), (300, "users", "waitlisted")]
 
 
 def test_a_net_loss_is_a_negative_net_profit():

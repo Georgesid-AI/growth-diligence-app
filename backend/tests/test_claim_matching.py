@@ -381,6 +381,46 @@ def test_another_currency_is_converted_at_the_audits_fx_rate():
     assert row["evidence_label"] == "Verified" and row["gloss"] == "€13,125 higher (beat)"
 
 
+def _table_rows(rows, cid):
+    """The approved candidates a deck table gives (the parser's own code, deck-parser.md section 2), and their register rows on
+    run A's data."""
+    dp = pytest.importorskip("test_deck_parser")
+    found = [{**c, "id": f"{cid}{n}", "status": "approved", "file": "deck.pptx", "order": n}
+             for n, c in enumerate(dp._found(dp._slide([], table=(rows, 1, 2))))]
+    return found, cm.build_register(found, results_for(RUNS["A"]), settings(RUNS["A"]))
+
+
+QUALIFIED = "deck label 'registered institutions' is not paying customers; the analyst can edit the type to Customers to test it"
+
+
+def test_registered_institutions_are_users_not_paying_customers_and_every_value_is_unsupported_with_the_reason():
+    """George, 2026-10-13: the deck row "Registered Institutions | - | 1 | 2 | 25 | 50" under Y/E headers."""
+    found, rows = _table_rows([["", "Y/E 21", "Y/E 22", "Y/E 23", "Y/E 24", "Y/E 25"],
+                               ["Registered Institutions", "-", "1", "2", "25", "50"]], "r")
+    assert [(c["claim_type"], c["qualifier"], [i["value"] for i in c["by_period"]]) for c in found] == \
+        [("users", "registered", [1, 2, 25, 50])]
+    assert [(r["claim_id"], r["evidence_label"], r["reason"], r["metric"]) for r in rows] == \
+        [(f"r0#{n}", "Unsupported", QUALIFIED, None) for n in range(1, 5)]
+
+
+def test_paying_customers_are_still_tested_against_the_customer_count():
+    found, rows = _table_rows([["", "Y/E 22", "Y/E 23"], ["Paying customers", "10", "20"]], "p")
+    assert [(c["claim_type"], c.get("qualifier")) for c in found] == [("customers", None)]
+    y22, y23 = row_of(rows, "p0#1"), row_of(rows, "p0#2")
+    assert (y22["metric"], y22["evidence_label"], y22["reason"]) == \
+        ("Customer count", "Unverified", "before Customer count's first month, 2023-01")
+    assert (y23["metric"], y23["observed_value"], y23["gap_kind"], y23["evidence_label"]) == ("Customer count", 5, "miss", "Contradicted")
+
+
+def test_the_qualified_reason_is_only_for_users_with_a_qualifier_and_an_edit_to_customers_tests_the_claim():
+    base = {"claim_type": "users", "unit": None, "currency": None, "value": 40, "target_date": "2024-02",
+            "snippet": "Registered Institutions 40"}
+    assert run_claim({**base, "qualifier": "registered"})["reason"] == QUALIFIED
+    assert run_claim(base)["reason"] == "no metric", "a users claim with no qualifier is unchanged"
+    edited = run_claim({**base, "claim_type": "customers", "qualifier": "registered", "status": "edited"})
+    assert (edited["metric"], edited["observed_value"], edited["evidence_label"]) == ("Customer count", 5, "Contradicted")
+
+
 # --- section 3 and 4: gap, gloss, tolerance --------------------------------------------------------------------------
 
 @pytest.mark.parametrize("unit, value, gap_text", [

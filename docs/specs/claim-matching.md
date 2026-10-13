@@ -2,7 +2,8 @@
 Status: Draft; decisions of 2026-10-07 applied (§10). Location: docs/specs/claim-matching.md.
 Follows deck-parser.md §6.
 Amended 2026-10-13 (George): a beat outside tolerance is Verified, marked (beat), not Contradicted (§4, D2); it never reaches the
-banner and the IC memo lists it under Worth flagging (verdict-and-memo.md §7.2).
+banner and the IC memo lists it under Worth flagging (verdict-and-memo.md §7.2). A Users claim the parser typed from a qualified
+customers noun ("Registered Institutions", deck-parser.md §2) is Unsupported with its own reason (§4).
 Amended 2026-10-09 (George): turnover, GMV, TPV and volume are ambiguous and are no longer revenue by default; new metric
 "Transaction volume" and §11. This supersedes decision R2.
 Amended 2026-10-08 (UI and claims fixes from live testing, George): a claim in another currency shows both figures and a
@@ -102,7 +103,7 @@ Untested rows stay listed with a reason and observed "—" (a forecast shows its
 | Verified | Tested and within tolerance: ±5% of the claimed value for amounts, counts and durations; ±1 percentage point for rates. The boundary is Verified. Or a beat outside tolerance (observed above the claim), marked (beat). |
 | Contradicted | Tested and outside tolerance: a miss. |
 | Unverified | Not testable yet; the reason names what would test it: a Missing file (the engine's `unlocked_by`), a forecast period, a period before the metric's first month, no saved FX rate for the claim's currency ("FX rate needed"), a direction with no figure, a revenue claim with no period ("no period stated"), months of the period missing from the data (named), or a deck reading "AI suggestion, not verified" (until the analyst edits the claim, even unchanged): a claim that would otherwise be Verified or Contradicted; any other reason stands. A Use of funds claim (deck-parser.md, amended 2026-10-10) and an Acquisition channels claim (chat-upload.md section 17, 2026-10-11) are always Unverified, with no metric, gap, value at stake or gate. |
-| Unsupported | The app gives no figure: no metric proposed or picked, the metric not computed for that period or by segment, the segment not in the data, or the engine's "not computable" reason. |
+| Unsupported | The app gives no figure: no metric proposed or picked, the metric not computed for that period or by segment, the segment not in the data, or the engine's "not computable" reason. A Users claim with a `qualifier` (deck-parser.md §2) and no metric picked reads "deck label '{qualifier} {noun}' is not paying customers; the analyst can edit the type to Customers to test it" (2026-10-13, George). |
 
 ## 5. Gate
 No gate is proposed and no threshold has a default. For every row with an observed value the screen shows the claimed

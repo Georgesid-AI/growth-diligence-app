@@ -1277,7 +1277,7 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             "turnover_views", "file_note", "NO_FILE_PERIOD",
                             "inconsistent_dates", "mixed_slide", "USE_OF_FUNDS_NOTE", "MIXED_SLIDE", "ACQUISITION_NOTE", "ACQUISITION_CHANNELS",
                             "UNTESTED_TYPES", "channel", "auto_accepted", "BEAT_PREFIX", "is_beat", "beat_text",
-                            *MATCHING_SERVER_ONLY})
+                            "qualifier", "QUALIFIERS", "QUALIFIED_REASON", "qualified_label", *MATCHING_SERVER_ONLY})
 # The functions that log about the register, and the only things their log calls may name.
 REGISTER_LOGGERS = frozenset({"_claim_rows", "claim_register", "claim_register_csv", "update_claim_inputs", "answer_turnover",
                               "approve_all_candidates"})
@@ -1438,6 +1438,38 @@ def test_the_beat_reason_is_the_closed_prefix_and_the_gloss_and_holds_no_deck_te
     assert out["reason"] == claim_matching.BEAT_PREFIX + out["gloss"]
     assert re.fullmatch(r"€[\d,]+ higher \(beat\)", out["gloss"]), out["gloss"]
     assert sentinel not in json.dumps(out, default=str)
+
+
+def test_the_qualified_users_reason_holds_two_closed_words_and_the_qualifier_never_reaches_the_gateway_or_a_log(caplog):
+    """A customers noun with a qualifier is Users (deck-parser.md section 2, George, 2026-10-13). The register reason names the
+    qualifier and the noun, both from closed lists (QUALIFIERS, the customers keywords); the rest of the row label (a sentinel
+    here) reaches no register field. `qualifier` is not gateway-readable: run over a database holding the candidate, nothing
+    the gateway reads, sends or logs carries the sentinel or the reason."""
+    import logging
+    from app.decks import claims as deck_claims
+    sentinel = "Zephyr"
+    assert "qualifier" not in decks.GATEWAY_READABLE_FIELDS
+    found, = deck_claims.line_candidates(f"{sentinel} registered institutions 40", [(0, 40, {"file": "deck.pptx", "slide": 3,
+                                                                                              "kind": "text"})])
+    assert (found["claim_type"], found["qualifier"]) == ("users", "registered") and sentinel in found["snippet"], "fixture"
+    row = {**found, "id": "x1", "status": "approved", "file": "deck.pptx", "order": 0, "target_date": "2026-12"}
+    deck_claims.resolve_period(row, 12)
+    out = claim_matching.build_register([row], RESULTS, {"fiscal_year_end": 12, "reporting_currency": "EUR", "fx": {"EUR": 1.0}})[0]
+    nouns = r"customers?|clients?|paying users?|accounts?|compan(?:y|ies)|agenc(?:y|ies)|subscribers?|institutions?"
+    words = "|".join(re.escape(q) for q in deck_claims.QUALIFIERS)
+    closed = re.escape(claim_matching.QUALIFIED_REASON).replace(re.escape("{label}"), f"(?:{words}) (?:{nouns})")
+    assert re.fullmatch(closed, out["reason"]), out["reason"]
+    assert out["evidence_label"] == "Unsupported" and sentinel not in json.dumps(out, default=str)
+    db, reads = _recording_db()
+    db[decks.CANDIDATES_COLLECTION].docs.append({**row, "audit_id": RUN_ID})
+    adapter = t.FakeAdapter(replies=[json.dumps(NARRATIVE)])
+    with caplog.at_level(logging.DEBUG):
+        asyncio.run(gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=adapter, sleep=t._noop_sleep))
+    returned = json.dumps([doc for _, _, doc in reads], ensure_ascii=False, default=str)
+    logs = caplog.text + "".join(r.getMessage() for r in caplog.records)
+    for where, text in (("read by the gateway", returned), ("sent to the provider", adapter.payloads[0]), ("logged", logs)):
+        assert sentinel not in text and '"qualifier"' not in text, f"the row label or its qualifier was {where}"
+        assert "is not paying customers" not in text, f"the register reason was {where}"
 
 
 def test_the_use_of_funds_reason_is_a_closed_sentence_and_mixed_slide_and_the_note_never_reach_the_gateway_or_a_log(caplog):

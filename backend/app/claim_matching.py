@@ -44,6 +44,9 @@ ACQUISITION_NOTE = "acquisition channels: a count per platform, no engine metric
 UNTESTED_TYPES = {USE_OF_FUNDS: USE_OF_FUNDS_NOTE, ACQUISITION_CHANNELS: ACQUISITION_NOTE}
 DIRECTION_ONLY = "direction only: the claim states no figure to test"
 BEAT_PREFIX = "beat: observed exceeds the claim by "     # the reason of a Verified beat outside tolerance, its gloss follows
+# A Users claim the parser typed from a qualified customers noun (deck-parser.md section 2, George, 2026-10-13); the label is
+# two words of closed lists: the qualifier and the customers keyword.
+QUALIFIED_REASON = "deck label '{label}' is not paying customers; the analyst can edit the type to Customers to test it"
 SUGGESTION = "AI suggestion, not verified"
 ANALYST_ENTERED = "analyst-entered"
 DAYS_PER_WEEK, DAYS_PER_MONTH = 7.0, 30.44
@@ -706,6 +709,9 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         out["gate_needed"] = False
         return out
     if not spec:
+        from .decks.claims import QUALIFIERS, qualified_label
+        if out["claim_type"] == "users" and c.get("qualifier") in QUALIFIERS:
+            return finish("Unsupported", QUALIFIED_REASON.format(label=qualified_label(text, c["qualifier"])))
         return finish("Unsupported", "no metric")
     if metric == VOLUME:                        # never matched to engine revenue; the take rate is derived, never Verified
         if turn and turn["file_revenue"] is not None and low and not c.get("value_high"):
