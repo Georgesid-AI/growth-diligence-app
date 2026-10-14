@@ -1,11 +1,12 @@
 import axios from "axios";
+import { READ_TIMEOUT_MS } from "@/lib/requestError";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 export const api = axios.create({ baseURL: API });
 
 export const listAudits = () => api.get("/audits").then((r) => r.data);
-export const getAudit = (id) => api.get(`/audits/${id}`).then((r) => r.data);
+export const getAudit = (id) => api.get(`/audits/${id}`, { timeout: READ_TIMEOUT_MS }).then((r) => r.data);
 export const createAudit = (payload) => api.post("/audits", payload).then((r) => r.data);
 export const updateAudit = (id, payload) => api.put(`/audits/${id}`, payload).then((r) => r.data);
 // The company name goes in the body, never the URL, so no access log holds it (chat-upload.md section 6.3).
@@ -42,7 +43,7 @@ export const uploadChatFile = (id, file, { dtype, replace } = {}) => {
     .post(`/audits/${id}/datasets/upload`, fd, { params, timeout: UPLOAD_TIMEOUT_MS, headers: { "Content-Type": "multipart/form-data" } })
     .then((r) => r.data);
 };
-export const getDatasets = (id) => api.get(`/audits/${id}/datasets`).then((r) => r.data.datasets);
+export const getDatasets = (id) => api.get(`/audits/${id}/datasets`, { timeout: READ_TIMEOUT_MS }).then((r) => r.data.datasets);
 export const decideColumns = (id, dtype, decisions) =>
   api.post(`/audits/${id}/datasets/${dtype}/decisions`, decisions).then((r) => r.data);
 export const getBlockers = (id) => api.get(`/audits/${id}/blockers`).then((r) => r.data.blockers);
@@ -59,7 +60,7 @@ export const uploadDeck = (id, file) => {
     .post(`/audits/${id}/decks/upload`, fd, { headers: { "Content-Type": "multipart/form-data" } })
     .then((r) => r.data);
 };
-export const getDecks = (id) => api.get(`/audits/${id}/decks`).then((r) => r.data);
+export const getDecks = (id) => api.get(`/audits/${id}/decks`, { timeout: READ_TIMEOUT_MS }).then((r) => r.data);
 export const removeDeck = (id, deckId) => api.delete(`/audits/${id}/decks/${deckId}`).then((r) => r.data);
 export const addClaim = (id, payload) => api.post(`/audits/${id}/decks/candidates`, payload).then((r) => r.data);
 // Approve every claim to review of one category in one call (docs/specs/chat-upload.md section 17); `deckId` limits it to a deck tab.
@@ -107,6 +108,6 @@ export const getDisclosure = (id) => api.get(`/runs/${id}/disclosure`).then((r) 
 // Run audit (one button): three stages in order, each answering done, needs_review, waiting, running or failed with a plain-English
 // message; and what the review screen opens with. The files themselves go through the endpoints above.
 export const runStage = (id, stage) => api.post(`/audits/${id}/run/${stage}`, null, { timeout: 120000 }).then((r) => r.data);
-export const getReview = (id) => api.get(`/audits/${id}/review`).then((r) => r.data);
+export const getReview = (id) => api.get(`/audits/${id}/review`, { timeout: READ_TIMEOUT_MS }).then((r) => r.data);
 // What "Write all narratives" would run and its upper-bound cost; reads only, no provider call.
 export const getNarrativeEstimate = (id) => api.get(`/runs/${id}/narratives/estimate`).then((r) => r.data);
