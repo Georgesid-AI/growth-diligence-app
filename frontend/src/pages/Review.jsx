@@ -19,7 +19,7 @@ import { useGateEdits } from "@/lib/useGateEdits";
 import { S13_status, MAPPING_HEADERS, REASONS, fieldName, heldFields, sortColumns } from "@/lib/chatUpload";
 import { describeRequestError, READ_TIMEOUT_MS } from "@/lib/requestError";
 import { runAudit } from "@/lib/runAudit";
-import { mappingSummary, summaryHeadline, FILE_CHIP, DTYPE_SHORT, writeAllLabel, estimateText, allWritten, ALL_WRITTEN_LEAD, ALL_WRITTEN_LINK, WRITE_ALL_HELP, MEMO_LABEL, MEMO_WAITING, RECONCILIATION_NOTE } from "@/lib/review";
+import { mappingSummary, summaryHeadline, DTYPE_SHORT, writeAllLabel, estimateText, allWritten, ALL_WRITTEN_LEAD, ALL_WRITTEN_LINK, WRITE_ALL_HELP, MEMO_LABEL, MEMO_WAITING, RECONCILIATION_NOTE } from "@/lib/review";
 
 const GROUP_TITLE = Object.fromEntries(CLAIM_GROUPS);
 
@@ -184,7 +184,7 @@ function MappingSummary({ views, decide, lastReason, setLastReason }) {
         {summaryHeadline(matched.length, unsure.length)}
       </div>
       <div className="flex flex-wrap gap-2 my-1" data-testid="review-mappings-chips">
-        {chips.map((v) => <span key={v.dtype} className="rounded-full bg-slate-900/[0.06] px-2.5 text-slate-600" data-testid="review-mappings-chip">{FILE_CHIP(v.file)}</span>)}
+        {chips.map((v) => <span key={v.dtype} className="rounded-full bg-slate-900/[0.06] px-2.5 text-slate-600" data-testid="review-mappings-chip">{DTYPE_SHORT[v.dtype] || v.dtype}</span>)}
       </div>
       {unsure.map(({ view, col }, i) => (
         <UnsureRow key={`${view.dtype}-${col.column}`} view={view} col={col} striped={i % 2 === 1} decide={decide} lastReason={lastReason} setLastReason={setLastReason} />

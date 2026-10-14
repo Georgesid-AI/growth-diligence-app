@@ -29,7 +29,6 @@ export function estimateText(estimate) {
 
 // Mapping summary (chat-upload.md section 18).
 const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-export const FILE_CHIP = (file) => String(file || "").replace(/\.(xlsx|xls|csv)$/i, "");
 export const DTYPE_SHORT = { revenue: "Revenue", crm: "CRM", pnl: "P&L" };
 
 /** A matched column the analyst has not decided that is worth a look: confidence under 100, or the file's name and the app's differ. */

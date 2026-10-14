@@ -328,14 +328,14 @@ describe("mapping summary (chat-upload.md section 18)", () => {
   const SURE = { ...CRM, columns: [col("Amount", { field: "amount" }), col("Stage", { field: "stage" })] };
   const LOW = { ...CRM, columns: [col("Amount", { field: "amount", confidence: 90 }), col("Stage", { field: "stage", confidence: 95 })] };
 
-  test("all sure: bold green top line, file names as chips without extension, no row, details collapsed", async () => {
+  test("all sure: bold green top line, file type labels as chips, no row, details collapsed", async () => {
     state.views = [VIEW_DONE, SURE];
     await mount();
     const head = q("review-mappings-headline");
     expect(head.textContent).toBe("✓ 4 columns matched – nothing to do.");
     expect(head.className).toContain("font-bold");
     expect(head.className).toContain("text-emerald");
-    expect(qa("review-mappings-chip").map((c) => c.textContent)).toEqual(["pnl", "CRM deals"]);
+    expect(qa("review-mappings-chip").map((c) => c.textContent)).toEqual(["P&L", "CRM"]);
     expect(document.body.querySelector("[data-testid^='review-unsure-']")).toBeNull();
     expect(q("review-details")).toBeNull();
     expect(q("review-details-toggle").textContent).toBe("Show details");
