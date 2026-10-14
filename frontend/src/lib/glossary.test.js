@@ -1,7 +1,7 @@
 import { GLOSSARY, GLOSSED, seeGlossary } from "./glossary";
 import { REVENUE_REQUIRED_NOTE } from "./chatUpload";
 import { SETUP_HELP } from "./auditForm";
-import { REGISTER_COLUMNS } from "./claimRegister";
+import { VAS_LABEL } from "./claimRegister";
 
 // George, 2026-10-09: "Value at stake" reads VaS; the first use of VaS, ARR, MRR, NRR or CAC in a text block reads
 // "VaS (see glossary)", later uses plain.
@@ -27,9 +27,8 @@ describe("abbreviations point to the glossary at their first use in a text block
     expect(GLOSSARY["Value at stake"]).toBeUndefined();
   });
 
-  test("Value at stake reads VaS on screen: the register column and the help text", () => {
-    expect(REGISTER_COLUMNS).toContain("VaS");
-    expect(REGISTER_COLUMNS).not.toContain("Value at stake");
+  test("Value at stake reads VaS on screen: the register's second line and the help text", () => {
+    expect(VAS_LABEL).toBe("VaS");
     expect(SETUP_HELP.target_arr).toBe("The plan figure the audit tests. Every claim's VaS (see glossary) is measured against it.");
     expect(SETUP_HELP.target_date).toBe("When the plan says Target ARR (see glossary) is reached. Sets the forecast horizon.");
     expect(REVENUE_REQUIRED_NOTE).toBe("The revenue file is the only required file. Every metric in the audit – ARR (see glossary), "
