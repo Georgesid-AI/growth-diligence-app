@@ -1085,7 +1085,8 @@ def definition_views(candidates: List[dict], results: Optional[dict], settings: 
 
 
 def open_definition_ids(views: Dict[str, List[dict]]) -> set:
-    """The candidates of `definition_views` with a question still open: they stay To review (Approve all skips them)."""
+    """The candidates of `definition_views` with a question still open. Approve all approves them like any other claim and
+    counts the approved ones as `open_definition` (section 4.1)."""
     return {cid for cid, found in views.items() if any(v["definition_check"] == DEFINITION_ASK for v in found)}
 
 
