@@ -475,3 +475,13 @@ line shape, so no new matching code is written; nothing is deleted.
 - Tests: `test_approve_all.py` (the endpoint), `test_deck_parser.py` (the cues and the line shape), `test_claim_matching.py`, `test_verdict.py`,
   `test_analyst_claim.py` (register, top 5, Add claim), `test_gateway_data_boundary.py` (the reason, the platform name and the log line),
   `DeckPanel.test.jsx` and `deckClaims.test.js` (buttons, toast, sections, spacing, forms).
+
+## 18. Mapping summary on the review screen (amended 2026-10-14, George)
+Replaces the flat "N columns mapped" count with a Show link and its list of every column. The Open mappings table above it is unchanged (columns that wait for a decision).
+- Matched columns = every used column of every loaded file that does not wait for a decision. A matched column is **unsure** when the analyst has not decided it and its confidence is under 100, or its name in the file and the app's field name differ (compared lower case, letters and digits only: "S&M Expense" and "sm expense" are the same; "Amount (EUR)" and "amount" differ). A column with no score is unsure only by the name test.
+- Top line, bold, green: "✓ {n} columns matched – nothing to do." With unsure columns it is "{n} columns matched – {k} to check." (bold, not green). "1 column" in the singular.
+- Under it, the file names as small grey chips, without the extension and without counts.
+- One row per unsure column, plain text: `{CRM | Revenue | P&L}  "{column}" read as {field}`, with two small buttons on the right. **Correct** confirms the proposal (the same decision as Confirm: `action: confirm`); the row leaves the list and the count drops. **Change** opens the field and reason dropdowns of §4.3 and sends `action: correct`. No icons, arrows or warning signs.
+- "Show details", a plain text link, collapsed by default (it reads "Hide details" when open): per file, every matched column as `"{column}" read as {field}`.
+- Layout: one font size, bold only on the top line, generous line spacing, no boxes or borders. Rows alternate page colour and 3–4% grey, both the unsure rows and the rows inside Show details.
+- Tests: `Review.test.jsx` (headline, chips, unsure rows by confidence and by name, Correct and Change calls, collapsed details, alternating rows).

@@ -85,11 +85,10 @@ test("the sections come in this order: open mappings, open claims, Revenue / Vol
   expect(["1", "2", "3", "4", "5", "6", "7"].map((n, i) => q(ids[i]).textContent.startsWith(n))).toEqual(Array(7).fill(true));
 });
 
-test("what the app settled itself is a count with a Show link: columns mapped and claims within tolerance", async () => {
+test("what the app settled itself is a count with a Show link: claims within tolerance; mappings are the summary", async () => {
   await mount();
-  expect(q("review-mappings-auto-count").textContent).toBe("5 columns mapped");
+  expect(q("review-mappings-headline").textContent).toBe("✓ 2 columns matched – nothing to do.");
   expect(q("review-claims-auto-count").textContent).toBe("12 claims within tolerance");
-  expect(q("review-mappings-auto").textContent).toContain("Show");
   expect(q("review-mappings-none").textContent).toContain("No column waits");
 });
 
@@ -318,5 +317,72 @@ test("under React.StrictMode the loaded review still renders (alive ref is re-ar
   root = createRoot(host);
   await act(async () => { root.render(<React.StrictMode><Review /></React.StrictMode>); });
   await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-  expect(q("review-mappings-auto-count").textContent).toBe("5 columns mapped");
+  expect(q("review-mappings-headline").textContent).toBe("✓ 2 columns matched – nothing to do.");
+});
+
+describe("mapping summary (chat-upload.md section 18)", () => {
+  const CRM = {
+    dtype: "crm", file: "CRM deals.xlsx", status: "ok", pending: 0, missing_required: [], fields: { required: ["amount"], optional: ["stage"] },
+    columns: [col("Amount (EUR)", { field: "amount", state: "unsure", confidence: 100 }), col("Stage", { field: "stage" }), col("Notes", { field: null, state: "unused" })],
+  };
+  const SURE = { ...CRM, columns: [col("Amount", { field: "amount" }), col("Stage", { field: "stage" })] };
+  const LOW = { ...CRM, columns: [col("Amount", { field: "amount", confidence: 90 }), col("Stage", { field: "stage", confidence: 95 })] };
+
+  test("all sure: bold green top line, file names as chips without extension, no row, details collapsed", async () => {
+    state.views = [VIEW_DONE, SURE];
+    await mount();
+    const head = q("review-mappings-headline");
+    expect(head.textContent).toBe("✓ 4 columns matched – nothing to do.");
+    expect(head.className).toContain("font-bold");
+    expect(head.className).toContain("text-emerald");
+    expect(qa("review-mappings-chip").map((c) => c.textContent)).toEqual(["pnl", "CRM deals"]);
+    expect(document.body.querySelector("[data-testid^='review-unsure-']")).toBeNull();
+    expect(q("review-details")).toBeNull();
+    expect(q("review-details-toggle").textContent).toBe("Show details");
+  });
+
+  test("a name that differs is one row with Correct and Change; the headline counts it; no icon, one font size", async () => {
+    state.views = [CRM];
+    await mount();
+    expect(q("review-mappings-headline").textContent).toBe("2 columns matched – 1 to check.");
+    expect(q("review-mappings-headline").className).not.toContain("text-emerald");
+    const row = q("review-unsure-crm-Amount (EUR)");
+    expect(row.textContent).toBe('CRM"Amount (EUR)" read as amountCorrectChange');
+    expect(qa("review-unsure-crm-Stage")).toHaveLength(0);
+    const sizes = [...q("review-mappings-summary").querySelectorAll("[class]")].flatMap((e) => e.className.split(" ")).filter((c) => /^text-(xs|base|lg|xl)/.test(c));
+    expect(sizes).toEqual([]);
+    expect(q("review-mappings-summary").querySelector("svg")).toBeNull();
+    expect(q("review-mappings-summary").innerHTML).not.toMatch(/border|rounded-md/);
+  });
+
+  test("confidence under 100 makes a row unsure even when the names match", async () => {
+    state.views = [LOW];
+    await mount();
+    expect(q("review-mappings-headline").textContent).toBe("2 columns matched – 2 to check.");
+    expect(q("review-unsure-crm-Amount")).not.toBeNull();
+  });
+
+  test("Correct sends a confirm; Change sends a correct with the chosen field and the reason", async () => {
+    state.views = [CRM];
+    api.decideColumns.mockResolvedValue({});
+    await mount();
+    await act(async () => { q("review-correct-crm-Amount (EUR)").click(); });
+    expect(api.decideColumns).toHaveBeenLastCalledWith("a1", "crm", [{ column: "Amount (EUR)", action: "confirm", field: "amount" }]);
+    await act(async () => { q("review-change-crm-Amount (EUR)").click(); });
+    expect(q("review-change-editor-crm-Amount (EUR)")).not.toBeNull();
+    await act(async () => { q("review-change-apply-crm-Amount (EUR)").click(); });
+    expect(api.decideColumns).toHaveBeenLastCalledWith("a1", "crm", [expect.objectContaining({ column: "Amount (EUR)", action: "correct", field: "amount", reason: "header_misleading" })]);
+  });
+
+  test("Show details lists every matched column per file, rows alternate page colour and grey, unsure rows too", async () => {
+    state.views = [LOW];
+    await mount();
+    await act(async () => { q("review-details-toggle").click(); });
+    expect(q("review-details-toggle").textContent).toBe("Hide details");
+    const rows = [...q("review-details-crm").querySelectorAll("[data-testid^='review-detail-crm-']")];
+    expect(rows.map((r) => r.textContent)).toEqual(['"Amount" read as amount', '"Stage" read as stage']);
+    expect(rows.map((r) => r.className.includes("bg-slate-900/[0.035]"))).toEqual([false, true]);
+    const unsure = [...document.body.querySelectorAll("[data-testid^='review-unsure-']")];
+    expect(unsure.map((r) => r.className.includes("bg-slate-900/[0.035]"))).toEqual([false, true]);
+  });
 });
