@@ -260,7 +260,7 @@ function UsageTotals() {
   const [totals, setTotals] = useState(null);
   const [open, setOpen] = useState(false);
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; }, []);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
     if (open && !totals) getUsageTotals().then((t) => alive.current && setTotals(t)).catch(() => alive.current && setTotals(false));
   }, [open]); // eslint-disable-line

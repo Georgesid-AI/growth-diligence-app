@@ -42,7 +42,7 @@ export default function Review() {
   const [proceeding, setProceeding] = useState(false);
   const [loadError, setLoadError] = useState(null);     // why the audit or its review could not be read: shown instead of a spinner
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; }, []);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
   const reload = useCallback(async () => {
     const safe = (p, fallback) => p.catch(() => fallback);

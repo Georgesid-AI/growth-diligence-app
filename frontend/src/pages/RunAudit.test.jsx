@@ -104,3 +104,17 @@ test("a failed stage says what to do in plain English and Retry stage carries on
   expect(q("stage-engine").getAttribute("data-status")).toBe("done");
   expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/review");
 });
+
+test("under React.StrictMode the stage updates still land (alive ref is re-armed on the second mount)", async () => {
+  api.runStage.mockResolvedValue({ stage: "mapping", status: "needs_review", open: 1 });
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  await act(async () => { root.render(<React.StrictMode><RunAudit /></React.StrictMode>); });
+  await act(async () => { await Promise.resolve(); });
+  await attach("revenue.csv");
+  await act(async () => { q("run-audit").click(); });
+  await act(async () => { await Promise.resolve(); });
+  expect(q("stage-mapping").getAttribute("data-status")).toBe("needs_review");
+  expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/review");
+});

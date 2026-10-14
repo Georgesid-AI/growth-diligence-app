@@ -352,6 +352,13 @@ def test_a_file_that_is_not_xlsx_or_csv_is_refused_and_counted_by_extension(api)
     assert rejected == {"pptx": 1, "docx": 1}
 
 
+def test_usage_accepts_the_review_and_run_screens_and_refuses_others(api):
+    for screen in ("review", "run"):
+        assert api.post(f"/api/audits/{AUDIT}/usage", json={"screen": screen}).status_code == 200
+        assert usage_mod.get(api.db["audits"].docs[0])["last_screen"] == screen
+    assert api.post(f"/api/audits/{AUDIT}/usage", json={"screen": "elsewhere"}).status_code == 422
+
+
 def test_sheet_row_numbers_name_the_real_rows_in_the_citations(api):
     api.state["adapter"] = t.FakeAdapter(replies=[mapping_reply(("customer_id", 4))])
     body = upload(api, "duplicate_ids_header_row3.csv").json()

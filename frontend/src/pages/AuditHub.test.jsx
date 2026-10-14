@@ -210,3 +210,17 @@ describe("delete audit and the usage totals", () => {
     expect(details.textContent).not.toContain("Acme");
   });
 });
+
+test("under React.StrictMode the usage totals still render once opened (alive ref is re-armed on the second mount)", async () => {
+  api.listAudits.mockResolvedValue([]);
+  api.getUsageTotals.mockResolvedValue({ files: { uploaded: { revenue: 2 } }, other_notes: [{ note: "strict note", at: "t" }] });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => { root.render(<React.StrictMode><AuditHub /></React.StrictMode>); });
+  const details = q("usage-totals");
+  await act(async () => { details.open = true; details.dispatchEvent(new Event("toggle", { bubbles: true })); });
+  await act(async () => { await Promise.resolve(); });
+  expect(q("usage-notes").textContent).toContain("strict note");
+  await act(async () => { root.unmount(); host.remove(); });
+});
