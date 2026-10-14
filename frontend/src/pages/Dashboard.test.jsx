@@ -204,6 +204,20 @@ test("a blocked verdict shows no outcome, only the claims that need a gate (W9)"
   await unmount();
 });
 
+test("an open Definition check blocks the verdict (W9b) and its row of the five reads Definition check, not a label", async () => {
+  const five = [{ ...OK.verdict.five[0], evidence_label: null, definition_check: "ask", reason: "definition check: the gap is beyond 50% of the claim" },
+    OK.verdict.five[1]];
+  const blocked = { ...OK, verdict: { ...OK.verdict, status: "blocked", outcome: null, rule: null, reasons: [], blocked: ["c1"], five,
+    message: "Verdict blocked: answer the definition check on #1." } };
+  const { host, unmount } = await mountDashboard(sample, blocked);
+  expect(host.querySelector('[data-testid="verdict-message"]').textContent).toBe("Verdict blocked: answer the definition check on #1.");
+  const rows = host.querySelectorAll('[data-testid="verdict-five-row"]');
+  expect(rows[0].textContent).toContain("Definition check");
+  expect(rows[0].textContent).toContain("the gap is beyond 50% of the claim");
+  expect(rows[1].textContent).toContain(OK.verdict.five[1].evidence_label);
+  await unmount();
+});
+
 test("an audit with no claims says so (W10) and offers no top 5", async () => {
   const none = { ...VERDICT_BASE, candidates: [], verdict: { ...VERDICT_BASE.verdict, status: "no_verdict", message: "No verdict: the register has no claims.",
     top5: { ...TOP, proposed: [], in_force: [] } } };

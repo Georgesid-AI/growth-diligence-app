@@ -62,6 +62,19 @@ export const TURNOVER_QUESTION = "Revenue or transaction volume?";
 export const TURNOVER_CONFIRM = "Turnover – confirm:";
 export const UNVERIFIED = "Unverified";
 
+// Section 4.1 of docs/specs/claim-matching.md: a gap beyond 50% of the claim asks "Same metric and period?" before the row gets a label.
+export const DEFINITION_CHECK = "Definition check";
+export const DEFINITION_ANSWERS = [["yes", "Yes"], ["no", "No"]];
+
+/** What the Evidence cell shows: the label, or "Definition check" while that question is open (a status, not an evidence label). */
+export const labelText = (row) => (row.definition_check === "ask" ? DEFINITION_CHECK : row.evidence_label);
+
+/** The Definition check views of a deck-list claim (one per value of a table row that has one) and whether one is still open. */
+export function definitionOf(candidate) {
+  const views = candidate?.definition || [];
+  return { views, open: views.some((v) => v.definition_check === "ask") };
+}
+
 /** The turnover views of a deck-list claim (one per value of a table row) and whether one still waits for the analyst. */
 export function turnoverOf(candidate) {
   const views = candidate?.turnover || [];

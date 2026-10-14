@@ -1533,7 +1533,9 @@
      },
      "analyst": {},
      "expect": {
-      "label": "Contradicted",
+      "label": null,
+      "reason": "definition check: the gap is beyond 50% of the claim",
+      "definition_check": "ask",
       "metric": "New MRR",
       "observed": 0.0,
       "observed_at": "2023-Q4",

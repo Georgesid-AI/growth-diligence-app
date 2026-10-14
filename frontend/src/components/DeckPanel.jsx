@@ -138,14 +138,14 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
   };
 
   // Approve all: one call for the section's claims to review (the deck tab's, under a deck tab). The server skips the ones that need a
-  // Revenue / Volume answer or a type and the ones whose save fails, and says how many; they stay "To review".
+  // Revenue / Volume answer, a Definition check answer or a type and the ones whose save fails, and says how many; they stay "To review".
   const [approving, setApproving] = useState(null);
   const approveSection = async (section) => {
     if (approving !== null) return;
     setApproving(section.group);
     try {
       const done = await approveAll(auditId, section.group, tab && tab !== ALL_DECKS ? tab : undefined);
-      if (alive.current) toast.success(approveAllToast(done.approved, done.skipped));
+      if (alive.current) toast.success(approveAllToast(done.approved, done.skipped, done.skipped_definition));
       await load();
     } catch (err) {
       if (alive.current) toast.error(describeRequestError(err).message);

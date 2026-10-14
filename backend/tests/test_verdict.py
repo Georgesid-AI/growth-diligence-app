@@ -113,13 +113,53 @@ def test_the_three_reasons_are_the_claims_that_made_the_rule_fire_each_citing_it
     assert again["reasons"][0] == "#1 ARR, Feb 2024: Unsupported, reason 1. No figure in the supplied files."
 
 
-@pytest.mark.parametrize("run, expected", [("A", ("ok", "Re-plan")), ("C", ("ok", "Re-plan")), ("D", ("ok", "Re-plan"))])
+@pytest.mark.parametrize("run, expected", [("A", ("ok", "Re-plan")), ("C", ("ok", "Re-plan")),
+                                           ("D", ("blocked", None))])      # D: c37 asks its Definition check (below)
 def test_the_fixture_runs_measure_as_the_spec_says_with_the_proposed_top_5_confirmed(run, expected):
     rows = register(RUNS[run])
     ids = {"claim_ids": vd.proposal(rows)}
     assert vd.verdict(rows, results_for(RUNS[run]), ids)["status"] == "blocked", "no gate saved yet"
     v = vd.verdict(gated(rows), results_for(RUNS[run]), ids)
     assert (v["status"], v["outcome"]) == expected
+
+
+def _run_d(answer=None):
+    """Run D's register with the analyst's answer to c37's Definition check (New MRR €5,000 claimed, 0 observed: a 100% miss)."""
+    from test_claim_matching import candidates_for, settings
+    run = RUNS["D"]
+    cands = candidates_for(run)
+    if answer:
+        next(c for c in cands if c["id"] == "c37").setdefault("claim_inputs", {})["c37"] = {"definition_check": answer}
+    return cm.build_register(cands, results_for(run), settings(run))
+
+
+def test_an_open_definition_check_blocks_the_verdict_wherever_it_ranks_until_it_is_answered():
+    """claim-matching.md section 4.1: a gap beyond 50% has no label until the analyst answers; it blocks the verdict even with
+    every gate saved, it is in no count by label, and the answer gives the label the normal rule gives."""
+    rows = _run_d()
+    c37 = row_of(rows, "c37")
+    assert (c37["evidence_label"], c37["definition_check"], c37["rank"], c37["gate_needed"]) == (None, "ask", 1, False)
+    assert c37["definition_question"] == "Observed €0, claimed €5,000. Same metric and period?"
+    ids = {"claim_ids": vd.proposal(rows)}
+    v = vd.verdict(gated(rows), results_for(RUNS["D"]), ids)
+    assert (v["status"], v["outcome"], v["blocked"]) == ("blocked", None, ["c37"])
+    assert v["message"] == "Verdict blocked: answer the definition check on #1."
+    assert next(f for f in v["five"] if f["claim_id"] == "c37")["definition_check"] == "ask"
+    assert sum(cm.label_counts(rows).values()) == len(rows) - 1, "the open check is in no count by label"
+    # outside the top 5 it blocks too: the analyst's five leave c37 out
+    others = {"claim_ids": [r["claim_id"] for r in vd.sortable(rows) if r["claim_id"] != "c37"][:5]}
+    assert vd.verdict(gated(rows), results_for(RUNS["D"]), others)["blocked"] == ["c37"]
+    # a gate on a top-5 row still needed is named after the definition check
+    both = vd.verdict(rows, results_for(RUNS["D"]), ids)["message"]
+    assert both.startswith("Verdict blocked: answer the definition check on #1. Verdict blocked: set a gate on #2"), both
+    yes = _run_d("yes")
+    assert (row_of(yes, "c37")["evidence_label"], row_of(yes, "c37")["definition_check"]) == ("Contradicted", "yes")
+    assert (vd.verdict(gated(yes), results_for(RUNS["D"]), ids)["outcome"]) == "Re-plan"
+    no = _run_d("no")
+    assert (row_of(no, "c37")["evidence_label"], row_of(no, "c37")["reason"], row_of(no, "c37")["gate_needed"]) == \
+        ("Unverified", "definition mismatch", True)
+    assert vd.verdict(no, results_for(RUNS["D"]), ids)["status"] == "blocked", "a No needs a gate as any Unverified claim"
+    assert vd.verdict(gated(no), results_for(RUNS["D"]), ids)["status"] == "ok"
 
 
 def test_run_b_is_one_unverified_claim_blocked_until_its_gate_is_saved():

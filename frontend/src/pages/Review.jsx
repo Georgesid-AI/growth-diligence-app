@@ -5,16 +5,16 @@ import { Download, Loader2, Sparkles } from "lucide-react";
 import { Layout } from "@/components/Layout";
 import { BLOCKERS_CHANGED } from "@/components/BlockerBanner";
 import { ColumnRow } from "@/components/UploadChat";
-import { TurnoverCell, GateCell } from "@/components/ClaimRegister";
+import { DefinitionCell, TurnoverCell, GateCell } from "@/components/ClaimRegister";
 import { TopFive, ThesisFields, RatingFields, downloadMemo, icSaver } from "@/components/Verdict";
 import { Button } from "@/components/ui/button";
 import * as apiModule from "@/lib/api";
 import {
-  answerTurnover, approveAll, decideColumns, generateNarrative, getAudit, getClaimRegister, getDatasets, getDecks, getNarrativeEstimate,
+  answerDefinitionCheck, answerTurnover, approveAll, decideColumns, generateNarrative, getAudit, getClaimRegister, getDatasets, getDecks, getNarrativeEstimate,
   getReview, getVerdict, putIcInputs, reportUsage, updateCandidate, updateClaimInputs,
 } from "@/lib/api";
 import { claimPeriod, claimValue, sourceRef, typeLabel, CLAIM_GROUPS, approveAllToast } from "@/lib/deckClaims";
-import { turnoverHeading, turnoverOf, registerRows } from "@/lib/claimRegister";
+import { definitionOf, turnoverHeading, turnoverOf, registerRows } from "@/lib/claimRegister";
 import { useGateEdits } from "@/lib/useGateEdits";
 import { S13_status, MAPPING_HEADERS, fieldName, sortColumns } from "@/lib/chatUpload";
 import { describeRequestError, READ_TIMEOUT_MS } from "@/lib/requestError";
@@ -24,8 +24,8 @@ import { writeAllLabel, estimateText, allWritten, ALL_WRITTEN_LEAD, ALL_WRITTEN_
 const GROUP_TITLE = Object.fromEntries(CLAIM_GROUPS);
 
 /**
- * The review screen: everything the analyst decides, in one place and in one order. Open mappings, open claims, Revenue / Volume
- * answers, the top 5, the deal thesis, the gates and the ratings; then Write all narratives and Generate IC memo. Whatever
+ * The review screen: everything the analyst decides, in one place and in one order. Open mappings, open claims (with their Definition
+ * checks), Revenue / Volume answers, the top 5, the deal thesis, the gates and the ratings; then Write all narratives and Generate IC memo. Whatever
  * the app could settle itself (columns above the mapping threshold, claims within tolerance) is a count with a Show link.
  */
 export default function Review() {
@@ -176,13 +176,16 @@ function MappingsSection({ views, summary, decide }) {
 
 function ClaimsSection({ auditId, data, summary, reload }) {
   const [busy, setBusy] = useState(null);
-  const open = data.candidates.filter((c) => c.status === "pending" && !turnoverOf(c).open);
+  // A claim with an open Definition check (claim-matching.md section 4.1) is To review whether it is approved or not: it asks here.
+  const asks = (c) => definitionOf(c).open;
+  const open = data.candidates.filter((c) => (c.status === "pending" && !turnoverOf(c).open) || (c.status !== "rejected" && asks(c)));
   const auto = data.candidates.filter((c) => c.auto_accepted && ["approved", "edited"].includes(c.status));
   const groups = [...new Set(open.map((c) => c.group))].sort((a, b) => a - b);
   const act = async (key, fn) => {
     setBusy(key);
     try { await fn(); await reload(); } catch (e) { toast.error(describeRequestError(e).message); } finally { setBusy(null); }
   };
+  const answerDefinition = (row, value) => act(row.claim_id, () => answerDefinitionCheck(auditId, row.claim_id, value));
   const needsType = (c) => ["other", "unknown"].includes(c.claim_type) && !c.parsed;
   return (
     <section className={sectionClass} data-testid="review-claims">
@@ -193,8 +196,8 @@ function ClaimsSection({ auditId, data, summary, reload }) {
           <div className="flex items-center justify-between">
             <div className="text-xs font-medium text-slate-900">{GROUP_TITLE[g] || "Other"}</div>
             <Button size="sm" variant="outline" className="h-7" disabled={busy !== null} data-testid={`review-approve-all-${g}`}
-              onClick={() => act(`g${g}`, async () => { const done = await approveAll(auditId, g); toast.success(approveAllToast(done.approved, done.skipped)); })}>
-              Approve all ({open.filter((c) => c.group === g).length})
+              onClick={() => act(`g${g}`, async () => { const done = await approveAll(auditId, g); toast.success(approveAllToast(done.approved, done.skipped, done.skipped_definition)); })}>
+              Approve all ({open.filter((c) => c.group === g && c.status === "pending").length})
             </Button>
           </div>
           <table className="w-full text-xs mt-1"><tbody>
@@ -205,7 +208,11 @@ function ClaimsSection({ auditId, data, summary, reload }) {
                 <td className="py-1.5 pr-3 font-mono text-slate-600">{claimPeriod(c)}</td>
                 <td className="py-1.5 pr-3 font-mono text-slate-500">{sourceRef(c.sources?.[0])}</td>
                 <td className="py-1.5 whitespace-nowrap">
-                  {needsType(c) ? <span className="text-amber-800">Choose its type under Details, Upload &amp; Mapping.</span> : (
+                  {needsType(c) ? <span className="text-amber-800">Choose its type under Details, Upload &amp; Mapping.</span> : asks(c) ? (
+                    definitionOf(c).views.filter((v) => v.definition_check === "ask").map((v) => (
+                      <DefinitionCell key={v.claim_id} row={v} onAnswer={answerDefinition} heading={c.by_period?.length ? v.period : undefined} />
+                    ))
+                  ) : (
                     <>
                       <Button size="sm" variant="outline" className="h-7 mr-1.5" disabled={busy !== null} data-testid="review-approve"
                         onClick={() => act(c.id, () => updateCandidate(auditId, c.id, { status: "approved" }))}>Approve</Button>
@@ -281,7 +288,8 @@ function ThesisSection({ verdict, save }) {
 
 function GatesSection({ auditId, verdict, register, extras, audit, reload }) {
   const five = new Set((verdict.verdict.five || []).map((f) => f.claim_id));
-  const rows = register.filter((r) => five.has(r.claim_id) && r.evidence_label !== "Verified");
+  // a row still in Definition check is answered under Open claims first: its label, and so its need for a gate, follow the answer
+  const rows = register.filter((r) => five.has(r.claim_id) && r.evidence_label !== "Verified" && r.definition_check !== "ask");
   const { edits, onEdit, clear, saveAll } = useGateEdits({ auditId, rows, prefill: extras.prefill, afterSave: reload });
   const save = (row, edit) => updateClaimInputs(auditId, row.claim_id, edit).then(() => { clear([row.claim_id]); return reload(); })
     .catch((e) => { toast.error(describeRequestError(e).message); throw e; });

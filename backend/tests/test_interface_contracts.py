@@ -696,8 +696,14 @@ def test_a_memo_is_built_from_every_engine_run_the_contract_covers_with_no_false
     base = CLAIM_RUNS["A"]
     cands = candidates_for(base)
     sets = {**settings(base), "as_of_month": None}
-    top = vd.proposal(cm.build_register(cands, stored, sets))
+    first = cm.build_register(cands, stored, sets)
+    top = vd.proposal(first)
+    # run A's claims against another company's data: the analyst answers every Definition check (claim-matching.md section 4.1)
+    asked = {r["claim_id"] for r in first if r["definition_check"] == cm.DEFINITION_ASK}
     for c in cands:
+        for cid in asked:
+            if cid.split("#")[0] == c["id"]:
+                c.setdefault("claim_inputs", {}).setdefault(cid, {})["definition_check"] = "yes"
         for cid in top:
             if cid.split("#")[0] == c["id"]:
                 c.setdefault("claim_inputs", {}).setdefault(cid, {}).update({

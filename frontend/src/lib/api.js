@@ -80,6 +80,9 @@ export const saveFx = (id, fx) => api.put(`/audits/${id}/fx`, { fx }).then((r) =
 // One click, Revenue or Volume, with a reason code (docs/specs/claim-matching.md section 11).
 export const answerTurnover = (id, claimId, payload) =>
   api.put(`/audits/${id}/claims/${encodeURIComponent(claimId)}/turnover`, payload).then((r) => r.data);
+/** "Same metric and period?" for a gap beyond 50% of the claim (claim-matching.md section 4.1): answer is "yes" or "no". */
+export const answerDefinitionCheck = (id, claimId, answer) =>
+  api.put(`/audits/${id}/claims/${encodeURIComponent(claimId)}/definition-check`, { answer }).then((r) => r.data);
 export const claimsCsvUrl = (id) => `${API}/audits/${id}/claims.csv`;
 
 // Verdict, data gaps and the IC memo (docs/specs/verdict-and-memo.md): computed on read by the server from the register, the

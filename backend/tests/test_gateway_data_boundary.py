@@ -1276,16 +1276,20 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             "implied_take_rate", "implied_take_rate_source", "turnover_suggested", "deck_revenue_note", "period_basis", "inconsistencies",
                             "turnover_views", "file_note", "NO_FILE_PERIOD",
                             "inconsistent_dates", "mixed_slide", "USE_OF_FUNDS_NOTE", "MIXED_SLIDE", "ACQUISITION_NOTE", "ACQUISITION_CHANNELS",
-                            "UNTESTED_TYPES", "channel", "auto_accepted", "BEAT_PREFIX", "is_beat", "beat_text",
-                            "qualifier", "QUALIFIERS", "QUALIFIED_REASON", "qualified_label", *MATCHING_SERVER_ONLY})
+                            "UNTESTED_TYPES", "channel", "auto_accepted", "BEAT_PREFIX", "is_beat", "flag_text", "flagged_rows",
+                            "qualifier", "QUALIFIERS", "QUALIFIED_REASON", "qualified_label", "definition_check", "definition_question",
+                            "definition_views", "DEFINITION_QUESTION", "DEFINITION_OPEN_REASON", "DEFINITION_MISMATCH",
+                            *MATCHING_SERVER_ONLY})
 # The functions that log about the register, and the only things their log calls may name.
 REGISTER_LOGGERS = frozenset({"_claim_rows", "claim_register", "claim_register_csv", "update_claim_inputs", "answer_turnover",
-                              "approve_all_candidates"})
+                              "approve_all_candidates", "answer_definition_check"})
 REGISTER_LOG_ARGS = frozenset({"audit_id", "counts", "len(rows)"})      # exactly these expressions, as format arguments
 # The turnover answer logs two closed words (Literal fields of the request), never a claim or a figure.
 TURNOVER_LOG_ARGS = frozenset({"audit_id", "payload.answer", "payload.reason"})
 # Approve all logs the run, the category's number and two counts (chat-upload.md section 17), never a claim or an id.
 APPROVE_ALL_LOG_ARGS = frozenset({"audit_id", "payload.group", "len(approved)", "len(skipped)"})
+# The Definition check answer (claim-matching.md section 4.1) logs the run and yes or no (a Literal of the request), nothing else.
+DEFINITION_LOG_ARGS = frozenset({"audit_id", "payload.answer"})
 
 
 def _results_with_the_series():
@@ -1401,7 +1405,8 @@ def test_the_register_log_lines_name_counts_per_label_and_the_run_only():
                 found.append((fn.name, ast.unparse(node)))
                 assert not node.keywords and isinstance(node.args[0], ast.Constant) and "{" not in node.args[0].value, ast.unparse(node)
                 for arg in node.args[1:]:
-                    allowed = {"answer_turnover": TURNOVER_LOG_ARGS, "approve_all_candidates": APPROVE_ALL_LOG_ARGS}.get(fn.name, REGISTER_LOG_ARGS)
+                    allowed = {"answer_turnover": TURNOVER_LOG_ARGS, "approve_all_candidates": APPROVE_ALL_LOG_ARGS,
+                               "answer_definition_check": DEFINITION_LOG_ARGS}.get(fn.name, REGISTER_LOG_ARGS)
                     assert ast.unparse(arg) in allowed, f"{fn.name}: {ast.unparse(node)} logs {ast.unparse(arg)}"
     assert found, "the register logs its label counts"
     module = ast.parse((BACKEND / "app" / "claim_matching.py").read_text(encoding="utf-8"))
@@ -1426,8 +1431,8 @@ def test_the_beat_reason_is_the_closed_prefix_and_the_gloss_and_holds_no_deck_te
     """A beat outside tolerance (claim-matching.md section 4, 2026-10-13) is Verified with reason "beat: observed beats the claim
     by {gloss}": the gloss is a figure and closed words (section 3), so a sentinel in the snippet or the label reaches no field."""
     sentinel = "Zephyr Holdings"
-    row = {"id": "x1", "status": "approved", "claim_type": "revenue", "value": 100.0, "currency": "EUR", "target_date": "2026-12",
-           "period_text": "Dec 2026", "snippet": f"{sentinel} ARR EUR 100", "label_from": f"{sentinel} ARR", "file": "deck.pptx",
+    row = {"id": "x1", "status": "approved", "claim_type": "revenue", "value": 4800.0, "currency": "EUR", "target_date": "2026-12",
+           "period_text": "Dec 2026", "snippet": f"{sentinel} ARR EUR 4,800", "label_from": f"{sentinel} ARR", "file": "deck.pptx",
            "order": 0, "sources": [{"file": "deck.pptx", "slide": 3}]}
     from app.decks import claims as deck_claims
     deck_claims.resolve_period(row, 12)
@@ -1438,6 +1443,31 @@ def test_the_beat_reason_is_the_closed_prefix_and_the_gloss_and_holds_no_deck_te
     assert out["reason"] == claim_matching.BEAT_PREFIX + out["gloss"]
     assert re.fullmatch(r"€[\d,]+ higher \(beat\)", out["gloss"]), out["gloss"]
     assert sentinel not in json.dumps(out, default=str)
+
+
+def test_the_definition_check_question_and_reasons_hold_figures_and_closed_words_never_deck_text():
+    """claim-matching.md section 4.1: the question is two figures in the metric's unit and closed words; the reasons are closed
+    sentences. A sentinel in the snippet or the label reaches no field of the row, asked or answered, nor the deck list's view."""
+    sentinel = "Zephyr Holdings"
+    row = {"id": "x1", "status": "approved", "claim_type": "revenue", "value": 100.0, "currency": "EUR", "target_date": "2026-12",
+           "period_text": "Dec 2026", "snippet": f"{sentinel} ARR EUR 100", "label_from": f"{sentinel} ARR", "file": "deck.pptx",
+           "order": 0, "sources": [{"file": "deck.pptx", "slide": 3}]}
+    from app.decks import claims as deck_claims
+    deck_claims.resolve_period(row, 12)
+    results = {**_results_with_the_series(), "mrr_series": {"months": ["2026-12"], "segments": [], "source": SOURCE,
+                                                            "data": [{"month": "2026-12", "total": 500.0}]}}
+    settings = {"fiscal_year_end": 12, "reporting_currency": "EUR", "fx": {"EUR": 1.0}}
+    asked = claim_matching.build_register([row], results, settings)[0]
+    assert re.fullmatch(r"Observed €[\d,]+, claimed €[\d,]+\. Same metric and period\?", asked["definition_question"])
+    assert asked["reason"] == claim_matching.DEFINITION_OPEN_REASON.format(share="50%")
+    texts = [asked]
+    for answer in claim_matching.DEFINITION_ANSWERS:
+        answered = claim_matching.build_register([{**row, "claim_inputs": {"x1": {"definition_check": answer}}}], results, settings)[0]
+        assert answered["reason"] in (claim_matching.DEFINITION_MISMATCH, claim_matching.BEAT_PREFIX + answered["gloss"])
+        texts.append(answered)
+    texts.append(claim_matching.definition_views([row], results, settings))
+    assert sentinel not in json.dumps(texts, default=str)
+    assert not {"definition_check", "definition_question"} & decks.GATEWAY_READABLE_FIELDS
 
 
 def test_the_qualified_users_reason_holds_two_closed_words_and_the_qualifier_never_reaches_the_gateway_or_a_log(caplog):
