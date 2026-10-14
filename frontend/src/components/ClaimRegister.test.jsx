@@ -454,6 +454,12 @@ const CHECK = { ...ROW, claim_id: "k1", claim_type: "customers", claimed_value: 
   observed_value: 26, gap: -25, gap_normalised: -25, gloss: "25 customers more (beat)", evidence_label: null, definition_check: "ask",
   definition_question: "Observed 26, claimed 1. Same metric and period?", reason: "definition check: the gap is beyond 50% of the claim" };
 
+test("a row with an open Definition check has no Set gate button; once answered it has one like any row that is not Verified", async () => {
+  const { host } = await mount([CHECK, { ...CHECK, claim_id: "k2", rank: 2, definition_check: "no", evidence_label: "Unverified" }]);
+  const rows = [...host.querySelectorAll('[data-testid="claim-register-row"]')];
+  expect(rows.map((r) => r.querySelector('[data-testid="register-set-gate"]') !== null)).toEqual([false, true]);
+});
+
 test("a row in Definition check reads so in the Evidence cell and asks its question with Yes and No on one line", async () => {
   const { host } = await mount([CHECK, ROW]);
   const rows = host.querySelectorAll('[data-testid="claim-register-row"]');

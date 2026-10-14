@@ -48,9 +48,13 @@ BEAT_PREFIX = "beat: observed beats the claim by "       # the reason of a Verif
 # Section 4.1 (George, 2026-10-14): a tested gap beyond this share of the claim, either way, asks the analyst "Same metric and
 # period?" before the row gets a label. Adjustable; exactly at it the normal rule applies.
 BIG_GAP_THRESHOLD = 0.5
+# A rate is read in points, not as a share of the claim (George, 2026-10-14): its gap opens the check only beyond this many
+# percentage points. Adjustable; exactly at it the normal rule applies.
+BIG_GAP_RATE_POINTS = 10.0
 DEFINITION_ASK, DEFINITION_ANSWERS = "ask", ("yes", "no")     # "ask": the row is a Definition check, a status with no label
 DEFINITION_QUESTION = "Observed {observed}, claimed {claimed}. Same metric and period?"
 DEFINITION_OPEN_REASON = "definition check: the gap is beyond {share} of the claim"
+DEFINITION_OPEN_REASON_RATE = "definition check: the gap is beyond {points} percentage points"
 DEFINITION_MISMATCH = "definition mismatch"
 # A Users claim the parser typed from a qualified customers noun (deck-parser.md section 2, George, 2026-10-13); the label is
 # two words of closed lists: the qualifier and the customers keyword.
@@ -800,13 +804,16 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         return finish("Unverified", "deck reading: AI suggestion, not verified until the analyst edits the claim")
     if verified:
         return finish("Verified", f"within {out['tolerance']} of the claim")
-    if is_big_gap(out["gap_normalised"]):       # section 4.1: the analyst says whether claim and figure measure the same thing
+    if is_big_gap(spec["unit"], out["gap"], out["gap_normalised"]):    # section 4.1: the analyst says whether claim and figure measure the same thing
         reporting = results.get("reporting_currency")
-        answer = inputs.get("definition_check") if inputs.get("definition_check") in DEFINITION_ANSWERS else None
+        # an answer holds only for the figures it was given against: if any differs now, it is asked again
+        answer = inputs.get("definition_check") if inputs.get("definition_check") in DEFINITION_ANSWERS \
+            and inputs.get("definition_basis") == definition_basis(out) else None
         out.update(definition_check=answer or DEFINITION_ASK, definition_question=DEFINITION_QUESTION.format(
             observed=_format(spec["unit"], observed, reporting), claimed=_format(spec["unit"], claimed, reporting)))
         if answer is None:                      # a status, not an evidence label: no label until the analyst answers
-            return finish(None, DEFINITION_OPEN_REASON.format(share=f"{BIG_GAP_THRESHOLD:.0%}"))
+            return finish(None, DEFINITION_OPEN_REASON_RATE.format(points=f"{BIG_GAP_RATE_POINTS:g}") if spec["unit"] == "%"
+                          else DEFINITION_OPEN_REASON.format(share=f"{BIG_GAP_THRESHOLD:.0%}"))
         if answer == "no":
             return finish("Unverified", DEFINITION_MISMATCH)
     if kind == "beat":                          # amended 2026-10-13 (George): a beat is Verified, marked (beat), not Contradicted
@@ -814,10 +821,22 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
     return finish("Contradicted", f"outside {out['tolerance']}: a miss")
 
 
-def is_big_gap(gap_normalised: Optional[float]) -> bool:
-    """Whether a gap, as a share of the claim, is beyond BIG_GAP_THRESHOLD in either direction (section 4.1). A claim of 0 has no
-    share, so it is never one."""
+def is_big_gap(unit: str, gap: Optional[float], gap_normalised: Optional[float]) -> bool:
+    """Whether a tested gap opens the Definition check (section 4.1): a rate, beyond BIG_GAP_RATE_POINTS points; any other unit,
+    beyond BIG_GAP_THRESHOLD of the claim, either way. A claim of 0 has no share, so it is never one."""
+    if unit == "%":
+        return gap is not None and round(abs(gap), 9) > BIG_GAP_RATE_POINTS
     return gap_normalised is not None and round(abs(gap_normalised), 9) > BIG_GAP_THRESHOLD
+
+
+def definition_basis(row: dict) -> dict:
+    """What a Definition check answer was given against (section 4.1): the claimed figures and the rate they are converted at,
+    the observed figure, the claim's period, the as-of month and the FX rate date. Stored with the answer; the answer applies only
+    while all of it is unchanged. Read from the register row's own fields, so it adds none."""
+    figure = lambda v: None if v is None else round(float(v), 6)
+    return {"claimed": [figure(row.get("claimed_value")), figure(row.get("claimed_high"))], "fx_rate": figure(row.get("fx_rate")),
+            "fx_date": row.get("fx_date"), "observed": figure(row.get("observed_value")),
+            "period": [row.get("period_start"), row.get("period_end")], "as_of_month": row.get("as_of_month")}
 
 
 def _gate(out: dict, c: dict, inputs: dict, spec: Optional[dict], claim_unit: Optional[str], results: dict,
@@ -1044,10 +1063,10 @@ def turnover_views(candidates: List[dict], results: Optional[dict], settings: di
 DEFINITION_VIEW_FIELDS = ("claim_id", "period", "definition_check", "definition_question")
 
 
-def definition_views(candidates: List[dict], results: Optional[dict], settings: dict) -> Dict[str, List[dict]]:
-    """Section 4.1: for each candidate with a Definition check (asked or answered), one view per claim that has one, keyed by candidate
-    id, computed by the register's own code over every candidate not rejected, pending ones included, so the review screen can ask
-    before a claim is approved. Empty before the first Calculate: no figure, no gap. Nothing is read from a model."""
+def definition_rows(candidates: List[dict], results: Optional[dict], settings: dict) -> Dict[str, List[dict]]:
+    """Section 4.1: the register rows with a Definition check (asked or answered), keyed by candidate id, computed by the register's
+    own code over every candidate not rejected, pending ones included, so the review screen can ask before a claim is approved.
+    Empty before the first Calculate: no figure, no gap. Nothing is read from a model."""
     if not results:
         return {}
     claims = _expand([c for c in candidates if c.get("status") != "rejected"])
@@ -1055,8 +1074,14 @@ def definition_views(candidates: List[dict], results: Optional[dict], settings: 
     for c in claims:
         row = _row(c, results, settings, claims)
         if row["definition_check"] is not None:
-            out.setdefault(c["id"], []).append({k: row[k] for k in DEFINITION_VIEW_FIELDS})
+            out.setdefault(c["id"], []).append(row)
     return out
+
+
+def definition_views(candidates: List[dict], results: Optional[dict], settings: dict) -> Dict[str, List[dict]]:
+    """`definition_rows` cut to the fields the deck list shows."""
+    return {cid: [{k: r[k] for k in DEFINITION_VIEW_FIELDS} for r in rows]
+            for cid, rows in definition_rows(candidates, results, settings).items()}
 
 
 def open_definition_ids(views: Dict[str, List[dict]]) -> set:
@@ -1070,7 +1095,7 @@ def without_definition_answer(inputs: Optional[dict], claim_ids: Optional[set] =
     out = {}
     for cid, kept in (inputs or {}).items():
         if claim_ids is None or cid in claim_ids:
-            kept = {k: v for k, v in kept.items() if k != "definition_check"}
+            kept = {k: v for k, v in kept.items() if k not in ("definition_check", "definition_basis")}
         if kept:
             out[cid] = kept
     return out

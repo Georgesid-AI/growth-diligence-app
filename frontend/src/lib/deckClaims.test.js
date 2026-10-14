@@ -324,13 +324,13 @@ describe("Approve all (docs/specs/chat-upload.md section 17)", () => {
     expect(approveAllToast(5, 2)).toBe("Approved 5 claims, 2 skipped (need Revenue / Volume or failed to save)");
     expect(approveAllToast(1, 0)).toBe("Approved 1 claim, 0 skipped (need Revenue / Volume or failed to save)");
   });
-  test("a claim with an open definition check is counted apart (claim-matching.md section 4.1)", () => {
-    expect(approveAllToast(5, 3, 2)).toBe("Approved 5 claims, 1 skipped (need Revenue / Volume or failed to save), 2 skipped (definition check)");
+  test("an approved claim with an open definition check is counted apart, not as a skip (claim-matching.md section 4.1)", () => {
+    expect(approveAllToast(5, 1, 2)).toBe("Approved 5 claims, 1 skipped (need Revenue / Volume or failed to save), 2 with open definition check");
     expect(approveAllToast(5, 2, 0)).toBe(approveAllToast(5, 2));
   });
-  test("the upload page says where a definition check is answered; with none skipped it adds nothing", () => {
-    expect(approveAllToast(5, 3, 2, true)).toBe(
-      "Approved 5 claims, 1 skipped (need Revenue / Volume or failed to save), 2 skipped (definition check) – answer on the review screen");
+  test("the upload page says where a definition check is answered; with none open it adds nothing", () => {
+    expect(approveAllToast(5, 1, 2, true)).toBe(
+      "Approved 5 claims, 1 skipped (need Revenue / Volume or failed to save), 2 with open definition check – answer on the review screen");
     expect(approveAllToast(5, 2, 0, true)).toBe(approveAllToast(5, 2));
   });
   test("only a claim to review counts", () => {

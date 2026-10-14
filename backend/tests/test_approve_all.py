@@ -86,22 +86,37 @@ def test_a_turnover_claim_without_a_revenue_or_volume_answer_is_skipped_until_it
     assert client.post(URL, json={"group": REVENUE}).json()["approved_ids"] == ["g1"]
 
 
-def test_a_claim_with_an_open_definition_check_is_skipped_and_counted_apart_until_it_is_answered(api):
-    """claim-matching.md section 4.1: a gap beyond 50% of the claim keeps the claim To review until "Same metric and period?" is
-    answered; Approve all reports it apart ("Y skipped (definition check)")."""
+def test_a_claim_with_an_open_definition_check_is_approved_and_counted_and_the_check_stays_open(api):
+    """claim-matching.md section 4.1 (George, 2026-10-14): Approve all approves it; its open check enters the register and blocks the
+    verdict. The reply counts it as `open_definition`, not as a skip."""
     client, db = api
     db[decks.CANDIDATES_COLLECTION].docs.append(claim("b1", value=1000, snippet="Revenue EUR 1,000"))      # observed 187,701
-    body = client.post(URL, json={"group": REVENUE}).json()
-    assert (body["approved"], body["skipped"], body["skipped_ids"], body["skipped_definition"]) == (3, 1, ["b1"], 1)
-    assert status(db, "b1") == "pending"
     view = next(c for c in client.get(f"/api/audits/{AUDIT}/decks").json()["candidates"] if c["id"] == "b1")["definition"]
     assert view == [{"claim_id": "b1", "period": "FY2023", "definition_check": "ask",
                      "definition_question": "Observed €187,701, claimed €1,000. Same metric and period?"}]
+    body = client.post(URL, json={"group": REVENUE}).json()
+    assert (body["approved"], body["skipped"], body["open_definition"]) == (4, 0, 1) and "b1" in body["approved_ids"]
+    assert "skipped_definition" not in body and status(db, "b1") == "approved"
+    row = next(r for r in client.get(f"/api/audits/{AUDIT}/claims").json()["register"] if r["claim_id"] == "b1")
+    assert (row["definition_check"], row["evidence_label"]) == ("ask", None), "the open check is in the register"
     answered = client.put(f"/api/audits/{AUDIT}/claims/b1/definition-check", json={"answer": "yes"})
     assert answered.status_code == 200, answered.text
-    assert client.post(URL, json={"group": REVENUE}).json()["approved_ids"] == ["b1"]
     row = next(r for r in client.get(f"/api/audits/{AUDIT}/claims").json()["register"] if r["claim_id"] == "b1")
     assert (row["definition_check"], row["evidence_label"], row["gap_kind"]) == ("yes", "Verified", "beat")
+
+
+def test_the_open_definition_count_is_taken_on_the_status_the_claim_has_once_approved(api):
+    """A claim read as an AI suggestion while pending shows no check (claim-matching.md section 4.1, D3); approved, its check opens.
+    The count is of the checks as the register holds them after the approval."""
+    client, db = api
+    db[decks.CANDIDATES_COLLECTION].docs.append(
+        claim("s1", value=1000, snippet="Revenue EUR 1,000", origin="ai", parsed={"claim_type": "revenue", "value": 1000}))
+    before = next(c for c in client.get(f"/api/audits/{AUDIT}/decks").json()["candidates"] if c["id"] == "s1")
+    assert before["definition"] is None, "fixture: pending, read by the AI: a suggestion, no check yet"
+    body = client.post(URL, json={"group": REVENUE}).json()
+    assert "s1" in body["approved_ids"] and status(db, "s1") == "edited" and body["open_definition"] == 1
+    after = next(r for r in client.get(f"/api/audits/{AUDIT}/claims").json()["register"] if r["claim_id"] == "s1")
+    assert after["definition_check"] == "ask"
 
 
 def test_a_claim_whose_type_is_still_to_be_chosen_is_skipped_as_a_single_approve_refuses_it(api):

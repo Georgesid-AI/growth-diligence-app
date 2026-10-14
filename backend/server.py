@@ -1168,9 +1168,9 @@ class ApproveAll(BaseModel):
 async def approve_all_candidates(audit_id: str, payload: ApproveAll):
     """One call, one category: every claim with status "pending" in the category is approved as a single Approve does it
     ("edited" when it carries the parser's values under "parsed"). Left pending and counted as skipped: a turnover claim whose
-    Revenue / Volume question the analyst has not answered, a claim with an open Definition check (also counted apart, as
-    `skipped_definition`), a claim whose type still has to be chosen (Other, Unknown), and a claim whose save fails. Nothing else
-    changes."""
+    Revenue / Volume question the analyst has not answered, a claim whose type still has to be chosen (Other, Unknown), and a claim
+    whose save fails. A claim with an open Definition check is approved like any other: it enters the register as an open check,
+    which blocks the verdict (claim-matching.md section 4.1); `open_definition` counts the approved ones. Nothing else changes."""
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
     if not audit:
         raise HTTPException(404, "Audit not found")
@@ -1179,17 +1179,14 @@ async def approve_all_candidates(audit_id: str, payload: ApproveAll):
     settings = _register_settings(audit, await _fx(audit_id, audit), await _deck_take_rate(audit_id))
     open_turnover = {cid for cid, views in claim_matching.turnover_views(found, current.get("results"), settings).items()
                      if any(v["turnover_set_by"] != "analyst" for v in views)}
-    open_definition = claim_matching.open_definition_ids(claim_matching.definition_views(found, current.get("results"), settings))
-    approved, skipped, skipped_definition = [], [], []
+    approved, skipped = [], []
     for c in found:
         if c.get("status") != "pending" or deck_claims.type_group(c.get("claim_type")) != payload.group \
                 or (payload.deck_id and c.get("deck_id") != payload.deck_id):
             continue
         needs_type = c.get("claim_type") in (structures.verify.OTHER, deck_claims.UNKNOWN) and "parsed" not in c
-        if c["id"] in open_turnover or needs_type or c["id"] in open_definition:
+        if c["id"] in open_turnover or needs_type:
             skipped.append(c["id"])
-            if c["id"] in open_definition:          # stays To review until "Same metric and period?" is answered
-                skipped_definition.append(c["id"])
             continue
         try:
             await db[decks.CANDIDATES_COLLECTION].update_one(
@@ -1198,8 +1195,11 @@ async def approve_all_candidates(audit_id: str, payload: ApproveAll):
         except Exception:                      # a failed save leaves the claim to review and is counted; the rest go on
             skipped.append(c["id"])
     logger.info("approve all: run_id=%s group=%d approved=%d skipped=%d", audit_id, payload.group, len(approved), len(skipped))
+    # The check as the register now holds it: a claim read as an AI suggestion while pending may ask once it is approved.
+    after = [{**c, "status": "edited" if "parsed" in c else "approved"} if c["id"] in approved else c for c in found]
+    open_definition = claim_matching.open_definition_ids(claim_matching.definition_views(after, current.get("results"), settings))
     return {"approved": len(approved), "skipped": len(skipped), "approved_ids": approved, "skipped_ids": skipped,
-            "skipped_definition": len(skipped_definition)}
+            "open_definition": len(open_definition & set(approved))}
 
 
 # ---------------------------------------------------------------------------
@@ -1213,7 +1213,8 @@ async def _open_turnover_ids(audit_id: str, audit: dict, found: list) -> set:
 
 
 async def _accept_within_tolerance(audit_id: str, audit: dict) -> dict:
-    """Approve, as approve-all does, every pending claim the register would label Verified (within tolerance). A claim whose
+    """Approve, as approve-all does, every pending claim the register would label Verified within tolerance (not a beat, which the
+    analyst reviews, and not a Definition check, section 4.1). A claim whose
     Revenue / Volume question is open, whose type is still to be chosen, or that is not Verified stays pending for the review
     screen. Each accepted claim is marked `auto_accepted`, so the review screen can list it and the analyst can still edit or
     reject it. No threshold or tolerance is read or changed here."""
@@ -1658,12 +1659,14 @@ async def answer_definition_check(audit_id: str, claim_id: str, payload: Definit
     current = await _current_audit(audit_id, audit, strict=False)
     if not current.get("results"):
         raise HTTPException(409, "Audit not computed yet")
-    views = claim_matching.definition_views(claims, current.get("results"), _register_settings(
+    found = claim_matching.definition_rows(claims, current.get("results"), _register_settings(
         audit, await _fx(audit_id, audit), await _deck_take_rate(audit_id)))
-    if not any(v["claim_id"] == claim_id for v in views.get(candidate["id"]) or ()):
+    row = next((r for r in found.get(candidate["id"]) or () if r["claim_id"] == claim_id), None)
+    if row is None:
         raise HTTPException(400, "This claim has no definition check")
-    inputs = {**(candidate.get("claim_inputs") or {})}
-    inputs[claim_id] = {**inputs.get(claim_id, {}), "definition_check": payload.answer}
+    inputs = {**(candidate.get("claim_inputs") or {})}      # the answer is kept with the figures it was given against
+    inputs[claim_id] = {**inputs.get(claim_id, {}), "definition_check": payload.answer,
+                        "definition_basis": claim_matching.definition_basis(row)}
     await db[decks.CANDIDATES_COLLECTION].update_one({"audit_id": audit_id, "id": candidate["id"]},
                                                     {"$set": {"claim_inputs": inputs}})
     logger.info("definition check: run_id=%s answer=%s", audit_id, payload.answer)

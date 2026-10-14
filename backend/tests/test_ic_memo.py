@@ -10,6 +10,7 @@ import pytest
 pytest.importorskip("fastapi")
 pytest.importorskip("motor")
 
+from claim_matching_support import answer_definition  # noqa: E402
 from test_claim_matching import RUNS, candidates_for, results_for, settings  # noqa: E402
 from test_claim_register_api import AUDIT, _get, _put, api  # noqa: E402,F401  (the fixture)
 
@@ -43,10 +44,9 @@ def inputs(run="A", decision=GATE_DECISION, ratings=None, thesis=None, key=5, na
     results = stored if stored is not None else results_for(r)
 
     def answered(cands):
-        for c in cands:
-            for cid, answer in (answers or {}).items():
-                if cid.split("#")[0] == c["id"]:
-                    c.setdefault("claim_inputs", {}).setdefault(cid, {})["definition_check"] = answer
+        asked = cm.build_register(cands, results, settings(r))
+        for cid, answer in (answers or {}).items():
+            answer_definition(cands, asked, cid, answer)
         return cands
     first = cm.build_register(answered(candidates_for(r)), results, settings(r))
     top = vd.proposal(first)

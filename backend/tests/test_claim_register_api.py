@@ -92,7 +92,11 @@ def test_the_analyst_sets_a_segment_and_the_row_follows(api):
     assert r.status_code == 200, r.text
     row = next(x for x in r.json()["register"] if x["claim_id"] == "c17")
     assert (row["segment"], row["segment_set_by"], row["observed_value"]) == ("Enterprise", "analyst", 112.68)
-    assert row["evidence_label"] == "Contradicted", "NRR 130% against the Enterprise segment's 112.68%"
+    assert (row["evidence_label"], row["definition_check"]) == (None, "ask"), "NRR 130% against 112.68%: 17 points, beyond the 10 of a rate"
+    yes = client.put(f"/api/audits/{AUDIT}/claims/c17/definition-check", json={"answer": "yes"})
+    assert yes.status_code == 200, yes.text
+    row = next(x for x in yes.json()["register"] if x["claim_id"] == "c17")
+    assert row["evidence_label"] == "Contradicted", "answered Yes: the normal rule for a miss"
     stored = next(c for c in db[decks.CANDIDATES_COLLECTION].docs if c["id"] == "c17")
     assert stored["claim_inputs"]["c17"]["segment"] == "Enterprise"
     assert row == next(x for x in _get(client)["register"] if x["claim_id"] == "c17"), "the next read gives the same row"

@@ -689,6 +689,7 @@ def test_nrr_written_as_106_41_refuses_the_memo_and_names_the_field():
 def test_a_memo_is_built_from_every_engine_run_the_contract_covers_with_no_false_refusal(run):
     """The number check must not refuse a figure the engine stored or the export's own tables derive: the sample run, both demo
     companies and their sparse variants (no P&L, no CRM, 8 and 14 months, a bad target date)."""
+    from claim_matching_support import answer_definition
     from test_claim_matching import RUNS as CLAIM_RUNS, candidates_for, settings
     from app import verdict as vd
     stored = copy.deepcopy(stored_form(all_raws()[run]))
@@ -699,11 +700,9 @@ def test_a_memo_is_built_from_every_engine_run_the_contract_covers_with_no_false
     first = cm.build_register(cands, stored, sets)
     top = vd.proposal(first)
     # run A's claims against another company's data: the analyst answers every Definition check (claim-matching.md section 4.1)
-    asked = {r["claim_id"] for r in first if r["definition_check"] == cm.DEFINITION_ASK}
+    for cid in [r["claim_id"] for r in first if r["definition_check"] == cm.DEFINITION_ASK]:
+        answer_definition(cands, first, cid, "yes")
     for c in cands:
-        for cid in asked:
-            if cid.split("#")[0] == c["id"]:
-                c.setdefault("claim_inputs", {}).setdefault(cid, {})["definition_check"] = "yes"
         for cid in top:
             if cid.split("#")[0] == c["id"]:
                 c.setdefault("claim_inputs", {}).setdefault(cid, {}).update({

@@ -3,6 +3,9 @@ Status: Draft; decisions of 2026-10-07 applied (§10). Location: docs/specs/clai
 Follows deck-parser.md §6.
 Amended 2026-10-14 (George), big-gap rule: a tested gap beyond 50% of the claim in either direction is a "Definition check", a
 status that is not an evidence label, until the analyst answers "Same metric and period?" Yes or No (§4, replacing D2; §6, §8).
+Amended 2026-10-14 (George), after the review: a rate asks only beyond 10 percentage points (`BIG_GAP_RATE_POINTS`); Approve all
+approves a claim with an open check; Run audit accepts only rows within tolerance; an answer is kept with the figures it was given
+against and holds only while they are unchanged; the baseline CSV exports an open row; "Set gate" is not offered on one (§4.1, §8).
 Amended 2026-10-14 (George): the register is six columns (#, Claim with its period under it, Segment, Observed with its month, Gap,
 Evidence label) and a second, smaller grey line per row; the Gate column is gone and a "Set gate" button on a row whose label is
 not Verified opens the gate fields below it (§5, §8). Screen only: no field, engine or model change.
@@ -105,38 +108,51 @@ Untested rows stay listed with a reason and observed "—" (a forecast shows its
 
 | Label | Rule |
 |---|---|
-| Verified | Tested and within tolerance: ±5% of the claimed value for amounts, counts and durations; ±1 percentage point for rates. The boundary is Verified. Or a beat outside tolerance up to 50% of the claim (observed better than the claim: above it, or below it where lower is better), or a bigger beat whose Definition check is answered Yes: reason "beat: observed beats the claim by {gloss}", marked (beat). |
-| Contradicted | Tested and outside tolerance: a miss up to 50% of the claim, or a bigger miss whose Definition check is answered Yes. |
+| Verified | Tested and within tolerance: ±5% of the claimed value for amounts, counts and durations; ±1 percentage point for rates. The boundary is Verified. Or a beat outside tolerance up to the check limit of §4.1 (observed better than the claim: above it, or below it where lower is better), or a bigger beat whose Definition check is answered Yes: reason "beat: observed beats the claim by {gloss}", marked (beat). |
+| Contradicted | Tested and outside tolerance: a miss up to the check limit of §4.1, or a bigger miss whose Definition check is answered Yes. |
 | Unverified | Not testable yet; the reason names what would test it: a Missing file (the engine's `unlocked_by`), a forecast period, a period before the metric's first month, no saved FX rate for the claim's currency ("FX rate needed"), a direction with no figure, a revenue claim with no period ("no period stated"), months of the period missing from the data (named), or a deck reading "AI suggestion, not verified" (until the analyst edits the claim, even unchanged): a claim that would otherwise be Verified, Contradicted or a Definition check; any other reason stands. A Definition check answered No: reason "definition mismatch". A Use of funds claim (deck-parser.md, amended 2026-10-10) and an Acquisition channels claim (chat-upload.md section 17, 2026-10-11) are always Unverified, with no metric, gap, value at stake or gate. |
 | Unsupported | The app gives no figure: no metric proposed or picked, the metric not computed for that period or by segment, the segment not in the data, or the engine's "not computable" reason. A Users claim with a `qualifier` (deck-parser.md §2) and no metric picked reads "deck label '{qualifier} {noun}' is not paying customers; the analyst can edit the type to Customers to test it" (2026-10-13, George). |
 
 ### 4.1 Definition check (2026-10-14, George; replaces D2)
-A tested row (not a forecast, not an AI suggestion) is read by the size of its gap as a share of the claim (`gap_normalised`; for a
-rate, points over the claimed points):
+A tested row (not a forecast, not an AI suggestion) is read by the size of its gap. For an amount, a count or a duration the gap is
+a share of the claim (`gap_normalised`); for a rate it is the gap in percentage points:
 
 | Gap | Result |
 |---|---|
 | within tolerance (±5%; ±1 pp for rates) | Verified |
-| a miss beyond tolerance, up to 50% of the claim | Contradicted |
-| a beat beyond tolerance, up to 50% | Verified, marked (beat), listed under Worth flagging (verdict-and-memo.md §7.2) |
-| beyond 50% in either direction | status "Definition check" |
+| a miss beyond tolerance, up to the limit | Contradicted |
+| a beat beyond tolerance, up to the limit | Verified, marked (beat), listed under Worth flagging (verdict-and-memo.md §7.2) |
+| beyond the limit in either direction | status "Definition check" |
 
-- 50% is the single constant `BIG_GAP_THRESHOLD` (0.5) in `claim_matching.py`; it is adjustable. Exactly 50% takes the rule of the
-  row above it. Tolerance is read first, so a rate within ±1 pp is Verified whatever its share.
+- The limit is two constants in `claim_matching.py`, both adjustable: `BIG_GAP_THRESHOLD` (0.5) is 50% of the claim, for amounts,
+  counts and durations; `BIG_GAP_RATE_POINTS` (10) is 10 percentage points, for rates (George, 2026-10-14: a share of a small
+  rate fires at gaps of a point or two). A gap of exactly the limit counts as up to the limit: the normal rule for its direction
+  (a miss is Contradicted, a beat is Verified (beat)). The gap is rounded to 6 decimals before it is compared. Tolerance is read
+  first, so a rate within ±1 pp is Verified whatever its share. A claim of 0 has no share, so it is never a check.
 - "Definition check" is a status, not an evidence label. The analyst answers one question, shown on the row:
   "Observed {X}, claimed {Y}. Same metric and period?" Yes / No. X and Y are the figures compared, in the metric's unit (a claim in
   another currency at the saved rate; a range at its nearer end).
   - Yes: the normal rule for the direction (a beat Verified (beat), a miss Contradicted); the row is listed under Worth flagging
     with its gloss.
-  - No: Unverified, reason "definition mismatch". The analyst may re-type the claim (deck list edit) or re-match it (metric or
-    segment); either clears the answer, and the question is asked again while the gap stays beyond 50%. A gate is required as
-    for any Unverified claim.
-- The answer is stored on the claim's inputs, as the metric and the gate are: `definition_check` null, yes or no. It changes no
-  value, gap, gloss or rank.
-- While unanswered: the evidence label is null, the reason "definition check: the gap is beyond 50% of the claim", and the claim is
-  "To review": Approve all skips it and reports "Y skipped (definition check)" (chat-upload.md §17), Run audit's within-tolerance
-  step does not accept it, and it needs no gate. It blocks the verdict as long as it is open, wherever it ranks
+  - No: Unverified, reason "definition mismatch". The analyst may re-type the claim (deck list edit) or re-match it (a metric or
+    segment change); either clears the answer, and so does a Revenue / Volume answer (§11). The question is asked again while the
+    gap stays beyond the limit. A gate is required as for any Unverified claim.
+- The answer is stored on the claim's inputs, as the metric and the gate are: `definition_check` yes or no, with
+  `definition_basis`, the figures it was given against: the claimed value (and its upper end), the FX rate and its date, the
+  observed value, the claim's period start and end, and the as-of month. The answer applies only while every one of them is
+  unchanged; if any differs when the row is read (a fiscal year-end change that moves the period, an as-of month change, a
+  recompute after a new or corrected file, an FX rate change), the answer is not applied and the question is asked again. The
+  explicit clears above remain a second guard. The answer changes no value, gap, gloss or rank.
+- While unanswered: the evidence label is null, the reason "definition check: the gap is beyond 50% of the claim" (for a rate,
+  "beyond 10 percentage points"), and the claim needs no gate. It blocks the verdict as long as it is open, wherever it ranks
   (verdict-and-memo.md §6.3), and it is left out of every count by evidence label (the top 5's, the log lines', the memo's).
+- Approve all approves a claim whose check is open, like any other claim to review; the claim enters the register as an open
+  check, and blocks the verdict there. The toast reports it: ", Y with open definition check" (chat-upload.md §17). Run audit's
+  within-tolerance step accepts only rows within tolerance (Verified, not a beat, no check): a beat of 5% to 50% and a bigger
+  beat answered Yes stop at the review screen.
+- The baseline CSV (verdict-and-memo.md §5) downloads while a check is open, the row with an empty `evidence_label` and
+  `definition_check` ask.
+- The register offers no "Set gate" button on a row with an open check; it has one again once the check is answered.
 - The IC memo's summary reports how many Definition checks were answered Yes and No (verdict-and-memo.md §7.2).
 
 ## 5. Gate
@@ -170,7 +186,7 @@ under `register`, beside today's `claims`; `register` is empty when the audit ha
 | `gap`, `gap_normalised`, `gap_kind` | float or null | miss, beat, to go |
 | `gloss` | str or null | table 3 |
 | `evidence_label`, `reason`, `tolerance` | str | table 4 (null while a Definition check is open, §4.1); "±5%", "±1 pp" |
-| `definition_check`, `definition_question` | str or null | §4.1: null (no gap beyond 50%), ask, yes, no; the question, set whenever `definition_check` is |
+| `definition_check`, `definition_question` | str or null | §4.1: null (no gap beyond the limit), ask, yes, no; the question, set whenever `definition_check` is |
 | `rank` | int | §3 |
 | `value_at_stake_arr` | float or null | null until issue #6 |
 | `gate_sentence` | str or null | §5; null until the gate is saved |
@@ -265,7 +281,7 @@ gross revenue churn, ACV), figures by segment, and row 36. Its ranks stand on th
 | # | Question | Decision of 2026-10-07 |
 |---|---|---|
 | D1 | Tolerance between Verified and Contradicted | ±5% for amounts, counts, durations; ±1 pp for rates; the gap in native units and % shown on every row, Verified rows included |
-| D2 | A gap beyond tolerance | Replaced 2026-10-14 (George) by §4.1: a miss up to 50% of the claim is Contradicted; a beat up to 50% is Verified, marked (beat), listed under Worth flagging, still ranked after every miss; beyond 50% either way the row is a Definition check until the analyst answers Yes (the normal rule) or No (Unverified, "definition mismatch"). 50% is `BIG_GAP_THRESHOLD`, adjustable |
+| D2 | A gap beyond tolerance | Replaced 2026-10-14 (George) by §4.1: a miss up to 50% of the claim is Contradicted; a beat up to 50% is Verified, marked (beat), listed under Worth flagging, still ranked after every miss; beyond the limit either way the row is a Definition check until the analyst answers Yes (the normal rule) or No (Unverified, "definition mismatch"). The limit is `BIG_GAP_THRESHOLD`, 50% of the claim, adjustable; for a rate `BIG_GAP_RATE_POINTS`, 10 points, adjustable |
 | D3 | An unedited "AI suggestion, not verified" claim | Unverified until the analyst edits it |
 | D4 | A claim with no period | tested at the as-of figure, marked "no period stated" |
 | D5 | Metric list | table 2a, adding revenue, ARR and customer count by period; growth rates, users and bare retention or churn stay unmatched |

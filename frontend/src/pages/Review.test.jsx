@@ -143,11 +143,11 @@ test("a turnover claim waits in Revenue / Volume answers, not in the open claims
 const asked = (claimId, period = "FY2024") => [{ claim_id: claimId, period, definition_check: "ask",
   definition_question: "Observed 26, claimed 1. Same metric and period?" }];
 
-test("a claim in Definition check asks its question with Yes / No on one line in its row, and Approve all says it skipped it", async () => {
+test("a claim in Definition check asks its question with Yes / No on one line in its row, and Approve all reports it as approved with an open definition check", async () => {
   state.candidates = [cand("d1", { definition: asked("d1") }), cand("p1"), cand("a2", { status: "approved", definition: asked("a2") }),
     cand("y1", { definition: [{ ...asked("y1")[0], definition_check: "yes" }] })];
   api.answerDefinitionCheck.mockResolvedValue({ register: [] });
-  api.approveAll.mockResolvedValue({ approved: 2, skipped: 1, skipped_definition: 1 });
+  api.approveAll.mockResolvedValue({ approved: 3, skipped: 0, open_definition: 1 });
   await mount();
   const rows = qa("review-claim-row");
   expect(rows).toHaveLength(4);             // d1 and p1 to review, a2 approved but still asking, y1 answered and to approve
@@ -163,7 +163,7 @@ test("a claim in Definition check asks its question with Yes / No on one line in
   expect(api.answerDefinitionCheck).toHaveBeenCalledWith("a1", "a2", "no");
   await act(async () => { q("review-approve-all-1").click(); });
   const { toast } = require("sonner");
-  expect(toast.success).toHaveBeenCalledWith("Approved 2 claims, 0 skipped (need Revenue / Volume or failed to save), 1 skipped (definition check)");
+  expect(toast.success).toHaveBeenCalledWith("Approved 3 claims, 0 skipped (need Revenue / Volume or failed to save), 1 with open definition check");
 });
 
 test("a top-5 row in Definition check is answered under Open claims, not given gate fields", async () => {

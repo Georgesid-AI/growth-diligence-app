@@ -1278,7 +1278,8 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             "inconsistent_dates", "mixed_slide", "USE_OF_FUNDS_NOTE", "MIXED_SLIDE", "ACQUISITION_NOTE", "ACQUISITION_CHANNELS",
                             "UNTESTED_TYPES", "channel", "auto_accepted", "BEAT_PREFIX", "is_beat", "flag_text", "flagged_rows",
                             "qualifier", "QUALIFIERS", "QUALIFIED_REASON", "qualified_label", "definition_check", "definition_question",
-                            "definition_views", "DEFINITION_QUESTION", "DEFINITION_OPEN_REASON", "DEFINITION_MISMATCH",
+                            "definition_views", "definition_rows", "definition_basis", "DEFINITION_QUESTION", "DEFINITION_OPEN_REASON",
+                            "DEFINITION_OPEN_REASON_RATE", "DEFINITION_MISMATCH", "BIG_GAP_RATE_POINTS",
                             *MATCHING_SERVER_ONLY})
 # The functions that log about the register, and the only things their log calls may name.
 REGISTER_LOGGERS = frozenset({"_claim_rows", "claim_register", "claim_register_csv", "update_claim_inputs", "answer_turnover",
@@ -1462,10 +1463,15 @@ def test_the_definition_check_question_and_reasons_hold_figures_and_closed_words
     assert asked["reason"] == claim_matching.DEFINITION_OPEN_REASON.format(share="50%")
     texts = [asked]
     for answer in claim_matching.DEFINITION_ANSWERS:
-        answered = claim_matching.build_register([{**row, "claim_inputs": {"x1": {"definition_check": answer}}}], results, settings)[0]
+        answered = claim_matching.build_register([{**row, "claim_inputs": {"x1": {"definition_check": answer, "definition_basis": claim_matching.definition_basis(asked)}}}], results, settings)[0]
         assert answered["reason"] in (claim_matching.DEFINITION_MISMATCH, claim_matching.BEAT_PREFIX + answered["gloss"])
         texts.append(answered)
     texts.append(claim_matching.definition_views([row], results, settings))
+    rate = {**row, "id": "x2", "claim_type": "sales", "value": 60.0, "unit": "%", "currency": None, "target_date": None, "period_text": None,
+            "snippet": f"{sentinel} win rate 60%", "label_from": f"{sentinel} win rate"}
+    rated = claim_matching.build_register([rate], {**results, "win_rate": {"win_rate_pct": 0.40, "source": SOURCE}}, settings)[0]
+    assert rated["reason"] == claim_matching.DEFINITION_OPEN_REASON_RATE.format(points="10"), "a rate: 20 points, asked in points"
+    texts += [rated, claim_matching.definition_basis(rated)]
     assert sentinel not in json.dumps(texts, default=str)
     assert not {"definition_check", "definition_question"} & decks.GATEWAY_READABLE_FIELDS
 

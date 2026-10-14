@@ -11,7 +11,7 @@ pytest.importorskip("fastapi")
 pytest.importorskip("motor")
 
 import server  # noqa: E402
-from claim_matching_support import engine_results  # noqa: E402
+from claim_matching_support import answer_definition, engine_results  # noqa: E402
 from test_claim_matching import RUNS, register, results_for, row_of  # noqa: E402
 from test_claim_register_api import AUDIT, _get, _put, api  # noqa: E402,F401  (the fixture)
 
@@ -113,10 +113,9 @@ def test_the_three_reasons_are_the_claims_that_made_the_rule_fire_each_citing_it
     assert again["reasons"][0] == "#1 ARR, Feb 2024: Unsupported, reason 1. No figure in the supplied files."
 
 
-@pytest.mark.parametrize("run, expected", [("A", ("ok", "Re-plan")), ("C", ("ok", "Re-plan")),
-                                           ("D", ("blocked", None))])      # D: c37 asks its Definition check (below)
+@pytest.mark.parametrize("run, expected", [("A", ("ok", "Re-plan")), ("C", ("ok", "Re-plan")), ("D", ("ok", "Re-plan"))])
 def test_the_fixture_runs_measure_as_the_spec_says_with_the_proposed_top_5_confirmed(run, expected):
-    rows = register(RUNS[run])
+    rows = _run_d("yes") if run == "D" else register(RUNS[run])       # D: c37's Definition check answered, so only the gates block
     ids = {"claim_ids": vd.proposal(rows)}
     assert vd.verdict(rows, results_for(RUNS[run]), ids)["status"] == "blocked", "no gate saved yet"
     v = vd.verdict(gated(rows), results_for(RUNS[run]), ids)
@@ -129,7 +128,7 @@ def _run_d(answer=None):
     run = RUNS["D"]
     cands = candidates_for(run)
     if answer:
-        next(c for c in cands if c["id"] == "c37").setdefault("claim_inputs", {})["c37"] = {"definition_check": answer}
+        answer_definition(cands, cm.build_register(cands, results_for(run), settings(run)), "c37", answer)
     return cm.build_register(cands, results_for(run), settings(run))
 
 

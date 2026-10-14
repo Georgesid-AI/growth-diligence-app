@@ -196,7 +196,7 @@ function ClaimsSection({ auditId, data, summary, reload }) {
           <div className="flex items-center justify-between">
             <div className="text-xs font-medium text-slate-900">{GROUP_TITLE[g] || "Other"}</div>
             <Button size="sm" variant="outline" className="h-7" disabled={busy !== null} data-testid={`review-approve-all-${g}`}
-              onClick={() => act(`g${g}`, async () => { const done = await approveAll(auditId, g); toast.success(approveAllToast(done.approved, done.skipped, done.skipped_definition)); })}>
+              onClick={() => act(`g${g}`, async () => { const done = await approveAll(auditId, g); toast.success(approveAllToast(done.approved, done.skipped, done.open_definition)); })}>
               Approve all ({open.filter((c) => c.group === g && c.status === "pending").length})
             </Button>
           </div>

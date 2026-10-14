@@ -110,10 +110,11 @@ export function GateCell({ row, ccy, onSave, prefill, budgets = [], edits, onEdi
 }
 
 /** The register's gate: nothing but the gate's status until the analyst clicks Set gate, which opens the fields below the row. A
- *  Verified row has no button (it needs no gate); a gate it already holds still shows as text. */
+ *  Verified row has no button (it needs no gate), nor has a row with an open Definition check (claim-matching.md section 4.1: it needs
+ *  no gate until it is answered); a gate it already holds still shows as text. */
 function GateToggle({ row, ...gate }) {
   const [open, setOpen] = useState(false);
-  const verified = row.evidence_label === "Verified";
+  const verified = row.evidence_label === "Verified" || row.definition_check === "ask";
   return (
     <div className="space-y-1" data-testid="register-gate">
       {!open && <div className="flex flex-wrap items-baseline gap-x-3"><GateStatus row={row} /></div>}
