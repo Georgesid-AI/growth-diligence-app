@@ -224,3 +224,46 @@ test("under React.StrictMode the usage totals still render once opened (alive re
   expect(q("usage-notes").textContent).toContain("strict note");
   await act(async () => { root.unmount(); host.remove(); });
 });
+
+describe("the audit list when it cannot be read", () => {
+  const fail = (status) => Object.assign(new Error("failed"), { response: { status, statusText: "", data: "<html>Bad gateway</html>" } });
+  let host, root;
+  const mountHub = async () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => { root.render(<AuditHub />); });
+    await act(async () => { await Promise.resolve(); });
+  };
+  beforeEach(() => { api.listAudits.mockReset(); });
+  afterEach(async () => { await act(async () => { root.unmount(); }); host.remove(); });
+
+  test("a rejected listAudits (502) shows the message and a Retry, and no spinner", async () => {
+    api.listAudits.mockRejectedValue(fail(502));
+    await mountHub();
+    expect(q("audits-load-error").textContent).toContain("Server is restarting – try again in a few seconds");
+    expect(q("audits-load-retry").textContent).toBe("Retry");
+    expect(document.body.querySelector(".animate-spin")).toBeNull();
+  });
+
+  test("Retry reads again and shows the list when the second read works", async () => {
+    api.listAudits.mockRejectedValueOnce(fail(502)).mockResolvedValueOnce([
+      { id: "a1", company_name: "Acme", status: "draft", reporting_currency: "EUR", target_arr: 0 }]);
+    await mountHub();
+    await act(async () => { q("audits-load-retry").click(); });
+    await act(async () => { await Promise.resolve(); });
+    expect(q("audits-load-error")).toBeNull();
+    expect(q("audit-row-a1")).not.toBeNull();
+    expect(api.listAudits).toHaveBeenCalledTimes(2);
+  });
+
+  test("under React.StrictMode the list and the error still land (alive ref is re-armed on the second mount)", async () => {
+    api.listAudits.mockRejectedValue(fail(502));
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => { root.render(<React.StrictMode><AuditHub /></React.StrictMode>); });
+    await act(async () => { await Promise.resolve(); });
+    expect(q("audits-load-error")).not.toBeNull();
+  });
+});

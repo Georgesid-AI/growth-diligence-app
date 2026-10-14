@@ -7,8 +7,9 @@ import * as api from "@/lib/api";
 import { REVENUE_REQUIRED_NOTE, setCalculatePressed } from "@/lib/chatUpload";
 
 jest.mock("@/lib/api", () => ({ getBlockers: jest.fn() }));
+const mockNavigate = jest.fn();
 jest.mock("react-router-dom", () => ({
-  useNavigate: () => jest.fn(),
+  useNavigate: () => mockNavigate,
   useLocation: () => ({ pathname: "/audit/a1/mapping" }),
   Link: ({ to, children, ...rest }) => <a href={to} {...rest}>{children}</a>,
 }), { virtual: true });
@@ -125,4 +126,40 @@ test("Run audit and Review are the tabs; every earlier page is under the Details
     .toEqual(["Growth Dashboard", "Upload & Mapping", "Diagnostics"]);
   await act(async () => { q("nav-details").click(); });
   expect(q("details-menu")).toBeNull();
+});
+
+describe("the Details menu", () => {
+  beforeEach(() => { api.getBlockers.mockResolvedValue([]); });
+
+  test("a click outside the menu closes it; a click inside it does not", async () => {
+    await mount(AUDIT);
+    await act(async () => { q("nav-details").click(); });
+    expect(q("details-menu")).not.toBeNull();
+    await act(async () => { q("details-menu").dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); });
+    expect(q("details-menu")).not.toBeNull();
+    await act(async () => { q("page").dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); });
+    expect(q("details-menu")).toBeNull();
+  });
+
+  test("Escape closes it and returns focus to the Details button", async () => {
+    await mount(AUDIT);
+    await act(async () => { q("nav-details").click(); });
+    expect(q("details-menu")).not.toBeNull();
+    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+    expect(q("details-menu")).toBeNull();
+    expect(document.activeElement).toBe(q("nav-details"));
+  });
+
+  test.each([
+    ["nav-tab-growth-dashboard", "/audit/a1/dashboard"],
+    ["nav-tab-mapping-wizard", "/audit/a1/mapping"],
+    ["nav-tab-missing-data", "/audit/a1/diagnostics"],
+  ])("choosing %s navigates to %s and closes the menu", async (testid, path) => {
+    mockNavigate.mockClear();
+    await mount(AUDIT);
+    await act(async () => { q("nav-details").click(); });
+    await act(async () => { q(testid).click(); });
+    expect(mockNavigate).toHaveBeenCalledWith(path);
+    expect(q("details-menu")).toBeNull();
+  });
 });
