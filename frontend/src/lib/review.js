@@ -26,3 +26,25 @@ export function estimateText(estimate) {
   if (todo.length === 0) return "";
   return `Estimated cost: up to ${usd(estimate.total_usd)} for ${todo.length} narrative${todo.length === 1 ? "" : "s"}`;
 }
+
+// Mapping summary (chat-upload.md section 18).
+const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+export const DTYPE_SHORT = { revenue: "Revenue", crm: "CRM", pnl: "P&L" };
+
+/** A matched column the analyst has not decided that is worth a look: confidence under 100, or the file's name and the app's differ. */
+export function isUnsure(c, fieldLabel) {
+  if (c.decision === "confirm" || c.decision === "correct") return false;
+  if (c.confidence != null && c.confidence < 100) return true;
+  return norm(c.column) !== norm(fieldLabel(c.field));
+}
+
+/** Matched = used columns that do not wait for a decision (those sit under Open mappings). Unsure rows are the ones to check. */
+export function mappingSummary(views, fieldLabel) {
+  const matched = [];
+  views.forEach((v) => v.columns.filter((c) => c.state !== "unused" && !c.pending).forEach((c) => matched.push({ view: v, col: c })));
+  const unsure = matched.filter(({ col }) => isUnsure(col, fieldLabel));
+  return { matched, unsure };
+}
+
+export const summaryHeadline = (n, check) =>
+  check === 0 ? `✓ ${n} column${n === 1 ? "" : "s"} matched – nothing to do.` : `${n} column${n === 1 ? "" : "s"} matched – ${check} to check.`;

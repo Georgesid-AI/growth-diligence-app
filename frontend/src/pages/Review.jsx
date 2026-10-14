@@ -16,10 +16,10 @@ import {
 import { claimPeriod, claimValue, sourceRef, typeLabel, CLAIM_GROUPS, approveAllToast } from "@/lib/deckClaims";
 import { definitionOf, turnoverHeading, turnoverOf, registerRows } from "@/lib/claimRegister";
 import { useGateEdits } from "@/lib/useGateEdits";
-import { S13_status, MAPPING_HEADERS, fieldName, sortColumns } from "@/lib/chatUpload";
+import { S13_status, MAPPING_HEADERS, REASONS, fieldName, heldFields, sortColumns } from "@/lib/chatUpload";
 import { describeRequestError, READ_TIMEOUT_MS } from "@/lib/requestError";
 import { runAudit } from "@/lib/runAudit";
-import { writeAllLabel, estimateText, allWritten, ALL_WRITTEN_LEAD, ALL_WRITTEN_LINK, WRITE_ALL_HELP, MEMO_LABEL, MEMO_WAITING, RECONCILIATION_NOTE } from "@/lib/review";
+import { mappingSummary, summaryHeadline, DTYPE_SHORT, writeAllLabel, estimateText, allWritten, ALL_WRITTEN_LEAD, ALL_WRITTEN_LINK, WRITE_ALL_HELP, MEMO_LABEL, MEMO_WAITING, RECONCILIATION_NOTE } from "@/lib/review";
 
 const GROUP_TITLE = Object.fromEntries(CLAIM_GROUPS);
 
@@ -110,7 +110,7 @@ export default function Review() {
       </div>
       {proceeding && <p className="mb-4 flex items-center gap-2 text-sm text-slate-600" data-testid="review-continuing"><Loader2 className="h-4 w-4 animate-spin" /> Continuing the run…</p>}
 
-      <MappingsSection views={views} summary={summary} decide={decide} />
+      <MappingsSection views={views} decide={decide} />
       <ClaimsSection auditId={id} data={deckData} summary={summary} reload={reload} />
       <TurnoverSection auditId={id} data={deckData} reload={reload} />
       {summary.computed && verdict ? (
@@ -143,10 +143,9 @@ function Counted({ testid, text, children }) {
   );
 }
 
-function MappingsSection({ views, summary, decide }) {
+function MappingsSection({ views, decide }) {
   const [lastReason, setLastReason] = useState("header_misleading");
   const open = views.filter((v) => v.pending > 0 || v.missing_required.length > 0);
-  const autoRows = views.flatMap((v) => v.columns.filter((c) => c.state === "auto").map((c) => ({ ...c, file: v.file })));
   return (
     <section className={sectionClass} data-testid="review-mappings">
       <Heading n="1">Open mappings</Heading>
@@ -165,12 +164,93 @@ function MappingsSection({ views, summary, decide }) {
           </div>
         );
       })}
-      <Counted testid="review-mappings-auto" text={`${summary.mappings.auto} column${summary.mappings.auto === 1 ? "" : "s"} mapped`}>
-        <ul className="space-y-0.5 font-mono">
-          {autoRows.map((c) => <li key={`${c.file}-${c.column}`}>{c.column} → {fieldName(c.field)} <span className="text-slate-500">({c.file}, confidence {c.confidence ?? "—"})</span></li>)}
-        </ul>
-      </Counted>
+      <MappingSummary views={views} decide={decide} lastReason={lastReason} setLastReason={setLastReason} />
     </section>
+  );
+}
+
+const GREY_ROW = "bg-slate-900/[0.035]";                       // rows alternate: page colour, then 3-4% grey
+const linkBtn = "text-slate-600 underline underline-offset-2 hover:text-slate-900";
+const smallBtn = "rounded bg-slate-900/[0.06] px-2 py-0.5 text-slate-700 hover:bg-slate-900/10 disabled:opacity-50";
+
+/** Mapping summary (chat-upload.md section 18): one line, the file chips, one row per unsure column, and a collapsed full list. One font size. */
+function MappingSummary({ views, decide, lastReason, setLastReason }) {
+  const [showAll, setShowAll] = useState(false);
+  const { matched, unsure } = mappingSummary(views, fieldName);
+  const chips = views.filter((v) => v.columns.some((c) => c.state !== "unused"));
+  return (
+    <div className="mt-4 text-sm leading-8 text-slate-800" data-testid="review-mappings-summary">
+      <div className={`font-bold ${unsure.length ? "text-slate-900" : "text-emerald-700"}`} data-testid="review-mappings-headline">
+        {summaryHeadline(matched.length, unsure.length)}
+      </div>
+      <div className="flex flex-wrap gap-2 my-1" data-testid="review-mappings-chips">
+        {chips.map((v) => <span key={v.dtype} className="rounded-full bg-slate-900/[0.06] px-2.5 text-slate-600" data-testid="review-mappings-chip">{DTYPE_SHORT[v.dtype] || v.dtype}</span>)}
+      </div>
+      {unsure.map(({ view, col }, i) => (
+        <UnsureRow key={`${view.dtype}-${col.column}`} view={view} col={col} striped={i % 2 === 1} decide={decide} lastReason={lastReason} setLastReason={setLastReason} />
+      ))}
+      <button type="button" className={`${linkBtn} mt-1`} aria-expanded={showAll} data-testid="review-details-toggle" onClick={() => setShowAll((v) => !v)}>
+        {showAll ? "Hide details" : "Show details"}
+      </button>
+      {showAll && (
+        <div data-testid="review-details">
+          {views.map((v) => {
+            const rows = v.columns.filter((c) => c.state !== "unused");
+            return (
+              <div key={v.dtype} className="mt-2" data-testid={`review-details-${v.dtype}`}>
+                <div>{v.file}</div>
+                {rows.map((c, i) => (
+                  <div key={c.column} className={`px-2 ${i % 2 === 1 ? GREY_ROW : ""}`} data-testid={`review-detail-${v.dtype}-${c.column}`}>
+                    "{c.column}" read as {fieldName(c.field)}
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UnsureRow({ view, col, striped, decide, lastReason, setLastReason }) {
+  const [editing, setEditing] = useState(false);
+  const [field, setField] = useState(col.field || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const held = heldFields(view.columns, col.column);
+  const fields = [...view.fields.required, ...view.fields.optional];
+  const send = async (decision) => {
+    setSaving(true); setError(null);
+    try { await decide(view, [decision]); setEditing(false); }
+    catch (e) { setError(describeRequestError(e).message); }
+    finally { setSaving(false); }
+  };
+  return (
+    <div className={`px-2 ${striped ? GREY_ROW : ""}`} data-testid={`review-unsure-${view.dtype}-${col.column}`}>
+      <div className="flex items-center justify-between gap-3">
+        <span><span className="mr-3">{DTYPE_SHORT[view.dtype] || view.dtype}</span>"{col.column}" read as {fieldName(col.field)}</span>
+        <span className="whitespace-nowrap">
+          <button type="button" className={`${smallBtn} mr-1.5`} disabled={saving} data-testid={`review-correct-${view.dtype}-${col.column}`}
+            onClick={() => send({ column: col.column, action: "confirm", field: col.field })}>Correct</button>
+          <button type="button" className={smallBtn} data-testid={`review-change-${view.dtype}-${col.column}`} onClick={() => setEditing((v) => !v)}>Change</button>
+        </span>
+      </div>
+      {editing && (
+        <div className="flex flex-wrap items-center gap-2 pb-1" data-testid={`review-change-editor-${view.dtype}-${col.column}`}>
+          <select value={field} onChange={(e) => setField(e.target.value)} data-testid={`review-change-field-${view.dtype}-${col.column}`} className="h-8 rounded bg-white text-sm px-1.5">
+            <option value="">Not used</option>
+            {fields.map((f) => <option key={f} value={f} disabled={!!held[f]}>{fieldName(f)}{held[f] ? ` (held by ${held[f]})` : ""}</option>)}
+          </select>
+          <select value={lastReason} onChange={(e) => setLastReason(e.target.value)} className="h-8 rounded bg-white text-sm px-1.5">
+            {REASONS.map((r) => <option key={r.code} value={r.code}>{r.label}</option>)}
+          </select>
+          <button type="button" className={smallBtn} disabled={saving} data-testid={`review-change-apply-${view.dtype}-${col.column}`}
+            onClick={() => send({ column: col.column, action: "correct", field: field || null, reason: lastReason })}>Apply</button>
+          {error && <span className="text-rose-700">{error}</span>}
+        </div>
+      )}
+    </div>
   );
 }
 
