@@ -1,6 +1,9 @@
 # Spec: Claim matching: approved claims tested against the computed metrics
 Status: Draft; decisions of 2026-10-07 applied (§10). Location: docs/specs/claim-matching.md.
 Follows deck-parser.md §6.
+Amended 2026-10-14 (George): the register is six columns (#, Claim with its period under it, Segment, Observed with its month, Gap,
+Evidence label) and a second, smaller grey line per row; the Gate column is gone and a "Set gate" button on a row whose label is
+not Verified opens the gate fields below it (§5, §8). Screen only: no field, engine or model change.
 Amended 2026-10-13 (George): a beat outside tolerance is Verified, marked (beat), not Contradicted (§4, D2); it never reaches the
 banner and the IC memo lists it under Worth flagging (verdict-and-memo.md §7.2). A Users claim the parser typed from a qualified
 customers noun ("Registered Institutions", deck-parser.md §2) is Unsupported with its own reason (§4).
@@ -153,7 +156,9 @@ names; numbers unformatted, dates ISO, `observed_source` as "file · sheet · ro
 | Part | Content |
 |---|---|
 | Place | a new "Claim register" section on the Dashboard, under the metric cards, with a "Download baseline (CSV)" button |
-| Row | rank, claim, period, segment, page, "Read from deck", observed value (source on hover), gap in native units and %, gloss, "Evidence" with its reason, gate (claimed and observed beside the empty fields of §5) |
+| Row | six columns: rank, claim (its period under it), segment, observed value and month (source on hover; the metric select under it), gap in native units and %, the evidence label. A second, smaller grey line spans the row: page, "Read from deck", gloss, VaS, overlaps, the evidence reason and the full evidence path (analysis, source key, month); a turnover claim's Revenue / Volume control sits under it |
+| Gate | no column. A row whose label is not Verified has a "Set gate" button; it expands, below the row, the threshold, budget decision and date fields (claimed and observed beside them, §5), "Save gate" and the Key gate checkbox. "Gate needed" and a saved gate's sentence show before it is opened. A Verified row has no button; a gate it already holds shows as text. "Save all gates" and "Download baseline (CSV)" stay at the top |
+| Width | fits 1280 px with no horizontal scroll: fixed-layout table, no minimum width, no scroll container |
 | Editable | segment; metric (a metric in the claim's unit, or none); the gate's threshold, budget decision and date (the threshold field starts empty) |
 | Read-only | everything else |
 | Not shown | value at stake, until #6 fills it |

@@ -20,8 +20,7 @@ describe("the Claim register section of the Dashboard (spec section 8)", () => {
   test("its title, its download button and its columns are those of the spec", () => {
     expect(REGISTER_HEADING).toBe("Claim register");
     expect(DOWNLOAD_LABEL).toBe("Download baseline (CSV)");
-    expect(REGISTER_COLUMNS).toEqual(["#", "Claim", "Period", "Segment", "Page", "Read from deck", "Observed", "Gap", "Gloss", "VaS",
-      "Overlaps with", "Evidence", "Gate"]);
+    expect(REGISTER_COLUMNS).toEqual(["#", "Claim", "Segment", "Observed", "Gap", "Evidence"]);
   });
 
   test("the segment, the metric and the gate are editable; everything else is read-only", () => {

@@ -2,7 +2,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 
 import ClaimRegister from "./ClaimRegister";
-import { REGISTER_COLUMNS } from "@/lib/claimRegister";
+import { REGISTER_COLUMNS, REGISTER_COLUMN_WIDTHS } from "@/lib/claimRegister";
 import { CALCULATE_CLASS } from "@/lib/chatUpload";
 import * as api from "@/lib/api";
 
@@ -38,6 +38,11 @@ async function mount(rows) {
   return { host, root };
 }
 
+// A gate's fields show only after "Set gate" is clicked on its row.
+async function openGates(host) {
+  for (const button of host.querySelectorAll('[data-testid="register-set-gate"]')) await act(async () => { button.click(); });
+}
+
 test("the section has its title, the download button and one row per claim with the spec's columns", async () => {
   const { host } = await mount([ROW, { ...ROW, claim_id: "c02", rank: 2 }]);
   expect(host.querySelector("h2").textContent).toBe("Claim register");
@@ -56,22 +61,76 @@ test("the section has its title, the download button and one row per claim with 
   expect(row.querySelector('[data-testid="register-gloss"]').textContent).toBe("€2,125 better than claimed");
   expect(row.querySelector('[data-testid="register-evidence"]').textContent).toBe("Verified");
   expect(row.textContent).toContain("within ±5% of the claim");
-  expect(row.querySelector('[data-testid="register-value-at-stake"]').textContent).toBe("not yet computed");
-  expect(row.querySelector('[data-testid="register-overlaps"]').textContent).toBe("—");
+  expect(row.querySelector('[data-testid="register-value-at-stake"]').textContent).toBe("VaS not yet computed");
+  expect(row.querySelector('[data-testid="register-overlaps"]').textContent).toBe("Overlaps with —");
+  expect(row.querySelector('[data-testid="register-page"]').textContent).toBe("slide 4");
+  expect(row.querySelector('[data-testid="register-period"]').textContent).toBe("Feb 2024");
+  expect(row.textContent).not.toContain("Value at stake");
   expect(row.querySelector('[data-testid="register-evidence-source"]').textContent).toBe("Monthly MRR by Segment · mrr_series.data.total (2024-02)");
-  expect(row.querySelector('[data-testid="register-gate-date"]').placeholder).toBe("Gate date", "the gate date starts empty");
   expect(row.querySelector('[data-testid="register-gate-needed"]')).toBeNull();
-  expect(row.querySelector('[data-testid="register-gate-context"]').textContent).toBe("Claimed 200,000 EUR (Feb 2024) · Observed 202,125 EUR (2024-02)");
-  expect(row.querySelector('[data-testid="register-gate-threshold"]').value).toBe("");
   expect(row.querySelector('[data-testid="register-gate-sentence"]')).toBeNull();
+});
+
+test("the table has the six columns, each claim's second line spans the row, and the layout cannot scroll sideways at 1280 px", async () => {
+  const { host } = await mount([ROW, { ...ROW, claim_id: "c02", rank: 2, evidence_label: "Unverified", gate_needed: true }]);
+  expect(REGISTER_COLUMNS).toEqual(["#", "Claim", "Segment", "Observed", "Gap", "Evidence"]);
+  expect(REGISTER_COLUMN_WIDTHS.reduce((a, b) => a + b, 0)).toBe(100);
+  const table = host.querySelector('[data-testid="claim-register-table"]');
+  const cols = [...table.querySelectorAll("col")].map((c) => c.style.width);
+  expect(cols).toEqual(REGISTER_COLUMN_WIDTHS.map((w) => `${w}%`));
+  // jsdom has no layout, so the guarantee is structural: a fixed table as wide as its box, no scroll container around it,
+  // no minimum width anywhere inside, and the only no-wrap items are the label pill and the buttons.
+  expect(table.className.split(" ")).toEqual(expect.arrayContaining(["table-fixed", "w-full"]));
+  const section = host.querySelector('[data-testid="claim-register"]');
+  expect(section.querySelectorAll('[class*="overflow-x"]').length).toBe(0);
+  expect(section.querySelectorAll('[class*="min-w-"]').length).toBe(0);
+  const nowrap = [...table.querySelectorAll('[class*="whitespace-nowrap"]')];
+  expect(nowrap.length).toBeGreaterThan(0);
+  expect(nowrap.every((el) => el.matches('[data-testid="register-evidence"], button'))).toBe(true);
+  for (const body of host.querySelectorAll('[data-testid="claim-register-row"]')) {
+    const [first, second] = body.querySelectorAll("tr");
+    expect(first.querySelectorAll("td").length).toBe(REGISTER_COLUMNS.length);
+    expect(second.querySelectorAll("td").length).toBe(1);
+    expect(second.querySelector("td").getAttribute("colspan")).toBe(String(REGISTER_COLUMNS.length));
+    expect(second.querySelector('[data-testid="register-page"]')).not.toBeNull();
+  }
+  // Save all gates and the download stay at the top
+  expect(host.querySelector('[data-testid="register-gates-save-all"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="claim-register-csv"]')).not.toBeNull();
+});
+
+test("a Verified row has no Set gate button; every other label has one, and a click opens the gate fields below the row", async () => {
+  const labels = ["Verified", "Contradicted", "Unverified", "Unsupported"];
+  const { host } = await mount(labels.map((evidence_label, i) => ({ ...ROW, claim_id: `c${i}`, rank: i + 1, evidence_label })));
+  const rows = [...host.querySelectorAll('[data-testid="claim-register-row"]')];
+  expect(rows.map((r) => r.querySelector('[data-testid="register-set-gate"]') !== null)).toEqual([false, true, true, true]);
+  expect(rows[0].querySelector('[data-testid="register-gate-threshold"]')).toBeNull();
+  expect(host.querySelector('[data-testid="register-gate-threshold"]')).toBeNull();           // closed until clicked
+  expect(rows[1].querySelector('[data-testid="register-set-gate"]').textContent).toBe("Set gate");
+  await act(async () => { rows[1].querySelector('[data-testid="register-set-gate"]').click(); });
+  const [claimLine, detailLine] = rows[1].querySelectorAll("tr");
+  expect(claimLine.querySelector('[data-testid="register-gate-threshold"]')).toBeNull();      // below the claim's line, not in it
+  for (const id of ["register-gate-threshold", "register-gate-date", "register-gate-save", "register-key-gate"]) {
+    expect(detailLine.querySelector(`[data-testid="${id}"]`)).not.toBeNull();
+  }
+  expect(host.querySelectorAll('[data-testid="register-gate-threshold"]').length).toBe(1);   // only the clicked row opened
+  await act(async () => { rows[1].querySelector('[data-testid="register-set-gate"]').click(); });
+  expect(host.querySelector('[data-testid="register-gate-threshold"]')).toBeNull();           // a second click closes it
+});
+
+test("a Verified row that already holds a saved gate still shows the gate as text, with no button", async () => {
+  const sentence = "Before the plan, ARR must be at least €195,000 by 2024-06-30.";
+  const { host } = await mount([{ ...ROW, gate_saved: true, gate_sentence: sentence }]);
+  expect(host.querySelector('[data-testid="register-gate-sentence"]').textContent).toContain("must be at least €195,000");
+  expect(host.querySelector('[data-testid="register-set-gate"]')).toBeNull();
 });
 
 test("overlaps show the other rows' ranks and a shortfall shows beside the value at stake", async () => {
   const { host } = await mount([{ ...ROW, overlaps_with: ["c02"], shortfall: 0.183 }, { ...ROW, claim_id: "c02", rank: 2, overlaps_with: ["c01"] }]);
   const rows = host.querySelectorAll('[data-testid="claim-register-row"]');
-  expect(rows[0].querySelector('[data-testid="register-overlaps"]').textContent).toBe("#2");
-  expect(rows[1].querySelector('[data-testid="register-overlaps"]').textContent).toBe("#1");
-  expect(rows[0].querySelector('[data-testid="register-value-at-stake"]').textContent).toBe("not yet computed · shortfall 18.3%");
+  expect(rows[0].querySelector('[data-testid="register-overlaps"]').textContent).toBe("Overlaps with #2");
+  expect(rows[1].querySelector('[data-testid="register-overlaps"]').textContent).toBe("Overlaps with #1");
+  expect(rows[0].querySelector('[data-testid="register-value-at-stake"]').textContent).toBe("VaS not yet computed · shortfall 18.3%");
 });
 
 test("the segment and metric are selects of the right options; the rest is text", async () => {
@@ -98,24 +157,27 @@ test("choosing a segment saves it and the rows follow the server's answer", asyn
   expect(host.textContent).toContain("set by you");
 });
 
-test("every row has a gate: Gate needed until it is saved, then its sentence; a row with no figure shows only the claimed one", async () => {
+test("Gate needed until it is saved, then its sentence; a row with no figure shows only the claimed one", async () => {
   const saved = { ...ROW, claim_id: "c2", gate_saved: true, gate_threshold: 195000, gate_budget_decision: "the plan", gate_date: "2024-06-30",
     gate_sentence: "Before the plan, ARR must be at least €195,000 by 2024-06-30. Observed €202,125 (2024-02); claimed €200,000 (Feb 2024)." };
   const { host } = await mount([{ ...ROW, observed_value: null, evidence_label: "Unverified", gate_needed: true }, saved]);
   const rows = host.querySelectorAll('[data-testid="claim-register-row"]');
+  expect(rows[0].querySelector('[data-testid="register-gate-needed"]').textContent).toBe("Gate needed");      // shown before the row is opened
+  await openGates(host);
   expect(rows[0].querySelector('[data-testid="register-gate-context"]').textContent).toBe("Claimed 200,000 EUR (Feb 2024)");
-  expect(rows[0].querySelector('[data-testid="register-gate-needed"]').textContent).toBe("Gate needed");
+  expect(rows[0].querySelectorAll('[data-testid="register-gate-needed"]').length).toBe(1);
   expect(rows[1].querySelector('[data-testid="register-gate-needed"]')).toBeNull();
   expect(rows[1].querySelector('[data-testid="register-gate-sentence"]').textContent).toBe(
     "Before the plan, ARR (see glossary) must be at least €195,000 by 2024-06-30. Observed €202,125 (2024-02); claimed €200,000 (Feb 2024).");
   expect(rows[1].querySelector('[data-testid="register-gate-saved"]').textContent).toBe("Gate saved");
-  const vas = [...host.querySelectorAll("thead th")].find((th) => th.textContent === "VaS");
-  expect(vas.className).toContain("normal-case");          // the header row is in capitals; VaS keeps its case
+  expect(rows[1].querySelector('[data-testid="register-value-at-stake"]').textContent).toMatch(/^VaS /);      // VaS keeps its glossary spelling
 });
 
 test("the key gate checkbox is off until the gate is saved, saves on a click and sends false to clear it", async () => {
-  const saved = { ...ROW, gate_saved: true, gate_threshold: 1, gate_budget_decision: "x", gate_date: "2024-06-30" };
-  const { host } = await mount([ROW, saved]);
+  const open = { ...ROW, evidence_label: "Unverified" };
+  const saved = { ...open, gate_saved: true, gate_threshold: 1, gate_budget_decision: "x", gate_date: "2024-06-30" };
+  const { host } = await mount([open, saved]);
+  await openGates(host);
   const boxes = host.querySelectorAll('[data-testid="register-key-gate"]');
   expect([boxes[0].disabled, boxes[1].disabled]).toEqual([true, false]);
   expect(host.textContent).toContain("Key gate");
@@ -129,8 +191,9 @@ test("the key gate checkbox is off until the gate is saved, saves on a click and
 
 test("a refused key gate shows the server's reason", async () => {
   const { toast } = require("sonner");
-  const saved = { ...ROW, gate_saved: true, gate_threshold: 1, gate_budget_decision: "x", gate_date: "2024-06-30" };
+  const saved = { ...ROW, evidence_label: "Unverified", gate_saved: true, gate_threshold: 1, gate_budget_decision: "x", gate_date: "2024-06-30" };
   const { host } = await mount([saved]);
+  await openGates(host);
   api.updateClaimInputs.mockRejectedValue({ response: { status: 400, data: { detail: "At most 5 key gates." } } });
   await act(async () => { host.querySelector('[data-testid="register-key-gate"]').click(); });
   expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("At most 5 key gates."));
@@ -138,7 +201,8 @@ test("a refused key gate shows the server's reason", async () => {
 
 test("a row with no metric of the app asks for the metric (max 100 characters) and At least / At most", async () => {
   const none = { ...ROW, metric: null, reason: "no metric", observed_value: null, evidence_label: "Unsupported", evidence_analysis: null, gate_needed: true };
-  const { host } = await mount([none, ROW]);
+  const { host } = await mount([none, { ...ROW, evidence_label: "Unverified" }]);
+  await openGates(host);
   const rows = host.querySelectorAll('[data-testid="claim-register-row"]');
   const name = rows[0].querySelector('[data-testid="register-gate-metric-name"]');
   expect(name.getAttribute("placeholder")).toBe("Metric (max 100 characters)");
@@ -151,6 +215,7 @@ test("a qualified Users row asks for the metric and its direction too, as the se
   const qualified = { ...ROW, claim_type: "users", metric: null, reason: "deck label 'registered institutions' is not paying customers; the analyst can edit the type to Customers to test it",
     observed_value: null, evidence_label: "Unsupported", evidence_analysis: null, gate_needed: true };
   const { host } = await mount([qualified]);
+  await openGates(host);
   const row = host.querySelector('[data-testid="claim-register-row"]');
   expect(row.querySelector('[data-testid="register-gate-metric-name"]')).not.toBeNull();
   expect(row.querySelector('[data-testid="register-gate-direction"]')).not.toBeNull();
@@ -292,7 +357,7 @@ test("a row with no rate names the pair and links to the FX settings", async () 
     reason: "FX rate needed: GBP→EUR" };
   const { host } = await mount([needs, ROW]);
   const rows = host.querySelectorAll('[data-testid="claim-register-row"]');
-  expect(rows[0].querySelector('[data-testid="register-evidence-reason"]').textContent).toBe("· FX rate needed: GBP→EUR");
+  expect(rows[0].querySelector('[data-testid="register-evidence-reason"]').textContent).toBe("FX rate needed: GBP→EUR");
   expect(rows[0].querySelector('[data-testid="register-fx-link"]').getAttribute("href")).toBe("/audit/a1/mapping#fx-settings");
   expect(rows[1].querySelector('[data-testid="register-fx-link"]')).toBeNull();
 });
@@ -303,11 +368,11 @@ test("a market-size row: the value, the converted value, FY2028 from the deck, a
   const undated = { ...market, claim_id: "m02", claimed_value: 1e9, claimed_converted: 9e8, period: null, period_note: "no period stated" };
   const { host } = await mount([market, undated]);
   const [a, b] = host.querySelectorAll('[data-testid="claim-register-row"]');
-  const cells = (tr) => [...tr.querySelectorAll("td")].slice(1, 3).map((td) => td.textContent);
-  expect(cells(a)).toEqual(["Market size · 2,500,000,000 USD (2,250,000,000 EUR)", "FY2028"]);
-  expect(cells(b)).toEqual(["Market size · 1,000,000,000 USD (900,000,000 EUR)", "no date"]);
+  const cells = (tr) => ["register-claim", "register-period"].map((id) => tr.querySelector(`[data-testid="${id}"]`));
+  expect([cells(a)[0].textContent, cells(a)[1].textContent]).toEqual(["Market size · 2,500,000,000 USD (2,250,000,000 EUR)", "FY2028"]);
+  expect([cells(b)[0].textContent, cells(b)[1].textContent]).toEqual(["Market size · 1,000,000,000 USD (900,000,000 EUR)", "no date"]);
   expect(a.textContent).not.toMatch(/30 Jun 2026|Jun 2026|0\.9\b/);
-  expect(a.querySelector('[data-testid="register-claim"] span').getAttribute("title")).toBe("Rate used: 1 USD = 0.9 EUR on 30 Jun 2026");
+  expect(a.querySelector('[data-testid="register-claim"]').getAttribute("title")).toBe("Rate used: 1 USD = 0.9 EUR on 30 Jun 2026");
 });
 
 test("a row with no saved rate says which rate is missing, and FX settings in it is the link", async () => {
@@ -329,6 +394,7 @@ async function mountGates(rows, prefill, budgets = []) {
   const host = document.createElement("div");
   document.body.appendChild(host);
   await act(async () => { createRoot(host).render(<ClaimRegister auditId="a1" results={RESULTS} />); });
+  await openGates(host);
   return host;
 }
 

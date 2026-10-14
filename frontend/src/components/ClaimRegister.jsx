@@ -8,7 +8,7 @@ import DateField from "@/components/DateField";
 import { answerTurnover, claimsCsvUrl, getClaimRegister, updateClaimInputs } from "@/lib/api";
 import {
   DOWNLOAD_LABEL, GATE_BUDGET_MAX, GATE_DIRECTIONS, GATE_METRIC_MAX, GATE_METRIC_PLACEHOLDER, GATE_NEEDED, KEY_GATE_LABEL, NO_METRIC, OTHER_DECISION, PREFILLED, gateDraft,
-  REGISTER_COLUMNS, REGISTER_HEADING, TURNOVER_QUESTION, answerReady, reasonsFor, claimCellText, rateHover, takeRateText, evidenceLines, gapText, gateContext, gateEdit, metricOptions, needsMetricName,
+  REGISTER_COLUMNS, REGISTER_COLUMN_WIDTHS, REGISTER_HEADING, SET_GATE_LABEL, VAS_LABEL, TURNOVER_QUESTION, answerReady, reasonsFor, claimCellText, rateHover, takeRateText, evidenceLines, gapText, gateContext, gateEdit, metricOptions, needsMetricName,
   observedText, overlapsText, readingText, registerRows, segmentOptions, valueAtStakeText,
 } from "@/lib/claimRegister";
 import { CALCULATE_CLASS } from "@/lib/chatUpload";
@@ -35,7 +35,19 @@ const withCurrent = (options, current) => (options.includes(current) ? options :
  *  with the server's prefill (docs/specs/verdict-and-memo.md section 3), each prefilled field marked until the analyst edits or saves
  *  it; the budget decision starts blank. Nothing is saved until the threshold, the decision and the date are all filled; a row with
  *  no metric of the app also needs the analyst's metric and its direction. `edits` holds only what the analyst changed. */
-export function GateCell({ row, ccy, onSave, prefill, budgets = [], edits, onEdit }) {
+/** What a row says about its gate before any field is shown: "Gate needed", or the saved gate's sentence. */
+function GateStatus({ row }) {
+  return (
+    <>
+      {row.gate_needed && <div className="text-[10px] font-mono text-amber-800" data-testid="register-gate-needed">{GATE_NEEDED}</div>}
+      {row.gate_sentence && <div className="text-slate-800" data-testid="register-gate-sentence">{seeGlossary(row.gate_sentence)}</div>}
+      {row.gate_saved && <div className="text-[10px] font-mono text-emerald-700" data-testid="register-gate-saved">Gate saved</div>}
+    </>
+  );
+}
+
+/** `inline` lays the fields out in a wrapping row (the register's expanded gate); the default is the narrow column of the Review page. */
+export function GateCell({ row, ccy, onSave, prefill, budgets = [], edits, onEdit, inline = false }) {
   const { draft, prefilled } = gateDraft(row, prefill, edits);
   const context = gateContext(row, ccy);
   const named = needsMetricName(row);
@@ -51,11 +63,11 @@ export function GateCell({ row, ccy, onSave, prefill, budgets = [], edits, onEdi
     if (Object.keys(edit).length) onSave(row, edit).catch(() => {});
   };
   return (
-    <div className="max-w-xs space-y-1">
-      {row.gate_needed && <div className="text-[10px] font-mono text-amber-800" data-testid="register-gate-needed">{GATE_NEEDED}</div>}
-      <div className="text-slate-600" data-testid="register-gate-context">{context}</div>
-      {row.gate_sentence && <div className="text-slate-800" data-testid="register-gate-sentence">{seeGlossary(row.gate_sentence)}</div>}
-      {row.gate_saved && <div className="text-[10px] font-mono text-emerald-700" data-testid="register-gate-saved">Gate saved</div>}
+    <div className={inline ? "flex flex-wrap items-start gap-x-3 gap-y-1" : "max-w-xs space-y-1"}>
+      <div className={inline ? "basis-full space-y-1" : "contents"}>
+        <GateStatus row={row} />
+        <div className="text-slate-600" data-testid="register-gate-context">{context}</div>
+      </div>
       {named && (
         <div className="flex gap-1 flex-wrap">
           <Input value={draft.metricName} onChange={set("metricName")} maxLength={GATE_METRIC_MAX} placeholder={GATE_METRIC_PLACEHOLDER} className="h-7 text-xs" data-testid="register-gate-metric-name" />
@@ -66,27 +78,51 @@ export function GateCell({ row, ccy, onSave, prefill, budgets = [], edits, onEdi
           {mark("metricName")}
         </div>
       )}
-      <Input value={draft.threshold} onChange={set("threshold")} placeholder="Threshold" inputMode="decimal" className="h-7 text-xs font-mono" data-testid="register-gate-threshold" />
-      {mark("threshold")}
-      {options.length ? (
-        <select value={other ? OTHER_DECISION : draft.budget} onChange={(e) => pick(e.target.value)} className={`${selectClass} w-full`} data-testid="register-gate-budget-pick">
-          <option value="">Budget decision…</option>
-          {options.map((d) => <option key={d} value={d}>{d}</option>)}
-          <option value={OTHER_DECISION}>{OTHER_DECISION}</option>
-        </select>
-      ) : null}
-      {(other || !options.length) && (
-        <Input value={draft.budget} onChange={set("budget")} maxLength={GATE_BUDGET_MAX} placeholder="Budget decision (max 200 characters)" className="h-7 text-xs" data-testid="register-gate-budget" />
-      )}
-      <DateField testId="register-gate-date" value={draft.date} onChange={(v) => onEdit(row, { date: v })}
-        placeholder="Gate date" className="!mt-0 h-7 text-xs" />
-      {mark("date")}
+      <div className={inline ? "w-36" : "contents"}>
+        <Input value={draft.threshold} onChange={set("threshold")} placeholder="Threshold" inputMode="decimal" className="h-7 text-xs font-mono" data-testid="register-gate-threshold" />
+        {mark("threshold")}
+      </div>
+      <div className={inline ? "w-72 space-y-1" : "contents"}>
+        {options.length ? (
+          <select value={other ? OTHER_DECISION : draft.budget} onChange={(e) => pick(e.target.value)} className={`${selectClass} w-full`} data-testid="register-gate-budget-pick">
+            <option value="">Budget decision…</option>
+            {options.map((d) => <option key={d} value={d}>{d}</option>)}
+            <option value={OTHER_DECISION}>{OTHER_DECISION}</option>
+          </select>
+        ) : null}
+        {(other || !options.length) && (
+          <Input value={draft.budget} onChange={set("budget")} maxLength={GATE_BUDGET_MAX} placeholder="Budget decision (max 200 characters)" className="h-7 text-xs" data-testid="register-gate-budget" />
+        )}
+      </div>
+      <div className={inline ? "w-40" : "contents"}>
+        <DateField testId="register-gate-date" value={draft.date} onChange={(v) => onEdit(row, { date: v })}
+          placeholder="Gate date" className="!mt-0 h-7 text-xs" />
+        {mark("date")}
+      </div>
       <Button size="sm" onClick={save} className="h-7 bg-sky-600 hover:bg-sky-500" data-testid="register-gate-save">Save gate</Button>
-      <label className="flex items-center gap-1.5 text-slate-700">
+      <label className="flex items-center gap-1.5 text-slate-700 h-7">
         <input type="checkbox" checked={draft.key} disabled={!row.gate_saved && !row.gate_needed} data-testid="register-key-gate"
           onChange={(e) => (row.gate_saved ? onSave(row, { key_gate: e.target.checked }).catch(() => {}) : onEdit(row, { key: e.target.checked }))} />
         {KEY_GATE_LABEL} {mark("key")}
       </label>
+    </div>
+  );
+}
+
+/** The register's gate: nothing but the gate's status until the analyst clicks Set gate, which opens the fields below the row. A
+ *  Verified row has no button (it needs no gate); a gate it already holds still shows as text. */
+function GateToggle({ row, ...gate }) {
+  const [open, setOpen] = useState(false);
+  const verified = row.evidence_label === "Verified";
+  return (
+    <div className="space-y-1" data-testid="register-gate">
+      {!open && <div className="flex flex-wrap items-baseline gap-x-3"><GateStatus row={row} /></div>}
+      {!verified && (
+        <Button size="sm" variant="outline" className="h-7" aria-expanded={open} onClick={() => setOpen(!open)} data-testid="register-set-gate">
+          {SET_GATE_LABEL}
+        </Button>
+      )}
+      {open && !verified && <GateCell row={row} inline {...gate} />}
     </div>
   );
 }
@@ -195,71 +231,82 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
         <p className="text-sm text-slate-600" data-testid="claim-register-empty">No approved claims yet. Approve claims in the deck list and they are tested here.</p>
       )}
       {rows && rows.length > 0 && (
-        <div className="overflow-x-auto rounded-md border border-[#E5E7EB] bg-white">
-          <table className="w-full text-xs" data-testid="claim-register-table">
+        <div className="rounded-md border border-[#E5E7EB] bg-white" data-testid="claim-register-scroll">
+          <table className="w-full table-fixed text-xs" data-testid="claim-register-table">
+            <colgroup>{REGISTER_COLUMN_WIDTHS.map((w, i) => <col key={REGISTER_COLUMNS[i]} style={{ width: `${w}%` }} />)}</colgroup>
             <thead>
               <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500 border-b border-[#E5E7EB]">
-                {/* the headers are set in capitals; "VaS" keeps its own case, as the glossary writes it */}
-                {REGISTER_COLUMNS.map((c) => <th key={c} className={`py-2 px-3 font-medium whitespace-nowrap ${c === "VaS" ? "normal-case" : ""}`}>{c}</th>)}
+                {REGISTER_COLUMNS.map((c) => <th key={c} className="py-2 px-3 font-medium">{c}</th>)}
               </tr>
             </thead>
-            <tbody>
-              {rows.map((row) => {
-                const observed = observedText(row, ccy);
-                return (
-                  <tr key={row.claim_id} className="border-b border-[#F1F5F9] align-top" data-testid="claim-register-row">
-                    <td className="py-2 px-3 font-mono text-slate-700">{row.rank}</td>
-                    <td className="py-2 px-3 text-slate-900 min-w-[10rem]" data-testid="register-claim">
-                      <span title={rateHover(row, ccy) || undefined}>
+            {/* one tbody per claim: the claim's line, then a second smaller grey line spanning the row */}
+            {rows.map((row) => {
+              const observed = observedText(row, ccy);
+              const path = evidenceLines(row).second;
+              const detail = [
+                [row.page_ref || "—", "register-page"],
+                [readingText(row.deck_reading), "register-reading"],
+                [row.gloss || "—", "register-gloss"],
+                [`${VAS_LABEL} ${valueAtStakeText(row)}`, "register-value-at-stake"],
+                [`Overlaps with ${overlapsText(row, rows)}`, "register-overlaps"],
+                [row.reason, "register-evidence-reason"],
+              ];
+              return (
+                <tbody key={row.claim_id} className="border-b border-[#F1F5F9] align-top break-words" data-testid="claim-register-row">
+                  <tr>
+                    <td className="pt-2 px-3 font-mono text-slate-700">{row.rank}</td>
+                    <td className="pt-2 px-3 text-slate-900">
+                      <span title={rateHover(row, ccy) || undefined} data-testid="register-claim">
                         <FxText text={claimCellText(row, ccy)} href={`/audit/${auditId}/mapping#fx-settings`} testId="register-claim-fx-link" />
                       </span>
+                      <div className="font-mono text-[11px] text-slate-500" data-testid="register-period">{row.period || NO_DATE}</div>
                     </td>
-                    <td className="py-2 px-3 font-mono text-slate-700 whitespace-nowrap">
-                      {row.period || NO_DATE}
-                    </td>
-                    <td className="py-2 px-3">
-                      <select value={row.segment} onChange={(e) => save(row, { segment: e.target.value }).catch(() => {})} className={selectClass} data-testid="register-segment">
+                    <td className="pt-2 px-3">
+                      <select value={row.segment} onChange={(e) => save(row, { segment: e.target.value }).catch(() => {})} className={`${selectClass} w-full`} data-testid="register-segment">
                         {withCurrent(segmentOptions(results), row.segment).map((s) => <option key={s} value={s}>{s}</option>)}
                       </select>
                       <div className="text-[10px] text-slate-500 mt-0.5">{row.segment_set_by === "analyst" ? "set by you" : "proposed"}</div>
                     </td>
-                    <td className="py-2 px-3 font-mono text-slate-600 whitespace-nowrap">{row.page_ref || "—"}</td>
-                    <td className="py-2 px-3 text-slate-700 whitespace-nowrap" data-testid="register-reading">{readingText(row.deck_reading)}</td>
-                    <td className="py-2 px-3 min-w-[9rem]">
-                      <select value={row.metric ?? NO_METRIC} onChange={(e) => save(row, { metric: e.target.value }).catch(() => {})} className={selectClass} data-testid="register-metric">
+                    <td className="pt-2 px-3">
+                      <div className="font-mono text-slate-900" data-testid="register-observed">
+                        <Provenance source={row.observed_source}>{observed.value}</Provenance>
+                        {observed.at && <span className="text-[10px] text-slate-500"> · {observed.at}</span>}
+                      </div>
+                      <select value={row.metric ?? NO_METRIC} onChange={(e) => save(row, { metric: e.target.value }).catch(() => {})} className={`${selectClass} w-full mt-1`} data-testid="register-metric">
                         {withCurrent(metricOptions(row), row.metric ?? NO_METRIC).map((m) => (
                           <option key={m} value={m}>{m === NO_METRIC ? "none" : m}</option>
                         ))}
                       </select>
-                      <div className="font-mono text-slate-900 mt-1" data-testid="register-observed">
-                        <Provenance source={row.observed_source}>{observed.value}</Provenance>
-                        {observed.at && <span className="text-[10px] text-slate-500"> · {observed.at}</span>}
-                      </div>
                     </td>
-                    <td className="py-2 px-3 font-mono text-slate-800 whitespace-nowrap" data-testid="register-gap">{gapText(row, ccy)}</td>
-                    <td className="py-2 px-3 text-slate-700 min-w-[9rem]" data-testid="register-gloss">{row.gloss || "—"}</td>
-                    <td className="py-2 px-3 font-mono text-slate-700 whitespace-nowrap" data-testid="register-value-at-stake">{valueAtStakeText(row)}</td>
-                    <td className="py-2 px-3 font-mono text-slate-700 whitespace-nowrap" data-testid="register-overlaps">{overlapsText(row, rows)}</td>
-                    <td className="py-2 px-3 min-w-[10rem]">
+                    <td className="pt-2 px-3 font-mono text-slate-800" data-testid="register-gap">{gapText(row, ccy)}</td>
+                    <td className="pt-2 px-3">
                       <span className={`text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-nowrap ${LABEL_STYLE[row.evidence_label] || ""}`} data-testid="register-evidence">
                         {row.evidence_label}
                       </span>
-                      <span className="ml-1 text-slate-600" data-testid="register-evidence-reason">· {row.reason}</span>
-                      {String(row.reason || "").startsWith("FX rate needed") && (
-                        <a href={`/audit/${auditId}/mapping#fx-settings`} className="ml-1 text-sky-700 underline" data-testid="register-fx-link">FX settings</a>
-                      )}
-                      {row.turnover_state && <TurnoverCell row={row} onAnswer={answer} />}
-                      {evidenceLines(row).second && (
-                        <div className="mt-1 font-mono text-[11px] text-slate-700" data-testid="register-evidence-source">
-                          <Provenance source={row.observed_source}>{evidenceLines(row).second}</Provenance>
-                        </div>
-                      )}
                     </td>
-                    <td className="py-2 px-3"><GateCell row={row} ccy={ccy} onSave={save} prefill={prefill[row.claim_id]} budgets={budgets} edits={edits[row.claim_id]} onEdit={onEdit} /></td>
                   </tr>
-                );
-              })}
-            </tbody>
+                  <tr>
+                    <td colSpan={REGISTER_COLUMNS.length} className="pb-2 px-3 text-[11px] text-slate-500 space-y-1" data-testid="register-detail">
+                      <div>
+                        {detail.map(([text, testId], i) => (
+                          <span key={testId}>{i > 0 && " · "}<span data-testid={testId}>{text}</span></span>
+                        ))}
+                        {String(row.reason || "").startsWith("FX rate needed") && (
+                          <a href={`/audit/${auditId}/mapping#fx-settings`} className="ml-1 text-sky-700 underline" data-testid="register-fx-link">FX settings</a>
+                        )}
+                        {path && (
+                          <> · <span data-testid="register-evidence-source"><Provenance source={row.observed_source}>{path}</Provenance></span></>
+                        )}
+                      </div>
+                      <div className="text-xs text-slate-700 space-y-1">
+                        {row.turnover_state && <TurnoverCell row={row} onAnswer={answer} />}
+                        <GateToggle row={row} ccy={ccy} onSave={save} prefill={prefill[row.claim_id]} budgets={budgets} edits={edits[row.claim_id]} onEdit={onEdit} />
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              );
+            })}
           </table>
         </div>
       )}

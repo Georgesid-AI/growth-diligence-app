@@ -10,10 +10,13 @@ import { dateRangeError, displayDate } from "./datePicker";
 
 export const REGISTER_HEADING = "Claim register";
 export const DOWNLOAD_LABEL = "Download baseline (CSV)";
-// docs/specs/verdict-and-memo.md section 2.1: value at stake ("VaS", in the glossary), overlaps and evidence join the columns of
-// claim-matching.md section 8.
-export const REGISTER_COLUMNS = ["#", "Claim", "Period", "Segment", "Page", "Read from deck", "Observed", "Gap", "Gloss", "VaS",
-  "Overlaps with", "Evidence", "Gate"];
+// The register is six columns so it fits 1280 px without a horizontal scroll (claim-matching.md section 8). Page, "Read from deck",
+// gloss, VaS (value at stake, in the glossary), overlaps and the evidence path sit on the second, smaller line of each row.
+export const REGISTER_COLUMNS = ["#", "Claim", "Segment", "Observed", "Gap", "Evidence"];
+// The width of each column as a share of the table, in the order of REGISTER_COLUMNS; the table is fixed-layout, so they sum to 100.
+export const REGISTER_COLUMN_WIDTHS = [4, 36, 16, 20, 12, 12];
+export const SET_GATE_LABEL = "Set gate";
+export const VAS_LABEL = "VaS";
 // Only these are editable (section 3 adds the gate's metric name and direction on a row with no app metric, and the key mark).
 export const EDITABLE_FIELDS = ["segment", "metric", "gate_threshold", "gate_budget_decision", "gate_date", "gate_metric_name",
   "gate_direction", "key_gate"];
