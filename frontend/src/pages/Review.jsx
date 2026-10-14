@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { Link, useParams, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { Download, Loader2, Sparkles } from "lucide-react";
 import { Layout } from "@/components/Layout";
@@ -17,7 +17,7 @@ import { claimPeriod, claimValue, sourceRef, typeLabel, CLAIM_GROUPS, approveAll
 import { turnoverHeading, turnoverOf, registerRows } from "@/lib/claimRegister";
 import { useGateEdits } from "@/lib/useGateEdits";
 import { S13_status, MAPPING_HEADERS, fieldName, sortColumns } from "@/lib/chatUpload";
-import { describeRequestError } from "@/lib/requestError";
+import { describeRequestError, READ_TIMEOUT_MS } from "@/lib/requestError";
 import { runAudit } from "@/lib/runAudit";
 import { writeAllLabel, estimateText, WRITE_ALL_HELP, MEMO_LABEL, MEMO_WAITING, RECONCILIATION_NOTE } from "@/lib/review";
 
@@ -40,14 +40,20 @@ export default function Review() {
   const [verdict, setVerdict] = useState(null);
   const [estimate, setEstimate] = useState(null);
   const [proceeding, setProceeding] = useState(false);
+  const [loadError, setLoadError] = useState(null);     // why the audit or its review could not be read: shown instead of a spinner
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
   const reload = useCallback(async () => {
     const safe = (p, fallback) => p.catch(() => fallback);
+    // The audit and its review are what the screen stands on: a failure of either is shown, never swallowed.
     const [a, s, v, d] = await Promise.all([
-      safe(getAudit(id), null), safe(getReview(id), null), safe(getDatasets(id), []), safe(getDecks(id), { decks: [], candidates: [] })]);
+      getAudit(id).catch((e) => ({ failed: e })), getReview(id).catch((e) => ({ failed: e })),
+      safe(getDatasets(id), []), safe(getDecks(id), { decks: [], candidates: [] })]);
     if (!alive.current) return;
+    const failed = a?.failed || s?.failed;
+    if (failed) { setLoadError(describeRequestError(failed, { timeoutMs: READ_TIMEOUT_MS }).message); return; }
+    setLoadError(null);
     setAudit(a); setSummary(s); setViews(v); setDeckData(d);
     if (s?.computed) {
       const [r, vd, est] = await Promise.all([safe(getClaimRegister(id), null), safe(getVerdict(id), null), safe(getNarrativeEstimate(id), null)]);
@@ -74,6 +80,20 @@ export default function Review() {
     return next;
   };
 
+  if (loadError) {
+    return (
+      <Layout audit={audit}>
+        <div className="max-w-xl mx-auto py-24 text-center" data-testid="review-load-error">
+          <p className="text-sm text-slate-900">The review could not be loaded.</p>
+          <p className="mt-1 text-sm text-rose-800 font-mono break-words">{loadError}</p>
+          <div className="mt-4 flex justify-center gap-3">
+            <Button size="sm" onClick={() => { setLoadError(null); reload(); }} data-testid="review-load-retry">Retry</Button>
+            <Button size="sm" variant="outline" asChild><Link to="/" data-testid="review-load-list">Back to the audit list</Link></Button>
+          </div>
+        </div>
+      </Layout>
+    );
+  }
   if (!audit || !summary) {
     return <Layout audit={audit}><div className="flex justify-center py-32 text-slate-500"><Loader2 className="h-6 w-6 animate-spin" /></div></Layout>;
   }

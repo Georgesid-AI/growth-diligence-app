@@ -19,6 +19,9 @@ export function redactSecrets(text) {
   return out.replace(NAMED_SECRET, (_m, name, sep) => `${name}${sep}[redacted]`);
 }
 
+/** How long a screen waits for the reads it opens with before it shows the error instead of a spinner. */
+export const READ_TIMEOUT_MS = 30000;
+
 const MAX_TEXT = 300;
 const clip = (s) => (s.length > MAX_TEXT ? `${s.slice(0, MAX_TEXT)}…` : s);
 

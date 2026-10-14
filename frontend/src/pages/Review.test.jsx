@@ -229,3 +229,31 @@ test("a reconciliation gap is reported in the memo and does not block it", async
   expect(q("memo-blockers").textContent).toBe("A reconciliation gap over 2% is reported in the memo; it does not block it.");
   expect(q("generate-memo")).not.toBeNull();
 });
+
+// A failed read must not leave the spinner: the error, a Retry and a link back to the audit list (bug of 2026-10-14).
+const httpError = (status, detail) => Object.assign(new Error("failed"), { response: { status, statusText: "", data: { detail } } });
+
+test.each([["getReview"], ["getAudit"]])("when %s fails the spinner stops: the error, Retry and a link to the audit list", async (which) => {
+  api[which].mockRejectedValue(httpError(500, "boom"));
+  await mount();
+  expect(q("review-load-error").textContent).toContain("HTTP 500");
+  expect(document.body.querySelector(".animate-spin")).toBeNull();
+  expect(q("review-load-retry").textContent).toBe("Retry");
+  expect(q("review-load-list").getAttribute("href")).toBe("/");
+});
+
+test("Retry reads again and shows the review when the second read works", async () => {
+  api.getReview.mockRejectedValueOnce(httpError(500, "boom"));
+  await mount();
+  expect(q("review-load-error")).not.toBeNull();
+  await act(async () => { q("review-load-retry").click(); });
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  expect(q("review-load-error")).toBeNull();
+  expect(q("review-mappings")).not.toBeNull();
+});
+
+test("a read that times out ends in the error too, never in a spinner", async () => {
+  api.getReview.mockRejectedValue(Object.assign(new Error("timeout of 30000ms exceeded"), { code: "ECONNABORTED" }));
+  await mount();
+  expect(q("review-load-error").textContent).toContain("No response from the server after 30 seconds");
+});
