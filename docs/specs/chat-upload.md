@@ -448,8 +448,8 @@ line shape, so no new matching code is written; nothing is deleted.
   claim whose save fails. Reply: `{approved, skipped, approved_ids, skipped_ids}`. Toast, word for word: "Approved X claims, Y skipped (need
   Revenue / Volume or failed to save)" ("1 claim" for one). The log line holds the run, the group number and two counts, nothing else
   (boundary test, rule 14). Amended 2026-10-14 (claim-matching.md §4.1): a claim with an open Definition check is skipped too, and
-  counted apart: the toast adds ", Y skipped (definition check)" when Y is above 0 (`skipped` in the reply still counts every skip;
-  `skipped_definition` counts these).
+  counted apart: the toast adds ", Y skipped (definition check)" when Y is above 0, and on the upload page, which cannot answer it,
+  " – answer on the review screen" after it (`skipped` in the reply still counts every skip; `skipped_definition` counts these).
 - **Acquisition channels** (stored `acquisition_channels`): the figure per platform on a user-acquisition slide, such as a funnel listing social
   platforms, each with a number in brackets. Parser trigger: the slide or page needs a cue, as whole words in any case: acquisition,
   acquisition channel(s), channels, funnel, traffic source(s), user acquisition. It counts in the slide's title, in a heading or a chart title (a

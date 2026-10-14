@@ -145,7 +145,7 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
     setApproving(section.group);
     try {
       const done = await approveAll(auditId, section.group, tab && tab !== ALL_DECKS ? tab : undefined);
-      if (alive.current) toast.success(approveAllToast(done.approved, done.skipped, done.skipped_definition));
+      if (alive.current) toast.success(approveAllToast(done.approved, done.skipped, done.skipped_definition, true));
       await load();
     } catch (err) {
       if (alive.current) toast.error(describeRequestError(err).message);

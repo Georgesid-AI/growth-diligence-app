@@ -736,6 +736,11 @@ describe("Approve all and the category sections (docs/specs/chat-upload.md secti
     api.approveAll.mockResolvedValueOnce({ approved: 1, skipped: 0 });
     await act(async () => { q("approve-all-top-8").click(); });
     expect(toast.success).toHaveBeenCalledWith("Approved 1 claim, 0 skipped (need Revenue / Volume or failed to save)");
+    // a claim waiting for its Definition check is answered on the review screen, not here (claim-matching.md section 4.1)
+    api.approveAll.mockResolvedValueOnce({ approved: 1, skipped: 2, skipped_definition: 1 });
+    await act(async () => { q("approve-all-top-8").click(); });
+    expect(toast.success).toHaveBeenLastCalledWith(
+      "Approved 1 claim, 1 skipped (need Revenue / Volume or failed to save), 1 skipped (definition check) – answer on the review screen");
     api.approveAll.mockRejectedValueOnce({ response: { status: 500, data: { detail: "boom" } } });
     await act(async () => { q("approve-all-top-8").click(); });
     expect(toast.error).toHaveBeenCalled();
