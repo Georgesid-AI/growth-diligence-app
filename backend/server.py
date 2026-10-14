@@ -407,7 +407,7 @@ async def _usage_update(audit_id: str, change) -> None:
 class UsageEvent(BaseModel):
     """What the browser reports: the screen it is on, or the extension of a file it refused."""
     model_config = {"extra": "forbid"}
-    screen: Optional[Literal["mapping", "dashboard", "diagnostics"]] = None
+    screen: Optional[Literal["mapping", "dashboard", "diagnostics", "review", "run"]] = None
     rejected_extension: Optional[str] = Field(default=None, max_length=12)
 
 

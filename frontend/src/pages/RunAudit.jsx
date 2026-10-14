@@ -29,7 +29,7 @@ export default function RunAudit() {
   const pick = useRef({ data: [], decks: [] });
   const picker = useRef(null);
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; }, []);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
   useEffect(() => {
     getAudit(id).then((a) => { setAudit(a); setAsOf(asOfInputValue(a.as_of_month)); }).catch(() => {});

@@ -257,3 +257,12 @@ test("a read that times out ends in the error too, never in a spinner", async ()
   await mount();
   expect(q("review-load-error").textContent).toContain("No response from the server after 30 seconds");
 });
+
+test("under React.StrictMode the loaded review still renders (alive ref is re-armed on the second mount)", async () => {
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  await act(async () => { root.render(<React.StrictMode><Review /></React.StrictMode>); });
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  expect(q("review-mappings-auto-count").textContent).toBe("5 columns mapped");
+});

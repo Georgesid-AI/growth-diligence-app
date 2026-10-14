@@ -227,7 +227,7 @@ deck_text, column_mappings (every saved version) and the rest. There is no mappi
 
 ## 7. Usage counters (no file names, no values)
 - `audits.usage` (Q2) holds: `first_upload_at`, `first_export_at` (the first xlsx export, which carries the IC
-  memo), `last_screen` (mapping, dashboard or diagnostics, sent by each page on mount; any other value is refused);
+  memo), `last_screen` (mapping, dashboard, diagnostics, review or run, sent by each page on mount; any other value is refused);
   `files.uploaded` by type and `files.rejected` by extension; `columns` mapped by rules, saved mapping, the model's
   proposal, confirmed and corrected, with a count per reason code; `other_notes`, the kept "Other" notes (§4.3) as
   `{note, at}`, at most 50 per audit with the oldest dropped first, and with no column, file or field beside them;
