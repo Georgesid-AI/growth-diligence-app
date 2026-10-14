@@ -27,6 +27,25 @@ export function splitFiles(files) {
 
 export const idleStages = () => Object.fromEntries(STAGES.map((s) => [s.key, { status: "idle", message: null }]));
 
+/**
+ * The stages as the audit stands now, for a page that is opened or reloaded: done once the work exists, needs_review while
+ * something waits for the analyst, idle only when nothing was done. `views` are the stored datasets, `summary` the review
+ * summary (its `computed` is whether results exist), `deckData` the decks and their candidates.
+ */
+export function stagesFromState({ views = [], summary = null, deckData = { decks: [], candidates: [] } } = {}) {
+  const stages = idleStages();
+  if (views.length) {
+    const open = views.some((v) => v.pending > 0 || (v.missing_required || []).length > 0);
+    stages.mapping = { status: open ? "needs_review" : "done", message: null };
+  }
+  if (summary?.computed) stages.engine = { status: "done", message: null };
+  if ((deckData.decks || []).length || (deckData.candidates || []).length) {
+    const waiting = (deckData.candidates || []).some((c) => c.status === "pending");
+    stages.claims = { status: waiting ? "needs_review" : "done", message: null };
+  }
+  return stages;
+}
+
 const detailOf = (e, fallback) => {
   const detail = e?.response?.data?.detail;
   return typeof detail === "string" ? detail : fallback;

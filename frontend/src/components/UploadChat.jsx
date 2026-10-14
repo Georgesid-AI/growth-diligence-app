@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { BLOCKERS_CHANGED } from "@/components/BlockerBanner";
 import { uploadChatFile, getDatasets, decideColumns, reportUsage } from "@/lib/api";
 import {
-  S1_TEXT_REPLY, S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE, S6_UNKNOWN_TYPE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S_UPLOAD_RETRY,
+  S1_TEXT_REPLY, S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE, S6_UNKNOWN_TYPE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S_UPLOAD_RETRY, RUN_DECK_EXTENSIONS, RUN_DROP_ZONE, RUN_REFUSED,
   S20_NOTE_PLACEHOLDER, S21_NOTE_REFUSED, NOTE_MAX, ALLOWED_EXTENSIONS, REASONS, TYPE_LABELS, S5_head, S8_replace,
   S9_confidence, S13_status, MAP_LABEL, CALCULATE_LABEL, CALCULATE_CLASS, SEND_TOOLTIP, setCalculatePressed, S14_same, MAPPING_HEADERS, S25_TITLE, S25_PARAGRAPHS, mappedBy, sortColumns, fieldName, fmtBytes, extensionOf, heldFields,
 } from "@/lib/chatUpload";
@@ -19,8 +19,13 @@ const uid = () => `m${nextId++}`;
  * The chat-style upload (docs/specs/chat-upload.md section 2): one message list, files in, one analyst bubble and one
  * system bubble per file, the mapping table in the system bubble. Typed text is answered on the page (S1) and goes
  * nowhere else. `extras(view)` renders what follows the table of a revenue file (FX rates, billing terms).
+ *
+ * `deferred` is the Run audit page's use of the same box: decks are accepted too, there is no Map or Calculate button, and
+ * nothing is read here. The attached files are handed up through `onFiles(files)`; the page reads them when Run audit is pressed
+ * and then passes `leftover` (the files it did not send); the bubbles of every other file are dropped.
  */
-export default function UploadChat({ audit, extras, onViews, onCalculate, onStaged, onMapping, mapButton, calculateButton, computing }) {
+export default function UploadChat({ audit, extras, onViews, onCalculate, onStaged, onMapping, mapButton, calculateButton, computing,
+  deferred = false, onFiles, leftover }) {
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(0);
@@ -40,13 +45,14 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, onStag
 
   // On reload: one analyst bubble and one system bubble per stored dataset. Text replies and refused files are not kept.
   useEffect(() => {
+    if (deferred) return;                               // the page lists the stored files itself
     getDatasets(audit.id).then((views) => {
       setMessages(views.flatMap((v) => [
         { id: uid(), kind: "analyst", dtype: v.dtype, file: v.file, size: v.size_bytes, ext: v.ext },
         { id: uid(), kind: "system", dtype: v.dtype, view: v },
       ]));
     }).catch(() => {});
-  }, [audit.id]);
+  }, [audit.id]); // eslint-disable-line
 
   useEffect(() => {
     onViews?.(messages.filter((m) => m.kind === "system" && m.view).map((m) => m.view));
@@ -95,13 +101,15 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, onStag
     }
   };
 
+  const allowed = deferred ? [...ALLOWED_EXTENSIONS, ...RUN_DECK_EXTENSIONS] : ALLOWED_EXTENSIONS;
+
   // Files go one at a time, in drop order.
   const takeFiles = (files) => {
     for (const file of Array.from(files || [])) {
       const ext = extensionOf(file.name);
-      if (!ALLOWED_EXTENSIONS.includes(ext)) {
+      if (!allowed.includes(ext)) {
         push({ kind: "analyst", file: file.name, size: file.size, ext });
-        push({ kind: "text", role: "system", text: ext === "xls" ? S7B_XLS_REFUSED : S7_REFUSED });
+        push({ kind: "text", role: "system", text: ext === "xls" ? S7B_XLS_REFUSED : deferred ? RUN_REFUSED : S7_REFUSED });
         reportUsage(audit.id, { rejected_extension: ext || "other" });
         continue;
       }
@@ -116,6 +124,14 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, onStag
     setMessages((all) => all.filter((m) => m.id !== id));
   };
   useEffect(() => { onStaged?.(messages.filter((m) => m.staged).length); }, [messages]); // eslint-disable-line
+  useEffect(() => { onFiles?.([...staged.current.values()]); }, [messages]); // eslint-disable-line
+
+  // The page has read the files: only those it did not send stay attached.
+  useEffect(() => {
+    if (!leftover) return;
+    for (const [bubble, file] of [...staged.current]) if (!leftover.includes(file)) staged.current.delete(bubble);
+    setMessages((all) => all.filter((m) => !m.staged || staged.current.has(m.id)));
+  }, [leftover]);
 
   // Map: read the attached files one at a time, in drop order; each loads with its mapping table and confirmation list.
   // The banner is refreshed once, after the last file, and not while a file still waits for its type or a replace answer:
@@ -171,7 +187,7 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, onStag
       <div data-testid="chat-messages" className="px-5 py-4 space-y-3 min-h-[240px]">
         {/* The drop zone stays after a drop: more files can be attached until Map is pressed. */}
         <div data-testid="chat-drop-zone" className={`border border-dashed rounded-lg text-center text-slate-500 ${messages.length === 0 ? "py-14 text-sm" : "py-3 text-xs"} ${dragging ? "border-sky-500 bg-sky-50" : "border-[#D1D5DB]"}`}>
-          {S4_DROP_ZONE}
+          {deferred ? RUN_DROP_ZONE : S4_DROP_ZONE}
         </div>
         {messages.map((m) => (
           <Message key={m.id} m={m} audit={audit} unstage={unstage} extras={extras} lastReason={lastReason} setLastReason={setLastReason}
@@ -183,16 +199,17 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, onStag
         {busy > 0 && <div className="text-xs text-slate-500 flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Reading…</div>}
       </div>
       <form onSubmit={submitText} className="border-t border-[#E5E7EB] px-3 py-3 flex items-center gap-2">
-        <input ref={picker} type="file" multiple accept=".xlsx,.csv" className="hidden" data-testid="chat-file-input"
+        <input ref={picker} type="file" multiple accept={allowed.map((e) => `.${e}`).join(",")} className="hidden" data-testid="chat-file-input"
           onChange={(e) => { takeFiles(e.target.files); e.target.value = ""; }} />
         <button type="button" aria-label="Attach files" data-testid="chat-paperclip" onClick={() => picker.current?.click()}
           className="p-2 rounded-md text-slate-600 hover:bg-slate-100"><Paperclip className="h-4 w-4" /></button>
-        <Input data-testid="chat-text-input" value={text} onChange={(e) => setText(e.target.value)} placeholder={S4_DROP_ZONE}
+        <Input data-testid="chat-text-input" value={text} onChange={(e) => setText(e.target.value)} placeholder={deferred ? RUN_DROP_ZONE : S4_DROP_ZONE}
           className="h-9 bg-white border-[#E5E7EB]" />
         {/* A disabled button shows no tooltip of its own, so the wrapper carries it. */}
         <span title={SEND_TOOLTIP} data-testid="chat-send-wrap">
           <Button type="submit" size="sm" aria-label="Send" data-testid="chat-send" variant="outline" disabled={!text.trim()} title={SEND_TOOLTIP}><Send className="h-4 w-4" /></Button>
         </span>
+        {!deferred && <>
         <span title={mapButton.tooltip} data-testid="chat-map-wrap">
           <Button type="button" size="sm" data-testid="chat-map" disabled={mapButton.disabled} onClick={map}
             className={CALCULATE_CLASS} title={mapButton.tooltip}>
@@ -205,6 +222,7 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, onStag
             {computing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{CALCULATE_LABEL}
           </Button>
         </span>
+        </>}
       </form>
     </section>
   );

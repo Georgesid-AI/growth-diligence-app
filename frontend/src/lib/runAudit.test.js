@@ -1,4 +1,4 @@
-import { STAGES, runAudit, splitFiles, idleStages } from "./runAudit";
+import { STAGES, runAudit, splitFiles, idleStages, stagesFromState } from "./runAudit";
 
 const file = (name) => ({ name });
 const mk = (answers = {}) => {
@@ -93,4 +93,24 @@ test("a network failure on a stage reads as a message, not a stack", async () =>
   await runAudit({ api, auditId: "a1", from: "engine", onUpdate: (k, r) => seen.push(r) });
   expect(seen.at(-1).message).toContain("Retry it");
   expect(seen.at(-1).message).not.toContain("Network Error");
+});
+
+describe("stagesFromState", () => {
+  const view = (over = {}) => ({ dtype: "revenue", pending: 0, missing_required: [], ...over });
+  const status = (state) => Object.values(stagesFromState(state)).map((s) => s.status);
+  test("nothing stored: every stage is idle", () => {
+    expect(status({})).toEqual(["idle", "idle", "idle"]);
+    expect(status({ views: [], summary: { computed: false }, deckData: { decks: [], candidates: [] } })).toEqual(["idle", "idle", "idle"]);
+  });
+  test("mapped files, results and read decks: every stage is done", () => {
+    expect(status({ views: [view()], summary: { computed: true }, deckData: { decks: [{ deck_id: "d" }], candidates: [{ status: "approved" }] } })).toEqual(["done", "done", "done"]);
+  });
+  test("a pending column or a missing required field needs review; so does a pending claim", () => {
+    expect(status({ views: [view({ pending: 1 })] })[0]).toBe("needs_review");
+    expect(status({ views: [view({ missing_required: ["month"] })] })[0]).toBe("needs_review");
+    expect(status({ deckData: { decks: [{ deck_id: "d" }], candidates: [{ status: "pending" }] } })[2]).toBe("needs_review");
+  });
+  test("a deck with no claim in it is done: it was read", () => {
+    expect(status({ deckData: { decks: [{ deck_id: "d" }], candidates: [] } })[2]).toBe("done");
+  });
 });

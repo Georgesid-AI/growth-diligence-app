@@ -12,6 +12,7 @@ import {
 import { listAudits, createAudit, deleteAudit, getUsageTotals } from "@/lib/api";
 import { S18_TITLE, S18_BODY, S18_MISMATCH, S19_USAGE_TOTALS, S19_USAGE_EXPLAINER } from "@/lib/chatUpload";
 import { fmtCurrency } from "@/lib/format";
+import { describeRequestError } from "@/lib/requestError";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DEFAULT_FISCAL_YEAR_END, CONSENT_EXPLAINER, CONSENT_LABEL, requiredFieldError } from "@/lib/auditForm";
 
@@ -24,8 +25,13 @@ export default function AuditHub() {
   const blank = { company_name: "", client_name: "", structure_reading_consent: true };
   const [form, setForm] = useState(blank);
 
-  const load = () => listAudits().then(setAudits);
-  useEffect(() => { load(); }, []);
+  const [loadError, setLoadError] = useState(null);   // why the list could not be read: shown instead of a spinner, with Retry
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  const load = () => listAudits().then((list) => { if (alive.current) { setLoadError(null); setAudits(list); } })
+    .catch((e) => { if (alive.current) setLoadError(describeRequestError(e).message); });
+  const retry = () => { setLoadError(null); setAudits(null); load(); };
+  useEffect(() => { load(); }, []); // eslint-disable-line
 
   const submit = async () => {
     const missing = requiredFieldError(form);
@@ -143,7 +149,13 @@ export default function AuditHub() {
         </Dialog>
       </div>
 
-      {audits === null ? (
+      {loadError ? (
+        <div className="py-24 text-center" data-testid="audits-load-error">
+          <p className="text-sm text-slate-900">The audit list could not be loaded.</p>
+          <p className="mt-1 text-sm text-rose-800 font-mono break-words">{loadError}</p>
+          <Button size="sm" onClick={retry} data-testid="audits-load-retry" className="mt-4">Retry</Button>
+        </div>
+      ) : audits === null ? (
         <div className="flex items-center justify-center py-24 text-slate-500">
           <Loader2 className="h-6 w-6 animate-spin" />
         </div>

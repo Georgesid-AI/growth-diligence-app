@@ -1,0 +1,6 @@
+2026-10-14, claude/dazzling-pasteur-0krqq9
+Deleted: the Add files button, the page's own file list and picker on Run audit (the shared chat-style box replaces them); the "All narratives are written: no cost." estimate text.
+Decided: UploadChat gets a `deferred` mode (decks accepted, no Map or Calculate, files handed up, nothing read in the box) rather than a second component, so both pages share one box; stage state on load comes from one pure function (stagesFromState) over getDatasets, getReview.computed and getDecks; datasets have no remove control today, so only decks get one (with their existing confirm text); the dashboard link shows when every available narrative is stored or a write just succeeded.
+Slow or unclear: the full backend suite takes about two minutes and runs in the background; Run audit and Upload & Mapping now differ in wording only where decks are concerned (RUN_DROP_ZONE, RUN_REFUSED), not in the spec's S-strings.
+Root cause and rule: a promise chain with no catch (listAudits) left the spinner up on a 502; every screen read ends in data or a described error with Retry, and each has a rejected-read test plus a StrictMode test.
+Process change to propose: a lint rule or test helper that fails any page whose first read has no catch.

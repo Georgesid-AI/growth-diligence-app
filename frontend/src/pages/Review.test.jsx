@@ -217,10 +217,30 @@ test("a narrative that cannot be written says so, the others are still written a
   expect(q("write-all-unavailable").textContent).toContain("computed metrics are unaffected");
 });
 
-test("when every narrative is stored the estimate says there is no cost", async () => {
+test("when every narrative is stored the screen says so, with a link to the Growth Dashboard and no cost estimate", async () => {
   state.estimate = { ...ESTIMATE, total_usd: 0, steps: ESTIMATE.steps.map((s) => ({ ...s, cached: true, estimate_usd: 0 })) };
   await mount();
-  expect(q("write-all-estimate").textContent).toBe("All narratives are written: no cost.");
+  expect(q("write-all-done").textContent).toBe("All narratives are written – read them on the Growth Dashboard");
+  expect(q("write-all-link").getAttribute("href")).toBe("/audit/a1/dashboard");
+  expect(q("write-all-estimate")).toBeNull();
+});
+
+test("narratives still to write: no dashboard link until a write succeeds, then the same link", async () => {
+  await mount();
+  expect(q("write-all-done")).toBeNull();
+  api.generateNarrative.mockResolvedValue({ narrative_status: "ok" });
+  await act(async () => { q("write-all-narratives").click(); });
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  expect(q("write-all-done").textContent).toBe("All narratives are written – read them on the Growth Dashboard");
+  expect(q("write-all-link").getAttribute("href")).toBe("/audit/a1/dashboard");
+});
+
+test("a write where every narrative failed shows no dashboard link", async () => {
+  api.generateNarrative.mockRejectedValue(new Error("down"));
+  await mount();
+  await act(async () => { q("write-all-narratives").click(); });
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  expect(q("write-all-done")).toBeNull();
 });
 
 test("a reconciliation gap is reported in the memo and does not block it", async () => {

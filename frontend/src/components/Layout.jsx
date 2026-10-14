@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Activity, ChevronDown, Terminal } from "lucide-react";
 import { fmtCurrency } from "@/lib/format";
@@ -25,6 +25,18 @@ export function Layout({ audit, children }) {
     : [];
   const [detailsOpen, setDetailsOpen] = useState(false);
   const inDetails = details.some((t) => t.to === loc.pathname);
+  const detailsRef = useRef(null);
+  const detailsButton = useRef(null);
+
+  // The menu closes on a click outside it, on Escape (focus returns to the button) and after an item is chosen.
+  useEffect(() => {
+    if (!detailsOpen) return undefined;
+    const onPointer = (e) => { if (detailsRef.current && !detailsRef.current.contains(e.target)) setDetailsOpen(false); };
+    const onKey = (e) => { if (e.key === "Escape") { setDetailsOpen(false); detailsButton.current?.focus(); } };
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onPointer); document.removeEventListener("keydown", onKey); };
+  }, [detailsOpen]);
 
   return (
     <div className="min-h-screen bg-white">
@@ -65,8 +77,9 @@ export function Layout({ audit, children }) {
                   </button>
                 );
               })}
-              <div className="relative">
+              <div className="relative" ref={detailsRef}>
                 <button
+                  ref={detailsButton}
                   data-testid="nav-details"
                   aria-expanded={detailsOpen}
                   aria-haspopup="menu"

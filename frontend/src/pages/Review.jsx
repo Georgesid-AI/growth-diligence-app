@@ -19,7 +19,7 @@ import { useGateEdits } from "@/lib/useGateEdits";
 import { S13_status, MAPPING_HEADERS, fieldName, sortColumns } from "@/lib/chatUpload";
 import { describeRequestError, READ_TIMEOUT_MS } from "@/lib/requestError";
 import { runAudit } from "@/lib/runAudit";
-import { writeAllLabel, estimateText, WRITE_ALL_HELP, MEMO_LABEL, MEMO_WAITING, RECONCILIATION_NOTE } from "@/lib/review";
+import { writeAllLabel, estimateText, allWritten, ALL_WRITTEN_LEAD, ALL_WRITTEN_LINK, WRITE_ALL_HELP, MEMO_LABEL, MEMO_WAITING, RECONCILIATION_NOTE } from "@/lib/review";
 
 const GROUP_TITLE = Object.fromEntries(CLAIM_GROUPS);
 
@@ -320,6 +320,7 @@ function Finish({ auditId, verdict, summary, estimate, reload }) {
   const ratings = verdict.ic_inputs?.ratings || {};
   const rated = Object.keys(verdict.ratings_for || {}).every((row) => ratings[row]);
   const steps = (estimate?.steps || []).filter((s) => s.available);
+  const wroteSome = Object.values(outcome).some((status) => status !== "unavailable");   // after a write the link shows at once
 
   const writeAll = async () => {
     const results = {};
@@ -346,7 +347,13 @@ function Finish({ auditId, verdict, summary, estimate, reload }) {
           {writing !== null ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4 text-sky-700" />}
           {writeAllLabel(writing)}
         </Button>
-        <span className="text-xs font-mono text-slate-700" data-testid="write-all-estimate">{estimateText(estimate)}</span>
+        {estimateText(estimate) && <span className="text-xs font-mono text-slate-700" data-testid="write-all-estimate">{estimateText(estimate)}</span>}
+        {(allWritten(estimate) || wroteSome) && (
+          <span className="text-xs text-slate-700" data-testid="write-all-done">
+            {ALL_WRITTEN_LEAD}
+            <Link to={`/audit/${auditId}/dashboard`} data-testid="write-all-link" className="text-sky-700 underline underline-offset-2">{ALL_WRITTEN_LINK}</Link>
+          </span>
+        )}
       </div>
       <p className="mt-1.5 max-w-2xl text-xs text-slate-500" data-testid="write-all-help">{WRITE_ALL_HELP}</p>
       {Object.entries(outcome).filter(([, status]) => status === "unavailable").map(([step]) => (

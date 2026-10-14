@@ -11,6 +11,11 @@ export const S3_EXPLAINER_NO_CONSENT =
   "Mapping is done by rules only: AI-assisted reading is off for this audit. You map the columns the rules cannot decide.";
 export const S4_DROP_ZONE =
   "Drop files here or use the paperclip. Required: revenue by customer (monthly, 24–36 months). Also useful: CRM export, P&L. Board decks go to the Deck panel. .xlsx or .csv only.";
+// Run audit uses the same box, with decks accepted: the files wait there until Run audit reads them (no Map or Calculate button).
+export const RUN_DECK_EXTENSIONS = ["pptx", "pdf", "docx"];
+export const RUN_DROP_ZONE =
+  "Drop files here or use the paperclip. Required: revenue by customer (.xlsx or .csv). Also useful: CRM export, P&L, board decks (.pptx, .pdf or .docx). Press Run audit to read them.";
+export const RUN_REFUSED = "This window takes .xlsx, .csv, .pptx, .pdf and .docx files.";
 export const S6_UNKNOWN_TYPE = "Could not tell what this file holds. Pick its type:";
 export const S7_REFUSED = "This window takes .xlsx and .csv files. Decks go in the deck panel below.";
 export const S7B_XLS_REFUSED = "Save as .xlsx or .csv and upload again.";
