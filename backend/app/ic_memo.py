@@ -393,7 +393,11 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, us
     out += [f"Files reviewed: {len(files)} data {'file' if len(files) == 1 else 'files'} and {len(decks)} {'deck' if len(decks) == 1 else 'decks'}.{notes.add('files by evidence category, Appendix D')}",
             f"Evidence categories covered: {covered} of 7.{notes.add('files by evidence category, Appendix D')}",
             "Claims: " + ", ".join(f"{counts.get(label, 0)} {label}" for label in ("Contradicted", "Unsupported", "Unverified"))
-            + f" of {len(rows)} in the register.{notes.register()}", W16_VALUE_AT_RISK, ""]
+            + f" of {len(rows)} in the register.{notes.register()}"]
+    checks = cm.definition_counts(rows)
+    if checks["yes"] or checks["no"]:            # claim-matching.md section 4.1: an open one blocks the verdict, so none is left here
+        out += [f"Definition checks: {checks['yes']} answered Yes, {checks['no']} answered No.{notes.register()}"]
+    out += [W16_VALUE_AT_RISK, ""]
 
     # 2. Deal thesis
     out += [f"## {HEADINGS[1]}"]
@@ -444,16 +448,18 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, us
 
     # 5. Worth flagging
     out += [f"## {HEADINGS[4]}"]
-    flagged = []
+    flagged, listed = [], []
     for b in blockers:
         if b.get("kind") == "claim_contradicted" and b.get("claim_id") in by_id:
             flagged.append(f"{b['text']}{notes.register([by_id[b['claim_id']]['rank']])}")
+            listed.append(b["claim_id"])
         elif b.get("kind") == "revenue_reconciliation":
             flagged.append(f"{b['text']}{notes.source('Revenue reconciliation', 'revenue_reconciliation', (b.get('citation') or {}).get('revenue_file'))}")
         else:
             flagged.append(b["text"])
-    # Every Verified beat outside tolerance, so a large beat stays visible (amended 2026-10-13, George)
-    flagged += [f"{vd.beat_text(r)}{notes.register([r['rank']])}" for r in rows if cm.is_beat(r)]
+    # Every Verified beat outside tolerance, so a large beat stays visible (amended 2026-10-13, George), and every row whose
+    # Definition check the analyst answered Yes (claim-matching.md section 4.1), each once
+    flagged += [f"{vd.flag_text(r)}{notes.register([r['rank']])}" for r in vd.flagged_rows(rows, listed)]
     if narrative:
         flagged += [f"{item}{notes.add('growth-engine narrative, AI call log')}" for item in narrative.get("worth_flagging") or ()]
     elif not narrative:

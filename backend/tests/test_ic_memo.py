@@ -10,6 +10,7 @@ import pytest
 pytest.importorskip("fastapi")
 pytest.importorskip("motor")
 
+from claim_matching_support import answer_definition  # noqa: E402
 from test_claim_matching import RUNS, candidates_for, results_for, settings  # noqa: E402
 from test_claim_register_api import AUDIT, _get, _put, api  # noqa: E402,F401  (the fixture)
 
@@ -36,13 +37,20 @@ def narrative(headline="The growth engine is steady.", flagging=("Win rate is be
 
 
 def inputs(run="A", decision=GATE_DECISION, ratings=None, thesis=None, key=5, narratives=(), files=None, decks_=None, usage=None,
-           blockers=(), tables=(), stored=None, **extra):
-    """Everything build_memo reads, for one fixture run: the proposed top 5 confirmed and gated, `key` of them marked key."""
+           blockers=(), tables=(), stored=None, answers=None, **extra):
+    """Everything build_memo reads, for one fixture run: the proposed top 5 confirmed and gated, `key` of them marked key. `answers`:
+    the analyst's Definition check answers by claim id (claim-matching.md section 4.1)."""
     r = RUNS[run]
     results = stored if stored is not None else results_for(r)
-    first = cm.build_register(candidates_for(r), results, settings(r))
+
+    def answered(cands):
+        asked = cm.build_register(cands, results, settings(r))
+        for cid, answer in (answers or {}).items():
+            answer_definition(cands, asked, cid, answer)
+        return cands
+    first = cm.build_register(answered(candidates_for(r)), results, settings(r))
     top = vd.proposal(first)
-    cands = candidates_for(r)
+    cands = answered(candidates_for(r))
     for c in cands:
         for cid in top:
             if cid.split("#")[0] == c["id"]:
@@ -291,6 +299,24 @@ def test_without_a_narrative_the_memo_carries_every_figure_with_its_footnote_and
     assert re.search(r"ARR 202,125 EUR\[\^\d+\], NRR 113%\[\^\d+\], gross revenue churn 0%\[\^\d+\]", growth)
     assert im.S17 in growth and im.S17 in head.split("## Worth flagging")[1]
     assert "The growth engine is steady." not in text
+
+
+def test_the_summary_counts_the_definition_checks_answered_and_worth_flagging_lists_a_yes_once():
+    """claim-matching.md section 4.1: run D's c37 (New MRR €5,000 claimed, 0 observed) asks its Definition check; the memo is
+    refused while it is open, and once answered the summary counts the answers and Worth flagging names a Yes with its gloss."""
+    assert refusal(run="D").code == "blocked", "an open Definition check blocks the verdict, so the memo"
+    text = memo(run="D", answers={"c37": "yes"})
+    summary = head_of(text).split("## Deal thesis")[0]
+    assert re.search(r"^Definition checks: 1 answered Yes, 0 answered No\.\[\^\d+\]$", summary, re.M), summary
+    section = head_of(text).split("## Worth flagging")[1].split("## Data gaps")[0]
+    line = "- #1 New MRR (see glossary), Q4 2023: Contradicted, €5,000 lower (miss). Same metric and period confirmed by the analyst."
+    assert sum(1 for item in section.splitlines() if item.startswith(line)) == 1, section
+    banner = {"kind": "claim_contradicted", "claim_id": "c37", "text": "Top-5 claim contradicted: revenue 5,000 EUR vs 0 EUR observed."}
+    shown = head_of(memo(run="D", answers={"c37": "yes"}, blockers=[banner])).split("## Worth flagging")[1].split("## Data gaps")[0]
+    assert banner["text"] in shown and line not in shown, "a Yes the banner already lists is not repeated"
+    no = head_of(memo(run="D", answers={"c37": "no"}))
+    assert "Definition checks: 0 answered Yes, 1 answered No." in no and "Same metric and period confirmed" not in no
+    assert "Definition checks" not in head_of(memo()), "run A asks none: the line is left out"
 
 
 def test_worth_flagging_lists_every_verified_beat_with_its_gloss_after_the_blockers():

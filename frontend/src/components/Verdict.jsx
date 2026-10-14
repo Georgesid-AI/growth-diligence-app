@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { getMemo, putIcInputs } from "@/lib/api";
 import { describeRequestError } from "@/lib/requestError";
 import { seeGlossary } from "@/lib/glossary";
+import { labelText } from "@/lib/claimRegister";
 import {
   CONFIRM, MEMO_BUTTON, OTHER_GATES, PART_FIVE, PART_GAPS, PART_INPUTS, PART_KEY_GATES, PART_REASONS, PROPOSED, REPLACE, REVIEW_LABEL,
   THESIS_MAX, TOP5_HEADING, TOP5_STATEMENT, VERDICT_HEADING, RATING_OPTIONS, candidateText, initialPicks, refusalText, replacePick, samePicks,
@@ -153,7 +154,7 @@ export default function Verdict({ auditId, verdict, onChanged }) {
             {v.five.map((f) => (
               <li key={f.claim_id} data-testid="verdict-five-row">
                 <span className="font-mono text-slate-700">#{f.rank}</span> {f.claim}{" "}
-                <span className={`text-[10px] font-mono border rounded px-1.5 py-0.5 ${LABEL_STYLE[f.evidence_label] || ""}`}>{f.evidence_label}</span>
+                <span className={`text-[10px] font-mono border rounded px-1.5 py-0.5 ${LABEL_STYLE[f.evidence_label] || ""}`}>{labelText(f)}</span>
                 <span className="text-slate-600"> · {f.reason}</span>
               </li>
             ))}

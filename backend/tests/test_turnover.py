@@ -56,7 +56,7 @@ def test_once_the_analyst_answers_revenue_the_claim_is_tested_as_revenue_against
     assert (within["metric"], within["evidence_label"], within["turnover_note"], within["turnover_set_by"]) == \
         ("Revenue", "Verified", "Gross revenue (turnover)", "analyst")
     assert within["observed_source"]
-    below = row("Turnover €100,000 in FY2023", value=100_000, inputs=answer)
+    below = row("Turnover €150,000 in FY2023", value=150_000, inputs=answer)       # 25% under the file: a beat up to 50%
     assert (below["metric"], below["evidence_label"], below["gap_kind"]) == ("Revenue", "Verified", "beat"), "a beat (2026-10-13)"
     rng = row("GMV €100,000–190,000 FY2023", value=100_000, value_high=190_000, inputs=answer)     # tested at the nearest end
     assert rng["evidence_label"] == "Verified"
@@ -98,9 +98,10 @@ def test_the_analyst_answer_wins_over_the_file_and_over_the_deck():
     r = row("Turnover €190,000", inputs={"turnover_as": "volume", "turnover_reason": "deck_says_processed_volume"})
     assert (r["metric"], r["turnover_set_by"], r["turnover_reason"], r["evidence_label"]) == \
         ("Transaction volume", "analyst", "deck_says_processed_volume", "Unsupported")
-    r = row("GMV €900,000", value=900000, inputs={"turnover_as": "revenue", "turnover_reason": "deck_says_gross_revenue"})
+    # a miss up to 50% of the claim is Contradicted (claim-matching.md section 4.1); FY2023 revenue is 187,701
+    r = row("GMV €300,000", value=300000, inputs={"turnover_as": "revenue", "turnover_reason": "deck_says_gross_revenue"})
     assert (r["metric"], r["evidence_label"], r["turnover_set_by"]) == ("Revenue", "Contradicted", "analyst")
-    r = row("GMV €900,000–1,000,000", value=900000, value_high=1_000_000, inputs={"turnover_as": "revenue", "turnover_reason": "file_confirms"})
+    r = row("GMV €300,000–400,000", value=300000, value_high=400_000, inputs={"turnover_as": "revenue", "turnover_reason": "file_confirms"})
     assert (r["metric"], r["evidence_label"]) == ("Revenue", "Contradicted")
 
 

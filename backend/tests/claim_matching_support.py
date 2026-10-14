@@ -17,6 +17,16 @@ def fixture() -> dict:
     return json.loads(FIXTURE.read_text(encoding="utf-8"))
 
 
+def answer_definition(candidates: list, rows: list, claim_id: str, answer: str) -> None:
+    """The analyst's Definition check answer (claim-matching.md section 4.1) on a candidate's inputs, with the figures it is given
+    against, as the endpoint stores it. `rows` is the register built before the answer: its row for `claim_id` is the one asked."""
+    from app import claim_matching as cm
+    row = next(r for r in rows if r["claim_id"] == claim_id)
+    candidate = next(c for c in candidates if c["id"] == claim_id.split("#")[0])
+    candidate.setdefault("claim_inputs", {}).setdefault(claim_id, {}).update(
+        {"definition_check": answer, "definition_basis": cm.definition_basis(row)})
+
+
 @lru_cache(maxsize=None)
 def engine_results(files: tuple = ("revenue", "pnl", "crm"), as_of_month=None) -> dict:
     """compute_all over the chosen sample files, EUR, no other currency, the as-of month as given."""

@@ -148,6 +148,8 @@ The order matters only when 3 or more claims are Unsupported and none is Contrad
 ### 6.3 Blocked
 The verdict is blocked while any top-5 claim that is not Verified has no saved gate. A blocked verdict shows no
 outcome, only the claims that need a gate (W9). The memo refuses while the verdict is blocked.
+Amended 2026-10-14 (George, claim-matching.md §4.1): the verdict is also blocked while any register row has an open Definition
+check, wherever it ranks: "Verdict blocked: answer the definition check on {ranks}." (W9b), before W9 when both apply.
 
 ### 6.4 Verdict section (Dashboard)
 | Part | Content |
@@ -176,7 +178,8 @@ missing; the results fail MetricsPayload (§9); a number is not in the stored da
 Title "Investment committee memo: {company}" and a date line. The date is the export date; it is the only line the
 number check skips.
 1. Summary. The verdict and its rule, then W24. Files reviewed (data files and decks). Evidence categories covered,
-   x of 7 (table below). Counts of Contradicted, Unsupported and Unverified claims over the whole register. Value at
+   x of 7 (table below). Counts of Contradicted, Unsupported and Unverified claims over the whole register, then (2026-10-14,
+   claim-matching.md §4.1), when any was asked, the Definition checks answered Yes and No. Value at
    risk, ARR and cash separately, de-duplicated across overlaps, with the method stated: both "not yet computed"
    until #6 (W16).
 2. Deal thesis. Three sentences labelled Plan, Evidence and Condition, written by the analyst (decision Q4). They are
@@ -196,7 +199,8 @@ number check skips.
      stay empty, and no rating is ever shown, even if one is stored.
 4. Key gates and deal terms. The key gates' sentences (or W25), then W13.
 5. Worth flagging. The banner's hard blockers when present, in their S16a–d texts. Then every Verified row that beat its
-   claim beyond tolerance, by rank, with its gloss (amended 2026-10-13, George: a large beat stays visible).
+   claim beyond tolerance, by rank, with its gloss (amended 2026-10-13, George: a large beat stays visible), and every row whose
+   Definition check was answered Yes (claim-matching.md §4.1), once, unless the banner already lists it.
    Then the `worth_flagging` items of the growth-engine narrative when it is current and ok, or the S17 note.
 6. Data gaps and requests. Up to five gap rows ("and {n} more in Appendix B"), then the management questions (V6
    requests).

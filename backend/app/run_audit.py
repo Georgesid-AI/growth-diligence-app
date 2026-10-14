@@ -6,6 +6,7 @@ a claim is within tolerance by `claim_matching.within_tolerance` (the register's
 """
 from typing import Dict, Iterable, List, Optional
 
+from app import claim_matching as cm
 from app import column_rules as cr
 
 STAGES = ("mapping", "engine", "claims")
@@ -39,15 +40,16 @@ def mapping_counts(datasets: Iterable[dict]) -> Dict:
 
 
 def within_tolerance_ids(rows: List[dict], candidate_ids: Iterable[str]) -> List[str]:
-    """The candidates whose every register row is Verified (within the claim's tolerance: ±5% of the claimed value for
-    amounts, counts and durations, ±1 percentage point for rates). A table row of several values counts only when all are."""
+    """The candidates whose every register row is Verified within the claim's tolerance: ±5% of the claimed value for
+    amounts, counts and durations, ±1 percentage point for rates. A beat (Verified, marked beat, however the analyst answered a
+    Definition check) is not within tolerance and stays for the review screen. A table row of several values counts only when all are."""
     wanted = set(candidate_ids)
-    labels: Dict[str, List[str]] = {}
+    labels: Dict[str, List[bool]] = {}
     for r in rows:
         cid = str(r["claim_id"]).split("#")[0]
         if cid in wanted:
-            labels.setdefault(cid, []).append(r["evidence_label"])
-    return [cid for cid, found in labels.items() if found and all(label == "Verified" for label in found)]
+            labels.setdefault(cid, []).append(r["evidence_label"] == "Verified" and not cm.is_beat(r) and r.get("definition_check") is None)
+    return [cid for cid, found in labels.items() if found and all(found)]
 
 
 def stage_result(stage: str, status: str, message: Optional[str] = None, **counts) -> Dict:

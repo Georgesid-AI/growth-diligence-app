@@ -344,9 +344,15 @@ export const APPROVE_ALL_LABEL = "Approve all";
  *  still need a Revenue / Volume answer or a type, and the ones whose save fails. */
 export const toReview = (section) => section.claims.filter((c) => c.status === "pending");
 
-/** The toast after Approve all: "Approved 5 claims, 2 skipped (need Revenue / Volume or failed to save)". */
-export const approveAllToast = (approved, skipped) =>
-  `Approved ${approved} claim${approved === 1 ? "" : "s"}, ${skipped} skipped (need Revenue / Volume or failed to save)`;
+// The upload page cannot answer a Definition check: its toast says where to (claim-matching.md section 4.1).
+export const DEFINITION_ELSEWHERE = " – answer on the review screen";
+
+/** The toast after Approve all: "Approved 5 claims, 2 skipped (need Revenue / Volume or failed to save)", then ", 1 with open definition
+ *  check" when an approved claim waits for "Same metric and period?" (`open_definition` of the reply; such a claim is approved, not
+ *  skipped); `elsewhere` adds where it is answered. */
+export const approveAllToast = (approved, skipped, openDefinition = 0, elsewhere = false) =>
+  `Approved ${approved} claim${approved === 1 ? "" : "s"}, ${skipped} skipped (need Revenue / Volume or failed to save)`
+  + (openDefinition > 0 ? `, ${openDefinition} with open definition check${elsewhere ? DEFINITION_ELSEWHERE : ""}` : "");
 
 /** Counts per status, for the list header. */
 export function statusCounts(candidates) {

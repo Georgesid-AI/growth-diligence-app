@@ -10,7 +10,7 @@ import csv
 import io
 import re
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 from app import claim_matching as cm
 
@@ -28,6 +28,9 @@ W4_GATE_NEEDED = "Gate needed"
 W5_SIXTH = "At most 5 key gates."
 W8_UNDERWRITE = "All top-5 claims are Verified."
 W9_BLOCKED = "Verdict blocked: set a gate on {ranks} (top-5 claims that are not Verified)."
+# claim-matching.md section 4.1 (George, 2026-10-14): an open Definition check blocks the verdict wherever it ranks.
+W9B_DEFINITION = "Verdict blocked: answer the definition check on {ranks}."
+DEFINITION_CONFIRMED = "Same metric and period confirmed by the analyst."
 W10_NO_CLAIMS = "No verdict: the register has no claims."
 W10_NOT_COMPUTED = "No verdict: compute the audit first."
 W12_NO_KEY_GATES = "No key gates marked."
@@ -122,11 +125,18 @@ def reason_text(row: dict, reporting_currency: Optional[str]) -> str:
     return text
 
 
-def beat_text(row: dict) -> str:
-    """A Verified row that beat its claim beyond tolerance, for Worth flagging (claim-matching.md section 4), with its gloss:
-    "#14 Customer count, Feb 2024: Verified, 1 customer more (beat).". The gloss is the register's own text, so the memo's number
-    check reads its figures as stored."""
-    return f"#{row['rank']} {claim_name(row)}: Verified, {row['gloss']}."
+def flagged_rows(rows: List[dict], listed: Iterable[str] = ()) -> List[dict]:
+    """The register rows Worth flagging names, by rank: every Verified beat outside tolerance, and every row whose Definition check
+    the analyst answered Yes (claim-matching.md section 4.1), except the ones already `listed` (by the banner)."""
+    skip = set(listed)
+    return [r for r in rows if r["claim_id"] not in skip and (cm.is_beat(r) or r.get("definition_check") == "yes")]
+
+
+def flag_text(row: dict) -> str:
+    """A row of `flagged_rows` with its label and gloss: "#14 Customer count, Feb 2024: Verified, 1 customer more (beat)."; a confirmed
+    definition says so after it. The gloss is the register's own text, so the memo's number check reads its figures as stored."""
+    text = f"#{row['rank']} {claim_name(row)}: {row['evidence_label']}, {row['gloss']}."
+    return f"{text} {DEFINITION_CONFIRMED}" if row.get("definition_check") == "yes" else text
 
 
 # --- gates ----------------------------------------------------------------------------------------------------------------
@@ -257,11 +267,16 @@ def verdict(rows: List[dict], results: Optional[dict], stored_top5: Optional[dic
     by_id = {r["claim_id"]: r for r in rows}
     five = [by_id[i] for i in state["claim_ids"]]
     summary = [{"claim_id": r["claim_id"], "rank": r["rank"], "claim": claim_name(r), "evidence_label": r["evidence_label"],
-                "reason": r["reason"]} for r in five]
-    blocked = [r for r in five if r["evidence_label"] != "Verified" and not r["gate_saved"]]
-    if blocked:
-        return {**base, "status": "blocked", "five": summary, "blocked": [r["claim_id"] for r in blocked],
-                "message": W9_BLOCKED.format(ranks=ranks_text(blocked))}
+                "reason": r["reason"], "definition_check": r.get("definition_check")} for r in five]
+    # An open Definition check has no label yet: it blocks wherever it ranks (claim-matching.md section 4.1), before any gate.
+    checks = [r for r in rows if r.get("definition_check") == cm.DEFINITION_ASK]
+    blocked = [r for r in five if r["evidence_label"] != "Verified" and not r["gate_saved"]
+               and r.get("definition_check") != cm.DEFINITION_ASK]
+    if checks or blocked:
+        message = " ".join(([W9B_DEFINITION.format(ranks=ranks_text(checks))] if checks else [])
+                           + ([W9_BLOCKED.format(ranks=ranks_text(blocked))] if blocked else []))
+        return {**base, "status": "blocked", "five": summary, "blocked": [r["claim_id"] for r in checks + blocked],
+                "message": message}
 
     labels = [r["evidence_label"] for r in five]
     contradicted = [r for r in five if r["evidence_label"] == "Contradicted"]

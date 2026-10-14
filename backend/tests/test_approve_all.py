@@ -26,8 +26,9 @@ REVENUE, CUSTOMERS, CHANNELS, FUNDS, OTHER = (deck_claims.type_group(x) for x in
 
 
 def claim(cid, claim_type="revenue", **over):
-    c = {"audit_id": AUDIT, "id": cid, "deck_id": "d1", "status": "pending", "claim_type": claim_type, "value": 1000, "value_high": None,
-         "unit": None, "currency": "EUR", "snippet": f"Revenue EUR 1,000 ({cid})", "label_from": None, "file": "deck.pptx", "order": 0,
+    # FY2023 revenue is 187,701.05 in run A: the figures stay within 50% of it, so no claim asks a Definition check unless a test says so
+    c = {"audit_id": AUDIT, "id": cid, "deck_id": "d1", "status": "pending", "claim_type": claim_type, "value": 190000, "value_high": None,
+         "unit": None, "currency": "EUR", "snippet": f"Revenue EUR 190,000 ({cid})", "label_from": None, "file": "deck.pptx", "order": 0,
          "sources": [{"file": "deck.pptx", "slide": 3}], "target_date": "2023", "period_text": "FY2023", **over}
     deck_claims.resolve_period(c, RUN["fiscal_year_end"])
     return c
@@ -40,15 +41,15 @@ def api(monkeypatch):
                               "results": copy.deepcopy(engine_results(tuple(RUN["files"]), RUN["as_of_month"]))})
     db["datasets"].docs.append({"audit_id": AUDIT, "dtype": "revenue", "fx": {}})
     docs = db[decks.CANDIDATES_COLLECTION].docs
-    docs += [claim("r1"), claim("r2", value=2000), claim("r3", status="rejected"), claim("r4", status="approved"),
-             claim("c1", "customers", value=40, currency=None, unit="count", snippet="40 customers"),
+    docs += [claim("r1"), claim("r2", value=200000), claim("r3", status="rejected"), claim("r4", status="approved"),
+             claim("c1", "customers", value=4, currency=None, unit="count", snippet="4 customers"),
              claim("a1", "acquisition_channels", value=30000, currency=None, unit="count", snippet="Telegram(30K)", channel="Telegram",
                    target_date=None, period_text=None),
              claim("a2", "acquisition_channels", value=3000, currency=None, unit="count", snippet="Twitter(3K)", channel="Twitter",
                    target_date=None, period_text=None, deck_id="d2"),
              claim("f1", "use_of_funds", value=40, currency=None, unit="%", snippet="Hiring (40%)", target_date=None, period_text=None),
              claim("o1", "other", value=7, currency=None, snippet="7 things", target_date=None, period_text=None),
-             claim("e1", "revenue", value=5, status="pending", parsed={"claim_type": "revenue", "value": 4})]
+             claim("e1", "revenue", value=180000, status="pending", parsed={"claim_type": "revenue", "value": 18000})]
     monkeypatch.setattr(server, "db", db)
     return TestClient(server.app, raise_server_exceptions=False), db
 
@@ -83,6 +84,39 @@ def test_a_turnover_claim_without_a_revenue_or_volume_answer_is_skipped_until_it
     answered = client.put(f"/api/audits/{AUDIT}/claims/g1/turnover", json={"as": "volume", "reason": "deck_says_processed_volume"})
     assert answered.status_code == 200, answered.text
     assert client.post(URL, json={"group": REVENUE}).json()["approved_ids"] == ["g1"]
+
+
+def test_a_claim_with_an_open_definition_check_is_approved_and_counted_and_the_check_stays_open(api):
+    """claim-matching.md section 4.1 (George, 2026-10-14): Approve all approves it; its open check enters the register and blocks the
+    verdict. The reply counts it as `open_definition`, not as a skip."""
+    client, db = api
+    db[decks.CANDIDATES_COLLECTION].docs.append(claim("b1", value=1000, snippet="Revenue EUR 1,000"))      # observed 187,701
+    view = next(c for c in client.get(f"/api/audits/{AUDIT}/decks").json()["candidates"] if c["id"] == "b1")["definition"]
+    assert view == [{"claim_id": "b1", "period": "FY2023", "definition_check": "ask",
+                     "definition_question": "Observed €187,701, claimed €1,000. Same metric and period?"}]
+    body = client.post(URL, json={"group": REVENUE}).json()
+    assert (body["approved"], body["skipped"], body["open_definition"]) == (4, 0, 1) and "b1" in body["approved_ids"]
+    assert "skipped_definition" not in body and status(db, "b1") == "approved"
+    row = next(r for r in client.get(f"/api/audits/{AUDIT}/claims").json()["register"] if r["claim_id"] == "b1")
+    assert (row["definition_check"], row["evidence_label"]) == ("ask", None), "the open check is in the register"
+    answered = client.put(f"/api/audits/{AUDIT}/claims/b1/definition-check", json={"answer": "yes"})
+    assert answered.status_code == 200, answered.text
+    row = next(r for r in client.get(f"/api/audits/{AUDIT}/claims").json()["register"] if r["claim_id"] == "b1")
+    assert (row["definition_check"], row["evidence_label"], row["gap_kind"]) == ("yes", "Verified", "beat")
+
+
+def test_the_open_definition_count_is_taken_on_the_status_the_claim_has_once_approved(api):
+    """A claim read as an AI suggestion while pending shows no check (claim-matching.md section 4.1, D3); approved, its check opens.
+    The count is of the checks as the register holds them after the approval."""
+    client, db = api
+    db[decks.CANDIDATES_COLLECTION].docs.append(
+        claim("s1", value=1000, snippet="Revenue EUR 1,000", origin="ai", parsed={"claim_type": "revenue", "value": 1000}))
+    before = next(c for c in client.get(f"/api/audits/{AUDIT}/decks").json()["candidates"] if c["id"] == "s1")
+    assert before["definition"] is None, "fixture: pending, read by the AI: a suggestion, no check yet"
+    body = client.post(URL, json={"group": REVENUE}).json()
+    assert "s1" in body["approved_ids"] and status(db, "s1") == "edited" and body["open_definition"] == 1
+    after = next(r for r in client.get(f"/api/audits/{AUDIT}/claims").json()["register"] if r["claim_id"] == "s1")
+    assert after["definition_check"] == "ask"
 
 
 def test_a_claim_whose_type_is_still_to_be_chosen_is_skipped_as_a_single_approve_refuses_it(api):

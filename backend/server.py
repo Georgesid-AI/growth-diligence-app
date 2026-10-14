@@ -975,6 +975,8 @@ async def list_deck_candidates(audit_id: str):
     # point 8), from the register's own code: read before the list adds its display fields to the candidates.
     current = await _current_audit(audit_id, audit, strict=False)
     turnover = claim_matching.turnover_views(candidates, current.get("results"), settings)
+    # A gap beyond 50% of the claim asks "Same metric and period?" on the review screen, approved or not (claim-matching.md 4.1).
+    definition = claim_matching.definition_views(candidates, current.get("results"), settings)
     # By the group of the claim type (revenue, P&L, customers and sales, market size, Unknown, Other), then ascending by
     # slide or page across all decks (a tie goes to the more recent deck), then reading order on the page: top to bottom
     # in bands of 2% of the height, then left to right, then the order the parser found them in.
@@ -987,6 +989,7 @@ async def list_deck_candidates(audit_id: str):
     for c in candidates:
         c["fx"] = claim_matching.fx_view(c, settings, as_of)
         c["turnover"] = turnover.get(c["id"])
+        c["definition"] = definition.get(c["id"])
     peers = {}
     for c in candidates:
         peers.setdefault(c.get("deck_id"), []).append(c)
@@ -1131,6 +1134,9 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
         raise _rejected("claim_type", "choose a claim type for this item before approving it")
     if edits:
         changes = {**edits, "status": "edited"}
+        if current.get("claim_inputs"):
+            # a re-typed claim is asked "Same metric and period?" again (claim-matching.md section 4.1)
+            changes["claim_inputs"] = claim_matching.without_definition_answer(current["claim_inputs"])
         if current.get("claim_direction") and (edits.get("value") is not None or edits.get("by_period")):
             changes["claim_direction"] = None       # a figure typed in: no longer a direction with no figure
         if "parsed" not in current:       # what the parser found stays next to the analyst's edit
@@ -1163,7 +1169,8 @@ async def approve_all_candidates(audit_id: str, payload: ApproveAll):
     """One call, one category: every claim with status "pending" in the category is approved as a single Approve does it
     ("edited" when it carries the parser's values under "parsed"). Left pending and counted as skipped: a turnover claim whose
     Revenue / Volume question the analyst has not answered, a claim whose type still has to be chosen (Other, Unknown), and a claim
-    whose save fails. Nothing else changes."""
+    whose save fails. A claim with an open Definition check is approved like any other: it enters the register as an open check,
+    which blocks the verdict (claim-matching.md section 4.1); `open_definition` counts the approved ones. Nothing else changes."""
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
     if not audit:
         raise HTTPException(404, "Audit not found")
@@ -1188,7 +1195,11 @@ async def approve_all_candidates(audit_id: str, payload: ApproveAll):
         except Exception:                      # a failed save leaves the claim to review and is counted; the rest go on
             skipped.append(c["id"])
     logger.info("approve all: run_id=%s group=%d approved=%d skipped=%d", audit_id, payload.group, len(approved), len(skipped))
-    return {"approved": len(approved), "skipped": len(skipped), "approved_ids": approved, "skipped_ids": skipped}
+    # The check as the register now holds it: a claim read as an AI suggestion while pending may ask once it is approved.
+    after = [{**c, "status": "edited" if "parsed" in c else "approved"} if c["id"] in approved else c for c in found]
+    open_definition = claim_matching.open_definition_ids(claim_matching.definition_views(after, current.get("results"), settings))
+    return {"approved": len(approved), "skipped": len(skipped), "approved_ids": approved, "skipped_ids": skipped,
+            "open_definition": len(open_definition & set(approved))}
 
 
 # ---------------------------------------------------------------------------
@@ -1202,7 +1213,8 @@ async def _open_turnover_ids(audit_id: str, audit: dict, found: list) -> set:
 
 
 async def _accept_within_tolerance(audit_id: str, audit: dict) -> dict:
-    """Approve, as approve-all does, every pending claim the register would label Verified (within tolerance). A claim whose
+    """Approve, as approve-all does, every pending claim the register would label Verified within tolerance (not a beat, which the
+    analyst reviews, and not a Definition check, section 4.1). A claim whose
     Revenue / Volume question is open, whose type is still to be chosen, or that is not Verified stays pending for the review
     screen. Each accepted claim is marked `auto_accepted`, so the review screen can list it and the analyst can still edit or
     reject it. No threshold or tolerance is read or changed here."""
@@ -1501,6 +1513,8 @@ async def update_claim_inputs(audit_id: str, claim_id: str, payload: ClaimInputs
         raise _rejected("segment", "choose a segment of the data, Whole company or Not in the data")
     candidate = next(c for c in claims if c["id"] == claim_id.split("#")[0])
     inputs = {**(candidate.get("claim_inputs") or {})}
+    if {"metric", "segment"} & sent:            # a re-matched claim is asked "Same metric and period?" again (section 4.1)
+        inputs = claim_matching.without_definition_answer(inputs, {claim_id})
     kept = {**inputs.get(claim_id, {}), **{k: v for k, v in values.items() if v is not None}}
     for k, v in values.items():
         if v is None:
@@ -1612,7 +1626,7 @@ async def answer_turnover(audit_id: str, claim_id: str, payload: TurnoverAnswer)
     if not any(v["claim_id"] == claim_id for v in views.get(candidate["id"]) or ()):
         raise HTTPException(400, "This claim is not a turnover claim")
     expanded = next(c for c in claim_matching._expand([candidate]) if c["claim_id"] == claim_id)
-    inputs = {**(candidate.get("claim_inputs") or {})}
+    inputs = claim_matching.without_definition_answer(candidate.get("claim_inputs"), {claim_id})     # re-matched: asked again
     inputs[claim_id] = {**inputs.get(claim_id, {}), "turnover_as": payload.answer, "turnover_reason": payload.reason}
     await db[decks.CANDIDATES_COLLECTION].update_one({"audit_id": audit_id, "id": candidate["id"]},
                                                     {"$set": {"claim_inputs": inputs}})
@@ -1620,6 +1634,42 @@ async def answer_turnover(audit_id: str, claim_id: str, payload: TurnoverAnswer)
         "as": payload.answer, "reason": payload.reason, "saved_at": usage_mod.now()}}})
     logger.info("turnover answer: run_id=%s as=%s reason=%s", audit_id, payload.answer, payload.reason)
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
+    _, rows = await _claim_rows(audit_id, audit)
+    return sanitize({"register": rows})
+
+
+class DefinitionAnswer(BaseModel):
+    """The answer to "Same metric and period?" for a gap beyond 50% of the claim (claim-matching.md section 4.1)."""
+    model_config = {"extra": "forbid"}
+    answer: Literal[claim_matching.DEFINITION_ANSWERS]
+
+
+@api.put("/audits/{audit_id}/claims/{claim_id}/definition-check")
+async def answer_definition_check(audit_id: str, claim_id: str, payload: DefinitionAnswer):
+    """Save the analyst's Yes or No on the claim's inputs and give the register back. The claim may still be pending (the review
+    screen asks before it is approved); it must have a Definition check now, asked or answered, so an answer can be changed."""
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
+    if not audit:
+        raise HTTPException(404, "Audit not found")
+    claims = await db[decks.CANDIDATES_COLLECTION].find(
+        {"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
+    candidate = next((c for c in claims if c["id"] == claim_id.split("#")[0]), None)
+    if candidate is None or not any(c["claim_id"] == claim_id for c in claim_matching._expand([candidate])):
+        raise HTTPException(404, "Claim not found")
+    current = await _current_audit(audit_id, audit, strict=False)
+    if not current.get("results"):
+        raise HTTPException(409, "Audit not computed yet")
+    found = claim_matching.definition_rows(claims, current.get("results"), _register_settings(
+        audit, await _fx(audit_id, audit), await _deck_take_rate(audit_id)))
+    row = next((r for r in found.get(candidate["id"]) or () if r["claim_id"] == claim_id), None)
+    if row is None:
+        raise HTTPException(400, "This claim has no definition check")
+    inputs = {**(candidate.get("claim_inputs") or {})}      # the answer is kept with the figures it was given against
+    inputs[claim_id] = {**inputs.get(claim_id, {}), "definition_check": payload.answer,
+                        "definition_basis": claim_matching.definition_basis(row)}
+    await db[decks.CANDIDATES_COLLECTION].update_one({"audit_id": audit_id, "id": candidate["id"]},
+                                                    {"$set": {"claim_inputs": inputs}})
+    logger.info("definition check: run_id=%s answer=%s", audit_id, payload.answer)
     _, rows = await _claim_rows(audit_id, audit)
     return sanitize({"register": rows})
 

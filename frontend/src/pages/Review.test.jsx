@@ -7,6 +7,7 @@ import * as api from "@/lib/api";
 jest.mock("@/lib/api", () => ({
   getAudit: jest.fn(), getReview: jest.fn(), getDatasets: jest.fn(), getDecks: jest.fn(), getClaimRegister: jest.fn(), getVerdict: jest.fn(),
   getNarrativeEstimate: jest.fn(), decideColumns: jest.fn(), updateCandidate: jest.fn(), approveAll: jest.fn(), answerTurnover: jest.fn(),
+  answerDefinitionCheck: jest.fn(),
   putIcInputs: jest.fn(), updateClaimInputs: jest.fn(), generateNarrative: jest.fn(), getMemo: jest.fn(), reportUsage: jest.fn(),
   getBlockers: jest.fn(), saveAllGatesCall: jest.fn(), uploadChatFile: jest.fn(), uploadDeck: jest.fn(), runStage: jest.fn(),
 }));
@@ -136,6 +137,39 @@ test("a turnover claim waits in Revenue / Volume answers, not in the open claims
   expect(qa("review-turnover-claim")).toHaveLength(1);
   expect(qa("review-claim-row")).toHaveLength(1);
   expect(q("review-turnover").querySelector('[data-testid="register-turnover-revenue"]')).not.toBeNull();
+});
+
+// claim-matching.md section 4.1: a gap beyond 50% of the claim asks "Same metric and period?" before the claim is decided.
+const asked = (claimId, period = "FY2024") => [{ claim_id: claimId, period, definition_check: "ask",
+  definition_question: "Observed 26, claimed 1. Same metric and period?" }];
+
+test("a claim in Definition check asks its question with Yes / No on one line in its row, and Approve all reports it as approved with an open definition check", async () => {
+  state.candidates = [cand("d1", { definition: asked("d1") }), cand("p1"), cand("a2", { status: "approved", definition: asked("a2") }),
+    cand("y1", { definition: [{ ...asked("y1")[0], definition_check: "yes" }] })];
+  api.answerDefinitionCheck.mockResolvedValue({ register: [] });
+  api.approveAll.mockResolvedValue({ approved: 3, skipped: 0, open_definition: 1 });
+  await mount();
+  const rows = qa("review-claim-row");
+  expect(rows).toHaveLength(4);             // d1 and p1 to review, a2 approved but still asking, y1 answered and to approve
+  const line = rows[0].querySelector('[data-testid="definition-check"]');
+  expect(line.className).toContain("flex-nowrap");
+  expect(line.querySelector('[data-testid="definition-question"]').textContent).toBe("Observed 26, claimed 1. Same metric and period?");
+  expect([...line.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Yes", "No"]);
+  expect(rows[0].querySelector('[data-testid="review-approve"]')).toBeNull();          // To review until it is answered
+  expect(rows.map((r) => Boolean(r.querySelector('[data-testid="definition-check"]')))).toEqual([true, false, true, false]);
+  expect(rows[3].querySelector('[data-testid="review-approve"]')).not.toBeNull();     // answered: approved as any other claim
+  expect(q("review-approve-all-1").textContent).toBe("Approve all (3)");                // the approved one is not Approve all's
+  await act(async () => { rows[2].querySelector('[data-testid="definition-no"]').click(); });
+  expect(api.answerDefinitionCheck).toHaveBeenCalledWith("a1", "a2", "no");
+  await act(async () => { q("review-approve-all-1").click(); });
+  const { toast } = require("sonner");
+  expect(toast.success).toHaveBeenCalledWith("Approved 3 claims, 0 skipped (need Revenue / Volume or failed to save), 1 with open definition check");
+});
+
+test("a top-5 row in Definition check is answered under Open claims, not given gate fields", async () => {
+  api.getClaimRegister.mockResolvedValue({ register: [{ ...REGISTER.register[0], evidence_label: null, definition_check: "ask", gate_needed: false }] });
+  await mount();
+  expect(qa("review-gate-row")).toHaveLength(0);
 });
 
 test("gates are asked for the top-5 claims that are not Verified, and a gate saves through the register's own call", async () => {

@@ -22,7 +22,8 @@ FIELDS = (
     "overlaps_with", "evidence_analysis", "evidence_source_key", "gate_sentence", "gate_threshold",
     "gate_budget_decision", "gate_date", "gate_saved", "gate_metric_name", "gate_direction", "key_gate", "gate_needed",
     "as_of_month", "as_of_defaulted", "turnover_state", "turnover_note", "turnover_set_by", "turnover_reason",
-    "implied_take_rate", "implied_take_rate_source", "turnover_suggested", "deck_revenue_note",
+    "implied_take_rate", "implied_take_rate_source", "turnover_suggested", "deck_revenue_note", "definition_check",
+    "definition_question",
 )
 # How the baseline CSV reads each field back (verdict-and-memo.md section 5); a field not listed is text.
 FLOAT_FIELDS = frozenset({"implied_take_rate", "claimed_value", "claimed_high", "claimed_converted", "claimed_converted_high", "fx_rate",
@@ -44,6 +45,17 @@ ACQUISITION_NOTE = "acquisition channels: a count per platform, no engine metric
 UNTESTED_TYPES = {USE_OF_FUNDS: USE_OF_FUNDS_NOTE, ACQUISITION_CHANNELS: ACQUISITION_NOTE}
 DIRECTION_ONLY = "direction only: the claim states no figure to test"
 BEAT_PREFIX = "beat: observed beats the claim by "       # the reason of a Verified beat outside tolerance, its gloss follows
+# Section 4.1 (George, 2026-10-14): a tested gap beyond this share of the claim, either way, asks the analyst "Same metric and
+# period?" before the row gets a label. Adjustable; exactly at it the normal rule applies.
+BIG_GAP_THRESHOLD = 0.5
+# A rate is read in points, not as a share of the claim (George, 2026-10-14): its gap opens the check only beyond this many
+# percentage points. Adjustable; exactly at it the normal rule applies.
+BIG_GAP_RATE_POINTS = 10.0
+DEFINITION_ASK, DEFINITION_ANSWERS = "ask", ("yes", "no")     # "ask": the row is a Definition check, a status with no label
+DEFINITION_QUESTION = "Observed {observed}, claimed {claimed}. Same metric and period?"
+DEFINITION_OPEN_REASON = "definition check: the gap is beyond {share} of the claim"
+DEFINITION_OPEN_REASON_RATE = "definition check: the gap is beyond {points} percentage points"
+DEFINITION_MISMATCH = "definition mismatch"
 # A Users claim the parser typed from a qualified customers noun (deck-parser.md section 2, George, 2026-10-13); the label is
 # two words of closed lists: the qualifier and the customers keyword.
 QUALIFIED_REASON = "deck label '{label}' is not paying customers; the analyst can edit the type to Customers to test it"
@@ -692,7 +704,7 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         out.update(turnover_suggested=suggested, deck_revenue_note=hint["note"] if hint else None)
     shown_claim: List[Optional[float]] = [None]         # the claimed figure the gate sentence names, once it is known
 
-    def finish(label: str, reason: str) -> dict:
+    def finish(label: Optional[str], reason: str) -> dict:
         out.update(evidence_label=label, reason=reason)
         if out["evidence_analysis"] is None and reason.startswith("Missing:") and metric in METRICS:
             item = _missing_item(results, metric)
@@ -792,9 +804,39 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         return finish("Unverified", "deck reading: AI suggestion, not verified until the analyst edits the claim")
     if verified:
         return finish("Verified", f"within {out['tolerance']} of the claim")
+    if is_big_gap(spec["unit"], out["gap"], out["gap_normalised"]):    # section 4.1: the analyst says whether claim and figure measure the same thing
+        reporting = results.get("reporting_currency")
+        # an answer holds only for the figures it was given against: if any differs now, it is asked again
+        answer = inputs.get("definition_check") if inputs.get("definition_check") in DEFINITION_ANSWERS \
+            and inputs.get("definition_basis") == definition_basis(out) else None
+        out.update(definition_check=answer or DEFINITION_ASK, definition_question=DEFINITION_QUESTION.format(
+            observed=_format(spec["unit"], observed, reporting), claimed=_format(spec["unit"], claimed, reporting)))
+        if answer is None:                      # a status, not an evidence label: no label until the analyst answers
+            return finish(None, DEFINITION_OPEN_REASON_RATE.format(points=f"{BIG_GAP_RATE_POINTS:g}") if spec["unit"] == "%"
+                          else DEFINITION_OPEN_REASON.format(share=f"{BIG_GAP_THRESHOLD:.0%}"))
+        if answer == "no":
+            return finish("Unverified", DEFINITION_MISMATCH)
     if kind == "beat":                          # amended 2026-10-13 (George): a beat is Verified, marked (beat), not Contradicted
         return finish("Verified", f"{BEAT_PREFIX}{out['gloss']}")
     return finish("Contradicted", f"outside {out['tolerance']}: a miss")
+
+
+def is_big_gap(unit: str, gap: Optional[float], gap_normalised: Optional[float]) -> bool:
+    """Whether a tested gap opens the Definition check (section 4.1): a rate, beyond BIG_GAP_RATE_POINTS points; any other unit,
+    beyond BIG_GAP_THRESHOLD of the claim, either way. A claim of 0 has no share, so it is never one."""
+    if unit == "%":
+        return gap is not None and round(abs(gap), 9) > BIG_GAP_RATE_POINTS
+    return gap_normalised is not None and round(abs(gap_normalised), 9) > BIG_GAP_THRESHOLD
+
+
+def definition_basis(row: dict) -> dict:
+    """What a Definition check answer was given against (section 4.1): the claimed figures and the rate they are converted at,
+    the observed figure, the claim's period, the as-of month and the FX rate date. Stored with the answer; the answer applies only
+    while all of it is unchanged. Read from the register row's own fields, so it adds none."""
+    figure = lambda v: None if v is None else round(float(v), 6)
+    return {"claimed": [figure(row.get("claimed_value")), figure(row.get("claimed_high"))], "fx_rate": figure(row.get("fx_rate")),
+            "fx_date": row.get("fx_date"), "observed": figure(row.get("observed_value")),
+            "period": [row.get("period_start"), row.get("period_end")], "as_of_month": row.get("as_of_month")}
 
 
 def _gate(out: dict, c: dict, inputs: dict, spec: Optional[dict], claim_unit: Optional[str], results: dict,
@@ -1018,14 +1060,63 @@ def turnover_views(candidates: List[dict], results: Optional[dict], settings: di
     return out
 
 
+DEFINITION_VIEW_FIELDS = ("claim_id", "period", "definition_check", "definition_question")
+
+
+def definition_rows(candidates: List[dict], results: Optional[dict], settings: dict) -> Dict[str, List[dict]]:
+    """Section 4.1: the register rows with a Definition check (asked or answered), keyed by candidate id, computed by the register's
+    own code over every candidate not rejected, pending ones included, so the review screen can ask before a claim is approved.
+    Empty before the first Calculate: no figure, no gap. Nothing is read from a model."""
+    if not results:
+        return {}
+    claims = _expand([c for c in candidates if c.get("status") != "rejected"])
+    out: Dict[str, List[dict]] = {}
+    for c in claims:
+        row = _row(c, results, settings, claims)
+        if row["definition_check"] is not None:
+            out.setdefault(c["id"], []).append(row)
+    return out
+
+
+def definition_views(candidates: List[dict], results: Optional[dict], settings: dict) -> Dict[str, List[dict]]:
+    """`definition_rows` cut to the fields the deck list shows."""
+    return {cid: [{k: r[k] for k in DEFINITION_VIEW_FIELDS} for r in rows]
+            for cid, rows in definition_rows(candidates, results, settings).items()}
+
+
+def open_definition_ids(views: Dict[str, List[dict]]) -> set:
+    """The candidates of `definition_views` with a question still open. Approve all approves them like any other claim and
+    counts the approved ones as `open_definition` (section 4.1)."""
+    return {cid for cid, found in views.items() if any(v["definition_check"] == DEFINITION_ASK for v in found)}
+
+
+def without_definition_answer(inputs: Optional[dict], claim_ids: Optional[set] = None) -> dict:
+    """A candidate's `claim_inputs` with the Definition check answer dropped (of `claim_ids`, or of every claim): a re-typed or
+    re-matched claim is asked again (section 4.1). A claim left with no input loses its entry."""
+    out = {}
+    for cid, kept in (inputs or {}).items():
+        if claim_ids is None or cid in claim_ids:
+            kept = {k: v for k, v in kept.items() if k not in ("definition_check", "definition_basis")}
+        if kept:
+            out[cid] = kept
+    return out
+
+
 def is_beat(row: dict) -> bool:
     """A Verified row whose observed figure beat the claim beyond tolerance (section 4): listed under Worth flagging."""
     return row.get("evidence_label") == "Verified" and str(row.get("reason") or "").startswith(BEAT_PREFIX)
 
 
 def label_counts(rows: List[dict]) -> Dict[str, int]:
-    """Rows per evidence label: the only thing a log line may say about the register."""
+    """Rows per evidence label: the only thing a log line may say about the register. An open Definition check has no label and is
+    in no count (section 4.1)."""
     counts: Dict[str, int] = {}
     for r in rows:
-        counts[r["evidence_label"]] = counts.get(r["evidence_label"], 0) + 1
+        if r["evidence_label"] is not None:
+            counts[r["evidence_label"]] = counts.get(r["evidence_label"], 0) + 1
     return counts
+
+
+def definition_counts(rows: List[dict]) -> Dict[str, int]:
+    """Definition checks by state (section 4.1): open (ask), answered yes, answered no."""
+    return {state: sum(1 for r in rows if r.get("definition_check") == state) for state in (DEFINITION_ASK, *DEFINITION_ANSWERS)}

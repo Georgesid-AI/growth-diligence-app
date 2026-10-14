@@ -260,9 +260,12 @@ def test_claims_within_tolerance_are_accepted_and_the_others_stay_for_the_review
     res = stage(api, "claims")
     rows = cm.build_register(candidates_for(RUN), results_for(RUN), settings(RUN))
     verified = {r["claim_id"].split("#")[0] for r in rows if r["evidence_label"] == "Verified"}
+    beats = {r["claim_id"].split("#")[0] for r in rows if cm.is_beat(r)}
     accepted = {c["id"] for c in candidates(api) if c.get("auto_accepted")}
-    assert res["accepted"] == len(accepted) and 0 < len(accepted) <= len(verified)
-    assert accepted <= verified, "only what the register labels Verified"
+    assert beats, "fixture: a Verified beat"
+    assert res["accepted"] == len(accepted) and 0 < len(accepted) <= len(verified - beats)
+    assert accepted <= verified - beats, "only what the register labels Verified within tolerance: a beat waits for the analyst"
+    assert not accepted & beats and all(c["status"] == "pending" for c in candidates(api) if c["id"] in beats)
     left = [c for c in candidates(api) if c["status"] == "pending"]
     assert res["open"] == len(left) and left, "claims outside tolerance wait for the analyst"
     assert all(c["status"] in ("approved", "edited") for c in candidates(api) if c.get("auto_accepted"))
@@ -270,6 +273,18 @@ def test_claims_within_tolerance_are_accepted_and_the_others_stay_for_the_review
     assert summary["auto_accepted"] == len(accepted) and set(summary["auto_accepted_ids"]) == accepted and summary["open"] == len(left)
     again = stage(api, "claims")
     assert again["accepted"] == 0, "running the stage again accepts nothing twice"
+
+
+def test_only_a_row_within_tolerance_is_accepted_not_a_beat_nor_a_definition_check_however_it_was_answered():
+    """claim-matching.md section 4.1 (George, 2026-10-14): a beat of 5% to 50% and a bigger beat answered Yes are Verified (beat), not
+    within tolerance; the analyst reviews them. A table row counts only when every value is within tolerance."""
+    plain = {"claim_id": "a", "evidence_label": "Verified", "reason": "within ±5% of the claim", "definition_check": None}
+    beat = {"claim_id": "b", "evidence_label": "Verified", "reason": cm.BEAT_PREFIX + "€5 higher (beat)", "definition_check": None}
+    big_yes = {**beat, "claim_id": "c", "definition_check": "yes"}
+    open_ = {"claim_id": "d", "evidence_label": None, "reason": "definition check", "definition_check": "ask"}
+    table = [{**plain, "claim_id": "e#1"}, {**beat, "claim_id": "e#2"}]
+    assert run_audit.within_tolerance_ids([plain, beat, big_yes, open_, *table], list("abcde")) == ["a"]
+    assert run_audit.within_tolerance_ids([{**plain, "claim_id": "e#1"}, {**plain, "claim_id": "e#2"}], ["e"]) == ["e"]
 
 
 def test_an_accepted_claim_can_still_be_rejected_or_edited_by_the_analyst(api):

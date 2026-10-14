@@ -10,6 +10,7 @@ jest.mock("@/lib/api", () => ({
   getClaimRegister: jest.fn(),
   updateClaimInputs: jest.fn(),
   answerTurnover: jest.fn(),
+  answerDefinitionCheck: jest.fn(),
   saveAllGatesCall: jest.fn(),
   claimsCsvUrl: (id) => `http://api/api/audits/${id}/claims.csv`,
 }));
@@ -446,4 +447,37 @@ test("Save all gates sends every gate with a budget decision, prefilled or edite
     { claim_id: "c01", gate_threshold: 200000, gate_budget_decision: "Series B", gate_date: "2025-03-31", key_gate: true },
     { claim_id: "c02", gate_threshold: 150000, gate_budget_decision: "Series B", gate_date: "2025-03-31" },
   ]);
+});
+
+// claim-matching.md section 4.1: a gap beyond 50% of the claim asks "Same metric and period?" on the row.
+const CHECK = { ...ROW, claim_id: "k1", claim_type: "customers", claimed_value: 1, currency: null, unit: "customers", metric: "Customer count",
+  observed_value: 26, gap: -25, gap_normalised: -25, gloss: "25 customers more (beat)", evidence_label: null, definition_check: "ask",
+  definition_question: "Observed 26, claimed 1. Same metric and period?", reason: "definition check: the gap is beyond 50% of the claim" };
+
+test("a row with an open Definition check has no Set gate button; once answered it has one like any row that is not Verified", async () => {
+  const { host } = await mount([CHECK, { ...CHECK, claim_id: "k2", rank: 2, definition_check: "no", evidence_label: "Unverified" }]);
+  const rows = [...host.querySelectorAll('[data-testid="claim-register-row"]')];
+  expect(rows.map((r) => r.querySelector('[data-testid="register-set-gate"]') !== null)).toEqual([false, true]);
+});
+
+test("a row in Definition check reads so in the Evidence cell and asks its question with Yes and No on one line", async () => {
+  const { host } = await mount([CHECK, ROW]);
+  const rows = host.querySelectorAll('[data-testid="claim-register-row"]');
+  expect(rows[0].querySelector('[data-testid="register-evidence"]').textContent).toBe("Definition check");
+  const line = rows[0].querySelector('[data-testid="register-detail"] [data-testid="definition-check"]');
+  expect(line.className).toContain("flex-nowrap");
+  expect(line.querySelector('[data-testid="definition-question"]').textContent).toBe("Observed 26, claimed 1. Same metric and period?");
+  expect([...line.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Yes", "No"]);
+  expect(line.querySelector('[data-testid="definition-yes"]').getAttribute("aria-pressed")).toBeNull();
+  expect(rows[1].querySelector('[data-testid="definition-check"]')).toBeNull();
+  expect(host.querySelectorAll("thead th").length).toBe(6);
+  api.answerDefinitionCheck.mockResolvedValue({ register: [{ ...CHECK, definition_check: "yes", evidence_label: "Verified",
+    reason: "beat: observed beats the claim by 25 customers more (beat)" }, ROW] });
+  await act(async () => { line.querySelector('[data-testid="definition-yes"]').click(); });
+  expect(api.answerDefinitionCheck).toHaveBeenCalledWith("a1", "k1", "yes");
+  const after = host.querySelector('[data-testid="claim-register-row"]');
+  expect(after.querySelector('[data-testid="register-evidence"]').textContent).toBe("Verified");
+  expect(after.querySelector('[data-testid="definition-yes"]').getAttribute("aria-pressed")).toBe("true");
+  expect(after.querySelector('[data-testid="definition-no"]').getAttribute("aria-pressed")).toBe("false");
+  expect(after.querySelector('[data-testid="definition-check"]').textContent).toContain("set by you");
 });

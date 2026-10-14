@@ -5,9 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Provenance } from "@/components/Provenance";
 import DateField from "@/components/DateField";
-import { answerTurnover, claimsCsvUrl, getClaimRegister, updateClaimInputs } from "@/lib/api";
+import { answerDefinitionCheck, answerTurnover, claimsCsvUrl, getClaimRegister, updateClaimInputs } from "@/lib/api";
 import {
-  DOWNLOAD_LABEL, GATE_BUDGET_MAX, GATE_DIRECTIONS, GATE_METRIC_MAX, GATE_METRIC_PLACEHOLDER, GATE_NEEDED, KEY_GATE_LABEL, NO_METRIC, OTHER_DECISION, PREFILLED, gateDraft,
+  DEFINITION_ANSWERS, DOWNLOAD_LABEL, labelText, GATE_BUDGET_MAX, GATE_DIRECTIONS, GATE_METRIC_MAX, GATE_METRIC_PLACEHOLDER, GATE_NEEDED, KEY_GATE_LABEL, NO_METRIC, OTHER_DECISION, PREFILLED, gateDraft,
   REGISTER_COLUMNS, REGISTER_COLUMN_WIDTHS, REGISTER_HEADING, SET_GATE_LABEL, VAS_LABEL, TURNOVER_QUESTION, answerReady, reasonsFor, claimCellText, rateHover, takeRateText, evidenceLines, gapText, gateContext, gateEdit, metricOptions, needsMetricName,
   observedText, overlapsText, readingText, registerRows, segmentOptions, valueAtStakeText,
 } from "@/lib/claimRegister";
@@ -110,10 +110,11 @@ export function GateCell({ row, ccy, onSave, prefill, budgets = [], edits, onEdi
 }
 
 /** The register's gate: nothing but the gate's status until the analyst clicks Set gate, which opens the fields below the row. A
- *  Verified row has no button (it needs no gate); a gate it already holds still shows as text. */
+ *  Verified row has no button (it needs no gate), nor has a row with an open Definition check (claim-matching.md section 4.1: it needs
+ *  no gate until it is answered); a gate it already holds still shows as text. */
 function GateToggle({ row, ...gate }) {
   const [open, setOpen] = useState(false);
-  const verified = row.evidence_label === "Verified";
+  const verified = row.evidence_label === "Verified" || row.definition_check === "ask";
   return (
     <div className="space-y-1" data-testid="register-gate">
       {!open && <div className="flex flex-wrap items-baseline gap-x-3"><GateStatus row={row} /></div>}
@@ -179,6 +180,24 @@ export function TurnoverCell({ row, onAnswer, heading }) {
   );
 }
 
+/** A gap beyond 50% of the claim (claim-matching.md section 4.1): "Observed 26, claimed 1. Same metric and period?" and Yes / No, on one
+ *  line. The answer given stays marked and can be changed. The review screen passes `heading`: the period of a table row's value. */
+export function DefinitionCell({ row, onAnswer, heading }) {
+  const answered = row.definition_check !== "ask";
+  return (
+    <div className="mt-1 flex flex-nowrap items-center gap-1.5" data-testid="definition-check">
+      {heading && <span className="font-mono text-slate-500 shrink-0">{heading} ·</span>}
+      <span className="text-slate-800" data-testid="definition-question">{row.definition_question}</span>
+      {DEFINITION_ANSWERS.map(([value, label]) => (
+        <Button key={value} size="sm" variant="outline" className={`h-7 shrink-0 ${row.definition_check === value ? "border-sky-600 text-sky-800" : ""}`}
+          aria-pressed={answered ? row.definition_check === value : undefined} data-testid={`definition-${value}`}
+          onClick={() => onAnswer(row, value).catch(() => {})}>{label}</Button>
+      ))}
+      {answered && <span className="text-[10px] text-slate-500 shrink-0">· set by you</span>}
+    </div>
+  );
+}
+
 /** The claim register of one audit, in the order the server ranks it (docs/specs/claim-matching.md section 8). */
 export default function ClaimRegister({ auditId, results, onChanged }) {
   const [rows, setRows] = useState(null);
@@ -211,6 +230,10 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
     .catch((e) => { toast.error(describeRequestError(e).message); throw e; }), [auditId, afterSave, clear]);
 
   const answer = useCallback((row, payload) => answerTurnover(auditId, row.claim_id, payload)
+    .then((d) => { setRows(registerRows(d)); if (onChanged) onChanged(); })
+    .catch((e) => { toast.error(describeRequestError(e).message); throw e; }), [auditId, onChanged]);
+
+  const answerDefinition = useCallback((row, value) => answerDefinitionCheck(auditId, row.claim_id, value)
     .then((d) => { setRows(registerRows(d)); if (onChanged) onChanged(); })
     .catch((e) => { toast.error(describeRequestError(e).message); throw e; }), [auditId, onChanged]);
 
@@ -281,7 +304,7 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
                     <td className="pt-2 px-3 font-mono text-slate-800" data-testid="register-gap">{gapText(row, ccy)}</td>
                     <td className="pt-2 px-3">
                       <span className={`text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-nowrap ${LABEL_STYLE[row.evidence_label] || ""}`} data-testid="register-evidence">
-                        {row.evidence_label}
+                        {labelText(row)}
                       </span>
                     </td>
                   </tr>
@@ -300,6 +323,7 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
                       </div>
                       <div className="text-xs text-slate-700 space-y-1">
                         {row.turnover_state && <TurnoverCell row={row} onAnswer={answer} />}
+                        {row.definition_check && <DefinitionCell row={row} onAnswer={answerDefinition} />}
                         <GateToggle row={row} ccy={ccy} onSave={save} prefill={prefill[row.claim_id]} budgets={budgets} edits={edits[row.claim_id]} onEdit={onEdit} />
                       </div>
                     </td>

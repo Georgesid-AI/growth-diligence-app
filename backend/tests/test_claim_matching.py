@@ -69,7 +69,7 @@ ALL = [(name, e) for name, r in RUNS.items() for e in r["claims"]]
 
 def test_the_fixture_covers_every_label_class_and_every_metric_of_table_2a():
     expected = [e["expect"] for _, e in ALL]
-    assert {x["label"] for x in expected} == set(LABELS)
+    assert {x["label"] for x in expected} == {*LABELS, None}, "None: an open Definition check, a status with no label (section 4.1)"
     assert {x["metric"] for x in expected if x.get("metric")} == set(METRICS_2A)
 
 
@@ -82,7 +82,7 @@ def test_fixture_row_gives_its_label_gap_gloss_and_rank(name, entry):
         assert e["reason"].lower() in row["reason"].lower(), row["reason"]
     for key, field in (("metric", "metric"), ("segment", "segment"), ("observed_at", "observed_at"), ("kind", "gap_kind"),
                        ("note", "period_note"), ("gloss", "gloss"), ("tolerance", "tolerance"), ("direction", "direction"),
-                       ("deck_reading", "deck_reading"), ("rank", "rank")):
+                       ("deck_reading", "deck_reading"), ("rank", "rank"), ("definition_check", "definition_check")):
         if key in e:
             assert row[field] == e[key], f"{field}: {row[field]!r}"
     if "observed" in e:
@@ -422,7 +422,9 @@ def test_paying_customers_are_still_tested_against_the_customer_count():
     y22, y23 = row_of(rows, "p0#1"), row_of(rows, "p0#2")
     assert (y22["metric"], y22["evidence_label"], y22["reason"]) == \
         ("Customer count", "Unverified", "before Customer count's first month, 2023-01")
-    assert (y23["metric"], y23["observed_value"], y23["gap_kind"], y23["evidence_label"]) == ("Customer count", 5, "miss", "Contradicted")
+    # 20 paying customers against 5 in the data: a 75% miss asks whether they are the same customers (section 4.1)
+    assert (y23["metric"], y23["observed_value"], y23["gap_kind"], y23["evidence_label"], y23["definition_check"]) == \
+        ("Customer count", 5, "miss", None, "ask")
 
 
 def test_the_qualified_reason_is_only_for_users_with_a_qualifier_and_an_edit_to_customers_tests_the_claim():
@@ -431,7 +433,8 @@ def test_the_qualified_reason_is_only_for_users_with_a_qualifier_and_an_edit_to_
     assert run_claim({**base, "qualifier": "registered"})["reason"] == QUALIFIED
     assert run_claim(base)["reason"] == "no metric", "a users claim with no qualifier is unchanged"
     edited = run_claim({**base, "claim_type": "customers", "qualifier": "registered", "status": "edited"})
-    assert (edited["metric"], edited["observed_value"], edited["evidence_label"]) == ("Customer count", 5, "Contradicted")
+    assert (edited["metric"], edited["observed_value"], edited["definition_check"]) == ("Customer count", 5, "ask"), \
+        "tested: 40 against 5 is beyond 50%, so the analyst is asked whether they are the same customers (section 4.1)"
 
 
 # --- section 3 and 4: gap, gloss, tolerance --------------------------------------------------------------------------
@@ -586,7 +589,7 @@ def test_a_register_row_has_exactly_the_fields_of_section_6_and_the_verdict_spec
                  "value_at_stake_arr shortfall overlaps_with evidence_analysis evidence_source_key gate_sentence gate_threshold "
                  "gate_budget_decision gate_date gate_saved gate_metric_name gate_direction key_gate gate_needed as_of_month "
                  "as_of_defaulted turnover_state turnover_note turnover_set_by turnover_reason implied_take_rate "
-                 "implied_take_rate_source turnover_suggested deck_revenue_note").split()
+                 "implied_take_rate_source turnover_suggested deck_revenue_note definition_check definition_question").split()
     assert list(register(RUNS["A"])[0]) == section_6 == list(cm.FIELDS)
 
 
