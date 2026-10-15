@@ -93,6 +93,7 @@ Four separate fields, always shown separately, never merged into one date:
 | NRR / churn / retention | R | R | R (%) | – | R (window) | R (cohort) | R | – |
 | Sales cycle / win rate / pipeline | R | R | R | – | R | R (deals won / all closed / open) | R | – |
 | Costs / burn / runway / cash | R | R | R | R | R | – | R | – |
+| Unit economics (ltv, cac, ltv_cac, customer_lifetime, trials_per_day) | R | R | R | R for a money value | R | – | R | – |
 | Headcount / hiring | R | R | count | – | R | optional (team) | R | – |
 | Launch date | item name | date | – | – | – | – | R | – |
 | Market size | R | R | R | R | optional | – | – | – |
@@ -100,7 +101,7 @@ Four separate fields, always shown separately, never merged into one date:
 | Acquisition channels | channel | count | count | – | optional | – | – | – |
 | Other | text only | – | – | – | – | – | – | – |
 
-**Other:** claims typed Other (e.g. "15 months", "3 tiers") are excluded from matching, value at stake, top-5 candidates, review tasks and the hard-blocker banner. They are shown collapsed as a count ("12 other figures") and never generate a task. Retyping a claim out of Other puts it back into matching.
+**Other:** a figure the parser cannot type is Other and never a task (decision of 15 Oct 2026). Claims typed Other (e.g. "15 months", "3 tiers") are excluded from matching, value at stake, top-5 candidates, review tasks and the hard-blocker banner. They are shown collapsed as a count ("12 other figures") and never generate a task. Retyping a claim out of Other puts it back into matching.
 
 **Editor.** The inline editor edits every field in the table above, including Figure type (Actual / Target) and Growth basis. Each change keeps the reason code and records who changed it and the previous value (provenance unchanged).
 
