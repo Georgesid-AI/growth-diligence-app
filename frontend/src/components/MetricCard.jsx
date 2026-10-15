@@ -8,6 +8,16 @@ const STATUS = {
   neutral: "text-slate-900",
 };
 
+/** A chart or table card's own period and the months missing inside it (dates-and-periods.md section 3), under its title. */
+export function PeriodLines({ id, period }) {
+  return (
+    <>
+      {periodText(period) && <div data-testid={`card-period-${id}`} className="-mt-3 mb-2 text-[11px] text-slate-500 font-mono">{periodText(period)}</div>}
+      {missingText(period) && <div data-testid={`card-missing-${id}`} className="-mt-1 mb-2 text-[11px] text-amber-800 font-mono">{missingText(period)}</div>}
+    </>
+  );
+}
+
 export function MetricCard({ id, label, value, source, sub, qualifier, status = "neutral", note, caption, period }) {
   return (
     <div

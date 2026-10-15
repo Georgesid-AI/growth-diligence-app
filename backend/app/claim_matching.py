@@ -915,8 +915,6 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
     if isinstance(observed, str):                       # a verdict instead of a figure
         return finish(*observed.split("|", 1))
     forecast = end is not None and as_of_i is not None and end > as_of_i
-    if observed is None and partly:                     # a growth whose compared months are only partly in the data
-        return finish(INCONCLUSIVE, partly_reason)
     if observed is None:
         if observed_at == "missing":
             unlock = _missing(results, metric)
@@ -1229,8 +1227,7 @@ def _growth(figures: "_Figures", spec: dict, basis: str, start: Optional[int], e
     if not present:
         return _not_covered(span, read, cov), None, None, None
     if len(present) < len(read):
-        cov.update(coverage=PARTLY_COVERED, missing=[_ms(m) for m in read if m not in present])
-        return None, None, source, None
+        return _not_covered(span, [m for m in read if m not in present], cov), None, None, None     # a compared month is outside the data
     current, base = sum(values[_ms(m)] for m in now), sum(values[_ms(m)] for m in then)
     if base <= 0 or current < 0:
         return f"Unsupported|{GROWTH_BASE_REASON}", None, None, None
