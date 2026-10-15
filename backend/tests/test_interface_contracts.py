@@ -716,3 +716,26 @@ def test_a_memo_is_built_from_every_engine_run_the_contract_covers_with_no_false
         gaps=vd.data_gaps(stored, rows, state["in_force"]), ic={"ratings": icm.RATINGS, "thesis": {"plan": "p", "evidence": "e", "condition": "c"}},
         blockers=[], narratives=[], usage=icm.USAGE, files=icm.FILES, decks=icm.DECKS, tables=tables, today="2026-10-08")
     assert ic_memo.word_count_of(text) <= 1500 and "## Appendix D" in text
+
+
+# ---------------------------------------------------------------------------
+# 9. Evidence status in the memo (docs/specs/evidence-labels.md section 5): the memo's summary counts Inconclusive under
+# Unverified with the Inconclusive count in brackets, and frontend/src/lib/evidence_labels.json (the shared list) says the same.
+# ---------------------------------------------------------------------------
+import json  # noqa: E402
+
+SHARED_LABELS = Path(__file__).resolve().parents[2] / "frontend" / "src" / "lib" / "evidence_labels.json"
+
+
+@pytest.mark.xfail(strict=True, reason="docs/specs/evidence-labels.md section 5: not built yet")
+def test_the_memo_summary_counts_inconclusive_under_unverified_with_the_count_in_brackets():
+    shared = json.loads(SHARED_LABELS.read_text(encoding="utf-8"))
+    assert shared["memo_groups"] == {"Unverified": ["Unverified", "Inconclusive"]}
+    kw = icm.inputs()
+    rows = [dict(r) for r in kw["rows"]]
+    next(r for r in rows if r["evidence_label"] == "Unverified")["evidence_label"] = "Inconclusive"
+    counts = cm.label_counts(rows)
+    text = ic_memo.build_memo(**{**kw, "rows": rows})
+    unverified = sum(counts.get(label, 0) for label in shared["memo_groups"]["Unverified"])
+    assert f"{unverified} Unverified ({counts['Inconclusive']} Inconclusive) of {len(rows)} in the register" in text
+    assert "Unverified (0 Inconclusive)" in ic_memo.build_memo(**icm.inputs()), "the bracket is printed when none is Inconclusive"
