@@ -93,8 +93,8 @@ computed metric renders.
 ## 7. Architecture note (CLAUDE.md rule 1)
 docs/architecture.md says "Prompts are server-side files with a version and a release stamp (`prompt_store.py`, `prompts/`)" and its
 Storage row lists the collections. This spec adds the collections `prompts` and `access_tokens` and replaces the files. The task
-instruction named the prompt store as the frozen component, so the code follows it; **docs/architecture.md is not edited here** (rule 1)
-and now disagrees with the code in two cells. Proposed wording for George to apply:
+instruction named the prompt store as the frozen component, so the code follows it; **docs/architecture.md was not edited in the first
+commit** (rule 1); George instructed the edit on 15 Oct 2026 and it is applied as written below:
 - LLM gateway row: "Prompts are versioned documents in the MongoDB collection `prompts`, uploaded on the owner page and read by the
   gateway only (`prompt_store.py`); a missing prompt means no model call."
 - Storage row: add `prompts` and `access_tokens` (no `audit_id`; Delete audit leaves them, they hold no audit data).

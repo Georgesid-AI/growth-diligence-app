@@ -71,9 +71,10 @@ def _month_index(month: str) -> int:
     return int(month[:4]) * 12 + int(month[5:7]) - 1
 
 
-def _smoothness(results: dict) -> Optional[dict]:
+def smoothness(results: dict) -> Optional[dict]:
     """Smoothness (smoothness.md): the deviation, in points, of the last 12 month-on-month growth rates of the latest run of
-    consecutive months with revenue, a Possibly partial last month left out. None when 13 such months do not exist."""
+    consecutive months with revenue, a Possibly partial last month left out. None when 13 such months do not exist. The one
+    calculation: the integrity block and the data-integrity narrative's payload both read it."""
     series = results.get("revenue_series") or {}
     partial = results.get("source_period") or {}
     skip = partial.get("month") if partial.get("status") == "Possibly partial" else None
@@ -86,11 +87,18 @@ def _smoothness(results: dict) -> Optional[dict]:
         return None
     window = run[-SMOOTHNESS_MONTHS:]
     deviation = pstdev([window[i][2] / window[i - 1][2] - 1 for i in range(1, len(window))]) * 100
-    smooth = deviation < SMOOTHNESS_LIMIT_POINTS
-    finding = (f"Month-on-month revenue growth varies by {deviation:.1f} points (standard deviation) over "
-               f"{window[0][1]}–{window[-1][1]}" + (f"; below {SMOOTHNESS_LIMIT_POINTS:g} points is unusually smooth" if smooth else "") +
+    return {"deviation": deviation, "first": window[0][1], "last": window[-1][1], "smooth": deviation < SMOOTHNESS_LIMIT_POINTS,
+            "limit": SMOOTHNESS_LIMIT_POINTS, "label": SMOOTHNESS_LABEL}
+
+
+def _smoothness(results: dict) -> Optional[dict]:
+    read = smoothness(results)
+    if read is None:
+        return None
+    finding = (f"Month-on-month revenue growth varies by {read['deviation']:.1f} points (standard deviation) over "
+               f"{read['first']}–{read['last']}" + (f"; below {SMOOTHNESS_LIMIT_POINTS:g} points is unusually smooth" if read["smooth"] else "") +
                f" ({SMOOTHNESS_LABEL})")
-    return {"result": AMBER if smooth else GREEN, "finding": finding, "source": _cite(series.get("source"))}
+    return {"result": AMBER if read["smooth"] else GREEN, "finding": finding, "source": _cite((results.get("revenue_series") or {}).get("source"))}
 
 
 def _where(source: Optional[dict]) -> str:

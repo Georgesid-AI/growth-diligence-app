@@ -1,8 +1,8 @@
-"""The owner routes (docs/specs/prompt-store.md section 3; docs/specs/access-links.md section 2).
+"""The owner routes (docs/specs/prompt-store.md section 3).
 
-Prompts: list by name, version and date; upload a new version; nothing deleted; the text never comes back. Tester links: issue
-(the link is shown once), list with status, revoke, re-issue (the tester keeps their id and so their audits). Owner token only:
-no token or an unknown one is 401, a tester's token is 404. These run the real access guard. No network.
+Prompts: list by name, version and date; upload a new version; nothing deleted; the text never comes back. Owner token only: no
+token or an unknown one is 401, a tester's token is 404 (the guard of docs/specs/access-links.md; the tester links themselves are
+tested in test_access_links.py). These run the real access guard. No network.
 """
 import hashlib
 import json
@@ -19,8 +19,6 @@ from fastapi.testclient import TestClient  # noqa: E402
 import server  # noqa: E402
 import test_llm_gateway as t  # noqa: E402
 
-pytestmark = pytest.mark.real_access
-
 OWNER = "owner-token-for-the-test-suite-only"
 SECRET = "SECRET-METHODOLOGY-SENTINEL-4471"
 ADMIN_ROUTES = [("GET", "/api/admin/prompts"), ("POST", "/api/admin/prompts"), ("GET", "/api/admin/testers"),
@@ -32,6 +30,7 @@ def owner(monkeypatch):
     db = t.FakeDB()
     db["prompts"].docs.clear()
     monkeypatch.setattr(server, "db", db)
+    monkeypatch.delenv("ACCESS_DISABLED", raising=False)          # the suite runs with the check off; these tests need it on
     monkeypatch.setenv("OWNER_TOKEN_SHA256", hashlib.sha256(OWNER.encode()).hexdigest())
     client = TestClient(server.app, raise_server_exceptions=False)
     client.db, client.headers_owner = db, {"Authorization": f"Bearer {OWNER}"}
@@ -99,77 +98,6 @@ def test_the_owner_page_calls_show_no_audit_data(owner):
     seen = [owner.get(p, headers=owner.headers_owner).text for p in ("/api/admin/prompts", "/api/admin/testers")]
     assert "AuditedCo" not in "".join(seen) and "Fund" not in "".join(seen)
     assert owner.get(f"/api/audits/{created.json()['id']}", headers=owner.headers_owner).status_code == 404
-
-
-def test_a_link_is_shown_once_the_list_has_status_and_never_a_token_or_hash(owner):
-    issued = owner.post("/api/admin/testers", json={"label": "  Tester   One "}, headers=owner.headers_owner)
-    assert issued.status_code == 200
-    body = issued.json()
-    token = token_of(body)
-    assert body["label"] == "Tester One" and body["status"] == "active" and len(token) >= 43, "32 bytes, URL-safe base64"
-    stored = owner.db["access_tokens"].docs[0]
-    assert stored["token_hash"] == hashlib.sha256(token.encode()).hexdigest() and token not in json.dumps(stored)
-    listed = owner.get("/api/admin/testers", headers=owner.headers_owner)
-    assert token not in listed.text and "token_hash" not in listed.text and stored["token_hash"] not in listed.text
-    row = listed.json()["testers"][0]
-    assert set(row) == {"id", "label", "status", "created_at", "expires_at", "revoked_at"} and row["status"] == "active"
-    days = (datetime.fromisoformat(row["expires_at"]) - datetime.fromisoformat(row["created_at"])).days
-    assert days == 29 or days == 30, "30 days"
-    assert owner.get("/api/audits", headers=bearer(token)).status_code == 200
-
-
-def test_the_link_is_built_on_the_app_address_when_one_is_set(owner, monkeypatch):
-    monkeypatch.setenv("APP_URL", "https://app.example/")
-    body = owner.post("/api/admin/testers", json={"label": "T"}, headers=owner.headers_owner).json()
-    assert body["link"].startswith("https://app.example/t/")
-    monkeypatch.delenv("APP_URL")
-    body = owner.post("/api/admin/testers", json={"label": "T"}, headers={**owner.headers_owner, "Origin": "https://web.example"}).json()
-    assert body["link"].startswith("https://web.example/t/")
-
-
-@pytest.mark.parametrize("payload", [{"label": ""}, {"label": "   "}, {"label": "x" * 81}, {"label": "T", "expires_in_days": 0},
-                                     {"label": "T", "expires_in_days": 31}, {}])
-def test_a_tester_needs_a_name_and_an_expiry_of_one_to_thirty_days(owner, payload):
-    assert owner.post("/api/admin/testers", json=payload, headers=owner.headers_owner).status_code == 422
-    assert owner.db["access_tokens"].docs == []
-
-
-def test_an_expiry_shorter_than_thirty_days_is_kept_and_the_token_stops_working_then(owner, monkeypatch):
-    from app import access
-    body = owner.post("/api/admin/testers", json={"label": "T", "expires_in_days": 2}, headers=owner.headers_owner).json()
-    token = token_of(body)
-    assert owner.get("/api/audits", headers=bearer(token)).status_code == 200
-    later = datetime.now(timezone.utc) + timedelta(days=3)
-    monkeypatch.setattr(access, "utcnow", lambda: later)
-    assert owner.get("/api/audits", headers=bearer(token)).status_code == 401
-    status = {r["id"]: r["status"] for r in owner.get("/api/admin/testers", headers=owner.headers_owner).json()["testers"]}
-    assert status[body["id"]] == "expired"
-
-
-def test_revoke_lists_the_tester_as_revoked_and_the_token_is_refused_on_every_route(owner):
-    body = owner.post("/api/admin/testers", json={"label": "T"}, headers=owner.headers_owner).json()
-    token = token_of(body)
-    audit = owner.post("/api/audits", json={"company_name": "Co", "client_name": "F"}, headers=bearer(token)).json()["id"]
-    revoked = owner.post(f"/api/admin/testers/{body['id']}/revoke", headers=owner.headers_owner)
-    assert revoked.status_code == 200 and revoked.json()["status"] == "revoked" and revoked.json()["revoked_at"]
-    assert owner.get("/api/audits", headers=bearer(token)).status_code == 401
-    assert owner.get(f"/api/audits/{audit}", headers=bearer(token)).status_code == 401
-    assert owner.post("/api/admin/testers/no-such-tester/revoke", headers=owner.headers_owner).status_code == 404
-
-
-def test_reissue_gives_a_new_link_the_old_one_stops_and_the_tester_keeps_their_audits(owner):
-    body = owner.post("/api/admin/testers", json={"label": "T"}, headers=owner.headers_owner).json()
-    old = token_of(body)
-    audit = owner.post("/api/audits", json={"company_name": "Co", "client_name": "F"}, headers=bearer(old)).json()["id"]
-    owner.post(f"/api/admin/testers/{body['id']}/revoke", headers=owner.headers_owner)
-    again = owner.post(f"/api/admin/testers/{body['id']}/reissue", headers=owner.headers_owner)
-    assert again.status_code == 200 and again.json()["id"] == body["id"] and again.json()["status"] == "active"
-    new = token_of(again.json())
-    assert new != old
-    assert owner.get(f"/api/audits/{audit}", headers=bearer(old)).status_code == 401, "the old link is dead"
-    assert owner.get(f"/api/audits/{audit}", headers=bearer(new)).status_code == 200, "the same tester, the same audits"
-    assert len(owner.db["access_tokens"].docs) == 1
-    assert owner.post("/api/admin/testers/no-such-tester/reissue", headers=owner.headers_owner).status_code == 404
 
 
 def test_the_owner_token_alone_opens_the_admin_routes_and_an_unset_owner_hash_opens_none(owner, monkeypatch):

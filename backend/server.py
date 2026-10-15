@@ -64,7 +64,9 @@ async def access_guard(request: Request):
         raise HTTPException(401, "Invalid or missing access link")
     role, tester_id = who
     request.state.principal = who
-    if path.startswith("/api/admin/") or path == "/api/usage/totals":
+    if path == "/api/usage/totals":
+        return                      # a tester reads the totals of their own audits, the owner token those of all (usage_totals)
+    if path.startswith("/api/admin/"):
         if role != access_mod.OWNER:
             raise HTTPException(404, "Not found")
         return
@@ -545,12 +547,18 @@ async def report_usage(audit_id: str, event: UsageEvent):
 
 
 @api.get("/usage/totals")
-async def usage_totals():
+async def usage_totals(request: Request):
     """Sums across audits, the median days from first upload to first export and the 50 newest "Other" notes. No
     per-audit rows, names or ids (chat-upload.md section 7). Tokens and cost come from the call log; evidence
-    labels and analyst changes are computed on read from what the audits hold."""
-    audits = await db.audits.find({}, {"_id": 0}).to_list(100000)
+    labels and analyst changes are computed on read from what the audits hold. A tester token sums its own audits
+    only, notes included; the owner token sums all (access-links.md section 3)."""
+    who = getattr(request.state, "principal", None)
+    mine = {"owner": who[1]} if who and who[0] == access_mod.TESTER else {}
+    audits = await db.audits.find(mine, {"_id": 0}).to_list(100000)
     calls = await db[llm_gateway.CALLS_COLLECTION].find({}, {"_id": 0}).to_list(1000000)
+    if mine:
+        own = {a["id"] for a in audits}
+        calls = [c for c in calls if c.get("run_id") in own]
     steps: dict = {}
     for c in calls:
         step = steps.setdefault(str(c.get("step") or "other"), {"calls": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0})

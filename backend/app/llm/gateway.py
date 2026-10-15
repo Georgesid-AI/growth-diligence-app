@@ -301,6 +301,7 @@ OUTBOUND_FIELDS = frozenset({
     "source_list", "inventory", "integrity", "source_key", "description", "category", "in_request_list", "quality_issues",
     "analyses_blocked", "months_supplied", "months_required", "check", "first_month", "last_month", "revenue_file_total",
     "pnl_total", "gap", "gap_pct", "tolerance", "window_over_tolerance", "months_over_tolerance",
+    "deviation_points", "limit_points", "result", "threshold_note",
     # shared
     "value", "mrr", "month", "series", "n", "status", "reason", "computable", "available",
     "source", "rule",

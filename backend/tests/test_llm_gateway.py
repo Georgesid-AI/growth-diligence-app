@@ -1137,7 +1137,7 @@ def test_a_narrative_stored_under_the_as_of_payload_is_still_read_until_the_anal
         db = make_db(_period_doc())
         computed = await gateway.load_computed_results(db, RUN_ID, "growth_engine")
         mapping = await redaction.get_or_create_map(db, RUN_ID, computed)
-        prompt = prompt_store.load(gateway.STEP_CONFIG["growth_engine"]["prompt"])
+        prompt = await prompt_store.load(db, gateway.STEP_CONFIG["growth_engine"]["prompt"])
         tag = prompt_store.cache_tag(prompt)
         old_key = cache.cache_key(RUN_ID, "growth_engine", tag, gateway.run_model(),
                                   gateway.build_outbound(gateway.legacy_computed(computed, "growth_engine"), mapping))
@@ -1163,7 +1163,7 @@ def test_a_narrative_stored_under_the_as_of_payload_is_not_read_once_the_numbers
         db = make_db(_period_doc())
         computed = await gateway.load_computed_results(db, RUN_ID, "growth_engine")
         mapping = await redaction.get_or_create_map(db, RUN_ID, computed)
-        prompt = prompt_store.load(gateway.STEP_CONFIG["growth_engine"]["prompt"])
+        prompt = await prompt_store.load(db, gateway.STEP_CONFIG["growth_engine"]["prompt"])
         old_key = cache.cache_key(RUN_ID, "growth_engine", prompt_store.cache_tag(prompt), gateway.run_model(),
                                   gateway.build_outbound(gateway.legacy_computed(computed, "growth_engine"), mapping))
         await cache.put(db, old_key, RUN_ID, "growth_engine", prompt.version, gateway.run_model(), GOOD_NARRATIVE)

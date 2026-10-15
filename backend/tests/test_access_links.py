@@ -117,9 +117,9 @@ def test_a_reissued_link_replaces_the_old_one_and_keeps_the_testers_audits(acces
     assert client.get(f"/api/audits/{audit_b}", headers=new).status_code == 200, "the tester keeps their audits"
 
 
-def test_a_tester_token_cannot_reach_the_admin_routes_or_the_usage_totals(access):
+def test_a_tester_token_cannot_reach_the_admin_routes(access):
     client, a = access["client"], access["a"]
-    for method, url in (("GET", "/api/usage/totals"), ("GET", "/api/admin/testers"), ("POST", "/api/admin/testers"),
+    for method, url in (("GET", "/api/admin/testers"), ("POST", "/api/admin/testers"),
                         ("POST", f"/api/admin/testers/{access['b_id']}/revoke")):
         assert _call(client, method, url, a).status_code == 404, url
 
@@ -139,3 +139,41 @@ def test_the_store_holds_hashes_only_and_a_token_is_never_stored_or_listed(acces
 def test_health_and_the_field_list_are_open(access):
     client = access["client"]
     assert client.get("/api/").status_code == 200 and client.get("/api/fields").status_code == 200
+
+
+def _seed_usage(access):
+    """Tester A and tester B each hold one audit with a note and one model call; A's note and B's note are told apart."""
+    from app import usage as usage_mod
+    db, client = access["db"], access["client"]
+    a_audit = client.post("/api/audits", json={"company_name": "AlphaCo", "client_name": "Fund A"}, headers=access["a"]).json()["id"]
+    for audit_id, note, cost in ((a_audit, "NOTE-OF-A", 1.0), (access["audit_b"], "NOTE-OF-B", 2.0)):
+        doc = next(d for d in db["audits"].docs if d["id"] == audit_id)
+        doc["usage"] = usage_mod.empty()
+        usage_mod.record_other_note(doc["usage"], note) if hasattr(usage_mod, "record_other_note") else doc["usage"]["other_notes"].append(
+            {"note": note, "at": "2026-10-15T10:00:00+00:00"})
+        db["llm_calls"].docs.append({"run_id": audit_id, "step": "growth_engine", "input_tokens": 100, "output_tokens": 10,
+                                     "estimated_cost_usd": cost, "cache_hit": False})
+    return a_audit
+
+
+def test_a_tester_sees_only_their_own_usage_and_notes_and_the_owner_sees_all(access):
+    client = access["client"]
+    _seed_usage(access)
+    mine = client.get("/api/usage/totals", headers=access["a"])
+    assert mine.status_code == 200
+    assert "NOTE-OF-A" in mine.text and "NOTE-OF-B" not in mine.text, "no tester sees another tester's notes"
+    assert mine.json()["tokens_and_cost_by_step"]["growth_engine"]["cost_usd"] == 1.0, "only the calls of their own audits"
+    theirs = client.get("/api/usage/totals", headers=access["b"])
+    assert "NOTE-OF-B" in theirs.text and "NOTE-OF-A" not in theirs.text
+    assert theirs.json()["tokens_and_cost_by_step"]["growth_engine"]["cost_usd"] == 2.0
+    everyone = client.get("/api/usage/totals", headers=access["owner"])
+    assert "NOTE-OF-A" in everyone.text and "NOTE-OF-B" in everyone.text
+    assert everyone.json()["tokens_and_cost_by_step"]["growth_engine"]["cost_usd"] == 3.0
+    assert client.get("/api/usage/totals").status_code == 401
+
+
+def test_a_tester_with_no_audit_sees_empty_totals(access):
+    new_id, new = access["client"].post("/api/admin/testers", json={"label": "Tester C"}, headers=access["owner"]).json()["id"], None
+    link = access["client"].post(f"/api/admin/testers/{new_id}/reissue", headers=access["owner"]).json()["link"]
+    empty = access["client"].get("/api/usage/totals", headers={"Authorization": f"Bearer {link.rsplit('/t/', 1)[1]}"})
+    assert empty.status_code == 200 and "NOTE-OF" not in empty.text

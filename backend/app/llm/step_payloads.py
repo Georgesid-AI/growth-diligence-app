@@ -14,6 +14,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from .. import formatting as fmt
+from .. import integrity
 
 STEPS = ("data_inventory", "data_integrity")
 
@@ -57,6 +58,7 @@ REASONS = {
     "not_stored": "the engine does not store this check",
     "no_transactions": "the engine stores no transaction-level result",
     "no_anomalies": "the engine could not compute the anomaly flags",
+    "no_smoothness_window": "the revenue file has fewer than 13 consecutive months of revenue",
     "no_common_month": "the revenue file and the P&L have no month in common up to the as-of month",
 }
 DATA_INTEGRITY_VERDICTS = ("Reliable", "Needs clarification", "Material concerns")
@@ -214,9 +216,21 @@ def _reconciliation(results: dict) -> dict:
     return out
 
 
+def _smoothness(results: dict) -> dict:
+    """The smoothness check as docs/specs/smoothness.md computes it (integrity.smoothness, the same function the Dashboard's
+    integrity block reads); the figures are display strings and the provisional label travels with the result."""
+    name = "Month-on-month revenue smoothness"
+    read = integrity.smoothness(results)
+    if read is None:
+        return _check(name, NOT_COMPUTED, reason=REASONS["no_smoothness_window"])
+    return _check(name, COMPUTED, source_key=SOURCES["revenue"][0], first_month=read["first"], last_month=read["last"],
+                  deviation_points=f"{read['deviation']:.1f} points", limit_points=f"{read['limit']:g} points",
+                  result=integrity.AMBER if read["smooth"] else integrity.GREEN, threshold_note=read["label"])
+
+
 def build_integrity(results: dict) -> dict:
     """The data-integrity slice: the stored reconciliation (window total and the months over its tolerance), the stored
-    count of revenue lines without a customer ID, and, for every other check, "not computed" or "not ingested" with a
+    count of revenue lines without a customer ID, the smoothness reading (docs/specs/smoothness.md), and, for every other check, "not computed" or "not ingested" with a
     closed reason. Nothing is calculated here."""
     a = results.get("anomalies")
     if not isinstance(a, dict):
@@ -226,9 +240,10 @@ def build_integrity(results: dict) -> dict:
                              count=_count((a.get("revenue_missing_customer_id") or {}).get("count") or 0))
     checks = [_reconciliation(results), missing_ids]
     checks += [_check(name, NOT_COMPUTED, reason=REASONS[why]) for name, why in (
-        ("Cohorts starting mid-period", "not_stored"), ("Quarter-end clustering of deals", "not_stored"),
-        ("Month-on-month revenue smoothness", "not_stored"), ("Figures that differ from an approved deck claim", "not_stored"),
-        ("Benford test", "no_transactions"))]
+        ("Cohorts starting mid-period", "not_stored"), ("Quarter-end clustering of deals", "not_stored"))]
+    checks.append(_smoothness(results))
+    checks += [_check(name, NOT_COMPUTED, reason=REASONS[why]) for name, why in (
+        ("Figures that differ from an approved deck claim", "not_stored"), ("Benford test", "no_transactions"))]
     checks.append(_check("Bank data", NOT_INGESTED))
     return {"source_list": source_list(results), "integrity": checks}
 

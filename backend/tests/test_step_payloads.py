@@ -221,12 +221,43 @@ def test_missing_customer_ids_are_the_stored_count():
     assert checks_by_name(sp.build_integrity(results))["Revenue lines without a customer ID"]["status"] == "not computed"
 
 
-@pytest.mark.parametrize("name", ["Cohorts starting mid-period", "Quarter-end clustering of deals", "Month-on-month revenue smoothness",
+@pytest.mark.parametrize("name", ["Cohorts starting mid-period", "Quarter-end clustering of deals",
                                   "Figures that differ from an approved deck claim", "Benford test"])
 def test_the_checks_the_engine_does_not_store_read_not_computed_and_are_never_estimated(name):
     check = checks_by_name(sp.build_integrity(full_results()))[name]
     assert check["status"] == "not computed" and check["reason"] in sp.REASONS.values()
     assert set(check) == {"check", "status", "reason"}, "no figure"
+
+
+def _with_series(totals, status="Complete"):
+    months = [f"{2023 + i // 12}-{i % 12 + 1:02d}" for i in range(len(totals))]
+    results = full_results()
+    results["revenue_series"] = {"months": months, "segments": [], "data": [{"month": m, "total": v} for m, v in zip(months, totals)],
+                                 "source": cite(0)}
+    results["source_period"] = {"month": months[-1], "status": status, "complete_by": None, "evidence_to": months[-1]}
+    return results
+
+
+def test_smoothness_is_the_integrity_modules_reading_not_not_computed():
+    """Decision of 15 Oct 2026: the data-integrity narrative is told the smoothness result (docs/specs/smoothness.md), with the
+    provisional label, as display strings; the number comes from integrity.smoothness, the function the Dashboard block reads."""
+    from app import integrity
+    results = _with_series([10000 * 1.01 ** i for i in range(24)])
+    check = checks_by_name(sp.build_integrity(results))["Month-on-month revenue smoothness"]
+    read = integrity.smoothness(results)
+    assert check == {"check": "Month-on-month revenue smoothness", "status": "computed", "source_key": "S1",
+                     "first_month": read["first"], "last_month": read["last"], "deviation_points": "0.0 points",
+                     "limit_points": "0.5 points", "result": "Amber", "threshold_note": "provisional threshold, 3 synthetic series"}
+    noisy = checks_by_name(sp.build_integrity(_with_series([100, 108, 103, 121, 118, 131, 127, 149, 141, 160, 158, 181, 170, 196])))
+    assert noisy["Month-on-month revenue smoothness"]["result"] == "Green"
+
+
+def test_smoothness_stays_not_computed_with_a_closed_reason_when_the_window_is_short_or_the_last_month_is_partial():
+    short = checks_by_name(sp.build_integrity(_with_series([10000 * 1.01 ** i for i in range(12)])))["Month-on-month revenue smoothness"]
+    assert short == {"check": "Month-on-month revenue smoothness", "status": "not computed",
+                     "reason": "the revenue file has fewer than 13 consecutive months of revenue"}
+    thirteen_partial = checks_by_name(sp.build_integrity(_with_series([10000 * 1.01 ** i for i in range(13)], "Possibly partial")))
+    assert thirteen_partial["Month-on-month revenue smoothness"]["status"] == "not computed", "the partial month is left out"
 
 
 def test_bank_data_is_not_ingested():
