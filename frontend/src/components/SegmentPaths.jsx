@@ -1,3 +1,4 @@
+import { PeriodLines } from "./MetricCard";
 import { Provenance } from "@/components/Provenance";
 import { AlertTriangle } from "lucide-react";
 import {
@@ -22,7 +23,7 @@ import { seeGlossary } from "@/lib/glossary";
 const L = (path) => metricLabel(path);
 const Q = (path) => bracketed(metricQualifier(path));
 
-export function SegmentPaths({ sp, ccy }) {
+export function SegmentPaths({ sp, ccy, period }) {
   return (
     <div data-testid="segment-paths-panel" className="bg-white border border-[#E5E7EB] rounded-lg p-5 mb-6">
       <div className="flex items-baseline justify-between mb-3 flex-wrap gap-2">
@@ -31,6 +32,7 @@ export function SegmentPaths({ sp, ccy }) {
         </h3>
         <span className="text-[10px] font-mono text-slate-500">segments only · ACV bands are a separate cut</span>
       </div>
+      <PeriodLines id="segment-paths-panel" period={period} />
       <div data-testid="segment-view-heading" className="-mt-2 mb-3 text-[11px] font-mono text-slate-500">
         Segment view · NRR-compounded base · landed ACV by segment · gross landings
       </div>

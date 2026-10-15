@@ -227,10 +227,41 @@ def test_plan_7_1_growth_with_a_yoy_cue_is_matched_on_the_year_on_year_basis_onl
     assert row["evidence_label"] in ("Verified", "Contradicted") or row["definition_check"] == "ask"
 
 
+@pytest.mark.parametrize("basis_text, month, period, missing", [
+    ("15% YoY", "2023-12", "Dec 2023", ["2022-12"]),            # the base month, a year earlier, is before the data
+    ("2% MoM", "2023-01", "Jan 2023", ["2022-12"]),             # the month before the first month
+])
+def test_a_growth_claim_with_a_compared_month_outside_the_data_is_not_covered_and_unverified(basis_text, month, period, missing):
+    """Dates-and-periods section 5 (Opus review): a figure over the months present would compare other months than the claim's."""
+    value = int(basis_text.split("%")[0])
+    row = run_claim({"claim_type": "revenue_growth", "value": value, "unit": "%", "currency": None, "target_date": month,
+                     "period_text": period, "snippet": f"Revenue grew {basis_text} in {period}"})
+    assert (row["evidence_label"], row["period_coverage"]) == ("Unverified", "Not covered")
+    assert row["months_missing"] == missing and row["observed_value"] is None and row["gap"] is None
+    assert row["reason"].startswith("claim period not in supplied data: ")
+
+
+def test_a_mom_growth_claim_for_the_possibly_partial_default_month_is_unverified():
+    results = sample_run()
+    sets = {"fiscal_year_end": 12, "as_of_month": None, "reporting_currency": "EUR", "fx": {"EUR": 1.0}}
+    row = cm.build_register([_claim(claim_type="revenue_growth", value=2, unit="%", currency=None, target_date="2024-02",
+                                    period_text="Feb 2024", snippet="Revenue grew 2% MoM in Feb 2024")], results, sets)[0]
+    assert (row["evidence_label"], row["period_coverage"]) == ("Unverified", "Not covered")
+    assert "possibly partial" in row["reason"]
+
+
+def test_cagr_or_annualised_wins_over_since_and_over():
+    from app.decks.claims import growth_basis
+    assert growth_basis("Revenue CAGR of 40% since 2020") == "annualised"
+    assert growth_basis("Annualised growth of 40% over the last 3 years") == "annualised"
+    assert growth_basis("Revenue grew 40% since 2020") == "cumulative"
+    assert growth_basis("Revenue grew 40% YoY since 2020") == "unknown", "other pairs of bases still need the analyst"
+
+
 @pytest.mark.parametrize("line, basis", [
     ("Revenue grew 15% YoY in Jan 2024", "yoy"), ("Revenue grew 15% in Jan 2024", "unknown"),
     ("Revenues stand at €15K MRR and are growing 15% MoM", "mom"), ("55,000 users, growing 40% per month", "mom"),
-    ("Annual recurring revenue grew 120% in 2023", "unknown"), ("Revenue CAGR of 40% since 2020", "unknown"),
+    ("Annual recurring revenue grew 120% in 2023", "unknown"), ("Revenue CAGR of 40% since 2020", "annualised"),
     ("Revenue grew 300% over the last 3 years", "cumulative"), ("Revenue grew over 15% in 2023", "unknown"),
 ])
 def test_the_parser_sets_the_growth_basis_from_cue_words(line, basis):
