@@ -1,4 +1,4 @@
-from fastapi import BackgroundTasks, Body, FastAPI, APIRouter, HTTPException, UploadFile, File
+from fastapi import BackgroundTasks, Body, Depends, FastAPI, APIRouter, HTTPException, Request, UploadFile, File
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -26,6 +26,7 @@ from app import disclosure as disclosure_mod
 from app import narrative_export
 from app import run_audit
 from app import claim_matching
+from app import access as access_mod
 from app import ic_memo
 from app import integrity as integrity_mod
 from app import verdict as verdict_mod
@@ -47,7 +48,35 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
 
 app = FastAPI(title="Growth Diligence Engine")
-api = APIRouter(prefix="/api")
+
+
+async def access_guard(request: Request):
+    """docs/specs/access-links.md section 3, on every route of the router: 401 for no, unknown, expired or revoked token; the
+    owner token reaches usage totals and the admin routes only (404 elsewhere); a tester reaches an audit (or run) id only when
+    their token owns it, and gets the missing-audit answer otherwise."""
+    path = request.url.path
+    if access_mod.disabled() or path in access_mod.OPEN_PATHS or request.method == "OPTIONS":
+        request.state.principal = None
+        return
+    who = await access_mod.principal(db, access_mod.bearer(request.headers.get("authorization")))
+    if who is None:
+        raise HTTPException(401, "Invalid or missing access link")
+    role, tester_id = who
+    request.state.principal = who
+    if path.startswith("/api/admin/") or path == "/api/usage/totals":
+        if role != access_mod.OWNER:
+            raise HTTPException(404, "Not found")
+        return
+    if role == access_mod.OWNER:
+        raise HTTPException(404, "Audit not found")
+    audit_id = request.path_params.get("audit_id") or request.path_params.get("run_id")
+    if audit_id is not None:
+        owned = await db.audits.find_one({"id": audit_id, "owner": tester_id}, {"id": 1})
+        if not owned:
+            raise HTTPException(404, "Audit not found")
+
+
+api = APIRouter(prefix="/api", dependencies=[Depends(access_guard)])
 
 install_secret_redaction()      # no key can reach a log line, message or traceback
 logger = logging.getLogger("growth")
@@ -311,7 +340,7 @@ async def root():
 
 
 @api.post("/audits")
-async def create_audit(payload: AuditCreate):
+async def create_audit(payload: AuditCreate, request: Request):
     audit = {
         "id": str(uuid.uuid4()),
         "company_name": payload.company_name,
@@ -331,13 +360,53 @@ async def create_audit(payload: AuditCreate):
         "metrics_stale": False,
     }
     audit["ic_inputs"] = verdict_mod.with_review(audit, None)       # the first quarterly review: creation date + 90 days
-    await db.audits.insert_one({**audit, "usage": usage_mod.empty()})
+    who = getattr(request.state, "principal", None)
+    owner = {"owner": who[1]} if who and who[1] else {}              # the tester token's id, never the token
+    await db.audits.insert_one({**audit, **owner, "usage": usage_mod.empty()})
     return audit
 
 
+class TesterCreate(BaseModel):
+    label: str = Field(min_length=1, max_length=80)
+
+
+def _link(request: Request, token: str) -> str:
+    base = os.environ.get("PUBLIC_APP_URL") or str(request.base_url)
+    return f"{base.rstrip('/')}/t/{token}"
+
+
+@api.post("/admin/testers")
+async def issue_tester(payload: TesterCreate, request: Request):
+    """The owner issues one link per tester. The link is returned once; only its hash is stored."""
+    tester_id, token = await access_mod.issue(db, payload.label.strip())
+    return {"id": tester_id, "label": payload.label.strip(), "link": _link(request, token)}
+
+
+@api.get("/admin/testers")
+async def list_testers():
+    return await access_mod.testers(db)
+
+
+@api.post("/admin/testers/{tester_id}/revoke")
+async def revoke_tester(tester_id: str):
+    if not await access_mod.revoke(db, tester_id):
+        raise HTTPException(404, "Not found")
+    return {"ok": True}
+
+
+@api.post("/admin/testers/{tester_id}/reissue")
+async def reissue_tester(tester_id: str, request: Request):
+    token = await access_mod.reissue(db, tester_id)
+    if token is None:
+        raise HTTPException(404, "Not found")
+    return {"id": tester_id, "link": _link(request, token)}
+
+
 @api.get("/audits")
-async def list_audits():
-    return await db.audits.find({}, {"_id": 0, "results": 0, "usage": 0}).sort("created_at", -1).to_list(200)
+async def list_audits(request: Request):
+    who = getattr(request.state, "principal", None)
+    flt = {"owner": who[1]} if who else {}
+    return await db.audits.find(flt, {"_id": 0, "results": 0, "usage": 0, "owner": 0}).sort("created_at", -1).to_list(200)
 
 
 @api.get("/audits/{audit_id}")

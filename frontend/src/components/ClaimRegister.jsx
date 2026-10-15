@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Provenance } from "@/components/Provenance";
 import DateField from "@/components/DateField";
-import { answerDefinitionCheck, answerTurnover, claimsCsvUrl, getClaimRegister, updateClaimInputs } from "@/lib/api";
+import { answerDefinitionCheck, answerTurnover, claimsCsvUrl, downloadFile, getClaimRegister, updateClaimInputs } from "@/lib/api";
 import {
   DEFINITION_ANSWERS, DOWNLOAD_LABEL, labelText, GATE_BUDGET_MAX, GATE_DIRECTIONS, GATE_METRIC_MAX, GATE_METRIC_PLACEHOLDER, GATE_NEEDED, KEY_GATE_LABEL, NO_METRIC, OTHER_DECISION, PREFILLED, gateDraft,
   REGISTER_COLUMNS, REGISTER_COLUMN_WIDTHS, REGISTER_HEADING, SET_GATE_LABEL, VAS_LABEL, TURNOVER_QUESTION, answerReady, reasonsFor, claimCellText, rateHover, takeRateText, evidenceLines, gapText, gateContext, gateEdit, metricOptions, needsMetricName,
@@ -253,7 +253,8 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
         <div className="flex gap-2">
         <Button size="sm" onClick={saveAll} className="h-8 bg-sky-600 hover:bg-sky-500" data-testid="register-gates-save-all">Save all gates</Button>
         <Button asChild variant="outline" size="sm" className="h-8">
-          <a href={claimsCsvUrl(auditId)} data-testid="claim-register-csv"><Download className="h-3.5 w-3.5 mr-1.5" />{DOWNLOAD_LABEL}</a>
+          <a href={claimsCsvUrl(auditId)} data-testid="claim-register-csv"
+            onClick={(e) => { e.preventDefault(); downloadFile(`/audits/${auditId}/claims.csv`, "claims.csv").catch(() => toast.error("The CSV could not be downloaded.")); }}><Download className="h-3.5 w-3.5 mr-1.5" />{DOWNLOAD_LABEL}</a>
         </Button>
         </div>
       </div>

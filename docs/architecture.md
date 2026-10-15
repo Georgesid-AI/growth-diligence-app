@@ -9,15 +9,21 @@ what is written here is an architecture change: a session that needs one stops a
 | Component | Where | What it does |
 |---|---|---|
 | Frontend | `frontend/` (React, CRA) | Pages AuditHub, MappingWizard, Dashboard, Diagnostics. The approval list and the deck panel (`DeckPanel.jsx`) show each claim with its source and its label (Verified, "AI suggestion, not verified"). Provenance hover cards show file, sheet, rows and rule for every metric. |
-| API | `backend/server.py` (FastAPI) | Audit CRUD, uploads, column mapping (`FIELD_DEFS`), the claim register, exports. Reads `MONGO_URL` and `DB_NAME` at start. |
+| API | `backend/server.py` (FastAPI) | Audit CRUD, uploads, column mapping (`FIELD_DEFS`), the claim register, exports. Reads `MONGO_URL` and `DB_NAME` at start. Every audit route checks the request's token link against the audit's owner (`backend/app/access.py`, docs/specs/access-links.md); the owner token sees usage totals only. |
 | Calc engine | `backend/growth_engine.py` | Pure, deterministic. Never guesses a missing input; every number carries a source reference (file, sheet, rows). |
 | Deck parser | `backend/app/decks/` | Python only, no model: parsed text with slide or page references, candidate claims (`claims.py`), and the structures of docs/specs/deck-parser.md §7. Has no import of, or call to, the gateway. |
 | Structure path | `backend/app/structures/` | Redaction of structure cells (`redact.py`), the item list Python makes from them (`items.py`), the verifier that rebuilds periods and sets Verified (`verify.py`), and the orchestration that queues decks until the revenue file is mapped and turns checked items into approval rows (`__init__.py`). |
 | LLM gateway | `backend/app/llm/` | The only component allowed to call a model provider (`gateway.py`). Prompts are server-side files with a version and a release stamp (`prompt_store.py`, `prompts/`); cache keys carry text, type, prompt tag, model and schema hash (`cache.py`); guards hold the per-audit lock, the daily spend cap and the retry policy (`guards.py`); the per-audit pseudonym map (`redaction.py`); strict output schemas (`schemas.py`). |
 | Supporting modules | `backend/app/` | `formatting.py`, `disclosure.py` (the AI-provenance block), `narrative_export.py`, `logsafety.py` (no secret reaches a log line). |
 | Interface contracts | `backend/schemas/` | `metrics.py`: `MetricsPayload`, the one description of the calc engine's output (units, citations), validated by the engine, the gateway and the export (docs/specs/interface-contracts.md). |
-| Storage | MongoDB | `audits`, `datasets`, `deck_text` (parsed text and structures), `deck_candidates`, `llm_narratives`, `llm_structures`, `llm_calls`, `llm_locks`, `pseudonym_map`, `column_mappings`. Delete audit removes an audit's documents in every collection. |
+| Storage | MongoDB | `audits`, `datasets`, `deck_text` (parsed text and structures), `deck_candidates`, `llm_narratives`, `llm_structures`, `llm_calls`, `llm_locks`, `pseudonym_map`, `column_mappings`, `access_tokens` (tester-phase token hashes with id, label and expiry; never a token; removed at the move to accounts). Delete audit removes an audit's documents in every collection. |
 | Manual tooling | `scripts/consistency_run.py` | Live consistency runs (paid), `--fake` replays, `--diagnostic` and `--probe` on the 10 public test decks. Reports are committed to docs/test-runs/. |
+
+## The amendment of 2026-10-15
+
+George approved (decision 1, 15 Oct 2026) one new MongoDB collection, `access_tokens`, and the token check in the API row, for
+the tester phase on Emergent (docs/specs/access-links.md §6, option a). The collection holds SHA-256 hashes, ids, labels and
+dates only. It is not an audit document, so Delete audit does not touch it. It is removed at the move to magic-link accounts.
 
 ## Evidence method
 

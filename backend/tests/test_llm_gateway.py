@@ -58,7 +58,8 @@ def _project(doc, projection):
         return dict(doc)
     include = {k: v for k, v in projection.items() if k != "_id" and v}
     if not include:
-        return {k: v for k, v in doc.items() if k != "_id"}
+        dropped = {k for k, v in projection.items() if not v}      # an exclusion projection, as Mongo reads it
+        return {k: v for k, v in doc.items() if k != "_id" and k not in dropped}
     return {k: doc[k] for k in include if k in doc}
 
 
@@ -82,6 +83,10 @@ class FakeResult:
 class FakeCursor:
     def __init__(self, docs):
         self._docs = docs
+
+    def sort(self, key, direction=1):
+        self._docs = sorted(self._docs, key=lambda d: d.get(key) or "", reverse=direction < 0)
+        return self
 
     async def to_list(self, n):
         return self._docs[:n]

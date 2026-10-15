@@ -1,8 +1,8 @@
 # Spec: Access links for the tester phase, and the deployment rule (Release 1)
 Status: Agreed scope. Source: docs/plans/app-plan_V2_amendments_15_10_2026.md section 6 and 7.1 (D6 amended, decisions of
 15 Oct 2026, final). Location: docs/specs/access-links.md (new: no earlier access spec existed in docs/specs/).
-Implementation order: 6 of 6. **Architecture note (CLAUDE.md rule 1): building §2 needs a collection that
-docs/architecture.md does not list (§6). Nothing of §2–§4 is built until George decides.**
+Implementation order: 6 of 6. **Architecture change approved by George (15 Oct 2026, decision 1, option a): the `access_tokens` collection and the token check are
+in docs/architecture.md.**
 
 ## 0. Challenge and deletions (CLAUDE.md rule 4)
 - Needed: testers will hold real audits on a public URL; today any visitor can list and open every audit. The simpler
@@ -41,15 +41,15 @@ generate memo, export CSV/xlsx, delete audit, and every other `/audits/{audit_id
 | A tester token on an audit another token owns (or an audit id that does not exist) | 404, the same body as a missing audit, so the answer never reveals that the audit exists |
 | The owner token on any audit route | 404 |
 | The owner token on `GET /api/usage/totals` and the admin routes | 200: usage totals only (counts and cost, no company, file or claim), the product stance "we cannot see your deals" |
-| `GET /api/` (health) and `GET /api/fields` (the field list, no audit data) | open |
-List audits returns only the token's own audits.
+| `GET /api/` (health) and `GET /api/fields` (the field list, no audit data) | open (George, 15 Oct 2026, decision 2a: they stay open; neither holds audit data) |
+List audits returns only the token's own audits; the owner token gets 404 on it too (George, 15 Oct 2026).
 
 ## 4. Tests required before tester deployment
 | Test | File |
 |---|---|
 | 1. No token → 401 on every route of §3 | `test_access_links.py` |
 | 2. Tester A's token on tester B's audit id → 404 on every route of §3, including file download, memo and export | `test_access_links.py` |
-| 3. Expired token → 401; revoked token → 401 | `test_access_links.py` |
+| 3. Expired token → 401; revoked token → 401, on every route of §3 and on the audit list and create | `test_access_links.py` |
 | 4. Owner token on any audit route → 404 | `test_access_links.py` |
 | The tester page states "Your link is your login. Anyone with the link can open your audits." | `AccessLink.test.jsx` |
 The route list of tests 1, 2 and 4 is read from the app's own router, so a route added later is covered without editing the
@@ -74,7 +74,7 @@ the engineering owner; no session of this spec has that access.
 - Options for George: (a) approve the collection `access_tokens` and the check in the API row (recommended: one collection,
   hashes only, removed at the AWS move); (b) keep tester tokens in the environment (hashes and expiry dates set at deploy),
   which drops run-time revoke and re-issue from §2 and needs a redeploy for each change.
-- Until then: this spec, the failing tests of §4 (strict expected failures) and nothing else are committed.
+- Decided: option (a). docs/architecture.md now lists `access_tokens` and the token check.
 
 ## 7. Found while writing this spec (reported, not changed)
 - The plan names "no methodology prompt text in the repo (CLAUDE.md)". CLAUDE.md has no such rule, and the narrative and

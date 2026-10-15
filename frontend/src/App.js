@@ -7,12 +7,14 @@ import Dashboard from "@/pages/Dashboard";
 import Diagnostics from "@/pages/Diagnostics";
 import RunAudit from "@/pages/RunAudit";
 import Review from "@/pages/Review";
+import AccessLink from "@/pages/AccessLink";
 
 function App() {
   return (
     <div className="App">
       <BrowserRouter>
         <Routes>
+          <Route path="/t/:token" element={<AccessLink />} />
           <Route path="/" element={<AuditHub />} />
           <Route path="/audit/:id/run" element={<RunAudit />} />
           <Route path="/audit/:id/review" element={<Review />} />
