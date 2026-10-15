@@ -21,7 +21,8 @@ jest.mock("recharts", () => new Proxy({}, { get: () => ({ children }) => <div>{c
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-const BLOCKS = ["arr", "mrr_series", "revenue_series", "customers_series", "nrr", "gross_churn", "acv_path", "cohort_retention"];
+const BLOCKS = ["arr", "mrr_series", "revenue_series", "customers_series", "nrr", "gross_churn", "acv_path", "cohort_retention",
+  "sales_cycle", "win_rate", "founder_win_rate", "cac_payback", "segment_paths"];
 
 function regressionResults() {
   const data = JSON.parse(JSON.stringify(sample));
@@ -81,5 +82,26 @@ test("a possibly partial last month says so beside the latest valid source perio
   const { host, done } = await mountDashboard(data);
   try {
     expect(host.querySelector('[data-testid="dates-line"]').textContent).toContain("Latest valid source period: June 2019 (Possibly partial)");
+  } finally { await done(); }
+});
+
+// card testid -> the metric_periods block it must show (dates-and-periods.md section 3: every chart and table card)
+const CARDS = { "mrr-by-segment-chart": "mrr_series", "nrr-chart": "nrr", "cohort-retention": "cohort_retention",
+  "path-to-plan-panel": "acv_path", "nrr-by-segment": "nrr", "sales-cycle-by-segment": "sales_cycle", "acv-bands": "acv_path",
+  "win-rate-founder": "founder_win_rate", "cac-payback-chart": "cac_payback", "segment-paths-panel": "segment_paths" };
+
+test("every chart and table card shows its own period and the months missing inside it", async () => {
+  const data = regressionResults();
+  for (const [i, block] of [...new Set(Object.values(CARDS))].entries()) {
+    data.results.metric_periods[block] = { first: "2017-07", last: "2019-06", missing: [`2018-0${(i % 9) + 1}`] };
+  }
+  const { host, done } = await mountDashboard(data);
+  try {
+    for (const [card, block] of Object.entries(CARDS)) {
+      const missing = data.results.metric_periods[block].missing[0];
+      const month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep"][Number(missing.slice(5)) - 1];
+      expect(host.querySelector(`[data-testid="card-period-${card}"]`)?.textContent).toBe("Jul 2017 – Jun 2019");
+      expect(host.querySelector(`[data-testid="card-missing-${card}"]`)?.textContent).toBe(`Months missing: ${month} 2018`);
+    }
   } finally { await done(); }
 });

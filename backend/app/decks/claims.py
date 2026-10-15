@@ -1272,6 +1272,8 @@ def growth_basis(text: str) -> str:
     """mom, yoy, annualised or cumulative when the claim's words carry the cues of exactly one basis; else "unknown" (none, or
     two bases): the analyst sets it with one click."""
     found = [basis for basis, rx in GROWTH_CUES.items() if rx.search(text or "")]
+    if "annualised" in found:           # "CAGR of 40% since 2020": the window is the period of the annualised rate, not a second basis
+        found = [b for b in found if b != "cumulative"]
     return found[0] if len(found) == 1 else "unknown"
 
 
