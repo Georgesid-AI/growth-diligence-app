@@ -1208,7 +1208,32 @@ def detect_candidates(blocks: List[Dict], file: str, fiscal_year_end: int = 12) 
     _flag_funds_inconsistencies(found)
     for c in found:
         c.pop("_funds", None)
+        if c.get("claim_type") in GROWTH_TYPES:
+            c["growth_basis"] = growth_basis(f"{c.get('snippet') or ''} {c.get('label_from') or ''}")
     return found
+
+
+# ---------------------------------------------------------------------------
+# Growth basis (docs/specs/dates-and-periods.md section 5)
+# ---------------------------------------------------------------------------
+GROWTH_TYPES = ("revenue_growth", "growth", "user_growth")
+# The cue words of each basis, whole words; "annual" and "monthly" do not count inside "annual / monthly recurring revenue", and
+# "over" counts only before a year, a fiscal year or a duration ("over 2023", "over the last 12 months"), never before a figure.
+_PERIOD_AFTER_OVER = (r"(?:the\s+(?:last|past|next)\s+)?(?:\d+\s+|one\s+|two\s+|three\s+|four\s+|five\s+)?"
+                      r"(?:(?:19|20)\d{2}|FY\s?\d{2}|years?|months?|quarters?)\b")
+GROWTH_CUES = {
+    "mom": re.compile(r"\bMoM\b|\bm/m\b|(?i:\bmonth[- ](?:on|over)[- ]month\b|\bmonthly\b(?!\s+recurring\s+revenue)|\bper\s+month\b)"),
+    "yoy": re.compile(r"\bYoY\b|\by/y\b|(?i:\byear[- ](?:on|over)[- ]year\b|\bannual\b(?!\s+recurring\s+revenue)|\bper\s+year\b)"),
+    "annualised": re.compile(r"\bCAGR\b|(?i:\bannuali[sz]ed\b)"),
+    "cumulative": re.compile(r"(?i:\bsince\b|\bover\s+" + _PERIOD_AFTER_OVER + r")"),
+}
+
+
+def growth_basis(text: str) -> str:
+    """mom, yoy, annualised or cumulative when the claim's words carry the cues of exactly one basis; else "unknown" (none, or
+    two bases): the analyst sets it with one click."""
+    found = [basis for basis, rx in GROWTH_CUES.items() if rx.search(text or "")]
+    return found[0] if len(found) == 1 else "unknown"
 
 
 def same_claim(a: Dict, b: Dict) -> Optional[Dict]:

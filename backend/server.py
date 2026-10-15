@@ -210,12 +210,29 @@ def _required_text(v: Optional[str]) -> Optional[str]:
     return v
 
 
+def _validate_analysis_date(v: Optional[str]) -> Optional[str]:
+    """The requested analysis date (docs/specs/dates-and-periods.md section 2): YYYY-MM-DD, a year from 2000 to 2100, or none."""
+    if not v:
+        return None
+    try:
+        dt = datetime.strptime(v, "%Y-%m-%d")
+    except ValueError:
+        dt = None
+    if dt is None or dt.strftime("%Y-%m-%d") != v or not 2000 <= dt.year <= 2100:
+        raise ValueError("analysis_date must be an ISO date (YYYY-MM-DD) with a year between 2000 and 2100")
+    return v
+
+
 class AuditCreate(BaseModel):
     company_name: str                       # the target company
     reporting_currency: str = "EUR"
     target_arr: float = 0
     target_date: Optional[str] = None
     as_of_month: Optional[str] = None
+    # The analyst's date: dates the memo and the analyst's own text, never a figure (null: today). The box "Last month is
+    # complete" marks the revenue file's last month Complete (dates-and-periods.md section 2).
+    analysis_date: Optional[str] = None
+    last_month_complete: bool = False
     # The month the company's fiscal year ends in (deck-parser.md section 2). FY25 is the fiscal year
     # that ends in 2025; with December it is the calendar year.
     fiscal_year_end: int = Field(default=12, ge=1, le=12)
@@ -225,6 +242,7 @@ class AuditCreate(BaseModel):
 
     _check_target_date = field_validator("target_date")(_validate_target_date)
     _check_as_of_month = field_validator("as_of_month")(_validate_as_of_month)
+    _check_analysis_date = field_validator("analysis_date")(_validate_analysis_date)
     _check_required = field_validator("client_name")(_required_text)
 
 
@@ -234,12 +252,15 @@ class AuditUpdate(BaseModel):
     target_arr: Optional[float] = None
     target_date: Optional[str] = None
     as_of_month: Optional[str] = None
+    analysis_date: Optional[str] = None
+    last_month_complete: Optional[bool] = None
     fiscal_year_end: Optional[int] = Field(default=None, ge=1, le=12)
     client_name: Optional[str] = None
     structure_reading_consent: Optional[bool] = None
 
     _check_target_date = field_validator("target_date")(_validate_target_date)
     _check_as_of_month = field_validator("as_of_month")(_validate_as_of_month)
+    _check_analysis_date = field_validator("analysis_date")(_validate_analysis_date)
     _check_required = field_validator("client_name")(_required_text)
 
 
@@ -297,6 +318,8 @@ async def create_audit(payload: AuditCreate):
         "target_arr": payload.target_arr,
         "target_date": payload.target_date,
         "as_of_month": payload.as_of_month,
+        "analysis_date": payload.analysis_date,
+        "last_month_complete": payload.last_month_complete,
         "fiscal_year_end": payload.fiscal_year_end,
         "client_name": payload.client_name,
         "structure_reading_consent": payload.structure_reading_consent,
@@ -332,6 +355,8 @@ async def update_audit(audit_id: str, payload: AuditUpdate):
     updates = {k: v for k, v in payload.model_dump().items() if v is not None}
     if "as_of_month" in payload.model_fields_set and payload.as_of_month is None:
         updates["as_of_month"] = None       # an explicit null clears the as-of month back to the default (last P&L month)
+    if "analysis_date" in payload.model_fields_set and payload.analysis_date is None:
+        updates["analysis_date"] = None     # an explicit null returns the requested analysis date to today
     consent = updates.get("structure_reading_consent")
     if consent is not None and consent != (a.get("structure_reading_consent") is True):
         await db.audits.update_one({"id": audit_id},
@@ -1472,6 +1497,8 @@ class ClaimInputs(BaseModel):
     gate_metric_name: Optional[str] = Field(default=None, max_length=claim_matching.GATE_METRIC_MAX)
     gate_direction: Optional[Literal["at least", "at most"]] = None
     key_gate: Optional[bool] = None
+    # dates-and-periods.md section 5: the one-click "Set growth basis" of a growth claim
+    growth_basis: Optional[Literal["mom", "yoy", "annualised", "cumulative"]] = None
 
     @field_validator("gate_date")
     @classmethod
@@ -1516,7 +1543,7 @@ async def update_claim_inputs(audit_id: str, claim_id: str, payload: ClaimInputs
         raise _rejected("segment", "choose a segment of the data, Whole company or Not in the data")
     candidate = next(c for c in claims if c["id"] == claim_id.split("#")[0])
     inputs = {**(candidate.get("claim_inputs") or {})}
-    if {"metric", "segment"} & sent:            # a re-matched claim is asked "Same metric and period?" again (section 4.1)
+    if {"metric", "segment", "growth_basis"} & sent:  # a re-matched claim is asked "Same metric and period?" again (section 4.1)
         inputs = claim_matching.without_definition_answer(inputs, {claim_id})
     kept = {**inputs.get(claim_id, {}), **{k: v for k, v in values.items() if v is not None}}
     for k, v in values.items():
@@ -1838,6 +1865,12 @@ async def put_ic_inputs(audit_id: str, payload: IcInputs):
     return await get_verdict(audit_id)
 
 
+def analysis_date(audit: dict) -> str:
+    """The requested analysis date: the analyst's, else today (dates-and-periods.md section 2). It dates the memo and the analyst's
+    text and is never printed next to a figure."""
+    return audit.get("analysis_date") or datetime.now(timezone.utc).date().isoformat()
+
+
 def _memo_filename(company: str) -> str:
     safe = "".join(c for c in (company or "audit") if c.isalnum() or c in " -_").strip().replace(" ", "_")
     return f"{safe or 'audit'}_ic_memo.md"
@@ -1876,7 +1909,7 @@ async def export_memo(audit_id: str):
             key=verdict_mod.key_gates(rows), gaps=ctx["gaps"], ic=ctx["ic"],
             blockers=await _blocker_list(audit_id, audit), narratives=narratives, usage=usage,
             files=[{"dtype": d["dtype"], "file": d.get("file"), "sheet": d.get("sheet")} for d in datasets],
-            decks=[{"file": d.get("file")} for d in deck_docs], tables=tables, today=datetime.now(timezone.utc).date().isoformat())
+            decks=[{"file": d.get("file")} for d in deck_docs], tables=tables, today=analysis_date(audit))
     except ic_memo.MemoRefused as exc:
         refusal = exc
     words = ic_memo.word_count_of(text) if text else (refusal.words or 0)
@@ -1894,7 +1927,7 @@ async def export_memo(audit_id: str):
 # Setup inputs that change what a computed audit's metrics should be. A change
 # to any of these on an already-computed audit means the stored results are
 # stale until recomputed (see _mark_stale_and_maybe_recompute).
-RECOMPUTE_TRIGGER_FIELDS = {"reporting_currency", "target_arr", "target_date", "as_of_month"}
+RECOMPUTE_TRIGGER_FIELDS = {"reporting_currency", "target_arr", "target_date", "as_of_month", "last_month_complete"}
 
 
 async def _run_compute(audit_id: str) -> dict:
@@ -1921,6 +1954,7 @@ async def _run_compute(audit_id: str) -> dict:
         "target_date": a["target_date"], "fx": fx,
         "billing_terms": ds["revenue"].get("billing_terms", {}), "default_l": 1,
         "as_of_month": a.get("as_of_month"),
+        "last_month_complete": bool(a.get("last_month_complete")),
     }
     sources = {t: {"file": ds[t]["file"], "sheet": ds[t]["sheet"]} for t in ds}
     failures = []
@@ -2157,7 +2191,9 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
                 cac_label = lab("CAC payback", hq, qual("months"), unit="months")
         kv_sheet(xw, "Headline", [
             ("Company", None, meta.get("company_name")),
-            ("As-of month", None, meta.get("as_of_month") or r.get("as_of_month")),
+            # the evidence end and the latest valid source period, never the as-of setting as a period (dates-and-periods.md)
+            ("Evidence to", None, ((r.get("source_period") or {}).get("evidence_to") or r.get("as_of_month"))),
+            ("Latest valid source period", None, fmt.source_period_text(r.get("source_period"))),
             ("Reporting currency", None, ccy),
             (lab("Ending ARR", unit=cur), fmt.CURRENCY, arr.get("value")),
             (lab("Current MRR", unit=cur), fmt.CURRENCY, arr.get("mrr")),
@@ -2254,7 +2290,7 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
         ])
 
         # ACV bands (hide empty bands, keep fixed low-to-high display order)
-        as_of = meta.get("as_of_month") or r.get("as_of_month") or ""
+        as_of = (r.get("source_period") or {}).get("evidence_to") or r.get("as_of_month") or ""     # the active customers' month
         band_rows = [
             {"Band": b["label"], "ACV range": fmt.band_range_label(b.get("low"), b.get("high"), ccy), "Customers": b["count"]}
             for b in (ap.get("bands") or []) if b.get("count")
@@ -2504,7 +2540,8 @@ app.add_middleware(
 # 6: results carry contract_version 1 (percents as fractions, whole counts and days).
 # 7: results carry contract_version 2 (a citation on every result block).
 # 8: demo audits carry no engagement reference (the field is gone).
-SEED_VERSION = 8
+# 9: results carry contract_version 3 (the latest valid source period and the period of every metric).
+SEED_VERSION = 9
 
 
 @app.on_event("startup")

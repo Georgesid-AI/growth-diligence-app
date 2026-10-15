@@ -93,8 +93,9 @@ def _segment_a(final_amount):
     rows += [("C2", f"{m}-01", 500, "EUR", "A") for m in pd.period_range("2024-06", "2024-12", freq="M")]
     rev = pd.DataFrame(rows, columns=["customer_id", "invoice_date", "amount", "currency", "segment"])
     rev["_row"] = range(2, len(rev) + 2)
+    # the as-of month is complete by construction (docs/specs/dates-and-periods.md section 2: else NRR stops a month early)
     cfg = {"reporting_currency": "EUR", "target_arr": 1_000_000, "target_date": "2025-06-30", "fx": {"EUR": 1.0},
-           "billing_terms": {}, "default_l": 1, "as_of_month": None}
+           "billing_terms": {}, "default_l": 1, "as_of_month": None, "last_month_complete": True}
     return ge.compute_all(rev, None, None, cfg, {"revenue": {"file": "revenue.csv", "sheet": "Sheet1"}})
 
 
@@ -197,13 +198,16 @@ def test_the_compute_endpoint_survives_a_failing_metric_and_logs_type_run_id_and
 # ---------------------------------------------------------------------------
 # The reported audit's settings: as-of month after the last month of revenue
 # ---------------------------------------------------------------------------
-def test_reported_settings_with_the_as_of_month_after_the_data_compute_and_flag_the_gap():
+def test_reported_settings_with_the_as_of_month_after_the_data_compute_and_show_where_the_evidence_ends():
     """EUR, target ARR 6,000,000, target 2027-12-31, as-of 2026-06-30; demo revenue ends 2025-02."""
     results = _demo("2026-06-30", "2027-12-31", target_arr=6_000_000)
     assert results["as_of_month"] == "2026-06" and results["arr"]["month"] == "2025-02"
-    item = _missing(results, "Revenue up to the as-of month")
-    assert item and item[0]["reason"].startswith("Revenue lines end 2025-02, 16 month(s) before the as-of month (2026-06)")
-    assert "not guessed" in item[0]["reason"]
+    # since 2026-10-15 (docs/specs/dates-and-periods.md section 2) the latest valid source period says where the evidence ends;
+    # the as-of setting is never printed as the data's period, so the gap item is gone
+    assert results["source_period"] == {"month": "2025-02", "status": "Complete", "complete_by": "as_of", "evidence_to": "2025-02"}
+    assert not _missing(results, "Revenue up to the as-of month")
+    crm = ("sales_cycle", "win_rate", "founder_win_rate")          # deals keep their own period, to their last close month
+    assert all(p["last"] == "2025-02" for k, p in results["metric_periods"].items() if k not in crm)
 
 
 def test_no_gap_item_when_the_revenue_reaches_the_as_of_month():

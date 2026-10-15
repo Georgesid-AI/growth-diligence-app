@@ -5,7 +5,6 @@ import { createRoot } from "react-dom/client";
 
 import ClaimRegister from "./ClaimRegister";
 import * as api from "@/lib/api";
-import { failing } from "@/testing/expectedFailure";
 
 jest.mock("@/lib/api", () => ({
   getClaimRegister: jest.fn(),
@@ -97,7 +96,7 @@ test("the deck list's Confidence column is named Extraction confidence and carri
 });
 
 // docs/specs/dates-and-periods.md section 5, plan 7.1: "15% growth" with no cue waits for the analyst's one click.
-failing("plan 7.1: a growth claim with no basis offers Set growth basis, and one click sends the basis", async () => {
+test("plan 7.1: a growth claim with no basis offers Set growth basis, and one click sends the basis", async () => {
   const row = { ...ROW, claim_id: "g1", claim_type: "revenue_growth", currency: null, unit: "%", claimed_value: 15, metric: "Revenue growth",
     observed_value: null, observed_at: null, gap: null, gap_normalised: null, gap_kind: null, gloss: null, shortfall: null,
     evidence_label: "Unverified", reason: "growth basis unknown: set the growth basis", growth_basis: "unknown" };

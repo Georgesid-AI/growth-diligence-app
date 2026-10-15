@@ -275,7 +275,8 @@ HEADER_SENTINEL = "Jane Doe"    # every mapped column header is renamed to carry
 SERVER_ONLY_TOP_LEVEL = frozenset({"contract_version",                   # interface-contracts.md: the version the stored payload was built under
                                    "anomalies", "mrr_series", "new_mrr_by_quarter", "new_mrr_by_quarter_source",
                                    "revenue_series", "customers_series",    # claim-matching.md table 2a
-                                   "revenue_reconciliation"})               # chat-upload.md section 6.2; data_integrity reads a summary (step_payloads.py)
+                                   "revenue_reconciliation",                # chat-upload.md section 6.2; data_integrity reads a summary (step_payloads.py)
+                                   "source_period", "metric_periods"})      # dates-and-periods.md sections 2-3: months as text, no figure
 SERVER_ONLY_FIELDS = frozenset({
     "file", "sheet", "columns", "rows", "row_numbers", "unlocked_by",
     "values",                       # founder_involved_excluded.values are raw cells (cohort `data.values` is allowed by parent)
@@ -1283,6 +1284,10 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             # docs/specs/evidence-labels.md: the confidence column, the statuses, their explainers and grouping
                             "extraction_confidence", "with_confidence", "confidence_level", "EVIDENCE_STATUSES", "MEMO_GROUPS", "QUALIFIED_NO_FIGURE",
                             "EXTRACTION_EXPLAINER", "EVIDENCE_EXPLAINER", "POPULATION_PREFIX", "NOT_VERIFIED",
+                            # docs/specs/dates-and-periods.md: coverage, the growth basis and their reasons
+                            "period_coverage", "months_missing", "growth_basis", "analysis_date", "last_month_complete",
+                            "NOT_COVERED_REASON", "PARTLY_REASON", "PARTIAL_DETAIL", "AFTER_SOURCE_DETAIL", "GROWTH_UNKNOWN_REASON",
+                            "GROWTH_WINDOW_REASON", "GROWTH_BASE_REASON", "GROWTH_RULES", "GROWTH_CUES",
                             *MATCHING_SERVER_ONLY})
 # The functions that log about the register, and the only things their log calls may name.
 REGISTER_LOGGERS = frozenset({"_claim_rows", "claim_register", "claim_register_csv", "update_claim_inputs", "answer_turnover",

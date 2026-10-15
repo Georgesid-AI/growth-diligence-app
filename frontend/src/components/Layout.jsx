@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Activity, ChevronDown, Terminal } from "lucide-react";
 import { fmtCurrency } from "@/lib/format";
+import { evidenceToText } from "@/lib/periods";
 import BlockerBanner from "@/components/BlockerBanner";
 
 export function Layout({ audit, children }) {
@@ -115,7 +116,8 @@ export function Layout({ audit, children }) {
                 <div className="text-xs font-medium text-slate-800 truncate max-w-[220px]">{audit.company_name}</div>
                 <div className="text-[10px] font-mono text-slate-500" data-testid="header-target-line">
                   {audit.reporting_currency} · {Number(audit.target_arr) ? `target ${fmtCurrency(audit.target_arr, audit.reporting_currency)} ARR` : "target not set"}
-                  {audit.as_of_month ? ` · as of ${audit.as_of_month}` : ""}
+                  {/* the data's own end, never the as-of setting (docs/specs/dates-and-periods.md section 2) */}
+                  {audit.results?.source_period ? ` · evidence to ${evidenceToText(audit.results)}` : ""}
                 </div>
               </div>
             )}

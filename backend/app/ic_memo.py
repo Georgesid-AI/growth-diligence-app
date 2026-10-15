@@ -53,6 +53,8 @@ WORDING_NOT_IN_W = {
 }
 
 RATING_LABELS = {"data_reliability": "Data reliability", "growth_engine": "Growth engine"}
+# The "as of" label of the analyst's own text: the requested analysis date (dates-and-periods.md section 2).
+ANALYST_TEXT = "Analyst's text, as of {date}."
 THESIS_LABELS = {"plan": "Plan", "evidence": "Evidence", "condition": "Condition"}
 
 CATEGORIES = (
@@ -76,7 +78,8 @@ class MemoRefused(Exception):
 
 # --- numbers (section 7.4) --------------------------------------------------------------------------------------------------
 
-_DATE = re.compile(r"\d{4}-\d{2}(?:-\d{2})?(?![\d])|\d{4}-Q[1-4]|\bQ[1-4]\b|\[\^\d+\]:?|(?<![\d:])\d{1,2}:\d{2}(?![\d:])")
+_DATE = re.compile(r"\d{4}-\d{2}(?:-\d{2})?(?![\d])|\d{4}-Q[1-4]|\bQ[1-4]\b|\[\^\d+\]:?|(?<![\d:])\d{1,2}:\d{2}(?![\d:])"
+                   r"|\b(?:January|February|March|April|May|June|July|August|September|October|November|December) \d{4}\b")
 _NUMBER = re.compile(r"(?<![\w.])-?\d[\d,]*(?:\.\d+)?")
 
 
@@ -386,7 +389,9 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, us
     categories = evidence_categories(files, decks)
     covered = sum(1 for c in categories if c["covered"])
     narrative = _growth_narrative(narratives)
-    out: List[str] = [f"# {TITLE.format(company=audit.get('company_name') or 'audit')}", f"Date: {today}", ""]
+    # The date is the requested analysis date; the evidence end is the data's, never the as-of setting (dates-and-periods.md)
+    out: List[str] = [f"# {TITLE.format(company=audit.get('company_name') or 'audit')}", f"Date: {today}",
+                      f"Evidence to {fmt.evidence_to_text(results)}", ""]
 
     # 1. Summary
     out += [f"## {HEADINGS[0]}", f"Verdict: {ver['outcome']} – {ver['rule']}{notes.register(top_ranks)}", vd.W24_STATEMENT, ""]
@@ -396,10 +401,10 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, us
     checks = cm.definition_counts(rows)
     if checks["yes"] or checks["no"]:            # claim-matching.md section 4.1: an open one blocks the verdict, so none is left here
         out += [f"Definition checks: {checks['yes']} answered Yes, {checks['no']} answered No.{notes.register()}"]
-    out += [W16_VALUE_AT_RISK, ""]
+    out += [f"Latest valid source period: {fmt.source_period_text(results.get('source_period'))}.", W16_VALUE_AT_RISK, ""]
 
     # 2. Deal thesis
-    out += [f"## {HEADINGS[1]}"]
+    out += [f"## {HEADINGS[1]}", ANALYST_TEXT.format(date=today)]
     out += [f"{THESIS_LABELS[k]}: {thesis.get(k, '')}{notes.analyst()}" for k in vd.THESIS_PARTS]
     out += [""]
 
@@ -428,9 +433,11 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, us
         growth = f"{narrative['headline']}{notes.add('growth-engine narrative, AI call log')}"
     else:
         arr, nrr, churn = results.get("arr") or {}, results.get("nrr") or {}, results.get("gross_churn") or {}
-        growth = (f"ARR {fmt.fmt_currency(arr.get('value'), ccy)}{notes.source('Monthly MRR by Segment', 'arr.value', arr.get('source'))}, "
-                  f"NRR {fmt.fmt_pct(nrr.get('overall_pct'))}{notes.source('NRR', 'nrr.overall_pct', nrr.get('source'))}, "
-                  f"gross revenue churn {fmt.fmt_pct(churn.get('overall_pct'))}"
+        periods = results.get("metric_periods") or {}
+        at = lambda block: f" ({periods[block]['last']})" if block in periods else ""      # each figure's own period
+        growth = (f"ARR {fmt.fmt_currency(arr.get('value'), ccy)}{at('arr')}{notes.source('Monthly MRR by Segment', 'arr.value', arr.get('source'))}, "
+                  f"NRR {fmt.fmt_pct(nrr.get('overall_pct'))}{at('nrr')}{notes.source('NRR', 'nrr.overall_pct', nrr.get('source'))}, "
+                  f"gross revenue churn {fmt.fmt_pct(churn.get('overall_pct'))}{at('gross_churn')}"
                   f"{notes.source('Gross revenue churn', 'gross_churn.overall_pct', churn.get('source'))}. {S17}")
     ratings = ic.get("ratings") or {}
     score = [["Data reliability", ratings["data_reliability"], reliability, reliability_evidence],

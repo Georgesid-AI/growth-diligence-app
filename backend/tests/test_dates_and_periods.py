@@ -28,9 +28,6 @@ from app import ic_memo as im  # noqa: E402
 from app import verdict as vd  # noqa: E402
 from app.decks import claims as deck_claims  # noqa: E402
 
-# Committed before the code (docs/specs/dates-and-periods.md): strict expected failures until the code PR removes this mark.
-pytestmark = pytest.mark.xfail(strict=True, reason="docs/specs/dates-and-periods.md: not built yet")
-
 MACHINE_DATE = "2026-10-15"          # the regression's machine date, October 2026
 CUSTOMERS = (("C-01", "Enterprise", 9000.0), ("C-02", "Enterprise", 7000.0), ("C-03", "Mid-Market", 3000.0),
              ("C-04", "Mid-Market", 2500.0), ("C-05", "SMB", 800.0))

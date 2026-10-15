@@ -899,6 +899,77 @@ def _first_months(mrr: pd.DataFrame) -> dict:
     return fm
 
 
+COMPLETE, POSSIBLY_PARTIAL = "Complete", "Possibly partial"
+
+
+def revenue_months(rev: pd.DataFrame) -> list:
+    """The months of the revenue file, as uploaded, that hold a row with a valid invoice date and a non-zero amount."""
+    if rev is None or rev.empty or "invoice_date" not in rev.columns or "amount" not in rev.columns:
+        return []
+    amounts = pd.to_numeric(rev["amount"], errors="coerce")
+    return sorted({m for d, a in zip(rev["invoice_date"], amounts)
+                   if (m := _month_of(d)) is not None and pd.notna(a) and a != 0})
+
+
+def source_period(rev: pd.DataFrame, as_of, last_month_complete: bool) -> dict | None:
+    """The latest valid source period (docs/specs/dates-and-periods.md section 2): the last month of the revenue file with a valid
+    invoice date and a non-zero amount; Complete when the as-of month is later, or the analyst ticked "Last month is complete";
+    otherwise Possibly partial. `evidence_to` is the last month any revenue figure reads: the earlier of the as-of month and it."""
+    months = revenue_months(rev)
+    if not months:
+        return None
+    month = months[-1]
+    by = "as_of" if as_of is not None and as_of > month else "analyst" if last_month_complete else None
+    end = min(month, as_of) if as_of is not None else month
+    return {"month": _period_str(month), "status": COMPLETE if by else POSSIBLY_PARTIAL, "complete_by": by,
+            "evidence_to": _period_str(end)}
+
+
+def _span(months, gaps_from=None) -> dict | None:
+    """{"first", "last", "missing"}: the range of `months` and the months inside it absent from `gaps_from` (default: `months`)."""
+    months = sorted(set(months))
+    if not months:
+        return None
+    pool = set(months if gaps_from is None else gaps_from)
+    inside = pd.period_range(months[0], months[-1], freq="M")
+    return {"first": _period_str(months[0]), "last": _period_str(months[-1]),
+            "missing": [_period_str(m) for m in inside if m not in pool]}
+
+
+REVENUE_BLOCKS = ("arr", "mrr_series", "revenue_series", "customers_series", "acv_path", "segment_paths", "cohort_retention",
+                  "new_mrr_by_quarter")
+SERIES_BLOCKS = {"nrr": "series", "gross_churn": "series"}
+PNL_BLOCKS = ("revenue_reconciliation", "cac_payback")
+DEAL_BLOCKS = ("sales_cycle", "win_rate", "founder_win_rate")
+
+
+def metric_periods(results: dict, rev: pd.DataFrame, pnl: pd.DataFrame, deals: pd.DataFrame, source: dict | None) -> dict:
+    """The period and gaps of every computed block (dates-and-periods.md section 3): first and last month and the list of the
+    months missing inside that range. Revenue blocks read the revenue file up to the evidence end, NRR and churn their own series,
+    P&L blocks the P&L months, CRM blocks the close months of their deals (a month without a closed deal is not a gap)."""
+    out = {}
+    end = pd.Period(source["evidence_to"], "M") if source else None
+    rev_months = [m for m in revenue_months(rev) if end is None or m <= end]
+    for key in REVENUE_BLOCKS:
+        if results.get(key) and (span := _span(rev_months)):
+            out[key] = span
+    for key, field in SERIES_BLOCKS.items():
+        months = [pd.Period(d["month"], "M") for d in ((results.get(key) or {}).get(field) or ()) if d.get("month")]
+        if months and (span := _span(months, gaps_from=rev_months)):
+            out[key] = span
+    pnl_months = [m for m in (_month_of(x) for x in (pnl["month"] if pnl is not None and "month" in pnl.columns else ()))
+                  if m is not None]
+    for key in PNL_BLOCKS:
+        if results.get(key) and (span := _span(pnl_months)):
+            out[key] = span
+    closes = [m for m in (_month_of(x) for x in (deals["close_date"] if deals is not None and "close_date" in deals.columns else ()))
+              if m is not None]
+    for key in DEAL_BLOCKS:
+        if results.get(key) and closes:
+            out[key] = {**_span(closes), "missing": []}
+    return out
+
+
 def _resolve_as_of(as_of_str, pnl: pd.DataFrame, mrr: pd.DataFrame):
     """As-of month = explicit override, else last P&L month, else last MRR month."""
     if as_of_str:
@@ -1497,17 +1568,10 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
             "file": rev_src.get("file"),
         })
 
-    if last_revenue_month is not None and as_of is not None and as_of > last_revenue_month:
-        gap_months = (as_of - last_revenue_month).n
-        missing_data.append({
-            "metric": "Revenue up to the as-of month",
-            "reason": f"Revenue lines end {_period_str(last_revenue_month)}, {gap_months} month(s) before the as-of "
-                      f"month ({_period_str(as_of)}). Current figures are measured at "
-                      f"{_period_str(last_revenue_month)}; the months after it are not filled, not guessed",
-            "unlocked_by": f"Upload revenue lines through {_period_str(as_of)}, or set the as-of month to "
-                           f"{_period_str(last_revenue_month)}",
-            "file": rev_src.get("file"),
-        })
+    # An as-of month after the last month of revenue is no gap to report: the latest valid source period says where the
+    # evidence ends, and every figure carries its own period (docs/specs/dates-and-periods.md section 2). The months after it
+    # are not filled, not guessed.
+    source = source_period(rev, as_of, bool(config.get("last_month_complete")))
 
     # No as-of month set and no P&L months: the as-of month defaults to the last MRR month,
     # which prepaid service periods can push past the last invoice. Those months hold only
@@ -1582,7 +1646,12 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
                              "unlocked_by": "Upload revenue lines with customer ID, invoice date, amount, currency",
                              "file": rev_src.get("file")})
 
-    nrr = guarded("NRR (12-month)", rev_src.get("file"), None, compute_nrr, mrr, seg_map, first_month)
+    # A Possibly partial last month is shown in every series and excluded from the NRR (dates-and-periods.md section 2)
+    nrr_mrr = mrr
+    if source and source["status"] == POSSIBLY_PARTIAL and not mrr.empty:
+        cut = pd.Period(source["month"], "M")
+        nrr_mrr = mrr.loc[:, [c for c in mrr.columns if c < cut]]
+    nrr = guarded("NRR (12-month)", rev_src.get("file"), None, compute_nrr, nrr_mrr, seg_map, _first_months(nrr_mrr))
     if nrr and nrr.get("insufficient_history"):
         missing_data.append({"metric": "NRR (12-month)", "reason": f"Needs 12+ months of history; have {nrr['months_available']}",
                              "unlocked_by": "Provide at least 13 months of revenue lines", "file": rev_src.get("file")})
@@ -1747,6 +1816,8 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
     results["missing_data"], results["questions_for_management"] = resolve_missing(
         missing_data, results, files, as_of=as_of, fx=fx, new_mrr_q=new_mrr_q,
         default_l=config.get("default_l", 1))
+    results["source_period"] = source
+    results["metric_periods"] = metric_periods(results, rev, pnl, deals, source)
     return results
 
 

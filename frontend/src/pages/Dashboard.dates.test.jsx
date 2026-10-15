@@ -7,7 +7,6 @@ import { createRoot } from "react-dom/client";
 import Dashboard from "./Dashboard";
 import * as api from "@/lib/api";
 import sample from "./fixtures/sample_results.json";
-import { failing } from "@/testing/expectedFailure";
 
 jest.mock("@/lib/api", () => ({
   getAudit: jest.fn(), getResults: jest.fn(), readNarrative: jest.fn(), generateNarrative: jest.fn(), getDisclosure: jest.fn(),
@@ -53,7 +52,7 @@ async function mountDashboard(data) {
   return { host, done: async () => { await act(async () => { root.unmount(); }); host.remove(); } };
 }
 
-failing("plan 3 regression: the requested analysis date and the latest valid source period are shown apart, and figures read June 2019", async () => {
+test("plan 3 regression: the requested analysis date and the latest valid source period are shown apart, and figures read June 2019", async () => {
   const { host, done } = await mountDashboard(regressionResults());
   try {
     expect(host.querySelector('[data-testid="dates-line"]').textContent)
@@ -67,7 +66,7 @@ failing("plan 3 regression: the requested analysis date and the latest valid sou
   } finally { await done(); }
 });
 
-failing("a metric with months missing shows the list of months beside its period", async () => {
+test("a metric with months missing shows the list of months beside its period", async () => {
   const data = regressionResults();
   data.results.metric_periods.arr = { first: "2017-07", last: "2019-06", missing: ["2018-03", "2018-04"] };
   const { host, done } = await mountDashboard(data);
@@ -76,7 +75,7 @@ failing("a metric with months missing shows the list of months beside its period
   } finally { await done(); }
 });
 
-failing("a possibly partial last month says so beside the latest valid source period", async () => {
+test("a possibly partial last month says so beside the latest valid source period", async () => {
   const data = regressionResults();
   data.results.source_period = { month: "2019-06", status: "Possibly partial", complete_by: null, evidence_to: "2019-06" };
   const { host, done } = await mountDashboard(data);

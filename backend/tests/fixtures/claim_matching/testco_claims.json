@@ -1411,10 +1411,11 @@
      },
      "analyst": {},
      "expect": {
-      "label": "Unverified",
-      "reason": "2022-04 to 2022-12",
+      "label": "Inconclusive",
+      "reason": "claim period partly covered (months missing: 2022-04 to 2022-12)",
       "metric": "Revenue",
-      "observed": null,
+      "observed": 44845.48,
+      "observed_at": "2023-01 to 2023-03 (3 of 12 months)",
       "rank": 2
      }
     }

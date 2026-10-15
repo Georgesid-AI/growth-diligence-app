@@ -22,7 +22,8 @@ import Verdict from "@/components/Verdict";
 import { describeRequestError, logRequestFailure } from "@/lib/requestError";
 import { metricLabel, metricQualifier, bracketed } from "@/lib/metricNames";
 import { ANOMALIES_NOT_COMPUTED, NONE, anomalyFlags, missingRows, questionRows, questionsEmptyText } from "@/lib/gapLists";
-import { fmtCurrency, fmtCount, fmtCountUp, fmtDays, fmtDaysNumber, fmtMonths, fmtPct, fmtRatio, bandRangeLabel, monthEndDate } from "@/lib/format";
+import { fmtCurrency, fmtCount, fmtCountUp, fmtDays, fmtDaysNumber, fmtMonths, fmtPct, fmtRatio, bandRangeLabel } from "@/lib/format";
+import { datesLine, evidenceToText } from "@/lib/periods";
 
 const SEG_COLORS = ["#0284C7", "#059669", "#D97706", "#DB2777", "#475569"];
 
@@ -162,7 +163,7 @@ export default function Dashboard() {
     : fxRates.length === 0
     ? "N/A (single-currency reporting)"
     : fxRates.map(([c, rate]) => `1 ${c} = ${rate} ${ccy}`).join(" · ");
-  const asOfFullDate = monthEndDate(r.as_of_month);
+  const periods = r.metric_periods || {};
   const missing = missingRows(r);
   const questions = questionRows(r);
   const flags = anomalyFlags(r);
@@ -220,8 +221,10 @@ export default function Dashboard() {
             Target: <span className="text-slate-800">{fmtCurrency(por?.target_arr, por?.reporting_currency ?? ccy)} ARR</span>{" "}
             by <span className="text-slate-800">{por?.target_date ?? "—"}</span> · FX: {fxDisplay}
           </p>
+          {/* Two dates, never merged: the analyst's and the data's (docs/specs/dates-and-periods.md section 1) */}
+          <p data-testid="dates-line" className="text-slate-600 text-xs font-mono mt-1">{datesLine(audit ?? data.audit, r)}</p>
           <p className="text-slate-500 text-xs font-mono mt-1">
-            {asOfFullDate ? <>Figures reflect company data through <span className="text-sky-700">{asOfFullDate}</span>. </> : null}
+            {r.source_period || r.as_of_month ? <>Evidence to <span className="text-sky-700">{evidenceToText(r)}</span>. </> : null}
             Computed {data.audit.computed_at?.slice(0, 10)} — verify nothing material has changed since.
             {" "}Reporting currency {ccy}. Hover any figure for source lineage.
           </p>
@@ -244,19 +247,19 @@ export default function Dashboard() {
 
       {/* Metric strip */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4 mb-6">
-        <MetricCard id="arr" label={metricLabel("arr.value")} qualifier={bracketed(metricQualifier("arr.value"))} status="growth_positive" source={r.arr?.source}
+        <MetricCard id="arr" period={periods.arr} label={metricLabel("arr.value")} qualifier={bracketed(metricQualifier("arr.value"))} status="growth_positive" source={r.arr?.source}
           value={r.arr ? fmtCurrency(r.arr.value, ccy) : "—"} sub={r.arr ? `MRR ${fmtCurrency(r.arr.mrr, ccy)}` : ""}
           caption="Shows distance to target" />
-        <MetricCard id="nrr" label={metricLabel("nrr.overall_pct")} qualifier={bracketed(metricQualifier("nrr.overall_pct"))} status={nrrStatus} source={r.nrr?.source}
+        <MetricCard id="nrr" period={periods.nrr} label={metricLabel("nrr.overall_pct")} qualifier={bracketed(metricQualifier("nrr.overall_pct"))} status={nrrStatus} source={r.nrr?.source}
           value={r.nrr ? fmtPct(r.nrr.overall_pct) : "n/c"} sub={r.nrr ? `${fmtCount(r.nrr.nrr_base_customers ?? r.nrr.n)} base customers` : "needs 12m history"}
           caption="Growth from existing customers alone" />
-        <MetricCard id="gross_churn" label={metricLabel("gross_churn.overall_pct")} qualifier={bracketed(metricQualifier("gross_churn.overall_pct"))} status={churnStatus} source={r.gross_churn?.source}
+        <MetricCard id="gross_churn" period={periods.gross_churn} label={metricLabel("gross_churn.overall_pct")} qualifier={bracketed(metricQualifier("gross_churn.overall_pct"))} status={churnStatus} source={r.gross_churn?.source}
           value={r.gross_churn ? fmtPct(r.gross_churn.overall_pct) : "n/c"} sub={r.gross_churn ? "" : "needs 12m history"}
           caption="Shows revenue lost to churn" />
-        <MetricCard id="cac_payback" label={metricLabel("cac_payback.months")} qualifier={cac.qualifier} status={cac.status} source={cac.source}
+        <MetricCard id="cac_payback" period={periods.cac_payback} label={metricLabel("cac_payback.months")} qualifier={cac.qualifier} status={cac.status} source={cac.source}
           value={cac.value} sub={cac.sub} note={cac.note}
           caption="Time to recoup acquisition cost" />
-        <MetricCard id="sales_cycle" label={metricLabel("sales_cycle.median_days")} qualifier={bracketed(metricQualifier("sales_cycle.median_days"))} status="neutral" source={r.sales_cycle?.source}
+        <MetricCard id="sales_cycle" period={periods.sales_cycle} label={metricLabel("sales_cycle.median_days")} qualifier={bracketed(metricQualifier("sales_cycle.median_days"))} status="neutral" source={r.sales_cycle?.source}
           value={r.sales_cycle?.median_days != null ? fmtDays(r.sales_cycle.median_days) : "n/c"}
           sub={r.sales_cycle ? (
             <>
@@ -267,7 +270,7 @@ export default function Dashboard() {
             </>
           ) : ""}
           caption="Speed of closing new deals" />
-        <MetricCard id="win_rate" label={metricLabel("win_rate.win_rate_pct")} qualifier={bracketed(metricQualifier("win_rate.win_rate_pct"))} status="neutral" source={r.win_rate?.source}
+        <MetricCard id="win_rate" period={periods.win_rate} label={metricLabel("win_rate.win_rate_pct")} qualifier={bracketed(metricQualifier("win_rate.win_rate_pct"))} status="neutral" source={r.win_rate?.source}
           value={r.win_rate ? fmtPct(r.win_rate.win_rate_pct) : "n/c"}
           sub={r.win_rate ? (
             <Gloss id="win-rate-wl" text="Won versus lost">{fmtCount(r.win_rate.won)}W / {fmtCount(r.win_rate.lost)}L</Gloss>
@@ -436,7 +439,7 @@ export default function Dashboard() {
         <Card className="lg:col-span-4" title="Sales Cycle by Segment">
           <SegTable rows={r.sales_cycle?.by_segment} render={(v) => `${fmtDays(v.median_days)} · n=${fmtCount(v.n)}`} empty="Segment column not mapped" />
         </Card>
-        <Card className="lg:col-span-4" title={`ACV Bands — active customers (as of ${r.as_of_month ?? "—"})`}>
+        <Card className="lg:col-span-4" title={`ACV Bands — active customers (as of ${r.source_period?.evidence_to ?? r.as_of_month ?? "—"})`}>
           {r.acv_path ? (
             <div className="space-y-1.5">
               {r.acv_path.overall_band && (

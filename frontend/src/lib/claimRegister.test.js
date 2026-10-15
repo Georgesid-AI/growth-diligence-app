@@ -92,7 +92,8 @@ describe("what the analyst may set", () => {
   test("a metric in the claim's unit, or none", () => {
     expect(claimUnit(ARR_ROW)).toBe("currency");
     expect(metricOptions(ARR_ROW)).toEqual(["Revenue", "ARR", "MRR", "New MRR", "ACV", "Transaction volume", NO_METRIC]);
-    expect(metricOptions(WIN_ROW)).toEqual(["NRR (12-month)", "Gross revenue churn", "Win rate", "Gross margin", NO_METRIC]);
+    expect(metricOptions(WIN_ROW)).toEqual(["NRR (12-month)", "Gross revenue churn", "Win rate", "Gross margin", "Revenue growth",
+      "ARR growth", "MRR growth", "Customer growth", NO_METRIC]);                       // growth: docs/specs/dates-and-periods.md 5
     expect(metricOptions({ ...ARR_ROW, unit: "customers", currency: null })).toEqual(["Customer count", NO_METRIC]);
     expect(metricOptions({ ...ARR_ROW, unit: "weeks", currency: null })).toEqual(["Median sales cycle", "CAC payback", NO_METRIC]);
     expect(metricOptions({ ...ARR_ROW, unit: "years", currency: null })).toEqual(["Median sales cycle", "CAC payback", NO_METRIC]);
