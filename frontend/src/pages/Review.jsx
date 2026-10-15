@@ -6,7 +6,7 @@ import { Layout } from "@/components/Layout";
 import { BLOCKERS_CHANGED } from "@/components/BlockerBanner";
 import { ColumnRow } from "@/components/UploadChat";
 import { DefinitionCell, TurnoverCell, GateCell } from "@/components/ClaimRegister";
-import { TopFive, ThesisFields, RatingFields, downloadMemo, icSaver } from "@/components/Verdict";
+import { TopFive, ThesisFields, RatingFields, JudgmentFields, downloadMemo, icSaver } from "@/components/Verdict";
 import { Button } from "@/components/ui/button";
 import * as apiModule from "@/lib/api";
 import {
@@ -14,6 +14,7 @@ import {
   getReview, getVerdict, putIcInputs, reportUsage, updateCandidate, updateClaimInputs,
 } from "@/lib/api";
 import { claimPeriod, claimValue, sourceRef, typeLabel, CLAIM_GROUPS, approveAllToast, isOther } from "@/lib/deckClaims";
+import { JUDGMENT_HEADING } from "@/lib/verdict";
 import { definitionOf, turnoverHeading, turnoverOf, registerRows } from "@/lib/claimRegister";
 import { useGateEdits } from "@/lib/useGateEdits";
 import { S13_status, MAPPING_HEADERS, REASONS, fieldName, heldFields, sortColumns } from "@/lib/chatUpload";
@@ -119,6 +120,7 @@ export default function Review() {
           <ThesisSection verdict={verdict} save={saveIc} />
           <GatesSection auditId={id} verdict={verdict} register={register} extras={gateExtras} audit={audit} reload={reload} />
           <RatingsSection verdict={verdict} save={saveIc} />
+          <JudgmentSection verdict={verdict} save={saveIc} />
           <Finish auditId={id} verdict={verdict} summary={summary} estimate={estimate} reload={reload} />
         </>
       ) : (
@@ -396,6 +398,16 @@ function RatingsSection({ verdict, save }) {
     <section className={sectionClass} data-testid="review-ratings">
       <Heading n="7">Ratings</Heading>
       <div className="grid gap-3 md:grid-cols-2 text-xs"><RatingFields verdict={verdict} save={save} /></div>
+    </section>
+  );
+}
+
+/** The analyst judgment (claim-review-conclusion.md section 3): the same two fields as the Dashboard, so the memo can be exported from here. */
+function JudgmentSection({ verdict, save }) {
+  return (
+    <section className={sectionClass} data-testid="review-judgment">
+      <Heading n="8">{JUDGMENT_HEADING}</Heading>
+      <div className="grid gap-3 md:grid-cols-2 text-xs"><JudgmentFields verdict={verdict} save={save} /></div>
     </section>
   );
 }

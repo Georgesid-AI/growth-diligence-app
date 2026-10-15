@@ -450,7 +450,7 @@ def test_the_reconciliation_blocker_is_on_the_review_summary_and_in_the_memo_not
 # --- the click count: from upload to the memo download -------------------------------------------------------------------------
 MAX_CLICKS = 15
 # 21 set by George (2026-10-11), plus the two analyst judgment fields the plan of 15 Oct 2026 requires before export
-# (claim-review-conclusion.md section 3).
+# (claim-review-conclusion.md section 3). 23 accepted by George, 15 Oct 2026.
 MAX_CLICKS_FULL = 23
 
 

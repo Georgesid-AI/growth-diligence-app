@@ -36,7 +36,8 @@ const VERDICT = {
     rule: null, blocked: [], five: [{ claim_id: "c1", rank: 1, claim: "Revenue 100", evidence_label: "Contradicted", reason: "outside ±5%" }], reasons: [] },
   data_gaps: [], top_gaps: [], key_gates: { note: null, ok: true, sentences: [] }, gates_still_needed: 0, deal_terms: "x",
   candidates: [{ claim_id: "c1", rank: 1, claim: "Revenue 100", evidence_label: "Contradicted", reason: "outside" }],
-  ic_inputs: { ratings: {}, thesis: {}, first_quarterly_review: null }, ratings: ["Strong", "Adequate", "Weak"],
+  ic_inputs: { ratings: {}, thesis: {}, judgment: null, first_quarterly_review: null }, ratings: ["Strong", "Adequate", "Weak"],
+  judgment_labels: { reasons: "Reasons", unresolved_questions: "Unresolved questions" }, judgment_max: 1000,
   ratings_for: { data_reliability: "Data reliability", growth_engine: "Growth engine" }, thesis_labels: { plan: "Plan", evidence: "Evidence", condition: "Condition" },
 };
 const REGISTER = { register: [{ claim_id: "c1", rank: 1, claim: "Revenue 100", evidence_label: "Contradicted", gate_needed: true, gate_saved: false, key_gate: false,
@@ -62,6 +63,7 @@ beforeEach(() => {
   api.reportUsage.mockResolvedValue(null);
   api.putIcInputs.mockImplementation(async (id, body) => {
     if (body.ratings) state.verdict.ic_inputs.ratings = { ...state.verdict.ic_inputs.ratings, ...body.ratings };
+    if (body.judgment) state.verdict.ic_inputs.judgment = { ...state.verdict.ic_inputs.judgment, ...body.judgment };
     return {};
   });
   api.runStage.mockResolvedValue({ status: "done" });
@@ -77,12 +79,28 @@ async function mount() {
   await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 }
 
-test("the sections come in this order: open mappings, open claims, Revenue / Volume answers, top 5, deal thesis, gates, ratings", async () => {
+test("the sections come in this order: open mappings, open claims, Revenue / Volume answers, top 5, deal thesis, gates, ratings, analyst judgment", async () => {
   await mount();
-  const ids = ["review-mappings", "review-claims", "review-turnover", "review-top5", "review-thesis", "review-gates", "review-ratings", "review-finish"];
+  const ids = ["review-mappings", "review-claims", "review-turnover", "review-top5", "review-thesis", "review-gates", "review-ratings", "review-judgment", "review-finish"];
   const found = [...document.body.querySelectorAll("section[data-testid^='review-']")].map((s) => s.getAttribute("data-testid"));
   expect(found).toEqual(ids);
-  expect(["1", "2", "3", "4", "5", "6", "7"].map((n, i) => q(ids[i]).textContent.startsWith(n))).toEqual(Array(7).fill(true));
+  expect(["1", "2", "3", "4", "5", "6", "7", "8"].map((n, i) => q(ids[i]).textContent.startsWith(n))).toEqual(Array(8).fill(true));
+});
+
+test("the analyst judgment is written on the Review page: two empty fields, saved as the analyst leaves each, never pre-filled", async () => {
+  await mount();
+  const reasons = q("judgment-reasons"), open = q("judgment-unresolved_questions");
+  expect([reasons.value, open.value]).toEqual(["", ""]);
+  expect(q("review-judgment").textContent).toContain("Analyst judgment");
+  const write = async (el, text) => {
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(el, text); el.dispatchEvent(new Event("input", { bubbles: true })); });
+    await act(async () => { el.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); await Promise.resolve(); await Promise.resolve(); });
+  };
+  await write(reasons, "Revenue misses by 50%.");
+  expect(api.putIcInputs).toHaveBeenCalledWith("a1", { judgment: { reasons: "Revenue misses by 50%." } });
+  await write(open, "Why does the pilot revenue drop in March?");
+  expect(api.putIcInputs).toHaveBeenCalledWith("a1", { judgment: { unresolved_questions: "Why does the pilot revenue drop in March?" } });
+  expect(q("judgment-reasons").value).toBe("Revenue misses by 50%.");
 });
 
 test("what the app settled itself is a count with a Show link: claims within tolerance; mappings are the summary", async () => {
