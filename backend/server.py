@@ -1388,6 +1388,9 @@ async def _claim_rows(audit_id: str, audit: dict) -> tuple:
         {"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
     claims = [c for c in found if c.get("status") in REGISTER_STATUSES]
     claims.sort(key=lambda c: (c.get("file") or "", c.get("order", 0)))
+    # The extraction confidence the deck list shows, read over every candidate of the deck as the list reads it (evidence-labels.md)
+    every = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0}).to_list(10000)
+    claims = claim_matching.with_confidence(claims, every)
     rows = claim_matching.build_register(
         claims, audit.get("results"), _register_settings(audit, await _fx(audit_id, audit), await _deck_take_rate(audit_id)),
         peers=found)

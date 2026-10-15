@@ -263,7 +263,7 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-left text-[10px] font-mono uppercase tracking-wider text-slate-500 border-b border-[#E5E7EB]">
-                  {COLUMNS.map((name) => <th key={name} className="py-2 pr-3">{name}</th>)}
+                  {COLUMNS.map((name) => <th key={name} className="py-2 pr-3" title={name === "Extraction confidence" ? CONFIDENCE_HOVER : undefined}>{name}</th>)}
                 </tr>
               </thead>
               <tbody>

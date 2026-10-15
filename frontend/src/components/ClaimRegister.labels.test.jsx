@@ -44,7 +44,7 @@ async function mount(rows) {
   return { host, done: async () => { await act(async () => { root.unmount(); }); host.remove(); } };
 }
 
-failing("plan 5: High extraction confidence and Contradicted sit in two columns, with the computed figure and the gap", async () => {
+test("plan 5: High extraction confidence and Contradicted sit in two columns, with the computed figure and the gap", async () => {
   const { host, done } = await mount([ROW]);
   try {
     const heads = [...host.querySelectorAll("thead th")];
@@ -64,7 +64,7 @@ failing("plan 5: High extraction confidence and Contradicted sit in two columns,
   } finally { await done(); }
 });
 
-failing("an Inconclusive row shows its label, its reason and the computed figure, and no gap", async () => {
+test("an Inconclusive row shows its label, its reason and the computed figure, and no gap", async () => {
   const row = { ...ROW, claim_id: "q1", claim_type: "users", currency: null, unit: "trial accounts", claimed_value: 40, metric: "Customer count",
     observed_value: 5, observed_at: "2024-02", gap: null, gap_normalised: null, gap_kind: null, gloss: null, shortfall: null,
     evidence_label: "Inconclusive", reason: "population differs: deck label 'trial accounts' is not paying customers; the figure shown is paying customers" };
@@ -80,7 +80,7 @@ failing("an Inconclusive row shows its label, its reason and the computed figure
   } finally { await done(); }
 });
 
-failing("the shared evidence_labels.json is the one list the register reads", async () => {
+test("the shared evidence_labels.json is the one list the register reads", async () => {
   const labels = require("@/lib/evidence_labels.json");
   const register = require("@/lib/claimRegister");
   expect(labels.statuses).toEqual(["Verified", "Contradicted", "Inconclusive", "Unverified", "Unsupported"]);
@@ -90,7 +90,7 @@ failing("the shared evidence_labels.json is the one list the register reads", as
   expect(labels.explainers).toEqual({ extraction_confidence: EXTRACTION, evidence_status: EVIDENCE });
 });
 
-failing("the deck list's Confidence column is named Extraction confidence and carries the same explainer", async () => {
+test("the deck list's Confidence column is named Extraction confidence and carries the same explainer", async () => {
   const deck = require("@/lib/deckClaims");
   expect(deck.COLUMNS[3]).toBe("Extraction confidence");
   expect(deck.CONFIDENCE_HOVER).toBe(EXTRACTION);

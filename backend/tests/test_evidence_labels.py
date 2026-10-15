@@ -17,9 +17,6 @@ from test_claim_register_api import _get, api  # noqa: E402,F401  (the fixture)
 from app import claim_matching as cm  # noqa: E402
 from app import decks  # noqa: E402
 
-# Committed before the code (docs/specs/evidence-labels.md): strict expected failures until the code PR removes this mark.
-pytestmark = pytest.mark.xfail(strict=True, reason="docs/specs/evidence-labels.md: not built yet")
-
 SHARED = Path(__file__).resolve().parents[2] / "frontend" / "src" / "lib" / "evidence_labels.json"
 EXTRACTION_EXPLAINER = "How well the app read this figure from the deck. Not a statement about whether it is true."
 EVIDENCE_EXPLAINER = "How this claim compares with the company data supplied for this audit. Agreement is not independent verification."

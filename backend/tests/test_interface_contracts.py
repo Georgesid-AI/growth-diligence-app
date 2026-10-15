@@ -727,7 +727,6 @@ import json  # noqa: E402
 SHARED_LABELS = Path(__file__).resolve().parents[2] / "frontend" / "src" / "lib" / "evidence_labels.json"
 
 
-@pytest.mark.xfail(strict=True, reason="docs/specs/evidence-labels.md section 5: not built yet")
 def test_the_memo_summary_counts_inconclusive_under_unverified_with_the_count_in_brackets():
     shared = json.loads(SHARED_LABELS.read_text(encoding="utf-8"))
     assert shared["memo_groups"] == {"Unverified": ["Unverified", "Inconclusive"]}

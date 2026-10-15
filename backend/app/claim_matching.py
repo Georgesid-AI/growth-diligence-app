@@ -15,7 +15,7 @@ from typing import Dict, List, Optional, Tuple
 
 # The register's fields, in the order of the spec's section 6 (and the CSV header of section 7).
 FIELDS = (
-    "claim_id", "deck_file", "page_ref", "claim_type", "status", "deck_reading", "claimed_value", "claimed_high",
+    "claim_id", "deck_file", "page_ref", "claim_type", "status", "deck_reading", "extraction_confidence", "claimed_value", "claimed_high",
     "claim_direction", "unit", "currency", "claimed_converted", "claimed_converted_high", "fx_rate", "fx_date", "period", "period_start", "period_end", "period_note", "segment", "segment_set_by", "metric",
     "metric_set_by", "direction", "observed_value", "observed_at", "observed_source", "gap", "gap_normalised",
     "gap_kind", "gloss", "evidence_label", "reason", "tolerance", "rank", "value_at_stake_arr", "shortfall",
@@ -57,8 +57,19 @@ DEFINITION_OPEN_REASON = "definition check: the gap is beyond {share} of the cla
 DEFINITION_OPEN_REASON_RATE = "definition check: the gap is beyond {points} percentage points"
 DEFINITION_MISMATCH = "definition mismatch"
 # A Users claim the parser typed from a qualified customers noun (deck-parser.md section 2, George, 2026-10-13); the label is
-# two words of closed lists: the qualifier and the customers keyword.
-QUALIFIED_REASON = "deck label '{label}' is not paying customers; the analyst can edit the type to Customers to test it"
+# two words of closed lists: the qualifier and the customers keyword. It is read against the paying customers and is Inconclusive
+# (docs/specs/evidence-labels.md section 3): the figure is shown, it cannot confirm or contradict a count of other people.
+QUALIFIED_REASON = "population differs: deck label '{label}' is not paying customers; the figure shown is paying customers"
+QUALIFIED_NO_FIGURE = "population differs: deck label '{label}' is not paying customers"     # Unsupported: no figure to show
+POPULATION_PREFIX = "population differs: "
+# docs/specs/evidence-labels.md: the five evidence statuses in screen order, the memo's grouping of them, and the two explainers.
+# frontend/src/lib/evidence_labels.json holds the same, pinned by tests/test_interface_contracts.py.
+EVIDENCE_STATUSES = ("Verified", "Contradicted", "Inconclusive", "Unverified", "Unsupported")
+INCONCLUSIVE = "Inconclusive"
+MEMO_GROUPS = {"Unverified": ["Unverified", "Inconclusive"]}
+EXTRACTION_EXPLAINER = "How well the app read this figure from the deck. Not a statement about whether it is true."
+EVIDENCE_EXPLAINER = "How this claim compares with the company data supplied for this audit. Agreement is not independent verification."
+NOT_VERIFIED = ("Unverified", "Inconclusive", "Unsupported", "Contradicted")      # the labels whose row needs a gate
 SUGGESTION = "AI suggestion, not verified"
 ANALYST_ENTERED = "analyst-entered"
 DAYS_PER_WEEK, DAYS_PER_MONTH = 7.0, 30.44
@@ -461,8 +472,10 @@ def _claimed_text(c: dict) -> str:
 
 def needs_metric_name(row: dict) -> bool:
     """Whether a row's gate is saved only with the analyst's metric name and direction: the row has no app metric (none set, or
-    one that does not fit the claim's unit). The screen asks for the two fields by the same rule."""
-    return row.get("metric") not in METRICS or row.get("reason") in NO_APP_METRIC
+    one that does not fit the claim's unit), or the app's metric counts another population than the claim (evidence-labels.md
+    section 3). The screen asks for the two fields by the same rule."""
+    return row.get("metric") not in METRICS or row.get("reason") in NO_APP_METRIC \
+        or str(row.get("reason") or "").startswith(POPULATION_PREFIX)
 
 
 def _is_saved(inputs: dict, needs_name: bool) -> bool:
@@ -664,6 +677,12 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         metric, metric_by = (None if inputs["metric"] == NO_METRIC else inputs["metric"]), "analyst"
     else:
         metric, metric_by = propose_metric(c.get("claim_type"), claim_unit, text), "python"
+    from .decks.claims import QUALIFIERS, qualified_label
+    # evidence-labels.md section 3: a qualified Users count is read against the paying customers, and is Inconclusive
+    population_differs = (metric_by == "python" and metric is None and c.get("claim_type") == "users"
+                          and c.get("qualifier") in QUALIFIERS and _fits(METRICS["Customer count"]["unit"], claim_unit))
+    if population_differs:
+        metric = "Customer count"
     if inputs.get("segment"):
         segment, segment_by = inputs["segment"], "analyst"
     else:
@@ -688,6 +707,7 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         claim_id=c["claim_id"], deck_file=c.get("file"), page_ref=_page_ref(c.get("sources")),
         claim_type=c.get("claim_type"), status=c.get("status"), deck_reading=_deck_reading(c), claimed_value=low,
         claimed_high=high, claim_direction=c.get("claim_direction") if low is None else None, unit=c.get("unit"),
+        extraction_confidence=c.get("extraction_confidence"),
         currency=currency, period=period,
         period_start=str(c["period_start"]) if c.get("period_start") else None,
         period_end=str(c["period_end"]) if c.get("period_end") else None,
@@ -705,6 +725,8 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
     shown_claim: List[Optional[float]] = [None]         # the claimed figure the gate sentence names, once it is known
 
     def finish(label: Optional[str], reason: str) -> dict:
+        if population_differs and label == "Unsupported":     # no paying-customer figure: the reason still names the population
+            reason = QUALIFIED_NO_FIGURE.format(label=qualified_label(text, c["qualifier"]))
         out.update(evidence_label=label, reason=reason)
         if out["evidence_analysis"] is None and reason.startswith("Missing:") and metric in METRICS:
             item = _missing_item(results, metric)
@@ -727,9 +749,8 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         out["gate_needed"] = False
         return out
     if not spec:
-        from .decks.claims import QUALIFIERS, qualified_label
-        if out["claim_type"] == "users" and c.get("qualifier") in QUALIFIERS:
-            return finish("Unsupported", QUALIFIED_REASON.format(label=qualified_label(text, c["qualifier"])))
+        if out["claim_type"] == "users" and c.get("qualifier") in QUALIFIERS:      # a figure that is not a count: nothing to read
+            return finish("Unsupported", QUALIFIED_NO_FIGURE.format(label=qualified_label(text, c["qualifier"])))
         return finish("Unsupported", "no metric")
     if metric == VOLUME:                        # never matched to engine revenue; the take rate is derived, never Verified
         if turn and turn["file_revenue"] is not None and low and not c.get("value_high"):
@@ -778,6 +799,8 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         out.update(evidence_analysis=found[0], evidence_source_key=found[1])
     if claimed_low is None:
         return finish("Unsupported", "no claimed value")
+    if population_differs and not forecast:     # the figure is shown; it cannot confirm or contradict a count of other people
+        return finish(INCONCLUSIVE, QUALIFIED_REASON.format(label=qualified_label(text, c["qualifier"])))
     claimed = claimed_low
     if claimed_high is not None:                        # a range is tested at the end nearest the observed value
         lo, hi = sorted((claimed_low, claimed_high))
@@ -848,7 +871,7 @@ def _gate(out: dict, c: dict, inputs: dict, spec: Optional[dict], claim_unit: Op
     saved = _is_saved(inputs, needs_name=not app_metric)
     out["gate_saved"] = saved
     out["key_gate"] = bool(inputs.get("key_gate")) and saved
-    out["gate_needed"] = out["evidence_label"] in ("Unverified", "Unsupported", "Contradicted") and not saved
+    out["gate_needed"] = out["evidence_label"] in NOT_VERIFIED and not saved
     if not saved:
         return
     if app_metric:
@@ -1026,11 +1049,28 @@ def build_register(candidates: List[dict], results: Optional[dict], settings: di
     rejected, pending ones included (None: the register's own). Nothing is read from a model and nothing is changed."""
     if not results:
         return []
+    candidates = with_confidence(candidates, peers if peers is not None else candidates)
     claims = _expand(candidates)
     others = _expand(peers) if peers is not None else claims
     rows = _rank([_row(c, results, settings, others) for c in claims])
     _overlaps(rows)
     return rows
+
+
+def confidence_level(candidate: dict, peers: List[dict]) -> str:
+    """The extraction confidence the deck list shows (deck-parser.md section 6): High, Medium or Low, or "Analyst-entered" for a
+    claim added with Add claim. `peers` are the candidates of the audit; only those of the candidate's deck are read."""
+    from .decks.claims import confidence
+    deck = candidate.get("deck_id") or candidate.get("file")
+    same = [p for p in peers if (p.get("deck_id") or p.get("file")) == deck] or [candidate]
+    found = confidence(candidate, same)
+    return found["level"] or found["text"]
+
+
+def with_confidence(candidates: List[dict], peers: List[dict]) -> List[dict]:
+    """The candidates with `extraction_confidence` (evidence-labels.md section 1), kept where the caller set it. Display only: no
+    label, gap, rank or gate reads it."""
+    return [c if c.get("extraction_confidence") else {**c, "extraction_confidence": confidence_level(c, peers)} for c in candidates]
 
 
 # Section 11 point 8: what the deck list shows of a turnover claim, before it is approved.

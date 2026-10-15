@@ -6,14 +6,16 @@
  * its decimals ("2.5", "13.72%") instead of going through format.js rounding.
  */
 import { displayDate } from "./datePicker";
+import evidenceLabels from "./evidence_labels.json";
 
 export const PLACEHOLDER = "—";
 export const NO_DATE = "no date";        // the Period column of a claim that states no date
 
 export const DECK_ACCEPT = ".pptx,.pdf,.docx";
 
-// Hover on the Confidence column, word for word.
-export const CONFIDENCE_HOVER = "Confidence shows how well this figure was read from the deck, not whether it is true. High: value, date and unit were all found and the figure appears in more than one place in the deck. Medium: value found with a date or a unit, but one detail is missing or the figure appears once. Low: value found, date and unit missing. 'Not corroborated' means the figure appears only once in the deck. 'No date' or 'no unit' names the detail that was not found; you can add it in the row. Whether the figure is true is shown by the evidence label after the data files are calculated.";
+// Hover on the Extraction confidence column, word for word (docs/specs/evidence-labels.md section 1): how well the figure was read,
+// never whether it is true. The same explainer heads the register's column (evidence_labels.json).
+export const CONFIDENCE_HOVER = evidenceLabels.explainers.extraction_confidence;
 
 // Shown above the upload button, word for word.
 export const DECK_UPLOAD_HELP = "Board deck or growth plan: the company's board decks, investor updates, growth model or business plan, as PDF or PowerPoint. Up to 8 documents per audit. The audit reads the claims from them and tests each against the data files.";
@@ -89,7 +91,7 @@ export const COUNT_TYPES = ["customers", "users", "people", "trials_per_day", "a
 export const COUNT_UNIT = "count";
 
 // One header per column of the approval list, in column order.
-export const COLUMNS = ["Type", "Value", "Period", "Confidence", "Claim in the deck", "Source", "Status", "Action"];
+export const COLUMNS = ["Type", "Value", "Period", "Extraction confidence", "Claim in the deck", "Source", "Status", "Action"];
 
 export const typeLabel = (t) => TYPE_LABELS[t] || t;
 

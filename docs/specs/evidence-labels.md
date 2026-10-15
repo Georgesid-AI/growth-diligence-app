@@ -50,6 +50,8 @@ carries `observed_value`, `observed_at` and `observed_source` (the computed figu
 | Population differs: a claim whose population (claim-types-and-correction.md §2) is registered or active users, or a sales population other than the metric's | claim-types-and-correction.md | `population differs: the claim counts {population}; the figure shown counts {metric population}` ("registered users", "paying customers") |
 | The claim period is only partly covered (dates-and-periods.md §4) | dates-and-periods.md | `claim period partly covered (months missing: {list})` |
 
+- With no paying-customer figure at all (no revenue series, or a figure that is not a count), the qualified Users claim is
+  Unsupported with `population differs: deck label '{label}' is not paying customers`.
 - Order inside a row's rules: the period is read first. A qualified Users claim whose period has no Customer count in the
   data is not Inconclusive: it follows dates-and-periods.md §4 (Unverified, not covered).
 - Growth basis unknown: plan section 5 lists it under Inconclusive, plan sections 3 and 7.1 say "stays Unverified with a

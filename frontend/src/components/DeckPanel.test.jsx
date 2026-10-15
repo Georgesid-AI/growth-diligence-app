@@ -46,11 +46,11 @@ const rows = () => [...document.body.querySelectorAll("[data-testid='deck-candid
 const open = async (group) => act(async () => { q(`claim-group-toggle-${group}`).click(); });
 const text = (tr) => tr.textContent;
 
-test("the table has a Confidence column between Period and the claim, in every row", async () => {
+test("the table has an Extraction confidence column between Period and the claim, in every row", async () => {
   await act(async () => { q("deck-tab-all").click(); });
   await open(6);
   const heads = [...document.body.querySelectorAll("[data-testid='deck-candidates'] thead th")].map((th) => th.textContent);
-  expect(heads).toEqual(["Type", "Value", "Period", "Confidence", "Claim in the deck", "Source", "Status", "Action"]);
+  expect(heads).toEqual(["Type", "Value", "Period", "Extraction confidence", "Claim in the deck", "Source", "Status", "Action"]);
   const cells = rows().map((tr) => tr.querySelector("[data-testid='candidate-confidence']").textContent);
   expect(cells.sort()).toEqual(["High", "Low – no date, no heading", "Medium – not corroborated", "Medium – not corroborated"].sort());
 });
@@ -412,10 +412,10 @@ test("To review is a status label, not a control: plain text with no border, chi
   }
 });
 
-test("the upload help, the Confidence hover are shown word for word", async () => {
+test("the upload help, the Extraction confidence hover are shown word for word", async () => {
   await reload([claim("c", "d1", 2, { group: 1 })]);
   expect(q("deck-upload-help").textContent).toMatch(/^Board deck or growth plan: the company's board decks, investor updates.* Up to 8 documents per audit\./);
-  expect(q("candidate-confidence-text").title).toMatch(/^Confidence shows how well this figure was read from the deck, not whether it is true\. High:/);
+  expect(q("candidate-confidence-text").title).toBe("How well the app read this figure from the deck. Not a statement about whether it is true.");
 });
 
 test("a tag never shows without its explanation", async () => {
