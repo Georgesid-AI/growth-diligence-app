@@ -5,6 +5,36 @@ const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 export const api = axios.create({ baseURL: API });
 
+// Your link is your login (docs/specs/access-links.md): the token from /t/{token} is kept in this browser and sent as a bearer
+// header on every request. The owner token is never kept here: the owner page holds it in memory and passes it per call.
+export const ACCESS_TOKEN_KEY = "access_token";
+export const getAccessToken = () => { try { return window.localStorage.getItem(ACCESS_TOKEN_KEY); } catch (e) { return null; } };
+export const setAccessToken = (token) => { try { window.localStorage.setItem(ACCESS_TOKEN_KEY, token); return true; } catch (e) { return false; } };
+api.interceptors.request.use((config) => {
+  const token = getAccessToken();
+  if (token && !(config.headers && config.headers.Authorization)) {
+    config.headers = config.headers || {};
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// A file is fetched with the header and saved from memory: a plain link cannot carry the token.
+export async function downloadFile(path, fallbackName) {
+  const res = await api.get(path, { responseType: "blob" });
+  const named = /filename="?([^";]+)"?/i.exec(res.headers?.["content-disposition"] || "");
+  const url = window.URL.createObjectURL(res.data);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = named ? named[1] : fallbackName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
+}
+export const downloadExport = (id) => downloadFile(`/audits/${id}/export`, "audit_growth_diligence.xlsx");
+export const downloadClaimsCsv = (id) => downloadFile(`/audits/${id}/claims.csv`, "claims.csv");
+
 export const listAudits = () => api.get("/audits").then((r) => r.data);
 export const getAudit = (id) => api.get(`/audits/${id}`, { timeout: READ_TIMEOUT_MS }).then((r) => r.data);
 export const createAudit = (payload) => api.post("/audits", payload).then((r) => r.data);
@@ -12,7 +42,6 @@ export const updateAudit = (id, payload) => api.put(`/audits/${id}`, payload).th
 // The company name goes in the body, never the URL, so no access log holds it (chat-upload.md section 6.3).
 export const deleteAudit = (id, confirm) => api.delete(`/audits/${id}`, { data: { confirm } }).then((r) => r.data);
 export const getResults = (id) => api.get(`/audits/${id}/results`).then((r) => r.data);
-export const exportUrl = (id) => `${API}/audits/${id}/export`;
 export const getFields = () => api.get("/fields").then((r) => r.data);
 export const computeAudit = (id) => api.post(`/audits/${id}/compute`).then((r) => r.data);
 export const saveMapping = (id, dtype, payload) =>
@@ -83,7 +112,6 @@ export const answerTurnover = (id, claimId, payload) =>
 /** "Same metric and period?" for a gap beyond 50% of the claim (claim-matching.md section 4.1): answer is "yes" or "no". */
 export const answerDefinitionCheck = (id, claimId, answer) =>
   api.put(`/audits/${id}/claims/${encodeURIComponent(claimId)}/definition-check`, { answer }).then((r) => r.data);
-export const claimsCsvUrl = (id) => `${API}/audits/${id}/claims.csv`;
 
 // Verdict, data gaps and the IC memo (docs/specs/verdict-and-memo.md): computed on read by the server from the register, the
 // results and the analyst's inputs. No model is called.
@@ -114,3 +142,14 @@ export const runStage = (id, stage) => api.post(`/audits/${id}/run/${stage}`, nu
 export const getReview = (id) => api.get(`/audits/${id}/review`, { timeout: READ_TIMEOUT_MS }).then((r) => r.data);
 // What "Write all narratives" would run and its upper-bound cost; reads only, no provider call.
 export const getNarrativeEstimate = (id) => api.get(`/runs/${id}/narratives/estimate`).then((r) => r.data);
+
+// Owner page (docs/specs/prompt-store.md): the owner token is passed per call, from memory, and replaces any tester token.
+// Prompt text goes up and never comes back: the list holds name, version, date and hash.
+const asOwner = (token) => ({ headers: { Authorization: `Bearer ${token}` } });
+export const ownerPrompts = (token) => api.get("/admin/prompts", asOwner(token)).then((r) => r.data);
+export const ownerUploadPrompt = (token, name, text) => api.post("/admin/prompts", { name, text }, asOwner(token)).then((r) => r.data);
+export const ownerTesters = (token) => api.get("/admin/testers", asOwner(token)).then((r) => r.data.testers);
+export const ownerIssueTester = (token, label, expiresInDays) =>
+  api.post("/admin/testers", { label, ...(expiresInDays ? { expires_in_days: expiresInDays } : {}) }, asOwner(token)).then((r) => r.data);
+export const ownerRevokeTester = (token, id) => api.post(`/admin/testers/${id}/revoke`, null, asOwner(token)).then((r) => r.data);
+export const ownerReissueTester = (token, id) => api.post(`/admin/testers/${id}/reissue`, null, asOwner(token)).then((r) => r.data);

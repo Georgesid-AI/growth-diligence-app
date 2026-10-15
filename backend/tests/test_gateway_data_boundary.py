@@ -18,7 +18,8 @@ BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 sys.path.insert(0, str(BACKEND / "tests"))
 
-from app.llm import gateway, redaction  # noqa: E402
+from app import access  # noqa: E402
+from app.llm import gateway, prompt_store, redaction  # noqa: E402
 import contract_fixtures as cf  # noqa: E402
 import test_llm_gateway as t  # noqa: E402
 
@@ -1996,11 +1997,6 @@ def test_the_stored_narrative_holds_model_output_only(step):
         assert secret not in json.dumps(doc, default=str)
 
 
-def test_the_new_prompts_and_builder_name_no_deck_text_register_field_or_file():
-    for name in ("data_inventory.md", "data_integrity.md"):
-        text = (BACKEND / "app" / "llm" / "prompts" / name).read_text(encoding="utf-8")
-        for word in ("snippet", "deck", "claim_inputs", "gate_sentence", ".xlsx", ".csv"):
-            assert word not in text, f"{name} names {word!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -2088,3 +2084,78 @@ def test_the_narrative_estimate_sends_nothing_and_names_no_file(run_api):  # noq
     assert len(run_api.adapter.payloads) == sent_before, "an estimate is not a call"
     for secret in ("revenue.csv", "crm.csv", "pnl.csv", "testco_board"):
         assert secret not in body
+
+
+# ---------------------------------------------------------------------------
+# The prompt store and the access tokens (docs/specs/prompt-store.md, section 5; CLAUDE.md rules 14 and 26). Prompt text is
+# the methodology: it goes from the owner page into `prompts`, from `prompts` into the model request, and nowhere else. A token
+# is in an Authorization header and, as a hash, in `access_tokens`; it is in no log line, no response but the one that issues it.
+# ---------------------------------------------------------------------------
+PROMPT_SENTINEL = "PROMPT-TEXT-SENTINEL-8812"
+
+
+def _run_with_sentinel_prompt():
+    class Seen(t.FakeAdapter):
+        def complete(self, *, system, **kwargs):
+            self.systems = getattr(self, "systems", []) + [system]
+            return super().complete(system=system, **kwargs)
+
+    async def go():
+        db = t.make_db()
+        await prompt_store.upload(db, "growth_engine", f"Test only. {PROMPT_SENTINEL}")
+        adapter = Seen()
+        result = await gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=adapter, sleep=t._noop_sleep)
+        return db, adapter, result
+
+    return asyncio.run(go())
+
+
+def test_prompt_text_reaches_the_provider_as_the_system_prompt_only_and_is_stored_in_prompts_only(caplog):
+    import logging
+    with caplog.at_level(logging.DEBUG):
+        db, adapter, result = _run_with_sentinel_prompt()
+    assert adapter.systems == [f"Test only. {PROMPT_SENTINEL}"] and not any(PROMPT_SENTINEL in p for p in adapter.payloads)
+    assert PROMPT_SENTINEL not in json.dumps(result.model_dump(), default=str), "the response holds the version, never the text"
+    assert PROMPT_SENTINEL not in caplog.text
+    holders = {name for name, col in db._cols.items() if PROMPT_SENTINEL in json.dumps(col.docs, default=str)}
+    assert holders == {"prompts"}, "no other collection holds prompt text"
+
+
+def test_the_prompts_and_access_tokens_documents_have_fixed_fields_and_no_raw_token():
+    db = t.FakeDB()
+    db["prompts"].docs.clear()
+    asyncio.run(prompt_store.upload(db, "growth_engine", "Test only."))
+    assert set(db["prompts"].docs[0]) == {"name", "version", "text", "uploaded_at", "sha256"}
+    issued = asyncio.run(access.issue(db, "Tester"))
+    doc = db[access.COLLECTION].docs[0]
+    assert set(doc) == {"id", "label", "token_hash", "created_at", "expires_at", "revoked_at"}
+    assert issued["token"] not in json.dumps(doc) and doc["token_hash"] == access.hash_token(issued["token"])
+    assert issued["token"] not in json.dumps(access.public(doc)) and "token_hash" not in access.public(doc)
+
+
+def test_the_missing_prompt_reason_is_the_closed_sentence_and_holds_no_name_text_or_path():
+    async def go():
+        db = t.make_db()
+        db["prompts"].docs.clear()
+        return await gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=t.FakeAdapter(), sleep=t._noop_sleep)
+
+    assert asyncio.run(go()).reason == prompt_store.NO_PROMPT == "No prompt loaded — upload prompts on the owner page"
+
+
+def test_no_module_of_the_gateway_reads_a_token_and_the_store_and_the_access_module_log_nothing():
+    for path in (BACKEND / "app" / "llm").glob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        assert "app.access" not in text and "OWNER_TOKEN" not in text and "authorization" not in text.lower(), path.name
+    for path in (BACKEND / "app" / "access.py", BACKEND / "app" / "llm" / "prompt_store.py"):
+        text = path.read_text(encoding="utf-8")
+        assert "logging" not in text and "logger" not in text and "print(" not in text, path.name
+
+
+def test_the_owner_route_log_lines_hold_ids_names_and_versions_only():
+    source = (BACKEND / "server.py").read_text(encoding="utf-8")
+    admin = source[source.index("# Owner routes"):source.index("app.include_router(api)")]
+    lines = re.findall(r'logger\.\w+\((.*)\)', admin)
+    assert lines == ['"prompt uploaded: name=%s version=%s", row["name"], row["version"]',
+                     '"tester link issued: tester=%s", issued["tester"]["id"]',
+                     '"tester link revoked: tester=%s", tester_id',
+                     '"tester link re-issued: tester=%s", tester_id']

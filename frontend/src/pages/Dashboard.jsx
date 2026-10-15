@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
@@ -12,7 +13,7 @@ import { Gloss } from "@/components/Gloss";
 import { Narrative } from "@/components/Narrative";
 import { NarrativeControl } from "@/components/NarrativeControl";
 import StepNarrative from "@/components/StepNarrative";
-import { getAudit, getResults, getVerdict, exportUrl, readNarrative, generateNarrative, getDisclosure, reportUsage, NARRATIVE_TIMEOUT_MS } from "@/lib/api";
+import { getAudit, getResults, getVerdict, downloadExport, readNarrative, generateNarrative, getDisclosure, reportUsage, NARRATIVE_TIMEOUT_MS } from "@/lib/api";
 import { GLOSSARY, seeGlossary } from "@/lib/glossary";
 import { SegmentPaths } from "@/components/SegmentPaths";
 import ClaimRegister from "@/components/ClaimRegister";
@@ -226,10 +227,11 @@ export default function Dashboard() {
             {" "}Reporting currency {ccy}. Hover any figure for source lineage.
           </p>
         </div>
-        <a href={exportUrl(id)} data-testid="export-results-button"
+        <button type="button" data-testid="export-results-button"
+          onClick={() => downloadExport(id).catch((e) => toast.error(describeRequestError(e).message))}
           className="inline-flex items-center gap-2 px-3.5 py-2 rounded-md bg-sky-50 border border-[#D1D5DB] text-sm text-slate-800 hover:bg-slate-100 transition-colors">
           <Download className="h-4 w-4" /> Export results
-        </a>
+        </button>
       </div>
 
       {/* Generating is explicit and costed — see NarrativeControl. */}

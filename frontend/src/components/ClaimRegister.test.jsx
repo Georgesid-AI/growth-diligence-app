@@ -12,7 +12,7 @@ jest.mock("@/lib/api", () => ({
   answerTurnover: jest.fn(),
   answerDefinitionCheck: jest.fn(),
   saveAllGatesCall: jest.fn(),
-  claimsCsvUrl: (id) => `http://api/api/audits/${id}/claims.csv`,
+  downloadClaimsCsv: jest.fn(() => Promise.resolve()),
 }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
 
@@ -49,7 +49,10 @@ test("the section has its title, the download button and one row per claim with 
   expect(host.querySelector("h2").textContent).toBe("Claim register");
   const button = host.querySelector('[data-testid="claim-register-csv"]');
   expect(button.textContent).toBe("Download baseline (CSV)");
-  expect(button.getAttribute("href")).toBe("http://api/api/audits/a1/claims.csv");
+  expect(button.getAttribute("href")).toBeNull();       // a link cannot carry the access token: the file is fetched with the header
+  api.downloadClaimsCsv.mockResolvedValue();
+  await act(async () => { button.click(); });
+  expect(api.downloadClaimsCsv).toHaveBeenCalledWith("a1");
   expect([...host.querySelectorAll("thead th")].map((th) => th.textContent)).toEqual(REGISTER_COLUMNS);
   expect(host.querySelectorAll('[data-testid="claim-register-row"]').length).toBe(2);
   const row = host.querySelector('[data-testid="claim-register-row"]');

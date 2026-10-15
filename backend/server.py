@@ -1,4 +1,4 @@
-from fastapi import BackgroundTasks, Body, FastAPI, APIRouter, HTTPException, UploadFile, File
+from fastapi import BackgroundTasks, Body, Depends, FastAPI, APIRouter, HTTPException, Request, UploadFile, File
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -32,9 +32,11 @@ from app import decks
 from app import structures
 from app import column_rules as cr
 from app import usage as usage_mod
+from app import access
 from app.decks import claims as deck_claims
 from app.decks import parser as deck_parser
 from app.llm import gateway as llm_gateway
+from app.llm import prompt_store
 from app.llm import redaction as llm_redaction
 from app.logsafety import install_secret_redaction
 
@@ -46,7 +48,42 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
 
 app = FastAPI(title="Growth Diligence Engine")
-api = APIRouter(prefix="/api")
+
+OPEN_PATHS = ("/api/", "/api/fields")           # the health check and the field list: no audit data (access-links.md section 3)
+
+
+async def access_guard(request: Request) -> Optional[access.Principal]:
+    """Every /api route but OPEN_PATHS passes here (docs/specs/access-links.md section 3), by the route's template:
+    no token, an unknown, expired or revoked one: 401. /api/admin/...: the owner token only (a tester's gets 404, so the
+    routes are not revealed). /api/audits/{id}/... and /api/runs/{id}/...: a tester token whose id owns the audit; any
+    other token (another tester's, the owner's) and an audit that does not exist all get the same 404. The list and
+    create routes and the usage totals need a valid token; the handlers narrow the list to the token's own audits.
+    A route this function does not know still needs a valid token."""
+    path = getattr(request.scope.get("route"), "path", request.url.path)
+    if path in OPEN_PATHS:
+        return None
+    principal = await access.authenticate(db, request.headers.get("authorization"))
+    if principal is None:
+        raise HTTPException(401, "Your link is missing, expired or revoked")
+    if path.startswith("/api/admin/"):
+        if principal.kind != access.OWNER:
+            raise HTTPException(404, "Not found")
+        return principal
+    audit_id = request.path_params.get("audit_id") or request.path_params.get("run_id")
+    if audit_id is None:
+        if path == "/api/audits" and request.method == "POST" and principal.kind != access.TESTER:
+            raise HTTPException(404, "Audit not found")             # the owner token opens and creates no audit
+        return principal
+    miss = HTTPException(404, "Run not found" if path.startswith("/api/runs/") else "Audit not found")
+    if principal.kind != access.TESTER:
+        raise miss
+    audit = await db.audits.find_one({"id": audit_id}, {"id": 1, "owner": 1})
+    if not audit or audit.get("owner") != principal.id:
+        raise miss
+    return principal
+
+
+api = APIRouter(prefix="/api", dependencies=[Depends(access_guard)])
 
 install_secret_redaction()      # no key can reach a log line, message or traceback
 logger = logging.getLogger("growth")
@@ -269,6 +306,7 @@ def sanitize(obj):
 async def audit_public(a: dict) -> dict:
     a.pop("_id", None)
     a.pop("usage", None)          # the counters, notes included, are read only through the usage totals
+    a.pop("owner", None)          # the tester id that owns the audit (access-links.md section 1)
     if a.get("created_at"):
         a["ic_inputs"] = verdict_mod.with_review(a, a.get("ic_inputs"))
     ds = await db.datasets.find({"audit_id": a["id"]}, {"rows": 0, "_id": 0}).to_list(10)
@@ -289,7 +327,7 @@ async def root():
 
 
 @api.post("/audits")
-async def create_audit(payload: AuditCreate):
+async def create_audit(payload: AuditCreate, principal: access.Principal = Depends(access_guard)):
     audit = {
         "id": str(uuid.uuid4()),
         "company_name": payload.company_name,
@@ -307,13 +345,16 @@ async def create_audit(payload: AuditCreate):
         "metrics_stale": False,
     }
     audit["ic_inputs"] = verdict_mod.with_review(audit, None)       # the first quarterly review: creation date + 90 days
-    await db.audits.insert_one({**audit, "usage": usage_mod.empty()})
+    await db.audits.insert_one({**audit, "usage": usage_mod.empty(), "owner": principal.id})
     return audit
 
 
 @api.get("/audits")
-async def list_audits():
-    return await db.audits.find({}, {"_id": 0, "results": 0, "usage": 0}).sort("created_at", -1).to_list(200)
+async def list_audits(principal: access.Principal = Depends(access_guard)):
+    """The token's own audits; the owner token owns none (access-links.md section 3)."""
+    if principal.kind != access.TESTER:
+        return []
+    return await db.audits.find({"owner": principal.id}, {"_id": 0, "results": 0, "usage": 0, "owner": 0}).sort("created_at", -1).to_list(200)
 
 
 @api.get("/audits/{audit_id}")
@@ -2461,6 +2502,74 @@ async def narrative_disclosure(run_id: str):
 async def llm_usage(run_id: str):
     usage = await llm_gateway.usage_for_run(db, run_id)
     return sanitize(usage.model_dump())
+
+
+# ---------------------------------------------------------------------------
+# Owner routes (owner token only, see access_guard): the prompt store and the tester links. They hold no audit data.
+# Prompt text goes in and never comes out: the list has name, version, date and hash (docs/specs/prompt-store.md).
+# ---------------------------------------------------------------------------
+class PromptUpload(BaseModel):
+    name: str
+    text: str
+
+
+class TesterIssue(BaseModel):
+    label: str
+    expires_in_days: Optional[int] = None
+
+
+def _tester_link(request: Request, issued: dict) -> dict:
+    base = os.environ.get("APP_URL") or request.headers.get("origin") or ""
+    return {**issued["tester"], "link": access.link_for(issued["token"], base)}
+
+
+@api.get("/admin/prompts")
+async def admin_prompts():
+    return {"names": list(prompt_store.NAMES), "prompts": await prompt_store.list_versions(db),
+            "missing": await prompt_store.missing(db)}
+
+
+@api.post("/admin/prompts")
+async def admin_upload_prompt(payload: PromptUpload):
+    try:
+        row = await prompt_store.upload(db, payload.name, payload.text)
+    except prompt_store.PromptRefused as exc:
+        raise HTTPException(422, str(exc))
+    logger.info("prompt uploaded: name=%s version=%s", row["name"], row["version"])
+    return row
+
+
+@api.get("/admin/testers")
+async def admin_testers():
+    return {"testers": await access.testers(db)}
+
+
+@api.post("/admin/testers")
+async def admin_issue_tester(payload: TesterIssue, request: Request):
+    try:
+        issued = await access.issue(db, payload.label, payload.expires_in_days)
+    except access.Refused as exc:
+        raise HTTPException(422, str(exc))
+    logger.info("tester link issued: tester=%s", issued["tester"]["id"])
+    return _tester_link(request, issued)
+
+
+@api.post("/admin/testers/{tester_id}/revoke")
+async def admin_revoke_tester(tester_id: str):
+    tester = await access.revoke(db, tester_id)
+    if tester is None:
+        raise HTTPException(404, "Tester not found")
+    logger.info("tester link revoked: tester=%s", tester_id)
+    return tester
+
+
+@api.post("/admin/testers/{tester_id}/reissue")
+async def admin_reissue_tester(tester_id: str, request: Request):
+    issued = await access.reissue(db, tester_id)
+    if issued is None:
+        raise HTTPException(404, "Tester not found")
+    logger.info("tester link re-issued: tester=%s", tester_id)
+    return _tester_link(request, issued)
 
 
 app.include_router(api)

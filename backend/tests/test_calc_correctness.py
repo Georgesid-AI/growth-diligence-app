@@ -114,8 +114,3 @@ def test_the_auto_recompute_log_never_carries_upload_content(monkeypatch, caplog
     assert all(r.exc_info is None for r in caplog.records), "no traceback text in the log"
 
 
-def test_the_prompt_reports_a_missing_ratio_as_missing_and_names_the_segment_labels():
-    from app.llm import prompt_store
-    text = " ".join(prompt_store.load("growth_engine").text.split())
-    assert 'A null ratio is Missing, never "within reach"' in text
-    assert "Segments appear as labels (`Segment A`, `Segment B`, ...)" in text

@@ -579,58 +579,6 @@ def test_each_schemas_hash_enters_the_cache_key_of_its_own_type(monkeypatch):
     assert (moved.cache_hit, adapter.calls) == (False, 1) and moved.key != mapping.key
 
 
-def test_the_prompt_is_v6_and_names_every_label_field_metric_category_and_tie_break():
-    """The prompt lists exactly the label fields, every metric (other and not_a_metric too), the roadmap categories
-    and the tie-breaks; a unit is one of the 20 listed currency codes, or "other" with its ISO code in unit_other.
-    The column-mapping section keeps its own item fields. v4 (issue #48): its input section reads a title cell. v5
-    (issues #45 and #47, decisions of 2026-10-06): the new claim types and tie-breaks. v6 (issue #58, decisions of
-    2026-10-06): the run-rate period, the conversion rate and the review scores."""
-    import re
-    from app.decks import claims
-    from app.llm import prompt_store, schemas
-    prompt = prompt_store.load(gateway.STRUCTURE_PROMPT)
-    assert prompt.version == "v6"
-    text = prompt.text
-    given = text.split("# The input")[1].split("# Deck structures")[0]
-    assert "`r1c1 title: 2011 Estimated Revenue`" in given and "label of the value" in given
-    fields = text.split("Each label has exactly these fields:")[1].split("\n\n")[1]
-    named = re.findall(r"^- `(\w+)`:", fields, re.M)
-    assert named == list(schemas.labelling_output_schema()["properties"]["labels"]["items"]["properties"])
-    unit, unit_other = (re.search(rf"^- `{f}`:(.*?)(?=^- `)", fields, re.M | re.S).group(1)
-                        for f in ("unit", "unit_other"))
-    assert "20 currency codes" in unit and "`other`" in unit
-    assert "`other`" in unit_other and "ISO code" in unit_other and "null" in unit_other
-    for word in [*schemas.LABEL_METRICS, *schemas.ROADMAP_CATEGORIES]:
-        assert f"`{word}`" in text, word
-    metric = re.search(r"^- `metric`:(.*?)(?=^- `)", fields, re.M | re.S).group(1)
-    assert all(f"`{m}`" in metric for m in claims.CLAIM_TYPES), "the metric field lists every claim type"
-    ties = text.split("Tie-breaks:")[1].split("\n\n")[0]
-    assert "time figures are `product`, unless a user count is named or a tie-break below names them" in ties
-    assert '"% of marketplace" and market share are `market`' in ties
-    assert "commission and take rate are `sales`" in ties
-    assert "monthly revenue, MRR, ARR and revenue run rate are `revenue`" in ties
-    flat = " ".join(ties.split())
-    assert "a run rate has a period only when a header of its cell states one" in flat, "issue #58, moz p20 i3"
-    assert "rebuilds the period" not in flat, "issue #58: the v5 clause probably invited the model to write a period"
-    assert re.search(r'a conversion rate \("% of Free Trials Converting to Paid"\) is `sales`', flat), "moz p21 i1"
-    assert re.search(r'employee review scores \("Recommend to a friend", "Approve of CEO"\) and their number of '
-                     r'ratings are `not_a_metric`', flat), "front-b p14 i1-i3"
-    for new in ("cash", "burn", "runway", "ltv", "cac", "customer_lifetime", "ltv_cac", "trials_per_day",
-                "months_to_profitability"):
-        assert re.search(rf"^- [^\n]* `{new}`[;.]$", ties, re.M), f"{new} has its tie-break line"
-    assert ("followers and other social counts, visits, email subscribers and community members on a channel are "
-            "`other`, not `users`") in " ".join(ties.split())
-    assert "board seats are `not_a_metric`, the whole count" in ties
-    assert "a team member's tenure" in ties and re.search(r"tenure[^\n]* is `not_a_metric`", ties)
-    assert "the share of a market or of a survey that does something" in flat and \
-        re.search(r"share of a market or of a survey[^;]* is `not_a_metric`; the company's own market share stays "
-                  r"`market`", flat), "decision of 2026-10-06 on issue #47"
-    assert "DAU/MAU and other engagement ratios are `product`, like hours" in flat
-    assert "integrations and partnerships are `product`" in flat
-    mapping = text.split("# Column mapping")[1].split("Each item has exactly these fields:")[1]
-    heads = [line.split(":")[0] for line in mapping.splitlines() if line.startswith("- `")]
-    named = [name for head in heads for name in re.findall(r"`(\w+)`", head)]
-    assert sorted(named) == sorted(schemas.structure_output_schema()["properties"]["items"]["items"]["properties"])
 
 
 def test_the_labelling_schema_lists_20_currencies_and_other_with_the_code_in_unit_other():
@@ -2031,7 +1979,8 @@ def test_the_consistency_report_shows_where_passes_disagree_why_items_are_unveri
     average text plus item list against 4,000."""
     pytest.importorskip("pdfplumber")
     from app.decks import parser
-    from app.llm import cache, prompt_store, schemas
+    from app.llm import cache, schemas
+    from prompt_fixtures import stub_documents
     script = _consistency_script()
     report = asyncio.run(script.run(["05-zero2hero.pdf"], 3, script.MemoryDB(), _drifting(script)()))
     # Table: 24 items, the FY2023 revenue written three ways but kept as one period: 23 of 24 as written, 24 of 24
@@ -2067,7 +2016,8 @@ def test_the_consistency_report_shows_where_passes_disagree_why_items_are_unveri
     def count(system=None, payload="", schema=None):
         return (len(system or "") + len(payload) + (len(json.dumps(schema)) if schema else 0)) // 2
     assert script.FakeAdapter.CHARS_PER_TOKEN == 2
-    system, schema = prompt_store.load(gateway.STRUCTURE_PROMPT).text, schemas.labelling_output_schema()
+    system = next(d for d in stub_documents() if d["name"] == gateway.STRUCTURE_PROMPT)["text"]
+    schema = schemas.labelling_output_schema()
     empty = cache.canonical_json({"type": "table", "text": ""})
     sent = []
     for structure in parser.parse_deck((DECKS / "05-zero2hero.pdf").read_bytes(), "05-zero2hero.pdf")["structures"]:
@@ -2107,7 +2057,7 @@ def test_the_consistency_report_shows_where_passes_disagree_why_items_are_unveri
     class Uncountable:
         def count_tokens(self, **kwargs):
             raise RuntimeError("count_tokens unavailable")
-    failed = asyncio.run(script.fixed_tokens(Uncountable()))
+    failed = asyncio.run(script.fixed_tokens(Uncountable(), "system"))
     assert failed == dict.fromkeys(("fixed_prompt", "system_prompt", "output_schema", "empty_message")), \
         "a failed count is n/a and never stops a paid run"
     report["tokens"].update(failed)

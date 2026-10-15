@@ -7,6 +7,8 @@ import Dashboard from "@/pages/Dashboard";
 import Diagnostics from "@/pages/Diagnostics";
 import RunAudit from "@/pages/RunAudit";
 import Review from "@/pages/Review";
+import AccessLink from "@/pages/AccessLink";
+import OwnerPage from "@/pages/OwnerPage";
 
 function App() {
   return (
@@ -14,6 +16,8 @@ function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<AuditHub />} />
+          <Route path="/t/:token" element={<AccessLink />} />
+          <Route path="/owner" element={<OwnerPage />} />
           <Route path="/audit/:id/run" element={<RunAudit />} />
           <Route path="/audit/:id/review" element={<Review />} />
           <Route path="/audit/:id/mapping" element={<MappingWizard />} />

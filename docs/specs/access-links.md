@@ -1,8 +1,9 @@
 # Spec: Access links for the tester phase, and the deployment rule (Release 1)
 Status: Agreed scope. Source: docs/plans/app-plan_V2_amendments_15_10_2026.md section 6 and 7.1 (D6 amended, decisions of
 15 Oct 2026, final). Location: docs/specs/access-links.md (new: no earlier access spec existed in docs/specs/).
-Implementation order: 6 of 6. **Architecture note (CLAUDE.md rule 1): building §2 needs a collection that
-docs/architecture.md does not list (§6). Nothing of §2–§4 is built until George decides.**
+Implementation order: 6 of 6. **Built with the prompt store (docs/specs/prompt-store.md), on George's instruction of 15 Oct 2026
+to issue, list, revoke and re-issue tester links on the owner page. The collection `access_tokens` is in the code; docs/architecture.md
+is not edited (CLAUDE.md rule 1), see §6.**
 
 ## 0. Challenge and deletions (CLAUDE.md rule 4)
 - Needed: testers will hold real audits on a public URL; today any visitor can list and open every audit. The simpler
@@ -74,17 +75,22 @@ the engineering owner; no session of this spec has that access.
 - Options for George: (a) approve the collection `access_tokens` and the check in the API row (recommended: one collection,
   hashes only, removed at the AWS move); (b) keep tester tokens in the environment (hashes and expiry dates set at deploy),
   which drops run-time revoke and re-issue from §2 and needs a redeploy for each change.
-- Until then: this spec, the failing tests of §4 (strict expected failures) and nothing else are committed.
+- Status: the task of 15 Oct 2026 asked for the tester links (option (a)), so `access_tokens` and the check on every route are built and the
+  tests of §4 pass. docs/architecture.md still has to be edited by George (wording in prompt-store.md §7). The environment
+  variables are `OWNER_TOKEN_SHA256` (the SHA-256 hex of the owner token) and, optionally, `APP_URL` (the address links are built on).
+- Owner on the list route: `GET /api/audits` with the owner token answers `[]`; `POST /api/audits` answers 404. Usage totals answer any
+  valid token (the tester's usage panel is unchanged); see "Decisions for you" in the session log.
+- Audits made before this change, and the demo audits, have no owner and are listed for no one.
 
 ## 7. Found while writing this spec (reported, not changed)
 - The plan names "no methodology prompt text in the repo (CLAUDE.md)". CLAUDE.md has no such rule, and the narrative and
   structure prompts are tracked in `backend/app/llm/prompts/` (marked "server-side only"), so a public repository publishes
   them. Since Emergent deploys from GitHub only, moving them out of the repository needs another delivery path for the
-  prompts. See "Decisions for you".
+  prompts. Done: docs/specs/prompt-store.md and CLAUDE.md rule 26 (the old texts remain in git history).
 
-## Files (once §6 is decided)
+## Files
 `backend/server.py` (a dependency on every audit route), `backend/app/access.py` (new: hashing, expiry, ownership),
-`frontend/src/lib/api.js` (the header), `frontend/src/pages/AccessLink.jsx` (new: the link page), `frontend/src/App.js`,
+`frontend/src/lib/api.js` (the header, authenticated downloads), `frontend/src/pages/AccessLink.jsx` (new: the link page), `frontend/src/App.js`,
 the tests of §4.
 
 ## Done when

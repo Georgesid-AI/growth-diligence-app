@@ -1,8 +1,8 @@
 """Access links for the tester phase (docs/specs/access-links.md; plan of 15 Oct 2026, section 6 and 7.1).
 
 The four tests the plan requires before tester deployment. Every audit route is read from the app's own router, so a route
-added later is covered without editing this file. The building of the access model waits on the architecture note of the
-spec (section 6): these tests are committed as strict expected failures until then. No network.
+added later is covered without editing this file. They run the real access guard (marker `real_access`, conftest.py); every
+other API test runs as one fixed tester. No network.
 """
 import hashlib
 import re
@@ -18,8 +18,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 import server  # noqa: E402
 import test_llm_gateway as t  # noqa: E402
 
-# Committed before the code (docs/specs/access-links.md, section 6): strict expected failures until the access model is built.
-pytestmark = pytest.mark.xfail(strict=True, reason="docs/specs/access-links.md: waits on the architecture note (section 6)")
+pytestmark = pytest.mark.real_access
 
 OWNER = "owner-token-for-the-test-suite-only"
 PARAMS = {"dtype": "revenue", "deck_id": "deck-1", "candidate_id": "c1", "claim_id": "c1", "stage": "engine",
