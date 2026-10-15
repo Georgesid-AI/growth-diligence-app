@@ -6,19 +6,13 @@ import { Input } from "@/components/ui/input";
 import { getMemo, putIcInputs } from "@/lib/api";
 import { describeRequestError } from "@/lib/requestError";
 import { seeGlossary } from "@/lib/glossary";
-import { labelText } from "@/lib/claimRegister";
+import { LABEL_STYLE, labelText } from "@/lib/claimRegister";
 import {
   CONFIRM, MEMO_BUTTON, OTHER_GATES, PART_FIVE, PART_GAPS, PART_INPUTS, PART_KEY_GATES, PART_REASONS, PROPOSED, REPLACE, REVIEW_LABEL,
   THESIS_MAX, TOP5_HEADING, TOP5_STATEMENT, VERDICT_HEADING, RATING_OPTIONS, candidateText, initialPicks, refusalText, replacePick, samePicks,
 } from "@/lib/verdict";
 
 const selectClass = "h-8 rounded-md border border-[#E5E7EB] bg-white px-2 text-xs";
-const LABEL_STYLE = {
-  Verified: "text-emerald-800 border-emerald-500/50 bg-emerald-50",
-  Contradicted: "text-rose-800 border-rose-500/50 bg-rose-50",
-  Unverified: "text-amber-800 border-amber-500/50 bg-amber-50",
-  Unsupported: "text-slate-700 border-slate-400/60 bg-slate-50",
-};
 
 /** The top 5: the proposed or confirmed five, a pick per row from the register, and Confirm (verdict-and-memo.md section 6.1). */
 export function TopFive({ verdict, candidates, onConfirm, busy }) {

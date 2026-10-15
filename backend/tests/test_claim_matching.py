@@ -390,17 +390,20 @@ def _table_rows(rows, cid):
     return found, cm.build_register(found, results_for(RUNS["A"]), settings(RUNS["A"]))
 
 
-QUALIFIED = "deck label 'registered institutions' is not paying customers; the analyst can edit the type to Customers to test it"
+QUALIFIED = "population differs: deck label 'registered institutions' is not paying customers; the figure shown is paying customers"
 
 
-def test_registered_institutions_are_users_not_paying_customers_and_every_value_is_unsupported_with_the_reason():
-    """George, 2026-10-13: the deck row "Registered Institutions | - | 1 | 2 | 25 | 50" under Y/E headers."""
+def test_registered_institutions_are_users_read_against_paying_customers_and_inconclusive_where_a_figure_is_read():
+    """George, 2026-10-13: the deck row "Registered Institutions | - | 1 | 2 | 25 | 50" under Y/E headers. Since 2026-10-15
+    (evidence-labels.md section 3) the paying customers of each period are shown, and a value whose figure is read is Inconclusive."""
     found, rows = _table_rows([["", "Y/E 21", "Y/E 22", "Y/E 23", "Y/E 24", "Y/E 25"],
                                ["Registered Institutions", "-", "1", "2", "25", "50"]], "r")
     assert [(c["claim_type"], c["qualifier"], [i["value"] for i in c["by_period"]]) for c in found] == \
         [("users", "registered", [1, 2, 25, 50])]
-    assert [(r["claim_id"], r["evidence_label"], r["reason"], r["metric"]) for r in rows] == \
-        [(f"r0#{n}", "Unsupported", QUALIFIED, None) for n in range(1, 5)]
+    got = {r["claim_id"]: (r["evidence_label"], r["reason"], r["metric"], r["observed_value"]) for r in rows}
+    assert got["r0#1"] == ("Unverified", "before Customer count's first month, 2023-01", "Customer count", None)
+    assert got["r0#2"] == ("Inconclusive", QUALIFIED, "Customer count", 5)
+    assert [got[f"r0#{n}"][0] for n in (3, 4)] == ["Unverified", "Unverified"], "Y/E 24 and Y/E 25 end after the as-of month"
 
 
 def test_a_qualified_users_gate_is_saved_only_with_the_analysts_metric_and_direction():
@@ -410,10 +413,11 @@ def test_a_qualified_users_gate_is_saved_only_with_the_analysts_metric_and_direc
     gate = {"gate_threshold": 40.0, "gate_budget_decision": "the plan", "gate_date": "2024-06-30"}
     bare = run_claim({**claim, "claim_inputs": {"x1": gate}})
     assert (bare["reason"], bare["gate_saved"], bare["gate_needed"], cm.needs_metric_name(bare)) == (QUALIFIED, False, True, True)
+    assert bare["evidence_label"] == "Inconclusive" and bare["observed_value"] == 5
     named = run_claim({**claim, "claim_inputs": {"x1": {**gate, "gate_metric_name": "Registered institutions",
                                                         "gate_direction": "at least"}}})
     assert named["gate_saved"] and named["gate_sentence"].startswith(
-        "Before the plan, Registered institutions must be at least 40 by 2024-06-30. Not yet observed: deck label")
+        "Before the plan, Registered institutions must be at least 40 by 2024-06-30. Not yet observed: population differs")
 
 
 def test_paying_customers_are_still_tested_against_the_customer_count():
@@ -428,6 +432,7 @@ def test_paying_customers_are_still_tested_against_the_customer_count():
 
 
 def test_the_qualified_reason_is_only_for_users_with_a_qualifier_and_an_edit_to_customers_tests_the_claim():
+    """A qualified Users count is Inconclusive with the paying customers shown (evidence-labels.md section 3)."""
     base = {"claim_type": "users", "unit": None, "currency": None, "value": 40, "target_date": "2024-02",
             "snippet": "Registered Institutions 40"}
     assert run_claim({**base, "qualifier": "registered"})["reason"] == QUALIFIED
@@ -582,7 +587,7 @@ def test_a_saved_gate_on_a_lower_is_better_metric_says_at_most_and_a_forecast_ro
 # --- section 6: the register's fields ----------------------------------------------------------------------------
 
 def test_a_register_row_has_exactly_the_fields_of_section_6_and_the_verdict_spec_in_order():
-    section_6 = ("claim_id deck_file page_ref claim_type status deck_reading claimed_value claimed_high claim_direction unit "
+    section_6 = ("claim_id deck_file page_ref claim_type status deck_reading extraction_confidence claimed_value claimed_high claim_direction unit "
                  "currency claimed_converted claimed_converted_high fx_rate fx_date period "
                  "period_start period_end period_note segment segment_set_by metric metric_set_by direction observed_value "
                  "observed_at observed_source gap gap_normalised gap_kind gloss evidence_label reason tolerance rank "

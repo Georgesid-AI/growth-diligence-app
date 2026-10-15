@@ -21,7 +21,7 @@ RATINGS = ("Strong", "Adequate", "Weak")
 RATED_ROWS = ("data_reliability", "growth_engine")
 THESIS_PARTS = ("plan", "evidence", "condition")
 THESIS_MAX = 300
-UNVERIFIED_LABELS = ("Unverified", "Unsupported")
+UNVERIFIED_LABELS = ("Unverified", "Inconclusive", "Unsupported")    # Inconclusive counts with Unverified (evidence-labels.md section 4)
 
 # Screen wording W1-W25 (verdict-and-memo.md section 11), as approved.
 W4_GATE_NEEDED = "Gate needed"
@@ -87,6 +87,8 @@ def with_review(audit: dict, ic: Optional[dict]) -> dict:
 def claim_name(row: dict) -> str:
     """How a register row is called in a sentence: its metric (or claim type), the segment when not the whole company, the period."""
     name = row.get("metric") or str(row.get("claim_type") or "claim").replace("_", " ").capitalize()
+    if str(row.get("reason") or "").startswith(cm.POPULATION_PREFIX):     # the app's metric counts other people: name the claim's own
+        name = str(row.get("claim_type") or "claim").replace("_", " ").capitalize()
     if row.get("segment") not in (None, cm.WHOLE):
         name = f"{name} · {row['segment']}"
     if row.get("period"):
@@ -156,7 +158,7 @@ def key_gates(rows: List[dict]) -> dict:
             "note": note, "ok": all_key or MIN_KEY_GATES <= len(marked) <= MAX_KEY_GATES}
 
 
-GATE_LABELS = ("Unverified", "Unsupported", "Contradicted")
+GATE_LABELS = cm.NOT_VERIFIED
 PREFILL_KEY_GATES = 3
 OTHER_DECISION = "Other"
 

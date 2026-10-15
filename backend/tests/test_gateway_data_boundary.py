@@ -1280,6 +1280,9 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             "qualifier", "QUALIFIERS", "QUALIFIED_REASON", "qualified_label", "definition_check", "definition_question",
                             "definition_views", "definition_rows", "definition_basis", "DEFINITION_QUESTION", "DEFINITION_OPEN_REASON",
                             "DEFINITION_OPEN_REASON_RATE", "DEFINITION_MISMATCH", "BIG_GAP_RATE_POINTS",
+                            # docs/specs/evidence-labels.md: the confidence column, the statuses, their explainers and grouping
+                            "extraction_confidence", "with_confidence", "confidence_level", "EVIDENCE_STATUSES", "MEMO_GROUPS", "QUALIFIED_NO_FIGURE",
+                            "EXTRACTION_EXPLAINER", "EVIDENCE_EXPLAINER", "POPULATION_PREFIX", "NOT_VERIFIED",
                             *MATCHING_SERVER_ONLY})
 # The functions that log about the register, and the only things their log calls may name.
 REGISTER_LOGGERS = frozenset({"_claim_rows", "claim_register", "claim_register_csv", "update_claim_inputs", "answer_turnover",
@@ -1493,7 +1496,8 @@ def test_the_qualified_users_reason_holds_two_closed_words_and_the_qualifier_nev
     out = claim_matching.build_register([row], RESULTS, {"fiscal_year_end": 12, "reporting_currency": "EUR", "fx": {"EUR": 1.0}})[0]
     nouns = r"customers?|clients?|paying users?|accounts?|compan(?:y|ies)|agenc(?:y|ies)|subscribers?|institutions?"
     words = "|".join(re.escape(q) for q in deck_claims.QUALIFIERS)
-    closed = re.escape(claim_matching.QUALIFIED_REASON).replace(re.escape("{label}"), f"(?:{words}) (?:{nouns})")
+    # no paying-customer figure in these results: Unsupported, with the reason that names the population (evidence-labels.md)
+    closed = re.escape(claim_matching.QUALIFIED_NO_FIGURE).replace(re.escape("{label}"), f"(?:{words}) (?:{nouns})")
     assert re.fullmatch(closed, out["reason"]), out["reason"]
     assert out["evidence_label"] == "Unsupported" and sentinel not in json.dumps(out, default=str)
     db, reads = _recording_db()

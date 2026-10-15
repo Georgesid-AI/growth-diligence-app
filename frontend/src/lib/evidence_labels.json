@@ -1,0 +1,9 @@
+{
+  "note": "docs/specs/evidence-labels.md: the evidence statuses in screen order, the memo's grouping (Inconclusive counted under Unverified, its count in brackets) and the two explainers. Pinned to backend/app/claim_matching.py by backend/tests/test_interface_contracts.py and test_evidence_labels.py.",
+  "statuses": ["Verified", "Contradicted", "Inconclusive", "Unverified", "Unsupported"],
+  "memo_groups": { "Unverified": ["Unverified", "Inconclusive"] },
+  "explainers": {
+    "extraction_confidence": "How well the app read this figure from the deck. Not a statement about whether it is true.",
+    "evidence_status": "How this claim compares with the company data supplied for this audit. Agreement is not independent verification."
+  }
+}

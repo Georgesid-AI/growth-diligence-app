@@ -9,7 +9,7 @@ import { answerDefinitionCheck, answerTurnover, claimsCsvUrl, getClaimRegister, 
 import {
   DEFINITION_ANSWERS, DOWNLOAD_LABEL, labelText, GATE_BUDGET_MAX, GATE_DIRECTIONS, GATE_METRIC_MAX, GATE_METRIC_PLACEHOLDER, GATE_NEEDED, KEY_GATE_LABEL, NO_METRIC, OTHER_DECISION, PREFILLED, gateDraft,
   REGISTER_COLUMNS, REGISTER_COLUMN_WIDTHS, REGISTER_HEADING, SET_GATE_LABEL, VAS_LABEL, TURNOVER_QUESTION, answerReady, reasonsFor, claimCellText, rateHover, takeRateText, evidenceLines, gapText, gateContext, gateEdit, metricOptions, needsMetricName,
-  observedText, overlapsText, readingText, registerRows, segmentOptions, valueAtStakeText,
+  observedText, overlapsText, readingText, registerRows, segmentOptions, valueAtStakeText, COLUMN_EXPLAINERS, EVIDENCE_SUBTITLE, LABEL_STYLE,
 } from "@/lib/claimRegister";
 import { CALCULATE_CLASS } from "@/lib/chatUpload";
 import { useGateEdits } from "@/lib/useGateEdits";
@@ -21,12 +21,6 @@ import { NO_DATE } from "@/lib/deckClaims";
 // The button the dropdown points at is drawn like Map and Compute; the other is the same style, paler. Any other reason: both pale.
 const ACTIVE_REASON = { deck_says_gross_revenue: "revenue", deck_says_processed_volume: "volume" };
 const selectClass ="h-8 rounded-md border border-[#E5E7EB] bg-white px-2 text-xs max-w-[11rem]";
-const LABEL_STYLE = {
-  Verified: "text-emerald-800 border-emerald-500/50 bg-emerald-50",
-  Contradicted: "text-rose-800 border-rose-500/50 bg-rose-50",
-  Unverified: "text-amber-800 border-amber-500/50 bg-amber-50",
-  Unsupported: "text-slate-700 border-slate-400/60 bg-slate-50",
-};
 
 // The options of a select, with the stored choice kept in the list even when it is no longer offered.
 const withCurrent = (options, current) => (options.includes(current) ? options : [...options, current]);
@@ -259,7 +253,12 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
             <colgroup>{REGISTER_COLUMN_WIDTHS.map((w, i) => <col key={REGISTER_COLUMNS[i]} style={{ width: `${w}%` }} />)}</colgroup>
             <thead>
               <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500 border-b border-[#E5E7EB]">
-                {REGISTER_COLUMNS.map((c) => <th key={c} className="py-2 px-3 font-medium">{c}</th>)}
+                {REGISTER_COLUMNS.map((c) => (
+                  <th key={c} className="py-2 px-3 font-medium" title={COLUMN_EXPLAINERS[c]}>
+                    {c}
+                    {c === "Evidence status" && <div className="normal-case tracking-normal text-[10px] text-slate-400">{EVIDENCE_SUBTITLE}</div>}
+                  </th>
+                ))}
               </tr>
             </thead>
             {/* one tbody per claim: the claim's line, then a second smaller grey line spanning the row */}
@@ -302,6 +301,7 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
                       </select>
                     </td>
                     <td className="pt-2 px-3 font-mono text-slate-800" data-testid="register-gap">{gapText(row, ccy)}</td>
+                    <td className="pt-2 px-3 font-mono text-slate-700"><span data-testid="register-confidence">{row.extraction_confidence || "—"}</span></td>
                     <td className="pt-2 px-3">
                       <span className={`text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-nowrap ${LABEL_STYLE[row.evidence_label] || ""}`} data-testid="register-evidence">
                         {labelText(row)}

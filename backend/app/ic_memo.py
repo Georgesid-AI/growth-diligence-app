@@ -392,8 +392,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, us
     out += [f"## {HEADINGS[0]}", f"Verdict: {ver['outcome']} – {ver['rule']}{notes.register(top_ranks)}", vd.W24_STATEMENT, ""]
     out += [f"Files reviewed: {len(files)} data {'file' if len(files) == 1 else 'files'} and {len(decks)} {'deck' if len(decks) == 1 else 'decks'}.{notes.add('files by evidence category, Appendix D')}",
             f"Evidence categories covered: {covered} of 7.{notes.add('files by evidence category, Appendix D')}",
-            "Claims: " + ", ".join(f"{counts.get(label, 0)} {label}" for label in ("Contradicted", "Unsupported", "Unverified"))
-            + f" of {len(rows)} in the register.{notes.register()}"]
+            "Claims: " + summary_counts(counts) + f" of {len(rows)} in the register.{notes.register()}"]
     checks = cm.definition_counts(rows)
     if checks["yes"] or checks["no"]:            # claim-matching.md section 4.1: an open one blocks the verdict, so none is left here
         out += [f"Definition checks: {checks['yes']} answered Yes, {checks['no']} answered No.{notes.register()}"]
@@ -537,6 +536,14 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, us
     app += ["Glossary", *(f"- {term}: {definition}" for term, definition in fmt.GLOSSARY.items()), ""]
     app += ["Footnotes", notes.definitions()]
     return head, head + "\n" + "\n".join(app) + "\n"
+
+
+def summary_counts(counts: Dict[str, int]) -> str:
+    """"{c} Contradicted, {s} Unsupported, {u} Unverified ({i} Inconclusive)": Inconclusive counted under Unverified, its own count in
+    brackets, printed also when 0 (evidence-labels.md section 4; the grouping is claim_matching.MEMO_GROUPS)."""
+    unverified = sum(counts.get(label, 0) for label in cm.MEMO_GROUPS["Unverified"])
+    return (f"{counts.get('Contradicted', 0)} Contradicted, {counts.get('Unsupported', 0)} Unsupported, "
+            f"{unverified} Unverified ({counts.get(cm.INCONCLUSIVE, 0)} Inconclusive)")
 
 
 def _glossed(lines: List[str]) -> List[str]:
