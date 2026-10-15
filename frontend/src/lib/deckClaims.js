@@ -63,11 +63,8 @@ export function newClaimPayload(draft) {
   };
 }
 
-// A figure no heading names a type for (docs/specs/deck-parser.md section 2): not guessed, the analyst chooses.
-export const UNKNOWN_TYPE_LABEL = "Unknown – choose type";
-
-// Labels for every type a stored claim may carry; "usage" only on claims parsed before it was dropped; "other" on an
-// item the model labelled other (docs/specs/structure-labelling.md section 4).
+// Labels for every type a stored claim may carry; "usage" only on claims parsed before it was dropped. An item the model labelled
+// other and a figure no heading names a type for are both Other (docs/specs/claim-types-and-correction.md section 4).
 export const TYPE_LABELS = {
   revenue: "Revenue", revenue_growth: "Revenue growth", growth: "Growth", retention: "Retention", sales: "Sales",
   customers: "Customers", users: "Users", user_growth: "User growth", gross_margin: "Gross margin",
@@ -76,11 +73,15 @@ export const TYPE_LABELS = {
   cac: "CAC", customer_lifetime: "Customer lifetime", ltv_cac: "LTV/CAC", trials_per_day: "Trials per day",
   months_to_profitability: "Months to profitability", acquisition_channels: "Acquisition channels", use_of_funds: "Use of funds",
   other: "Other",
-  unknown: UNKNOWN_TYPE_LABEL,
+  unknown: "Other",
 };
 // The types an analyst can choose: same order and names as backend app/decks/claims.py CLAIM_TYPES.
 // "Use of funds" is a type the model may read from a structure, not one the parser gives.
 export const CLAIM_TYPES = Object.keys(TYPE_LABELS).filter((t) => !["usage", "use_of_funds", "other", "unknown"].includes(t));
+// The editor also offers Other: a figure typed Other leaves the register and is never a task (claim-types-and-correction.md 4).
+export const OTHER_TYPES = ["other", "unknown"];
+export const EDIT_TYPES = [...CLAIM_TYPES, "other"];
+export const isOther = (c) => OTHER_TYPES.includes(c?.claim_type);
 // Suggestions for the unit field; a count's unit is the noun it counts ("paying users").
 export const CLAIM_UNITS = ["%", "x", "months", "years", "weeks", "days", "hours", "count", "customers", "users"];
 // What the unit "count" stands for, shown beside it in the unit list; a currency stays in its own field.
@@ -264,10 +265,52 @@ export function readingChoices(c) {
   }));
 }
 
-// An item the model labelled "other", or a figure no heading names a type for ("unknown"), is listed under that type;
-// the server approves it only once its type is edited to a claim type.
-export const OTHER_TYPE_NOTE = "Choose a claim type, then approve.";
-export const needsType = (c) => c?.claim_type === "other" || c?.claim_type === "unknown";
+// The fields every claim holds besides its figure (docs/specs/claim-types-and-correction.md sections 1 to 3), as the editor offers
+// them. Every select offers Unknown. Values are the server's.
+export const FIGURE_TYPE_OPTIONS = [["actual", "Actual"], ["target", "Target"], ["unknown", "Unknown"]];
+export const POPULATION_OPTIONS = {
+  customers: [["paying", "Paying customers"], ["registered", "Registered users"], ["active", "Active users"]],
+  users: [["paying", "Paying customers"], ["registered", "Registered users"], ["active", "Active users"]],
+  user_growth: [["paying", "Paying customers"], ["registered", "Registered users"], ["active", "Active users"]],
+  sales: [["deals won", "Deals won"], ["all closed", "All closed deals"], ["open", "Open deals"]],
+};
+export const GROWTH_TYPES = ["revenue_growth", "growth", "user_growth"];
+export const GROWTH_BASIS_OPTIONS = [["mom", "MoM"], ["yoy", "YoY"], ["annualised", "Annualised"], ["cumulative", "Cumulative"], ["unknown", "Unknown"]];
+export const EDIT_REASONS = [["parser_misread", "Parser misread the deck"], ["deck_context", "Deck context says otherwise"], ["other", "Other"]];
+export const DEFAULT_EDIT_REASON = "parser_misread";
+const FIELD_NAMES = { claim_type: "Type", value: "Value", value_high: "To (range)", unit: "Unit", currency: "Currency", target_date: "Period",
+  by_period: "Values by period", population: "Population", figure_type: "Figure type", growth_basis: "Growth basis" };
+const OPTION_LABELS = Object.fromEntries([...FIGURE_TYPE_OPTIONS, ...Object.values(POPULATION_OPTIONS).flat(), ...GROWTH_BASIS_OPTIONS]);
+
+/** The figure type, population and growth basis the editor opens on: the stored value, else the one the register reads
+ *  (`claim_fields`, sent by the server), else Unknown ("" for a population). */
+export function claimFields(c) {
+  const read = c?.claim_fields || {};
+  return {
+    figure_type: c?.figure_type || read.figure_type || "unknown",
+    population: c?.population || read.population || "",
+    growth_basis: c?.growth_basis || read.growth_basis || "unknown",
+  };
+}
+
+const logValue = (field, v) => {
+  if (v === null || v === undefined || v === "") return "Unknown";
+  if (field === "claim_type") return typeLabel(v);
+  if (Array.isArray(v)) return v.map((i) => i.value ?? "Unknown").join(", ");
+  return OPTION_LABELS[v] || String(v);
+};
+
+/** The Status cell's hover: one line per edit, "Figure type: Target → Actual · analyst · 15 Oct 2026 · Parser misread the deck". */
+export function editLogText(c) {
+  const reasons = Object.fromEntries(EDIT_REASONS);
+  return (c?.edit_log || []).map((e) => [`${FIELD_NAMES[e.field] || e.field}: ${logValue(e.field, e.previous)} → ${logValue(e.field, e.value)}`,
+    e.by, displayDate(String(e.at || "").slice(0, 10)), reasons[e.reason] || e.reason].filter(Boolean).join(" · ")).join("\n");
+}
+
+// A line the analyst picked on the stored deck page (claim-types-and-correction.md section 5).
+export const ADDED_FROM_DECK_TAG = "Added from deck by analyst";
+export const VIEW_PAGE_LABEL = "View page";
+export const ADD_FROM_DECK_LABEL = "Add from deck";
 
 /** The Confidence column: "High", "Medium – not corroborated", "Low – no date, no heading". The server derives it from
  *  the checks the parser runs (never a model's own score); a row from an older server shows the placeholder. */
@@ -322,29 +365,32 @@ export function claimsForDeck(candidates, deckId) {
 }
 
 // The order of the claims table (docs/specs/deck-parser.md section 6): the group of the claim's type, set by the server, then
-// slide or page. Unknown and Other start collapsed under a header with their count.
+// slide or page. Other starts collapsed under its count (claim-types-and-correction.md section 4).
 // Acquisition channels and Use of funds are sections of their own, directly above Other (chat-upload.md section 17).
 export const OTHER_GROUP = 9;
 export const CLAIM_GROUPS = [
   [1, "Revenue, ARR, MRR and bookings"], [2, "P&L items"], [3, "Customers, users, usage, retention and sales"],
-  [4, "Hiring and roadmap"], [5, "Market size"], [6, UNKNOWN_TYPE_LABEL], [7, "Acquisition channels"], [8, "Use of funds"],
+  [4, "Hiring and roadmap"], [5, "Market size"], [7, "Acquisition channels"], [8, "Use of funds"],
   [OTHER_GROUP, "Other"],
 ];
-export const COLLAPSED_BY_DEFAULT = [6, OTHER_GROUP];
+export const COLLAPSED_BY_DEFAULT = [OTHER_GROUP];
+
+/** "1 other figure", "3 other figures": the header of the Other section, which has no review count. */
+export const otherFiguresTitle = (n) => `${n} other figure${n === 1 ? "" : "s"}`;
 
 /** [{group, title, claims, collapsed}] for the groups that hold a claim, in group order; the claims keep the server's order. */
 export function claimSections(claims) {
   return CLAIM_GROUPS.map(([group, title]) => ({
     group, title, claims: (claims || []).filter((c) => (c.group ?? OTHER_GROUP) === group), collapsed: COLLAPSED_BY_DEFAULT.includes(group),
-  })).filter((s) => s.claims.length > 0);
+  })).filter((s) => s.claims.length > 0).map((s) => (s.group === OTHER_GROUP ? { ...s, title: otherFiguresTitle(s.claims.length) } : s));
 }
 
 // Approve all (docs/specs/chat-upload.md section 17): one button at the top and one at the bottom of every category section.
 export const APPROVE_ALL_LABEL = "Approve all";
 
-/** The claims Approve all would approve: the section's claims with status "To review". The server skips, and counts, the ones that
- *  still need a Revenue / Volume answer or a type, and the ones whose save fails. */
-export const toReview = (section) => section.claims.filter((c) => c.status === "pending");
+/** The claims Approve all would approve: the section's claims with status "To review"; an Other figure is never one. The server
+ *  skips, and counts, the ones that still need a Revenue / Volume answer, and the ones whose save fails. */
+export const toReview = (section) => section.claims.filter((c) => c.status === "pending" && !isOther(c));
 
 // The upload page cannot answer a Definition check: its toast says where to (claim-matching.md section 4.1).
 export const DEFINITION_ELSEWHERE = " – answer on the review screen";
@@ -356,9 +402,9 @@ export const approveAllToast = (approved, skipped, openDefinition = 0, elsewhere
   `Approved ${approved} claim${approved === 1 ? "" : "s"}, ${skipped} skipped (need Revenue / Volume or failed to save)`
   + (openDefinition > 0 ? `, ${openDefinition} with open definition check${elsewhere ? DEFINITION_ELSEWHERE : ""}` : "");
 
-/** Counts per status, for the list header. */
+/** Counts per status, for the list header. Other figures are not claims to review and are not counted. */
 export function statusCounts(candidates) {
   const out = { pending: 0, approved: 0, rejected: 0, edited: 0 };
-  (candidates || []).forEach((c) => { out[c.status] = (out[c.status] || 0) + 1; });
+  (candidates || []).filter((c) => !isOther(c)).forEach((c) => { out[c.status] = (out[c.status] || 0) + 1; });
   return out;
 }

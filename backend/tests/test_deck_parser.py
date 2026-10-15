@@ -754,12 +754,12 @@ def test_an_edit_that_types_a_figure_ends_the_direction_and_the_list_is_grouped_
     _upload(client, "audit-1", "05-zero2hero.pdf", (DECKS / "05-zero2hero.pdf").read_bytes())
     listed = client.get("/api/audits/audit-1/decks").json()["candidates"]
     groups = [c["group"] for c in listed]
-    assert groups == sorted(groups) and set(groups) >= {1, 2, 3, 4, 6}, "revenue, P&L, customers and sales, hiring and roadmap, Unknown"
+    assert groups == sorted(groups) and set(groups) >= {1, 2, 3, 4, 9}, "revenue, P&L, customers and sales, hiring and roadmap, Other"
     for group in set(groups):
         pages = [_page(c) for c in listed if c["group"] == group]
         assert pages == sorted(pages), f"ascending by page within group {group}"
     assert {c["claim_type"] for c in listed if c["group"] == 1} <= {"revenue", "revenue_growth"}
-    assert {c["claim_type"] for c in listed if c["group"] == 6} == {"unknown"}
+    assert "unknown" in {c["claim_type"] for c in listed if c["group"] == 9}, "a figure with no type is Other"
     direction = next(c for c in listed if c.get("claim_direction"))
     assert direction["group"] == 2 and direction["claim_type"] == "ebitda"
     edited = client.put(f"/api/audits/audit-1/decks/candidates/{direction['id']}", json={"value": 3.0, "unit": "%"})
@@ -774,8 +774,8 @@ def test_every_claim_type_has_its_group():
         2: ["burn", "cash", "costs", "ebitda", "gross_margin", "gross_profit", "months_to_profitability", "net_profit", "runway"],
         3: ["cac", "customer_lifetime", "customers", "growth", "ltv", "ltv_cac", "retention", "sales", "trials_per_day", "usage",
             "user_growth", "users"],
-        4: ["people", "product"], 5: ["market"], 6: ["unknown"], 7: ["acquisition_channels"], 8: ["use_of_funds"], 9: ["other"]}
-    assert claims.COLLAPSED_GROUPS == (6, 9)
+        4: ["people", "product"], 5: ["market"], 6: [], 7: ["acquisition_channels"], 8: ["use_of_funds"], 9: ["other", "unknown"]}
+    assert claims.COLLAPSED_GROUPS == (9,), "Other is one collapsed section (claim-types-and-correction.md section 4)"
     assert list(claims.GROUPS.values())[-3:] == ["acquisition channels", "use of funds", "other"], "Acquisition channels, then Use of funds, then Other"
 
 

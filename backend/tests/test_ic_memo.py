@@ -270,7 +270,7 @@ def test_the_two_assessed_rows_carry_the_analysts_rating_and_the_w17_headline():
     reliability = next(line for line in text.split("\n") if line.startswith("| Data reliability |"))
     assert "| Adequate |" in reliability
     assert "Revenue file and P&L differ by 69.61% over 2023-03–2024-02" in reliability
-    assert "0 anomaly flags" in reliability and "11 of 33 claims Verified" in reliability
+    assert "0 anomaly flags" in reliability and "8 of 33 claims Verified" in reliability
     assert next(line for line in text.split("\n") if line.startswith("| Growth engine |")).split("|")[2].strip() == "Weak"
 
 
@@ -327,11 +327,11 @@ def test_worth_flagging_lists_every_verified_beat_with_its_gloss_after_the_block
     section = head_of(text).split("## Worth flagging")[1].split("## Data gaps")[0]
     items = [line for line in section.split("\n") if line.startswith("- ")]
     assert items[0] == f"- {blocker['text']}"
-    assert re.fullmatch(r"- #14 Customer count, Feb 2024: Verified, 1 customer more \(beat\)\.\[\^\d+\]", items[1])
+    assert re.fullmatch(r"- #10 Customer count, Feb 2024: Verified, 1 customer more \(beat\)\.\[\^\d+\]", items[1])
     assert items[2].startswith("- Win rate is below the claim."), "the narrative's items follow"
     assert len(items) == 3, "c01, a beat within tolerance, is not listed"
     marker = re.search(r"\[\^(\d+)\]$", items[1]).group(1)
-    assert f"[^{marker}]: claim register, #14" in text
+    assert f"[^{marker}]: claim register, #10" in text
 
 
 def test_the_memo_never_generates_a_narrative_or_reads_the_model():
@@ -370,7 +370,7 @@ def test_value_at_risk_reads_not_yet_computed_in_the_summary_and_appendix_d_with
     line = ("Value at risk: ARR (see glossary) not yet computed (ARR bridge not run); cash not yet computed (no cash analysis). "
             "Overlapping claims are counted once, at the largest value in their group.")
     assert head_of(text).count(line) == 1 and text.count(line) == 2
-    assert "Overlap groups: #1, #12;" in text
+    assert "Overlap groups: #1, #7;" in text
 
 
 def test_the_appendices_carry_the_register_the_gaps_the_tables_and_the_cost_table():

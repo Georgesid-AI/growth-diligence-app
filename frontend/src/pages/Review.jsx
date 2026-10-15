@@ -13,7 +13,7 @@ import {
   answerDefinitionCheck, answerTurnover, approveAll, decideColumns, generateNarrative, getAudit, getClaimRegister, getDatasets, getDecks, getNarrativeEstimate,
   getReview, getVerdict, putIcInputs, reportUsage, updateCandidate, updateClaimInputs,
 } from "@/lib/api";
-import { claimPeriod, claimValue, sourceRef, typeLabel, CLAIM_GROUPS, approveAllToast } from "@/lib/deckClaims";
+import { claimPeriod, claimValue, sourceRef, typeLabel, CLAIM_GROUPS, approveAllToast, isOther } from "@/lib/deckClaims";
 import { definitionOf, turnoverHeading, turnoverOf, registerRows } from "@/lib/claimRegister";
 import { useGateEdits } from "@/lib/useGateEdits";
 import { S13_status, MAPPING_HEADERS, REASONS, fieldName, heldFields, sortColumns } from "@/lib/chatUpload";
@@ -258,7 +258,8 @@ function ClaimsSection({ auditId, data, summary, reload }) {
   const [busy, setBusy] = useState(null);
   // A claim with an open Definition check (claim-matching.md section 4.1) is To review whether it is approved or not: it asks here.
   const asks = (c) => definitionOf(c).open;
-  const open = data.candidates.filter((c) => (c.status === "pending" && !turnoverOf(c).open) || (c.status !== "rejected" && asks(c)));
+  // An Other figure is never a task (claim-types-and-correction.md section 4): it is not listed here.
+  const open = data.candidates.filter((c) => !isOther(c) && ((c.status === "pending" && !turnoverOf(c).open) || (c.status !== "rejected" && asks(c))));
   const auto = data.candidates.filter((c) => c.auto_accepted && ["approved", "edited"].includes(c.status));
   const groups = [...new Set(open.map((c) => c.group))].sort((a, b) => a - b);
   const act = async (key, fn) => {
@@ -266,7 +267,6 @@ function ClaimsSection({ auditId, data, summary, reload }) {
     try { await fn(); await reload(); } catch (e) { toast.error(describeRequestError(e).message); } finally { setBusy(null); }
   };
   const answerDefinition = (row, value) => act(row.claim_id, () => answerDefinitionCheck(auditId, row.claim_id, value));
-  const needsType = (c) => ["other", "unknown"].includes(c.claim_type) && !c.parsed;
   return (
     <section className={sectionClass} data-testid="review-claims">
       <Heading n="2">Open claims</Heading>
@@ -288,7 +288,7 @@ function ClaimsSection({ auditId, data, summary, reload }) {
                 <td className="py-1.5 pr-3 font-mono text-slate-600">{claimPeriod(c)}</td>
                 <td className="py-1.5 pr-3 font-mono text-slate-500">{sourceRef(c.sources?.[0])}</td>
                 <td className="py-1.5 whitespace-nowrap">
-                  {needsType(c) ? <span className="text-amber-800">Choose its type under Details, Upload &amp; Mapping.</span> : asks(c) ? (
+                  {asks(c) ? (
                     definitionOf(c).views.filter((v) => v.definition_check === "ask").map((v) => (
                       <DefinitionCell key={v.claim_id} row={v} onAnswer={answerDefinition} heading={c.by_period?.length ? v.period : undefined} />
                     ))

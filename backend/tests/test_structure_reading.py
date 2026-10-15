@@ -826,7 +826,7 @@ def test_an_other_item_is_listed_as_type_other_and_approved_only_once_its_type_i
     refused = client.put(url, json={"status": "approved"})
     assert refused.status_code == 400 and "type" in refused.json()["detail"]
     assert client.put(url, json={"value": 10}).status_code == 400, "an edit approves, so it needs a type too"
-    assert client.put(url, json={"claim_type": "other"}).status_code == 422, "other is no claim type to choose"
+    assert client.put(url, json={"claim_type": "other"}).status_code == 400, "typed Other again: still no claim type"
     assert next(c for c in db["deck_candidates"].docs if c["id"] == other["id"])["status"] == "pending"
     edited = client.put(url, json={"claim_type": "product"})
     assert edited.status_code == 200 and edited.json()["status"] == "edited"

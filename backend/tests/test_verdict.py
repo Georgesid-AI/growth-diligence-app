@@ -55,7 +55,7 @@ def test_underwrite_with_gates_when_nothing_is_contradicted_and_at_most_two_are_
 
 def test_replan_when_a_top_5_claim_is_contradicted_a_miss():
     rows = register(RUNS["A"])
-    miss = row_of(rows, "c06")
+    miss = row_of(rows, "c28")              # Revenue Q4 2023 (c06, undated, waits for its period since claim-types-and-correction.md)
     assert (miss["gap_kind"], miss["evidence_label"]) == ("miss", "Contradicted")
     verified = [r for r in rows if r["evidence_label"] == "Verified"][:4]
     five = [miss, *verified]
@@ -106,8 +106,8 @@ def test_the_three_reasons_are_the_claims_that_made_the_rule_fire_each_citing_it
     rows = gated(register(RUNS["A"]))
     v = vd.verdict(rows, results_for(RUNS["A"]), {"claim_ids": vd.proposal(rows)})
     assert v["outcome"] == "Re-plan" and len(v["reasons"]) == 3
-    assert v["reasons"][0].startswith("#1 Median sales cycle: Contradicted, 58.5 days against 45.0 days (13.5 days longer, two working weeks (miss)).")
-    assert "Evidence: Sales cycle · sales_cycle.median_days (crm.csv · CSV · rows 2–121" in v["reasons"][0]
+    assert v["reasons"][0] == ("#1 Revenue, Q4 2023: Contradicted, €49,047 against €60,000 (€10,953 lower (miss)). "
+                               "Evidence: Revenue by month · revenue_series.data.total (revenue.csv · CSV · rows 2–71 (70 rows)).")
     unsupported = [row(1, "Unsupported", gate=True), *[row(i, "Verified") for i in range(2, 6)]]
     again = vd.verdict(unsupported, {"reporting_currency": "EUR"}, {"claim_ids": [r["claim_id"] for r in unsupported]})
     assert again["reasons"][0] == "#1 ARR, Feb 2024: Unsupported, reason 1. No figure in the supplied files."
@@ -443,7 +443,12 @@ def test_the_fixture_gaps_are_the_three_path_to_plan_items_and_say_what_they_blo
 
 
 def test_a_gap_that_blocks_register_claims_names_their_ranks_and_sorts_first():
-    rows, gaps = _gaps("B", top=[r["claim_id"] for r in register(RUNS["B"])[:5]])
+    run = copy.deepcopy(RUNS["B"])
+    for entry in run["claims"]:                 # the win rate claim, dated at the as-of month: a claim with no period is not matched
+        if entry["claim_id"] == "c11":
+            entry["candidate"].update(target_date="2024-02", period_text="Feb 2024")
+    rows = register(run)
+    gaps = vd.data_gaps(results_for(run), rows, [r["claim_id"] for r in rows[:5]])
     first = gaps[0]
     assert first["item"] == "Sales cycle & win rate" and first["blocks_top5"] == 1
     assert first["why"].startswith("Blocks Sales cycle and Win rate; claims #1. ")

@@ -23,7 +23,7 @@ FIELDS = (
     "gate_budget_decision", "gate_date", "gate_saved", "gate_metric_name", "gate_direction", "key_gate", "gate_needed",
     "as_of_month", "as_of_defaulted", "turnover_state", "turnover_note", "turnover_set_by", "turnover_reason",
     "implied_take_rate", "implied_take_rate_source", "turnover_suggested", "deck_revenue_note", "definition_check",
-    "definition_question", "period_coverage", "months_missing", "growth_basis",
+    "definition_question", "period_coverage", "months_missing", "growth_basis", "population", "figure_type", "required_unknown",
 )
 # How the baseline CSV reads each field back (verdict-and-memo.md section 5); a field not listed is text.
 FLOAT_FIELDS = frozenset({"implied_take_rate", "claimed_value", "claimed_high", "claimed_converted", "claimed_converted_high", "fx_rate",
@@ -31,7 +31,7 @@ FLOAT_FIELDS = frozenset({"implied_take_rate", "claimed_value", "claimed_high", 
                           "shortfall", "gate_threshold"})
 INT_FIELDS = frozenset({"rank"})
 BOOL_FIELDS = frozenset({"gate_saved", "key_gate", "gate_needed", "as_of_defaulted"})
-LIST_FIELDS = frozenset({"overlaps_with", "months_missing"})
+LIST_FIELDS = frozenset({"overlaps_with", "months_missing", "required_unknown"})
 SOURCE_FIELDS = frozenset({"observed_source"})
 
 WHOLE, NOT_IN_DATA = "Whole company", "Not in the data"
@@ -76,6 +76,20 @@ NOT_COVERED_REASON = "claim period not in supplied data: {detail}"
 PARTLY_REASON = "claim period partly covered (months missing: {months})"
 PARTIAL_DETAIL = "{month} is possibly partial (tick 'Last month is complete' to use it)"
 AFTER_SOURCE_DETAIL = "after the latest valid source period, {month}"
+# docs/specs/claim-types-and-correction.md section 2: the fields a claim must know before it is matched.
+FIGURE_TYPES = ("actual", "target", "unknown")
+REQUIRED_REASON = "required field unknown: {fields}; set it with Edit in the claims list"
+TARGET_REASON = "target figure: the deck states a plan for this period, not a result"
+POPULATION_REASON = "population differs: the claim counts {population}; the figure shown counts {measured}"
+POPULATION_WORDS = {"paying": "paying customers", "registered": "registered users", "active": "active users",
+                    "deals won": "deals won", "all closed": "all closed deals", "open": "open deals"}
+METRIC_POPULATION = {"Customer count": "paying", "Customer growth": "paying", "Median sales cycle": "deals won",
+                     "Win rate": "all closed"}
+POPULATION_TYPES = ("customers", "users", "user_growth")
+# The types whose figure is an amount: with no currency and no unit, the currency is the field still unknown.
+MONEY_TYPES = ("revenue", "costs", "burn", "cash", "gross_profit", "ebitda", "net_profit", "ltv", "cac")
+# The types whose period may stay unknown (the plan's table: optional or "–").
+PERIOD_OPTIONAL_TYPES = ("market", "use_of_funds", "acquisition_channels", "product")
 # Section 5: growth claims. The basis is the analyst's, else the parser's, else read from the claim's own words on read.
 GROWTH_BASES = ("mom", "yoy", "annualised", "cumulative")
 GROWTH_TYPES = ("revenue_growth", "growth", "user_growth")
@@ -88,6 +102,7 @@ GROWTH_RULES = {"mom": "MoM growth = v(e) ÷ v(e−1) − 1", "yoy": "YoY growth
                 "annualised": "Annualised growth = (v(e) ÷ v(s))^(12 ÷ (e − s)) − 1"}
 SUGGESTION = "AI suggestion, not verified"
 ANALYST_ENTERED = "analyst-entered"
+ADDED_FROM_DECK = "added-from-deck"     # a line the analyst picked on the stored deck page (claim-types-and-correction.md section 5)
 DAYS_PER_WEEK, DAYS_PER_MONTH = 7.0, 30.44
 RATE_TOLERANCE_PP, AMOUNT_TOLERANCE = 1.0, 0.05
 BUDGET_DECISION_MAX = 200
@@ -623,8 +638,10 @@ def propose_metric(claim_type: str, claim_unit: Optional[str], text: str) -> Opt
             metric = "ARR"
         elif _REVENUE.search(plain) and not re.search(r"(?i)\brecurring revenue\b", plain):
             metric = "Revenue"
-    elif claim_type == "customers":
+    elif claim_type in ("customers", "users"):          # users: the population decides (claim-types-and-correction.md section 2)
         metric = "Customer count"
+    elif claim_type == "user_growth":
+        metric = "Customer growth"
     elif claim_type == "retention":
         metric = "NRR (12-month)" if _NRR.search(text) else "Gross revenue churn" if _CHURN.search(text) else None
     elif claim_type == "sales":
@@ -656,6 +673,8 @@ def _page_ref(sources: list) -> str:
 def _deck_reading(c: dict) -> str:
     if c.get("origin") == "analyst":
         return ANALYST_ENTERED                          # kept after a later edit: the claim never came from the deck
+    if c.get("origin") == "deck_analyst":
+        return ADDED_FROM_DECK                          # kept after a later edit: the analyst picked the line
     if c.get("status") == "edited":
         return "edited"                                 # an edit clears the AI label (deck-parser.md section 6)
     if c.get("origin") == "ai":
@@ -704,12 +723,60 @@ def deck_revenue_hint(c: dict, peers: List[dict]) -> Optional[dict]:
                                        f"{f' ({where})' if where else ''}; implied take rate {rate:.0%}, derived, not verified"}
 
 
+def _population(c: dict, metric: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+    """(population, set by) of a claim (claim-types-and-correction.md section 2): the analyst's or the parser's, else what the type's
+    keyword means (a customers keyword counts paying customers; a qualifier names registered users) or, for sales, the metric's own
+    population. None when nothing says it (plain users)."""
+    from .decks.claims import QUALIFIERS
+    if c.get("population"):
+        return c["population"], c.get("population_set_by") or "parser"
+    kind = c.get("claim_type")
+    if kind == "customers":
+        return "paying", "python"
+    if kind == "users" and c.get("qualifier") in QUALIFIERS:
+        return "registered", "python"
+    if kind == "sales" and metric in METRIC_POPULATION:
+        return METRIC_POPULATION[metric], "python"
+    return None, None
+
+
+def _figure_type(c: dict, text: str, end: Optional[int], as_of_i: Optional[int]) -> Optional[str]:
+    """The analyst's or the parser's figure type, a target cue in the claim's words, else read from the period: a period after the
+    as-of month is a target, any other an actual (claim-types-and-correction.md section 2). None while the period is unknown."""
+    from .decks.claims import target_cue
+    if c.get("figure_type") in FIGURE_TYPES:
+        return c["figure_type"]
+    if target_cue(text):
+        return "target"
+    if end is not None and as_of_i is not None:
+        return "target" if end > as_of_i else "actual"
+    return None
+
+
+def candidate_fields(c: dict, results: Optional[dict]) -> dict:
+    """The figure type, population and growth basis of a deck candidate as the register reads them, for the editor and for the
+    previous value of an edit (claim-types-and-correction.md section 3). Nothing is stored."""
+    text = f"{c.get('snippet') or ''} {c.get('label_from') or ''}"
+    as_of = (results or {}).get("as_of_month")
+    metric = propose_metric(c.get("claim_type"), _claim_unit(c), text)
+    out = {"figure_type": _figure_type(c, text, _month_of(c.get("period_end")), _mi(as_of) if as_of else None),
+           "population": _population(c, metric)[0], "growth_basis": None}
+    if c.get("claim_type") in GROWTH_TYPES:
+        from .decks.claims import growth_basis
+        shown = ((c.get("claim_inputs") or {}).get(c.get("id")) or {}).get("growth_basis")     # the register row's one-click choice
+        out["growth_basis"] = shown or c.get("growth_basis") or growth_basis(text)
+    return out
+
+
 def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = None) -> dict:
     inputs = (c.get("claim_inputs") or {}).get(c["claim_id"]) or {}
     as_of = results.get("as_of_month")
     as_of_i = _mi(as_of) if as_of else None
     currency = (c.get("currency") or None)
-    claim_unit = _claim_unit(c)
+    # an amount with no currency and no unit: the currency is the field still unknown (claim-types-and-correction.md section 2)
+    currency_unknown = c.get("claim_type") in MONEY_TYPES and not currency and not (c.get("unit") or "").strip() \
+        and c.get("value") is not None
+    claim_unit = "currency" if currency_unknown else _claim_unit(c)
     text = f"{c.get('snippet') or ''} {c.get('label_from') or ''}"
     revenue_segments, data_segments = _segments(results)
 
@@ -719,17 +786,17 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
     else:
         metric, metric_by = propose_metric(c.get("claim_type"), claim_unit, text), "python"
     from .decks.claims import QUALIFIERS, qualified_label
-    # evidence-labels.md section 3: a qualified Users count is read against the paying customers, and is Inconclusive
-    population_differs = (metric_by == "python" and metric is None and c.get("claim_type") == "users"
-                          and c.get("qualifier") in QUALIFIERS and _fits(METRICS["Customer count"]["unit"], claim_unit))
-    if population_differs:
-        metric = "Customer count"
+    population, population_by = _population(c, metric)
+    qualified = c.get("claim_type") == "users" and c.get("qualifier") in QUALIFIERS and population_by != "analyst"
+    # evidence-labels.md section 3, claim-types-and-correction.md section 2: the figure counts other people than the claim
+    population_differs = metric in METRIC_POPULATION and population is not None and population != METRIC_POPULATION[metric]
     if inputs.get("segment"):
         segment, segment_by = inputs["segment"], "analyst"
     else:
         named = [s for s in revenue_segments if re.search(rf"(?i)(?<!\w){re.escape(s)}(?!\w)", text)]
         segment, segment_by = (named[0] if len(named) == 1 else WHOLE), "python"
     start, end = _month_of(c.get("period_start")), _month_of(c.get("period_end"))
+    figure_type = _figure_type(c, text, end, as_of_i)
     turn = None
     if metric_by == "python" and _is_turnover_claim(c, text):       # section 11: never revenue or volume by default
         fx0 = fx_view(c, settings, as_of)
@@ -761,6 +828,20 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
     if c.get("claim_type") in GROWTH_TYPES:            # dates-and-periods.md section 5: the analyst's, the parser's, or the words'
         from .decks.claims import growth_basis
         out["growth_basis"] = inputs.get("growth_basis") or c.get("growth_basis") or growth_basis(text)
+    out.update(population=population, figure_type=figure_type)
+    # the required fields still Unknown, in the order of the plan's table (claim-types-and-correction.md section 1)
+    required = []
+    if currency_unknown:
+        required.append("currency")
+    if not c.get("target_date") and c.get("claim_type") not in PERIOD_OPTIONAL_TYPES:
+        required.append("period")
+    if population is None and (c.get("claim_type") in POPULATION_TYPES or metric in ("Median sales cycle", "Win rate")):
+        required.append("population")
+    if figure_type == "unknown":
+        required.append("figure type")
+    if out["growth_basis"] == "unknown":
+        required.append("growth basis")
+    out["required_unknown"] = required
     if turn:
         out.update(turnover_state=turn["state"], turnover_note=turn["note"], turnover_set_by=turn["set_by"],
                    turnover_reason=turn["reason"])
@@ -769,7 +850,7 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
     shown_claim: List[Optional[float]] = [None]         # the claimed figure the gate sentence names, once it is known
 
     def finish(label: Optional[str], reason: str) -> dict:
-        if population_differs and label == "Unsupported":     # no paying-customer figure: the reason still names the population
+        if qualified and population_differs and label == "Unsupported":     # no paying-customer figure: the reason names the population
             reason = QUALIFIED_NO_FIGURE.format(label=qualified_label(text, c["qualifier"]))
         out.update(evidence_label=label, reason=reason)
         if out["evidence_analysis"] is None and reason.startswith("Missing:") and metric in METRICS:
@@ -793,7 +874,7 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         out["gate_needed"] = False
         return out
     if not spec:
-        if out["claim_type"] == "users" and c.get("qualifier") in QUALIFIERS:      # a figure that is not a count: nothing to read
+        if qualified:                                   # a figure that is not a count: nothing to read
             return finish("Unsupported", QUALIFIED_NO_FIGURE.format(label=qualified_label(text, c["qualifier"])))
         return finish("Unsupported", "no metric")
     if metric == VOLUME:                        # never matched to engine revenue; the take rate is derived, never Verified
@@ -805,6 +886,8 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
                            implied_take_rate_source=(f"revenue: {src.get('file')} · {src.get('sheet')} · {src.get('rows')}; "
                                                      f"volume: {out['deck_file']} · {out['page_ref']}"))
         return finish("Unsupported", VOLUME_REASON)
+    if [f for f in required if f != "growth basis"]:      # not matched until every required field is known (section 2)
+        return finish("Unverified", REQUIRED_REASON.format(fields=", ".join(required)))
     if not _fits(spec["unit"], claim_unit):
         return finish("Unsupported", "metric does not fit the claim's unit")
     if segment == NOT_IN_DATA or (segment != WHOLE and segment not in data_segments):
@@ -856,8 +939,13 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         return finish("Unsupported", "no claimed value")
     if partly:                                          # section 4: the figure over the months present, no test
         return finish(INCONCLUSIVE, partly_reason)
+    if figure_type == "target" and not forecast:        # a plan for a period that has passed: shown, never tested as a result
+        return finish("Unverified", TARGET_REASON)
     if population_differs and not forecast:     # the figure is shown; it cannot confirm or contradict a count of other people
-        return finish(INCONCLUSIVE, QUALIFIED_REASON.format(label=qualified_label(text, c["qualifier"])))
+        if qualified:
+            return finish(INCONCLUSIVE, QUALIFIED_REASON.format(label=qualified_label(text, c["qualifier"])))
+        return finish(INCONCLUSIVE, POPULATION_REASON.format(population=POPULATION_WORDS.get(population, population),
+                                                             measured=POPULATION_WORDS[METRIC_POPULATION[metric]]))
     claimed = claimed_low
     if claimed_high is not None:                        # a range is tested at the end nearest the observed value
         lo, hi = sorted((claimed_low, claimed_high))
@@ -1223,7 +1311,10 @@ def build_register(candidates: List[dict], results: Optional[dict], settings: di
     rejected, pending ones included (None: the register's own). Nothing is read from a model and nothing is changed."""
     if not results:
         return []
-    candidates = with_confidence(candidates, peers if peers is not None else candidates)
+    from .decks.claims import OTHER_TYPES
+    # Other figures are never matched, ranked or put in the top 5 (claim-types-and-correction.md section 4)
+    candidates = with_confidence([c for c in candidates if c.get("claim_type") not in OTHER_TYPES],
+                                 peers if peers is not None else candidates)
     claims = _expand(candidates)
     others = _expand(peers) if peers is not None else claims
     rows = _rank([_row(c, results, settings, others) for c in claims])

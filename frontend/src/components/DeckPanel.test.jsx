@@ -22,12 +22,12 @@ const claim = (id, deck_id, page, over = {}) => ({
   confidence: { level: "Medium", failed: ["not corroborated"], text: "Medium – not corroborated" }, ...over,
 });
 // The server sends them ascending by page across the decks within each group.
-// ... and by the group of the claim type first: revenue (1), market size (5), Unknown (6).
+// ... and by the group of the claim type first: revenue (1), market size (5), Other (9: a figure with no type).
 const CLAIMS = [
   claim("c", "d1", 2, { group: 1 }),
   claim("d", "d2", 3, { group: 1 }),
   claim("b", "d2", 1, { claim_type: "market", label_from: "MARKET SIZE", group: 5, confidence: { level: "High", failed: [], text: "High" } }),
-  claim("a", "d1", 1, { claim_type: "unknown", target_date: null, group: 6, confidence: { level: "Low", failed: ["no date", "no heading"], text: "Low – no date, no heading" } }),
+  claim("a", "d1", 1, { claim_type: "unknown", target_date: null, group: 9, confidence: { level: "Low", failed: ["no date", "no heading"], text: "Low – no date, no heading" } }),
 ];
 
 const q = (id) => document.body.querySelector(`[data-testid="${id}"]`);
@@ -48,7 +48,7 @@ const text = (tr) => tr.textContent;
 
 test("the table has an Extraction confidence column between Period and the claim, in every row", async () => {
   await act(async () => { q("deck-tab-all").click(); });
-  await open(6);
+  await open(9);
   const heads = [...document.body.querySelectorAll("[data-testid='deck-candidates'] thead th")].map((th) => th.textContent);
   expect(heads).toEqual(["Type", "Value", "Period", "Extraction confidence", "Claim in the deck", "Source", "Status", "Action"]);
   const cells = rows().map((tr) => tr.querySelector("[data-testid='candidate-confidence']").textContent);
@@ -57,23 +57,23 @@ test("the table has an Extraction confidence column between Period and the claim
 
 test("All lists the claims in the server's order, group by group; a deck tab keeps that order", async () => {
   await act(async () => { q("deck-tab-all").click(); });
-  await open(6);
+  await open(9);
   expect(rows().map((tr) => /snippet-(\w)/.exec(text(tr))[1])).toEqual(["c", "d", "b", "a"]);
   await act(async () => { q("deck-tab-d1").click(); });
   expect(rows().map((tr) => /snippet-(\w)/.exec(text(tr))[1])).toEqual(["c", "a"]);
 });
 
-test("Unknown and Other start collapsed under a header with their count; the other groups are open", async () => {
+test("Other starts collapsed under its count; the other groups are open", async () => {
   await act(async () => { q("deck-tab-all").click(); });
-  expect(["claim-group-toggle-1", "claim-group-toggle-5", "claim-group-toggle-6"].map((id) => q(id).textContent)).toEqual([
-    "Revenue, ARR, MRR and bookings (2)", "Market size (1)", "Unknown – choose type (1)"]);
+  expect(["claim-group-toggle-1", "claim-group-toggle-5", "claim-group-toggle-9"].map((id) => q(id).textContent)).toEqual([
+    "Revenue, ARR, MRR and bookings (2)", "Market size (1)", "1 other figure"]);
   expect(q("claim-group-2")).toBeNull();
-  expect(q("claim-group-toggle-6").getAttribute("aria-expanded")).toBe("false");
+  expect(q("claim-group-toggle-9").getAttribute("aria-expanded")).toBe("false");
   expect(q("claim-group-toggle-1").getAttribute("aria-expanded")).toBe("true");
   expect(rows().map((tr) => /snippet-(\w)/.exec(text(tr))[1])).toEqual(["c", "d", "b"]);
-  await open(6);
+  await open(9);
   expect(rows().length).toBe(4);
-  await open(6);
+  await open(9);
   expect(rows().length).toBe(3);
   await open(1);
   expect(rows().map((tr) => /snippet-(\w)/.exec(text(tr))[1])).toEqual(["b"]);
@@ -81,7 +81,7 @@ test("Unknown and Other start collapsed under a header with their count; the oth
 
 test("the Period column reads FY2025 for the year 2025 and no date when the deck gives no period", async () => {
   await act(async () => { q("deck-tab-all").click(); });
-  await open(6);
+  await open(9);
   expect(rows().map((tr) => tr.querySelectorAll("td")[2].textContent)).toEqual(["FY2025", "FY2025", "FY2025", "no date"]);
 });
 
@@ -108,16 +108,17 @@ test("a figure in another currency shows both figures, and a direction with no f
   expect(rows()[2].querySelector("[data-testid='candidate-confidence']").textContent).toBe("Medium – no figure");
 });
 
-test("an Unknown type says so, cannot be approved before a type is chosen, and Market size is a choice", async () => {
+test("a figure with no type reads Other, has no Approve, and saves only once a claim type is chosen; Market size is a choice", async () => {
   await act(async () => { q("deck-tab-d1").click(); });
-  await open(6);
+  await open(9);
   const first = rows()[1];
-  expect(first.textContent).toContain("Unknown – choose type");
-  expect(first.querySelector("[data-testid='candidate-approve']").disabled).toBe(true);
+  expect(first.querySelector("[data-testid='candidate-type']").textContent).toBe("Other");
+  expect(first.querySelector("[data-testid='candidate-approve']")).toBeNull();
   expect(rows()[0].querySelector("[data-testid='candidate-approve']").disabled).toBe(false);
   await act(async () => { first.querySelector("[data-testid='candidate-edit']").click(); });
-  const options = [...document.body.querySelectorAll("[data-testid='edit-claim-type'] option")].map((o) => o.textContent);
-  expect(options[0]).toBe("Unknown – choose type");
+  const select = document.body.querySelector("[data-testid='edit-claim-type']");
+  expect(select.selectedOptions[0].textContent).toBe("Other");
+  const options = [...select.options].map((o) => o.textContent);
   expect(options).toContain("Market size");
   expect(options).not.toContain("Market");
   expect(document.body.querySelector("[data-testid='edit-save']").disabled).toBe(true);
@@ -215,10 +216,10 @@ test("a use-of-funds text figure and its chart figure show text and chart with t
   expect(document.body.textContent).not.toMatch(/Contradicted/);
 });
 
-test("a percentage on a mixed slide is Unknown and says so: mixed slide – check", async () => {
-  await reload([claim("c", "d1", 22, { group: 6, claim_type: "unknown", value: 60, unit: "%", mixed_slide: true }),
-    claim("d", "d1", 22, { group: 6, claim_type: "unknown", value: 40, unit: "%" })]);
-  await open(6);
+test("a percentage on a mixed slide is Other and says so: mixed slide – check", async () => {
+  await reload([claim("c", "d1", 22, { group: 9, claim_type: "unknown", value: 60, unit: "%", mixed_slide: true }),
+    claim("d", "d1", 22, { group: 9, claim_type: "unknown", value: 40, unit: "%" })]);
+  await open(9);
   expect(document.querySelectorAll("[data-testid=candidate-mixed-slide]").length).toBe(1);
   expect(q("candidate-mixed-slide").textContent).toBe("mixed slide – check");
 });
@@ -619,7 +620,7 @@ describe("Add claim", () => {
     const typeOptions = [...q("add-claim-type").options].map((o) => o.textContent);
     expect(typeOptions).toContain("Revenue");
     expect(typeOptions).toContain("Market size");
-    expect(typeOptions).not.toContain("Unknown – choose type");
+    expect(typeOptions).not.toContain("Other");
     expect([...q("add-claim-deck").options].map((o) => o.textContent).sort()).toEqual(["newer.pdf", "older.pptx"]);
     for (const id of ["add-claim-value", "add-claim-value-high", "add-claim-unit", "add-claim-currency", "add-claim-date", "add-claim-page"]) expect(q(id)).not.toBeNull();
   });
@@ -700,7 +701,7 @@ describe("Approve all and the category sections (docs/specs/chat-upload.md secti
     claim("n1", "d2", 2, { group: 1 }),
   ];
 
-  test("every open section has an Approve all at its top and at its bottom; Other and Unknown, collapsed, have none until opened", async () => {
+  test("every open section has an Approve all at its top and at its bottom; Other, never a task, has none even when opened", async () => {
     await reload(LIST.concat([pending("o1", 9, { claim_type: "other" })]));
     for (const group of [1, 7, 8]) {
       expect(q(`approve-all-top-${group}`).textContent).toBe("Approve all");
@@ -708,8 +709,8 @@ describe("Approve all and the category sections (docs/specs/chat-upload.md secti
     }
     expect(q("approve-all-top-9")).toBeNull();
     await open(9);
-    expect(q("approve-all-top-9")).not.toBeNull();
-    expect(q("approve-all-bottom-9")).not.toBeNull();
+    expect(q("approve-all-top-9")).toBeNull();
+    expect(q("approve-all-bottom-9")).toBeNull();
     // the top button sits in the section's header row, the bottom one after its last claim
     expect(q("claim-group-1").contains(q("approve-all-top-1"))).toBe(true);
     expect(q("claim-group-end-1").previousElementSibling.getAttribute("data-testid")).toMatch(/^candidate-row-/);
@@ -759,7 +760,7 @@ describe("Approve all and the category sections (docs/specs/chat-upload.md secti
   test("Acquisition channels and Use of funds are sections of their own, in that order, directly above Other", async () => {
     await reload(LIST.concat([pending("o1", 9, { claim_type: "other" })]));
     const titles = [...document.body.querySelectorAll("[data-testid^='claim-group-toggle-']")].map((b) => b.textContent.replace(/\s*\(\d+\)$/, ""));
-    expect(titles.slice(-3)).toEqual(["Acquisition channels", "Use of funds", "Other"]);
+    expect(titles.slice(-3)).toEqual(["Acquisition channels", "Use of funds", "1 other figure"]);
     expect(q("claim-group-7").textContent).toContain("(1)");
     expect(q("candidate-row-a1").querySelector("[data-testid='candidate-type']").textContent).toContain("Acquisition channels");
     expect(q("candidate-row-a1").querySelector("[data-testid='candidate-channel']").textContent).toBe("Telegram");

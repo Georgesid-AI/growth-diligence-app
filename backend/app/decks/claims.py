@@ -124,7 +124,8 @@ COUNT = "count"         # the unit of an acquisition-channels figure
 # The order of the claims table (deck-parser.md section 6): the group of a type, then slide or page. Revenue covers ARR,
 # MRR and bookings; P&L items and unit economics are listed with their neighbours; acquisition channels and use of funds
 # have a group each, above Other (chat-upload.md section 17); the types no group names (the model's "other") are Other.
-GROUPS = {1: "revenue", 2: "P&L", 3: "customers and sales", 4: "hiring and roadmap", 5: "market size", 6: "unknown",
+# Group 6 (Unknown) is gone: a figure no heading names a type for is Other (claim-types-and-correction.md section 4).
+GROUPS = {1: "revenue", 2: "P&L", 3: "customers and sales", 4: "hiring and roadmap", 5: "market size",
           7: "acquisition channels", 8: "use of funds", 9: "other"}
 _GROUP_OF = {
     "revenue": 1, "revenue_growth": 1,
@@ -133,15 +134,52 @@ _GROUP_OF = {
     "customers": 3, "users": 3, "user_growth": 3, "growth": 3, "retention": 3, "sales": 3, "ltv": 3, "cac": 3, "ltv_cac": 3,
     "customer_lifetime": 3, "trials_per_day": 3, "usage": 3,
     "people": 4, "product": 4,
-    "market": 5, UNKNOWN: 6, ACQUISITION_CHANNELS: 7, USE_OF_FUNDS: 8,
+    "market": 5, ACQUISITION_CHANNELS: 7, USE_OF_FUNDS: 8,
 }
 OTHER_GROUP = 9
-COLLAPSED_GROUPS = (6, OTHER_GROUP)
+COLLAPSED_GROUPS = (OTHER_GROUP,)
+# docs/specs/claim-types-and-correction.md section 4: a figure the parser cannot type and an item the model labelled other are Other:
+# never matched, never a task, listed collapsed under their count. The analyst may type a claim Other, and retype it out.
+OTHER_TYPES = ("other", UNKNOWN)
 
 
 def type_group(claim_type: Optional[str]) -> int:
-    """1 to 9: the group a claim type sorts under."""
+    """1 to 9: the group a claim type sorts under; Other (other, unknown) sorts under Other."""
+    if claim_type in OTHER_TYPES:
+        return OTHER_GROUP
     return _GROUP_OF.get(claim_type or "", OTHER_GROUP)
+
+
+# ---------------------------------------------------------------------------
+# Claim fields (docs/specs/claim-types-and-correction.md sections 1-2)
+# ---------------------------------------------------------------------------
+FIGURE_TYPES = ("actual", "target", "unknown")
+# Target cues, whole words, any case. "plan" and "plans" are not cues ("Free to Paid plans"). Measured on the 10 public decks: 4 of
+# 225 candidates carry one (front slide 16, moz page 18, buffer slide 7 twice).
+TARGET_CUE = re.compile(r"(?i)\b(?:target(?:s|ed)?|planned|forecast(?:s|ed)?|budget(?:ed)?|goals?|projected|projections?|expected"
+                        r"|guidance|outlook|aim(?:s|ing)?)\b")
+# The population each type may state, and what a value reads as in a sentence.
+POPULATIONS = {"customers": ("paying", "registered", "active"), "users": ("paying", "registered", "active"),
+               "user_growth": ("paying", "registered", "active"), "sales": ("deals won", "all closed", "open")}
+EDIT_REASONS = {"parser_misread": "Parser misread the deck", "deck_context": "Deck context says otherwise", "other": "Other"}
+
+
+def target_cue(text: str) -> bool:
+    return bool(TARGET_CUE.search(text or ""))
+
+
+def parsed_fields(candidate: Dict) -> Dict:
+    """What the parser reads into the fields of section 2 from the claim's own line and label: the figure type when a target cue is
+    there, the population a customers keyword or a qualifier names. Nothing else is guessed: the rest is read on matching."""
+    text = f"{candidate.get('snippet') or ''} {candidate.get('label_from') or ''}"
+    out: Dict = {}
+    if target_cue(text):
+        out.update(figure_type="target", figure_type_set_by="parser")
+    if candidate.get("claim_type") == "customers":
+        out.update(population="paying", population_set_by="parser")
+    elif candidate.get("claim_type") == "users" and candidate.get("qualifier") in QUALIFIERS:
+        out.update(population="registered", population_set_by="parser")
+    return out
 # A net loss is a negative net profit: "Net loss of $2M" is stored as -2,000,000.
 _DIRECTION = re.compile(r"(?i)\b(positive|negative)\b")
 _NET_LOSS = re.compile(r"(?i)\bnet loss(?:es)?\b")
@@ -1210,6 +1248,7 @@ def detect_candidates(blocks: List[Dict], file: str, fiscal_year_end: int = 12) 
         c.pop("_funds", None)
         if c.get("claim_type") in GROWTH_TYPES:
             c["growth_basis"] = growth_basis(f"{c.get('snippet') or ''} {c.get('label_from') or ''}")
+        c.update(parsed_fields(c))
     return found
 
 
