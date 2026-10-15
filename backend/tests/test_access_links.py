@@ -1,8 +1,7 @@
 """Access links for the tester phase (docs/specs/access-links.md; plan of 15 Oct 2026, section 6 and 7.1).
 
 The four tests the plan requires before tester deployment. Every audit route is read from the app's own router, so a route
-added later is covered without editing this file. The building of the access model waits on the architecture note of the
-spec (section 6): these tests are committed as strict expected failures until then. No network.
+added later is covered without editing this file. George approved the architecture change (15 Oct 2026). No network.
 """
 import hashlib
 import re
@@ -17,9 +16,6 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 import server  # noqa: E402
 import test_llm_gateway as t  # noqa: E402
-
-# Committed before the code (docs/specs/access-links.md, section 6): strict expected failures until the access model is built.
-pytestmark = pytest.mark.xfail(strict=True, reason="docs/specs/access-links.md: waits on the architecture note (section 6)")
 
 OWNER = "owner-token-for-the-test-suite-only"
 PARAMS = {"dtype": "revenue", "deck_id": "deck-1", "candidate_id": "c1", "claim_id": "c1", "stage": "engine",
@@ -45,6 +41,7 @@ def fill(path: str, audit_id: str) -> str:
 def access(monkeypatch):
     db = t.FakeDB()
     monkeypatch.setattr(server, "db", db)
+    monkeypatch.delenv("ACCESS_DISABLED", raising=False)       # the suite runs with the check off; these tests need it on
     monkeypatch.setenv("OWNER_TOKEN_SHA256", hashlib.sha256(OWNER.encode()).hexdigest())
     client = TestClient(server.app, raise_server_exceptions=False)
     owner = {"Authorization": f"Bearer {OWNER}"}
@@ -107,3 +104,36 @@ def test_4_the_owner_token_is_404_on_every_audit_route_and_sees_usage_totals_onl
     assert {k: v for k, v in answers.items() if v != 404} == {}
     assert client.get("/api/usage/totals", headers=owner).status_code == 200
     assert client.get("/api/audits", headers=owner).json() == []
+
+
+def test_a_reissued_link_replaces_the_old_one_and_keeps_the_testers_audits(access):
+    client, owner, b, audit_b = access["client"], access["owner"], access["b"], access["audit_b"]
+    r = client.post(f"/api/admin/testers/{access['b_id']}/reissue", headers=owner)
+    assert r.status_code == 200 and r.json()["id"] == access["b_id"]
+    new = {"Authorization": f"Bearer {r.json()['link'].rsplit('/t/', 1)[1]}"}
+    assert client.get(f"/api/audits/{audit_b}", headers=b).status_code == 401, "the old link is dead"
+    assert client.get(f"/api/audits/{audit_b}", headers=new).status_code == 200, "the tester keeps their audits"
+
+
+def test_a_tester_token_cannot_reach_the_admin_routes_or_the_usage_totals(access):
+    client, a = access["client"], access["a"]
+    for method, url in (("GET", "/api/usage/totals"), ("GET", "/api/admin/testers"), ("POST", "/api/admin/testers"),
+                        ("POST", f"/api/admin/testers/{access['b_id']}/revoke")):
+        assert _call(client, method, url, a).status_code == 404, url
+
+
+def test_the_store_holds_hashes_only_and_a_token_is_never_stored_or_listed(access):
+    client, db = access["client"], access["db"]
+    token = access["b"]["Authorization"].split(" ", 1)[1]
+    stored = db["access_tokens"].docs
+    assert len(stored) == 2 and all(set(d) >= {"id", "label", "hash", "created_at", "expires_at", "revoked_at"} for d in stored)
+    assert all(token not in str(d) for d in stored) and hashlib.sha256(token.encode()).hexdigest() in [d["hash"] for d in stored]
+    listed = client.get("/api/admin/testers", headers=access["owner"]).json()
+    assert [t["label"] for t in listed] == ["Tester A", "Tester B"] and all("hash" not in t for t in listed)
+    audit = next(d for d in db["audits"].docs if d["id"] == access["audit_b"])
+    assert audit["owner"] == access["b_id"] and token not in str(audit), "the audit holds the token's id, never the token"
+
+
+def test_health_and_the_field_list_are_open(access):
+    client = access["client"]
+    assert client.get("/api/").status_code == 200 and client.get("/api/fields").status_code == 200

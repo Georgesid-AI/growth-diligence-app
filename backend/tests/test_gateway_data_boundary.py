@@ -2182,3 +2182,18 @@ def test_the_period_the_model_is_told_is_two_closed_values_and_never_the_as_of_s
                                                    "evidence_to": "2019-06"}, "as_of_month": "2026-06"})
     assert out == {"evidence_to": "2019-06", "last_month_status": "Possibly partial"}
     assert gateway.period_fields({}) == {"evidence_to": None, "last_month_status": None}
+
+
+def test_the_access_module_logs_nothing_and_imports_nothing_from_the_gateway():
+    """access-links.md section 4: a token never reaches a log line. The module has no logging call at all, and the server's
+    guard and admin routes log nothing of the request's headers or links."""
+    tree = ast.parse((BACKEND / "app" / "access.py").read_text())
+    imported = {n.module or "" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)} | \
+        {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
+    assert not any(m.startswith(("app.llm", "logging", "anthropic")) or m == "logging" for m in imported), imported
+    assert not [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "print"]
+    server_tree = ast.parse((BACKEND / "server.py").read_text())
+    fns = {"access_guard", "issue_tester", "list_testers", "revoke_tester", "reissue_tester"}
+    for fn in (f for f in ast.walk(server_tree) if isinstance(f, (ast.AsyncFunctionDef, ast.FunctionDef)) and f.name in fns):
+        calls = [ast.unparse(c) for c in ast.walk(fn) if isinstance(c, ast.Call) and "logger" in ast.unparse(c.func)]
+        assert not calls, f"{fn.name} logs: {calls}"

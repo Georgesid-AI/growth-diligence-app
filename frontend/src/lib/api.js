@@ -5,6 +5,26 @@ const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 export const api = axios.create({ baseURL: API });
 
+// Access links (docs/specs/access-links.md): the token from the tester's link is kept in the browser and sent on every request.
+export const TOKEN_KEY = "access_token";
+export const getToken = () => { try { return window.localStorage.getItem(TOKEN_KEY); } catch (e) { return null; } };
+export const setToken = (token) => { try { window.localStorage.setItem(TOKEN_KEY, token); } catch (e) { /* the link then works for this page only */ } };
+api.interceptors.request.use((config) => {
+  const token = getToken();
+  if (token) config.headers = { ...(config.headers || {}), Authorization: `Bearer ${token}` };
+  return config;
+});
+
+/** A file download that carries the token (a plain link cannot): the response is saved under the server's file name. */
+export const downloadFile = async (path, fallbackName) => {
+  const r = await api.get(path, { responseType: "blob" });
+  const name = /filename="?([^";]+)"?/.exec(r.headers?.["content-disposition"] || "")?.[1] || fallbackName;
+  const url = URL.createObjectURL(r.data);
+  const a = document.createElement("a");
+  a.href = url; a.download = name; a.click();
+  URL.revokeObjectURL(url);
+};
+
 export const listAudits = () => api.get("/audits").then((r) => r.data);
 export const getAudit = (id) => api.get(`/audits/${id}`, { timeout: READ_TIMEOUT_MS }).then((r) => r.data);
 export const createAudit = (payload) => api.post("/audits", payload).then((r) => r.data);
