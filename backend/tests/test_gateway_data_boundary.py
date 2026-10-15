@@ -1292,6 +1292,9 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             "population", "figure_type", "required_unknown", "edit_log", "deck_analyst", "claim_fields",
                             "candidate_fields", "REQUIRED_REASON", "TARGET_REASON", "POPULATION_REASON", "POPULATION_WORDS",
                             "TARGET_CUE", "EDIT_REASONS", "ADDED_FROM_DECK", "add_from_deck", "deck_page",
+                            # docs/specs/integrity-coverage.md: the coverage, its conclusion and the cross-deck reading
+                            "integrity_mod", "assess", "data_requests", "completed_text", "cross_deck_inconsistencies",
+                            "INSUFFICIENT", "INSUFFICIENT_NOTE", "COMPLETED_TEXT",
                             *MATCHING_SERVER_ONLY})
 # The functions that log about the register, and the only things their log calls may name.
 REGISTER_LOGGERS = frozenset({"_claim_rows", "claim_register", "claim_register_csv", "update_claim_inputs", "answer_turnover",
@@ -1857,6 +1860,24 @@ def test_the_new_register_fields_and_the_analysts_inputs_are_names_the_gateway_n
                       if isinstance(n, (ast.Name, ast.Attribute)) and getattr(n, "id", getattr(n, "attr", None)) in names]
     assert not offenders, "the gateway names the verdict inputs:\n  " + "\n  ".join(offenders)
     assert not names & gateway.OUTBOUND_FIELDS and not names & decks.GATEWAY_READABLE_FIELDS
+
+
+def test_the_integrity_module_imports_nothing_from_the_gateway_and_logs_nothing_and_the_endpoint_logs_codes_and_counts():
+    """integrity-coverage.md section 5: a pure module; the endpoint's one log line holds the run, the conclusion code and two counts."""
+    path = BACKEND / "app" / "integrity.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    offenders = [f"{m} -> {n}" for m, n in _imports(tree)
+                 if (set(re.split(r"[.\s\"'()]+", m)) | {n}) & {"llm", "gateway", "anthropic", "structures", "<dynamic>", "server"}]
+    assert not offenders, "integrity.py reaches for the gateway:\n  " + "\n  ".join(offenders)
+    assert not [n for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id in ("logger", "logging", "log", "print")]
+    code = "import sys, app.integrity; print(sorted(m for m in sys.modules if m.startswith('app.llm') or m.split('.')[0] == 'anthropic'))"
+    assert subprocess.run([sys.executable, "-c", code], cwd=BACKEND, capture_output=True, text=True, check=True).stdout.strip() == "[]"
+    server_tree = ast.parse((BACKEND / "server.py").read_text(encoding="utf-8"))
+    fn = next(f for f in ast.walk(server_tree) if isinstance(f, ast.AsyncFunctionDef) and f.name == "get_integrity")
+    calls = [n for n in ast.walk(fn) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in _LOG_LEVELS
+             and isinstance(n.func.value, ast.Name) and "log" in n.func.value.id.lower()]
+    assert [(c.args[0].value, [ast.unparse(a) for a in c.args[1:]]) for c in calls] == [
+        ("integrity: run_id=%s conclusion=%s completed=%d applicable=%d", ["audit_id", "out['code']", "out['completed']", "out['applicable']"])]
 
 
 def test_the_verdict_and_memo_modules_import_nothing_from_the_gateway_a_provider_or_the_server_and_log_nothing():

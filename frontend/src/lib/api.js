@@ -91,6 +91,8 @@ export const claimsCsvUrl = (id) => `${API}/audits/${id}/claims.csv`;
 // Verdict, data gaps and the IC memo (docs/specs/verdict-and-memo.md): computed on read by the server from the register, the
 // results and the analyst's inputs. No model is called.
 export const getVerdict = (id) => api.get(`/audits/${id}/verdict`).then((r) => r.data);
+// Data integrity: results of the completed checks, assessment coverage and the conclusion (docs/specs/integrity-coverage.md).
+export const getIntegrity = (id) => api.get(`/audits/${id}/integrity`).then((r) => r.data);
 export const putIcInputs = (id, payload) => api.put(`/audits/${id}/ic-inputs`, payload).then((r) => r.data);
 export const getMemo = (id) => api.get(`/audits/${id}/memo.md`, { responseType: "text", transformResponse: (d) => d });
 

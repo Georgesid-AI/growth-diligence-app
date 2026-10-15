@@ -12,13 +12,14 @@ import { Gloss } from "@/components/Gloss";
 import { Narrative } from "@/components/Narrative";
 import { NarrativeControl } from "@/components/NarrativeControl";
 import StepNarrative from "@/components/StepNarrative";
-import { getAudit, getResults, getVerdict, exportUrl, readNarrative, generateNarrative, getDisclosure, reportUsage, NARRATIVE_TIMEOUT_MS } from "@/lib/api";
+import { getAudit, getResults, getVerdict, getIntegrity, exportUrl, readNarrative, generateNarrative, getDisclosure, reportUsage, NARRATIVE_TIMEOUT_MS } from "@/lib/api";
 import { GLOSSARY, seeGlossary } from "@/lib/glossary";
 import { SegmentPaths } from "@/components/SegmentPaths";
 import ClaimRegister from "@/components/ClaimRegister";
 import DataGaps from "@/components/DataGaps";
 import UsagePanel from "@/components/UsagePanel";
 import Verdict from "@/components/Verdict";
+import IntegrityCoverage from "@/components/IntegrityCoverage";
 import { describeRequestError, logRequestFailure } from "@/lib/requestError";
 import { metricLabel, metricQualifier, bracketed } from "@/lib/metricNames";
 import { ANOMALIES_NOT_COMPUTED, NONE, anomalyFlags, missingRows, questionRows, questionsEmptyText } from "@/lib/gapLists";
@@ -60,6 +61,15 @@ export default function Dashboard() {
     getVerdict(id).then((v) => { if (!cancelled) setVerdict(v); }).catch(() => {});
     return () => { cancelled = true; };
   }, [id, verdictTick]);
+
+  // Data integrity (docs/specs/integrity-coverage.md): read once the results are there; a failure leaves the section out.
+  const [integrity, setIntegrity] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    if (!data) return undefined;
+    Promise.resolve().then(() => getIntegrity(id)).then((v) => { if (!cancelled) setIntegrity(v || null); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [id, data]);
 
   useEffect(() => {
     reportUsage(id, { screen: "dashboard" });
@@ -296,8 +306,10 @@ export default function Dashboard() {
       {/* Narrative — status tells the reader which figures were verified */}
       <Narrative state={generating ? { loading: true } : narrative} />
 
-      {/* Data inventory (A1) and data integrity (A2): one button each, costed like the growth-engine narrative. */}
+      {/* Data inventory (A1) and data integrity (A2): one button each, costed like the growth-engine narrative. The integrity
+          conclusion and coverage are Python's and sit above the A2 narrative, which explains them. */}
       <StepNarrative auditId={id} step="data_inventory" ready={!!data} onChanged={stepWritten} />
+      <IntegrityCoverage integrity={integrity} />
       <StepNarrative auditId={id} step="data_integrity" ready={!!data} onChanged={stepWritten} />
 
       {/* Charts */}
