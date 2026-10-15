@@ -246,7 +246,7 @@ def test_payload_allowlist_holds_no_file_sheet_customer_row_or_raw_block(step):
     for dropped in ("file", "sheet", "rows", "row_numbers", "columns", "by_month", "revenue_reconciliation", "anomalies",
                     "revenue_gap_then_resume", "unlocked_by", "values"):
         assert dropped not in keys, dropped
-    assert set(out["metrics"]) == {"source_list", "as_of_month", "inventory" if step == "data_inventory" else "integrity"}
+    assert set(out["metrics"]) == {"source_list", "evidence_to", "last_month_status", "inventory" if step == "data_inventory" else "integrity"}
 
 
 def _keys(node):

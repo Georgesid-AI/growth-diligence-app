@@ -1646,12 +1646,12 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
                              "unlocked_by": "Upload revenue lines with customer ID, invoice date, amount, currency",
                              "file": rev_src.get("file")})
 
-    # A Possibly partial last month is shown in every series and excluded from the NRR (dates-and-periods.md section 2)
-    nrr_mrr = mrr
+    # A Possibly partial last month is shown in every series and excluded from the NRR and the gross churn (dates-and-periods.md section 2)
+    complete_mrr = mrr
     if source and source["status"] == POSSIBLY_PARTIAL and not mrr.empty:
         cut = pd.Period(source["month"], "M")
-        nrr_mrr = mrr.loc[:, [c for c in mrr.columns if c < cut]]
-    nrr = guarded("NRR (12-month)", rev_src.get("file"), None, compute_nrr, nrr_mrr, seg_map, _first_months(nrr_mrr))
+        complete_mrr = mrr.loc[:, [c for c in mrr.columns if c < cut]]
+    nrr = guarded("NRR (12-month)", rev_src.get("file"), None, compute_nrr, complete_mrr, seg_map, _first_months(complete_mrr))
     if nrr and nrr.get("insufficient_history"):
         missing_data.append({"metric": "NRR (12-month)", "reason": f"Needs 12+ months of history; have {nrr['months_available']}",
                              "unlocked_by": "Provide at least 13 months of revenue lines", "file": rev_src.get("file")})
@@ -1663,7 +1663,7 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
         missing_data.append({"metric": "NRR by segment", "reason": "Segment column not mapped on revenue lines",
                              "unlocked_by": "Map the optional 'segment' column on revenue lines", "file": rev_src.get("file")})
 
-    churn = guarded("Gross revenue churn", rev_src.get("file"), None, compute_gross_churn, mrr)
+    churn = guarded("Gross revenue churn", rev_src.get("file"), None, compute_gross_churn, complete_mrr)
     if churn and churn.get("insufficient_history"):
         missing_data.append({"metric": "Gross revenue churn", "reason": f"Needs 12+ months; have {churn['months_available']}",
                              "unlocked_by": "Provide at least 13 months of revenue lines", "file": rev_src.get("file")})

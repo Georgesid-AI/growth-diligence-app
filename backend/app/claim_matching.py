@@ -87,7 +87,7 @@ METRIC_POPULATION = {"Customer count": "paying", "Customer growth": "paying", "M
                      "Win rate": "all closed"}
 POPULATION_TYPES = ("customers", "users", "user_growth")
 # The types whose figure is an amount: with no currency and no unit, the currency is the field still unknown.
-MONEY_TYPES = ("revenue", "costs", "burn", "cash", "gross_profit", "ebitda", "net_profit")
+MONEY_TYPES = ("revenue", "costs", "burn", "cash", "gross_profit", "ebitda", "net_profit", "ltv", "cac")
 # The types whose period may stay unknown (the plan's table: optional or "–").
 PERIOD_OPTIONAL_TYPES = ("market", "use_of_funds", "acquisition_channels", "product")
 # Section 5: growth claims. The basis is the analyst's, else the parser's, else read from the claim's own words on read.
@@ -1055,7 +1055,7 @@ class _Span:
         self.first = _mi(periods["first"]) if periods else None
         self.last = _mi(periods["last"]) if periods else None
         self.missing = {_mi(m) for m in periods["missing"]} if periods else set()
-        partial_read = metric == "NRR (12-month)" or spec.get("kind") == "growth"
+        partial_read = metric in ("NRR (12-month)", "Gross revenue churn") or spec.get("kind") == "growth"
         self.partial = _mi(source["month"]) if partial_read and source.get("status") == "Possibly partial" and source.get("month") else None
         self.evidence_to = source.get("evidence_to")
 

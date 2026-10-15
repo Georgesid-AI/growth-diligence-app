@@ -134,6 +134,25 @@ def test_a_claim_with_no_period_is_not_matched_until_its_period_is_set():
     assert row["observed_value"] is None
 
 
+@pytest.mark.parametrize("claim_type, value, unit, currency, snippet, needs_currency", [
+    ("ltv", 4200, None, None, "LTV 4,200", True),
+    ("cac", 310, None, None, "CAC 310", True),
+    ("ltv_cac", 3.4, "x", None, "LTV/CAC 3.4x", False),
+    ("customer_lifetime", 28, "months", None, "Customer lifetime 28 months", False),
+    ("trials_per_day", 40, "trials", None, "40 trials per day", False),
+])
+def test_a_unit_economics_claim_needs_its_period_and_figure_type_and_a_currency_only_for_money(
+        claim_type, value, unit, currency, snippet, needs_currency):
+    """Decision 4 (15 Oct 2026): the Unit economics row. Metric, value, unit, period and figure type are required; the
+    currency is required for the money values (ltv, cac) only. No population."""
+    row = run_claim({"claim_type": claim_type, "value": value, "unit": unit, "currency": currency, "snippet": snippet})
+    assert row["required_unknown"] == (["currency", "period"] if needs_currency else ["period"])
+    dated = run_claim({"claim_type": claim_type, "value": value, "unit": unit, "currency": currency, "snippet": snippet,
+                       "target_date": "2024-02", "period_text": "Feb 2024"})
+    assert dated["required_unknown"] == (["currency"] if needs_currency else [])
+    assert dated["figure_type"] == "actual" and dated["population"] is None
+
+
 def test_users_with_no_qualifier_need_their_population_and_registered_users_are_inconclusive():
     base = {"claim_type": "users", "value": 10000, "unit": "users", "currency": None, "target_date": "2024-02",
             "period_text": "Feb 2024", "snippet": "10,000 users in Feb 2024"}
