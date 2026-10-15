@@ -55,14 +55,15 @@ test("opening reads a saved narrative and never generates one", async () => {
   expect(api.generateNarrative).not.toHaveBeenCalled();
 });
 
-test("the button writes this step's narrative and shows the verdict, the decision informed column and a ranked list", async () => {
+test("the button writes this step's narrative, shows no verdict of its own, the decision informed column and a ranked list", async () => {
   api.readNarrative.mockResolvedValue({ narrative_status: "not_generated" });
   api.generateNarrative.mockResolvedValue({ narrative_status: "ok", narrative: NARRATIVE, row_labels: {}, generated_at: "2026-10-11T10:00:00Z" });
   const onChanged = jest.fn();
   await mount({ step: "data_integrity", onChanged });
   await act(async () => { q("narrative-generate-data_integrity").click(); });
   expect(api.generateNarrative).toHaveBeenCalledWith("a1", "data_integrity");
-  expect(q("narrative-verdict-data_integrity").textContent).toContain("Material concerns");
+  expect(q("narrative-verdict-data_integrity")).toBeNull();
+  expect(host.textContent).not.toContain("Verdict:");       // Python's integrity conclusion is the only one shown (integrity-coverage.md section 4)
   expect(host.textContent).toContain("Decision informed");
   expect(q("narrative-row-decision").textContent).toBe("Whether revenue can be relied on");
   expect(host.textContent).toContain("1.Ask management to reconcile the files.");

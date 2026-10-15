@@ -27,6 +27,7 @@ from app import narrative_export
 from app import run_audit
 from app import claim_matching
 from app import ic_memo
+from app import integrity as integrity_mod
 from app import verdict as verdict_mod
 from app import decks
 from app import structures
@@ -1586,6 +1587,26 @@ async def _ic_context(audit_id: str, audit: dict, validate: bool = True) -> dict
     return {"rows": rows, "results": results, "ic": ic, "state": state, "gaps": gaps, "contract": None}
 
 
+async def _integrity(audit_id: str, results: Optional[dict]) -> dict:
+    """Both blocks of the Data integrity section and the conclusion (docs/specs/integrity-coverage.md), from the stored results, the
+    deck count and the stored candidates. Pure reads; no model."""
+    deck_count = len(await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, {"_id": 0, "deck_id": 1}).to_list(100))
+    candidates = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
+    return integrity_mod.assess(results, deck_count=deck_count, candidates=candidates)
+
+
+@api.get("/audits/{audit_id}/integrity")
+async def get_integrity(audit_id: str):
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
+    if not audit:
+        raise HTTPException(404, "Audit not found")
+    results = (await _current_audit(audit_id, audit, strict=False)).get("results")
+    out = await _integrity(audit_id, results)
+    logger.info("integrity: run_id=%s conclusion=%s completed=%d applicable=%d", audit_id, out["code"], out["completed"],
+                out["applicable"])
+    return sanitize(out)
+
+
 @api.get("/audits/{audit_id}/claims.csv")
 async def claim_register_csv(audit_id: str):
     """The monitoring baseline (docs/specs/verdict-and-memo.md section 5): the register's rows in rank order, then the data
@@ -2026,7 +2047,8 @@ async def export_memo(audit_id: str):
             key=verdict_mod.key_gates(rows), gaps=ctx["gaps"], ic=ctx["ic"],
             blockers=await _blocker_list(audit_id, audit), narratives=narratives, usage=usage,
             files=[{"dtype": d["dtype"], "file": d.get("file"), "sheet": d.get("sheet")} for d in datasets],
-            decks=[{"file": d.get("file")} for d in deck_docs], tables=tables, today=analysis_date(audit))
+            decks=[{"file": d.get("file")} for d in deck_docs], tables=tables, today=analysis_date(audit),
+            integrity=await _integrity(audit_id, results))
     except ic_memo.MemoRefused as exc:
         refusal = exc
     words = ic_memo.word_count_of(text) if text else (refusal.words or 0)

@@ -549,20 +549,22 @@ def appendix_b(text):
     return text.split("## Appendix B")[1].split("## Appendix C")[0]
 
 
-def test_the_data_reliability_headline_and_key_evidence_read_the_a2_verdict_and_the_rating_stays_the_analysts():
+def test_the_data_reliability_row_reads_the_integrity_conclusion_never_the_a2_verdict_and_the_rating_stays_the_analysts():
+    """integrity-coverage.md section 4 (replaces the A2-verdict headline of 2026-10-08): the conclusion and the coverage head the row."""
     text = memo(narratives=[data_step("data_integrity")])
     row = reliability_row(text).split("|")
     assert row[2].strip() == "Adequate", "Strong / Adequate / Weak is entered by the analyst"
-    assert "Material concerns: the revenue file and the P&L differ by 69.61%." in row[3]
-    assert "Data integrity verdict: Material concerns" in row[4]
-    assert "11 of 33 claims Verified" not in row[3], "the computed line is replaced, not repeated"
-    assert "data-integrity narrative" in text.split("Footnotes")[1], "the headline carries its footnote"
+    assert row[3].strip().startswith("Insufficient assessment coverage (3 of 5). Completed 3 of 5 applicable checks.")
+    assert "Insufficient assessment coverage is not a finding about the company: 2 of the 5 applicable checks could not be completed." in row[3]
+    assert "Revenue file and P&L differ by 69.61% over 2023-03–2024-02" in row[3], "the computed line follows"
+    assert row[4].strip() == "Data integrity conclusion: Insufficient assessment coverage (3 of 5); revenue_reconciliation, anomalies, claim register"
+    assert "Material concerns: the revenue file and the P&L differ by 69.61%." not in text and "Data integrity verdict" not in text
 
 
 @pytest.mark.parametrize("narratives", [[], [data_step("data_integrity", status="flagged")], [data_step("data_integrity", status="unavailable")],
                                         [data_step("data_integrity", verdict=None)], [data_step("data_inventory")]],
                          ids=["none", "flagged", "unavailable", "no verdict", "other step"])
-def test_without_a_current_ok_a2_narrative_with_a_verdict_the_row_keeps_the_computed_line(narratives):
+def test_whatever_the_a2_narrative_the_row_keeps_the_computed_line(narratives):
     row = reliability_row(memo(narratives=narratives))
     assert "Revenue file and P&L differ by 69.61% over 2023-03–2024-02" in row and "Data integrity verdict" not in row
 
@@ -583,9 +585,10 @@ def test_without_a_current_a1_narrative_appendix_b_has_no_request_list(narrative
     assert "Data request list from the data inventory" not in appendix_b(memo(narratives=narratives))
 
 
-def test_a_number_in_the_a2_headline_that_the_stored_results_do_not_hold_refuses_the_memo():
-    exc = refusal(narratives=[data_step("data_integrity", headline="Material concerns: the files differ by 77.31%.")])
-    assert exc.code == "numbers" and "77.31" in exc.unmatched
+def test_the_a2_headline_is_not_printed_so_a_number_in_it_never_reaches_the_memo():
+    """integrity-coverage.md section 4: the A2 narrative's headline left the scorecard, so its figures are never checked or shown."""
+    text = memo(narratives=[data_step("data_integrity", headline="Material concerns: the files differ by 77.31%.")])
+    assert "77.31" not in text
 
 
 @pytest.mark.parametrize("when", ["2026-10-08T14:43:00+00:00", "2026-10-08T09:57:12+00:00", "2026-10-08T23:59:00+00:00"])

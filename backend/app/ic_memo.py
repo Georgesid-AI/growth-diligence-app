@@ -16,6 +16,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 from app import claim_matching as cm
 from app import disclosure
 from app import formatting as fmt
+from app import integrity as integrity_mod
 from app import verdict as vd
 from schemas import metrics as contract
 
@@ -377,7 +378,7 @@ def _needs(ic: dict, rows: List[dict], key: dict) -> None:
         raise MemoRefused("inputs", WORDING_NOT_IN_W["thesis"].format(parts=", ".join(absent)))
 
 
-def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, usage, files, decks, tables, today,
+def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, usage, files, decks, tables, today, integrity,
            thesis: Dict[str, str]) -> Tuple[str, str]:
     """(sections 1-6 with the title, the whole text) for one view of the thesis."""
     notes = Notes()
@@ -422,13 +423,13 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, us
         recon = "no P&L to reconcile"
     anomalies = (f"{flags} anomaly flags{notes.source('Anomaly Flags', 'anomalies', (results.get('anomalies') or {}).get('source'))}"
                  if flags is not None else "anomaly flags not computed")
-    reliability = f"{recon}; {anomalies}; {verified} of {len(rows)} claims Verified{notes.register()}."
-    reliability_evidence = "revenue_reconciliation, anomalies, claim register"
-    integrity = _step_narrative(narratives, "data_integrity")
-    if integrity and integrity.get("verdict"):
-        # The data-integrity narrative (A2) writes the headline and the key evidence; the rating stays the analyst's.
-        reliability = f"{integrity['headline']}{notes.add('data-integrity narrative, AI call log')}"
-        reliability_evidence = f"Data integrity verdict: {integrity['verdict']}; {reliability_evidence}"
+    # integrity-coverage.md section 4: the conclusion and the coverage head the row; the A2 narrative's verdict is never printed here.
+    # The rating stays the analyst's.
+    coverage = f"{integrity['conclusion']}. {integrity['completed_text']}."
+    if integrity.get("memo_sentence"):
+        coverage += f" {integrity['memo_sentence']}"
+    reliability = f"{coverage} {recon}; {anomalies}; {verified} of {len(rows)} claims Verified{notes.register()}."
+    reliability_evidence = f"Data integrity conclusion: {integrity['conclusion']}; revenue_reconciliation, anomalies, claim register"
     if narrative:
         growth = f"{narrative['headline']}{notes.add('growth-engine narrative, AI call log')}"
     else:
@@ -499,7 +500,9 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, us
     app += [f"## {APPENDICES[1]}", f"First quarterly review: {review or '—'}", ""]
     app += [_table(["What the company cannot measure", "Why it matters", "Requested", "Target date"],
                    [[g["item"], g["why"], g["requested"] or "", g["target_date"] or "—"] for g in gaps]) if gaps else "No data gaps.", ""]
-    asks = [f"- {g['requested']}" for g in gaps if g["requested"]] + [f"- {q}" for q in vd.management_questions(results)]
+    asks = [f"- {g['requested']}" for g in gaps if g["requested"]]
+    asks += [f"- {r}" for r in integrity["data_requests"]]        # a Blocked integrity check is a data request (integrity-coverage.md 3)
+    asks += [f"- {q}" for q in vd.management_questions(results)]
     asks += [f"- {o['item']}: {o['requested']}" for o in vd.other_requests(results) if o["requested"]]
     app += ["Requests", *asks, ""]
     inventory = _step_narrative(narratives, "data_inventory")
@@ -595,9 +598,10 @@ def allowed_numbers(audit: dict, results: dict, rows: List[dict], gaps: List[dic
 
 def build_memo(*, audit: dict, results: dict, rows: List[dict], ver: dict, key: dict, gaps: List[dict], ic: dict,
                blockers: List[dict], narratives: List, usage: dict, files: List[dict], decks: List[dict], tables: List[dict],
-               today: str) -> str:
+               today: str, integrity: Optional[dict] = None) -> str:
     """The IC memo as Markdown, or `MemoRefused` (section 7.1). Built on request from the functions of the register and the verdict;
-    nothing is stored."""
+    nothing is stored. `integrity`: the Data integrity assessment (integrity-coverage.md); None reads it from the results and the
+    decks with no deck candidates."""
     try:
         contract.validate_for_export(results)
     except contract.ContractError as exc:
@@ -612,8 +616,10 @@ def build_memo(*, audit: dict, results: dict, rows: List[dict], ver: dict, key: 
         raise MemoRefused("key_gates", W19_KEY_GATES)
     _needs(ic, rows, key)
 
+    if integrity is None:
+        integrity = integrity_mod.assess(results, deck_count=len(decks), candidates=[])
     common = dict(audit=audit, results=results, rows=rows, ver=ver, key=key, gaps=gaps, ic=ic, blockers=blockers,
-                  narratives=narratives, usage=usage, files=files, decks=decks, tables=tables, today=today)
+                  narratives=narratives, usage=usage, files=files, decks=decks, tables=tables, today=today, integrity=integrity)
     # A number in a thesis sentence must be in the results, the register or the cost log: checked sentence by sentence.
     strict = allowed_numbers(audit, results, rows, gaps, ic, usage, files, decks, thesis=True)
     bad = [t for part in vd.THESIS_PARTS for t in unmatched(ic["thesis"][part], strict)]

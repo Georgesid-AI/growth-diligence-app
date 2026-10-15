@@ -8,7 +8,7 @@ import sample from "./fixtures/sample_results.json";
 jest.mock("@/lib/api", () => ({
   getAudit: jest.fn(), getResults: jest.fn(), readNarrative: jest.fn(), generateNarrative: jest.fn(), getDisclosure: jest.fn(),
   getClaimRegister: jest.fn(), updateClaimInputs: jest.fn(), claimsCsvUrl: () => "x", exportUrl: () => "x", reportUsage: jest.fn(),
-  getVerdict: jest.fn(), putIcInputs: jest.fn(), getMemo: jest.fn(), getLlmUsage: jest.fn(),
+  getVerdict: jest.fn(), putIcInputs: jest.fn(), getMemo: jest.fn(), getLlmUsage: jest.fn(), getIntegrity: jest.fn(),
   NARRATIVE_TIMEOUT_MS: 150000, NARRATIVE_EXPECTED_SECONDS: 33,
 }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
@@ -100,6 +100,29 @@ async function mountDashboard(results, verdict = VERDICT_NONE, audit = sample.au
   await act(async () => { await Promise.resolve(); });
   return { host, unmount: async () => { await act(async () => { root.unmount(); }); host.remove(); } };
 }
+
+test("the Data integrity section shows the server's conclusion and both blocks above the A2 narrative (integrity-coverage.md)", async () => {
+  api.getAudit.mockResolvedValue(sample.audit);
+  api.getResults.mockResolvedValue(sample);
+  api.readNarrative.mockResolvedValue(null);
+  api.getDisclosure.mockResolvedValue(null);
+  api.getClaimRegister.mockResolvedValue({ claims: [], register: [] });
+  api.getVerdict.mockResolvedValue(VERDICT_NONE);
+  api.getLlmUsage.mockResolvedValue(USAGE);
+  api.getIntegrity.mockResolvedValue({ conclusion: "Insufficient assessment coverage (3 of 5)", code: "insufficient", completed: 3, applicable: 5,
+    completed_text: "Completed 3 of 5 applicable checks", blocked: [], data_requests: [], results: [], coverage: [] });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => { root.render(<Dashboard />); });
+  await act(async () => { await Promise.resolve(); });
+  expect(api.getIntegrity).toHaveBeenCalledWith("a1");
+  expect(host.querySelector('[data-testid="integrity-conclusion"]').textContent).toBe("Insufficient assessment coverage (3 of 5)");
+  const order = [...host.querySelectorAll('[data-testid="integrity"], [data-testid^="step-narrative-data_integrity"]')].map((n) => n.getAttribute("data-testid"));
+  expect(order[0]).toBe("integrity");
+  await act(async () => { root.unmount(); });
+  host.remove();
+});
 
 test("segment paths, new MRR, cohort retention, MRR by segment and anomaly flags show their citation like the other blocks", async () => {
   const { host, unmount } = await mountDashboard(sample);

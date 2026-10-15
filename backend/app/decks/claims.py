@@ -52,6 +52,7 @@ bullet. A direction with no figure ("Positive EBITDA") is a candidate with no va
 source reference.
 """
 import calendar
+import copy
 import re
 from datetime import date
 from math import hypot
@@ -1382,6 +1383,23 @@ def _flag_inconsistencies(candidates: List[Dict]) -> None:
         for i in c.get("by_period") or ():
             i.pop("_stated", None)
 
+
+def cross_deck_inconsistencies(candidates: List[Dict]) -> List[Dict]:
+    """The deck inconsistency rule read over stored candidates of several decks (integrity-coverage.md section 1, check 6): the
+    pairs {"this", "other"} of figures with the same type, label and stated period and different values. A stored candidate keeps no
+    "_stated": a date is stated unless it was borrowed from a heading or a neighbour ("date_from"); a table row's periods are its
+    column headers'. Nothing is changed in place."""
+    work = []
+    for c in candidates:
+        c = {**copy.deepcopy(c), "inconsistent_dates": [], "inconsistencies": []}
+        c["_stated"] = not c.get("date_from")
+        for i in c.get("by_period") or ():
+            i["_stated"] = True
+        c.setdefault("currency", None)
+        c.setdefault("unit", None)
+        work.append(c)
+    _flag_inconsistencies(work)
+    return [pair for c in work for pair in c["inconsistencies"]]
 
 # ---------------------------------------------------------------------------
 # Use of funds (deck-parser.md section 2)

@@ -13,9 +13,6 @@ from claim_matching_support import engine_results  # noqa: E402
 from test_claim_register_api import AUDIT, api  # noqa: E402,F401  (the fixture)
 from test_ic_memo import inputs  # noqa: E402
 
-# Committed before the code (docs/specs/integrity-coverage.md): strict expected failures until the code PR removes this mark.
-pytestmark = pytest.mark.xfail(strict=True, reason="docs/specs/integrity-coverage.md: not built yet")
-
 CHECKS = ["Revenue reconciliation", "Gaps in customer data", "Quarter-end clustering", "Smoothness", "Benford on transactions",
           "Deck-vs-deck figures"]
 
@@ -119,3 +116,68 @@ def test_the_memo_scorecard_reads_the_conclusion_and_never_the_narratives_verdic
     assert "Insufficient assessment coverage (3 of 5)" in row and "Completed 3 of 5 applicable checks" in row
     assert "Data integrity conclusion: Insufficient assessment coverage (3 of 5)" in row
     assert "Data integrity verdict" not in text and "Reliable: the files agree." not in row
+
+
+# --- section 1: the result of each completed check -----------------------------------------------------------------------------
+
+def _rec(blocker, months):
+    return {"revenue_reconciliation": {"available": True, "first": "2024-01", "last": "2024-03", "tolerance_pct": 0.02, "gap_pct": 0.01,
+                                       "blocker": blocker, "by_month": [{"month": m, "gap_pct": g} for m, g in months],
+                                       "source": {"revenue_file": {"file": "revenue.csv", "sheet": "CSV", "rows": "rows 2–9"},
+                                                  "pnl": {"file": "pnl.csv", "sheet": "CSV", "rows": "rows 2–4"}}}}
+
+
+@pytest.mark.parametrize("blocker, months, result", [
+    (False, [("2024-01", 0.01), ("2024-02", -0.02)], "Green"),
+    (False, [("2024-01", 0.01), ("2024-02", -0.05)], "Amber"),
+    (True, [("2024-01", 0.30)], "Red"),
+])
+def test_the_reconciliation_is_green_amber_or_red_by_the_window_and_its_months(blocker, months, result):
+    ig = _integrity()
+    row = next(r for r in ig.assess(_rec(blocker, months), deck_count=0, candidates=[])["results"] if r["check"] == "Revenue reconciliation")
+    assert row["result"] == result
+    assert row["finding"] == "Revenue file and P&L differ by 1% over 2024-01–2024-03"
+    assert row["source"] == "revenue.csv · CSV · rows 2–9; pnl.csv · CSV · rows 2–4"
+
+
+def test_gaps_in_customer_data_is_amber_on_a_resumed_customer_or_a_line_without_a_customer_id():
+    ig = _integrity()
+    clean = {"anomalies": {"revenue_gap_then_resume": [], "revenue_missing_customer_id": {"count": 0}, "source": {"file": "revenue.csv"}}}
+    found = {"anomalies": {"revenue_gap_then_resume": [{"customer": "C1"}], "revenue_missing_customer_id": {"count": 2},
+                           "source": {"file": "revenue.csv"}}}
+    gaps = lambda results: next(r for r in ig.assess(results, deck_count=0, candidates=[])["results"] if r["check"] == "Gaps in customer data")
+    assert gaps(clean)["result"] == "Green"
+    assert (gaps(found)["result"], gaps(found)["finding"]) == (
+        "Amber", "1 customers whose revenue stops for over two months and resumes; 2 revenue lines without a customer ID")
+
+
+def _cand(cid, deck, page, value, **over):
+    c = {"id": cid, "status": "approved", "claim_type": "revenue", "value": value, "value_high": None, "currency": "EUR", "unit": None,
+         "target_date": "2023", "period_start": "2023-01-01", "period_end": "2023-12-31", "snippet": "Revenue", "label_from": None,
+         "date_from": None, "file": deck, "sources": [{"file": deck, "slide": page}]}
+    c.update(over)
+    return c
+
+
+def test_deck_vs_deck_compares_the_figures_of_every_deck_and_names_the_first_pair():
+    ig = _integrity()
+    deck = lambda cands: next(r for r in ig.assess({}, deck_count=2, candidates=cands)["results"] if r["check"] == "Deck-vs-deck figures")
+    assert deck([_cand("a", "board.pptx", 3, 1_000_000), _cand("b", "plan.pdf", 5, 1_000_000)])["result"] == "Green"
+    differ = [_cand("a", "board.pptx", 3, 1_000_000), _cand("b", "plan.pdf", 5, 1_200_000)]
+    row = deck(differ)
+    assert row["result"] == "Amber" and row["finding"].startswith("2 deck figures differ from another of the same type, label and stated period")
+    assert "board.pptx · slide 3 and plan.pdf · slide 5" in row["finding"]
+    assert differ[0].get("inconsistencies") is None, "the stored candidates are not changed"
+    assert deck([_cand("a", "board.pptx", 3, 1_000_000), _cand("b", "plan.pdf", 5, 1_200_000, date_from="FY2023 heading")])["result"] == "Green", \
+        "a borrowed date is not compared"
+    assert deck([_cand("a", "board.pptx", 3, 1_000_000), _cand("b", "plan.pdf", 5, 1_200_000, status="rejected")])["result"] == "Green", \
+        "a rejected figure is no claim"
+
+
+def test_with_no_deck_the_deck_check_is_blocked_and_requested():
+    ig = _integrity()
+    out = ig.assess(engine_results(), deck_count=0, candidates=[])
+    row = next(r for r in out["coverage"] if r["check"] == "Deck-vs-deck figures")
+    assert (row["status"], row["reason"]) == (ig.BLOCKED, "At least one board deck")
+    assert out["blocked"] == ["Deck-vs-deck figures"] and out["data_requests"] == ["Deck-vs-deck figures: At least one board deck"]
+    assert out["memo_sentence"] == "Insufficient assessment coverage is not a finding about the company: 3 of the 5 applicable checks could not be completed."
