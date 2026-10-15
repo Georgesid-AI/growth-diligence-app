@@ -1296,6 +1296,8 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             # docs/specs/integrity-coverage.md: the coverage, its conclusion and the cross-deck reading
                             "integrity_mod", "assess", "data_requests", "completed_text", "cross_deck_inconsistencies",
                             "INSUFFICIENT", "INSUFFICIENT_NOTE", "COMPLETED_TEXT",
+                            # docs/specs/smoothness.md: the deviation limit and the window
+                            "SMOOTHNESS_LIMIT_POINTS", "SMOOTHNESS_MONTHS",
                             # docs/specs/claim-review-conclusion.md: the analyst judgment and the contradictions outside the five
                             "judgment", "reasons", "unresolved_questions", "other_contradictions", "other_contradictions_text",
                             "JUDGMENT_PARTS", "JUDGMENT_LABELS", "SCOPE_SENTENCE", "NO_OTHER_CONTRADICTIONS",

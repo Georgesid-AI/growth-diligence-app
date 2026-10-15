@@ -4,6 +4,7 @@ Pure: reads the stored engine results, the audit's deck count and its deck candi
 calls no model, imports nothing from the gateway and logs nothing. Block A lists the checks that ran with their result; Block B
 lists the six checks of the method with their status; the conclusion is Python's, by the fixed rule of section 2.
 """
+from statistics import pstdev
 from typing import List, Optional
 
 COMPLETED = "Completed"
@@ -21,10 +22,13 @@ REASONS = {
     RECONCILIATION: "P&L with a revenue line, overlapping the revenue file's months",
     GAPS: "Revenue file mapped (customer ID, invoice date, amount)",
     CLUSTERING: "The app does not compute quarter-end clustering of deals yet.",
-    SMOOTHNESS: "The app does not compute revenue smoothness yet.",
+    SMOOTHNESS: "Revenue file with at least 13 consecutive months of revenue",
     BENFORD: "No transaction-level file: the app ingests revenue by customer and month, not transactions.",
     DECKS: "At least one board deck",
 }
+SMOOTHNESS_MONTHS = 13              # smoothness.md section 1: 12 month-on-month changes need 13 consecutive months
+SMOOTHNESS_LABEL = "provisional threshold, 3 synthetic series"    # shown beside the result, on screen and in the memo (George, 15 Oct 2026)
+SMOOTHNESS_LIMIT_POINTS = 0.5       # below this deviation of the growth rate, in points, revenue is unusually smooth (provisional, section 1)
 MIN_COMPLETED = 4                   # section 2: fewer completed applicable checks is insufficient coverage
 INSUFFICIENT = "Insufficient assessment coverage ({x} of {y})"
 INSUFFICIENT_NOTE = ("Insufficient assessment coverage is not a finding about the company: {n} of the {y} applicable checks could not "
@@ -61,6 +65,32 @@ def _gaps(results: dict) -> Optional[dict]:
             "finding": f"{resumed} customers whose revenue stops for over two months and resumes; {no_id} revenue lines without a "
                        f"customer ID",
             "source": _cite(a.get("source"))}
+
+
+def _month_index(month: str) -> int:
+    return int(month[:4]) * 12 + int(month[5:7]) - 1
+
+
+def _smoothness(results: dict) -> Optional[dict]:
+    """Smoothness (smoothness.md): the deviation, in points, of the last 12 month-on-month growth rates of the latest run of
+    consecutive months with revenue, a Possibly partial last month left out. None when 13 such months do not exist."""
+    series = results.get("revenue_series") or {}
+    partial = results.get("source_period") or {}
+    skip = partial.get("month") if partial.get("status") == "Possibly partial" else None
+    points = sorted((_month_index(d["month"]), d["month"], d["total"]) for d in series.get("data") or ()
+                    if d.get("month") != skip and isinstance(d.get("total"), (int, float)) and d["total"] > 0)
+    run: list = []
+    for point in points:
+        run = run + [point] if run and point[0] == run[-1][0] + 1 else [point]
+    if len(run) < SMOOTHNESS_MONTHS:
+        return None
+    window = run[-SMOOTHNESS_MONTHS:]
+    deviation = pstdev([window[i][2] / window[i - 1][2] - 1 for i in range(1, len(window))]) * 100
+    smooth = deviation < SMOOTHNESS_LIMIT_POINTS
+    finding = (f"Month-on-month revenue growth varies by {deviation:.1f} points (standard deviation) over "
+               f"{window[0][1]}–{window[-1][1]}" + (f"; below {SMOOTHNESS_LIMIT_POINTS:g} points is unusually smooth" if smooth else "") +
+               f" ({SMOOTHNESS_LABEL})")
+    return {"result": AMBER if smooth else GREEN, "finding": finding, "source": _cite(series.get("source"))}
 
 
 def _where(source: Optional[dict]) -> str:
@@ -101,12 +131,12 @@ def assess(results: Optional[dict], deck_count: int, candidates: List[dict]) -> 
     """Both blocks, the conclusion, the data requests and the memo's sentence for one audit. `results` may be None (not computed):
     every check that reads it is then Blocked."""
     results = results or {}
-    ran = {RECONCILIATION: _reconciliation(results), GAPS: _gaps(results), DECKS: _decks(candidates) if deck_count else None}
+    ran = {RECONCILIATION: _reconciliation(results), GAPS: _gaps(results), SMOOTHNESS: _smoothness(results), DECKS: _decks(candidates) if deck_count else None}
     coverage = []
     for check in CHECKS:
         if check == BENFORD:
             status = NOT_APPLICABLE
-        elif check in (CLUSTERING, SMOOTHNESS):
+        elif check == CLUSTERING:
             status = NOT_AVAILABLE
         else:
             status = COMPLETED if ran[check] else BLOCKED
