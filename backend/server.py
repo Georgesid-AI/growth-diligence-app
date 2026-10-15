@@ -1,4 +1,4 @@
-from fastapi import BackgroundTasks, Body, FastAPI, APIRouter, HTTPException, UploadFile, File
+from fastapi import BackgroundTasks, Body, Depends, FastAPI, APIRouter, HTTPException, Request, UploadFile, File
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -26,7 +26,9 @@ from app import disclosure as disclosure_mod
 from app import narrative_export
 from app import run_audit
 from app import claim_matching
+from app import access as access_mod
 from app import ic_memo
+from app import integrity as integrity_mod
 from app import verdict as verdict_mod
 from app import decks
 from app import structures
@@ -46,7 +48,35 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ["DB_NAME"]]
 
 app = FastAPI(title="Growth Diligence Engine")
-api = APIRouter(prefix="/api")
+
+
+async def access_guard(request: Request):
+    """docs/specs/access-links.md section 3, on every route of the router: 401 for no, unknown, expired or revoked token; the
+    owner token reaches usage totals and the admin routes only (404 elsewhere); a tester reaches an audit (or run) id only when
+    their token owns it, and gets the missing-audit answer otherwise."""
+    path = request.url.path
+    if access_mod.disabled() or path in access_mod.OPEN_PATHS or request.method == "OPTIONS":
+        request.state.principal = None
+        return
+    who = await access_mod.principal(db, access_mod.bearer(request.headers.get("authorization")))
+    if who is None:
+        raise HTTPException(401, "Invalid or missing access link")
+    role, tester_id = who
+    request.state.principal = who
+    if path.startswith("/api/admin/") or path == "/api/usage/totals":
+        if role != access_mod.OWNER:
+            raise HTTPException(404, "Not found")
+        return
+    if role == access_mod.OWNER:
+        raise HTTPException(404, "Audit not found")
+    audit_id = request.path_params.get("audit_id") or request.path_params.get("run_id")
+    if audit_id is not None:
+        owned = await db.audits.find_one({"id": audit_id, "owner": tester_id}, {"id": 1})
+        if not owned:
+            raise HTTPException(404, "Audit not found")
+
+
+api = APIRouter(prefix="/api", dependencies=[Depends(access_guard)])
 
 install_secret_redaction()      # no key can reach a log line, message or traceback
 logger = logging.getLogger("growth")
@@ -210,12 +240,29 @@ def _required_text(v: Optional[str]) -> Optional[str]:
     return v
 
 
+def _validate_analysis_date(v: Optional[str]) -> Optional[str]:
+    """The requested analysis date (docs/specs/dates-and-periods.md section 2): YYYY-MM-DD, a year from 2000 to 2100, or none."""
+    if not v:
+        return None
+    try:
+        dt = datetime.strptime(v, "%Y-%m-%d")
+    except ValueError:
+        dt = None
+    if dt is None or dt.strftime("%Y-%m-%d") != v or not 2000 <= dt.year <= 2100:
+        raise ValueError("analysis_date must be an ISO date (YYYY-MM-DD) with a year between 2000 and 2100")
+    return v
+
+
 class AuditCreate(BaseModel):
     company_name: str                       # the target company
     reporting_currency: str = "EUR"
     target_arr: float = 0
     target_date: Optional[str] = None
     as_of_month: Optional[str] = None
+    # The analyst's date: dates the memo and the analyst's own text, never a figure (null: today). The box "Last month is
+    # complete" marks the revenue file's last month Complete (dates-and-periods.md section 2).
+    analysis_date: Optional[str] = None
+    last_month_complete: bool = False
     # The month the company's fiscal year ends in (deck-parser.md section 2). FY25 is the fiscal year
     # that ends in 2025; with December it is the calendar year.
     fiscal_year_end: int = Field(default=12, ge=1, le=12)
@@ -225,6 +272,7 @@ class AuditCreate(BaseModel):
 
     _check_target_date = field_validator("target_date")(_validate_target_date)
     _check_as_of_month = field_validator("as_of_month")(_validate_as_of_month)
+    _check_analysis_date = field_validator("analysis_date")(_validate_analysis_date)
     _check_required = field_validator("client_name")(_required_text)
 
 
@@ -234,12 +282,15 @@ class AuditUpdate(BaseModel):
     target_arr: Optional[float] = None
     target_date: Optional[str] = None
     as_of_month: Optional[str] = None
+    analysis_date: Optional[str] = None
+    last_month_complete: Optional[bool] = None
     fiscal_year_end: Optional[int] = Field(default=None, ge=1, le=12)
     client_name: Optional[str] = None
     structure_reading_consent: Optional[bool] = None
 
     _check_target_date = field_validator("target_date")(_validate_target_date)
     _check_as_of_month = field_validator("as_of_month")(_validate_as_of_month)
+    _check_analysis_date = field_validator("analysis_date")(_validate_analysis_date)
     _check_required = field_validator("client_name")(_required_text)
 
 
@@ -289,7 +340,7 @@ async def root():
 
 
 @api.post("/audits")
-async def create_audit(payload: AuditCreate):
+async def create_audit(payload: AuditCreate, request: Request):
     audit = {
         "id": str(uuid.uuid4()),
         "company_name": payload.company_name,
@@ -297,6 +348,8 @@ async def create_audit(payload: AuditCreate):
         "target_arr": payload.target_arr,
         "target_date": payload.target_date,
         "as_of_month": payload.as_of_month,
+        "analysis_date": payload.analysis_date,
+        "last_month_complete": payload.last_month_complete,
         "fiscal_year_end": payload.fiscal_year_end,
         "client_name": payload.client_name,
         "structure_reading_consent": payload.structure_reading_consent,
@@ -307,13 +360,53 @@ async def create_audit(payload: AuditCreate):
         "metrics_stale": False,
     }
     audit["ic_inputs"] = verdict_mod.with_review(audit, None)       # the first quarterly review: creation date + 90 days
-    await db.audits.insert_one({**audit, "usage": usage_mod.empty()})
+    who = getattr(request.state, "principal", None)
+    owner = {"owner": who[1]} if who and who[1] else {}              # the tester token's id, never the token
+    await db.audits.insert_one({**audit, **owner, "usage": usage_mod.empty()})
     return audit
 
 
+class TesterCreate(BaseModel):
+    label: str = Field(min_length=1, max_length=80)
+
+
+def _link(request: Request, token: str) -> str:
+    base = os.environ.get("PUBLIC_APP_URL") or str(request.base_url)
+    return f"{base.rstrip('/')}/t/{token}"
+
+
+@api.post("/admin/testers")
+async def issue_tester(payload: TesterCreate, request: Request):
+    """The owner issues one link per tester. The link is returned once; only its hash is stored."""
+    tester_id, token = await access_mod.issue(db, payload.label.strip())
+    return {"id": tester_id, "label": payload.label.strip(), "link": _link(request, token)}
+
+
+@api.get("/admin/testers")
+async def list_testers():
+    return await access_mod.testers(db)
+
+
+@api.post("/admin/testers/{tester_id}/revoke")
+async def revoke_tester(tester_id: str):
+    if not await access_mod.revoke(db, tester_id):
+        raise HTTPException(404, "Not found")
+    return {"ok": True}
+
+
+@api.post("/admin/testers/{tester_id}/reissue")
+async def reissue_tester(tester_id: str, request: Request):
+    token = await access_mod.reissue(db, tester_id)
+    if token is None:
+        raise HTTPException(404, "Not found")
+    return {"id": tester_id, "link": _link(request, token)}
+
+
 @api.get("/audits")
-async def list_audits():
-    return await db.audits.find({}, {"_id": 0, "results": 0, "usage": 0}).sort("created_at", -1).to_list(200)
+async def list_audits(request: Request):
+    who = getattr(request.state, "principal", None)
+    flt = {"owner": who[1]} if who else {}
+    return await db.audits.find(flt, {"_id": 0, "results": 0, "usage": 0, "owner": 0}).sort("created_at", -1).to_list(200)
 
 
 @api.get("/audits/{audit_id}")
@@ -332,6 +425,8 @@ async def update_audit(audit_id: str, payload: AuditUpdate):
     updates = {k: v for k, v in payload.model_dump().items() if v is not None}
     if "as_of_month" in payload.model_fields_set and payload.as_of_month is None:
         updates["as_of_month"] = None       # an explicit null clears the as-of month back to the default (last P&L month)
+    if "analysis_date" in payload.model_fields_set and payload.analysis_date is None:
+        updates["analysis_date"] = None     # an explicit null returns the requested analysis date to today
     consent = updates.get("structure_reading_consent")
     if consent is not None and consent != (a.get("structure_reading_consent") is True):
         await db.audits.update_one({"id": audit_id},
@@ -885,16 +980,23 @@ class CandidateUpdate(BaseModel):
     # Use of funds is accepted so that correcting a figure of that type keeps the type (deck-parser.md section 2): the
     # claim stays out of the top 5, the banner and the verdict. The analyst's list of types does not offer it. Acquisition
     # channels is accepted and offered (chat-upload.md section 17).
-    claim_type: Optional[Literal[deck_claims.CLAIM_TYPES + (deck_claims.USE_OF_FUNDS, deck_claims.ACQUISITION_CHANNELS)]] = None
+    claim_type: Optional[Literal[deck_claims.CLAIM_TYPES + (deck_claims.USE_OF_FUNDS, deck_claims.ACQUISITION_CHANNELS, "other")]] = None
     value: Optional[float] = None
     value_high: Optional[float] = None          # the high end of a range
     unit: Optional[str] = Field(default=None, min_length=1, max_length=40)   # "%", "months", "paying users"
     currency: Optional[str] = Field(default=None, pattern=r"^[A-Z]{3}$")
     target_date: Optional[str] = Field(default=None, pattern=_TARGET_DATE.pattern)
     by_period: Optional[List[PeriodValue]] = None   # a table row: every value, in the row's order
+    # docs/specs/claim-types-and-correction.md section 3: the fields every claim type holds, and why the analyst changed them
+    population: Optional[Literal["paying", "registered", "active", "deals won", "all closed", "open"]] = None
+    figure_type: Optional[Literal[deck_claims.FIGURE_TYPES]] = None
+    growth_basis: Optional[Literal["mom", "yoy", "annualised", "cumulative", "unknown"]] = None
+    reason: Literal[tuple(deck_claims.EDIT_REASONS)] = "parser_misread"
 
 
 _EDITABLE = ("claim_type", "value", "value_high", "unit", "currency", "target_date", "by_period")
+_CLAIM_FIELDS = ("population", "figure_type", "growth_basis")       # each with *_set_by "analyst" once edited
+ADDED_FROM_DECK = "Added from deck by analyst"
 _ROW_FIELDS = ("value", "value_high", "target_date")     # held per period on a table row candidate
 # Approved and edited claims make up the claim register; rejected ones stay on record, unused.
 REGISTER_STATUSES = ("approved", "edited")
@@ -990,6 +1092,8 @@ async def list_deck_candidates(audit_id: str):
         c["fx"] = claim_matching.fx_view(c, settings, as_of)
         c["turnover"] = turnover.get(c["id"])
         c["definition"] = definition.get(c["id"])
+        # the figure type, population and growth basis as the register reads them, for the editor (claim-types-and-correction.md 3)
+        c["claim_fields"] = claim_matching.candidate_fields(c, current.get("results"))
     peers = {}
     for c in candidates:
         peers.setdefault(c.get("deck_id"), []).append(c)
@@ -1102,6 +1206,94 @@ async def add_analyst_claim(audit_id: str, payload: AnalystClaim):
     return sanitize(await db[decks.CANDIDATES_COLLECTION].find_one({"audit_id": audit_id, "id": candidate["id"]}, {"_id": 0}))
 
 
+SNIPPET_MAX = 300           # the longest passage Add from deck takes (claim-types-and-correction.md section 5)
+
+
+def _page_lines(deck: dict, page: int) -> List[dict]:
+    """A stored page as the analyst sees it under View page: its text, notes and table lines ("b{n}", the block's index in the
+    stored deck) and its chart labels ("c{structure}:{cell}"), in the stored order. Nothing is read again from the file."""
+    key = "slide" if deck.get("page_unit") == "slide" else "page"
+    lines = [{"ref": f"b{n}", "kind": b.get("kind"), "text": b.get("text") or ""}
+             for n, b in enumerate(deck.get("blocks") or []) if b.get(key) == page and (b.get("text") or "").strip()]
+    for s, structure in enumerate(deck.get("structures") or []):
+        if structure.get("type") == "chart" and structure.get(key) == page:
+            lines += [{"ref": f"c{s}:{n}", "kind": "chart", "text": cell.get("text") or ""}
+                      for n, cell in enumerate(structure.get("cells") or []) if (cell.get("text") or "").strip()]
+    return lines
+
+
+async def _stored_deck(audit_id: str, deck_id: str) -> dict:
+    deck = await db[decks.TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id}, {"_id": 0})
+    if not deck:
+        raise HTTPException(404, "Deck not found")
+    return deck
+
+
+@api.get("/audits/{audit_id}/decks/{deck_id}/pages/{page}")
+async def deck_page(audit_id: str, deck_id: str, page: int):
+    """One stored page of one of the audit's decks, for Add from deck (claim-types-and-correction.md section 5). The text goes to the
+    analyst's browser only, as the deck list's snippets do; the log line holds the run id and a count."""
+    deck = await _stored_deck(audit_id, deck_id)
+    if page < 1 or (deck.get("pages") and page > deck["pages"]):
+        raise HTTPException(404, "Page not found")
+    lines = _page_lines(deck, page)
+    logger.info("deck page: run_id=%s lines=%d", audit_id, len(lines))
+    return sanitize({"deck_id": deck_id, "file": deck.get("file"), "page_unit": deck.get("page_unit"), "page": page,
+                     "pages": deck.get("pages"), "lines": lines})
+
+
+class AddFromDeck(BaseModel):
+    """A line of a stored deck page, by reference: the server reads its text, the client never sends claim text."""
+    model_config = {"extra": "forbid"}
+    page: int = Field(ge=1)
+    ref: str = Field(pattern=r"^(b\d+|c\d+:\d+)$")
+
+
+@api.post("/audits/{audit_id}/decks/{deck_id}/add-from-deck")
+async def add_from_deck(audit_id: str, deck_id: str, payload: AddFromDeck):
+    """Recover a claim the parser missed (claim-types-and-correction.md section 5): a candidate from one stored line, its snippet the
+    line verbatim, its source the deck, page and cell, origin "deck_analyst", pending. The parser reads its fields from that text;
+    with no figure or no type it is Other with no value, for the analyst to type in the editor."""
+    audit = await db.audits.find_one({"id": audit_id}, {"id": 1, "fiscal_year_end": 1})
+    if not audit:
+        raise HTTPException(404, "Audit not found")
+    deck = await _stored_deck(audit_id, deck_id)
+    line = next((x for x in _page_lines(deck, payload.page) if x["ref"] == payload.ref), None)
+    if line is None:
+        raise _rejected("ref", "choose a line of this page")
+    text = line["text"]
+    if len(text) > SNIPPET_MAX:
+        raise _rejected("ref", f"Select a shorter passage ({SNIPPET_MAX} characters at most)")
+    key = "slide" if deck.get("page_unit") == "slide" else "page"
+    if payload.ref.startswith("b"):
+        block = deck["blocks"][int(payload.ref[1:])]
+        source = {k: block[k] for k in ("table", "row", "col", "box") if block.get(k) is not None}
+    else:
+        s, n = (int(x) for x in payload.ref[1:].split(":"))
+        cell = deck["structures"][s]["cells"][n]
+        block = {key: payload.page, "text": text}
+        source = {"chart": deck["structures"][s].get("chart"), "row": cell.get("row"), "col": cell.get("col")}
+    found = deck_claims.detect_candidates([{key: payload.page, "text": text, "kind": "text", **{
+        k: v for k, v in block.items() if k in ("box", "top", "left", "width", "height")}}], deck["file"], _fiscal_year_end(audit))
+    parsed = found[0] if found and found[0].get("claim_type") else {}
+    existing = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0, "order": 1}).to_list(10000)
+    candidate = {
+        "claim_type": parsed.get("claim_type") or deck_claims.UNKNOWN, "value": parsed.get("value"),
+        "value_high": parsed.get("value_high"), "unit": parsed.get("unit"), "currency": parsed.get("currency"),
+        "target_date": parsed.get("target_date"), "period_text": parsed.get("period_text"), "label_from": None,
+        "date_from": parsed.get("date_from"), "inconsistent_dates": [], "claim_direction": parsed.get("claim_direction"),
+        **{k: parsed[k] for k in ("qualifier", "growth_basis", "figure_type", "figure_type_set_by", "population", "population_set_by",
+                                  "type_from") if parsed.get(k) is not None},
+        "snippet": text, "sources": [{"file": deck["file"], key: payload.page, "kind": "deck_analyst", **source}],
+        "origin": "deck_analyst", "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"], "id": str(uuid.uuid4()),
+        "order": max((c.get("order", 0) for c in existing), default=-1) + 1, "status": "pending",
+    }
+    deck_claims.resolve_period(candidate, _fiscal_year_end(audit))
+    await db[decks.CANDIDATES_COLLECTION].insert_one(candidate)
+    logger.info("add from deck: run_id=%s figures=%d", audit_id, len(found))
+    return sanitize(await db[decks.CANDIDATES_COLLECTION].find_one({"audit_id": audit_id, "id": candidate["id"]}, {"_id": 0}))
+
+
 @api.put("/audits/{audit_id}/decks/candidates/{candidate_id}")
 async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateUpdate):
     where = {"audit_id": audit_id, "id": candidate_id}
@@ -1109,7 +1301,7 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
     if not current:
         raise HTTPException(404, "Candidate not found")
     sent = payload.model_fields_set
-    edits = {k: getattr(payload, k) for k in _EDITABLE if k in sent}
+    edits = {k: getattr(payload, k) for k in _EDITABLE + _CLAIM_FIELDS if k in sent}
     if not edits and "status" not in sent:
         raise HTTPException(400, "Nothing to change")
     if edits and "status" in sent:
@@ -1126,17 +1318,36 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
         raise _rejected("value", "this claim is a table row; edit its values in by_period")
     if "target_date" in edits:
         edits.update(_period_fields(_edited_period({"target_date": edits["target_date"]}, current, year_end)))
-    if current.get("claim_type") in (structures.verify.OTHER, deck_claims.UNKNOWN) and "parsed" not in current and \
-            (payload.status == "approved" or (edits and "claim_type" not in edits)):
-        # An item the model labelled "other" is listed as type Other, a figure no heading names a type for as type
-        # Unknown; either is approved only once its type is edited to a claim type (structure-labelling.md section 4,
-        # deck-parser.md section 2). An edit approves, so it needs the type too.
+    if current.get("claim_type") in deck_claims.OTHER_TYPES and (payload.status == "approved" or (
+            edits and edits.get("claim_type", current["claim_type"]) in deck_claims.OTHER_TYPES)):
+        # An Other figure (the model's "other", a figure no heading names a type for) is never a task and never approved: it enters
+        # the register only once the analyst retypes it (claim-types-and-correction.md section 4). An edit approves, so it needs
+        # the type too.
         raise _rejected("claim_type", "choose a claim type for this item before approving it")
     if edits:
         changes = {**edits, "status": "edited"}
+        for field in _CLAIM_FIELDS:
+            if field in edits:
+                changes[f"{field}_set_by"] = "analyst"
+        # Each change keeps its reason code, who made it and the previous value; the provenance stays (section 3)
+        log = list(current.get("edit_log") or [])
+        now = datetime.now(timezone.utc).isoformat()
+        shown = claim_matching.candidate_fields(current, (await db.audits.find_one({"id": audit_id}, {"results": 1}) or {}).get("results"))
+        for field, value in edits.items():
+            before = current.get(field) if field != "by_period" else [{k: i.get(k) for k in _ROW_FIELDS} for i in rows]
+            if field in _CLAIM_FIELDS and before is None:
+                before = shown.get(field)
+            after = value if field != "by_period" else [{k: i.get(k) for k in _ROW_FIELDS} for i in value]
+            if after != before:
+                log.append({"field": field, "previous": before, "value": after, "by": "analyst", "at": now, "reason": payload.reason})
+        changes["edit_log"] = log
         if current.get("claim_inputs"):
-            # a re-typed claim is asked "Same metric and period?" again (claim-matching.md section 4.1)
+            # a re-typed claim is asked "Same metric and period?" again (claim-matching.md section 4.1); a growth basis set here
+            # replaces the one set on the register row
             changes["claim_inputs"] = claim_matching.without_definition_answer(current["claim_inputs"])
+            if "growth_basis" in edits:
+                changes["claim_inputs"] = {cid: kept for cid, kept in (
+                    (cid, {k: v for k, v in inputs.items() if k != "growth_basis"}) for cid, inputs in changes["claim_inputs"].items()) if kept}
         if current.get("claim_direction") and (edits.get("value") is not None or edits.get("by_period")):
             changes["claim_direction"] = None       # a figure typed in: no longer a direction with no figure
         if "parsed" not in current:       # what the parser found stays next to the analyst's edit
@@ -1184,8 +1395,9 @@ async def approve_all_candidates(audit_id: str, payload: ApproveAll):
         if c.get("status") != "pending" or deck_claims.type_group(c.get("claim_type")) != payload.group \
                 or (payload.deck_id and c.get("deck_id") != payload.deck_id):
             continue
-        needs_type = c.get("claim_type") in (structures.verify.OTHER, deck_claims.UNKNOWN) and "parsed" not in c
-        if c["id"] in open_turnover or needs_type:
+        if c.get("claim_type") in deck_claims.OTHER_TYPES:      # never a task: neither approved nor counted (section 4)
+            continue
+        if c["id"] in open_turnover:
             skipped.append(c["id"])
             continue
         try:
@@ -1220,10 +1432,9 @@ async def _accept_within_tolerance(audit_id: str, audit: dict) -> dict:
     reject it. No threshold or tolerance is read or changed here."""
     audit = await _current_audit(audit_id, audit, strict=False)
     found = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
-    pending = [c for c in found if c.get("status") == "pending"]
+    pending = [c for c in found if c.get("status") == "pending" and c.get("claim_type") not in deck_claims.OTHER_TYPES]
     skipped_turnover = await _open_turnover_ids(audit_id, audit, found)
-    decided = [c for c in pending if c["id"] not in skipped_turnover and not (
-        c.get("claim_type") in (structures.verify.OTHER, deck_claims.UNKNOWN) and "parsed" not in c)]
+    decided = [c for c in pending if c["id"] not in skipped_turnover]
     # The register as it would stand with these claims approved; the register's own code labels them.
     trial = [{**c, "status": "edited" if "parsed" in c else "approved"} for c in decided]
     kept = [c for c in found if c.get("status") in REGISTER_STATUSES]
@@ -1308,7 +1519,8 @@ async def review_summary(audit_id: str):
     datasets = await db.datasets.find({"audit_id": audit_id}, {"_id": 0, "rows": 0}).to_list(10)
     found = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
     auto = [c["id"] for c in found if c.get("auto_accepted") and c.get("status") in REGISTER_STATUSES]
-    pending = [c for c in found if c.get("status") == "pending"]
+    # Other figures are never a task (claim-types-and-correction.md section 4)
+    pending = [c for c in found if c.get("status") == "pending" and c.get("claim_type") not in deck_claims.OTHER_TYPES]
     open_turnover = await _open_turnover_ids(audit_id, audit, found) if pending else set()
     return sanitize({
         "mappings": run_audit.mapping_counts(datasets),
@@ -1388,6 +1600,9 @@ async def _claim_rows(audit_id: str, audit: dict) -> tuple:
         {"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
     claims = [c for c in found if c.get("status") in REGISTER_STATUSES]
     claims.sort(key=lambda c: (c.get("file") or "", c.get("order", 0)))
+    # The extraction confidence the deck list shows, read over every candidate of the deck as the list reads it (evidence-labels.md)
+    every = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0}).to_list(10000)
+    claims = claim_matching.with_confidence(claims, every)
     rows = claim_matching.build_register(
         claims, audit.get("results"), _register_settings(audit, await _fx(audit_id, audit), await _deck_take_rate(audit_id)),
         peers=found)
@@ -1441,6 +1656,26 @@ async def _ic_context(audit_id: str, audit: dict, validate: bool = True) -> dict
     return {"rows": rows, "results": results, "ic": ic, "state": state, "gaps": gaps, "contract": None}
 
 
+async def _integrity(audit_id: str, results: Optional[dict]) -> dict:
+    """Both blocks of the Data integrity section and the conclusion (docs/specs/integrity-coverage.md), from the stored results, the
+    deck count and the stored candidates. Pure reads; no model."""
+    deck_count = len(await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, {"_id": 0, "deck_id": 1}).to_list(100))
+    candidates = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
+    return integrity_mod.assess(results, deck_count=deck_count, candidates=candidates)
+
+
+@api.get("/audits/{audit_id}/integrity")
+async def get_integrity(audit_id: str):
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
+    if not audit:
+        raise HTTPException(404, "Audit not found")
+    results = (await _current_audit(audit_id, audit, strict=False)).get("results")
+    out = await _integrity(audit_id, results)
+    logger.info("integrity: run_id=%s conclusion=%s completed=%d applicable=%d", audit_id, out["code"], out["completed"],
+                out["applicable"])
+    return sanitize(out)
+
+
 @api.get("/audits/{audit_id}/claims.csv")
 async def claim_register_csv(audit_id: str):
     """The monitoring baseline (docs/specs/verdict-and-memo.md section 5): the register's rows in rank order, then the data
@@ -1469,6 +1704,8 @@ class ClaimInputs(BaseModel):
     gate_metric_name: Optional[str] = Field(default=None, max_length=claim_matching.GATE_METRIC_MAX)
     gate_direction: Optional[Literal["at least", "at most"]] = None
     key_gate: Optional[bool] = None
+    # dates-and-periods.md section 5: the one-click "Set growth basis" of a growth claim
+    growth_basis: Optional[Literal["mom", "yoy", "annualised", "cumulative"]] = None
 
     @field_validator("gate_date")
     @classmethod
@@ -1513,7 +1750,7 @@ async def update_claim_inputs(audit_id: str, claim_id: str, payload: ClaimInputs
         raise _rejected("segment", "choose a segment of the data, Whole company or Not in the data")
     candidate = next(c for c in claims if c["id"] == claim_id.split("#")[0])
     inputs = {**(candidate.get("claim_inputs") or {})}
-    if {"metric", "segment"} & sent:            # a re-matched claim is asked "Same metric and period?" again (section 4.1)
+    if {"metric", "segment", "growth_basis"} & sent:  # a re-matched claim is asked "Same metric and period?" again (section 4.1)
         inputs = claim_matching.without_definition_answer(inputs, {claim_id})
     kept = {**inputs.get(claim_id, {}), **{k: v for k, v in values.items() if v is not None}}
     for k, v in values.items():
@@ -1764,9 +2001,10 @@ async def get_verdict(audit_id: str):
         "deal_terms": verdict_mod.W13_DEAL_TERMS, "top5_statement": verdict_mod.W24_STATEMENT,
         "candidates": [{"claim_id": r["claim_id"], "rank": r["rank"], "claim": verdict_mod.claim_name(r),
                         "evidence_label": r["evidence_label"], "reason": r["reason"]} for r in verdict_mod.sortable(rows)],
-        "ic_inputs": {k: ic.get(k) for k in ("first_quarterly_review", "ratings", "thesis")},
+        "ic_inputs": {k: ic.get(k) for k in ("first_quarterly_review", "ratings", "thesis", "judgment")},
         "ratings": list(verdict_mod.RATINGS), "ratings_for": {k: ic_memo.RATING_LABELS[k] for k in verdict_mod.RATED_ROWS},
         "thesis_labels": ic_memo.THESIS_LABELS, "thesis_max": verdict_mod.THESIS_MAX,
+        "judgment_labels": verdict_mod.JUDGMENT_LABELS, "judgment_max": verdict_mod.JUDGMENT_MAX,
     })
 
 
@@ -1778,6 +2016,7 @@ class IcInputs(BaseModel):
     gap_target_dates: Optional[dict] = None
     ratings: Optional[dict] = None
     thesis: Optional[dict] = None
+    judgment: Optional[dict] = None         # claim-review-conclusion.md section 3: Reasons, Unresolved questions
 
     @field_validator("first_quarterly_review")
     @classmethod
@@ -1810,6 +2049,14 @@ class IcInputs(BaseModel):
                 raise ValueError(f"the thesis is Plan, Evidence and Condition, each at most {verdict_mod.THESIS_MAX} characters")
         return v
 
+    @field_validator("judgment")
+    @classmethod
+    def _known_judgment(cls, v):
+        for part, text in (v or {}).items():
+            if part not in verdict_mod.JUDGMENT_PARTS or (text is not None and (not isinstance(text, str) or len(text) > verdict_mod.JUDGMENT_MAX)):
+                raise ValueError(f"the analyst judgment is Reasons and Unresolved questions, each at most {verdict_mod.JUDGMENT_MAX} characters")
+        return v
+
 
 @api.put("/audits/{audit_id}/ic-inputs")
 async def put_ic_inputs(audit_id: str, payload: IcInputs):
@@ -1833,6 +2080,12 @@ async def put_ic_inputs(audit_id: str, payload: IcInputs):
         raise HTTPException(400, str(exc))
     await db.audits.update_one({"id": audit_id}, {"$set": {"ic_inputs": ic}})
     return await get_verdict(audit_id)
+
+
+def analysis_date(audit: dict) -> str:
+    """The requested analysis date: the analyst's, else today (dates-and-periods.md section 2). It dates the memo and the analyst's
+    text and is never printed next to a figure."""
+    return audit.get("analysis_date") or datetime.now(timezone.utc).date().isoformat()
 
 
 def _memo_filename(company: str) -> str:
@@ -1873,7 +2126,8 @@ async def export_memo(audit_id: str):
             key=verdict_mod.key_gates(rows), gaps=ctx["gaps"], ic=ctx["ic"],
             blockers=await _blocker_list(audit_id, audit), narratives=narratives, usage=usage,
             files=[{"dtype": d["dtype"], "file": d.get("file"), "sheet": d.get("sheet")} for d in datasets],
-            decks=[{"file": d.get("file")} for d in deck_docs], tables=tables, today=datetime.now(timezone.utc).date().isoformat())
+            decks=[{"file": d.get("file")} for d in deck_docs], tables=tables, today=analysis_date(audit),
+            integrity=await _integrity(audit_id, results))
     except ic_memo.MemoRefused as exc:
         refusal = exc
     words = ic_memo.word_count_of(text) if text else (refusal.words or 0)
@@ -1891,7 +2145,7 @@ async def export_memo(audit_id: str):
 # Setup inputs that change what a computed audit's metrics should be. A change
 # to any of these on an already-computed audit means the stored results are
 # stale until recomputed (see _mark_stale_and_maybe_recompute).
-RECOMPUTE_TRIGGER_FIELDS = {"reporting_currency", "target_arr", "target_date", "as_of_month"}
+RECOMPUTE_TRIGGER_FIELDS = {"reporting_currency", "target_arr", "target_date", "as_of_month", "last_month_complete"}
 
 
 async def _run_compute(audit_id: str) -> dict:
@@ -1918,6 +2172,7 @@ async def _run_compute(audit_id: str) -> dict:
         "target_date": a["target_date"], "fx": fx,
         "billing_terms": ds["revenue"].get("billing_terms", {}), "default_l": 1,
         "as_of_month": a.get("as_of_month"),
+        "last_month_complete": bool(a.get("last_month_complete")),
     }
     sources = {t: {"file": ds[t]["file"], "sheet": ds[t]["sheet"]} for t in ds}
     failures = []
@@ -2154,7 +2409,9 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
                 cac_label = lab("CAC payback", hq, qual("months"), unit="months")
         kv_sheet(xw, "Headline", [
             ("Company", None, meta.get("company_name")),
-            ("As-of month", None, meta.get("as_of_month") or r.get("as_of_month")),
+            # the evidence end and the latest valid source period, never the as-of setting as a period (dates-and-periods.md)
+            ("Evidence to", None, ((r.get("source_period") or {}).get("evidence_to") or r.get("as_of_month"))),
+            ("Latest valid source period", None, fmt.source_period_text(r.get("source_period"))),
             ("Reporting currency", None, ccy),
             (lab("Ending ARR", unit=cur), fmt.CURRENCY, arr.get("value")),
             (lab("Current MRR", unit=cur), fmt.CURRENCY, arr.get("mrr")),
@@ -2251,7 +2508,7 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
         ])
 
         # ACV bands (hide empty bands, keep fixed low-to-high display order)
-        as_of = meta.get("as_of_month") or r.get("as_of_month") or ""
+        as_of = (r.get("source_period") or {}).get("evidence_to") or r.get("as_of_month") or ""     # the active customers' month
         band_rows = [
             {"Band": b["label"], "ACV range": fmt.band_range_label(b.get("low"), b.get("high"), ccy), "Customers": b["count"]}
             for b in (ap.get("bands") or []) if b.get("count")
@@ -2501,7 +2758,8 @@ app.add_middleware(
 # 6: results carry contract_version 1 (percents as fractions, whole counts and days).
 # 7: results carry contract_version 2 (a citation on every result block).
 # 8: demo audits carry no engagement reference (the field is gone).
-SEED_VERSION = 8
+# 9: results carry contract_version 3 (the latest valid source period and the period of every metric).
+SEED_VERSION = 9
 
 
 @app.on_event("startup")

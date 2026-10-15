@@ -4,23 +4,39 @@
  * server as they are tested and ranked there (backend/app/claim_matching.py); nothing is tested or ranked here.
  */
 import metricUnits from "./claim_metrics.json";
+import evidenceLabels from "./evidence_labels.json";
 import { PLACEHOLDER, fmtCount, fmtCurrency } from "./format";
 import { NO_DATE, rateMissingText, typeLabel } from "./deckClaims";
 import { dateRangeError, displayDate } from "./datePicker";
 
 export const REGISTER_HEADING = "Claim register";
 export const DOWNLOAD_LABEL = "Download baseline (CSV)";
-// The register is six columns so it fits 1280 px without a horizontal scroll (claim-matching.md section 8). Page, "Read from deck",
-// gloss, VaS (value at stake, in the glossary), overlaps and the evidence path sit on the second, smaller line of each row.
-export const REGISTER_COLUMNS = ["#", "Claim", "Segment", "Observed", "Gap", "Evidence"];
+// The register is seven columns so it fits 1280 px without a horizontal scroll (claim-matching.md section 8). Page, "Read from deck",
+// gloss, VaS (value at stake, in the glossary), overlaps and the evidence path sit on the second, smaller line of each row. How well
+// the deck was read and how the claim compares with the data are two columns, never one (docs/specs/evidence-labels.md section 1).
+export const REGISTER_COLUMNS = ["#", "Claim", "Segment", "Observed", "Gap", "Extraction confidence", "Evidence status"];
 // The width of each column as a share of the table, in the order of REGISTER_COLUMNS; the table is fixed-layout, so they sum to 100.
-export const REGISTER_COLUMN_WIDTHS = [4, 36, 16, 20, 12, 12];
+export const REGISTER_COLUMN_WIDTHS = [4, 30, 14, 18, 12, 10, 12];
+// The hover explainers of the two label columns, word for word from the shared list (evidence_labels.json, pinned by the backend).
+export const EXTRACTION_EXPLAINER = evidenceLabels.explainers.extraction_confidence;
+export const EVIDENCE_EXPLAINER = evidenceLabels.explainers.evidence_status;
+export const EVIDENCE_STATUSES = evidenceLabels.statuses;
+export const COLUMN_EXPLAINERS = { "Extraction confidence": EXTRACTION_EXPLAINER, "Evidence status": EVIDENCE_EXPLAINER };
+export const EVIDENCE_SUBTITLE = "(within the supplied evidence)";
+// One style per evidence status, shared by the register and the conclusion section.
+export const LABEL_STYLE = {
+  Verified: "text-emerald-800 border-emerald-500/50 bg-emerald-50",
+  Contradicted: "text-rose-800 border-rose-500/50 bg-rose-50",
+  Inconclusive: "text-violet-800 border-violet-500/50 bg-violet-50",
+  Unverified: "text-amber-800 border-amber-500/50 bg-amber-50",
+  Unsupported: "text-slate-700 border-slate-400/60 bg-slate-50",
+};
 export const SET_GATE_LABEL = "Set gate";
 export const VAS_LABEL = "VaS";
 // Only these are editable (section 3 adds the gate's metric name and direction on a row with no app metric, and the key mark).
 export const EDITABLE_FIELDS = ["segment", "metric", "gate_threshold", "gate_budget_decision", "gate_date", "gate_metric_name",
   "gate_direction", "key_gate"];
-export const READ_ONLY_FIELDS = ["rank", "claim", "period", "page", "deck_reading", "observed", "gap", "gloss", "value_at_stake",
+export const READ_ONLY_FIELDS = ["rank", "claim", "period", "page", "deck_reading", "extraction_confidence", "observed", "gap", "gloss", "value_at_stake",
   "overlaps_with", "evidence"];
 
 // Screen wording W4, W5, W22 (verdict-and-memo.md section 11).
@@ -61,6 +77,11 @@ export const TURNOVER_QUESTION = "Revenue or transaction volume?";
 // The deck list (section 11 point 8): a turnover claim never reads "Revenue" before the analyst confirms it.
 export const TURNOVER_CONFIRM = "Turnover – confirm:";
 export const UNVERIFIED = "Unverified";
+
+// docs/specs/dates-and-periods.md section 5: a growth claim with no basis waits for the analyst's one click.
+export const SET_GROWTH_BASIS = "Set growth basis";
+export const GROWTH_BASES = [["mom", "MoM"], ["yoy", "YoY"], ["annualised", "Annualised"], ["cumulative", "Cumulative"]];
+export const growthBasisLabel = (basis) => (GROWTH_BASES.find(([value]) => value === basis) || [])[1] || null;
 
 // Section 4.1 of docs/specs/claim-matching.md: a gap beyond 50% of the claim asks "Same metric and period?" before the row gets a label.
 export const DEFINITION_CHECK = "Definition check";
@@ -122,8 +143,10 @@ export function dataSegments(results) {
 export const segmentOptions = (results) => [WHOLE_COMPANY, ...dataSegments(results), NOT_IN_DATA];
 
 /** Whether the gate of a row also needs the analyst's metric name and direction: the row has no metric of the app (none set, or
- *  one that does not fit the claim's unit). The server saves the gate by the same rule (claim_matching.needs_metric_name). */
-export const needsMetricName = (row) => row.metric == null || NO_APP_METRIC.includes(row.reason);
+ *  one that does not fit the claim's unit), or the app's metric counts another population than the claim. The server saves the gate
+ *  by the same rule (claim_matching.needs_metric_name). */
+export const needsMetricName = (row) => row.metric == null || NO_APP_METRIC.includes(row.reason)
+  || String(row.reason || "").startsWith("population differs: ");
 
 /** W1: "not yet computed · shortfall 18.3%"; a row with no shortfall reads "not yet computed". */
 export function valueAtStakeText(row) {
@@ -227,7 +250,8 @@ export function gapText(row, ccy) {
   return `${prefix}${native}${share}`;
 }
 
-const READINGS = { parser: "Read by the parser", edited: "Edited by the analyst", "analyst-entered": "Analyst-entered" };
+const READINGS = { parser: "Read by the parser", edited: "Edited by the analyst", "analyst-entered": "Analyst-entered",
+  "added-from-deck": "Added from deck by analyst" };      // claim-types-and-correction.md section 5
 export const readingText = (reading) => READINGS[reading] || reading;
 
 export const segmentEdit = (segment) => ({ segment });

@@ -1,9 +1,6 @@
-// Release 1, committed before the code: docs/specs/integrity-coverage.md (plan section 2 and 7.1). The component does not exist
-// yet, so it is required inside each test and the file always loads. failing() becomes test() in the code PR.
+// docs/specs/integrity-coverage.md (plan section 2 and 7.1): the conclusion, the two blocks and the data requests.
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
-
-import { failing } from "@/testing/expectedFailure";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -37,7 +34,7 @@ async function mount(integrity) {
   return { host, done: async () => { await act(async () => { root.unmount(); }); host.remove(); } };
 }
 
-failing("plan 2 (1): two completed and Green, four blocked reads Insufficient assessment coverage (2 of 6), never Reliable", async () => {
+test("plan 2 (1): two completed and Green, four blocked reads Insufficient assessment coverage (2 of 6), never Reliable", async () => {
   const { host, done } = await mount(SPARSE);
   try {
     expect(host.querySelector('[data-testid="integrity-conclusion"]').textContent).toBe("Insufficient assessment coverage (2 of 6)");
@@ -48,7 +45,7 @@ failing("plan 2 (1): two completed and Green, four blocked reads Insufficient as
   } finally { await done(); }
 });
 
-failing("the two blocks are separate tables: results of completed checks, and assessment coverage of all six", async () => {
+test("the two blocks are separate tables: results of completed checks, and assessment coverage of all six", async () => {
   const { host, done } = await mount(SPARSE);
   try {
     const a = host.querySelector('[data-testid="integrity-results"]');
@@ -61,7 +58,7 @@ failing("the two blocks are separate tables: results of completed checks, and as
   } finally { await done(); }
 });
 
-failing("plan 2 (3): a check blocked by missing company data is in the data request list", async () => {
+test("plan 2 (3): a check blocked by missing company data is in the data request list", async () => {
   const { host, done } = await mount(SPARSE);
   try {
     expect(host.querySelector('[data-testid="integrity-requests"]').textContent)

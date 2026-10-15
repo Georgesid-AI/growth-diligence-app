@@ -22,6 +22,7 @@ from app import verdict as vd  # noqa: E402
 THESIS = {"plan": "Reach the target ARR with the current segment mix.", "evidence": "ARR is 202,125 EUR at the as-of month.",
           "condition": "The contradicted claims are re-based before closing."}
 RATINGS = {"data_reliability": "Adequate", "growth_engine": "Weak"}
+JUDGMENT = {"reasons": "The revenue claims of the five agree with the revenue file.", "unresolved_questions": "Why the deck ARR differs from the file."}
 USAGE = {"calls": 0, "structure_calls": 0, "cache_hits": 0, "input_tokens": 0, "output_tokens": 0, "estimated_cost_usd": 0.0,
          "by_step": {}}
 FILES = [{"dtype": "revenue", "file": "revenue.csv", "sheet": "CSV"}, {"dtype": "crm", "file": "crm.csv", "sheet": "CSV"},
@@ -37,7 +38,7 @@ def narrative(headline="The growth engine is steady.", flagging=("Win rate is be
 
 
 def inputs(run="A", decision=GATE_DECISION, ratings=None, thesis=None, key=5, narratives=(), files=None, decks_=None, usage=None,
-           blockers=(), tables=(), stored=None, answers=None, **extra):
+           blockers=(), tables=(), stored=None, answers=None, judgment=None, **extra):
     """Everything build_memo reads, for one fixture run: the proposed top 5 confirmed and gated, `key` of them marked key. `answers`:
     the analyst's Definition check answers by claim id (claim-matching.md section 4.1)."""
     r = RUNS[run]
@@ -59,7 +60,8 @@ def inputs(run="A", decision=GATE_DECISION, ratings=None, thesis=None, key=5, na
                 c.setdefault("claim_inputs", {}).setdefault(cid, {}).update(gate)
     rows = cm.build_register(cands, results, settings(r))
     ver = vd.verdict(rows, results, {"claim_ids": top})
-    ic = {"ratings": dict(RATINGS) if ratings is None else ratings, "thesis": dict(THESIS) if thesis is None else thesis, "first_quarterly_review": "2024-09-30"}
+    ic = {"ratings": dict(RATINGS) if ratings is None else ratings, "thesis": dict(THESIS) if thesis is None else thesis, "first_quarterly_review": "2024-09-30",
+          "judgment": dict(JUDGMENT) if judgment is None else judgment}
     state = vd.top5_state(rows, {"claim_ids": top})
     return dict(audit={"company_name": "TestCo", "target_arr": 1_000_000, "target_date": "2026-12-31", "as_of_month": "2024-02"},
                 results=results, rows=rows, ver=ver, key=vd.key_gates(rows), ic=ic, today="2026-10-08",
@@ -92,7 +94,11 @@ def test_the_memo_is_built_from_the_run_a_fixture_in_the_order_of_w15_with_the_f
                         "Appendix B – Data gaps and data request list", "Appendix C – Detailed analysis tables",
                         "Appendix D – Source key list and value-at-risk de-duplication"]
     assert text.startswith("# Investment committee memo: TestCo\nDate: 2026-10-08\n")
-    assert "Verdict: Re-plan – 5 top-5 claims Contradicted." in text
+    summary = head_of(text).split("## Summary\n")[1]
+    assert summary.startswith("Claim-review conclusion — assessment of the five selected claims\n"
+                              "Conclusion: Selected claims not supported – 5 selected claims are Contradicted.")
+    assert "This assesses the five claims the analyst selected. It is not an investment recommendation." in summary
+    assert "Verdict" not in text
     assert text.count("Top 5 set by the analyst pending ARR (see glossary) bridge.") == 1
     assert head_of(text).index("Top 5 set by the analyst pending ARR (see glossary) bridge.") < head_of(text).index("## Deal thesis")
 
@@ -136,7 +142,7 @@ def test_a_blocked_verdict_refuses():
                            {"claim_ids": vd.proposal(kw["rows"])})
     with pytest.raises(im.MemoRefused) as exc:
         im.build_memo(**kw)
-    assert exc.value.message == "Memo not exported: the verdict is blocked."
+    assert exc.value.message == "Memo not exported: the conclusion is blocked."
 
 
 def test_key_gates_that_are_not_three_to_five_refuse_unless_fewer_than_three_gates_are_saved():
@@ -270,7 +276,7 @@ def test_the_two_assessed_rows_carry_the_analysts_rating_and_the_w17_headline():
     reliability = next(line for line in text.split("\n") if line.startswith("| Data reliability |"))
     assert "| Adequate |" in reliability
     assert "Revenue file and P&L differ by 69.61% over 2023-03–2024-02" in reliability
-    assert "0 anomaly flags" in reliability and "11 of 33 claims Verified" in reliability
+    assert "0 anomaly flags" in reliability and "8 of 33 claims Verified" in reliability
     assert next(line for line in text.split("\n") if line.startswith("| Growth engine |")).split("|")[2].strip() == "Weak"
 
 
@@ -296,7 +302,7 @@ def test_without_a_narrative_the_memo_carries_every_figure_with_its_footnote_and
     text = memo(narratives=narratives)
     head = head_of(text)
     growth = next(line for line in head.split("\n") if line.startswith("| Growth engine |"))
-    assert re.search(r"ARR 202,125 EUR\[\^\d+\], NRR 113%\[\^\d+\], gross revenue churn 0%\[\^\d+\]", growth)
+    assert re.search(r"ARR 202,125 EUR \(2024-02\)\[\^\d+\], NRR 113% \(2024-02\)\[\^\d+\], gross revenue churn 0% \(2024-02\)\[\^\d+\]", growth)
     assert im.S17 in growth and im.S17 in head.split("## Worth flagging")[1]
     assert "The growth engine is steady." not in text
 
@@ -327,11 +333,11 @@ def test_worth_flagging_lists_every_verified_beat_with_its_gloss_after_the_block
     section = head_of(text).split("## Worth flagging")[1].split("## Data gaps")[0]
     items = [line for line in section.split("\n") if line.startswith("- ")]
     assert items[0] == f"- {blocker['text']}"
-    assert re.fullmatch(r"- #14 Customer count, Feb 2024: Verified, 1 customer more \(beat\)\.\[\^\d+\]", items[1])
+    assert re.fullmatch(r"- #10 Customer count, Feb 2024: Verified, 1 customer more \(beat\)\.\[\^\d+\]", items[1])
     assert items[2].startswith("- Win rate is below the claim."), "the narrative's items follow"
     assert len(items) == 3, "c01, a beat within tolerance, is not listed"
     marker = re.search(r"\[\^(\d+)\]$", items[1]).group(1)
-    assert f"[^{marker}]: claim register, #14" in text
+    assert f"[^{marker}]: claim register, #10" in text
 
 
 def test_the_memo_never_generates_a_narrative_or_reads_the_model():
@@ -370,7 +376,7 @@ def test_value_at_risk_reads_not_yet_computed_in_the_summary_and_appendix_d_with
     line = ("Value at risk: ARR (see glossary) not yet computed (ARR bridge not run); cash not yet computed (no cash analysis). "
             "Overlapping claims are counted once, at the largest value in their group.")
     assert head_of(text).count(line) == 1 and text.count(line) == 2
-    assert "Overlap groups: #1, #12;" in text
+    assert "Overlap groups: #1, #7;" in text
 
 
 def test_the_appendices_carry_the_register_the_gaps_the_tables_and_the_cost_table():
@@ -398,7 +404,7 @@ def _ready(client, decision=GATE_DECISION):
     for n, cid in enumerate(ids):
         assert _put(client, cid, {"gate_threshold": 100.0 + n, "gate_budget_decision": decision, "gate_date": "2024-06-30"}).status_code == 200
         assert _put(client, cid, {"key_gate": True}).status_code == 200
-    ok = client.put(f"/api/audits/{AUDIT}/ic-inputs", json={"ratings": RATINGS, "thesis": THESIS})
+    ok = client.put(f"/api/audits/{AUDIT}/ic-inputs", json={"ratings": RATINGS, "thesis": THESIS, "judgment": JUDGMENT})
     assert ok.status_code == 200, ok.text
 
 
@@ -441,14 +447,14 @@ def test_the_endpoint_refuses_a_blocked_verdict_missing_key_gates_ratings_and_a_
     client, db = api
     ids = client.get(f"/api/audits/{AUDIT}/verdict").json()["verdict"]["top5"]["proposed"]
     client.put(f"/api/audits/{AUDIT}/ic-inputs", json={"top5": ids})
-    assert client.get(f"/api/audits/{AUDIT}/memo.md").json()["detail"] == "Memo not exported: the verdict is blocked."
+    assert client.get(f"/api/audits/{AUDIT}/memo.md").json()["detail"] == "Memo not exported: the conclusion is blocked."
     for n, cid in enumerate(ids):
         _put(client, cid, {"gate_threshold": 100.0 + n, "gate_budget_decision": GATE_DECISION, "gate_date": "2024-06-30"})
     assert client.get(f"/api/audits/{AUDIT}/memo.md").json()["detail"] == "Memo not exported: mark 3 to 5 key gates."
     for cid in ids:
         _put(client, cid, {"key_gate": True})
     assert client.get(f"/api/audits/{AUDIT}/memo.md").json()["detail"] == "Memo not exported: rate Data reliability, Growth engine."
-    client.put(f"/api/audits/{AUDIT}/ic-inputs", json={"ratings": RATINGS, "thesis": {**THESIS, "plan": "Grow 37% a year."}})
+    client.put(f"/api/audits/{AUDIT}/ic-inputs", json={"ratings": RATINGS, "thesis": {**THESIS, "plan": "Grow 37% a year."}, "judgment": JUDGMENT})
     detail = client.get(f"/api/audits/{AUDIT}/memo.md").json()["detail"]
     assert detail == "Memo not exported: 1 numbers are not in the stored results: 37."
     client.put(f"/api/audits/{AUDIT}/ic-inputs", json={"thesis": THESIS})
@@ -498,11 +504,14 @@ def test_a_ratio_or_any_other_derived_figure_in_a_table_refuses(cells):
     assert exc.code == "numbers" and exc.unmatched
 
 
-def test_w8_says_is_for_one_open_claim_and_are_for_more():
-    v, _ = verdict_of_labels(["Verified", "Unverified", "Verified", "Verified", "Verified"], gates={2})
-    assert v["rule"] == "No top-5 claim is Contradicted; 1 is Unverified or Unsupported."
+def test_the_rule_text_says_is_for_one_contradicted_claim_and_are_for_more():
+    """claim-review-conclusion.md section 2 (replaces W8)."""
+    v, _ = verdict_of_labels(["Contradicted", "Verified", "Verified", "Verified", "Verified"], gates={1})
+    assert v["rule"] == "1 selected claim is Contradicted."
+    v, _ = verdict_of_labels(["Contradicted", "Contradicted", "Verified", "Verified", "Verified"], gates={1, 2})
+    assert v["rule"] == "2 selected claims are Contradicted."
     v, _ = verdict_of_labels(["Unverified", "Unsupported", "Verified", "Verified", "Verified"], gates={1, 2})
-    assert v["rule"] == "No top-5 claim is Contradicted; 2 are Unverified or Unsupported."
+    assert v["rule"] == "No selected claim is Contradicted; 3 of 5 are Verified, 2 untested."
 
 
 def verdict_of_labels(labels, gates):
@@ -519,6 +528,9 @@ def test_value_at_stake_reads_vas_and_each_abbreviation_points_to_the_glossary_o
     for line in body.split("\n"):
         if line.startswith("|") or line.startswith("#") or line.startswith("[^"):
             assert "(see glossary)" not in line, f"a table, a heading or a footnote is not a text block: {line!r}"
+            continue
+        if line.startswith(("Reasons: ", "Unresolved questions: ")):      # the analyst's judgment is printed verbatim
+            assert "(see glossary)" not in line, line
             continue
         for term in fmt.GLOSSED:
             uses = re.findall(rf"(?<![\w-]){term}(?![\w-])( \(see glossary\))?", line)
@@ -549,20 +561,22 @@ def appendix_b(text):
     return text.split("## Appendix B")[1].split("## Appendix C")[0]
 
 
-def test_the_data_reliability_headline_and_key_evidence_read_the_a2_verdict_and_the_rating_stays_the_analysts():
+def test_the_data_reliability_row_reads_the_integrity_conclusion_never_the_a2_verdict_and_the_rating_stays_the_analysts():
+    """integrity-coverage.md section 4 (replaces the A2-verdict headline of 2026-10-08): the conclusion and the coverage head the row."""
     text = memo(narratives=[data_step("data_integrity")])
     row = reliability_row(text).split("|")
     assert row[2].strip() == "Adequate", "Strong / Adequate / Weak is entered by the analyst"
-    assert "Material concerns: the revenue file and the P&L differ by 69.61%." in row[3]
-    assert "Data integrity verdict: Material concerns" in row[4]
-    assert "11 of 33 claims Verified" not in row[3], "the computed line is replaced, not repeated"
-    assert "data-integrity narrative" in text.split("Footnotes")[1], "the headline carries its footnote"
+    assert row[3].strip().startswith("Material concerns. Completed 4 of 5 applicable checks.")
+    assert "not a finding about the company" not in row[3], "the sentence belongs to Insufficient assessment coverage only"
+    assert "Revenue file and P&L differ by 69.61% over 2023-03–2024-02" in row[3], "the computed line follows"
+    assert row[4].strip() == "Data integrity conclusion: Material concerns; revenue_reconciliation, anomalies, claim register"
+    assert "Material concerns: the revenue file and the P&L differ by 69.61%." not in text and "Data integrity verdict" not in text
 
 
 @pytest.mark.parametrize("narratives", [[], [data_step("data_integrity", status="flagged")], [data_step("data_integrity", status="unavailable")],
                                         [data_step("data_integrity", verdict=None)], [data_step("data_inventory")]],
                          ids=["none", "flagged", "unavailable", "no verdict", "other step"])
-def test_without_a_current_ok_a2_narrative_with_a_verdict_the_row_keeps_the_computed_line(narratives):
+def test_whatever_the_a2_narrative_the_row_keeps_the_computed_line(narratives):
     row = reliability_row(memo(narratives=narratives))
     assert "Revenue file and P&L differ by 69.61% over 2023-03–2024-02" in row and "Data integrity verdict" not in row
 
@@ -583,9 +597,10 @@ def test_without_a_current_a1_narrative_appendix_b_has_no_request_list(narrative
     assert "Data request list from the data inventory" not in appendix_b(memo(narratives=narratives))
 
 
-def test_a_number_in_the_a2_headline_that_the_stored_results_do_not_hold_refuses_the_memo():
-    exc = refusal(narratives=[data_step("data_integrity", headline="Material concerns: the files differ by 77.31%.")])
-    assert exc.code == "numbers" and "77.31" in exc.unmatched
+def test_the_a2_headline_is_not_printed_so_a_number_in_it_never_reaches_the_memo():
+    """integrity-coverage.md section 4: the A2 narrative's headline left the scorecard, so its figures are never checked or shown."""
+    text = memo(narratives=[data_step("data_integrity", headline="Material concerns: the files differ by 77.31%.")])
+    assert "77.31" not in text
 
 
 @pytest.mark.parametrize("when", ["2026-10-08T14:43:00+00:00", "2026-10-08T09:57:12+00:00", "2026-10-08T23:59:00+00:00"])

@@ -46,7 +46,7 @@
       "gap": -2125.48,
       "norm": -0.010627,
       "kind": "beat",
-      "rank": 11,
+      "rank": 8,
       "gloss": "€2,125 higher (beat)",
       "tolerance": "±5%"
      }
@@ -78,16 +78,13 @@
      },
      "analyst": {},
      "expect": {
-      "label": "Verified",
+      "label": "Unverified",
+      "reason": "required field unknown: period",
+      "observed": null,
+      "rank": 15,
       "metric": "Median sales cycle",
       "segment": "Enterprise",
-      "observed": 58.5,
-      "gap": -1.5,
-      "norm": -0.025,
-      "kind": "beat",
-      "rank": 12,
-      "note": "no period stated",
-      "gloss": "1.5 days shorter (beat)"
+      "note": "no period stated"
      }
     },
     {
@@ -117,16 +114,13 @@
      },
      "analyst": {},
      "expect": {
-      "label": "Verified",
+      "label": "Unverified",
+      "reason": "required field unknown: period",
+      "observed": null,
+      "rank": 16,
       "metric": "Win rate",
       "segment": "Whole company",
-      "observed": 40.0,
-      "gap": 1.0,
-      "norm": 0.02439,
-      "kind": "miss",
-      "rank": 9,
-      "tolerance": "±1 pp",
-      "gloss": "1.0 points lower (miss)"
+      "tolerance": "±1 pp"
      }
     },
     {
@@ -163,7 +157,7 @@
       "gap": -0.68,
       "norm": -0.006071,
       "kind": "beat",
-      "rank": 13,
+      "rank": 9,
       "gloss": "0.7 points higher (beat)"
      }
     },
@@ -201,7 +195,7 @@
       "gap": 41857.32,
       "norm": 0.174405,
       "kind": "miss",
-      "rank": 3,
+      "rank": 2,
       "gloss": "€41,857 lower (miss)"
      }
     },
@@ -232,15 +226,12 @@
      },
      "analyst": {},
      "expect": {
-      "label": "Contradicted",
+      "label": "Unverified",
+      "reason": "required field unknown: period",
+      "observed": null,
+      "rank": 17,
       "metric": "Median sales cycle",
-      "segment": "Whole company",
-      "observed": 58.5,
-      "gap": 13.5,
-      "norm": 0.3,
-      "kind": "miss",
-      "rank": 1,
-      "gloss": "13.5 days longer, two working weeks (miss)"
+      "segment": "Whole company"
      }
     },
     {
@@ -277,7 +268,7 @@
       "gap": 7.0,
       "norm": 0.082353,
       "kind": "miss",
-      "rank": 5,
+      "rank": 4,
       "gloss": "7.0 points lower (miss)"
      }
     },
@@ -315,7 +306,7 @@
       "gap": -1.0,
       "norm": -0.25,
       "kind": "beat",
-      "rank": 14,
+      "rank": 10,
       "gloss": "1 customer more (beat)"
      }
     },
@@ -354,7 +345,7 @@
       "gap": 4797874.52,
       "norm": 0.959575,
       "kind": "to go",
-      "rank": 20,
+      "rank": 18,
       "gloss": "€4.8M lower (to go by Dec 2026)"
      }
     },
@@ -389,7 +380,7 @@
       "reason": "before NRR's first month, 2024-01",
       "metric": "NRR (12-month)",
       "observed": null,
-      "rank": 21
+      "rank": 19
      }
     },
     {
@@ -423,7 +414,7 @@
       "reason": "FX rate needed",
       "metric": "ARR",
       "observed": null,
-      "rank": 22
+      "rank": 20
      }
     },
     {
@@ -463,7 +454,7 @@
       "gap": -0.68,
       "norm": -0.006071,
       "kind": "beat",
-      "rank": 15,
+      "rank": 11,
       "deck_reading": "AI suggestion, not verified"
      }
     },
@@ -498,7 +489,7 @@
       "reason": "no metric",
       "metric": null,
       "observed": null,
-      "rank": 23
+      "rank": 21
      }
     },
     {
@@ -528,11 +519,10 @@
      },
      "analyst": {},
      "expect": {
-      "label": "Unsupported",
-      "reason": "no metric",
-      "metric": null,
+      "label": "Unverified",
+      "reason": "required field unknown: period, population",
       "observed": null,
-      "rank": 24
+      "rank": 22
      }
     },
     {
@@ -566,7 +556,7 @@
       "reason": "new MRR is zero",
       "metric": "CAC payback",
       "observed": null,
-      "rank": 25
+      "rank": 23
      }
     },
     {
@@ -598,11 +588,11 @@
       "segment": "Not in the data"
      },
      "expect": {
-      "label": "Unsupported",
-      "reason": "segment not in the data",
-      "segment": "Not in the data",
+      "label": "Unverified",
+      "reason": "required field unknown: period",
       "observed": null,
-      "rank": 26
+      "rank": 24,
+      "segment": "Not in the data"
      }
     },
     {
@@ -632,12 +622,12 @@
      },
      "analyst": {},
      "expect": {
-      "label": "Unsupported",
-      "reason": "not computed by segment",
-      "metric": "Win rate",
-      "segment": "Enterprise",
+      "label": "Unverified",
+      "reason": "required field unknown: period",
       "observed": null,
-      "rank": 27
+      "rank": 25,
+      "metric": "Win rate",
+      "segment": "Enterprise"
      }
     },
     {
@@ -701,7 +691,7 @@
       "reason": "before ARR's first month, 2023-01",
       "metric": "ARR",
       "observed": null,
-      "rank": 28
+      "rank": 26
      }
     },
     {
@@ -768,7 +758,7 @@
       "gap": -142.68,
       "norm": -0.000721,
       "kind": "beat",
-      "rank": 16
+      "rank": 12
      }
     },
     {
@@ -804,7 +794,7 @@
       "gap": 0.0,
       "norm": 0.0,
       "kind": null,
-      "rank": 17,
+      "rank": 13,
       "gloss": "as claimed"
      }
     },
@@ -835,13 +825,11 @@
      },
      "analyst": {},
      "expect": {
-      "label": "Contradicted",
-      "metric": "Win rate",
-      "observed": 40.0,
-      "gap": 2.0,
-      "norm": 0.047619,
-      "kind": "miss",
-      "rank": 8
+      "label": "Unverified",
+      "reason": "required field unknown: period",
+      "observed": null,
+      "rank": 27,
+      "metric": "Win rate"
      }
     },
     {
@@ -877,7 +865,7 @@
       "gap": 10574.52,
       "norm": 0.049716,
       "kind": "miss",
-      "rank": 7
+      "rank": 6
      }
     },
     {
@@ -913,7 +901,7 @@
       "gap": 10874.52,
       "norm": 0.051054,
       "kind": "miss",
-      "rank": 6
+      "rank": 5
      }
     },
     {
@@ -943,14 +931,11 @@
      },
      "analyst": {},
      "expect": {
-      "label": "Verified",
+      "label": "Unverified",
+      "reason": "required field unknown: period",
+      "observed": null,
+      "rank": 28,
       "metric": "ARR",
-      "observed": 202125.48,
-      "observed_at": "2024-02",
-      "gap": -2125.48,
-      "norm": -0.010627,
-      "kind": "beat",
-      "rank": 18,
       "note": "no period stated"
      }
     },
@@ -1025,7 +1010,7 @@
       "gap": 2298.95,
       "norm": 0.0121,
       "kind": "miss",
-      "rank": 10,
+      "rank": 7,
       "gloss": "€2,299 lower (miss)"
      }
     },
@@ -1063,7 +1048,7 @@
       "gap": 10953.16,
       "norm": 0.182553,
       "kind": "miss",
-      "rank": 2
+      "rank": 1
      }
     },
     {
@@ -1176,7 +1161,7 @@
       "gap": 0.0,
       "norm": 0.0,
       "kind": null,
-      "rank": 19,
+      "rank": 14,
       "gloss": "as claimed"
      }
     },
@@ -1213,7 +1198,7 @@
       "gap": 1.0,
       "norm": 0.166667,
       "kind": "miss",
-      "rank": 4,
+      "rank": 3,
       "gloss": "1 customer fewer (miss)"
      }
     },
@@ -1328,10 +1313,10 @@
      "analyst": {},
      "expect": {
       "label": "Unverified",
-      "reason": "Missing: Upload CRM deals with",
-      "metric": "Win rate",
+      "reason": "required field unknown: period",
       "observed": null,
-      "rank": 1
+      "rank": 1,
+      "metric": "Win rate"
      }
     }
    ]
@@ -1411,10 +1396,11 @@
      },
      "analyst": {},
      "expect": {
-      "label": "Unverified",
-      "reason": "2022-04 to 2022-12",
+      "label": "Inconclusive",
+      "reason": "claim period partly covered (months missing: 2022-04 to 2022-12)",
       "metric": "Revenue",
-      "observed": null,
+      "observed": 44845.48,
+      "observed_at": "2023-01 to 2023-03 (3 of 12 months)",
       "rank": 2
      }
     }
@@ -1612,15 +1598,12 @@
      },
      "analyst": {},
      "expect": {
-      "label": "Verified",
+      "label": "Unverified",
+      "reason": "required field unknown: period",
+      "observed": null,
+      "rank": 8,
       "metric": "ACV",
       "segment": "Whole company",
-      "observed": 40425.1,
-      "observed_at": "2024-02",
-      "gap": -425.1,
-      "norm": -0.010628,
-      "kind": "beat",
-      "rank": 6,
       "note": "no period stated"
      }
     },
@@ -1651,14 +1634,12 @@
      },
      "analyst": {},
      "expect": {
-      "label": "Verified",
+      "label": "Unverified",
+      "reason": "required field unknown: period",
+      "observed": null,
+      "rank": 9,
       "metric": "ACV",
-      "segment": "Enterprise",
-      "observed": 75114.18,
-      "gap": -5114.18,
-      "norm": -0.07306,
-      "kind": "beat",
-      "rank": 7
+      "segment": "Enterprise"
      }
     },
     {
@@ -1695,7 +1676,7 @@
       "gap": -519.03,
       "norm": -0.043253,
       "kind": "beat",
-      "rank": 8
+      "rank": 6
      }
     },
     {
@@ -1725,15 +1706,12 @@
      },
      "analyst": {},
      "expect": {
-      "label": "Verified",
+      "label": "Unverified",
+      "reason": "required field unknown: period",
+      "observed": null,
+      "rank": 10,
       "metric": "NRR (12-month)",
-      "segment": "Enterprise",
-      "observed": 112.68,
-      "observed_at": "2024-02",
-      "gap": -2.68,
-      "norm": -0.024364,
-      "kind": "beat",
-      "rank": 9
+      "segment": "Enterprise"
      }
     },
     {
@@ -1770,7 +1748,7 @@
       "gap": 0.0,
       "norm": 0.0,
       "kind": null,
-      "rank": 10,
+      "rank": 7,
       "gloss": "as claimed"
      }
     },
@@ -1840,10 +1818,10 @@
      "analyst": {},
      "expect": {
       "label": "Unverified",
-      "reason": "no period stated",
-      "metric": "Revenue",
+      "reason": "required field unknown: period",
       "observed": null,
-      "rank": 11
+      "rank": 11,
+      "metric": "Revenue"
      }
     }
    ]

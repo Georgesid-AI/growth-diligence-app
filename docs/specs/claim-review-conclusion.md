@@ -76,7 +76,13 @@ the conclusion endpoint's response, the rendered section and the frontend's sour
 ## 8. Decided (engineering, rule 19)
 - The rule texts of §2 name counts, as W8 did, so the memo's number check reads them as register counts.
 - 1,000 characters per judgment field: the memo's 1,500-word limit (verdict-and-memo.md §7.5) still applies to the whole.
-- Inconclusive counts as untested here, as in the memo's counts (evidence-labels.md §4). See "Decisions for you".
+- Inconclusive counts as untested here, as in the memo's counts (evidence-labels.md §4). Confirmed by George, 15 Oct 2026.
+- The two judgment fields show on the Dashboard (inside the conclusion block) and on the Review page (section 8, after the
+  ratings, before Write all narratives), the same component and the same stored text. Decided by George, 15 Oct 2026
+  (decision 11). The Generate IC memo button on the Review page keeps its rule (both ratings); the server's refusal names a
+  missing judgment field, and the fields sit directly above the button.
+- The full TestCo run takes 23 clicks (`MAX_CLICKS_FULL`); the limit of 21 is raised to 23 and the note stays (George,
+  decision 10, 15 Oct 2026).
 
 ## Files
 `backend/app/verdict.py`, `backend/app/ic_memo.py`, `backend/server.py`, `frontend/src/components/Verdict.jsx`,

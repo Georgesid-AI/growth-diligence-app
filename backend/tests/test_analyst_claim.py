@@ -89,8 +89,10 @@ def test_it_is_matched_and_labelled_by_the_same_code_as_a_parser_claim_with_the_
     rows = {r["claim_id"]: r for r in _register(client)}
     mine, parsers = rows[new["id"]], rows["twin"]
     assert (mine["deck_reading"], parsers["deck_reading"]) == ("analyst-entered", "parser")
-    assert {k: v for k, v in mine.items() if k not in ("claim_id", "deck_reading", "rank", "overlaps_with")} == \
-           {k: v for k, v in parsers.items() if k not in ("claim_id", "deck_reading", "rank", "overlaps_with")}
+    # the reading and its extraction confidence say who entered the claim (evidence-labels.md section 1); everything tested is the same
+    differ = ("claim_id", "deck_reading", "extraction_confidence", "rank", "overlaps_with")
+    assert {k: v for k, v in mine.items() if k not in differ} == {k: v for k, v in parsers.items() if k not in differ}
+    assert (mine["extraction_confidence"], parsers["extraction_confidence"]) == ("Analyst-entered", "Medium")
     assert mine["page_ref"] == "slide 3" and mine["deck_file"] == "testco_board.pptx"
 
 

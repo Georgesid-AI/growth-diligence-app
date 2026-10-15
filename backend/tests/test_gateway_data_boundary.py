@@ -275,7 +275,9 @@ HEADER_SENTINEL = "Jane Doe"    # every mapped column header is renamed to carry
 SERVER_ONLY_TOP_LEVEL = frozenset({"contract_version",                   # interface-contracts.md: the version the stored payload was built under
                                    "anomalies", "mrr_series", "new_mrr_by_quarter", "new_mrr_by_quarter_source",
                                    "revenue_series", "customers_series",    # claim-matching.md table 2a
-                                   "revenue_reconciliation"})               # chat-upload.md section 6.2; data_integrity reads a summary (step_payloads.py)
+                                   "revenue_reconciliation",                # chat-upload.md section 6.2; data_integrity reads a summary (step_payloads.py)
+                                   "source_period", "metric_periods",       # dates-and-periods.md sections 2-3: months as text, no figure
+                                   "as_of_month"})                          # the analyst's setting: the model is told evidence_to and last_month_status instead
 SERVER_ONLY_FIELDS = frozenset({
     "file", "sheet", "columns", "rows", "row_numbers", "unlocked_by",
     "values",                       # founder_involved_excluded.values are raw cells (cohort `data.values` is allowed by parent)
@@ -1280,6 +1282,25 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             "qualifier", "QUALIFIERS", "QUALIFIED_REASON", "qualified_label", "definition_check", "definition_question",
                             "definition_views", "definition_rows", "definition_basis", "DEFINITION_QUESTION", "DEFINITION_OPEN_REASON",
                             "DEFINITION_OPEN_REASON_RATE", "DEFINITION_MISMATCH", "BIG_GAP_RATE_POINTS",
+                            # docs/specs/evidence-labels.md: the confidence column, the statuses, their explainers and grouping
+                            "extraction_confidence", "with_confidence", "confidence_level", "EVIDENCE_STATUSES", "MEMO_GROUPS", "QUALIFIED_NO_FIGURE",
+                            "EXTRACTION_EXPLAINER", "EVIDENCE_EXPLAINER", "POPULATION_PREFIX", "NOT_VERIFIED",
+                            # docs/specs/dates-and-periods.md: coverage, the growth basis and their reasons
+                            "period_coverage", "months_missing", "growth_basis", "analysis_date", "last_month_complete",
+                            "NOT_COVERED_REASON", "PARTLY_REASON", "PARTIAL_DETAIL", "AFTER_SOURCE_DETAIL", "GROWTH_UNKNOWN_REASON",
+                            "GROWTH_WINDOW_REASON", "GROWTH_BASE_REASON", "GROWTH_RULES", "GROWTH_CUES",
+                            # docs/specs/claim-types-and-correction.md: the claim fields, the edit log, Add from deck and their reasons
+                            "population", "figure_type", "required_unknown", "edit_log", "deck_analyst", "claim_fields",
+                            "candidate_fields", "REQUIRED_REASON", "TARGET_REASON", "POPULATION_REASON", "POPULATION_WORDS",
+                            "TARGET_CUE", "EDIT_REASONS", "ADDED_FROM_DECK", "add_from_deck", "deck_page",
+                            # docs/specs/integrity-coverage.md: the coverage, its conclusion and the cross-deck reading
+                            "integrity_mod", "assess", "data_requests", "completed_text", "cross_deck_inconsistencies",
+                            "INSUFFICIENT", "INSUFFICIENT_NOTE", "COMPLETED_TEXT",
+                            # docs/specs/smoothness.md: the deviation limit and the window
+                            "SMOOTHNESS_LIMIT_POINTS", "SMOOTHNESS_MONTHS",
+                            # docs/specs/claim-review-conclusion.md: the analyst judgment and the contradictions outside the five
+                            "judgment", "reasons", "unresolved_questions", "other_contradictions", "other_contradictions_text",
+                            "JUDGMENT_PARTS", "JUDGMENT_LABELS", "SCOPE_SENTENCE", "NO_OTHER_CONTRADICTIONS",
                             *MATCHING_SERVER_ONLY})
 # The functions that log about the register, and the only things their log calls may name.
 REGISTER_LOGGERS = frozenset({"_claim_rows", "claim_register", "claim_register_csv", "update_claim_inputs", "answer_turnover",
@@ -1467,7 +1488,7 @@ def test_the_definition_check_question_and_reasons_hold_figures_and_closed_words
         assert answered["reason"] in (claim_matching.DEFINITION_MISMATCH, claim_matching.BEAT_PREFIX + answered["gloss"])
         texts.append(answered)
     texts.append(claim_matching.definition_views([row], results, settings))
-    rate = {**row, "id": "x2", "claim_type": "sales", "value": 60.0, "unit": "%", "currency": None, "target_date": None, "period_text": None,
+    rate = {**row, "id": "x2", "claim_type": "sales", "value": 60.0, "unit": "%", "currency": None,
             "snippet": f"{sentinel} win rate 60%", "label_from": f"{sentinel} win rate"}
     rated = claim_matching.build_register([rate], {**results, "win_rate": {"win_rate_pct": 0.40, "source": SOURCE}}, settings)[0]
     assert rated["reason"] == claim_matching.DEFINITION_OPEN_REASON_RATE.format(points="10"), "a rate: 20 points, asked in points"
@@ -1493,7 +1514,8 @@ def test_the_qualified_users_reason_holds_two_closed_words_and_the_qualifier_nev
     out = claim_matching.build_register([row], RESULTS, {"fiscal_year_end": 12, "reporting_currency": "EUR", "fx": {"EUR": 1.0}})[0]
     nouns = r"customers?|clients?|paying users?|accounts?|compan(?:y|ies)|agenc(?:y|ies)|subscribers?|institutions?"
     words = "|".join(re.escape(q) for q in deck_claims.QUALIFIERS)
-    closed = re.escape(claim_matching.QUALIFIED_REASON).replace(re.escape("{label}"), f"(?:{words}) (?:{nouns})")
+    # no paying-customer figure in these results: Unsupported, with the reason that names the population (evidence-labels.md)
+    closed = re.escape(claim_matching.QUALIFIED_NO_FIGURE).replace(re.escape("{label}"), f"(?:{words}) (?:{nouns})")
     assert re.fullmatch(closed, out["reason"]), out["reason"]
     assert out["evidence_label"] == "Unsupported" and sentinel not in json.dumps(out, default=str)
     db, reads = _recording_db()
@@ -1506,6 +1528,45 @@ def test_the_qualified_users_reason_holds_two_closed_words_and_the_qualifier_nev
     for where, text in (("read by the gateway", returned), ("sent to the provider", adapter.payloads[0]), ("logged", logs)):
         assert sentinel not in text and '"qualifier"' not in text, f"the row label or its qualifier was {where}"
         assert "is not paying customers" not in text, f"the register reason was {where}"
+
+
+def test_the_required_field_target_and_population_reasons_are_closed_sentences_with_no_deck_text():
+    """claim-types-and-correction.md sections 2 and 6: the three reasons name field names, closed population words and nothing from
+    the deck; a sentinel in the snippet or the label reaches no field of the row."""
+    sentinel = "Zephyr Holdings"
+    from app.decks import claims as deck_claims
+    base = {"id": "x1", "status": "approved", "currency": None, "file": "deck.pptx", "order": 0, "label_from": f"{sentinel} label",
+            "sources": [{"file": "deck.pptx", "slide": 3}]}
+    rows = []
+    for extra in ({"claim_type": "sales", "value": 45.0, "unit": "days", "target_date": None, "snippet": f"{sentinel} sales cycle 45 days"},
+                  {"claim_type": "revenue", "value": 1.5, "currency": "EUR", "target_date": "2026-11", "snippet": f"{sentinel} target revenue"},
+                  {"claim_type": "users", "value": 4000.0, "unit": "users", "target_date": "2026-12", "population": "registered",
+                   "snippet": f"{sentinel} users"}):
+        c = {**base, **extra}
+        deck_claims.resolve_period(c, 12)
+        rows.append(claim_matching.build_register([c], _results_with_the_series(),
+                                                  {"fiscal_year_end": 12, "reporting_currency": "EUR", "fx": {"EUR": 1.0}})[0])
+    assert re.fullmatch(r"required field unknown: [a-z ,]+; set it with Edit in the claims list", rows[0]["reason"]), rows[0]["reason"]
+    assert rows[1]["reason"] == claim_matching.TARGET_REASON
+    assert rows[2]["reason"] == claim_matching.POPULATION_REASON.format(population="registered users", measured="paying customers")
+    assert sentinel not in json.dumps(rows, default=str)
+    assert not {"population", "figure_type", "required_unknown", "edit_log"} & decks.GATEWAY_READABLE_FIELDS
+
+
+# The two Add from deck endpoints log the run and one count, nothing of the page (claim-types-and-correction.md section 6).
+DECK_PAGE_LOG = {"deck_page": ("deck page: run_id=%s lines=%d", ["audit_id", "len(lines)"]),
+                 "add_from_deck": ("add from deck: run_id=%s figures=%d", ["audit_id", "len(found)"])}
+
+
+def test_the_page_view_and_add_from_deck_log_the_run_and_a_count_only():
+    tree = ast.parse((BACKEND / "server.py").read_text(encoding="utf-8"))
+    seen = {}
+    for fn in ast.walk(tree):
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) and fn.name in DECK_PAGE_LOG:
+            seen[fn.name] = [(node.args[0].value, [ast.unparse(a) for a in node.args[1:]]) for node in ast.walk(fn)
+                             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in _LOG_LEVELS
+                             and isinstance(node.func.value, ast.Name) and "log" in node.func.value.id.lower() and not node.keywords]
+    assert seen == {name: [(fmt, list(args))] for name, (fmt, args) in DECK_PAGE_LOG.items()}
 
 
 def test_the_use_of_funds_reason_is_a_closed_sentence_and_mixed_slide_and_the_note_never_reach_the_gateway_or_a_log(caplog):
@@ -1784,7 +1845,8 @@ def test_a_payload_that_breaks_the_contract_reaches_no_provider_and_no_log_line_
 import test_claim_register_api as register_api_tests  # noqa: E402
 from test_claim_register_api import api as register_api  # noqa: E402,F401  (the fixture)
 
-IC_SENTINELS = ("the Falcon hiring plan", "Zephyr pipeline cover", "Quartz thesis plan", "Basalt thesis evidence", "Opal thesis condition")
+IC_SENTINELS = ("the Falcon hiring plan", "Zephyr pipeline cover", "Quartz thesis plan", "Basalt thesis evidence", "Opal thesis condition",
+                "Garnet judgment reasons", "Jasper unresolved question")      # the last two: claim-review-conclusion.md section 3
 VERDICT_LOGGERS = frozenset({"get_verdict", "export_memo"})
 VERDICT_LOG_FORMATS = {
     "get_verdict": "verdict: run_id=%s outcome=%s blocked=%s top5=%s confirmed=%s",
@@ -1805,6 +1867,24 @@ def test_the_new_register_fields_and_the_analysts_inputs_are_names_the_gateway_n
                       if isinstance(n, (ast.Name, ast.Attribute)) and getattr(n, "id", getattr(n, "attr", None)) in names]
     assert not offenders, "the gateway names the verdict inputs:\n  " + "\n  ".join(offenders)
     assert not names & gateway.OUTBOUND_FIELDS and not names & decks.GATEWAY_READABLE_FIELDS
+
+
+def test_the_integrity_module_imports_nothing_from_the_gateway_and_logs_nothing_and_the_endpoint_logs_codes_and_counts():
+    """integrity-coverage.md section 5: a pure module; the endpoint's one log line holds the run, the conclusion code and two counts."""
+    path = BACKEND / "app" / "integrity.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    offenders = [f"{m} -> {n}" for m, n in _imports(tree)
+                 if (set(re.split(r"[.\s\"'()]+", m)) | {n}) & {"llm", "gateway", "anthropic", "structures", "<dynamic>", "server"}]
+    assert not offenders, "integrity.py reaches for the gateway:\n  " + "\n  ".join(offenders)
+    assert not [n for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id in ("logger", "logging", "log", "print")]
+    code = "import sys, app.integrity; print(sorted(m for m in sys.modules if m.startswith('app.llm') or m.split('.')[0] == 'anthropic'))"
+    assert subprocess.run([sys.executable, "-c", code], cwd=BACKEND, capture_output=True, text=True, check=True).stdout.strip() == "[]"
+    server_tree = ast.parse((BACKEND / "server.py").read_text(encoding="utf-8"))
+    fn = next(f for f in ast.walk(server_tree) if isinstance(f, ast.AsyncFunctionDef) and f.name == "get_integrity")
+    calls = [n for n in ast.walk(fn) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in _LOG_LEVELS
+             and isinstance(n.func.value, ast.Name) and "log" in n.func.value.id.lower()]
+    assert [(c.args[0].value, [ast.unparse(a) for a in c.args[1:]]) for c in calls] == [
+        ("integrity: run_id=%s conclusion=%s completed=%d applicable=%d", ["audit_id", "out['code']", "out['completed']", "out['applicable']"])]
 
 
 def test_the_verdict_and_memo_modules_import_nothing_from_the_gateway_a_provider_or_the_server_and_log_nothing():
@@ -1852,7 +1932,8 @@ def _with_the_analysts_inputs(client, db):
         assert register_api_tests._put(client, cid, body).status_code == 200
         assert register_api_tests._put(client, cid, {"key_gate": True}).status_code == 200
     r = client.put(f"{base}/ic-inputs", json={"ratings": {"data_reliability": "Strong", "growth_engine": "Weak"},
-                                              "thesis": {"plan": IC_SENTINELS[2], "evidence": IC_SENTINELS[3], "condition": IC_SENTINELS[4]}})
+                                              "thesis": {"plan": IC_SENTINELS[2], "evidence": IC_SENTINELS[3], "condition": IC_SENTINELS[4]},
+                                              "judgment": {"reasons": IC_SENTINELS[5], "unresolved_questions": IC_SENTINELS[6]}})
     assert r.status_code == 200, r.text
 
 
@@ -1864,7 +1945,8 @@ def test_the_analysts_inputs_reach_no_log_line_no_gateway_collection_and_no_prov
         for url in ("/verdict", "/memo.md", "/claims.csv", "/claims", "/blockers"):
             client.get(base + url)
     memo = client.get(f"{base}/memo.md")
-    assert memo.status_code == 200 and IC_SENTINELS[3] in memo.text, "fixture: the memo is built from the inputs and returned, not logged"
+    assert memo.status_code == 200 and IC_SENTINELS[3] in memo.text and IC_SENTINELS[6] in memo.text, \
+        "fixture: the memo is built from the inputs and returned, not logged"
     for needle in IC_SENTINELS:
         assert needle not in caplog.text, f"{needle!r} reached a log line"
     stored = {name: json.dumps(col.docs, default=str) for name, col in db._cols.items()}
@@ -1879,7 +1961,8 @@ def test_the_analysts_inputs_reach_no_log_line_no_gateway_collection_and_no_prov
 def test_the_gateway_reads_no_ic_inputs_and_the_provider_payload_holds_none(register_api):  # noqa: F811
     db, reads = _recording_db()
     db["audits"].docs[0]["ic_inputs"] = {"thesis": {"plan": IC_SENTINELS[2]}, "ratings": {"growth_engine": "Weak"},
-                                         "top5": {"claim_ids": ["c1"], "set_at": "x"}, "first_quarterly_review": "2031-04-05"}
+                                         "top5": {"claim_ids": ["c1"], "set_at": "x"}, "first_quarterly_review": "2031-04-05",
+                                         "judgment": {"reasons": IC_SENTINELS[5], "unresolved_questions": IC_SENTINELS[6]}}
     db[decks.CANDIDATES_COLLECTION].docs[0]["claim_inputs"] = {"c1": {"gate_metric_name": IC_SENTINELS[1], "key_gate": True,
                                                                       "gate_direction": "at most"}}
     adapter = t.FakeAdapter(replies=[json.dumps(NARRATIVE)])
@@ -1887,7 +1970,7 @@ def test_the_gateway_reads_no_ic_inputs_and_the_provider_payload_holds_none(regi
     asyncio.run(gateway.narratives_for_run(db, RUN_ID))
     asyncio.run(gateway.usage_for_run(db, RUN_ID))
     returned = json.dumps([doc for name, _, doc in reads if name in ("audits", decks.CANDIDATES_COLLECTION)], default=str)
-    for needle in (*IC_SENTINELS[1:3], "ic_inputs", "2031-04-05", "gate_metric_name", "key_gate"):
+    for needle in (*IC_SENTINELS[1:3], *IC_SENTINELS[5:], "ic_inputs", "2031-04-05", "gate_metric_name", "key_gate", "judgment"):
         assert needle not in returned, f"{needle!r} was read by the gateway"
         assert needle not in adapter.payloads[0], f"{needle!r} reached the provider"
 
@@ -2088,3 +2171,29 @@ def test_the_narrative_estimate_sends_nothing_and_names_no_file(run_api):  # noq
     assert len(run_api.adapter.payloads) == sent_before, "an estimate is not a call"
     for secret in ("revenue.csv", "crm.csv", "pnl.csv", "testco_board"):
         assert secret not in body
+
+
+def test_the_period_the_model_is_told_is_two_closed_values_and_never_the_as_of_setting():
+    """Decision 7 (15 Oct 2026): evidence_to is a month and last_month_status is one of two words. The as-of setting and
+    the requested analysis date are not outbound fields."""
+    assert {"evidence_to", "last_month_status"} <= gateway.OUTBOUND_TOP_LEVEL
+    assert not ({"as_of_month", "requested_analysis_date", "last_month_complete"} & (gateway.OUTBOUND_TOP_LEVEL | gateway.OUTBOUND_FIELDS))
+    out = gateway.period_fields({"source_period": {"month": "2019-06", "status": "Possibly partial", "complete_by": "analyst",
+                                                   "evidence_to": "2019-06"}, "as_of_month": "2026-06"})
+    assert out == {"evidence_to": "2019-06", "last_month_status": "Possibly partial"}
+    assert gateway.period_fields({}) == {"evidence_to": None, "last_month_status": None}
+
+
+def test_the_access_module_logs_nothing_and_imports_nothing_from_the_gateway():
+    """access-links.md section 4: a token never reaches a log line. The module has no logging call at all, and the server's
+    guard and admin routes log nothing of the request's headers or links."""
+    tree = ast.parse((BACKEND / "app" / "access.py").read_text())
+    imported = {n.module or "" for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)} | \
+        {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
+    assert not any(m.startswith(("app.llm", "logging", "anthropic")) or m == "logging" for m in imported), imported
+    assert not [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "print"]
+    server_tree = ast.parse((BACKEND / "server.py").read_text())
+    fns = {"access_guard", "issue_tester", "list_testers", "revoke_tester", "reissue_tester"}
+    for fn in (f for f in ast.walk(server_tree) if isinstance(f, (ast.AsyncFunctionDef, ast.FunctionDef)) and f.name in fns):
+        calls = [ast.unparse(c) for c in ast.walk(fn) if isinstance(c, ast.Call) and "logger" in ast.unparse(c.func)]
+        assert not calls, f"{fn.name} logs: {calls}"

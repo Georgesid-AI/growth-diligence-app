@@ -52,6 +52,7 @@ bullet. A direction with no figure ("Positive EBITDA") is a candidate with no va
 source reference.
 """
 import calendar
+import copy
 import re
 from datetime import date
 from math import hypot
@@ -124,7 +125,8 @@ COUNT = "count"         # the unit of an acquisition-channels figure
 # The order of the claims table (deck-parser.md section 6): the group of a type, then slide or page. Revenue covers ARR,
 # MRR and bookings; P&L items and unit economics are listed with their neighbours; acquisition channels and use of funds
 # have a group each, above Other (chat-upload.md section 17); the types no group names (the model's "other") are Other.
-GROUPS = {1: "revenue", 2: "P&L", 3: "customers and sales", 4: "hiring and roadmap", 5: "market size", 6: "unknown",
+# Group 6 (Unknown) is gone: a figure no heading names a type for is Other (claim-types-and-correction.md section 4).
+GROUPS = {1: "revenue", 2: "P&L", 3: "customers and sales", 4: "hiring and roadmap", 5: "market size",
           7: "acquisition channels", 8: "use of funds", 9: "other"}
 _GROUP_OF = {
     "revenue": 1, "revenue_growth": 1,
@@ -133,15 +135,52 @@ _GROUP_OF = {
     "customers": 3, "users": 3, "user_growth": 3, "growth": 3, "retention": 3, "sales": 3, "ltv": 3, "cac": 3, "ltv_cac": 3,
     "customer_lifetime": 3, "trials_per_day": 3, "usage": 3,
     "people": 4, "product": 4,
-    "market": 5, UNKNOWN: 6, ACQUISITION_CHANNELS: 7, USE_OF_FUNDS: 8,
+    "market": 5, ACQUISITION_CHANNELS: 7, USE_OF_FUNDS: 8,
 }
 OTHER_GROUP = 9
-COLLAPSED_GROUPS = (6, OTHER_GROUP)
+COLLAPSED_GROUPS = (OTHER_GROUP,)
+# docs/specs/claim-types-and-correction.md section 4: a figure the parser cannot type and an item the model labelled other are Other:
+# never matched, never a task, listed collapsed under their count. The analyst may type a claim Other, and retype it out.
+OTHER_TYPES = ("other", UNKNOWN)
 
 
 def type_group(claim_type: Optional[str]) -> int:
-    """1 to 9: the group a claim type sorts under."""
+    """1 to 9: the group a claim type sorts under; Other (other, unknown) sorts under Other."""
+    if claim_type in OTHER_TYPES:
+        return OTHER_GROUP
     return _GROUP_OF.get(claim_type or "", OTHER_GROUP)
+
+
+# ---------------------------------------------------------------------------
+# Claim fields (docs/specs/claim-types-and-correction.md sections 1-2)
+# ---------------------------------------------------------------------------
+FIGURE_TYPES = ("actual", "target", "unknown")
+# Target cues, whole words, any case. "plan" and "plans" are not cues ("Free to Paid plans"). Measured on the 10 public decks: 4 of
+# 225 candidates carry one (front slide 16, moz page 18, buffer slide 7 twice).
+TARGET_CUE = re.compile(r"(?i)\b(?:target(?:s|ed)?|planned|forecast(?:s|ed)?|budget(?:ed)?|goals?|projected|projections?|expected"
+                        r"|guidance|outlook|aim(?:s|ing)?)\b")
+# The population each type may state, and what a value reads as in a sentence.
+POPULATIONS = {"customers": ("paying", "registered", "active"), "users": ("paying", "registered", "active"),
+               "user_growth": ("paying", "registered", "active"), "sales": ("deals won", "all closed", "open")}
+EDIT_REASONS = {"parser_misread": "Parser misread the deck", "deck_context": "Deck context says otherwise", "other": "Other"}
+
+
+def target_cue(text: str) -> bool:
+    return bool(TARGET_CUE.search(text or ""))
+
+
+def parsed_fields(candidate: Dict) -> Dict:
+    """What the parser reads into the fields of section 2 from the claim's own line and label: the figure type when a target cue is
+    there, the population a customers keyword or a qualifier names. Nothing else is guessed: the rest is read on matching."""
+    text = f"{candidate.get('snippet') or ''} {candidate.get('label_from') or ''}"
+    out: Dict = {}
+    if target_cue(text):
+        out.update(figure_type="target", figure_type_set_by="parser")
+    if candidate.get("claim_type") == "customers":
+        out.update(population="paying", population_set_by="parser")
+    elif candidate.get("claim_type") == "users" and candidate.get("qualifier") in QUALIFIERS:
+        out.update(population="registered", population_set_by="parser")
+    return out
 # A net loss is a negative net profit: "Net loss of $2M" is stored as -2,000,000.
 _DIRECTION = re.compile(r"(?i)\b(positive|negative)\b")
 _NET_LOSS = re.compile(r"(?i)\bnet loss(?:es)?\b")
@@ -1208,7 +1247,35 @@ def detect_candidates(blocks: List[Dict], file: str, fiscal_year_end: int = 12) 
     _flag_funds_inconsistencies(found)
     for c in found:
         c.pop("_funds", None)
+        if c.get("claim_type") in GROWTH_TYPES:
+            c["growth_basis"] = growth_basis(f"{c.get('snippet') or ''} {c.get('label_from') or ''}")
+        c.update(parsed_fields(c))
     return found
+
+
+# ---------------------------------------------------------------------------
+# Growth basis (docs/specs/dates-and-periods.md section 5)
+# ---------------------------------------------------------------------------
+GROWTH_TYPES = ("revenue_growth", "growth", "user_growth")
+# The cue words of each basis, whole words; "annual" and "monthly" do not count inside "annual / monthly recurring revenue", and
+# "over" counts only before a year, a fiscal year or a duration ("over 2023", "over the last 12 months"), never before a figure.
+_PERIOD_AFTER_OVER = (r"(?:the\s+(?:last|past|next)\s+)?(?:\d+\s+|one\s+|two\s+|three\s+|four\s+|five\s+)?"
+                      r"(?:(?:19|20)\d{2}|FY\s?\d{2}|years?|months?|quarters?)\b")
+GROWTH_CUES = {
+    "mom": re.compile(r"\bMoM\b|\bm/m\b|(?i:\bmonth[- ](?:on|over)[- ]month\b|\bmonthly\b(?!\s+recurring\s+revenue)|\bper\s+month\b)"),
+    "yoy": re.compile(r"\bYoY\b|\by/y\b|(?i:\byear[- ](?:on|over)[- ]year\b|\bannual\b(?!\s+recurring\s+revenue)|\bper\s+year\b)"),
+    "annualised": re.compile(r"\bCAGR\b|(?i:\bannuali[sz]ed\b)"),
+    "cumulative": re.compile(r"(?i:\bsince\b|\bover\s+" + _PERIOD_AFTER_OVER + r")"),
+}
+
+
+def growth_basis(text: str) -> str:
+    """mom, yoy, annualised or cumulative when the claim's words carry the cues of exactly one basis; else "unknown" (none, or
+    two bases): the analyst sets it with one click."""
+    found = [basis for basis, rx in GROWTH_CUES.items() if rx.search(text or "")]
+    if "annualised" in found:           # "CAGR of 40% since 2020": the window is the period of the annualised rate, not a second basis
+        found = [b for b in found if b != "cumulative"]
+    return found[0] if len(found) == 1 else "unknown"
 
 
 def same_claim(a: Dict, b: Dict) -> Optional[Dict]:
@@ -1316,6 +1383,23 @@ def _flag_inconsistencies(candidates: List[Dict]) -> None:
         for i in c.get("by_period") or ():
             i.pop("_stated", None)
 
+
+def cross_deck_inconsistencies(candidates: List[Dict]) -> List[Dict]:
+    """The deck inconsistency rule read over stored candidates of several decks (integrity-coverage.md section 1, check 6): the
+    pairs {"this", "other"} of figures with the same type, label and stated period and different values. A stored candidate keeps no
+    "_stated": a date is stated unless it was borrowed from a heading or a neighbour ("date_from"); a table row's periods are its
+    column headers'. Nothing is changed in place."""
+    work = []
+    for c in candidates:
+        c = {**copy.deepcopy(c), "inconsistent_dates": [], "inconsistencies": []}
+        c["_stated"] = not c.get("date_from")
+        for i in c.get("by_period") or ():
+            i["_stated"] = True
+        c.setdefault("currency", None)
+        c.setdefault("unit", None)
+        work.append(c)
+    _flag_inconsistencies(work)
+    return [pair for c in work for pair in c["inconsistencies"]]
 
 # ---------------------------------------------------------------------------
 # Use of funds (deck-parser.md section 2)

@@ -5,6 +5,26 @@ const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 export const api = axios.create({ baseURL: API });
 
+// Access links (docs/specs/access-links.md): the token from the tester's link is kept in the browser and sent on every request.
+export const TOKEN_KEY = "access_token";
+export const getToken = () => { try { return window.localStorage.getItem(TOKEN_KEY); } catch (e) { return null; } };
+export const setToken = (token) => { try { window.localStorage.setItem(TOKEN_KEY, token); } catch (e) { /* the link then works for this page only */ } };
+api.interceptors.request.use((config) => {
+  const token = getToken();
+  if (token) config.headers = { ...(config.headers || {}), Authorization: `Bearer ${token}` };
+  return config;
+});
+
+/** A file download that carries the token (a plain link cannot): the response is saved under the server's file name. */
+export const downloadFile = async (path, fallbackName) => {
+  const r = await api.get(path, { responseType: "blob" });
+  const name = /filename="?([^";]+)"?/.exec(r.headers?.["content-disposition"] || "")?.[1] || fallbackName;
+  const url = URL.createObjectURL(r.data);
+  const a = document.createElement("a");
+  a.href = url; a.download = name; a.click();
+  URL.revokeObjectURL(url);
+};
+
 export const listAudits = () => api.get("/audits").then((r) => r.data);
 export const getAudit = (id) => api.get(`/audits/${id}`, { timeout: READ_TIMEOUT_MS }).then((r) => r.data);
 export const createAudit = (payload) => api.post("/audits", payload).then((r) => r.data);
@@ -68,6 +88,9 @@ export const approveAll = (id, group, deckId) =>
   api.post(`/audits/${id}/decks/candidates/approve-all`, { group, ...(deckId ? { deck_id: deckId } : {}) }).then((r) => r.data);
 export const updateCandidate = (id, candidateId, payload) =>
   api.put(`/audits/${id}/decks/candidates/${candidateId}`, payload).then((r) => r.data);
+// Add from deck (docs/specs/claim-types-and-correction.md section 5): a stored page's lines, and a claim from one of them by reference.
+export const getDeckPage = (id, deckId, page) => api.get(`/audits/${id}/decks/${deckId}/pages/${page}`).then((r) => r.data);
+export const addFromDeck = (id, deckId, { page, ref }) => api.post(`/audits/${id}/decks/${deckId}/add-from-deck`, { page, ref }).then((r) => r.data);
 
 // Claim register (docs/specs/claim-matching.md): rows tested and ranked by the server, the analyst's inputs, and the CSV baseline.
 export const getClaimRegister = (id) => api.get(`/audits/${id}/claims`).then((r) => r.data);
@@ -88,6 +111,8 @@ export const claimsCsvUrl = (id) => `${API}/audits/${id}/claims.csv`;
 // Verdict, data gaps and the IC memo (docs/specs/verdict-and-memo.md): computed on read by the server from the register, the
 // results and the analyst's inputs. No model is called.
 export const getVerdict = (id) => api.get(`/audits/${id}/verdict`).then((r) => r.data);
+// Data integrity: results of the completed checks, assessment coverage and the conclusion (docs/specs/integrity-coverage.md).
+export const getIntegrity = (id) => api.get(`/audits/${id}/integrity`).then((r) => r.data);
 export const putIcInputs = (id, payload) => api.put(`/audits/${id}/ic-inputs`, payload).then((r) => r.data);
 export const getMemo = (id) => api.get(`/audits/${id}/memo.md`, { responseType: "text", transformResponse: (d) => d });
 

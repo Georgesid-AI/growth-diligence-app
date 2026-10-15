@@ -1,6 +1,7 @@
 import {
   ALL_DECKS, AI_SUGGESTION_LABEL, CLAIM_TYPES, INCONSISTENCY_LABEL, UPLOADED_BEFORE_CONSENT, VERIFIED_LABEL, deckRunLog, REMOVE_DECK_CONFIRM, claimPeriod, conversionHover, claimSections, claimsForDeck, periodLabel, directionText, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, newClaimPayload, sourceRef, statusCounts, typeLabel,
-  approveAllToast, toReview, DECK_SCOPE_CANNOT, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, OTHER_TYPE_NOTE, needsType, readingChoices, confidenceText, UNKNOWN_TYPE_LABEL,
+  approveAllToast, toReview, DECK_SCOPE_CANNOT, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, EDIT_TYPES, isOther, readingChoices, confidenceText, otherFiguresTitle,
+  claimFields, editLogText,
 } from "./deckClaims";
 
 describe("source reference", () => {
@@ -54,7 +55,7 @@ test("type labels", () => {
 });
 
 test("every column has a header", () => {
-  expect(COLUMNS).toEqual(["Type", "Value", "Period", "Confidence", "Claim in the deck", "Source", "Status", "Action"]);
+  expect(COLUMNS).toEqual(["Type", "Value", "Period", "Extraction confidence", "Claim in the deck", "Source", "Status", "Action"]);
 });
 
 test("instruction text is word for word", () => {
@@ -234,19 +235,31 @@ describe("structure labelling in the approval list (docs/specs/structure-labelli
     expect(readingChoices({ value: 5000, readings: [{ value: 5000, dot_reading: null, bracket_reading: null }] })).toEqual([]);
   });
 
-  test("an item labelled other is listed as type Other and needs a type before it can be approved", () => {
+  test("an item labelled other and a figure with no type are both Other; the editor may type a claim Other (claim-types-and-correction.md 4)", () => {
     expect(typeLabel("other")).toBe("Other");
+    expect(typeLabel("unknown")).toBe("Other");
     expect(CLAIM_TYPES).not.toContain("other");
-    expect(needsType({ claim_type: "other" })).toBe(true);
-    expect(needsType({ claim_type: "product" })).toBe(false);
-    expect(OTHER_TYPE_NOTE).toBe("Choose a claim type, then approve.");
+    expect(CLAIM_TYPES).not.toContain("unknown");
+    expect(EDIT_TYPES).toContain("other");
+    expect([isOther({ claim_type: "other" }), isOther({ claim_type: "unknown" }), isOther({ claim_type: "product" })]).toEqual([true, true, false]);
   });
 
-  test("a figure no heading names a type for is listed as 'Unknown – choose type' and needs a type before approval", () => {
-    expect(UNKNOWN_TYPE_LABEL).toBe("Unknown – choose type");
-    expect(typeLabel("unknown")).toBe("Unknown – choose type");
-    expect(CLAIM_TYPES).not.toContain("unknown");
-    expect(needsType({ claim_type: "unknown" })).toBe(true);
+  test("an Other figure is not a claim to review: neither counted nor approved by Approve all", () => {
+    const claims = [{ id: 1, status: "pending", claim_type: "revenue" }, { id: 2, status: "pending", claim_type: "unknown" },
+      { id: 3, status: "pending", claim_type: "other" }];
+    expect(statusCounts(claims).pending).toBe(1);
+    expect(toReview({ claims }).map((c) => c.id)).toEqual([1]);
+    expect([otherFiguresTitle(1), otherFiguresTitle(3)]).toEqual(["1 other figure", "3 other figures"]);
+  });
+
+  test("the editor opens on the stored field, else the one the register reads, else Unknown; the Status hover lists the edit log", () => {
+    expect(claimFields({ figure_type: "target", claim_fields: { figure_type: "actual" } }).figure_type).toBe("target");
+    expect(claimFields({ claim_fields: { figure_type: "actual", population: "paying", growth_basis: "yoy" } }))
+      .toEqual({ figure_type: "actual", population: "paying", growth_basis: "yoy" });
+    expect(claimFields({})).toEqual({ figure_type: "unknown", population: "", growth_basis: "unknown" });
+    expect(editLogText({ edit_log: [{ field: "figure_type", previous: "target", value: "actual", by: "analyst", at: "2026-10-15T09:00:00+00:00",
+      reason: "parser_misread" }] })).toBe("Figure type: Target → Actual · analyst · 15 Oct 2026 · Parser misread the deck");
+    expect(editLogText({})).toBe("");
   });
 
   test("'Market size' is in the type list the analyst chooses from", () => {
@@ -282,13 +295,13 @@ describe("2026-10-08: the Period column, groups, a direction with no figure and 
     expect(periodLabel({ target_date: "0001-01-01" })).toBe("", "a date outside the range is never shown");
   });
 
-  test("the groups, in order; Unknown and Other are collapsed; an empty group is not listed", () => {
-    const claims = ["c", "a", "b"].map((id, i) => ({ id, group: [5, 1, 6][i] }));
+  test("the groups, in order; Other is collapsed under its count; an empty group is not listed", () => {
+    const claims = ["c", "a", "b"].map((id, i) => ({ id, group: [5, 1, 9][i] }));
     expect(claimSections(claims).map((s) => [s.group, s.title, s.claims.map((c) => c.id), s.collapsed])).toEqual([
-      [1, "Revenue, ARR, MRR and bookings", ["a"], false], [5, "Market size", ["c"], false], [6, "Unknown – choose type", ["b"], true]]);
-    expect(claimSections([{ id: "z" }])[0]).toMatchObject({ group: 9, title: "Other", collapsed: true });
+      [1, "Revenue, ARR, MRR and bookings", ["a"], false], [5, "Market size", ["c"], false], [9, "1 other figure", ["b"], true]]);
+    expect(claimSections([{ id: "z" }])[0]).toMatchObject({ group: 9, title: "1 other figure", collapsed: true });
     expect(claimSections([7, 9, 8].map((group) => ({ id: `g${group}`, group }))).map((s) => [s.group, s.title, s.collapsed])).toEqual([
-      [7, "Acquisition channels", false], [8, "Use of funds", false], [9, "Other", true]]);
+      [7, "Acquisition channels", false], [8, "Use of funds", false], [9, "1 other figure", true]]);
     expect(claimSections([{ id: "p", group: 4 }])[0]).toMatchObject({ title: "Hiring and roadmap", collapsed: false });
     expect(claimSections([{ id: "p", group: 3 }])[0].title).toBe("Customers, users, usage, retention and sales");
     expect(claimSections([]).length).toBe(0);

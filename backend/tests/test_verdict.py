@@ -43,27 +43,40 @@ def verdict_of(labels, gates=(), stored="all"):
 
 # --- section 6.2: the rule, in order ---------------------------------------------------------------------------------------
 
-def test_underwrite_when_every_top_5_claim_is_verified():
+# claim-review-conclusion.md section 2 (replaces the Underwrite / Re-plan rule): Contradicted, then Insufficient evidence, then
+# Supported, then Partly supported. Untested = Unverified, Inconclusive or Unsupported.
+
+def test_supported_when_every_selected_claim_is_verified():
     v, _ = verdict_of(["Verified"] * 5 + ["Contradicted"])
-    assert (v["status"], v["outcome"], v["rule"]) == ("ok", "Underwrite", "All top-5 claims are Verified.")
+    assert (v["status"], v["outcome"], v["outcome_code"], v["rule"]) == (
+        "ok", "Selected claims supported", "supported", "All 5 selected claims are Verified.")
 
 
-def test_underwrite_with_gates_when_nothing_is_contradicted_and_at_most_two_are_unsupported():
+def test_insufficient_evidence_when_nothing_is_contradicted_and_three_are_untested():
     v, _ = verdict_of(["Verified", "Unverified", "Unsupported", "Unsupported", "Verified"], gates={2, 3, 4})
-    assert (v["outcome"], v["rule"]) == ("Underwrite with gates", "No top-5 claim is Contradicted; 3 are Unverified or Unsupported.")
+    assert (v["outcome"], v["outcome_code"], v["rule"]) == (
+        "Insufficient evidence", "insufficient", "No selected claim is Contradicted; 3 of 5 are untested (Unverified, Inconclusive or Unsupported).")
 
 
-def test_replan_when_a_top_5_claim_is_contradicted_a_miss():
+def test_inconclusive_counts_as_untested():
+    v, _ = verdict_of(["Verified", "Inconclusive", "Inconclusive", "Unverified", "Verified"], gates={2, 3, 4})
+    assert v["outcome_code"] == "insufficient"
+    v, _ = verdict_of(["Verified", "Inconclusive", "Verified", "Verified", "Verified"], gates={2})
+    assert (v["outcome_code"], v["rule"]) == ("partly_supported", "No selected claim is Contradicted; 4 of 5 are Verified, 1 untested.")
+
+
+def test_not_supported_when_a_selected_claim_is_contradicted_a_miss():
     rows = register(RUNS["A"])
-    miss = row_of(rows, "c06")
+    miss = row_of(rows, "c28")              # Revenue Q4 2023 (c06, undated, waits for its period since claim-types-and-correction.md)
     assert (miss["gap_kind"], miss["evidence_label"]) == ("miss", "Contradicted")
     verified = [r for r in rows if r["evidence_label"] == "Verified"][:4]
     five = [miss, *verified]
     v = vd.verdict(gated(rows), results_for(RUNS["A"]), {"claim_ids": [r["claim_id"] for r in five]})
-    assert (v["status"], v["outcome"], v["rule"]) == ("ok", "Re-plan", "1 top-5 claim Contradicted.")
+    assert (v["status"], v["outcome"], v["outcome_code"], v["rule"]) == (
+        "ok", "Selected claims not supported", "not_supported", "1 selected claim is Contradicted.")
 
 
-def test_a_top_5_beat_beyond_tolerance_is_verified_so_it_neither_replans_nor_blocks():
+def test_a_selected_beat_beyond_tolerance_is_verified_so_it_is_supported_and_never_blocks():
     """Amended 2026-10-13 (George): a beat outside tolerance is Verified, marked (beat); it needs no gate."""
     rows = register(RUNS["A"])
     beat = row_of(rows, "c08")
@@ -71,49 +84,46 @@ def test_a_top_5_beat_beyond_tolerance_is_verified_so_it_neither_replans_nor_blo
     verified = [r for r in rows if r["evidence_label"] == "Verified" and r is not beat][:4]
     five = [beat, *verified]
     v = vd.verdict(rows, results_for(RUNS["A"]), {"claim_ids": [r["claim_id"] for r in five]})
-    assert (v["status"], v["outcome"], v["rule"]) == ("ok", "Underwrite", "All top-5 claims are Verified.")
+    assert (v["status"], v["outcome"], v["rule"]) == ("ok", "Selected claims supported", "All 5 selected claims are Verified.")
 
 
-def test_replan_when_three_top_5_claims_are_unsupported():
-    v, _ = verdict_of(["Unsupported"] * 3 + ["Verified", "Verified"], gates={1, 2, 3})
-    assert (v["outcome"], v["rule"]) == ("Re-plan", "3 top-5 claims Unsupported (3 or more).")
+def test_contradicted_comes_before_insufficient_evidence():
+    v, _ = verdict_of(["Contradicted", "Unsupported", "Unsupported", "Unverified", "Verified"], gates={1, 2, 3, 4})
+    assert (v["outcome_code"], v["rule"]) == ("not_supported", "1 selected claim is Contradicted.")
 
 
-def test_three_unsupported_and_one_unverified_is_replan_not_underwrite_with_gates():
-    """The request's rules match both outcomes; Re-plan is checked first (section 6.2)."""
-    v, _ = verdict_of(["Unsupported", "Unsupported", "Unsupported", "Unverified", "Verified"], gates={1, 2, 3, 4})
-    assert v["outcome"] == "Re-plan"
-
-
-def test_two_unsupported_and_two_unverified_is_not_replan():
-    v, _ = verdict_of(["Unsupported", "Unsupported", "Unverified", "Unverified", "Verified"], gates={1, 2, 3, 4})
-    assert v["outcome"] == "Underwrite with gates"
+def test_two_untested_and_three_verified_is_partly_supported():
+    v, _ = verdict_of(["Unsupported", "Unverified", "Verified", "Verified", "Verified"], gates={1, 2})
+    assert (v["outcome"], v["outcome_code"]) == ("Selected claims partly supported", "partly_supported")
 
 
 def test_with_fewer_than_five_rows_the_top_5_is_every_row_and_the_rule_says_so():
     v, rows = verdict_of(["Verified", "Verified", "Verified"])
-    assert len(v["five"]) == 3 and v["outcome"] == "Underwrite"
-    assert v["rule"] == "All top-5 claims are Verified. Top 3 (the register has 3 claims)."
+    assert len(v["five"]) == 3 and v["outcome"] == "Selected claims supported"
+    assert v["rule"] == "All 3 selected claims are Verified. Top 3 (the register has 3 claims)."
+    v, rows = verdict_of(["Unverified", "Unverified", "Unsupported"], gates={1, 2, 3})
+    assert v["outcome_code"] == "insufficient", "3 or more stays 3"
 
 
 def test_no_rows_and_no_results_give_no_verdict():
-    assert vd.verdict([], {"reporting_currency": "EUR"}, None)["message"] == "No verdict: the register has no claims."
-    assert vd.verdict([row(1, "Verified")], None, None)["message"] == "No verdict: compute the audit first."
+    assert vd.verdict([], {"reporting_currency": "EUR"}, None)["message"] == "No conclusion: the register has no claims."
+    assert vd.verdict([row(1, "Verified")], None, None)["message"] == "No conclusion: compute the audit first."
     assert vd.verdict([], {"reporting_currency": "EUR"}, None)["status"] == "no_verdict"
 
 
 def test_the_three_reasons_are_the_claims_that_made_the_rule_fire_each_citing_its_evidence():
     rows = gated(register(RUNS["A"]))
     v = vd.verdict(rows, results_for(RUNS["A"]), {"claim_ids": vd.proposal(rows)})
-    assert v["outcome"] == "Re-plan" and len(v["reasons"]) == 3
-    assert v["reasons"][0].startswith("#1 Median sales cycle: Contradicted, 58.5 days against 45.0 days (13.5 days longer, two working weeks (miss)).")
-    assert "Evidence: Sales cycle · sales_cycle.median_days (crm.csv · CSV · rows 2–121" in v["reasons"][0]
+    assert v["outcome"] == "Selected claims not supported" and len(v["reasons"]) == 3
+    assert v["reasons"][0] == ("#1 Revenue, Q4 2023: Contradicted, €49,047 against €60,000 (€10,953 lower (miss)). "
+                               "Evidence: Revenue by month · revenue_series.data.total (revenue.csv · CSV · rows 2–71 (70 rows)).")
     unsupported = [row(1, "Unsupported", gate=True), *[row(i, "Verified") for i in range(2, 6)]]
     again = vd.verdict(unsupported, {"reporting_currency": "EUR"}, {"claim_ids": [r["claim_id"] for r in unsupported]})
     assert again["reasons"][0] == "#1 ARR, Feb 2024: Unsupported, reason 1. No figure in the supplied files."
 
 
-@pytest.mark.parametrize("run, expected", [("A", ("ok", "Re-plan")), ("C", ("ok", "Re-plan")), ("D", ("ok", "Re-plan"))])
+@pytest.mark.parametrize("run, expected", [("A", ("ok", "Selected claims not supported")), ("C", ("ok", "Selected claims not supported")),
+                                           ("D", ("ok", "Selected claims not supported"))])
 def test_the_fixture_runs_measure_as_the_spec_says_with_the_proposed_top_5_confirmed(run, expected):
     rows = _run_d("yes") if run == "D" else register(RUNS[run])       # D: c37's Definition check answered, so only the gates block
     ids = {"claim_ids": vd.proposal(rows)}
@@ -142,7 +152,7 @@ def test_an_open_definition_check_blocks_the_verdict_wherever_it_ranks_until_it_
     ids = {"claim_ids": vd.proposal(rows)}
     v = vd.verdict(gated(rows), results_for(RUNS["D"]), ids)
     assert (v["status"], v["outcome"], v["blocked"]) == ("blocked", None, ["c37"])
-    assert v["message"] == "Verdict blocked: answer the definition check on #1."
+    assert v["message"] == "Conclusion blocked: answer the definition check on #1."
     assert next(f for f in v["five"] if f["claim_id"] == "c37")["definition_check"] == "ask"
     assert sum(cm.label_counts(rows).values()) == len(rows) - 1, "the open check is in no count by label"
     # outside the top 5 it blocks too: the analyst's five leave c37 out
@@ -150,10 +160,10 @@ def test_an_open_definition_check_blocks_the_verdict_wherever_it_ranks_until_it_
     assert vd.verdict(gated(rows), results_for(RUNS["D"]), others)["blocked"] == ["c37"]
     # a gate on a top-5 row still needed is named after the definition check
     both = vd.verdict(rows, results_for(RUNS["D"]), ids)["message"]
-    assert both.startswith("Verdict blocked: answer the definition check on #1. Verdict blocked: set a gate on #2"), both
+    assert both.startswith("Conclusion blocked: answer the definition check on #1. Conclusion blocked: set a gate on #2"), both
     yes = _run_d("yes")
     assert (row_of(yes, "c37")["evidence_label"], row_of(yes, "c37")["definition_check"]) == ("Contradicted", "yes")
-    assert (vd.verdict(gated(yes), results_for(RUNS["D"]), ids)["outcome"]) == "Re-plan"
+    assert (vd.verdict(gated(yes), results_for(RUNS["D"]), ids)["outcome"]) == "Selected claims not supported"
     no = _run_d("no")
     assert (row_of(no, "c37")["evidence_label"], row_of(no, "c37")["reason"], row_of(no, "c37")["gate_needed"]) == \
         ("Unverified", "definition mismatch", True)
@@ -169,7 +179,7 @@ def test_run_b_is_one_unverified_claim_blocked_until_its_gate_is_saved():
     blocked = vd.verdict(rows, results_for(RUNS["B"]), state)
     assert blocked["status"] == "blocked" and blocked["outcome"] is None
     gated = [{**r, "gate_saved": True, "gate_needed": False} if r["rank"] == 1 else r for r in rows]
-    assert vd.verdict(gated, results_for(RUNS["B"]), state)["outcome"] == "Underwrite with gates"
+    assert vd.verdict(gated, results_for(RUNS["B"]), state)["outcome"] == "Selected claims partly supported"
     assert single
 
 
@@ -178,7 +188,7 @@ def test_run_b_is_one_unverified_claim_blocked_until_its_gate_is_saved():
 def test_no_verdict_before_the_top_5_is_confirmed_and_the_proposal_is_rows_1_to_5():
     rows = register(RUNS["A"])
     v = vd.verdict(rows, results_for(RUNS["A"]), None)
-    assert (v["status"], v["outcome"], v["message"]) == ("unconfirmed", None, "No verdict until the top 5 is confirmed.")
+    assert (v["status"], v["outcome"], v["message"]) == ("unconfirmed", None, "No conclusion until the top 5 is confirmed.")
     assert v["top5"]["proposed"] == [r["claim_id"] for r in rows[:5]] and not v["top5"]["confirmed"]
 
 
@@ -190,7 +200,7 @@ def test_a_replaced_row_counts_and_the_replaced_one_does_not():
     v = vd.verdict(rows, results_for(RUNS["A"]), {"claim_ids": replaced})
     assert [f["claim_id"] for f in v["five"]] == sorted(replaced, key=lambda i: row_of(rows, i)["rank"])
     assert ids[0] not in [f["claim_id"] for f in v["five"]] and verified["claim_id"] in [f["claim_id"] for f in v["five"]]
-    assert v["rule"] == "4 top-5 claims Contradicted.", "the replaced Contradicted row no longer counts"
+    assert v["rule"] == "4 selected claims are Contradicted.", "the replaced Contradicted row no longer counts"
 
 
 @pytest.mark.parametrize("size", [0, 4, 6])
@@ -230,9 +240,9 @@ def test_the_banner_keeps_rows_1_to_5_of_the_pre_sort_after_the_analyst_replaces
 def test_a_non_verified_top_5_claim_without_a_gate_blocks_and_saving_its_gate_unblocks():
     v, rows = verdict_of(["Verified", "Unverified", "Verified", "Verified", "Verified"])
     assert v["status"] == "blocked" and v["outcome"] is None and v["blocked"] == ["r2"]
-    assert v["message"] == "Verdict blocked: set a gate on #2 (top-5 claims that are not Verified)."
+    assert v["message"] == "Conclusion blocked: set a gate on #2 (top-5 claims that are not Verified)."
     again, _ = verdict_of(["Verified", "Unverified", "Verified", "Verified", "Verified"], gates={2})
-    assert again["status"] == "ok" and again["outcome"] == "Underwrite with gates"
+    assert again["status"] == "ok" and again["outcome"] == "Selected claims partly supported"
 
 
 def test_a_verified_top_5_claim_without_a_gate_does_not_block():
@@ -405,7 +415,7 @@ def test_the_verdict_reads_no_figure_of_results_that_fail_the_contract(api):  # 
     bad["nrr"]["overall_pct"] = 106.41
     db["audits"].docs[0]["results"] = bad
     v = _verdict(client)["verdict"]
-    assert v["status"] == "no_verdict" and v["message"].startswith("No verdict: the stored results fail the contract: ")
+    assert v["status"] == "no_verdict" and v["message"].startswith("No conclusion: the stored results fail the contract: ")
     assert "nrr.overall_pct" in v["message"] and "106" not in v["message"]
 
 
@@ -443,7 +453,12 @@ def test_the_fixture_gaps_are_the_three_path_to_plan_items_and_say_what_they_blo
 
 
 def test_a_gap_that_blocks_register_claims_names_their_ranks_and_sorts_first():
-    rows, gaps = _gaps("B", top=[r["claim_id"] for r in register(RUNS["B"])[:5]])
+    run = copy.deepcopy(RUNS["B"])
+    for entry in run["claims"]:                 # the win rate claim, dated at the as-of month: a claim with no period is not matched
+        if entry["claim_id"] == "c11":
+            entry["candidate"].update(target_date="2024-02", period_text="Feb 2024")
+    rows = register(run)
+    gaps = vd.data_gaps(results_for(run), rows, [r["claim_id"] for r in rows[:5]])
     first = gaps[0]
     assert first["item"] == "Sales cycle & win rate" and first["blocks_top5"] == 1
     assert first["why"].startswith("Blocks Sales cycle and Win rate; claims #1. ")
@@ -555,7 +570,7 @@ def test_a_use_of_funds_row_is_never_in_the_proposal_the_top_5_or_the_verdict():
     rows = [funds, *[row(i + 2, "Verified") for i in range(5)]]
     assert vd.proposal(rows) == [f"r{i}" for i in range(2, 7)] and vd.banner_ids(rows) == vd.proposal(rows)
     v = vd.verdict(rows, {"reporting_currency": "EUR"}, {"claim_ids": vd.proposal(rows)})
-    assert (v["status"], v["outcome"]) == ("ok", "Underwrite") and "r1" not in [f["claim_id"] for f in v["five"]]
+    assert (v["status"], v["outcome"]) == ("ok", "Selected claims supported") and "r1" not in [f["claim_id"] for f in v["five"]]
     with pytest.raises(ValueError):
         vd.check_top5(rows, ["r1", *vd.proposal(rows)[:4]])
     only = [funds]
@@ -601,7 +616,7 @@ def test_an_acquisition_channels_row_is_never_in_the_proposal_the_top_5_or_the_v
     rows = [channel, *[row(i + 2, "Verified") for i in range(5)]]
     assert vd.proposal(rows) == [f"r{i}" for i in range(2, 7)] and vd.banner_ids(rows) == vd.proposal(rows)
     v = vd.verdict(rows, {"reporting_currency": "EUR"}, {"claim_ids": vd.proposal(rows)})
-    assert (v["status"], v["outcome"]) == ("ok", "Underwrite") and "r1" not in [f["claim_id"] for f in v["five"]]
+    assert (v["status"], v["outcome"]) == ("ok", "Selected claims supported") and "r1" not in [f["claim_id"] for f in v["five"]]
     with pytest.raises(ValueError):
         vd.check_top5(rows, ["r1", *vd.proposal(rows)[:4]])
     assert vd.proposal([channel]) == [] and vd.top5_state([channel], None)["in_force"] == []

@@ -5,12 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Provenance } from "@/components/Provenance";
 import DateField from "@/components/DateField";
-import { answerDefinitionCheck, answerTurnover, claimsCsvUrl, getClaimRegister, updateClaimInputs } from "@/lib/api";
+import { answerDefinitionCheck, answerTurnover, claimsCsvUrl, downloadFile, getClaimRegister, updateClaimInputs } from "@/lib/api";
 import {
   DEFINITION_ANSWERS, DOWNLOAD_LABEL, labelText, GATE_BUDGET_MAX, GATE_DIRECTIONS, GATE_METRIC_MAX, GATE_METRIC_PLACEHOLDER, GATE_NEEDED, KEY_GATE_LABEL, NO_METRIC, OTHER_DECISION, PREFILLED, gateDraft,
   REGISTER_COLUMNS, REGISTER_COLUMN_WIDTHS, REGISTER_HEADING, SET_GATE_LABEL, VAS_LABEL, TURNOVER_QUESTION, answerReady, reasonsFor, claimCellText, rateHover, takeRateText, evidenceLines, gapText, gateContext, gateEdit, metricOptions, needsMetricName,
-  observedText, overlapsText, readingText, registerRows, segmentOptions, valueAtStakeText,
+  observedText, overlapsText, readingText, registerRows, segmentOptions, valueAtStakeText, COLUMN_EXPLAINERS, EVIDENCE_SUBTITLE, LABEL_STYLE,
+  GROWTH_BASES, SET_GROWTH_BASIS, growthBasisLabel,
 } from "@/lib/claimRegister";
+import { missingText } from "@/lib/periods";
 import { CALCULATE_CLASS } from "@/lib/chatUpload";
 import { useGateEdits } from "@/lib/useGateEdits";
 import { describeRequestError } from "@/lib/requestError";
@@ -21,12 +23,6 @@ import { NO_DATE } from "@/lib/deckClaims";
 // The button the dropdown points at is drawn like Map and Compute; the other is the same style, paler. Any other reason: both pale.
 const ACTIVE_REASON = { deck_says_gross_revenue: "revenue", deck_says_processed_volume: "volume" };
 const selectClass ="h-8 rounded-md border border-[#E5E7EB] bg-white px-2 text-xs max-w-[11rem]";
-const LABEL_STYLE = {
-  Verified: "text-emerald-800 border-emerald-500/50 bg-emerald-50",
-  Contradicted: "text-rose-800 border-rose-500/50 bg-rose-50",
-  Unverified: "text-amber-800 border-amber-500/50 bg-amber-50",
-  Unsupported: "text-slate-700 border-slate-400/60 bg-slate-50",
-};
 
 // The options of a select, with the stored choice kept in the list even when it is no longer offered.
 const withCurrent = (options, current) => (options.includes(current) ? options : [...options, current]);
@@ -198,6 +194,19 @@ export function DefinitionCell({ row, onAnswer, heading }) {
   );
 }
 
+/** The one-click "Set growth basis" of a growth claim whose basis is unknown (docs/specs/dates-and-periods.md section 5). */
+export function GrowthBasisCell({ row, onSet }) {
+  return (
+    <div className="mt-1 flex flex-nowrap items-center gap-1.5" data-testid="register-growth-basis">
+      <span className="text-slate-800">{SET_GROWTH_BASIS}</span>
+      {GROWTH_BASES.map(([value, label]) => (
+        <Button key={value} size="sm" variant="outline" className="h-7 shrink-0" data-testid={`growth-basis-${value}`}
+          onClick={() => onSet(row, { growth_basis: value }).catch(() => {})}>{label}</Button>
+      ))}
+    </div>
+  );
+}
+
 /** The claim register of one audit, in the order the server ranks it (docs/specs/claim-matching.md section 8). */
 export default function ClaimRegister({ auditId, results, onChanged }) {
   const [rows, setRows] = useState(null);
@@ -244,7 +253,8 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
         <div className="flex gap-2">
         <Button size="sm" onClick={saveAll} className="h-8 bg-sky-600 hover:bg-sky-500" data-testid="register-gates-save-all">Save all gates</Button>
         <Button asChild variant="outline" size="sm" className="h-8">
-          <a href={claimsCsvUrl(auditId)} data-testid="claim-register-csv"><Download className="h-3.5 w-3.5 mr-1.5" />{DOWNLOAD_LABEL}</a>
+          <a href={claimsCsvUrl(auditId)} data-testid="claim-register-csv"
+            onClick={(e) => { e.preventDefault(); downloadFile(`/audits/${auditId}/claims.csv`, "claims.csv").catch(() => toast.error("The CSV could not be downloaded.")); }}><Download className="h-3.5 w-3.5 mr-1.5" />{DOWNLOAD_LABEL}</a>
         </Button>
         </div>
       </div>
@@ -259,7 +269,12 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
             <colgroup>{REGISTER_COLUMN_WIDTHS.map((w, i) => <col key={REGISTER_COLUMNS[i]} style={{ width: `${w}%` }} />)}</colgroup>
             <thead>
               <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500 border-b border-[#E5E7EB]">
-                {REGISTER_COLUMNS.map((c) => <th key={c} className="py-2 px-3 font-medium">{c}</th>)}
+                {REGISTER_COLUMNS.map((c) => (
+                  <th key={c} className="py-2 px-3 font-medium" title={COLUMN_EXPLAINERS[c]}>
+                    {c}
+                    {c === "Evidence status" && <div className="normal-case tracking-normal text-[10px] text-slate-400">{EVIDENCE_SUBTITLE}</div>}
+                  </th>
+                ))}
               </tr>
             </thead>
             {/* one tbody per claim: the claim's line, then a second smaller grey line spanning the row */}
@@ -273,6 +288,7 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
                 [`${VAS_LABEL} ${valueAtStakeText(row)}`, "register-value-at-stake"],
                 [`Overlaps with ${overlapsText(row, rows)}`, "register-overlaps"],
                 [row.reason, "register-evidence-reason"],
+                ...(growthBasisLabel(row.growth_basis) ? [[`Growth basis ${growthBasisLabel(row.growth_basis)}`, "register-growth-basis-set"]] : []),
               ];
               return (
                 <tbody key={row.claim_id} className="border-b border-[#F1F5F9] align-top break-words" data-testid="claim-register-row">
@@ -295,6 +311,10 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
                         <Provenance source={row.observed_source}>{observed.value}</Provenance>
                         {observed.at && <span className="text-[10px] text-slate-500"> · {observed.at}</span>}
                       </div>
+                      {/* the months of the claim's period the data lacks, beside the value (dates-and-periods.md section 4) */}
+                      {missingText({ missing: row.months_missing }) && (
+                        <div className="text-[10px] font-mono text-amber-800" data-testid="register-months-missing">{missingText({ missing: row.months_missing })}</div>
+                      )}
                       <select value={row.metric ?? NO_METRIC} onChange={(e) => save(row, { metric: e.target.value }).catch(() => {})} className={`${selectClass} w-full mt-1`} data-testid="register-metric">
                         {withCurrent(metricOptions(row), row.metric ?? NO_METRIC).map((m) => (
                           <option key={m} value={m}>{m === NO_METRIC ? "none" : m}</option>
@@ -302,6 +322,7 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
                       </select>
                     </td>
                     <td className="pt-2 px-3 font-mono text-slate-800" data-testid="register-gap">{gapText(row, ccy)}</td>
+                    <td className="pt-2 px-3 font-mono text-slate-700"><span data-testid="register-confidence">{row.extraction_confidence || "—"}</span></td>
                     <td className="pt-2 px-3">
                       <span className={`text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-nowrap ${LABEL_STYLE[row.evidence_label] || ""}`} data-testid="register-evidence">
                         {labelText(row)}
@@ -324,6 +345,7 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
                       <div className="text-xs text-slate-700 space-y-1">
                         {row.turnover_state && <TurnoverCell row={row} onAnswer={answer} />}
                         {row.definition_check && <DefinitionCell row={row} onAnswer={answerDefinition} />}
+                        {row.growth_basis === "unknown" && <GrowthBasisCell row={row} onSet={save} />}
                         <GateToggle row={row} ccy={ccy} onSave={save} prefill={prefill[row.claim_id]} budgets={budgets} edits={edits[row.claim_id]} onEdit={onEdit} />
                       </div>
                     </td>

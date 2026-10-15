@@ -265,10 +265,11 @@ def test_no_narrative_no_narrative_sheet():
 def test_the_sheet_states_the_period_and_target_it_was_written_against():
     ws = openpyxl.load_workbook(server.build_export_workbook(_META, RESULTS, None, [_narrative()]))["Narrative - Growth engine"]
     rows = {r[0]: r[1] for r in _sheet_rows(ws) if r[0]}
-    assert rows["As-of month"] == "2026-06 (data through 2026-06-30)"
+    # the evidence end, never "data through" the as-of setting (docs/specs/dates-and-periods.md section 2)
+    assert rows["Evidence to"] == "June 2026" and "As-of month" not in rows
     assert rows["Target ARR and date"] == "5,000,000 EUR by 2027-12-31"
     top = [r[0] for r in _sheet_rows(ws)[:5]]
-    assert top[:1] == ["Growth engine narrative"] and "As-of month" in top, "the period is at the top, not buried"
+    assert top[:1] == ["Growth engine narrative"] and "Evidence to" in top, "the period is at the top, not buried"
 
 
 def test_the_six_sections_are_each_their_own_section():

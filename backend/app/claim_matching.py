@@ -15,7 +15,7 @@ from typing import Dict, List, Optional, Tuple
 
 # The register's fields, in the order of the spec's section 6 (and the CSV header of section 7).
 FIELDS = (
-    "claim_id", "deck_file", "page_ref", "claim_type", "status", "deck_reading", "claimed_value", "claimed_high",
+    "claim_id", "deck_file", "page_ref", "claim_type", "status", "deck_reading", "extraction_confidence", "claimed_value", "claimed_high",
     "claim_direction", "unit", "currency", "claimed_converted", "claimed_converted_high", "fx_rate", "fx_date", "period", "period_start", "period_end", "period_note", "segment", "segment_set_by", "metric",
     "metric_set_by", "direction", "observed_value", "observed_at", "observed_source", "gap", "gap_normalised",
     "gap_kind", "gloss", "evidence_label", "reason", "tolerance", "rank", "value_at_stake_arr", "shortfall",
@@ -23,7 +23,7 @@ FIELDS = (
     "gate_budget_decision", "gate_date", "gate_saved", "gate_metric_name", "gate_direction", "key_gate", "gate_needed",
     "as_of_month", "as_of_defaulted", "turnover_state", "turnover_note", "turnover_set_by", "turnover_reason",
     "implied_take_rate", "implied_take_rate_source", "turnover_suggested", "deck_revenue_note", "definition_check",
-    "definition_question",
+    "definition_question", "period_coverage", "months_missing", "growth_basis", "population", "figure_type", "required_unknown",
 )
 # How the baseline CSV reads each field back (verdict-and-memo.md section 5); a field not listed is text.
 FLOAT_FIELDS = frozenset({"implied_take_rate", "claimed_value", "claimed_high", "claimed_converted", "claimed_converted_high", "fx_rate",
@@ -31,7 +31,7 @@ FLOAT_FIELDS = frozenset({"implied_take_rate", "claimed_value", "claimed_high", 
                           "shortfall", "gate_threshold"})
 INT_FIELDS = frozenset({"rank"})
 BOOL_FIELDS = frozenset({"gate_saved", "key_gate", "gate_needed", "as_of_defaulted"})
-LIST_FIELDS = frozenset({"overlaps_with"})
+LIST_FIELDS = frozenset({"overlaps_with", "months_missing", "required_unknown"})
 SOURCE_FIELDS = frozenset({"observed_source"})
 
 WHOLE, NOT_IN_DATA = "Whole company", "Not in the data"
@@ -57,10 +57,52 @@ DEFINITION_OPEN_REASON = "definition check: the gap is beyond {share} of the cla
 DEFINITION_OPEN_REASON_RATE = "definition check: the gap is beyond {points} percentage points"
 DEFINITION_MISMATCH = "definition mismatch"
 # A Users claim the parser typed from a qualified customers noun (deck-parser.md section 2, George, 2026-10-13); the label is
-# two words of closed lists: the qualifier and the customers keyword.
-QUALIFIED_REASON = "deck label '{label}' is not paying customers; the analyst can edit the type to Customers to test it"
+# two words of closed lists: the qualifier and the customers keyword. It is read against the paying customers and is Inconclusive
+# (docs/specs/evidence-labels.md section 3): the figure is shown, it cannot confirm or contradict a count of other people.
+QUALIFIED_REASON = "population differs: deck label '{label}' is not paying customers; the figure shown is paying customers"
+QUALIFIED_NO_FIGURE = "population differs: deck label '{label}' is not paying customers"     # Unsupported: no figure to show
+POPULATION_PREFIX = "population differs: "
+# docs/specs/evidence-labels.md: the five evidence statuses in screen order, the memo's grouping of them, and the two explainers.
+# frontend/src/lib/evidence_labels.json holds the same, pinned by tests/test_interface_contracts.py.
+EVIDENCE_STATUSES = ("Verified", "Contradicted", "Inconclusive", "Unverified", "Unsupported")
+INCONCLUSIVE = "Inconclusive"
+MEMO_GROUPS = {"Unverified": ["Unverified", "Inconclusive"]}
+EXTRACTION_EXPLAINER = "How well the app read this figure from the deck. Not a statement about whether it is true."
+EVIDENCE_EXPLAINER = "How this claim compares with the company data supplied for this audit. Agreement is not independent verification."
+NOT_VERIFIED = ("Unverified", "Inconclusive", "Unsupported", "Contradicted")      # the labels whose row needs a gate
+# docs/specs/dates-and-periods.md section 4: claim-period coverage, measured on the months the observed figure reads.
+COVERED, PARTLY_COVERED, NOT_COVERED = "Covered", "Partly covered", "Not covered"
+NOT_COVERED_REASON = "claim period not in supplied data: {detail}"
+PARTLY_REASON = "claim period partly covered (months missing: {months})"
+PARTIAL_DETAIL = "{month} is possibly partial (tick 'Last month is complete' to use it)"
+AFTER_SOURCE_DETAIL = "after the latest valid source period, {month}"
+# docs/specs/claim-types-and-correction.md section 2: the fields a claim must know before it is matched.
+FIGURE_TYPES = ("actual", "target", "unknown")
+REQUIRED_REASON = "required field unknown: {fields}; set it with Edit in the claims list"
+TARGET_REASON = "target figure: the deck states a plan for this period, not a result"
+POPULATION_REASON = "population differs: the claim counts {population}; the figure shown counts {measured}"
+POPULATION_WORDS = {"paying": "paying customers", "registered": "registered users", "active": "active users",
+                    "deals won": "deals won", "all closed": "all closed deals", "open": "open deals"}
+METRIC_POPULATION = {"Customer count": "paying", "Customer growth": "paying", "Median sales cycle": "deals won",
+                     "Win rate": "all closed"}
+POPULATION_TYPES = ("customers", "users", "user_growth")
+# The types whose figure is an amount: with no currency and no unit, the currency is the field still unknown.
+MONEY_TYPES = ("revenue", "costs", "burn", "cash", "gross_profit", "ebitda", "net_profit", "ltv", "cac")
+# The types whose period may stay unknown (the plan's table: optional or "–").
+PERIOD_OPTIONAL_TYPES = ("market", "use_of_funds", "acquisition_channels", "product")
+# Section 5: growth claims. The basis is the analyst's, else the parser's, else read from the claim's own words on read.
+GROWTH_BASES = ("mom", "yoy", "annualised", "cumulative")
+GROWTH_TYPES = ("revenue_growth", "growth", "user_growth")
+GROWTH_UNKNOWN_REASON = "growth basis unknown: set the growth basis"
+GROWTH_WINDOW_REASON = "growth window not stated"
+GROWTH_BASE_REASON = "growth base is not positive"
+GROWTH_RULES = {"mom": "MoM growth = v(e) ÷ v(e−1) − 1", "yoy": "YoY growth = v(e) ÷ v(e−12) − 1",
+                "yoy_sum": "YoY growth = revenue of the period ÷ revenue of the same months a year earlier − 1",
+                "cumulative": "Cumulative growth = v(e) ÷ v(s) − 1",
+                "annualised": "Annualised growth = (v(e) ÷ v(s))^(12 ÷ (e − s)) − 1"}
 SUGGESTION = "AI suggestion, not verified"
 ANALYST_ENTERED = "analyst-entered"
+ADDED_FROM_DECK = "added-from-deck"     # a line the analyst picked on the stored deck page (claim-types-and-correction.md section 5)
 DAYS_PER_WEEK, DAYS_PER_MONTH = 7.0, 30.44
 RATE_TOLERANCE_PP, AMOUNT_TOLERANCE = 1.0, 0.05
 BUDGET_DECISION_MAX = 200
@@ -86,7 +128,18 @@ METRICS: Dict[str, dict] = {
     "CAC payback": dict(kind="quarter", unit="months", direction="lower", seg=False, missing=("cac payback",)),
     # Section 11: no engine source exists, so a claim measured here is always Unsupported.
     "Transaction volume": dict(kind="sum", unit="currency", direction="higher", seg=False, missing=()),
+    # dates-and-periods.md section 5: growth of a monthly series on the claim's basis, in percentage points
+    "Revenue growth": dict(kind="growth", unit="%", direction="higher", seg=False, missing=("arr / mrr",), base="Revenue"),
+    "ARR growth": dict(kind="growth", unit="%", direction="higher", seg=False, missing=("arr / mrr",), base="ARR"),
+    "MRR growth": dict(kind="growth", unit="%", direction="higher", seg=False, missing=("arr / mrr",), base="MRR"),
+    "Customer growth": dict(kind="growth", unit="%", direction="higher", seg=False, missing=("arr / mrr",), base="Customer count"),
 }
+# The metric_periods block each metric's figures are read from (dates-and-periods.md section 3); the revenue-file ones end at the
+# latest valid source period.
+PERIOD_BLOCK = {"Revenue": "revenue_series", "ARR": "mrr_series", "MRR": "mrr_series", "Customer count": "customers_series",
+                "New MRR": "new_mrr_by_quarter", "NRR (12-month)": "nrr", "Gross revenue churn": "gross_churn",
+                "Gross margin": "cac_payback", "CAC payback": "cac_payback"}
+REVENUE_FILE_METRICS = ("Revenue", "ARR", "MRR", "Customer count", "New MRR")
 VOLUME = "Transaction volume"
 VOLUME_REASON = "no engine volume source for transaction volume"
 TURNOVER_REASONS = ("deck_says_gross_revenue", "deck_says_processed_volume", "file_confirms", "other")
@@ -114,6 +167,7 @@ _ACV = re.compile(r"\bACVs?\b")
 _SALES_CYCLE = re.compile(r"(?i)\bsales cycles?\b")
 _WIN_RATE = re.compile(r"(?i)\bwin rates?\b")
 _PAYBACK = re.compile(r"(?i)\bpayback\b")
+_CUSTOMERS = re.compile(r"(?i)\b(?:customers?|clients?|subscribers?|accounts?)\b")
 
 
 # --- months and periods ----------------------------------------------------------------------------------------------
@@ -375,6 +429,10 @@ EVIDENCE: Dict[str, Tuple[str, str, Optional[str]]] = {
     "Win rate": ("Win rate", "win_rate.win_rate_pct", None),
     "Gross margin": ("CAC Payback by Quarter", "cac_payback.quarters.{q}.gross_margin_pct", None),
     "CAC payback": ("CAC Payback by Quarter", "cac_payback.quarters.{q}.L{l}.months", None),
+    "Revenue growth": ("Revenue by month", "revenue_series.data.total", None),
+    "ARR growth": ("Monthly MRR by Segment", "mrr_series.data.total", None),
+    "MRR growth": ("Monthly MRR by Segment", "mrr_series.data.total", None),
+    "Customer growth": ("Customers", "customers_series.data.total", None),
 }
 MISSING_KEY = "missing_data"
 
@@ -461,8 +519,10 @@ def _claimed_text(c: dict) -> str:
 
 def needs_metric_name(row: dict) -> bool:
     """Whether a row's gate is saved only with the analyst's metric name and direction: the row has no app metric (none set, or
-    one that does not fit the claim's unit). The screen asks for the two fields by the same rule."""
-    return row.get("metric") not in METRICS or row.get("reason") in NO_APP_METRIC
+    one that does not fit the claim's unit), or the app's metric counts another population than the claim (evidence-labels.md
+    section 3). The screen asks for the two fields by the same rule."""
+    return row.get("metric") not in METRICS or row.get("reason") in NO_APP_METRIC \
+        or str(row.get("reason") or "").startswith(POPULATION_PREFIX)
 
 
 def _is_saved(inputs: dict, needs_name: bool) -> bool:
@@ -578,8 +638,10 @@ def propose_metric(claim_type: str, claim_unit: Optional[str], text: str) -> Opt
             metric = "ARR"
         elif _REVENUE.search(plain) and not re.search(r"(?i)\brecurring revenue\b", plain):
             metric = "Revenue"
-    elif claim_type == "customers":
+    elif claim_type in ("customers", "users"):          # users: the population decides (claim-types-and-correction.md section 2)
         metric = "Customer count"
+    elif claim_type == "user_growth":
+        metric = "Customer growth"
     elif claim_type == "retention":
         metric = "NRR (12-month)" if _NRR.search(text) else "Gross revenue churn" if _CHURN.search(text) else None
     elif claim_type == "sales":
@@ -587,6 +649,15 @@ def propose_metric(claim_type: str, claim_unit: Optional[str], text: str) -> Opt
                   else "Win rate" if _WIN_RATE.search(text) else "CAC payback" if _PAYBACK.search(text) else None)
     elif claim_type == "gross_margin":
         metric = "Gross margin"
+    elif claim_type in ("revenue_growth", "growth"):     # dates-and-periods.md section 5: growth of the series the claim names
+        if _MRR.search(text) and not _NEW_MRR.search(text):
+            metric = "MRR growth"
+        elif _ARR.search(text):
+            metric = "ARR growth"
+        elif claim_type == "revenue_growth" or _REVENUE.search(text):
+            metric = "Revenue growth"
+        elif _CUSTOMERS.search(text):
+            metric = "Customer growth"
     return metric if metric and _fits(METRICS[metric]["unit"], claim_unit) else None
 
 
@@ -602,6 +673,8 @@ def _page_ref(sources: list) -> str:
 def _deck_reading(c: dict) -> str:
     if c.get("origin") == "analyst":
         return ANALYST_ENTERED                          # kept after a later edit: the claim never came from the deck
+    if c.get("origin") == "deck_analyst":
+        return ADDED_FROM_DECK                          # kept after a later edit: the analyst picked the line
     if c.get("status") == "edited":
         return "edited"                                 # an edit clears the AI label (deck-parser.md section 6)
     if c.get("origin") == "ai":
@@ -650,12 +723,60 @@ def deck_revenue_hint(c: dict, peers: List[dict]) -> Optional[dict]:
                                        f"{f' ({where})' if where else ''}; implied take rate {rate:.0%}, derived, not verified"}
 
 
+def _population(c: dict, metric: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+    """(population, set by) of a claim (claim-types-and-correction.md section 2): the analyst's or the parser's, else what the type's
+    keyword means (a customers keyword counts paying customers; a qualifier names registered users) or, for sales, the metric's own
+    population. None when nothing says it (plain users)."""
+    from .decks.claims import QUALIFIERS
+    if c.get("population"):
+        return c["population"], c.get("population_set_by") or "parser"
+    kind = c.get("claim_type")
+    if kind == "customers":
+        return "paying", "python"
+    if kind == "users" and c.get("qualifier") in QUALIFIERS:
+        return "registered", "python"
+    if kind == "sales" and metric in METRIC_POPULATION:
+        return METRIC_POPULATION[metric], "python"
+    return None, None
+
+
+def _figure_type(c: dict, text: str, end: Optional[int], as_of_i: Optional[int]) -> Optional[str]:
+    """The analyst's or the parser's figure type, a target cue in the claim's words, else read from the period: a period after the
+    as-of month is a target, any other an actual (claim-types-and-correction.md section 2). None while the period is unknown."""
+    from .decks.claims import target_cue
+    if c.get("figure_type") in FIGURE_TYPES:
+        return c["figure_type"]
+    if target_cue(text):
+        return "target"
+    if end is not None and as_of_i is not None:
+        return "target" if end > as_of_i else "actual"
+    return None
+
+
+def candidate_fields(c: dict, results: Optional[dict]) -> dict:
+    """The figure type, population and growth basis of a deck candidate as the register reads them, for the editor and for the
+    previous value of an edit (claim-types-and-correction.md section 3). Nothing is stored."""
+    text = f"{c.get('snippet') or ''} {c.get('label_from') or ''}"
+    as_of = (results or {}).get("as_of_month")
+    metric = propose_metric(c.get("claim_type"), _claim_unit(c), text)
+    out = {"figure_type": _figure_type(c, text, _month_of(c.get("period_end")), _mi(as_of) if as_of else None),
+           "population": _population(c, metric)[0], "growth_basis": None}
+    if c.get("claim_type") in GROWTH_TYPES:
+        from .decks.claims import growth_basis
+        shown = ((c.get("claim_inputs") or {}).get(c.get("id")) or {}).get("growth_basis")     # the register row's one-click choice
+        out["growth_basis"] = shown or c.get("growth_basis") or growth_basis(text)
+    return out
+
+
 def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = None) -> dict:
     inputs = (c.get("claim_inputs") or {}).get(c["claim_id"]) or {}
     as_of = results.get("as_of_month")
     as_of_i = _mi(as_of) if as_of else None
     currency = (c.get("currency") or None)
-    claim_unit = _claim_unit(c)
+    # an amount with no currency and no unit: the currency is the field still unknown (claim-types-and-correction.md section 2)
+    currency_unknown = c.get("claim_type") in MONEY_TYPES and not currency and not (c.get("unit") or "").strip() \
+        and c.get("value") is not None
+    claim_unit = "currency" if currency_unknown else _claim_unit(c)
     text = f"{c.get('snippet') or ''} {c.get('label_from') or ''}"
     revenue_segments, data_segments = _segments(results)
 
@@ -664,12 +785,18 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         metric, metric_by = (None if inputs["metric"] == NO_METRIC else inputs["metric"]), "analyst"
     else:
         metric, metric_by = propose_metric(c.get("claim_type"), claim_unit, text), "python"
+    from .decks.claims import QUALIFIERS, qualified_label
+    population, population_by = _population(c, metric)
+    qualified = c.get("claim_type") == "users" and c.get("qualifier") in QUALIFIERS and population_by != "analyst"
+    # evidence-labels.md section 3, claim-types-and-correction.md section 2: the figure counts other people than the claim
+    population_differs = metric in METRIC_POPULATION and population is not None and population != METRIC_POPULATION[metric]
     if inputs.get("segment"):
         segment, segment_by = inputs["segment"], "analyst"
     else:
         named = [s for s in revenue_segments if re.search(rf"(?i)(?<!\w){re.escape(s)}(?!\w)", text)]
         segment, segment_by = (named[0] if len(named) == 1 else WHOLE), "python"
     start, end = _month_of(c.get("period_start")), _month_of(c.get("period_end"))
+    figure_type = _figure_type(c, text, end, as_of_i)
     turn = None
     if metric_by == "python" and _is_turnover_claim(c, text):       # section 11: never revenue or volume by default
         fx0 = fx_view(c, settings, as_of)
@@ -688,15 +815,33 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         claim_id=c["claim_id"], deck_file=c.get("file"), page_ref=_page_ref(c.get("sources")),
         claim_type=c.get("claim_type"), status=c.get("status"), deck_reading=_deck_reading(c), claimed_value=low,
         claimed_high=high, claim_direction=c.get("claim_direction") if low is None else None, unit=c.get("unit"),
+        extraction_confidence=c.get("extraction_confidence"),
         currency=currency, period=period,
         period_start=str(c["period_start"]) if c.get("period_start") else None,
         period_end=str(c["period_end"]) if c.get("period_end") else None,
         period_note=None if c.get("target_date") else NO_PERIOD, segment=segment, segment_set_by=segment_by,
         metric=metric, metric_set_by=metric_by, direction=spec["direction"] if spec else None,
         tolerance=tolerance_text(metric) if spec else None, as_of_month=as_of,
-        as_of_defaulted=not settings.get("as_of_month"), overlaps_with=[], gate_date=inputs.get("gate_date"),
+        as_of_defaulted=not settings.get("as_of_month"), overlaps_with=[], months_missing=[], gate_date=inputs.get("gate_date"),
         gate_threshold=inputs.get("gate_threshold"), gate_budget_decision=inputs.get("gate_budget_decision"),
         gate_metric_name=inputs.get("gate_metric_name"), gate_direction=inputs.get("gate_direction"))
+    if c.get("claim_type") in GROWTH_TYPES:            # dates-and-periods.md section 5: the analyst's, the parser's, or the words'
+        from .decks.claims import growth_basis
+        out["growth_basis"] = inputs.get("growth_basis") or c.get("growth_basis") or growth_basis(text)
+    out.update(population=population, figure_type=figure_type)
+    # the required fields still Unknown, in the order of the plan's table (claim-types-and-correction.md section 1)
+    required = []
+    if currency_unknown:
+        required.append("currency")
+    if not c.get("target_date") and c.get("claim_type") not in PERIOD_OPTIONAL_TYPES:
+        required.append("period")
+    if population is None and (c.get("claim_type") in POPULATION_TYPES or metric in ("Median sales cycle", "Win rate")):
+        required.append("population")
+    if figure_type == "unknown":
+        required.append("figure type")
+    if out["growth_basis"] == "unknown":
+        required.append("growth basis")
+    out["required_unknown"] = required
     if turn:
         out.update(turnover_state=turn["state"], turnover_note=turn["note"], turnover_set_by=turn["set_by"],
                    turnover_reason=turn["reason"])
@@ -705,6 +850,8 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
     shown_claim: List[Optional[float]] = [None]         # the claimed figure the gate sentence names, once it is known
 
     def finish(label: Optional[str], reason: str) -> dict:
+        if qualified and population_differs and label == "Unsupported":     # no paying-customer figure: the reason names the population
+            reason = QUALIFIED_NO_FIGURE.format(label=qualified_label(text, c["qualifier"]))
         out.update(evidence_label=label, reason=reason)
         if out["evidence_analysis"] is None and reason.startswith("Missing:") and metric in METRICS:
             item = _missing_item(results, metric)
@@ -727,9 +874,8 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         out["gate_needed"] = False
         return out
     if not spec:
-        from .decks.claims import QUALIFIERS, qualified_label
-        if out["claim_type"] == "users" and c.get("qualifier") in QUALIFIERS:
-            return finish("Unsupported", QUALIFIED_REASON.format(label=qualified_label(text, c["qualifier"])))
+        if qualified:                                   # a figure that is not a count: nothing to read
+            return finish("Unsupported", QUALIFIED_NO_FIGURE.format(label=qualified_label(text, c["qualifier"])))
         return finish("Unsupported", "no metric")
     if metric == VOLUME:                        # never matched to engine revenue; the take rate is derived, never Verified
         if turn and turn["file_revenue"] is not None and low and not c.get("value_high"):
@@ -740,6 +886,8 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
                            implied_take_rate_source=(f"revenue: {src.get('file')} · {src.get('sheet')} · {src.get('rows')}; "
                                                      f"volume: {out['deck_file']} · {out['page_ref']}"))
         return finish("Unsupported", VOLUME_REASON)
+    if [f for f in required if f != "growth basis"]:      # not matched until every required field is known (section 2)
+        return finish("Unverified", REQUIRED_REASON.format(fields=", ".join(required)))
     if not _fits(spec["unit"], claim_unit):
         return finish("Unsupported", "metric does not fit the claim's unit")
     if segment == NOT_IN_DATA or (segment != WHOLE and segment not in data_segments):
@@ -751,8 +899,19 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
 
     if fx and fx["rate"] is None:
         return finish("Unverified", f"{FX_NEEDED}: {currency}→{fx['currency']}")       # names the pair (the rate to set)
-    figures = _Figures(results, metric, segment)
-    observed, observed_at, source, why = _observe(figures, spec, metric, start, end, as_of_i)
+    span, cov = _Span(results, metric), {}
+    if spec["kind"] == "growth":                        # dates-and-periods.md section 5: tested on its basis only
+        if out["growth_basis"] not in GROWTH_BASES:
+            return finish("Unverified", GROWTH_UNKNOWN_REASON)
+        figures = _Figures(results, spec["base"], segment)
+        observed, observed_at, source, why = _growth(figures, spec, out["growth_basis"], start, end, as_of_i, span, cov)
+    else:
+        figures = _Figures(results, metric, segment)
+        observed, observed_at, source, why = _observe(figures, spec, metric, start, end, as_of_i, span, cov)
+    if cov:
+        out.update(period_coverage=cov["coverage"], months_missing=cov["missing"])
+    partly = cov.get("coverage") == PARTLY_COVERED
+    partly_reason = PARTLY_REASON.format(months=_month_ranges([_mi(m) for m in cov.get("missing") or ()])) if partly else None
     if isinstance(observed, str):                       # a verdict instead of a figure
         return finish(*observed.split("|", 1))
     forecast = end is not None and as_of_i is not None and end > as_of_i
@@ -778,6 +937,15 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         out.update(evidence_analysis=found[0], evidence_source_key=found[1])
     if claimed_low is None:
         return finish("Unsupported", "no claimed value")
+    if partly:                                          # section 4: the figure over the months present, no test
+        return finish(INCONCLUSIVE, partly_reason)
+    if figure_type == "target" and not forecast:        # a plan for a period that has passed: shown, never tested as a result
+        return finish("Unverified", TARGET_REASON)
+    if population_differs and not forecast:     # the figure is shown; it cannot confirm or contradict a count of other people
+        if qualified:
+            return finish(INCONCLUSIVE, QUALIFIED_REASON.format(label=qualified_label(text, c["qualifier"])))
+        return finish(INCONCLUSIVE, POPULATION_REASON.format(population=POPULATION_WORDS.get(population, population),
+                                                             measured=POPULATION_WORDS[METRIC_POPULATION[metric]]))
     claimed = claimed_low
     if claimed_high is not None:                        # a range is tested at the end nearest the observed value
         lo, hi = sorted((claimed_low, claimed_high))
@@ -848,7 +1016,7 @@ def _gate(out: dict, c: dict, inputs: dict, spec: Optional[dict], claim_unit: Op
     saved = _is_saved(inputs, needs_name=not app_metric)
     out["gate_saved"] = saved
     out["key_gate"] = bool(inputs.get("key_gate")) and saved
-    out["gate_needed"] = out["evidence_label"] in ("Unverified", "Unsupported", "Contradicted") and not saved
+    out["gate_needed"] = out["evidence_label"] in NOT_VERIFIED and not saved
     if not saved:
         return
     if app_metric:
@@ -871,11 +1039,65 @@ def _gate(out: dict, c: dict, inputs: dict, spec: Optional[dict], claim_unit: Op
         out["gate_sentence"] = f"{start} Not yet observed: {out['reason']}; claimed {_claimed_text(c)} ({period})."
 
 
-def _observe(figures: "_Figures", spec: dict, metric: str, start: Optional[int], end: Optional[int], as_of_i: Optional[int]):
-    """(observed, observed_at, source, reason) read as table 2b says. `observed` is a number, None, or a
-    "Label|reason" verdict string when the claim cannot be tested; None with observed_at "missing" when the engine
-    holds no figure for the metric at all."""
+class _Span:
+    """The months a metric's figures can be read for (dates-and-periods.md sections 3 and 4): first..last of its stored
+    metric_periods block, without the missing months; for NRR and growth a Possibly partial month is not in the data. With no
+    stored periods (results computed before them) every month the series holds counts."""
+
+    def __init__(self, results: dict, metric: str):
+        spec = METRICS.get(metric) or {}
+        self.metric = spec.get("base", metric)
+        periods = (results.get("metric_periods") or {}).get(PERIOD_BLOCK.get(self.metric) or "")
+        source = results.get("source_period") or {}
+        self.known = periods is not None
+        self.first = _mi(periods["first"]) if periods else None
+        self.last = _mi(periods["last"]) if periods else None
+        self.missing = {_mi(m) for m in periods["missing"]} if periods else set()
+        partial_read = metric in ("NRR (12-month)", "Gross revenue churn") or spec.get("kind") == "growth"
+        self.partial = _mi(source["month"]) if partial_read and source.get("status") == "Possibly partial" and source.get("month") else None
+        self.evidence_to = source.get("evidence_to")
+
+    def has(self, m: int, values: Optional[dict] = None) -> bool:
+        if m == self.partial:
+            return False
+        if not self.known:
+            return values is None or values.get(_ms(m)) is not None
+        return self.first <= m <= self.last and m not in self.missing
+
+    def last_month(self, fallback: int) -> int:
+        """The last month a figure can be read at, never after `fallback` (the as-of month)."""
+        if not self.known:
+            return fallback
+        last = self.last if self.partial is None or self.last < self.partial else self.partial - 1
+        return min(last, fallback)
+
+    def detail(self, read: List[int]) -> str:
+        """Why none of the months `read` is in the data (section 4, "Not covered")."""
+        name = _short(self.metric)
+        if self.known and all(m < self.first for m in read):
+            return f"before {name}'s first month, {_ms(self.first)}"
+        if self.partial is not None and max(read) == self.partial:
+            return PARTIAL_DETAIL.format(month=_ms(self.partial))
+        if self.known and all(m > self.last for m in read):
+            if self.metric in REVENUE_FILE_METRICS and self.evidence_to:
+                return AFTER_SOURCE_DETAIL.format(month=self.evidence_to)
+            return f"after {name}'s last month, {_ms(self.last)}"
+        return f"months missing: {_month_ranges(sorted(read))}"
+
+
+def _not_covered(span: "_Span", read: List[int], cov: dict) -> str:
+    cov.update(coverage=NOT_COVERED, missing=[_ms(m) for m in sorted(read)])
+    return f"Unverified|{NOT_COVERED_REASON.format(detail=span.detail(read))}"
+
+
+def _observe(figures: "_Figures", spec: dict, metric: str, start: Optional[int], end: Optional[int], as_of_i: Optional[int],
+             span: Optional["_Span"] = None, cov: Optional[dict] = None):
+    """(observed, observed_at, source, reason) read as table 2b says, with the claim-period coverage of dates-and-periods.md
+    section 4 written into `cov` (coverage, missing months). `observed` is a number, None, or a "Label|reason" verdict string
+    when the claim cannot be tested; None with observed_at "missing" when the engine holds no figure for the metric at all."""
     kind = spec["kind"]
+    cov = {} if cov is None else cov
+    span = span or _Span(figures.results, metric)
     if as_of_i is None:
         return None, "missing", None, None
     forecast = end is not None and end > as_of_i
@@ -887,6 +1109,8 @@ def _observe(figures: "_Figures", spec: dict, metric: str, start: Optional[int],
         value, source, why = got
         if end is not None and not forecast and end != as_of_i:
             return "Unsupported|the figure is computed at the as-of month, not for this period", None, None, None
+        if value is not None:
+            cov.update(coverage=COVERED, missing=[])
         return value, _ms(as_of_i), source, why or "not computed"
 
     if kind == "month":
@@ -906,10 +1130,16 @@ def _observe(figures: "_Figures", spec: dict, metric: str, start: Optional[int],
             return "Unsupported|segment not in the data", None, None, None
         months = sorted(values, key=_mi)
         first = months[0] if months else None
-        target = as_of_i if end is None or forecast else end
-        if first is not None and target < _mi(first):
-            return f"Unverified|before {_short(metric)}'s first month, {first}", None, None, None
+        # no period, or a forecast: the latest figure, at the evidence end, never at an as-of month the data does not reach
+        target = span.last_month(as_of_i) if end is None or forecast else end
+        if first is not None and target < _mi(first) and not span.known:
+            return f"Unverified|{NOT_COVERED_REASON.format(detail=span.detail([target]))}", None, None, None
+        if not forecast and not span.has(target, values if not span.known else None):
+            if span.known or target == span.partial:
+                return _not_covered(span, [target], cov), None, None, None
         value = values.get(_ms(target))
+        if value is not None and not forecast:
+            cov.update(coverage=COVERED, missing=[])
         return value, _ms(target), source, why or "not computed for that month"
 
     if kind == "sum":
@@ -923,17 +1153,21 @@ def _observe(figures: "_Figures", spec: dict, metric: str, start: Optional[int],
             return "Unverified|no period stated", None, None, None
         months = sorted(values, key=_mi)
         first = _mi(months[0]) if months else None
-        if first is not None and end < first:
-            return f"Unverified|before {_short(metric)}'s first month, {months[0]}", None, None, None
         if forecast:
-            used = [m for m in range(max(start, first or start), as_of_i + 1) if _ms(m) in values]
+            used = [m for m in range(max(start, first or start), as_of_i + 1) if _ms(m) in values and span.has(m, values)]
             if not used:
                 return None, _ms(as_of_i), source, None
         else:
-            used = list(range(start, end + 1))
-            absent = [m for m in used if values.get(_ms(m)) is None]
-            if absent:
-                return f"Unverified|months missing from the data: {_month_ranges(absent)}", None, None, None
+            period = list(range(start, end + 1))
+            used = [m for m in period if span.has(m, values) and values.get(_ms(m)) is not None]
+            absent = [m for m in period if m not in used]
+            if not used:
+                return _not_covered(span, period, cov), None, None, None
+            if absent:                                     # some months of the period are in the data: the figure over them
+                cov.update(coverage=PARTLY_COVERED, missing=[_ms(m) for m in absent])
+                total = round(sum(values[_ms(m)] for m in used), 2)
+                return total, f"{_ms(used[0])} to {_ms(used[-1])} ({len(used)} of {len(period)} months)", source, None
+            cov.update(coverage=COVERED, missing=[])
         total = round(sum(values[_ms(m)] for m in used), 2)
         return total, f"{_ms(used[0])} to {_ms(used[-1])}", source, None
 
@@ -952,11 +1186,62 @@ def _observe(figures: "_Figures", spec: dict, metric: str, start: Optional[int],
             return "Unsupported|the period is not one calendar quarter of the data", None, None, None
         first = min(quarters, key=lambda k: (int(k.split("-Q")[0]), int(k.split("-Q")[1])))
         if _mi(_quarter_first_month(q)) < _mi(_quarter_first_month(first)):
-            return f"Unverified|before {_short(metric)}'s first month, {_quarter_first_month(first)}", None, None, None
+            cov.update(coverage=NOT_COVERED, missing=[_ms(m) for m in range(start, end + 1)])
+            detail = f"before {_short(metric)}'s first month, {_quarter_first_month(first)}"
+            return f"Unverified|{NOT_COVERED_REASON.format(detail=detail)}", None, None, None
         if q not in quarters:
             return "Unsupported|not computed for that period", None, None, None
     item = quarters[q]
+    if item["value"] is not None and not forecast:
+        cov.update(coverage=COVERED, missing=[])
     return item["value"], q, source, item["reason"] or "not computed"
+
+
+def _growth(figures: "_Figures", spec: dict, basis: str, start: Optional[int], end: Optional[int], as_of_i: Optional[int],
+            span: "_Span", cov: dict):
+    """The growth of the metric's monthly series on `basis` for the claim's period [s, e] (dates-and-periods.md section 5), in
+    percentage points, computed on read from the stored series as the revenue sum is. The four bases read different months; only
+    the claim's basis is computed and tested. Returns what `_observe` returns."""
+    got = figures.monthly()
+    if got is None or as_of_i is None:
+        return None, "missing", None, None
+    values, source, why = got
+    if why == "segment not in the data":
+        return "Unsupported|segment not in the data", None, None, None
+    if end is not None and end > as_of_i:
+        return None, None, source, None                 # a forecast: the caller says so
+    e = span.last_month(as_of_i) if end is None else end
+    s = e if start is None or end is None else start
+    if basis in ("cumulative", "annualised") and e <= s:
+        return f"Unverified|{GROWTH_WINDOW_REASON}", None, None, None
+    window = basis == "yoy" and spec["base"] == "Revenue" and e > s      # revenue of the period against the same months a year earlier
+    if basis == "mom":
+        now, then = [e], [e - 1]
+    elif basis == "yoy":
+        now = list(range(s, e + 1)) if window else [e]
+        then = [m - 12 for m in now]
+    else:
+        now, then = [e], [s]
+    read = sorted(set(now + then))
+    present = [m for m in read if span.has(m, values) and values.get(_ms(m)) is not None]
+    if not present:
+        return _not_covered(span, read, cov), None, None, None
+    if len(present) < len(read):
+        return _not_covered(span, [m for m in read if m not in present], cov), None, None, None     # a compared month is outside the data
+    current, base = sum(values[_ms(m)] for m in now), sum(values[_ms(m)] for m in then)
+    if base <= 0 or current < 0:
+        return f"Unsupported|{GROWTH_BASE_REASON}", None, None, None
+    ratio = current / base
+    growth = ratio ** (12 / (e - s)) - 1 if basis == "annualised" else ratio - 1
+    if window:
+        at = f"{_ms(s)} to {_ms(e)} vs {_ms(s - 12)} to {_ms(e - 12)}"
+    elif basis in ("mom", "yoy"):
+        at = f"{_ms(e)} vs {_ms(then[0])}"
+    else:
+        at = f"{_ms(s)} to {_ms(e)}"
+    rule = GROWTH_RULES["yoy_sum" if window else basis]
+    cov.update(coverage=COVERED, missing=[])
+    return round(growth * 100, 2), at, ({**source, "rule": rule} if source else None), None
 
 
 # --- overlaps (verdict-and-memo.md section 2.2) ----------------------------------------------------------------------
@@ -1026,11 +1311,31 @@ def build_register(candidates: List[dict], results: Optional[dict], settings: di
     rejected, pending ones included (None: the register's own). Nothing is read from a model and nothing is changed."""
     if not results:
         return []
+    from .decks.claims import OTHER_TYPES
+    # Other figures are never matched, ranked or put in the top 5 (claim-types-and-correction.md section 4)
+    candidates = with_confidence([c for c in candidates if c.get("claim_type") not in OTHER_TYPES],
+                                 peers if peers is not None else candidates)
     claims = _expand(candidates)
     others = _expand(peers) if peers is not None else claims
     rows = _rank([_row(c, results, settings, others) for c in claims])
     _overlaps(rows)
     return rows
+
+
+def confidence_level(candidate: dict, peers: List[dict]) -> str:
+    """The extraction confidence the deck list shows (deck-parser.md section 6): High, Medium or Low, or "Analyst-entered" for a
+    claim added with Add claim. `peers` are the candidates of the audit; only those of the candidate's deck are read."""
+    from .decks.claims import confidence
+    deck = candidate.get("deck_id") or candidate.get("file")
+    same = [p for p in peers if (p.get("deck_id") or p.get("file")) == deck] or [candidate]
+    found = confidence(candidate, same)
+    return found["level"] or found["text"]
+
+
+def with_confidence(candidates: List[dict], peers: List[dict]) -> List[dict]:
+    """The candidates with `extraction_confidence` (evidence-labels.md section 1), kept where the caller set it. Display only: no
+    label, gap, rank or gate reads it."""
+    return [c if c.get("extraction_confidence") else {**c, "extraction_confidence": confidence_level(c, peers)} for c in candidates]
 
 
 # Section 11 point 8: what the deck list shows of a turnover claim, before it is approved.

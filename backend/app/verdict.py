@@ -21,23 +21,22 @@ RATINGS = ("Strong", "Adequate", "Weak")
 RATED_ROWS = ("data_reliability", "growth_engine")
 THESIS_PARTS = ("plan", "evidence", "condition")
 THESIS_MAX = 300
-UNVERIFIED_LABELS = ("Unverified", "Unsupported")
+UNVERIFIED_LABELS = ("Unverified", "Inconclusive", "Unsupported")    # Inconclusive counts with Unverified (evidence-labels.md section 4)
 
 # Screen wording W1-W25 (verdict-and-memo.md section 11), as approved.
 W4_GATE_NEEDED = "Gate needed"
 W5_SIXTH = "At most 5 key gates."
-W8_UNDERWRITE = "All top-5 claims are Verified."
-W9_BLOCKED = "Verdict blocked: set a gate on {ranks} (top-5 claims that are not Verified)."
-# claim-matching.md section 4.1 (George, 2026-10-14): an open Definition check blocks the verdict wherever it ranks.
-W9B_DEFINITION = "Verdict blocked: answer the definition check on {ranks}."
+W9_BLOCKED = "Conclusion blocked: set a gate on {ranks} (top-5 claims that are not Verified)."
+# claim-matching.md section 4.1 (George, 2026-10-14): an open Definition check blocks the conclusion wherever it ranks.
+W9B_DEFINITION = "Conclusion blocked: answer the definition check on {ranks}."
 DEFINITION_CONFIRMED = "Same metric and period confirmed by the analyst."
-W10_NO_CLAIMS = "No verdict: the register has no claims."
-W10_NOT_COMPUTED = "No verdict: compute the audit first."
+W10_NO_CLAIMS = "No conclusion: the register has no claims."
+W10_NOT_COMPUTED = "No conclusion: compute the audit first."
 W12_NO_KEY_GATES = "No key gates marked."
 W13_DEAL_TERMS = "Deal terms: not available – the execution capacity review has not been run."
 W14_OTHER_GATES = "{n} other claims still need a gate."
 W23_PROPOSED = "Proposed by shortfall – confirm or replace."
-W23_NONE = "No verdict until the top 5 is confirmed."
+W23_NONE = "No conclusion until the top 5 is confirmed."
 W23_VOID = "A claim of the confirmed top 5 left the register – confirm the top 5 again."
 W23_MEMO = "confirm the top 5."
 W24_STATEMENT = "Top 5 set by the analyst pending ARR bridge."
@@ -46,7 +45,21 @@ W7_AFTER_REVIEW = "The target date must be on or before the first quarterly revi
 W7_REVIEW_FIRST = "Set the first quarterly review first."
 W7_REVIEW_BEFORE_GAP = "The first quarterly review cannot be before a gap's target date ({date})."
 
-OUTCOMES = {"replan": "Re-plan", "underwrite": "Underwrite", "underwrite_with_gates": "Underwrite with gates"}
+# docs/specs/claim-review-conclusion.md: the outcome describes the five selected claims, never a recommendation.
+HEADING = "Claim-review conclusion — assessment of the five selected claims"
+SCOPE_SENTENCE = "This assesses the five claims the analyst selected. It is not an investment recommendation."
+OUTCOMES = {"not_supported": "Selected claims not supported", "insufficient": "Insufficient evidence",
+            "supported": "Selected claims supported", "partly_supported": "Selected claims partly supported"}
+INSUFFICIENT_UNTESTED = 3               # this many untested selected claims, with none Contradicted, is insufficient evidence
+RULE_CONTRADICTED = "{n} selected {claim} Contradicted."
+RULE_INSUFFICIENT = "No selected claim is Contradicted; {u} of {n} are untested (Unverified, Inconclusive or Unsupported)."
+RULE_SUPPORTED = "All {n} selected claims are Verified."
+RULE_PARTLY = "No selected claim is Contradicted; {v} of {n} are Verified, {u} untested."
+NO_OTHER_CONTRADICTIONS = "None found among tested claims."
+# The analyst's own judgment beside the conclusion: two free-text fields, required before memo export, never pre-filled.
+JUDGMENT_PARTS = ("reasons", "unresolved_questions")
+JUDGMENT_LABELS = {"reasons": "Reasons", "unresolved_questions": "Unresolved questions"}
+JUDGMENT_MAX = 1000
 
 _ISO = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -87,6 +100,8 @@ def with_review(audit: dict, ic: Optional[dict]) -> dict:
 def claim_name(row: dict) -> str:
     """How a register row is called in a sentence: its metric (or claim type), the segment when not the whole company, the period."""
     name = row.get("metric") or str(row.get("claim_type") or "claim").replace("_", " ").capitalize()
+    if str(row.get("reason") or "").startswith(cm.POPULATION_PREFIX):     # the app's metric counts other people: name the claim's own
+        name = str(row.get("claim_type") or "claim").replace("_", " ").capitalize()
     if row.get("segment") not in (None, cm.WHOLE):
         name = f"{name} · {row['segment']}"
     if row.get("period"):
@@ -156,7 +171,7 @@ def key_gates(rows: List[dict]) -> dict:
             "note": note, "ok": all_key or MIN_KEY_GATES <= len(marked) <= MAX_KEY_GATES}
 
 
-GATE_LABELS = ("Unverified", "Unsupported", "Contradicted")
+GATE_LABELS = cm.NOT_VERIFIED
 PREFILL_KEY_GATES = 3
 OTHER_DECISION = "Other"
 
@@ -250,13 +265,33 @@ def _plural(n: int, one: str, many: str) -> str:
     return one if n == 1 else many
 
 
+def _source_text(row: dict) -> str:
+    """Where a contradiction's figures come from: analysis · source key · file · sheet · rows, then the deck and its page."""
+    src = row.get("observed_source") or {}
+    parts = [row.get("evidence_analysis"), row.get("evidence_source_key"), src.get("file"), src.get("sheet"), src.get("rows")]
+    deck = " ".join(str(x) for x in (row.get("deck_file"), row.get("page_ref")) if x)
+    return " · ".join(str(p) for p in parts + [deck] if p)
+
+
+def other_contradictions(rows: List[dict], five_ids: Iterable[str]) -> List[dict]:
+    """Every Contradicted register row outside the five, by rank, with its metric, its gap and its source (claim-review-conclusion.md
+    section 3)."""
+    five = set(five_ids)
+    return [{"claim_id": r["claim_id"], "rank": r["rank"], "metric": claim_name(r), "gap": r.get("gloss"), "source": _source_text(r)}
+            for r in rows if r["evidence_label"] == "Contradicted" and r["claim_id"] not in five]
+
+
 def verdict(rows: List[dict], results: Optional[dict], stored_top5: Optional[dict]) -> dict:
-    """The verdict of the confirmed top 5 (section 6). `status`: no_verdict (W10), unconfirmed or void (W23), blocked (W9), ok."""
+    """The claim-review conclusion of the confirmed top 5 (claim-review-conclusion.md). `status`: no_verdict (W10), unconfirmed or
+    void (W23), blocked (W9), ok. The heading, the scope sentence and the other contradictions (against the five in force, the
+    proposed ones before confirmation) are always there; the outcome only once the conclusion is reached."""
     state = top5_state(rows, stored_top5)
     rows = sortable(rows)
     reporting = (results or {}).get("reporting_currency")
+    others = other_contradictions(rows, state["in_force"]) if results else []
     base = {"top5": state, "outcome": None, "outcome_code": None, "rule": None, "message": None, "blocked": [], "five": [],
-            "reasons": [], "fewer": None}
+            "reasons": [], "fewer": None, "heading": HEADING, "scope_sentence": SCOPE_SENTENCE, "other_contradictions": others,
+            "other_contradictions_text": None if others else NO_OTHER_CONTRADICTIONS}
     if not results:
         return {**base, "status": "no_verdict", "message": W10_NOT_COMPUTED}
     if not rows:
@@ -278,22 +313,20 @@ def verdict(rows: List[dict], results: Optional[dict], stored_top5: Optional[dic
         return {**base, "status": "blocked", "five": summary, "blocked": [r["claim_id"] for r in checks + blocked],
                 "message": message}
 
-    labels = [r["evidence_label"] for r in five]
+    # Section 2, in this order: Contradicted, Insufficient evidence, Supported, Partly supported. A beat is Verified.
+    n = len(five)
     contradicted = [r for r in five if r["evidence_label"] == "Contradicted"]
-    unsupported = [r for r in five if r["evidence_label"] == "Unsupported"]
-    open_ = [r for r in five if r["evidence_label"] in UNVERIFIED_LABELS]
-    if contradicted or len(unsupported) >= 3:
-        code, parts = "replan", []
-        if contradicted:
-            parts.append(f"{len(contradicted)} top-5 {_plural(len(contradicted), 'claim', 'claims')} Contradicted.")
-        if len(unsupported) >= 3:
-            parts.append(f"{len(unsupported)} top-5 claims Unsupported (3 or more).")
-        rule, lead = " ".join(parts), contradicted + unsupported
-    elif all(label == "Verified" for label in labels):
-        code, rule, lead = "underwrite", W8_UNDERWRITE, [r for r in five if r["evidence_label"] == "Verified"]
+    untested = [r for r in five if r["evidence_label"] in UNVERIFIED_LABELS]
+    verified = [r for r in five if r["evidence_label"] == "Verified"]
+    if contradicted:
+        code, lead = "not_supported", contradicted
+        rule = RULE_CONTRADICTED.format(n=len(contradicted), claim=_plural(len(contradicted), "claim is", "claims are"))
+    elif len(untested) >= INSUFFICIENT_UNTESTED:
+        code, lead, rule = "insufficient", untested, RULE_INSUFFICIENT.format(u=len(untested), n=n)
+    elif len(verified) == n:
+        code, lead, rule = "supported", verified, RULE_SUPPORTED.format(n=n)
     else:
-        code, lead = "underwrite_with_gates", open_
-        rule = f"No top-5 claim is Contradicted; {len(open_)} {'is' if len(open_) == 1 else 'are'} Unverified or Unsupported."
+        code, lead, rule = "partly_supported", untested, RULE_PARTLY.format(v=len(verified), n=n, u=len(untested))
     fewer = None
     if len(rows) < TOP_N:
         fewer = f"Top {len(rows)} (the register has {len(rows)} claims)."
@@ -408,6 +441,9 @@ def apply_ic_inputs(current: Optional[dict], changes: dict, rows: List[dict], ga
     if "thesis" in changes:
         merged = {**ic.get("thesis", {}), **(changes["thesis"] or {})}
         ic["thesis"] = {k: v.strip() for k, v in merged.items() if isinstance(v, str) and v.strip()}
+    if "judgment" in changes:
+        merged = {**ic.get("judgment", {}), **(changes["judgment"] or {})}
+        ic["judgment"] = {k: v.strip() for k, v in merged.items() if isinstance(v, str) and v.strip()}
     if "first_quarterly_review" in changes:
         if changes["first_quarterly_review"] is None:
             ic.pop("first_quarterly_review", None)

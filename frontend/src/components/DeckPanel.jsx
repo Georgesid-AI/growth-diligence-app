@@ -6,12 +6,14 @@ import { Input } from "@/components/ui/input";
 import FxText from "@/components/FxText";
 import { TurnoverCell, TurnoverReason } from "@/components/ClaimRegister";
 import { NO_FILE_PERIOD, UNVERIFIED, answerReady, metricOptions, turnoverHeading, turnoverOf } from "@/lib/claimRegister";
-import { addClaim, answerTurnover, approveAll, getDecks, removeDeck, updateCandidate, uploadDeck } from "@/lib/api";
+import { addClaim, addFromDeck, answerTurnover, approveAll, getDeckPage, getDecks, removeDeck, updateCandidate, uploadDeck } from "@/lib/api";
 import { describeRequestError } from "@/lib/requestError";
 import {
   ACQUISITION_CHANNELS, ADD_CLAIM_PLATFORM_LABEL, ALL_DECKS, APPROVE_ALL_LABEL, CLAIM_GROUPS, CLAIM_TYPES, approveAllToast, toReview, CLAIM_UNITS, COUNT_UNIT_HINT, COUNT_TYPES, COUNT_UNIT, FX_SETTINGS_ANCHOR, FX_SETTINGS_LABEL, conversionHover, inconsistencyText, MIXED_SLIDE_LABEL, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, ADD_CLAIM_LABEL, ADD_CLAIM_NEEDS_SOURCE, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, newClaimPayload, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
-  DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, CONFIDENCE_HOVER, DECK_UPLOAD_HELP, INCONSISTENCY_LABEL, OTHER_TYPE_NOTE, PLACEHOLDER, STATUS_LABELS, VERIFIED_LABEL, claimPeriod, claimSections, claimValue, deckRunLog,
-  confidenceText, needsType, readingChoices, rowEdit, sourceRef, statusCounts, typeLabel,
+  DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, CONFIDENCE_HOVER, DECK_UPLOAD_HELP, INCONSISTENCY_LABEL, PLACEHOLDER, STATUS_LABELS, VERIFIED_LABEL, claimPeriod, claimSections, claimValue, deckRunLog,
+  confidenceText, readingChoices, rowEdit, sourceRef, statusCounts, typeLabel,
+  ADD_FROM_DECK_LABEL, ADDED_FROM_DECK_TAG, DEFAULT_EDIT_REASON, EDIT_REASONS, EDIT_TYPES, FIGURE_TYPE_OPTIONS, GROWTH_BASIS_OPTIONS, GROWTH_TYPES,
+  OTHER_GROUP, POPULATION_OPTIONS, VIEW_PAGE_LABEL, claimFields, editLogText, isOther,
 } from "@/lib/deckClaims";
 
 // The status is a label, not a control: plain coloured text, no border or chip, so it never reads as a button (George,
@@ -29,8 +31,8 @@ const selectClass = "h-8 rounded-md border border-[#E5E7EB] bg-white px-2 text-x
 const VOLUME_OPTION = "transaction_volume";
 const VOLUME_LABEL = "Transaction volume";
 const ASK_OPTION = "turnover_ask";
-/** What the edit form's metric dropdown shows: the stored answer of a turnover claim, else its type. */
-const typeValue = (d) => (d.claim_type !== "revenue" || !d.answer ? d.claim_type
+/** What the edit form's metric dropdown shows: the stored answer of a turnover claim, else its type (a figure with no type: Other). */
+const typeValue = (d) => (d.claim_type === "unknown" ? "other" : d.claim_type !== "revenue" || !d.answer ? d.claim_type
   : d.answer === "volume" ? VOLUME_OPTION : d.answer === "ask" ? ASK_OPTION : d.claim_type);
 
 /** Board deck or growth plan: the scope message, the upload, and the candidate approval list. */
@@ -41,7 +43,8 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
   const [tab, setTab] = useState(null);            // deck id or ALL_DECKS; null until the first load
   const [confirming, setConfirming] = useState(null);
   const [adding, setAdding] = useState(false);       // the Add claim row is open
-  const [expanded, setExpanded] = useState({});     // group -> opened or closed by the analyst; groups 5 and 6 start closed
+  const [expanded, setExpanded] = useState({});     // group -> opened or closed by the analyst; Other starts closed
+  const [editing, setEditing] = useState(null);     // a claim just added from the deck with no type: opened in the editor
 
   // After a load, keep the chosen tab if its deck still exists; otherwise show the most recent deck.
   // A background poll (silent) that meets an error, a 404 included, stops for good and shows nothing; so does a
@@ -167,6 +170,23 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
     }
   };
 
+  // Add from deck (claim-types-and-correction.md section 5): the server reads the line's text; its group is shown open, and a figure
+  // with no type opens in the editor.
+  const addLine = async (deckId, page, ref) => {
+    try {
+      const created = await addFromDeck(auditId, deckId, { page, ref });
+      toast.success("Claim added from the deck");
+      const fresh = await load(deckId);
+      const listed = fresh?.candidates.find((c) => c.id === created.id) || created;
+      setExpanded((e) => ({ ...e, [listed.group ?? OTHER_GROUP]: true }));
+      if (isOther(listed)) setEditing(listed.id);
+      return true;
+    } catch (err) {
+      toast.error(describeRequestError(err).message);
+      return false;
+    }
+  };
+
   const remove = async (deckId) => {
     try {
       await removeDeck(auditId, deckId);
@@ -251,6 +271,7 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
               )}
             </div>
           )}
+          {selectedDeck && <DeckPageView key={selectedDeck.deck_id} auditId={auditId} deck={selectedDeck} onAdd={addLine} />}
           {selectedDeck && deckRunLog(selectedDeck).length > 0 && (
             <div className="text-[11px] font-mono text-slate-600 mb-2 space-y-0.5" data-testid="deck-run-log">
               {deckRunLog(selectedDeck).map((line) => <div key={line}>{line}</div>)}
@@ -263,13 +284,14 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-left text-[10px] font-mono uppercase tracking-wider text-slate-500 border-b border-[#E5E7EB]">
-                  {COLUMNS.map((name) => <th key={name} className="py-2 pr-3">{name}</th>)}
+                  {COLUMNS.map((name) => <th key={name} className="py-2 pr-3" title={name === "Extraction confidence" ? CONFIDENCE_HOVER : undefined}>{name}</th>)}
                 </tr>
               </thead>
               <tbody>
                 {claimSections(shown).map((section, index) => {
                   const open = expanded[section.group] ?? !section.collapsed;
                   const waiting = toReview(section).length;
+                  const other = section.group === OTHER_GROUP;       // never a task: no review count and no Approve all
                   const approveAllButton = (where) => (
                     <Button type="button" size="sm" variant="outline" onClick={() => approveSection(section)} disabled={waiting === 0 || approving !== null}
                       title={`Approve the ${waiting} claim${waiting === 1 ? "" : "s"} to review in ${section.title}`} className="h-7"
@@ -291,14 +313,15 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
                               onClick={() => setExpanded((e) => ({ ...e, [section.group]: !open }))}
                               className="flex items-center gap-1.5 text-xs font-semibold text-slate-800">
                               {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-                              {section.title} <span className="font-mono font-normal text-slate-500">({section.claims.length})</span>
+                              {section.title}{!other && <span className="font-mono font-normal text-slate-500"> ({section.claims.length})</span>}
                             </button>
-                            {open && approveAllButton("top")}
+                            {open && !other && approveAllButton("top")}
                           </div>
                         </td>
                       </tr>
-                      {open && section.claims.map((c) => <CandidateRow key={c.id} candidate={c} onSave={save} onAnswer={answer} highlight={flash === c.id} />)}
-                      {open && (
+                      {open && section.claims.map((c) => <CandidateRow key={c.id} candidate={c} onSave={save} onAnswer={answer} highlight={flash === c.id}
+                        autoEdit={editing === c.id} />)}
+                      {open && !other && (
                         <tr data-testid={`claim-group-end-${section.group}`}>
                           <td colSpan={COLUMNS.length} className="pt-2 pb-1 px-2 text-right">{approveAllButton("bottom")}</td>
                         </tr>
@@ -381,7 +404,59 @@ function AddClaimRow({ decks, initialDeck, onSave, onCancel }) {
   );
 }
 
-function CandidateRow({ candidate: c, onSave, onAnswer, highlight }) {
+/** View page: one stored page of the selected deck, its lines, cells and chart labels; the analyst selects one and adds it as a claim.
+ *  The server reads the text of the line it is sent by reference, never text from here. */
+function DeckPageView({ auditId, deck, onAdd }) {
+  const [page, setPage] = useState("");
+  const [shown, setShown] = useState(null);
+  const [picked, setPicked] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const number = Number(page);
+  const valid = Number.isInteger(number) && number >= 1 && (!deck.pages || number <= deck.pages);
+  const show = async () => {
+    setBusy(true);
+    try {
+      setShown(await getDeckPage(auditId, deck.deck_id, number));
+      setPicked(null);
+    } catch (err) {
+      toast.error(describeRequestError(err).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const add = async () => {
+    setBusy(true);
+    if (await onAdd(deck.deck_id, shown.page, picked)) setPicked(null);
+    setBusy(false);
+  };
+  return (
+    <div className="mb-3 text-[11px]" data-testid="deck-page-view">
+      <div className="flex items-end gap-2">
+        <label className="flex flex-col text-[10px] font-mono text-slate-500">{VIEW_PAGE_LABEL} ({deck.page_unit || "page"})
+          <Input value={page} onChange={(e) => setPage(e.target.value)} type="number" min="1" className="h-7 w-20 text-xs font-mono" data-testid="deck-page-input" />
+        </label>
+        <Button size="sm" variant="outline" onClick={show} disabled={!valid || busy} className="h-7" data-testid="deck-page-show">Show page</Button>
+        {shown && <Button size="sm" onClick={add} disabled={!picked || busy} className="h-7 bg-sky-600 hover:bg-sky-500" data-testid="add-from-deck">
+          <Plus className="h-3.5 w-3.5 mr-1" />{ADD_FROM_DECK_LABEL}</Button>}
+      </div>
+      {shown && (
+        <ul className="mt-2 max-h-64 overflow-y-auto border border-[#E5E7EB] rounded-md divide-y divide-[#F1F5F9]" data-testid="deck-page-lines">
+          {shown.lines.length === 0 && <li className="px-2 py-1.5 text-slate-500">No text on this {shown.page_unit || "page"}.</li>}
+          {shown.lines.map((line) => (
+            <li key={line.ref}>
+              <button type="button" aria-pressed={picked === line.ref} onClick={() => setPicked(line.ref)} data-testid={`deck-page-line-${line.ref}`}
+                className={`w-full text-left px-2 py-1.5 ${picked === line.ref ? "bg-sky-50 text-slate-900" : "text-slate-700 hover:bg-slate-50"}`}>
+                <span className="font-mono text-slate-400 mr-2">{line.kind}</span>{line.text}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function CandidateRow({ candidate: c, onSave, onAnswer, highlight, autoEdit = false }) {
   const [draft, setDraft] = useState(null);
   const [why, setWhy] = useState(false);
   const explanation = inconsistencyText(c);
@@ -394,11 +469,15 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight }) {
   const answered = turnover.views.map((v) => (v.turnover_set_by === "analyst" ? v.turnover_state : "ask"));
   const initialAnswer = answered.length && answered.every((a) => a === answered[0]) ? answered[0] : "ask";
   const reasonRow = { file_note: turnover.views.length && turnover.views.every((v) => v.file_note === NO_FILE_PERIOD) ? NO_FILE_PERIOD : null };
+  const fields = claimFields(c);                   // figure type, population and growth basis as the register reads them
   const startEdit = (value) => setDraft({
     claim_type: c.claim_type, value: value ?? c.value ?? "", value_high: c.value_high ?? "", unit: c.unit ?? "", currency: c.currency ?? "", target_date: c.target_date ?? "",
     values: (c.by_period || []).map((i) => i.value ?? ""),
-    answer: turnover.views.length ? initialAnswer : null, reason: "",
+    answer: turnover.views.length ? initialAnswer : null, reason: "", ...fields, edit_reason: DEFAULT_EDIT_REASON,
   });
+  useEffect(() => { if (autoEdit) startEdit(); }, [autoEdit]); // eslint-disable-line react-hooks/exhaustive-deps
+  // An Other figure stays out of matching until it is given a claim type; typing a claim Other is allowed (it leaves the register).
+  const stillOther = (d) => isOther(c) && isOther(d);
   // The answer to send: only a turnover claim that stays a revenue-type claim, whose Revenue / Transaction volume was changed.
   const newAnswer = (d) => (turnover.views.length && d.claim_type === "revenue" && d.answer !== initialAnswer && ["revenue", "volume"].includes(d.answer) ? d.answer : null);
   const answerBlocked = (d) => { const a = newAnswer(d); return a !== null && !answerReady(a, d.reason, reasonRow); };
@@ -408,11 +487,18 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight }) {
       unit: draft.unit || null,
       currency: draft.currency.trim() ? draft.currency.trim().toUpperCase() : null,
     };
-    const payload = isRow ? { ...common, by_period: rowEdit(c, draft.values) } : {
+    // the claim fields that changed, and why (claim-types-and-correction.md section 3)
+    const changed = {};
+    if (draft.figure_type !== fields.figure_type) changed.figure_type = draft.figure_type;
+    if (POPULATION_OPTIONS[draft.claim_type] && draft.population !== fields.population) changed.population = draft.population || null;
+    if (GROWTH_TYPES.includes(draft.claim_type) && draft.growth_basis !== fields.growth_basis) changed.growth_basis = draft.growth_basis;
+    const payload = isRow ? { ...common, ...changed, by_period: rowEdit(c, draft.values), reason: draft.edit_reason } : {
       ...common,
+      ...changed,
       value: draft.value === "" ? null : Number(draft.value),
       value_high: draft.value_high === "" ? null : Number(draft.value_high),
       target_date: draft.target_date.trim() || null,
+      reason: draft.edit_reason,
     };
     if (!(await onSave(c, payload))) return;
     const as = newAnswer(draft);
@@ -443,12 +529,40 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight }) {
         <>
           <td className="py-2 pr-3">
             <select value={typeValue(draft)} onChange={setType} className={selectClass} data-testid="edit-claim-type">
-              {needsType(draft) && <option value={draft.claim_type} disabled>{typeLabel(draft.claim_type)}{draft.claim_type === "unknown" ? "" : ": choose a type"}</option>}
               {draft.claim_type === "use_of_funds" && <option value="use_of_funds">{typeLabel("use_of_funds")}</option>}
               {turnover.views.length > 0 && draft.claim_type === "revenue" && draft.answer === "ask" && <option value={ASK_OPTION} disabled>Turnover – choose</option>}
-              {CLAIM_TYPES.flatMap((t) => (t === "revenue" && turnover.views.length ? [t, VOLUME_OPTION] : [t])).map((t) => (
+              {EDIT_TYPES.flatMap((t) => (t === "revenue" && turnover.views.length ? [t, VOLUME_OPTION] : [t])).map((t) => (
                 <option key={t} value={t}>{t === VOLUME_OPTION ? VOLUME_LABEL : typeLabel(t)}</option>))}
             </select>
+            {!isOther(draft) && (
+              <div className="mt-1 flex flex-col gap-1">
+                <label className="flex flex-col text-[10px] font-mono text-slate-500">Figure type
+                  <select value={draft.figure_type} onChange={set("figure_type")} className={selectClass} data-testid="edit-figure-type">
+                    {FIGURE_TYPE_OPTIONS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+                  </select>
+                </label>
+                {POPULATION_OPTIONS[draft.claim_type] && (
+                  <label className="flex flex-col text-[10px] font-mono text-slate-500">Population
+                    <select value={draft.population} onChange={set("population")} className={selectClass} data-testid="edit-population">
+                      <option value="">Unknown</option>
+                      {POPULATION_OPTIONS[draft.claim_type].map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+                    </select>
+                  </label>
+                )}
+                {GROWTH_TYPES.includes(draft.claim_type) && (
+                  <label className="flex flex-col text-[10px] font-mono text-slate-500">Growth basis
+                    <select value={draft.growth_basis} onChange={set("growth_basis")} className={selectClass} data-testid="edit-growth-basis">
+                      {GROWTH_BASIS_OPTIONS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+                    </select>
+                  </label>
+                )}
+              </div>
+            )}
+            <label className="mt-1 flex flex-col text-[10px] font-mono text-slate-500">Reason for the change
+              <select value={draft.edit_reason} onChange={set("edit_reason")} className={selectClass} data-testid="edit-reason">
+                {EDIT_REASONS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+              </select>
+            </label>
             {newAnswer(draft) ? (
               <div className="mt-1 min-w-[16rem]">
                 <TurnoverReason row={reasonRow} reason={draft.reason} setReason={(reason) => setDraft((d) => ({ ...d, reason }))}
@@ -487,7 +601,6 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight }) {
               <TurnoverCell key={v.claim_id} row={v} onAnswer={onAnswer} heading={turnoverHeading(v, isRow)} />
             )) : typeLabel(c.claim_type)}
             {c.channel && <div className="text-[10px] text-slate-500 mt-0.5" data-testid="candidate-channel">{c.channel}</div>}
-            {needsType(c) && <div className="text-[10px] text-amber-800 mt-0.5" data-testid="candidate-needs-type">{OTHER_TYPE_NOTE}</div>}
           </td>
           <td className={`py-2 pr-3 font-mono text-slate-900 ${isRow || claimValue(c).includes(FX_SETTINGS_LABEL) ? "" : "whitespace-nowrap"}`}>
             {choices.length ? (
@@ -506,6 +619,7 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight }) {
       </td>
       <td className="py-2 pr-3 text-slate-700 max-w-md">
         <div>{c.snippet}</div>
+        {c.origin === "deck_analyst" && <div className="text-slate-400 mt-0.5" data-testid="candidate-added-from-deck">{ADDED_FROM_DECK_TAG}</div>}
         {c.label_from && <div className="text-slate-400 mt-0.5" data-testid="candidate-label">Label from: {c.label_from}</div>}
         {c.date_from && <div className="text-slate-400 mt-0.5" data-testid="candidate-date-from">Date from: {c.date_from}</div>}
       </td>
@@ -513,7 +627,8 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight }) {
         {c.sources.map((s, i) => <div key={i}>{sourceRef(s)}</div>)}
       </td>
       <td className="py-2 pr-3">
-        <span className={`text-[10px] font-mono whitespace-nowrap cursor-default ${STATUS_STYLE[c.status] || ""}`} data-testid="candidate-status">
+        <span className={`text-[10px] font-mono whitespace-nowrap cursor-default ${STATUS_STYLE[c.status] || ""}`} title={editLogText(c) || undefined}
+          data-testid="candidate-status">
           {STATUS_LABELS[c.status] || c.status}
         </span>
         {turnover.open && (
@@ -551,15 +666,18 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight }) {
       <td className="py-2 whitespace-nowrap">
         {draft ? (
           <div className="flex gap-1">
-            <Button size="sm" onClick={saveEdit} disabled={needsType(draft) || answerBlocked(draft)} title={answerBlocked(draft) ? "Choose a reason for the answer first." : undefined} className="h-7 bg-sky-600 hover:bg-sky-500" data-testid="edit-save">Save and approve</Button>
+            <Button size="sm" onClick={saveEdit} disabled={stillOther(draft) || answerBlocked(draft)}
+              title={answerBlocked(draft) ? "Choose a reason for the answer first." : stillOther(draft) ? "Choose a claim type first." : undefined}
+              className="h-7 bg-sky-600 hover:bg-sky-500" data-testid="edit-save">{isOther(draft) ? "Save" : "Save and approve"}</Button>
             <Button size="sm" variant="outline" onClick={() => setDraft(null)} className="h-7">Cancel</Button>
           </div>
         ) : (
           <div className="flex gap-1">
-            <Button size="sm" variant="outline" title={needsType(c) ? OTHER_TYPE_NOTE : "Approve"} disabled={needsType(c)}
-              onClick={() => onSave(c, { status: "approved" })} className="h-7 px-2" data-testid="candidate-approve">
-              <Check className="h-3.5 w-3.5 text-emerald-700" />
-            </Button>
+            {!isOther(c) && (
+              <Button size="sm" variant="outline" title="Approve" onClick={() => onSave(c, { status: "approved" })} className="h-7 px-2" data-testid="candidate-approve">
+                <Check className="h-3.5 w-3.5 text-emerald-700" />
+              </Button>
+            )}
             <Button size="sm" variant="outline" title="Reject" onClick={() => onSave(c, { status: "rejected" })} className="h-7 px-2" data-testid="candidate-reject">
               <X className="h-3.5 w-3.5 text-rose-700" />
             </Button>

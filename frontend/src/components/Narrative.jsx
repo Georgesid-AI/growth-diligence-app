@@ -51,11 +51,7 @@ export function Narrative({ state, step, title = "Narrative", actionsTitle = "Ne
   const decisions = narrative.table_rows?.some((r) => r.decision_informed);
   return (
     <Card title={title} testid={id("narrative-panel")}>
-      {narrative.verdict && (
-        <div data-testid={id("narrative-verdict")} className="mb-3 text-xs font-mono uppercase tracking-wider text-slate-600">
-          Verdict: <span className="font-semibold text-slate-900">{narrative.verdict}</span>
-        </div>
-      )}
+      {/* The narrative's own verdict is not shown: Python's integrity conclusion is the only one (integrity-coverage.md section 4). */}
       {status === "flagged" && unmatched.length > 0 && (
         <div
           data-testid="narrative-flagged-banner"

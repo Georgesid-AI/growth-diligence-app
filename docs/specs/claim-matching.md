@@ -1,6 +1,13 @@
 # Spec: Claim matching: approved claims tested against the computed metrics
 Status: Draft; decisions of 2026-10-07 applied (§10). Location: docs/specs/claim-matching.md.
 Follows deck-parser.md §6.
+Amended 2026-10-15 (docs/specs/dates-and-periods.md): claim-period coverage (Covered / Partly covered → Inconclusive / Not covered →
+Unverified "claim period not in supplied data: …") replaces table 2b's "before {metric}'s first month" and "months missing" reasons
+and Q2; a claim with no period reads the evidence end, never an as-of month the data does not reach; table 2a gains Revenue, ARR, MRR
+and Customer growth on a stated basis; the register gains `period_coverage`, `months_missing`, `growth_basis`.
+Amended 2026-10-15 (plan of 15 Oct 2026, docs/specs/evidence-labels.md): a fifth status, Inconclusive (a test ran but cannot confirm
+or contradict; the figure is shown, no gap); a qualified Users claim is read against the paying customers and is Inconclusive
+(replacing §4's Unsupported rule of 2026-10-13); the register gains `extraction_confidence` and shows it as its own column (§6, §8).
 Amended 2026-10-14 (George), big-gap rule: a tested gap beyond 50% of the claim in either direction is a "Definition check", a
 status that is not an evidence label, until the analyst answers "Same metric and period?" Yes or No (§4, replacing D2; §6, §8).
 Amended 2026-10-14 (George), after the review: a rate asks only beyond 10 percentage points (`BIG_GAP_RATE_POINTS`); Approve all

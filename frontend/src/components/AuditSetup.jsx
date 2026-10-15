@@ -15,7 +15,7 @@ const help = "mt-1 text-[11px] leading-snug text-slate-500";
 
 /**
  * The audit's set-up fields at the top of the upload and mapping page: reporting currency, Target ARR, target date, as-of
- * month and fiscal year-end, each with one line of help. Each saves as it changes; a save that fails names the field and
+ * month (with "Last month is complete"), the requested analysis date and fiscal year-end, each with one line of help. Each saves as it changes; a save that fails names the field and
  * the server's reason. The as-of month is held by the page (`asOf`, `setAsOf`), which also sends it when it computes.
  */
 export default function AuditSetup({ audit, setAudit, asOf, setAsOf }) {
@@ -91,6 +91,18 @@ export default function AuditSetup({ audit, setAudit, asOf, setAsOf }) {
           <label className={label}>{SETUP_LABELS.as_of_month}</label>
           <DateField testId="asof-month-input" value={asOfInputValue(asOf)} onChange={(v) => dates("as_of_month", targetDate, v)} placeholder="last P&L month" className="!mt-1" />
           <p className={help} data-testid="setup-help-as_of_month">{SETUP_HELP.as_of_month}</p>
+          <label className="mt-2 flex items-center gap-2 text-xs text-slate-700">
+            <input type="checkbox" data-testid="setup-last-month-complete" checked={!!audit.last_month_complete}
+              onChange={(e) => save("last_month_complete", { last_month_complete: e.target.checked })} />
+            {SETUP_LABELS.last_month_complete}
+          </label>
+          <p className={help} data-testid="setup-help-last_month_complete">{SETUP_HELP.last_month_complete}</p>
+        </div>
+        <div>
+          <label className={label}>{SETUP_LABELS.analysis_date}</label>
+          <DateField testId="setup-analysis-date-input" value={audit.analysis_date || ""} placeholder="today"
+            onChange={(v) => save("analysis_date", { analysis_date: v || null })} className="!mt-1" />
+          <p className={help} data-testid="setup-help-analysis_date">{SETUP_HELP.analysis_date}</p>
         </div>
         <div>
           <label className={label}>{SETUP_LABELS.fiscal_year_end}</label>

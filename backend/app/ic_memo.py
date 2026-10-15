@@ -16,6 +16,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 from app import claim_matching as cm
 from app import disclosure
 from app import formatting as fmt
+from app import integrity as integrity_mod
 from app import verdict as vd
 from schemas import metrics as contract
 
@@ -40,19 +41,23 @@ S17 = ("Narrative could not be generated. The computed metrics below are unaffec
 W19_PREFIX = "Memo not exported: "
 W19_WORDS = W19_PREFIX + "{n} words; the limit is 1,500."
 W19_NUMBERS = W19_PREFIX + "{n} numbers are not in the stored results: {list}."
-W19_BLOCKED = W19_PREFIX + "the verdict is blocked."
+W19_BLOCKED = W19_PREFIX + "the conclusion is blocked."
 W19_KEY_GATES = W19_PREFIX + "mark 3 to 5 key gates."
 W19_RATE = W19_PREFIX + "rate {rows}."
 W19_CONTRACT = W19_PREFIX + "the stored results fail the contract: {fields}."
-CONTRACT_NO_VERDICT = "No verdict: the stored results fail the contract: {fields}."
+CONTRACT_NO_VERDICT = "No conclusion: the stored results fail the contract: {fields}."
 W19_TOP5 = W19_PREFIX + vd.W23_MEMO
 # Not in W1-W25 (reported under "Decisions for you"): the refusals for a missing thesis and for no verdict at all.
 WORDING_NOT_IN_W = {
     "thesis": W19_PREFIX + "write the deal thesis: {parts}.",
+    "judgment": W19_PREFIX + "write the analyst judgment: {parts}.",       # claim-review-conclusion.md section 3
     "no_verdict": W19_PREFIX + "{message}",
 }
 
 RATING_LABELS = {"data_reliability": "Data reliability", "growth_engine": "Growth engine"}
+# The "as of" label of the analyst's own text: the requested analysis date (dates-and-periods.md section 2).
+ANALYST_TEXT = "Analyst's text, as of {date}."
+ANALYST_JUDGMENT = "Analyst judgment (analyst's text, as of {date})"
 THESIS_LABELS = {"plan": "Plan", "evidence": "Evidence", "condition": "Condition"}
 
 CATEGORIES = (
@@ -76,7 +81,8 @@ class MemoRefused(Exception):
 
 # --- numbers (section 7.4) --------------------------------------------------------------------------------------------------
 
-_DATE = re.compile(r"\d{4}-\d{2}(?:-\d{2})?(?![\d])|\d{4}-Q[1-4]|\bQ[1-4]\b|\[\^\d+\]:?|(?<![\d:])\d{1,2}:\d{2}(?![\d:])")
+_DATE = re.compile(r"\d{4}-\d{2}(?:-\d{2})?(?![\d])|\d{4}-Q[1-4]|\bQ[1-4]\b|\[\^\d+\]:?|(?<![\d:])\d{1,2}:\d{2}(?![\d:])"
+                   r"|\b(?:January|February|March|April|May|June|July|August|September|October|November|December) \d{4}\b")
 _NUMBER = re.compile(r"(?<![\w.])-?\d[\d,]*(?:\.\d+)?")
 
 
@@ -372,9 +378,12 @@ def _needs(ic: dict, rows: List[dict], key: dict) -> None:
     absent = [THESIS_LABELS[k] for k in vd.THESIS_PARTS if not (ic.get("thesis") or {}).get(k)]
     if absent:
         raise MemoRefused("inputs", WORDING_NOT_IN_W["thesis"].format(parts=", ".join(absent)))
+    unwritten = [vd.JUDGMENT_LABELS[k] for k in vd.JUDGMENT_PARTS if not (ic.get("judgment") or {}).get(k)]
+    if unwritten:
+        raise MemoRefused("inputs", WORDING_NOT_IN_W["judgment"].format(parts=", ".join(unwritten)))
 
 
-def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, usage, files, decks, tables, today,
+def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, usage, files, decks, tables, today, integrity,
            thesis: Dict[str, str]) -> Tuple[str, str]:
     """(sections 1-6 with the title, the whole text) for one view of the thesis."""
     notes = Notes()
@@ -386,21 +395,32 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, us
     categories = evidence_categories(files, decks)
     covered = sum(1 for c in categories if c["covered"])
     narrative = _growth_narrative(narratives)
-    out: List[str] = [f"# {TITLE.format(company=audit.get('company_name') or 'audit')}", f"Date: {today}", ""]
+    # The date is the requested analysis date; the evidence end is the data's, never the as-of setting (dates-and-periods.md)
+    out: List[str] = [f"# {TITLE.format(company=audit.get('company_name') or 'audit')}", f"Date: {today}",
+                      f"Evidence to {fmt.evidence_to_text(results)}", ""]
 
     # 1. Summary
-    out += [f"## {HEADINGS[0]}", f"Verdict: {ver['outcome']} – {ver['rule']}{notes.register(top_ranks)}", vd.W24_STATEMENT, ""]
+    # claim-review-conclusion.md section 4: the heading, the conclusion, the scope sentence, the other contradictions and the analyst's
+    # judgment, verbatim; W24 stays.
+    judgment = ic.get("judgment") or {}
+    others = ver.get("other_contradictions") or []
+    out += [f"## {HEADINGS[0]}", vd.HEADING, f"Conclusion: {ver['outcome']} – {ver['rule']}{notes.register(top_ranks)}", vd.SCOPE_SENTENCE,
+            vd.W24_STATEMENT, ""]
+    out += ["Other contradictions:"]
+    out += [f"- {o['metric']}: {o['gap']}{notes.register([o['rank']])}" for o in others] or [vd.NO_OTHER_CONTRADICTIONS]
+    out += ["", ANALYST_JUDGMENT.format(date=today)]
+    verbatim = [f"{vd.JUDGMENT_LABELS[k]}: {judgment.get(k, '')}{notes.analyst()}" for k in vd.JUDGMENT_PARTS]
+    out += verbatim + [""]
     out += [f"Files reviewed: {len(files)} data {'file' if len(files) == 1 else 'files'} and {len(decks)} {'deck' if len(decks) == 1 else 'decks'}.{notes.add('files by evidence category, Appendix D')}",
             f"Evidence categories covered: {covered} of 7.{notes.add('files by evidence category, Appendix D')}",
-            "Claims: " + ", ".join(f"{counts.get(label, 0)} {label}" for label in ("Contradicted", "Unsupported", "Unverified"))
-            + f" of {len(rows)} in the register.{notes.register()}"]
+            "Claims: " + summary_counts(counts) + f" of {len(rows)} in the register.{notes.register()}"]
     checks = cm.definition_counts(rows)
     if checks["yes"] or checks["no"]:            # claim-matching.md section 4.1: an open one blocks the verdict, so none is left here
         out += [f"Definition checks: {checks['yes']} answered Yes, {checks['no']} answered No.{notes.register()}"]
-    out += [W16_VALUE_AT_RISK, ""]
+    out += [f"Latest valid source period: {fmt.source_period_text(results.get('source_period'))}.", W16_VALUE_AT_RISK, ""]
 
     # 2. Deal thesis
-    out += [f"## {HEADINGS[1]}"]
+    out += [f"## {HEADINGS[1]}", ANALYST_TEXT.format(date=today)]
     out += [f"{THESIS_LABELS[k]}: {thesis.get(k, '')}{notes.analyst()}" for k in vd.THESIS_PARTS]
     out += [""]
 
@@ -418,20 +438,25 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, us
         recon = "no P&L to reconcile"
     anomalies = (f"{flags} anomaly flags{notes.source('Anomaly Flags', 'anomalies', (results.get('anomalies') or {}).get('source'))}"
                  if flags is not None else "anomaly flags not computed")
-    reliability = f"{recon}; {anomalies}; {verified} of {len(rows)} claims Verified{notes.register()}."
-    reliability_evidence = "revenue_reconciliation, anomalies, claim register"
-    integrity = _step_narrative(narratives, "data_integrity")
-    if integrity and integrity.get("verdict"):
-        # The data-integrity narrative (A2) writes the headline and the key evidence; the rating stays the analyst's.
-        reliability = f"{integrity['headline']}{notes.add('data-integrity narrative, AI call log')}"
-        reliability_evidence = f"Data integrity verdict: {integrity['verdict']}; {reliability_evidence}"
+    # integrity-coverage.md section 4: the conclusion and the coverage head the row; the A2 narrative's verdict is never printed here.
+    # The rating stays the analyst's.
+    coverage = f"{integrity['conclusion']}. {integrity['completed_text']}."
+    if integrity.get("memo_sentence"):
+        coverage += f" {integrity['memo_sentence']}"
+    smooth = next((r for r in integrity.get("results") or () if r["check"] == integrity_mod.SMOOTHNESS), None)
+    if smooth:
+        coverage += f" Smoothness: {smooth['result']} ({integrity_mod.SMOOTHNESS_LABEL})."
+    reliability = f"{coverage} {recon}; {anomalies}; {verified} of {len(rows)} claims Verified{notes.register()}."
+    reliability_evidence = f"Data integrity conclusion: {integrity['conclusion']}; revenue_reconciliation, anomalies, claim register"
     if narrative:
         growth = f"{narrative['headline']}{notes.add('growth-engine narrative, AI call log')}"
     else:
         arr, nrr, churn = results.get("arr") or {}, results.get("nrr") or {}, results.get("gross_churn") or {}
-        growth = (f"ARR {fmt.fmt_currency(arr.get('value'), ccy)}{notes.source('Monthly MRR by Segment', 'arr.value', arr.get('source'))}, "
-                  f"NRR {fmt.fmt_pct(nrr.get('overall_pct'))}{notes.source('NRR', 'nrr.overall_pct', nrr.get('source'))}, "
-                  f"gross revenue churn {fmt.fmt_pct(churn.get('overall_pct'))}"
+        periods = results.get("metric_periods") or {}
+        at = lambda block: f" ({periods[block]['last']})" if block in periods else ""      # each figure's own period
+        growth = (f"ARR {fmt.fmt_currency(arr.get('value'), ccy)}{at('arr')}{notes.source('Monthly MRR by Segment', 'arr.value', arr.get('source'))}, "
+                  f"NRR {fmt.fmt_pct(nrr.get('overall_pct'))}{at('nrr')}{notes.source('NRR', 'nrr.overall_pct', nrr.get('source'))}, "
+                  f"gross revenue churn {fmt.fmt_pct(churn.get('overall_pct'))}{at('gross_churn')}"
                   f"{notes.source('Gross revenue churn', 'gross_churn.overall_pct', churn.get('source'))}. {S17}")
     ratings = ic.get("ratings") or {}
     score = [["Data reliability", ratings["data_reliability"], reliability, reliability_evidence],
@@ -474,7 +499,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, us
     if len(gaps) > 5:
         out += [f"and {len(gaps) - 5} more in Appendix B{notes.source('Missing Data', 'missing_data')}"]
     out += [f"- {q}{notes.source('Questions for management', 'questions_for_management')}" for q in vd.management_questions(results)]
-    head = "\n".join(_glossed(out)).rstrip() + "\n"
+    head = "\n".join(_glossed(out, keep=set(verbatim))).rstrip() + "\n"
 
     # Appendices
     app: List[str] = []
@@ -493,7 +518,9 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, us
     app += [f"## {APPENDICES[1]}", f"First quarterly review: {review or '—'}", ""]
     app += [_table(["What the company cannot measure", "Why it matters", "Requested", "Target date"],
                    [[g["item"], g["why"], g["requested"] or "", g["target_date"] or "—"] for g in gaps]) if gaps else "No data gaps.", ""]
-    asks = [f"- {g['requested']}" for g in gaps if g["requested"]] + [f"- {q}" for q in vd.management_questions(results)]
+    asks = [f"- {g['requested']}" for g in gaps if g["requested"]]
+    asks += [f"- {r}" for r in integrity["data_requests"]]        # a Blocked integrity check is a data request (integrity-coverage.md 3)
+    asks += [f"- {q}" for q in vd.management_questions(results)]
     asks += [f"- {o['item']}: {o['requested']}" for o in vd.other_requests(results) if o["requested"]]
     app += ["Requests", *asks, ""]
     inventory = _step_narrative(narratives, "data_inventory")
@@ -539,11 +566,20 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, us
     return head, head + "\n" + "\n".join(app) + "\n"
 
 
-def _glossed(lines: List[str]) -> List[str]:
+def summary_counts(counts: Dict[str, int]) -> str:
+    """"{c} Contradicted, {s} Unsupported, {u} Unverified ({i} Inconclusive)": Inconclusive counted under Unverified, its own count in
+    brackets, printed also when 0 (evidence-labels.md section 4; the grouping is claim_matching.MEMO_GROUPS)."""
+    unverified = sum(counts.get(label, 0) for label in cm.MEMO_GROUPS["Unverified"])
+    return (f"{counts.get('Contradicted', 0)} Contradicted, {counts.get('Unsupported', 0)} Unsupported, "
+            f"{unverified} Unverified ({counts.get(cm.INCONCLUSIVE, 0)} Inconclusive)")
+
+
+def _glossed(lines: List[str], keep: Iterable[str] = ()) -> List[str]:
     """Each prose line (a paragraph or a list item) with VaS, ARR, MRR, NRR and CAC pointing to the glossary at their first
     use in it (George, 2026-10-09). Headings, tables and footnotes are not text blocks: a sheet name or a source reference
-    is never changed."""
-    return [fmt.see_glossary(line) if line and not line.startswith(("#", "|", "[^")) else line for line in lines]
+    is never changed; nor is a line in `keep` (the analyst's judgment, printed verbatim, claim-review-conclusion.md section 4)."""
+    keep = set(keep)
+    return [fmt.see_glossary(line) if line and line not in keep and not line.startswith(("#", "|", "[^")) else line for line in lines]
 
 
 def _usage_table(usage: dict) -> str:
@@ -576,20 +612,22 @@ def allowed_numbers(audit: dict, results: dict, rows: List[dict], gaps: List[dic
         # the difference of two other cells of its row that it does hold; a ratio or any other derived figure is refused.
         allowed.derived_cells([row for t in tables or () for row in t["rows"]])
         allowed.tree(ic.get("gap_target_dates") or {}).tree(ic.get("first_quarterly_review"))
+        allowed.tree(ic.get("judgment") or {})          # the analyst's own text: its numbers are the analyst's (section 7.4 d)
     return allowed
 
 
 def build_memo(*, audit: dict, results: dict, rows: List[dict], ver: dict, key: dict, gaps: List[dict], ic: dict,
                blockers: List[dict], narratives: List, usage: dict, files: List[dict], decks: List[dict], tables: List[dict],
-               today: str) -> str:
+               today: str, integrity: Optional[dict] = None) -> str:
     """The IC memo as Markdown, or `MemoRefused` (section 7.1). Built on request from the functions of the register and the verdict;
-    nothing is stored."""
+    nothing is stored. `integrity`: the Data integrity assessment (integrity-coverage.md); None reads it from the results and the
+    decks with no deck candidates."""
     try:
         contract.validate_for_export(results)
     except contract.ContractError as exc:
         raise MemoRefused("contract", W19_CONTRACT.format(fields=exc.log_text)) from exc
     if ver["status"] in ("no_verdict",):
-        raise MemoRefused("no_verdict", WORDING_NOT_IN_W["no_verdict"].format(message=ver["message"].removeprefix("No verdict: ")))
+        raise MemoRefused("no_verdict", WORDING_NOT_IN_W["no_verdict"].format(message=ver["message"].removeprefix("No conclusion: ")))
     if ver["status"] in ("unconfirmed", "void"):
         raise MemoRefused("top5", W19_TOP5)
     if ver["status"] == "blocked":
@@ -598,8 +636,10 @@ def build_memo(*, audit: dict, results: dict, rows: List[dict], ver: dict, key: 
         raise MemoRefused("key_gates", W19_KEY_GATES)
     _needs(ic, rows, key)
 
+    if integrity is None:
+        integrity = integrity_mod.assess(results, deck_count=len(decks), candidates=[])
     common = dict(audit=audit, results=results, rows=rows, ver=ver, key=key, gaps=gaps, ic=ic, blockers=blockers,
-                  narratives=narratives, usage=usage, files=files, decks=decks, tables=tables, today=today)
+                  narratives=narratives, usage=usage, files=files, decks=decks, tables=tables, today=today, integrity=integrity)
     # A number in a thesis sentence must be in the results, the register or the cost log: checked sentence by sentence.
     strict = allowed_numbers(audit, results, rows, gaps, ic, usage, files, decks, thesis=True)
     bad = [t for part in vd.THESIS_PARTS for t in unmatched(ic["thesis"][part], strict)]

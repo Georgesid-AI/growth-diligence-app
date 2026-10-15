@@ -23,7 +23,7 @@ Block B, "Assessment coverage": one row per check of the method, `Check | Status
 | 1 | Revenue reconciliation | the engine's `revenue_reconciliation` is available (a P&L with a revenue line and a month in common with the revenue file) | Green: the window and every month within tolerance; Amber: the window within tolerance, a month beyond it; Red: the window beyond tolerance (the hard blocker of CLAUDE.md rule 21). Finding: "Revenue file and P&L differ by {x}% over {first}–{last}". Source: the block's citation |
 | 2 | Gaps in customer data | the engine's `anomalies` block exists (a mapped revenue file) | Green: no customer whose revenue stops for over two months and resumes, no revenue line without a customer ID; Amber: any. Finding: the two counts. Source: `anomalies` citation |
 | 3 | Quarter-end clustering | never in Release 1 | – |
-| 4 | Smoothness | never in Release 1 | – |
+| 4 | Smoothness | built by smoothness.md (15 Oct 2026): 13 consecutive months of revenue in the stored series | Amber below 0.5 points of month-on-month growth deviation, else Green (smoothness.md §1) |
 | 5 | Benford on transactions | never: not applicable by design | – |
 | 6 | Deck-vs-deck figures | at least one deck is parsed | Green: no figure of the audit's decks (claims not rejected) differs from another figure of the same type, label and stated period (deck-parser.md §2 inconsistency rule, read across all the audit's decks); Amber: any. Finding: the count and the first pair's pages. Source: deck file · page |
 
@@ -32,8 +32,8 @@ Status values, with the reason the row prints:
 |---|---|---|
 | Completed | the check ran | – (its result is in Block A) |
 | Not applicable | the check cannot apply to this company by design; a stated reason is required | Benford: "No transaction-level file: the app ingests revenue by customer and month, not transactions." |
-| Blocked — company data missing | names the file or field that would unblock it; a data request, not a negative finding | 1: "P&L with a revenue line, overlapping the revenue file's months"; 2: "Revenue file mapped (customer ID, invoice date, amount)"; 6: "At least one board deck" |
-| Not available in the app | product limitation; printed as such, never as a company finding | 3: "The app does not compute quarter-end clustering of deals yet."; 4: "The app does not compute revenue smoothness yet." |
+| Blocked — company data missing | names the file or field that would unblock it; a data request, not a negative finding | 1: "P&L with a revenue line, overlapping the revenue file's months"; 2: "Revenue file mapped (customer ID, invoice date, amount)"; 4: "Revenue file with at least 13 consecutive months of revenue"; 6: "At least one board deck" |
+| Not available in the app | product limitation; printed as such, never as a company finding | 3: "The app does not compute quarter-end clustering of deals yet." |
 
 Denominator: applicable checks only (every status but Not applicable). Display: "Completed {x} of {y} applicable checks",
 then "Blocked: {names}" when any is blocked.
@@ -56,7 +56,8 @@ check is never a request.
 Scorecard, data reliability (verdict-and-memo.md §7.2, item 3): the headline is the overall conclusion and "Completed {x} of
 {y} applicable checks", then the sentence of §2.1 when it applies; key evidence "Data integrity conclusion: {conclusion};
 revenue_reconciliation, anomalies, claim register". The rating stays the analyst's. The A2 narrative's headline and verdict
-are no longer printed there.
+are no longer printed there. On the Dashboard the data-integrity narrative no longer shows its "Verdict:" line either (George,
+15 Oct 2026, decision 1a): Python's conclusion is the only one shown. The narrative text stays; no model call changes.
 
 ## 5. Contract and data boundary
 - A pure module `backend/app/integrity.py` reads `audits.results`, the audit's deck count and the stored candidates'
@@ -82,9 +83,10 @@ are no longer printed there.
   each other and with the other decks'.
 
 ## 8. Consequences to know
-- With today's app, checks 3 and 4 are Not available and 5 is Not applicable, so at most 3 of 5 applicable checks can be
-  completed: every audit reads "Insufficient assessment coverage ({x} of 5)" until the app computes quarter-end clustering
-  or smoothness. Building them is outside this spec (see "Decisions for you").
+- Quarter-end clustering is Not available and Benford is Not applicable. With smoothness built (smoothness.md), 4 of the 5
+  applicable checks can complete, so an audit with the reconciliation, the gaps, the smoothness and the deck check completed
+  has a conclusion; without a deck, or a P&L, or 13 months of revenue it still reads "Insufficient assessment coverage (x of 5)"
+  until clustering is built (Release 3, CRM data).
 
 ## Files
 `backend/app/integrity.py` (new), `backend/server.py`, `backend/app/ic_memo.py`, `frontend/src/components/IntegrityCoverage.jsx`

@@ -58,7 +58,8 @@ def _project(doc, projection):
         return dict(doc)
     include = {k: v for k, v in projection.items() if k != "_id" and v}
     if not include:
-        return {k: v for k, v in doc.items() if k != "_id"}
+        dropped = {k for k, v in projection.items() if not v}      # an exclusion projection, as Mongo reads it
+        return {k: v for k, v in doc.items() if k != "_id" and k not in dropped}
     return {k: doc[k] for k in include if k in doc}
 
 
@@ -82,6 +83,10 @@ class FakeResult:
 class FakeCursor:
     def __init__(self, docs):
         self._docs = docs
+
+    def sort(self, key, direction=1):
+        self._docs = sorted(self._docs, key=lambda d: d.get(key) or "", reverse=direction < 0)
+        return self
 
     async def to_list(self, n):
         return self._docs[:n]
@@ -1103,6 +1108,71 @@ def test_superseded_is_scoped_to_the_step():
 
     result = asyncio.run(run())
     assert result.superseded is False
+
+
+def _period_doc():
+    """RESULTS_DOC for a revenue file that ends in June 2019, set up with an as-of month far after it."""
+    doc = copy.deepcopy(RESULTS_DOC)
+    doc["as_of_month"] = doc["results"]["as_of_month"] = "2031-03"
+    doc["results"]["source_period"] = {"month": "2019-06", "status": "Complete", "complete_by": "as_of", "evidence_to": "2019-06"}
+    return doc
+
+
+def test_the_payload_tells_the_model_where_the_evidence_ends_not_the_as_of_setting():
+    """Decision 7 (15 Oct 2026): the narrative payload carries evidence_to and last_month_status. The as-of setting, which
+    can be June 2026 against June 2019 data, never reaches the model."""
+    async def run():
+        db = make_db(_period_doc())
+        computed = await gateway.load_computed_results(db, RUN_ID, "growth_engine")
+        return gateway.build_outbound(computed, await redaction.get_or_create_map(db, RUN_ID, computed))
+
+    out = asyncio.run(run())
+    assert out["evidence_to"] == "2019-06" and out["last_month_status"] == "Complete"
+    assert out["metrics"]["evidence_to"] == "2019-06" and out["metrics"]["last_month_status"] == "Complete"
+    blob = cache.canonical_json(out)
+    assert "as_of_month" not in blob and "2031" not in blob, "the as-of setting is not sent, under any name"
+
+
+def test_a_narrative_stored_under_the_as_of_payload_is_still_read_until_the_analyst_regenerates_it():
+    async def run():
+        db = make_db(_period_doc())
+        computed = await gateway.load_computed_results(db, RUN_ID, "growth_engine")
+        mapping = await redaction.get_or_create_map(db, RUN_ID, computed)
+        prompt = prompt_store.load(gateway.STEP_CONFIG["growth_engine"]["prompt"])
+        tag = prompt_store.cache_tag(prompt)
+        old_key = cache.cache_key(RUN_ID, "growth_engine", tag, gateway.run_model(),
+                                  gateway.build_outbound(gateway.legacy_computed(computed, "growth_engine"), mapping))
+        new_key = cache.cache_key(RUN_ID, "growth_engine", tag, gateway.run_model(), gateway.build_outbound(computed, mapping))
+        assert old_key != new_key, "the payload changed, so the key changed"
+        await cache.put(db, old_key, RUN_ID, "growth_engine", prompt.version, gateway.run_model(), GOOD_NARRATIVE)
+        read = await gateway.read_cached_narrative(db, RUN_ID, "growth_engine")
+        adapter = FakeAdapter()
+        regenerated = await gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=adapter, sleep=_noop_sleep)
+        after = await gateway.read_cached_narrative(db, RUN_ID, "growth_engine")
+        kept = await cache.get(db, old_key)
+        return read, adapter, regenerated, after, kept
+
+    read, adapter, regenerated, after, kept = asyncio.run(run())
+    assert read.narrative_status == "ok" and read.narrative is not None, "the stored narrative stays until it is regenerated"
+    assert read.cache_hit is True and read.superseded is False
+    assert adapter.calls == 1 and regenerated.narrative_status == "ok", "Write narratives is the analyst's act: it regenerates"
+    assert after.narrative is not None and kept is not None, "the earlier record is not deleted"
+
+
+def test_a_narrative_stored_under_the_as_of_payload_is_not_read_once_the_numbers_moved():
+    async def run():
+        db = make_db(_period_doc())
+        computed = await gateway.load_computed_results(db, RUN_ID, "growth_engine")
+        mapping = await redaction.get_or_create_map(db, RUN_ID, computed)
+        prompt = prompt_store.load(gateway.STEP_CONFIG["growth_engine"]["prompt"])
+        old_key = cache.cache_key(RUN_ID, "growth_engine", prompt_store.cache_tag(prompt), gateway.run_model(),
+                                  gateway.build_outbound(gateway.legacy_computed(computed, "growth_engine"), mapping))
+        await cache.put(db, old_key, RUN_ID, "growth_engine", prompt.version, gateway.run_model(), GOOD_NARRATIVE)
+        db["audits"].docs[0]["results"]["arr"]["value"] = 4000000
+        return await gateway.read_cached_narrative(db, RUN_ID, "growth_engine")
+
+    read = asyncio.run(run())
+    assert read.narrative is None and read.superseded is True
 
 
 def test_superseded_clears_after_regenerating():

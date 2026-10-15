@@ -24,7 +24,7 @@ from typing import Annotated, Any, Dict, Iterator, List, Literal, Optional, Tupl
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, ValidationInfo
 
-CONTRACT_VERSION = 2
+CONTRACT_VERSION = 3
 
 # Display kinds: the same names app/formatting.py and frontend/src/lib/format.js use.
 CURRENCY, COUNT, COUNT_UP, DAYS, MONTHS, PCT, RATIO, PLAIN = (
@@ -506,9 +506,24 @@ class Question(Block):
 # ---------------------------------------------------------------------------
 # The payload
 # ---------------------------------------------------------------------------
+class SourcePeriod(Block):
+    """The latest valid source period (docs/specs/dates-and-periods.md section 2): months as text, no figure."""
+    month: str                                      # the last month of the revenue file with a valid date and a non-zero amount
+    status: Literal["Complete", "Possibly partial"]
+    complete_by: Optional[Literal["as_of", "analyst"]]
+    evidence_to: str                                # the last month any revenue figure reads
+
+
+class MetricPeriod(Block):
+    """A computed block's period (dates-and-periods.md section 3): first and last month and the months missing inside, a list."""
+    first: str
+    last: str
+    missing: List[str]
+
+
 class MetricsPayload(Block):
     """The full engine output. A block the engine could not compute is null; the reason is in `missing_data`."""
-    contract_version: Literal[2]
+    contract_version: Literal[3]
     reporting_currency: str                         # the one currency code; no value repeats it
     as_of_month: Optional[str]
     arr: Optional[Arr]
@@ -530,6 +545,8 @@ class MetricsPayload(Block):
     cohort_retention: CohortRetention
     missing_data: List[MissingItem]
     questions_for_management: List[Question]
+    source_period: Optional[SourcePeriod] = None
+    metric_periods: Dict[str, MetricPeriod] = Field(default_factory=dict)
 
 
 def build(raw: dict) -> dict:

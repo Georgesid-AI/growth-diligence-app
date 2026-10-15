@@ -6,19 +6,14 @@ import { Input } from "@/components/ui/input";
 import { getMemo, putIcInputs } from "@/lib/api";
 import { describeRequestError } from "@/lib/requestError";
 import { seeGlossary } from "@/lib/glossary";
-import { labelText } from "@/lib/claimRegister";
+import { LABEL_STYLE, labelText } from "@/lib/claimRegister";
 import {
   CONFIRM, MEMO_BUTTON, OTHER_GATES, PART_FIVE, PART_GAPS, PART_INPUTS, PART_KEY_GATES, PART_REASONS, PROPOSED, REPLACE, REVIEW_LABEL,
-  THESIS_MAX, TOP5_HEADING, TOP5_STATEMENT, VERDICT_HEADING, RATING_OPTIONS, candidateText, initialPicks, refusalText, replacePick, samePicks,
+  THESIS_MAX, TOP5_HEADING, TOP5_STATEMENT, RATING_OPTIONS, candidateText, initialPicks, refusalText, replacePick, samePicks,
+  CONCLUSION_HEADING, JUDGMENT_HEADING, JUDGMENT_MAX, NO_OTHER_CONTRADICTIONS, OTHER_CONTRADICTIONS, SCOPE_SENTENCE,
 } from "@/lib/verdict";
 
 const selectClass = "h-8 rounded-md border border-[#E5E7EB] bg-white px-2 text-xs";
-const LABEL_STYLE = {
-  Verified: "text-emerald-800 border-emerald-500/50 bg-emerald-50",
-  Contradicted: "text-rose-800 border-rose-500/50 bg-rose-50",
-  Unverified: "text-amber-800 border-amber-500/50 bg-amber-50",
-  Unsupported: "text-slate-700 border-slate-400/60 bg-slate-50",
-};
 
 /** The top 5: the proposed or confirmed five, a pick per row from the register, and Confirm (verdict-and-memo.md section 6.1). */
 export function TopFive({ verdict, candidates, onConfirm, busy }) {
@@ -97,6 +92,25 @@ export function ThesisFields({ verdict, save }) {
   ));
 }
 
+/** The analyst judgment (claim-review-conclusion.md section 3): Reasons and Unresolved questions, the analyst's own text, never
+ *  pre-filled; each saves when the field loses focus with a changed text. Both are required before the memo is exported. */
+export function JudgmentFields({ verdict, save }) {
+  const ic = verdict.ic_inputs || {};
+  const [judgment, setJudgment] = useState(ic.judgment || {});
+  const stored = JSON.stringify(ic.judgment || {});
+  useEffect(() => setJudgment(JSON.parse(stored)), [stored]);
+  const max = verdict.judgment_max || JUDGMENT_MAX;
+  return Object.entries(verdict.judgment_labels || {}).map(([part, label]) => (
+    <label key={part} className="flex flex-col gap-1 text-slate-700 md:col-span-2">
+      {label}
+      <textarea value={judgment[part] ?? ""} maxLength={max} rows={3} data-testid={`judgment-${part}`}
+        className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1 text-xs"
+        onChange={(e) => setJudgment((j) => ({ ...j, [part]: e.target.value }))}
+        onBlur={() => (judgment[part] ?? "") !== (ic.judgment?.[part] ?? "") && save({ judgment: { [part]: judgment[part] || null } })} />
+    </label>
+  ));
+}
+
 /** Saves an input of the IC memo and tells the parent to read the verdict again. */
 export const icSaver = (auditId, onChanged) => (body) => putIcInputs(auditId, body).then(() => onChanged && onChanged())
   .catch((e) => { toast.error(describeRequestError(e).message); if (onChanged) onChanged(); });
@@ -116,6 +130,8 @@ function Inputs({ auditId, verdict, onChanged }) {
         <RatingFields verdict={verdict} save={save} />
         <ThesisFields verdict={verdict} save={save} />
       </div>
+      <h3 className="text-sm font-semibold text-slate-900 mt-4 mb-2" data-testid="judgment-heading">{JUDGMENT_HEADING}</h3>
+      <div className="grid gap-3 md:grid-cols-2 text-xs"><JudgmentFields verdict={verdict} save={save} /></div>
       <Button size="sm" variant="outline" onClick={() => downloadMemo(auditId)} className="mt-3 h-8" data-testid="verdict-memo">
         <Download className="h-3.5 w-3.5 mr-1.5" />{MEMO_BUTTON}
       </Button>
@@ -123,8 +139,30 @@ function Inputs({ auditId, verdict, onChanged }) {
   );
 }
 
-/** The Verdict section (docs/specs/verdict-and-memo.md section 6.4). `verdict` is GET /audits/{id}/verdict, read again by the
- *  parent after every change. */
+/** The claims beside the conclusion that it does not assess: every Contradicted register row outside the five, by rank, with its
+ *  metric, gap and source (claim-review-conclusion.md section 3). */
+function OtherContradictions({ v }) {
+  const others = v.other_contradictions || [];
+  return (
+    <div className="mb-4" data-testid="other-contradictions">
+      <h3 className="text-sm font-semibold text-slate-900 mb-1">{OTHER_CONTRADICTIONS}</h3>
+      {others.length === 0 ? <p className="text-xs text-slate-600">{v.other_contradictions_text || NO_OTHER_CONTRADICTIONS}</p> : (
+        <ul className="space-y-1 text-xs text-slate-800">
+          {others.map((o) => (
+            <li key={o.claim_id} data-testid="other-contradiction-row">
+              <span className="font-mono text-slate-700">#{o.rank}</span> {o.metric}: {o.gap}
+              <span className="block text-[11px] font-mono text-slate-500">{o.source}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/** The claim-review conclusion section (docs/specs/claim-review-conclusion.md; verdict-and-memo.md section 6.4). `verdict` is
+ *  GET /audits/{id}/verdict, read again by the parent after every change. The scope sentence and the other contradictions show
+ *  whenever the section does; the outcome only once the conclusion is reached. */
 export default function Verdict({ auditId, verdict, onChanged }) {
   const [busy, setBusy] = useState(false);
   if (!verdict) return null;
@@ -138,7 +176,8 @@ export default function Verdict({ auditId, verdict, onChanged }) {
   const key = verdict.key_gates;
   return (
     <section className="mb-6 rounded-md border border-[#E5E7EB] bg-white p-4" data-testid="verdict">
-      <h2 className="font-heading text-lg font-semibold text-slate-900 mb-3">{VERDICT_HEADING}</h2>
+      <h2 className="font-heading text-lg font-semibold text-slate-900 mb-1">{v.heading || CONCLUSION_HEADING}</h2>
+      <p className="text-xs text-slate-600 mb-3" data-testid="conclusion-scope">{v.scope_sentence || SCOPE_SENTENCE}</p>
       {v.status !== "no_verdict" && <TopFive verdict={v} candidates={verdict.candidates || []} onConfirm={confirm} busy={busy} />}
       {v.message && <p className="text-sm text-slate-800 mb-3" data-testid="verdict-message">{seeGlossary(v.message)}</p>}
       {v.status === "ok" && (
@@ -147,6 +186,7 @@ export default function Verdict({ auditId, verdict, onChanged }) {
           <p className="text-sm text-slate-700" data-testid="verdict-rule">{seeGlossary(v.rule)}</p>
         </div>
       )}
+      {v.status !== "no_verdict" && <OtherContradictions v={v} />}
       {v.five?.length > 0 && (
         <div className="mb-4" data-testid="verdict-five">
           <h3 className="text-sm font-semibold text-slate-900 mb-1">{PART_FIVE}</h3>

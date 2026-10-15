@@ -43,9 +43,11 @@ def customers(claimed, observed, answer=None):
 
 
 def win_rate_claim(claimed):
-    return {"id": "w1", "status": "approved", "claim_type": "sales", "value": claimed, "value_high": None, "unit": "%", "currency": None,
-            "target_date": None, "period_text": None, "snippet": f"Win rate {claimed}%", "label_from": None, "file": "deck.pptx",
-            "order": 0, "sources": [{"file": "deck.pptx", "slide": 4}]}
+    c = {"id": "w1", "status": "approved", "claim_type": "sales", "value": claimed, "value_high": None, "unit": "%", "currency": None,
+         "target_date": "2024-02", "period_text": "Feb 2024", "snippet": f"Win rate {claimed}%", "label_from": None, "file": "deck.pptx",
+         "order": 0, "sources": [{"file": "deck.pptx", "slide": 4}]}
+    deck_claims.resolve_period(c, 12)      # a claim with no period is not matched (claim-types-and-correction.md section 2)
+    return c
 
 
 def win_rate(claimed, observed_pct):
@@ -147,12 +149,14 @@ def test_a_fiscal_year_end_change_that_moves_the_period_asks_again():
     assert state(again) == (None, "ask", "beat"), "the Yes was for Feb 2024"
 
 
-def test_an_as_of_month_change_asks_again_for_a_claim_tested_at_the_as_of_figure():
-    c = answered(win_rate_claim(41), "no", 10, res=results(5, 0.10))
-    assert state(cm.build_register([c], results(5, 0.10), SETTINGS)[0])[:2] == ("Unverified", "no")
-    again = cm.build_register([c], results(5, 0.10, as_of="2023-06"), {**SETTINGS, "as_of_month": "2023-06"})[0]
-    assert (again["observed_value"], again["claimed_value"]) == (10.0, 41), "only the as-of month differs"
-    assert state(again) == (None, "ask", "miss")
+def test_an_as_of_month_change_asks_again_with_the_same_figures():
+    # a claim with no period is no longer tested at the as-of figure (claim-types-and-correction.md section 2): a dated claim whose
+    # figures stay the same while the as-of month moves
+    c = answered(customer_claim(1, "Jan 2024", "2024-01"), "no", 26)
+    assert state(cm.build_register([c], results(26), SETTINGS)[0])[:2] == ("Unverified", "no")
+    again = cm.build_register([c], results(26, as_of="2024-01"), {**SETTINGS, "as_of_month": "2024-01"})[0]
+    assert (again["observed_value"], again["claimed_value"]) == (26, 1), "only the as-of month differs"
+    assert state(again) == (None, "ask", "beat")
 
 
 def test_a_recompute_that_changes_the_observed_figure_asks_again():

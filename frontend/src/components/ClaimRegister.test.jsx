@@ -50,7 +50,7 @@ test("the section has its title, the download button and one row per claim with 
   const button = host.querySelector('[data-testid="claim-register-csv"]');
   expect(button.textContent).toBe("Download baseline (CSV)");
   expect(button.getAttribute("href")).toBe("http://api/api/audits/a1/claims.csv");
-  expect([...host.querySelectorAll("thead th")].map((th) => th.textContent)).toEqual(REGISTER_COLUMNS);
+  expect([...host.querySelectorAll("thead th")].map((th) => th.firstChild.textContent)).toEqual(REGISTER_COLUMNS);
   expect(host.querySelectorAll('[data-testid="claim-register-row"]').length).toBe(2);
   const row = host.querySelector('[data-testid="claim-register-row"]');
   expect(row.textContent).toContain("Revenue · 200,000 EUR");
@@ -72,9 +72,9 @@ test("the section has its title, the download button and one row per claim with 
   expect(row.querySelector('[data-testid="register-gate-sentence"]')).toBeNull();
 });
 
-test("the table has the six columns, each claim's second line spans the row, and the layout cannot scroll sideways at 1280 px", async () => {
+test("the table has the seven columns, each claim's second line spans the row, and the layout cannot scroll sideways at 1280 px", async () => {
   const { host } = await mount([ROW, { ...ROW, claim_id: "c02", rank: 2, evidence_label: "Unverified", gate_needed: true }]);
-  expect(REGISTER_COLUMNS).toEqual(["#", "Claim", "Segment", "Observed", "Gap", "Evidence"]);
+  expect(REGISTER_COLUMNS).toEqual(["#", "Claim", "Segment", "Observed", "Gap", "Extraction confidence", "Evidence status"]);
   expect(REGISTER_COLUMN_WIDTHS.reduce((a, b) => a + b, 0)).toBe(100);
   const table = host.querySelector('[data-testid="claim-register-table"]');
   const cols = [...table.querySelectorAll("col")].map((c) => c.style.width);
@@ -470,7 +470,7 @@ test("a row in Definition check reads so in the Evidence cell and asks its quest
   expect([...line.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["Yes", "No"]);
   expect(line.querySelector('[data-testid="definition-yes"]').getAttribute("aria-pressed")).toBeNull();
   expect(rows[1].querySelector('[data-testid="definition-check"]')).toBeNull();
-  expect(host.querySelectorAll("thead th").length).toBe(6);
+  expect(host.querySelectorAll("thead th").length).toBe(REGISTER_COLUMNS.length);
   api.answerDefinitionCheck.mockResolvedValue({ register: [{ ...CHECK, definition_check: "yes", evidence_label: "Verified",
     reason: "beat: observed beats the claim by 25 customers more (beat)" }, ROW] });
   await act(async () => { line.querySelector('[data-testid="definition-yes"]').click(); });

@@ -60,7 +60,7 @@ def test_metric_name_is_prefilled_on_every_row_whose_gate_the_server_saves_only_
     the same rule (claim_matching.needs_metric_name): no metric set (a direction only, a turnover question, a qualified Users
     count) or one that does not fit the claim's unit."""
     qualified = cm.QUALIFIED_REASON.format(label="registered institutions")
-    rows = [row("q", "Unsupported", reason=qualified, claim_type="users", period="Y/E 24"),
+    rows = [row("q", "Inconclusive", reason=qualified, claim_type="users", period="Y/E 24", metric="Customer count"),
             row("d", "Unverified", reason=cm.DIRECTION_ONLY, claim_type="ebitda", period="Q2 2024"),
             row("f", "Unsupported", reason="metric does not fit the claim's unit", metric="ARR", period="2025"),
             row("m", metric="ARR", reason="outside ±5%: a miss")]

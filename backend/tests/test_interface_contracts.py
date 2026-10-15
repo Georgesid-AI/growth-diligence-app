@@ -147,7 +147,9 @@ CITATION_BESIDE_BLOCK = {"new_mrr_by_quarter": "new_mrr_by_quarter_source"}     
 NO_OWN_CITATION = {"revenue_reconciliation": "its months and its window carry both sides' citations",
                    "founder_win_rate": "optional twin of win_rate", "missing_data": "gaps, no figure",
                    "questions_for_management": "text, no figure", "contract_version": "", "reporting_currency": "",
-                   "as_of_month": ""}
+                   "as_of_month": "",
+                   # docs/specs/dates-and-periods.md sections 2-3: months as text, read from the uploads, no figure
+                   "source_period": "months as text, no figure", "metric_periods": "months as text, no figure"}
 
 
 def test_every_block_with_a_figure_carries_a_citation_in_the_model_and_in_the_engine_output():
@@ -177,7 +179,7 @@ def test_the_engine_rounds_counts_and_days_once_and_percents_are_fractions():
     assert isinstance(s["acv_path"]["required_net_new_per_year"], int)
     assert 0 < s["nrr"]["overall_pct"] < 10 and 0 <= s["win_rate"]["win_rate_pct"] <= 1
     assert all(0 <= v <= 10 for r in s["cohort_retention"]["data"] for v in r["values"].values())
-    assert s["contract_version"] == 2 and s["reporting_currency"] == "EUR"
+    assert s["contract_version"] == metrics.CONTRACT_VERSION == 3 and s["reporting_currency"] == "EUR"
 
 
 @pytest.mark.parametrize("model, value, expected", [
@@ -509,14 +511,22 @@ def api(monkeypatch):
 def test_old_results_are_recomputed_on_the_first_read(api):
     r = api.get(f"/api/audits/{AUDIT_ID}/results")
     assert r.status_code == 200 and api.recomputed == [AUDIT_ID]
-    assert r.json()["results"]["nrr"]["overall_pct"] == 1.0641 and r.json()["results"]["contract_version"] == 2
+    assert r.json()["results"]["nrr"]["overall_pct"] == 1.0641 and r.json()["results"]["contract_version"] == metrics.CONTRACT_VERSION
 
 
 def test_results_stored_before_the_citations_were_added_are_recomputed_on_the_first_read(api):
     """Version 1 results have no citation on five blocks: they would fail the gateway and the export, so they are recomputed."""
     api.db["audits"].docs[0]["results"] = {**cf.stored(nrr=cf.nrr(1.0641, 100)), "contract_version": 1}
     r = api.get(f"/api/audits/{AUDIT_ID}/results")
-    assert r.status_code == 200 and api.recomputed == [AUDIT_ID] and r.json()["results"]["contract_version"] == 2
+    assert r.status_code == 200 and api.recomputed == [AUDIT_ID] and r.json()["results"]["contract_version"] == metrics.CONTRACT_VERSION
+
+
+def test_results_stored_before_the_periods_were_added_are_recomputed_on_the_first_read(api):
+    """Version 2 results have no latest valid source period and no period per metric (dates-and-periods.md section 7): they are
+    recomputed, so every audit shows where its evidence ends."""
+    api.db["audits"].docs[0]["results"] = {**cf.stored(nrr=cf.nrr(1.0641, 100)), "contract_version": 2}
+    r = api.get(f"/api/audits/{AUDIT_ID}/results")
+    assert r.status_code == 200 and api.recomputed == [AUDIT_ID] and r.json()["results"]["contract_version"] == 3
 
 
 def test_the_narrative_endpoints_recompute_old_results_before_the_gateway_reads_them(api):
@@ -713,7 +723,7 @@ def test_a_memo_is_built_from_every_engine_run_the_contract_covers_with_no_false
     text = ic_memo.build_memo(
         audit={"company_name": "TestCo", "target_arr": 1e6, "target_date": "2026-12-31", "as_of_month": stored["as_of_month"]},
         results=stored, rows=rows, ver=vd.verdict(rows, stored, {"claim_ids": top}), key=vd.key_gates(rows),
-        gaps=vd.data_gaps(stored, rows, state["in_force"]), ic={"ratings": icm.RATINGS, "thesis": {"plan": "p", "evidence": "e", "condition": "c"}},
+        gaps=vd.data_gaps(stored, rows, state["in_force"]), ic={"ratings": icm.RATINGS, "thesis": {"plan": "p", "evidence": "e", "condition": "c"}, "judgment": icm.JUDGMENT},
         blockers=[], narratives=[], usage=icm.USAGE, files=icm.FILES, decks=icm.DECKS, tables=tables, today="2026-10-08")
     assert ic_memo.word_count_of(text) <= 1500 and "## Appendix D" in text
 
@@ -727,7 +737,6 @@ import json  # noqa: E402
 SHARED_LABELS = Path(__file__).resolve().parents[2] / "frontend" / "src" / "lib" / "evidence_labels.json"
 
 
-@pytest.mark.xfail(strict=True, reason="docs/specs/evidence-labels.md section 5: not built yet")
 def test_the_memo_summary_counts_inconclusive_under_unverified_with_the_count_in_brackets():
     shared = json.loads(SHARED_LABELS.read_text(encoding="utf-8"))
     assert shared["memo_groups"] == {"Unverified": ["Unverified", "Inconclusive"]}
