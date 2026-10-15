@@ -18,7 +18,7 @@ BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 sys.path.insert(0, str(BACKEND / "tests"))
 
-from app.llm import gateway, redaction  # noqa: E402
+from app.llm import gateway, prompt_store, redaction  # noqa: E402
 import contract_fixtures as cf  # noqa: E402
 import test_llm_gateway as t  # noqa: E402
 
@@ -1988,7 +1988,7 @@ NEW_STEPS = ("data_inventory", "data_integrity")
 STEP_FIELDS = frozenset({"source_list", "inventory", "integrity", "source_key", "description", "category", "in_request_list",
                          "quality_issues", "analyses_blocked", "months_supplied", "months_required", "check", "first_month",
                          "last_month", "revenue_file_total", "pnl_total", "gap", "gap_pct", "tolerance", "window_over_tolerance",
-                         "months_over_tolerance"})
+                         "months_over_tolerance", "deviation_points", "limit_points", "result", "threshold_note"})
 
 
 def _strings(node):
@@ -2079,11 +2079,6 @@ def test_the_stored_narrative_holds_model_output_only(step):
         assert secret not in json.dumps(doc, default=str)
 
 
-def test_the_new_prompts_and_builder_name_no_deck_text_register_field_or_file():
-    for name in ("data_inventory.md", "data_integrity.md"):
-        text = (BACKEND / "app" / "llm" / "prompts" / name).read_text(encoding="utf-8")
-        for word in ("snippet", "deck", "claim_inputs", "gate_sentence", ".xlsx", ".csv"):
-            assert word not in text, f"{name} names {word!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -2197,3 +2192,67 @@ def test_the_access_module_logs_nothing_and_imports_nothing_from_the_gateway():
     for fn in (f for f in ast.walk(server_tree) if isinstance(f, (ast.AsyncFunctionDef, ast.FunctionDef)) and f.name in fns):
         calls = [ast.unparse(c) for c in ast.walk(fn) if isinstance(c, ast.Call) and "logger" in ast.unparse(c.func)]
         assert not calls, f"{fn.name} logs: {calls}"
+
+
+# ---------------------------------------------------------------------------
+# The prompt store (docs/specs/prompt-store.md, section 5; CLAUDE.md rules 14 and 26). Prompt text is the methodology: it goes from
+# the owner page into `prompts`, from `prompts` into the model request, and nowhere else.
+# ---------------------------------------------------------------------------
+PROMPT_SENTINEL = "PROMPT-TEXT-SENTINEL-8812"
+
+
+def _run_with_sentinel_prompt():
+    class Seen(t.FakeAdapter):
+        def complete(self, *, system, **kwargs):
+            self.systems = getattr(self, "systems", []) + [system]
+            return super().complete(system=system, **kwargs)
+
+    async def go():
+        db = t.make_db()
+        await prompt_store.upload(db, "growth_engine", f"Test only. {PROMPT_SENTINEL}")
+        adapter = Seen()
+        result = await gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=adapter, sleep=t._noop_sleep)
+        return db, adapter, result
+
+    return asyncio.run(go())
+
+
+def test_prompt_text_reaches_the_provider_as_the_system_prompt_only_and_is_stored_in_prompts_only(caplog):
+    import logging
+    with caplog.at_level(logging.DEBUG):
+        db, adapter, result = _run_with_sentinel_prompt()
+    assert adapter.systems == [f"Test only. {PROMPT_SENTINEL}"] and not any(PROMPT_SENTINEL in p for p in adapter.payloads)
+    assert PROMPT_SENTINEL not in json.dumps(result.model_dump(), default=str), "the response holds the version, never the text"
+    assert PROMPT_SENTINEL not in caplog.text
+    holders = {name for name, col in db._cols.items() if PROMPT_SENTINEL in json.dumps(col.docs, default=str)}
+    assert holders == {"prompts"}, "no other collection holds prompt text"
+
+
+def test_the_prompts_document_has_fixed_fields():
+    db = t.FakeDB()
+    db["prompts"].docs.clear()
+    asyncio.run(prompt_store.upload(db, "growth_engine", "Test only."))
+    assert set(db["prompts"].docs[0]) == {"name", "version", "text", "uploaded_at", "sha256"}
+
+
+def test_the_missing_prompt_reason_is_the_closed_sentence_and_holds_no_name_text_or_path():
+    async def go():
+        db = t.make_db()
+        db["prompts"].docs.clear()
+        return await gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=t.FakeAdapter(), sleep=t._noop_sleep)
+
+    assert asyncio.run(go()).reason == prompt_store.NO_PROMPT == "No prompt loaded — upload prompts on the owner page"
+
+
+def test_no_module_of_the_gateway_reads_a_token_and_the_prompt_store_logs_nothing():
+    for path in (BACKEND / "app" / "llm").glob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        assert "app.access" not in text and "OWNER_TOKEN" not in text and "authorization" not in text.lower(), path.name
+    text = (BACKEND / "app" / "llm" / "prompt_store.py").read_text(encoding="utf-8")
+    assert "logging" not in text and "logger" not in text and "print(" not in text
+
+
+def test_the_prompt_upload_route_logs_the_name_and_version_only():
+    source = (BACKEND / "server.py").read_text(encoding="utf-8")
+    fn = source[source.index("async def admin_upload_prompt"):source.index("@api.post(\"/admin/testers\")")]
+    assert re.findall(r'logger\.\w+\((.*)\)', fn) == ['"prompt uploaded: name=%s version=%s", row["name"], row["version"]']

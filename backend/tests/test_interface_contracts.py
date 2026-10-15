@@ -482,6 +482,19 @@ def test_the_integrity_reconciliation_is_the_engines_own_with_no_second_calculat
     assert [m["month"] for m in check["months_over_tolerance"]] == over
 
 
+def test_the_integrity_smoothness_is_the_integrity_modules_own_with_no_second_calculation():
+    """The data-integrity payload reads integrity.smoothness (the Dashboard block's function) over the stored revenue series."""
+    from app import integrity
+    stored = stored_form(all_raws()["sample"])
+    read = integrity.smoothness(stored)
+    assert read is not None, "fixture: the sample run has 13 consecutive months"
+    check = next(c for c in gateway._slice_for_step(stored, "data_integrity")["integrity"] if c["check"] == "Month-on-month revenue smoothness")
+    assert check["status"] == "computed" and check["deviation_points"] == f"{read['deviation']:.1f} points"
+    assert (check["first_month"], check["last_month"]) == (read["first"], read["last"])
+    block = next(r for r in integrity.assess(stored, 0, [])["results"] if r["check"] == "Smoothness")
+    assert block["result"] == check["result"], "the screen and the narrative never disagree"
+
+
 # ---------------------------------------------------------------------------
 # 6. Results stored before the contract are recomputed on read, never shown 100 times too large
 # ---------------------------------------------------------------------------

@@ -77,3 +77,9 @@
 ## Testing
 25. Frontend suite is run with --no-cache. Report the number of test files found and loaded, not only tests
     passed. A test file that fails to load is a failure.
+
+## Prompts
+26. Prompt text is never committed to the repository: the repository is public and the prompts are the methodology. They live
+    in the server-side prompt store (MongoDB `prompts`, docs/specs/prompt-store.md), uploaded on the owner page; the gateway
+    reads them from there only. The repository holds stubs only: short texts marked "test only" in
+    backend/tests/fixtures/prompts/, which tests load into a fake store. Tests do not assert a prompt's wording.

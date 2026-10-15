@@ -68,7 +68,6 @@ async def put(
     narrative: dict,
     narrative_status: str = "ok",
     unmatched_numbers: Optional[list] = None,
-    prompt_release: Optional[str] = None,
 ) -> None:
     """Store a narrative under `key`.
 
@@ -82,7 +81,6 @@ async def put(
             "run_id": run_id,
             "step": step,
             "prompt_version": prompt_version,
-            "prompt_release": prompt_release,
             "model": model,
             "narrative": narrative,
             "narrative_status": narrative_status,
@@ -115,7 +113,7 @@ async def records_for(db, run_id: str, step: str) -> list:
     """
     cursor = db[NARRATIVES_COLLECTION].find(
         {"run_id": run_id, "step": step},
-        {"_id": 0, "key": 1, "prompt_version": 1, "prompt_release": 1, "model": 1, "created_at": 1},
+        {"_id": 0, "key": 1, "prompt_version": 1, "model": 1, "created_at": 1},
     )
     return await cursor.to_list(1000)
 

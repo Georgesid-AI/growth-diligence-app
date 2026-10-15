@@ -37,6 +37,7 @@ from app import usage as usage_mod
 from app.decks import claims as deck_claims
 from app.decks import parser as deck_parser
 from app.llm import gateway as llm_gateway
+from app.llm import prompt_store
 from app.llm import redaction as llm_redaction
 from app.logsafety import install_secret_redaction
 
@@ -55,7 +56,8 @@ async def access_guard(request: Request):
     owner token reaches usage totals and the admin routes only (404 elsewhere); a tester reaches an audit (or run) id only when
     their token owns it, and gets the missing-audit answer otherwise."""
     path = request.url.path
-    if access_mod.disabled() or path in access_mod.OPEN_PATHS or request.method == "OPTIONS":
+    # ACCESS_DISABLED opens the audit routes (local development, the test suite) and never the owner routes: they stay locked.
+    if (access_mod.disabled() and not path.startswith("/api/admin/")) or path in access_mod.OPEN_PATHS or request.method == "OPTIONS":
         request.state.principal = None
         return
     who = await access_mod.principal(db, access_mod.bearer(request.headers.get("authorization")))
@@ -63,7 +65,9 @@ async def access_guard(request: Request):
         raise HTTPException(401, "Invalid or missing access link")
     role, tester_id = who
     request.state.principal = who
-    if path.startswith("/api/admin/") or path == "/api/usage/totals":
+    if path == "/api/usage/totals":
+        return                      # a tester reads the totals of their own audits, the owner token those of all (usage_totals)
+    if path.startswith("/api/admin/"):
         if role != access_mod.OWNER:
             raise HTTPException(404, "Not found")
         return
@@ -375,6 +379,29 @@ def _link(request: Request, token: str) -> str:
     return f"{base.rstrip('/')}/t/{token}"
 
 
+class PromptUpload(BaseModel):
+    name: str
+    text: str
+
+
+# Prompt text goes in and never comes out: the list has name, version, date and hash (docs/specs/prompt-store.md). Owner token only
+# (access_guard, /api/admin/...).
+@api.get("/admin/prompts")
+async def admin_prompts():
+    return {"names": list(prompt_store.NAMES), "prompts": await prompt_store.list_versions(db),
+            "missing": await prompt_store.missing(db)}
+
+
+@api.post("/admin/prompts")
+async def admin_upload_prompt(payload: PromptUpload):
+    try:
+        row = await prompt_store.upload(db, payload.name, payload.text)
+    except prompt_store.PromptRefused as exc:
+        raise HTTPException(422, str(exc))
+    logger.info("prompt uploaded: name=%s version=%s", row["name"], row["version"])
+    return row
+
+
 @api.post("/admin/testers")
 async def issue_tester(payload: TesterCreate, request: Request):
     """The owner issues one link per tester. The link is returned once; only its hash is stored."""
@@ -521,12 +548,18 @@ async def report_usage(audit_id: str, event: UsageEvent):
 
 
 @api.get("/usage/totals")
-async def usage_totals():
+async def usage_totals(request: Request):
     """Sums across audits, the median days from first upload to first export and the 50 newest "Other" notes. No
     per-audit rows, names or ids (chat-upload.md section 7). Tokens and cost come from the call log; evidence
-    labels and analyst changes are computed on read from what the audits hold."""
-    audits = await db.audits.find({}, {"_id": 0}).to_list(100000)
+    labels and analyst changes are computed on read from what the audits hold. A tester token sums its own audits
+    only, notes included; the owner token sums all (access-links.md section 3)."""
+    who = getattr(request.state, "principal", None)
+    mine = {"owner": who[1]} if who and who[0] == access_mod.TESTER else {}
+    audits = await db.audits.find(mine, {"_id": 0}).to_list(100000)
     calls = await db[llm_gateway.CALLS_COLLECTION].find({}, {"_id": 0}).to_list(1000000)
+    if mine:
+        own = {a["id"] for a in audits}
+        calls = [c for c in calls if c.get("run_id") in own]
     steps: dict = {}
     for c in calls:
         step = steps.setdefault(str(c.get("step") or "other"), {"calls": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0})
@@ -545,7 +578,8 @@ async def usage_totals():
             sum(len(c.get("claim_inputs") or {}) for c in claims)
         changes += usage_mod.get(a)["columns"]["corrected"]
     return sanitize(usage_mod.totals([usage_mod.get(a) for a in audits], {
-        "tokens_and_cost_by_step": steps, "evidence_labels": labels, "metrics_missing": missing, "analyst_changes": changes}))
+        "tokens_and_cost_by_step": steps, "evidence_labels": labels, "metrics_missing": missing, "analyst_changes": changes,
+        "scope": "own" if mine else "all"}))       # the screen words its title from this
 
 
 # ---------------------------------------------------------------------------
