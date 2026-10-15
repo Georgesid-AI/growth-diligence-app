@@ -27,6 +27,7 @@ REASONS = {
     DECKS: "At least one board deck",
 }
 SMOOTHNESS_MONTHS = 13              # smoothness.md section 1: 12 month-on-month changes need 13 consecutive months
+SMOOTHNESS_LABEL = "provisional threshold, 3 synthetic series"    # shown beside the result, on screen and in the memo (George, 15 Oct 2026)
 SMOOTHNESS_LIMIT_POINTS = 0.5       # below this deviation of the growth rate, in points, revenue is unusually smooth (provisional, section 1)
 MIN_COMPLETED = 4                   # section 2: fewer completed applicable checks is insufficient coverage
 INSUFFICIENT = "Insufficient assessment coverage ({x} of {y})"
@@ -87,7 +88,8 @@ def _smoothness(results: dict) -> Optional[dict]:
     deviation = pstdev([window[i][2] / window[i - 1][2] - 1 for i in range(1, len(window))]) * 100
     smooth = deviation < SMOOTHNESS_LIMIT_POINTS
     finding = (f"Month-on-month revenue growth varies by {deviation:.1f} points (standard deviation) over "
-               f"{window[0][1]}–{window[-1][1]}" + (f"; below {SMOOTHNESS_LIMIT_POINTS:g} points is unusually smooth" if smooth else ""))
+               f"{window[0][1]}–{window[-1][1]}" + (f"; below {SMOOTHNESS_LIMIT_POINTS:g} points is unusually smooth" if smooth else "") +
+               f" ({SMOOTHNESS_LABEL})")
     return {"result": AMBER if smooth else GREEN, "finding": finding, "source": _cite(series.get("source"))}
 
 

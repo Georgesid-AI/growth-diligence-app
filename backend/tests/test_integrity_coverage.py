@@ -214,7 +214,7 @@ def test_a_series_growing_exactly_one_percent_a_month_is_amber_and_the_finding_n
     assert row["status"] == "Completed" and row["reason"] is None and row["result"] == "Amber"
     assert ran["result"] == "Amber"
     assert ran["finding"] == ("Month-on-month revenue growth varies by 0.0 points (standard deviation) over 2023-12–2024-12; "
-                              "below 0.5 points is unusually smooth")
+                              "below 0.5 points is unusually smooth (provisional threshold, 3 synthetic series)")
     assert ran["source"] == "revenue.csv · CSV · rows 2–71 (70 rows)"
 
 
@@ -222,6 +222,7 @@ def test_a_series_with_ordinary_noise_is_green():
     _, row, ran = _smooth(_series(NOISY + [210, 230, 224, 251]))
     assert row["result"] == "Green" and ran["result"] == "Green"
     assert ran["finding"].startswith("Month-on-month revenue growth varies by ") and "unusually smooth" not in ran["finding"]
+    assert ran["finding"].endswith("(provisional threshold, 3 synthetic series)")
 
 
 def test_twelve_months_or_a_gap_that_leaves_fewer_than_thirteen_consecutive_months_is_blocked_and_requested():
@@ -253,3 +254,9 @@ def test_with_smoothness_four_of_five_applicable_checks_can_complete_and_cluster
     assert (assessed["completed"], assessed["applicable"]) == (4, 5)
     assert assessed["code"] != "insufficient"
     assert next(r for r in assessed["results"] if r["check"] == "Smoothness")["result"] == "Amber", "TestCo grows exactly 1% a month"
+
+
+def test_the_memo_labels_the_smoothness_threshold_as_provisional():
+    from app import ic_memo as im
+    row = next(line for line in im.build_memo(**inputs()).split("\n") if line.startswith("| Data reliability"))
+    assert "Smoothness: Amber (provisional threshold, 3 synthetic series)." in row

@@ -443,6 +443,9 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, us
     coverage = f"{integrity['conclusion']}. {integrity['completed_text']}."
     if integrity.get("memo_sentence"):
         coverage += f" {integrity['memo_sentence']}"
+    smooth = next((r for r in integrity.get("results") or () if r["check"] == integrity_mod.SMOOTHNESS), None)
+    if smooth:
+        coverage += f" Smoothness: {smooth['result']} ({integrity_mod.SMOOTHNESS_LABEL})."
     reliability = f"{coverage} {recon}; {anomalies}; {verified} of {len(rows)} claims Verified{notes.register()}."
     reliability_evidence = f"Data integrity conclusion: {integrity['conclusion']}; revenue_reconciliation, anomalies, claim register"
     if narrative:
