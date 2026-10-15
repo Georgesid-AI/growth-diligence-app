@@ -1,10 +1,8 @@
-// Release 1, committed before the code: docs/specs/claim-review-conclusion.md (plan section 1 and 7.1). failing() becomes test()
-// in the code PR.
+// docs/specs/claim-review-conclusion.md (plan section 1 and 7.1): the conclusion, the contradictions outside the five, the judgment.
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 
 import Verdict from "./Verdict";
-import { failing } from "@/testing/expectedFailure";
 
 jest.mock("@/lib/api", () => ({ getMemo: jest.fn(), putIcInputs: jest.fn(() => Promise.resolve({})) }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
@@ -45,7 +43,7 @@ async function mount(response) {
   return { host, done: async () => { await act(async () => { root.unmount(); }); host.remove(); } };
 }
 
-failing("plan 1: Selected claims supported and the contradiction outside the five show in the same block", async () => {
+test("plan 1: Selected claims supported and the contradiction outside the five show in the same block", async () => {
   const { host, done } = await mount(RESPONSE);
   try {
     const block = host.querySelector('[data-testid="verdict"]');
@@ -59,7 +57,7 @@ failing("plan 1: Selected claims supported and the contradiction outside the fiv
   } finally { await done(); }
 });
 
-failing("no contradiction outside the five reads None found among tested claims", async () => {
+test("no contradiction outside the five reads None found among tested claims", async () => {
   const response = { ...RESPONSE, verdict: { ...RESPONSE.verdict, other_contradictions: [], other_contradictions_text: "None found among tested claims." } };
   const { host, done } = await mount(response);
   try {
@@ -67,7 +65,7 @@ failing("no contradiction outside the five reads None found among tested claims"
   } finally { await done(); }
 });
 
-failing("the analyst judgment has two empty fields, Reasons and Unresolved questions, never pre-filled", async () => {
+test("the analyst judgment has two empty fields, Reasons and Unresolved questions, never pre-filled", async () => {
   const { host, done } = await mount(RESPONSE);
   try {
     expect(host.querySelector('[data-testid="judgment-reasons"]').value).toBe("");
@@ -76,7 +74,7 @@ failing("the analyst judgment has two empty fields, Reasons and Unresolved quest
   } finally { await done(); }
 });
 
-failing("the section never shows Underwrite, Re-plan, invest, pass or proceed", async () => {
+test("the section never shows Underwrite, Re-plan, invest, pass or proceed", async () => {
   const { host, done } = await mount(RESPONSE);
   try {
     expect(host.textContent).not.toMatch(BANNED);

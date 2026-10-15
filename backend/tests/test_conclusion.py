@@ -17,9 +17,6 @@ from test_ic_memo import RATINGS, THESIS  # noqa: E402
 
 from app import decks  # noqa: E402
 
-# Committed before the code (docs/specs/claim-review-conclusion.md): strict expected failures until the code PR removes it.
-pytestmark = pytest.mark.xfail(strict=True, reason="docs/specs/claim-review-conclusion.md: not built yet")
-
 ROOT = Path(__file__).resolve().parents[2]
 HEADING = "Claim-review conclusion — assessment of the five selected claims"
 SCOPE = "This assesses the five claims the analyst selected. It is not an investment recommendation."

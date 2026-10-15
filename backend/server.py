@@ -1932,9 +1932,10 @@ async def get_verdict(audit_id: str):
         "deal_terms": verdict_mod.W13_DEAL_TERMS, "top5_statement": verdict_mod.W24_STATEMENT,
         "candidates": [{"claim_id": r["claim_id"], "rank": r["rank"], "claim": verdict_mod.claim_name(r),
                         "evidence_label": r["evidence_label"], "reason": r["reason"]} for r in verdict_mod.sortable(rows)],
-        "ic_inputs": {k: ic.get(k) for k in ("first_quarterly_review", "ratings", "thesis")},
+        "ic_inputs": {k: ic.get(k) for k in ("first_quarterly_review", "ratings", "thesis", "judgment")},
         "ratings": list(verdict_mod.RATINGS), "ratings_for": {k: ic_memo.RATING_LABELS[k] for k in verdict_mod.RATED_ROWS},
         "thesis_labels": ic_memo.THESIS_LABELS, "thesis_max": verdict_mod.THESIS_MAX,
+        "judgment_labels": verdict_mod.JUDGMENT_LABELS, "judgment_max": verdict_mod.JUDGMENT_MAX,
     })
 
 
@@ -1946,6 +1947,7 @@ class IcInputs(BaseModel):
     gap_target_dates: Optional[dict] = None
     ratings: Optional[dict] = None
     thesis: Optional[dict] = None
+    judgment: Optional[dict] = None         # claim-review-conclusion.md section 3: Reasons, Unresolved questions
 
     @field_validator("first_quarterly_review")
     @classmethod
@@ -1976,6 +1978,14 @@ class IcInputs(BaseModel):
         for part, text in (v or {}).items():
             if part not in verdict_mod.THESIS_PARTS or (text is not None and (not isinstance(text, str) or len(text) > verdict_mod.THESIS_MAX)):
                 raise ValueError(f"the thesis is Plan, Evidence and Condition, each at most {verdict_mod.THESIS_MAX} characters")
+        return v
+
+    @field_validator("judgment")
+    @classmethod
+    def _known_judgment(cls, v):
+        for part, text in (v or {}).items():
+            if part not in verdict_mod.JUDGMENT_PARTS or (text is not None and (not isinstance(text, str) or len(text) > verdict_mod.JUDGMENT_MAX)):
+                raise ValueError(f"the analyst judgment is Reasons and Unresolved questions, each at most {verdict_mod.JUDGMENT_MAX} characters")
         return v
 
 

@@ -22,6 +22,7 @@ from app import verdict as vd  # noqa: E402
 THESIS = {"plan": "Reach the target ARR with the current segment mix.", "evidence": "ARR is 202,125 EUR at the as-of month.",
           "condition": "The contradicted claims are re-based before closing."}
 RATINGS = {"data_reliability": "Adequate", "growth_engine": "Weak"}
+JUDGMENT = {"reasons": "The revenue claims of the five agree with the revenue file.", "unresolved_questions": "Why the deck ARR differs from the file."}
 USAGE = {"calls": 0, "structure_calls": 0, "cache_hits": 0, "input_tokens": 0, "output_tokens": 0, "estimated_cost_usd": 0.0,
          "by_step": {}}
 FILES = [{"dtype": "revenue", "file": "revenue.csv", "sheet": "CSV"}, {"dtype": "crm", "file": "crm.csv", "sheet": "CSV"},
@@ -37,7 +38,7 @@ def narrative(headline="The growth engine is steady.", flagging=("Win rate is be
 
 
 def inputs(run="A", decision=GATE_DECISION, ratings=None, thesis=None, key=5, narratives=(), files=None, decks_=None, usage=None,
-           blockers=(), tables=(), stored=None, answers=None, **extra):
+           blockers=(), tables=(), stored=None, answers=None, judgment=None, **extra):
     """Everything build_memo reads, for one fixture run: the proposed top 5 confirmed and gated, `key` of them marked key. `answers`:
     the analyst's Definition check answers by claim id (claim-matching.md section 4.1)."""
     r = RUNS[run]
@@ -59,7 +60,8 @@ def inputs(run="A", decision=GATE_DECISION, ratings=None, thesis=None, key=5, na
                 c.setdefault("claim_inputs", {}).setdefault(cid, {}).update(gate)
     rows = cm.build_register(cands, results, settings(r))
     ver = vd.verdict(rows, results, {"claim_ids": top})
-    ic = {"ratings": dict(RATINGS) if ratings is None else ratings, "thesis": dict(THESIS) if thesis is None else thesis, "first_quarterly_review": "2024-09-30"}
+    ic = {"ratings": dict(RATINGS) if ratings is None else ratings, "thesis": dict(THESIS) if thesis is None else thesis, "first_quarterly_review": "2024-09-30",
+          "judgment": dict(JUDGMENT) if judgment is None else judgment}
     state = vd.top5_state(rows, {"claim_ids": top})
     return dict(audit={"company_name": "TestCo", "target_arr": 1_000_000, "target_date": "2026-12-31", "as_of_month": "2024-02"},
                 results=results, rows=rows, ver=ver, key=vd.key_gates(rows), ic=ic, today="2026-10-08",
@@ -92,7 +94,11 @@ def test_the_memo_is_built_from_the_run_a_fixture_in_the_order_of_w15_with_the_f
                         "Appendix B – Data gaps and data request list", "Appendix C – Detailed analysis tables",
                         "Appendix D – Source key list and value-at-risk de-duplication"]
     assert text.startswith("# Investment committee memo: TestCo\nDate: 2026-10-08\n")
-    assert "Verdict: Re-plan – 5 top-5 claims Contradicted." in text
+    summary = head_of(text).split("## Summary\n")[1]
+    assert summary.startswith("Claim-review conclusion — assessment of the five selected claims\n"
+                              "Conclusion: Selected claims not supported – 5 selected claims are Contradicted.")
+    assert "This assesses the five claims the analyst selected. It is not an investment recommendation." in summary
+    assert "Verdict" not in text
     assert text.count("Top 5 set by the analyst pending ARR (see glossary) bridge.") == 1
     assert head_of(text).index("Top 5 set by the analyst pending ARR (see glossary) bridge.") < head_of(text).index("## Deal thesis")
 
@@ -136,7 +142,7 @@ def test_a_blocked_verdict_refuses():
                            {"claim_ids": vd.proposal(kw["rows"])})
     with pytest.raises(im.MemoRefused) as exc:
         im.build_memo(**kw)
-    assert exc.value.message == "Memo not exported: the verdict is blocked."
+    assert exc.value.message == "Memo not exported: the conclusion is blocked."
 
 
 def test_key_gates_that_are_not_three_to_five_refuse_unless_fewer_than_three_gates_are_saved():
@@ -398,7 +404,7 @@ def _ready(client, decision=GATE_DECISION):
     for n, cid in enumerate(ids):
         assert _put(client, cid, {"gate_threshold": 100.0 + n, "gate_budget_decision": decision, "gate_date": "2024-06-30"}).status_code == 200
         assert _put(client, cid, {"key_gate": True}).status_code == 200
-    ok = client.put(f"/api/audits/{AUDIT}/ic-inputs", json={"ratings": RATINGS, "thesis": THESIS})
+    ok = client.put(f"/api/audits/{AUDIT}/ic-inputs", json={"ratings": RATINGS, "thesis": THESIS, "judgment": JUDGMENT})
     assert ok.status_code == 200, ok.text
 
 
@@ -441,14 +447,14 @@ def test_the_endpoint_refuses_a_blocked_verdict_missing_key_gates_ratings_and_a_
     client, db = api
     ids = client.get(f"/api/audits/{AUDIT}/verdict").json()["verdict"]["top5"]["proposed"]
     client.put(f"/api/audits/{AUDIT}/ic-inputs", json={"top5": ids})
-    assert client.get(f"/api/audits/{AUDIT}/memo.md").json()["detail"] == "Memo not exported: the verdict is blocked."
+    assert client.get(f"/api/audits/{AUDIT}/memo.md").json()["detail"] == "Memo not exported: the conclusion is blocked."
     for n, cid in enumerate(ids):
         _put(client, cid, {"gate_threshold": 100.0 + n, "gate_budget_decision": GATE_DECISION, "gate_date": "2024-06-30"})
     assert client.get(f"/api/audits/{AUDIT}/memo.md").json()["detail"] == "Memo not exported: mark 3 to 5 key gates."
     for cid in ids:
         _put(client, cid, {"key_gate": True})
     assert client.get(f"/api/audits/{AUDIT}/memo.md").json()["detail"] == "Memo not exported: rate Data reliability, Growth engine."
-    client.put(f"/api/audits/{AUDIT}/ic-inputs", json={"ratings": RATINGS, "thesis": {**THESIS, "plan": "Grow 37% a year."}})
+    client.put(f"/api/audits/{AUDIT}/ic-inputs", json={"ratings": RATINGS, "thesis": {**THESIS, "plan": "Grow 37% a year."}, "judgment": JUDGMENT})
     detail = client.get(f"/api/audits/{AUDIT}/memo.md").json()["detail"]
     assert detail == "Memo not exported: 1 numbers are not in the stored results: 37."
     client.put(f"/api/audits/{AUDIT}/ic-inputs", json={"thesis": THESIS})
@@ -498,11 +504,14 @@ def test_a_ratio_or_any_other_derived_figure_in_a_table_refuses(cells):
     assert exc.code == "numbers" and exc.unmatched
 
 
-def test_w8_says_is_for_one_open_claim_and_are_for_more():
-    v, _ = verdict_of_labels(["Verified", "Unverified", "Verified", "Verified", "Verified"], gates={2})
-    assert v["rule"] == "No top-5 claim is Contradicted; 1 is Unverified or Unsupported."
+def test_the_rule_text_says_is_for_one_contradicted_claim_and_are_for_more():
+    """claim-review-conclusion.md section 2 (replaces W8)."""
+    v, _ = verdict_of_labels(["Contradicted", "Verified", "Verified", "Verified", "Verified"], gates={1})
+    assert v["rule"] == "1 selected claim is Contradicted."
+    v, _ = verdict_of_labels(["Contradicted", "Contradicted", "Verified", "Verified", "Verified"], gates={1, 2})
+    assert v["rule"] == "2 selected claims are Contradicted."
     v, _ = verdict_of_labels(["Unverified", "Unsupported", "Verified", "Verified", "Verified"], gates={1, 2})
-    assert v["rule"] == "No top-5 claim is Contradicted; 2 are Unverified or Unsupported."
+    assert v["rule"] == "No selected claim is Contradicted; 3 of 5 are Verified, 2 untested."
 
 
 def verdict_of_labels(labels, gates):
@@ -519,6 +528,9 @@ def test_value_at_stake_reads_vas_and_each_abbreviation_points_to_the_glossary_o
     for line in body.split("\n"):
         if line.startswith("|") or line.startswith("#") or line.startswith("[^"):
             assert "(see glossary)" not in line, f"a table, a heading or a footnote is not a text block: {line!r}"
+            continue
+        if line.startswith(("Reasons: ", "Unresolved questions: ")):      # the analyst's judgment is printed verbatim
+            assert "(see glossary)" not in line, line
             continue
         for term in fmt.GLOSSED:
             uses = re.findall(rf"(?<![\w-]){term}(?![\w-])( \(see glossary\))?", line)

@@ -28,7 +28,7 @@ const CANDIDATES = [
   { claim_id: "c3", rank: 3, claim: "Win rate", evidence_label: "Verified", reason: "within ±1 pp of the claim" },
 ];
 const VERDICT_BASE = {
-  verdict: { top5: TOP, status: "unconfirmed", message: "No verdict until the top 5 is confirmed.", outcome: null, rule: null, blocked: [], five: [], reasons: [] },
+  verdict: { top5: TOP, status: "unconfirmed", message: "No conclusion until the top 5 is confirmed.", outcome: null, rule: null, blocked: [], five: [], reasons: [] },
   data_gaps: [{ item: "NRR (12-month)", why: "Blocks NRR; claims #4. Needs 12+ months of history.", requested: "Provide at least 13 months of revenue lines", target_date: null, claims: [], ranks: [4] }],
   top_gaps: [], key_gates: { note: "No key gates marked.", ok: true, all_key: true, saved: 0, sentences: [] }, gates_still_needed: 0,
   deal_terms: "Deal terms: not available – the execution capacity review has not been run.", top5_statement: "Top 5 set by the analyst pending ARR bridge.",
@@ -161,7 +161,7 @@ test("the FX line shows the audit's rates, the audit's winning over those saved 
 const OK = {
   ...VERDICT_BASE,
   verdict: { top5: { ...TOP, confirmed: true, claim_ids: ["c1", "c2"], set_at: "2026-10-08T10:00:00+00:00" }, status: "ok", message: null,
-    outcome: "Re-plan", outcome_code: "replan", rule: "2 top-5 claims Contradicted.", blocked: [],
+    outcome: "Selected claims not supported", outcome_code: "not_supported", rule: "2 selected claims are Contradicted.", blocked: [],
     five: CANDIDATES.slice(0, 2).map((c) => ({ ...c })), reasons: ["#1 ARR, FY2023: Contradicted, €198,143 against €240,000 (€41,857 lower (miss))."] },
   top_gaps: VERDICT_BASE.data_gaps, gates_still_needed: 3,
   key_gates: { note: null, ok: true, all_key: false, saved: 3, sentences: [{ claim_id: "c1", rank: 1, sentence: "Before the plan, ARR must be at least €100 by 2024-06-30." }] },
@@ -178,10 +178,10 @@ async function type(el, value) {
 test("before the top 5 is confirmed the Verdict section proposes it, gives no outcome and says so (W23)", async () => {
   const { host, unmount } = await mountDashboard(sample);
   const section = host.querySelector('[data-testid="verdict"]');
-  expect(section.querySelector("h2").textContent).toBe("Verdict");
+  expect(section.querySelector("h2").textContent).toBe("Claim-review conclusion — assessment of the five selected claims");
   expect(section.querySelector('[data-testid="verdict-top5"] h3').textContent).toBe("Top 5");
   expect(section.querySelector('[data-testid="verdict-top5-note"]').textContent).toBe("Proposed by shortfall – confirm or replace.");
-  expect(section.querySelector('[data-testid="verdict-message"]').textContent).toBe("No verdict until the top 5 is confirmed.");
+  expect(section.querySelector('[data-testid="verdict-message"]').textContent).toBe("No conclusion until the top 5 is confirmed.");
   expect(section.querySelector('[data-testid="verdict-outcome"]')).toBeNull();
   expect([...section.querySelectorAll('[data-testid="verdict-pick-row"]')].map((r) => r.querySelector("span").textContent))
     .toEqual(["#1 ARR, FY2023", "#2 Revenue, Q4 2023"]);
@@ -206,8 +206,8 @@ test("a confirmed top 5 shows W24, the outcome with its rule, the five claims, t
   const { host, unmount } = await mountDashboard(sample, OK);
   const section = host.querySelector('[data-testid="verdict"]');
   expect(section.querySelector('[data-testid="verdict-top5-note"]').textContent).toBe("Top 5 set by the analyst pending ARR (see glossary) bridge.");
-  expect(section.querySelector('[data-testid="verdict-outcome"]').textContent).toContain("Re-plan");
-  expect(section.querySelector('[data-testid="verdict-rule"]').textContent).toBe("2 top-5 claims Contradicted.");
+  expect(section.querySelector('[data-testid="verdict-outcome"]').textContent).toContain("Selected claims not supported");
+  expect(section.querySelector('[data-testid="verdict-rule"]').textContent).toBe("2 selected claims are Contradicted.");
   expect(section.querySelectorAll('[data-testid="verdict-five-row"]').length).toBe(2);
   expect(section.querySelector('[data-testid="verdict-reasons"]').textContent).toContain("#1 ARR (see glossary), FY2023: Contradicted, €198,143 against €240,000");
   expect(section.querySelector('[data-testid="verdict-key-gates"]').textContent).toContain("Before the plan, ARR (see glossary) must be at least €100 by 2024-06-30.");
@@ -219,9 +219,9 @@ test("a confirmed top 5 shows W24, the outcome with its rule, the five claims, t
 
 test("a blocked verdict shows no outcome, only the claims that need a gate (W9)", async () => {
   const blocked = { ...OK, verdict: { ...OK.verdict, status: "blocked", outcome: null, rule: null, reasons: [], blocked: ["c1"],
-    message: "Verdict blocked: set a gate on #1 (top-5 claims that are not Verified)." } };
+    message: "Conclusion blocked: set a gate on #1 (top-5 claims that are not Verified)." } };
   const { host, unmount } = await mountDashboard(sample, blocked);
-  expect(host.querySelector('[data-testid="verdict-message"]').textContent).toBe("Verdict blocked: set a gate on #1 (top-5 claims that are not Verified).");
+  expect(host.querySelector('[data-testid="verdict-message"]').textContent).toBe("Conclusion blocked: set a gate on #1 (top-5 claims that are not Verified).");
   expect(host.querySelector('[data-testid="verdict-outcome"]')).toBeNull();
   expect(host.querySelector('[data-testid="verdict-reasons"]')).toBeNull();
   await unmount();
@@ -231,9 +231,9 @@ test("an open Definition check blocks the verdict (W9b) and its row of the five 
   const five = [{ ...OK.verdict.five[0], evidence_label: null, definition_check: "ask", reason: "definition check: the gap is beyond 50% of the claim" },
     OK.verdict.five[1]];
   const blocked = { ...OK, verdict: { ...OK.verdict, status: "blocked", outcome: null, rule: null, reasons: [], blocked: ["c1"], five,
-    message: "Verdict blocked: answer the definition check on #1." } };
+    message: "Conclusion blocked: answer the definition check on #1." } };
   const { host, unmount } = await mountDashboard(sample, blocked);
-  expect(host.querySelector('[data-testid="verdict-message"]').textContent).toBe("Verdict blocked: answer the definition check on #1.");
+  expect(host.querySelector('[data-testid="verdict-message"]').textContent).toBe("Conclusion blocked: answer the definition check on #1.");
   const rows = host.querySelectorAll('[data-testid="verdict-five-row"]');
   expect(rows[0].textContent).toContain("Definition check");
   expect(rows[0].textContent).toContain("the gap is beyond 50% of the claim");
@@ -242,10 +242,10 @@ test("an open Definition check blocks the verdict (W9b) and its row of the five 
 });
 
 test("an audit with no claims says so (W10) and offers no top 5", async () => {
-  const none = { ...VERDICT_BASE, candidates: [], verdict: { ...VERDICT_BASE.verdict, status: "no_verdict", message: "No verdict: the register has no claims.",
+  const none = { ...VERDICT_BASE, candidates: [], verdict: { ...VERDICT_BASE.verdict, status: "no_verdict", message: "No conclusion: the register has no claims.",
     top5: { ...TOP, proposed: [], in_force: [] } } };
   const { host, unmount } = await mountDashboard(sample, none);
-  expect(host.querySelector('[data-testid="verdict-message"]').textContent).toBe("No verdict: the register has no claims.");
+  expect(host.querySelector('[data-testid="verdict-message"]').textContent).toBe("No conclusion: the register has no claims.");
   expect(host.querySelector('[data-testid="verdict-top5"]')).toBeNull();
   await unmount();
 });

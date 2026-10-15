@@ -41,21 +41,23 @@ S17 = ("Narrative could not be generated. The computed metrics below are unaffec
 W19_PREFIX = "Memo not exported: "
 W19_WORDS = W19_PREFIX + "{n} words; the limit is 1,500."
 W19_NUMBERS = W19_PREFIX + "{n} numbers are not in the stored results: {list}."
-W19_BLOCKED = W19_PREFIX + "the verdict is blocked."
+W19_BLOCKED = W19_PREFIX + "the conclusion is blocked."
 W19_KEY_GATES = W19_PREFIX + "mark 3 to 5 key gates."
 W19_RATE = W19_PREFIX + "rate {rows}."
 W19_CONTRACT = W19_PREFIX + "the stored results fail the contract: {fields}."
-CONTRACT_NO_VERDICT = "No verdict: the stored results fail the contract: {fields}."
+CONTRACT_NO_VERDICT = "No conclusion: the stored results fail the contract: {fields}."
 W19_TOP5 = W19_PREFIX + vd.W23_MEMO
 # Not in W1-W25 (reported under "Decisions for you"): the refusals for a missing thesis and for no verdict at all.
 WORDING_NOT_IN_W = {
     "thesis": W19_PREFIX + "write the deal thesis: {parts}.",
+    "judgment": W19_PREFIX + "write the analyst judgment: {parts}.",       # claim-review-conclusion.md section 3
     "no_verdict": W19_PREFIX + "{message}",
 }
 
 RATING_LABELS = {"data_reliability": "Data reliability", "growth_engine": "Growth engine"}
 # The "as of" label of the analyst's own text: the requested analysis date (dates-and-periods.md section 2).
 ANALYST_TEXT = "Analyst's text, as of {date}."
+ANALYST_JUDGMENT = "Analyst judgment (analyst's text, as of {date})"
 THESIS_LABELS = {"plan": "Plan", "evidence": "Evidence", "condition": "Condition"}
 
 CATEGORIES = (
@@ -376,6 +378,9 @@ def _needs(ic: dict, rows: List[dict], key: dict) -> None:
     absent = [THESIS_LABELS[k] for k in vd.THESIS_PARTS if not (ic.get("thesis") or {}).get(k)]
     if absent:
         raise MemoRefused("inputs", WORDING_NOT_IN_W["thesis"].format(parts=", ".join(absent)))
+    unwritten = [vd.JUDGMENT_LABELS[k] for k in vd.JUDGMENT_PARTS if not (ic.get("judgment") or {}).get(k)]
+    if unwritten:
+        raise MemoRefused("inputs", WORDING_NOT_IN_W["judgment"].format(parts=", ".join(unwritten)))
 
 
 def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, usage, files, decks, tables, today, integrity,
@@ -395,7 +400,17 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, us
                       f"Evidence to {fmt.evidence_to_text(results)}", ""]
 
     # 1. Summary
-    out += [f"## {HEADINGS[0]}", f"Verdict: {ver['outcome']} – {ver['rule']}{notes.register(top_ranks)}", vd.W24_STATEMENT, ""]
+    # claim-review-conclusion.md section 4: the heading, the conclusion, the scope sentence, the other contradictions and the analyst's
+    # judgment, verbatim; W24 stays.
+    judgment = ic.get("judgment") or {}
+    others = ver.get("other_contradictions") or []
+    out += [f"## {HEADINGS[0]}", vd.HEADING, f"Conclusion: {ver['outcome']} – {ver['rule']}{notes.register(top_ranks)}", vd.SCOPE_SENTENCE,
+            vd.W24_STATEMENT, ""]
+    out += ["Other contradictions:"]
+    out += [f"- {o['metric']}: {o['gap']}{notes.register([o['rank']])}" for o in others] or [vd.NO_OTHER_CONTRADICTIONS]
+    out += ["", ANALYST_JUDGMENT.format(date=today)]
+    verbatim = [f"{vd.JUDGMENT_LABELS[k]}: {judgment.get(k, '')}{notes.analyst()}" for k in vd.JUDGMENT_PARTS]
+    out += verbatim + [""]
     out += [f"Files reviewed: {len(files)} data {'file' if len(files) == 1 else 'files'} and {len(decks)} {'deck' if len(decks) == 1 else 'decks'}.{notes.add('files by evidence category, Appendix D')}",
             f"Evidence categories covered: {covered} of 7.{notes.add('files by evidence category, Appendix D')}",
             "Claims: " + summary_counts(counts) + f" of {len(rows)} in the register.{notes.register()}"]
@@ -481,7 +496,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, us
     if len(gaps) > 5:
         out += [f"and {len(gaps) - 5} more in Appendix B{notes.source('Missing Data', 'missing_data')}"]
     out += [f"- {q}{notes.source('Questions for management', 'questions_for_management')}" for q in vd.management_questions(results)]
-    head = "\n".join(_glossed(out)).rstrip() + "\n"
+    head = "\n".join(_glossed(out, keep=set(verbatim))).rstrip() + "\n"
 
     # Appendices
     app: List[str] = []
@@ -556,11 +571,12 @@ def summary_counts(counts: Dict[str, int]) -> str:
             f"{unverified} Unverified ({counts.get(cm.INCONCLUSIVE, 0)} Inconclusive)")
 
 
-def _glossed(lines: List[str]) -> List[str]:
+def _glossed(lines: List[str], keep: Iterable[str] = ()) -> List[str]:
     """Each prose line (a paragraph or a list item) with VaS, ARR, MRR, NRR and CAC pointing to the glossary at their first
     use in it (George, 2026-10-09). Headings, tables and footnotes are not text blocks: a sheet name or a source reference
-    is never changed."""
-    return [fmt.see_glossary(line) if line and not line.startswith(("#", "|", "[^")) else line for line in lines]
+    is never changed; nor is a line in `keep` (the analyst's judgment, printed verbatim, claim-review-conclusion.md section 4)."""
+    keep = set(keep)
+    return [fmt.see_glossary(line) if line and line not in keep and not line.startswith(("#", "|", "[^")) else line for line in lines]
 
 
 def _usage_table(usage: dict) -> str:
@@ -593,6 +609,7 @@ def allowed_numbers(audit: dict, results: dict, rows: List[dict], gaps: List[dic
         # the difference of two other cells of its row that it does hold; a ratio or any other derived figure is refused.
         allowed.derived_cells([row for t in tables or () for row in t["rows"]])
         allowed.tree(ic.get("gap_target_dates") or {}).tree(ic.get("first_quarterly_review"))
+        allowed.tree(ic.get("judgment") or {})          # the analyst's own text: its numbers are the analyst's (section 7.4 d)
     return allowed
 
 
@@ -607,7 +624,7 @@ def build_memo(*, audit: dict, results: dict, rows: List[dict], ver: dict, key: 
     except contract.ContractError as exc:
         raise MemoRefused("contract", W19_CONTRACT.format(fields=exc.log_text)) from exc
     if ver["status"] in ("no_verdict",):
-        raise MemoRefused("no_verdict", WORDING_NOT_IN_W["no_verdict"].format(message=ver["message"].removeprefix("No verdict: ")))
+        raise MemoRefused("no_verdict", WORDING_NOT_IN_W["no_verdict"].format(message=ver["message"].removeprefix("No conclusion: ")))
     if ver["status"] in ("unconfirmed", "void"):
         raise MemoRefused("top5", W19_TOP5)
     if ver["status"] == "blocked":
