@@ -7,7 +7,7 @@ import {
 } from "recharts";
 import { Loader2, AlertTriangle, Download } from "lucide-react";
 import { Layout } from "@/components/Layout";
-import { MetricCard } from "@/components/MetricCard";
+import { MetricCard, PeriodLines } from "@/components/MetricCard";
 import { Provenance } from "@/components/Provenance";
 import { Gloss } from "@/components/Gloss";
 import { Narrative } from "@/components/Narrative";
@@ -316,7 +316,7 @@ export default function Dashboard() {
 
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6">
-        <Card className="lg:col-span-8" testid="mrr-by-segment-chart" source={r.mrr_series.source} title="Monthly MRR by Segment" hint={`${r.mrr_series.months.length} months · recurring only`}>
+        <Card className="lg:col-span-8" testid="mrr-by-segment-chart" period={periods.mrr_series} source={r.mrr_series.source} title="Monthly MRR by Segment" hint={`${r.mrr_series.months.length} months · recurring only`}>
           <ResponsiveContainer width="100%" height={300}>
             <AreaChart data={r.mrr_series.data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
@@ -332,7 +332,7 @@ export default function Dashboard() {
           </ResponsiveContainer>
         </Card>
 
-        <Card className="lg:col-span-4" testid="nrr-chart" title="NRR Over Time" hint="100% baseline">
+        <Card className="lg:col-span-4" testid="nrr-chart" period={periods.nrr} title="NRR Over Time" hint="100% baseline">
           {r.nrr?.series ? (
             <ResponsiveContainer width="100%" height={300}>
               <LineChart data={r.nrr.series} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
@@ -352,7 +352,7 @@ export default function Dashboard() {
 
       {/* Cohort + Path to plan */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6">
-        <Card className="lg:col-span-8" testid="cohort-retention" source={r.cohort_retention.source} title="Cohort MRR Retention" hint="% of starting MRR retained · rows = start cohort">
+        <Card className="lg:col-span-8" testid="cohort-retention" period={periods.cohort_retention} source={r.cohort_retention.source} title="Cohort MRR Retention" hint="% of starting MRR retained · rows = start cohort">
           <div className="overflow-x-auto -mx-2 px-2">
             <table className="w-full border-separate border-spacing-1 min-w-[640px]">
               <thead>
@@ -385,7 +385,7 @@ export default function Dashboard() {
           </div>
         </Card>
 
-        <Card className="lg:col-span-4" testid="path-to-plan-panel" title="Path to Plan" hint="simple view · flat base · today's ACV · net-new customers / year">
+        <Card className="lg:col-span-4" testid="path-to-plan-panel" period={periods.acv_path} title="Path to Plan" hint="simple view · flat base · today's ACV · net-new customers / year">
           {r.acv_path ? (
             <>
               {r.acv_path.target_date_error && (
@@ -447,13 +447,13 @@ export default function Dashboard() {
 
       {/* Segment tables + ACV bands */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6">
-        <Card className="lg:col-span-4" title="NRR by Segment">
+        <Card className="lg:col-span-4" testid="nrr-by-segment" period={periods.nrr} title="NRR by Segment">
           <SegTable rows={r.nrr?.by_segment} render={(v) => fmtPct(v.nrr_pct)} empty="Segment column not mapped" />
         </Card>
-        <Card className="lg:col-span-4" title="Sales Cycle by Segment">
+        <Card className="lg:col-span-4" testid="sales-cycle-by-segment" period={periods.sales_cycle} title="Sales Cycle by Segment">
           <SegTable rows={r.sales_cycle?.by_segment} render={(v) => `${fmtDays(v.median_days)} · n=${fmtCount(v.n)}`} empty="Segment column not mapped" />
         </Card>
-        <Card className="lg:col-span-4" title={`ACV Bands — active customers (as of ${r.source_period?.evidence_to ?? r.as_of_month ?? "—"})`}>
+        <Card className="lg:col-span-4" testid="acv-bands" period={periods.acv_path} title={`ACV Bands — active customers (as of ${r.source_period?.evidence_to ?? r.as_of_month ?? "—"})`}>
           {r.acv_path ? (
             <div className="space-y-1.5">
               {r.acv_path.overall_band && (
@@ -477,7 +477,7 @@ export default function Dashboard() {
 
       {/* Win rate by founder + CAC quarters */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6">
-        <Card className="lg:col-span-4" title="Win Rate by Founder Involvement">
+        <Card className="lg:col-span-4" testid="win-rate-founder" period={periods.founder_win_rate} title="Win Rate by Founder Involvement">
           {r.win_rate?.by_founder ? (
             <div className="space-y-3">
               {Object.entries(r.win_rate.by_founder).map(([k, v]) => (
@@ -495,7 +495,7 @@ export default function Dashboard() {
           ) : <NotComputable label="'Founder involved' column not mapped" />}
         </Card>
 
-        <Card className="lg:col-span-8" title="CAC Payback by Quarter" hint="months · L = quarters of S&M lag">
+        <Card className="lg:col-span-8" testid="cac-payback-chart" period={periods.cac_payback} title="CAC Payback by Quarter" hint="months · L = quarters of S&M lag">
           {r.cac_payback ? (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -539,7 +539,7 @@ export default function Dashboard() {
       </div>
 
       {/* Segment mix paths to target ARR - hidden for results computed before it existed */}
-      {r.segment_paths && <SegmentPaths sp={r.segment_paths} ccy={ccy} />}
+      {r.segment_paths && <SegmentPaths sp={r.segment_paths} ccy={ccy} period={periods.segment_paths} />}
 
       {/* Missing data + anomalies summary */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -616,7 +616,7 @@ export default function Dashboard() {
   );
 }
 
-function Card({ title, hint, className = "", testid, source, children }) {
+function Card({ title, hint, className = "", testid, source, period, children }) {
   return (
     <div data-testid={testid} className={`bg-white border border-[#E5E7EB] rounded-lg p-5 ${className}`}>
       <div className="flex items-baseline justify-between mb-4">
@@ -625,6 +625,7 @@ function Card({ title, hint, className = "", testid, source, children }) {
         </h3>
         {hint && <span className="text-[10px] font-mono text-slate-500">{hint}</span>}
       </div>
+      <PeriodLines id={testid} period={period} />
       {children}
     </div>
   );

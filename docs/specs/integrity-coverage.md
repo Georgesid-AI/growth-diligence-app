@@ -56,7 +56,8 @@ check is never a request.
 Scorecard, data reliability (verdict-and-memo.md §7.2, item 3): the headline is the overall conclusion and "Completed {x} of
 {y} applicable checks", then the sentence of §2.1 when it applies; key evidence "Data integrity conclusion: {conclusion};
 revenue_reconciliation, anomalies, claim register". The rating stays the analyst's. The A2 narrative's headline and verdict
-are no longer printed there.
+are no longer printed there. On the Dashboard the data-integrity narrative no longer shows its "Verdict:" line either (George,
+15 Oct 2026, decision 1a): Python's conclusion is the only one shown. The narrative text stays; no model call changes.
 
 ## 5. Contract and data boundary
 - A pure module `backend/app/integrity.py` reads `audits.results`, the audit's deck count and the stored candidates'

@@ -19,12 +19,14 @@ claim-review-conclusion (PR 5 of 6).
   points.
 - Result: **Amber** when the statistic is below 0.5 points (revenue grows at an almost constant rate, which real billing
   rarely does); **Green** otherwise. Never Red: only the reconciliation's hard blocker is Red (integrity-coverage.md §7).
+- Label (George, 15 Oct 2026, decision 3a): the limit stays 0.5 and the finding ends `(provisional threshold, 3 synthetic series)` on
+  screen; the memo's data-reliability row adds `Smoothness: {result} (provisional threshold, 3 synthetic series).`
 - Finding (word for word): `Month-on-month revenue growth varies by {s} points (standard deviation) over {first}–{last}` and,
   when Amber, `; below 0.5 points is unusually smooth`. `{s}` has one decimal; `{first}`/`{last}` are the first and last month
   of the 13 months read. Source: the `revenue_series` citation (file · sheet · rows).
 - The 0.5 limit is provisional: measured on the three series the repo holds (sample TestCo: 0.0 points, an exact 1% a month;
   the two demo audits: 19.5 and 21.9 points, all synthetic), which show where the extremes lie and nothing between. It is a
-  named constant (`SMOOTHNESS_LIMIT_POINTS`) so a calibration on real audits changes one line. See "Decisions for you".
+  named constant (`SMOOTHNESS_LIMIT_POINTS`) so a calibration on real audits changes one line.
 
 ## 2. Where it shows
 Block A gets a row when the check ran; Block B row 4 reads Completed. The conclusion rule (integrity-coverage.md §2) is
@@ -53,11 +55,10 @@ what the model is told re-keys the stored data-integrity narratives and costs a 
 | Clustering is still Not available | `test_integrity_coverage.py` |
 | Older tests: TestCo reads 4 of 5 and "Material concerns" (its reconciliation is Red) | `test_integrity_coverage.py`, `test_ic_memo.py` |
 
-## 6. Decisions for you
-- The 0.5-point limit: provisional, from three synthetic series. Recommendation: keep it until five real audits have run, then
-  set it from their distribution.
-- Whether the data-integrity narrative is told the smoothness result (recommended: yes, with the next prompt release, since it
-  re-keys that narrative and costs a regeneration).
+## 6. Decided and open
+- Decided by George (15 Oct 2026): the 0.5-point limit stays, labelled provisional (§1). Recalibrate after five real audits.
+- Open: whether the data-integrity narrative is told the smoothness result (recommended: yes, with the next prompt release, since
+  it re-keys that narrative and costs a regeneration).
 
 ## Files
 `backend/app/integrity.py`, the tests of §5, `docs/specs/integrity-coverage.md` (amendment lines).
