@@ -1,8 +1,8 @@
 # Spec: Access links for the tester phase, and the deployment rule (Release 1)
 Status: Agreed scope. Source: docs/plans/app-plan_V2_amendments_15_10_2026.md section 6 and 7.1 (D6 amended, decisions of
 15 Oct 2026, final). Location: docs/specs/access-links.md (new: no earlier access spec existed in docs/specs/).
-Implementation order: 6 of 6. **Architecture note (CLAUDE.md rule 1): building §2 needs a collection that
-docs/architecture.md does not list (§6). Nothing of §2–§4 is built until George decides.**
+Implementation order: 6 of 6. **Architecture change approved by George (15 Oct 2026, decision 1, option a): the `access_tokens` collection and the token check are
+in docs/architecture.md.**
 
 ## 0. Challenge and deletions (CLAUDE.md rule 4)
 - Needed: testers will hold real audits on a public URL; today any visitor can list and open every audit. The simpler
@@ -74,7 +74,7 @@ the engineering owner; no session of this spec has that access.
 - Options for George: (a) approve the collection `access_tokens` and the check in the API row (recommended: one collection,
   hashes only, removed at the AWS move); (b) keep tester tokens in the environment (hashes and expiry dates set at deploy),
   which drops run-time revoke and re-issue from §2 and needs a redeploy for each change.
-- Until then: this spec, the failing tests of §4 (strict expected failures) and nothing else are committed.
+- Decided: option (a). docs/architecture.md now lists `access_tokens` and the token check.
 
 ## 7. Found while writing this spec (reported, not changed)
 - The plan names "no methodology prompt text in the repo (CLAUDE.md)". CLAUDE.md has no such rule, and the narrative and
