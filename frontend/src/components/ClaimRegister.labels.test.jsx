@@ -12,7 +12,7 @@ jest.mock("@/lib/api", () => ({
   answerTurnover: jest.fn(),
   answerDefinitionCheck: jest.fn(),
   saveAllGatesCall: jest.fn(),
-  downloadClaimsCsv: jest.fn(() => Promise.resolve()),
+  claimsCsvUrl: (id) => `http://api/api/audits/${id}/claims.csv`,
 }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
 
