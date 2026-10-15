@@ -1324,7 +1324,7 @@ async def supersession(db, run_id: str, step: str, outbound: Any, model: str) ->
     reason = "data_changed"
     for rec in sorted(records, key=lambda r: r.get("created_at") or ""):  # newest match wins
         rec_model = rec.get("model") or model
-        tag = rec.get("prompt_version") or ""
+        tag = prompt_store.tag_for(rec.get("prompt_version") or "")
         if cache.cache_key(run_id, step, tag, rec_model, outbound) == rec.get("key"):
             reason = "model_changed" if rec_model != model else "prompt_release_changed"
     return reason

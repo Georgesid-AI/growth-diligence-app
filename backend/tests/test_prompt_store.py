@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from app.llm import cache, gateway, prompt_store
+from app.llm import cache, gateway, prompt_store, redaction
 import test_llm_gateway as t
 from prompt_fixtures import stub_documents
 
@@ -213,3 +213,24 @@ def test_the_stub_documents_are_what_an_upload_writes():
         row = run(prompt_store.upload(db, doc["name"], doc["text"]))
         stored = next(d for d in db["prompts"].docs if d["name"] == doc["name"])
         assert (row["version"], row["sha256"]) == (doc["version"], doc["sha256"]) == (stored["version"], stored["sha256"])
+
+
+def test_a_narrative_written_under_a_retired_file_prompt_is_not_served_as_the_store_version_of_the_same_number():
+    """The file prompts were "v1" ... "v7" and their cache tag was the plain version; a store prompt is also "v1". Without the
+    "store:" namespace the retired record's key equals the store v1 key and the old narrative would be shown as written by it."""
+    async def go():
+        db = t.make_db()
+        computed, _ = await gateway.load_checked_results(db, RUN_ID, "growth_engine")
+        outbound = gateway.build_outbound(computed, await redaction.get_or_create_map(db, RUN_ID, computed))
+        old_key = cache.cache_key(RUN_ID, "growth_engine", "v1", gateway.run_model(), outbound)       # the retired tag format
+        await cache.put(db, old_key, RUN_ID, "growth_engine", "v1", gateway.run_model(), t.GOOD_NARRATIVE)
+        served = await gateway.read_cached_narrative(db, RUN_ID, "growth_engine")
+        adapter = RecordingAdapter()
+        fresh = await gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=adapter, sleep=t._noop_sleep)
+        return old_key, served, adapter, fresh, db
+
+    old_key, served, adapter, fresh, db = run(go())
+    assert served.narrative is None and served.narrative_status == "not_generated", "the retired record is not shown"
+    assert fresh.cache_hit is False and adapter.calls == 1, "a store prompt writes its own narrative"
+    assert {d["key"] for d in db["llm_narratives"].docs} >= {old_key} and len(db["llm_narratives"].docs) == 2, "the old record is kept"
+    assert prompt_store.tag_for("v1") == "store:v1" != "v1"

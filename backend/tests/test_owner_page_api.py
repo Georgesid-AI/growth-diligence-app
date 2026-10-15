@@ -125,3 +125,17 @@ def test_no_log_line_holds_a_token_or_prompt_text(owner, caplog):
     for needle in (OWNER, token, "a-wrong-token-value", SECRET, "Private Name", hashlib.sha256(token.encode()).hexdigest()):
         assert needle not in text, needle
     assert "prompt uploaded: name=growth_engine version=v1" in text
+
+
+def test_the_admin_routes_stay_locked_when_access_is_disabled_for_development(owner, monkeypatch):
+    """ACCESS_DISABLED switches the check off for the audit routes only: a deployment that set it by mistake must not hand the
+    prompt store and the tester links to every visitor."""
+    tester = owner.post("/api/admin/testers", json={"label": "T"}, headers=owner.headers_owner).json()
+    monkeypatch.setenv("ACCESS_DISABLED", "1")
+    assert owner.get("/api/audits").status_code == 200, "the audit routes are open, as in the test session"
+    for method, path in ADMIN_ROUTES:
+        body = {} if method == "POST" else None
+        assert owner.request(method, path, json=body).status_code == 401, (method, path)
+        assert owner.request(method, path, json=body, headers=bearer(token_of(tester))).status_code == 404, (method, path)
+    assert owner.get("/api/admin/prompts", headers=owner.headers_owner).status_code == 200
+    assert owner.db["prompts"].docs == []

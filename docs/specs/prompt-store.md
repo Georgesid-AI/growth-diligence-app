@@ -30,7 +30,8 @@ Collection `prompts`, one document per upload: `name`, `version`, `text`, `uploa
     upload prompts on the owner page"` and the computed metrics (CLAUDE.md rule 20: every metric still renders). No `llm_calls`
     row, no lock, no spend.
   - A read (`GET`) says `not_generated`; the estimate lists the step as not available; a structure read is "Not read by AI".
-- The prompt identity in a cache key is its version. A new upload therefore moves the key: the earlier narrative is kept,
+- The prompt identity in a cache key is `store:{version}` (`prompt_store.tag_for`): the namespace keeps a narrative written under the
+  retired file prompts (plain `v1`, `v7` ...) from being served as if a store version of the same number had written it. A new upload therefore moves the key: the earlier narrative is kept,
   not shown, with the reason code `prompt_release_changed` the screen already words ("The summary prompt was updated ..."). The
   release stamp (r1 ... r10) is gone; stored records keep their `prompt_version`, and the old `prompt_release` field is no longer written.
   Narratives stored under the file prompts (version strings like `v7`) match no store version and show as "data changed".
@@ -43,7 +44,7 @@ and is gone on reload. The page shows no audit data and imports no audit call.
 - **Prompts.** A table of every stored version: name, version, upload date, first 12 characters of the hash. A note names the
   prompts that have none. To upload: choose the name, then either choose a file (read in the browser as text) or paste text, then "Upload as new version".
   After the upload the text is cleared from the page. Prompt text is never sent to the browser; there is no read, edit or delete.
-- **Tester links.** Issue (name, expiry in days, 1 to 30, default 30): the link `{app}/t/{token}` is shown once in a box that stays until
+- **Tester links.** Issue (name; the expiry is fixed at 30 days): the link `{app}/t/{token}` is shown once in a box that stays until
   the owner dismisses it. List: name, status (active, expired, revoked), expiry. Revoke. Re-issue (revokes and returns a new link; the
   tester keeps their id and so their audits).
 
@@ -51,12 +52,12 @@ and is gone on reload. The page shows no audit data and imports no audit call.
 |---|---|
 | `GET /api/admin/prompts` | `{names, prompts: [{name, version, uploaded_at, sha256}], missing}` |
 | `POST /api/admin/prompts` `{name, text}` | stores the next version; returns `{name, version, uploaded_at, sha256}` |
-| `GET /api/admin/testers` | `{testers: [{id, label, status, created_at, expires_at, revoked_at}]}` |
-| `POST /api/admin/testers` `{label, expires_in_days?}` | issues; returns the tester and `link` |
+| `GET /api/admin/testers` | a list `[{id, label, created_at, expires_at, revoked_at}]`; the page derives the status (active, expired, revoked) from the dates |
+| `POST /api/admin/testers` `{label}` | issues, expiry 30 days; returns `{id, label, link}` |
 | `POST /api/admin/testers/{id}/revoke` | sets `revoked_at` |
-| `POST /api/admin/testers/{id}/reissue` | new token, same id; returns the tester and `link` |
+| `POST /api/admin/testers/{id}/reissue` | new token, same id; returns `{id, link}` |
 
-The link is built on `APP_URL` if set, else the request's `Origin`, else it is the path `/t/{token}` and the page adds its own address.
+The link is built on `PUBLIC_APP_URL` if set, else on the request's base URL: `{base}/t/{token}`.
 Access rules are those of docs/specs/access-links.md section 3: no token, an unknown, expired or revoked one is 401; a tester token on an
 admin route is 404 (the routes are not revealed); the owner token on an audit route is 404.
 
@@ -72,8 +73,8 @@ computed metric renders.
   `llm_calls` hold the version only.
 - `prompts` and `access_tokens` documents have fixed fields; a token is stored only as its hash and never listed.
 - The missing-prompt reason is the closed sentence above; it holds no name, text or path.
-- No module of the gateway reads a token or the owner hash; `prompt_store.py` and `access.py` log nothing; the four owner-route log
-  lines (prompt uploaded, tester link issued, revoked, re-issued) hold ids, a prompt name and a version only, never a label, token or text.
+- No module of the gateway reads a token or the owner hash; `prompt_store.py` and `access.py` log nothing; the one owner-route log
+  line (prompt uploaded) holds a prompt name and a version only, never a label, token or text.
 - A token never reaches a log line in a request (`test_owner_page_api.py`).
 
 ## 6. Tests

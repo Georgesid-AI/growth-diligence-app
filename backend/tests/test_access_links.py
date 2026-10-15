@@ -89,7 +89,7 @@ def test_2_tester_a_on_tester_bs_audit_is_404_on_every_route_including_file_down
 def test_3_an_expired_or_revoked_token_is_401_on_every_route(access, monkeypatch):
     from app import access as access_mod
     client, b, audit_b = access["client"], access["b"], access["audit_b"]
-    routes = [(m, fill(p, audit_b)) for m, p in audit_routes()] + [("GET", "/api/audits"), ("POST", "/api/audits")]
+    routes = [(m, fill(p, audit_b)) for m, p in audit_routes()] + [("GET", "/api/audits"), ("POST", "/api/audits"), ("GET", "/api/usage/totals")]
     assert client.get(f"/api/audits/{audit_b}", headers=b).status_code == 200
     later = datetime.now(timezone.utc) + timedelta(days=31)
     monkeypatch.setattr(access_mod, "utcnow", lambda: later)
@@ -174,7 +174,11 @@ def test_a_tester_sees_only_their_own_usage_and_notes_and_the_owner_sees_all(acc
 
 
 def test_a_tester_with_no_audit_sees_empty_totals(access):
-    new_id, new = access["client"].post("/api/admin/testers", json={"label": "Tester C"}, headers=access["owner"]).json()["id"], None
-    link = access["client"].post(f"/api/admin/testers/{new_id}/reissue", headers=access["owner"]).json()["link"]
-    empty = access["client"].get("/api/usage/totals", headers={"Authorization": f"Bearer {link.rsplit('/t/', 1)[1]}"})
+    client = access["client"]
+    _seed_usage(access)                         # other testers hold notes and cost: an empty tester must see none of it
+    new_id = client.post("/api/admin/testers", json={"label": "Tester C"}, headers=access["owner"]).json()["id"]
+    link = client.post(f"/api/admin/testers/{new_id}/reissue", headers=access["owner"]).json()["link"]
+    empty = client.get("/api/usage/totals", headers={"Authorization": f"Bearer {link.rsplit('/t/', 1)[1]}"})
     assert empty.status_code == 200 and "NOTE-OF" not in empty.text
+    assert empty.json()["tokens_and_cost_by_step"] == {}, "no cost of another tester's audits"
+    assert empty.json()["scope"] == "own"

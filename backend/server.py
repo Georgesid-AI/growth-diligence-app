@@ -56,7 +56,8 @@ async def access_guard(request: Request):
     owner token reaches usage totals and the admin routes only (404 elsewhere); a tester reaches an audit (or run) id only when
     their token owns it, and gets the missing-audit answer otherwise."""
     path = request.url.path
-    if access_mod.disabled() or path in access_mod.OPEN_PATHS or request.method == "OPTIONS":
+    # ACCESS_DISABLED opens the audit routes (local development, the test suite) and never the owner routes: they stay locked.
+    if (access_mod.disabled() and not path.startswith("/api/admin/")) or path in access_mod.OPEN_PATHS or request.method == "OPTIONS":
         request.state.principal = None
         return
     who = await access_mod.principal(db, access_mod.bearer(request.headers.get("authorization")))

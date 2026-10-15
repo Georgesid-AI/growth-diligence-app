@@ -75,9 +75,14 @@ async def missing(db) -> List[str]:
     return [n for n in NAMES if not await _latest_doc(db, n)]
 
 
+def tag_for(version: str) -> str:
+    """The prompt identity in a cache key for a stored version. A version names one text; the "store:" namespace keeps a record
+    written under the retired file prompts (plain "v1", "v7" ...) from matching the key of a store version of the same number."""
+    return f"store:{version}"
+
+
 def cache_tag(prompt: Prompt) -> str:
-    """The prompt identity in a cache key. A version names one text, so the version is enough."""
-    return prompt.version
+    return tag_for(prompt.version)
 
 
 async def list_versions(db) -> List[dict]:
