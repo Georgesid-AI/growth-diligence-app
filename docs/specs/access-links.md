@@ -41,15 +41,15 @@ generate memo, export CSV/xlsx, delete audit, and every other `/audits/{audit_id
 | A tester token on an audit another token owns (or an audit id that does not exist) | 404, the same body as a missing audit, so the answer never reveals that the audit exists |
 | The owner token on any audit route | 404 |
 | The owner token on `GET /api/usage/totals` and the admin routes | 200: usage totals only (counts and cost, no company, file or claim), the product stance "we cannot see your deals" |
-| `GET /api/` (health) and `GET /api/fields` (the field list, no audit data) | open |
-List audits returns only the token's own audits.
+| `GET /api/` (health) and `GET /api/fields` (the field list, no audit data) | open (George, 15 Oct 2026, decision 2a: they stay open; neither holds audit data) |
+List audits returns only the token's own audits; the owner token gets 404 on it too (George, 15 Oct 2026).
 
 ## 4. Tests required before tester deployment
 | Test | File |
 |---|---|
 | 1. No token → 401 on every route of §3 | `test_access_links.py` |
 | 2. Tester A's token on tester B's audit id → 404 on every route of §3, including file download, memo and export | `test_access_links.py` |
-| 3. Expired token → 401; revoked token → 401 | `test_access_links.py` |
+| 3. Expired token → 401; revoked token → 401, on every route of §3 and on the audit list and create | `test_access_links.py` |
 | 4. Owner token on any audit route → 404 | `test_access_links.py` |
 | The tester page states "Your link is your login. Anyone with the link can open your audits." | `AccessLink.test.jsx` |
 The route list of tests 1, 2 and 4 is read from the app's own router, so a route added later is covered without editing the

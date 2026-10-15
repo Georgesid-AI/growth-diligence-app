@@ -68,8 +68,6 @@ async def access_guard(request: Request):
             raise HTTPException(404, "Not found")
         return
     if role == access_mod.OWNER:
-        if request.method == "GET" and path == "/api/audits":
-            return
         raise HTTPException(404, "Audit not found")
     audit_id = request.path_params.get("audit_id") or request.path_params.get("run_id")
     if audit_id is not None:
@@ -407,8 +405,6 @@ async def reissue_tester(tester_id: str, request: Request):
 @api.get("/audits")
 async def list_audits(request: Request):
     who = getattr(request.state, "principal", None)
-    if who and who[0] == access_mod.OWNER:
-        return []                                   # the owner token sees usage totals only, never an audit
     flt = {"owner": who[1]} if who else {}
     return await db.audits.find(flt, {"_id": 0, "results": 0, "usage": 0, "owner": 0}).sort("created_at", -1).to_list(200)
 

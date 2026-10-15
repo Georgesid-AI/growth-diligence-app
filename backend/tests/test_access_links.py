@@ -86,16 +86,18 @@ def test_2_tester_a_on_tester_bs_audit_is_404_on_every_route_including_file_down
     assert client.get(f"/api/audits/{audit_b}", headers=access["b"]).status_code == 200
 
 
-def test_3_an_expired_or_revoked_token_is_401(access, monkeypatch):
+def test_3_an_expired_or_revoked_token_is_401_on_every_route(access, monkeypatch):
     from app import access as access_mod
     client, b, audit_b = access["client"], access["b"], access["audit_b"]
+    routes = [(m, fill(p, audit_b)) for m, p in audit_routes()] + [("GET", "/api/audits"), ("POST", "/api/audits")]
+    assert client.get(f"/api/audits/{audit_b}", headers=b).status_code == 200
     later = datetime.now(timezone.utc) + timedelta(days=31)
     monkeypatch.setattr(access_mod, "utcnow", lambda: later)
-    assert client.get(f"/api/audits/{audit_b}", headers=b).status_code == 401, "expired after 30 days"
+    assert {f"{m} {u}": _call(client, m, u, b).status_code for m, u in routes if _call(client, m, u, b).status_code != 401} == {}, "expired"
     monkeypatch.setattr(access_mod, "utcnow", lambda: datetime.now(timezone.utc))
     assert client.get(f"/api/audits/{audit_b}", headers=b).status_code == 200
     assert client.post(f"/api/admin/testers/{access['b_id']}/revoke", headers=access["owner"]).status_code == 200
-    assert client.get(f"/api/audits/{audit_b}", headers=b).status_code == 401, "revoked"
+    assert {f"{m} {u}": _call(client, m, u, b).status_code for m, u in routes if _call(client, m, u, b).status_code != 401} == {}, "revoked"
 
 
 def test_4_the_owner_token_is_404_on_every_audit_route_and_sees_usage_totals_only(access):
@@ -103,7 +105,7 @@ def test_4_the_owner_token_is_404_on_every_audit_route_and_sees_usage_totals_onl
     answers = {m + " " + p: _call(client, m, fill(p, audit_b), owner).status_code for m, p in audit_routes()}
     assert {k: v for k, v in answers.items() if v != 404} == {}
     assert client.get("/api/usage/totals", headers=owner).status_code == 200
-    assert client.get("/api/audits", headers=owner).json() == []
+    assert client.get("/api/audits", headers=owner).status_code == 404, "the owner token lists no audit either"
 
 
 def test_a_reissued_link_replaces_the_old_one_and_keeps_the_testers_audits(access):
