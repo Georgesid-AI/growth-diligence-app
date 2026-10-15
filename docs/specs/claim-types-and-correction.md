@@ -21,6 +21,7 @@ final). Location: docs/specs/claim-types-and-correction.md. Amends deck-parser.m
 | NRR / churn / retention | retention | R | R | R (%) | – | R (window) | R (cohort) | R | – |
 | Sales cycle / win rate / pipeline | sales | R | R | R | – | R | R (deals won / all closed / open) | R | – |
 | Costs / burn / runway / cash | costs, burn, runway, cash, gross_profit, ebitda, net_profit, gross_margin, months_to_profitability | R | R | R | R for an amount | R | – | R | – |
+| Unit economics | ltv, cac, ltv_cac, customer_lifetime, trials_per_day | R | R | R | R for a money value (ltv, cac) | R | – | R | – |
 | Headcount / hiring | people | R | R | count | – | R | optional (team) | R | – |
 | Launch date | product | item name | date | – | – | – | – | R | – |
 | Market size | market | R | R | R | R | optional | – | – | – |
@@ -28,9 +29,10 @@ final). Location: docs/specs/claim-types-and-correction.md. Amends deck-parser.m
 | Acquisition channels | acquisition_channels | channel | count | count | – | optional | – | – | – |
 | Other | other, unknown | text only | – | – | – | – | – | – | – |
 
-- `ltv`, `cac`, `ltv_cac`, `customer_lifetime`, `trials_per_day` and `usage` have no row in the plan's table. Until George
-  decides (§9), they take the Costs / burn / runway / cash requirements (no population) and stay typed as today; none has
-  an app metric, so each stays Unsupported (claim-matching.md §4).
+- Unit economics is a row of the plan's table (George, 15 Oct 2026, decision 4): metric, value, unit, period and figure type
+  are required, and the currency is required for the money values (`ltv`, `cac`), not for `ltv_cac`, `customer_lifetime`
+  or `trials_per_day`. No population. None has an app metric, so each stays Unsupported (claim-matching.md §4); `usage` has
+  no row and stays typed as today.
 - Every field holds a value, "Unknown" or "Not applicable" (shown "–" in the table). Only R fields are required before
   matching; the others may stay Unknown.
 
@@ -138,9 +140,8 @@ join `REGISTER_NAMES` in `test_gateway_data_boundary.py`; the two new endpoints 
 - Every undated claim with an app metric becomes Unverified "required field unknown: period" (claim-matching fixture rows 2,
   3, 6, 22, 25, 36 and run B row 11), where it was tested at the as-of figure. Each is a task until the analyst sets its
   period.
-- Decisions for you: where `ltv`, `cac`, `ltv_cac`, `customer_lifetime`, `trials_per_day` belong in the plan's table
-  (recommendation: a "Unit economics" row with the Costs requirements, as built); whether a "15 months" figure the parser
-  cannot type should count as Other (built: yes, `unknown` is Other).
+- Decided by George (15 Oct 2026): the Unit economics row (decision 4); a figure the parser cannot type, such as "15 months",
+  is Other and never a task (decision 5).
 
 ## Files
 `backend/app/decks/claims.py`, `backend/app/claim_matching.py`, `backend/app/verdict.py`, `backend/server.py`,

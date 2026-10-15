@@ -54,9 +54,9 @@ carries `observed_value`, `observed_at` and `observed_source` (the computed figu
   Unsupported with `population differs: deck label '{label}' is not paying customers`.
 - Order inside a row's rules: the period is read first. A qualified Users claim whose period has no Customer count in the
   data is not Inconclusive: it follows dates-and-periods.md §4 (Unverified, not covered).
-- Growth basis unknown: plan section 5 lists it under Inconclusive, plan sections 3 and 7.1 say "stays Unverified with a
-  one-click Set growth basis task". The release test (7.1) is followed: Unverified (dates-and-periods.md §5). Reported
-  under "Decisions for you" (§8).
+- Growth basis unknown: Unverified (dates-and-periods.md §5). Decided by George, 15 Oct 2026 (decision 2): plan section 5 is
+  amended, Inconclusive requires a test that ran, and an unknown growth basis is Unverified. Invariant: every Inconclusive
+  row carries a computed figure (`observed_value`, `observed_at`, `observed_source`) and a reason, and no gap.
 - An Inconclusive row needs a gate, like Unverified (verdict-and-memo.md §3: `gate_needed` and the prefill cover
   Unverified, Inconclusive, Unsupported and Contradicted). It is never a hard blocker (CLAUDE.md rule 21: only a
   Contradicted top-5 claim is).
@@ -104,9 +104,7 @@ Tests replaced (plan 5: "replaces any test that only checks label placement"): a
 ## 8. Decided (engineering, rule 19) and open
 - Decided: the Inconclusive row has no gap, so it neither ranks as a miss nor reads as a test result; the computed figure
   and its source are shown. The confidence is computed on read from the candidates (no stored copy that could go stale).
-- Decisions for you (plan conflict, not built differently from the release test): growth basis unknown is Unverified
-  (plan 3 and 7.1), not Inconclusive (plan 5). Recommendation: keep Unverified and drop "growth basis unknown" from the
-  Inconclusive list, because no test can run without a basis.
+- Decided by George (15 Oct 2026): growth basis unknown is Unverified; plan section 5 amended to say so.
 
 ## Files
 `backend/app/claim_matching.py`, `backend/app/ic_memo.py`, `backend/app/verdict.py`, `backend/server.py` (`_claim_rows`),
