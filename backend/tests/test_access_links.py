@@ -169,6 +169,7 @@ def test_a_tester_sees_only_their_own_usage_and_notes_and_the_owner_sees_all(acc
     everyone = client.get("/api/usage/totals", headers=access["owner"])
     assert "NOTE-OF-A" in everyone.text and "NOTE-OF-B" in everyone.text
     assert everyone.json()["tokens_and_cost_by_step"]["growth_engine"]["cost_usd"] == 3.0
+    assert (mine.json()["scope"], theirs.json()["scope"], everyone.json()["scope"]) == ("own", "own", "all"), "the title follows the scope"
     assert client.get("/api/usage/totals").status_code == 401
 
 

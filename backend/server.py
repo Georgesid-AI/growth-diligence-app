@@ -577,7 +577,8 @@ async def usage_totals(request: Request):
             sum(len(c.get("claim_inputs") or {}) for c in claims)
         changes += usage_mod.get(a)["columns"]["corrected"]
     return sanitize(usage_mod.totals([usage_mod.get(a) for a in audits], {
-        "tokens_and_cost_by_step": steps, "evidence_labels": labels, "metrics_missing": missing, "analyst_changes": changes}))
+        "tokens_and_cost_by_step": steps, "evidence_labels": labels, "metrics_missing": missing, "analyst_changes": changes,
+        "scope": "own" if mine else "all"}))       # the screen words its title from this
 
 
 # ---------------------------------------------------------------------------
