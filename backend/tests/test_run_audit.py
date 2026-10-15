@@ -30,6 +30,7 @@ AUDIT_DOC = {"id": AUDIT, "company_name": "TestCo", "client_name": "Northbridge 
              "created_at": "2026-10-11T08:00:00+00:00", "ic_inputs": {"first_quarterly_review": "2027-01-09"}}      # as create_audit stores it
 RATINGS = {"data_reliability": "Adequate", "growth_engine": "Weak"}
 THESIS = {"plan": "Grow through the mid-market.", "evidence": "Retention holds in the base.", "condition": "Gates met on time."}
+JUDGMENT = {"reasons": "The five claims hold against the files.", "unresolved_questions": "None beyond the data requests."}
 RUN = RUNS["A"]
 
 
@@ -428,7 +429,7 @@ def memo(client):
 def test_the_memo_is_refused_until_ratings_are_entered_and_then_built(api):
     ready_for_review(api, only_verified=True)
     ids = api.get(f"/api/audits/{AUDIT}/verdict").json()["verdict"]["top5"]["proposed"]
-    api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"top5": ids, "thesis": THESIS})
+    api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"top5": ids, "thesis": THESIS, "judgment": JUDGMENT})
     r = memo(api)
     assert r.status_code == 409 and "rate Data reliability, Growth engine" in r.json()["detail"]
     api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"ratings": RATINGS})
@@ -441,14 +442,16 @@ def test_the_reconciliation_blocker_is_on_the_review_summary_and_in_the_memo_not
     kinds = [b["kind"] for b in review(api)["blockers"]]
     assert "revenue_reconciliation" in kinds, "the sample files differ from the sample P&L by more than 2%"
     ids = api.get(f"/api/audits/{AUDIT}/verdict").json()["verdict"]["top5"]["proposed"]
-    api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"top5": ids, "thesis": THESIS, "ratings": RATINGS})
+    api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"top5": ids, "thesis": THESIS, "ratings": RATINGS, "judgment": JUDGMENT})
     r = memo(api)
     assert r.status_code == 200 and "Revenue file and P&L differ by" in r.text.split("## Key gates")[1].split("## Data gaps")[0]
 
 
 # --- the click count: from upload to the memo download -------------------------------------------------------------------------
 MAX_CLICKS = 15
-MAX_CLICKS_FULL = 21
+# 21 set by George (2026-10-11), plus the two analyst judgment fields the plan of 15 Oct 2026 requires before export
+# (claim-review-conclusion.md section 3).
+MAX_CLICKS_FULL = 23
 
 
 def analyst_flow(client, only_verified):
@@ -510,7 +513,9 @@ def analyst_flow(client, only_verified):
         clicks(f"deal thesis: {part}")
     clicks("rating: Data reliability")
     clicks("rating: Growth engine")
-    assert client.put(f"/api/audits/{AUDIT}/ic-inputs", json={"thesis": THESIS, "ratings": RATINGS}).status_code == 200
+    for part in ("reasons", "unresolved questions"):      # claim-review-conclusion.md section 3: the analyst judgment
+        clicks(f"analyst judgment: {part}")
+    assert client.put(f"/api/audits/{AUDIT}/ic-inputs", json={"thesis": THESIS, "ratings": RATINGS, "judgment": JUDGMENT}).status_code == 200
 
     clicks("Write all narratives")
     _, done = write_all(client)
@@ -544,6 +549,6 @@ def test_the_full_testco_audit_with_contradicted_top_5_claims_needs_more_clicks_
     assert len(gated) == 5 and clicks.n > MAX_CLICKS, "the budget decision of each gate is the analyst's: more than the clean audit"
 
 
-def test_the_full_testco_audit_goes_from_upload_to_the_memo_in_no_more_than_21_clicks(api):
+def test_the_full_testco_audit_goes_from_upload_to_the_memo_in_no_more_than_23_clicks(api):
     clicks, _ = analyst_flow(api, only_verified=False)
     assert clicks.n <= MAX_CLICKS_FULL, f"{clicks.n} clicks: {clicks.log}"

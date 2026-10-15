@@ -1295,6 +1295,9 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             # docs/specs/integrity-coverage.md: the coverage, its conclusion and the cross-deck reading
                             "integrity_mod", "assess", "data_requests", "completed_text", "cross_deck_inconsistencies",
                             "INSUFFICIENT", "INSUFFICIENT_NOTE", "COMPLETED_TEXT",
+                            # docs/specs/claim-review-conclusion.md: the analyst judgment and the contradictions outside the five
+                            "judgment", "reasons", "unresolved_questions", "other_contradictions", "other_contradictions_text",
+                            "JUDGMENT_PARTS", "JUDGMENT_LABELS", "SCOPE_SENTENCE", "NO_OTHER_CONTRADICTIONS",
                             *MATCHING_SERVER_ONLY})
 # The functions that log about the register, and the only things their log calls may name.
 REGISTER_LOGGERS = frozenset({"_claim_rows", "claim_register", "claim_register_csv", "update_claim_inputs", "answer_turnover",
@@ -1839,7 +1842,8 @@ def test_a_payload_that_breaks_the_contract_reaches_no_provider_and_no_log_line_
 import test_claim_register_api as register_api_tests  # noqa: E402
 from test_claim_register_api import api as register_api  # noqa: E402,F401  (the fixture)
 
-IC_SENTINELS = ("the Falcon hiring plan", "Zephyr pipeline cover", "Quartz thesis plan", "Basalt thesis evidence", "Opal thesis condition")
+IC_SENTINELS = ("the Falcon hiring plan", "Zephyr pipeline cover", "Quartz thesis plan", "Basalt thesis evidence", "Opal thesis condition",
+                "Garnet judgment reasons", "Jasper unresolved question")      # the last two: claim-review-conclusion.md section 3
 VERDICT_LOGGERS = frozenset({"get_verdict", "export_memo"})
 VERDICT_LOG_FORMATS = {
     "get_verdict": "verdict: run_id=%s outcome=%s blocked=%s top5=%s confirmed=%s",
@@ -1925,7 +1929,8 @@ def _with_the_analysts_inputs(client, db):
         assert register_api_tests._put(client, cid, body).status_code == 200
         assert register_api_tests._put(client, cid, {"key_gate": True}).status_code == 200
     r = client.put(f"{base}/ic-inputs", json={"ratings": {"data_reliability": "Strong", "growth_engine": "Weak"},
-                                              "thesis": {"plan": IC_SENTINELS[2], "evidence": IC_SENTINELS[3], "condition": IC_SENTINELS[4]}})
+                                              "thesis": {"plan": IC_SENTINELS[2], "evidence": IC_SENTINELS[3], "condition": IC_SENTINELS[4]},
+                                              "judgment": {"reasons": IC_SENTINELS[5], "unresolved_questions": IC_SENTINELS[6]}})
     assert r.status_code == 200, r.text
 
 
@@ -1937,7 +1942,8 @@ def test_the_analysts_inputs_reach_no_log_line_no_gateway_collection_and_no_prov
         for url in ("/verdict", "/memo.md", "/claims.csv", "/claims", "/blockers"):
             client.get(base + url)
     memo = client.get(f"{base}/memo.md")
-    assert memo.status_code == 200 and IC_SENTINELS[3] in memo.text, "fixture: the memo is built from the inputs and returned, not logged"
+    assert memo.status_code == 200 and IC_SENTINELS[3] in memo.text and IC_SENTINELS[6] in memo.text, \
+        "fixture: the memo is built from the inputs and returned, not logged"
     for needle in IC_SENTINELS:
         assert needle not in caplog.text, f"{needle!r} reached a log line"
     stored = {name: json.dumps(col.docs, default=str) for name, col in db._cols.items()}
@@ -1952,7 +1958,8 @@ def test_the_analysts_inputs_reach_no_log_line_no_gateway_collection_and_no_prov
 def test_the_gateway_reads_no_ic_inputs_and_the_provider_payload_holds_none(register_api):  # noqa: F811
     db, reads = _recording_db()
     db["audits"].docs[0]["ic_inputs"] = {"thesis": {"plan": IC_SENTINELS[2]}, "ratings": {"growth_engine": "Weak"},
-                                         "top5": {"claim_ids": ["c1"], "set_at": "x"}, "first_quarterly_review": "2031-04-05"}
+                                         "top5": {"claim_ids": ["c1"], "set_at": "x"}, "first_quarterly_review": "2031-04-05",
+                                         "judgment": {"reasons": IC_SENTINELS[5], "unresolved_questions": IC_SENTINELS[6]}}
     db[decks.CANDIDATES_COLLECTION].docs[0]["claim_inputs"] = {"c1": {"gate_metric_name": IC_SENTINELS[1], "key_gate": True,
                                                                       "gate_direction": "at most"}}
     adapter = t.FakeAdapter(replies=[json.dumps(NARRATIVE)])
@@ -1960,7 +1967,7 @@ def test_the_gateway_reads_no_ic_inputs_and_the_provider_payload_holds_none(regi
     asyncio.run(gateway.narratives_for_run(db, RUN_ID))
     asyncio.run(gateway.usage_for_run(db, RUN_ID))
     returned = json.dumps([doc for name, _, doc in reads if name in ("audits", decks.CANDIDATES_COLLECTION)], default=str)
-    for needle in (*IC_SENTINELS[1:3], "ic_inputs", "2031-04-05", "gate_metric_name", "key_gate"):
+    for needle in (*IC_SENTINELS[1:3], *IC_SENTINELS[5:], "ic_inputs", "2031-04-05", "gate_metric_name", "key_gate", "judgment"):
         assert needle not in returned, f"{needle!r} was read by the gateway"
         assert needle not in adapter.payloads[0], f"{needle!r} reached the provider"
 

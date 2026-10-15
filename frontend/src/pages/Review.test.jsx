@@ -32,7 +32,7 @@ const cand = (id, over = {}) => ({ id, status: "pending", group: 1, claim_type: 
   sources: [{ file: "board.pptx", slide: 3 }], turnover: null, ...over });
 
 const VERDICT = {
-  verdict: { top5: { proposed: ["c1"], confirmed: true, claim_ids: ["c1"], void: false, in_force: ["c1"] }, status: "blocked", message: "Verdict blocked", outcome: null,
+  verdict: { top5: { proposed: ["c1"], confirmed: true, claim_ids: ["c1"], void: false, in_force: ["c1"] }, status: "blocked", message: "Conclusion blocked", outcome: null,
     rule: null, blocked: [], five: [{ claim_id: "c1", rank: 1, claim: "Revenue 100", evidence_label: "Contradicted", reason: "outside ±5%" }], reasons: [] },
   data_gaps: [], top_gaps: [], key_gates: { note: null, ok: true, sentences: [] }, gates_still_needed: 0, deal_terms: "x",
   candidates: [{ claim_id: "c1", rank: 1, claim: "Revenue 100", evidence_label: "Contradicted", reason: "outside" }],

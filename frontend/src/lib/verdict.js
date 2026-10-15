@@ -1,11 +1,19 @@
 /**
- * The Verdict, Data gaps and AI usage and cost sections of the Dashboard (docs/specs/verdict-and-memo.md sections 4, 6.4 and 8).
+ * The claim-review conclusion, Data gaps and AI usage and cost sections of the Dashboard (docs/specs/verdict-and-memo.md sections 4,
+ * 6.4 and 8; docs/specs/claim-review-conclusion.md).
  * The wording is W7, W8, W20, W21, W23 and W24 as approved; the part names are those of section 6.4. Everything shown is a
  * register row, a gap row, a stored input or a count from the server; nothing is rated, ranked or tested here.
  */
 import { seeGlossary } from "./glossary";
 
-export const VERDICT_HEADING = "Verdict";
+// docs/specs/claim-review-conclusion.md: the section describes the five selected claims, never a recommendation. The server sends
+// the heading and the scope sentence; these are the same words for a response that lacks them.
+export const CONCLUSION_HEADING = "Claim-review conclusion — assessment of the five selected claims";
+export const SCOPE_SENTENCE = "This assesses the five claims the analyst selected. It is not an investment recommendation.";
+export const OTHER_CONTRADICTIONS = "Other contradictions";
+export const NO_OTHER_CONTRADICTIONS = "None found among tested claims.";
+export const JUDGMENT_HEADING = "Analyst judgment";
+export const JUDGMENT_MAX = 1000;
 export const TOP5_HEADING = "Top 5";
 export const PROPOSED = "Proposed by shortfall – confirm or replace.";
 export const REPLACE = "Replace with…";
