@@ -967,7 +967,7 @@ class _Span:
         self.first = _mi(periods["first"]) if periods else None
         self.last = _mi(periods["last"]) if periods else None
         self.missing = {_mi(m) for m in periods["missing"]} if periods else set()
-        partial_read = metric == "NRR (12-month)" or spec.get("kind") == "growth"
+        partial_read = metric in ("NRR (12-month)", "Gross revenue churn") or spec.get("kind") == "growth"
         self.partial = _mi(source["month"]) if partial_read and source.get("status") == "Possibly partial" and source.get("month") else None
         self.evidence_to = source.get("evidence_to")
 
