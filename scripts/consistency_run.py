@@ -24,7 +24,12 @@ in tests/fixtures/decks/decks/ three times and reports:
 Passes 2 and 3 look the cache up first to get the hit rate (expected 100%; the lookup never calls the model),
 then call the model with the cache bypassed, so agreement measures the model. Target: at least 95% agreement.
 
-Usage (from the repository root, with ANTHROPIC_API_KEY set and a MongoDB to keep the cache in):
+The prompt is never in the repository (CLAUDE.md rule 26): --fake and the tests use the test-only stub of
+backend/tests/fixtures/prompts/; a live run copies the latest structure_reading prompt from the app's prompt store
+(the database named by DB_NAME, uploaded on the owner page) into the scratch database, and the report names its
+version only.
+
+Usage (from the repository root, with ANTHROPIC_API_KEY, MONGO_URL and DB_NAME set and a MongoDB to keep the cache in):
     python scripts/consistency_run.py --yes [--passes 3] [--deck 05-zero2hero.pdf ...] [--out report.json]
                                       [--pause 2] [--diagnostic]
 It waits --pause seconds (default 2) between structure calls; the gateway retries a 429 or 529 itself. It prints
@@ -153,6 +158,9 @@ class MemoryDB:
 
     def __init__(self):
         self._cols = {}
+        sys.path.insert(0, str(BACKEND / "tests"))
+        from prompt_fixtures import stub_documents
+        self["prompts"].docs.extend(stub_documents())       # --fake and the tests: the test-only stubs, never the real prompt
 
     def __getitem__(self, name):
         return self._cols.setdefault(name, MemoryDB._Collection())
@@ -258,11 +266,11 @@ async def _count(counter, **kwargs):
         return None
 
 
-async def fixed_tokens(counter):
-    """The tokens of a structure call with an empty structure text, and of its parts: the system prompt and the
-    output schema, each counted with the empty message and less the empty message alone."""
-    from app.llm import cache, gateway, prompt_store, schemas
-    system, schema = prompt_store.load(gateway.STRUCTURE_PROMPT).text, schemas.output_schema("table")
+async def fixed_tokens(counter, system):
+    """The tokens of a structure call with an empty structure text, and of its parts: the system prompt (the text the
+    store holds) and the output schema, each counted with the empty message and less the empty message alone."""
+    from app.llm import cache, schemas
+    schema = schemas.output_schema("table")
     payload = cache.canonical_json({"type": "table", "text": ""})      # as read_structure builds it, text empty
     empty = await _count(counter, system=None, user_payload=payload, json_schema=None)
     prompt = await _count(counter, system=system, user_payload=payload, json_schema=None)
@@ -417,17 +425,24 @@ def _roadmap_lines(readings, structures, listings):
     return lines, positioned, same, same_date, rebuilt
 
 
-async def run(decks, passes, db, adapter=None, pause=0.0, sleep=None, diagnostic=None):
+async def run(decks, passes, db, adapter=None, pause=0.0, sleep=None, diagnostic=None, prompt_source=None):
     """`pause` seconds between structure calls, so a burst does not hit the provider's rate limit. A `diagnostic`
-    list gets the rows of diagnostic_rows; the report itself is the same either way."""
+    list gets the rows of diagnostic_rows; the report itself is the same either way. `prompt_source` (the live run) is
+    the app's database: its latest structure_reading prompt is copied into `db` first; --fake and the tests hold the
+    test-only stub already."""
     from app.decks import parser
     from app.llm import gateway
     from app.structures import items as structure_items
     from app.structures import redact, verify
 
+    from app.llm import prompt_store
+
     sleep = sleep or asyncio.sleep
     counter = adapter or gateway.AnthropicAdapter()       # token counts only; read_structure gets `adapter`
-    tokens = await fixed_tokens(counter)
+    if prompt_source is not None:
+        await copy_prompt(prompt_source, db)
+    prompt = await prompt_store.load(db, gateway.STRUCTURE_PROMPT)       # from the db's `prompts` collection, as the gateway does
+    tokens = await fixed_tokens(counter, prompt.text)
     text_tokens = []                                       # per structure, the gateway's 4,000-token measure
     readings = defaultdict(list)    # (deck, index) -> per pass None (not read) or {"raw", "norm", "labels", ...}
     types, pages = {}, {}
@@ -550,6 +565,7 @@ async def run(decks, passes, db, adapter=None, pause=0.0, sleep=None, diagnostic
         "per_deck": per_deck,
         "cache_hit_rate_pct": {f"pass_{p}": round(100.0 * h / n, 1) if n else None for p, (h, n) in hits.items()},
         "target_agreement_pct": 95.0,
+        "prompt_version": prompt.version,
     }
 
 
@@ -638,7 +654,7 @@ def summary(report):
 
 def write_report(report, folder, passes, fake=False):
     """folder/consistency_<date>.md; a later run that day gets -2, -3, ... so a paid report is never overwritten."""
-    from app.llm import gateway, prompt_store
+    from app.llm import gateway
     day = datetime.date.today().isoformat()
     folder.mkdir(parents=True, exist_ok=True)
     path, n = folder / f"consistency_{day}.md", 1
@@ -651,7 +667,7 @@ def write_report(report, folder, passes, fake=False):
         f"# Consistency run {day}", "",
         f"{'Fake run: recorded replies, no live API.' if fake else 'Live API.'} Decks: {len(decks)}. "
         f"Passes: {passes}. Model: {gateway.STRUCTURE_MODEL}. "
-        f"Prompt: {gateway.STRUCTURE_PROMPT} {prompt_store.load(gateway.STRUCTURE_PROMPT).version}. "
+        f"Prompt: {gateway.STRUCTURE_PROMPT} {report["prompt_version"]}. "
         "Method: docs/specs/structure-labelling.md sections 6 and 7.", "",
         summary(report), "",
         "## Agreement per structure type", "",
@@ -836,6 +852,18 @@ def not_public(decks):
     return None
 
 
+async def copy_prompt(store, scratch):
+    """The scratch database starts empty, so the live run copies the latest structure_reading prompt from the app's
+    prompt store (DB_NAME) into it. The text is read, never printed or written to the report: only its version is."""
+    from app.llm import gateway, prompt_store
+    try:
+        prompt = await prompt_store.load(store, gateway.STRUCTURE_PROMPT)
+    except prompt_store.PromptMissing:
+        sys.exit(prompt_store.NO_PROMPT)
+    await scratch[prompt_store.COLLECTION].insert_one(
+        {"name": prompt.name, "version": prompt.version, "text": prompt.text, "uploaded_at": "copied", "sha256": prompt.sha256})
+
+
 async def live(args, decks, rows=None):
     """The whole live run in one event loop. Motor binds a client to the loop of its first call, so a drop in a
     second asyncio.run found that loop closed ("Event loop is closed") and the report was never written. `rows`
@@ -848,7 +876,9 @@ async def live(args, decks, rows=None):
                 await client.drop_database(name)
                 print(f"Dropped scratch database {name} left by an earlier run", flush=True)
         try:
-            report = await run(decks, args.passes, client[args.db], pause=args.pause, diagnostic=rows)
+            store_name = os.environ.get("DB_NAME") or sys.exit("DB_NAME is not set: the live run copies the structure_reading prompt from the app's prompt store.")
+            report = await run(decks, args.passes, client[args.db], pause=args.pause, diagnostic=rows,
+                               prompt_source=client[store_name])
             path = write_report(report, REPORTS, args.passes)            # before the drop: a failed drop keeps it
             if rows is not None:
                 write_diagnostic(rows, path, args.passes)

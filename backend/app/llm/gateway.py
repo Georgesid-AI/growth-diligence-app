@@ -31,8 +31,9 @@ figures Python listed: every value and cell is Python's, read from its source ce
 (app/structures/items.py), and app/structures/verify.py rebuilds every period; anything it cannot
 verify is shown as "AI suggestion, not verified" or dropped.
 
-No other function here touches Mongo for audit data, and no module in this package except
-`prompt_store` performs file I/O.
+No other function here touches Mongo for audit data, and no module in this package performs file I/O: the
+prompts are read from the `prompts` collection (`prompt_store`, docs/specs/prompt-store.md) and a missing prompt
+means no model call.
 
 Order of operations for a generation request:
 
@@ -993,9 +994,9 @@ async def generate_narrative(
         return contract_failed(run_id, step, problems, metrics)
 
     try:
-        prompt = prompt_store.load(config["prompt"])
-    except (FileNotFoundError, ValueError) as exc:
-        return _unavailable(run_id, step, f"prompt unavailable: {exc}", metrics)
+        prompt = await prompt_store.load(db, config["prompt"])
+    except prompt_store.PromptMissing:
+        return _unavailable(run_id, step, prompt_store.NO_PROMPT, metrics)       # no model call (docs/specs/prompt-store.md)
 
     try:
         model = run_model()
@@ -1105,7 +1106,6 @@ async def generate_narrative(
         await cache.put(
             db, key, run_id, step, prompt.version, model, final.model_dump(),
             narrative_status=status, unmatched_numbers=guard.soft,
-            prompt_release=prompt_store.release(),
         )
         await log_call(
             db, run_id=run_id, step=step, prompt_version=prompt.version, model=model,
@@ -1266,8 +1266,8 @@ async def read_cached_narrative(db, run_id: str, step: str) -> NarrativeResponse
         return contract_failed(run_id, step, problems, metrics)
 
     try:
-        prompt = prompt_store.load(config["prompt"])
-    except (FileNotFoundError, ValueError):
+        prompt = await prompt_store.load(db, config["prompt"])
+    except prompt_store.PromptMissing:
         # No prompt means nothing could have been generated under it.
         return NarrativeResponse(
             run_id=run_id, step=step, narrative_status="not_generated", metrics=metrics,
@@ -1314,18 +1314,16 @@ async def supersession(db, run_id: str, step: str, outbound: Any, model: str) ->
 
     The stored key is recomputed under the settings the narrative was written with,
     against the current numbers. If it still matches, the numbers did not move and the
-    narrative is unreachable only because the prompt release or the model changed.
+    narrative is unreachable only because the prompt (a newer version was uploaded) or the model changed.
     Only if no stored narrative matches under its own settings did the data change.
-    Records from before releases were stamped count as the baseline release.
     """
     records = await cache.records_for(db, run_id, step)
     if not records:
         return None
     reason = "data_changed"
     for rec in sorted(records, key=lambda r: r.get("created_at") or ""):  # newest match wins
-        rec_release = rec.get("prompt_release") or prompt_store.BASELINE_RELEASE
         rec_model = rec.get("model") or model
-        tag = prompt_store.tag_for(rec_release, rec.get("prompt_version") or "")
+        tag = rec.get("prompt_version") or ""
         if cache.cache_key(run_id, step, tag, rec_model, outbound) == rec.get("key"):
             reason = "model_changed" if rec_model != model else "prompt_release_changed"
     return reason
@@ -1369,7 +1367,7 @@ async def estimate_narratives(db, run_id: str) -> dict:
                  "available": True}
         try:
             computed, problems = await load_checked_results(db, run_id, step)
-            prompt = prompt_store.load(config["prompt"])
+            prompt = await prompt_store.load(db, config["prompt"])
             if problems or model is None:
                 raise GatewayError("unavailable")
             outbound = build_outbound(computed, await redaction.get_or_create_map(db, run_id, computed))
@@ -1382,6 +1380,8 @@ async def estimate_narratives(db, run_id: str) -> dict:
         except GatewayError as exc:
             if exc.reason in ("run_not_found", "not_computed"):
                 raise
+            entry.update(available=False)
+        except prompt_store.PromptMissing:             # nothing to estimate and no call: the generation says why
             entry.update(available=False)
         steps.append(entry)
     return {"model": model, "steps": steps, "total_usd": round(sum(s["estimate_usd"] for s in steps), 4),
@@ -1675,8 +1675,8 @@ async def read_structure(
         logger.warning("structure refused: run_id=%s step=%s reason=%s", audit_id, STRUCTURE_STEP, problem)
         return _structure_result("refused", structure_type, f"refused: {problem}")
     try:
-        prompt = prompt_store.load(STRUCTURE_PROMPT)
-    except (FileNotFoundError, ValueError):
+        prompt = await prompt_store.load(db, STRUCTURE_PROMPT)
+    except prompt_store.PromptMissing:
         return _structure_result("not_read", structure_type, NOT_READ)
     if STRUCTURE_MODEL not in MODEL_PRICING_USD:
         return _structure_result("not_read", structure_type, NOT_READ)
@@ -1779,7 +1779,7 @@ async def _store_structure(db, *, audit_id, key, digest, structure_type, model_t
     """Store the model's JSON output with its metadata (spec section 9). The text sent is never stored."""
     await cache.put_structure(db, audit_id, key, {
         "content_hash": digest, "type": structure_type, "model_type": model_type, "output": output,
-        "prompt_version": prompt_version, "prompt_release": prompt_store.release(), "model": STRUCTURE_MODEL,
+        "prompt_version": prompt_version, "model": STRUCTURE_MODEL,
         "input_tokens": int(input_tokens), "output_tokens": int(output_tokens),
         "estimated_cost_usd": round(float(cost), 6), "deck_id": deck_id, "page": page})
 

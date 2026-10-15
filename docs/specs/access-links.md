@@ -80,7 +80,7 @@ the engineering owner; no session of this spec has that access.
 - The plan names "no methodology prompt text in the repo (CLAUDE.md)". CLAUDE.md has no such rule, and the narrative and
   structure prompts are tracked in `backend/app/llm/prompts/` (marked "server-side only"), so a public repository publishes
   them. Since Emergent deploys from GitHub only, moving them out of the repository needs another delivery path for the
-  prompts. See "Decisions for you".
+  prompts. Done: docs/specs/prompt-store.md and CLAUDE.md rule 26 (the old texts remain in git history).
 
 ## Files (once §6 is decided)
 `backend/server.py` (a dependency on every audit route), `backend/app/access.py` (new: hashing, expiry, ownership),

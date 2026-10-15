@@ -20,3 +20,16 @@ test("every request carries the tester's token as a bearer header, and none is s
   expect(seen.headers.Authorization).toBe("Bearer tester-token-123");
   window.localStorage.removeItem(TOKEN_KEY);
 });
+
+test("an owner call sends the owner token it was given, never the kept tester token, and the owner token is never kept", async () => {
+  const { setToken, TOKEN_KEY, ownerPrompts } = require("./api");
+  setToken("tester-token-123");
+  let seen;
+  api.defaults.adapter = async (config) => { seen = config; return { data: {}, status: 200, statusText: "OK", headers: {}, config }; };
+  await ownerPrompts("owner-token");
+  expect(seen.headers.Authorization).toBe("Bearer owner-token");
+  expect(seen.url).toBe("/admin/prompts");
+  expect(window.localStorage.getItem(TOKEN_KEY)).toBe("tester-token-123");
+  expect(JSON.stringify({ ...window.localStorage })).not.toContain("owner-token");
+  window.localStorage.removeItem(TOKEN_KEY);
+});

@@ -37,6 +37,7 @@ from app import usage as usage_mod
 from app.decks import claims as deck_claims
 from app.decks import parser as deck_parser
 from app.llm import gateway as llm_gateway
+from app.llm import prompt_store
 from app.llm import redaction as llm_redaction
 from app.logsafety import install_secret_redaction
 
@@ -373,6 +374,29 @@ class TesterCreate(BaseModel):
 def _link(request: Request, token: str) -> str:
     base = os.environ.get("PUBLIC_APP_URL") or str(request.base_url)
     return f"{base.rstrip('/')}/t/{token}"
+
+
+class PromptUpload(BaseModel):
+    name: str
+    text: str
+
+
+# Prompt text goes in and never comes out: the list has name, version, date and hash (docs/specs/prompt-store.md). Owner token only
+# (access_guard, /api/admin/...).
+@api.get("/admin/prompts")
+async def admin_prompts():
+    return {"names": list(prompt_store.NAMES), "prompts": await prompt_store.list_versions(db),
+            "missing": await prompt_store.missing(db)}
+
+
+@api.post("/admin/prompts")
+async def admin_upload_prompt(payload: PromptUpload):
+    try:
+        row = await prompt_store.upload(db, payload.name, payload.text)
+    except prompt_store.PromptRefused as exc:
+        raise HTTPException(422, str(exc))
+    logger.info("prompt uploaded: name=%s version=%s", row["name"], row["version"])
+    return row
 
 
 @api.post("/admin/testers")

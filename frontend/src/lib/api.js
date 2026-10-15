@@ -11,7 +11,10 @@ export const getToken = () => { try { return window.localStorage.getItem(TOKEN_K
 export const setToken = (token) => { try { window.localStorage.setItem(TOKEN_KEY, token); } catch (e) { /* the link then works for this page only */ } };
 api.interceptors.request.use((config) => {
   const token = getToken();
-  if (token) config.headers = { ...(config.headers || {}), Authorization: `Bearer ${token}` };
+  if (token && !(config.headers && config.headers.Authorization)) {     // an owner call carries its own token
+    config.headers = config.headers || {};
+    config.headers.Authorization = `Bearer ${token}`;
+  }
   return config;
 });
 
@@ -139,3 +142,14 @@ export const runStage = (id, stage) => api.post(`/audits/${id}/run/${stage}`, nu
 export const getReview = (id) => api.get(`/audits/${id}/review`, { timeout: READ_TIMEOUT_MS }).then((r) => r.data);
 // What "Write all narratives" would run and its upper-bound cost; reads only, no provider call.
 export const getNarrativeEstimate = (id) => api.get(`/runs/${id}/narratives/estimate`).then((r) => r.data);
+
+// Owner page (docs/specs/prompt-store.md): the owner token is passed per call, from memory, and replaces any tester token.
+// Prompt text goes up and never comes back: the list holds name, version, date and hash. Tester links use the admin routes of
+// docs/specs/access-links.md section 2.
+const asOwner = (token) => ({ headers: { Authorization: `Bearer ${token}` } });
+export const ownerPrompts = (token) => api.get("/admin/prompts", asOwner(token)).then((r) => r.data);
+export const ownerUploadPrompt = (token, name, text) => api.post("/admin/prompts", { name, text }, asOwner(token)).then((r) => r.data);
+export const ownerTesters = (token) => api.get("/admin/testers", asOwner(token)).then((r) => r.data);
+export const ownerIssueTester = (token, label) => api.post("/admin/testers", { label }, asOwner(token)).then((r) => r.data);
+export const ownerRevokeTester = (token, id) => api.post(`/admin/testers/${id}/revoke`, null, asOwner(token)).then((r) => r.data);
+export const ownerReissueTester = (token, id) => api.post(`/admin/testers/${id}/reissue`, null, asOwner(token)).then((r) => r.data);
