@@ -1,5 +1,8 @@
 # Spec: Gates, verdict and IC memo (method A9, A10, A11)
 Status: Final (2026-10-08). Every decision is in §12 and every wording item in §11 is approved.
+Amended 2026-10-15 (docs/specs/dates-and-periods.md §2, §3): the memo's date line is the requested analysis date; "Evidence to
+{Month YYYY}" follows it; the summary states the latest valid source period; the thesis carries "Analyst's text, as of {date}."; a
+figure that is not a register figure carries its last month in brackets.
 Amended 2026-10-15 (docs/specs/evidence-labels.md §4): the memo summary counts Inconclusive under Unverified with its count in
 brackets; an Inconclusive row needs a gate like an Unverified one.
 Location: docs/specs/verdict-and-memo.md. Follows claim-matching.md (the register) and interface-contracts.md

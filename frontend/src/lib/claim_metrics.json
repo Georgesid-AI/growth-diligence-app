@@ -13,6 +13,10 @@
     "Win rate": "%",
     "Gross margin": "%",
     "CAC payback": "months",
-    "Transaction volume": "currency"
+    "Transaction volume": "currency",
+    "Revenue growth": "%",
+    "ARR growth": "%",
+    "MRR growth": "%",
+    "Customer growth": "%"
   }
 }

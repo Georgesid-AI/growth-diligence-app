@@ -115,6 +115,32 @@ def fmt_plain(value: Any) -> str:
     return PLACEHOLDER if d is None else str(_nearest(d))
 
 
+MONTH_NAMES = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November",
+               "December")
+
+
+def fmt_month_name(month: Optional[str]) -> str:
+    """'2019-06' -> 'June 2019': a month as a name and a year, never a day (docs/specs/dates-and-periods.md section 2)."""
+    try:
+        year, number = str(month)[:7].split("-")
+        return f"{MONTH_NAMES[int(number) - 1]} {int(year)}"
+    except (ValueError, IndexError):
+        return PLACEHOLDER
+
+
+def source_period_text(source: Optional[dict]) -> str:
+    """'June 2019 (Complete)' / 'June 2019 (Possibly partial)': the latest valid source period; '—' when none."""
+    if not source or not source.get("month"):
+        return PLACEHOLDER
+    return f"{fmt_month_name(source['month'])} ({source.get('status')})"
+
+
+def evidence_to_text(results: Optional[dict]) -> str:
+    """'June 2019': the last month any revenue figure reads (the source period's evidence end), else the as-of month."""
+    source = (results or {}).get("source_period") or {}
+    return fmt_month_name(source.get("evidence_to") or (results or {}).get("as_of_month"))
+
+
 def fmt(kind: str, value: Any, ccy: Optional[str] = None) -> str:
     """Format `value` as `kind`. The one entry point callers should use."""
     if kind == CURRENCY:

@@ -10,7 +10,9 @@ import {
   DEFINITION_ANSWERS, DOWNLOAD_LABEL, labelText, GATE_BUDGET_MAX, GATE_DIRECTIONS, GATE_METRIC_MAX, GATE_METRIC_PLACEHOLDER, GATE_NEEDED, KEY_GATE_LABEL, NO_METRIC, OTHER_DECISION, PREFILLED, gateDraft,
   REGISTER_COLUMNS, REGISTER_COLUMN_WIDTHS, REGISTER_HEADING, SET_GATE_LABEL, VAS_LABEL, TURNOVER_QUESTION, answerReady, reasonsFor, claimCellText, rateHover, takeRateText, evidenceLines, gapText, gateContext, gateEdit, metricOptions, needsMetricName,
   observedText, overlapsText, readingText, registerRows, segmentOptions, valueAtStakeText, COLUMN_EXPLAINERS, EVIDENCE_SUBTITLE, LABEL_STYLE,
+  GROWTH_BASES, SET_GROWTH_BASIS, growthBasisLabel,
 } from "@/lib/claimRegister";
+import { missingText } from "@/lib/periods";
 import { CALCULATE_CLASS } from "@/lib/chatUpload";
 import { useGateEdits } from "@/lib/useGateEdits";
 import { describeRequestError } from "@/lib/requestError";
@@ -192,6 +194,19 @@ export function DefinitionCell({ row, onAnswer, heading }) {
   );
 }
 
+/** The one-click "Set growth basis" of a growth claim whose basis is unknown (docs/specs/dates-and-periods.md section 5). */
+export function GrowthBasisCell({ row, onSet }) {
+  return (
+    <div className="mt-1 flex flex-nowrap items-center gap-1.5" data-testid="register-growth-basis">
+      <span className="text-slate-800">{SET_GROWTH_BASIS}</span>
+      {GROWTH_BASES.map(([value, label]) => (
+        <Button key={value} size="sm" variant="outline" className="h-7 shrink-0" data-testid={`growth-basis-${value}`}
+          onClick={() => onSet(row, { growth_basis: value }).catch(() => {})}>{label}</Button>
+      ))}
+    </div>
+  );
+}
+
 /** The claim register of one audit, in the order the server ranks it (docs/specs/claim-matching.md section 8). */
 export default function ClaimRegister({ auditId, results, onChanged }) {
   const [rows, setRows] = useState(null);
@@ -272,6 +287,7 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
                 [`${VAS_LABEL} ${valueAtStakeText(row)}`, "register-value-at-stake"],
                 [`Overlaps with ${overlapsText(row, rows)}`, "register-overlaps"],
                 [row.reason, "register-evidence-reason"],
+                ...(growthBasisLabel(row.growth_basis) ? [[`Growth basis ${growthBasisLabel(row.growth_basis)}`, "register-growth-basis-set"]] : []),
               ];
               return (
                 <tbody key={row.claim_id} className="border-b border-[#F1F5F9] align-top break-words" data-testid="claim-register-row">
@@ -294,6 +310,10 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
                         <Provenance source={row.observed_source}>{observed.value}</Provenance>
                         {observed.at && <span className="text-[10px] text-slate-500"> · {observed.at}</span>}
                       </div>
+                      {/* the months of the claim's period the data lacks, beside the value (dates-and-periods.md section 4) */}
+                      {missingText({ missing: row.months_missing }) && (
+                        <div className="text-[10px] font-mono text-amber-800" data-testid="register-months-missing">{missingText({ missing: row.months_missing })}</div>
+                      )}
                       <select value={row.metric ?? NO_METRIC} onChange={(e) => save(row, { metric: e.target.value }).catch(() => {})} className={`${selectClass} w-full mt-1`} data-testid="register-metric">
                         {withCurrent(metricOptions(row), row.metric ?? NO_METRIC).map((m) => (
                           <option key={m} value={m}>{m === NO_METRIC ? "none" : m}</option>
@@ -324,6 +344,7 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
                       <div className="text-xs text-slate-700 space-y-1">
                         {row.turnover_state && <TurnoverCell row={row} onAnswer={answer} />}
                         {row.definition_check && <DefinitionCell row={row} onAnswer={answerDefinition} />}
+                        {row.growth_basis === "unknown" && <GrowthBasisCell row={row} onSet={save} />}
                         <GateToggle row={row} ccy={ccy} onSave={save} prefill={prefill[row.claim_id]} budgets={budgets} edits={edits[row.claim_id]} onEdit={onEdit} />
                       </div>
                     </td>

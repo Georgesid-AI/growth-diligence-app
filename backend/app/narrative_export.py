@@ -7,7 +7,6 @@ workbook where the cited number sits, so prose can be traced to data without lea
 the file. That link is decided here, from the cited path and the results, and only ever
 names a sheet that really carries the value.
 """
-import calendar
 from typing import List, Optional
 
 from . import disclosure, formatting
@@ -138,24 +137,14 @@ def data_sheet_for(source_key: str, results: Optional[dict] = None) -> str:
     return NOT_ON_A_SHEET
 
 
-def month_end_date(month: Optional[str]) -> Optional[str]:
-    """"2025-02" -> "2025-02-28": data runs through the last day of the as-of month."""
-    try:
-        year, mon = str(month).split("-")[:2]
-        return f"{int(year):04d}-{int(mon):02d}-{calendar.monthrange(int(year), int(mon))[1]:02d}"
-    except (ValueError, TypeError):
-        return None
-
-
 def written_against(meta: dict, results: dict) -> List[tuple]:
     """(label, text) rows saying which period and target the narrative describes."""
     ccy = results.get("reporting_currency") or meta.get("reporting_currency") or ""
-    as_of = meta.get("as_of_month") or results.get("as_of_month")
     ap = results.get("acv_path") or {}
     target_arr = meta.get("target_arr") if meta.get("target_arr") is not None else ap.get("target_arr")
     target_date = meta.get("target_date") or ap.get("target_date")
-    end = month_end_date(as_of)
-    rows = [("As-of month", f"{as_of} (data through {end})" if as_of and end else (as_of or "not set"))]
+    # the evidence end, never the as-of setting as the data's period (docs/specs/dates-and-periods.md section 2)
+    rows = [("Evidence to", formatting.evidence_to_text(results))]
     if target_arr is not None:
         rows.append(("Target ARR and date",
                      f"{formatting.fmt_currency(target_arr, ccy)} by {target_date}" if target_date

@@ -17,7 +17,7 @@ FIX = fixture()
 RUNS = FIX["runs"]
 METRICS_2A = ("Revenue", "ARR", "MRR", "Customer count", "New MRR", "NRR (12-month)", "Gross revenue churn", "ACV",
               "Median sales cycle", "Win rate", "Gross margin", "CAC payback")
-LABELS = ("Verified", "Contradicted", "Unverified", "Unsupported")
+LABELS = ("Verified", "Contradicted", "Inconclusive", "Unverified", "Unsupported")
 
 
 def settings(run, **extra):
@@ -147,8 +147,8 @@ def test_a_beat_beyond_tolerance_is_verified_and_never_ranks_as_a_miss():
     ({"claim_type": "revenue", "snippet": "New MRR €1M"}, "New MRR"),
     ({"claim_type": "revenue", "snippet": "ARR €1M"}, "ARR"),
     ({"claim_type": "revenue", "snippet": "Revenue €1M", "currency": None}, None),                  # no currency: not an amount
-    ({"claim_type": "revenue_growth", "snippet": "Revenue growth 30%", "unit": "%", "currency": None}, None),
-    ({"claim_type": "growth", "snippet": "ARR growth 30%", "unit": "%", "currency": None}, None),
+    ({"claim_type": "revenue_growth", "snippet": "Revenue growth 30%", "unit": "%", "currency": None}, "Revenue growth"),
+    ({"claim_type": "growth", "snippet": "ARR growth 30%", "unit": "%", "currency": None}, "ARR growth"),     # dates-and-periods.md 5
     ({"claim_type": "customers", "snippet": "40 customers", "unit": "customers", "currency": None}, "Customer count"),
     ({"claim_type": "customers", "snippet": "40 customers", "unit": "%", "currency": None}, None),
     ({"claim_type": "users", "snippet": "40 users", "unit": "users", "currency": None}, None),
@@ -264,16 +264,20 @@ def test_hours_and_claims_with_no_unit_stay_unmatched(unit, snippet, claim_type)
 
 # --- table 2b: periods -------------------------------------------------------------------------------------------------
 
-def test_a_period_before_the_data_or_cut_by_its_start_is_unverified_and_the_reason_names_the_missing_months():
+def test_a_period_before_the_data_is_not_covered_and_one_cut_by_its_start_is_partly_covered_with_the_missing_months_named():
+    """dates-and-periods.md section 4: no month of the period in the data is Unverified (not covered); some is Inconclusive with
+    the figure over the months present."""
     full = run_claim({"claim_type": "revenue", "snippet": "Revenue €1M", "target_date": "2022"})
-    assert (full["evidence_label"], full["observed_value"]) == ("Unverified", None) and "first month, 2023-01" in full["reason"]
+    assert (full["evidence_label"], full["observed_value"], full["period_coverage"]) == ("Unverified", None, "Not covered")
+    assert full["reason"] == "claim period not in supplied data: before Revenue's first month, 2023-01"
     run = RUNS["A"]
     c = {"id": "x1", "status": "approved", "claim_type": "revenue", "value": 1, "currency": "EUR", "snippet": "Revenue",
          "target_date": "2023", "sources": []}
     deck_claims.resolve_period(c, 3)                                   # a March year-end: FY2023 starts April 2022
     row = cm.build_register([c], results_for(run), settings(run, fiscal_year_end=3))[0]
-    assert (row["evidence_label"], row["observed_value"]) == ("Unverified", None)
+    assert (row["evidence_label"], row["period_coverage"]) == ("Inconclusive", "Partly covered") and row["observed_value"] > 0
     assert "2022-04 to 2022-12" in row["reason"], "the months the data lacks are named"
+    assert row["months_missing"][0] == "2022-04" and len(row["months_missing"]) == 9
 
 
 def test_a_gap_inside_the_period_names_its_months_too():
@@ -282,7 +286,8 @@ def test_a_gap_inside_the_period_names_its_months_too():
     series["data"] = [d for d in series["data"] if d["month"] not in ("2023-05", "2023-06", "2023-09")]
     series["months"] = [d["month"] for d in series["data"]]
     row = run_claim({"claim_type": "revenue", "snippet": "Revenue", "value": 1, "target_date": "2023"}, results=results)
-    assert row["evidence_label"] == "Unverified" and "2023-05 to 2023-06, 2023-09" in row["reason"]
+    assert row["evidence_label"] == "Inconclusive" and "2023-05 to 2023-06, 2023-09" in row["reason"]
+    assert row["observed_at"] == "2023-01 to 2023-12 (9 of 12 months)"
 
 
 def test_a_quarter_metric_needs_one_calendar_quarter_of_the_engine():
@@ -401,7 +406,8 @@ def test_registered_institutions_are_users_read_against_paying_customers_and_inc
     assert [(c["claim_type"], c["qualifier"], [i["value"] for i in c["by_period"]]) for c in found] == \
         [("users", "registered", [1, 2, 25, 50])]
     got = {r["claim_id"]: (r["evidence_label"], r["reason"], r["metric"], r["observed_value"]) for r in rows}
-    assert got["r0#1"] == ("Unverified", "before Customer count's first month, 2023-01", "Customer count", None)
+    assert got["r0#1"] == ("Unverified", "claim period not in supplied data: before Customer count's first month, 2023-01",
+                           "Customer count", None)
     assert got["r0#2"] == ("Inconclusive", QUALIFIED, "Customer count", 5)
     assert [got[f"r0#{n}"][0] for n in (3, 4)] == ["Unverified", "Unverified"], "Y/E 24 and Y/E 25 end after the as-of month"
 
@@ -425,7 +431,7 @@ def test_paying_customers_are_still_tested_against_the_customer_count():
     assert [(c["claim_type"], c.get("qualifier")) for c in found] == [("customers", None)]
     y22, y23 = row_of(rows, "p0#1"), row_of(rows, "p0#2")
     assert (y22["metric"], y22["evidence_label"], y22["reason"]) == \
-        ("Customer count", "Unverified", "before Customer count's first month, 2023-01")
+        ("Customer count", "Unverified", "claim period not in supplied data: before Customer count's first month, 2023-01")
     # 20 paying customers against 5 in the data: a 75% miss asks whether they are the same customers (section 4.1)
     assert (y23["metric"], y23["observed_value"], y23["gap_kind"], y23["evidence_label"], y23["definition_check"]) == \
         ("Customer count", 5, "miss", None, "ask")
@@ -594,7 +600,8 @@ def test_a_register_row_has_exactly_the_fields_of_section_6_and_the_verdict_spec
                  "value_at_stake_arr shortfall overlaps_with evidence_analysis evidence_source_key gate_sentence gate_threshold "
                  "gate_budget_decision gate_date gate_saved gate_metric_name gate_direction key_gate gate_needed as_of_month "
                  "as_of_defaulted turnover_state turnover_note turnover_set_by turnover_reason implied_take_rate "
-                 "implied_take_rate_source turnover_suggested deck_revenue_note definition_check definition_question").split()
+                 "implied_take_rate_source turnover_suggested deck_revenue_note definition_check definition_question "
+                 "period_coverage months_missing growth_basis").split()
     assert list(register(RUNS["A"])[0]) == section_6 == list(cm.FIELDS)
 
 

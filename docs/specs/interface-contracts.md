@@ -1,6 +1,8 @@
 # Spec: Interface contracts on two handoffs
 Status: Draft; the agreed scope is the task of 2026-10-08. Location: docs/specs/interface-contracts.md.
 No architecture change: the engine stays pure, the gateway stays the only caller of a model, the export stays in the API.
+Amended 2026-10-15 (docs/specs/dates-and-periods.md §7): `contract_version` 3 adds `source_period` and `metric_periods` (months as
+text, no figure, server-only); results stored under version 2 are recomputed on first read.
 
 ## Goal
 One written definition of what the calc engine hands over, checked at the two places where a wrong unit turns into a

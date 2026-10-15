@@ -275,7 +275,9 @@ HEADER_SENTINEL = "Jane Doe"    # every mapped column header is renamed to carry
 SERVER_ONLY_TOP_LEVEL = frozenset({"contract_version",                   # interface-contracts.md: the version the stored payload was built under
                                    "anomalies", "mrr_series", "new_mrr_by_quarter", "new_mrr_by_quarter_source",
                                    "revenue_series", "customers_series",    # claim-matching.md table 2a
-                                   "revenue_reconciliation"})               # chat-upload.md section 6.2; data_integrity reads a summary (step_payloads.py)
+                                   "revenue_reconciliation",                # chat-upload.md section 6.2; data_integrity reads a summary (step_payloads.py)
+                                   "source_period", "metric_periods",       # dates-and-periods.md sections 2-3: months as text, no figure
+                                   "as_of_month"})                          # the analyst's setting: the model is told evidence_to and last_month_status instead
 SERVER_ONLY_FIELDS = frozenset({
     "file", "sheet", "columns", "rows", "row_numbers", "unlocked_by",
     "values",                       # founder_involved_excluded.values are raw cells (cohort `data.values` is allowed by parent)
@@ -1283,6 +1285,10 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             # docs/specs/evidence-labels.md: the confidence column, the statuses, their explainers and grouping
                             "extraction_confidence", "with_confidence", "confidence_level", "EVIDENCE_STATUSES", "MEMO_GROUPS", "QUALIFIED_NO_FIGURE",
                             "EXTRACTION_EXPLAINER", "EVIDENCE_EXPLAINER", "POPULATION_PREFIX", "NOT_VERIFIED",
+                            # docs/specs/dates-and-periods.md: coverage, the growth basis and their reasons
+                            "period_coverage", "months_missing", "growth_basis", "analysis_date", "last_month_complete",
+                            "NOT_COVERED_REASON", "PARTLY_REASON", "PARTIAL_DETAIL", "AFTER_SOURCE_DETAIL", "GROWTH_UNKNOWN_REASON",
+                            "GROWTH_WINDOW_REASON", "GROWTH_BASE_REASON", "GROWTH_RULES", "GROWTH_CUES",
                             *MATCHING_SERVER_ONLY})
 # The functions that log about the register, and the only things their log calls may name.
 REGISTER_LOGGERS = frozenset({"_claim_rows", "claim_register", "claim_register_csv", "update_claim_inputs", "answer_turnover",
@@ -2092,3 +2098,14 @@ def test_the_narrative_estimate_sends_nothing_and_names_no_file(run_api):  # noq
     assert len(run_api.adapter.payloads) == sent_before, "an estimate is not a call"
     for secret in ("revenue.csv", "crm.csv", "pnl.csv", "testco_board"):
         assert secret not in body
+
+
+def test_the_period_the_model_is_told_is_two_closed_values_and_never_the_as_of_setting():
+    """Decision 7 (15 Oct 2026): evidence_to is a month and last_month_status is one of two words. The as-of setting and
+    the requested analysis date are not outbound fields."""
+    assert {"evidence_to", "last_month_status"} <= gateway.OUTBOUND_TOP_LEVEL
+    assert not ({"as_of_month", "requested_analysis_date", "last_month_complete"} & (gateway.OUTBOUND_TOP_LEVEL | gateway.OUTBOUND_FIELDS))
+    out = gateway.period_fields({"source_period": {"month": "2019-06", "status": "Possibly partial", "complete_by": "analyst",
+                                                   "evidence_to": "2019-06"}, "as_of_month": "2026-06"})
+    assert out == {"evidence_to": "2019-06", "last_month_status": "Possibly partial"}
+    assert gateway.period_fields({}) == {"evidence_to": None, "last_month_status": None}

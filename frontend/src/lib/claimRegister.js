@@ -78,6 +78,11 @@ export const TURNOVER_QUESTION = "Revenue or transaction volume?";
 export const TURNOVER_CONFIRM = "Turnover – confirm:";
 export const UNVERIFIED = "Unverified";
 
+// docs/specs/dates-and-periods.md section 5: a growth claim with no basis waits for the analyst's one click.
+export const SET_GROWTH_BASIS = "Set growth basis";
+export const GROWTH_BASES = [["mom", "MoM"], ["yoy", "YoY"], ["annualised", "Annualised"], ["cumulative", "Cumulative"]];
+export const growthBasisLabel = (basis) => (GROWTH_BASES.find(([value]) => value === basis) || [])[1] || null;
+
 // Section 4.1 of docs/specs/claim-matching.md: a gap beyond 50% of the claim asks "Same metric and period?" before the row gets a label.
 export const DEFINITION_CHECK = "Definition check";
 export const DEFINITION_ANSWERS = [["yes", "Yes"], ["no", "No"]];

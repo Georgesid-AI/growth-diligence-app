@@ -1,4 +1,5 @@
 import { Provenance } from "./Provenance";
+import { missingText, periodText } from "@/lib/periods";
 
 const STATUS = {
   growth_positive: "text-emerald-700",
@@ -7,7 +8,17 @@ const STATUS = {
   neutral: "text-slate-900",
 };
 
-export function MetricCard({ id, label, value, source, sub, qualifier, status = "neutral", note, caption }) {
+/** A chart or table card's own period and the months missing inside it (dates-and-periods.md section 3), under its title. */
+export function PeriodLines({ id, period }) {
+  return (
+    <>
+      {periodText(period) && <div data-testid={`card-period-${id}`} className="-mt-3 mb-2 text-[11px] text-slate-500 font-mono">{periodText(period)}</div>}
+      {missingText(period) && <div data-testid={`card-missing-${id}`} className="-mt-1 mb-2 text-[11px] text-amber-800 font-mono">{missingText(period)}</div>}
+    </>
+  );
+}
+
+export function MetricCard({ id, label, value, source, sub, qualifier, status = "neutral", note, caption, period }) {
   return (
     <div
       data-testid={`metric-card-${id}`}
@@ -24,6 +35,9 @@ export function MetricCard({ id, label, value, source, sub, qualifier, status = 
       {qualifier && (
         <div data-testid={`metric-qualifier-${id}`} className="text-[11px] text-slate-500 mt-1 font-mono">{qualifier}</div>
       )}
+      {/* the figure's own period and the months missing inside it (docs/specs/dates-and-periods.md section 3) */}
+      {periodText(period) && <div data-testid={`metric-period-${id}`} className="text-[11px] text-slate-500 mt-1 font-mono">{periodText(period)}</div>}
+      {missingText(period) && <div data-testid={`metric-missing-${id}`} className="text-[11px] text-amber-800 mt-0.5 font-mono">{missingText(period)}</div>}
       {sub && <div className="text-xs text-slate-600 mt-2 font-mono">{sub}</div>}
       {note && <div className="text-[11px] text-slate-500 mt-1">{note}</div>}
       {/* Static plain-language caption — always visible, never computed. */}
