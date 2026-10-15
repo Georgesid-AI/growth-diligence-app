@@ -122,7 +122,7 @@ Two labels, shown as two separate columns, each with a hover explainer.
 |---|---|
 | Verified | Tested against supplied company data; within tolerance (beat shown as "(beat)" and flagged, per 13 Oct rule). |
 | Contradicted | Tested against supplied company data; claim misses by more than tolerance. |
-| Inconclusive | A test ran but cannot confirm or contradict the claim: claim period only partly covered, population differs (e.g. registered vs paying), or growth basis unknown. Reason and computed figure shown. |
+| Inconclusive | A test ran but cannot confirm or contradict the claim: claim period only partly covered, or population differs (e.g. registered vs paying). A row is Inconclusive only when a test ran: it always shows the computed figure and the reason. Amended 15 Oct 2026 (George, decision 2): an unknown growth basis is Unverified, because no test can run without a basis (section 3). |
 | Unverified | Testable metric, but the supplied files do not cover it (company data gap) or an analyst answer is pending. Reason shown. |
 | Unsupported | The app does not compute this metric (product limitation). Never counted as a company finding. |
 
