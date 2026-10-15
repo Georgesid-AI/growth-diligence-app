@@ -234,9 +234,11 @@ async def load_checked_results(db, run_id: str, step: str) -> Tuple[dict, List[s
         "reporting_currency": doc.get("reporting_currency"),
         "target_arr": doc.get("target_arr"),
         "target_date": doc.get("target_date"),
-        "as_of_month": doc.get("as_of_month") or results.get("as_of_month"),
+        **period_fields(results),
         "computed_at": doc.get("computed_at"),
         "metrics": slice_,
+        # The payload narratives were keyed on before the period fields: kept server-side to find them (never sent).
+        "legacy_as_of": {"top": doc.get("as_of_month") or results.get("as_of_month"), "metrics": results.get("as_of_month")},
     }, contract_problems(results))
 
 
@@ -287,12 +289,12 @@ def withhold_partial_quarters(node: Any) -> Any:
 # engine-written reasons and pseudonymised segment labels. Never file or sheet
 # names, column headers or raw cell values (`source.file`, `source.sheet`,
 # `source.columns`, `founder_involved_excluded.values`).
-OUTBOUND_TOP_LEVEL = frozenset({"reporting_currency", "target_arr", "target_date", "as_of_month", "metrics"})
+OUTBOUND_TOP_LEVEL = frozenset({"reporting_currency", "target_arr", "target_date", "evidence_to", "last_month_status", "metrics"})
 
 OUTBOUND_FIELDS = frozenset({
     # metric blocks (the step slice)
     "arr", "nrr", "gross_churn", "cac_payback", "sales_cycle", "win_rate", "founder_win_rate",
-    "acv_path", "segment_paths", "cohort_retention", "as_of_month", "reporting_currency",
+    "acv_path", "segment_paths", "cohort_retention", "evidence_to", "last_month_status", "reporting_currency",
     "missing_data", "questions_for_management",
     # data inventory and data integrity (step_payloads.py): source keys, statuses and closed sentences
     "source_list", "inventory", "integrity", "source_key", "description", "category", "in_request_list", "quality_issues",
@@ -365,6 +367,41 @@ def allowlist_payload(node: Any, key: Optional[str] = None) -> Any:
     return {k: allowlist_payload(v, k) for k, v in node.items() if k in allowed}
 
 
+def period_fields(results: dict) -> dict:
+    """The period the model is told: where the evidence ends and whether that last month is complete, both read from the
+    stored source period (dates-and-periods.md section 2). The as-of setting and the requested analysis date never go."""
+    source = results.get("source_period") or {}
+    return {"evidence_to": source.get("evidence_to"), "last_month_status": source.get("status")}
+
+
+def legacy_computed(computed: dict, step: str) -> dict:
+    """`computed` as it was before the period fields: the as-of setting in place of them. Used only to find a narrative
+    stored under the earlier cache key, so it stays served until the analyst regenerates it (decision 7, 15 Oct 2026)."""
+    old = computed.get("legacy_as_of") or {}
+    out = {k: v for k, v in computed.items() if k not in ("evidence_to", "last_month_status", "legacy_as_of")}
+    out["as_of_month"] = old.get("top")
+    metrics = {k: v for k, v in (computed.get("metrics") or {}).items() if k not in ("evidence_to", "last_month_status")}
+    if step in step_payloads.STEPS or old.get("metrics") is not None:
+        metrics["as_of_month"] = old.get("metrics")
+    out["metrics"] = metrics
+    return out
+
+
+async def cached_for(db, run_id: str, step: str, tag: str, model: str, computed: dict, mapping: dict, outbound: Any):
+    """(key, stored record) for the current payload; when none is stored, the record written under the earlier payload
+    shape, if its numbers still match. Reads only: the dashboard's read path uses it; Write narratives and the cost estimate
+    do not, so an analyst's regenerate replaces the earlier narrative (and the estimate shows its cost)."""
+    key = cache.cache_key(run_id, step, tag, model, outbound)
+    found = await cache.get(db, key)
+    if found or "legacy_as_of" not in computed:
+        return key, found
+    try:
+        old = build_outbound(legacy_computed(computed, step), mapping)
+    except GatewayError:
+        return key, None
+    return key, await cache.get(db, cache.cache_key(run_id, step, tag, model, old))
+
+
 def build_outbound(computed: dict, mapping: dict) -> dict:
     """The payload the provider sees: display strings, allowlisted, then pseudonyms.
 
@@ -391,17 +428,18 @@ def _slice_for_step(results: dict, step: str, deck_count: Optional[int] = None) 
     """Narrow computed results to what a step needs. Unknown keys are dropped. `deck_count` is the data inventory's
     only input that is not in the stored results."""
     if step in step_payloads.STEPS:
-        return {**step_payloads.build(step, results, deck_count), "as_of_month": results.get("as_of_month")}
+        return {**step_payloads.build(step, results, deck_count), **period_fields(results)}
     wanted = {
         "growth_engine": [
             "arr", "nrr", "gross_churn", "cac_payback", "sales_cycle",
-            "win_rate", "founder_win_rate", "acv_path", "segment_paths", "as_of_month", "reporting_currency",
+            "win_rate", "founder_win_rate", "acv_path", "segment_paths", "reporting_currency",
         ],
-        "cohort_retention": ["cohort_retention", "as_of_month"],
-        "cac_efficiency": ["cac_payback", "as_of_month"],
-        "path_to_plan": ["acv_path", "segment_paths", "as_of_month"],
+        "cohort_retention": ["cohort_retention"],
+        "cac_efficiency": ["cac_payback"],
+        "path_to_plan": ["acv_path", "segment_paths"],
     }.get(step, [])
     out = {k: results.get(k) for k in wanted if results.get(k) is not None}
+    out.update({k: v for k, v in period_fields(results).items() if v is not None})
     if step == "growth_engine":
         # What could not be computed, and what was computed from another upload and
         # needs management's explanation. Stored results only - never file names,
@@ -1248,9 +1286,7 @@ async def read_cached_narrative(db, run_id: str, step: str) -> NarrativeResponse
         return NarrativeResponse(
             run_id=run_id, step=step, narrative_status="not_generated", metrics=metrics,
         )
-    key = cache.cache_key(run_id, step, prompt_store.cache_tag(prompt), model, outbound)
-
-    cached = await cache.get(db, key)
+    key, cached = await cached_for(db, run_id, step, prompt_store.cache_tag(prompt), model, computed, mapping, outbound)
     if not cached:
         # Nothing matches the current key. If something was written for an earlier
         # version of this run, say so - the reader may remember it - and say why.

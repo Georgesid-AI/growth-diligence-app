@@ -72,6 +72,21 @@ def test_an_inconclusive_row_ranks_after_every_tested_row_and_is_never_a_hard_bl
     assert q1["evidence_label"] == "Inconclusive" and q1["rank"] > max(tested)
 
 
+def test_an_inconclusive_row_always_comes_from_a_test_that_ran():
+    """Plan section 5 (amended 15 Oct 2026): Inconclusive means a figure was computed. No figure, no Inconclusive."""
+    run = RUNS["A"]
+    cands = candidates_for(run) + [{"id": "q1", "status": "approved", "value_high": None, "period_text": "Feb 2024",
+                                    "label_from": None, "file": "testco_board.pptx", "order": 99,
+                                    "sources": [{"file": "testco_board.pptx", "slide": 9}], **QUALIFIED}]
+    from app.decks import claims as deck_claims
+    deck_claims.resolve_period(cands[-1], run["fiscal_year_end"])
+    rows = [r for r in cm.build_register(cands, results_for(run), settings(run)) if r["evidence_label"] == "Inconclusive"]
+    assert rows, "the fixture holds an Inconclusive row"
+    for r in rows:
+        assert r["observed_value"] is not None and r["observed_at"] and r["observed_source"], r["claim_id"]
+        assert r["reason"] and r["gap"] is None, r["claim_id"]
+
+
 def test_the_shared_evidence_labels_json_is_the_backends_list():
     shared = json.loads(SHARED.read_text(encoding="utf-8"))
     assert shared["statuses"] == list(cm.EVIDENCE_STATUSES) == ["Verified", "Contradicted", "Inconclusive", "Unverified", "Unsupported"]

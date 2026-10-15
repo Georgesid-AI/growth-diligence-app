@@ -39,7 +39,8 @@ source period: June 2019 (Complete)". The two never share a cell or a sentence.
     trigger, a checkbox under the as-of month on the set-up fields); else "Possibly partial". `complete_by`: "as_of",
     "analyst" or null.
   - A Possibly partial month is shown in every series and figure, and excluded from the NRR (series, overall, by segment)
-    and from growth (§5): NRR is computed as if the matrix ended the month before. Shown, not used.
+    and from growth (§5), and from gross revenue churn: NRR and churn are computed as if the matrix ended the month before.
+    Shown, not used.
   - `evidence_to`: the last month any revenue figure reads, `min(as-of month, month)`. Screen and memo text: "Evidence to
     June 2019".
   - Text: "June 2019 (Complete)" / "June 2019 (Possibly partial)", month name and year, never a day.
@@ -175,7 +176,13 @@ expected failures.
   (Possibly partial)" until the box is ticked, so NRR reads January 2024 and the NRR claims for February 2024 are Not
   covered. The claim-matching fixture ticks the box so its rows keep their meaning; the measured default is pinned in
   `test_dates_and_periods.py`.
-- Gross revenue churn still reads a Possibly partial month (the plan names growth and NRR); see "Decisions for you".
+- Gross revenue churn ends the month before a Possibly partial month, like NRR (decision 6, 15 Oct 2026): series, overall and the
+  metric period; a gross churn claim for that month is Not covered.
+- The narrative payload carries `evidence_to` and `last_month_status` (from `source_period`) in place of `as_of_month`
+  (decision 7, 15 Oct 2026). The cache key moves, so a stored narrative is no longer found under the new key; the dashboard
+  read path falls back to the key of the earlier payload (as-of setting restored) while the numbers still match, so it stays
+  until the analyst regenerates it. Write narratives and the cost estimate use the new key only. No narrative is regenerated
+  by the change.
 
 ## Files
 `backend/growth_engine.py`, `backend/schemas/metrics.py`, `backend/app/claim_matching.py`, `backend/app/decks/claims.py`
