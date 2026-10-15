@@ -88,6 +88,9 @@ WHOLE = cm.WHOLE
 
 def test_the_analyst_sets_a_segment_and_the_row_follows(api):
     client, db = api
+    # a claim with no period is not matched (claim-types-and-correction.md section 2): the NRR claim is dated at the as-of month
+    claim = next(c for c in db[decks.CANDIDATES_COLLECTION].docs if c["id"] == "c17")
+    claim.update(target_date="2024-02", period_text="Feb 2024", period_start="2024-02-01", period_end="2024-02-29")
     r = _put(client, "c17", {"segment": "Enterprise"})
     assert r.status_code == 200, r.text
     row = next(x for x in r.json()["register"] if x["claim_id"] == "c17")

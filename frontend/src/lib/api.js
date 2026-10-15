@@ -68,6 +68,9 @@ export const approveAll = (id, group, deckId) =>
   api.post(`/audits/${id}/decks/candidates/approve-all`, { group, ...(deckId ? { deck_id: deckId } : {}) }).then((r) => r.data);
 export const updateCandidate = (id, candidateId, payload) =>
   api.put(`/audits/${id}/decks/candidates/${candidateId}`, payload).then((r) => r.data);
+// Add from deck (docs/specs/claim-types-and-correction.md section 5): a stored page's lines, and a claim from one of them by reference.
+export const getDeckPage = (id, deckId, page) => api.get(`/audits/${id}/decks/${deckId}/pages/${page}`).then((r) => r.data);
+export const addFromDeck = (id, deckId, { page, ref }) => api.post(`/audits/${id}/decks/${deckId}/add-from-deck`, { page, ref }).then((r) => r.data);
 
 // Claim register (docs/specs/claim-matching.md): rows tested and ranked by the server, the analyst's inputs, and the CSV baseline.
 export const getClaimRegister = (id) => api.get(`/audits/${id}/claims`).then((r) => r.data);

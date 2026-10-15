@@ -120,6 +120,13 @@ test("a claim outside tolerance is a row: Approve and Reject save it, Approve al
   expect(api.approveAll).toHaveBeenCalledWith("a1", 1);
 });
 
+test("an Other figure is never a task: it is not in the open claims (claim-types-and-correction.md section 4)", async () => {
+  state.candidates = [cand("p1"), cand("o1", { group: 9, claim_type: "other", value: 15, unit: "months" }), cand("u1", { group: 9, claim_type: "unknown" })];
+  await mount();
+  expect(qa("review-claim-row")).toHaveLength(1);
+  expect(q("review-claim-group-9")).toBeNull();
+});
+
 test("a claim accepted within tolerance is listed under Show and can still be rejected", async () => {
   state.candidates = [cand("x1", { status: "approved", auto_accepted: true })];
   api.updateCandidate.mockResolvedValue({});

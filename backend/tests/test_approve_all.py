@@ -119,12 +119,13 @@ def test_the_open_definition_count_is_taken_on_the_status_the_claim_has_once_app
     assert after["definition_check"] == "ask"
 
 
-def test_a_claim_whose_type_is_still_to_be_chosen_is_skipped_as_a_single_approve_refuses_it(api):
+def test_an_other_figure_is_neither_approved_nor_counted_by_approve_all_as_a_single_approve_refuses_it(api):
+    """claim-types-and-correction.md section 4: an Other figure is never a task."""
     client, db = api
     one = client.put(f"/api/audits/{AUDIT}/decks/candidates/o1", json={"status": "approved"})
     assert one.status_code == 400
     body = client.post(URL, json={"group": OTHER}).json()
-    assert (body["approved"], body["skipped_ids"]) == (0, ["o1"]) and status(db, "o1") == "pending"
+    assert (body["approved"], body["skipped_ids"]) == (0, []) and status(db, "o1") == "pending"
 
 
 def test_a_claim_whose_save_fails_stays_to_review_and_the_rest_are_approved(api, monkeypatch):

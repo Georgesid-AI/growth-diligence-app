@@ -1,11 +1,9 @@
-// Release 1, committed before the code: docs/specs/claim-types-and-correction.md (plan section 4 and 7.1). failing() becomes
-// test() in the code PR.
+// docs/specs/claim-types-and-correction.md (plan section 4 and 7.1): the editor, Other figures and Add from deck.
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 
 import DeckPanel from "./DeckPanel";
 import * as api from "@/lib/api";
-import { failing } from "@/testing/expectedFailure";
 
 jest.mock("@/lib/api", () => ({ getDecks: jest.fn(), removeDeck: jest.fn(), updateCandidate: jest.fn(), uploadDeck: jest.fn(), addClaim: jest.fn(),
   answerTurnover: jest.fn(), approveAll: jest.fn(), getDeckPage: jest.fn(), addFromDeck: jest.fn() }));
@@ -43,7 +41,7 @@ const setValue = async (el, value) => act(async () => {
   el.dispatchEvent(new Event("change", { bubbles: true }));
 });
 
-failing("plan 4 (1): the editor corrects Target to Actual with a reason, and the save sends both", async () => {
+test("plan 4 (1): the editor corrects Target to Actual with a reason, and the save sends both", async () => {
   await act(async () => { q("candidate-row-t1").querySelector("[data-testid='candidate-edit']").click(); });
   const figureType = q("edit-figure-type");
   expect([...figureType.querySelectorAll("option")].map((o) => o.textContent)).toEqual(["Actual", "Target", "Unknown"]);
@@ -55,7 +53,7 @@ failing("plan 4 (1): the editor corrects Target to Actual with a reason, and the
   expect(api.updateCandidate).toHaveBeenCalledWith("a1", "t1", expect.objectContaining({ figure_type: "actual", reason: "parser_misread" }));
 });
 
-failing("plan 4 (2): Other figures sit collapsed under their count, with no Approve and no review count", async () => {
+test("plan 4 (2): Other figures sit collapsed under their count, with no Approve and no review count", async () => {
   expect(q("claim-group-toggle-9").textContent).toBe("1 other figure");
   await act(async () => { q("claim-group-toggle-9").click(); });
   const row = q("candidate-row-o1");
@@ -64,7 +62,7 @@ failing("plan 4 (2): Other figures sit collapsed under their count, with no Appr
   expect(document.body.textContent).not.toMatch(/1 to review/);
 });
 
-failing("plan 4 (3): a line of the deck page is added from the deck and shows its page as source", async () => {
+test("plan 4 (3): a line of the deck page is added from the deck and shows its page as source", async () => {
   api.getDeckPage.mockResolvedValue({ deck_id: "d1", file: "board.pptx", page_unit: "slide", page: 4, pages: 12,
     lines: [{ ref: "b1", kind: "text", text: MISSED }, { ref: "b2", kind: "table", text: "Q1 2024" }] });
   const added = claim("n1", { status: "pending", claim_type: "other", value: null, currency: null, target_date: null, snippet: MISSED,

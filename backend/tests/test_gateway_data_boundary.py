@@ -1288,6 +1288,10 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             "period_coverage", "months_missing", "growth_basis", "analysis_date", "last_month_complete",
                             "NOT_COVERED_REASON", "PARTLY_REASON", "PARTIAL_DETAIL", "AFTER_SOURCE_DETAIL", "GROWTH_UNKNOWN_REASON",
                             "GROWTH_WINDOW_REASON", "GROWTH_BASE_REASON", "GROWTH_RULES", "GROWTH_CUES",
+                            # docs/specs/claim-types-and-correction.md: the claim fields, the edit log, Add from deck and their reasons
+                            "population", "figure_type", "required_unknown", "edit_log", "deck_analyst", "claim_fields",
+                            "candidate_fields", "REQUIRED_REASON", "TARGET_REASON", "POPULATION_REASON", "POPULATION_WORDS",
+                            "TARGET_CUE", "EDIT_REASONS", "ADDED_FROM_DECK", "add_from_deck", "deck_page",
                             *MATCHING_SERVER_ONLY})
 # The functions that log about the register, and the only things their log calls may name.
 REGISTER_LOGGERS = frozenset({"_claim_rows", "claim_register", "claim_register_csv", "update_claim_inputs", "answer_turnover",
@@ -1475,7 +1479,7 @@ def test_the_definition_check_question_and_reasons_hold_figures_and_closed_words
         assert answered["reason"] in (claim_matching.DEFINITION_MISMATCH, claim_matching.BEAT_PREFIX + answered["gloss"])
         texts.append(answered)
     texts.append(claim_matching.definition_views([row], results, settings))
-    rate = {**row, "id": "x2", "claim_type": "sales", "value": 60.0, "unit": "%", "currency": None, "target_date": None, "period_text": None,
+    rate = {**row, "id": "x2", "claim_type": "sales", "value": 60.0, "unit": "%", "currency": None,
             "snippet": f"{sentinel} win rate 60%", "label_from": f"{sentinel} win rate"}
     rated = claim_matching.build_register([rate], {**results, "win_rate": {"win_rate_pct": 0.40, "source": SOURCE}}, settings)[0]
     assert rated["reason"] == claim_matching.DEFINITION_OPEN_REASON_RATE.format(points="10"), "a rate: 20 points, asked in points"
@@ -1515,6 +1519,45 @@ def test_the_qualified_users_reason_holds_two_closed_words_and_the_qualifier_nev
     for where, text in (("read by the gateway", returned), ("sent to the provider", adapter.payloads[0]), ("logged", logs)):
         assert sentinel not in text and '"qualifier"' not in text, f"the row label or its qualifier was {where}"
         assert "is not paying customers" not in text, f"the register reason was {where}"
+
+
+def test_the_required_field_target_and_population_reasons_are_closed_sentences_with_no_deck_text():
+    """claim-types-and-correction.md sections 2 and 6: the three reasons name field names, closed population words and nothing from
+    the deck; a sentinel in the snippet or the label reaches no field of the row."""
+    sentinel = "Zephyr Holdings"
+    from app.decks import claims as deck_claims
+    base = {"id": "x1", "status": "approved", "currency": None, "file": "deck.pptx", "order": 0, "label_from": f"{sentinel} label",
+            "sources": [{"file": "deck.pptx", "slide": 3}]}
+    rows = []
+    for extra in ({"claim_type": "sales", "value": 45.0, "unit": "days", "target_date": None, "snippet": f"{sentinel} sales cycle 45 days"},
+                  {"claim_type": "revenue", "value": 1.5, "currency": "EUR", "target_date": "2026-11", "snippet": f"{sentinel} target revenue"},
+                  {"claim_type": "users", "value": 4000.0, "unit": "users", "target_date": "2026-12", "population": "registered",
+                   "snippet": f"{sentinel} users"}):
+        c = {**base, **extra}
+        deck_claims.resolve_period(c, 12)
+        rows.append(claim_matching.build_register([c], _results_with_the_series(),
+                                                  {"fiscal_year_end": 12, "reporting_currency": "EUR", "fx": {"EUR": 1.0}})[0])
+    assert re.fullmatch(r"required field unknown: [a-z ,]+; set it with Edit in the claims list", rows[0]["reason"]), rows[0]["reason"]
+    assert rows[1]["reason"] == claim_matching.TARGET_REASON
+    assert rows[2]["reason"] == claim_matching.POPULATION_REASON.format(population="registered users", measured="paying customers")
+    assert sentinel not in json.dumps(rows, default=str)
+    assert not {"population", "figure_type", "required_unknown", "edit_log"} & decks.GATEWAY_READABLE_FIELDS
+
+
+# The two Add from deck endpoints log the run and one count, nothing of the page (claim-types-and-correction.md section 6).
+DECK_PAGE_LOG = {"deck_page": ("deck page: run_id=%s lines=%d", ["audit_id", "len(lines)"]),
+                 "add_from_deck": ("add from deck: run_id=%s figures=%d", ["audit_id", "len(found)"])}
+
+
+def test_the_page_view_and_add_from_deck_log_the_run_and_a_count_only():
+    tree = ast.parse((BACKEND / "server.py").read_text(encoding="utf-8"))
+    seen = {}
+    for fn in ast.walk(tree):
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) and fn.name in DECK_PAGE_LOG:
+            seen[fn.name] = [(node.args[0].value, [ast.unparse(a) for a in node.args[1:]]) for node in ast.walk(fn)
+                             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in _LOG_LEVELS
+                             and isinstance(node.func.value, ast.Name) and "log" in node.func.value.id.lower() and not node.keywords]
+    assert seen == {name: [(fmt, list(args))] for name, (fmt, args) in DECK_PAGE_LOG.items()}
 
 
 def test_the_use_of_funds_reason_is_a_closed_sentence_and_mixed_slide_and_the_note_never_reach_the_gateway_or_a_log(caplog):

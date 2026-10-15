@@ -16,9 +16,6 @@ from test_claim_register_api import AUDIT, _get, api  # noqa: E402,F401  (the fi
 from app import decks  # noqa: E402
 from app.decks import claims as deck_claims  # noqa: E402
 
-# Committed before the code (docs/specs/claim-types-and-correction.md): strict expected failures until the code PR removes it.
-pytestmark = pytest.mark.xfail(strict=True, reason="docs/specs/claim-types-and-correction.md: not built yet")
-
 DECK_ID = "deck-1"
 MISSED = "Signed twelve enterprise pilots last quarter"     # a figure in words: the parser finds no claim in it
 
@@ -147,3 +144,33 @@ def test_users_with_no_qualifier_need_their_population_and_registered_users_are_
     assert registered["reason"] == "population differs: the claim counts registered users; the figure shown counts paying customers"
     paying = run_claim({**base, "value": 5, "population": "paying"})
     assert (paying["metric"], paying["evidence_label"]) == ("Customer count", "Verified")
+
+
+def test_add_from_deck_reads_the_fields_of_the_line_or_makes_an_other_figure_and_refuses_a_long_passage(api):  # noqa: F811
+    client, db = api
+    _deck(db)
+    deck = db[decks.TEXT_COLLECTION].docs[-1]
+    deck["blocks"] += [{"slide": 5, "kind": "text", "text": "ARR of €2.4M in Dec 2023", "box": 3},
+                       {"slide": 5, "kind": "text", "text": "x" * 301, "box": 4}]
+    url = f"/api/audits/{AUDIT}/decks/{DECK_ID}/add-from-deck"
+    parsed = client.post(url, json={"page": 5, "ref": "b3"}).json()
+    assert (parsed["claim_type"], parsed["value"], parsed["currency"], parsed["target_date"]) == ("revenue", 2400000, "EUR", "2023-12")
+    missed = client.post(url, json={"page": 4, "ref": "b1"}).json()
+    assert (missed["claim_type"], missed["value"]) == ("unknown", None), "no figure: Other, typed by the analyst"
+    long = client.post(url, json={"page": 5, "ref": "b4"})
+    assert long.status_code == 400 and "Select a shorter passage (300 characters at most)" in long.text
+    reading = client.get(f"/api/audits/{AUDIT}/claims").json()
+    assert all(r["claim_id"] != missed["id"] for r in reading["register"]), "an Other figure is not in the register"
+
+
+def test_a_growth_basis_set_in_the_editor_replaces_the_one_set_on_the_register_row(api):  # noqa: F811
+    client, db = api
+    _add(db, id="g1", claim_type="revenue_growth", value=10, unit="%", currency=None, target_date="2024-02", period_text="Feb 2024",
+         snippet="Revenue up 10% in Feb 2024")
+    assert client.put(f"/api/audits/{AUDIT}/claims/g1", json={"growth_basis": "yoy"}).status_code == 200
+    assert _row(client, "g1")["growth_basis"] == "yoy"
+    r = client.put(f"/api/audits/{AUDIT}/decks/candidates/g1", json={"growth_basis": "mom", "reason": "deck_context"})
+    assert r.status_code == 200, r.text
+    log = r.json()["edit_log"][-1]
+    assert (log["field"], log["previous"], log["value"], log["reason"]) == ("growth_basis", "yoy", "mom", "deck_context"), "as shown"
+    assert _row(client, "g1")["growth_basis"] == "mom"
