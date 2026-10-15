@@ -102,10 +102,14 @@ table 2b, Q2) now read through this table.
   | yoy | YoY, y/y, year-on-year, year over year, annual (not "annual recurring revenue"), per year |
   | annualised | CAGR, annualised, annualized |
   | cumulative | since; over, when a year, a fiscal year or a duration follows ("over 2023", "over the last 12 months", "over 3 years"), never before a number ("over 15%") |
-  Cues of more than one basis, or none: `unknown`. The analyst may set it (claim-types-and-correction.md §3, and the
+  Cues of more than one basis, or none: `unknown`, except that CAGR or "annualised" wins over "since" and "over" ("CAGR of 40%
+  since 2020" is `annualised`; the window is that rate's period). Decided by George, 15 Oct 2026. The analyst may set it (claim-types-and-correction.md §3, and the
   one-click task below). Measured on the 10 public test decks on this branch (`python -I` over `detect_candidates`, no
   network): 225 candidates, 8 growth claims; 2 get `mom` (buffer slide 5 "growing 40% per month", clevergig page 2 "growing
   15% MoM"), 6 stay `unknown` (front slide 15, moz page 35 twice, clevergig page 7, uber pages 17 and 24).
+- A growth claim with a compared month outside the data (the base month before the first month, or after the last, or a
+  Possibly partial month) is Not covered: Unverified, "claim period not in supplied data", the months outside the data listed.
+  It is never Inconclusive on the months present, which would compare other months than the claim's.
 - Unknown basis: the claim is Unverified, reason `growth basis unknown: set the growth basis`, and the register row offers
   the one-click task "Set growth basis" with four buttons (MoM · YoY · Annualised · Cumulative). The answer is stored on the
   claim's inputs (`growth_basis`), as the metric is; it clears a Definition check answer (claim-matching.md §4.1).
