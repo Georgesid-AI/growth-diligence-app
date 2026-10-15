@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 import AuditHub from "./AuditHub";
 import * as api from "@/lib/api";
 import { CONSENT_EXPLAINER, CONSENT_LABEL } from "@/lib/auditForm";
-import { S18_MISMATCH, S19_USAGE_OWN, S19_USAGE_ALL, S19_USAGE_EXPLAINER } from "@/lib/chatUpload";
+import { S18_MISMATCH, S19_USAGE_OWN, S19_USAGE_ALL, S19_USAGE_EXPLAINER_OWN, S19_USAGE_EXPLAINER_ALL } from "@/lib/chatUpload";
 
 jest.mock("@/lib/api", () => ({
   listAudits: jest.fn(),
@@ -194,8 +194,8 @@ describe("delete audit and the usage totals", () => {
     const details = q("usage-totals");
     expect(details.querySelector("summary").textContent).toBe("Your usage");
     expect([S19_USAGE_OWN, S19_USAGE_ALL]).toEqual(["Your usage", "Usage totals (all testers)"]);
-    expect(q("usage-explainer").textContent).toBe(S19_USAGE_EXPLAINER);
-    expect(S19_USAGE_EXPLAINER).toBe("Totals across all audits on this server since counting began. Counts and costs only — no file names, figures or company names. Kept to improve the app.");
+    expect(q("usage-explainer").textContent).toBe(S19_USAGE_EXPLAINER_OWN);
+    expect(S19_USAGE_EXPLAINER_OWN).toBe("Totals for your audits since counting began. Counts and costs only — no file names, figures or company names. Kept to improve the app.");
     expect(details.open).toBe(false);
     expect(api.getUsageTotals).not.toHaveBeenCalled();
     await act(async () => { details.open = true; details.dispatchEvent(new Event("toggle", { bubbles: true })); });
@@ -217,6 +217,8 @@ describe("delete audit and the usage totals", () => {
     await act(async () => { details.open = true; details.dispatchEvent(new Event("toggle", { bubbles: true })); });
     await act(async () => { await Promise.resolve(); });
     expect(details.querySelector("summary").textContent).toBe("Usage totals (all testers)");
+    expect(q("usage-explainer").textContent).toBe(S19_USAGE_EXPLAINER_ALL);
+    expect(S19_USAGE_EXPLAINER_ALL).toBe("Totals across all testers since counting began. Counts and costs only — no file names, figures or company names. Kept to improve the app.");
   });
 });
 

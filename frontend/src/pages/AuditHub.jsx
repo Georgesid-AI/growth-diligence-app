@@ -10,7 +10,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger,
 } from "@/components/ui/dialog";
 import { listAudits, createAudit, deleteAudit, getUsageTotals } from "@/lib/api";
-import { S18_TITLE, S18_BODY, S18_MISMATCH, S19_USAGE_OWN, S19_USAGE_ALL, S19_USAGE_EXPLAINER } from "@/lib/chatUpload";
+import { S18_TITLE, S18_BODY, S18_MISMATCH, S19_USAGE_OWN, S19_USAGE_ALL, S19_USAGE_EXPLAINER_OWN, S19_USAGE_EXPLAINER_ALL } from "@/lib/chatUpload";
 import { fmtCurrency } from "@/lib/format";
 import { describeRequestError } from "@/lib/requestError";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -279,7 +279,7 @@ function UsageTotals() {
   return (
     <details data-testid="usage-totals" className="mt-10 border border-[#E5E7EB] rounded-lg bg-white" onToggle={(e) => setOpen(e.currentTarget.open)}>
       <summary className="px-5 py-3 cursor-pointer text-sm font-medium text-slate-800">{totals?.scope === "all" ? S19_USAGE_ALL : S19_USAGE_OWN}</summary>
-      <p data-testid="usage-explainer" className="px-5 pb-3 text-xs text-slate-500">{S19_USAGE_EXPLAINER}</p>
+      <p data-testid="usage-explainer" className="px-5 pb-3 text-xs text-slate-500">{totals?.scope === "all" ? S19_USAGE_EXPLAINER_ALL : S19_USAGE_EXPLAINER_OWN}</p>
       {open && totals === false && <p className="px-5 pb-4 text-xs text-slate-500">Not available.</p>}
       {open && totals && (
         <dl className="px-5 pb-5 grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 text-xs text-slate-700">
