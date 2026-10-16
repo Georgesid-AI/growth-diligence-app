@@ -342,8 +342,8 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 | S26 | file got no answer | The file could not be read. Press Map to try again. (Added 2026-10-10: shown when an upload gets no answer from the server within 120 s or loses its connection; the file returns to "attached – not read yet".) |
 | S28a | a miss with periods across the columns (§20) | Read as {N} claims from {sheet}!{range}. Default label: Unverified. ("1 claim" for one) and the link "Show claims" (George, 2026-10-16) |
 | S28b | under S28a, over the cap (§20.2) | The table holds {total} claims; the first 60 by row order are read. |
-| S28c | the Show claims list (§20.4) | One row per line, a checkbox each, ticked: the line as in the file, then each year and its value, then its cells. Under it the button "Confirm" |
-| S28d | after Confirm (§20.4) | Saved {n} claims as Unverified. ("1 claim" for one) |
+| S28c | the Show claims list (§20.4) | One row per line, a checkbox each, ticked: the line as in the file, then each year and its value, then its cells. Under it the button "Save claims" (George, 2026-10-16; it was "Confirm"), off while no line is ticked |
+| S28d | after Save claims (§20.4) | Saved {n} claims as Unverified. ("1 claim" for one) It is the file's status line (S13) from then on, in green (§20.5) |
 
 ## 12. Decisions of 2026-10-08
 | Q | Question | Decision |
@@ -402,7 +402,7 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 - 2026-10-16 (§20): new `backend/app/forecast_claims.py` (pure), `backend/tests/test_forecast_claims.py`, `backend/tests/fixtures/forecast/*.csv`;
   changed `backend/app/column_rules.py` (first column and title currency of a sheet), `backend/server.py` (the view, the Confirm endpoint, the
   year-end re-read), `backend/app/claim_matching.py` and `backend/app/verdict.py` (the untested rows), `backend/app/decks/claims.py` (the type),
-  `frontend/src/components/UploadChat.jsx`, `frontend/src/lib/{chatUpload,api,deckClaims,claimRegister}.js`.
+  `frontend/src/components/UploadChat.jsx`, `frontend/src/lib/{chatUpload,api,deckClaims,claimRegister,review}.js`.
 
 ## 15. Amount columns named turnover or volume (amended 2026-10-09, George)
 If the header of a column mapped to an amount field (revenue file `amount`, P&L `revenue`, CRM `amount`) contains
@@ -586,7 +586,7 @@ line, its values by period), and the register treats the claims as it treats Use
   changes, rolled-up month claims already saved are read again from the stored file under the new year-end. Claims are ordered by sheet row,
   then year; the first 60 are kept and the rest dropped, and the bubble says so (S28b).
 - **20.3 What is stored, and where it shows.** Nothing until the analyst confirms: the list is computed on read from the stored file rows. On
-  Confirm, one `deck_candidates` row per ticked line, in the table-row shape of deck-parser.md §2: `claim_type` (revenue for ARR, MRR, bookings
+  Save claims, one `deck_candidates` row per ticked line, in the table-row shape of deck-parser.md §2: `claim_type` (revenue for ARR, MRR, bookings
   and revenue; gross_margin or gross_profit; ebitda; cash; people; customers; `installed_units`, a new type shown "Installed units" and not offered
   in the type lists), `snippet` = the metric name as in the file (at most 300 characters), `unit`, `currency`, and `by_period` with per year:
   `value`, `target_date`, `period` (the header, or "first–last" of the parts rolled up), `period_text` (the header as stated, none when rolled up),
@@ -595,23 +595,32 @@ line, its values by period), and the register treats the claims as it treats Use
   no unit, "%" for a rate, and "customers", "people" or "units" for a count. The row also holds `origin` "forecast_file", `file_hash`,
   `dtype`, `sheet_row`, `status` "approved" and no deck. Added fields: `sheet` and `cell` in a source, `origin` "forecast_file", `file_hash`,
   `dtype` and `sheet_row` (the line's row, for the year-end re-read); the dataset keeps `first_col` and `title_currency` for the cells and the unit.
-  In the register (claim-matching.md §6) each value is one row, `#n` as for any table row: evidence label Unverified, reason "forecast table:
-  read from the file, not tested against the data", no metric, observed figure, gap or gate, `value_at_stake_arr` null and `overlaps_with`
+  In the register (claim-matching.md §6) each value is one row, `#n` as for any table row: evidence label Unverified, reason "Read from the
+  forecast file, not yet tested against data" (George, 2026-10-16), no metric, observed figure, gap or gate, `value_at_stake_arr` null and `overlaps_with`
   null; ranked after every other row, with Use of funds; out of the top 5, the banner and the verdict; `deck_reading` "forecast-file", shown
   "Read from forecast table"; `page_ref` "{sheet}!{cell}". Once a deck is uploaded the deck list shows them under All, the source as
   "{file} · {sheet}!{cell}"; the IC memo lists them in its register appendix and the baseline CSV carries them. A second
-  Confirm for the same file answers 409. Delete audit removes them with the other candidates (§6.3).
+  Save claims for the same file answers 409. Delete audit removes them with the other candidates (§6.3).
 - **20.4 Screen and data boundary.** Under the miss message the bubble shows S28a with "Show claims", and S28b over the cap. Show claims opens
-  the list of S28c: one row per line with its checkbox, ticked by default; unticking a line drops all its claims. Confirm sends the sheet rows
+  the list of S28c: one row per line with its checkbox, ticked by default; unticking a line drops all its claims. Save claims sends the sheet rows
   of the ticked lines, `POST /api/audits/{id}/datasets/{dtype}/forecast-claims {rows}`; the server reads the claims again from the stored file
   (the browser sends no value), refuses a row that is not a line of the list (400), stores the ticked lines and answers `{saved, lines}`; the
-  bubble then shows S28d in place of the list. A file whose claims are saved shows S28d on reload. No model call is made: the reading is rules
+  file's view is then read again, the list is gone and the status line shows S28d (§20.5). A file whose claims are saved shows S28d on reload. No model call is made: the reading is rules
   only, nothing new reaches the gateway (`GATEWAY_READABLE_FIELDS` unchanged), and the log line holds the run and two counts.
+- **20.5 After review (2026-10-16, George).** (1) A file read as claims (one whose bytes have saved forecast-table claims) no longer counts
+  toward Calculate: compute does not read it (it is no engine input), Run audit's mapping stage and the review screen's counts and mapping
+  summary leave it out, and the revenue banner treats a revenue-typed file read as claims as no revenue file (S16a). Its view carries
+  `read_as_claims` {lines, claims} with nothing pending and no required field missing; the miss message stays, and its status line reads S28d.
+  Saving claims brings a computed audit up to date (the stale rule of §16). (2) Forecast-table claims selectable for the top 5 once the
+  analyst enters a value at stake: not a small change (an analyst-entered value at stake, the top-5 rule, gates on these rows), so not built;
+  issue #117. (3) The button is "Save claims" and the register reason "Read from the forecast file, not yet tested against data".
 - **Decided (engineering, rule 19).** Exact synonyms and exclusion words (20.1, measured on the three fixtures below); a flow needs all parts of
-  its year, a balance its last part; a rate is never rolled up (no weights); a cut line keeps the years before the cap; one Confirm per file.
+  its year, a balance its last part; a rate is never rolled up (no weights); a cut line keeps the years before the cap; one Save claims per file.
 - **Tests.** `test_forecast_claims.py` on `backend/tests/fixtures/forecast/`: `annual_forecast.csv` (an appendix P&L, EUR thousands, actual and
   forecast years: plan lines read, cost sub-lines dropped, ×1,000, cells), `monthly_model.csv` (60 months, July start: rolled up to years, sums
   and year-ends, partial years dropped, a June year-end re-reads) and `eighty_lines.csv` (80 plan lines, capped at 60), the endpoint (nothing
-  stored before Confirm, unticked lines dropped, 400, 409), the register row, the memo and the CSV; `test_gateway_data_boundary.py` (no model
-  call, the reason, the log line, nothing gateway-readable); `MappingWizard.test.jsx` (S28a–S28d, the list, Confirm with unticked lines),
-  `deckClaims.test.js` (the sheet source, the type), `claimRegister.test.js` (the reading).
+  stored before Save claims, unticked lines dropped, 400, 409), the register row, the memo and the CSV; `test_gateway_data_boundary.py` (no model
+  call, the reason, the log line, nothing gateway-readable); `MappingWizard.test.jsx` (S28a–S28d, the list, Save claims with unticked lines),
+  `deckClaims.test.js` (the sheet source, the type), `claimRegister.test.js` (the reading); for 20.5 `test_forecast_claims.py` (compute, Run
+  audit, the review counts, the banner, a Save with no line), `MappingWizard.test.jsx` (Calculate, the status line, Save claims off with no
+  line) and `review.test.js` (the mapping summary).

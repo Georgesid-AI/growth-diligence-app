@@ -677,7 +677,7 @@ def _dataset_view(ds: dict, version: Optional[int] = None, status: str = "ok", f
         "fx": ds.get("fx") or {}, "billing_terms": ds.get("billing_terms") or {}, "preview": ds.get("preview") or [],
         "saved": bool(ds.get("mapped_at")), "sheet": ds.get("sheet"), "type_source": ds.get("type_source"),
         "unit_note": ds.get("unit_note"), "looks": ds.get("looks"), "miss": _miss(dtype, states, mapping, ds.get("looks")),
-        "forecast_claims": forecast,
+        "forecast_claims": forecast, "read_as_claims": None,
     }
 
 
@@ -699,16 +699,35 @@ async def _saved_forecast(audit_id: str, file_hash: Optional[str]) -> list:
         {"audit_id": audit_id, "origin": forecast_claims.ORIGIN, "file_hash": file_hash}, {"_id": 0, "by_period": 1}).to_list(10000)
 
 
+async def _claims_files(audit_id: str) -> set:
+    """The file hashes whose forecast-table claims are saved (chat-upload.md section 20). Such a file is read as claims and no longer
+    counts toward Calculate: compute, Run audit's mapping stage, the review counts and the revenue banner leave it out."""
+    found = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "origin": forecast_claims.ORIGIN},
+                                                       {"_id": 0, "file_hash": 1}).to_list(10000)
+    return {c["file_hash"] for c in found if c.get("file_hash")}
+
+
+async def _counted(audit_id: str, datasets: list) -> list:
+    """The stored files that count toward Calculate: every one but a file read as claims (section 20)."""
+    read = await _claims_files(audit_id)
+    return [d for d in datasets if d.get("file_hash") not in read]
+
+
 async def _view(audit_id: str, ds: dict, version: Optional[int] = None, status: str = "ok") -> dict:
-    """_dataset_view with the forecast claims of section 20: the list to confirm, and what was saved from these bytes."""
+    """_dataset_view with the forecast claims of section 20: the list to confirm, and what was saved from these bytes. A file whose
+    claims are saved is read as claims: it waits for nothing (no pending column, no required field), so it no longer holds Calculate."""
     if (ds.get("looks") or {}).get("shape") not in forecast_claims.SHAPES:
         return _dataset_view(ds, version, status)
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "fiscal_year_end": 1})
     _, found = await _forecast_found(audit_id, ds["dtype"], _fiscal_year_end(audit))
+    saved = await _saved_forecast(audit_id, ds.get("file_hash"))
+    claims = sum(len(c.get("by_period") or []) for c in saved)
     if found and found.get("count"):
-        saved = await _saved_forecast(audit_id, ds.get("file_hash"))
-        found = {**found, "saved_lines": len(saved), "saved": sum(len(c.get("by_period") or []) for c in saved)}
-    return _dataset_view(ds, version, status, found or None)
+        found = {**found, "saved_lines": len(saved), "saved": claims}
+    view = _dataset_view(ds, version, status, found or None)
+    if saved:
+        view.update(read_as_claims={"lines": len(saved), "claims": claims}, pending=0, missing_required=[])
+    return view
 
 
 def _miss(dtype: str, states: list, mapping: dict, looks: Optional[dict]) -> Optional[dict]:
@@ -1092,6 +1111,8 @@ async def confirm_forecast_claims(audit_id: str, dtype: str, payload: ForecastCo
                                                           "id": str(uuid.uuid4()), "order": order + i, "status": "approved"})
     saved = sum(len(c["by_period"]) for c in made)
     logger.info("forecast claims: run_id=%s lines=%d claims=%d", audit_id, len(made), saved)
+    if made:                            # the file no longer counts toward Calculate: results computed without it are brought up to date
+        await _mark_stale_and_maybe_recompute(audit_id)
     return {"saved": saved, "lines": len(made)}
 
 
@@ -1684,7 +1705,7 @@ async def run_stage(audit_id: str, stage: str):
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
     if not audit:
         raise HTTPException(404, "Audit not found")
-    datasets = await db.datasets.find({"audit_id": audit_id}, {"_id": 0, "rows": 0}).to_list(10)
+    datasets = await _counted(audit_id, await db.datasets.find({"audit_id": audit_id}, {"_id": 0, "rows": 0}).to_list(10))
     counts = run_audit.mapping_counts(datasets)
     mapped = bool(datasets) and any(d["dtype"] == "revenue" for d in datasets) and not counts["open"] and not counts["missing_required"]
     result = None
@@ -1732,7 +1753,7 @@ async def review_summary(audit_id: str):
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
     if not audit:
         raise HTTPException(404, "Audit not found")
-    datasets = await db.datasets.find({"audit_id": audit_id}, {"_id": 0, "rows": 0}).to_list(10)
+    datasets = await _counted(audit_id, await db.datasets.find({"audit_id": audit_id}, {"_id": 0, "rows": 0}).to_list(10))
     found = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
     auto = [c["id"] for c in found if c.get("auto_accepted") and c.get("status") in REGISTER_STATUSES]
     # Other figures are never a task (claim-types-and-correction.md section 4)
@@ -2157,7 +2178,9 @@ async def _blocker_list(audit_id: str, audit: dict) -> list:
     (docs/specs/verdict-and-memo.md section 6.1)."""
     audit = await _current_audit(audit_id, audit, strict=False)
     out = []
-    revenue = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"}, {"_id": 0, "mapped_at": 1})
+    revenue = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"}, {"_id": 0, "mapped_at": 1, "file_hash": 1})
+    if revenue and revenue.get("file_hash") in await _claims_files(audit_id):
+        revenue = None                  # read as claims (chat-upload.md section 20): no revenue file counts
     if not revenue:
         out.append({"kind": "revenue_file_missing", "text": "Revenue file missing: upload and map it to compute metrics."})
     elif not revenue.get("mapped_at"):
@@ -2368,7 +2391,8 @@ async def _run_compute(audit_id: str) -> dict:
     a = await db.audits.find_one({"id": audit_id})
     if not a:
         raise HTTPException(404, "Audit not found")
-    ds = {d["dtype"]: d for d in await db.datasets.find({"audit_id": audit_id}).to_list(10)}
+    read = await _claims_files(audit_id)        # a file read as claims is not an engine input (chat-upload.md section 20)
+    ds = {d["dtype"]: d for d in await db.datasets.find({"audit_id": audit_id}).to_list(10) if d.get("file_hash") not in read}
     if "revenue" not in ds:
         raise HTTPException(409, "Revenue lines are required before compute")
     for d in ds.values():          # a file read by the chat upload waits for the analyst (chat-upload.md section 4.3)

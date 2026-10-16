@@ -8,7 +8,7 @@ import {
   S1_TEXT_REPLY, S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE, S6_UNKNOWN_TYPE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S_UPLOAD_RETRY, RUN_DECK_EXTENSIONS, RUN_DROP_ZONE, RUN_REFUSED,
   S20_NOTE_PLACEHOLDER, S21_NOTE_REFUSED, NOTE_MAX, ALLOWED_EXTENSIONS, REASONS, TYPE_LABELS, S5_head, S8_replace,
   S9_confidence, S13_status, S26_type, S26_CHANGE, S26_sheet, S27_miss, S27_SHOW_COLUMNS, S28_read, S28_SHOW_CLAIMS, S28_cap, S28_CONFIRM,
-  S28_saved, forecastValueText, forecastCells, MAP_LABEL, CALCULATE_LABEL, CALCULATE_CLASS, SEND_TOOLTIP, setCalculatePressed, S14_same, MAPPING_HEADERS, S25_TITLE, S25_PARAGRAPHS, mappedBy, sortColumns, fieldName, fmtBytes, extensionOf, heldFields,
+  forecastValueText, forecastCells, MAP_LABEL, CALCULATE_LABEL, CALCULATE_CLASS, SEND_TOOLTIP, setCalculatePressed, S14_same, MAPPING_HEADERS, S25_TITLE, S25_PARAGRAPHS, mappedBy, sortColumns, fieldName, fmtBytes, extensionOf, heldFields,
 } from "@/lib/chatUpload";
 
 const NONE = "";
@@ -167,6 +167,14 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, onStag
     setText("");
   };
 
+  // After Save claims the stored file is read as claims (chat-upload.md section 20): its view is read again, so its status line and
+  // Calculate follow the server.
+  const claimsSaved = async (view) => {
+    const fresh = (await getDatasets(audit.id).catch(() => [])).find((v) => v.dtype === view.dtype);
+    if (fresh) setMessages((all) => all.map((m) => (m.kind === "system" && m.dtype === view.dtype ? { ...m, view: fresh } : m)));
+    announce();
+  };
+
   const decide = async (view, decisions) => {
     const next = await decideColumns(audit.id, view.dtype, decisions);
     setMessages((all) => all.map((m) => (m.kind === "system" && m.dtype === view.dtype ? { ...m, view: next } : m)));
@@ -203,7 +211,7 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, onStag
         </div>
         {messages.map((m) => (
           <Message key={m.id} m={m} audit={audit} unstage={unstage} extras={extras} lastReason={lastReason} setLastReason={setLastReason}
-            decide={decide} retype={retype} showInfo={m.id === firstTable}
+            decide={decide} retype={retype} claimsSaved={claimsSaved} showInfo={m.id === firstTable}
             onType={(file, dtype) => { setMessages((all) => all.filter((x) => x.id !== m.id)); send(file, { dtype }, m.bubble); }}
             onReplace={(file, dtype) => { setMessages((all) => all.filter((x) => x.id !== m.id)); send(file, { dtype, replace: true }, m.bubble); }}
             onKeep={() => { openPrompts.current.delete(m.bubble); setMessages((all) => all.filter((x) => x.id !== m.id && x.id !== m.bubble)); }} />
@@ -240,7 +248,7 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, onStag
   );
 }
 
-function Message({ m, audit, unstage, extras, lastReason, setLastReason, decide, retype, showInfo, onType, onReplace, onKeep }) {
+function Message({ m, audit, unstage, extras, lastReason, setLastReason, decide, retype, claimsSaved, showInfo, onType, onReplace, onKeep }) {
   if (m.kind === "analyst") return <AnalystBubble m={m} unstage={unstage} />;
   if (m.kind === "text") {
     return m.role === "analyst"
@@ -270,7 +278,8 @@ function Message({ m, audit, unstage, extras, lastReason, setLastReason, decide,
       </Bubble>
     );
   }
-  return <SystemBubble view={m.view} audit={audit} extras={extras} lastReason={lastReason} setLastReason={setLastReason} decide={decide} retype={retype} showInfo={showInfo} />;
+  return <SystemBubble view={m.view} audit={audit} extras={extras} lastReason={lastReason} setLastReason={setLastReason} decide={decide} retype={retype}
+    claimsSaved={claimsSaved} showInfo={showInfo} />;
 }
 
 function Bubble({ side, children, testid }) {
@@ -299,7 +308,7 @@ function AnalystBubble({ m, unstage }) {
   );
 }
 
-function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide, retype, showInfo }) {
+function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide, retype, claimsSaved, showInfo }) {
   const [openUnused, setOpenUnused] = useState(false);
   const [showColumns, setShowColumns] = useState(false);       // a miss hides the rows behind its message until asked
   const shown = sortColumns(view.columns.filter((c) => c.state !== "unused"));
@@ -351,9 +360,10 @@ function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide, 
           </tbody>
         </table>
       </div>
-      {view.forecast_claims && <ForecastClaims key={`${view.file}:${view.uploaded_at}`} view={view} auditId={audit.id} />}
+      {view.forecast_claims && !view.read_as_claims && (
+        <ForecastClaims key={`${view.file}:${view.uploaded_at}`} view={view} auditId={audit.id} onSaved={() => claimsSaved?.(view)} />)}
       {view.dtype === "revenue" && extras?.(view)}
-      <div className={`mt-3 text-xs font-mono ${status === "Ready for calculation" ? "text-emerald-700" : "text-amber-700"}`} data-testid={`status-${view.dtype}`}>
+      <div className={`mt-3 text-xs font-mono ${status === "Ready for calculation" || view.read_as_claims ? "text-emerald-700" : "text-amber-700"}`} data-testid={`status-${view.dtype}`}>
         {status}
       </div>
     </Bubble>
@@ -361,17 +371,16 @@ function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide, 
 }
 
 /** A forecast table read as claims (chat-upload.md section 20): S28a and, over the cap, S28b; "Show claims" lists the lines, each with a
- *  checkbox, ticked; Confirm saves the ticked lines (the server reads their values again) and S28d replaces the list. Nothing is saved
- *  before Confirm, and an unticked line is dropped. */
-function ForecastClaims({ view, auditId }) {
+ *  checkbox, ticked; Save claims saves the ticked lines (the server reads their values again), and the file's view is read again: it is
+ *  then read as claims, its status line says S28d and this block is gone. Nothing is saved before Save claims; an unticked line is dropped,
+ *  and with none ticked the button is off. */
+function ForecastClaims({ view, auditId, onSaved }) {
   const found = view.forecast_claims;
   const [open, setOpen] = useState(false);
   const [ticked, setTicked] = useState(() => new Set(found.lines.map((line) => line.row)));
-  const [saved, setSaved] = useState(found.saved_lines > 0 ? found.saved : null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const id = view.dtype;
-  if (saved != null) return <p className="mt-2 text-xs text-slate-700" data-testid={`forecast-saved-${id}`}>{S28_saved(saved)}</p>;
   const toggle = (row) => setTicked((before) => {
     const next = new Set(before);
     if (next.has(row)) next.delete(row); else next.add(row);
@@ -381,8 +390,8 @@ function ForecastClaims({ view, auditId }) {
     setBusy(true);
     setError(null);
     try {
-      const res = await confirmForecastClaims(auditId, id, found.lines.filter((line) => ticked.has(line.row)).map((line) => line.row));
-      setSaved(res.saved);
+      await confirmForecastClaims(auditId, id, found.lines.filter((line) => ticked.has(line.row)).map((line) => line.row));
+      await onSaved();
     } catch (err) {
       const detail = err.response?.data?.detail;
       setError(typeof detail === "string" ? detail : "The claims could not be saved.");
@@ -412,7 +421,7 @@ function ForecastClaims({ view, auditId }) {
               </li>
             ))}
           </ul>
-          <Button type="button" size="sm" disabled={busy} onClick={confirm} data-testid={`forecast-confirm-${id}`}
+          <Button type="button" size="sm" disabled={busy || ticked.size === 0} onClick={confirm} data-testid={`forecast-confirm-${id}`}
             className="mt-2 h-7 bg-sky-600 hover:bg-sky-500">{S28_CONFIRM}</Button>
           {error && <span className="ml-2 text-rose-700" data-testid={`forecast-error-${id}`}>{error}</span>}
         </div>

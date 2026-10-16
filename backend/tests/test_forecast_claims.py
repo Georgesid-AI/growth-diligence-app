@@ -2,6 +2,7 @@
 stored file, rolled up from months or quarters, capped at 60, stored only when the analyst confirms, and kept Unverified in the register
 with no value at stake, no overlaps and no gate. Fixtures in tests/fixtures/forecast/ hold invented figures only (CLAUDE.md rule 15).
 Every API test runs on the in-memory Mongo stub and the fake adapter: nothing reaches a provider."""
+import json
 from pathlib import Path
 
 import pytest
@@ -225,7 +226,7 @@ def test_a_forecast_claim_is_unverified_with_no_value_at_stake_overlaps_metric_o
     assert len(forecast) == 12 and [r["claim_id"] for r in rows[:2]] == ["t1", "t2"], "forecast-table claims rank after every other row"
     assert rows[1]["evidence_label"] == "Unsupported", "fixture: a row with no gap, which ranks before the untested rows"
     for r in forecast:
-        assert (r["evidence_label"], r["reason"]) == ("Unverified", cm.FORECAST_NOTE)
+        assert (r["evidence_label"], r["reason"]) == ("Unverified", "Read from the forecast file, not yet tested against data")
         assert r["value_at_stake_arr"] is None and r["overlaps_with"] is None, "value at stake and overlaps are null"
         assert (r["metric"], r["observed_value"], r["gap"], r["gate_needed"]) == (None, None, None, False)
         assert r["deck_reading"] == cm.FORECAST_READING
@@ -260,3 +261,56 @@ def test_the_ic_memo_and_the_baseline_csv_carry_forecast_claims_whose_overlaps_a
     assert text.count(cm.FORECAST_NOTE) == len(added) == 6, "each forecast-table row is listed in the register appendix"
     csv_rows, _, _ = vd.parse_baseline(vd.baseline_csv(rows, [], top, None))
     assert [r["overlaps_with"] for r in csv_rows if r["reason"] == cm.FORECAST_NOTE] == [[]] * 6, "a null reads back as no overlap"
+
+
+# ---------------------------------------------------------------------------
+# After review (2026-10-16, George, decision 1): a file read as claims no longer counts toward Calculate
+# ---------------------------------------------------------------------------
+def _confirm(client, dtype, rows):
+    return client.post(f"/api/audits/{AUDIT}/datasets/{dtype}/forecast-claims", json={"rows": rows})
+
+
+def test_a_file_read_as_claims_no_longer_holds_calculate_and_is_no_engine_input(api):  # noqa: F811
+    assert upload(api, "blank_vs_zero.csv").json()["pending"] == 0, "fixture: a revenue file that maps with nothing pending"
+    upload(api, ANNUAL, (FORECAST / ANNUAL).read_bytes())
+    before = view(api, "pnl")
+    assert before["read_as_claims"] is None and before["missing_required"], "fixture: the forecast table is a miss"
+    assert api.post(f"/api/audits/{AUDIT}/compute").status_code == 409, "a miss holds Calculate until its claims are saved"
+    assert api.post(f"/api/audits/{AUDIT}/run/mapping").json()["status"] == "needs_review"
+    assert _confirm(api, "pnl", [5, 16]).json() == {"saved": 12, "lines": 2}
+    after = view(api, "pnl")
+    assert after["read_as_claims"] == {"lines": 2, "claims": 12}
+    assert (after["pending"], after["missing_required"]) == (0, []), "a file read as claims waits for nothing"
+    assert after["miss"] is not None, "the miss message stays: the file is still not a P&L"
+    assert api.post(f"/api/audits/{AUDIT}/run/mapping").json()["status"] == "done"
+    assert api.get(f"/api/audits/{AUDIT}/review").json()["mappings"]["missing_required"] == []
+    assert api.post(f"/api/audits/{AUDIT}/compute").status_code == 200
+    results = json.dumps(api.db["audits"].docs[0]["results"], default=str)
+    assert "blank_vs_zero.csv" in results and ANNUAL not in results, "no figure cites the forecast table: it is no engine input"
+
+
+def test_a_confirm_with_no_line_ticked_saves_nothing_and_the_file_still_counts(api):  # noqa: F811
+    upload(api, "blank_vs_zero.csv")
+    upload(api, ANNUAL, (FORECAST / ANNUAL).read_bytes())
+    assert _confirm(api, "pnl", []).json() == {"saved": 0, "lines": 0}
+    assert view(api, "pnl")["read_as_claims"] is None
+    assert api.post(f"/api/audits/{AUDIT}/compute").status_code == 409
+
+
+def test_a_revenue_typed_file_read_as_claims_is_no_revenue_file(api):  # noqa: F811
+    upload(api, EIGHTY, (FORECAST / EIGHTY).read_bytes(), dtype="revenue")
+    texts = lambda: [b["text"] for b in api.get(f"/api/audits/{AUDIT}/blockers").json()["blockers"]]  # noqa: E731
+    assert texts() == ["Revenue file uploaded – confirm the mapping to compute metrics."]
+    _confirm(api, "revenue", [2, 3])
+    assert texts() == ["Revenue file missing: upload and map it to compute metrics."], "no revenue file counts"
+    assert api.post(f"/api/audits/{AUDIT}/compute").status_code == 409
+
+
+def test_saving_claims_brings_a_computed_audit_up_to_date(api):  # noqa: F811
+    upload(api, "blank_vs_zero.csv")
+    assert api.post(f"/api/audits/{AUDIT}/compute").status_code == 200
+    upload(api, ANNUAL, (FORECAST / ANNUAL).read_bytes())
+    assert api.db["audits"].docs[0]["metrics_stale"] is True, "fixture: the miss holds the recompute, so the results are stale"
+    _confirm(api, "pnl", [5])
+    assert api.db["audits"].docs[0]["metrics_stale"] is False, "the file no longer counts: the audit is recomputed without it"
+

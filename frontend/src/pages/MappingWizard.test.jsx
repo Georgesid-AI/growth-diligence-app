@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { SETUP_HELP } from "@/lib/auditForm";
 import {
   S1_TEXT_REPLY, S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S_UPLOAD_RETRY, S21_NOTE_REFUSED, REASONS,
-  S5_head, S9_confidence, mappedBy, sortColumns, S25_PARAGRAPHS, S27_miss, S28_read, S28_cap, S28_saved,
+  S5_head, S9_confidence, mappedBy, sortColumns, S25_PARAGRAPHS, S27_miss, S28_read, S28_cap, S28_saved, mappingComplete,
 } from "@/lib/chatUpload";
 
 jest.mock("@/lib/api", () => ({
@@ -525,6 +525,10 @@ describe("a forecast table read as claims (chat-upload.md section 20)", () => {
     columns: [row("Period", { field: "month" }), row("Line", { state: "unused", source: null, confidence: null })],
     forecast_claims: forecast,
   });
+  // As the server sends a file read as claims: nothing waits, its claims counted (chat-upload.md section 20).
+  const READ_AS_CLAIMS = (lines, claims, over = {}) => ({
+    ...SUMMARY(FORECAST({ saved: claims, saved_lines: lines })), pending: 0, missing_required: [], read_as_claims: { lines, claims }, ...over,
+  });
 
   test("the bubble says how many claims were read from which cells, with the default label, and a Show claims link", async () => {
     await mount({ datasets: [SUMMARY()] });
@@ -557,7 +561,7 @@ describe("a forecast table read as claims (chat-upload.md section 20)", () => {
     expect(q("forecast-values-8").textContent).toBe("2025F 65.2% · 2026F 66.1% · 2027F 67.1%");
     expect(q("forecast-values-16").textContent).toBe("2025F 26 people · 2026F 34 people · 2027F 43 people");
     expect(q("forecast-cells-5").textContent).toBe("E5:G5");
-    expect(q("forecast-confirm-pnl").textContent).toBe("Confirm");
+    expect(q("forecast-confirm-pnl").textContent).toBe("Save claims");
     await click(q("forecast-tick-8"));
     expect(q("forecast-tick-8").checked).toBe(false);
     expect(api.confirmForecastClaims).not.toHaveBeenCalled();
@@ -573,22 +577,49 @@ describe("a forecast table read as claims (chat-upload.md section 20)", () => {
     expect(q("forecast-cells-5").textContent).toBe("H5:AE5");
   });
 
-  test("Confirm sends the ticked lines only, then the bubble says what was saved and the list is gone", async () => {
+  test("Save claims sends the ticked lines only, then the file is read again and its status line says what was saved", async () => {
     api.confirmForecastClaims.mockResolvedValue({ saved: 6, lines: 2 });
     await mount({ datasets: [SUMMARY()] });
     await flush();
+    api.getDatasets.mockResolvedValue([READ_AS_CLAIMS(2, 6)]);
     await click(q("forecast-show-pnl"));
     await click(q("forecast-tick-8"));
     await click(q("forecast-confirm-pnl"));
     await flush();
+    await flush();
     expect(api.confirmForecastClaims).toHaveBeenCalledTimes(1);
     expect(api.confirmForecastClaims).toHaveBeenCalledWith("a1", "pnl", [5, 16]);
-    expect(q("forecast-saved-pnl").textContent).toBe("Saved 6 claims as Unverified.");
-    expect(q("forecast-list-pnl")).toBeNull();
+    expect(q("status-pnl").textContent).toBe("Saved 6 claims as Unverified.");
+    expect(q("status-pnl").className).toContain("text-emerald-700");
+    expect(q("forecast-claims-pnl")).toBeNull();
     expect(q("forecast-show-pnl")).toBeNull();
   });
 
-  test("a refused Confirm names the reason and keeps the list", async () => {
+  test("Save claims is off while no line is ticked", async () => {
+    await mount({ datasets: [SUMMARY(FORECAST({ count: 3, total: 3, lines: [LINE(5, "Revenue", YEARS(5, [1, 2, 3]))] }))] });
+    await flush();
+    await click(q("forecast-show-pnl"));
+    expect(q("forecast-confirm-pnl").disabled).toBe(false);
+    await click(q("forecast-tick-5"));
+    expect(q("forecast-confirm-pnl").disabled).toBe(true);
+    await click(q("forecast-confirm-pnl"));
+    expect(api.confirmForecastClaims).not.toHaveBeenCalled();
+  });
+
+  test("a file read as claims no longer holds Calculate; a revenue-typed one is no revenue file", async () => {
+    await mount({ datasets: [VIEW(), SUMMARY()] });
+    await flush();
+    expect(q("chat-calculate").disabled).toBe(true);                // the forecast table is still a miss: Calculate waits
+    await act(async () => { root.unmount(); });
+    host.remove();
+    await mount({ datasets: [VIEW(), READ_AS_CLAIMS(2, 6)] });
+    await flush();
+    expect([q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([false, false]);
+    expect(mappingComplete({ attached: 0, views: [READ_AS_CLAIMS(1, 3, { dtype: "revenue" })] })).toBe(false);
+    expect(mappingComplete({ attached: 0, views: [VIEW(), READ_AS_CLAIMS(1, 3)] })).toBe(true);
+  });
+
+  test("a refused Save claims names the reason and keeps the list", async () => {
     api.confirmForecastClaims.mockRejectedValue(Object.assign(new Error("409"), { response: { status: 409, data: { detail: "The claims of this file are already saved" } } }));
     await mount({ datasets: [SUMMARY()] });
     await flush();
@@ -601,13 +632,14 @@ describe("a forecast table read as claims (chat-upload.md section 20)", () => {
   });
 
   test("a file whose claims are saved shows what was saved on reload, and a file with no claims shows nothing", async () => {
-    await mount({ datasets: [SUMMARY(FORECAST({ saved: 1, saved_lines: 1 })), VIEW({ forecast_claims: null })] });
+    await mount({ datasets: [READ_AS_CLAIMS(1, 1), VIEW({ forecast_claims: null })] });
     await flush();
-    expect(q("forecast-saved-pnl").textContent).toBe("Saved 1 claim as Unverified.");
+    expect(q("status-pnl").textContent).toBe("Saved 1 claim as Unverified.");
     expect(S28_saved(1)).toBe("Saved 1 claim as Unverified.");
     expect(q("forecast-show-pnl")).toBeNull();
+    expect(q("mapping-miss-pnl")).not.toBeNull();                  // the file is still not a P&L: its message stays
     expect(q("forecast-claims-revenue")).toBeNull();
-    expect(q("forecast-saved-revenue")).toBeNull();
+    expect(q("status-revenue").textContent).toBe("Ready for calculation");
   });
 });
 

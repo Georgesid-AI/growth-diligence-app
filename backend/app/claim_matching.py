@@ -47,7 +47,7 @@ UNTESTED_TYPES = {USE_OF_FUNDS: USE_OF_FUNDS_NOTE, ACQUISITION_CHANNELS: ACQUISI
 # value at stake and no overlaps (null), whatever its type. Its deck reading stays "forecast-file" after an edit.
 FORECAST_FILE = "forecast_file"
 FORECAST_READING = "forecast-file"
-FORECAST_NOTE = "forecast table: read from the file, not tested against the data"
+FORECAST_NOTE = "Read from the forecast file, not yet tested against data"      # George, 2026-10-16
 DIRECTION_ONLY = "direction only: the claim states no figure to test"
 BEAT_PREFIX = "beat: observed beats the claim by "       # the reason of a Verified beat outside tolerance, its gloss follows
 # Section 4.1 (George, 2026-10-14): a tested gap beyond this share of the claim, either way, asks the analyst "Same metric and
