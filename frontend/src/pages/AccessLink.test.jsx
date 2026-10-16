@@ -4,7 +4,8 @@ import { createRoot } from "react-dom/client";
 
 const mockToken = "tester-token-123";
 jest.mock("react-router-dom", () => ({ useParams: () => ({ token: mockToken }), useNavigate: () => jest.fn() }), { virtual: true });
-jest.mock("@/lib/api", () => ({ setToken: (t) => global.localStorage.setItem("access_token", t), clearToken: () => global.localStorage.removeItem("access_token"), listAudits: jest.fn() }));
+jest.mock("@/lib/api", () => ({ setToken: (t) => global.localStorage.setItem("access_token", t), clearToken: () => global.localStorage.removeItem("access_token"), listAudits: jest.fn(), ownerPrompts: jest.fn() }));
+jest.mock("@/pages/OwnerPage", () => () => <div data-testid="owner-page">owner page</div>);
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -23,6 +24,7 @@ test("the tester page states that the link is the login, and keeps the token for
   try {
     expect(host.textContent).toContain("Your link is your login. Anyone with the link can open your audits.");
     expect(host.textContent).toContain("Welcome");
+    expect(host.querySelector('[data-testid="access-link-open"]')).not.toBeNull();
     expect(window.localStorage.getItem("access_token")).toBe("tester-token-123");
   } finally { await done(); }
 });
@@ -47,5 +49,19 @@ test("the bare /t/ path shows only the full-link page", async () => {
     expect(host.querySelector("h1").textContent).toBe("Use your full access link");
     expect(host.textContent).toContain("this page cannot be reached without it.");
     expect(host.querySelector("input, form, a, button")).toBeNull();
+  } finally { await done(); }
+});
+
+test("the owner token opens the owner page, never the audits button, and is not kept", async () => {
+  const api = require("@/lib/api");
+  api.listAudits.mockRejectedValue({ response: { status: 404 } });     // the owner token has no audits (access-links.md section 3)
+  api.ownerPrompts.mockResolvedValue({});                              // and reaches the admin routes
+  const AccessLink = require("./AccessLink").default;
+  const { host, done } = await mount(<AccessLink />);
+  try {
+    expect(host.querySelector('[data-testid="owner-page"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="access-link-open"]')).toBeNull();
+    expect(host.textContent).not.toContain("Open my audits");
+    expect(window.localStorage.getItem("access_token")).toBeNull();
   } finally { await done(); }
 });

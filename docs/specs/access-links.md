@@ -49,6 +49,8 @@ generate memo, export CSV/xlsx, delete audit, and every other `/audits/{audit_id
 | `GET /api/` (health) and `GET /api/fields` (the field list, no audit data) | open (George, 15 Oct 2026, decision 2a: they stay open; neither holds audit data) |
 List audits returns only the token's own audits; the owner token gets 404 on it too (George, 15 Oct 2026).
 
+The owner has no audits of their own and sees none. To test the audit screens the owner creates a tester link for themselves on the owner page and opens that. The owner link (`/t/{owner token}`) opens the owner page, never the audits button: the page detects the owner token by the 404 on the audit list followed by a 200 on the admin routes, and does not keep the token.
+
 ## 4. Tests required before tester deployment
 | Test | File |
 |---|---|
