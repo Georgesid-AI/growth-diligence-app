@@ -2394,3 +2394,79 @@ def test_chat_the_company_name_in_a_sheet_name_or_a_title_row_never_reaches_the_
 def test_chat_a_file_type_text_still_holding_the_company_name_is_refused():
     text = _file_type_text(name="Fixture Target Ltd", titles=[{"row": 1, "col": 1, "text": "Fixture Target Ltd report"}])
     assert gateway.structure_text_problem(text, "file_type", FILE_TYPE_CONTEXT, {}) == "redaction_changed"
+
+
+# ---------------------------------------------------------------------------
+# Forecast tables read as claims (chat-upload.md section 20, issue #114): rules only, no model call; the line labels, the sheet and
+# the cells are deck-candidate evidence the gateway may not read; the register reason is one fixed sentence; the log line holds the
+# run and two counts.
+# ---------------------------------------------------------------------------
+import server  # noqa: E402
+from app import column_rules as cr_mod, forecast_claims  # noqa: E402
+
+FORECAST_SENTINEL = "Zephyr Holdings Revenue"           # a line label: client text, only on the candidate
+FORECAST_LOG_ARGS = frozenset({"audit_id", "len(made)", "saved"})
+
+
+def _forecast_file():
+    head = ("Zephyr Holdings plan,,,\nEUR thousands,,,\n,,,\nLine,2026F,2027F,2028F\n"
+            f"{FORECAST_SENTINEL},4321,5432,6543\nCost of sales,-1,-2,-3\nCustomers,11,22,33\n")
+    return head.encode()
+
+
+def test_forecast_claims_are_read_and_saved_with_no_model_call_and_no_log_line_holds_a_label_value_or_file_name(api, caplog):  # noqa: F811
+    caplog.set_level(logging.DEBUG)
+    out = chat.upload(api, "Zephyr_plan.csv", _forecast_file(), dtype="pnl").json()     # the type as the analyst picks it (S6)
+    assert out["forecast_claims"]["count"] == 6, "fixture: two plan lines over three years"
+    saved = api.post(f"/api/audits/{chat.AUDIT}/datasets/{out['dtype']}/forecast-claims", json={"rows": [5, 7]})
+    assert saved.json() == {"saved": 6, "lines": 2}
+    assert chat.adapter_of(api).calls == 0, "reading and saving a forecast table calls no model (section 20.4)"
+    log = "\n".join(r.getMessage() for r in caplog.records)
+    assert "forecast claims: run_id=" in log
+    for secret in (FORECAST_SENTINEL, "Zephyr", "4321000", "4321", "Zephyr_plan.csv", "E5", "Customers"):
+        assert secret not in log, f"{secret!r} reached a log line"
+    stored = [c for c in api.db[decks.CANDIDATES_COLLECTION].docs if c.get("origin") == forecast_claims.ORIGIN]
+    assert any(c["snippet"] == FORECAST_SENTINEL for c in stored), "fixture: the label is kept on the candidate as evidence"
+    for name in ("llm_calls", "llm_structures", "column_mappings", "audits"):
+        assert FORECAST_SENTINEL not in json.dumps(api.db[name].docs, default=str), f"the label reached {name}"
+
+
+def test_the_forecast_claims_log_line_is_a_fixed_format_with_the_run_and_two_counts():
+    tree = ast.parse((BACKEND / "server.py").read_text(encoding="utf-8"))
+    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "confirm_forecast_claims")
+    calls = [n for n in ast.walk(fn) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in _LOG_LEVELS
+             and isinstance(n.func.value, ast.Name) and "log" in n.func.value.id.lower()]
+    assert len(calls) == 1, "one log line"
+    (call,) = calls
+    assert not call.keywords and isinstance(call.args[0], ast.Constant) and "{" not in call.args[0].value
+    assert {ast.unparse(a) for a in call.args[1:]} <= FORECAST_LOG_ARGS, ast.unparse(call)
+    module = ast.parse((BACKEND / "app" / "forecast_claims.py").read_text(encoding="utf-8"))
+    names = {n.id for n in ast.walk(module) if isinstance(n, ast.Name)} | \
+        {a.name for n in ast.walk(module) if isinstance(n, (ast.Import, ast.ImportFrom)) for a in n.names}
+    assert not names & {"logger", "logging", "log", "print", "gateway", "llm"}, "the reader logs nothing and imports no gateway"
+    assert not any("llm" in (n.module or "") for n in ast.walk(module) if isinstance(n, ast.ImportFrom))
+
+
+def test_the_forecast_reason_is_a_closed_sentence_and_the_line_label_never_reaches_the_gateway_or_a_log(caplog):
+    assert not {"snippet", "sources", "by_period", "sheet_row", "file_hash", "dtype", "origin"} & decks.GATEWAY_READABLE_FIELDS
+    sheet = cr_mod.read_workbook(_forecast_file(), "plan.csv")[0]
+    ds = {"columns": sheet.columns, "rows": server.df_to_records(sheet.frame), "row_numbers": sheet.row_numbers, "wide": sheet.wide,
+          "raw_headers": sheet.raw_headers, "first_col": sheet.first_col, "title_currency": sheet.currency,
+          "unit_scale": sheet.unit_scale, "sheet": sheet.sheet, "file": "plan.csv", "file_hash": "h", "dtype": "pnl"}
+    found = forecast_claims.candidates(forecast_claims.read(ds), {5, 7}, ds)
+    rows = claim_matching.build_register([{**c, "id": f"fc{i}", "status": "approved", "file": "plan.csv", "order": i}
+                                          for i, c in enumerate(found)], RESULTS,
+                                         {"fiscal_year_end": 12, "reporting_currency": "EUR", "fx": {"EUR": 1.0}})
+    assert rows and all(r["reason"] == claim_matching.FORECAST_NOTE for r in rows)
+    assert FORECAST_SENTINEL not in json.dumps(rows, default=str), "the register holds no line label"
+    db, reads = _recording_db()
+    for i, c in enumerate(found):
+        db[decks.CANDIDATES_COLLECTION].docs.append({**c, "audit_id": RUN_ID, "id": f"fc{i}", "status": "approved"})
+    adapter = t.FakeAdapter(replies=[json.dumps(NARRATIVE)])
+    with caplog.at_level(logging.DEBUG):
+        asyncio.run(gateway.generate_narrative(db, RUN_ID, "growth_engine", adapter=adapter, sleep=t._noop_sleep))
+    returned = json.dumps([doc for _, _, doc in reads], ensure_ascii=False, default=str)
+    logs = caplog.text + "".join(r.getMessage() for r in caplog.records)
+    for where, text in (("read by the gateway", returned), ("sent to the provider", adapter.payloads[0]), ("logged", logs)):
+        assert FORECAST_SENTINEL not in text, f"the line label was {where}"
+        assert claim_matching.FORECAST_NOTE not in text and "plan.csv" not in text, f"the reason or the file was {where}"

@@ -73,6 +73,9 @@ export const decideColumns = (id, dtype, decisions) =>
 // The analyst changes the type a stored file was read as; a type already loaded needs replace (chat-upload.md section 19).
 export const changeDatasetType = (id, dtype, to, replace = false) =>
   api.post(`/audits/${id}/datasets/${dtype}/type`, { to, replace }).then((r) => r.data);
+// A forecast table read as claims: the sheet rows of the ticked lines; the server reads the values again (chat-upload.md section 20).
+export const confirmForecastClaims = (id, dtype, rows) =>
+  api.post(`/audits/${id}/datasets/${dtype}/forecast-claims`, { rows }).then((r) => r.data);
 export const getBlockers = (id) => api.get(`/audits/${id}/blockers`).then((r) => r.data.blockers);
 // Usage counters: the screen the analyst is on, or the extension of a file the browser refused. Never a name or a value.
 export const reportUsage = (id, event) => api.post(`/audits/${id}/usage`, event).then((r) => r.data).catch(() => null);

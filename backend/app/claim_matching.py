@@ -43,6 +43,11 @@ ACQUISITION_CHANNELS = "acquisition_channels"
 ACQUISITION_NOTE = "acquisition channels: a count per platform, no engine metric to test it against"
 # Claim types that are never matched, ranked, gated or put in the top 5, with the closed sentence each register row carries.
 UNTESTED_TYPES = {USE_OF_FUNDS: USE_OF_FUNDS_NOTE, ACQUISITION_CHANNELS: ACQUISITION_NOTE}
+# A claim read from a forecast table (chat-upload.md section 20): Unverified, never matched, ranked, gated or put in the top 5, with no
+# value at stake and no overlaps (null), whatever its type. Its deck reading stays "forecast-file" after an edit.
+FORECAST_FILE = "forecast_file"
+FORECAST_READING = "forecast-file"
+FORECAST_NOTE = "Read from the forecast file, not yet tested against data"      # George, 2026-10-16
 DIRECTION_ONLY = "direction only: the claim states no figure to test"
 BEAT_PREFIX = "beat: observed beats the claim by "       # the reason of a Verified beat outside tolerance, its gloss follows
 # Section 4.1 (George, 2026-10-14): a tested gap beyond this share of the claim, either way, asks the analyst "Same metric and
@@ -664,13 +669,16 @@ def propose_metric(claim_type: str, claim_unit: Optional[str], text: str) -> Opt
 def _page_ref(sources: list) -> str:
     refs = []
     for s in sources or ():
-        ref = f"slide {s['slide']}" if s.get("slide") is not None else f"p{s['page']}" if s.get("page") is not None else None
+        ref = f"slide {s['slide']}" if s.get("slide") is not None else f"p{s['page']}" if s.get("page") is not None else \
+            f"{s['sheet']}!{s['cell']}" if s.get("cell") else None
         if ref and ref not in refs:
             refs.append(ref)
     return ", ".join(refs)
 
 
 def _deck_reading(c: dict) -> str:
+    if c.get("origin") == FORECAST_FILE:
+        return FORECAST_READING                         # kept after a later edit: the claim came from a forecast table
     if c.get("origin") == "analyst":
         return ANALYST_ENTERED                          # kept after a later edit: the claim never came from the deck
     if c.get("origin") == "deck_analyst":
@@ -798,7 +806,7 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
     start, end = _month_of(c.get("period_start")), _month_of(c.get("period_end"))
     figure_type = _figure_type(c, text, end, as_of_i)
     turn = None
-    if metric_by == "python" and _is_turnover_claim(c, text):       # section 11: never revenue or volume by default
+    if metric_by == "python" and _is_turnover_claim(c, text) and c.get("origin") != FORECAST_FILE:   # section 11
         fx0 = fx_view(c, settings, as_of)
         turn = _turnover(c, inputs, results, settings, fx0["rate"] if fx0 else 1.0, start, end, as_of_i, segment)
         if turn["fx_needed"]:
@@ -865,6 +873,11 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         out.update(fx_rate=fx["rate"], fx_date=fx["date"],
                    claimed_converted=low * fx["rate"] if low is not None else None,
                    claimed_converted_high=high * fx["rate"] if high is not None else None)
+    if c.get("origin") == FORECAST_FILE:       # chat-upload.md section 20: never matched, ranked or gated; no value at stake, no overlaps
+        out.update(metric=None, metric_set_by=None, direction=None, tolerance=None)
+        finish("Unverified", FORECAST_NOTE)
+        out.update(gate_needed=False, value_at_stake_arr=None, overlaps_with=None)
+        return out
     if out["claim_direction"]:                  # "Positive EBITDA": never Verified or Contradicted
         return finish("Unverified", DIRECTION_ONLY)
     if turn and turn["verdict"]:
@@ -1275,9 +1288,11 @@ def _same_measure(a: Optional[str], b: Optional[str]) -> bool:
 def _overlaps(rows: List[dict]) -> None:
     """Fill `overlaps_with` (claim ids in rank order). Two rows overlap when their metrics are the same (or ARR and MRR), they
     have the same segment or either is Whole company, and their observed periods share a month. A row with no observed
-    figure overlaps with nothing. Symmetric."""
+    figure overlaps with nothing. Symmetric. A row whose overlaps are null (a forecast-table claim) stays null."""
     months = {r["claim_id"]: observed_months(r["observed_at"]) if r["observed_value"] is not None else set() for r in rows}
     for r in rows:
+        if r["overlaps_with"] is None:
+            continue
         mine = months[r["claim_id"]]
         r["overlaps_with"] = [o["claim_id"] for o in rows if o is not r and mine and months[o["claim_id"]] & mine
                               and _same_measure(r["metric"], o["metric"])
@@ -1286,16 +1301,22 @@ def _overlaps(rows: List[dict]) -> None:
 
 # --- the register -----------------------------------------------------------------------------------------------------
 
+def is_untested(row: dict) -> bool:
+    """A row that is never matched, ranked among the tested ones, gated or put in the top 5: use of funds, acquisition channels and a
+    claim read from a forecast table (chat-upload.md section 20)."""
+    return row.get("claim_type") in UNTESTED_TYPES or row.get("deck_reading") == FORECAST_READING
+
+
 def _rank(rows: List[dict]) -> List[dict]:
     """Rows with a gap other than "to go" by normalised gap, largest first (a beat counts as 0); then the rest in register order,
-    then the use-of-funds and acquisition-channel rows."""
+    then the use-of-funds, acquisition-channel and forecast-table rows."""
     def key(r):
         norm = r["gap_normalised"]
         if r["gap_kind"] == "beat" or norm is None and r["gap"] == 0:
             return 0.0
         return float("inf") if norm is None else max(norm, 0.0)
     ranked = [r for r in rows if r["gap"] is not None and r["gap_kind"] != "to go"]
-    funds = [r for r in rows if r["claim_type"] in UNTESTED_TYPES]
+    funds = [r for r in rows if is_untested(r)]
     rest = [r for r in rows if r not in ranked and r not in funds]
     ordered = sorted(ranked, key=key, reverse=True) + rest + funds         # use of funds last: no claim's rank depends on it
     for rank, row in enumerate(ordered, 1):

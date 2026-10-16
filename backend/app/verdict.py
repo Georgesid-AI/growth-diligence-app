@@ -184,7 +184,7 @@ def gate_prefill(rows: List[dict], first_review: Optional[str]) -> Dict[str, dic
     row: the register, the CSV and the memo read the saved gate alone."""
     out: Dict[str, dict] = {}
     for row in rows:
-        if row.get("evidence_label") not in GATE_LABELS or row.get("gate_saved") or row.get("claim_type") in cm.UNTESTED_TYPES:
+        if row.get("evidence_label") not in GATE_LABELS or row.get("gate_saved") or cm.is_untested(row):
             continue
         fill: dict = {}
         shown = row.get("claimed_converted") if row.get("claimed_converted") is not None else row.get("claimed_value")
@@ -223,8 +223,9 @@ def marked_count_after(rows: List[dict], claim_id: str) -> int:
 # --- the top 5 ------------------------------------------------------------------------------------------------------------
 
 def sortable(rows: List[dict]) -> List[dict]:
-    """The rows the top 5 is taken from: a use-of-funds row (an allocation share of the raise) or an acquisition-channels row (a count per platform) is never one of them."""
-    return [r for r in rows if r.get("claim_type") not in ("use_of_funds", "acquisition_channels")]
+    """The rows the top 5 is taken from: a use-of-funds row (an allocation share of the raise), an acquisition-channels row (a count per
+    platform) or a claim read from a forecast table (chat-upload.md section 20) is never one of them."""
+    return [r for r in rows if not cm.is_untested(r)]
 
 
 def proposal(rows: List[dict]) -> List[str]:

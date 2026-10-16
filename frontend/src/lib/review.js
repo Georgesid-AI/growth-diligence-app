@@ -41,7 +41,9 @@ export function isUnsure(c, fieldLabel) {
 /** Matched = used columns that do not wait for a decision (those sit under Open mappings). Unsure rows are the ones to check. */
 export function mappingSummary(views, fieldLabel) {
   const matched = [];
-  views.forEach((v) => v.columns.filter((c) => c.state !== "unused" && !c.pending).forEach((c) => matched.push({ view: v, col: c })));
+  // a file read as claims (chat-upload.md section 20) is no calculation input: its columns are not listed
+  views.filter((v) => !v.read_as_claims)
+    .forEach((v) => v.columns.filter((c) => c.state !== "unused" && !c.pending).forEach((c) => matched.push({ view: v, col: c })));
   const unsure = matched.filter(({ col }) => isUnsure(col, fieldLabel));
   return { matched, unsure };
 }

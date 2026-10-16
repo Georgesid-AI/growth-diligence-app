@@ -72,6 +72,26 @@ export const S27_miss = (view) => {
   const what = LOOKS[looks.shape] || `a table of ${(looks.rows ?? 0).toLocaleString("en-US")} rows and ${looks.columns ?? 0} columns`;
   return `Could not read this file as ${TYPE_LABELS[view.dtype]}. Missing: ${view.miss.missing.map(fieldName).join(", ")}. It looks like ${what}.`;
 };
+// S28a-d (2026-10-16, section 20): a forecast table read as claims, one plan line × one year; nothing is saved before Confirm.
+const claimsWord = (n) => `${n.toLocaleString("en-US")} ${n === 1 ? "claim" : "claims"}`;
+export const S28_read = (fc) => `Read as ${claimsWord(fc.count)} from ${fc.sheet}!${fc.range}. Default label: Unverified.`;
+export const S28_SHOW_CLAIMS = "Show claims";
+export const S28_cap = (fc) => `The table holds ${fc.total.toLocaleString("en-US")} claims; the first 60 by row order are read.`;
+export const S28_CONFIRM = "Save claims";      // George, 2026-10-16
+export const S28_saved = (n) => `Saved ${claimsWord(n)} as Unverified.`;
+/** One year of a line in the Show claims list: its period as the file states it (or the fiscal year it was rolled up to) and its
+ *  value with its unit: "2025F 1,980,000 EUR", "FY2026 65.2%", "2025F 26 people". */
+export const forecastValueText = (line, v) => {
+  const n = Number(v.value).toLocaleString("en-US", { maximumFractionDigits: 2 });
+  const figure = line.unit === "%" ? `${n}%` : [n, line.currency || line.unit].filter(Boolean).join(" ");
+  return `${v.period_text || `FY${v.target_date}`} ${figure}`;
+};
+/** The cells a line's claims cite, first to last: "C5:H5", "H5:BC5". */
+export const forecastCells = (line) => {
+  const first = line.values[0].cell.split(":")[0];
+  const last = line.values[line.values.length - 1].cell.split(":").pop();
+  return first === last ? first : `${first}:${last}`;
+};
 export const S8_replace = (dtype, file) => `${LOADED_LABELS[dtype]} is already loaded (${file}). Replace it?`;
 
 // S23: the mapping table's headers (the last column holds the buttons).
@@ -116,6 +136,7 @@ export const S25_PARAGRAPHS = [
   "Your choices are saved with the audit and automatically reused if you upload the same file again.",
 ];
 export const S13_status = (view) => {
+  if (view.read_as_claims) return S28_saved(view.read_as_claims.claims);     // read as claims: it waits for nothing (section 20)
   if (view.miss && view.miss.missing.length > 0) return `Required field not mapped: ${view.miss.missing.map(fieldName).join(", ")}`;
   if (view.pending > 0) return `${view.pending} columns wait for your decision`;
   if (view.missing_required.length > 0) return `Required field not mapped: ${view.missing_required.map(fieldName).join(", ")}`;
@@ -171,7 +192,7 @@ export const mapState = ({ attached, loaded, busy }) => {
 };
 /** The mapping is complete when a revenue file is loaded, no file waits unread, and every loaded file has no column left for
  *  the analyst's decision and no required field unmapped (section 4.3). */
-export const mappingComplete = ({ attached, views }) => attached === 0 && views.some((v) => v.dtype === "revenue")
+export const mappingComplete = ({ attached, views }) => attached === 0 && views.some((v) => v.dtype === "revenue" && !v.read_as_claims)
   && views.every((v) => v.pending === 0 && v.missing_required.length === 0);
 /** Both Calculate buttons (header and chat) show this one state: on only when the mapping is complete and nothing is running. */
 export const calculateState = ({ attached, views, busy }) => {

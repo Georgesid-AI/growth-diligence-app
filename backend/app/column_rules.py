@@ -158,6 +158,8 @@ class Sheet:
     unit_note: Optional[str] = None
     wide: Optional[Dict] = None     # {"periods", "monthly"} when period headers were melted into Period and Value
     raw_headers: Optional[List[str]] = None     # the header row as written, kept for a wide sheet (its columns are melted)
+    first_col: int = 1              # the sheet column of the first column kept (1 = A): leading empty columns are dropped
+    currency: Optional[str] = None  # the currency code the title rows name, if any (a forecast table's claims, section 20)
 
 
 class SheetError(Exception):
@@ -290,6 +292,19 @@ def read_units(titles: List[Tuple[int, int, str]]) -> Tuple[int, Optional[str]]:
     return 1, None
 
 
+_TITLE_CURRENCY = re.compile(r"(?i)(?<![A-Za-z])(EUR|USD|GBP|CHF|SEK|NOK|DKK|PLN|BGN)(?![A-Za-z])|[€$£]")
+
+
+def title_currency(texts) -> Optional[str]:
+    """The first currency code or sign in the texts (title rows, a line label) as an ISO code, or None. Only titles and labels
+    are read, never the data."""
+    for text in texts:
+        m = _TITLE_CURRENCY.search(str(text or ""))
+        if m:
+            return (m.group(1) or {"€": "EUR", "$": "USD", "£": "GBP"}[m.group(0)]).upper()
+    return None
+
+
 def _is_number(v) -> bool:
     if isinstance(v, bool) or _blank(v):
         return False
@@ -390,7 +405,8 @@ def _read_grid(grid: List[List], name: str, is_csv: bool) -> Optional[Sheet]:
         long_headers, texts, data, numbers, wide = melted
         columns = _unique(long_headers)
         frame = pd.DataFrame(data, columns=columns, dtype=object)
-        return Sheet(name, h + 1, columns, texts, frame, numbers, titles, scale, note, wide, headers)
+        return Sheet(name, h + 1, columns, texts, frame, numbers, titles, scale, note, wide, headers, lead + 1,
+                     title_currency(t for _, _, t in titles))
     columns = _unique(headers)
     frame = pd.DataFrame([r for _, r in rows], columns=columns, dtype=object)
     if is_csv:                                   # CSV cells are text: a column that is all numbers is numeric
@@ -401,7 +417,8 @@ def _read_grid(grid: List[List], name: str, is_csv: bool) -> Optional[Sheet]:
                 conv = pd.to_numeric(col, errors="coerce")
                 if conv.notna().sum() == present.sum():
                     frame[c] = conv
-    return Sheet(name, h + 1, columns, headers, frame, [n for n, _ in rows], titles, scale, note, None)
+    return Sheet(name, h + 1, columns, headers, frame, [n for n, _ in rows], titles, scale, note, None, None, lead + 1,
+                 title_currency(t for _, _, t in titles))
 
 
 def read_workbook(content: bytes, filename: str) -> List[Sheet]:

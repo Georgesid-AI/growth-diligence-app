@@ -72,12 +72,13 @@ export const TYPE_LABELS = {
   people: "People", product: "Product", market: "Market size", cash: "Cash", burn: "Burn", runway: "Runway", ltv: "LTV",
   cac: "CAC", customer_lifetime: "Customer lifetime", ltv_cac: "LTV/CAC", trials_per_day: "Trials per day",
   months_to_profitability: "Months to profitability", acquisition_channels: "Acquisition channels", use_of_funds: "Use of funds",
+  installed_units: "Installed units",       // read from a forecast table only (chat-upload.md section 20), in no type list
   other: "Other",
   unknown: "Other",
 };
 // The types an analyst can choose: same order and names as backend app/decks/claims.py CLAIM_TYPES.
 // "Use of funds" is a type the model may read from a structure, not one the parser gives.
-export const CLAIM_TYPES = Object.keys(TYPE_LABELS).filter((t) => !["usage", "use_of_funds", "other", "unknown"].includes(t));
+export const CLAIM_TYPES = Object.keys(TYPE_LABELS).filter((t) => !["usage", "use_of_funds", "installed_units", "other", "unknown"].includes(t));
 // The editor also offers Other: a figure typed Other leaves the register and is never a task (claim-types-and-correction.md 4).
 export const OTHER_TYPES = ["other", "unknown"];
 export const EDIT_TYPES = [...CLAIM_TYPES, "other"];
@@ -88,7 +89,7 @@ export const CLAIM_UNITS = ["%", "x", "months", "years", "weeks", "days", "hours
 export const COUNT_UNIT_HINT = "customers, headcount, deals";
 
 // Types whose figure counts things: they carry the unit "count" (or the noun counted) and never a currency.
-export const COUNT_TYPES = ["customers", "users", "people", "trials_per_day", "acquisition_channels"];
+export const COUNT_TYPES = ["customers", "users", "people", "trials_per_day", "acquisition_channels", "installed_units"];
 export const COUNT_UNIT = "count";
 
 // One header per column of the approval list, in column order.
@@ -108,6 +109,7 @@ export const STRUCTURE_NAMES = {
  *  its cell: "plan.pdf · page 19 · table 1, cell r4c3", "plan.pdf · page 19 · KPI panel, cell r2c1". */
 export function sourceRef(ref) {
   if (!ref) return PLACEHOLDER;
+  if (ref.kind === "sheet") return `${ref.file} · ${ref.sheet}!${ref.cell}`;      // a forecast table's cell (chat-upload.md section 20)
   const where = ref.slide != null ? `slide ${ref.slide}` : `page ${ref.page}`;
   const parts = [ref.file, where];
   if (ref.kind === "notes") parts.push("notes");
