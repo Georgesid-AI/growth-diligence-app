@@ -31,7 +31,7 @@ in docs/architecture.md.**
 - Two link cases show one plain page, no form, no token input, no link to any other page: title "Use your full access
   link", text "Open the complete link you received by email or message; this page cannot be reached without it."
   (1) The bare `/t/` path. (2) `/t/{token}` when the API answers 401 (the page asks `GET /api/audits` with the token;
-  the Welcome page shows meanwhile and stays unchanged for a valid token). Any other answer keeps the Welcome page.
+  the Welcome page shows meanwhile and stays unchanged for a valid token). On a 401 the stored token is also removed from `localStorage`. Any other answer keeps the Welcome page and the token.
 
 ## 3. Authorization matrix
 Every API route that reads or changes an audit checks that the audit belongs to the request's token: list audits, read

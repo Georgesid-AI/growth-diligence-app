@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { listAudits, setToken } from "@/lib/api";
+import { clearToken, listAudits, setToken } from "@/lib/api";
 
 export const LINK_NOTICE = "Your link is your login. Anyone with the link can open your audits.";
 
@@ -26,7 +26,7 @@ export default function AccessLink() {
   useEffect(() => {
     if (!token) return;
     setToken(token);
-    listAudits().catch((e) => { if (e?.response?.status === 401) setRejected(true); });   // the Welcome page shows meanwhile
+    listAudits().catch((e) => { if (e?.response?.status === 401) { clearToken(); setRejected(true); } });   // the Welcome page shows meanwhile
   }, [token]);
   if (rejected) return <FullLinkNeeded />;
   return (

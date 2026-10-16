@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 
 const mockToken = "tester-token-123";
 jest.mock("react-router-dom", () => ({ useParams: () => ({ token: mockToken }), useNavigate: () => jest.fn() }), { virtual: true });
-jest.mock("@/lib/api", () => ({ setToken: (t) => global.localStorage.setItem("access_token", t), listAudits: jest.fn() }));
+jest.mock("@/lib/api", () => ({ setToken: (t) => global.localStorage.setItem("access_token", t), clearToken: () => global.localStorage.removeItem("access_token"), listAudits: jest.fn() }));
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -35,6 +35,7 @@ test("a token the API rejects with 401 shows only the full-link page", async () 
     expect(host.querySelector("h1").textContent).toBe("Use your full access link");
     expect(host.textContent).toContain("Open the complete link you received by email or message; this page cannot be reached without it.");
     expect(host.textContent).not.toContain("Welcome");
+    expect(window.localStorage.getItem("access_token")).toBeNull();
     expect(host.querySelector("input, form, a, button")).toBeNull();
   } finally { await done(); }
 });
