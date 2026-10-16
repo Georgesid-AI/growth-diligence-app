@@ -85,6 +85,7 @@ describe("what a row shows", () => {
     expect(readingText("Verified")).toBe("Verified");
     expect(readingText("AI suggestion, not verified")).toBe("AI suggestion, not verified");
     expect(readingText("edited")).toBe("Edited by the analyst");
+    expect(readingText("forecast-file")).toBe("Read from forecast table");      // chat-upload.md section 20
   });
 });
 

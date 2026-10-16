@@ -7,11 +7,12 @@ import { toast } from "sonner";
 import { SETUP_HELP } from "@/lib/auditForm";
 import {
   S1_TEXT_REPLY, S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S_UPLOAD_RETRY, S21_NOTE_REFUSED, REASONS,
-  S5_head, S9_confidence, mappedBy, sortColumns, S25_PARAGRAPHS, S27_miss,
+  S5_head, S9_confidence, mappedBy, sortColumns, S25_PARAGRAPHS, S27_miss, S28_read, S28_cap, S28_saved,
 } from "@/lib/chatUpload";
 
 jest.mock("@/lib/api", () => ({
   getAudit: jest.fn(), getDatasets: jest.fn(), uploadChatFile: jest.fn(), decideColumns: jest.fn(), reportUsage: jest.fn(), changeDatasetType: jest.fn(),
+  confirmForecastClaims: jest.fn(),
   saveMapping: jest.fn(), saveFx: jest.fn(), computeAudit: jest.fn(), getRevenueCustomers: jest.fn(), updateAudit: jest.fn(), putIcInputs: jest.fn(),
 }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
@@ -502,6 +503,111 @@ describe("the type, the sheet and the miss (2026-10-16)", () => {
     await flush();
     expect(q("mapping-miss-revenue")).toBeNull();
     expect(q("column-row-Customer")).not.toBeNull();
+  });
+});
+
+describe("a forecast table read as claims (chat-upload.md section 20)", () => {
+  const LINE = (row, label, values, over = {}) => ({ row, label, metric: "revenue", claim_type: "revenue", unit: null, currency: "EUR", values, ...over });
+  const YEARS = (row, figures) => figures.map((value, i) => ({ target_date: String(2025 + i), period: `${2025 + i}F`, period_text: `${2025 + i}F`,
+    value, cell: `${"EFG"[i]}${row}` }));
+  const FORECAST = (over = {}) => ({
+    sheet: "Plan", range: "E5:G16", count: 9, total: 9, capped: false, saved: 0, saved_lines: 0,
+    lines: [LINE(5, "Revenue", YEARS(5, [1980000, 3100000, 4650000])),
+            LINE(8, "Gross margin %", YEARS(8, [65.2, 66.1, 67.1]), { metric: "gross_margin", claim_type: "gross_margin", unit: "%", currency: null }),
+            LINE(16, "Headcount (FTE)", YEARS(16, [26, 34, 43]), { metric: "headcount", claim_type: "people", unit: "people", currency: null })],
+    ...over,
+  });
+  const SUMMARY = (forecast = FORECAST()) => VIEW({
+    dtype: "pnl", file: "plan.xlsx", ext: "xlsx", row_count: 88, months: null, sheet: "Plan", header_row: 4, type_source: "rules",
+    pending: 0, missing_required: ["sm_expense", "revenue", "cost_of_revenue"],
+    fields: { required: ["month", "sm_expense", "revenue", "cost_of_revenue"], optional: [] },
+    miss: { missing: ["sm_expense", "revenue", "cost_of_revenue"], looks: { shape: "summary", rows: 88, columns: 3 } },
+    columns: [row("Period", { field: "month" }), row("Line", { state: "unused", source: null, confidence: null })],
+    forecast_claims: forecast,
+  });
+
+  test("the bubble says how many claims were read from which cells, with the default label, and a Show claims link", async () => {
+    await mount({ datasets: [SUMMARY()] });
+    await flush();
+    expect(q("forecast-read-pnl").textContent).toBe("Read as 9 claims from Plan!E5:G16. Default label: Unverified.");
+    expect(q("forecast-read-pnl").textContent).toBe(S28_read(FORECAST()));
+    expect(q("forecast-show-pnl").textContent).toBe("Show claims");
+    expect(q("forecast-cap-pnl")).toBeNull();
+    expect(q("forecast-list-pnl")).toBeNull();
+    expect(q("mapping-miss-pnl")).not.toBeNull();
+    expect(S28_read({ ...FORECAST(), count: 1 })).toBe("Read as 1 claim from Plan!E5:G16. Default label: Unverified.");
+  });
+
+  test("over the cap the bubble says only the first 60 by row order are read", async () => {
+    await mount({ datasets: [SUMMARY(FORECAST({ count: 60, total: 560, capped: true }))] });
+    await flush();
+    expect(q("forecast-read-pnl").textContent).toBe("Read as 60 claims from Plan!E5:G16. Default label: Unverified.");
+    expect(q("forecast-cap-pnl").textContent).toBe("The table holds 560 claims; the first 60 by row order are read.");
+    expect(S28_cap({ total: 560 })).toBe(q("forecast-cap-pnl").textContent);
+  });
+
+  test("Show claims lists each line with a ticked checkbox, its values by year and its cells; nothing is sent", async () => {
+    await mount({ datasets: [SUMMARY()] });
+    await flush();
+    await click(q("forecast-show-pnl"));
+    expect(all("forecast-tick-5").length + all("forecast-tick-8").length + all("forecast-tick-16").length).toBe(3);
+    expect([5, 8, 16].map((r) => q(`forecast-tick-${r}`).checked)).toEqual([true, true, true]);
+    expect(q("forecast-label-5").textContent).toBe("Revenue");
+    expect(q("forecast-values-5").textContent).toBe("2025F 1,980,000 EUR · 2026F 3,100,000 EUR · 2027F 4,650,000 EUR");
+    expect(q("forecast-values-8").textContent).toBe("2025F 65.2% · 2026F 66.1% · 2027F 67.1%");
+    expect(q("forecast-values-16").textContent).toBe("2025F 26 people · 2026F 34 people · 2027F 43 people");
+    expect(q("forecast-cells-5").textContent).toBe("E5:G5");
+    expect(q("forecast-confirm-pnl").textContent).toBe("Confirm");
+    await click(q("forecast-tick-8"));
+    expect(q("forecast-tick-8").checked).toBe(false);
+    expect(api.confirmForecastClaims).not.toHaveBeenCalled();
+  });
+
+  test("a rolled-up year reads as its fiscal year", async () => {
+    const rolled = LINE(5, "Revenue", [{ target_date: "2026", period: "Jan-26–Dec-26", period_text: null, value: 1338, cell: "H5:S5" },
+      { target_date: "2027", period: "Jan-27–Dec-27", period_text: null, value: 1482, cell: "T5:AE5" }]);
+    await mount({ datasets: [SUMMARY(FORECAST({ count: 2, total: 2, lines: [rolled] }))] });
+    await flush();
+    await click(q("forecast-show-pnl"));
+    expect(q("forecast-values-5").textContent).toBe("FY2026 1,338 EUR · FY2027 1,482 EUR");
+    expect(q("forecast-cells-5").textContent).toBe("H5:AE5");
+  });
+
+  test("Confirm sends the ticked lines only, then the bubble says what was saved and the list is gone", async () => {
+    api.confirmForecastClaims.mockResolvedValue({ saved: 6, lines: 2 });
+    await mount({ datasets: [SUMMARY()] });
+    await flush();
+    await click(q("forecast-show-pnl"));
+    await click(q("forecast-tick-8"));
+    await click(q("forecast-confirm-pnl"));
+    await flush();
+    expect(api.confirmForecastClaims).toHaveBeenCalledTimes(1);
+    expect(api.confirmForecastClaims).toHaveBeenCalledWith("a1", "pnl", [5, 16]);
+    expect(q("forecast-saved-pnl").textContent).toBe("Saved 6 claims as Unverified.");
+    expect(q("forecast-list-pnl")).toBeNull();
+    expect(q("forecast-show-pnl")).toBeNull();
+  });
+
+  test("a refused Confirm names the reason and keeps the list", async () => {
+    api.confirmForecastClaims.mockRejectedValue(Object.assign(new Error("409"), { response: { status: 409, data: { detail: "The claims of this file are already saved" } } }));
+    await mount({ datasets: [SUMMARY()] });
+    await flush();
+    await click(q("forecast-show-pnl"));
+    await click(q("forecast-confirm-pnl"));
+    await flush();
+    expect(q("forecast-error-pnl").textContent).toBe("The claims of this file are already saved");
+    expect(q("forecast-list-pnl")).not.toBeNull();
+    expect(q("forecast-saved-pnl")).toBeNull();
+  });
+
+  test("a file whose claims are saved shows what was saved on reload, and a file with no claims shows nothing", async () => {
+    await mount({ datasets: [SUMMARY(FORECAST({ saved: 1, saved_lines: 1 })), VIEW({ forecast_claims: null })] });
+    await flush();
+    expect(q("forecast-saved-pnl").textContent).toBe("Saved 1 claim as Unverified.");
+    expect(S28_saved(1)).toBe("Saved 1 claim as Unverified.");
+    expect(q("forecast-show-pnl")).toBeNull();
+    expect(q("forecast-claims-revenue")).toBeNull();
+    expect(q("forecast-saved-revenue")).toBeNull();
   });
 });
 

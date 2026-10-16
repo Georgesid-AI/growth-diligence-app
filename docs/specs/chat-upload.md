@@ -1,6 +1,6 @@
 # Spec: Chat-style upload and column mapping
 Status: Final (2026-10-08); decisions applied (§12); amended 2026-10-08 for the mapping-screen wording, the delete dialog
-and the banner (§12, §13, S5, S9, S15, S16a, S16d, S18, S18b, S23–S25), and 2026-10-09 for §15 and §16, and 2026-10-11 for §17 (claims list and parser), and 2026-10-16 for §19 (file type, every sheet, wide tables, units and the miss message). Location: docs/specs/chat-upload.md.
+and the banner (§12, §13, S5, S9, S15, S16a, S16d, S18, S18b, S23–S25), and 2026-10-09 for §15 and §16, and 2026-10-11 for §17 (claims list and parser), and 2026-10-16 for §19 (file type, every sheet, wide tables, units and the miss message) and §20 (forecast tables read as claims, issue #114). Location: docs/specs/chat-upload.md.
 Replaces the content of the MappingWizard page. Supersedes in part docs/specs/llm-structure-reading.md §1 for
 the column-mapping path only: which columns are sent and from how many rows (§4.2). Everything else in that spec
 stands, including the rule-16 shape of what is sent and §9 (sent text is never stored).
@@ -340,6 +340,10 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 | S26c | bubble, units | Title rows say {EUR }thousands: money figures are multiplied by 1,000. |
 | S27 | a miss | Could not read this file as {type}. Missing: {fields}. It looks like {a forecast or summary table: periods (years or quarters) run across the columns and each line is a metric / a table with months across the columns and one line per row / a table of {n} rows and {m} columns}. A "Show columns" link opens the rows. The status line reads "Required field not mapped: {fields}". |
 | S26 | file got no answer | The file could not be read. Press Map to try again. (Added 2026-10-10: shown when an upload gets no answer from the server within 120 s or loses its connection; the file returns to "attached – not read yet".) |
+| S28a | a miss with periods across the columns (§20) | Read as {N} claims from {sheet}!{range}. Default label: Unverified. ("1 claim" for one) and the link "Show claims" (George, 2026-10-16) |
+| S28b | under S28a, over the cap (§20.2) | The table holds {total} claims; the first 60 by row order are read. |
+| S28c | the Show claims list (§20.4) | One row per line, a checkbox each, ticked: the line as in the file, then each year and its value, then its cells. Under it the button "Confirm" |
+| S28d | after Confirm (§20.4) | Saved {n} claims as Unverified. ("1 claim" for one) |
 
 ## 12. Decisions of 2026-10-08
 | Q | Question | Decision |
@@ -395,6 +399,10 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
   (§6.4), the demo seed and the tests that delete audits.
 - Unchanged: docs/architecture.md.
 - 2026-10-16 (§19): `backend/app/column_rules.py` (every sheet, leading columns, wide to long, units, type rules, miss), `backend/app/structures/{__init__,redact}.py` (the file-type text), `backend/app/llm/{gateway,schemas,prompt_store}.py` (the `file_type` read and prompt), `backend/server.py` (ingest, the Change endpoint, units in `normalize`), `frontend/src/components/UploadChat.jsx`, `frontend/src/lib/{chatUpload,api}.js`, `backend/tests/fixtures/mapping/*.csv`, `backend/tests/{mapping_shapes,test_mapping_miss}.py`, `backend/tests/fixtures/prompts/file_type.md` (a stub).
+- 2026-10-16 (§20): new `backend/app/forecast_claims.py` (pure), `backend/tests/test_forecast_claims.py`, `backend/tests/fixtures/forecast/*.csv`;
+  changed `backend/app/column_rules.py` (first column and title currency of a sheet), `backend/server.py` (the view, the Confirm endpoint, the
+  year-end re-read), `backend/app/claim_matching.py` and `backend/app/verdict.py` (the untested rows), `backend/app/decks/claims.py` (the type),
+  `frontend/src/components/UploadChat.jsx`, `frontend/src/lib/{chatUpload,api,deckClaims,claimRegister}.js`.
 
 ## 15. Amount columns named turnover or volume (amended 2026-10-09, George)
 If the header of a column mapped to an amount field (revenue file `amount`, P&L `revenue`, CRM `amount`) contains
@@ -540,10 +548,70 @@ maps nothing.
   that wait for a click count as mapped). The bubble then shows S27 in place of the mapping rows, with "Show columns" to open them. The message
   holds closed words and counts only. A summary table is not sent to the model for its columns.
 - **Saved mappings.** A saved mapping version that is itself a miss is not reused: the rules and the model run again for the file (§5).
-- **Not built, for George (rule 19.1, 19.2): "Read as claims".** The request names an option on the miss message that reads the forecast or
-  summary table as claims. It needs a decision on what counts as a claim from a spreadsheet line and what is stored about it, so it is not part of
-  this change.
+- **"Read as claims"** was not built with this section; George decided it on 2026-10-16 and it is §20.
 - **Tests.** `test_mapping_miss.py` (the three shapes, each rule, the units, the miss, the file-type call, Change, and one test per export layout
   in `backend/tests/fixtures/mapping/`: Stripe invoices, Xero invoices, HubSpot deals, Pipedrive deals, an accountant P&L with the header on row 5
   in EUR thousands, a wide monthly revenue table), `test_gateway_data_boundary.py` (rule 14: the file-type text, its refusals, no stored text, no log
   line, the closed reply), `MappingWizard.test.jsx` (type line, Change, caption, units note, miss message, S2).
+
+## 20. Forecast tables read as claims (2026-10-16, George; issue #114)
+Decided by George with the task (rules 19.1, 19.2, 19.3): a claim is one forecast line × one period; only plan lines count; the annual
+figure is read; at most 60 claims per file; what is stored; the screen; no model call. This section amends claim-matching.md §4 and §6 for
+these claims, as §17 did for Acquisition channels. The architecture is unchanged: the claims are `deck_candidates` rows in the table-row
+shape of deck-parser.md §2 and use the register's untested path; no collection, component or boundary changes (docs/architecture.md stays).
+
+Challenge (rule 4): needed, because a forecast table ends in the miss of §19 and its plan figures are lost unless the analyst types each one
+with Add claim. Simpler: no new screen; the miss message gains one line and a checkbox list, storage is the deck's table row (one candidate per
+line, its values by period), and the register treats the claims as it treats Use of funds. Deleted first: the "Not built" paragraph of §19.
+
+- **20.1 What is a claim.** A file is read as claims when it is a miss (§19) with periods across the columns (`looks.shape` summary or
+  monthly_wide). Only the first table of the stored sheet is read (§19, wide to long). A line is a row of that table; its label is its first
+  column, as written. A claim is one plan line × one year. Plan lines are found by header synonyms, as in column_rules.py, over the label read
+  as the headers are (punctuation as one space, a bracket's content left out), first match in this order:
+  ARR (arr, annual recurring revenue) · MRR (mrr, monthly recurring revenue) · gross margin (gross margin, gross profit) · EBITDA (ebitda) ·
+  bookings (booking, bookings) · revenue (revenue, revenues, net sales; the whole label sales or total sales) · cash balance (cash balance,
+  closing cash, ending cash, cash at end of period or year, cash at year end, cash position, cash on hand, cash and cash equivalents; the whole
+  label cash) · headcount (headcount, head count, fte, ftes, employees, team size) · installed units (installed units, installed base, units
+  installed, installations) · customers (customer, customers, client, clients, subscribers). Each synonym counts as whole words. Not claims: a
+  label with a cost word (cost, costs, cogs, expense, expenses, opex, capex, spend, marketing, payroll, salaries: the cost sub-lines), a change or
+  a per-unit word (growth, yoy, cagr, change, variance, per, average, arpu, churn, churned, new, lost, added, flow, burn, deferred, ltv, cac,
+  lifetime, retention), and a rate (a "%", or margin, ratio or rate outside "gross margin") on any line but gross margin. Turnover, GMV and
+  volume are not revenue synonyms here: they are ambiguous (claim-matching.md §11). A gross margin line is a rate (unit %) when its label holds
+  "%" or every value is between −1 and 1 (a fraction, read ×100); otherwise it is an amount and its type is gross profit.
+- **20.2 Years, roll-up, cap.** A year column (2025, FY2025, 2025E) is read as stated; a year-to-date column never. A year with no column is
+  rolled up from its quarters (4), halves (2) or months (12): a flow (revenue, bookings, gross margin as an amount, EBITDA) is the sum, read only
+  when every part of the year is in the table; a balance or a count (ARR, MRR, cash balance, headcount, installed units, customers) is the
+  year's last part, read when that part is in the table. A rate is read from year columns only. Months are grouped by the audit's fiscal
+  year-end, a year named by the calendar year it ends in (deck-parser.md §2); a quarter or half label names its fiscal year. When the year-end
+  changes, rolled-up month claims already saved are read again from the stored file under the new year-end. Claims are ordered by sheet row,
+  then year; the first 60 are kept and the rest dropped, and the bubble says so (S28b).
+- **20.3 What is stored, and where it shows.** Nothing until the analyst confirms: the list is computed on read from the stored file rows. On
+  Confirm, one `deck_candidates` row per ticked line, in the table-row shape of deck-parser.md §2: `claim_type` (revenue for ARR, MRR, bookings
+  and revenue; gross_margin or gross_profit; ebitda; cash; people; customers; `installed_units`, a new type shown "Installed units" and not offered
+  in the type lists), `snippet` = the metric name as in the file (at most 300 characters), `unit`, `currency`, and `by_period` with per year:
+  `value`, `target_date`, `period` (the header, or "first–last" of the parts rolled up), `period_text` (the header as stated, none when rolled up),
+  `period_start`, `period_end` and `source` {file, sheet, cell, kind "sheet"} (a range "D7:O7" for a sum). The value is the file's, ×1,000 for a
+  money line when the title rows say thousands (§19 units); the unit after that scaling is the currency code (title rows, else the label) with
+  no unit, "%" for a rate, and "customers", "people" or "units" for a count. The row also holds `origin` "forecast_file", `file_hash`,
+  `dtype`, `sheet_row`, `status` "approved" and no deck. Added fields: `sheet` and `cell` in a source, `origin` "forecast_file", `file_hash`,
+  `dtype` and `sheet_row` (the line's row, for the year-end re-read); the dataset keeps `first_col` and `title_currency` for the cells and the unit.
+  In the register (claim-matching.md §6) each value is one row, `#n` as for any table row: evidence label Unverified, reason "forecast table:
+  read from the file, not tested against the data", no metric, observed figure, gap or gate, `value_at_stake_arr` null and `overlaps_with`
+  null; ranked after every other row, with Use of funds; out of the top 5, the banner and the verdict; `deck_reading` "forecast-file", shown
+  "Read from forecast table"; `page_ref` "{sheet}!{cell}". Once a deck is uploaded the deck list shows them under All, the source as
+  "{file} · {sheet}!{cell}"; the IC memo lists them in its register appendix and the baseline CSV carries them. A second
+  Confirm for the same file answers 409. Delete audit removes them with the other candidates (§6.3).
+- **20.4 Screen and data boundary.** Under the miss message the bubble shows S28a with "Show claims", and S28b over the cap. Show claims opens
+  the list of S28c: one row per line with its checkbox, ticked by default; unticking a line drops all its claims. Confirm sends the sheet rows
+  of the ticked lines, `POST /api/audits/{id}/datasets/{dtype}/forecast-claims {rows}`; the server reads the claims again from the stored file
+  (the browser sends no value), refuses a row that is not a line of the list (400), stores the ticked lines and answers `{saved, lines}`; the
+  bubble then shows S28d in place of the list. A file whose claims are saved shows S28d on reload. No model call is made: the reading is rules
+  only, nothing new reaches the gateway (`GATEWAY_READABLE_FIELDS` unchanged), and the log line holds the run and two counts.
+- **Decided (engineering, rule 19).** Exact synonyms and exclusion words (20.1, measured on the three fixtures below); a flow needs all parts of
+  its year, a balance its last part; a rate is never rolled up (no weights); a cut line keeps the years before the cap; one Confirm per file.
+- **Tests.** `test_forecast_claims.py` on `backend/tests/fixtures/forecast/`: `annual_forecast.csv` (an appendix P&L, EUR thousands, actual and
+  forecast years: plan lines read, cost sub-lines dropped, ×1,000, cells), `monthly_model.csv` (60 months, July start: rolled up to years, sums
+  and year-ends, partial years dropped, a June year-end re-reads) and `eighty_lines.csv` (80 plan lines, capped at 60), the endpoint (nothing
+  stored before Confirm, unticked lines dropped, 400, 409), the register row, the memo and the CSV; `test_gateway_data_boundary.py` (no model
+  call, the reason, the log line, nothing gateway-readable); `MappingWizard.test.jsx` (S28a–S28d, the list, Confirm with unticked lines),
+  `deckClaims.test.js` (the sheet source, the type), `claimRegister.test.js` (the reading).

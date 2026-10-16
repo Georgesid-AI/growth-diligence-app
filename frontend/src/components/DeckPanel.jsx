@@ -529,7 +529,7 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight, autoEdit = fa
         <>
           <td className="py-2 pr-3">
             <select value={typeValue(draft)} onChange={setType} className={selectClass} data-testid="edit-claim-type">
-              {draft.claim_type === "use_of_funds" && <option value="use_of_funds">{typeLabel("use_of_funds")}</option>}
+              {["use_of_funds", "installed_units"].includes(draft.claim_type) && <option value={draft.claim_type}>{typeLabel(draft.claim_type)}</option>}
               {turnover.views.length > 0 && draft.claim_type === "revenue" && draft.answer === "ask" && <option value={ASK_OPTION} disabled>Turnover – choose</option>}
               {EDIT_TYPES.flatMap((t) => (t === "revenue" && turnover.views.length ? [t, VOLUME_OPTION] : [t])).map((t) => (
                 <option key={t} value={t}>{t === VOLUME_OPTION ? VOLUME_LABEL : typeLabel(t)}</option>))}

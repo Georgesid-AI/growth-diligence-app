@@ -121,6 +121,8 @@ USE_OF_FUNDS = "use_of_funds"
 # A per-platform figure on a user-acquisition slide (chat-upload.md section 17): count, no currency, no engine metric.
 ACQUISITION_CHANNELS = "acquisition_channels"
 COUNT = "count"         # the unit of an acquisition-channels figure
+# A count of installed units, read only from a forecast table (chat-upload.md section 20): no engine metric, in no type list.
+INSTALLED_UNITS = "installed_units"
 
 # The order of the claims table (deck-parser.md section 6): the group of a type, then slide or page. Revenue covers ARR,
 # MRR and bookings; P&L items and unit economics are listed with their neighbours; acquisition channels and use of funds
@@ -133,7 +135,7 @@ _GROUP_OF = {
     "gross_profit": 2, "ebitda": 2, "burn": 2, "cash": 2, "runway": 2, "costs": 2, "net_profit": 2, "gross_margin": 2,
     "months_to_profitability": 2,
     "customers": 3, "users": 3, "user_growth": 3, "growth": 3, "retention": 3, "sales": 3, "ltv": 3, "cac": 3, "ltv_cac": 3,
-    "customer_lifetime": 3, "trials_per_day": 3, "usage": 3,
+    "customer_lifetime": 3, "trials_per_day": 3, "usage": 3, INSTALLED_UNITS: 3,
     "people": 4, "product": 4,
     "market": 5, ACQUISITION_CHANNELS: 7, USE_OF_FUNDS: 8,
 }

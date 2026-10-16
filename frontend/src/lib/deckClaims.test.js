@@ -11,6 +11,9 @@ describe("source reference", () => {
     expect(sourceRef({ file: "plan.pdf", page: 19, kind: "table", table: 1, row: 4, col: 2 }))
       .toBe("plan.pdf · page 19 · table 1, row 4, col 2");
     expect(sourceRef({ file: "plan.docx", page: 6, kind: "text" })).toBe("plan.docx · page 6");
+    // a forecast table's cell (chat-upload.md section 20): the file, then sheet!cell, never "page undefined"
+    expect(sourceRef({ file: "plan.csv", sheet: "Plan", cell: "E5", kind: "sheet" })).toBe("plan.csv · Plan!E5");
+    expect(sourceRef({ file: "plan.csv", sheet: "Plan", cell: "H5:S5", kind: "sheet" })).toBe("plan.csv · Plan!H5:S5");
   });
 });
 
@@ -348,5 +351,13 @@ describe("Approve all (docs/specs/chat-upload.md section 17)", () => {
   });
   test("only a claim to review counts", () => {
     expect(toReview({ claims: [{ id: 1, status: "pending" }, { id: 2, status: "approved" }, { id: 3, status: "rejected" }, { id: 4, status: "edited" }] }).map((c) => c.id)).toEqual([1]);
+  });
+});
+
+describe("installed units (chat-upload.md section 20)", () => {
+  test("a claim read from a forecast table shows its type, which no type list offers", () => {
+    expect(typeLabel("installed_units")).toBe("Installed units");
+    expect(CLAIM_TYPES).not.toContain("installed_units");
+    expect(EDIT_TYPES).not.toContain("installed_units");
   });
 });
