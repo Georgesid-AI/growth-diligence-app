@@ -28,6 +28,10 @@ in docs/architecture.md.**
 - A revoked or expired token is refused on every route (401).
 - The browser keeps the token from the link in `localStorage` and sends it as `Authorization: Bearer {token}` on every
   request; the link page then opens the audit list.
+- Two link cases show one plain page, no form, no token input, no link to any other page: title "Use your full access
+  link", text "Open the complete link you received by email or message; this page cannot be reached without it."
+  (1) The bare `/t/` path. (2) `/t/{token}` when the API answers 401 (the page asks `GET /api/audits` with the token;
+  the Welcome page shows meanwhile and stays unchanged for a valid token). Any other answer keeps the Welcome page.
 
 ## 3. Authorization matrix
 Every API route that reads or changes an audit checks that the audit belongs to the request's token: list audits, read
@@ -53,6 +57,8 @@ List audits returns only the token's own audits; the owner token gets 404 on it 
 | 3. Expired token → 401; revoked token → 401, on every route of §3 and on the audit list and create | `test_access_links.py` |
 | 4. Owner token on any audit route → 404 | `test_access_links.py` |
 | The tester page states "Your link is your login. Anyone with the link can open your audits." | `AccessLink.test.jsx` |
+| `/t/{token}` rejected with 401 shows only the full-link page (no Welcome, no input, form, link or button) | `AccessLink.test.jsx` |
+| The bare `/t/` path shows only the full-link page | `AccessLink.test.jsx` |
 The route list of tests 1, 2 and 4 is read from the app's own router, so a route added later is covered without editing the
 test. A token never reaches a log line (`test_gateway_data_boundary.py`, rule 14).
 

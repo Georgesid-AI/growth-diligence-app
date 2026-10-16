@@ -7,7 +7,7 @@ import Dashboard from "@/pages/Dashboard";
 import Diagnostics from "@/pages/Diagnostics";
 import RunAudit from "@/pages/RunAudit";
 import Review from "@/pages/Review";
-import AccessLink from "@/pages/AccessLink";
+import AccessLink, { FullLinkNeeded } from "@/pages/AccessLink";
 import OwnerPage from "@/pages/OwnerPage";
 
 function App() {
@@ -15,6 +15,7 @@ function App() {
     <div className="App">
       <BrowserRouter>
         <Routes>
+          <Route path="/t" element={<FullLinkNeeded />} />
           <Route path="/t/:token" element={<AccessLink />} />
           <Route path="/owner" element={<OwnerPage />} />
           <Route path="/" element={<AuditHub />} />
