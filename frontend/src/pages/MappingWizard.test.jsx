@@ -7,11 +7,11 @@ import { toast } from "sonner";
 import { SETUP_HELP } from "@/lib/auditForm";
 import {
   S1_TEXT_REPLY, S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S_UPLOAD_RETRY, S21_NOTE_REFUSED, REASONS,
-  S5_head, S9_confidence, mappedBy, sortColumns, S25_PARAGRAPHS,
+  S5_head, S9_confidence, mappedBy, sortColumns, S25_PARAGRAPHS, S27_miss,
 } from "@/lib/chatUpload";
 
 jest.mock("@/lib/api", () => ({
-  getAudit: jest.fn(), getDatasets: jest.fn(), uploadChatFile: jest.fn(), decideColumns: jest.fn(), reportUsage: jest.fn(),
+  getAudit: jest.fn(), getDatasets: jest.fn(), uploadChatFile: jest.fn(), decideColumns: jest.fn(), reportUsage: jest.fn(), changeDatasetType: jest.fn(),
   saveMapping: jest.fn(), saveFx: jest.fn(), computeAudit: jest.fn(), getRevenueCustomers: jest.fn(), updateAudit: jest.fn(), putIcInputs: jest.fn(),
 }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
@@ -412,6 +412,96 @@ describe("a file", () => {
     await mount();
     await pickAndMap([file("rev.csv")]);
     expect(q("bubble-same").textContent).toBe("Same file as before: saved mapping v3 applied.");
+  });
+});
+
+describe("the type, the sheet and the miss (2026-10-16)", () => {
+  const MISS = (over = {}) => VIEW({
+    dtype: "crm", file: "CRM_Anonymous.xlsx", ext: "xlsx", row_count: 6, months: null, sheet: "Accounts", header_row: 6, type_source: "ai",
+    pending: 3, missing_required: ["created_date", "close_date", "stage"],
+    fields: { required: ["deal_id", "created_date", "close_date", "stage", "amount"], optional: ["segment", "founder_involved"] },
+    miss: { missing: ["created_date", "close_date", "stage"], looks: { shape: "table", rows: 6, columns: 17 } },
+    columns: [row("Account ID", { field: "deal_id", state: "unsure", confidence: 60, pending: true }), row("Segment", { field: "segment" })],
+    ...over,
+  });
+
+  test("the consent explainer says the AI may see sheet names and title rows and no sentence about the company name", () => {
+    expect(S2_EXPLAINER_CONSENT).toContain("When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table.");
+    expect(S2_EXPLAINER_CONSENT).not.toMatch(/company name/);
+  });
+
+  test("the bubble shows the detected type with its source and a Change button, the sheet read, and the units note", async () => {
+    await mount({ datasets: [VIEW({ type_source: "rules", sheet: "Revenue", header_row: 5, unit_note: "Title rows say EUR thousands: money figures are multiplied by 1,000." })] });
+    await flush();
+    expect(q("type-label-revenue").textContent).toBe("Type: Revenue lines (by rules)");
+    expect(q("type-change-revenue").textContent).toBe("Change");
+    expect(q("mapping-sheet-revenue").textContent).toBe('Sheet "Revenue" · header on row 5');
+    expect(q("mapping-table-revenue").contains(q("mapping-sheet-revenue"))).toBe(true);
+    expect(q("bubble-units").textContent).toBe("Title rows say EUR thousands: money figures are multiplied by 1,000.");
+  });
+
+  test("the source of the type reads AI suggestion or your choice", async () => {
+    await mount({ datasets: [VIEW({ type_source: "ai" }), VIEW({ dtype: "pnl", file: "p.xlsx", type_source: "you" })] });
+    await flush();
+    expect(q("type-label-revenue").textContent).toBe("Type: Revenue lines (AI suggestion)");
+    expect(q("type-label-pnl").textContent).toBe("Type: P&L (monthly) (your choice)");
+  });
+
+  test("Change offers the other two types, sends the choice and shows the file read as the new type", async () => {
+    api.changeDatasetType.mockResolvedValue(VIEW({ dtype: "pnl", file: "rev.csv", type_source: "you" }));
+    await mount({ datasets: [VIEW({ type_source: "ai" })] });
+    await flush();
+    await click(q("type-change-revenue"));
+    expect(q("type-pick-revenue")).toBeNull();
+    expect(["type-pick-crm", "type-pick-pnl"].map((id) => q(id).textContent)).toEqual(["CRM deals", "P&L (monthly)"]);
+    await click(q("type-pick-pnl"));
+    await flush();
+    expect(api.changeDatasetType).toHaveBeenCalledWith("a1", "revenue", "pnl", false);
+    expect(q("chat-system-revenue")).toBeNull();
+    expect(q("type-label-pnl").textContent).toBe("Type: P&L (monthly) (your choice)");
+    expect(all("chat-analyst-bubble").length).toBe(1);
+  });
+
+  test("a type already loaded asks to replace, and Replace sends it again with replace", async () => {
+    const conflict = Object.assign(new Error("409"), { response: { status: 409, data: { detail: { code: "type_loaded", dtype: "crm", file: "old.csv" } } } });
+    api.changeDatasetType.mockRejectedValueOnce(conflict).mockResolvedValueOnce(VIEW({ dtype: "crm", type_source: "you" }));
+    await mount({ datasets: [VIEW(), VIEW({ dtype: "crm", file: "old.csv", type_source: "rules" })] });
+    await flush();
+    await click(q("type-change-revenue"));
+    await click(q("type-pick-crm"));
+    await flush();
+    expect(q("type-replace").textContent).toContain("A CRM file is already loaded (old.csv). Replace it?");
+    await click(q("type-replace-yes"));
+    await flush();
+    expect(api.changeDatasetType).toHaveBeenLastCalledWith("a1", "revenue", "crm", true);
+    expect(all("chat-system-crm").length).toBe(1);
+  });
+
+  test("a miss replaces the mapping rows with one message naming the missing fields and what the file looks like", async () => {
+    await mount({ datasets: [MISS()] });
+    await flush();
+    const message = q("mapping-miss-crm");
+    expect(message.textContent).toContain("Could not read this file as CRM deals. Missing: created date, close date, stage. It looks like a table of 6 rows and 17 columns.");
+    expect(message.textContent).toContain(S27_miss(MISS()));
+    expect(q("column-row-Account ID")).toBeNull();
+    expect(q("status-crm").textContent).toBe("Required field not mapped: created date, close date, stage");
+    await click(q("miss-show-crm"));
+    expect(q("column-row-Account ID")).not.toBeNull();
+    expect(q("mapping-miss-crm")).toBeNull();
+  });
+
+  test("a summary table is named as a forecast or summary table", async () => {
+    await mount({ datasets: [MISS({ dtype: "revenue", miss: { missing: ["customer_id", "invoice_date", "currency"], looks: { shape: "summary", rows: 50, columns: 3 } } })] });
+    await flush();
+    expect(q("mapping-miss-revenue").textContent).toContain(
+      "Could not read this file as Revenue lines. Missing: customer id, invoice date, currency. It looks like a forecast or summary table: periods (years or quarters) run across the columns and each line is a metric.");
+  });
+
+  test("a file that maps cleanly shows no miss message", async () => {
+    await mount({ datasets: [VIEW({ miss: null })] });
+    await flush();
+    expect(q("mapping-miss-revenue")).toBeNull();
+    expect(q("column-row-Customer")).not.toBeNull();
   });
 });
 

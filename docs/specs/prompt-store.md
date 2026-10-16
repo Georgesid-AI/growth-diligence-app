@@ -13,7 +13,7 @@ links, built with this spec).
 
 ## 1. The store
 Collection `prompts`, one document per upload: `name`, `version`, `text`, `uploaded_at`, `sha256` (of the UTF-8 text).
-- `name` is one of the four the gateway reads: `growth_engine`, `data_inventory`, `data_integrity`, `structure_reading`
+- `name` is one of the five the gateway reads: `growth_engine`, `data_inventory`, `data_integrity`, `structure_reading`, `file_type` (added 2026-10-16: chat-upload.md §19)
   (`prompt_store.NAMES`; a test fails if the gateway reads a name this list lacks). Any other name is refused (422).
 - `version` is `v1`, `v2`, ... per name, the next number at upload. Unique on (name, version) (index), so two uploads at the
   same moment cannot share a number. The latest version is the highest number.

@@ -1,6 +1,6 @@
 # Spec: Chat-style upload and column mapping
 Status: Final (2026-10-08); decisions applied (§12); amended 2026-10-08 for the mapping-screen wording, the delete dialog
-and the banner (§12, §13, S5, S9, S15, S16a, S16d, S18, S18b, S23–S25), and 2026-10-09 for §15 and §16, and 2026-10-11 for §17 (claims list and parser). Location: docs/specs/chat-upload.md.
+and the banner (§12, §13, S5, S9, S15, S16a, S16d, S18, S18b, S23–S25), and 2026-10-09 for §15 and §16, and 2026-10-11 for §17 (claims list and parser), and 2026-10-16 for §19 (file type, every sheet, wide tables, units and the miss message). Location: docs/specs/chat-upload.md.
 Replaces the content of the MappingWizard page. Supersedes in part docs/specs/llm-structure-reading.md §1 for
 the column-mapping path only: which columns are sent and from how many rows (§4.2). Everything else in that spec
 stands, including the rule-16 shape of what is sent and §9 (sent text is never stored).
@@ -20,8 +20,7 @@ In: the MappingWizard page content, upload with type detection, the column-mappi
 then the analyst), saved mappings, the blocker banner, degrade-on-gateway-failure, the delete confirmation, the
 usage counters and their totals, the revenue reconciliation and its evidence table, the CLAUDE.md lines (§6.4),
 three messy fixtures and their tests.
-Out: decks (the deck panel stays as it is, below the chat), multi-sheet reading (the first sheet only, as today),
-data cleaning (a column the engine cannot read stays unreadable; the bubble says so), and any new metric on the
+Out: decks (the deck panel stays as it is, below the chat), data cleaning (a column the engine cannot read stays unreadable; the bubble says so), and any new metric on the
 Dashboard.
 
 The request as written crosses the frozen architecture in three places. This spec builds the in-architecture
@@ -82,19 +81,23 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
   one at a time, in drop order. The typed endpoint `POST .../datasets/{dtype}/upload` stays for the demo seed and
   the tests.
 - Accepted: .xlsx and .csv (amended 2026-10-08, George). Anything else is refused in the browser (S7) and counted by extension (§7). An old .xls workbook is refused with S7b, "Save as .xlsx or .csv and upload again.", in the browser and by the server (400), and counted as "xls"; the file picker lists .xlsx and .csv only.
+- Sheets and columns (amended 2026-10-16, §19): every sheet of a workbook is read; the best sheet for the role is stored and
+  its name is shown in the mapping table. Columns before the first one that has a header or a value are dropped.
 - Header row: among the first 10 sheet rows, the header row is the first row that fills at least half of the
   widest row's cells and holds no number other than a year. Rows above it (titles, blanks) are dropped and never
   stored. Header-like rows directly below it join the header stack, as today (at most 3). The file is read without
   a header (`header=None`), with short rows padded and blank lines counted, so a one-cell title row cannot break a
   CSV. Every stored row keeps its sheet row number, and `normalize` uses that number for `_row`, so citations name
   the real sheet rows. Today `_row` assumes the header is on row 1 and that there are no blank lines.
-- Type: for each type, the share of its required fields that the rules map (score above 0). The type with the
-  unique highest share wins, if that share is at least 50%; otherwise the type is unknown. Measured on
-  sample_data/: 3 of 3 files detected, with margins of 100% against 50% (revenue), 100% against 50% (CRM) and
-  100% against 25% (P&L). Months found are the distinct months of the date column: invoice date for revenue,
-  close date for CRM, month for the P&L.
-- Unknown: nothing is stored. The bubble asks for the type (S6), and the browser sends the same file again with
-  that `dtype`.
+- Type (amended 2026-10-16, §19): the rules give each type a share, and the type with the unique highest share wins
+  when that share is at least 80% (it was 50%). Revenue needs customer, date and amount, each header at 80 or more; CRM
+  needs four of five signature columns (deal, created, closed or won, stage or status, owner); a P&L is the share of its
+  fields the headers match, or two or three cost lines among the headers or the line labels. Measured on sample_data/: 3
+  of 3 files detected, at 100% (revenue), 80% (CRM, which has no owner column) and 100% (P&L), each against a lower
+  share for the other two types. Months found are the distinct months of the date column: invoice date for revenue,
+  close date for CRM, month for the P&L. Below 80, with consent, the model is asked once for the file's type (§19).
+- Unknown (no type at 80 and no answer from the model: no consent, no prompt loaded, a failure, a timeout or "unknown"):
+  nothing is stored. The bubble asks for the type (S6), and the browser sends the same file again with that `dtype`.
 - A type that is already loaded: if the hash is the same, the bubble says S14 and there is no prompt. If the hash
   differs, the server stores nothing and answers 409 with the detected type; the bubble asks S8, and Replace sends
   the file again with `replace=true`.
@@ -303,7 +306,7 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 | Id | Where | Text |
 |---|---|---|
 | S1 | text reply | This window accepts files and mapping confirmations. (as given) |
-| S2 | explainer, consent ticked | Mapping is done by rules first. Where rules cannot decide, the AI sees only those columns' headers, up to 3 example numbers or dates per column and a pattern for text columns – never your full file and never a name – and you confirm those columns. |
+| S2 | explainer, consent ticked | Mapping is done by rules first. Where rules cannot decide, the AI sees only those columns' headers, up to 3 example numbers or dates per column and a pattern for text columns – never your full file and never a name – and you confirm those columns. When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table. (Last sentence added 2026-10-16, §19; its "which can contain the company name" clause removed the same day, because the company name is masked.) |
 | S3 | explainer, consent unticked | Mapping is done by rules only: AI-assisted reading is off for this audit. You map the columns the rules cannot decide. |
 | S4 | drop zone | Drop files here or use the paperclip. Required: revenue by customer (monthly, 24–36 months). Also useful: CRM export, P&L. Board decks go to the Deck panel. .xlsx or .csv only. |
 | S5 | bubble head | Detected: Revenue lines · 1,240 rows · 24 months (Jan 2023 – Dec 2024). Before the date column is confirmed the months are left out: "Detected: Revenue lines · 1,240 rows". |
@@ -332,6 +335,10 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 | S23 | mapping table headers | In your file · Means · Confidence · Mapped by (the fifth column, the buttons, has no header). The label "Your decision" is removed. |
 | S24 | "Mapped by" values | Rules · AI suggestion – confirm · You · Saved from earlier upload. A column the rules and the model left without a proposal reads "You – choose" until the analyst decides it. A row the analyst confirmed or corrected reads "You". |
 | S25 | info box | Title: Why this step matters. A collapsible box, open by default, above the first mapping table of the page (one box, not one per file). Text, word for word, four paragraphs: "Every figure in this audit depends on how the columns are interpreted. If a column is mapped incorrectly—for example, bookings are treated as revenue, or an invoice date as a service date—the resulting calculations may look correct but be wrong." / "The app suggests a mapping for each column and indicates its confidence level. High-confidence mappings are accepted automatically, but you can change them. Low-confidence mappings appear at the top of the table and require your review." / "No calculations begin until all required columns are confirmed." / "Your choices are saved with the audit and automatically reused if you upload the same file again." |
+| S26a | bubble, under the head | Type: {Revenue lines / CRM deals / P&L (monthly)} ({by rules / AI suggestion / your choice}) and a Change button that offers the other two types (2026-10-16, §19). |
+| S26b | mapping table caption | Sheet "{sheet}" · header on row {n} |
+| S26c | bubble, units | Title rows say {EUR }thousands: money figures are multiplied by 1,000. |
+| S27 | a miss | Could not read this file as {type}. Missing: {fields}. It looks like {a forecast or summary table: periods (years or quarters) run across the columns and each line is a metric / a table with months across the columns and one line per row / a table of {n} rows and {m} columns}. A "Show columns" link opens the rows. The status line reads "Required field not mapped: {fields}". |
 | S26 | file got no answer | The file could not be read. Press Map to try again. (Added 2026-10-10: shown when an upload gets no answer from the server within 120 s or loses its connection; the file returns to "attached – not read yet".) |
 
 ## 12. Decisions of 2026-10-08
@@ -387,6 +394,7 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
   (reconciliation section), `frontend/src/lib/api.js`, CLAUDE.md
   (§6.4), the demo seed and the tests that delete audits.
 - Unchanged: docs/architecture.md.
+- 2026-10-16 (§19): `backend/app/column_rules.py` (every sheet, leading columns, wide to long, units, type rules, miss), `backend/app/structures/{__init__,redact}.py` (the file-type text), `backend/app/llm/{gateway,schemas,prompt_store}.py` (the `file_type` read and prompt), `backend/server.py` (ingest, the Change endpoint, units in `normalize`), `frontend/src/components/UploadChat.jsx`, `frontend/src/lib/{chatUpload,api}.js`, `backend/tests/fixtures/mapping/*.csv`, `backend/tests/{mapping_shapes,test_mapping_miss}.py`, `backend/tests/fixtures/prompts/file_type.md` (a stub).
 
 ## 15. Amount columns named turnover or volume (amended 2026-10-09, George)
 If the header of a column mapped to an amount field (revenue file `amount`, P&L `revenue`, CRM `amount`) contains
@@ -485,3 +493,57 @@ Replaces the flat "N columns mapped" count with a Show link and its list of ever
 - "Show details", a plain text link, collapsed by default (it reads "Hide details" when open): per file, every matched column as `"{column}" read as {field}`.
 - Layout: one font size, bold only on the top line, generous line spacing, no boxes or borders. Rows alternate page colour and 3–4% grey, both the unsure rows and the rows inside Show details.
 - Tests: `Review.test.jsx` (headline, chips, unsure rows by confidence and by name, Correct and Change calls, collapsed details, alternating rows).
+
+## 19. File type, every sheet, wide tables, units and the miss message (amended 2026-10-16, George)
+Cause found (3 workbooks missed their mapping; shapes in `backend/tests/mapping_shapes.py`): (1) the revenue rules scored a CRM tracker as
+revenue because "Account ID" scores 80 as a customer and "MRR EUR" scores 60 as an amount, and the type needed only half of the
+fields; (2) the model runs only for columns the rules left `unsure` or `needs`, and a column in state `unused` (no proposal, or left out of
+the model's reply, §4.2) shows "Rules", confidence 0 and is never sent; a mapping version that mapped nothing was saved (nothing
+pending) and reused for the same headers, so no rules and no model ran again (§5). Architecture note: rule 16 and
+docs/architecture.md now read "spreadsheet sheet names, title rows and header rows" (George, 2026-10-16), the same words as here and in
+the boundary test.
+
+Challenge (rule 4): needed, because three files could not be mapped and the screen gave no reason. Simpler: one message on a miss and rules
+for the type, no second model call. Deleted first: the "first sheet only" rule, the 50% type threshold, and the reuse of a saved mapping that
+maps nothing.
+
+- **Reading.** Every sheet is read. Columns before the first one with a header or a value are dropped (no "Unnamed: n" rows for them). Per
+  role the best sheet is stored: the one whose headers match most required fields at 80 or more, then the higher type share, then more
+  rows, then the earlier sheet. Its name and header row show as the table caption (S26b).
+- **Wide to long.** Three or more headers that are periods (2023, Q1:24, 2024 YTD, FY2024, H1 2024, Jan-24, 2024-01, 01/2024, dates) are melted into
+  `Period` and `Value`, one row per number, each keeping the sheet row of its line; the other columns stay beside them. Only the first
+  table of the sheet is read (a blank row followed by a row with no number ends it, as does a repeated period header). With three or more
+  months only the months are kept and the column is `Date`; otherwise (years, quarters, years to date) the sheet is a summary or forecast
+  table: `looks.shape` is `summary` and it is always a miss. A wide table with lines down the rows is not pivoted into a monthly P&L.
+- **Units.** "EUR thousands", "EUR 000", "k EUR", "EURk", "(€k)", "in thousands", "'000" in the title rows above the header: the money
+  fields (`amount`, `revenue`, `sm_expense`, `cost_of_revenue`) are multiplied by 1,000 when the engine reads the rows (`normalize`); the stored
+  rows keep the file's own figures; S26c shows the note. Millions are not read.
+- **Type, rules first.** §3. Header synonyms: headers are read with punctuation as one space ("Deal - ID", "*InvoiceDate"), and the synonyms of
+  Stripe, Xero, HubSpot and Pipedrive exports were added to FIELD_DEFS (created, contact name, record id, deal stage ...).
+- **Type, the model, once per file.** Only when the rules give no type at 80, the audit has consent and the file's hash has no answer yet.
+  The text, built in memory and never stored or logged: per sheet (at most 6) its name, the title rows above the header (at most 6 rows, cells
+  cut at 200 characters), the header row (at most 40 columns) and the masked sample of §4.2 (3 numbers or dates per numeric or date column, a
+  profile per text column; a wide sheet sends its header as written and the profile of its first column only). Nothing else: no data row text,
+  no file name. Redaction is the one of §4.2 and the gateway runs it again (the client name becomes [redacted], addresses and phone numbers
+  are masked, customer names take their pseudonyms, and the target company's own name becomes [redacted] in the sheet names, title rows and
+  headers, so it never reaches the model in clear text; unit markers such as "EUR thousands" are left as written, and the x1,000 scaling reads
+  the stored title rows, not the masked text). The reply is one closed word: revenue, crm, pnl or unknown (`FileTypeReply`). Its own prompt, `file_type` (prompt-store.md; the
+  owner uploads it; until then no call is made and the analyst picks the type, S6). `llm_calls` rows carry `structure_type: "file_type"`.
+  The answer is kept in `column_mappings` as `{audit_id, kind: "file_type", file_hash, file_type, saved_at}` and used again for the same bytes. A
+  failure, a timeout (`MAPPING_AI_SECONDS`), no consent or "unknown" leaves the type to the analyst (S6). A log line holds codes only: the
+  type, the source (rules, ai, you) and the status; never a sheet name, title or header.
+- **Change.** The bubble shows the type and how it was found (rules, AI suggestion, your choice) and a Change button. `POST
+  /api/audits/{id}/datasets/{dtype}/type {to, replace}` reads the stored sheet again as the new type (rules, then the model for the columns they
+  cannot decide) and stores it under the new type; a type already loaded answers 409 as in §3 and needs `replace`. No model is asked what the
+  file is.
+- **A miss** is a file that cannot supply the type's required fields: a summary table, or at most half of the required fields mapped (proposals
+  that wait for a click count as mapped). The bubble then shows S27 in place of the mapping rows, with "Show columns" to open them. The message
+  holds closed words and counts only. A summary table is not sent to the model for its columns.
+- **Saved mappings.** A saved mapping version that is itself a miss is not reused: the rules and the model run again for the file (§5).
+- **Not built, for George (rule 19.1, 19.2): "Read as claims".** The request names an option on the miss message that reads the forecast or
+  summary table as claims. It needs a decision on what counts as a claim from a spreadsheet line and what is stored about it, so it is not part of
+  this change.
+- **Tests.** `test_mapping_miss.py` (the three shapes, each rule, the units, the miss, the file-type call, Change, and one test per export layout
+  in `backend/tests/fixtures/mapping/`: Stripe invoices, Xero invoices, HubSpot deals, Pipedrive deals, an accountant P&L with the header on row 5
+  in EUR thousands, a wide monthly revenue table), `test_gateway_data_boundary.py` (rule 14: the file-type text, its refusals, no stored text, no log
+  line, the closed reply), `MappingWizard.test.jsx` (type line, Change, caption, units note, miss message, S2).

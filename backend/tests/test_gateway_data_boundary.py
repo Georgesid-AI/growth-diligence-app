@@ -1,6 +1,6 @@
 """The gateway's data boundary: what may leave the server, and what never does.
 
-The outbound payload is built from an allowlist. File and sheet names, column
+The outbound payload is built from an allowlist. File names, column
 headers and raw cell values stay in Mongo for the dashboard; segment names go
 out as stable labels and come back as real names. Every test runs against the
 in-memory Mongo stub and the fake adapter - no test can reach a real provider.
@@ -1004,7 +1004,7 @@ def test_unit_other_carries_an_iso_code_only_so_no_cell_text_is_stored_or_logged
 # sends none that reads as a code, the exception's class name), never its message.
 LLM_CALLS_KEYS = frozenset({"run_id", "step", "prompt_version", "model", "input_tokens", "output_tokens",
                             "estimated_cost_usd", "cache_hit", "status", "unmatched_numbers", "timestamp",
-                            "content_hash", "deck_id", "http_status", "error_type"})
+                            "content_hash", "deck_id", "http_status", "error_type", "structure_type"})
 
 
 def test_a_provider_error_reaches_llm_calls_and_the_log_as_a_status_and_a_type_code_only(caplog):
@@ -1711,7 +1711,7 @@ def test_chat_no_collection_holds_the_sent_text_after_an_upload_with_consent(api
     calls = api.db["llm_calls"].docs
     assert all(set(c) <= {"run_id", "step", "prompt_version", "model", "input_tokens", "output_tokens", "estimated_cost_usd",
                           "cache_hit", "status", "unmatched_numbers", "timestamp", "content_hash", "deck_id", "http_status",
-                          "error_type"} for c in calls)
+                          "error_type", "structure_type"} for c in calls)
 
 
 def test_chat_log_lines_hold_no_file_name_header_cell_value_company_name_or_note(api, caplog):  # noqa: F811
@@ -2256,3 +2256,141 @@ def test_the_prompt_upload_route_logs_the_name_and_version_only():
     source = (BACKEND / "server.py").read_text(encoding="utf-8")
     fn = source[source.index("async def admin_upload_prompt"):source.index("@api.post(\"/admin/testers\")")]
     assert re.findall(r'logger\.\w+\((.*)\)', fn) == ['"prompt uploaded: name=%s version=%s", row["name"], row["version"]']
+
+
+# ---------------------------------------------------------------------------
+# The file type (docs/specs/chat-upload.md section 19, 2026-10-16): the model may read spreadsheet sheet names, title rows and header
+# rows and the masked sample, with the client name and the company name masked. Nothing else, and none of it is kept.
+# ---------------------------------------------------------------------------
+import mapping_shapes as shapes  # noqa: E402
+
+FILE_TYPE_TITLES = ("Revenue through 31 December 2028", "Accounts through 31 December 2028", "EUR; accounts anonymised")
+FILE_TYPE_CONTEXT = {"company_name": "Fixture Target Ltd", "client_name": "Northbridge Capital"}
+
+
+def _file_type_text(**sheet):
+    base = {"name": "Accounts", "titles": [{"row": 2, "col": 1, "text": "Accounts through 2028"}],
+            "headers": [{"row": 5, "col": 1, "text": "Account ID"}], "samples": {2: ["100", "200"]},
+            "profiles": {1: {"distinct": 6, "length": 8, "shape": "A-0"}}}
+    return structure_redact.file_type_text([{**base, **sheet}])
+
+
+def test_chat_a_file_type_text_passes_with_title_rows_headers_a_masked_sample_and_nothing_else():
+    assert gateway.structure_text_problem(_file_type_text(), "file_type", FILE_TYPE_CONTEXT, {}) is None
+
+
+@pytest.mark.parametrize("sheet,problem", [
+    ({"samples": {2: ["Alder Works"]}}, "text_value"),                                   # a text cell value
+    ({"samples": {2: ["1", "2", "3", "4"]}}, "too_many_samples"),                        # more than 3 samples
+    ({"samples": {1: ["1"]}}, "text_value"),                                             # a sample and a profile for one column
+    ({"titles": [{"row": r, "col": 1, "text": "t"} for r in range(1, 8)]}, "too_many_header_rows"),
+    ({"headers": [{"row": 5, "col": 1, "text": "a"}, {"row": 6, "col": 1, "text": "b"}]}, "too_many_header_rows"),
+    ({"titles": [{"row": 2, "col": 1, "text": "x" * 201}]}, "cell_too_long"),
+    ({"titles": [{"row": 2, "col": 1, "text": "Report for Northbridge Capital"}]}, "client_name"),
+    ({"titles": [{"row": 2, "col": 1, "text": "Contact jane.doe@example.com"}]}, "redaction_changed"),
+    ({"name": "export.xlsx"}, "file_name"),
+])
+def test_chat_a_file_type_text_with_a_text_value_too_many_rows_a_long_title_a_name_an_address_or_a_file_name_is_refused(sheet, problem):
+    assert gateway.structure_text_problem(_file_type_text(**sheet), "file_type", FILE_TYPE_CONTEXT, {}) == problem
+
+
+def test_chat_a_file_type_text_with_more_than_six_sheets_or_a_line_of_no_kind_is_refused():
+    base = {"name": "S", "titles": [], "headers": [{"row": 1, "col": 1, "text": "h"}], "samples": {}, "profiles": {}}
+    seven = structure_redact.file_type_text([{**base, "name": f"S{i}"} for i in range(7)])
+    assert gateway.structure_text_problem(seven, "file_type", FILE_TYPE_CONTEXT, {}) == "too_many_header_rows"
+    assert gateway.structure_text_problem("s1: Accounts\nfree prose about the company", "file_type", FILE_TYPE_CONTEXT, {}) == "not_cells"
+    assert gateway.structure_text_problem("r1c1: Account ID", "file_type", FILE_TYPE_CONTEXT, {}) == "not_cells"
+
+
+def test_chat_the_file_type_reply_is_one_closed_word():
+    for reply in ('{"type":"file_type","file_type":"deck"}', '{"type":"file_type","file_type":"crm","note":"x"}', '{"file_type":"crm"}'):
+        with pytest.raises(gateway.GatewayError):
+            gateway.parse_structure_reply(reply, "file_type", "")
+    assert gateway.parse_structure_reply('{"type":"file_type","file_type":"crm"}', "file_type", "").file_type == "crm"
+
+
+def _file_type_upload(api):
+    api.state["adapter"] = t.FakeAdapter(replies=[json.dumps({"type": "file_type", "file_type": "crm"}), chat.mapping_reply()])
+    return chat.upload(api, "CRM_Anonymous_to_2028.xlsx", shapes.crm_anonymous_to_2028())
+
+
+def test_chat_the_file_type_text_holds_titles_and_headers_and_no_data_text_file_name_or_client_name(api):  # noqa: F811
+    _file_type_upload(api)
+    text = chat.model_text(api)
+    parsed = structure_redact.parse_file_type_text(text)
+    assert any("Accounts through" in c["text"] for c in parsed[0]["titles"]), "the title rows are sent"
+    for secret in ("ACC-0001", "Mid-market", "no contradiction found", "Owner A", "Claimed", "CRM_Anonymous", ".xlsx", "Northbridge"):
+        assert secret not in text, secret
+    assert gateway.structure_text_problem(text, "file_type", FILE_TYPE_CONTEXT, {}) is None
+
+
+def test_chat_no_collection_holds_the_file_type_text_and_the_kept_answer_is_a_hash_and_a_word(api, caplog):  # noqa: F811
+    caplog.set_level(logging.DEBUG)
+    _file_type_upload(api)
+    text = chat.model_text(api)
+    stored = _all_documents(api.db)
+    for line in text.split("\n"):
+        assert line not in stored.get("llm_structures", "") + stored.get("llm_calls", "") + stored.get("column_mappings", ""), line
+    for title in FILE_TYPE_TITLES + ("Source inputs", "Annual tracker", "Funnel and evidence"):
+        for name in ("llm_structures", "llm_calls", "column_mappings", "audits"):
+            assert title not in stored.get(name, ""), (title, name)
+    kept = [d for d in api.db["column_mappings"].docs if d.get("kind") == "file_type"]
+    assert len(kept) == 1 and set(kept[0]) <= {"audit_id", "kind", "file_hash", "file_type", "saved_at"} and kept[0]["file_type"] == "crm"
+    log = "\n".join(r.getMessage() for r in caplog.records)
+    for title in FILE_TYPE_TITLES + ("Source inputs", "Annual tracker", "Funnel and evidence", "Account ID", "CRM_Anonymous", chat.COMPANY):
+        assert title not in log, f"{title!r} reached a log line"
+    row = next(c for c in api.db["llm_calls"].docs if c.get("structure_type") == "file_type")
+    assert set(row) <= LLM_CALLS_KEYS and row["status"] == "ok"
+
+
+def test_chat_a_title_row_holding_the_client_name_or_an_address_reaches_the_model_masked(api):  # noqa: F811
+    from openpyxl import Workbook
+    import io
+    wb = Workbook()
+    ws = wb.active
+    ws["C2"] = "Monthly pack for Northbridge Capital, contact jane.doe@example.com"
+    ws["C3"] = "Fixture Target Ltd management accounts"
+    for j, h in enumerate(["Line", "2023", "2024", "2025"]):
+        ws.cell(5, 3 + j, h)
+    ws.cell(6, 3, "Metric")
+    for j in range(3):
+        ws.cell(6, 4 + j, 10 + j)
+    buf = io.BytesIO()
+    wb.save(buf)
+    api.state["adapter"] = t.FakeAdapter(replies=[json.dumps({"type": "file_type", "file_type": "unknown"})])
+    chat.upload(api, "x.xlsx", buf.getvalue())
+    text = chat.model_text(api)
+    assert "Northbridge" not in text and "jane.doe" not in text and "[redacted]" in text and "[email]" in text
+    assert "Fixture Target Ltd" not in text, "the company's own name is masked in the file-type text (chat-upload.md section 19)"
+
+
+def _name_workbook(sheet_name, title):
+    from openpyxl import Workbook
+    import io
+    wb = Workbook()
+    ws = wb.active
+    ws.title = sheet_name
+    ws["A1"] = title
+    for j, h in enumerate(["Line", "2023", "2024", "2025"]):
+        ws.cell(3, 1 + j, h)
+    ws.cell(4, 1, "Metric")
+    for j in range(3):
+        ws.cell(4, 2 + j, 10 + j)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_chat_the_company_name_in_a_sheet_name_or_a_title_row_never_reaches_the_model_and_the_unit_marker_stays(api):  # noqa: F811
+    api.state["adapter"] = t.FakeAdapter(replies=[json.dumps({"type": "file_type", "file_type": "unknown"})])
+    chat.upload(api, "x.xlsx", _name_workbook("Fixture Target Ltd P&L", "Fixture Target Ltd \u2013 April 2024 Report, EUR thousands"))
+    text = chat.model_text(api)
+    assert "fixture target" not in text.lower(), "the company name is absent from the model payload"
+    titles = [c["text"] for s in structure_redact.parse_file_type_text(text) for c in s["titles"]]
+    assert any("[redacted]" in x and "EUR thousands" in x for x in titles), titles
+    assert gateway.structure_text_problem(text, "file_type", FILE_TYPE_CONTEXT, {}) is None
+
+
+def test_chat_a_file_type_text_still_holding_the_company_name_is_refused():
+    text = _file_type_text(name="Fixture Target Ltd", titles=[{"row": 1, "col": 1, "text": "Fixture Target Ltd report"}])
+    assert gateway.structure_text_problem(text, "file_type", FILE_TYPE_CONTEXT, {}) == "redaction_changed"

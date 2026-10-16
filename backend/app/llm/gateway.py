@@ -9,7 +9,7 @@ so uploaded rows, raw file bytes and parsed deck text are never fetched, let alo
 
 Structure path (rule 16, read_structure): selected deck structures (tables, charts with data
 labels, KPI panels, roadmaps and timelines, hiring, unit-economics and use-of-funds tables) and
-spreadsheet header rows (at most 3) with, per column, up to 3 sample values (numeric and date
+spreadsheet sheet names, title rows and header rows (at most 3 header rows) with, per column, up to 3 sample values (numeric and date
 columns only) or a profile (distinct count, typical length, shape pattern) for text columns. Only
 after redaction, only with the audit's consent, only as extracted text with cell positions; never
 raw files, full pages or prose slides. A deck structure's text carries, below its cells, the item
@@ -57,7 +57,7 @@ from schemas.metrics import safe_problems
 from .. import disclosure, formatting
 from ..structures import redact as structure_redact
 from . import cache, guards, prompt_store, redaction, schemas, step_payloads
-from .schemas import (MAPPING_FIELDS, STRUCTURE_TYPES, DeckUsage, LabellingReply, Narrative, NarrativeResponse,
+from .schemas import (FILE_TYPE, MAPPING_FIELDS, STRUCTURE_TYPES, DeckUsage, FileTypeReply, LabellingReply, Narrative, NarrativeResponse,
                       StructureRead, StructureReply, UsageResponse, narrative_output_schema)
 
 logger = logging.getLogger("growth.llm")
@@ -921,7 +921,7 @@ async def log_call(
     input_tokens: int, output_tokens: int, estimated_cost_usd: float,
     cache_hit: bool, status: str, unmatched_numbers: Optional[List[str]] = None,
     content_hash: Optional[str] = None, deck_id: Optional[str] = None,
-    http_status: Optional[int] = None, error_type: Optional[str] = None,
+    http_status: Optional[int] = None, error_type: Optional[str] = None, structure_type: Optional[str] = None,
 ) -> None:
     """Append to llm_calls.
 
@@ -934,7 +934,7 @@ async def log_call(
     its HTTP status and error type, never its message.
     """
     extra = {k: v for k, v in (("content_hash", content_hash), ("deck_id", deck_id), ("http_status", http_status),
-                               ("error_type", error_type)) if v is not None}
+                               ("error_type", error_type), ("structure_type", structure_type)) if v is not None}
     await db[CALLS_COLLECTION].insert_one({**extra,
         "run_id": run_id,
         "step": step,
@@ -1408,6 +1408,7 @@ async def disclosure_for_run(db, run_id: str) -> Optional[dict]:
 # moves every structure cache key. Temperature stays at the model default and is never sent.
 STRUCTURE_MODEL = "claude-sonnet-5-5"
 STRUCTURE_PROMPT = "structure_reading"
+FILE_TYPE_PROMPT = "file_type"
 STRUCTURE_STEP = guards.STRUCTURE_STEP
 STRUCTURE_MAX_TOKENS = 4000
 STRUCTURE_INPUT_CAP = 4000          # tokens of structure text plus item list, by the provider's token counter
@@ -1481,6 +1482,19 @@ def structure_text_problem(text: Any, structure_type: str, context: dict, mappin
     if structure_redact.has_word(text, str(context.get("client_name") or "").strip()):
         return "client_name"
     company = context.get("company_name")
+    if structure_type == FILE_TYPE:
+        problem = structure_redact.file_type_text_problem(text)
+        if problem:
+            return problem
+        withheld = structure_redact.file_type_withheld(context)
+        for sheet in structure_redact.parse_file_type_text(text):
+            cells = structure_redact.file_type_cells(sheet)
+            if any(len(c["text"]) > STRUCTURE_CELL_MAX for c in cells):
+                return "cell_too_long"
+            redacted, _ = structure_redact.redact_structure(cells, company, mapping, withheld)
+            if redacted != cells:
+                return "redaction_changed"
+        return None
     if structure_type == "column_mapping":
         problem = structure_redact.column_text_problem(text)
         if problem:
@@ -1526,7 +1540,13 @@ def _schema_check(exc: Exception) -> str:
 
 def parse_structure_reply(reply: str, structure_type: str, text: str):
     """The validated reply for the type Python sent, or raise GatewayError("parse_failed"): a labelling reply for
-    a deck structure (parse_labelling_reply), the column-mapping reply for a column mapping."""
+    a deck structure (parse_labelling_reply), the column-mapping reply for a column mapping, the file-type word for a file."""
+    if structure_type == FILE_TYPE:
+        try:
+            return FileTypeReply.model_validate(json.loads((reply or "").strip()))
+        except Exception as exc:
+            raise GatewayError("parse_failed", f"reply did not match the schema: {type(exc).__name__}",
+                               check=_schema_check(exc))
     if structure_type != "column_mapping":
         return parse_labelling_reply(reply, structure_type, text)
     try:
@@ -1637,6 +1657,8 @@ def _structure_result(status, structure_type, reason=None, **fields) -> Structur
 
 def _reading(output: dict) -> dict:
     """The fields of a stored or new reply: a deck structure's labels and pairs, a column mapping's items."""
+    if "file_type" in output:
+        return {"file_type": output["file_type"]}
     if "labels" in output:
         return {"labels": output["labels"], "pairs": output.get("pairs") or []}
     return {"items": output.get("items") or []}
@@ -1665,7 +1687,7 @@ async def read_structure(
     """
     import asyncio
     sleep = sleep or asyncio.sleep
-    if structure_type not in STRUCTURE_TYPES:
+    if structure_type not in STRUCTURE_TYPES and structure_type != FILE_TYPE:
         return _structure_result("not_read", structure_type, f"unknown structure type {structure_type!r}")
     context = await load_structure_context(db, audit_id)
     if context.get("structure_reading_consent") is not True:
@@ -1676,7 +1698,7 @@ async def read_structure(
         logger.warning("structure refused: run_id=%s step=%s reason=%s", audit_id, STRUCTURE_STEP, problem)
         return _structure_result("refused", structure_type, f"refused: {problem}")
     try:
-        prompt = await prompt_store.load(db, STRUCTURE_PROMPT)
+        prompt = await prompt_store.load(db, FILE_TYPE_PROMPT if structure_type == FILE_TYPE else STRUCTURE_PROMPT)
     except prompt_store.PromptMissing:
         return _structure_result("not_read", structure_type, NOT_READ)
     if STRUCTURE_MODEL not in MODEL_PRICING_USD:
@@ -1690,7 +1712,7 @@ async def read_structure(
         if hit:
             await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version,
                            model=STRUCTURE_MODEL, input_tokens=0, output_tokens=0, estimated_cost_usd=0.0,
-                           cache_hit=True, status="cache_hit", content_hash=digest, deck_id=deck_id)
+                           cache_hit=True, status="cache_hit", content_hash=digest, deck_id=deck_id, structure_type=structure_type)
             return _structure_result("read", structure_type, model_type=hit.get("model_type"), cache_hit=True,
                                      **_reading(hit["output"]), **base)
 
@@ -1709,7 +1731,7 @@ async def read_structure(
         code, status, kind = exc.reason, exc.status, exc.error_type
         await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version, model=STRUCTURE_MODEL,
                        input_tokens=0, output_tokens=0, estimated_cost_usd=0.0, cache_hit=False, status=code,
-                       content_hash=digest, deck_id=deck_id, http_status=status, error_type=kind)
+                       content_hash=digest, deck_id=deck_id, http_status=status, error_type=kind, structure_type=structure_type)
         logger.warning("structure not read: run_id=%s step=%s hash=%s reason=%s status=%s type=%s", audit_id,
                        STRUCTURE_STEP, digest, code, status or "-", kind or "-")
         return _structure_result("not_read", structure_type, NOT_READ, **base)
@@ -1729,7 +1751,7 @@ async def read_structure(
         except guards.GuardRefusal as refusal:
             await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version,
                            model=STRUCTURE_MODEL, input_tokens=0, output_tokens=0, estimated_cost_usd=0.0,
-                           cache_hit=False, status=refusal.reason, content_hash=digest, deck_id=deck_id)
+                           cache_hit=False, status=refusal.reason, content_hash=digest, deck_id=deck_id, structure_type=structure_type)
             cap = CAP_REASONS.get(refusal.reason, "cap")          # a closed word, never the guard's message
             logger.warning("structure not read: run_id=%s step=%s hash=%s reason=%s status=- type=-", audit_id,
                            STRUCTURE_STEP, digest, cap)
@@ -1747,7 +1769,7 @@ async def read_structure(
             await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version,
                            model=STRUCTURE_MODEL, input_tokens=billed[0], output_tokens=billed[1],
                            estimated_cost_usd=cost, cache_hit=False, status=code, content_hash=digest,
-                           deck_id=deck_id, http_status=status, error_type=kind)
+                           deck_id=deck_id, http_status=status, error_type=kind, structure_type=structure_type)
             logger.warning("structure not read: run_id=%s step=%s hash=%s tokens=%d/%d cost=%.6f reason=%s "
                            "status=%s type=%s check=%s", audit_id, STRUCTURE_STEP, digest, billed[0], billed[1], cost,
                            code, status or "-", kind or "-", check)
@@ -1761,7 +1783,7 @@ async def read_structure(
                                input_tokens=in_tok, output_tokens=out_tok, cost=cost, deck_id=deck_id, page=page)
         await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version, model=STRUCTURE_MODEL,
                        input_tokens=in_tok, output_tokens=out_tok, estimated_cost_usd=cost, cache_hit=False,
-                       status="ok", content_hash=digest, deck_id=deck_id)
+                       status="ok", content_hash=digest, deck_id=deck_id, structure_type=structure_type)
         logger.info("structure read: run_id=%s step=%s hash=%s tokens=%d/%d cost=%.6f type_change=%s",
                     audit_id, STRUCTURE_STEP, digest, in_tok, out_tok, cost,
                     f"{structure_type}->{model_type}" if model_type else "none")
@@ -1822,7 +1844,7 @@ async def usage_for_run(db, run_id: str) -> UsageResponse:
     for r in rows:
         name = r.get("step")
         if name == STRUCTURE_STEP:
-            name = "deck_structure" if r.get("deck_id") else "column_mapping"
+            name = "deck_structure" if r.get("deck_id") else FILE_TYPE if r.get("structure_type") == FILE_TYPE else "column_mapping"
         step = by_step.setdefault(name, DeckUsage())
         step.calls += 0 if r.get("cache_hit") else 1
         step.cache_hits += 1 if r.get("cache_hit") else 0

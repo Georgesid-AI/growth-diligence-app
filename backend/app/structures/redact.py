@@ -244,6 +244,95 @@ def column_text_problem(text: str) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
+# The file-type text (chat-upload.md section 19): what the model reads to tell revenue, CRM and P&L files apart when the
+# rules cannot. Per sheet: its name, the title rows above its header, its header row, and the masked sample of the
+# column-mapping text (up to 3 numbers or dates per numeric or date column, a profile per text column). One line each:
+#     s1: Revenue
+#     s1 title r2c3: Revenue through 31 December 2028
+#     s1 header r5c3: 2023
+#     s1 c3 sample: 1200
+#     s1 c1 profile: distinct 8, typical length 11, shape Aa a
+# No text cell value of a data row is ever on this path.
+# ---------------------------------------------------------------------------
+FILE_MAX_SHEETS = 6
+FILE_MAX_TITLE_ROWS = 6
+FILE_MAX_COLUMNS = 40
+_FT_SHEET = re.compile(r"^s(?P<s>\d+): (?P<text>.+)$")
+_FT_TITLE = re.compile(r"^s(?P<s>\d+) title r(?P<row>\d+)c(?P<col>\d+): (?P<text>.+)$")
+_FT_HEADER = re.compile(r"^s(?P<s>\d+) header r(?P<row>\d+)c(?P<col>\d+): (?P<text>.+)$")
+_FT_SAMPLE = re.compile(r"^s(?P<s>\d+) c(?P<col>\d+) sample: (?P<value>.+)$")
+_FT_PROFILE = re.compile(r"^s(?P<s>\d+) c(?P<col>\d+) profile: distinct (?P<distinct>\d+), typical length (?P<length>\d+), "
+                         r"shape (?P<shape>[Aa0 \-_./@:,#()+&']{1,20})$")
+
+
+def file_type_text(sheets: List[Dict]) -> str:
+    """The text for [{"name", "titles": [cell], "headers": [cell], "samples": {col: [v]}, "profiles": {col: {...}}}]."""
+    lines = []
+    for k, sheet in enumerate(sheets, 1):
+        lines.append(f"s{k}: {cell_text({'text': sheet['name']})}")
+        lines += [f"s{k} title r{c['row']}c{c['col']}: {cell_text(c)}" for c in sheet["titles"] if cell_text(c)]
+        lines += [f"s{k} header r{c['row']}c{c['col']}: {cell_text(c)}" for c in sheet["headers"] if cell_text(c)]
+        lines += [f"s{k} c{col} sample: {v}" for col in sorted(sheet["samples"]) for v in sheet["samples"][col]]
+        lines += [f"s{k} c{col} profile: distinct {p['distinct']}, typical length {p['length']}, shape {p['shape']}"
+                  for col, p in sorted(sheet["profiles"].items())]
+    return "\n".join(lines)
+
+
+def parse_file_type_text(text: str) -> Optional[List[Dict]]:
+    """The sheets of a file-type text, or None when a line is of no kind above or a sheet line is out of order."""
+    sheets: Dict[int, Dict] = {}
+    for line in (text or "").split("\n"):
+        for kind, rx in (("name", _FT_SHEET), ("titles", _FT_TITLE), ("headers", _FT_HEADER), ("sample", _FT_SAMPLE),
+                         ("profile", _FT_PROFILE)):
+            m = rx.match(line)
+            if m:
+                break
+        else:
+            return None
+        k = int(m.group("s"))
+        if kind == "name":
+            if k in sheets or k != len(sheets) + 1:
+                return None
+            sheets[k] = {"name": m.group("text"), "titles": [], "headers": [], "samples": {}, "profiles": {}}
+            continue
+        if k not in sheets:
+            return None
+        if kind in ("titles", "headers"):
+            sheets[k][kind].append({"row": int(m.group("row")), "col": int(m.group("col")), "text": m.group("text")})
+        elif kind == "sample":
+            sheets[k]["samples"].setdefault(int(m.group("col")), []).append(m.group("value"))
+        else:
+            sheets[k]["profiles"][int(m.group("col"))] = {"distinct": int(m.group("distinct")),
+                                                           "length": int(m.group("length")), "shape": m.group("shape")}
+    return list(sheets.values()) or None
+
+
+def file_type_cells(sheet: Dict) -> List[Dict]:
+    """The text cells of one sheet in the order redaction reads them: the name (row 0, column 0), titles, headers."""
+    return [{"row": 0, "col": 0, "text": sheet["name"]}] + list(sheet["titles"]) + list(sheet["headers"])
+
+
+def file_type_text_problem(text: str) -> Optional[str]:
+    """Why a file-type text may not reach the model, or None: a line of no kind, more than 6 sheets, 6 title rows
+    or 40 columns, a sample that is not a number or a date, or a column with both a sample and a profile."""
+    sheets = parse_file_type_text(text)
+    if sheets is None:
+        return "not_cells"
+    if len(sheets) > FILE_MAX_SHEETS or any(len({c["row"] for c in s["titles"]}) > FILE_MAX_TITLE_ROWS for s in sheets):
+        return "too_many_header_rows"
+    if any(len({c["col"] for c in s["headers"]}) > FILE_MAX_COLUMNS or len({c["row"] for c in s["headers"]}) > 1
+           for s in sheets):
+        return "too_many_header_rows"
+    if any(len(v) > MAX_SAMPLES for s in sheets for v in s["samples"].values()):
+        return "too_many_samples"
+    if any(not SAMPLE_VALUE.match(v) for s in sheets for values in s["samples"].values() for v in values):
+        return "text_value"
+    if any(set(s["samples"]) & set(s["profiles"]) for s in sheets):
+        return "text_value"
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Redaction (spec section 3)
 # ---------------------------------------------------------------------------
 EMAIL, PHONE, PERSON, REDACTED = "[email]", "[phone]", "[person]", "[redacted]"
@@ -429,6 +518,13 @@ def withheld_values(audit: Dict) -> Tuple[str, ...]:
     """The audit's client name: never sent to the model, so a cell holding it is sent with [redacted] in its place."""
     return tuple(str(audit.get(k)).strip() for k in ("client_name",)
                  if audit.get(k) is not None and str(audit.get(k)).strip())
+
+
+def file_type_withheld(audit: Dict) -> Tuple[str, ...]:
+    """What the file-type text withholds (chat-upload.md section 19): the client name and the target company's own name,
+    which often stands in a sheet name or a title row ("<Company> LTD - April 2024 Report"). Unit markers are untouched."""
+    company = str(audit.get("company_name") or "").strip()
+    return withheld_values(audit) + ((company,) if company else ())
 
 
 def withhold_cells(cells: List[Dict], withheld: Tuple[str, ...]) -> Tuple[List[Dict], int]:

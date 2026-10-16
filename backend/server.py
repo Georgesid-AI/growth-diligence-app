@@ -123,9 +123,10 @@ def df_to_records(df: pd.DataFrame):
     return recs
 
 
-def normalize(rows: list, dtype: str, mapping: dict, row_numbers: Optional[list] = None) -> pd.DataFrame:
+def normalize(rows: list, dtype: str, mapping: dict, row_numbers: Optional[list] = None, unit_scale: int = 1) -> pd.DataFrame:
     """The stored rows read through a mapping. `_row` is the row's number in the sheet it came from
-    (`row_numbers`, kept at upload); without it the header is taken to be row 1 with no blank lines."""
+    (`row_numbers`, kept at upload); without it the header is taken to be row 1 with no blank lines. `unit_scale` is
+    1,000 when the title rows of the file said the figures are in thousands: the money fields are multiplied by it."""
     if not rows:
         return pd.DataFrame()
     raw = pd.DataFrame(rows)
@@ -143,7 +144,7 @@ def normalize(rows: list, dtype: str, mapping: dict, row_numbers: Optional[list]
                 date_formats[f]["row_ids"] = out.loc[date_formats[f].pop("index"), "_row"].tolist()
     for f in defs["numeric"]:
         if f in out.columns:
-            out[f] = pd.to_numeric(out[f], errors="coerce")
+            out[f] = pd.to_numeric(out[f], errors="coerce") * (unit_scale or 1)
     out.attrs["date_formats"] = {f: v for f, v in date_formats.items() if v}
     return out
 
@@ -195,7 +196,7 @@ def candidate_views(datasets: dict) -> dict:
         for as_type in FIELD_DEFS:
             mapping = (d.get("mapping") or {}) if as_type == dtype else suggest_mapping(as_type, d.get("columns") or [])
             mapping = {f: c for f, c in mapping.items() if c}
-            views[as_type] = {"mapping": mapping, "frame": normalize(d.get("rows") or [], as_type, mapping, d.get("row_numbers"))}
+            views[as_type] = {"mapping": mapping, "frame": normalize(d.get("rows") or [], as_type, mapping, d.get("row_numbers"), d.get("unit_scale") or 1)}
         files[dtype] = {"file": d.get("file"), "sheet": d.get("sheet"), "views": views}
     return files
 
@@ -658,8 +659,17 @@ def _dataset_view(ds: dict, version: Optional[int] = None, status: str = "ok") -
         "fields": {"required": list(FIELD_DEFS[dtype]["required"]), "optional": list(FIELD_DEFS[dtype]["optional"])},
         "mapping": mapping, "suggested_mapping": mapping, "mapping_source": ds.get("mapping_source") or _source_map(states),
         "fx": ds.get("fx") or {}, "billing_terms": ds.get("billing_terms") or {}, "preview": ds.get("preview") or [],
-        "saved": bool(ds.get("mapped_at")), "sheet": ds.get("sheet"),
+        "saved": bool(ds.get("mapped_at")), "sheet": ds.get("sheet"), "type_source": ds.get("type_source"),
+        "unit_note": ds.get("unit_note"), "looks": ds.get("looks"), "miss": _miss(dtype, states, mapping, ds.get("looks")),
     }
+
+
+def _miss(dtype: str, states: list, mapping: dict, looks: Optional[dict]) -> Optional[dict]:
+    """The file cannot supply the type's required fields (a summary or forecast table, or at most half of them mapped): the
+    screen shows one message in place of the mapping rows. Closed words and counts only (chat-upload.md section 19)."""
+    if not cr.is_miss(dtype, mapping, looks):
+        return None
+    return {"missing": cr.missing_required(dtype, states), "looks": looks or {"shape": "table", "rows": 0, "columns": len(states)}}
 
 
 def _months_for(dtype: str, states: list, columns: list, rows: list) -> Optional[dict]:
@@ -691,6 +701,46 @@ async def _ask_model(audit: dict, dtype: str, sheet: "cr.Sheet", rows: list, sta
     return cr.apply_model(states, sent, proposed), {"status": "read", "reason": read.reason}
 
 
+async def _stored_file_type(audit_id: str, digest: str) -> Optional[dict]:
+    """The type the model gave this file (by its hash) earlier in this audit, kept with the saved mappings."""
+    return await db[structures.COLUMN_MAPPINGS_COLLECTION].find_one(
+        {"audit_id": audit_id, "kind": "file_type", "file_hash": digest}, {"_id": 0})
+
+
+def _file_type_sheets(audit: dict, sheets: list, mapping: dict) -> str:
+    """The text the model reads to tell the file's type (chat-upload.md section 19): sheet names, the title rows above
+    each header, the header row and the masked sample. Built in memory; never stored, never logged."""
+    parts = []
+    for sheet in sheets[:structures.redact.FILE_MAX_SHEETS]:
+        rows = df_to_records(sheet.frame.head(structures.MAPPING_SAMPLE_ROWS))
+        parts.append(structures.file_type_sheet(
+            sheet.sheet, sheet.titles, sheet.header_row, sheet.headers, sheet.columns, rows,
+            tuple(cr.customer_columns(sheet, cr.analyse("revenue", sheet)[0])) if not sheet.wide else (), sheet.raw_headers))
+    return structures.file_type_text(parts, audit.get("company_name"), mapping, structures.redact.file_type_withheld(audit))
+
+
+async def _ask_file_type(audit: dict, sheets: list, digest: str):
+    """The rules found no type at 80: the model is asked once for the file, with the consent of the audit, and the answer is
+    kept by the file's hash (it is not asked again for the same bytes). Returns (type or None, status). A file the model
+    cannot place, a failure, a timeout or no consent leaves the type to the analyst (S6)."""
+    if audit.get("structure_reading_consent") is not True:
+        return None, "no_consent"
+    kept = await _stored_file_type(audit["id"], digest)
+    if kept:
+        return (kept.get("file_type") if kept.get("file_type") in DTYPE_ORDER else None), "stored"
+    text = _file_type_sheets(audit, sheets, await llm_redaction.get_map(db, audit["id"]))
+    try:
+        read = await asyncio.wait_for(llm_gateway.read_structure(db, audit["id"], text, "file_type"), MAPPING_AI_SECONDS)
+    except asyncio.TimeoutError:
+        return None, "timeout"
+    if read.status != "read":
+        return None, read.status
+    await db[structures.COLUMN_MAPPINGS_COLLECTION].insert_one({
+        "audit_id": audit["id"], "kind": "file_type", "file_hash": digest, "file_type": read.file_type,
+        "saved_at": usage_mod.now()})
+    return (read.file_type if read.file_type in DTYPE_ORDER else None), "read"
+
+
 async def _ingest(audit_id: str, upload: UploadFile, dtype: Optional[str], replace: bool, background: BackgroundTasks):
     if dtype is not None and dtype not in FIELD_DEFS:
         raise HTTPException(400, "Unknown dataset type")
@@ -704,18 +754,31 @@ async def _ingest(audit_id: str, upload: UploadFile, dtype: Optional[str], repla
         await _usage_update(audit_id, lambda u: usage_mod.record_rejected(u, ext))
         raise HTTPException(400, XLS_REFUSED if ext == "xls" else "Only .xlsx and .csv files are supported")
     try:
-        sheet = await run_in_threadpool(cr.read_sheet, content, filename)
+        sheets = await run_in_threadpool(cr.read_workbook, content, filename)
     except cr.SheetError:
         raise HTTPException(400, "This file could not be read as a sheet")
-    detected, _ = cr.detect_type(sheet)
-    chosen = dtype or detected
-    if chosen is None:
-        return {"status": "unknown_type", "file": filename, "size_bytes": len(content), "row_count": len(sheet.frame),
-                "ext": ext, "types": list(DTYPE_ORDER)}
     digest = hashlib.sha256(content).hexdigest()
+    detected, _, _ = cr.detect_workbook(sheets)
+    chosen, source, type_status = dtype or detected, "you" if dtype else "rules", None
+    if chosen is None:
+        chosen, type_status = await _ask_file_type(a, sheets, digest)
+        source = "ai"
+    if chosen is None:
+        return {"status": "unknown_type", "file": filename, "size_bytes": len(content), "row_count": len(sheets[0].frame),
+                "ext": ext, "types": list(DTYPE_ORDER), "sheets": len(sheets)}
+    return await _load(a, audit_id, chosen, cr.best_sheet(sheets, chosen), filename, len(content), digest, replace,
+                       background, source, detected == chosen, type_status)
+
+
+async def _load(a: dict, audit_id: str, chosen: str, sheet: "cr.Sheet", filename: str, size: int, digest: str, replace: bool,
+                background: Optional[BackgroundTasks], type_source: str, detected: bool, type_status: Optional[str] = None,
+                drop: Optional[str] = None):
+    """A sheet stored as the audit's file of one type: the saved mapping of its bytes or its headers, else the rules, then
+    the model for the columns the rules could not decide (unless the sheet is a summary table, which no column mapping can
+    read), then the analyst. `drop` is the type this file was stored as before, when the analyst changed its type."""
     existing = await db.datasets.find_one({"audit_id": audit_id, "dtype": chosen}, {"_id": 0, "rows": 0})
     versions = await _versions(audit_id, chosen)
-    if existing and existing.get("file_hash") == digest:
+    if existing and existing.get("file_hash") == digest and drop is None:
         same = [v for v in versions if v.get("file_hash") == digest]
         if same:        # the latest saved version is applied again: no rules, no model, no clicks
             states = cr.states_from_saved(chosen, sheet, _saved_columns(same[-1]), scale=False)
@@ -730,15 +793,20 @@ async def _ingest(audit_id: str, upload: UploadFile, dtype: Optional[str], repla
     key = structures.header_key(chosen, sheet.columns)
     same = [v for v in versions if v.get("file_hash") == digest]
     headers = [v for v in versions if v.get("header_key") == key]
+    looks = cr.describe(sheet)
     ai_reading = {"status": "rules", "reason": None}
-    if same or headers:      # a saved mapping: no rules run for the columns, no model call (section 5)
-        states = cr.states_from_saved(chosen, sheet, _saved_columns((same or headers)[-1]), scale=not same)
+    # A saved mapping that is itself a miss (at most half of the required fields mapped, as when every column was left
+    # out as "Not used") is no mapping to reuse: the rules and the model run again for this file.
+    reusable = [v for v in (same or headers)
+                if not cr.is_miss(chosen, {c.get("field"): c["column"] for c in _saved_columns(v) if c.get("field")}, looks)]
+    if reusable and (same or headers):
+        states = cr.states_from_saved(chosen, sheet, _saved_columns(reusable[-1]), scale=not any(v in same for v in reusable))
         ai_reading = {"status": "stored", "reason": None}
     else:
         proposals, open_fields = cr.analyse(chosen, sheet)
         states = cr.states_from_rules(proposals)
         sent = cr.to_send(states)
-        if sent:
+        if sent and looks["shape"] != "summary":
             states, ai_reading = await _ask_model(a, chosen, sheet, rows, states, sent, proposals, open_fields)
             await _usage_update(audit_id, lambda u: u["steps"]["mapping_ai"].__setitem__(
                 ai_reading["status"], u["steps"]["mapping_ai"].get(ai_reading["status"], 0) + 1))
@@ -748,9 +816,12 @@ async def _ingest(audit_id: str, upload: UploadFile, dtype: Optional[str], repla
            "row_count": len(rows), "mapping": mapping, "fx": (existing or {}).get("fx") or {},
            "billing_terms": {}, "preview": rows[:8],
            "mapping_source": _source_map(states), "ai_reading": ai_reading, "columns_state": states,
-           "months": _months_for(chosen, states, sheet.columns, rows), "file_hash": digest, "size_bytes": len(content),
-           "uploaded_at": usage_mod.now(), "mapped_at": None}
+           "months": _months_for(chosen, states, sheet.columns, rows), "file_hash": digest, "size_bytes": size,
+           "uploaded_at": usage_mod.now(), "mapped_at": None, "type_source": type_source, "looks": looks,
+           "unit_scale": sheet.unit_scale, "unit_note": sheet.unit_note, "wide": sheet.wide, "raw_headers": sheet.raw_headers}
     await db.datasets.replace_one({"audit_id": audit_id, "dtype": chosen}, doc, upsert=True)
+    if drop and drop != chosen:
+        await db.datasets.delete_one({"audit_id": audit_id, "dtype": drop})
 
     def count(u):
         usage_mod.record_upload(u, chosen)
@@ -761,8 +832,8 @@ async def _ingest(audit_id: str, upload: UploadFile, dtype: Optional[str], repla
     await _usage_update(audit_id, count)
     version = await _commit_mapping(audit_id, chosen, background)
     await _mark_stale_and_maybe_recompute(audit_id)
-    logger.info("upload: run_id=%s type=%s detected=%s pending=%d ai=%s", audit_id, chosen, detected == chosen,
-                cr.pending_count(states), ai_reading["status"])
+    logger.info("upload: run_id=%s type=%s detected=%s source=%s pending=%d ai=%s type_ai=%s", audit_id, chosen, detected,
+                type_source, cr.pending_count(states), ai_reading["status"], type_status or "-")
     stored = await db.datasets.find_one({"audit_id": audit_id, "dtype": chosen}, {"_id": 0, "rows": 0})
     return _dataset_view(stored, version)
 
@@ -791,6 +862,33 @@ async def upload_chat_file(audit_id: str, background: BackgroundTasks, file: Upl
     """One file of the chat: its type is detected unless `dtype` is given. Unknown: nothing is stored. A type
     already loaded with other bytes: 409 unless `replace` (docs/specs/chat-upload.md section 3)."""
     return await _ingest(audit_id, file, dtype, replace, background)
+
+
+class RetypeBody(BaseModel):
+    to: str
+    replace: bool = False
+
+
+@api.post("/audits/{audit_id}/datasets/{dtype}/type")
+async def change_dataset_type(audit_id: str, dtype: str, body: RetypeBody, background: BackgroundTasks):
+    """The analyst changes the type a stored file was read as (chat-upload.md section 19). The stored sheet is read again as the
+    new type: the rules, then the model for the columns they cannot decide. The file is not uploaded again, and no
+    model is asked what the file is. A file already stored under the new type needs `replace`."""
+    if dtype not in FIELD_DEFS or body.to not in FIELD_DEFS:
+        raise HTTPException(400, "Unknown dataset type")
+    a = await db.audits.find_one({"id": audit_id})
+    ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype})
+    if not a or not ds:
+        raise HTTPException(404, "Dataset not found")
+    if body.to == dtype:
+        return _dataset_view({k: v for k, v in ds.items() if k not in ("_id", "rows")}, None)
+    columns = ds.get("columns") or []
+    frame = pd.DataFrame([[r.get(c) for c in columns] for r in ds.get("rows") or []], columns=columns, dtype=object)
+    sheet = cr.Sheet(ds.get("sheet") or "", ds.get("header_row") or 1, columns, ds.get("headers") or columns, frame,
+                     ds.get("row_numbers") or [], [], ds.get("unit_scale") or 1, ds.get("unit_note"), ds.get("wide"),
+                     ds.get("raw_headers"))
+    return await _load(a, audit_id, body.to, sheet, ds.get("file") or "", ds.get("size_bytes") or 0, ds.get("file_hash") or "",
+                       body.replace, background, "you", False, drop=dtype)
 
 
 @api.post("/audits/{audit_id}/datasets/{dtype}/upload")
@@ -2196,9 +2294,12 @@ async def _run_compute(audit_id: str) -> dict:
         if states is not None and cr.missing_required(d["dtype"], states):
             raise HTTPException(409, "A required field is not mapped")
 
-    rev = normalize(ds["revenue"]["rows"], "revenue", ds["revenue"]["mapping"], ds["revenue"].get("row_numbers"))
-    crm = normalize(ds["crm"]["rows"], "crm", ds["crm"]["mapping"], ds["crm"].get("row_numbers")) if "crm" in ds else pd.DataFrame()
-    pnl = normalize(ds["pnl"]["rows"], "pnl", ds["pnl"]["mapping"], ds["pnl"].get("row_numbers")) if "pnl" in ds else pd.DataFrame()
+    def read(dtype):
+        d = ds[dtype]
+        return normalize(d["rows"], dtype, d["mapping"], d.get("row_numbers"), d.get("unit_scale") or 1)
+    rev = read("revenue")
+    crm = read("crm") if "crm" in ds else pd.DataFrame()
+    pnl = read("pnl") if "pnl" in ds else pd.DataFrame()
 
     fx = merged_fx(a, ds["revenue"].get("fx"))
     config = {

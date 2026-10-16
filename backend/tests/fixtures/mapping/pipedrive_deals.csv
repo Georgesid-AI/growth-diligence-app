@@ -1,0 +1,19 @@
+Deal - ID,Deal - Title,Deal - Value,Deal - Currency of Deal value,Deal - Status,Deal - Stage,Deal - Owner,Deal - Deal created,Deal - Expected close date,Deal - Deal closed on,Organization - Name
+700,Order 0,3000,EUR,won,Proposal made,Owner C,2024-01-04,2024-01-28,2024-01-25,Alder Works
+701,Order 1,3120,EUR,lost,Proposal made,Owner C,2024-02-04,2024-02-28,,Birch Labs
+702,Order 2,3240,EUR,open,Proposal made,Owner C,2024-03-04,2024-03-28,,Cedar Foods
+703,Order 3,3360,EUR,won,Proposal made,Owner C,2024-04-04,2024-04-28,2024-04-25,Dune Print
+704,Order 4,3480,EUR,won,Proposal made,Owner C,2024-05-04,2024-05-28,2024-05-25,Elm Studio
+705,Order 5,3600,EUR,lost,Proposal made,Owner C,2024-06-04,2024-06-28,,Fern Tools
+706,Order 6,3720,EUR,open,Proposal made,Owner C,2024-07-04,2024-07-28,,Alder Works
+707,Order 7,3840,EUR,won,Proposal made,Owner C,2024-08-04,2024-08-28,2024-08-25,Birch Labs
+708,Order 8,3960,EUR,won,Proposal made,Owner C,2024-09-04,2024-09-28,2024-09-25,Cedar Foods
+709,Order 9,4080,EUR,lost,Proposal made,Owner C,2024-10-04,2024-10-28,,Dune Print
+710,Order 10,4200,EUR,open,Proposal made,Owner C,2024-11-04,2024-11-28,,Elm Studio
+711,Order 11,4320,EUR,won,Proposal made,Owner C,2024-12-04,2024-12-28,2024-12-25,Fern Tools
+712,Order 12,4440,EUR,won,Proposal made,Owner C,2024-01-04,2024-01-28,2024-01-25,Alder Works
+713,Order 13,4560,EUR,lost,Proposal made,Owner C,2024-02-04,2024-02-28,,Birch Labs
+714,Order 14,4680,EUR,open,Proposal made,Owner C,2024-03-04,2024-03-28,,Cedar Foods
+715,Order 15,4800,EUR,won,Proposal made,Owner C,2024-04-04,2024-04-28,2024-04-25,Dune Print
+716,Order 16,4920,EUR,won,Proposal made,Owner C,2024-05-04,2024-05-28,2024-05-25,Elm Studio
+717,Order 17,5040,EUR,lost,Proposal made,Owner C,2024-06-04,2024-06-28,,Fern Tools

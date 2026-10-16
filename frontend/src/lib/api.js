@@ -70,6 +70,9 @@ export const uploadChatFile = (id, file, { dtype, replace } = {}) => {
 export const getDatasets = (id) => api.get(`/audits/${id}/datasets`, { timeout: READ_TIMEOUT_MS }).then((r) => r.data.datasets);
 export const decideColumns = (id, dtype, decisions) =>
   api.post(`/audits/${id}/datasets/${dtype}/decisions`, decisions).then((r) => r.data);
+// The analyst changes the type a stored file was read as; a type already loaded needs replace (chat-upload.md section 19).
+export const changeDatasetType = (id, dtype, to, replace = false) =>
+  api.post(`/audits/${id}/datasets/${dtype}/type`, { to, replace }).then((r) => r.data);
 export const getBlockers = (id) => api.get(`/audits/${id}/blockers`).then((r) => r.data.blockers);
 // Usage counters: the screen the analyst is on, or the extension of a file the browser refused. Never a name or a value.
 export const reportUsage = (id, event) => api.post(`/audits/${id}/usage`, event).then((r) => r.data).catch(() => null);
