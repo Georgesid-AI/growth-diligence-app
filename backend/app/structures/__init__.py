@@ -147,6 +147,39 @@ def column_mapping_text(columns: List[str], rows: List[Dict], company_name: Opti
     return redact.column_text(headers, samples, profiles)
 
 
+FILE_TYPE_CELL_MAX = 200           # a longer title is prose: it is cut (the gateway refuses a cell over 200 characters)
+
+
+def file_type_sheet(name: str, titles: List[Tuple[int, int, str]], header_row: int, headers: List[str], columns: List[str],
+                    rows: List[Dict], customer_columns: Tuple[str, ...] = (), raw_headers: Optional[List[str]] = None) -> Dict:
+    """One sheet as the file-type text reads it (chat-upload.md section 19): its name, the title rows nearest the header
+    (at most 6 rows), the header row, and the masked sample of the column mapping (3 numbers or dates per numeric or date
+    column, a profile per text column, from the first 20 rows). A wide sheet (periods across the columns) sends its header as
+    written and the profile of its first column only: its other columns are the periods."""
+    keep = sorted({r for r, _, _ in titles})[-redact.FILE_MAX_TITLE_ROWS:]
+    cells = [{"row": r, "col": c, "text": t[:FILE_TYPE_CELL_MAX]} for r, c, t in titles if r in keep]
+    shown = raw_headers if raw_headers is not None else headers
+    head = [{"row": header_row, "col": c, "text": h[:FILE_TYPE_CELL_MAX]} for c, h in enumerate(shown[:redact.FILE_MAX_COLUMNS], 1) if h]
+    _, samples, profiles = column_mapping_input(columns, rows, customer_columns, None)
+    if raw_headers is not None:
+        samples, profiles = {}, {1: profiles[1]} if 1 in profiles else {}
+    cols = {c for c in range(1, redact.FILE_MAX_COLUMNS + 1)}
+    return {"name": name[:FILE_TYPE_CELL_MAX], "titles": cells, "headers": head,
+            "samples": {c: v for c, v in samples.items() if c in cols}, "profiles": {c: v for c, v in profiles.items() if c in cols}}
+
+
+def file_type_text(sheets: List[Dict], company_name: Optional[str], mapping: Dict[str, str],
+                   withheld: Tuple[str, ...] = (), max_sheets: int = redact.FILE_MAX_SHEETS) -> str:
+    """The redacted text the model reads to tell a file's type: the sheets of file_type_sheet, each with the redaction of
+    every text cell (sheet name, title rows, headers) that column mappings get. Built in memory, never stored."""
+    out = []
+    for sheet in sheets[:max_sheets]:
+        cells, _ = redact.redact_structure(redact.file_type_cells(sheet), company_name, mapping, withheld)
+        out.append({**sheet, "name": cells[0]["text"], "titles": cells[1:1 + len(sheet["titles"])],
+                    "headers": cells[1 + len(sheet["titles"]):]})
+    return redact.file_type_text(out)
+
+
 def proposed_mapping(items: List[Dict], columns: List[str], fields: List[str]) -> Dict[str, str]:
     """{field: column} from a column-mapping reply: each item names a field and cites the header cell
     of a column. Fields of another file type, unknown cells and a column proposed twice are left out."""

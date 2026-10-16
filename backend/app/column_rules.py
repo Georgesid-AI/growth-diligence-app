@@ -9,7 +9,7 @@ import csv
 import io
 import re
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Dict, List, Optional, Tuple
 
@@ -21,8 +21,10 @@ import pandas as pd
 FIELD_DEFS = {
     "revenue": {
         "required": {
-            "customer_id": ["customer", "customer id", "account", "client", "cust"],
-            "invoice_date": ["invoice date", "date", "billing date", "posted"],
+            "customer_id": ["customer", "customer id", "account", "client", "cust", "contact", "contact name", "contactname",
+                            "bill to"],
+            "invoice_date": ["invoice date", "date", "billing date", "posted", "invoicedate", "created", "created utc",
+                             "issue date"],
             "amount": ["amount", "value", "revenue", "total", "arr", "mrr"],
             "currency": ["currency", "ccy", "curr"],
         },
@@ -37,11 +39,11 @@ FIELD_DEFS = {
     },
     "crm": {
         "required": {
-            "deal_id": ["deal id", "opportunity id", "deal", "id"],
-            "created_date": ["created", "create date", "created date", "open date"],
-            "close_date": ["close date", "closed", "won date", "close"],
-            "stage": ["stage", "status", "outcome"],
-            "amount": ["amount", "value", "deal value", "acv"],
+            "deal_id": ["deal id", "opportunity id", "deal", "id", "record id"],
+            "created_date": ["created", "create date", "created date", "open date", "deal created", "deal deal created"],
+            "close_date": ["close date", "closed", "won date", "close", "deal deal closed on"],
+            "stage": ["stage", "status", "outcome", "deal stage", "pipeline stage"],
+            "amount": ["amount", "value", "deal value", "acv", "deal amount"],
         },
         "optional": {
             "segment": ["segment", "tier", "size"],
@@ -65,7 +67,7 @@ FIELD_DEFS = {
 
 MAPPING_THRESHOLD = 80          # confidence at or above this, with no tie, is accepted without a click (Q3)
 HEADER_SCAN_ROWS = 10           # the header row is looked for in the first 10 sheet rows
-DETECTION_MIN_SHARE = 0.5       # a type is detected when the rules map at least half of its required fields
+DETECTION_MIN_SHARE = 0.8       # the rules detect a type at 80 or more (2026-10-16; before, half of its fields)
 
 _UNNAMED = re.compile(r"^Unnamed: \d+$")
 _DEDUPED = re.compile(r"^(.*)\.\d+$")
@@ -92,12 +94,18 @@ def _all_fields(dtype: str) -> Dict[str, List[str]]:
     return {**defs["required"], **defs["optional"]}
 
 
+def _norm(text: str) -> str:
+    """A header or alias as the scores read it: lower case, every run of punctuation one space ("Deal - ID" and
+    "*InvoiceDate" are read as "deal id" and "invoicedate"); "&" stays ("S&M")."""
+    return re.sub(r"[^\w&]+", " ", (text or "").lower()).strip()
+
+
 def field_score(dtype: str, field: str, header: str) -> int:
     """The best score of a header against one field's name and aliases (100, 80, 60, 40, 30 or 0)."""
-    lc = (header or "").lower().strip()
+    lc = _norm(header)
     if not lc:
         return 0
-    aliases = [field.replace("_", " ")] + _all_fields(dtype)[field]
+    aliases = [_norm(field.replace("_", " "))] + [_norm(a) for a in _all_fields(dtype)[field]]
     return max(_score(field, alias, lc) for alias in aliases)
 
 
@@ -134,7 +142,8 @@ def deduped_texts(columns: list) -> list:
 
 
 # ---------------------------------------------------------------------------
-# Reading a sheet (section 3)
+# Reading a workbook (section 3; amended 2026-10-16: every sheet, leading empty columns dropped, period headers
+# melted, units read from the title rows)
 # ---------------------------------------------------------------------------
 @dataclass
 class Sheet:
@@ -144,6 +153,11 @@ class Sheet:
     headers: List[str]              # the header cell text of each column, as written ("" when blank)
     frame: pd.DataFrame             # the data rows below the header, blank lines dropped
     row_numbers: List[int]          # the sheet row number of each frame row
+    titles: List[Tuple[int, int, str]] = field(default_factory=list)   # (sheet row, column, text) above the header
+    unit_scale: int = 1             # 1,000 when the title rows say the figures are in thousands
+    unit_note: Optional[str] = None
+    wide: Optional[Dict] = None     # {"periods", "monthly"} when period headers were melted into Period and Value
+    raw_headers: Optional[List[str]] = None     # the header row as written, kept for a wide sheet (its columns are melted)
 
 
 class SheetError(Exception):
@@ -154,8 +168,8 @@ def _blank(v) -> bool:
     return v is None or (isinstance(v, float) and v != v) or (isinstance(v, str) and not v.strip())
 
 
-def _grid(content: bytes, filename: str) -> Tuple[List[List], str, bool]:
-    """(rows as cell lists, sheet name, is_csv). Index i of the grid is sheet row i + 1."""
+def _grids(content: bytes, filename: str) -> Tuple[List[Tuple[str, List[List]]], bool]:
+    """([(sheet name, rows as cell lists)], is_csv), every sheet of the file. Index i of a grid is sheet row i + 1."""
     name = (filename or "").lower()
     try:
         if name.endswith(".csv"):
@@ -164,17 +178,16 @@ def _grid(content: bytes, filename: str) -> Tuple[List[List], str, bool]:
             except UnicodeDecodeError:
                 text = content.decode("latin-1")
             grid = [[None if _blank(c) else c for c in row] for row in csv.reader(io.StringIO(text))]
-            return grid, "CSV", True
+            return [("CSV", grid)], True
         if name.endswith(".xlsx"):
             from openpyxl import load_workbook
             wb = load_workbook(io.BytesIO(content), data_only=True)
-            ws = wb[wb.sheetnames[0]]
-            grid = [[None if _blank(c) else c for c in row] for row in ws.iter_rows(values_only=True)]
-            return grid, ws.title, False
+            return [(ws.title, [[None if _blank(c) else c for c in row] for row in ws.iter_rows(values_only=True)])
+                    for ws in wb.worksheets], False
         xls = pd.ExcelFile(io.BytesIO(content))
-        sheet = xls.sheet_names[0]
-        frame = xls.parse(sheet, header=None, dtype=object)
-        return [[None if _blank(c) else c for c in row] for row in frame.itertuples(index=False)], sheet, False
+        return [(sheet, [[None if _blank(c) else c for c in row]
+                         for row in xls.parse(sheet, header=None, dtype=object).itertuples(index=False)])
+                for sheet in xls.sheet_names], False
     except SheetError:
         raise
     except Exception as exc:
@@ -216,31 +229,170 @@ def _header_text(v) -> str:
     return str(v).strip()
 
 
-def read_sheet(content: bytes, filename: str) -> Sheet:
-    """The first sheet of a file as a header, its columns and its data rows with their sheet row numbers.
+# Period headers (amended 2026-10-16): the columns of a wide table. A year, a quarter, a year to date, a half, a month.
+_MONTH_NAMES = {m: i for i, m in enumerate("jan feb mar apr may jun jul aug sep oct nov dec".split(), 1)}
+_SEP = r"[\s:\-/'’.]*"
+_P_YEAR = re.compile(r"(?i)(?:FY\s?)?((?:19|20)\d{2})(?:\.0)?\s?[EFAB]?")
+_P_YTD = re.compile(r"(?i)(?:(?:19|20)\d{2}\s*YTD|YTD\s*(?:19|20)\d{2}|YTD)")
+_P_QUARTER = re.compile(r"(?i)(?:Q[1-4]" + _SEP + r"(?:19|20)?\d{2}|(?:19|20)?\d{2}" + _SEP + r"Q[1-4])")
+_P_HALF = re.compile(r"(?i)H[12]" + _SEP + r"(?:19|20)?\d{2}")
+_P_ISO_MONTH = re.compile(r"((?:19|20)\d{2})-(\d{2})(?:-\d{2})?(?:[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?)?")
+_P_NAMED_MONTH = re.compile(r"(?i)(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*" + _SEP + r"((?:19|20)?\d{2})")
+_P_NUMERIC_MONTH = re.compile(r"(\d{1,2})[/.]((?:19|20)\d{2})")
 
-    Read without a header, short rows padded, blank lines counted: a one-cell title row cannot break a CSV.
-    Rows above the header (titles, blanks) are dropped and never stored."""
-    grid, sheet, is_csv = _grid(content, filename)
-    while grid and _filled(grid[-1]) == 0:
-        grid.pop()
-    if not grid:
-        raise SheetError("empty")
-    h = find_header_row(grid)
-    body = [(i + 1, row) for i, row in enumerate(grid) if i > h and _filled(row)]
-    width = max([len(grid[h])] + [len(r) for _, r in body])
-    pad = lambda r: list(r) + [None] * (width - len(r))  # noqa: E731
-    headers = [_header_text(c) for c in pad(grid[h])]
-    while width and not headers[width - 1] and all(_blank(pad(r)[width - 1]) for _, r in body):
-        width -= 1
-        headers.pop()
+
+def parse_period(text: str) -> Optional[Tuple[str, Optional[date]]]:
+    """(grain, first day) of a period header, or None. Grains: year, quarter, ytd, half, month; the day is
+    set for a month only ("Jan-24", "2024-01", "2024-01-31", "01/2024")."""
+    t = (text or "").strip()
+    if not t:
+        return None
+    if _P_YTD.fullmatch(t):
+        return "ytd", None
+    if _P_QUARTER.fullmatch(t):
+        return "quarter", None
+    if _P_HALF.fullmatch(t):
+        return "half", None
+    if _P_YEAR.fullmatch(t):
+        return "year", None
+    m = _P_ISO_MONTH.fullmatch(t)
+    if m and 1 <= int(m.group(2)) <= 12:
+        return "month", date(int(m.group(1)), int(m.group(2)), 1)
+    m = _P_NAMED_MONTH.fullmatch(t)
+    if m:
+        y = int(m.group(2))
+        return "month", date(y + (2000 if y < 100 else 0), _MONTH_NAMES[m.group(1).lower()], 1)
+    m = _P_NUMERIC_MONTH.fullmatch(t)
+    if m and 1 <= int(m.group(1)) <= 12:
+        return "month", date(int(m.group(2)), int(m.group(1)), 1)
+    return None
+
+
+# Units (amended 2026-10-16): "EUR thousands", "EUR 000", "k EUR", "EURk", "in thousands" in the title rows.
+_CURRENCY = r"(?:EUR|USD|GBP|CHF|SEK|NOK|DKK|PLN|BGN|€|\$|£)"
+_THOUSANDS = [re.compile(p) for p in (
+    rf"(?i)\b({_CURRENCY})?\s*(?:in\s+)?(?:thousands?|tsd)\b",
+    rf"(?i)\b({_CURRENCY})\s?'?000s?\b|(?<![\w.,]){_CURRENCY}\s?'000",
+    rf"(?i)\bk\s?({_CURRENCY})(?!\w)",
+    rf"(?i)(?<![\w.,])({_CURRENCY})\s?k\b|\(\s?k\s?\)|'000s?\b")]
+
+
+def read_units(titles: List[Tuple[int, int, str]]) -> Tuple[int, Optional[str]]:
+    """(scale, note) from the title rows above the header: 1,000 and a note when they say the figures are in
+    thousands, else (1, None). Only titles are read, never the data."""
+    for _, _, text in titles:
+        for pattern in _THOUSANDS:
+            m = pattern.search(text)
+            if m:
+                code = next((g for g in m.groups() if g), "") if m.groups() else ""
+                code = {"€": "EUR", "$": "USD", "£": "GBP"}.get(code, code.upper())
+                return 1000, f"Title rows say {code + ' ' if code else ''}thousands: money figures are multiplied by 1,000."
+    return 1, None
+
+
+def _is_number(v) -> bool:
+    if isinstance(v, bool) or _blank(v):
+        return False
+    if isinstance(v, (int, float)):
+        return v == v
+    return isinstance(v, str) and bool(_PURE_NUMBER.match(v.strip().replace(",", "")))
+
+
+def _first_table(body: List[Tuple[int, List]], period_cols: List[int]) -> List[Tuple[int, List]]:
+    """The rows of the first table of a wide sheet: those with a number under a period header. The table ends at
+    a blank row followed by a row with no number there (the title of the next table), or at a row that repeats
+    the period headers. Several tables can sit one below the other (actuals, forecast, comparison, notes)."""
+    kept, last = [], None
+    for n, row in body:
+        has = any(_is_number(row[j]) for j in period_cols)
+        repeats = sum(1 for j in period_cols if isinstance(row[j], str) and parse_period(row[j])) >= 2
+        if kept and ((last is not None and n > last + 1 and not has) or repeats):
+            break
+        if has:
+            kept.append((n, row))
+        last = n
+    return kept
+
+
+def _melt(headers: List[str], body: List[Tuple[int, List]]) -> Optional[Tuple[List[str], List[str], List[List], List[int], Dict]]:
+    """Wide to long: the period headers (2023, Q1:24, 2024 YTD, Jan-24, ...) across the columns become a Period and
+    a Value column, one row per number, keeping the sheet row of its line. (columns, headers, rows, row numbers,
+    wide info), or None when fewer than 3 headers are periods. With 3 or more months the months alone are kept
+    (Period is a date, headed "Date"); otherwise the table is a summary or forecast by year or quarter and
+    Period keeps its label."""
+    periods = {j: parse_period(h) for j, h in enumerate(headers)}
+    periods = {j: p for j, p in periods.items() if p}
+    if len(periods) < 3:
+        return None
+    months = {j: p for j, p in periods.items() if p[0] == "month"}
+    monthly = len(months) >= 3
+    used = months if monthly else periods
+    ids = [j for j in range(len(headers)) if j not in periods]
+    table = _first_table(body, list(used))
+    names = [headers[j] or ("Line" if k == 0 else f"Column {k + 1}") for k, j in enumerate(ids)]
+    period_name = "Date" if monthly else "Period"
+    rows, numbers = [], []
+    for n, row in table:
+        for j in used:
+            if _is_number(row[j]):
+                label = pd.Timestamp(used[j][1]) if monthly else headers[j]
+                number = float(row[j].replace(",", "")) if isinstance(row[j], str) else row[j]
+                value = int(number) if isinstance(number, float) and number.is_integer() else number
+                rows.append([row[i] for i in ids] + [label, value])
+                numbers.append(n)
+    if not rows:
+        return None
+    out_headers = names + [period_name, "Value"]
+    return out_headers, out_headers, rows, numbers, {"periods": len(used), "monthly": monthly}
+
+
+def _unique(headers: List[str]) -> List[str]:
     columns, seen = [], {}
     for i, text in enumerate(headers):
         base = text or f"Unnamed: {i}"
         n = seen.get(base, 0)
         seen[base] = n + 1
         columns.append(base if n == 0 else f"{base}.{n}")
-    frame = pd.DataFrame([pad(r)[:width] for _, r in body], columns=columns, dtype=object)
+    return columns
+
+
+def _read_grid(grid: List[List], name: str, is_csv: bool) -> Optional[Sheet]:
+    """One sheet as a header, its columns and its data rows with their sheet row numbers; None when it is empty.
+
+    Read without a header, short rows padded, blank lines counted: a one-cell title row cannot break a CSV.
+    Rows above the header (titles, blanks) are dropped and never stored; the columns before the first one with
+    a header or a value are dropped too (no "Unnamed: n" for them)."""
+    grid = [list(r) for r in grid]
+    while grid and _filled(grid[-1]) == 0:
+        grid.pop()
+    if not grid:
+        return None
+    h = find_header_row(grid)
+    body = [(i + 1, row) for i, row in enumerate(grid) if i > h and _filled(row)]
+    width = max([len(grid[h])] + [len(r) for _, r in body])
+    pad = lambda r: list(r) + [None] * (width - len(r))  # noqa: E731
+    head, rows = pad(grid[h]), [(n, pad(r)) for n, r in body]
+    lead = 0
+    while lead < width and _blank(head[lead]) and all(_blank(r[lead]) for _, r in rows):
+        lead += 1
+    head, rows = head[lead:], [(n, r[lead:]) for n, r in rows]
+    width -= lead
+    titles = [(i + 1, max(j + 1 - lead, 1), str(c).strip()) for i, row in enumerate(grid[:h])
+              for j, c in enumerate(row) if isinstance(c, str) and c.strip()]
+    scale, note = read_units(titles)
+    headers = [_header_text(c) for c in head]
+    while width and not headers[width - 1] and all(_blank(r[width - 1]) for _, r in rows):
+        width -= 1
+        headers.pop()
+    rows = [(n, r[:width]) for n, r in rows]
+    melted = _melt(headers, rows)
+    if melted:
+        long_headers, texts, data, numbers, wide = melted
+        columns = _unique(long_headers)
+        frame = pd.DataFrame(data, columns=columns, dtype=object)
+        return Sheet(name, h + 1, columns, texts, frame, numbers, titles, scale, note, wide, headers)
+    columns = _unique(headers)
+    frame = pd.DataFrame([r for _, r in rows], columns=columns, dtype=object)
     if is_csv:                                   # CSV cells are text: a column that is all numbers is numeric
         for c in columns:
             col = frame[c]
@@ -249,7 +401,22 @@ def read_sheet(content: bytes, filename: str) -> Sheet:
                 conv = pd.to_numeric(col, errors="coerce")
                 if conv.notna().sum() == present.sum():
                     frame[c] = conv
-    return Sheet(sheet, h + 1, columns, headers, frame, [n for n, _ in body])
+    return Sheet(name, h + 1, columns, headers, frame, [n for n, _ in rows], titles, scale, note, None)
+
+
+def read_workbook(content: bytes, filename: str) -> List[Sheet]:
+    """Every sheet of a file that holds anything, in workbook order (a CSV is one sheet). Raises SheetError
+    when none does."""
+    grids, is_csv = _grids(content, filename)
+    sheets = [s for name, grid in grids if (s := _read_grid(grid, name, is_csv))]
+    if not sheets:
+        raise SheetError("empty")
+    return sheets
+
+
+def read_sheet(content: bytes, filename: str) -> Sheet:
+    """The first sheet of a file (see read_workbook)."""
+    return read_workbook(content, filename)[0]
 
 
 # ---------------------------------------------------------------------------
@@ -398,18 +565,105 @@ def customer_columns(sheet: Sheet, proposals: List[Proposal]) -> List[str]:
 
 
 # ---------------------------------------------------------------------------
-# Type detection (section 3)
+# Type detection (section 3; amended 2026-10-16)
 # ---------------------------------------------------------------------------
-def detect_type(sheet: Sheet) -> Tuple[Optional[str], Dict[str, float]]:
-    """(type, share per type). For each type, the share of its required fields that the rules map (score above
-    0). The type with the unique highest share wins when that share is at least 50%; otherwise None."""
+# Rules first, by the headers (and, in a wide table, the line labels): a type is detected when its share is the unique
+# highest and at least DETECTION_MIN_SHARE. Revenue needs all three of customer, date and amount, each header
+# at 80 or more: an "MRR" or "ARR" header alone never makes a revenue file. A CRM file needs four of the five
+# signature columns (deal, created, closed or won, stage or status, owner). A P&L is the share of its fields the
+# headers match, or cost lines (cost of sales, payroll, EBITDA ...) among its headers or line labels.
+REVENUE_KEY = ("customer_id", "invoice_date", "amount")
+_CRM_SIGNATURE = {
+    "deal": re.compile(r"(?i)\b(?:deal|opportunit\w*)\b"),
+    "created": re.compile(r"(?i)\b(?:created?|opened?)\b"),
+    "closed": re.compile(r"(?i)\b(?:close[ds]?|won)\b"),
+    "stage": re.compile(r"(?i)\b(?:stage|status|outcome)\b"),
+    "owner": re.compile(r"(?i)\b(?:owner|sales\s?rep|rep)\b"),
+}
+_COST_LINES = [re.compile(p) for p in (
+    r"(?i)\bcost of (?:sales|goods|revenue)\b|\bcogs\b", r"(?i)\bpayroll\b|\bsalar(?:y|ies)\b|\bpersonnel\b|\bstaff costs?\b",
+    r"(?i)\bebitda\b", r"(?i)\bopex\b|\boperating (?:expenses|costs|profit|income|result)\b",
+    r"(?i)\bgross (?:profit|margin)\b", r"(?i)\bsales (?:&|and) marketing\b|\bs&m\b",
+    r"(?i)\bgeneral (?:&|and) administrative\b|\bg&a\b", r"(?i)\br&d\b|\bresearch and development\b",
+    r"(?i)\bdepreciation\b|\bamorti[sz]ation\b", r"(?i)\bnet (?:income|profit|loss)\b")]
+
+
+def _line_labels(sheet: Sheet) -> List[str]:
+    """The text a P&L's cost lines can stand in: the headers, and in a wide table the labels of the lines."""
+    labels = list(sheet.headers)
+    if sheet.wide:
+        labels += [str(v) for v in sheet.frame[sheet.columns[0]].tolist() if isinstance(v, str)]
+    return labels
+
+
+def type_shares(sheet: Sheet) -> Dict[str, float]:
+    """{type: share 0..1} by the rules above."""
     shares = {}
-    for dtype, defs in FIELD_DEFS.items():
-        mapping = suggest_mapping(dtype, sheet.columns, sheet.headers)
-        shares[dtype] = sum(1 for f in defs["required"] if mapping.get(f)) / len(defs["required"])
+    key_hits = {f: max([field_score("revenue", f, t) for t in sheet.headers] or [0]) >= 80 for f in REVENUE_KEY}
+    shares["revenue"] = sum(key_hits.values()) / len(REVENUE_KEY)
+    groups = sum(1 for rx in _CRM_SIGNATURE.values() if any(rx.search(t or "") for t in sheet.headers))
+    shares["crm"] = groups / len(_CRM_SIGNATURE)
+    defs = FIELD_DEFS["pnl"]
+    mapping = suggest_mapping("pnl", sheet.columns, sheet.headers)
+    by_fields = sum(1 for f in defs["required"] if mapping.get(f)) / len(defs["required"])
+    lines = len({i for i, rx in enumerate(_COST_LINES) if any(rx.search(t) for t in _line_labels(sheet))})
+    shares["pnl"] = max(by_fields, 1.0 if lines >= 3 else 0.8 if lines == 2 else 0.0)
+    return shares
+
+
+def detect_type(sheet: Sheet) -> Tuple[Optional[str], Dict[str, float]]:
+    """(type, share per type). The type with the unique highest share wins when that share is at least 80%;
+    otherwise None (the model is asked once, or the analyst chooses)."""
+    shares = type_shares(sheet)
     best = max(shares.values())
     winners = [t for t, s in shares.items() if s == best]
     return (winners[0] if len(winners) == 1 and best >= DETECTION_MIN_SHARE else None), shares
+
+
+def detect_workbook(sheets: List[Sheet]) -> Tuple[Optional[str], Optional[Sheet], Dict[str, float]]:
+    """(type, sheet, shares) over every sheet of a file: the sheet whose detected type has the highest share
+    (the earlier sheet on a tie, then the one with more rows). (None, None, shares of the first sheet) when no
+    sheet is detected."""
+    found = []
+    for i, sheet in enumerate(sheets):
+        dtype, shares = detect_type(sheet)
+        if dtype:
+            found.append((-shares[dtype], i, dtype, sheet, shares))
+    if not found:
+        return None, None, type_shares(sheets[0])
+    _, _, dtype, sheet, shares = min(found, key=lambda f: (f[0], f[1]))
+    return dtype, sheet, shares
+
+
+def best_sheet(sheets: List[Sheet], dtype: str) -> Sheet:
+    """The sheet that best fits a role: the most required fields its headers match at 80 or more, then the
+    higher type share, then the one with more rows, then the earlier sheet."""
+    required = FIELD_DEFS[dtype]["required"]
+
+    def fit(item):
+        i, sheet = item
+        hits = sum(1 for f in required if max([field_score(dtype, f, t) for t in sheet.headers] or [0]) >= MAPPING_THRESHOLD)
+        return (-hits, -type_shares(sheet)[dtype], -len(sheet.frame), i)
+    return min(enumerate(sheets), key=fit)[1]
+
+
+def describe(sheet: Sheet) -> Dict:
+    """What a sheet looks like, in closed words and counts (no cell text): {"shape", "rows", "columns"}. A table
+    with periods across its columns is a monthly table, or a summary or forecast table when the periods are years,
+    quarters or years to date."""
+    shape = "table"
+    if sheet.wide:
+        shape = "monthly_wide" if sheet.wide["monthly"] else "summary"
+    return {"shape": shape, "rows": len(sheet.frame), "columns": len(sheet.columns)}
+
+
+def is_miss(dtype: str, mapping: Dict[str, Optional[str]], looks: Optional[Dict]) -> bool:
+    """True when the file cannot supply the type's required fields: a summary or forecast table, or no more than
+    half of the required fields mapped (counting proposals that still wait for a click)."""
+    required = FIELD_DEFS[dtype]["required"]
+    if looks and looks.get("shape") == "summary":
+        return True
+    return sum(1 for f in required if mapping.get(f)) * 2 <= len(required)
 
 
 def months_found(dtype: str, sheet: Sheet, mapping: Dict[str, str]) -> Optional[Dict]:

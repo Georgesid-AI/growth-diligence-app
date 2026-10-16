@@ -6,7 +6,7 @@ import { seeGlossary } from "./glossary";
 
 export const S1_TEXT_REPLY = "This window accepts files and mapping confirmations.";
 export const S2_EXPLAINER_CONSENT =
-  "Mapping is done by rules first. Where rules cannot decide, the AI sees only those columns' headers, up to 3 example numbers or dates per column and a pattern for text columns – never your full file and never a name – and you confirm those columns.";
+  "Mapping is done by rules first. Where rules cannot decide, the AI sees only those columns' headers, up to 3 example numbers or dates per column and a pattern for text columns – never your full file and never a name – and you confirm those columns. When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table, which can contain the company name.";
 export const S3_EXPLAINER_NO_CONSENT =
   "Mapping is done by rules only: AI-assisted reading is off for this audit. You map the columns the rules cannot decide.";
 export const S4_DROP_ZONE =
@@ -57,6 +57,21 @@ export const S5_head = (view) => {
   const head = `Detected: ${TYPE_LABELS[view.dtype]} · ${view.row_count.toLocaleString("en-US")} rows`;
   return view.months ? `${head} · ${view.months.count} months (${fmtMonth(view.months.first)} – ${fmtMonth(view.months.last)})` : head;
 };
+// S26a-c (2026-10-16): the detected type with its source and the Change button; the sheet read; what a miss says.
+export const TYPE_SOURCES = { rules: "by rules", ai: "AI suggestion", you: "your choice" };
+export const S26_type = (view) => `Type: ${TYPE_LABELS[view.dtype]}${TYPE_SOURCES[view.type_source] ? ` (${TYPE_SOURCES[view.type_source]})` : ""}`;
+export const S26_CHANGE = "Change";
+export const S26_sheet = (view) => `Sheet "${view.sheet}" · header on row ${view.header_row}`;
+const LOOKS = {
+  summary: "a forecast or summary table: periods (years or quarters) run across the columns and each line is a metric",
+  monthly_wide: "a table with months across the columns and one line per row",
+};
+export const S27_SHOW_COLUMNS = "Show columns";
+export const S27_miss = (view) => {
+  const looks = view.miss.looks || {};
+  const what = LOOKS[looks.shape] || `a table of ${(looks.rows ?? 0).toLocaleString("en-US")} rows and ${looks.columns ?? 0} columns`;
+  return `Could not read this file as ${TYPE_LABELS[view.dtype]}. Missing: ${view.miss.missing.map(fieldName).join(", ")}. It looks like ${what}.`;
+};
 export const S8_replace = (dtype, file) => `${LOADED_LABELS[dtype]} is already loaded (${file}). Replace it?`;
 
 // S23: the mapping table's headers (the last column holds the buttons).
@@ -101,6 +116,7 @@ export const S25_PARAGRAPHS = [
   "Your choices are saved with the audit and automatically reused if you upload the same file again.",
 ];
 export const S13_status = (view) => {
+  if (view.miss && view.miss.missing.length > 0) return `Required field not mapped: ${view.miss.missing.map(fieldName).join(", ")}`;
   if (view.pending > 0) return `${view.pending} columns wait for your decision`;
   if (view.missing_required.length > 0) return `Required field not mapped: ${view.missing_required.map(fieldName).join(", ")}`;
   return "Ready for calculation";

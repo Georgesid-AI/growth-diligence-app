@@ -1,0 +1,19 @@
+Record ID,Deal Name,Deal Stage,Pipeline,Amount,Close Date,Create Date,Deal owner,Deal Type
+5000,Deal 0 Alder,Closed won,Sales Pipeline,4000,2024-01-20,2024-01-02,Owner B,New business
+5001,Deal 1 Birch,Closed lost,Sales Pipeline,4250,2024-02-20,2024-02-02,Owner A,New business
+5002,Deal 2 Cedar,Contract sent,Sales Pipeline,4500,2024-03-20,2024-03-02,Owner B,New business
+5003,Deal 3 Dune,Qualified to buy,Sales Pipeline,4750,2024-04-20,2024-04-02,Owner A,New business
+5004,Deal 4 Elm,Closed won,Sales Pipeline,5000,2024-05-20,2024-05-02,Owner B,New business
+5005,Deal 5 Fern,Closed lost,Sales Pipeline,5250,2024-06-20,2024-06-02,Owner A,New business
+5006,Deal 6 Alder,Contract sent,Sales Pipeline,5500,2024-07-20,2024-07-02,Owner B,New business
+5007,Deal 7 Birch,Qualified to buy,Sales Pipeline,5750,2024-08-20,2024-08-02,Owner A,New business
+5008,Deal 8 Cedar,Closed won,Sales Pipeline,6000,2024-09-20,2024-09-02,Owner B,New business
+5009,Deal 9 Dune,Closed lost,Sales Pipeline,6250,2024-10-20,2024-10-02,Owner A,New business
+5010,Deal 10 Elm,Contract sent,Sales Pipeline,6500,2024-11-20,2024-11-02,Owner B,New business
+5011,Deal 11 Fern,Qualified to buy,Sales Pipeline,6750,2024-12-20,2024-12-02,Owner A,New business
+5012,Deal 12 Alder,Closed won,Sales Pipeline,7000,2024-01-20,2024-01-02,Owner B,New business
+5013,Deal 13 Birch,Closed lost,Sales Pipeline,7250,2024-02-20,2024-02-02,Owner A,New business
+5014,Deal 14 Cedar,Contract sent,Sales Pipeline,7500,2024-03-20,2024-03-02,Owner B,New business
+5015,Deal 15 Dune,Qualified to buy,Sales Pipeline,7750,2024-04-20,2024-04-02,Owner A,New business
+5016,Deal 16 Elm,Closed won,Sales Pipeline,8000,2024-05-20,2024-05-02,Owner B,New business
+5017,Deal 17 Fern,Closed lost,Sales Pipeline,8250,2024-06-20,2024-06-02,Owner A,New business

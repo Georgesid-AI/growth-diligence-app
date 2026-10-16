@@ -3,11 +3,11 @@ import { Paperclip, FileSpreadsheet, FileText, Loader2, Send, ChevronRight, Chev
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { BLOCKERS_CHANGED } from "@/components/BlockerBanner";
-import { uploadChatFile, getDatasets, decideColumns, reportUsage } from "@/lib/api";
+import { uploadChatFile, getDatasets, decideColumns, reportUsage, changeDatasetType } from "@/lib/api";
 import {
   S1_TEXT_REPLY, S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE, S6_UNKNOWN_TYPE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S_UPLOAD_RETRY, RUN_DECK_EXTENSIONS, RUN_DROP_ZONE, RUN_REFUSED,
   S20_NOTE_PLACEHOLDER, S21_NOTE_REFUSED, NOTE_MAX, ALLOWED_EXTENSIONS, REASONS, TYPE_LABELS, S5_head, S8_replace,
-  S9_confidence, S13_status, MAP_LABEL, CALCULATE_LABEL, CALCULATE_CLASS, SEND_TOOLTIP, setCalculatePressed, S14_same, MAPPING_HEADERS, S25_TITLE, S25_PARAGRAPHS, mappedBy, sortColumns, fieldName, fmtBytes, extensionOf, heldFields,
+  S9_confidence, S13_status, S26_type, S26_CHANGE, S26_sheet, S27_miss, S27_SHOW_COLUMNS, MAP_LABEL, CALCULATE_LABEL, CALCULATE_CLASS, SEND_TOOLTIP, setCalculatePressed, S14_same, MAPPING_HEADERS, S25_TITLE, S25_PARAGRAPHS, mappedBy, sortColumns, fieldName, fmtBytes, extensionOf, heldFields,
 } from "@/lib/chatUpload";
 
 const NONE = "";
@@ -173,6 +173,17 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, onStag
     return next;
   };
 
+  // The analyst changes the type a stored file was read as: the stored sheet is read again as the new type.
+  const retype = async (view, to, replace = false) => {
+    const next = await changeDatasetType(audit.id, view.dtype, to, replace);
+    setMessages((all) => all.filter((m) => !(m.dtype === next.dtype && m.dtype !== view.dtype && m.kind !== "text"))
+      .map((m) => (m.dtype === view.dtype && m.kind !== "text"
+        ? (m.kind === "system" ? { ...m, dtype: next.dtype, view: next } : { ...m, dtype: next.dtype })
+        : m)));
+    announce();
+    return next;
+  };
+
   return (
     <section
       data-testid="upload-chat"
@@ -191,7 +202,7 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, onStag
         </div>
         {messages.map((m) => (
           <Message key={m.id} m={m} audit={audit} unstage={unstage} extras={extras} lastReason={lastReason} setLastReason={setLastReason}
-            decide={decide} showInfo={m.id === firstTable}
+            decide={decide} retype={retype} showInfo={m.id === firstTable}
             onType={(file, dtype) => { setMessages((all) => all.filter((x) => x.id !== m.id)); send(file, { dtype }, m.bubble); }}
             onReplace={(file, dtype) => { setMessages((all) => all.filter((x) => x.id !== m.id)); send(file, { dtype, replace: true }, m.bubble); }}
             onKeep={() => { openPrompts.current.delete(m.bubble); setMessages((all) => all.filter((x) => x.id !== m.id && x.id !== m.bubble)); }} />
@@ -228,7 +239,7 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, onStag
   );
 }
 
-function Message({ m, audit, unstage, extras, lastReason, setLastReason, decide, showInfo, onType, onReplace, onKeep }) {
+function Message({ m, audit, unstage, extras, lastReason, setLastReason, decide, retype, showInfo, onType, onReplace, onKeep }) {
   if (m.kind === "analyst") return <AnalystBubble m={m} unstage={unstage} />;
   if (m.kind === "text") {
     return m.role === "analyst"
@@ -258,7 +269,7 @@ function Message({ m, audit, unstage, extras, lastReason, setLastReason, decide,
       </Bubble>
     );
   }
-  return <SystemBubble view={m.view} audit={audit} extras={extras} lastReason={lastReason} setLastReason={setLastReason} decide={decide} showInfo={showInfo} />;
+  return <SystemBubble view={m.view} audit={audit} extras={extras} lastReason={lastReason} setLastReason={setLastReason} decide={decide} retype={retype} showInfo={showInfo} />;
 }
 
 function Bubble({ side, children, testid }) {
@@ -287,16 +298,20 @@ function AnalystBubble({ m, unstage }) {
   );
 }
 
-function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide, showInfo }) {
+function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide, retype, showInfo }) {
   const [openUnused, setOpenUnused] = useState(false);
+  const [showColumns, setShowColumns] = useState(false);       // a miss hides the rows behind its message until asked
   const shown = sortColumns(view.columns.filter((c) => c.state !== "unused"));
   const unused = view.columns.filter((c) => c.state === "unused");
+  const missed = !!view.miss && !showColumns;
   const modelFailed = AI_FAILED.includes(view.ai_reading?.status);
   const status = S13_status(view);
   const props = { view, decide, lastReason, setLastReason };
   return (
     <Bubble side="left" testid={`chat-system-${view.dtype}`}>
       <div className="font-medium text-slate-900" data-testid="bubble-head">{S5_head(view)}</div>
+      <TypeLine view={view} retype={retype} />
+      {view.unit_note && <p className="text-xs text-slate-600 mt-1" data-testid="bubble-units">{view.unit_note}</p>}
       {view.status === "same_file" && view.version != null && (
         <p className="text-xs text-slate-600 mt-1" data-testid="bubble-same">{S14_same(view.version)}</p>
       )}
@@ -304,14 +319,24 @@ function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide, 
       {showInfo && <WhyThisMatters />}
       <div className="overflow-x-auto mt-3">
         <table className="w-full text-xs" data-testid={`mapping-table-${view.dtype}`}>
+          {view.sheet && <caption className="text-left text-slate-500 pb-1" data-testid={`mapping-sheet-${view.dtype}`}>{S26_sheet(view)}</caption>}
           <thead>
             <tr className="text-left text-slate-500 border-b border-[#E5E7EB]">
               {MAPPING_HEADERS.map((h, i) => <th key={i} className="py-1.5 pr-3 font-medium">{h}</th>)}
             </tr>
           </thead>
           <tbody>
-            {shown.map((c) => <ColumnRow key={c.column} row={c} {...props} />)}
-            {unused.length > 0 && (
+            {missed && (
+              <tr>
+                <td colSpan={5} className="py-2" data-testid={`mapping-miss-${view.dtype}`}>
+                  <p className="text-slate-800">{S27_miss(view)}</p>
+                  <button type="button" data-testid={`miss-show-${view.dtype}`} onClick={() => setShowColumns(true)}
+                    className="mt-1 text-slate-600 hover:text-slate-900 underline">{S27_SHOW_COLUMNS}</button>
+                </td>
+              </tr>
+            )}
+            {!missed && shown.map((c) => <ColumnRow key={c.column} row={c} {...props} />)}
+            {!missed && unused.length > 0 && (
               <tr>
                 <td colSpan={5} className="pt-2">
                   <button type="button" data-testid={`unused-toggle-${view.dtype}`} aria-expanded={openUnused}
@@ -321,7 +346,7 @@ function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide, 
                 </td>
               </tr>
             )}
-            {openUnused && unused.map((c) => <ColumnRow key={c.column} row={c} {...props} />)}
+            {!missed && openUnused && unused.map((c) => <ColumnRow key={c.column} row={c} {...props} />)}
           </tbody>
         </table>
       </div>
@@ -330,6 +355,50 @@ function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide, 
         {status}
       </div>
     </Bubble>
+  );
+}
+
+/** The detected type, how it was found, and the Change button: the analyst can override it (chat-upload.md section 19). */
+function TypeLine({ view, retype }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [ask, setAsk] = useState(null);                  // a type already loaded: the replace question
+  const go = async (to, replace = false) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await retype(view, to, replace);
+      setOpen(false);
+      setAsk(null);
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      if (err.response?.status === 409 && detail?.code === "type_loaded") setAsk({ to, loaded: detail.file });
+      else setError(typeof detail === "string" ? detail : "The type could not be changed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="mt-1 text-xs text-slate-600" data-testid={`type-line-${view.dtype}`}>
+      <span data-testid={`type-label-${view.dtype}`}>{S26_type(view)}</span>
+      <button type="button" data-testid={`type-change-${view.dtype}`} onClick={() => setOpen((v) => !v)} className="ml-2 underline hover:text-slate-900">{S26_CHANGE}</button>
+      {open && (
+        <span className="ml-2 inline-flex gap-1.5">
+          {Object.entries(TYPE_LABELS).filter(([dtype]) => dtype !== view.dtype).map(([dtype, label]) => (
+            <Button key={dtype} size="sm" variant="outline" disabled={busy} data-testid={`type-pick-${dtype}`} onClick={() => go(dtype)} className="h-6 px-2">{label}</Button>
+          ))}
+        </span>
+      )}
+      {ask && (
+        <span className="ml-2" data-testid="type-replace">
+          {S8_replace(ask.to, ask.loaded)}
+          <Button size="sm" disabled={busy} data-testid="type-replace-yes" onClick={() => go(ask.to, true)} className="h-6 px-2 ml-1.5 bg-sky-600 hover:bg-sky-500">Replace</Button>
+          <Button size="sm" variant="outline" data-testid="type-replace-no" onClick={() => setAsk(null)} className="h-6 px-2 ml-1.5">Keep current</Button>
+        </span>
+      )}
+      {error && <span className="ml-2 text-rose-700" data-testid="type-error">{error}</span>}
+    </div>
   );
 }
 

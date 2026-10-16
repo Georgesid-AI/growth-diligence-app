@@ -137,7 +137,8 @@ def test_the_type_is_detected_on_the_sample_files_and_on_the_three_fixtures():
     for name, expected in (("revenue", "revenue"), ("crm", "crm"), ("pnl", "pnl")):
         sheet = cr.read_sheet((SAMPLE / f"{name}.csv").read_bytes(), f"{name}.csv")
         found, shares = cr.detect_type(sheet)
-        assert found == expected and shares[expected] == 1.0
+        assert found == expected and shares[expected] >= cr.DETECTION_MIN_SHARE
+        assert all(v < shares[expected] for t, v in shares.items() if t != expected), "a unique winner"
     for name in ("blank_vs_zero", "mixed_currency", "duplicate_ids_header_row3"):
         assert cr.detect_type(cr.read_sheet((MESSY / f"{name}.csv").read_bytes(), name + ".csv"))[0] == "revenue"
     assert cr.detect_type(cr.read_sheet(b"Alpha,Beta,Gamma\n1,2,3\n", "x.csv"))[0] is None

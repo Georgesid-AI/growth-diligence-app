@@ -1,0 +1,19 @@
+id,Number,Customer ID,Customer Name,Customer Email,Status,Currency,Subtotal,Total,Amount Paid,Amount Due,Created (UTC),Due Date (UTC),Paid At (UTC)
+in_1000,INV-100,cus_200,Alder Works,billing@alder.example,paid,eur,900,1000,1000,0,2024-01-03 09:15,2024-01-17 00:00,2024-01-05 11:02
+in_1001,INV-101,cus_201,Birch Labs,billing@birch.example,paid,eur,937,1037,1037,0,2024-02-03 09:15,2024-02-17 00:00,2024-02-05 11:02
+in_1002,INV-102,cus_202,Cedar Foods,billing@cedar.example,paid,eur,974,1074,1074,0,2024-03-03 09:15,2024-03-17 00:00,2024-03-05 11:02
+in_1003,INV-103,cus_203,Dune Print,billing@dune.example,paid,eur,1011,1111,1111,0,2024-04-03 09:15,2024-04-17 00:00,2024-04-05 11:02
+in_1004,INV-104,cus_204,Elm Studio,billing@elm.example,paid,eur,1048,1148,1148,0,2024-05-03 09:15,2024-05-17 00:00,2024-05-05 11:02
+in_1005,INV-105,cus_205,Fern Tools,billing@fern.example,paid,eur,1085,1185,1185,0,2024-06-03 09:15,2024-06-17 00:00,2024-06-05 11:02
+in_1006,INV-106,cus_200,Alder Works,billing@alder.example,paid,eur,1122,1222,1222,0,2024-01-03 09:15,2024-01-17 00:00,2024-01-05 11:02
+in_1007,INV-107,cus_201,Birch Labs,billing@birch.example,paid,eur,1159,1259,1259,0,2024-02-03 09:15,2024-02-17 00:00,2024-02-05 11:02
+in_1008,INV-108,cus_202,Cedar Foods,billing@cedar.example,paid,eur,1196,1296,1296,0,2024-03-03 09:15,2024-03-17 00:00,2024-03-05 11:02
+in_1009,INV-109,cus_203,Dune Print,billing@dune.example,paid,eur,1233,1333,1333,0,2024-04-03 09:15,2024-04-17 00:00,2024-04-05 11:02
+in_1010,INV-110,cus_204,Elm Studio,billing@elm.example,paid,eur,1270,1370,1370,0,2024-05-03 09:15,2024-05-17 00:00,2024-05-05 11:02
+in_1011,INV-111,cus_205,Fern Tools,billing@fern.example,paid,eur,1307,1407,1407,0,2024-06-03 09:15,2024-06-17 00:00,2024-06-05 11:02
+in_1012,INV-112,cus_200,Alder Works,billing@alder.example,paid,eur,1344,1444,1444,0,2024-01-03 09:15,2024-01-17 00:00,2024-01-05 11:02
+in_1013,INV-113,cus_201,Birch Labs,billing@birch.example,paid,eur,1381,1481,1481,0,2024-02-03 09:15,2024-02-17 00:00,2024-02-05 11:02
+in_1014,INV-114,cus_202,Cedar Foods,billing@cedar.example,paid,eur,1418,1518,1518,0,2024-03-03 09:15,2024-03-17 00:00,2024-03-05 11:02
+in_1015,INV-115,cus_203,Dune Print,billing@dune.example,paid,eur,1455,1555,1555,0,2024-04-03 09:15,2024-04-17 00:00,2024-04-05 11:02
+in_1016,INV-116,cus_204,Elm Studio,billing@elm.example,paid,eur,1492,1592,1592,0,2024-05-03 09:15,2024-05-17 00:00,2024-05-05 11:02
+in_1017,INV-117,cus_205,Fern Tools,billing@fern.example,paid,eur,1529,1629,1629,0,2024-06-03 09:15,2024-06-17 00:00,2024-06-05 11:02

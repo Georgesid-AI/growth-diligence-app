@@ -175,6 +175,10 @@ class UsageResponse(BaseModel):
 # ---------------------------------------------------------------------------
 DECK_TYPES = ("table", "chart", "kpi_panel", "roadmap", "hiring_table", "unit_economics", "use_of_funds")
 STRUCTURE_TYPES = DECK_TYPES + ("column_mapping",)
+# A file's type (chat-upload.md section 19): the third kind of structure read. It has its own schema and prompt and is
+# not a member of STRUCTURE_TYPES, so the column-mapping and labelling schemas (and the cache keys built on them) stay as they were.
+FILE_TYPE = "file_type"
+FILE_TYPES = ("revenue", "crm", "pnl", "unknown")
 # deck-parser.md section 2 claim types, "Use of funds", and the FIELD_DEFS fields of server.py. The
 # gateway imports neither the deck package nor the server, so the lists are written out here and a
 # test keeps them equal to claims.CLAIM_TYPES and FIELD_DEFS.
@@ -281,6 +285,15 @@ class StructureReply(BaseModel):
     items: List[StructureItem]
 
 
+class FileTypeReply(BaseModel):
+    """What the model must return for a file's type: one closed word. No extra keys, no free text."""
+
+    model_config = {"extra": "forbid"}
+
+    type: Literal["file_type"]
+    file_type: Literal[FILE_TYPES]
+
+
 class StructureLabel(BaseModel):
     """What one listed item measures. Exactly these fields: no value, cell id or flag (the values and cells are
     Python's, the flags Python's to compute). `item` must be a listed id: the gateway checks it."""
@@ -366,8 +379,21 @@ def labelling_output_schema() -> dict:
 
 
 def output_schema(structure_type: str) -> dict:
-    """The schema a call sends for its type: a column mapping keeps its own, every deck type is labelled."""
+    """The schema a call sends for its type: a column mapping and a file type keep their own, every deck type is labelled."""
+    if structure_type == FILE_TYPE:
+        return file_type_output_schema()
     return structure_output_schema() if structure_type == "column_mapping" else labelling_output_schema()
+
+
+def file_type_output_schema() -> dict:
+    """The file-type JSON schema: the type word and nothing else."""
+    return {
+        "type": "object",
+        "properties": {"type": {"type": "string", "enum": [FILE_TYPE]},
+                       "file_type": {"type": "string", "enum": list(FILE_TYPES)}},
+        "required": ["type", "file_type"],
+        "additionalProperties": False,
+    }
 
 
 def structure_output_schema() -> dict:
@@ -414,6 +440,7 @@ class StructureRead(BaseModel):
     reason: Optional[str] = None
     type: str
     model_type: Optional[str] = None
+    file_type: Optional[str] = None
     items: List[dict] = Field(default_factory=list)
     labels: List[dict] = Field(default_factory=list)
     pairs: List[dict] = Field(default_factory=list)
