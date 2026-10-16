@@ -9,6 +9,7 @@ export const api = axios.create({ baseURL: API });
 export const TOKEN_KEY = "access_token";
 export const getToken = () => { try { return window.localStorage.getItem(TOKEN_KEY); } catch (e) { return null; } };
 export const setToken = (token) => { try { window.localStorage.setItem(TOKEN_KEY, token); } catch (e) { /* the link then works for this page only */ } };
+export const clearToken = () => { try { window.localStorage.removeItem(TOKEN_KEY); } catch (e) { /* nothing stored */ } };
 api.interceptors.request.use((config) => {
   const token = getToken();
   if (token && !(config.headers && config.headers.Authorization)) {     // an owner call carries its own token
