@@ -306,7 +306,7 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 | Id | Where | Text |
 |---|---|---|
 | S1 | text reply | This window accepts files and mapping confirmations. (as given) |
-| S2 | explainer, consent ticked | Mapping is done by rules first. Where rules cannot decide, the AI sees only those columns' headers, up to 3 example numbers or dates per column and a pattern for text columns – never your full file and never a name – and you confirm those columns. When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table, which can contain the company name. (Last sentence added 2026-10-16, §19.) |
+| S2 | explainer, consent ticked | Mapping is done by rules first. Where rules cannot decide, the AI sees only those columns' headers, up to 3 example numbers or dates per column and a pattern for text columns – never your full file and never a name – and you confirm those columns. When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table. (Last sentence added 2026-10-16, §19; its "which can contain the company name" clause removed the same day, because the company name is masked.) |
 | S3 | explainer, consent unticked | Mapping is done by rules only: AI-assisted reading is off for this audit. You map the columns the rules cannot decide. |
 | S4 | drop zone | Drop files here or use the paperclip. Required: revenue by customer (monthly, 24–36 months). Also useful: CRM export, P&L. Board decks go to the Deck panel. .xlsx or .csv only. |
 | S5 | bubble head | Detected: Revenue lines · 1,240 rows · 24 months (Jan 2023 – Dec 2024). Before the date column is confirmed the months are left out: "Detected: Revenue lines · 1,240 rows". |
@@ -500,8 +500,8 @@ revenue because "Account ID" scores 80 as a customer and "MRR EUR" scores 60 as 
 fields; (2) the model runs only for columns the rules left `unsure` or `needs`, and a column in state `unused` (no proposal, or left out of
 the model's reply, §4.2) shows "Rules", confidence 0 and is never sent; a mapping version that mapped nothing was saved (nothing
 pending) and reused for the same headers, so no rules and no model ran again (§5). Architecture note: rule 16 and
-docs/architecture.md name spreadsheet header rows; the title rows above a header and the sheet names (below) are a widening
-that George asked for in this task, held here and in the boundary test, and not in CLAUDE.md or architecture.md, which stay frozen.
+docs/architecture.md now read "spreadsheet sheet names, title rows and header rows" (George, 2026-10-16), the same words as here and in
+the boundary test.
 
 Challenge (rule 4): needed, because three files could not be mapped and the screen gave no reason. Simpler: one message on a miss and rules
 for the type, no second model call. Deleted first: the "first sheet only" rule, the 50% type threshold, and the reuse of a saved mapping that
@@ -525,8 +525,9 @@ maps nothing.
   cut at 200 characters), the header row (at most 40 columns) and the masked sample of §4.2 (3 numbers or dates per numeric or date column, a
   profile per text column; a wide sheet sends its header as written and the profile of its first column only). Nothing else: no data row text,
   no file name. Redaction is the one of §4.2 and the gateway runs it again (the client name becomes [redacted], addresses and phone numbers
-  are masked, customer names take their pseudonyms; the target company's own name is not masked, which is why S2 says the title rows can
-  contain it). The reply is one closed word: revenue, crm, pnl or unknown (`FileTypeReply`). Its own prompt, `file_type` (prompt-store.md; the
+  are masked, customer names take their pseudonyms, and the target company's own name becomes [redacted] in the sheet names, title rows and
+  headers, so it never reaches the model in clear text; unit markers such as "EUR thousands" are left as written, and the x1,000 scaling reads
+  the stored title rows, not the masked text). The reply is one closed word: revenue, crm, pnl or unknown (`FileTypeReply`). Its own prompt, `file_type` (prompt-store.md; the
   owner uploads it; until then no call is made and the analyst picks the type, S6). `llm_calls` rows carry `structure_type: "file_type"`.
   The answer is kept in `column_mappings` as `{audit_id, kind: "file_type", file_hash, file_type, saved_at}` and used again for the same bytes. A
   failure, a timeout (`MAPPING_AI_SECONDS`), no consent or "unknown" leaves the type to the analyst (S6). A log line holds codes only: the

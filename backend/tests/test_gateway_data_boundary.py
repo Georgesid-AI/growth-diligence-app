@@ -1,6 +1,6 @@
 """The gateway's data boundary: what may leave the server, and what never does.
 
-The outbound payload is built from an allowlist. File and sheet names, column
+The outbound payload is built from an allowlist. File names, column
 headers and raw cell values stay in Mongo for the dashboard; segment names go
 out as stable labels and come back as real names. Every test runs against the
 in-memory Mongo stub and the fake adapter - no test can reach a real provider.
@@ -2259,8 +2259,8 @@ def test_the_prompt_upload_route_logs_the_name_and_version_only():
 
 
 # ---------------------------------------------------------------------------
-# The file type (docs/specs/chat-upload.md section 19, 2026-10-16): the model may read sheet names, the title rows above each
-# header (which can hold the company name), the header row and the masked sample. Nothing else, and none of it is kept.
+# The file type (docs/specs/chat-upload.md section 19, 2026-10-16): the model may read spreadsheet sheet names, title rows and header
+# rows and the masked sample, with the client name and the company name masked. Nothing else, and none of it is kept.
 # ---------------------------------------------------------------------------
 import mapping_shapes as shapes  # noqa: E402
 
@@ -2361,4 +2361,36 @@ def test_chat_a_title_row_holding_the_client_name_or_an_address_reaches_the_mode
     chat.upload(api, "x.xlsx", buf.getvalue())
     text = chat.model_text(api)
     assert "Northbridge" not in text and "jane.doe" not in text and "[redacted]" in text and "[email]" in text
-    assert "Fixture Target Ltd" in text, "the company's own name is not masked (rule 16: only the client name is withheld)"
+    assert "Fixture Target Ltd" not in text, "the company's own name is masked in the file-type text (chat-upload.md section 19)"
+
+
+def _name_workbook(sheet_name, title):
+    from openpyxl import Workbook
+    import io
+    wb = Workbook()
+    ws = wb.active
+    ws.title = sheet_name
+    ws["A1"] = title
+    for j, h in enumerate(["Line", "2023", "2024", "2025"]):
+        ws.cell(3, 1 + j, h)
+    ws.cell(4, 1, "Metric")
+    for j in range(3):
+        ws.cell(4, 2 + j, 10 + j)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_chat_the_company_name_in_a_sheet_name_or_a_title_row_never_reaches_the_model_and_the_unit_marker_stays(api):  # noqa: F811
+    api.state["adapter"] = t.FakeAdapter(replies=[json.dumps({"type": "file_type", "file_type": "unknown"})])
+    chat.upload(api, "x.xlsx", _name_workbook("Fixture Target Ltd P&L", "Fixture Target Ltd \u2013 April 2024 Report, EUR thousands"))
+    text = chat.model_text(api)
+    assert "fixture target" not in text.lower(), "the company name is absent from the model payload"
+    titles = [c["text"] for s in structure_redact.parse_file_type_text(text) for c in s["titles"]]
+    assert any("[redacted]" in x and "EUR thousands" in x for x in titles), titles
+    assert gateway.structure_text_problem(text, "file_type", FILE_TYPE_CONTEXT, {}) is None
+
+
+def test_chat_a_file_type_text_still_holding_the_company_name_is_refused():
+    text = _file_type_text(name="Fixture Target Ltd", titles=[{"row": 1, "col": 1, "text": "Fixture Target Ltd report"}])
+    assert gateway.structure_text_problem(text, "file_type", FILE_TYPE_CONTEXT, {}) == "redaction_changed"

@@ -520,6 +520,13 @@ def withheld_values(audit: Dict) -> Tuple[str, ...]:
                  if audit.get(k) is not None and str(audit.get(k)).strip())
 
 
+def file_type_withheld(audit: Dict) -> Tuple[str, ...]:
+    """What the file-type text withholds (chat-upload.md section 19): the client name and the target company's own name,
+    which often stands in a sheet name or a title row ("<Company> LTD - April 2024 Report"). Unit markers are untouched."""
+    company = str(audit.get("company_name") or "").strip()
+    return withheld_values(audit) + ((company,) if company else ())
+
+
 def withhold_cells(cells: List[Dict], withheld: Tuple[str, ...]) -> Tuple[List[Dict], int]:
     """(cells, count): each withheld value (the client name) becomes
     [redacted] wherever it stands as a whole word, in any case. The target's own name does not shield

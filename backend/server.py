@@ -716,7 +716,7 @@ def _file_type_sheets(audit: dict, sheets: list, mapping: dict) -> str:
         parts.append(structures.file_type_sheet(
             sheet.sheet, sheet.titles, sheet.header_row, sheet.headers, sheet.columns, rows,
             tuple(cr.customer_columns(sheet, cr.analyse("revenue", sheet)[0])) if not sheet.wide else (), sheet.raw_headers))
-    return structures.file_type_text(parts, audit.get("company_name"), mapping, structures.redact.withheld_values(audit))
+    return structures.file_type_text(parts, audit.get("company_name"), mapping, structures.redact.file_type_withheld(audit))
 
 
 async def _ask_file_type(audit: dict, sheets: list, digest: str):

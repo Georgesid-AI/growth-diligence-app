@@ -9,7 +9,7 @@ so uploaded rows, raw file bytes and parsed deck text are never fetched, let alo
 
 Structure path (rule 16, read_structure): selected deck structures (tables, charts with data
 labels, KPI panels, roadmaps and timelines, hiring, unit-economics and use-of-funds tables) and
-spreadsheet header rows (at most 3) with, per column, up to 3 sample values (numeric and date
+spreadsheet sheet names, title rows and header rows (at most 3 header rows) with, per column, up to 3 sample values (numeric and date
 columns only) or a profile (distinct count, typical length, shape pattern) for text columns. Only
 after redaction, only with the audit's consent, only as extracted text with cell positions; never
 raw files, full pages or prose slides. A deck structure's text carries, below its cells, the item
@@ -1486,7 +1486,7 @@ def structure_text_problem(text: Any, structure_type: str, context: dict, mappin
         problem = structure_redact.file_type_text_problem(text)
         if problem:
             return problem
-        withheld = structure_redact.withheld_values(context)
+        withheld = structure_redact.file_type_withheld(context)
         for sheet in structure_redact.parse_file_type_text(text):
             cells = structure_redact.file_type_cells(sheet)
             if any(len(c["text"]) > STRUCTURE_CELL_MAX for c in cells):

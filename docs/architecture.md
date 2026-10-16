@@ -44,7 +44,7 @@ Two paths reach the gateway and each has its own fields (docs/specs/deck-parser.
 
 - Narrative path: computed results from MongoDB and the structured claim fields (type, value, high value of a range,
   unit, date, status). Never uploaded rows, raw file bytes or parsed deck text.
-- Structure path (rule 16): redacted deck structures and spreadsheet header rows, as extracted text with cell
+- Structure path (rule 16): redacted deck structures and spreadsheet sheet names, title rows and header rows, as extracted text with cell
   positions, only with per-audit consent. What the text may hold is defined in docs/specs/llm-structure-reading.md
   §1 and §3.
 
@@ -60,7 +60,7 @@ Claims within tolerance are approved by the analyst's Run audit press, listed un
 
 Until 2026-10-05 the gateway read no parsed deck text at all (the former deck-parser.md §4). The amendment added
 rules 16–18 to CLAUDE.md, which hold their wording: the gateway may read selected deck structures and spreadsheet
-header rows under the conditions of rule 16; logs and MongoDB store model output and metadata and never sent text
+sheet names, title rows and header rows under the conditions of rule 16; logs and MongoDB store model output and metadata and never sent text
 (rule 17); model output never becomes Verified on its own (rule 18). The structure path above is its implementation,
 specified in docs/specs/llm-structure-reading.md and docs/specs/structure-labelling.md. The deck parser still has no
 direct link to the gateway.

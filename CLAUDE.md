@@ -8,7 +8,7 @@
    whether they exist.
 16. The gateway may read selected deck structures (tables, charts with data labels, KPI
     panels, roadmaps/timelines, hiring tables, unit-economics boxes, use-of-funds
-    tables) and spreadsheet header rows with, per column, either up to 3 sample values
+    tables) and spreadsheet sheet names, title rows and header rows with, per column, either up to 3 sample values
     (numeric and date columns only) or a profile (distinct count, typical length, shape
     pattern) for text columns — only after redaction, only with per-audit consent, only
     as extracted text with cell positions. Never raw files, full pages or prose slides.

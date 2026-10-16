@@ -425,8 +425,9 @@ describe("the type, the sheet and the miss (2026-10-16)", () => {
     ...over,
   });
 
-  test("the consent explainer says the AI may see sheet names and title rows, which can contain the company name", () => {
-    expect(S2_EXPLAINER_CONSENT).toContain("When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table, which can contain the company name.");
+  test("the consent explainer says the AI may see sheet names and title rows and no sentence about the company name", () => {
+    expect(S2_EXPLAINER_CONSENT).toContain("When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table.");
+    expect(S2_EXPLAINER_CONSENT).not.toMatch(/company name/);
   });
 
   test("the bubble shows the detected type with its source and a Change button, the sheet read, and the units note", async () => {

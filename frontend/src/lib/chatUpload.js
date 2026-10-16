@@ -6,7 +6,7 @@ import { seeGlossary } from "./glossary";
 
 export const S1_TEXT_REPLY = "This window accepts files and mapping confirmations.";
 export const S2_EXPLAINER_CONSENT =
-  "Mapping is done by rules first. Where rules cannot decide, the AI sees only those columns' headers, up to 3 example numbers or dates per column and a pattern for text columns – never your full file and never a name – and you confirm those columns. When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table, which can contain the company name.";
+  "Mapping is done by rules first. Where rules cannot decide, the AI sees only those columns' headers, up to 3 example numbers or dates per column and a pattern for text columns – never your full file and never a name – and you confirm those columns. When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table.";
 export const S3_EXPLAINER_NO_CONSENT =
   "Mapping is done by rules only: AI-assisted reading is off for this audit. You map the columns the rules cannot decide.";
 export const S4_DROP_ZONE =
