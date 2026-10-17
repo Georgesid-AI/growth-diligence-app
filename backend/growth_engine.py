@@ -17,6 +17,7 @@ RECURRING_ALIASES = {"recurring", "subscription", "mrr", "arr", "rec"}
 ONE_OFF_ALIASES = {"one-off", "one off", "oneoff", "onetime", "one-time", "services", "service"}
 WON_ALIASES = {"won", "closed won", "closed-won", "closedwon", "win"}
 LOST_ALIASES = {"lost", "closed lost", "closed-lost", "closedlost"}
+CLUSTERING_DAYS = 10    # the last days of a month counted for quarter-end clustering (docs/specs/crm-dedup-clustering.md section 2)
 TERM_MONTHS = {"monthly": 1, "quarterly": 3, "annual": 12, "annually": 12, "yearly": 12}
 
 # (key, display label, low ACV, high ACV exclusive) — ordered lowest to highest ACV.
@@ -619,7 +620,8 @@ def _required_vs_observed(required, observed, months):
     return _round(required / observed, 2), None
 
 
-def compute_anomalies(mrr: pd.DataFrame, rev: pd.DataFrame, deals: pd.DataFrame, mrr_notes: dict):
+def compute_anomalies(mrr: pd.DataFrame, rev: pd.DataFrame, deals: pd.DataFrame, mrr_notes: dict, deal_repeats: dict | None = None):
+    """`deal_repeats` is dedupe_deals' flag over the deals before they were collapsed; without it the flag is read from `deals`."""
     flags = {}
     # negative MRR months
     neg_months = []
@@ -670,7 +672,32 @@ def compute_anomalies(mrr: pd.DataFrame, rev: pd.DataFrame, deals: pd.DataFrame,
         if "_row" in bad.columns:
             excluded_rows = [int(r) for r in bad["_row"].tolist() if r is not None and not pd.isna(r)][:200]
     flags["deals_close_before_created"] = {"excluded_count": int(excluded), "rows": excluded_rows}
+    flags["deals_duplicate_id"] = deal_repeats if deal_repeats is not None else dedupe_deals(deals)[1]
     return flags
+
+
+def compute_won_deal_closes(deals: pd.DataFrame):
+    """Won deals by calendar close month, and those closed in its last CLUSTERING_DAYS days (crm-dedup-clustering.md section 2).
+
+    Counts only: the quarter, which needs the audit's fiscal year-end, is applied by app/integrity.py. A won deal closing before
+    it was created is left out, as for the sales cycle and the win rate. None when the stage or the close date is not mapped (a
+    close date column with no date in any row is not mapped); deals all cut at the as-of month give an empty list.
+    Returns {"by_month": [{month, won, last_10_days}], "rows": [sheet rows of the won deals read]}.
+    """
+    if ("stage" not in deals.columns or "close_date" not in deals.columns
+            or (not deals.empty and deals["close_date"].notna().sum() == 0)):
+        return None
+    closed = pd.to_datetime(deals["close_date"], errors="coerce")
+    created = (pd.to_datetime(deals["created_date"], errors="coerce") if "created_date" in deals.columns
+               else pd.Series(pd.NaT, index=deals.index))
+    won = (deals["stage"].astype(str).str.lower().str.strip().isin(WON_ALIASES) & closed.notna()
+           & ~(created.notna() & (closed < created)))
+    close = closed[won]
+    late = close.dt.day > close.dt.days_in_month - CLUSTERING_DAYS
+    by_month = [{"month": _period_str(m), "won": int(len(g)), "last_10_days": int(g.sum())}
+                for m, g in late.groupby(close.dt.to_period("M"))]
+    rows = deals.loc[won, "_row"].tolist() if "_row" in deals.columns else []
+    return {"by_month": by_month, "rows": rows}
 
 
 def compute_mrr_series(mrr: pd.DataFrame, seg_map: dict):
@@ -1325,6 +1352,32 @@ def cut_deals_at_as_of(deals: pd.DataFrame, as_of):
     return deals[~after].copy(), int(after.sum())
 
 
+def dedupe_deals(deals: pd.DataFrame):
+    """Collapse repeated rows of one deal (docs/specs/crm-dedup-clustering.md section 1).
+
+    With deal_id mapped, rows with the same deal ID, stage (as the engine reads it), created date and close date are one deal:
+    the first row is kept. Rows with the same ID and a different stage or date are all kept. A blank ID is never a repeat.
+    Returns (deals, flag): flag = {rows, distinct_ids, collapsed, rows_list}, the rows whose ID is on another row too, the
+    number of such IDs, the rows removed and the sheet rows of the first (up to 200).
+    """
+    flag = {"rows": 0, "distinct_ids": 0, "collapsed": 0, "rows_list": []}
+    if deals is None or deals.empty or "deal_id" not in deals.columns:
+        return deals, flag
+    ids = deals["deal_id"].map(lambda v: "" if v is None or pd.isna(v) else str(v).strip())
+    shared = (ids != "") & ids.duplicated(keep=False)
+
+    def column(name):
+        return deals[name] if name in deals.columns else pd.Series(None, index=deals.index, dtype=object)
+    key = pd.DataFrame({"id": ids, "stage": column("stage").astype(str).str.lower().str.strip(),
+                        "created": pd.to_datetime(column("created_date"), errors="coerce"),
+                        "closed": pd.to_datetime(column("close_date"), errors="coerce")})
+    repeat = shared & key.duplicated(keep="first")
+    rows = deals.loc[shared, "_row"].tolist() if "_row" in deals.columns else []
+    flag = {"rows": int(shared.sum()), "distinct_ids": int(ids[shared].nunique()), "collapsed": int(repeat.sum()),
+            "rows_list": [int(r) for r in rows if r is not None and not pd.isna(r)][:200]}
+    return deals[~repeat].copy(), flag
+
+
 # ---------------------------------------------------------------------------
 # Compute before Missing (V6). Before an item stays in missing_data, every uploaded
 # file is tested for the columns the analysis needs - not only the file it normally
@@ -1376,6 +1429,7 @@ def _run_analysis(analysis: str, frame: pd.DataFrame, ctx: dict):
     as_of = ctx.get("as_of")
     if ANALYSIS_NEEDS[analysis]["as"] == "crm":
         deals, _ = cut_deals_at_as_of(frame, as_of)
+        deals, _ = dedupe_deals(deals)
         if deals is None or deals.empty:
             return None
         if analysis == "sales_cycle":
@@ -1536,6 +1590,8 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
         pnl = pnl[[(_month_of(x) is not None and _month_of(x) <= as_of) for x in pnl["month"]]]
     deals_loaded = len(deals)
     deals, deals_after_as_of = cut_deals_at_as_of(deals, as_of)
+    deal_rows = deals["_row"].tolist() if "_row" in deals.columns else []      # every row read, repeats included
+    deals, deal_repeats = dedupe_deals(deals)
 
     missing_data = []
     rev_src = sources.get("revenue", {"file": "revenue", "sheet": "Sheet1"})
@@ -1779,7 +1835,7 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
 
     # None after a failure, never zero counts: the dashboard shows the calculation error instead
     results["anomalies"] = guarded("Anomaly flags", rev_src.get("file"), None,
-                                   compute_anomalies, mrr, rev, deals, mrr_notes)
+                                   compute_anomalies, mrr, rev, deals, mrr_notes, deal_repeats)
     if results["anomalies"] is not None:
         results["anomalies"]["date_order_from_data"] = date_order_notes
         flagged = [r for k in ("rows_missing_customer", "rows_missing_fx", "rows_missing_amount") for r in mrr_notes.get(k, [])]
@@ -1788,8 +1844,14 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
                                              "and revenue lines excluded for a missing customer ID, FX rate or amount")
         if not deals.empty:
             results["anomalies"]["deals_source"] = src(
-                crm_src, deals.get("_row", []).tolist() if "_row" in deals.columns else [],
-                "Deals with a close date before the created date are flagged and excluded")
+                crm_src, deal_rows, "Deals with a close date before the created date are flagged and excluded; rows repeating a "
+                                    "deal's ID, stage and dates are flagged and counted once")
+    # Server-only: integrity.py reads it with the audit's fiscal year-end (docs/specs/crm-dedup-clustering.md section 2).
+    closes = guarded("Won deals by close month", crm_src.get("file"), None, compute_won_deal_closes, deals)
+    if closes is not None:
+        closes["source"] = src(crm_src, closes.pop("rows"), "Won deals closed by the as-of month, by close month and in its last "
+                                                            f"{CLUSTERING_DAYS} days; repeated rows of a deal counted once")
+    results["won_deal_closes"] = closes
     results["mrr_series"] = guarded("MRR by segment", rev_src.get("file"), {"months": [], "segments": [], "data": []},
                                     compute_mrr_series, mrr, seg_map)
     results["mrr_series"]["source"] = src(rev_src, contrib_rows, "MRR = recurring MRR per customer in the month, summed by segment")

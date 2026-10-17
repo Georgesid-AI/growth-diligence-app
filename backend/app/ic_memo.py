@@ -637,7 +637,8 @@ def build_memo(*, audit: dict, results: dict, rows: List[dict], ver: dict, key: 
     _needs(ic, rows, key)
 
     if integrity is None:
-        integrity = integrity_mod.assess(results, deck_count=len(decks), candidates=[])
+        integrity = integrity_mod.assess(results, deck_count=len(decks), candidates=[],
+                                         fiscal_year_end=int((audit or {}).get("fiscal_year_end") or 12))
     common = dict(audit=audit, results=results, rows=rows, ver=ver, key=key, gaps=gaps, ic=ic, blockers=blockers,
                   narratives=narratives, usage=usage, files=files, decks=decks, tables=tables, today=today, integrity=integrity)
     # A number in a thesis sentence must be in the results, the register or the cost log: checked sentence by sentence.

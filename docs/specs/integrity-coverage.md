@@ -22,7 +22,7 @@ Block B, "Assessment coverage": one row per check of the method, `Check | Status
 |---|---|---|---|
 | 1 | Revenue reconciliation | the engine's `revenue_reconciliation` is available (a P&L with a revenue line and a month in common with the revenue file) | Green: the window and every month within tolerance; Amber: the window within tolerance, a month beyond it; Red: the window beyond tolerance (the hard blocker of CLAUDE.md rule 21). Finding: "Revenue file and P&L differ by {x}% over {first}–{last}". Source: the block's citation |
 | 2 | Gaps in customer data | the engine's `anomalies` block exists (a mapped revenue file) | Green: no customer whose revenue stops for over two months and resumes, no revenue line without a customer ID; Amber: any. Finding: the two counts. Source: `anomalies` citation |
-| 3 | Quarter-end clustering | never in Release 1 | – |
+| 3 | Quarter-end clustering | built by crm-dedup-clustering.md (17 Oct 2026): the engine's `won_deal_closes` holds 20 or more won deals | Green below 20%, Amber 20% to 35%, Red above 35% of won deals closed in the last 10 days of a quarter (the audit's fiscal year-end). Finding: "{share}% of {n} won deals closed in the last 10 days of a quarter (chance: 11%)". Source: the block's citation |
 | 4 | Smoothness | built by smoothness.md (15 Oct 2026): 13 consecutive months of revenue in the stored series | Amber below 0.5 points of month-on-month growth deviation, else Green (smoothness.md §1) |
 | 5 | Benford on transactions | never: not applicable by design | – |
 | 6 | Deck-vs-deck figures | at least one deck is parsed | Green: no figure of the audit's decks (claims not rejected) differs from another figure of the same type, label and stated period (deck-parser.md §2 inconsistency rule, read across all the audit's decks); Amber: any. Finding: the count and the first pair's pages. Source: deck file · page |
@@ -32,8 +32,8 @@ Status values, with the reason the row prints:
 |---|---|---|
 | Completed | the check ran | – (its result is in Block A) |
 | Not applicable | the check cannot apply to this company by design; a stated reason is required | Benford: "No transaction-level file: the app ingests revenue by customer and month, not transactions." |
-| Blocked — company data missing | names the file or field that would unblock it; a data request, not a negative finding | 1: "P&L with a revenue line, overlapping the revenue file's months"; 2: "Revenue file mapped (customer ID, invoice date, amount)"; 4: "Revenue file with at least 13 consecutive months of revenue"; 6: "At least one board deck" |
-| Not available in the app | product limitation; printed as such, never as a company finding | 3: "The app does not compute quarter-end clustering of deals yet." |
+| Blocked — company data missing | names the file or field that would unblock it; a data request, not a negative finding | 1: "P&L with a revenue line, overlapping the revenue file's months"; 2: "Revenue file mapped (customer ID, invoice date, amount)"; 3: "CRM file mapped (stage, close date)", or "Not enough deals ({n})" below 20 won deals; 4: "Revenue file with at least 13 consecutive months of revenue"; 6: "At least one board deck" |
+| Not available in the app | product limitation; printed as such, never as a company finding | none since crm-dedup-clustering.md |
 
 Denominator: applicable checks only (every status but Not applicable). Display: "Completed {x} of {y} applicable checks",
 then "Blocked: {names}" when any is blocked.
@@ -78,15 +78,15 @@ are no longer printed there. On the Dashboard the data-integrity narrative no lo
 
 ## 7. Decided (engineering, rule 19)
 - Results thresholds: Green means nothing found, Amber anything found, Red only the reconciliation's hard blocker; no
-  count threshold is invented for gaps in customer data.
+  count threshold is invented for gaps in customer data. Amended 17 Oct 2026 (crm-dedup-clustering.md §2): quarter-end
+  clustering has its own bands and can be Red; it is not a hard blocker.
 - Deck-vs-deck reads the parser's own inconsistency rule over all the audit's decks, so one deck's figures are compared with
   each other and with the other decks'.
 
 ## 8. Consequences to know
-- Quarter-end clustering is Not available and Benford is Not applicable. With smoothness built (smoothness.md), 4 of the 5
-  applicable checks can complete, so an audit with the reconciliation, the gaps, the smoothness and the deck check completed
-  has a conclusion; without a deck, or a P&L, or 13 months of revenue it still reads "Insufficient assessment coverage (x of 5)"
-  until clustering is built (Release 3, CRM data).
+- Benford is Not applicable. With smoothness (smoothness.md) and quarter-end clustering (crm-dedup-clustering.md) built, all 5
+  applicable checks can complete; an audit reads "Insufficient assessment coverage (x of 5)" while fewer than 4 complete or the
+  reconciliation is not among them.
 
 ## Files
 `backend/app/integrity.py` (new), `backend/server.py`, `backend/app/ic_memo.py`, `frontend/src/components/IntegrityCoverage.jsx`

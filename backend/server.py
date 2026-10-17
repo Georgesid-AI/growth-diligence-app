@@ -1896,12 +1896,12 @@ async def _ic_context(audit_id: str, audit: dict, validate: bool = True) -> dict
     return {"rows": rows, "results": results, "ic": ic, "state": state, "gaps": gaps, "contract": None}
 
 
-async def _integrity(audit_id: str, results: Optional[dict]) -> dict:
+async def _integrity(audit_id: str, results: Optional[dict], fiscal_year_end: int) -> dict:
     """Both blocks of the Data integrity section and the conclusion (docs/specs/integrity-coverage.md), from the stored results, the
-    deck count and the stored candidates. Pure reads; no model."""
+    deck count, the stored candidates and the audit's fiscal year-end (the clustering check's quarters). Pure reads; no model."""
     deck_count = len(await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, {"_id": 0, "deck_id": 1}).to_list(100))
     candidates = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
-    return integrity_mod.assess(results, deck_count=deck_count, candidates=candidates)
+    return integrity_mod.assess(results, deck_count=deck_count, candidates=candidates, fiscal_year_end=fiscal_year_end)
 
 
 @api.get("/audits/{audit_id}/integrity")
@@ -1910,7 +1910,7 @@ async def get_integrity(audit_id: str):
     if not audit:
         raise HTTPException(404, "Audit not found")
     results = (await _current_audit(audit_id, audit, strict=False)).get("results")
-    out = await _integrity(audit_id, results)
+    out = await _integrity(audit_id, results, _fiscal_year_end(audit))
     logger.info("integrity: run_id=%s conclusion=%s completed=%d applicable=%d", audit_id, out["code"], out["completed"],
                 out["applicable"])
     return sanitize(out)
@@ -2369,7 +2369,7 @@ async def export_memo(audit_id: str):
             blockers=await _blocker_list(audit_id, audit), narratives=narratives, usage=usage,
             files=[{"dtype": d["dtype"], "file": d.get("file"), "sheet": d.get("sheet")} for d in datasets],
             decks=[{"file": d.get("file")} for d in deck_docs], tables=tables, today=analysis_date(audit),
-            integrity=await _integrity(audit_id, results))
+            integrity=await _integrity(audit_id, results, _fiscal_year_end(audit)))
     except ic_memo.MemoRefused as exc:
         refusal = exc
     words = ic_memo.word_count_of(text) if text else (refusal.words or 0)
@@ -3005,7 +3005,8 @@ app.add_middleware(
 # 7: results carry contract_version 2 (a citation on every result block).
 # 8: demo audits carry no engagement reference (the field is gone).
 # 9: results carry contract_version 3 (the latest valid source period and the period of every metric).
-SEED_VERSION = 9
+# 10: results carry contract_version 4 (repeated CRM rows counted once and flagged, won deals by close month).
+SEED_VERSION = 10
 
 
 @app.on_event("startup")

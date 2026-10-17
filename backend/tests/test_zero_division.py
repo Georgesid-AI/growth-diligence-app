@@ -220,7 +220,7 @@ def test_no_gap_item_when_the_revenue_reaches_the_as_of_month():
 def test_failing_anomaly_flags_are_missing_and_never_zero(monkeypatch):
     real = ge.compute_anomalies
     monkeypatch.setattr(ge, "compute_anomalies",
-                        lambda mrr, rev, deals, notes: real(mrr, rev, deals, None))  # fails inside the engine
+                        lambda mrr, rev, deals, notes, *rest: real(mrr, rev, deals, None, *rest))  # fails inside the engine
     errors = []
     results = ge.compute_all(_rev_two_customers(), None, None,
                              {"reporting_currency": "EUR", "target_arr": 0, "target_date": None, "fx": {"EUR": 1.0},

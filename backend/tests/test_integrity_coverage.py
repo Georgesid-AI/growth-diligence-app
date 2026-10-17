@@ -66,17 +66,17 @@ def test_plan_2_3_the_memo_lists_the_blocked_check_under_requests():
     assert "- Revenue reconciliation: P&L with a revenue line, overlapping the revenue file's months" in appendix_b
 
 
-def test_the_testco_run_completes_four_of_five_and_reads_material_concerns_from_its_red_reconciliation():
+def test_the_testco_run_completes_five_of_five_and_reads_material_concerns_from_its_red_reconciliation():
     ig = _integrity()
     assessed = ig.assess(engine_results(), deck_count=1, candidates=[])
     statuses = {r["check"]: r["status"] for r in assessed["coverage"]}
     assert [r["check"] for r in assessed["coverage"]] == CHECKS
     assert statuses == {"Revenue reconciliation": ig.COMPLETED, "Gaps in customer data": ig.COMPLETED,
-                        "Quarter-end clustering": ig.NOT_AVAILABLE, "Smoothness": ig.COMPLETED,
+                        "Quarter-end clustering": ig.COMPLETED, "Smoothness": ig.COMPLETED,
                         "Benford on transactions": ig.NOT_APPLICABLE, "Deck-vs-deck figures": ig.COMPLETED}
     rec = next(r for r in assessed["results"] if r["check"] == "Revenue reconciliation")
     assert rec["result"] == "Red", "TestCo's window is beyond tolerance: the hard blocker"
-    assert (assessed["conclusion"], assessed["completed_text"]) == ("Material concerns", "Completed 4 of 5 applicable checks")
+    assert (assessed["conclusion"], assessed["completed_text"]) == ("Material concerns", "Completed 5 of 5 applicable checks")
 
 
 @pytest.mark.parametrize("results, code", [
@@ -103,8 +103,8 @@ def test_the_endpoint_returns_both_blocks_and_the_conclusion(register_api):
     assert r.status_code == 200, r.text
     body = r.json()
     assert [row["check"] for row in body["coverage"]] == CHECKS
-    assert body["conclusion"].startswith("Insufficient assessment coverage")
-    assert body["completed_text"] == f"Completed {body['completed']} of {body['applicable']} applicable checks"
+    assert body["conclusion"] == "Material concerns", "no deck: 4 of 5 completed, TestCo's reconciliation is Red"
+    assert body["completed_text"] == "Completed 4 of 5 applicable checks"
     assert client.get("/api/audits/nope/integrity").status_code == 404
 
 
@@ -113,7 +113,7 @@ def test_the_memo_scorecard_reads_the_conclusion_and_never_the_narratives_verdic
     from test_ic_memo import data_step
     text = im.build_memo(**inputs(narratives=[data_step("data_integrity", verdict="Reliable", headline="Reliable: the files agree.")]))
     row = next(line for line in text.split("\n") if line.startswith("| Data reliability"))
-    assert "Material concerns" in row and "Completed 4 of 5 applicable checks" in row
+    assert "Material concerns" in row and "Completed 5 of 5 applicable checks" in row
     assert "Data integrity conclusion: Material concerns" in row
     assert "Data integrity verdict" not in text and "Reliable: the files agree." not in row
 
@@ -180,7 +180,11 @@ def test_with_no_deck_the_deck_check_is_blocked_and_requested():
     row = next(r for r in out["coverage"] if r["check"] == "Deck-vs-deck figures")
     assert (row["status"], row["reason"]) == (ig.BLOCKED, "At least one board deck")
     assert out["blocked"] == ["Deck-vs-deck figures"] and out["data_requests"] == ["Deck-vs-deck figures: At least one board deck"]
-    assert out["memo_sentence"] == "Insufficient assessment coverage is not a finding about the company: 2 of the 5 applicable checks could not be completed."
+    assert out["memo_sentence"] is None, "4 of 5 completed with the reconciliation: a conclusion"
+    no_crm = ig.assess(engine_results(("revenue", "pnl")), deck_count=0, candidates=[])
+    assert no_crm["blocked"] == ["Quarter-end clustering", "Deck-vs-deck figures"]
+    assert no_crm["memo_sentence"] == ("Insufficient assessment coverage is not a finding about the company: 2 of the 5 applicable "
+                                       "checks could not be completed.")
 
 
 # --- smoothness (docs/specs/smoothness.md) -----------------------------------------------------------------------------------------
@@ -245,13 +249,15 @@ def test_a_possibly_partial_last_month_is_not_read():
     assert _smooth(complete)[1]["result"] == "Green", "ticked complete, the same month is read"
 
 
-def test_with_smoothness_four_of_five_applicable_checks_can_complete_and_clustering_stays_not_available():
+def test_with_smoothness_and_clustering_all_five_applicable_checks_can_complete():
+    """Amended 17 Oct 2026 (crm-dedup-clustering.md): quarter-end clustering is built, so no check is Not available any more."""
     ig = _integrity()
     stored = engine_results()
     assessed = ig.assess(stored, deck_count=1, candidates=[])
     statuses = {r["check"]: r["status"] for r in assessed["coverage"]}
-    assert statuses["Smoothness"] == ig.COMPLETED and statuses["Quarter-end clustering"] == ig.NOT_AVAILABLE
-    assert (assessed["completed"], assessed["applicable"]) == (4, 5)
+    assert statuses["Smoothness"] == ig.COMPLETED and statuses["Quarter-end clustering"] == ig.COMPLETED
+    assert ig.NOT_AVAILABLE not in statuses.values()
+    assert (assessed["completed"], assessed["applicable"]) == (5, 5)
     assert assessed["code"] != "insufficient"
     assert next(r for r in assessed["results"] if r["check"] == "Smoothness")["result"] == "Amber", "TestCo grows exactly 1% a month"
 

@@ -277,6 +277,7 @@ SERVER_ONLY_TOP_LEVEL = frozenset({"contract_version",                   # inter
                                    "revenue_series", "customers_series",    # claim-matching.md table 2a
                                    "revenue_reconciliation",                # chat-upload.md section 6.2; data_integrity reads a summary (step_payloads.py)
                                    "source_period", "metric_periods",       # dates-and-periods.md sections 2-3: months as text, no figure
+                                   "won_deal_closes",                       # crm-dedup-clustering.md: data_integrity reads a closed sentence
                                    "as_of_month"})                          # the analyst's setting: the model is told evidence_to and last_month_status instead
 SERVER_ONLY_FIELDS = frozenset({
     "file", "sheet", "columns", "rows", "row_numbers", "unlocked_by",
@@ -1304,6 +1305,9 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             "INSUFFICIENT", "INSUFFICIENT_NOTE", "COMPLETED_TEXT",
                             # docs/specs/smoothness.md: the deviation limit and the window
                             "SMOOTHNESS_LIMIT_POINTS", "SMOOTHNESS_MONTHS",
+                            # docs/specs/crm-dedup-clustering.md: the won-deal counts, the repeated rows and the clustering bands
+                            "won_deal_closes", "rows_list", "CLUSTERING_DAYS", "CLUSTERING_MIN_DEALS", "CLUSTERING_FEW",
+                            "CLUSTERING_AMBER_PCT", "CLUSTERING_RED_PCT", "CLUSTERING_FINDING",
                             # docs/specs/claim-review-conclusion.md: the analyst judgment and the contradictions outside the five
                             "judgment", "reasons", "unresolved_questions", "other_contradictions", "other_contradictions_text",
                             "JUDGMENT_PARTS", "JUDGMENT_LABELS", "SCOPE_SENTENCE", "NO_OTHER_CONTRADICTIONS",
@@ -1992,7 +1996,7 @@ NEW_STEPS = ("data_inventory", "data_integrity")
 STEP_FIELDS = frozenset({"source_list", "inventory", "integrity", "source_key", "description", "category", "in_request_list",
                          "quality_issues", "analyses_blocked", "months_supplied", "months_required", "check", "first_month",
                          "last_month", "revenue_file_total", "pnl_total", "gap", "gap_pct", "tolerance", "window_over_tolerance",
-                         "months_over_tolerance", "deviation_points", "limit_points", "result", "threshold_note"})
+                         "months_over_tolerance", "deviation_points", "limit_points", "result", "threshold_note", "finding"})
 
 
 def _strings(node):
@@ -2052,6 +2056,32 @@ def test_the_integrity_payload_holds_the_window_figures_as_display_strings_and_n
     inventory = json.dumps(steps.payload_of("data_inventory", results), ensure_ascii=False)
     for needle in ("1,100,000", "1,000,000", "gap_pct", "window_over_tolerance"):
         assert needle not in inventory, f"{needle!r} reached the inventory payload"
+
+
+def test_the_clustering_sentence_reaches_the_integrity_payload_and_the_year_end_and_the_deal_rows_never_do():
+    """crm-dedup-clustering.md section 2: the gateway reads the audit's fiscal year-end beside the results to set the quarters; the
+    model is told the finding and the result, never the year-end, the monthly counts or a row."""
+    results = steps.full_results()
+    results["won_deal_closes"] = {"by_month": [{"month": "2026-03", "won": 10, "last_10_days": 10},
+                                               {"month": "2026-04", "won": 15, "last_10_days": 15}],
+                                  "source": steps.cite(1, "rule")}
+    db = steps.db_for(results)
+    db["audits"].docs[0]["fiscal_year_end"] = 1             # quarters end in Jan, Apr, Jul, Oct: April's closes count
+    computed = asyncio.run(gateway.load_computed_results(db, steps.RUN_ID, "data_integrity"))
+    blob = json.dumps(gateway.build_outbound(computed, {}), ensure_ascii=False)
+    assert "60% of 25 won deals closed in the last 10 days of a quarter (chance: 11%)" in blob and '"Red"' in blob
+    for needle in ("fiscal_year_end", "won_deal_closes", "by_month", "last_10_days", "2026-04", steps.FILE_NAMES[1], "row_numbers"):
+        assert needle not in blob, f"{needle!r} reached the integrity payload"
+    assert "fiscal_year_end" not in gateway.OUTBOUND_TOP_LEVEL | gateway.OUTBOUND_FIELDS
+
+
+def test_the_repeat_flag_reaches_the_inventory_as_counts_and_never_its_rows():
+    results = steps.full_results()
+    results["anomalies"]["deals_duplicate_id"] = {"rows": 9, "distinct_ids": 3, "collapsed": 6, "rows_list": [717171, 727272]}
+    blob = json.dumps(steps.payload_of("data_inventory", results), ensure_ascii=False)
+    assert "9 CRM row(s) share a deal ID with another row (3 deal ID(s)); 6 exact repeat(s) counted once" in blob
+    for needle in ("717171", "717,171", "rows_list", "deals_duplicate_id"):
+        assert needle not in blob, f"{needle!r} reached the inventory payload"
 
 
 @pytest.mark.parametrize("step", NEW_STEPS)

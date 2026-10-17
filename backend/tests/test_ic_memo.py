@@ -566,7 +566,7 @@ def test_the_data_reliability_row_reads_the_integrity_conclusion_never_the_a2_ve
     text = memo(narratives=[data_step("data_integrity")])
     row = reliability_row(text).split("|")
     assert row[2].strip() == "Adequate", "Strong / Adequate / Weak is entered by the analyst"
-    assert row[3].strip().startswith("Material concerns. Completed 4 of 5 applicable checks.")
+    assert row[3].strip().startswith("Material concerns. Completed 5 of 5 applicable checks.")
     assert "not a finding about the company" not in row[3], "the sentence belongs to Insufficient assessment coverage only"
     assert "Revenue file and P&L differ by 69.61% over 2023-03–2024-02" in row[3], "the computed line follows"
     assert row[4].strip() == "Data integrity conclusion: Material concerns; revenue_reconciliation, anomalies, claim register"

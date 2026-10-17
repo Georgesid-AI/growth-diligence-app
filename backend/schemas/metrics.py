@@ -24,7 +24,7 @@ from typing import Annotated, Any, Dict, Iterator, List, Literal, Optional, Tupl
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, ValidationInfo
 
-CONTRACT_VERSION = 3
+CONTRACT_VERSION = 4
 
 # Display kinds: the same names app/formatting.py and frontend/src/lib/format.js use.
 CURRENCY, COUNT, COUNT_UP, DAYS, MONTHS, PCT, RATIO, PLAIN = (
@@ -392,6 +392,14 @@ class DateOrder(Block):
     rows: Plain
 
 
+class DealsDuplicateId(Block):
+    """Rows of the CRM sharing a deal ID (docs/specs/crm-dedup-clustering.md section 1)."""
+    rows: Plain                                     # rows whose deal ID is on another row too: a row count, as DateOrder.rows
+    distinct_ids: Count
+    collapsed: Count                                # rows repeating a deal's ID, stage and dates: counted once
+    rows_list: List[Plain]
+
+
 class Anomalies(Block):
     negative_mrr_months: List[str]
     revenue_gap_then_resume: List[str]
@@ -399,9 +407,22 @@ class Anomalies(Block):
     revenue_missing_fx_rate: MissingFx
     revenue_missing_amount: RowCount
     deals_close_before_created: DealsExcluded
+    deals_duplicate_id: DealsDuplicateId
     date_order_from_data: List[DateOrder]
     source: Citation                                # the revenue file: MRR flags and excluded revenue lines
-    deals_source: Optional[Citation] = None         # the CRM file: deals closing before they were created; absent without a CRM
+    deals_source: Optional[Citation] = None         # the CRM file: deals closing before they were created, repeated rows; absent without a CRM
+
+
+class WonDealMonth(Block):
+    month: str
+    won: Count
+    last_10_days: Count
+
+
+class WonDealCloses(Block):
+    """Won deals by calendar close month (crm-dedup-clustering.md section 2): counts only, the quarter is applied by integrity.py."""
+    by_month: List[WonDealMonth]
+    source: Citation
 
 
 class AmountRow(BaseModel):
@@ -523,7 +544,7 @@ class MetricPeriod(Block):
 
 class MetricsPayload(Block):
     """The full engine output. A block the engine could not compute is null; the reason is in `missing_data`."""
-    contract_version: Literal[3]
+    contract_version: Literal[4]
     reporting_currency: str                         # the one currency code; no value repeats it
     as_of_month: Optional[str]
     arr: Optional[Arr]
@@ -538,6 +559,7 @@ class MetricsPayload(Block):
     acv_path: Optional[AcvPath]
     segment_paths: SegmentPaths
     anomalies: Optional[Anomalies]
+    won_deal_closes: Optional[WonDealCloses]        # null without a CRM stage and close date; server-only
     mrr_series: MrrSeries
     revenue_series: RevenueSeries
     revenue_reconciliation: Optional[RevenueReconciliation]
