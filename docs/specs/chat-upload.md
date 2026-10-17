@@ -92,7 +92,11 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
 - Type (amended 2026-10-16, §19): the rules give each type a share, and the type with the unique highest share wins
   when that share is at least 80% (it was 50%). Revenue needs customer, date and amount, each header at 80 or more; CRM
   needs four of five signature columns (deal, created, closed or won, stage or status, owner); a P&L is the share of its
-  fields the headers match, or two or three cost lines among the headers or the line labels. Measured on sample_data/: 3
+  fields the headers match, or two or three cost lines among the headers or the line labels. Headers and line labels are
+  read with every run of punctuation as one space, the underscore included, as the mapping reads them (§21; 2026-10-17):
+  `deal_id,created_date,close_date,stage,owner` is a CRM file at 100%, and a line `cost_of_sales` is a cost line. Measured
+  the same day on sample_data/ and the fixtures in `backend/tests/fixtures/{mapping,messy}/` (12 files): no detected type
+  and no share changed. Measured on sample_data/: 3
   of 3 files detected, at 100% (revenue), 80% (CRM, which has no owner column) and 100% (P&L), each against a lower
   share for the other two types. Months found are the distinct months of the date column: invoice date for revenue,
   close date for CRM, month for the P&L. Below 80, with consent, the model is asked once for the file's type (§19).
@@ -535,7 +539,9 @@ maps nothing.
   fields (`amount`, `revenue`, `sm_expense`, `cost_of_revenue`) are multiplied by 1,000 when the engine reads the rows (`normalize`); the stored
   rows keep the file's own figures; S26c shows the note. Millions are not read.
 - **Type, rules first.** §3. Header synonyms: headers are read with punctuation as one space ("Deal - ID", "*InvoiceDate"), and the synonyms of
-  Stripe, Xero, HubSpot and Pipedrive exports were added to FIELD_DEFS (created, contact name, record id, deal stage ...).
+  Stripe, Xero, HubSpot and Pipedrive exports were added to FIELD_DEFS (created, contact name, record id, deal stage ...). The type rules read
+  the same way (2026-10-17): the CRM signature words and the cost lines are matched on each header and line label with every run of punctuation,
+  the underscore included, read as one space ("created_date" is "created date", "cost_of_sales" is "cost of sales").
 - **Type, the model, once per file.** Only when the rules give no type at 80, the audit has consent and the file's hash has no answer yet.
   The text, built in memory and never stored or logged: per sheet (at most 6) its name, the title rows above the header (at most 6 rows, cells
   cut at 200 characters), the header row (at most 40 columns) and the masked sample of §4.2 (3 numbers or dates per numeric or date column, a

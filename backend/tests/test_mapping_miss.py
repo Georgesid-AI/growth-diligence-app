@@ -51,6 +51,17 @@ def test_stage_owner_created_and_won_columns_make_a_crm_file_and_cost_lines_a_pn
     assert cr.detect_type(crm)[0] == "crm" and cr.detect_type(pnl)[0] == "pnl"
 
 
+def test_snake_case_headers_and_line_labels_are_read_with_underscores_as_spaces():
+    """The type rules read a header or a line label as the mapping does (2026-10-17, chat-upload.md sections 3 and 19): an
+    underscore is punctuation, so it no longer hides a word from the signature and cost-line rules."""
+    crm = cr.read_sheet(b"deal_id,created_date,close_date,stage,owner\nD1,2024-01-01,2024-02-01,won,Ann\n"
+                        b"D2,2024-01-02,2024-03-01,lost,Bo\n", "x.csv")
+    assert (cr.detect_type(crm)[0], cr.type_shares(crm)["crm"]) == ("crm", 1.0)
+    pnl = cr.read_sheet(b"line_item,Jan-24,Feb-24,Mar-24\ncost_of_sales,10,11,12\nstaff_costs,20,21,22\n"
+                        b"gross_profit,30,31,32\nnet_income,5,6,7\n", "x.csv")
+    assert pnl.wide and cr.detect_type(pnl)[0] == "pnl" and cr.type_shares(pnl)["pnl"] == 1.0, "four cost lines in the labels"
+
+
 # ---------------------------------------------------------------------------
 # Finding 2: the model did not run while columns showed "Rules", confidence 0 (state "unused")
 # ---------------------------------------------------------------------------

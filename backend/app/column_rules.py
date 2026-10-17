@@ -650,7 +650,8 @@ def customer_columns(sheet: Sheet, proposals: List[Proposal]) -> List[str]:
 # highest and at least DETECTION_MIN_SHARE. Revenue needs all three of customer, date and amount, each header
 # at 80 or more: an "MRR" or "ARR" header alone never makes a revenue file. A CRM file needs four of the five
 # signature columns (deal, created, closed or won, stage or status, owner). A P&L is the share of its fields the
-# headers match, or cost lines (cost of sales, payroll, EBITDA ...) among its headers or line labels.
+# headers match, or cost lines (cost of sales, payroll, EBITDA ...) among its headers or line labels. Headers and line
+# labels are read as the mapping reads them, punctuation as one space ("deal_id" is "deal id"; 2026-10-17).
 REVENUE_KEY = ("customer_id", "invoice_date", "amount")
 _CRM_SIGNATURE = {
     "deal": re.compile(r"(?i)\b(?:deal|opportunit\w*)\b"),
@@ -680,12 +681,14 @@ def type_shares(sheet: Sheet) -> Dict[str, float]:
     shares = {}
     key_hits = {f: max([field_score("revenue", f, t) for t in sheet.headers] or [0]) >= 80 for f in REVENUE_KEY}
     shares["revenue"] = sum(key_hits.values()) / len(REVENUE_KEY)
-    groups = sum(1 for rx in _CRM_SIGNATURE.values() if any(rx.search(t or "") for t in sheet.headers))
+    heads = [_norm(t) for t in sheet.headers]
+    groups = sum(1 for rx in _CRM_SIGNATURE.values() if any(rx.search(t) for t in heads))
     shares["crm"] = groups / len(_CRM_SIGNATURE)
     defs = FIELD_DEFS["pnl"]
     mapping = suggest_mapping("pnl", sheet.columns, sheet.headers)
     by_fields = sum(1 for f in defs["required"] if mapping.get(f)) / len(defs["required"])
-    lines = len({i for i, rx in enumerate(_COST_LINES) if any(rx.search(t) for t in _line_labels(sheet))})
+    labels = [_norm(t) for t in _line_labels(sheet)]
+    lines = len({i for i, rx in enumerate(_COST_LINES) if any(rx.search(t) for t in labels)})
     shares["pnl"] = max(by_fields, 1.0 if lines >= 3 else 0.8 if lines == 2 else 0.0)
     return shares
 
