@@ -927,6 +927,21 @@ describe("the mapping table", () => {
     expect(q("correct-note-Adj")).toBeNull();
   });
 
+  test("a rules row corrected to a field of another kind is offered, and sends, Values do not fit this field", async () => {
+    await mountPending();
+    api.decideColumns.mockResolvedValue(PENDING_VIEW());
+    expect([q("source-Amount").textContent, q("confidence-Amount").textContent]).toEqual(["Rules", "30"]);
+    await click(q("correct-Amount"));
+    await change(q("correct-field-Amount"), "invoice_date");                 // a number field to a date field
+    const fit = [...q("correct-reason-Amount").options].find((o) => o.value === "values_do_not_fit");
+    expect([fit.textContent, fit.disabled]).toEqual(["Values do not fit this field", false]);
+    await change(q("correct-reason-Amount"), "values_do_not_fit");
+    await click(q("correct-apply-Amount"));
+    await flush();
+    expect(api.decideColumns).toHaveBeenLastCalledWith("a1", "revenue", [
+      { column: "Amount", action: "correct", field: "invoice_date", reason: "values_do_not_fit" }]);
+  });
+
   test("the reason stays selected for the next correction; an Other note clears after each one", async () => {
     await mountPending();
     api.decideColumns.mockResolvedValue(PENDING_VIEW());
