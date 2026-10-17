@@ -137,12 +137,13 @@ def test_the_coverage_check_fails_when_the_engine_gains_a_field():
 def test_the_sample_run_exercises_the_blocks_the_contract_exists_for():
     stored = stored_form(_sample_raw())
     for block in ("arr", "nrr", "gross_churn", "cac_payback", "sales_cycle", "win_rate", "acv_path", "segment_paths",
-                  "revenue_series", "customers_series", "cohort_retention", "revenue_reconciliation"):
+                  "revenue_series", "customers_series", "cohort_retention", "revenue_reconciliation", "won_deal_closes"):
         assert stored[block], f"{block} is empty in the sample run: the contract test would not see it"
 
 
 CITED_BLOCKS = ("arr", "nrr", "gross_churn", "cac_payback", "sales_cycle", "win_rate", "acv_path", "segment_paths",
-                "anomalies", "mrr_series", "revenue_series", "customers_series", "cohort_retention")
+                "anomalies", "mrr_series", "revenue_series", "customers_series", "cohort_retention",
+                "won_deal_closes")                                  # docs/specs/crm-dedup-clustering.md: the won deals' rows
 CITATION_BESIDE_BLOCK = {"new_mrr_by_quarter": "new_mrr_by_quarter_source"}      # a dict keyed by quarter has no room for a key
 NO_OWN_CITATION = {"revenue_reconciliation": "its months and its window carry both sides' citations",
                    "founder_win_rate": "optional twin of win_rate", "missing_data": "gaps, no figure",
@@ -179,7 +180,7 @@ def test_the_engine_rounds_counts_and_days_once_and_percents_are_fractions():
     assert isinstance(s["acv_path"]["required_net_new_per_year"], int)
     assert 0 < s["nrr"]["overall_pct"] < 10 and 0 <= s["win_rate"]["win_rate_pct"] <= 1
     assert all(0 <= v <= 10 for r in s["cohort_retention"]["data"] for v in r["values"].values())
-    assert s["contract_version"] == metrics.CONTRACT_VERSION == 3 and s["reporting_currency"] == "EUR"
+    assert s["contract_version"] == metrics.CONTRACT_VERSION == 4 and s["reporting_currency"] == "EUR"
 
 
 @pytest.mark.parametrize("model, value, expected", [
@@ -539,7 +540,25 @@ def test_results_stored_before_the_periods_were_added_are_recomputed_on_the_firs
     recomputed, so every audit shows where its evidence ends."""
     api.db["audits"].docs[0]["results"] = {**cf.stored(nrr=cf.nrr(1.0641, 100)), "contract_version": 2}
     r = api.get(f"/api/audits/{AUDIT_ID}/results")
-    assert r.status_code == 200 and api.recomputed == [AUDIT_ID] and r.json()["results"]["contract_version"] == 3
+    assert r.status_code == 200 and api.recomputed == [AUDIT_ID] and r.json()["results"]["contract_version"] == metrics.CONTRACT_VERSION
+
+
+def test_results_stored_before_the_crm_collapse_are_recomputed_on_the_first_read(api):
+    """Version 3 results count a deal once per repeated CRM row and hold no won-deal counts (crm-dedup-clustering.md section 3):
+    they are recomputed, so the win rate and the sales cycle count each deal once and the clustering check can run."""
+    api.db["audits"].docs[0]["results"] = {**cf.stored(nrr=cf.nrr(1.0641, 100)), "contract_version": 3}
+    r = api.get(f"/api/audits/{AUDIT_ID}/results")
+    assert r.status_code == 200 and api.recomputed == [AUDIT_ID] and r.json()["results"]["contract_version"] == 4
+
+
+def test_the_contract_declares_the_repeat_flag_and_the_won_deal_counts():
+    assert set(metrics.Anomalies.model_fields["deals_duplicate_id"].annotation.model_fields) == {
+        "rows", "distinct_ids", "collapsed", "rows_list"}
+    assert "won_deal_closes" in MetricsPayload.model_fields
+    sample = stored_form(_sample_raw())
+    assert sample["anomalies"]["deals_duplicate_id"] == {"rows": 0, "distinct_ids": 0, "collapsed": 0, "rows_list": []}
+    assert sample["won_deal_closes"]["source"]["file"] == "crm.csv" and sample["won_deal_closes"]["by_month"]
+    assert stored_form(all_raws()["demo1-no-crm"])["won_deal_closes"] is None, "no CRM, no won-deal counts"
 
 
 def test_the_narrative_endpoints_recompute_old_results_before_the_gateway_reads_them(api):

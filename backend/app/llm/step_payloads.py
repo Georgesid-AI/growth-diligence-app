@@ -59,6 +59,8 @@ REASONS = {
     "no_transactions": "the engine stores no transaction-level result",
     "no_anomalies": "the engine could not compute the anomaly flags",
     "no_smoothness_window": "the revenue file has fewer than 13 consecutive months of revenue",
+    "no_deal_closes": "no CRM export with a stage and a close date",
+    "few_won_deals": "the CRM export has fewer than 20 won deals with a close date",
     "no_common_month": "the revenue file and the P&L have no month in common up to the as-of month",
 }
 DATA_INTEGRITY_VERDICTS = ("Reliable", "Needs clarification", "Material concerns")
@@ -134,6 +136,11 @@ def _quality_issues(kind: str, results: dict) -> List[str]:
         n = (a.get("deals_close_before_created") or {}).get("excluded_count") or 0
         if n:
             out.append(f"{_count(n)} deal(s) closing before they were created, excluded")
+        repeats = a.get("deals_duplicate_id") or {}
+        if repeats.get("rows"):
+            out.append(f"{_count(repeats['rows'])} CRM row(s) share a deal ID with another row "
+                       f"({_count(repeats.get('distinct_ids') or 0)} deal ID(s)); "
+                       f"{_count(repeats.get('collapsed') or 0)} exact repeat(s) counted once")
         wr = _block(results, "win_rate")
         for key, text in (("excluded_invalid", "deal(s) with an invalid entry, excluded"),
                           ("excluded_after_as_of", "deal(s) created or closed after the as-of month, excluded")):
@@ -228,10 +235,23 @@ def _smoothness(results: dict) -> dict:
                   result=integrity.AMBER if read["smooth"] else integrity.GREEN, threshold_note=read["label"])
 
 
-def build_integrity(results: dict) -> dict:
+def _clustering(results: dict, fiscal_year_end: int) -> dict:
+    """Quarter-end clustering as docs/specs/crm-dedup-clustering.md computes it (integrity.clustering, the function the Dashboard's
+    integrity block reads): the finding as a closed sentence and the result; the year-end itself is not sent."""
+    name = "Quarter-end clustering of deals"
+    read = integrity.clustering(results, fiscal_year_end)
+    if read is None:
+        return _check(name, NOT_COMPUTED, reason=REASONS["no_deal_closes"])
+    if read["result"] is None:
+        return _check(name, NOT_COMPUTED, reason=REASONS["few_won_deals"])
+    return _check(name, COMPUTED, source_key=SOURCES["crm"][0], finding=read["finding"], result=read["result"])
+
+
+def build_integrity(results: dict, fiscal_year_end: int = 12) -> dict:
     """The data-integrity slice: the stored reconciliation (window total and the months over its tolerance), the stored
-    count of revenue lines without a customer ID, the smoothness reading (docs/specs/smoothness.md), and, for every other check, "not computed" or "not ingested" with a
-    closed reason. Nothing is calculated here."""
+    count of revenue lines without a customer ID, the clustering and smoothness readings (docs/specs/crm-dedup-clustering.md,
+    docs/specs/smoothness.md), and, for every other check, "not computed" or "not ingested" with a closed reason. Nothing is
+    calculated here."""
     a = results.get("anomalies")
     if not isinstance(a, dict):
         missing_ids = _check("Revenue lines without a customer ID", NOT_COMPUTED, reason=REASONS["no_anomalies"])
@@ -239,19 +259,18 @@ def build_integrity(results: dict) -> dict:
         missing_ids = _check("Revenue lines without a customer ID", COMPUTED, source_key=SOURCES["revenue"][0],
                              count=_count((a.get("revenue_missing_customer_id") or {}).get("count") or 0))
     checks = [_reconciliation(results), missing_ids]
-    checks += [_check(name, NOT_COMPUTED, reason=REASONS[why]) for name, why in (
-        ("Cohorts starting mid-period", "not_stored"), ("Quarter-end clustering of deals", "not_stored"))]
-    checks.append(_smoothness(results))
+    checks.append(_check("Cohorts starting mid-period", NOT_COMPUTED, reason=REASONS["not_stored"]))
+    checks += [_clustering(results, fiscal_year_end), _smoothness(results)]
     checks += [_check(name, NOT_COMPUTED, reason=REASONS[why]) for name, why in (
         ("Figures that differ from an approved deck claim", "not_stored"), ("Benford test", "no_transactions"))]
     checks.append(_check("Bank data", NOT_INGESTED))
     return {"source_list": source_list(results), "integrity": checks}
 
 
-def build(step: str, results: dict, deck_count: Optional[int] = None) -> dict:
+def build(step: str, results: dict, deck_count: Optional[int] = None, fiscal_year_end: int = 12) -> dict:
     if step == "data_inventory":
         return build_inventory(results, deck_count)
-    return build_integrity(results)
+    return build_integrity(results, fiscal_year_end)
 
 
 # --- guards that read the payload the model was sent ----------------------------------------------------------------------

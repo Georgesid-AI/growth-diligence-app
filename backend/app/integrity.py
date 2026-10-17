@@ -1,9 +1,10 @@
 """Data integrity: results of the completed checks and the assessment coverage (docs/specs/integrity-coverage.md).
 
-Pure: reads the stored engine results, the audit's deck count and its deck candidates; computes nothing new from the files,
-calls no model, imports nothing from the gateway and logs nothing. Block A lists the checks that ran with their result; Block B
-lists the six checks of the method with their status; the conclusion is Python's, by the fixed rule of section 2.
+Pure: reads the stored engine results, the audit's deck count, its deck candidates and its fiscal year-end; computes nothing new
+from the files, calls no model, imports nothing from the gateway and logs nothing. Block A lists the checks that ran with their
+result; Block B lists the six checks of the method with their status; the conclusion is Python's, by the fixed rule of section 2.
 """
+from decimal import ROUND_HALF_UP, Decimal
 from statistics import pstdev
 from typing import List, Optional
 
@@ -21,7 +22,7 @@ CHECKS = (RECONCILIATION, GAPS, CLUSTERING, SMOOTHNESS, BENFORD, DECKS)
 REASONS = {
     RECONCILIATION: "P&L with a revenue line, overlapping the revenue file's months",
     GAPS: "Revenue file mapped (customer ID, invoice date, amount)",
-    CLUSTERING: "The app does not compute quarter-end clustering of deals yet.",
+    CLUSTERING: "CRM file mapped (stage, close date)",
     SMOOTHNESS: "Revenue file with at least 13 consecutive months of revenue",
     BENFORD: "No transaction-level file: the app ingests revenue by customer and month, not transactions.",
     DECKS: "At least one board deck",
@@ -29,6 +30,10 @@ REASONS = {
 SMOOTHNESS_MONTHS = 13              # smoothness.md section 1: 12 month-on-month changes need 13 consecutive months
 SMOOTHNESS_LABEL = "provisional threshold, 3 synthetic series"    # shown beside the result, on screen and in the memo (George, 15 Oct 2026)
 SMOOTHNESS_LIMIT_POINTS = 0.5       # below this deviation of the growth rate, in points, revenue is unusually smooth (provisional, section 1)
+CLUSTERING_MIN_DEALS = 20           # crm-dedup-clustering.md section 2: fewer won deals and the check does not complete
+CLUSTERING_FEW = "Not enough deals ({n})"
+CLUSTERING_AMBER_PCT, CLUSTERING_RED_PCT = 20, 35      # Green below 20%, Amber 20% to 35%, Red above 35% (whole percents)
+CLUSTERING_FINDING = "{share}% of {n} won deals closed in the last 10 days of a quarter (chance: 11%)"
 MIN_COMPLETED = 4                   # section 2: fewer completed applicable checks is insufficient coverage
 INSUFFICIENT = "Insufficient assessment coverage ({x} of {y})"
 INSUFFICIENT_NOTE = ("Insufficient assessment coverage is not a finding about the company: {n} of the {y} applicable checks could not "
@@ -101,6 +106,32 @@ def _smoothness(results: dict) -> Optional[dict]:
     return {"result": AMBER if read["smooth"] else GREEN, "finding": finding, "source": _cite((results.get("revenue_series") or {}).get("source"))}
 
 
+def clustering(results: dict, fiscal_year_end: int = 12) -> Optional[dict]:
+    """Quarter-end clustering (crm-dedup-clustering.md section 2): the share of the stored won deals that closed in the last 10
+    days of a quarter, quarters ending in the fiscal year-end month and every third month from it. None when the engine stored no
+    won-deal counts (no CRM stage and close date); `result` and `finding` are None below CLUSTERING_MIN_DEALS won deals. The one
+    calculation: the integrity block and the data-integrity narrative's payload both read it."""
+    block = results.get("won_deal_closes")
+    if not isinstance(block, dict):
+        return None
+    months = block.get("by_month") or ()
+    n = sum(m["won"] for m in months)
+    late = sum(m["last_10_days"] for m in months if int(m["month"][5:7]) % 3 == fiscal_year_end % 3)
+    share = int((Decimal(100 * late) / n).quantize(Decimal(1), rounding=ROUND_HALF_UP)) if n else 0
+    if n < CLUSTERING_MIN_DEALS:
+        result = None
+    else:       # read from the whole percent shown, so the colour always matches the figure
+        result = RED if share > CLUSTERING_RED_PCT else AMBER if share >= CLUSTERING_AMBER_PCT else GREEN
+    return {"won": n, "last_10_days": late, "share": share, "result": result,
+            "finding": CLUSTERING_FINDING.format(share=share, n=f"{n:,}") if result else None, "source": block.get("source")}
+
+
+def _clustering(read: Optional[dict]) -> Optional[dict]:
+    if not read or not read["result"]:
+        return None
+    return {"result": read["result"], "finding": read["finding"], "source": _cite(read["source"])}
+
+
 def _where(source: Optional[dict]) -> str:
     s = source or {}
     page = f"slide {s['slide']}" if s.get("slide") is not None else f"page {s['page']}" if s.get("page") is not None else None
@@ -135,20 +166,18 @@ def overall(rows: List[dict]) -> dict:
     return {"conclusion": conclusion, "code": code, "completed": x, "applicable": y}
 
 
-def assess(results: Optional[dict], deck_count: int, candidates: List[dict]) -> dict:
+def assess(results: Optional[dict], deck_count: int, candidates: List[dict], fiscal_year_end: int = 12) -> dict:
     """Both blocks, the conclusion, the data requests and the memo's sentence for one audit. `results` may be None (not computed):
-    every check that reads it is then Blocked."""
+    every check that reads it is then Blocked. `fiscal_year_end` (1-12) sets the quarters of the clustering check."""
     results = results or {}
-    ran = {RECONCILIATION: _reconciliation(results), GAPS: _gaps(results), SMOOTHNESS: _smoothness(results), DECKS: _decks(candidates) if deck_count else None}
+    deals = clustering(results, fiscal_year_end)
+    ran = {RECONCILIATION: _reconciliation(results), GAPS: _gaps(results), CLUSTERING: _clustering(deals), SMOOTHNESS: _smoothness(results),
+           DECKS: _decks(candidates) if deck_count else None}
+    reasons = {**REASONS, **({CLUSTERING: CLUSTERING_FEW.format(n=deals["won"])} if deals else {})}
     coverage = []
     for check in CHECKS:
-        if check == BENFORD:
-            status = NOT_APPLICABLE
-        elif check == CLUSTERING:
-            status = NOT_AVAILABLE
-        else:
-            status = COMPLETED if ran[check] else BLOCKED
-        coverage.append({"check": check, "status": status, "reason": None if status == COMPLETED else REASONS[check],
+        status = NOT_APPLICABLE if check == BENFORD else COMPLETED if ran[check] else BLOCKED
+        coverage.append({"check": check, "status": status, "reason": None if status == COMPLETED else reasons[check],
                          "result": ran[check]["result"] if status == COMPLETED else None})
     block_a = [{"check": check, **ran[check]} for check in CHECKS if ran.get(check)]
     out = overall(coverage)

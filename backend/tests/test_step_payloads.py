@@ -221,8 +221,7 @@ def test_missing_customer_ids_are_the_stored_count():
     assert checks_by_name(sp.build_integrity(results))["Revenue lines without a customer ID"]["status"] == "not computed"
 
 
-@pytest.mark.parametrize("name", ["Cohorts starting mid-period", "Quarter-end clustering of deals",
-                                  "Figures that differ from an approved deck claim", "Benford test"])
+@pytest.mark.parametrize("name", ["Cohorts starting mid-period", "Figures that differ from an approved deck claim", "Benford test"])
 def test_the_checks_the_engine_does_not_store_read_not_computed_and_are_never_estimated(name):
     check = checks_by_name(sp.build_integrity(full_results()))[name]
     assert check["status"] == "not computed" and check["reason"] in sp.REASONS.values()
@@ -258,6 +257,40 @@ def test_smoothness_stays_not_computed_with_a_closed_reason_when_the_window_is_s
                      "reason": "the revenue file has fewer than 13 consecutive months of revenue"}
     thirteen_partial = checks_by_name(sp.build_integrity(_with_series([10000 * 1.01 ** i for i in range(13)], "Possibly partial")))
     assert thirteen_partial["Month-on-month revenue smoothness"]["status"] == "not computed", "the partial month is left out"
+
+
+def _with_closes(n, late):
+    results = full_results()
+    results["won_deal_closes"] = {"by_month": [{"month": "2025-02", "won": n - late, "last_10_days": 0},
+                                               {"month": "2025-03", "won": late, "last_10_days": late}], "source": cite(1)}
+    return results
+
+
+def test_clustering_is_the_integrity_modules_reading_as_a_closed_sentence():
+    """crm-dedup-clustering.md section 2: the finding and the result of integrity.clustering, the function the Dashboard reads."""
+    check = checks_by_name(sp.build_integrity(_with_closes(25, 10)))["Quarter-end clustering of deals"]
+    assert check == {"check": "Quarter-end clustering of deals", "status": "computed", "source_key": "S2",
+                     "finding": "40% of 25 won deals closed in the last 10 days of a quarter (chance: 11%)", "result": "Red"}
+    assert checks_by_name(sp.build_integrity(_with_closes(25, 10), fiscal_year_end=1))["Quarter-end clustering of deals"]["result"] == \
+        "Green", "with a January year-end March ends no quarter"
+
+
+def test_clustering_stays_not_computed_with_a_closed_reason_below_20_won_deals_or_without_a_crm():
+    few = checks_by_name(sp.build_integrity(_with_closes(8, 4)))["Quarter-end clustering of deals"]
+    assert few == {"check": "Quarter-end clustering of deals", "status": "not computed",
+                   "reason": "the CRM export has fewer than 20 won deals with a close date"}
+    none = checks_by_name(sp.build_integrity(full_results()))["Quarter-end clustering of deals"]
+    assert none == {"check": "Quarter-end clustering of deals", "status": "not computed",
+                    "reason": "no CRM export with a stage and a close date"}
+
+
+def test_repeated_crm_rows_are_a_crm_quality_issue_with_their_counts():
+    results = full_results()
+    results["anomalies"]["deals_duplicate_id"] = {"rows": 9, "distinct_ids": 3, "collapsed": 6, "rows_list": [2, 3]}
+    crm = rows_by_name(sp.build_inventory(results))["CRM"]
+    assert "9 CRM row(s) share a deal ID with another row (3 deal ID(s)); 6 exact repeat(s) counted once" in crm["quality_issues"]
+    assert not [i for i in rows_by_name(sp.build_inventory(full_results()))["CRM"]["quality_issues"] if "deal ID" in i], \
+        "no line without a repeat"
 
 
 def test_bank_data_is_not_ingested():

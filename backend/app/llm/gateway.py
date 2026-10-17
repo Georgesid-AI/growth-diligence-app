@@ -221,7 +221,7 @@ async def load_checked_results(db, run_id: str, step: str) -> Tuple[dict, List[s
     doc = await db[RESULTS_COLLECTION].find_one(
         {"id": run_id},
         {"_id": 0, "id": 1, "results": 1, "reporting_currency": 1,
-         "target_arr": 1, "target_date": 1, "as_of_month": 1, "computed_at": 1},
+         "target_arr": 1, "target_date": 1, "as_of_month": 1, "computed_at": 1, "fiscal_year_end": 1},
     )
     if not doc:
         raise GatewayError("run_not_found", f"no run {run_id}")
@@ -229,7 +229,8 @@ async def load_checked_results(db, run_id: str, step: str) -> Tuple[dict, List[s
         raise GatewayError("not_computed", f"run {run_id} has no computed results")
 
     results = doc["results"]
-    slice_ = _slice_for_step(results, step, await count_decks(db, run_id) if step == "data_inventory" else None)
+    slice_ = _slice_for_step(results, step, await count_decks(db, run_id) if step == "data_inventory" else None,
+                             int(doc.get("fiscal_year_end") or 12))
     return ({
         "run_id": run_id,
         "reporting_currency": doc.get("reporting_currency"),
@@ -301,7 +302,7 @@ OUTBOUND_FIELDS = frozenset({
     "source_list", "inventory", "integrity", "source_key", "description", "category", "in_request_list", "quality_issues",
     "analyses_blocked", "months_supplied", "months_required", "check", "first_month", "last_month", "revenue_file_total",
     "pnl_total", "gap", "gap_pct", "tolerance", "window_over_tolerance", "months_over_tolerance",
-    "deviation_points", "limit_points", "result", "threshold_note",
+    "deviation_points", "limit_points", "result", "threshold_note", "finding",
     # shared
     "value", "mrr", "month", "series", "n", "status", "reason", "computable", "available",
     "source", "rule",
@@ -426,11 +427,12 @@ async def count_decks(db, run_id: str) -> Optional[int]:
         return None
 
 
-def _slice_for_step(results: dict, step: str, deck_count: Optional[int] = None) -> dict:
+def _slice_for_step(results: dict, step: str, deck_count: Optional[int] = None, fiscal_year_end: int = 12) -> dict:
     """Narrow computed results to what a step needs. Unknown keys are dropped. `deck_count` is the data inventory's
-    only input that is not in the stored results."""
+    only input that is not in the stored results; the audit's `fiscal_year_end` sets the data integrity's clustering quarters
+    and is never sent."""
     if step in step_payloads.STEPS:
-        return {**step_payloads.build(step, results, deck_count), **period_fields(results)}
+        return {**step_payloads.build(step, results, deck_count, fiscal_year_end), **period_fields(results)}
     wanted = {
         "growth_engine": [
             "arr", "nrr", "gross_churn", "cac_payback", "sales_cycle",
