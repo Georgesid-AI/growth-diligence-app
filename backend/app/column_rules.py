@@ -845,9 +845,9 @@ def undecided(states: List[Dict]) -> List[str]:
 
 def apply_model(dtype: str, sheet: Sheet, proposals: List[Proposal], proposed: Dict[str, str]) -> List[Dict]:
     """The model's proposals ({field: column}) for a sheet whose every column was sent (section 4.2, 2026-10-17).
-    A rule confidence of 100, untied, wins. Otherwise the model's proposal is shown with its confidence, the rules'
+    A rule confidence of 100, untied, wins. Otherwise the model's proposal takes its confidence from the rules'
     formula (header score x value fit) on the model's field: it needs no click when the rules proposed the same field,
-    untied, at MAPPING_THRESHOLD or more, and waits for one otherwise. A column only the rules map waits for a click
+    untied, above MAPPING_THRESHOLD (exactly 80 waits, section 21), and waits for one otherwise. A column only the rules map waits for a click
     with their proposal (it needs a decision when the model gave that field to another column); a column neither maps
     is not used."""
     scores = rule_scores(dtype, sheet)
@@ -861,7 +861,7 @@ def apply_model(dtype: str, sheet: Sheet, proposals: List[Proposal], proposed: D
         elif f:
             fit, ok, total = value_fit(field_kind(dtype, f), sheet.frame[p.column].tolist())
             conf, note = round(scores[(f, p.column)] * fit), fit_note(field_kind(dtype, f), ok, total)
-            agreed = f == p.field and not p.tie and conf >= MAPPING_THRESHOLD
+            agreed = f == p.field and not p.tie and conf > MAPPING_THRESHOLD
             out.append(new_state(p.column, f, "rules", "auto", conf, note) if agreed else
                        new_state(p.column, f, "ai", "ai", conf, note))
         elif p.field and p.field not in by_col.values():

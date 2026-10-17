@@ -782,7 +782,7 @@ describe("the mapping table", () => {
     expect(q("bubble-head").textContent).toBe("Detected: Revenue lines · 1,240 rows");
     expect(q("bubble-head").textContent).not.toContain("confirmed");
     expect(q("source-Adj").textContent).toBe("AI suggestion – confirm");
-    expect(q("confidence-Adj").textContent).toBe("needs confirmation");
+    expect(q("confidence-Adj").textContent).toBe("AI suggestion – confirm");
     expect(q("confidence-Amount").textContent).toBe("30");
     expect(q("source-Amount").textContent).toBe("Rules");
     expect(q("source-Notes").textContent).toBe("You – choose");
@@ -803,9 +803,9 @@ describe("the mapping table", () => {
         row("Needs", { state: "needs", source: "needs", confidence: null, pending: true }),
         row("Unsure50", { field: "amount", state: "unsure", confidence: 50, pending: true }),
         row("Auto100b", { field: "currency" }),
-        row("Ai", { field: "segment", state: "ai", source: "ai", confidence: null, pending: true }),
+        row("Ai", { field: "segment", state: "ai", source: "ai", confidence: 70, pending: true }),
         row("Unsure20", { field: "revenue_type", state: "unsure", confidence: 20, pending: true }),
-        row("Done", { field: "service_start", state: "corrected", source: "ai", confidence: null, decision: "correct" }),
+        row("Done", { field: "service_start", state: "corrected", source: "ai", confidence: 60, decision: "correct" }),
       ],
     }));
     await mount();
@@ -816,7 +816,7 @@ describe("the mapping table", () => {
     expect(sortColumns([row("b", { confidence: 100 }), row("a", { confidence: 100 })]).map((c) => c.column)).toEqual(["b", "a"]);
   });
 
-  test("the confidence cell is never a dash: the number, needs confirmation, or reused", async () => {
+  test("the confidence cell is never a dash: the number, AI suggestion – confirm, needs confirmation, or reused", async () => {
     api.uploadChatFile.mockResolvedValue(VIEW({
       pending: 3, columns: [
         row("Rule", { field: "customer_id" }),
@@ -835,9 +835,8 @@ describe("the mapping table", () => {
     await click(q("unused-toggle-revenue"));
     const cells = Object.fromEntries(["Rule", "Ai", "AiScored", "AiDone", "Saved", "SavedLow", "Needs", "Chosen", "Memo"]
       .map((c) => [c, q(`confidence-${c}`).textContent]));
-    // An AI suggestion shows its confidence, the rules' formula on the model's field (section 4.2, 2026-10-17); one stored
-    // before carries none and still asks.
-    expect(cells).toEqual({ Rule: "100", Ai: "needs confirmation", AiScored: "0 · 0 of 20 values are numbers", AiDone: "confirmed",
+    // An AI suggestion shows "AI suggestion – confirm", never the number the server computes for it (George, 2026-10-17).
+    expect(cells).toEqual({ Rule: "100", Ai: "AI suggestion – confirm", AiScored: "AI suggestion – confirm", AiDone: "confirmed",
                             Saved: "reused", SavedLow: "reused", Needs: "needs confirmation", Chosen: "confirmed", Memo: "0" });
     Object.values(cells).forEach((text) => expect(text).not.toMatch(dash));
     const by = Object.fromEntries(["Rule", "Ai", "Saved", "Needs", "Chosen"].map((c) => [c, q(`source-${c}`).textContent]));

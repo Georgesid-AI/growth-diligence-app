@@ -150,10 +150,11 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
   Deck structure, file-type (§19) and narrative calls stay under the cap. The lock and the per-audit token cap still apply.
 - The outcome, per column:
   - A rule confidence of 100, untied, wins: the column is auto (Rules), whatever the model says.
-  - A column the model maps to a field shows the model's proposal with its confidence: the rules' formula on the model's
-    field (header score × value fit, §4.1), so the number is Python's. It needs no click (auto, Mapped by Rules) when the
-    rules proposed the same field, untied, at 80 or more. Otherwise (below 80, a tie, or another field than the rules')
-    it is an AI suggestion with Confirm and Correct.
+  - A column the model maps to a field takes its confidence from the rules' formula on the model's field (header score ×
+    value fit, §4.1), so the number is Python's. It needs no click (auto, Mapped by Rules, its number shown) when the
+    rules proposed the same field, untied, above 80; exactly 80 waits (§21). Otherwise (80 or below, a tie, or another
+    field than the rules') it is an AI suggestion with Confirm and Correct, and its Confidence cell reads "AI suggestion –
+    confirm", not the number (S9; George, 2026-10-17).
   - A column the rules map and the model leaves out is unsure, with the rules' proposal and confidence. When the model
     gave that field to another column, it needs a decision instead.
   - A column neither side maps goes to "Not used".
@@ -190,8 +191,8 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
 
 ### 4.4 Row order
 Rows that need a click come first (unsure, AI suggestion, no proposal), then the rest by ascending confidence, so the
-auto-accepted 100s come last. A row with no score (an AI suggestion stored before 2026-10-17, a column with no proposal,
-a row the analyst decided) counts as the lowest; an AI suggestion carries its confidence (§4.2). Rows of equal confidence keep the order of the file. The order follows the state, so a
+auto-accepted 100s come last. A row with no score shown (an AI suggestion, whose number stays off screen, §4.2; a
+column with no proposal; a row the analyst decided) counts as the lowest. Rows of equal confidence keep the order of the file. The order follows the state, so a
 row moves down when its click is made. Unused columns stay in the "Not used" fold.
 
 ## 5. Saved mapping
@@ -346,7 +347,7 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 | S7 | refused file | This window takes .xlsx and .csv files. Decks go in the deck panel below. |
 | S7b | refused .xls file | Save as .xlsx or .csv and upload again. |
 | S8 | replace | A revenue file is already loaded ({file}). Replace it? [Replace] [Keep current] |
-| S9 | confidence cell | A rule row: its number, 100 · or, when the fit lowers it: 0 · 0 of 20 values are numbers. An AI suggestion until decided: its confidence the same way (§4.2, 2026-10-17; decided: confirmed). An AI suggestion stored without a number, or a column with no proposal, until decided: needs confirmation (decided: confirmed). A saved mapping: reused. A column the rules found no field for: 0. Never a dash. |
+| S9 | confidence cell | A rule row: its number, 100 · or, when the fit lowers it: 0 · 0 of 20 values are numbers. An AI suggestion until decided: AI suggestion – confirm, never its number (George, 2026-10-17, §22; decided: confirmed). A column with no proposal, until decided: needs confirmation (decided: confirmed). A saved mapping: reused. A column the rules found no field for: 0. Never a dash. |
 | S10 | buttons | Confirm · Correct · Not used (n) |
 | S11 | reason codes | Header is misleading · Another column is the right one · Values do not fit this field · Wrong kind of date · Column not needed · Other (opens S20) |
 | S12 | model failed | AI reading unavailable – these columns need your decision. |
@@ -689,8 +690,8 @@ words and one value check for the deal id, and no auto-accept at 80. Deleted fir
   unless its header scores 100, waits for a click. A code is one token with a digit ("1C1I7A6R", "OPP-0042") or a whole
   number (5001), never a date or a decimal; unique means two or more values and no two the same.
 - **Exactly 80.** A rule mapping whose confidence is exactly `MAPPING_THRESHOLD` (80) is unsure: it is shown for
-  confirmation and, with consent, goes to step 2 like every unsure row (§4.2). Above 80 and untied it is accepted as
-  before. A saved mapping on new data keeps 80 or more (§5).
+  confirmation and, with consent, goes to step 2 like every unsure row (§4.2), where it still waits when the model agrees
+  (George, 2026-10-17, §22). Above 80 and untied it is accepted as before. A saved mapping on new data keeps 80 or more (§5).
 - **Measured.** On sample_data/ and the nine fixture files (87 columns), no column changes its field, state or confidence,
   and none was accepted at exactly 80 before. The reported file: opportunity_id → deal id (100, accepted), deal_stage →
   stage (100, accepted), close_date → close date (100, accepted), close_value → amount (60, unsure); sales_agent, product,
@@ -704,28 +705,31 @@ words and one value check for the deal id, and no auto-accept at 80. Deleted fir
 
 ## 22. Every column to the model, and mapping calls outside the daily spend cap (2026-10-17, George)
 Decided by George with the task: with consent, every upload sends all columns in one call, with the rules' proposal and
-confidence as a hint; a rule 100 wins; otherwise the model's proposal is shown with its confidence, and below 80, or where the
-rules and the model disagree, the column waits for a click; columns both sides leave out are Not used; mapping calls are
-exempt from the daily spend cap and still logged and counted; structure and narrative calls stay under it; cache by file hash
-as before; S2's first sentence. Without consent the rules alone decide, as before. The architecture is unchanged: what is sent
-keeps the rule-16 shape per column (docs/architecture.md, "Data boundary"), and the number shown is Python's.
+confidence as a hint; a rule 100 wins; otherwise the model's proposal waits for a click below 80, or where the rules and the
+model disagree; columns both sides leave out are Not used; mapping calls are exempt from the daily spend cap and still logged
+and counted; structure and narrative calls stay under it; cache by file hash as before; S2's first sentence. Without consent
+the rules alone decide, as before. The architecture is unchanged: what is sent keeps the rule-16 shape per column
+(docs/architecture.md, "Data boundary"), and the confidence is Python's.
+
+Decided by George on review (2026-10-17): (1) a model proposal's confidence is the rules' formula on its field, not a number
+the model reports, and an AI suggestion's Confidence cell reads "AI suggestion – confirm" instead of the number (rule rows keep
+theirs); (2) the file-type call (§19) stays under the cap: it is not a column mapping; (3) the same headers on new bytes keep the
+saved mapping with no call (§5), because the analyst's decisions rank above both sides; (4) a tie waits even when the model
+picks the rules' column, because two columns read equally well; (5) §21 stands: exactly 80 waits, and agreement needs no click
+only at 81 or more.
 
 Challenge (rule 4): needed, because the rules accept 81–99 alone and the model saw only the columns the rules could not
 decide. Simpler: no new output field; the confidence of a model proposal is the rules' own formula on its field. Deleted
 first: the undecided-only filter of the text (`only`), and the boundary assertion that decided headers are absent.
 
-- **Decided (engineering, rule 19).** "Its confidence" is the rules' formula (header score × value fit) on the model's field,
-  not a number the model reports: the model never produces a number on screen (docs/architecture.md, "Evidence method"), and
-  Q5 stands. A tie waits even when the model picks the rules' column, because two columns read equally well. A rule proposal
-  at exactly 80 that the model agrees with needs no click ("below 80" waits; §21's 80 rule holds without consent). A column the
-  rules map whose field the model gave to another column needs a decision, so no two rows wait on one field. When the model
-  cannot be read, the rules' outcome stands, as before this section. A file's type call (§19) stays under the cap: it is not a
-  column mapping. The same headers on new bytes still apply the saved mapping with no call (§5): the analyst's own decisions
-  rank above both sides.
+- **Decided (engineering, rule 19).** The server keeps an AI suggestion's confidence (it decides the click and is saved with
+  the mapping version); the screen hides it and orders the row as one with no score (§4.4), so a hidden number never moves it.
+  A column the rules map whose field the model gave to another column needs a decision, so no two rows wait on one field.
+  When the model cannot be read, the rules' outcome stands, as before this section.
 - **Tests.** `test_chat_upload.py`: every column sent with the rules' hints on the three fixtures; each branch of the outcome
-  (a rule 100 against the model, agreement at 80, agreement at 60, another field, a contested field, a tie, both sides
-  silent); consent off decides by rules and sends nothing; the 22 columns of a synthetic HubSpot deals export
+  (a rule 100 against the model, agreement at 90, at exactly 80 and at 60, another field, a contested field, a tie, both
+  sides silent); consent off decides by rules and sends nothing; the 22 columns of a synthetic HubSpot deals export
   (`mapping_shapes.hubspot_synthetic_crm`, invented values) in one call, masked; on a day over the cap the mapping call goes
   out, is logged and counted, and a deck structure and a file-type call are refused. `test_gateway_data_boundary.py`: the text
-  holds every column, the masked samples and closed hints; a bad hint is refused. `MappingWizard.test.jsx`: S2, and an AI
-  suggestion's confidence cell.
+  holds every column, the masked samples and closed hints; a bad hint is refused. `MappingWizard.test.jsx`: S2, an AI
+  suggestion's confidence cell ("AI suggestion – confirm" with or without a number from the server), and its row order.

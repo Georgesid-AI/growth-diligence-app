@@ -218,9 +218,9 @@ def test_a_column_the_reply_leaves_out_is_not_used_and_with_no_consent_nothing_i
 
 
 # ---------------------------------------------------------------------------
-# The rules and the model together (section 4.2, 2026-10-17): a rule 100 wins; the model's proposal is shown with its
-# confidence and needs no click only where the rules proposed the same field, untied, at 80 or more; a column neither side
-# maps is not used. Without consent the rules alone decide.
+# The rules and the model together (section 4.2, 2026-10-17): a rule 100 wins; the model's proposal needs no click only
+# where the rules proposed the same field, untied, above 80 (exactly 80 waits, section 21); a column neither side maps is
+# not used. Without consent the rules alone decide.
 # ---------------------------------------------------------------------------
 RULE_SHEET = ("Customer ID,Invoice,Amount,Currency,Net,Plan Tier,Notes\n" + "".join(
     f"C-{i},2024-{i:02d}-28,{'n/a' if i == 10 else 100 + i},EUR,{90 + i},{'Gold' if i % 2 else 'Silver'},note\n"
@@ -238,20 +238,20 @@ def outcome(states):
     return {s["column"]: (s["field"], s["source"], s["state"], s["confidence"]) for s in states}
 
 
-def test_a_rule_100_wins_agreement_at_80_needs_no_click_and_every_other_proposal_waits_with_its_confidence():
+def test_a_rule_100_wins_agreement_above_80_needs_no_click_and_every_other_proposal_waits():
     sheet, proposals = rule_sheet()
     assert {p.column: p.confidence for p in proposals if p.field} == \
         {"Customer ID": 100, "Invoice": 80, "Amount": 90, "Currency": 100, "Plan Tier": 60}
     assert outcome(cr.apply_model("revenue", sheet, proposals, {
         "revenue_type": "Customer ID",          # against a rule 100: the rule wins
-        "invoice_date": "Invoice",              # the rules' own field at exactly 80: no click
-        "segment": "Plan Tier",                 # the rules' own field at 60: a click
-        "amount": "Net"})) == {                 # a column the rules left open; Amount (rules, 90) loses its field
+        "amount": "Amount",                     # the rules' own field at 90: no click
+        "invoice_date": "Invoice",              # the rules' own field at exactly 80: a click (section 21)
+        "segment": "Plan Tier"})) == {          # the rules' own field at 60: a click
         "Customer ID": ("customer_id", "rules", "auto", 100),
-        "Invoice": ("invoice_date", "rules", "auto", 80),
-        "Amount": (None, "needs", "needs", None),
+        "Invoice": ("invoice_date", "ai", "ai", 80),
+        "Amount": ("amount", "rules", "auto", 90),
         "Currency": ("currency", "rules", "auto", 100),
-        "Net": ("amount", "ai", "ai", 0),
+        "Net": (None, None, "unused", None),
         "Plan Tier": ("segment", "ai", "ai", 60),
         "Notes": (None, None, "unused", None),
     }
@@ -263,6 +263,9 @@ def test_a_column_the_reply_leaves_out_waits_with_the_rules_proposal_and_a_tie_w
     assert got["Amount"] == ("amount", "rules", "unsure", 90), "the rules alone accept 90; the model disagrees, so a click"
     assert got["Invoice"][2] == got["Plan Tier"][2] == "unsure" and got["Customer ID"][2] == got["Currency"][2] == "auto"
     assert got["Net"] == got["Notes"] == (None, None, "unused", None), "neither side maps it: Not used"
+    got = outcome(cr.apply_model("revenue", sheet, proposals, {"amount": "Net"}))
+    assert got["Net"] == ("amount", "ai", "ai", 0), "a column the rules left open: the model's proposal waits"
+    assert got["Amount"] == (None, "needs", "needs", None), "the model gave its field to another column: a decision"
     tied = cr.read_sheet((MESSY / "duplicate_ids_header_row3.csv").read_bytes(), "x.csv")
     got = outcome(cr.apply_model("revenue", tied, cr.analyse("revenue", tied)[0], {"customer_id": "Customer ID"}))
     assert got["Customer ID"] == ("customer_id", "ai", "ai", 100), "two columns tie at 100: the model's pick needs a click"

@@ -107,24 +107,25 @@ export const mappedBy = (row) => {
   if (row.source === "ai") return MAPPED_BY.ai;
   return MAPPED_BY.rules;
 };
-// S9: the confidence cell, never a dash. A rule row shows its number (with the fit note when the values lower it), and so
-// does an AI suggestion until the analyst decides it (the rules' formula on the model's field, section 4.2); one stored
-// without a number, or a column with no proposal, says it needs confirmation until decided; a saved mapping says "reused".
-// A column the rules found no field for scores 0.
+// S9: the confidence cell, never a dash. A rule row shows its number (with the fit note when the values lower it), an AI
+// suggestion says "AI suggestion – confirm" and never its number (George, 2026-10-17), a column with no proposal says it
+// needs confirmation, both until the analyst decides them; a saved mapping says "reused". A column the rules found no field
+// for scores 0.
 export const S9_confidence = (row) => {
   const decided = row.decision === "confirm" || row.decision === "correct";
   if (row.source === "saved") return "reused";
-  const scored = row.source === "ai" && row.confidence != null && !decided;
-  if (!scored && (row.source === "ai" || row.source === "needs" || row.source === "decision" || row.state === "needs")) {
+  if (row.source === "ai" && !decided) return MAPPED_BY.ai;
+  if (row.source === "ai" || row.source === "needs" || row.source === "decision" || row.state === "needs") {
     return decided ? "confirmed" : "needs confirmation";
   }
   const n = row.confidence ?? 0;
   return row.fit_note ? `${n} · ${row.fit_note}` : String(n);
 };
 // Row order (section 4.4): rows that need a click first, then ascending confidence; the auto-accepted 100s come last.
-// A row with no score (an AI suggestion, a column with no proposal) counts as the lowest. Stable on file order.
+// A row with no score shown (an AI suggestion, whose number stays off screen; a column with no proposal) counts as the
+// lowest. Stable on file order.
 export function sortColumns(columns) {
-  const level = (c) => c.confidence ?? -1;
+  const level = (c) => (c.source === "ai" ? -1 : c.confidence ?? -1);
   return columns.map((c, i) => [c, i]).sort(([a, i], [b, j]) =>
     (b.pending ? 1 : 0) - (a.pending ? 1 : 0) || level(a) - level(b) || i - j).map(([c]) => c);
 }
