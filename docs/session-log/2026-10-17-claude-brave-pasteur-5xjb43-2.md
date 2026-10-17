@@ -1,0 +1,6 @@
+2026-10-17, claude/brave-pasteur-5xjb43 (file-type rules read underscores as spaces, chat-upload.md §3 and §19; follow-up of §21, go-ahead under rule 19.3)
+Deleted: nothing; `_line_labels` is now read once per sheet instead of once per cost-line pattern.
+Decided: the CRM signature words and the cost lines are matched on `_norm` of each header and line label, the reader the mapping already uses, so one normaliser decides what a word is for both type and fields; the patterns themselves are unchanged (their "&" lines still match, because `_norm` keeps "&"); the work rides the open PR of §21, because this session's branch is fixed and that PR is not merged yet.
+Slow or unclear: nothing in the task; the suggestion card for this follow-up timed out last session, so it came back as a written decision instead.
+Root cause and rule: the §21 fix changed the header reader for the mapping only, and the type rules kept their own raw-text matching; the rule now is that every header and line-label rule in column_rules.py reads text through `_norm`, with a test on snake_case headers and labels that failed before the change.
+Process change to propose: when a reader such as `_norm` changes, grep the module for every other place that reads the same text (here `rx.search` on headers) and change them in the same PR, so a fix does not stop at its first caller.

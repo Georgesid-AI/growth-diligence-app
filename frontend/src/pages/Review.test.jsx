@@ -399,6 +399,25 @@ describe("mapping summary (chat-upload.md section 18)", () => {
     expect(api.decideColumns).toHaveBeenLastCalledWith("a1", "crm", [expect.objectContaining({ column: "Amount (EUR)", action: "correct", field: "amount", reason: "header_misleading" })]);
   });
 
+  test("Change on a rules row offers, and sends, Values do not fit this field for a field of another kind", async () => {
+    state.views = [{ ...CRM, fields: { required: ["amount", "close_date"], optional: ["stage"] } }];
+    api.decideColumns.mockResolvedValue({});
+    await mount();
+    await act(async () => { q("review-change-crm-Amount (EUR)").click(); });
+    const pick = async (el, value) => act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(el, value);
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await pick(q("review-change-field-crm-Amount (EUR)"), "close_date");    // a number field to a date field
+    const reason = q("review-change-reason-crm-Amount (EUR)");
+    const fit = [...reason.options].find((o) => o.value === "values_do_not_fit");
+    expect([fit.textContent, fit.disabled]).toEqual(["Values do not fit this field", false]);
+    await pick(reason, "values_do_not_fit");
+    await act(async () => { q("review-change-apply-crm-Amount (EUR)").click(); });
+    expect(api.decideColumns).toHaveBeenLastCalledWith("a1", "crm", [
+      { column: "Amount (EUR)", action: "correct", field: "close_date", reason: "values_do_not_fit" }]);
+  });
+
   test("Show details lists every matched column per file, rows alternate page colour and grey, unsure rows too", async () => {
     state.views = [LOW];
     await mount();

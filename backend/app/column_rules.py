@@ -1,8 +1,8 @@
 """Column rules: reading a sheet, finding its header, detecting its type and mapping its columns by rule
 (docs/specs/chat-upload.md sections 3 and 4.1). Pure Python: no database, no model, no network.
 
-The model never decides here. A column is mapped when its header and its values agree (confidence at or
-above MAPPING_THRESHOLD, no tie); anything else is shown to the analyst, with or without the model's
+The model never decides here. A column is mapped when its header and its values agree (confidence above
+MAPPING_THRESHOLD, no tie); anything else is shown to the analyst, with or without the model's
 proposal (CLAUDE.md rule 18: model output is never Verified on its own).
 """
 import csv
@@ -65,7 +65,7 @@ FIELD_DEFS = {
     },
 }
 
-MAPPING_THRESHOLD = 80          # confidence at or above this, with no tie, is accepted without a click (Q3)
+MAPPING_THRESHOLD = 80          # a rule confidence above this, untied, needs no click (Q3); exactly 80 is unsure (2026-10-17)
 HEADER_SCAN_ROWS = 10           # the header row is looked for in the first 10 sheet rows
 DETECTION_MIN_SHARE = 0.8       # the rules detect a type at 80 or more (2026-10-16; before, half of its fields)
 
@@ -95,18 +95,40 @@ def _all_fields(dtype: str) -> Dict[str, List[str]]:
 
 
 def _norm(text: str) -> str:
-    """A header or alias as the scores read it: lower case, every run of punctuation one space ("Deal - ID" and
-    "*InvoiceDate" are read as "deal id" and "invoicedate"); "&" stays ("S&M")."""
-    return re.sub(r"[^\w&]+", " ", (text or "").lower()).strip()
+    """A header or alias as the scores read it: lower case, every run of punctuation one space, the underscore
+    included ("Deal - ID", "*InvoiceDate" and "deal_stage" are read as "deal id", "invoicedate" and "deal stage");
+    "&" stays ("S&M")."""
+    return re.sub(r"(?:[^\w&]|_)+", " ", (text or "").lower()).strip()
+
+
+# Deal ID (2026-10-17, chat-upload.md sections 4.1 and 21): a stage is never a deal id; a column of unique codes whose header
+# holds an id word is the deal id candidate.
+_NOT_AN_ID = re.compile(r"(?i)stage|status|phase")
+_ID_WORDS = {"id", "opportunity", "deal", "ref", "reference"}
+LABEL_SET_MAX = 12              # a stage column holds at most 12 labels (measured: 1 to 4 in sample_data/ and the fixtures)
+_CODE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_\-/.#:]*")
+_ISO_DATE = re.compile(r"^\d{4}-\d{1,2}-\d{1,2}")
 
 
 def field_score(dtype: str, field: str, header: str) -> int:
-    """The best score of a header against one field's name and aliases (100, 80, 60, 40, 30 or 0)."""
+    """The best score of a header against one field's name and aliases (100, 80, 60, 40, 30 or 0). A header that
+    holds stage, status or phase scores 0 as a deal id."""
     lc = _norm(header)
-    if not lc:
+    if not lc or (field == "deal_id" and _NOT_AN_ID.search(header)):
         return 0
     aliases = [_norm(field.replace("_", " "))] + [_norm(a) for a in _all_fields(dtype)[field]]
     return max(_score(field, alias, lc) for alias in aliases)
+
+
+def _assign(fields, columns: list, scores: Dict[Tuple[str, str], int]) -> dict:
+    """{field: column} by the greedy order: best score first; equal scores in field order, then column order."""
+    mapping = {f: None for f in fields}
+    used = set()
+    for (field, col), s in sorted(scores.items(), key=lambda kv: -kv[1]):
+        if s and mapping[field] is None and col not in used:
+            mapping[field] = col
+            used.add(col)
+    return mapping
 
 
 def suggest_mapping(dtype: str, columns: list, headers: Optional[list] = None) -> dict:
@@ -114,20 +136,60 @@ def suggest_mapping(dtype: str, columns: list, headers: Optional[list] = None) -
     texts when they differ from the column names (a pandas-style "Customer ID.1" is scored as "Customer ID")."""
     all_fields = _all_fields(dtype)
     texts = headers if headers is not None else deduped_texts(columns)
-    candidates = []
-    for field in all_fields:
-        for col, text in zip(columns, texts):
-            s = field_score(dtype, field, text)
-            if s:
-                candidates.append((s, field, col))
-    candidates.sort(reverse=True, key=lambda x: x[0])
-    mapping = {f: None for f in all_fields}
-    used = set()
-    for s, field, col in candidates:
-        if mapping[field] is None and col not in used:
-            mapping[field] = col
-            used.add(col)
-    return mapping
+    return _assign(all_fields, columns, {(f, c): field_score(dtype, f, t) for f in all_fields for c, t in zip(columns, texts)})
+
+
+def _is_code(v) -> bool:
+    """One token with a digit, or a whole number: "1C1I7A6R", "OPP-0042", 5001. Not a date, not a decimal."""
+    if isinstance(v, bool):
+        return False
+    if isinstance(v, int):
+        return True
+    if isinstance(v, float):
+        return v.is_integer()
+    if not isinstance(v, str):
+        return False
+    s = v.strip()
+    if _PURE_NUMBER.match(s):
+        return "." not in s
+    return bool(_CODE.fullmatch(s) and re.search(r"\d", s) and not _DM_DATE.match(s) and not _ISO_DATE.match(s))
+
+
+def unique_codes(values) -> bool:
+    """Two or more values, every one a code and no two the same."""
+    present = _non_blank(values)
+    return len(present) >= 2 and all(_is_code(v) for v in present) and len({str(v).strip() for v in present}) == len(present)
+
+
+def label_set(values) -> bool:
+    """A small set of repeated labels (Won / Lost / Engaging / Prospecting): text with a letter, not a code, at most
+    LABEL_SET_MAX distinct, each used twice on average."""
+    present = _non_blank(values)
+    if not present or not all(isinstance(v, str) and re.search(r"[^\W\d_]", v) and not _is_code(v) for v in present):
+        return False
+    distinct = len({v.strip().lower() for v in present})
+    return distinct <= LABEL_SET_MAX and 2 * distinct <= len(present)
+
+
+def _words(header: str) -> List[str]:
+    """The words of a header, camel case split ("OpportunityID" is "opportunity id")."""
+    return _norm(re.sub(r"(?<=[a-z])(?=[A-Z])", " ", header or "")).split()
+
+
+def rule_scores(dtype: str, sheet: "Sheet") -> Dict[Tuple[str, str], int]:
+    """{(field, column): score}: the header score, and for the deal id the values too. A small set of repeated labels
+    is a stage, never a deal id (0); a column of unique codes whose header holds id, opportunity, deal or ref is the
+    deal id candidate (at least MAPPING_THRESHOLD, so it waits for a click unless its header scores 100)."""
+    fields = _all_fields(dtype)
+    scores = {(f, c): field_score(dtype, f, t) for f in fields for c, t in zip(sheet.columns, sheet.headers)}
+    if "deal_id" in fields:
+        for c, t in zip(sheet.columns, sheet.headers):
+            values = sheet.frame[c].tolist()
+            if label_set(values):
+                scores[("deal_id", c)] = 0
+            elif not _NOT_AN_ID.search(t or "") and _ID_WORDS & set(_words(t)) and unique_codes(values):
+                scores[("deal_id", c)] = max(scores[("deal_id", c)], MAPPING_THRESHOLD)
+    return scores
 
 
 def deduped_texts(columns: list) -> list:
@@ -532,13 +594,13 @@ class Proposal:
 
 def analyse(dtype: str, sheet: Sheet) -> Tuple[List[Proposal], List[str]]:
     """(one Proposal per column, the fields still open). The rules propose one column per field, in the greedy
-    order of suggest_mapping. Auto: confidence at or above the threshold and no tie. Unsure: below it, or tied
-    (two columns share a field's best score, or one column shares its best score between two fields). Undecided:
-    no proposal while a field is still open. Unused: no proposal and no open field."""
+    order of suggest_mapping over rule_scores. Auto: confidence above the threshold and no tie. Unsure: at or below
+    it, or tied (two columns share a field's best score, or one column shares its best score between two fields).
+    Undecided: no proposal while a field is still open. Unused: no proposal and no open field."""
     fields = _all_fields(dtype)
-    mapping = suggest_mapping(dtype, sheet.columns, sheet.headers)
+    scores = rule_scores(dtype, sheet)
+    mapping = _assign(fields, sheet.columns, scores)
     by_col = {c: f for f, c in mapping.items() if c}
-    scores = {(f, c): field_score(dtype, f, t) for f in fields for c, t in zip(sheet.columns, sheet.headers)}
     tied, tie_fields = set(), {c: [] for c in sheet.columns}
     for f in fields:                                 # two columns share a field's best score
         best = max((scores[(f, c)] for c in sheet.columns), default=0)
@@ -562,7 +624,7 @@ def analyse(dtype: str, sheet: Sheet) -> Tuple[List[Proposal], List[str]]:
         fit, ok, total = value_fit(field_kind(dtype, field), sheet.frame[c].tolist())
         conf = round(scores[(field, c)] * fit)
         note = fit_note(field_kind(dtype, field), ok, total)
-        accepted = conf >= MAPPING_THRESHOLD and c not in tied
+        accepted = conf > MAPPING_THRESHOLD and c not in tied
         out.append(Proposal(c, field, scores[(field, c)], conf, note, "auto" if accepted else "unsure", c in tied,
                             tuple(tie_fields[c])))
     held = {p.field for p in out if p.state == "auto"}
@@ -588,7 +650,8 @@ def customer_columns(sheet: Sheet, proposals: List[Proposal]) -> List[str]:
 # highest and at least DETECTION_MIN_SHARE. Revenue needs all three of customer, date and amount, each header
 # at 80 or more: an "MRR" or "ARR" header alone never makes a revenue file. A CRM file needs four of the five
 # signature columns (deal, created, closed or won, stage or status, owner). A P&L is the share of its fields the
-# headers match, or cost lines (cost of sales, payroll, EBITDA ...) among its headers or line labels.
+# headers match, or cost lines (cost of sales, payroll, EBITDA ...) among its headers or line labels. Headers and line
+# labels are read as the mapping reads them, punctuation as one space ("deal_id" is "deal id"; 2026-10-17).
 REVENUE_KEY = ("customer_id", "invoice_date", "amount")
 _CRM_SIGNATURE = {
     "deal": re.compile(r"(?i)\b(?:deal|opportunit\w*)\b"),
@@ -618,12 +681,14 @@ def type_shares(sheet: Sheet) -> Dict[str, float]:
     shares = {}
     key_hits = {f: max([field_score("revenue", f, t) for t in sheet.headers] or [0]) >= 80 for f in REVENUE_KEY}
     shares["revenue"] = sum(key_hits.values()) / len(REVENUE_KEY)
-    groups = sum(1 for rx in _CRM_SIGNATURE.values() if any(rx.search(t or "") for t in sheet.headers))
+    heads = [_norm(t) for t in sheet.headers]
+    groups = sum(1 for rx in _CRM_SIGNATURE.values() if any(rx.search(t) for t in heads))
     shares["crm"] = groups / len(_CRM_SIGNATURE)
     defs = FIELD_DEFS["pnl"]
     mapping = suggest_mapping("pnl", sheet.columns, sheet.headers)
     by_fields = sum(1 for f in defs["required"] if mapping.get(f)) / len(defs["required"])
-    lines = len({i for i, rx in enumerate(_COST_LINES) if any(rx.search(t) for t in _line_labels(sheet))})
+    labels = [_norm(t) for t in _line_labels(sheet)]
+    lines = len({i for i, rx in enumerate(_COST_LINES) if any(rx.search(t) for t in labels)})
     shares["pnl"] = max(by_fields, 1.0 if lines >= 3 else 0.8 if lines == 2 else 0.0)
     return shares
 

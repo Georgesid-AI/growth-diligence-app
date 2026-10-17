@@ -1,6 +1,6 @@
 # Spec: Chat-style upload and column mapping
 Status: Final (2026-10-08); decisions applied (§12); amended 2026-10-08 for the mapping-screen wording, the delete dialog
-and the banner (§12, §13, S5, S9, S15, S16a, S16d, S18, S18b, S23–S25), and 2026-10-09 for §15 and §16, and 2026-10-11 for §17 (claims list and parser), and 2026-10-16 for §19 (file type, every sheet, wide tables, units and the miss message) and §20 (forecast tables read as claims, issue #114). Location: docs/specs/chat-upload.md.
+and the banner (§12, §13, S5, S9, S15, S16a, S16d, S18, S18b, S23–S25), and 2026-10-09 for §15 and §16, and 2026-10-11 for §17 (claims list and parser), and 2026-10-16 for §19 (file type, every sheet, wide tables, units and the miss message) and §20 (forecast tables read as claims, issue #114), and 2026-10-17 for §21 (deal ID and stage, and a rule confidence of exactly 80). Location: docs/specs/chat-upload.md.
 Replaces the content of the MappingWizard page. Supersedes in part docs/specs/llm-structure-reading.md §1 for
 the column-mapping path only: which columns are sent and from how many rows (§4.2). Everything else in that spec
 stands, including the rule-16 shape of what is sent and §9 (sent text is never stored).
@@ -92,7 +92,11 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
 - Type (amended 2026-10-16, §19): the rules give each type a share, and the type with the unique highest share wins
   when that share is at least 80% (it was 50%). Revenue needs customer, date and amount, each header at 80 or more; CRM
   needs four of five signature columns (deal, created, closed or won, stage or status, owner); a P&L is the share of its
-  fields the headers match, or two or three cost lines among the headers or the line labels. Measured on sample_data/: 3
+  fields the headers match, or two or three cost lines among the headers or the line labels. Headers and line labels are
+  read with every run of punctuation as one space, the underscore included, as the mapping reads them (§21; 2026-10-17):
+  `deal_id,created_date,close_date,stage,owner` is a CRM file at 100%, and a line `cost_of_sales` is a cost line. Measured
+  the same day on sample_data/ and the fixtures in `backend/tests/fixtures/{mapping,messy}/` (12 files): no detected type
+  and no share changed. Measured on sample_data/: 3
   of 3 files detected, at 100% (revenue), 80% (CRM, which has no owner column) and 100% (P&L), each against a lower
   share for the other two types. Months found are the distinct months of the date column: invoice date for revenue,
   close date for CRM, month for the P&L. Below 80, with consent, the model is asked once for the file's type (§19).
@@ -105,7 +109,11 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
 ## 4. Mapping rule
 ### 4.1 Step 1: rules (Python)
 - Header score: the existing `_score`, the best over a field's aliases (100, 80, 60, 40 or 30). A header that
-  pandas de-duplicated ("Customer ID.1") is scored on its cell text, so duplicate headers tie.
+  pandas de-duplicated ("Customer ID.1") is scored on its cell text, so duplicate headers tie. An underscore is
+  punctuation: "deal_stage" is read as "deal stage" (§21).
+- Deal ID (CRM, §21): a header containing stage, status or phase never maps to deal id, and neither does a column whose
+  values are a small set of repeated labels (Won / Lost / Engaging / Prospecting). A column of unique codes whose header
+  holds id, opportunity, deal or ref is the deal id candidate.
 - Value fit: the share of the column's non-blank values, over all data rows, that the engine can read as the
   field's kind. For a date field, the date parser reads the value; a day/month order it cannot settle still
   counts as a date. For a numeric field, `pd.to_numeric` reads it. For currency, the value is three letters. A
@@ -113,10 +121,10 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
   column with no non-blank value has a fit of 0.
 - Confidence = round(header score × value fit). The rules propose one column per field, using the existing greedy
   `suggest_mapping` order.
-- Auto-accepted: confidence at or above `MAPPING_THRESHOLD = 80` (Q3), and no tie. These rows are shown with
-  Correct and need no click. Measured on sample_data/: 16 of 17 columns score 100. "S&M Expense" scores 30 (the
+- Auto-accepted: confidence above `MAPPING_THRESHOLD = 80` (Q3; a rule mapping at exactly 80 is unsure, §21), and no
+  tie. These rows are shown with Correct and need no click. Measured on sample_data/: 16 of 17 columns score 100. "S&M Expense" scores 30 (the
   3-letter alias "s&m"), so it needs one Confirm.
-- Unsure: below the threshold, or tied. A tie means two columns share a field's best score, or one column shares
+- Unsure: at or below the threshold, or tied. A tie means two columns share a field's best score, or one column shares
   its best score between two fields. The rules' proposal is shown with Confirm and Correct. If consent is ticked,
   the column also goes to step 2.
 - Undecided: a column with no proposal while a field of its type is still open. With consent, it goes to step 2.
@@ -173,7 +181,8 @@ row moves down when its click is made. Unused columns stay in the "Not used" fol
 - Re-upload with the same file hash: the latest version is applied, with no rules run, no model call and no
   clicks, and the bubble says S14.
 - Same headers but a different hash: the latest version counts as confidence 100 for each column it mapped,
-  scaled by that column's value fit on the new data. No model call is made.
+  scaled by that column's value fit on the new data, and is accepted at 80 or more (§21 is for rule mappings only).
+  No model call is made.
 
 ## 6. Reliability rules (app-wide)
 ### 6.1 Degrade, don't die
@@ -403,6 +412,9 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
   changed `backend/app/column_rules.py` (first column and title currency of a sheet), `backend/server.py` (the view, the Confirm endpoint, the
   year-end re-read), `backend/app/claim_matching.py` and `backend/app/verdict.py` (the untested rows), `backend/app/decks/claims.py` (the type),
   `frontend/src/components/UploadChat.jsx`, `frontend/src/lib/{chatUpload,api,deckClaims,claimRegister,review}.js`.
+- 2026-10-17 (§21): `backend/app/column_rules.py` (underscores, the deal id rules, the threshold), new
+  `backend/tests/test_deal_id_rules.py`, `backend/tests/test_money_kind.py` (an 80 row now asks), `frontend/src/pages/Review.jsx` (a test id),
+  `frontend/src/pages/{MappingWizard,Review}.test.jsx`.
 
 ## 15. Amount columns named turnover or volume (amended 2026-10-09, George)
 If the header of a column mapped to an amount field (revenue file `amount`, P&L `revenue`, CRM `amount`) contains
@@ -527,7 +539,9 @@ maps nothing.
   fields (`amount`, `revenue`, `sm_expense`, `cost_of_revenue`) are multiplied by 1,000 when the engine reads the rows (`normalize`); the stored
   rows keep the file's own figures; S26c shows the note. Millions are not read.
 - **Type, rules first.** §3. Header synonyms: headers are read with punctuation as one space ("Deal - ID", "*InvoiceDate"), and the synonyms of
-  Stripe, Xero, HubSpot and Pipedrive exports were added to FIELD_DEFS (created, contact name, record id, deal stage ...).
+  Stripe, Xero, HubSpot and Pipedrive exports were added to FIELD_DEFS (created, contact name, record id, deal stage ...). The type rules read
+  the same way (2026-10-17): the CRM signature words and the cost lines are matched on each header and line label with every run of punctuation,
+  the underscore included, read as one space ("created_date" is "created date", "cost_of_sales" is "cost of sales").
 - **Type, the model, once per file.** Only when the rules give no type at 80, the audit has consent and the file's hash has no answer yet.
   The text, built in memory and never stored or logged: per sheet (at most 6) its name, the title rows above the header (at most 6 rows, cells
   cut at 200 characters), the header row (at most 40 columns) and the masked sample of §4.2 (3 numbers or dates per numeric or date column, a
@@ -624,3 +638,39 @@ line, its values by period), and the register treats the claims as it treats Use
   `deckClaims.test.js` (the sheet source, the type), `claimRegister.test.js` (the reading); for 20.5 `test_forecast_claims.py` (compute, Run
   audit, the review counts, the banner, a Save with no line), `MappingWizard.test.jsx` (Calculate, the status line, Save claims off with no
   line) and `review.test.js` (the mapping summary).
+
+## 21. Deal ID and stage, and a rule confidence of exactly 80 (2026-10-17, George)
+Cause found (a CRM export headed opportunity_id, sales_agent, product, account, deal_stage, engage_date, close_date,
+close_value; a synthetic file with these headers and 20 rows is in `backend/tests/test_deal_id_rules.py`): the rules mapped
+deal_stage to deal id at 80, accepted it without a click and left opportunity_id unmapped. A wrong label is worse than a
+missing one. (1) An underscore was read as a letter, so "deal_stage" never met the stage synonym "deal stage" (100) but
+began with the deal id synonym "deal" (80), and "opportunity_id" met only "id" (60); (2) 80 was accepted; (3) no value
+was checked for a deal id. The architecture is unchanged.
+
+Challenge (rule 4): needed, because a wrong field that needs no click reaches the engine unchecked. Simpler: two header
+words and one value check for the deal id, and no auto-accept at 80. Deleted first: nothing.
+
+- **Underscores.** A header is read with every run of punctuation as one space, the underscore included (§19 already said
+  punctuation): "deal_stage" is "deal stage", "opportunity_id" is "opportunity id".
+- **A stage is never a deal id.** A header containing stage, status or phase (any case, anywhere in the header) scores 0 for
+  deal id. A column whose values are a small set of repeated labels scores 0 for deal id: every value is text with a letter
+  and is not a code, there are at most 12 distinct labels (`LABEL_SET_MAX`; 1 to 4 in sample_data/ and the fixtures), and each
+  is used twice on average. Such a column stays a candidate for stage through its header; its values alone never propose a
+  field (agent, product and account columns are label sets too).
+- **The deal id candidate.** A column of unique codes whose header holds the word id, opportunity, deal, ref or reference
+  (words as the header is read, camel case split: "OpportunityID") scores at least 80 for deal id, so it is proposed and,
+  unless its header scores 100, waits for a click. A code is one token with a digit ("1C1I7A6R", "OPP-0042") or a whole
+  number (5001), never a date or a decimal; unique means two or more values and no two the same.
+- **Exactly 80.** A rule mapping whose confidence is exactly `MAPPING_THRESHOLD` (80) is unsure: it is shown for
+  confirmation and, with consent, goes to step 2 like every unsure row (§4.2). Above 80 and untied it is accepted as
+  before. A saved mapping on new data keeps 80 or more (§5).
+- **Measured.** On sample_data/ and the nine fixture files (87 columns), no column changes its field, state or confidence,
+  and none was accepted at exactly 80 before. The reported file: opportunity_id → deal id (100, accepted), deal_stage →
+  stage (100, accepted), close_date → close date (100, accepted), close_value → amount (60, unsure); sales_agent, product,
+  account and engage_date have no proposal.
+- **Reason codes.** "Values do not fit this field" (`values_do_not_fit`) is offered and accepted when a rule mapping is
+  corrected to a field of another kind, on the mapping table (§4.3) and in the review screen's Change (§18).
+- **Tests.** `test_deal_id_rules.py` (the reported file by rule and through upload, underscores, each rule and its limits,
+  80 and 85, the reason through the decisions endpoint and the usage counters), `test_money_kind.py` (a turnover or GMV
+  header scores 80, so its row waits for a click and is sent to the model), `MappingWizard.test.jsx` and `Review.test.jsx`
+  (the reason offered and sent for a number field corrected to a date field).

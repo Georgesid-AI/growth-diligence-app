@@ -244,7 +244,7 @@ function UnsureRow({ view, col, striped, decide, lastReason, setLastReason }) {
             <option value="">Not used</option>
             {fields.map((f) => <option key={f} value={f} disabled={!!held[f]}>{fieldName(f)}{held[f] ? ` (held by ${held[f]})` : ""}</option>)}
           </select>
-          <select value={lastReason} onChange={(e) => setLastReason(e.target.value)} className="h-8 rounded bg-white text-sm px-1.5">
+          <select value={lastReason} onChange={(e) => setLastReason(e.target.value)} data-testid={`review-change-reason-${view.dtype}-${col.column}`} className="h-8 rounded bg-white text-sm px-1.5">
             {REASONS.map((r) => <option key={r.code} value={r.code}>{r.label}</option>)}
           </select>
           <button type="button" className={smallBtn} disabled={saving} data-testid={`review-change-apply-${view.dtype}-${col.column}`}

@@ -2,6 +2,7 @@
 import pytest
 
 import test_chat_upload as chat
+import test_llm_gateway as t
 from test_chat_upload import api, AUDIT  # noqa: F401  (the fixture)
 
 from app import column_rules as cr
@@ -13,9 +14,17 @@ def state(client):
     return next(c for c in chat.view(client)["columns"] if c["field"] == "amount" or c.get("money_ask"))
 
 
-def money(client, kind, column):
+def money(client, kind, column, confirm=False):
+    """The answer to the money question; with `confirm`, the row's proposal is confirmed in the same request."""
+    decisions = [{"column": column, "action": "confirm"}] if confirm else []
     return client.post(f"/api/audits/{AUDIT}/datasets/revenue/decisions",
-                       json=[{"column": column, "action": "confirm", "money_kind": kind}])
+                       json=decisions + [{"column": column, "action": "confirm", "money_kind": kind}])
+
+
+def model_maps(client, field, position):
+    """A money header scores 80 at most ("total", "value" as a prefix): the row is unsure (section 4.1), so with consent the
+    model is asked, and here it proposes the column for the field."""
+    client.state["adapter"] = t.FakeAdapter(replies=[chat.mapping_reply((field, position))])
 
 
 @pytest.mark.parametrize("header", ["Total Turnover", "Transaction Volume", "GMV", "TPV (EUR)", "Revenue Turnover"])
@@ -35,17 +44,19 @@ def test_only_a_mapped_amount_field_asks():
 
 
 def test_an_amount_column_named_turnover_holds_the_mapping_until_the_analyst_answers(api):  # noqa: F811
+    model_maps(api, "amount", 3)
     body = chat.upload(api, "f.csv", CSV.replace(b"{amount}", b"Total Turnover")).json()
     col = chat.by_column(body)["Total Turnover"]
     assert col["money_ask"] and col["pending"] and body["pending"] == 1 and not body["saved"]
     refused = api.post(f"/api/audits/{AUDIT}/compute")
     assert refused.status_code == 409
-    done = money(api, "revenue", "Total Turnover").json()
+    done = money(api, "revenue", "Total Turnover", confirm=True).json()
     assert done["pending"] == 0 and done["saved"] and done["mapping"]["amount"] == "Total Turnover"
     assert done["columns"][[c["column"] for c in done["columns"]].index("Total Turnover")]["money_kind"] == "revenue"
 
 
 def test_a_volume_column_never_feeds_the_engine_and_the_field_stays_open(api):  # noqa: F811
+    model_maps(api, "amount", 3)
     chat.upload(api, "f.csv", CSV.replace(b"{amount}", b"Total Volume"))
     done = money(api, "volume", "Total Volume").json()
     assert done["mapping"]["amount"] is None and "amount" in done["missing_required"]
@@ -53,8 +64,9 @@ def test_a_volume_column_never_feeds_the_engine_and_the_field_stays_open(api):  
 
 def test_the_answer_is_asked_once_and_reused_for_the_same_file(api):  # noqa: F811
     content = CSV.replace(b"{amount}", b"Total GMV")
+    model_maps(api, "amount", 3)
     chat.upload(api, "f.csv", content)
-    money(api, "volume", "Total GMV")
+    money(api, "volume", "Total GMV", confirm=True)
     again = chat.upload(api, "f.csv", content).json()
     assert again["pending"] == 0 and chat.by_column(again)["Total GMV"]["money_kind"] == "volume"
 
@@ -97,6 +109,7 @@ def test_a_pnl_turnover_column_holds_the_mapping_until_answered_and_a_volume_ans
 
 
 def test_a_crm_deal_volume_column_asks_and_a_volume_answer_keeps_it_out_of_the_mapping(api):  # noqa: F811
+    model_maps(api, "amount", 5)
     body = chat.upload(api, "crm.csv", CRM.replace(b"{amount}", b"Value (GMV)")).json()
     assert body["dtype"] == "crm"
     col = chat.by_column(body)["Value (GMV)"]

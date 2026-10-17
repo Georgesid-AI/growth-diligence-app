@@ -46,6 +46,8 @@
     scope, with a test. A new test counts only after it has failed on a deliberate
     violation. Report only what needs my decision. If a fix goes beyond the task,
     list it under "Decisions for you" and do not build it.
+27. Never subscribe to PR or CI events and never schedule timed check-ins; George checks the PR's
+    Checks tab himself. Report once when the work is pushed, then end the session.
 
 ## Rule: which decisions to bring to George
 19. Decide engineering questions yourself: rule wording, limits measured from data, test design,
