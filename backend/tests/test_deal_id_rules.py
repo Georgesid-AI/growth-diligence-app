@@ -11,7 +11,7 @@ pytest.importorskip("fastapi")
 pytest.importorskip("motor")
 
 import test_chat_upload as chat  # noqa: E402
-from test_chat_upload import api, AUDIT  # noqa: E402,F401  (the fixture)
+from test_chat_upload import AUDIT  # noqa: E402
 
 from app import column_rules as cr, usage as usage_mod  # noqa: E402
 
@@ -69,7 +69,7 @@ def test_the_reported_file_maps_deal_stage_to_stage_and_opportunity_id_to_deal_i
     }
 
 
-def test_the_reported_file_shows_deal_stage_as_stage_and_close_value_for_confirmation(api):  # noqa: F811
+def test_the_reported_file_shows_deal_stage_as_stage_and_close_value_for_confirmation(api):
     api.db["audits"].docs[0]["structure_reading_consent"] = False         # the rules' proposals as the analyst sees them
     rows = chat.by_column(chat.upload(api, "deals.csv", opportunities(), dtype="crm").json())
     assert (rows["deal_stage"]["field"], rows["deal_stage"]["state"], rows["deal_stage"]["pending"]) == ("stage", "auto", False)
@@ -159,7 +159,7 @@ def test_a_header_that_scores_80_waits_for_a_click():
 # ---------------------------------------------------------------------------
 # "Values do not fit this field" when a rule mapping is corrected to a field of another kind
 # ---------------------------------------------------------------------------
-def test_values_do_not_fit_is_taken_when_a_rule_mapping_is_corrected_to_a_field_of_another_kind(api):  # noqa: F811
+def test_values_do_not_fit_is_taken_when_a_rule_mapping_is_corrected_to_a_field_of_another_kind(api):
     api.db["audits"].docs[0]["structure_reading_consent"] = False
     rows = chat.by_column(chat.upload(api, "deals.csv", opportunities(), dtype="crm").json())
     assert (rows["close_value"]["source"], rows["close_value"]["field"]) == ("rules", "amount")

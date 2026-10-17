@@ -1656,7 +1656,6 @@ def test_the_turnover_fields_hold_closed_words_figures_and_sources_never_deck_te
 import logging  # noqa: E402
 
 import test_chat_upload as chat  # noqa: E402
-from test_chat_upload import api  # noqa: E402,F401  (the fixture)
 
 FIXTURE_CELLS = ("Alder Works", "Birch Labs", "Cedar Foods", "Dune Print", "Elm Studio", "Fern Tools", "Birch Labs Ltd",
                  "C-100", "C-101", "C-102", "C-103", "C-104", "Quarterly revenue export", "Large", "Small", "Gold", "Silver")
@@ -1667,7 +1666,7 @@ def _all_documents(db):
     return {name: json.dumps(col.docs, default=str) for name, col in db._cols.items()}
 
 
-def test_chat_the_mapping_text_holds_only_the_columns_the_rules_could_not_decide_from_at_most_20_rows(api):  # noqa: F811
+def test_chat_the_mapping_text_holds_only_the_columns_the_rules_could_not_decide_from_at_most_20_rows(api):
     rows = "\n".join(f"Customer {i},2024-01-{i % 27 + 1:02d},{100 + i},EUR,note {i} {chr(97 + i % 26)}" for i in range(60))
     chat.upload(api, "wide.csv", ("Customer ID,Invoice Date,Amount,Currency,Remarks\n" + rows + "\n").encode())
     text = chat.model_text(api)
@@ -1680,7 +1679,7 @@ def test_chat_the_mapping_text_holds_only_the_columns_the_rules_could_not_decide
 
 
 @pytest.mark.parametrize("name", ["duplicate_ids_header_row3.csv", "blank_vs_zero.csv", "mixed_currency.csv"])
-def test_chat_no_fixture_customer_name_and_no_text_cell_reaches_the_model(api, name):  # noqa: F811
+def test_chat_no_fixture_customer_name_and_no_text_cell_reaches_the_model(api, name):
     chat.upload(api, name)
     text = chat.model_text(api)
     assert structure_redact.column_text_problem(text) is None
@@ -1688,7 +1687,7 @@ def test_chat_no_fixture_customer_name_and_no_text_cell_reaches_the_model(api, n
         assert cell.lower() not in text.lower(), cell
 
 
-def test_chat_a_customer_alias_column_sends_a_profile_only_even_when_its_values_are_numbers(api):  # noqa: F811
+def test_chat_a_customer_alias_column_sends_a_profile_only_even_when_its_values_are_numbers(api):
     csv = "Date,Amount,Currency,Customer ID,Customer ID\n" + "\n".join(
         f"2024-01-{i + 1:02d},{50 + i},EUR,{70000 + i},{81000 + i}" for i in range(8)) + "\n"
     chat.upload(api, "numeric_ids.csv", csv.encode())
@@ -1699,7 +1698,7 @@ def test_chat_a_customer_alias_column_sends_a_profile_only_even_when_its_values_
 
 
 @pytest.mark.parametrize("name", [n + ".csv" for n in FIXTURE_FILES])
-def test_chat_no_collection_holds_the_sent_text_after_an_upload_with_consent(api, name):  # noqa: F811
+def test_chat_no_collection_holds_the_sent_text_after_an_upload_with_consent(api, name):
     chat.upload(api, name)
     texts = [json.loads(p)["text"] for p in api.state["adapter"].payloads]
     assert texts, "the model was asked"
@@ -1714,7 +1713,7 @@ def test_chat_no_collection_holds_the_sent_text_after_an_upload_with_consent(api
                           "error_type", "structure_type"} for c in calls)
 
 
-def test_chat_log_lines_hold_no_file_name_header_cell_value_company_name_or_note(api, caplog):  # noqa: F811
+def test_chat_log_lines_hold_no_file_name_header_cell_value_company_name_or_note(api, caplog):
     caplog.set_level(logging.INFO)
     note = "Adj is not the type"
     for name in FIXTURE_FILES:
@@ -1735,7 +1734,7 @@ def test_chat_log_lines_hold_no_file_name_header_cell_value_company_name_or_note
         assert secret not in log, f"{secret!r} reached a log line"
 
 
-def test_chat_the_counters_and_the_totals_hold_no_file_name_cell_value_or_company_name_and_header_text_only_in_a_note(api):  # noqa: F811
+def test_chat_the_counters_and_the_totals_hold_no_file_name_cell_value_or_company_name_and_header_text_only_in_a_note(api):
     note = "Adj is not the type"
     chat.upload(api, "blank_vs_zero.csv")
     api.post(f"/api/audits/{chat.AUDIT}/datasets/revenue/decisions", json=[
@@ -1760,14 +1759,14 @@ def test_chat_the_counters_and_the_totals_hold_no_file_name_cell_value_or_compan
     ("see blank_vs_zero", True), ("see blank_vs_zero.csv", True), ("Alder is wrong", True),
     ("Fixture Target Ltd", True), ("Northbridge Capital", True), ("ENG-2026-041", True),
 ])
-def test_chat_an_other_note_is_refused_for_a_digit_a_file_name_a_cell_text_a_name_or_length(api, note, refused):  # noqa: F811
+def test_chat_an_other_note_is_refused_for_a_digit_a_file_name_a_cell_text_a_name_or_length(api, note, refused):
     chat.upload(api, "blank_vs_zero.csv")
     r = api.post(f"/api/audits/{chat.AUDIT}/datasets/revenue/decisions", json=[
         {"column": "Adj", "action": "correct", "field": "revenue_type", "reason": "other", "note": note}])
     assert (r.status_code == 400) is refused, r.text
 
 
-def test_chat_a_note_that_quotes_a_header_is_kept_including_a_header_holding_a_cell_word_and_one_with_a_digit_is_refused(api):  # noqa: F811
+def test_chat_a_note_that_quotes_a_header_is_kept_including_a_header_holding_a_cell_word_and_one_with_a_digit_is_refused(api):
     head = "Customer ID,Invoice Date,Amount,Currency,Segment,Large Account Flag,Plan 2024\nAlder Works,2024-01-01,5,EUR,Large,x,y\n"
     chat.upload(api, "h.csv", head.encode())
     ok = lambda note, col: api.post(f"/api/audits/{chat.AUDIT}/datasets/revenue/decisions", json=[  # noqa: E731
@@ -1777,7 +1776,7 @@ def test_chat_a_note_that_quotes_a_header_is_kept_including_a_header_holding_a_c
     assert ok("Segment is not needed", "Large Account Flag").status_code == 200, "a quoted header with no digit"
 
 
-def test_chat_a_kept_note_is_found_only_in_the_usage_counters_and_the_totals(api, caplog):  # noqa: F811
+def test_chat_a_kept_note_is_found_only_in_the_usage_counters_and_the_totals(api, caplog):
     caplog.set_level(logging.INFO)
     note = "Adj is not the type"
     chat.upload(api, "blank_vs_zero.csv")
@@ -2314,7 +2313,7 @@ def _file_type_upload(api):
     return chat.upload(api, "CRM_Anonymous_to_2028.xlsx", shapes.crm_anonymous_to_2028())
 
 
-def test_chat_the_file_type_text_holds_titles_and_headers_and_no_data_text_file_name_or_client_name(api):  # noqa: F811
+def test_chat_the_file_type_text_holds_titles_and_headers_and_no_data_text_file_name_or_client_name(api):
     _file_type_upload(api)
     text = chat.model_text(api)
     parsed = structure_redact.parse_file_type_text(text)
@@ -2324,7 +2323,7 @@ def test_chat_the_file_type_text_holds_titles_and_headers_and_no_data_text_file_
     assert gateway.structure_text_problem(text, "file_type", FILE_TYPE_CONTEXT, {}) is None
 
 
-def test_chat_no_collection_holds_the_file_type_text_and_the_kept_answer_is_a_hash_and_a_word(api, caplog):  # noqa: F811
+def test_chat_no_collection_holds_the_file_type_text_and_the_kept_answer_is_a_hash_and_a_word(api, caplog):
     caplog.set_level(logging.DEBUG)
     _file_type_upload(api)
     text = chat.model_text(api)
@@ -2343,7 +2342,7 @@ def test_chat_no_collection_holds_the_file_type_text_and_the_kept_answer_is_a_ha
     assert set(row) <= LLM_CALLS_KEYS and row["status"] == "ok"
 
 
-def test_chat_a_title_row_holding_the_client_name_or_an_address_reaches_the_model_masked(api):  # noqa: F811
+def test_chat_a_title_row_holding_the_client_name_or_an_address_reaches_the_model_masked(api):
     from openpyxl import Workbook
     import io
     wb = Workbook()
@@ -2381,7 +2380,7 @@ def _name_workbook(sheet_name, title):
     return buf.getvalue()
 
 
-def test_chat_the_company_name_in_a_sheet_name_or_a_title_row_never_reaches_the_model_and_the_unit_marker_stays(api):  # noqa: F811
+def test_chat_the_company_name_in_a_sheet_name_or_a_title_row_never_reaches_the_model_and_the_unit_marker_stays(api):
     api.state["adapter"] = t.FakeAdapter(replies=[json.dumps({"type": "file_type", "file_type": "unknown"})])
     chat.upload(api, "x.xlsx", _name_workbook("Fixture Target Ltd P&L", "Fixture Target Ltd \u2013 April 2024 Report, EUR thousands"))
     text = chat.model_text(api)
@@ -2414,7 +2413,7 @@ def _forecast_file():
     return head.encode()
 
 
-def test_forecast_claims_are_read_and_saved_with_no_model_call_and_no_log_line_holds_a_label_value_or_file_name(api, caplog):  # noqa: F811
+def test_forecast_claims_are_read_and_saved_with_no_model_call_and_no_log_line_holds_a_label_value_or_file_name(api, caplog):
     caplog.set_level(logging.DEBUG)
     out = chat.upload(api, "Zephyr_plan.csv", _forecast_file(), dtype="pnl").json()     # the type as the analyst picks it (S6)
     assert out["forecast_claims"]["count"] == 6, "fixture: two plan lines over three years"

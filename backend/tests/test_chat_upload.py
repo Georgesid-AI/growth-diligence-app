@@ -22,7 +22,7 @@ import pandas as pd  # noqa: E402
 
 from app import column_rules as cr  # noqa: E402
 from app import decks, structures, usage as usage_mod  # noqa: E402
-from app.llm import gateway, guards  # noqa: E402
+from app.llm import guards  # noqa: E402
 from app.structures import redact  # noqa: E402
 
 BACKEND = Path(__file__).resolve().parents[1]
@@ -51,18 +51,6 @@ class SlowAdapter(t.FakeAdapter):
     def complete(self, **kwargs):
         time.sleep(0.4)
         return super().complete(**kwargs)
-
-
-@pytest.fixture()
-def api(monkeypatch):
-    db = t.FakeDB()
-    db["audits"].docs.append({**AUDIT_DOC, "usage": usage_mod.empty()})
-    monkeypatch.setattr(server, "db", db)
-    state = {"adapter": t.FakeAdapter(replies=[mapping_reply()])}
-    monkeypatch.setattr(gateway, "AnthropicAdapter", lambda *a, **k: state["adapter"])
-    client = TestClient(server.app, raise_server_exceptions=False)
-    client.db, client.state = db, state
-    return client
 
 
 def adapter_of(client):

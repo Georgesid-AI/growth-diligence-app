@@ -12,7 +12,7 @@ pytest.importorskip("motor")
 
 import server  # noqa: E402
 import claim_matching_support as support  # noqa: E402
-from test_chat_upload import AUDIT, adapter_of, api, upload, view  # noqa: E402,F401
+from test_chat_upload import AUDIT, upload, view  # noqa: E402
 
 from app import claim_matching as cm  # noqa: E402
 from app import column_rules as cr  # noqa: E402
@@ -90,7 +90,7 @@ def test_an_annual_forecast_reads_each_plan_line_and_year_from_its_cell_scaled_b
     assert (line(found, "EBITDA")["claim_type"], line(found, "Cash balance")["claim_type"]) == ("ebitda", "cash")
 
 
-def test_the_upload_view_lists_the_claims_and_nothing_is_stored_before_confirm(api):  # noqa: F811
+def test_the_upload_view_lists_the_claims_and_nothing_is_stored_before_confirm(api):
     out = upload(api, ANNUAL, (FORECAST / ANNUAL).read_bytes()).json()
     assert out["dtype"] == "pnl" and out["miss"]["looks"]["shape"] == "summary"
     claims = out["forecast_claims"]
@@ -101,7 +101,7 @@ def test_the_upload_view_lists_the_claims_and_nothing_is_stored_before_confirm(a
     assert not any("forecast" in str(k) for d in api.db["datasets"].docs for k in d), "the list itself is not stored"
 
 
-def test_confirm_stores_the_ticked_lines_in_the_table_row_shape_and_drops_the_unticked(api):  # noqa: F811
+def test_confirm_stores_the_ticked_lines_in_the_table_row_shape_and_drops_the_unticked(api):
     upload(api, ANNUAL, (FORECAST / ANNUAL).read_bytes())
     res = api.post(f"/api/audits/{AUDIT}/datasets/pnl/forecast-claims", json={"rows": [5, 16]})
     assert res.status_code == 200 and res.json() == {"saved": 12, "lines": 2}
@@ -121,7 +121,7 @@ def test_confirm_stores_the_ticked_lines_in_the_table_row_shape_and_drops_the_un
     assert api.get(f"/api/audits/{AUDIT}/claims").status_code == 200
 
 
-def test_confirm_refuses_a_row_that_is_not_a_line_of_the_list_and_a_second_confirm(api):  # noqa: F811
+def test_confirm_refuses_a_row_that_is_not_a_line_of_the_list_and_a_second_confirm(api):
     upload(api, ANNUAL, (FORECAST / ANNUAL).read_bytes())
     for rows in ([6], [5, 99]):                      # row 6 is Cost of goods sold, a cost sub-line
         res = api.post(f"/api/audits/{AUDIT}/datasets/pnl/forecast-claims", json={"rows": rows})
@@ -132,7 +132,7 @@ def test_confirm_refuses_a_row_that_is_not_a_line_of_the_list_and_a_second_confi
     assert len(forecast_candidates(api)) == 1
 
 
-def test_a_wide_table_that_maps_is_not_read_as_claims(api):  # noqa: F811
+def test_a_wide_table_that_maps_is_not_read_as_claims(api):
     """A monthly revenue table by customer maps (no miss): its lines are customers, even when a name holds a plan word."""
     months = ",".join(f"{m}-24" for m in "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split())
     body = "".join(f"Client {n},EUR," + ",".join(str(100 + i) for i in range(12)) + "\n" for n in ("Alpha", "Beta", "Gamma"))
@@ -169,7 +169,7 @@ def test_a_june_year_end_groups_july_to_june_and_reads_five_full_years():
     assert values(found, "Customers")["2026"] == (21, "M10"), "June 2026 closes FY2026"
 
 
-def test_a_new_year_end_reads_the_saved_month_claims_again(api):  # noqa: F811
+def test_a_new_year_end_reads_the_saved_month_claims_again(api):
     upload(api, MONTHLY, (FORECAST / MONTHLY).read_bytes())
     assert api.post(f"/api/audits/{AUDIT}/datasets/pnl/forecast-claims", json={"rows": [5]}).json()["saved"] == 4
     assert api.put(f"/api/audits/{AUDIT}", json={"fiscal_year_end": 6}).status_code == 200
@@ -193,7 +193,7 @@ def test_quarters_roll_up_and_a_stated_year_column_wins():
 # ---------------------------------------------------------------------------
 # 20.2: the cap
 # ---------------------------------------------------------------------------
-def test_eighty_lines_cap_at_sixty_claims_by_row_order(api):  # noqa: F811
+def test_eighty_lines_cap_at_sixty_claims_by_row_order(api):
     found = fc.read(stored(EIGHTY))
     assert (found["count"], found["total"], found["capped"], found["range"]) == (60, 560, True, "B2:H10")
     assert [x["row"] for x in found["lines"]] == list(range(2, 11)), "lines 1 to 9: the first 60 claims by row order"
@@ -270,7 +270,7 @@ def _confirm(client, dtype, rows):
     return client.post(f"/api/audits/{AUDIT}/datasets/{dtype}/forecast-claims", json={"rows": rows})
 
 
-def test_a_file_read_as_claims_no_longer_holds_calculate_and_is_no_engine_input(api):  # noqa: F811
+def test_a_file_read_as_claims_no_longer_holds_calculate_and_is_no_engine_input(api):
     assert upload(api, "blank_vs_zero.csv").json()["pending"] == 0, "fixture: a revenue file that maps with nothing pending"
     upload(api, ANNUAL, (FORECAST / ANNUAL).read_bytes())
     before = view(api, "pnl")
@@ -289,7 +289,7 @@ def test_a_file_read_as_claims_no_longer_holds_calculate_and_is_no_engine_input(
     assert "blank_vs_zero.csv" in results and ANNUAL not in results, "no figure cites the forecast table: it is no engine input"
 
 
-def test_a_confirm_with_no_line_ticked_saves_nothing_and_the_file_still_counts(api):  # noqa: F811
+def test_a_confirm_with_no_line_ticked_saves_nothing_and_the_file_still_counts(api):
     upload(api, "blank_vs_zero.csv")
     upload(api, ANNUAL, (FORECAST / ANNUAL).read_bytes())
     assert _confirm(api, "pnl", []).json() == {"saved": 0, "lines": 0}
@@ -297,7 +297,7 @@ def test_a_confirm_with_no_line_ticked_saves_nothing_and_the_file_still_counts(a
     assert api.post(f"/api/audits/{AUDIT}/compute").status_code == 409
 
 
-def test_a_revenue_typed_file_read_as_claims_is_no_revenue_file(api):  # noqa: F811
+def test_a_revenue_typed_file_read_as_claims_is_no_revenue_file(api):
     upload(api, EIGHTY, (FORECAST / EIGHTY).read_bytes(), dtype="revenue")
     texts = lambda: [b["text"] for b in api.get(f"/api/audits/{AUDIT}/blockers").json()["blockers"]]  # noqa: E731
     assert texts() == ["Revenue file uploaded – confirm the mapping to compute metrics."]
@@ -306,7 +306,7 @@ def test_a_revenue_typed_file_read_as_claims_is_no_revenue_file(api):  # noqa: F
     assert api.post(f"/api/audits/{AUDIT}/compute").status_code == 409
 
 
-def test_saving_claims_brings_a_computed_audit_up_to_date(api):  # noqa: F811
+def test_saving_claims_brings_a_computed_audit_up_to_date(api):
     upload(api, "blank_vs_zero.csv")
     assert api.post(f"/api/audits/{AUDIT}/compute").status_code == 200
     upload(api, ANNUAL, (FORECAST / ANNUAL).read_bytes())

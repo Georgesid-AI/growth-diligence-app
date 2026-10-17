@@ -13,7 +13,7 @@ pytest.importorskip("motor")
 import server  # noqa: E402
 import test_llm_gateway as t  # noqa: E402
 from mapping_shapes import FIXTURES, crm_anonymous_to_2028, pnl_to_2028, revenue_to_2028  # noqa: E402
-from test_chat_upload import AUDIT, adapter_of, api, by_column, mapping_reply, upload, view  # noqa: E402,F401
+from test_chat_upload import AUDIT, adapter_of, mapping_reply, upload  # noqa: E402
 
 from app import column_rules as cr  # noqa: E402
 from app.structures import redact  # noqa: E402

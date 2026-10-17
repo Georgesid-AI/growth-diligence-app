@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 import server  # noqa: E402
 import test_chat_upload as chat  # noqa: E402
 import test_llm_gateway as t  # noqa: E402
-from test_chat_upload import api as chat_api, AUDIT as CHAT_AUDIT  # noqa: E402,F401
+from test_chat_upload import AUDIT as CHAT_AUDIT  # noqa: E402
 
 from app import decks  # noqa: E402
 
@@ -21,7 +21,7 @@ USD_CLAIM = {"audit_id": AUDIT, "id": "m1", "deck_id": "d1", "status": "pending"
 
 
 @pytest.fixture()
-def api(monkeypatch):
+def fx_api(monkeypatch):
     db = t.FakeDB()
     db["audits"].docs.append({"id": AUDIT, "reporting_currency": "EUR", "fiscal_year_end": 12, "as_of_month": None, "results": None})
     db[decks.CANDIDATES_COLLECTION].docs.append(copy.deepcopy(USD_CLAIM))
@@ -33,8 +33,8 @@ def claim(client):
     return client.get(f"/api/audits/{AUDIT}/decks").json()["candidates"][0]
 
 
-def test_a_usd_claim_needs_a_rate_until_one_is_entered_and_the_rate_needs_no_revenue_file(api):
-    client, db = api
+def test_a_usd_claim_needs_a_rate_until_one_is_entered_and_the_rate_needs_no_revenue_file(fx_api):
+    client, db = fx_api
     assert claim(client)["fx"]["rate"] is None
     done = client.put(f"/api/audits/{AUDIT}/fx", json={"fx": {"usd": 0.92}})
     assert done.status_code == 200 and done.json()["fx"] == {"USD": 0.92}
@@ -43,8 +43,8 @@ def test_a_usd_claim_needs_a_rate_until_one_is_entered_and_the_rate_needs_no_rev
     assert client.get(f"/api/audits/{AUDIT}").json()["fx"] == {"USD": 0.92}
 
 
-def test_a_rate_saved_with_the_revenue_file_can_be_removed_and_stays_removed(api):
-    client, db = api
+def test_a_rate_saved_with_the_revenue_file_can_be_removed_and_stays_removed(fx_api):
+    client, db = fx_api
     db["datasets"].docs.append({"audit_id": AUDIT, "dtype": "revenue", "fx": {"USD": 0.5, "GBP": 1.2}})
     assert claim(client)["fx"]["rate"] == 0.5
     done = client.put(f"/api/audits/{AUDIT}/fx", json={"fx": {"GBP": 1.2}})       # the screen sends the set it shows, USD removed
@@ -54,27 +54,27 @@ def test_a_rate_saved_with_the_revenue_file_can_be_removed_and_stays_removed(api
     assert db["datasets"].docs[0]["fx"] == {}, "the file's copy is cleared; the kept rate lives on the audit"
 
 
-def test_a_bad_rate_or_currency_is_refused(api):
-    client, _ = api
+def test_a_bad_rate_or_currency_is_refused(fx_api):
+    client, _ = fx_api
     for bad in ({"USD": 0}, {"USD": -1}, {"US": 1.1}, {"USD1": 1.1}, {"USD": "x"}):
         assert client.put(f"/api/audits/{AUDIT}/fx", json={"fx": bad}).status_code in (400, 422), bad
 
 
-def test_a_rate_saved_with_the_revenue_file_still_applies_and_the_audit_rate_wins(api):
-    client, db = api
+def test_a_rate_saved_with_the_revenue_file_still_applies_and_the_audit_rate_wins(fx_api):
+    client, db = fx_api
     db["datasets"].docs.append({"audit_id": AUDIT, "dtype": "revenue", "fx": {"USD": 0.5}})
     assert claim(client)["fx"]["rate"] == 0.5
     client.put(f"/api/audits/{AUDIT}/fx", json={"fx": {"USD": 0.9}})
     assert claim(client)["fx"]["rate"] == 0.9
 
 
-def test_replacing_the_revenue_file_does_not_wipe_the_rates(chat_api):  # noqa: F811
+def test_replacing_the_revenue_file_does_not_wipe_the_rates(api):
     """The cause found: a re-upload wrote fx: {} over the saved rates, so a deck claim in USD read 'FX rate needed' again."""
-    chat.upload(chat_api, "blank_vs_zero.csv")
-    chat_api.put(f"/api/audits/{CHAT_AUDIT}/datasets/revenue/mapping", json={"fx": {"USD": 0.9}, "billing_terms": {}})
+    chat.upload(api, "blank_vs_zero.csv")
+    api.put(f"/api/audits/{CHAT_AUDIT}/datasets/revenue/mapping", json={"fx": {"USD": 0.9}, "billing_terms": {}})
     other = (chat.MESSY / "blank_vs_zero.csv").read_bytes() + b"\n"
-    chat.upload(chat_api, "blank_vs_zero.csv", other, replace="true")
-    kept = next(d for d in chat_api.db["datasets"].docs if d["dtype"] == "revenue")
+    chat.upload(api, "blank_vs_zero.csv", other, replace="true")
+    kept = next(d for d in api.db["datasets"].docs if d["dtype"] == "revenue")
     assert kept["fx"] == {"USD": 0.9}
 
 
@@ -90,8 +90,8 @@ ITEM6_CLAIM = {**USD_CLAIM, "id": "m6", "value": 52e9, "target_date": "2028", "p
                "sources": [{"file": "deck.pdf", "page": 11, "kind": "table"}], "snippet": "Market size ($52 B)"}
 
 
-def test_item6_artefact_usd_market_size_is_converted_at_the_rate_saved_with_the_mapping(api):
-    client, db = api
+def test_item6_artefact_usd_market_size_is_converted_at_the_rate_saved_with_the_mapping(fx_api):
+    client, db = fx_api
     db[decks.CANDIDATES_COLLECTION].docs[:] = [copy.deepcopy(ITEM6_CLAIM)]
     db["datasets"].docs.append({"audit_id": AUDIT, "dtype": "revenue", "fx": {}})
     db["audits"].docs[0]["as_of_month"] = "2026-06"
@@ -104,13 +104,13 @@ def test_item6_artefact_usd_market_size_is_converted_at_the_rate_saved_with_the_
     assert row["value"] * row["fx"]["rate"] == pytest.approx(46_800_000_000)
 
 
-def test_item6_artefact_the_converted_market_size_survives_replacing_the_revenue_file(chat_api):  # noqa: F811
+def test_item6_artefact_the_converted_market_size_survives_replacing_the_revenue_file(api):
     """Same row after the analyst replaces the revenue file: the rate saved at the mapping step must still convert it."""
-    chat.upload(chat_api, "blank_vs_zero.csv")
-    chat_api.db["audits"].docs[0]["as_of_month"] = "2026-06"
-    chat_api.db[decks.CANDIDATES_COLLECTION].docs.append({**copy.deepcopy(ITEM6_CLAIM), "audit_id": CHAT_AUDIT})
-    chat_api.put(f"/api/audits/{CHAT_AUDIT}/datasets/revenue/mapping", json={"fx": {"USD": 0.9}, "billing_terms": {}})
+    chat.upload(api, "blank_vs_zero.csv")
+    api.db["audits"].docs[0]["as_of_month"] = "2026-06"
+    api.db[decks.CANDIDATES_COLLECTION].docs.append({**copy.deepcopy(ITEM6_CLAIM), "audit_id": CHAT_AUDIT})
+    api.put(f"/api/audits/{CHAT_AUDIT}/datasets/revenue/mapping", json={"fx": {"USD": 0.9}, "billing_terms": {}})
     other = (chat.MESSY / "blank_vs_zero.csv").read_bytes() + b"\n"
-    chat.upload(chat_api, "blank_vs_zero.csv", other, replace="true")
-    row = chat_api.get(f"/api/audits/{CHAT_AUDIT}/decks").json()["candidates"][0]
+    chat.upload(api, "blank_vs_zero.csv", other, replace="true")
+    row = api.get(f"/api/audits/{CHAT_AUDIT}/decks").json()["candidates"][0]
     assert row["fx"]["rate"] == 0.9 and row["fx"]["date"] == "2026-06-30"
