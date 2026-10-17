@@ -22,8 +22,9 @@ import pandas as pd  # noqa: E402
 
 from app import column_rules as cr  # noqa: E402
 from app import decks, structures, usage as usage_mod  # noqa: E402
-from app.llm import guards  # noqa: E402
+from app.llm import gateway, guards  # noqa: E402
 from app.structures import redact  # noqa: E402
+from mapping_shapes import HUBSPOT_HEADERS, HUBSPOT_TEXT, hubspot_synthetic_crm  # noqa: E402
 
 BACKEND = Path(__file__).resolve().parents[1]
 MESSY = BACKEND / "tests" / "fixtures" / "messy"
@@ -133,24 +134,33 @@ def test_the_type_is_detected_on_the_sample_files_and_on_the_three_fixtures():
 
 
 # ---------------------------------------------------------------------------
-# The rules, then the model: which columns are decided and which are sent (sections 4.1, 4.2, test 1 and 2)
+# The rules, then the model: with consent every column is sent, the rules' proposal as a hint (sections 4.1, 4.2, test 1
+# and 2; amended 2026-10-17)
 # ---------------------------------------------------------------------------
-EXPECTED = {
+EXPECTED = {     # the rules' 100s, which stand whatever the model says; the columns the rules have no proposal for
     "blank_vs_zero.csv": ({"Customer ID", "Invoice Date", "Amount", "Currency", "Segment"}, ["Adj"]),
-    "mixed_currency.csv": ({"Customer", "Invoice Date", "Tier"}, ["Amount"]),
-    "duplicate_ids_header_row3.csv": ({"Date", "Amount", "Currency"}, ["Customer ID", "Customer ID.1"]),
+    "mixed_currency.csv": ({"Customer", "Invoice Date", "Tier"}, []),
+    "duplicate_ids_header_row3.csv": ({"Date", "Amount", "Currency"}, ["Customer ID.1"]),
 }
 
 
+def hints(text, columns):
+    """{column: (field, confidence)} of the rules' hint lines in a column-mapping text."""
+    return {columns[col - 1]: (field, confidence) for col, field, confidence in redact.parse_column_text(text)["hints"]}
+
+
 @pytest.mark.parametrize("name", sorted(EXPECTED))
-def test_the_rules_map_exactly_the_clean_columns_and_only_the_ambiguous_ones_are_sent(api, name):
-    clean, sent = EXPECTED[name]
+def test_the_rules_keep_their_100s_and_every_column_is_sent_once_with_the_rules_proposal_as_a_hint(api, name):
+    clean, unproposed = EXPECTED[name]
     body = upload(api, name).json()
     states = by_column(body)
     assert {c for c, s in states.items() if s["state"] == "auto"} == clean
     columns = list(states)
-    assert sent_positions(model_text(api)) == [columns.index(c) + 1 for c in sent]
-    assert adapter_of(api).calls == 1
+    text = model_text(api)
+    assert sent_positions(text) == list(range(1, len(columns) + 1)) and adapter_of(api).calls == 1
+    sheet = cr.read_sheet((MESSY / name).read_bytes(), name)
+    assert hints(text, columns) == {p.column: (p.field, p.confidence) for p in cr.analyse("revenue", sheet)[0] if p.field}
+    assert sorted(set(columns) - set(hints(text, columns))) == unproposed
 
 
 def test_a_confidence_of_zero_says_why_and_a_low_alias_asks_for_one_confirm(api):
@@ -166,18 +176,17 @@ def test_no_customer_name_and_no_text_cell_reaches_the_model_and_a_numeric_id_se
     upload(api, "duplicate_ids_header_row3.csv")
     text = model_text(api)
     parsed = redact.parse_column_text(text)
-    assert set(parsed["profiles"]) == {4, 5} and not parsed["samples"], "a customer column never sends samples"
+    assert {4, 5} <= set(parsed["profiles"]) and not {4, 5} & set(parsed["samples"]), "a customer column never sends samples"
     for secret in CUSTOMERS + ["C-100", "C-101", "Quarterly revenue export", "EUR"]:
         assert secret.lower() not in text.lower(), secret
     assert redact.column_text_problem(text) is None
 
 
-def test_decided_columns_and_their_headers_are_not_sent_and_at_most_20_rows_are_read(api):
+def test_every_column_and_its_header_is_sent_and_at_most_20_rows_are_read(api):
     upload(api, "blank_vs_zero.csv")
     text = model_text(api)
-    assert [c["text"] for c in redact.parse_column_text(text)["headers"]] == ["Adj"]
-    for decided in ("Invoice Date", "Amount", "Segment", "Currency", "Customer ID"):
-        assert decided not in text
+    assert [c["text"] for c in redact.parse_column_text(text)["headers"]] == \
+        ["Customer ID", "Invoice Date", "Amount", "Currency", "Segment", "Adj"]
     rows = [{"A": f"x{i}", "B": i} for i in range(100)]
     _, samples, profiles = structures.column_mapping_input(["A", "B"], rows, max_rows=20)
     assert samples == {2: ["0", "1", "2"]} and profiles[1]["distinct"] == 20, "the profile is built from 20 rows, not 100"
@@ -187,7 +196,8 @@ def test_the_model_proposes_an_ai_suggestion_which_waits_for_a_click_and_the_tex
     api.state["adapter"] = t.FakeAdapter(replies=[mapping_reply(("revenue_type", 6))])
     body = upload(api, "blank_vs_zero.csv").json()
     adj = by_column(body)["Adj"]
-    assert (adj["state"], adj["source"], adj["field"], adj["confidence"]) == ("ai", "ai", "revenue_type", None)
+    assert (adj["state"], adj["source"], adj["field"], adj["confidence"]) == ("ai", "ai", "revenue_type", 0), \
+        "the rules' formula on the model's field: no alias of revenue type in the header"
     assert body["pending"] == 1 and body["saved"] is False and body["mapping"]["revenue_type"] == "Adj"
     assert api.db["llm_structures"].docs and api.db["column_mappings"].docs == [], "nothing is saved while a row waits"
     text = model_text(api)
@@ -205,6 +215,103 @@ def test_a_column_the_reply_leaves_out_is_not_used_and_with_no_consent_nothing_i
     body = upload(api, "blank_vs_zero.csv").json()
     assert adapter_of(api).calls == calls and by_column(body)["Adj"]["state"] == "needs"
     assert body["ai_reading"]["status"] == "no_consent"
+
+
+# ---------------------------------------------------------------------------
+# The rules and the model together (section 4.2, 2026-10-17): a rule 100 wins; the model's proposal is shown with its
+# confidence and needs no click only where the rules proposed the same field, untied, at 80 or more; a column neither side
+# maps is not used. Without consent the rules alone decide.
+# ---------------------------------------------------------------------------
+RULE_SHEET = ("Customer ID,Invoice,Amount,Currency,Net,Plan Tier,Notes\n" + "".join(
+    f"C-{i},2024-{i:02d}-28,{'n/a' if i == 10 else 100 + i},EUR,{90 + i},{'Gold' if i % 2 else 'Silver'},note\n"
+    for i in range(1, 11))).encode()
+
+
+def rule_sheet():
+    """Rules: Customer ID and Currency at 100, Amount at 90 (one value is no number), Invoice at 80, Plan Tier at 60, and
+    no proposal for Net and Notes."""
+    sheet = cr.read_sheet(RULE_SHEET, "rules.csv")
+    return sheet, cr.analyse("revenue", sheet)[0]
+
+
+def outcome(states):
+    return {s["column"]: (s["field"], s["source"], s["state"], s["confidence"]) for s in states}
+
+
+def test_a_rule_100_wins_agreement_at_80_needs_no_click_and_every_other_proposal_waits_with_its_confidence():
+    sheet, proposals = rule_sheet()
+    assert {p.column: p.confidence for p in proposals if p.field} == \
+        {"Customer ID": 100, "Invoice": 80, "Amount": 90, "Currency": 100, "Plan Tier": 60}
+    assert outcome(cr.apply_model("revenue", sheet, proposals, {
+        "revenue_type": "Customer ID",          # against a rule 100: the rule wins
+        "invoice_date": "Invoice",              # the rules' own field at exactly 80: no click
+        "segment": "Plan Tier",                 # the rules' own field at 60: a click
+        "amount": "Net"})) == {                 # a column the rules left open; Amount (rules, 90) loses its field
+        "Customer ID": ("customer_id", "rules", "auto", 100),
+        "Invoice": ("invoice_date", "rules", "auto", 80),
+        "Amount": (None, "needs", "needs", None),
+        "Currency": ("currency", "rules", "auto", 100),
+        "Net": ("amount", "ai", "ai", 0),
+        "Plan Tier": ("segment", "ai", "ai", 60),
+        "Notes": (None, None, "unused", None),
+    }
+
+
+def test_a_column_the_reply_leaves_out_waits_with_the_rules_proposal_and_a_tie_waits_when_the_model_agrees():
+    sheet, proposals = rule_sheet()
+    got = outcome(cr.apply_model("revenue", sheet, proposals, {}))
+    assert got["Amount"] == ("amount", "rules", "unsure", 90), "the rules alone accept 90; the model disagrees, so a click"
+    assert got["Invoice"][2] == got["Plan Tier"][2] == "unsure" and got["Customer ID"][2] == got["Currency"][2] == "auto"
+    assert got["Net"] == got["Notes"] == (None, None, "unused", None), "neither side maps it: Not used"
+    tied = cr.read_sheet((MESSY / "duplicate_ids_header_row3.csv").read_bytes(), "x.csv")
+    got = outcome(cr.apply_model("revenue", tied, cr.analyse("revenue", tied)[0], {"customer_id": "Customer ID"}))
+    assert got["Customer ID"] == ("customer_id", "ai", "ai", 100), "two columns tie at 100: the model's pick needs a click"
+    assert got["Customer ID.1"][2] == "unused"
+
+
+def test_without_consent_the_rules_alone_decide_and_nothing_is_sent(api):
+    api.db["audits"].docs[0]["structure_reading_consent"] = False
+    body = upload(api, "rules.csv", RULE_SHEET).json()
+    assert adapter_of(api).calls == 0 and body["ai_reading"]["status"] == "no_consent"
+    assert outcome(body["columns"]) == {
+        "Customer ID": ("customer_id", "rules", "auto", 100), "Invoice": ("invoice_date", "rules", "unsure", 80),
+        "Amount": ("amount", "rules", "auto", 90), "Currency": ("currency", "rules", "auto", 100),
+        "Net": (None, "needs", "needs", None), "Plan Tier": ("segment", "rules", "unsure", 60),
+        "Notes": (None, "needs", "needs", None)}
+
+
+def test_with_consent_all_22_columns_of_a_hubspot_export_go_to_the_model_in_one_call_masked(api):
+    body = upload(api, "Hubspot_Synthetic_CRM.xlsx", hubspot_synthetic_crm())
+    assert body.status_code == 200 and body.json()["dtype"] == "crm", body.text
+    text = model_text(api)
+    assert adapter_of(api).calls == 1 and sent_positions(text) == list(range(1, 23)), "all 22 columns in one call"
+    assert [c["text"] for c in redact.parse_column_text(text)["headers"]] == HUBSPOT_HEADERS
+    assert hints(text, HUBSPOT_HEADERS) == {"Record ID": ("deal_id", 100), "Deal Stage": ("stage", 100),
+                                            "Amount": ("amount", 100), "Close Date": ("close_date", 100),
+                                            "Create Date": ("created_date", 100)}
+    assert redact.column_text_problem(text) is None
+    for cell in HUBSPOT_TEXT:
+        assert cell.lower() not in text.lower(), cell
+
+
+def test_on_a_day_over_the_spend_cap_the_mapping_call_still_goes_out_logged_and_counted_and_no_other_call_does(api, monkeypatch):
+    from datetime import datetime, timezone
+    monkeypatch.setenv("LLM_DAILY_SPEND_CAP_USD", "0.01")
+    api.db["llm_calls"].docs.append({"run_id": "elsewhere", "cache_hit": False, "estimated_cost_usd": 1.0,
+                                     "timestamp": datetime.now(timezone.utc).isoformat()})
+    api.state["adapter"] = t.FakeAdapter(replies=[mapping_reply(("revenue_type", 6))])
+    body = upload(api, "blank_vs_zero.csv").json()
+    assert body["ai_reading"]["status"] == "read" and by_column(body)["Adj"]["field"] == "revenue_type", "the file maps"
+    logged = api.db["llm_calls"].docs[-1]
+    assert (logged["structure_type"], logged["status"], logged["cache_hit"]) == ("column_mapping", "ok", False)
+    assert asyncio.run(guards.spend_today_usd(api.db)) == pytest.approx(1.0 + logged["estimated_cost_usd"])
+    assert api.get(f"/api/runs/{AUDIT}/llm-usage").json()["by_step"]["column_mapping"]["calls"] == 1
+    deck = asyncio.run(gateway.read_structure(api.db, AUDIT, "r1c1: FY2025\nr2c1: Revenue\nr2c2: 1,200", "table"))
+    assert deck.status == "not_read" and api.db["llm_calls"].docs[-1]["status"] == "daily_spend_cap_exceeded"
+    assert upload(api, "mystery.csv", b"Alpha,Beta\n1,2\n").json()["status"] == "unknown_type"
+    assert (api.db["llm_calls"].docs[-1]["structure_type"], api.db["llm_calls"].docs[-1]["status"]) == \
+        ("file_type", "daily_spend_cap_exceeded"), "a file's type stays under the cap"
+    assert adapter_of(api).calls == 1, "only the mapping call reached the provider"
 
 
 # ---------------------------------------------------------------------------

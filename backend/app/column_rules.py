@@ -838,27 +838,45 @@ def states_from_rules(proposals: List[Proposal]) -> List[Dict]:
     return out
 
 
-def to_send(states: List[Dict]) -> List[str]:
-    """The columns the model is asked about: those the rules left unsure or undecided."""
+def undecided(states: List[Dict]) -> List[str]:
+    """The columns the rules alone leave unsure or undecided: they need a decision when the model cannot be read."""
     return [s["column"] for s in states if s["state"] in ("unsure", "needs")]
 
 
-def apply_model(states: List[Dict], sent: List[str], proposed: Dict[str, str]) -> List[Dict]:
-    """The model's proposals ({field: column}) for the columns that were sent. A proposal becomes an AI suggestion
-    (confirm or correct); a sent column the reply leaves out is not used. Decided columns are never touched."""
-    by_col = {c: f for f, c in proposed.items()}
+def apply_model(dtype: str, sheet: Sheet, proposals: List[Proposal], proposed: Dict[str, str]) -> List[Dict]:
+    """The model's proposals ({field: column}) for a sheet whose every column was sent (section 4.2, 2026-10-17).
+    A rule confidence of 100, untied, wins. Otherwise the model's proposal is shown with its confidence, the rules'
+    formula (header score x value fit) on the model's field: it needs no click when the rules proposed the same field,
+    untied, at MAPPING_THRESHOLD or more, and waits for one otherwise. A column only the rules map waits for a click
+    with their proposal (it needs a decision when the model gave that field to another column); a column neither maps
+    is not used."""
+    scores = rule_scores(dtype, sheet)
+    won = {p.column: p.field for p in proposals if p.state == "auto" and p.confidence == 100}
+    by_col = {c: f for f, c in proposed.items() if c not in won and f not in won.values()}
     out = []
-    for s in states:
-        if s["column"] in sent:
-            f = by_col.get(s["column"])
-            s = new_state(s["column"], f, "ai", "ai") if f else new_state(s["column"], None, None, "unused")
-        out.append(s)
+    for p in proposals:
+        f = by_col.get(p.column)
+        if p.column in won:
+            out.append(new_state(p.column, p.field, "rules", "auto", p.confidence, p.note))
+        elif f:
+            fit, ok, total = value_fit(field_kind(dtype, f), sheet.frame[p.column].tolist())
+            conf, note = round(scores[(f, p.column)] * fit), fit_note(field_kind(dtype, f), ok, total)
+            agreed = f == p.field and not p.tie and conf >= MAPPING_THRESHOLD
+            out.append(new_state(p.column, f, "rules", "auto", conf, note) if agreed else
+                       new_state(p.column, f, "ai", "ai", conf, note))
+        elif p.field and p.field not in by_col.values():
+            out.append(new_state(p.column, p.field, "rules", "unsure", p.confidence, p.note))
+        elif p.field:
+            out.append(new_state(p.column, None, "needs", "needs"))
+        else:
+            out.append(new_state(p.column, None, None, "unused"))
     return out
 
 
-def apply_model_failure(states: List[Dict], sent: List[str]) -> List[Dict]:
-    """The model could not be read: every column that was sent needs the analyst's decision."""
-    return [new_state(s["column"], None, "needs", "needs") if s["column"] in sent else s for s in states]
+def apply_model_failure(states: List[Dict], open_columns: List[str]) -> List[Dict]:
+    """The model could not be read: the rules' outcome stands, and every column they left open needs the analyst's
+    decision."""
+    return [new_state(s["column"], None, "needs", "needs") if s["column"] in open_columns else s for s in states]
 
 
 def states_from_saved(dtype: str, sheet: Sheet, saved: List[Dict], scale: bool) -> List[Dict]:

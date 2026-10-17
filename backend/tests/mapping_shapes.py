@@ -94,3 +94,31 @@ def crm_anonymous_to_2028() -> bytes:
         funnel.cell(5, 3 + j, h)
     funnel.append([None, None, "Lead", 10, "listed"])
     return _save(wb)
+
+
+HUBSPOT_HEADERS = ["Record ID", "Deal Name", "Deal Stage", "Pipeline", "Amount", "Close Date", "Create Date", "Deal owner",
+                   "Deal Type", "Associated Company", "Associated Contact", "Last Activity Date", "Next Activity Date",
+                   "Forecast category", "Forecast amount", "Deal probability", "Annual contract value",
+                   "Annual recurring revenue", "Monthly recurring revenue", "Total contract value", "Original Source Type",
+                   "Currency"]
+HUBSPOT_TEXT = ("Deal 0 Alder", "Alder Works", "Birch Labs", "Jane Roe", "John Poe", "Organic search", "Direct traffic")
+
+
+@lru_cache(maxsize=None)
+def hubspot_synthetic_crm() -> bytes:
+    """A HubSpot deals export with its 22 columns (chat-upload.md section 4.2, 2026-10-17): ids, names, stages, amounts,
+    dates, owners and forecast columns, 24 deals."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Deals"
+    ws.append(HUBSPOT_HEADERS)
+    for i in range(24):
+        won = i % 3 != 2
+        ws.append([5000 + i, f"Deal {i} {['Alder', 'Birch', 'Cedar'][i % 3]}", "Closed won" if won else "Closed lost",
+                   "Sales Pipeline", 4000 + 250 * i, f"2024-{i % 12 + 1:02d}-20", f"2024-{i % 12 + 1:02d}-02",
+                   ["Owner A", "Owner B"][i % 2], ["New business", "Existing business"][i % 2],
+                   ["Alder Works", "Birch Labs"][i % 2], ["Jane Roe", "John Poe"][i % 2], f"2024-{i % 12 + 1:02d}-18",
+                   f"2025-{i % 12 + 1:02d}-05", "Closed" if won else "Omit", 4000 + 250 * i if won else 0,
+                   1.0 if won else 0.0, 12000 + 500 * i, 12000 + 500 * i, 1000 + 40 * i, 36000 + 1500 * i,
+                   ["Organic search", "Direct traffic"][i % 2], "EUR"])
+    return _save(wb)

@@ -1,9 +1,11 @@
 # Spec: Chat-style upload and column mapping
 Status: Final (2026-10-08); decisions applied (§12); amended 2026-10-08 for the mapping-screen wording, the delete dialog
-and the banner (§12, §13, S5, S9, S15, S16a, S16d, S18, S18b, S23–S25), and 2026-10-09 for §15 and §16, and 2026-10-11 for §17 (claims list and parser), and 2026-10-16 for §19 (file type, every sheet, wide tables, units and the miss message) and §20 (forecast tables read as claims, issue #114), and 2026-10-17 for §21 (deal ID and stage, and a rule confidence of exactly 80). Location: docs/specs/chat-upload.md.
+and the banner (§12, §13, S5, S9, S15, S16a, S16d, S18, S18b, S23–S25), and 2026-10-09 for §15 and §16, and 2026-10-11 for §17 (claims list and parser), and 2026-10-16 for §19 (file type, every sheet, wide tables, units and the miss message) and §20 (forecast tables read as claims, issue #114), and 2026-10-17 for §21 (deal ID and stage, and a rule confidence of exactly 80) and §22 (every column to the model, and mapping calls
+outside the daily spend cap). Location: docs/specs/chat-upload.md.
 Replaces the content of the MappingWizard page. Supersedes in part docs/specs/llm-structure-reading.md §1 for
-the column-mapping path only: which columns are sent and from how many rows (§4.2). Everything else in that spec
-stands, including the rule-16 shape of what is sent and §9 (sent text is never stored).
+the column-mapping path only: which columns are sent, from how many rows and with which rule hint (§4.2), and, for a column
+mapping, the daily spend cap of its circuit breaker (§4.2, 2026-10-17). Everything else in that spec stands, including the
+rule-16 shape of what is sent and §9 (sent text is never stored).
 
 ## 0. Challenge and deletions (CLAUDE.md rule 4)
 - Needed by the analyst: one place showing what each file was read as and which columns still need them. Simpler
@@ -125,26 +127,44 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
   tie. These rows are shown with Correct and need no click. Measured on sample_data/: 16 of 17 columns score 100. "S&M Expense" scores 30 (the
   3-letter alias "s&m"), so it needs one Confirm.
 - Unsure: at or below the threshold, or tied. A tie means two columns share a field's best score, or one column shares
-  its best score between two fields. The rules' proposal is shown with Confirm and Correct. If consent is ticked,
-  the column also goes to step 2.
-- Undecided: a column with no proposal while a field of its type is still open. With consent, it goes to step 2.
+  its best score between two fields. The rules' proposal is shown with Confirm and Correct.
+- Undecided: a column with no proposal while a field of its type is still open; it needs a decision.
   A column with no proposal and no open field goes to "Not used".
+- These states are the outcome when consent is off (the rules alone decide), and when the model cannot be read (§4.2).
+  With consent, every column goes to step 2 and §4.2 decides (2026-10-17, §22).
 
-### 4.2 Step 2: the model (only with consent)
-- The column-mapping text (`structures.column_mapping_text`) is built only from the unsure and undecided columns.
-  It uses the first 20 data rows and is redacted as today: the header stack (at most 3 rows), up to 3 samples for
-  each numeric or date column, and a profile for each text column. Columns keep their sheet positions (`r1c5`),
-  so replies map back. Every column whose header matches a customer alias at any score, and every column tied for
-  `customer_id`, sends a profile only, even when its values are numbers. Decided columns and their headers are not
-  sent. The open fields are named by field name only.
+### 4.2 Step 2: the model (only with consent; amended 2026-10-17, §22)
+- Every upload with consent sends every column of the sheet to the model in one call (George, 2026-10-17). Not sent: a
+  summary table (§19), and a file a saved mapping applies to (§5: the same bytes, or the same headers), which makes no call.
+  The column-mapping text (`structures.column_mapping_text`) uses the first 20 data rows and is redacted as today: the
+  header stack (at most 3 rows), up to 3 samples for each numeric or date column, and a profile for each text column,
+  then one hint line per column the rules propose, `c5 rule: amount 60`: the field and the rules' confidence. The
+  gateway refuses a hint that is not one field of the closed list and a confidence from 0 to 100, once per column
+  (`bad_hint`). Columns keep their sheet positions (`r1c5`), so replies map back. Every column whose header matches a
+  customer alias at any score, and every column tied for `customer_id`, sends a profile only, even when its values are
+  numbers.
 - The text never touches MongoDB. `llm_structures` and `llm_calls` keep the reply, its content hash, tokens and
   cost, as today.
-- A budget of `MAPPING_AI_SECONDS = 20` covers the call (`asyncio.wait_for`). On a timeout, provider error, spend
-  cap, token cap or parse failure, the columns that were sent become "Needs your decision" and the bubble shows
-  S12. The per-audit lock is released on cancellation, and a test covers this. Nothing waits for the model.
-- A model proposal that maps a column to a field becomes AI suggestion, not verified, with Confirm and Correct.
-  Columns the reply leaves out go to "Not used". Python checks every proposal against the open fields and the sent
-  cells (`proposed_mapping`, as today). The output schema stays as it is (Q5).
+- A column-mapping call is exempt from the daily spend cap (`guards.check_spend_cap`). It is logged in `llm_calls` and
+  counted in the usage like any call, and its cost counts in the day's spend that the cap checks for every other call.
+  Deck structure, file-type (§19) and narrative calls stay under the cap. The lock and the per-audit token cap still apply.
+- The outcome, per column:
+  - A rule confidence of 100, untied, wins: the column is auto (Rules), whatever the model says.
+  - A column the model maps to a field shows the model's proposal with its confidence: the rules' formula on the model's
+    field (header score × value fit, §4.1), so the number is Python's. It needs no click (auto, Mapped by Rules) when the
+    rules proposed the same field, untied, at 80 or more. Otherwise (below 80, a tie, or another field than the rules')
+    it is an AI suggestion with Confirm and Correct.
+  - A column the rules map and the model leaves out is unsure, with the rules' proposal and confidence. When the model
+    gave that field to another column, it needs a decision instead.
+  - A column neither side maps goes to "Not used".
+  Python checks every proposal against the fields of the file's type and the sent cells (`proposed_mapping`, as today);
+  a proposal for a column or a field a rule 100 holds is dropped. The output schema stays as it is (Q5).
+- A budget of `MAPPING_AI_SECONDS = 20` covers the call (`asyncio.wait_for`). On a timeout, provider error, token cap,
+  refusal or parse failure, the rules' outcome stands (§4.1) and the columns they left unsure or undecided become "Needs
+  your decision"; the bubble shows S12. The per-audit lock is released on cancellation, and a test covers this. Nothing
+  waits for the model.
+- Cache by file hash, as before: the same bytes again apply the latest saved version with no rules, model or click (§5),
+  and the gateway serves a stored reply for the same text, prompt, model and schema.
 
 ### 4.3 Step 3: the analyst
 - Confirm accepts the proposal. Correct opens a field dropdown (the existing field names and "Not used"; a field
@@ -170,8 +190,8 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
 
 ### 4.4 Row order
 Rows that need a click come first (unsure, AI suggestion, no proposal), then the rest by ascending confidence, so the
-auto-accepted 100s come last. A row with no score (an AI suggestion, a column with no proposal, a row the analyst
-decided) counts as the lowest. Rows of equal confidence keep the order of the file. The order follows the state, so a
+auto-accepted 100s come last. A row with no score (an AI suggestion stored before 2026-10-17, a column with no proposal,
+a row the analyst decided) counts as the lowest; an AI suggestion carries its confidence (§4.2). Rows of equal confidence keep the order of the file. The order follows the state, so a
 row moves down when its click is made. Unused columns stay in the "Not used" fold.
 
 ## 5. Saved mapping
@@ -261,8 +281,9 @@ whether or not the note quotes a header. New log lines carry codes only (type, s
 ## 9. Data boundary (rule 14)
 `test_gateway_data_boundary.py` gains these assertions, and each new test is first shown failing on a deliberate
 violation:
-- The column-mapping text holds only unsure and undecided columns. Decided columns' headers are absent, and the
-  text is built from at most 20 data rows.
+- The column-mapping text holds every column of the sheet (amended 2026-10-17, §22; before, only unsure and undecided
+  columns), built from at most 20 data rows. A hint line holds one field of the closed list and a confidence from 0 to
+  100, once per column; anything else is refused (`bad_hint`).
 - A customer-alias column sends a profile only, numeric IDs included. No fixture customer name and no text cell
   value appears in the text.
 - No collection holds the sent text after an upload with consent.
@@ -283,9 +304,11 @@ Fixtures: synthetic CSV files under `backend/tests/fixtures/messy/` (rule 15: in
 | `blank_vs_zero.csv` (revenue, 24 rows) | Amount with 4 blank and 3 zero cells; an "Adj" column, mostly blank and 0 | Customer ID, Invoice Date, Amount, Currency, Segment | Adj |
 | `mixed_currency.csv` (revenue, 20 rows) | Amount written as "€1,200", "$950", "1.200,00 EUR"; no currency column | Customer, Invoice Date, Tier | Amount (confidence 0: no value is a number) |
 | `duplicate_ids_header_row3.csv` (revenue, 30 rows) | Title on row 1, blank row 2, header on row 3; two columns headed "Customer ID" (codes and names); IDs repeat, and one ID carries two names | Date, Amount, Currency | both Customer ID columns (tie) |
-Expected outcomes are under threshold 80. The third fixture also runs as an .xlsx file built in the test.
+Expected outcomes are under threshold 80. The third fixture also runs as an .xlsx file built in the test. Since 2026-10-17
+(§22) every column is sent with consent; the last column names the columns the rules leave open.
 Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layout.test.jsx`, `AuditHub.test.jsx`):
-1. For each fixture, the rules map exactly the clean columns, and only the ambiguous ones are in the model text.
+1. For each fixture, the rules map exactly the clean columns, and every column is in the model text with the rules' hints
+   (§22; before, only the ambiguous ones).
 2. Masking: no fixture customer name, and no text cell, is in the model text.
 3. Re-upload of the same bytes: the fake adapter's call count is unchanged, every column is auto, nothing is
    pending.
@@ -315,7 +338,7 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 | Id | Where | Text |
 |---|---|---|
 | S1 | text reply | This window accepts files and mapping confirmations. (as given) |
-| S2 | explainer, consent ticked | Mapping is done by rules first. Where rules cannot decide, the AI sees only those columns' headers, up to 3 example numbers or dates per column and a pattern for text columns – never your full file and never a name – and you confirm those columns. When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table. (Last sentence added 2026-10-16, §19; its "which can contain the company name" clause removed the same day, because the company name is masked.) |
+| S2 | explainer, consent ticked | The model reads every column header and a masked sample to propose the mapping. When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table. (First sentence given by George on 2026-10-17, §22, in place of "Mapping is done by rules first. Where rules cannot decide, the AI sees only those columns' headers, up to 3 example numbers or dates per column and a pattern for text columns – never your full file and never a name – and you confirm those columns."; last sentence added 2026-10-16, §19, its "which can contain the company name" clause removed the same day, because the company name is masked.) |
 | S3 | explainer, consent unticked | Mapping is done by rules only: AI-assisted reading is off for this audit. You map the columns the rules cannot decide. |
 | S4 | drop zone | Drop files here or use the paperclip. Required: revenue by customer (monthly, 24–36 months). Also useful: CRM export, P&L. Board decks go to the Deck panel. .xlsx or .csv only. |
 | S5 | bubble head | Detected: Revenue lines · 1,240 rows · 24 months (Jan 2023 – Dec 2024). Before the date column is confirmed the months are left out: "Detected: Revenue lines · 1,240 rows". |
@@ -323,7 +346,7 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 | S7 | refused file | This window takes .xlsx and .csv files. Decks go in the deck panel below. |
 | S7b | refused .xls file | Save as .xlsx or .csv and upload again. |
 | S8 | replace | A revenue file is already loaded ({file}). Replace it? [Replace] [Keep current] |
-| S9 | confidence cell | A rule row: its number, 100 · or, when the fit lowers it: 0 · 0 of 20 values are numbers. An AI suggestion, or a column with no proposal, until decided: needs confirmation (decided: confirmed). A saved mapping: reused. A column the rules found no field for: 0. Never a dash. |
+| S9 | confidence cell | A rule row: its number, 100 · or, when the fit lowers it: 0 · 0 of 20 values are numbers. An AI suggestion until decided: its confidence the same way (§4.2, 2026-10-17; decided: confirmed). An AI suggestion stored without a number, or a column with no proposal, until decided: needs confirmation (decided: confirmed). A saved mapping: reused. A column the rules found no field for: 0. Never a dash. |
 | S10 | buttons | Confirm · Correct · Not used (n) |
 | S11 | reason codes | Header is misleading · Another column is the right one · Values do not fit this field · Wrong kind of date · Column not needed · Other (opens S20) |
 | S12 | model failed | AI reading unavailable – these columns need your decision. |
@@ -412,6 +435,10 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
   changed `backend/app/column_rules.py` (first column and title currency of a sheet), `backend/server.py` (the view, the Confirm endpoint, the
   year-end re-read), `backend/app/claim_matching.py` and `backend/app/verdict.py` (the untested rows), `backend/app/decks/claims.py` (the type),
   `frontend/src/components/UploadChat.jsx`, `frontend/src/lib/{chatUpload,api,deckClaims,claimRegister,review}.js`.
+- 2026-10-17 (§22): `backend/app/column_rules.py` (`apply_model`, `undecided`), `backend/app/structures/{__init__,redact}.py` (every
+  column, the hint line and its check), `backend/app/llm/{gateway,guards}.py` (the cap exemption), `backend/server.py` (step 2),
+  `frontend/src/lib/chatUpload.js` (S2, S9), `backend/tests/{test_chat_upload,test_gateway_data_boundary,test_mapping_miss,
+  test_structure_reading,mapping_shapes}.py`, `frontend/src/pages/MappingWizard.test.jsx`.
 - 2026-10-17 (§21): `backend/app/column_rules.py` (underscores, the deal id rules, the threshold), new
   `backend/tests/test_deal_id_rules.py`, `backend/tests/test_money_kind.py` (an 80 row now asks), `frontend/src/pages/Review.jsx` (a test id),
   `frontend/src/pages/{MappingWizard,Review}.test.jsx`.
@@ -674,3 +701,31 @@ words and one value check for the deal id, and no auto-accept at 80. Deleted fir
   80 and 85, the reason through the decisions endpoint and the usage counters), `test_money_kind.py` (a turnover or GMV
   header scores 80, so its row waits for a click and is sent to the model), `MappingWizard.test.jsx` and `Review.test.jsx`
   (the reason offered and sent for a number field corrected to a date field).
+
+## 22. Every column to the model, and mapping calls outside the daily spend cap (2026-10-17, George)
+Decided by George with the task: with consent, every upload sends all columns in one call, with the rules' proposal and
+confidence as a hint; a rule 100 wins; otherwise the model's proposal is shown with its confidence, and below 80, or where the
+rules and the model disagree, the column waits for a click; columns both sides leave out are Not used; mapping calls are
+exempt from the daily spend cap and still logged and counted; structure and narrative calls stay under it; cache by file hash
+as before; S2's first sentence. Without consent the rules alone decide, as before. The architecture is unchanged: what is sent
+keeps the rule-16 shape per column (docs/architecture.md, "Data boundary"), and the number shown is Python's.
+
+Challenge (rule 4): needed, because the rules accept 81–99 alone and the model saw only the columns the rules could not
+decide. Simpler: no new output field; the confidence of a model proposal is the rules' own formula on its field. Deleted
+first: the undecided-only filter of the text (`only`), and the boundary assertion that decided headers are absent.
+
+- **Decided (engineering, rule 19).** "Its confidence" is the rules' formula (header score × value fit) on the model's field,
+  not a number the model reports: the model never produces a number on screen (docs/architecture.md, "Evidence method"), and
+  Q5 stands. A tie waits even when the model picks the rules' column, because two columns read equally well. A rule proposal
+  at exactly 80 that the model agrees with needs no click ("below 80" waits; §21's 80 rule holds without consent). A column the
+  rules map whose field the model gave to another column needs a decision, so no two rows wait on one field. When the model
+  cannot be read, the rules' outcome stands, as before this section. A file's type call (§19) stays under the cap: it is not a
+  column mapping. The same headers on new bytes still apply the saved mapping with no call (§5): the analyst's own decisions
+  rank above both sides.
+- **Tests.** `test_chat_upload.py`: every column sent with the rules' hints on the three fixtures; each branch of the outcome
+  (a rule 100 against the model, agreement at 80, agreement at 60, another field, a contested field, a tie, both sides
+  silent); consent off decides by rules and sends nothing; the 22 columns of a synthetic HubSpot deals export
+  (`mapping_shapes.hubspot_synthetic_crm`, invented values) in one call, masked; on a day over the cap the mapping call goes
+  out, is logged and counted, and a deck structure and a file-type call are refused. `test_gateway_data_boundary.py`: the text
+  holds every column, the masked samples and closed hints; a bad hint is refused. `MappingWizard.test.jsx`: S2, and an AI
+  suggestion's confidence cell.

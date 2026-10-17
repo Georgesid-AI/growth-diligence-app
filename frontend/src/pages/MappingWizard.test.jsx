@@ -426,7 +426,9 @@ describe("the type, the sheet and the miss (2026-10-16)", () => {
     ...over,
   });
 
-  test("the consent explainer says the AI may see sheet names and title rows and no sentence about the company name", () => {
+  test("the consent explainer says the model reads every header and a masked sample, may see sheet names and title rows, and no sentence about the company name", () => {
+    expect(S2_EXPLAINER_CONSENT.startsWith("The model reads every column header and a masked sample to propose the mapping. ")).toBe(true);
+    expect(S2_EXPLAINER_CONSENT).not.toMatch(/Where rules cannot decide/);
     expect(S2_EXPLAINER_CONSENT).toContain("When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table.");
     expect(S2_EXPLAINER_CONSENT).not.toMatch(/company name/);
   });
@@ -816,9 +818,11 @@ describe("the mapping table", () => {
 
   test("the confidence cell is never a dash: the number, needs confirmation, or reused", async () => {
     api.uploadChatFile.mockResolvedValue(VIEW({
-      pending: 2, columns: [
+      pending: 3, columns: [
         row("Rule", { field: "customer_id" }),
         row("Ai", { field: "segment", state: "ai", source: "ai", confidence: null, pending: true }),
+        row("AiScored", { field: "amount", state: "ai", source: "ai", confidence: 0, fit_note: "0 of 20 values are numbers", pending: true }),
+        row("AiDone", { field: "service_end", state: "confirmed", source: "ai", confidence: 60, decision: "confirm" }),
         row("Saved", { field: "amount", source: "saved", confidence: 100 }),
         row("SavedLow", { field: "currency", source: "saved", state: "unsure", confidence: 60, pending: true }),
         row("Needs", { state: "needs", source: "needs", confidence: null, pending: true }),
@@ -829,9 +833,12 @@ describe("the mapping table", () => {
     await mount();
     await pickAndMap([file("rev.csv")]);
     await click(q("unused-toggle-revenue"));
-    const cells = Object.fromEntries(["Rule", "Ai", "Saved", "SavedLow", "Needs", "Chosen", "Memo"].map((c) => [c, q(`confidence-${c}`).textContent]));
-    expect(cells).toEqual({ Rule: "100", Ai: "needs confirmation", Saved: "reused", SavedLow: "reused", Needs: "needs confirmation",
-                            Chosen: "confirmed", Memo: "0" });
+    const cells = Object.fromEntries(["Rule", "Ai", "AiScored", "AiDone", "Saved", "SavedLow", "Needs", "Chosen", "Memo"]
+      .map((c) => [c, q(`confidence-${c}`).textContent]));
+    // An AI suggestion shows its confidence, the rules' formula on the model's field (section 4.2, 2026-10-17); one stored
+    // before carries none and still asks.
+    expect(cells).toEqual({ Rule: "100", Ai: "needs confirmation", AiScored: "0 · 0 of 20 values are numbers", AiDone: "confirmed",
+                            Saved: "reused", SavedLow: "reused", Needs: "needs confirmation", Chosen: "confirmed", Memo: "0" });
     Object.values(cells).forEach((text) => expect(text).not.toMatch(dash));
     const by = Object.fromEntries(["Rule", "Ai", "Saved", "Needs", "Chosen"].map((c) => [c, q(`source-${c}`).textContent]));
     expect(by).toEqual({ Rule: "Rules", Ai: "AI suggestion – confirm", Saved: "Saved from earlier upload", Needs: "You – choose", Chosen: "You" });

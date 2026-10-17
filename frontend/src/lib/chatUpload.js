@@ -6,7 +6,7 @@ import { seeGlossary } from "./glossary";
 
 export const S1_TEXT_REPLY = "This window accepts files and mapping confirmations.";
 export const S2_EXPLAINER_CONSENT =
-  "Mapping is done by rules first. Where rules cannot decide, the AI sees only those columns' headers, up to 3 example numbers or dates per column and a pattern for text columns – never your full file and never a name – and you confirm those columns. When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table.";
+  "The model reads every column header and a masked sample to propose the mapping. When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table.";
 export const S3_EXPLAINER_NO_CONSENT =
   "Mapping is done by rules only: AI-assisted reading is off for this audit. You map the columns the rules cannot decide.";
 export const S4_DROP_ZONE =
@@ -107,13 +107,15 @@ export const mappedBy = (row) => {
   if (row.source === "ai") return MAPPED_BY.ai;
   return MAPPED_BY.rules;
 };
-// S9: the confidence cell, never a dash. A rule row shows its number (with the fit note when the values lower it), an AI
-// suggestion or a column with no proposal says it needs confirmation until the analyst decides it, a saved mapping says
-// "reused". A column the rules found no field for scores 0.
+// S9: the confidence cell, never a dash. A rule row shows its number (with the fit note when the values lower it), and so
+// does an AI suggestion until the analyst decides it (the rules' formula on the model's field, section 4.2); one stored
+// without a number, or a column with no proposal, says it needs confirmation until decided; a saved mapping says "reused".
+// A column the rules found no field for scores 0.
 export const S9_confidence = (row) => {
   const decided = row.decision === "confirm" || row.decision === "correct";
   if (row.source === "saved") return "reused";
-  if (row.source === "ai" || row.source === "needs" || row.source === "decision" || row.state === "needs") {
+  const scored = row.source === "ai" && row.confidence != null && !decided;
+  if (!scored && (row.source === "ai" || row.source === "needs" || row.source === "decision" || row.state === "needs")) {
     return decided ? "confirmed" : "needs confirmation";
   }
   const n = row.confidence ?? 0;
