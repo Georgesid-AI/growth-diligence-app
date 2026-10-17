@@ -138,6 +138,16 @@ export const S25_PARAGRAPHS = [
   "No calculations begin until all required columns are confirmed.",
   "Your choices are saved with the audit and automatically reused if you upload the same file again.",
 ];
+// S29: the fields a CRM file feeds, in an info box above its mapping table, open by default (George, 2026-10-17, word for word).
+export const S29_TITLE = "Fields used in this analysis";
+export const S29_PARAGRAPHS = [
+  "Match Created date, Close date, and Stage / status to calculate sales cycles and win rates.",
+  "Segment is optional. If mapped (for example a plan tier or company size), the sales cycle is also shown per segment with its median, spread and deal count. If not mapped, only the overall sales cycle is shown.",
+  "Founder involved is optional. If mapped, it must hold yes or no per deal (yes / y / true / 1, no / n / false / 0); the app then compares the win rate of deals with and without the founder. Values it cannot read are listed and left out. If not mapped, the founder comparison reads Missing.",
+  "Deal ID is used to remove repeated rows: rows that share a deal ID with the same stage and dates (for example one row per product line) count as one deal, and the number of rows collapsed is reported under Worth flagging.",
+  "Close date is also used for the quarter-end clustering check: the share of won deals closed in the last 10 days of a quarter, by the company's fiscal year-end (needs at least 20 won deals).",
+  "Amount can be mapped but is not used in any calculation.",
+];
 export const S13_status = (view) => {
   if (view.read_as_claims) return S28_saved(view.read_as_claims.claims);     // read as claims: it waits for nothing (section 20)
   if (view.miss && view.miss.missing.length > 0) return `Required field not mapped: ${view.miss.missing.map(fieldName).join(", ")}`;

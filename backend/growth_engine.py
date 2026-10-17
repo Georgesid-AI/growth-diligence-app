@@ -1753,7 +1753,7 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
         missing_data.append({"metric": "Sales cycle & win rate",
                              "reason": ("CRM deals not provided" if not deals_loaded else
                                         f"All {deals_loaded} CRM deals were created or closed after the as-of month"),
-                             "unlocked_by": "Upload CRM deals with deal ID, created date, close date, stage, amount", "file": crm_src.get("file")})
+                             "unlocked_by": "Upload CRM deals with deal ID, created date, close date and stage", "file": crm_src.get("file")})
     else:
         absent_dates = [f for f in ("created_date", "close_date")
                         if f not in deals.columns or deals[f].notna().sum() == 0]

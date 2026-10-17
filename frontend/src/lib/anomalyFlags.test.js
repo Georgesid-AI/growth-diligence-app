@@ -19,3 +19,14 @@ test("a failed anomaly calculation is never shown as zero anomalies", () => {
   expect(anomalyFlags({ anomalies: null })).toBeNull();
   expect(ANOMALIES_NOT_COMPUTED).toMatch(/calculation error/);
 });
+
+test("CRM rows sharing a deal ID follow the deals closed before created, with the collapsed rows and the distinct IDs", () => {
+  const flags = anomalyFlags({ anomalies: { ...anomalies, deals_duplicate_id: { rows: 9, distinct_ids: 3, collapsed: 6, rows_list: [2, 3] } } });
+  const at = flags.findIndex((f) => f.label === "Deals with close before created (excluded)");
+  expect(flags[at + 1]).toEqual({ label: "CRM rows sharing a deal ID", count: 6, detail: "3 distinct deal IDs" });
+  expect(flags).toHaveLength(6);
+});
+
+test("results stored before the flag existed show no row for it, never a zero", () => {
+  expect(anomalyFlags({ anomalies }).map((f) => f.label)).not.toContain("CRM rows sharing a deal ID");
+});
