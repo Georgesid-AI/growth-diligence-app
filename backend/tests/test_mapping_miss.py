@@ -152,11 +152,16 @@ def test_thousands_scale_the_money_fields_in_the_engine_input_and_leave_the_stor
 # ---------------------------------------------------------------------------
 # Fix 7: the miss message in place of the empty mapping rows
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize("content,name,word,missing", [
+MISSED = [
     (revenue_to_2028(), "Revenue_to_2028.xlsx", "revenue", {"customer_id", "invoice_date", "currency"}),
     (pnl_to_2028(), "PnL_to_2028.xlsx", "pnl", {"sm_expense", "revenue", "cost_of_revenue"}),
     (crm_anonymous_to_2028(), "CRM_Anonymous_to_2028.xlsx", "crm", {"created_date", "close_date", "stage"}),
-])
+]
+
+
+# The ids are the file names: the workbook bytes carry the time they were built, so two xdist workers would collect
+# different ids and the run would stop before any test.
+@pytest.mark.parametrize("content,name,word,missing", MISSED, ids=[name for _, name, _, _ in MISSED])
 def test_the_three_files_that_missed_end_in_one_miss_message_that_names_what_is_missing(api, content, name, word, missing):
     api.state["adapter"] = t.FakeAdapter(replies=[type_reply(word), mapping_reply()])
     body = upload(api, name, content).json()
