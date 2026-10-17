@@ -1842,7 +1842,6 @@ def test_a_payload_that_breaks_the_contract_reaches_no_provider_and_no_log_line_
 # read by two pure modules, and reach no model, no log line and no collection of the gateway.
 # ---------------------------------------------------------------------------
 import test_claim_register_api as register_api_tests  # noqa: E402
-from test_claim_register_api import api as register_api  # noqa: E402,F401  (the fixture)
 
 IC_SENTINELS = ("the Falcon hiring plan", "Zephyr pipeline cover", "Quartz thesis plan", "Basalt thesis evidence", "Opal thesis condition",
                 "Garnet judgment reasons", "Jasper unresolved question")      # the last two: claim-review-conclusion.md section 3
@@ -1936,7 +1935,7 @@ def _with_the_analysts_inputs(client, db):
     assert r.status_code == 200, r.text
 
 
-def test_the_analysts_inputs_reach_no_log_line_no_gateway_collection_and_no_provider(register_api, caplog):  # noqa: F811
+def test_the_analysts_inputs_reach_no_log_line_no_gateway_collection_and_no_provider(register_api, caplog):
     client, db = register_api
     base = f"/api/audits/{register_api_tests.AUDIT}"
     with caplog.at_level(logging.DEBUG):
@@ -1957,7 +1956,7 @@ def test_the_analysts_inputs_reach_no_log_line_no_gateway_collection_and_no_prov
     assert not db["llm_calls"].docs
 
 
-def test_the_gateway_reads_no_ic_inputs_and_the_provider_payload_holds_none(register_api):  # noqa: F811
+def test_the_gateway_reads_no_ic_inputs_and_the_provider_payload_holds_none(register_api):
     db, reads = _recording_db()
     db["audits"].docs[0]["ic_inputs"] = {"thesis": {"plan": IC_SENTINELS[2]}, "ratings": {"growth_engine": "Weak"},
                                          "top5": {"claim_ids": ["c1"], "set_at": "x"}, "first_quarterly_review": "2031-04-05",
@@ -2129,10 +2128,9 @@ def test_no_deck_is_missing_and_on_the_request_list_and_an_unreadable_count_leav
 # narrative estimate reads the payload a generation builds. None of them sends or logs anything the gateway did not already.
 # ---------------------------------------------------------------------------
 import test_run_audit as run_tests  # noqa: E402
-from test_run_audit import api as run_api  # noqa: E402,F401  (the fixture)
 
 
-def test_the_run_audit_log_lines_hold_the_run_the_stage_the_status_and_an_error_type_only(run_api, monkeypatch, caplog):  # noqa: F811
+def test_the_run_audit_log_lines_hold_the_run_the_stage_the_status_and_an_error_type_only(run_api, monkeypatch, caplog):
     import logging
     run_tests.upload_files(run_api)
     run_tests.confirm_open_columns(run_api)
@@ -2158,7 +2156,7 @@ def test_the_auto_accepted_flag_is_a_register_name_the_gateway_never_mentions():
         assert "auto_accepted" not in path.read_text(encoding="utf-8"), path.name
 
 
-def test_the_narrative_estimate_sends_nothing_and_names_no_file(run_api):  # noqa: F811
+def test_the_narrative_estimate_sends_nothing_and_names_no_file(run_api):
     run_tests.ready_for_review(run_api)
     sent_before = len(run_api.adapter.payloads)
     body = run_api.get(f"/api/runs/{run_tests.AUDIT}/narratives/estimate").text

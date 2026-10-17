@@ -19,7 +19,7 @@ import growth_engine as ge  # noqa: E402
 import server  # noqa: E402
 from claim_matching_support import SAMPLE, FILES  # noqa: E402
 from test_claim_matching import run_claim  # noqa: E402
-from test_claim_register_api import AUDIT, _get, _put, api  # noqa: E402,F401  (the fixture)
+from test_claim_register_api import AUDIT, _get, _put  # noqa: E402
 from test_ic_memo import USAGE, _ready  # noqa: E402
 
 from app import claim_matching as cm  # noqa: E402
@@ -270,8 +270,8 @@ def test_the_parser_sets_the_growth_basis_from_cue_words(line, basis):
     assert growth and {c["growth_basis"] for c in growth} == {basis}
 
 
-def test_set_growth_basis_is_one_click_and_the_claim_is_then_matched(api):  # noqa: F811
-    client, db = api
+def test_set_growth_basis_is_one_click_and_the_claim_is_then_matched(register_api):
+    client, db = register_api
     db[decks.CANDIDATES_COLLECTION].docs.append({**_claim(id="g1", claim_type="revenue_growth", value=15, unit="%", currency=None,
                                                           target_date="2024-01", period_text="Jan 2024",
                                                           snippet="Revenue grew 15% in Jan 2024", file="testco_board.pptx"),
@@ -286,8 +286,8 @@ def test_set_growth_basis_is_one_click_and_the_claim_is_then_matched(api):  # no
 
 # --- section 2 and 6: the requested analysis date ---------------------------------------------------------------------------------
 
-def test_the_requested_analysis_date_changes_the_memo_date_and_nothing_else(api):  # noqa: F811
-    client, db = api
+def test_the_requested_analysis_date_changes_the_memo_date_and_nothing_else(register_api):
+    client, db = register_api
     assert "analysis_date" not in server.RECOMPUTE_TRIGGER_FIELDS and "last_month_complete" in server.RECOMPUTE_TRIGGER_FIELDS
     _ready(client)
     before = copy.deepcopy(db["audits"].docs[0]["results"])

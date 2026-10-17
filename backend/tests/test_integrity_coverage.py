@@ -10,7 +10,7 @@ pytest.importorskip("fastapi")
 pytest.importorskip("motor")
 
 from claim_matching_support import engine_results  # noqa: E402
-from test_claim_register_api import AUDIT, api  # noqa: E402,F401  (the fixture)
+from test_claim_register_api import AUDIT  # noqa: E402
 from test_ic_memo import inputs  # noqa: E402
 
 CHECKS = ["Revenue reconciliation", "Gaps in customer data", "Quarter-end clustering", "Smoothness", "Benford on transactions",
@@ -97,8 +97,8 @@ def test_four_completed_without_the_reconciliation_stay_insufficient():
     assert ig.overall(rows)["conclusion"] == "Insufficient assessment coverage (4 of 5)"
 
 
-def test_the_endpoint_returns_both_blocks_and_the_conclusion(api):  # noqa: F811
-    client, _ = api
+def test_the_endpoint_returns_both_blocks_and_the_conclusion(register_api):
+    client, _ = register_api
     r = client.get(f"/api/audits/{AUDIT}/integrity")
     assert r.status_code == 200, r.text
     body = r.json()

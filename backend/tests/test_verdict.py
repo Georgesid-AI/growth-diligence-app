@@ -13,7 +13,7 @@ pytest.importorskip("motor")
 import server  # noqa: E402
 from claim_matching_support import answer_definition, engine_results  # noqa: E402
 from test_claim_matching import RUNS, register, results_for, row_of  # noqa: E402
-from test_claim_register_api import AUDIT, _get, _put, api  # noqa: E402,F401  (the fixture)
+from test_claim_register_api import AUDIT, _get, _put  # noqa: E402
 
 from app import claim_matching as cm  # noqa: E402
 from app import decks  # noqa: E402
@@ -328,8 +328,8 @@ def _gate_all(client, ids):
         assert _put(client, claim_id, {**{k: v for k, v in GATE.items()}}).status_code == 200
 
 
-def test_a_sixth_key_gate_is_refused_and_so_is_a_key_gate_on_an_unsaved_gate(api):  # noqa: F811
-    client, db = api
+def test_a_sixth_key_gate_is_refused_and_so_is_a_key_gate_on_an_unsaved_gate(register_api):
+    client, db = register_api
     rows = _get(client)["register"]
     ids = [r["claim_id"] for r in rows[:6]]
     _gate_all(client, ids)
@@ -345,8 +345,8 @@ def test_a_sixth_key_gate_is_refused_and_so_is_a_key_gate_on_an_unsaved_gate(api
     assert _put(client, ids[5], {"key_gate": True}).status_code == 200, "a mark freed is a mark available"
 
 
-def test_a_key_mark_counts_only_while_its_gate_is_saved(api):  # noqa: F811
-    client, _ = api
+def test_a_key_mark_counts_only_while_its_gate_is_saved(register_api):
+    client, _ = register_api
     rows = _get(client)["register"]
     _gate_all(client, [rows[0]["claim_id"]])
     _put(client, rows[0]["claim_id"], {"key_gate": True})
@@ -366,8 +366,8 @@ def _inputs(client, body):
     return client.put(f"/api/audits/{AUDIT}/ic-inputs", json=body)
 
 
-def test_the_verdict_endpoint_proposes_rows_1_to_5_and_gives_no_outcome_until_confirmed(api):  # noqa: F811
-    client, _ = api
+def test_the_verdict_endpoint_proposes_rows_1_to_5_and_gives_no_outcome_until_confirmed(register_api):
+    client, _ = register_api
     body = _verdict(client)
     register = _get(client)["register"]
     assert body["verdict"]["status"] == "unconfirmed" and body["verdict"]["outcome"] is None
@@ -375,8 +375,8 @@ def test_the_verdict_endpoint_proposes_rows_1_to_5_and_gives_no_outcome_until_co
     assert len(body["candidates"]) == len(register)
 
 
-def test_confirming_a_set_stores_it_as_an_analyst_decision_and_a_wrong_size_is_refused(api):  # noqa: F811
-    client, db = api
+def test_confirming_a_set_stores_it_as_an_analyst_decision_and_a_wrong_size_is_refused(register_api):
+    client, db = register_api
     ids = _verdict(client)["verdict"]["top5"]["proposed"]
     assert _inputs(client, {"top5": ids[:4]}).status_code == 400
     assert _inputs(client, {"top5": [ids[0]] * 5}).status_code == 400
@@ -388,8 +388,8 @@ def test_confirming_a_set_stores_it_as_an_analyst_decision_and_a_wrong_size_is_r
     assert r.json()["verdict"]["status"] == "blocked", "the proposed five are Contradicted and have no gate yet"
 
 
-def test_a_confirmed_claim_that_is_rejected_leaves_the_register_and_voids_the_set(api):  # noqa: F811
-    client, db = api
+def test_a_confirmed_claim_that_is_rejected_leaves_the_register_and_voids_the_set(register_api):
+    client, db = register_api
     ids = _verdict(client)["verdict"]["top5"]["proposed"]
     _inputs(client, {"top5": ids})
     gone = next(c for c in db[decks.CANDIDATES_COLLECTION].docs if c["id"] == ids[0].split("#")[0])
@@ -398,8 +398,8 @@ def test_a_confirmed_claim_that_is_rejected_leaves_the_register_and_voids_the_se
     assert v["status"] == "void" and v["message"].startswith("A claim of the confirmed top 5 left the register")
 
 
-def test_the_banner_still_uses_rows_1_to_5_of_the_pre_sort_after_a_replacement(api):  # noqa: F811
-    client, _ = api
+def test_the_banner_still_uses_rows_1_to_5_of_the_pre_sort_after_a_replacement(register_api):
+    client, _ = register_api
     before = client.get(f"/api/audits/{AUDIT}/blockers").json()["blockers"]
     register = _get(client)["register"]
     verified = next(r for r in register if r["evidence_label"] == "Verified")["claim_id"]
@@ -409,8 +409,8 @@ def test_the_banner_still_uses_rows_1_to_5_of_the_pre_sort_after_a_replacement(a
         {r["claim_id"] for r in register[:5] if r["evidence_label"] == "Contradicted"}
 
 
-def test_the_verdict_reads_no_figure_of_results_that_fail_the_contract(api):  # noqa: F811
-    client, db = api
+def test_the_verdict_reads_no_figure_of_results_that_fail_the_contract(register_api):
+    client, db = register_api
     bad = copy.deepcopy(db["audits"].docs[0]["results"])
     bad["nrr"]["overall_pct"] = 106.41
     db["audits"].docs[0]["results"] = bad
@@ -493,8 +493,8 @@ def test_the_items_the_engine_does_not_test_against_every_upload_each_need_a_fie
 
 # --- the analyst's dates (W7) -----------------------------------------------------------------------------------------------------------
 
-def test_a_gap_date_needs_the_review_first_and_may_not_be_after_it_and_the_review_may_not_move_before_a_gap(api):  # noqa: F811
-    client, db = api
+def test_a_gap_date_needs_the_review_first_and_may_not_be_after_it_and_the_review_may_not_move_before_a_gap(register_api):
+    client, db = register_api
     item = _verdict(client)["data_gaps"][0]["item"]
     gap = {"gap_target_dates": {item: "2024-08-31"}}
     first = _inputs(client, gap)
@@ -514,14 +514,14 @@ def test_a_gap_date_needs_the_review_first_and_may_not_be_after_it_and_the_revie
 @pytest.mark.parametrize("body", [{"ratings": {"data_reliability": "Excellent"}}, {"ratings": {"defensibility": "Strong"}},
                                   {"thesis": {"plan": "x" * 301}}, {"thesis": {"vision": "x"}}, {"first_quarterly_review": "soon"},
                                   {}, {"unknown": 1}])
-def test_inputs_that_are_not_valid_are_refused_and_write_nothing(api, body):  # noqa: F811
-    client, db = api
+def test_inputs_that_are_not_valid_are_refused_and_write_nothing(register_api, body):
+    client, db = register_api
     assert _inputs(client, body).status_code in (400, 422)
     assert db["audits"].docs[0].get("ic_inputs") is None
 
 
-def test_ratings_and_thesis_are_stored_on_the_audit_and_a_thesis_of_300_characters_is_kept(api):  # noqa: F811
-    client, db = api
+def test_ratings_and_thesis_are_stored_on_the_audit_and_a_thesis_of_300_characters_is_kept(register_api):
+    client, db = register_api
     r = _inputs(client, {"ratings": {"data_reliability": "Strong", "growth_engine": "Weak"},
                          "thesis": {"plan": "p" * 300, "evidence": "e", "condition": "c"}})
     assert r.status_code == 200
@@ -533,8 +533,8 @@ def test_ratings_and_thesis_are_stored_on_the_audit_and_a_thesis_of_300_characte
 
 # --- rule 22: delete audit removes the new inputs with their documents ----------------------------------------------------------------
 
-def test_delete_audit_removes_the_ic_inputs_and_every_claim_input_with_their_documents(api):  # noqa: F811
-    client, db = api
+def test_delete_audit_removes_the_ic_inputs_and_every_claim_input_with_their_documents(register_api):
+    client, db = register_api
     ids = _verdict(client)["verdict"]["top5"]["proposed"]
     _inputs(client, {"top5": ids, "ratings": {"data_reliability": "Strong"}, "thesis": {"plan": "Quartz thesis"}})
     assert _put(client, ids[0], {**GATE, "gate_metric_name": "Zephyr cover", "gate_direction": "at most"}).status_code == 200
@@ -586,8 +586,8 @@ def _add_funds(db):
          "file": "testco_board.pptx", "order": 99, "sources": [{"file": "testco_board.pptx", "slide": 22, "kind": "text"}]})
 
 
-def test_the_top_5_replace_list_holds_no_use_of_funds_row(api):  # noqa: F811
-    client, db = api
+def test_the_top_5_replace_list_holds_no_use_of_funds_row(register_api):
+    client, db = register_api
     before = len(_verdict(client)["candidates"])
     _add_funds(db)
     body = _verdict(client)
@@ -598,8 +598,8 @@ def test_the_top_5_replace_list_holds_no_use_of_funds_row(api):  # noqa: F811
     assert _inputs(client, {"top5": [*body["verdict"]["top5"]["proposed"][:4], ranked[0]]}).status_code == 400
 
 
-def test_correcting_a_use_of_funds_figure_keeps_its_type_and_the_row_stays_out_of_the_top_5(api):  # noqa: F811
-    client, db = api
+def test_correcting_a_use_of_funds_figure_keeps_its_type_and_the_row_stays_out_of_the_top_5(register_api):
+    client, db = register_api
     _add_funds(db)
     r = client.put(f"/api/audits/{AUDIT}/decks/candidates/funds1", json={"claim_type": "use_of_funds", "value": 42})
     assert r.status_code == 200, r.text
@@ -622,8 +622,8 @@ def test_an_acquisition_channels_row_is_never_in_the_proposal_the_top_5_or_the_v
     assert vd.proposal([channel]) == [] and vd.top5_state([channel], None)["in_force"] == []
 
 
-def test_the_top_5_replace_list_holds_no_acquisition_channels_row(api):  # noqa: F811
-    client, db = api
+def test_the_top_5_replace_list_holds_no_acquisition_channels_row(register_api):
+    client, db = register_api
     before = len(_verdict(client)["candidates"])
     db[decks.CANDIDATES_COLLECTION].docs.append(
         {"audit_id": AUDIT, "id": "chan1", "status": "approved", "claim_type": "acquisition_channels", "value": 30000, "unit": "count",

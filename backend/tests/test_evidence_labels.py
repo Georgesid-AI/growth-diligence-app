@@ -12,7 +12,7 @@ pytest.importorskip("fastapi")
 pytest.importorskip("motor")
 
 from test_claim_matching import RUNS, candidates_for, results_for, run_claim, settings  # noqa: E402
-from test_claim_register_api import _get, api  # noqa: E402,F401  (the fixture)
+from test_claim_register_api import _get  # noqa: E402
 
 from app import claim_matching as cm  # noqa: E402
 from app import decks  # noqa: E402
@@ -24,9 +24,9 @@ QUALIFIED = {"claim_type": "users", "value": 40, "unit": "trial accounts", "curr
              "snippet": "40 trial accounts in Feb 2024", "qualifier": "trial"}
 
 
-def test_plan_5_a_high_confidence_claim_contradicted_by_the_revenue_file_shows_high_and_contradicted_with_the_figure_and_gap(api):  # noqa: F811
+def test_plan_5_a_high_confidence_claim_contradicted_by_the_revenue_file_shows_high_and_contradicted_with_the_figure_and_gap(register_api):
     """Plan section 5, the required test: the two labels are two fields, and a well-read claim can be a wrong one."""
-    client, db = api
+    client, db = register_api
     c05 = next(c for c in db[decks.CANDIDATES_COLLECTION].docs if c["id"] == "c05")
     # ARR €240,000 for FY2023: a date, a currency, a named type, and the same figure on a second slide (corroborated): High
     c05["sources"] = c05["sources"] + [{"file": "testco_board.pptx", "slide": 12, "kind": "text"}]
@@ -37,8 +37,8 @@ def test_plan_5_a_high_confidence_claim_contradicted_by_the_revenue_file_shows_h
     assert row["gap"] == 41857.32 and row["gloss"] == "€41,857 lower (miss)", "and so is the gap"
 
 
-def test_the_extraction_confidence_is_the_deck_lists_level_and_changes_no_label(api):  # noqa: F811
-    client, db = api
+def test_the_extraction_confidence_is_the_deck_lists_level_and_changes_no_label(register_api):
+    client, db = register_api
     rows = {r["claim_id"]: r for r in _get(client)["register"]}
     assert {r["extraction_confidence"] for r in rows.values()} <= {"High", "Medium", "Low", "Analyst-entered"}
     assert rows["c05"]["extraction_confidence"] == "Medium", "one place only: not corroborated"
