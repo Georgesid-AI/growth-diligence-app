@@ -86,7 +86,7 @@ def crm_anonymous_to_2028() -> bytes:
                            "Evidence / update", "Owner", "Next review"]):
         tracker.cell(6, 3 + j, h)
     for i in range(3):
-        for j, v in enumerate([f"ACC-{i + 1:04d}", f"2024-12-31", "Plan", 6 + i, 600 + 20 * i, 7200 + 240 * i, "plan", "Owner A", "2025-03-31"]):
+        for j, v in enumerate([f"ACC-{i + 1:04d}", "2024-12-31", "Plan", 6 + i, 600 + 20 * i, 7200 + 240 * i, "plan", "Owner A", "2025-03-31"]):
             tracker.cell(7 + i, 3 + j, v)
     funnel = wb.create_sheet("Funnel and evidence")
     funnel["C2"] = "Funnel"

@@ -172,7 +172,7 @@ def test_an_fx_rate_change_asks_again():
     deck_claims.resolve_period(usd, 12)
     res = {"as_of_month": "2026-12", "reporting_currency": "EUR", "mrr_series": {
         "months": ["2026-12"], "segments": [], "source": SOURCE, "data": [{"month": "2026-12", "total": 500.0}]}}
-    sets = lambda rate: {"fiscal_year_end": 12, "as_of_month": "2026-12", "reporting_currency": "EUR", "fx": {"USD": rate, "EUR": 1.0}}
+    sets = lambda rate: {"fiscal_year_end": 12, "as_of_month": "2026-12", "reporting_currency": "EUR", "fx": {"USD": rate, "EUR": 1.0}}  # noqa: E731
     asked = cm.build_register([usd], res, sets(0.9))[0]
     assert asked["definition_check"] == "ask" and asked["fx_rate"] == 0.9, "fixture: a USD claim, asked at the saved rate"
     answer_definition([usd], [asked], "u1", "yes")

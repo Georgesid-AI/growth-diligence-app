@@ -124,9 +124,9 @@ def _assign(fields, columns: list, scores: Dict[Tuple[str, str], int]) -> dict:
     """{field: column} by the greedy order: best score first; equal scores in field order, then column order."""
     mapping = {f: None for f in fields}
     used = set()
-    for (field, col), s in sorted(scores.items(), key=lambda kv: -kv[1]):
-        if s and mapping[field] is None and col not in used:
-            mapping[field] = col
+    for (fld, col), s in sorted(scores.items(), key=lambda kv: -kv[1]):
+        if s and mapping[fld] is None and col not in used:
+            mapping[fld] = col
             used.add(col)
     return mapping
 

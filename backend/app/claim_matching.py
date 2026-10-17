@@ -1014,7 +1014,7 @@ def definition_basis(row: dict) -> dict:
     """What a Definition check answer was given against (section 4.1): the claimed figures and the rate they are converted at,
     the observed figure, the claim's period, the as-of month and the FX rate date. Stored with the answer; the answer applies only
     while all of it is unchanged. Read from the register row's own fields, so it adds none."""
-    figure = lambda v: None if v is None else round(float(v), 6)
+    figure = lambda v: None if v is None else round(float(v), 6)  # noqa: E731
     return {"claimed": [figure(row.get("claimed_value")), figure(row.get("claimed_high"))], "fx_rate": figure(row.get("fx_rate")),
             "fx_date": row.get("fx_date"), "observed": figure(row.get("observed_value")),
             "period": [row.get("period_start"), row.get("period_end")], "as_of_month": row.get("as_of_month")}

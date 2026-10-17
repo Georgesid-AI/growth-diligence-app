@@ -1,0 +1,9 @@
+# Lint scope: ruff's classic set over backend/, pinned so CI, sessions and Emergent count the same findings.
+required-version = "==0.16.8"
+
+[lint]
+select = ["E4", "E7", "E9", "F"]
+
+[lint.per-file-ignores]
+# Pytest fixtures are imported and then received as arguments of the same name.
+"backend/tests/**" = ["F811"]
