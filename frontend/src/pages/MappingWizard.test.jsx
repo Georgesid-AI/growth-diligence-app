@@ -426,7 +426,9 @@ describe("the type, the sheet and the miss (2026-10-16)", () => {
     ...over,
   });
 
-  test("the consent explainer says the AI may see sheet names and title rows and no sentence about the company name", () => {
+  test("the consent explainer says the model reads every header and a masked sample, may see sheet names and title rows, and no sentence about the company name", () => {
+    expect(S2_EXPLAINER_CONSENT.startsWith("The model reads every column header and a masked sample to propose the mapping. ")).toBe(true);
+    expect(S2_EXPLAINER_CONSENT).not.toMatch(/Where rules cannot decide/);
     expect(S2_EXPLAINER_CONSENT).toContain("When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table.");
     expect(S2_EXPLAINER_CONSENT).not.toMatch(/company name/);
   });
@@ -780,7 +782,7 @@ describe("the mapping table", () => {
     expect(q("bubble-head").textContent).toBe("Detected: Revenue lines · 1,240 rows");
     expect(q("bubble-head").textContent).not.toContain("confirmed");
     expect(q("source-Adj").textContent).toBe("AI suggestion – confirm");
-    expect(q("confidence-Adj").textContent).toBe("needs confirmation");
+    expect(q("confidence-Adj").textContent).toBe("AI suggestion – confirm");
     expect(q("confidence-Amount").textContent).toBe("30");
     expect(q("source-Amount").textContent).toBe("Rules");
     expect(q("source-Notes").textContent).toBe("You – choose");
@@ -801,9 +803,9 @@ describe("the mapping table", () => {
         row("Needs", { state: "needs", source: "needs", confidence: null, pending: true }),
         row("Unsure50", { field: "amount", state: "unsure", confidence: 50, pending: true }),
         row("Auto100b", { field: "currency" }),
-        row("Ai", { field: "segment", state: "ai", source: "ai", confidence: null, pending: true }),
+        row("Ai", { field: "segment", state: "ai", source: "ai", confidence: 70, pending: true }),
         row("Unsure20", { field: "revenue_type", state: "unsure", confidence: 20, pending: true }),
-        row("Done", { field: "service_start", state: "corrected", source: "ai", confidence: null, decision: "correct" }),
+        row("Done", { field: "service_start", state: "corrected", source: "ai", confidence: 60, decision: "correct" }),
       ],
     }));
     await mount();
@@ -814,11 +816,13 @@ describe("the mapping table", () => {
     expect(sortColumns([row("b", { confidence: 100 }), row("a", { confidence: 100 })]).map((c) => c.column)).toEqual(["b", "a"]);
   });
 
-  test("the confidence cell is never a dash: the number, needs confirmation, or reused", async () => {
+  test("the confidence cell is never a dash: the number, AI suggestion – confirm, needs confirmation, or reused", async () => {
     api.uploadChatFile.mockResolvedValue(VIEW({
-      pending: 2, columns: [
+      pending: 3, columns: [
         row("Rule", { field: "customer_id" }),
         row("Ai", { field: "segment", state: "ai", source: "ai", confidence: null, pending: true }),
+        row("AiScored", { field: "amount", state: "ai", source: "ai", confidence: 0, fit_note: "0 of 20 values are numbers", pending: true }),
+        row("AiDone", { field: "service_end", state: "confirmed", source: "ai", confidence: 60, decision: "confirm" }),
         row("Saved", { field: "amount", source: "saved", confidence: 100 }),
         row("SavedLow", { field: "currency", source: "saved", state: "unsure", confidence: 60, pending: true }),
         row("Needs", { state: "needs", source: "needs", confidence: null, pending: true }),
@@ -829,9 +833,11 @@ describe("the mapping table", () => {
     await mount();
     await pickAndMap([file("rev.csv")]);
     await click(q("unused-toggle-revenue"));
-    const cells = Object.fromEntries(["Rule", "Ai", "Saved", "SavedLow", "Needs", "Chosen", "Memo"].map((c) => [c, q(`confidence-${c}`).textContent]));
-    expect(cells).toEqual({ Rule: "100", Ai: "needs confirmation", Saved: "reused", SavedLow: "reused", Needs: "needs confirmation",
-                            Chosen: "confirmed", Memo: "0" });
+    const cells = Object.fromEntries(["Rule", "Ai", "AiScored", "AiDone", "Saved", "SavedLow", "Needs", "Chosen", "Memo"]
+      .map((c) => [c, q(`confidence-${c}`).textContent]));
+    // An AI suggestion shows "AI suggestion – confirm", never the number the server computes for it (George, 2026-10-17).
+    expect(cells).toEqual({ Rule: "100", Ai: "AI suggestion – confirm", AiScored: "AI suggestion – confirm", AiDone: "confirmed",
+                            Saved: "reused", SavedLow: "reused", Needs: "needs confirmation", Chosen: "confirmed", Memo: "0" });
     Object.values(cells).forEach((text) => expect(text).not.toMatch(dash));
     const by = Object.fromEntries(["Rule", "Ai", "Saved", "Needs", "Chosen"].map((c) => [c, q(`source-${c}`).textContent]));
     expect(by).toEqual({ Rule: "Rules", Ai: "AI suggestion – confirm", Saved: "Saved from earlier upload", Needs: "You – choose", Chosen: "You" });

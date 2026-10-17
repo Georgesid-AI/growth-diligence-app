@@ -1678,8 +1678,11 @@ async def read_structure(
 
         consent -> boundary and redaction check -> cache (audit, key) -> token count of the text and
         its item list (4,000 cap) -> token count of the whole call -> lock (step "structures") -> spend cap
-        -> token cap (400,000 per audit, with the whole call's input) -> provider
+        (not for a column mapping) -> token cap (400,000 per audit, with the whole call's input) -> provider
         -> schema, type and item id check (one reask) -> store -> log
+
+    A column mapping is exempt from the daily spend cap (chat-upload.md section 4.2, 2026-10-17): it is logged in
+    llm_calls like any call, so its cost counts in the usage and in the day's spend the cap checks for every other call.
 
     Never raises for a model-side problem: the structure is then "Not read by AI" and Python's result
     stands. The output is not Verified here: the caller joins each label to Python's item and
@@ -1746,7 +1749,8 @@ async def read_structure(
     billed = (0, 0)
     try:
         try:
-            await guards.check_spend_cap(db)
+            if structure_type != "column_mapping":
+                await guards.check_spend_cap(db)
             await guards.check_structure_token_cap(db, audit_id, counted, STRUCTURE_MAX_TOKENS)
         except guards.GuardRefusal as refusal:
             await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version,

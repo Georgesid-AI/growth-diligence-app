@@ -68,7 +68,11 @@ def test_snake_case_headers_and_line_labels_are_read_with_underscores_as_spaces(
 def test_a_saved_mapping_that_maps_nothing_is_not_reused_so_the_model_runs_again(api):
     api.state["adapter"] = t.FakeAdapter(replies=[mapping_reply()])        # the model leaves every sent column out
     first = upload(api, "CRM.xlsx", crm_anonymous_to_2028(), dtype="crm").json()
-    assert {c["state"] for c in first["columns"]} <= {"unused", "auto"}, "columns the reply left out are Not used (section 4.2)"
+    states = {c["column"]: c["state"] for c in first["columns"]}
+    assert states.pop("Account ID") == "unsure", "the rules' deal id at 80, which the reply leaves out, waits (section 4.2)"
+    assert set(states.values()) <= {"unused", "auto"}, "columns both sides leave out are Not used (section 4.2)"
+    first = api.post(f"/api/audits/{AUDIT}/datasets/crm/decisions", json=[
+        {"column": "Account ID", "action": "correct", "field": None, "reason": "not_needed"}]).json()
     assert first["pending"] == 0, "nothing waits, so the mapping saved"
     calls = adapter_of(api).calls
     assert len(api.db["column_mappings"].docs) == 1, "a version with no mapped column was written"
@@ -182,7 +186,7 @@ def test_a_file_that_maps_cleanly_has_no_miss(api):
 # ---------------------------------------------------------------------------
 def test_rules_decide_the_type_and_the_model_is_not_asked_when_they_reach_80(api):
     upload(api, "accountant_pnl.csv", (FIXTURES / "accountant_pnl.csv").read_bytes())
-    assert adapter_of(api).calls == 0
+    assert [json.loads(p)["type"] for p in adapter_of(api).payloads] == ["column_mapping"], "no file-type call"
 
 
 def test_a_file_the_rules_cannot_place_is_sent_once_and_the_answer_is_kept_by_the_file_hash(api):

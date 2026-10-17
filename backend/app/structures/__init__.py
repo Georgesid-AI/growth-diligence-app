@@ -101,16 +101,14 @@ MAPPING_SAMPLE_ROWS = 20          # a column mapping is read from the first 20 d
 
 
 def column_mapping_input(columns: List[str], rows: List[Dict], customer_columns: Tuple[str, ...] = (),
-                         only: Optional[Tuple[str, ...]] = None, max_rows: int = MAPPING_SAMPLE_ROWS
-                         ) -> Tuple[List[Dict], Dict[int, List[str]], Dict[int, Dict]]:
+                         max_rows: int = MAPPING_SAMPLE_ROWS) -> Tuple[List[Dict], Dict[int, List[str]], Dict[int, Dict]]:
     """(header cells, samples, profiles) for a sheet stored as `columns` and `rows`.
 
     The header stack is the column names and the rows below them that hold no number other than a
     year, capped at the 3 rows nearest the data. A column whose values are numbers or dates
     (SAMPLE_SHARE of them) sends up to 3 samples; any other column, and a customer column whatever
-    its values, sends a profile only. No text cell value is ever returned. `only` limits all three to
-    those columns (the ones the rules could not decide); positions stay the columns' sheet positions.
-    Values come from the first `max_rows` data rows.
+    its values, sends a profile only. No text cell value is ever returned. Positions are the columns'
+    sheet positions. Values come from the first `max_rows` data rows.
     """
     stack = [[_header_text(c) for c in columns]]
     body = list(rows)
@@ -119,13 +117,10 @@ def column_mapping_input(columns: List[str], rows: List[Dict], customer_columns:
         body = body[1:]
     body = body[:max_rows]
     stack = stack[-redact.MAX_HEADER_ROWS:]
-    keep = set(columns) if only is None else set(only)
     headers = [{"row": r, "col": c, "text": text} for r, row in enumerate(stack, 1)
-               for c, text in enumerate(row, 1) if text and columns[c - 1] in keep]
+               for c, text in enumerate(row, 1) if text]
     samples, profiles = {}, {}
     for c, name in enumerate(columns, 1):
-        if name not in keep:
-            continue
         values = [row.get(name) for row in body if row.get(name) is not None and str(row.get(name)).strip()]
         if not values and not _header_text(name):
             continue                       # an empty column with no header says nothing
@@ -140,11 +135,13 @@ def column_mapping_input(columns: List[str], rows: List[Dict], customer_columns:
 
 def column_mapping_text(columns: List[str], rows: List[Dict], company_name: Optional[str], mapping: Dict[str, str],
                         customer_columns: Tuple[str, ...] = (), withheld: Tuple[str, ...] = (),
-                        only: Optional[Tuple[str, ...]] = None) -> str:
-    """The redacted column-mapping text the model reads (`withheld`: the client name, see redact.withheld_values; `only`: the undecided columns, see column_mapping_input)."""
-    headers, samples, profiles = column_mapping_input(columns, rows, customer_columns, only)
+                        hints: Optional[Dict[str, Tuple[str, int]]] = None) -> str:
+    """The redacted column-mapping text the model reads, every column of the sheet (`withheld`: the client name, see
+    redact.withheld_values; `hints`: {column: (field, confidence)}, the rules' proposal per column, sent as a hint)."""
+    headers, samples, profiles = column_mapping_input(columns, rows, customer_columns)
     headers, _ = redact.redact_structure(headers, company_name, mapping, withheld)
-    return redact.column_text(headers, samples, profiles)
+    by_position = {c: (hints or {})[name] for c, name in enumerate(columns, 1) if name in (hints or {})}
+    return redact.column_text(headers, samples, profiles, by_position)
 
 
 FILE_TYPE_CELL_MAX = 200           # a longer title is prose: it is cut (the gateway refuses a cell over 200 characters)
@@ -160,7 +157,7 @@ def file_type_sheet(name: str, titles: List[Tuple[int, int, str]], header_row: i
     cells = [{"row": r, "col": c, "text": t[:FILE_TYPE_CELL_MAX]} for r, c, t in titles if r in keep]
     shown = raw_headers if raw_headers is not None else headers
     head = [{"row": header_row, "col": c, "text": h[:FILE_TYPE_CELL_MAX]} for c, h in enumerate(shown[:redact.FILE_MAX_COLUMNS], 1) if h]
-    _, samples, profiles = column_mapping_input(columns, rows, customer_columns, None)
+    _, samples, profiles = column_mapping_input(columns, rows, customer_columns)
     if raw_headers is not None:
         samples, profiles = {}, {1: profiles[1]} if 1 in profiles else {}
     cols = {c for c in range(1, redact.FILE_MAX_COLUMNS + 1)}

@@ -761,7 +761,7 @@ MAPPING_REPLY = json.dumps({"type": "column_mapping", "items": [
 # Every reason a structure text is refused: codes, never text from the structure.
 STRUCTURE_REFUSALS = frozenset({"not_text", "empty", "raw_bytes", "file_name", "client_name",
                                 "not_cells", "cell_too_long", "redaction_changed", "too_many_header_rows",
-                                "too_many_samples", "text_value", "bad_item_line"})
+                                "too_many_samples", "text_value", "bad_item_line", "bad_hint"})
 # A deck structure's item list (docs/specs/structure-labelling.md section 3): one line per figure Python listed, its
 # raw text a figure cut from its cell; a roadmap adds its date cells and text lines. Nothing else passes.
 GOOD_ITEMS = GOOD_STRUCTURE + ('\nitems:\ni1 r2c2 "1,200,000" 1200000 h r2c1 r1c2\n'
@@ -865,6 +865,12 @@ def test_a_sheet_built_by_the_app_sends_no_text_cell_value():
     ("a text cell value on the column-mapping path", GOOD_MAPPING + "\nr1c4: Note\nc4 sample: Northwind Trading",
      "column_mapping", "text_value"),
     ("a text value as a profile and a sample", GOOD_MAPPING + "\nc1 sample: 12", "column_mapping", "text_value"),
+    # A rules' hint is one field of the closed list and a confidence from 0 to 100, once per column (chat-upload.md section
+    # 4.2, 2026-10-17): nothing else rides on a hint line.
+    ("a hint naming no field", GOOD_MAPPING + "\nc1 rule: Northwind 60", "column_mapping", "bad_hint"),
+    ("a hint holding text", GOOD_MAPPING + "\nc1 rule: customer_id Northwind Trading 60", "column_mapping", "bad_hint"),
+    ("a hint over 100", GOOD_MAPPING + "\nc3 rule: amount 160", "column_mapping", "bad_hint"),
+    ("two hints for a column", GOOD_MAPPING + "\nc3 rule: amount 60\nc3 rule: currency 30", "column_mapping", "bad_hint"),
     # An item line passes only in format, its raw text a figure inside its cell.
     ("an item line out of format", GOOD_STRUCTURE + "\nitems:\ni1 r2c2 Revenue grew strongly 1200000", "table",
      "bad_item_line"),
@@ -1666,16 +1672,16 @@ def _all_documents(db):
     return {name: json.dumps(col.docs, default=str) for name, col in db._cols.items()}
 
 
-def test_chat_the_mapping_text_holds_only_the_columns_the_rules_could_not_decide_from_at_most_20_rows(api):
+def test_chat_the_mapping_text_holds_every_column_a_masked_sample_and_the_rules_hint_from_at_most_20_rows(api):
     rows = "\n".join(f"Customer {i},2024-01-{i % 27 + 1:02d},{100 + i},EUR,note {i} {chr(97 + i % 26)}" for i in range(60))
     chat.upload(api, "wide.csv", ("Customer ID,Invoice Date,Amount,Currency,Remarks\n" + rows + "\n").encode())
     text = chat.model_text(api)
     parsed = structure_redact.parse_column_text(text)
-    assert [c["text"] for c in parsed["headers"]] == ["Remarks"], "decided columns' headers are absent"
-    for decided in ("Customer ID", "Invoice Date", "Amount", "Currency"):
-        assert decided not in text
-    assert parsed["profiles"][5]["distinct"] == 20 and not parsed["samples"], "built from the first 20 data rows"
-    assert "Customer " not in text and "note " not in text
+    assert [c["text"] for c in parsed["headers"]] == ["Customer ID", "Invoice Date", "Amount", "Currency", "Remarks"]
+    assert parsed["profiles"][5]["distinct"] == 20 and parsed["profiles"][1]["distinct"] == 20, "built from the first 20 data rows"
+    assert parsed["samples"] == {2: ["2024-01-01", "2024-01-02", "2024-01-03"], 3: ["100", "101", "102"]}
+    assert parsed["hints"] == [(1, "customer_id", 100), (2, "invoice_date", 100), (3, "amount", 100), (4, "currency", 100)]
+    assert not re.search(r"Customer \d|note \d|EUR", text), "no text cell value"
 
 
 @pytest.mark.parametrize("name", ["duplicate_ids_header_row3.csv", "blank_vs_zero.csv", "mixed_currency.csv"])
@@ -1693,7 +1699,7 @@ def test_chat_a_customer_alias_column_sends_a_profile_only_even_when_its_values_
     chat.upload(api, "numeric_ids.csv", csv.encode())
     text = chat.model_text(api)
     parsed = structure_redact.parse_column_text(text)
-    assert set(parsed["profiles"]) == {4, 5} and not parsed["samples"]
+    assert {4, 5} <= set(parsed["profiles"]) and not {4, 5} & set(parsed["samples"])
     assert "70000" not in text and "81000" not in text and structure_redact.column_text_problem(text) is None
 
 

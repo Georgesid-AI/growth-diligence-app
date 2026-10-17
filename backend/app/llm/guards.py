@@ -4,7 +4,7 @@ Four independent brakes, all backed by Mongo so they hold across workers:
 
   * a hard per-run call cap on narrative calls (the 16th is refused, never queued or retried);
   * a per-audit token cap on structure reading calls (400,000 billed tokens, input and output);
-  * a daily spend ceiling across all runs;
+  * a daily spend ceiling across all runs (column mappings are exempt but counted: chat-upload.md section 4.2);
   * a per-run+step advisory lock, so a second request that arrives while one is
     in flight waits for that result instead of issuing another provider call. Structure
     reading takes one lock per audit (step "structures").

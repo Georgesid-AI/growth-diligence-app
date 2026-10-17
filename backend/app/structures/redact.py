@@ -18,6 +18,8 @@ import re
 from collections import Counter
 from typing import Dict, List, Optional, Tuple
 
+from ..llm.schemas import MAPPING_FIELDS
+
 _LINE = re.compile(r"^r(?P<row>\d+)c(?P<col>\d+)(?P<title> title)?: (?P<text>.*?)"
                    r"(?: \(r(?P=row)c(?P=col):r(?P<row2>\d+)c(?P<col2>\d+)\))?$")
 TITLE = " title"           # after a title cell's id in its line: the slide title, a KPI value's label
@@ -180,15 +182,18 @@ def items_in_format(lines: List[str], cells: List[Dict], roadmap: bool) -> bool:
 
 # ---------------------------------------------------------------------------
 # The column-mapping text: a spreadsheet's header rows (at most 3, the 3 nearest the data), up to
-# 3 sample values per numeric or date column, and a profile instead of values per text column.
+# 3 sample values per numeric or date column, a profile instead of values per text column, and the
+# rules' proposal per column as a hint (a field of the closed list and its confidence, 0 to 100).
 #     r1c2: Invoice Date
 #     c2 sample: 2025-01-31
 #     c1 profile: distinct 42, typical length 12, shape Aa a
+#     c2 rule: invoice_date 100
 # No text cell value is ever on this path: a sample is a number or an ISO date, nothing else.
 # ---------------------------------------------------------------------------
 MAX_HEADER_ROWS = 3
 MAX_SAMPLES = 3
 _SAMPLE_LINE = re.compile(r"^c(?P<col>\d+) sample: (?P<value>.+)$")
+_HINT_LINE = re.compile(r"^c(?P<col>\d+) rule: (?P<field>.+?) (?P<confidence>\d+)$")
 _PROFILE_LINE = re.compile(r"^c(?P<col>\d+) profile: distinct (?P<distinct>\d+), typical length (?P<length>\d+), "
                            r"shape (?P<shape>[Aa0 \-_./@:,#()+&']{1,20})$")
 # A sample value: a number (sign, currency symbol, separators, %) or an ISO date or date-time.
@@ -196,22 +201,26 @@ SAMPLE_VALUE = re.compile(r"^(?:[-+(]?\s?(?:[£$€¥]\s?)?\d[\d,]*(?:\.\d+)?\s?
                           r"|\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)?)$")
 
 
-def column_text(headers: List[Dict], samples: Dict[int, List[str]], profiles: Dict[int, Dict]) -> str:
-    """The column-mapping text: header cells, then samples, then profiles, each in column order."""
+def column_text(headers: List[Dict], samples: Dict[int, List[str]], profiles: Dict[int, Dict],
+                hints: Optional[Dict[int, Tuple[str, int]]] = None) -> str:
+    """The column-mapping text: header cells, then samples, then profiles, then the rules' hints, each in column order."""
     lines = [structure_text(headers)] if headers else []
     lines += [f"c{col} sample: {value}" for col in sorted(samples) for value in samples[col]]
     lines += [f"c{col} profile: distinct {p['distinct']}, typical length {p['length']}, shape {p['shape']}"
               for col, p in sorted(profiles.items())]
+    lines += [f"c{col} rule: {field} {confidence}" for col, (field, confidence) in sorted((hints or {}).items())]
     return "\n".join(line for line in lines if line)
 
 
 def parse_column_text(text: str) -> Optional[Dict]:
-    """{"headers": cells, "samples": {col: [values]}, "profiles": {col: {...}}}, or None when a line is
-    neither a header cell, a sample nor a profile."""
-    headers, samples, profiles = [], {}, {}
+    """{"headers": cells, "samples": {col: [values]}, "profiles": {col: {...}}, "hints": [(col, field, confidence)]},
+    or None when a line is neither a header cell, a sample, a profile nor a hint."""
+    headers, samples, profiles, hints = [], {}, {}, []
     for line in (text or "").split("\n"):
-        sample, profile = _SAMPLE_LINE.match(line), _PROFILE_LINE.match(line)
-        if sample:
+        sample, profile, hint = _SAMPLE_LINE.match(line), _PROFILE_LINE.match(line), _HINT_LINE.match(line)
+        if hint:
+            hints.append((int(hint.group("col")), hint.group("field"), int(hint.group("confidence"))))
+        elif sample:
             samples.setdefault(int(sample.group("col")), []).append(sample.group("value"))
         elif profile:
             profiles[int(profile.group("col"))] = {"distinct": int(profile.group("distinct")),
@@ -221,13 +230,14 @@ def parse_column_text(text: str) -> Optional[Dict]:
             if not cells:
                 return None
             headers += cells
-    return {"headers": headers, "samples": samples, "profiles": profiles}
+    return {"headers": headers, "samples": samples, "profiles": profiles, "hints": hints}
 
 
 def column_text_problem(text: str) -> Optional[str]:
     """Why a column-mapping text may not reach the model, or None: more than 3 header rows, more than
-    3 samples for a column, a sample that is not a number or a date (a text cell value), or a column
-    with both samples and a profile."""
+    3 samples for a column, a sample that is not a number or a date (a text cell value), a column
+    with both samples and a profile, or a hint that is not one field of the closed list and a
+    confidence from 0 to 100, once per column."""
     parsed = parse_column_text(text)
     if parsed is None:
         return "not_cells"
@@ -240,6 +250,10 @@ def column_text_problem(text: str) -> Optional[str]:
         return "text_value"
     if set(parsed["samples"]) & set(parsed["profiles"]):
         return "text_value"
+    hinted = [col for col, _, _ in parsed["hints"]]
+    if len(set(hinted)) != len(hinted) or \
+            any(field not in MAPPING_FIELDS or confidence > 100 for _, field, confidence in parsed["hints"]):
+        return "bad_hint"
     return None
 
 

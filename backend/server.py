@@ -745,26 +745,27 @@ def _months_for(dtype: str, states: list, columns: list, rows: list) -> Optional
     return cr.months_of([r.get(state["column"]) for r in rows]) if state else None
 
 
-async def _ask_model(audit: dict, dtype: str, sheet: "cr.Sheet", rows: list, states: list, sent: list, proposals: list,
-                     open_fields: list):
-    """Step 2: the columns the rules could not decide go to the model, redacted, and nothing waits for it for
-    longer than MAPPING_AI_SECONDS. Returns (states, ai_reading)."""
+async def _ask_model(audit: dict, dtype: str, sheet: "cr.Sheet", rows: list, states: list, proposals: list):
+    """Step 2 (section 4.2, 2026-10-17): with consent, every column goes to the model in one call, redacted, with the
+    rules' proposal and confidence as a hint, and nothing waits for it for longer than MAPPING_AI_SECONDS. On a failure
+    the rules' outcome stands and the columns they left open need a decision. Returns (states, ai_reading)."""
     if audit.get("structure_reading_consent") is not True:
         return states, {"status": "no_consent", "reason": "AI-assisted reading is off for this audit"}
+    hints = {p.column: (p.field, p.confidence) for p in proposals if p.field}
     text = structures.column_mapping_text(
         sheet.columns, rows, audit.get("company_name"), await llm_redaction.get_map(db, audit["id"]),
-        tuple(cr.customer_columns(sheet, proposals)), structures.redact.withheld_values(audit), only=tuple(sent))
+        tuple(cr.customer_columns(sheet, proposals)), structures.redact.withheld_values(audit), hints)
     try:
         read = await asyncio.wait_for(llm_gateway.read_structure(db, audit["id"], text, "column_mapping"),
                                       MAPPING_AI_SECONDS)
     except asyncio.TimeoutError:
-        return cr.apply_model_failure(states, sent), {"status": "timeout", "reason": "AI reading unavailable"}
+        return cr.apply_model_failure(states, cr.undecided(states)), {"status": "timeout", "reason": "AI reading unavailable"}
     if read.status != "read":
-        return cr.apply_model_failure(states, sent), {"status": read.status, "reason": read.reason}
+        return cr.apply_model_failure(states, cr.undecided(states)), {"status": read.status, "reason": read.reason}
     await llm_gateway.record_verification(db, audit["id"], read.key, ["suggestion"] * len(read.items))
-    proposed = structures.proposed_mapping(read.items, sheet.columns, open_fields)
-    proposed = {f: c for f, c in proposed.items() if c in sent}
-    return cr.apply_model(states, sent, proposed), {"status": "read", "reason": read.reason}
+    proposed = structures.proposed_mapping(read.items, sheet.columns, list(FIELD_DEFS[dtype]["required"]) +
+                                           list(FIELD_DEFS[dtype]["optional"]))
+    return cr.apply_model(dtype, sheet, proposals, proposed), {"status": "read", "reason": read.reason}
 
 
 async def _stored_file_type(audit_id: str, digest: str) -> Optional[dict]:
@@ -869,11 +870,13 @@ async def _load(a: dict, audit_id: str, chosen: str, sheet: "cr.Sheet", filename
         states = cr.states_from_saved(chosen, sheet, _saved_columns(reusable[-1]), scale=not any(v in same for v in reusable))
         ai_reading = {"status": "stored", "reason": None}
     else:
-        proposals, open_fields = cr.analyse(chosen, sheet)
+        proposals, _ = cr.analyse(chosen, sheet)
         states = cr.states_from_rules(proposals)
-        sent = cr.to_send(states)
-        if sent and looks["shape"] != "summary":
-            states, ai_reading = await _ask_model(a, chosen, sheet, rows, states, sent, proposals, open_fields)
+        # With consent every upload asks the model (section 4.2). Without it the rules alone decide; a file with a column
+        # they leave open still records the "no_consent" status.
+        asks = a.get("structure_reading_consent") is True or cr.undecided(states)
+        if asks and looks["shape"] != "summary":
+            states, ai_reading = await _ask_model(a, chosen, sheet, rows, states, proposals)
             await _usage_update(audit_id, lambda u: u["steps"]["mapping_ai"].__setitem__(
                 ai_reading["status"], u["steps"]["mapping_ai"].get(ai_reading["status"], 0) + 1))
     mapping = cr.mapping_of(chosen, states)
@@ -1022,7 +1025,7 @@ async def _check_notes(audit_id: str, audit: dict, notes: list) -> list:
     headers, cells = [], []
     for d in files:
         headers += [str(h) for h in d.get("headers") or []] + [str(c) for c in d.get("columns") or []]
-        headers += [c["text"] for c in structures.column_mapping_input(d.get("columns") or [], d.get("rows") or [], (), None, 0)[0]]
+        headers += [c["text"] for c in structures.column_mapping_input(d.get("columns") or [], d.get("rows") or [], (), 0)[0]]
         cells += [v for r in d.get("rows") or [] for v in r.values() if isinstance(v, str)]
     try:
         for n in cleaned:

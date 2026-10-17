@@ -6,7 +6,7 @@ import { seeGlossary } from "./glossary";
 
 export const S1_TEXT_REPLY = "This window accepts files and mapping confirmations.";
 export const S2_EXPLAINER_CONSENT =
-  "Mapping is done by rules first. Where rules cannot decide, the AI sees only those columns' headers, up to 3 example numbers or dates per column and a pattern for text columns – never your full file and never a name – and you confirm those columns. When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table.";
+  "The model reads every column header and a masked sample to propose the mapping. When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table.";
 export const S3_EXPLAINER_NO_CONSENT =
   "Mapping is done by rules only: AI-assisted reading is off for this audit. You map the columns the rules cannot decide.";
 export const S4_DROP_ZONE =
@@ -108,11 +108,13 @@ export const mappedBy = (row) => {
   return MAPPED_BY.rules;
 };
 // S9: the confidence cell, never a dash. A rule row shows its number (with the fit note when the values lower it), an AI
-// suggestion or a column with no proposal says it needs confirmation until the analyst decides it, a saved mapping says
-// "reused". A column the rules found no field for scores 0.
+// suggestion says "AI suggestion – confirm" and never its number (George, 2026-10-17), a column with no proposal says it
+// needs confirmation, both until the analyst decides them; a saved mapping says "reused". A column the rules found no field
+// for scores 0.
 export const S9_confidence = (row) => {
   const decided = row.decision === "confirm" || row.decision === "correct";
   if (row.source === "saved") return "reused";
+  if (row.source === "ai" && !decided) return MAPPED_BY.ai;
   if (row.source === "ai" || row.source === "needs" || row.source === "decision" || row.state === "needs") {
     return decided ? "confirmed" : "needs confirmation";
   }
@@ -120,9 +122,10 @@ export const S9_confidence = (row) => {
   return row.fit_note ? `${n} · ${row.fit_note}` : String(n);
 };
 // Row order (section 4.4): rows that need a click first, then ascending confidence; the auto-accepted 100s come last.
-// A row with no score (an AI suggestion, a column with no proposal) counts as the lowest. Stable on file order.
+// A row with no score shown (an AI suggestion, whose number stays off screen; a column with no proposal) counts as the
+// lowest. Stable on file order.
 export function sortColumns(columns) {
-  const level = (c) => c.confidence ?? -1;
+  const level = (c) => (c.source === "ai" ? -1 : c.confidence ?? -1);
   return columns.map((c, i) => [c, i]).sort(([a, i], [b, j]) =>
     (b.pending ? 1 : 0) - (a.pending ? 1 : 0) || level(a) - level(b) || i - j).map(([c]) => c);
 }

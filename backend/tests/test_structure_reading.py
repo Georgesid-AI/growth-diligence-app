@@ -1479,7 +1479,7 @@ def test_a_deck_waits_for_the_mapped_revenue_file_and_is_read_once_it_is(monkeyp
     assert adapter.calls == 0, "nothing is sent before the customers are in the mapping"
     assert not [c for c in listed["candidates"] if c.get("origin") == "ai"]
     _map_revenue(client)
-    calls_for_mapping = 0                    # the rules map every column of the revenue upload: no column-mapping call
+    calls_for_mapping = 1                    # with consent every upload asks the model once (chat-upload.md section 4.2)
     assert adapter.calls == calls_for_mapping + upload["structures"], "every structure read once"
     deck = _deck(client)["decks"][0]
     assert deck["ai_status"] == "read" and deck["sent_pages"] == [11, 17, 19, 22]
