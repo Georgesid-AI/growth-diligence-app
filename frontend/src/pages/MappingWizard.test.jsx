@@ -876,6 +876,43 @@ describe("the mapping table", () => {
     expect(box.open).toBe(false);
   });
 
+  const CRM_FIELDS = { required: ["deal_id", "created_date", "close_date", "stage"], optional: ["amount", "segment", "founder_involved"] };
+  const CRM_VIEW = (over = {}) => VIEW({ dtype: "crm", file: "crm.csv", fields: CRM_FIELDS, mapping: {},
+    columns: [row("Deal ID", { field: "deal_id" }), row("Created", { field: "created_date" }), row("Close Date", { field: "close_date" }),
+              row("Stage", { field: "stage" })], ...over });
+
+  test("a CRM file's panel holds the box 'Fields used in this analysis' with the agreed text (S29), and a CRM file without an amount is ready", async () => {
+    api.uploadChatFile.mockResolvedValueOnce(VIEW()).mockResolvedValueOnce(CRM_VIEW());
+    await mount();
+    await pickAndMap([file("rev.csv"), file("crm.csv")]);
+    expect(all("crm-fields-help").length).toBe(1);
+    const box = q("crm-fields-help");
+    expect(q("chat-system-crm").contains(box)).toBe(true);
+    expect(q("chat-system-revenue").contains(box)).toBe(false);
+    expect(box.tagName).toBe("DETAILS");
+    expect(box.open).toBe(true);
+    expect(box.compareDocumentPosition(q("mapping-table-crm")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(q("crm-fields-help-title").textContent).toBe("Fields used in this analysis");
+    expect([...box.querySelectorAll("p")].map((p) => p.textContent)).toEqual([
+      "Match Created date, Close date, and Stage / status to calculate sales cycles and win rates.",
+      "Segment is optional. If mapped (for example a plan tier or company size), the sales cycle is also shown per segment with its median, spread and deal count. If not mapped, only the overall sales cycle is shown.",
+      "Founder involved is optional. If mapped, it must hold yes or no per deal (yes / y / true / 1, no / n / false / 0); the app then compares the win rate of deals with and without the founder. Values it cannot read are listed and left out. If not mapped, the founder comparison reads Missing.",
+      "Deal ID is used to remove repeated rows: rows that share a deal ID with the same stage and dates (for example one row per product line) count as one deal, and the number of rows collapsed is reported under Worth flagging.",
+      "Close date is also used for the quarter-end clustering check: the share of won deals closed in the last 10 days of a quarter, by the company's fiscal year-end (needs at least 20 won deals).",
+      "Amount can be mapped but is not used in any calculation.",
+    ]);
+    expect(q("status-crm").textContent).toBe("Ready for calculation");
+  });
+
+  test("a CRM field list offers the required fields, then the optional ones, amount among them", async () => {
+    api.uploadChatFile.mockResolvedValueOnce(CRM_VIEW({ pending: 1, columns: [row("Deal ID", { field: "deal_id" }),
+      row("Owner", { state: "needs", source: "needs", confidence: null, pending: true })] }));
+    await mount();
+    await pickAndMap([file("crm.csv")]);
+    expect([...q("needs-field-Owner").options].map((o) => o.value)).toEqual(
+      ["", "deal_id", "created_date", "close_date", "stage", "amount", "segment", "founder_involved"]);
+  });
+
   test("a confidence lowered by the values says why (S9)", async () => {
     api.uploadChatFile.mockResolvedValue(VIEW({ columns: [row("Amount", { field: "amount", state: "unsure", confidence: 0, fit_note: "0 of 20 values are numbers", pending: true })], pending: 1 }));
     await mount();

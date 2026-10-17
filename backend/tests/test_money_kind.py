@@ -115,4 +115,4 @@ def test_a_crm_deal_volume_column_asks_and_a_volume_answer_keeps_it_out_of_the_m
     col = chat.by_column(body)["Value (GMV)"]
     assert col["field"] == "amount" and col["money_ask"] and col["pending"]
     dropped = decide(api, "crm", "volume", "Value (GMV)").json()
-    assert dropped["mapping"]["amount"] is None and "amount" in dropped["missing_required"]
+    assert dropped["mapping"]["amount"] is None and "amount" not in dropped["missing_required"], "a CRM amount is optional (2026-10-17)"

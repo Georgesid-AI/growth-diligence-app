@@ -338,6 +338,54 @@ def test_a_required_field_that_is_not_mapped_stops_compute_and_the_status_names_
     assert api.post(f"/api/audits/{AUDIT}/compute").status_code == 409
 
 
+# CRM amount is optional (George, 17 Oct 2026, follow-up to PR 123): no calculation reads it.
+CRM_NO_AMOUNT = ("Deal ID,Created,Close Date,Stage\n" + "\n".join(
+    f"D{i},2024-01-{i + 1:02d},2024-02-{i + 1:02d},{'Won' if i % 2 else 'Lost'}" for i in range(8)) + "\n").encode()
+CRM_WITH_AMOUNT = ("Deal ID,Created,Close Date,Stage,Amount\n" + "\n".join(
+    f"D{i},2024-01-{i + 1:02d},2024-02-{i + 1:02d},{'Won' if i % 2 else 'Lost'},{500 + i}" for i in range(8)) + "\n").encode()
+
+
+def test_the_crm_required_fields_are_deal_id_created_close_and_stage_and_amount_is_optional():
+    assert list(cr.FIELD_DEFS["crm"]["required"]) == ["deal_id", "created_date", "close_date", "stage"]
+    assert list(cr.FIELD_DEFS["crm"]["optional"]) == ["amount", "segment", "founder_involved"], "the dropdown order: required, then optional"
+    assert cr.FIELD_DEFS["crm"]["optional"]["amount"] == ["amount", "value", "deal value", "acv", "deal amount"], "aliases unchanged"
+    states = [cr.new_state(col, field, "rules", "auto", 100) for col, field in
+              (("Deal ID", "deal_id"), ("Created", "created_date"), ("Close Date", "close_date"), ("Stage", "stage"))]
+    assert cr.missing_required("crm", states) == []
+    mapping = {"deal_id": "Deal ID", "created_date": "Created", "close_date": "Close Date", "stage": "Stage", "amount": None}
+    assert not cr.is_miss("crm", mapping, None), "four of four required fields: no miss without an amount"
+    assert cr.is_miss("crm", {"deal_id": "Deal ID", "stage": "Stage", "amount": "Amount"}, None), "two of four is still a miss"
+    assert cr.missing_required("crm", states[:3]) == ["stage"]
+
+
+def test_a_crm_file_without_an_amount_column_is_ready_for_calculation_and_computes(api):
+    api.db["audits"].docs[0]["structure_reading_consent"] = False           # the rules alone decide
+    assert upload(api, "revenue.csv", (SAMPLE / "revenue.csv").read_bytes()).json()["pending"] == 0
+    body = upload(api, "deals.csv", CRM_NO_AMOUNT).json()
+    assert body["dtype"] == "crm" and (body["missing_required"], body["pending"], body["saved"]) == ([], 0, True)
+    assert body["fields"] == {"required": ["deal_id", "created_date", "close_date", "stage"],
+                              "optional": ["amount", "segment", "founder_involved"]}
+    r = api.post(f"/api/audits/{AUDIT}/compute")
+    assert r.status_code == 200, r.text
+    assert (r.json()["win_rate"]["won"], r.json()["win_rate"]["lost"]) == (4, 4)
+    again = upload(api, "deals.csv", CRM_NO_AMOUNT).json()
+    assert (again["status"], again["missing_required"], again["pending"]) == ("same_file", [], 0), "the saved mapping applies"
+
+
+def test_a_crm_mapping_saved_with_an_amount_still_applies_to_the_same_headers(api):
+    sheet = cr.read_sheet(CRM_WITH_AMOUNT, "x.csv")
+    api.db["column_mappings"].docs.append({
+        "audit_id": AUDIT, "dtype": "crm", "header_key": structures.header_key("crm", sheet.columns),
+        "mapping": {"deal_id": "Deal ID", "created_date": "Created", "close_date": "Close Date", "stage": "Stage",
+                    "amount": "Amount"}, "saved_at": "2026-10-01T00:00:00"})
+    calls = adapter_of(api).calls
+    body = upload(api, "deals.csv", CRM_WITH_AMOUNT).json()
+    rows = by_column(body)
+    assert adapter_of(api).calls == calls, "no model call for a saved mapping"
+    assert (rows["Amount"]["field"], rows["Amount"]["source"]) == ("amount", "saved")
+    assert (body["missing_required"], body["pending"]) == ([], 0)
+
+
 def test_saving_fx_rates_without_a_mapping_confirms_nothing(api):
     api.state["adapter"] = t.FakeAdapter(replies=[mapping_reply(("revenue_type", 6))])
     body = upload(api, "blank_vs_zero.csv").json()

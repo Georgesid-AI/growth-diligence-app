@@ -5,7 +5,7 @@ import { Layout } from "@/components/Layout";
 import { Provenance } from "@/components/Provenance";
 import { getAudit, getResults, reportUsage } from "@/lib/api";
 import { S22_RECONCILIATION } from "@/lib/chatUpload";
-import { fmtCurrency } from "@/lib/format";
+import { fmtCount, fmtCurrency } from "@/lib/format";
 import { ANOMALIES_NOT_COMPUTED } from "@/lib/gapLists";
 import { seeGlossary } from "@/lib/glossary";
 
@@ -95,6 +95,17 @@ export default function Diagnostics() {
                   <span className="text-slate-700">Deals close-before-created (flagged & excluded)</span>
                   <span className="font-mono text-xs text-slate-900">{r.anomalies.deals_close_before_created.excluded_count}</span>
                 </div>
+                {r.anomalies.deals_duplicate_id && (
+                  <div className="text-sm mt-2" data-testid="diagnostics-deal-repeats">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-700">CRM rows sharing a deal ID</span>
+                      <span className="font-mono text-xs text-slate-900" data-testid="diagnostics-deal-repeats-count">{r.anomalies.deals_duplicate_id.collapsed}</span>
+                    </div>
+                    <div className="text-[11px] font-mono text-slate-500 mt-1" data-testid="diagnostics-deal-repeats-detail">
+                      {fmtCount(r.anomalies.deals_duplicate_id.distinct_ids)} distinct deal IDs
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
             )}
