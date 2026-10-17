@@ -48,6 +48,7 @@
     list it under "Decisions for you" and do not build it.
 27. Never subscribe to PR or CI events and never schedule timed check-ins; George checks the PR's
     Checks tab himself. Report once when the work is pushed, then end the session.
+28. Open the PR as draft, report once, end the session. Never wait for, poll or subscribe to CI.
 
 ## Rule: which decisions to bring to George
 19. Decide engineering questions yourself: rule wording, limits measured from data, test design,
