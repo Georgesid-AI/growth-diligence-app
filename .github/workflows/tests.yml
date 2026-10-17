@@ -22,6 +22,12 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r requirements.txt
+      # Lint by ruff.toml at the repo root (classic set, pinned version).
+      - name: lint
+        working-directory: .
+        run: |
+          pip install ruff==0.16.8
+          ruff check backend/
       # No secrets and no live backend: the live-API suite (tests/backend_test.py) skips itself
       # when nothing answers, and conftest.py supplies the dummy Mongo settings.
       - run: python -m pytest

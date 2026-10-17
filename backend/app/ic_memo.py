@@ -453,7 +453,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, us
     else:
         arr, nrr, churn = results.get("arr") or {}, results.get("nrr") or {}, results.get("gross_churn") or {}
         periods = results.get("metric_periods") or {}
-        at = lambda block: f" ({periods[block]['last']})" if block in periods else ""      # each figure's own period
+        at = lambda block: f" ({periods[block]['last']})" if block in periods else ""      # each figure's own period  # noqa: E731
         growth = (f"ARR {fmt.fmt_currency(arr.get('value'), ccy)}{at('arr')}{notes.source('Monthly MRR by Segment', 'arr.value', arr.get('source'))}, "
                   f"NRR {fmt.fmt_pct(nrr.get('overall_pct'))}{at('nrr')}{notes.source('NRR', 'nrr.overall_pct', nrr.get('source'))}, "
                   f"gross revenue churn {fmt.fmt_pct(churn.get('overall_pct'))}{at('gross_churn')}"

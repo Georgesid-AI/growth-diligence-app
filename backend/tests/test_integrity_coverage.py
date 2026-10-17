@@ -145,7 +145,7 @@ def test_gaps_in_customer_data_is_amber_on_a_resumed_customer_or_a_line_without_
     clean = {"anomalies": {"revenue_gap_then_resume": [], "revenue_missing_customer_id": {"count": 0}, "source": {"file": "revenue.csv"}}}
     found = {"anomalies": {"revenue_gap_then_resume": [{"customer": "C1"}], "revenue_missing_customer_id": {"count": 2},
                            "source": {"file": "revenue.csv"}}}
-    gaps = lambda results: next(r for r in ig.assess(results, deck_count=0, candidates=[])["results"] if r["check"] == "Gaps in customer data")
+    gaps = lambda results: next(r for r in ig.assess(results, deck_count=0, candidates=[])["results"] if r["check"] == "Gaps in customer data")  # noqa: E731
     assert gaps(clean)["result"] == "Green"
     assert (gaps(found)["result"], gaps(found)["finding"]) == (
         "Amber", "1 customers whose revenue stops for over two months and resumes; 2 revenue lines without a customer ID")
@@ -161,7 +161,7 @@ def _cand(cid, deck, page, value, **over):
 
 def test_deck_vs_deck_compares_the_figures_of_every_deck_and_names_the_first_pair():
     ig = _integrity()
-    deck = lambda cands: next(r for r in ig.assess({}, deck_count=2, candidates=cands)["results"] if r["check"] == "Deck-vs-deck figures")
+    deck = lambda cands: next(r for r in ig.assess({}, deck_count=2, candidates=cands)["results"] if r["check"] == "Deck-vs-deck figures")  # noqa: E731
     assert deck([_cand("a", "board.pptx", 3, 1_000_000), _cand("b", "plan.pdf", 5, 1_000_000)])["result"] == "Green"
     differ = [_cand("a", "board.pptx", 3, 1_000_000), _cand("b", "plan.pdf", 5, 1_200_000)]
     row = deck(differ)

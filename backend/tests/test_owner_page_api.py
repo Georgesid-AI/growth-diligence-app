@@ -5,9 +5,7 @@ token or an unknown one is 401, a tester's token is 404 (the guard of docs/specs
 tested in test_access_links.py). These run the real access guard. No network.
 """
 import hashlib
-import json
 import logging
-from datetime import datetime, timedelta, timezone
 
 import pytest
 
