@@ -11,7 +11,7 @@ pytest.importorskip("fastapi")
 pytest.importorskip("motor")
 
 from test_claim_matching import run_claim  # noqa: E402
-from test_claim_register_api import AUDIT, _get, api  # noqa: E402,F401  (the fixture)
+from test_claim_register_api import AUDIT, _get  # noqa: E402
 
 from app import decks  # noqa: E402
 from app.decks import claims as deck_claims  # noqa: E402
@@ -43,8 +43,8 @@ def _row(client, claim_id):
 
 # --- plan section 4, acceptance test 1 -------------------------------------------------------------------------------------------
 
-def test_plan_4_1_a_claim_extracted_as_target_but_actually_actual_is_corrected_in_the_editor_and_re_matched(api):  # noqa: F811
-    client, db = api
+def test_plan_4_1_a_claim_extracted_as_target_but_actually_actual_is_corrected_in_the_editor_and_re_matched(register_api):
+    client, db = register_api
     _add(db, id="t1", claim_type="revenue", value=200000, target_date="2024-02", period_text="Feb 2024",
          snippet="Target ARR of €200,000 in Feb 2024")
     row = _row(client, "t1")
@@ -68,8 +68,8 @@ def test_plan_4_1_a_claim_extracted_as_target_but_actually_actual_is_corrected_i
 # --- plan section 4, acceptance test 2, and 7.1 ---------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("claim_type", ["other", "unknown"])
-def test_plan_4_2_fifteen_months_typed_other_creates_no_task_and_is_not_in_the_review_list(api, claim_type):  # noqa: F811
-    client, db = api
+def test_plan_4_2_fifteen_months_typed_other_creates_no_task_and_is_not_in_the_review_list(register_api, claim_type):
+    client, db = register_api
     _add(db, id="o1", claim_type=claim_type, status="pending", value=15, unit="months", currency=None, target_date=None,
          period_text=None, snippet="15 months")
     review = client.get(f"/api/audits/{AUDIT}/review").json()
@@ -83,8 +83,8 @@ def test_plan_4_2_fifteen_months_typed_other_creates_no_task_and_is_not_in_the_r
     assert listed["group"] == deck_claims.OTHER_GROUP
 
 
-def test_retyping_out_of_other_puts_the_claim_back_into_matching(api):  # noqa: F811
-    client, db = api
+def test_retyping_out_of_other_puts_the_claim_back_into_matching(register_api):
+    client, db = register_api
     _add(db, id="o2", claim_type="other", status="pending", value=200000, target_date="2024-02", period_text="Feb 2024",
          snippet="ARR €200,000 in Feb 2024")
     r = client.put(f"/api/audits/{AUDIT}/decks/candidates/o2", json={"claim_type": "revenue", "reason": "parser_misread"})
@@ -96,8 +96,8 @@ def test_retyping_out_of_other_puts_the_claim_back_into_matching(api):  # noqa: 
 
 # --- plan section 4, acceptance test 3 -------------------------------------------------------------------------------------------
 
-def test_plan_4_3_a_sentence_missed_by_the_parser_is_added_from_the_deck_page_with_its_page_as_source(api):  # noqa: F811
-    client, db = api
+def test_plan_4_3_a_sentence_missed_by_the_parser_is_added_from_the_deck_page_with_its_page_as_source(register_api):
+    client, db = register_api
     _deck(db)
     assert deck_claims.detect_candidates([{"slide": 4, "kind": "text", "text": MISSED, "box": 2}], "testco_board.pptx") == [], \
         "the premise: the parser finds no claim in the sentence"
@@ -115,8 +115,8 @@ def test_plan_4_3_a_sentence_missed_by_the_parser_is_added_from_the_deck_page_wi
     assert listed["sources"][0]["slide"] == 4
 
 
-def test_add_from_deck_takes_a_stored_line_only(api):  # noqa: F811
-    client, db = api
+def test_add_from_deck_takes_a_stored_line_only(register_api):
+    client, db = register_api
     _deck(db)
     assert client.post(f"/api/audits/{AUDIT}/decks/{DECK_ID}/add-from-deck", json={"page": 4, "ref": "b0"}).status_code == 400, \
         "b0 is on slide 3"
@@ -165,8 +165,8 @@ def test_users_with_no_qualifier_need_their_population_and_registered_users_are_
     assert (paying["metric"], paying["evidence_label"]) == ("Customer count", "Verified")
 
 
-def test_add_from_deck_reads_the_fields_of_the_line_or_makes_an_other_figure_and_refuses_a_long_passage(api):  # noqa: F811
-    client, db = api
+def test_add_from_deck_reads_the_fields_of_the_line_or_makes_an_other_figure_and_refuses_a_long_passage(register_api):
+    client, db = register_api
     _deck(db)
     deck = db[decks.TEXT_COLLECTION].docs[-1]
     deck["blocks"] += [{"slide": 5, "kind": "text", "text": "ARR of €2.4M in Dec 2023", "box": 3},
@@ -182,8 +182,8 @@ def test_add_from_deck_reads_the_fields_of_the_line_or_makes_an_other_figure_and
     assert all(r["claim_id"] != missed["id"] for r in reading["register"]), "an Other figure is not in the register"
 
 
-def test_a_growth_basis_set_in_the_editor_replaces_the_one_set_on_the_register_row(api):  # noqa: F811
-    client, db = api
+def test_a_growth_basis_set_in_the_editor_replaces_the_one_set_on_the_register_row(register_api):
+    client, db = register_api
     _add(db, id="g1", claim_type="revenue_growth", value=10, unit="%", currency=None, target_date="2024-02", period_text="Feb 2024",
          snippet="Revenue up 10% in Feb 2024")
     assert client.put(f"/api/audits/{AUDIT}/claims/g1", json={"growth_basis": "yoy"}).status_code == 200

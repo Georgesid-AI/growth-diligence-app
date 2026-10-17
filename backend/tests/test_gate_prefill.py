@@ -5,7 +5,7 @@ import pytest
 pytest.importorskip("fastapi")
 pytest.importorskip("motor")
 
-from test_run_audit import AUDIT, RATINGS, THESIS, api, candidates, memo, ready_for_review  # noqa: E402,F401
+from test_run_audit import AUDIT, RATINGS, THESIS, candidates, memo, ready_for_review  # noqa: E402
 
 from app import claim_matching as cm  # noqa: E402
 from app import verdict  # noqa: E402
@@ -118,99 +118,99 @@ def prefilled_gates(data):
             for cid, v in data["gate_prefill"].items() if "gate_threshold" in v and "gate_date" in v]
 
 
-def test_the_claims_endpoint_carries_prefill_beside_the_register_not_in_it(api):  # noqa: F811
-    data = open_register(api)
+def test_the_claims_endpoint_carries_prefill_beside_the_register_not_in_it(run_api):
+    data = open_register(run_api)
     assert data["gate_prefill"] and all(set(r) <= set(cm.FIELDS) for r in data["register"])
     assert all(r["gate_threshold"] is None and not r["gate_saved"] for r in data["register"] if r["claim_id"] in data["gate_prefill"])
     assert all(v.get("gate_date", REVIEW) <= REVIEW for v in data["gate_prefill"].values())
 
 
-def test_save_all_saves_every_filled_gate_in_one_call_and_the_key_marks_ride_along(api):  # noqa: F811
-    data = open_register(api)
+def test_save_all_saves_every_filled_gate_in_one_call_and_the_key_marks_ride_along(run_api):
+    data = open_register(run_api)
     gates = prefilled_gates(data)
     assert len(gates) >= 3
-    r = api.put(f"/api/audits/{AUDIT}/claim-gates", json={"gates": gates})
+    r = run_api.put(f"/api/audits/{AUDIT}/claim-gates", json={"gates": gates})
     assert r.status_code == 200, r.text
     saved = {x["claim_id"]: x for x in r.json()["register"]}
     assert all(saved[g["claim_id"]]["gate_saved"] and saved[g["claim_id"]]["gate_budget_decision"] == DECISION for g in gates)
     assert sorted(c for c, x in saved.items() if x["key_gate"]) == sorted(g["claim_id"] for g in gates if g.get("key_gate"))
 
 
-def test_save_all_is_refused_as_a_whole_when_one_gate_is_incomplete_or_a_sixth_key_gate(api):  # noqa: F811
-    data = open_register(api)
+def test_save_all_is_refused_as_a_whole_when_one_gate_is_incomplete_or_a_sixth_key_gate(run_api):
+    data = open_register(run_api)
     gates = prefilled_gates(data)
     bad = [{**gates[0], "gate_budget_decision": None}, {"claim_id": gates[1]["claim_id"], "gate_threshold": 1.0, "key_gate": True}]
-    assert api.put(f"/api/audits/{AUDIT}/claim-gates", json={"gates": bad}).status_code == 400
-    assert not any(r["gate_saved"] for r in api.get(f"/api/audits/{AUDIT}/claims").json()["register"]), "nothing is saved"
+    assert run_api.put(f"/api/audits/{AUDIT}/claim-gates", json={"gates": bad}).status_code == 400
+    assert not any(r["gate_saved"] for r in run_api.get(f"/api/audits/{AUDIT}/claims").json()["register"]), "nothing is saved"
     six = [{**g, "key_gate": True} for g in gates[:6]]
     if len(six) == 6:
-        assert api.put(f"/api/audits/{AUDIT}/claim-gates", json={"gates": six}).status_code == 400
+        assert run_api.put(f"/api/audits/{AUDIT}/claim-gates", json={"gates": six}).status_code == 400
 
 
-def test_an_edited_gate_saves_with_the_same_call_and_keeps_the_analysts_value(api):  # noqa: F811
-    data = open_register(api)
+def test_an_edited_gate_saves_with_the_same_call_and_keeps_the_analysts_value(run_api):
+    data = open_register(run_api)
     gates = prefilled_gates(data)
     gates[0]["gate_threshold"] = 123.0
-    assert api.put(f"/api/audits/{AUDIT}/claim-gates", json={"gates": gates}).status_code == 200
-    saved = {x["claim_id"]: x for x in api.get(f"/api/audits/{AUDIT}/claims").json()["register"]}
+    assert run_api.put(f"/api/audits/{AUDIT}/claim-gates", json={"gates": gates}).status_code == 200
+    saved = {x["claim_id"]: x for x in run_api.get(f"/api/audits/{AUDIT}/claims").json()["register"]}
     assert saved[gates[0]["claim_id"]]["gate_threshold"] == 123.0
 
 
-def test_the_csv_and_the_memo_show_a_gate_as_saved_with_no_trace_of_prefill(api):  # noqa: F811
-    data = open_register(api)
-    before = api.get(f"/api/audits/{AUDIT}/claims.csv").text
-    assert api.get(f"/api/audits/{AUDIT}/claims").status_code == 200
-    assert api.get(f"/api/audits/{AUDIT}/claims.csv").text == before, "reading the prefill changes nothing"
+def test_the_csv_and_the_memo_show_a_gate_as_saved_with_no_trace_of_prefill(run_api):
+    data = open_register(run_api)
+    before = run_api.get(f"/api/audits/{AUDIT}/claims.csv").text
+    assert run_api.get(f"/api/audits/{AUDIT}/claims").status_code == 200
+    assert run_api.get(f"/api/audits/{AUDIT}/claims.csv").text == before, "reading the prefill changes nothing"
     assert before.splitlines()[0].split(",")[1:len(cm.FIELDS) + 1] == list(cm.FIELDS), "same columns as before"
     gates = prefilled_gates(data)
-    api.put(f"/api/audits/{AUDIT}/claim-gates", json={"gates": gates})
-    after = api.get(f"/api/audits/{AUDIT}/claims.csv").text
-    ids = api.get(f"/api/audits/{AUDIT}/verdict").json()["verdict"]["top5"]["proposed"]
-    api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"top5": ids, "thesis": THESIS, "ratings": RATINGS})
-    text = memo(api).text
+    run_api.put(f"/api/audits/{AUDIT}/claim-gates", json={"gates": gates})
+    after = run_api.get(f"/api/audits/{AUDIT}/claims.csv").text
+    ids = run_api.get(f"/api/audits/{AUDIT}/verdict").json()["verdict"]["top5"]["proposed"]
+    run_api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"top5": ids, "thesis": THESIS, "ratings": RATINGS})
+    text = memo(run_api).text
     for out in (after, text):
         assert "prefill" not in out.lower() and "confirm" not in out.lower().replace("confirmed", "")
     assert DECISION in after
 
 
-def test_a_gate_saved_by_save_all_equals_the_same_gate_saved_alone(api):  # noqa: F811
-    data = open_register(api)
+def test_a_gate_saved_by_save_all_equals_the_same_gate_saved_alone(run_api):
+    data = open_register(run_api)
     g = prefilled_gates(data)[0]
     body = {k: v for k, v in g.items() if k != "claim_id"}
-    api.put(f"/api/audits/{AUDIT}/claim-gates", json={"gates": [g]})
-    via_all = next(x for x in api.get(f"/api/audits/{AUDIT}/claims").json()["register"] if x["claim_id"] == g["claim_id"])
+    run_api.put(f"/api/audits/{AUDIT}/claim-gates", json={"gates": [g]})
+    via_all = next(x for x in run_api.get(f"/api/audits/{AUDIT}/claims").json()["register"] if x["claim_id"] == g["claim_id"])
     cid = g["claim_id"].replace("#", "%23")
-    api.put(f"/api/audits/{AUDIT}/claims/{cid}", json={**body, "gate_threshold": body["gate_threshold"] + 1})
-    api.put(f"/api/audits/{AUDIT}/claims/{cid}", json=body)
-    alone = next(x for x in api.get(f"/api/audits/{AUDIT}/claims").json()["register"] if x["claim_id"] == g["claim_id"])
+    run_api.put(f"/api/audits/{AUDIT}/claims/{cid}", json={**body, "gate_threshold": body["gate_threshold"] + 1})
+    run_api.put(f"/api/audits/{AUDIT}/claims/{cid}", json=body)
+    alone = next(x for x in run_api.get(f"/api/audits/{AUDIT}/claims").json()["register"] if x["claim_id"] == g["claim_id"])
     assert alone == via_all
 
 
 # --- the first quarterly review, an audit set-up field -------------------------------------------------------------------------
 
-def test_a_new_audit_has_a_first_quarterly_review_90_days_after_its_creation(api):  # noqa: F811
-    r = api.post("/api/audits", json={"company_name": "NewCo", "client_name": "Fund"})
+def test_a_new_audit_has_a_first_quarterly_review_90_days_after_its_creation(run_api):
+    r = run_api.post("/api/audits", json={"company_name": "NewCo", "client_name": "Fund"})
     assert r.status_code == 200
     created = r.json()["created_at"][:10]
     from datetime import date, timedelta
     assert r.json()["ic_inputs"]["first_quarterly_review"] == (date.fromisoformat(created) + timedelta(days=90)).isoformat()
 
 
-def test_the_review_date_is_editable_and_clearing_it_returns_the_default(api):  # noqa: F811
-    ready_for_review(api)
-    assert api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"first_quarterly_review": "2027-03-31"}).status_code == 200
-    assert api.get(f"/api/audits/{AUDIT}").json()["ic_inputs"]["first_quarterly_review"] == "2027-03-31"
-    assert api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"first_quarterly_review": None}).status_code == 200
-    assert api.get(f"/api/audits/{AUDIT}").json()["ic_inputs"]["first_quarterly_review"] == "2027-01-09"
+def test_the_review_date_is_editable_and_clearing_it_returns_the_default(run_api):
+    ready_for_review(run_api)
+    assert run_api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"first_quarterly_review": "2027-03-31"}).status_code == 200
+    assert run_api.get(f"/api/audits/{AUDIT}").json()["ic_inputs"]["first_quarterly_review"] == "2027-03-31"
+    assert run_api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"first_quarterly_review": None}).status_code == 200
+    assert run_api.get(f"/api/audits/{AUDIT}").json()["ic_inputs"]["first_quarterly_review"] == "2027-01-09"
 
 
-def test_a_claim_without_a_period_is_dated_by_the_audits_review_date_and_no_period_goes_past_it(api):  # noqa: F811
-    ready_for_review(api)
-    for c in candidates(api):
+def test_a_claim_without_a_period_is_dated_by_the_audits_review_date_and_no_period_goes_past_it(run_api):
+    ready_for_review(run_api)
+    for c in candidates(run_api):
         if c["status"] == "pending":
-            api.put(f"/api/audits/{AUDIT}/decks/candidates/{c['id']}", json={"status": "approved"})
-    data = api.get(f"/api/audits/{AUDIT}/claims").json()
-    review = api.get(f"/api/audits/{AUDIT}").json()["ic_inputs"]["first_quarterly_review"]
+            run_api.put(f"/api/audits/{AUDIT}/decks/candidates/{c['id']}", json={"status": "approved"})
+    data = run_api.get(f"/api/audits/{AUDIT}/claims").json()
+    review = run_api.get(f"/api/audits/{AUDIT}").json()["ic_inputs"]["first_quarterly_review"]
     assert data["gate_prefill"] and all(v.get("gate_date") for v in data["gate_prefill"].values()), "every gate has a date"
     assert all(v["gate_date"] <= review for v in data["gate_prefill"].values())
     assert any(v["gate_date"] == review for v in data["gate_prefill"].values())

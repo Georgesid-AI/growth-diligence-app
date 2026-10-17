@@ -10,8 +10,6 @@ import pytest
 pytest.importorskip("fastapi")
 pytest.importorskip("motor")
 
-from fastapi.testclient import TestClient  # noqa: E402
-
 import server  # noqa: E402
 import test_llm_gateway as t  # noqa: E402
 from test_claim_matching import RUNS, candidates_for, results_for, settings  # noqa: E402
@@ -74,18 +72,6 @@ class EchoAdapter(t.FakeAdapter):
             base["verdict"] = "Material concerns" if rec.get("window_over_tolerance") else "Needs clarification"
             base["headline"] = f"{base['verdict']}: the checks that could be run are listed below."
         return json.dumps(base), 1200, 300
-
-
-@pytest.fixture()
-def api(monkeypatch):
-    db = t.FakeDB()
-    db["audits"].docs.append({**AUDIT_DOC, "usage": usage_mod.empty()})
-    monkeypatch.setattr(server, "db", db)
-    adapter = EchoAdapter()
-    monkeypatch.setattr(gateway, "AnthropicAdapter", lambda *a, **k: adapter)
-    client = TestClient(server.app, raise_server_exceptions=False)
-    client.db, client.adapter = db, adapter
-    return client
 
 
 def upload_files(client, kinds=("revenue", "crm", "pnl")):
@@ -153,85 +139,85 @@ def candidates(client):
 
 # --- the stages -------------------------------------------------------------------------------------------------------------
 
-def test_the_stages_run_in_the_order_mapping_engine_claims_and_each_reports_done(api):
-    upload_files(api)
-    confirm_open_columns(api)
-    add_deck(api)
+def test_the_stages_run_in_the_order_mapping_engine_claims_and_each_reports_done(run_api):
+    upload_files(run_api)
+    confirm_open_columns(run_api)
+    add_deck(run_api)
     assert run_audit.STAGES == ("mapping", "engine", "claims")
-    results = run_audit_button(api)
+    results = run_audit_button(run_api)
     assert [(r["stage"], r["status"]) for r in results] == [("mapping", "done"), ("engine", "done"), ("claims", "done")]
-    assert api.db["audits"].docs[0]["results"] and api.db["audits"].docs[0]["status"] == "computed"
+    assert run_api.db["audits"].docs[0]["results"] and run_api.db["audits"].docs[0]["status"] == "computed"
 
 
-def test_a_stage_asked_out_of_order_waits_and_does_nothing(api):
-    upload_files(api)
-    confirm_open_columns(api)
-    add_deck(api)
-    assert stage(api, "claims")["status"] == "waiting" and not api.db["audits"].docs[0]["results"]
-    assert all(c["status"] == "pending" for c in candidates(api)), "no claim is accepted before the calculations"
-    assert stage(api, "engine")["status"] == "done"
-    assert stage(api, "claims")["status"] == "done"
+def test_a_stage_asked_out_of_order_waits_and_does_nothing(run_api):
+    upload_files(run_api)
+    confirm_open_columns(run_api)
+    add_deck(run_api)
+    assert stage(run_api, "claims")["status"] == "waiting" and not run_api.db["audits"].docs[0]["results"]
+    assert all(c["status"] == "pending" for c in candidates(run_api)), "no claim is accepted before the calculations"
+    assert stage(run_api, "engine")["status"] == "done"
+    assert stage(run_api, "claims")["status"] == "done"
 
 
-def test_an_unknown_stage_is_a_404_and_an_unknown_audit_too(api):
-    assert api.post(f"/api/audits/{AUDIT}/run/launch").status_code == 404
-    assert api.post("/api/audits/nope/run/mapping").status_code == 404
-    assert api.get("/api/audits/nope/review").status_code == 404
+def test_an_unknown_stage_is_a_404_and_an_unknown_audit_too(run_api):
+    assert run_api.post(f"/api/audits/{AUDIT}/run/launch").status_code == 404
+    assert run_api.post("/api/audits/nope/run/mapping").status_code == 404
+    assert run_api.get("/api/audits/nope/review").status_code == 404
 
 
-def test_with_no_file_the_mapping_stage_says_so_in_plain_english(api):
-    res = stage(api, "mapping")
+def test_with_no_file_the_mapping_stage_says_so_in_plain_english(run_api):
+    res = stage(run_api, "mapping")
     assert (res["status"], res["message"]) == ("failed", run_audit.NO_FILES)
-    upload_files(api, ("crm",))
-    assert stage(api, "mapping")["message"] == run_audit.NO_REVENUE
+    upload_files(run_api, ("crm",))
+    assert stage(run_api, "mapping")["message"] == run_audit.NO_REVENUE
 
 
-def test_a_column_that_waits_stops_the_run_at_the_mapping_stage_and_the_engine_waits(api):
-    upload_files(api)
-    confirm_open_columns(api)
-    doc = next(d for d in api.db["datasets"].docs if d["dtype"] == "revenue")
+def test_a_column_that_waits_stops_the_run_at_the_mapping_stage_and_the_engine_waits(run_api):
+    upload_files(run_api)
+    confirm_open_columns(run_api)
+    doc = next(d for d in run_api.db["datasets"].docs if d["dtype"] == "revenue")
     doc["columns_state"][0] = {**doc["columns_state"][0], "state": "unsure"}
-    results = run_audit_button(api)
+    results = run_audit_button(run_api)
     assert [(r["stage"], r["status"]) for r in results] == [("mapping", "needs_review")] and results[0]["open"] == 1
-    assert stage(api, "engine")["status"] == "waiting" and not api.db["audits"].docs[0]["results"]
+    assert stage(run_api, "engine")["status"] == "waiting" and not run_api.db["audits"].docs[0]["results"]
     doc["columns_state"][0] = {**doc["columns_state"][0], "state": "confirmed"}
-    assert [r["status"] for r in run_audit_button(api)] == ["done", "done", "done"], "Run audit again carries on"
+    assert [r["status"] for r in run_audit_button(run_api)] == ["done", "done", "done"], "Run audit again carries on"
 
 
-def test_a_stage_that_fails_says_what_to_do_without_the_exception_text_and_retry_runs_it_again(api, monkeypatch, caplog):
+def test_a_stage_that_fails_says_what_to_do_without_the_exception_text_and_retry_runs_it_again(run_api, monkeypatch, caplog):
     import logging
-    upload_files(api)
-    confirm_open_columns(api)
+    upload_files(run_api)
+    confirm_open_columns(run_api)
     original = server._run_compute
 
     async def broken(audit_id):
         raise ValueError("Zeta Holdings 4242 secret")
     monkeypatch.setattr(server, "_run_compute", broken)
     with caplog.at_level(logging.DEBUG):
-        res = stage(api, "engine")
+        res = stage(run_api, "engine")
     assert (res["status"], res["message"]) == ("failed", run_audit.ENGINE_FAILED)
     assert "Zeta" not in json.dumps(res) and "4242" not in json.dumps(res)
     assert "Zeta" not in caplog.text and "4242" not in caplog.text and "ValueError" in caplog.text, "the log has the type"
     monkeypatch.setattr(server, "_run_compute", original)
-    assert stage(api, "engine")["status"] == "done", "Retry stage"
+    assert stage(run_api, "engine")["status"] == "done", "Retry stage"
 
 
-def test_the_claims_stage_waits_while_the_decks_are_read(api):
-    upload_files(api)
-    confirm_open_columns(api)
-    add_deck(api)
-    api.db[decks.TEXT_COLLECTION].docs[0]["ai_status"] = "reading"
-    stage(api, "engine")
-    assert stage(api, "claims")["status"] == "running"
-    api.db[decks.TEXT_COLLECTION].docs[0]["ai_status"] = "read"
-    assert stage(api, "claims")["status"] == "done"
+def test_the_claims_stage_waits_while_the_decks_are_read(run_api):
+    upload_files(run_api)
+    confirm_open_columns(run_api)
+    add_deck(run_api)
+    run_api.db[decks.TEXT_COLLECTION].docs[0]["ai_status"] = "reading"
+    stage(run_api, "engine")
+    assert stage(run_api, "claims")["status"] == "running"
+    run_api.db[decks.TEXT_COLLECTION].docs[0]["ai_status"] = "read"
+    assert stage(run_api, "claims")["status"] == "done"
 
 
-def test_an_audit_with_no_deck_has_no_claims_to_read(api):
-    upload_files(api)
-    confirm_open_columns(api)
-    stage(api, "engine")
-    res = stage(api, "claims")
+def test_an_audit_with_no_deck_has_no_claims_to_read(run_api):
+    upload_files(run_api)
+    confirm_open_columns(run_api)
+    stage(run_api, "engine")
+    res = stage(run_api, "claims")
     assert (res["status"], res["accepted"], res["open"], res["message"]) == ("done", 0, 0, run_audit.NO_DECKS)
 
 
@@ -242,37 +228,37 @@ def test_no_threshold_or_tolerance_changed():
     assert (cm.RATE_TOLERANCE_PP, cm.AMOUNT_TOLERANCE) == (1.0, 0.05)
 
 
-def test_columns_the_rules_accepted_are_counted_and_the_ones_that_wait_are_listed_once(api):
-    uploads = upload_files(api)
+def test_columns_the_rules_accepted_are_counted_and_the_ones_that_wait_are_listed_once(run_api):
+    uploads = upload_files(run_api)
     waiting = sum(1 for body in uploads.values() for c in body["columns"] if c["pending"])
     auto = sum(1 for body in uploads.values() for c in body["columns"] if c["state"] == "auto")
-    res = stage(api, "mapping")
+    res = stage(run_api, "mapping")
     assert auto > 0 and (res["status"], res["open"], res["auto"]) == ("needs_review" if waiting else "done", waiting, auto)
-    assert confirm_open_columns(api) == waiting
-    assert review(api)["mappings"]["open"] == 0 and review(api)["mappings"]["auto"] == auto, "a Confirm does not change the count of auto columns"
-    assert stage(api, "mapping")["status"] == "done"
+    assert confirm_open_columns(run_api) == waiting
+    assert review(run_api)["mappings"]["open"] == 0 and review(run_api)["mappings"]["auto"] == auto, "a Confirm does not change the count of auto columns"
+    assert stage(run_api, "mapping")["status"] == "done"
 
 
-def test_claims_within_tolerance_are_accepted_and_the_others_stay_for_the_review_screen(api):
-    upload_files(api)
-    confirm_open_columns(api)
-    add_deck(api)
-    stage(api, "engine")
-    res = stage(api, "claims")
+def test_claims_within_tolerance_are_accepted_and_the_others_stay_for_the_review_screen(run_api):
+    upload_files(run_api)
+    confirm_open_columns(run_api)
+    add_deck(run_api)
+    stage(run_api, "engine")
+    res = stage(run_api, "claims")
     rows = cm.build_register(candidates_for(RUN), results_for(RUN), settings(RUN))
     verified = {r["claim_id"].split("#")[0] for r in rows if r["evidence_label"] == "Verified"}
     beats = {r["claim_id"].split("#")[0] for r in rows if cm.is_beat(r)}
-    accepted = {c["id"] for c in candidates(api) if c.get("auto_accepted")}
+    accepted = {c["id"] for c in candidates(run_api) if c.get("auto_accepted")}
     assert beats, "fixture: a Verified beat"
     assert res["accepted"] == len(accepted) and 0 < len(accepted) <= len(verified - beats)
     assert accepted <= verified - beats, "only what the register labels Verified within tolerance: a beat waits for the analyst"
-    assert not accepted & beats and all(c["status"] == "pending" for c in candidates(api) if c["id"] in beats)
-    left = [c for c in candidates(api) if c["status"] == "pending"]
+    assert not accepted & beats and all(c["status"] == "pending" for c in candidates(run_api) if c["id"] in beats)
+    left = [c for c in candidates(run_api) if c["status"] == "pending"]
     assert res["open"] == len(left) and left, "claims outside tolerance wait for the analyst"
-    assert all(c["status"] in ("approved", "edited") for c in candidates(api) if c.get("auto_accepted"))
-    summary = review(api)["claims"]
+    assert all(c["status"] in ("approved", "edited") for c in candidates(run_api) if c.get("auto_accepted"))
+    summary = review(run_api)["claims"]
     assert summary["auto_accepted"] == len(accepted) and set(summary["auto_accepted_ids"]) == accepted and summary["open"] == len(left)
-    again = stage(api, "claims")
+    again = stage(run_api, "claims")
     assert again["accepted"] == 0, "running the stage again accepts nothing twice"
 
 
@@ -288,37 +274,37 @@ def test_only_a_row_within_tolerance_is_accepted_not_a_beat_nor_a_definition_che
     assert run_audit.within_tolerance_ids([{**plain, "claim_id": "e#1"}, {**plain, "claim_id": "e#2"}], ["e"]) == ["e"]
 
 
-def test_an_accepted_claim_can_still_be_rejected_or_edited_by_the_analyst(api):
-    upload_files(api)
-    confirm_open_columns(api)
-    add_deck(api)
-    stage(api, "engine")
-    stage(api, "claims")
-    cid = next(c["id"] for c in candidates(api) if c.get("auto_accepted"))
-    r = api.put(f"/api/audits/{AUDIT}/decks/candidates/{cid}", json={"status": "rejected"})
+def test_an_accepted_claim_can_still_be_rejected_or_edited_by_the_analyst(run_api):
+    upload_files(run_api)
+    confirm_open_columns(run_api)
+    add_deck(run_api)
+    stage(run_api, "engine")
+    stage(run_api, "claims")
+    cid = next(c["id"] for c in candidates(run_api) if c.get("auto_accepted"))
+    r = run_api.put(f"/api/audits/{AUDIT}/decks/candidates/{cid}", json={"status": "rejected"})
     assert r.status_code == 200 and r.json()["status"] == "rejected"
-    assert review(api)["claims"]["auto_accepted"] == len(
-        [c for c in candidates(api) if c.get("auto_accepted") and c["status"] != "rejected"])
+    assert review(run_api)["claims"]["auto_accepted"] == len(
+        [c for c in candidates(run_api) if c.get("auto_accepted") and c["status"] != "rejected"])
 
 
-def test_a_claim_with_an_open_revenue_or_volume_question_is_never_accepted(api):
-    upload_files(api)
-    confirm_open_columns(api)
-    add_deck(api)
+def test_a_claim_with_an_open_revenue_or_volume_question_is_never_accepted(run_api):
+    upload_files(run_api)
+    confirm_open_columns(run_api)
+    add_deck(run_api)
     # A turnover claim the deck makes in the TestCo wording, whose figure the revenue file would otherwise confirm.
-    base = next(c for c in candidates(api) if c["claim_type"] == "revenue")
-    api.db[decks.CANDIDATES_COLLECTION].docs.append(
+    base = next(c for c in candidates(run_api) if c["claim_type"] == "revenue")
+    run_api.db[decks.CANDIDATES_COLLECTION].docs.append(
         {**copy.deepcopy(base), "id": "turnover1", "snippet": "Gross turnover (GMV) of the platform", "label_from": "GMV",
          "status": "pending"})
-    stage(api, "engine")
-    audit = api.db["audits"].docs[0]
+    stage(run_api, "engine")
+    audit = run_api.db["audits"].docs[0]
     views = server.claim_matching.turnover_views(
-        candidates(api), audit["results"], server._register_settings(audit, {"EUR": 1.0}, None))
+        candidates(run_api), audit["results"], server._register_settings(audit, {"EUR": 1.0}, None))
     open_ids = {cid for cid, vs in views.items() if any(v["turnover_set_by"] != "analyst" for v in vs)}
     assert open_ids, "fixture: a claim with an open Revenue / Volume question"
-    stage(api, "claims")
-    assert not [c for c in candidates(api) if c["id"] in open_ids and c.get("auto_accepted")]
-    summary = review(api)["claims"]
+    stage(run_api, "claims")
+    assert not [c for c in candidates(run_api) if c["id"] in open_ids and c.get("auto_accepted")]
+    summary = review(run_api)["claims"]
     assert 0 < summary["turnover_open"] <= summary["open"]
 
 
@@ -331,39 +317,39 @@ def ready_for_review(client, only_verified=False):
     assert [r["status"] for r in run_audit_button(client)] == ["done", "done", "done"]
 
 
-def test_the_review_inputs_persist_and_come_back_on_the_next_read(api):
-    ready_for_review(api)
-    ids = api.get(f"/api/audits/{AUDIT}/verdict").json()["verdict"]["top5"]["proposed"]
-    assert api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"top5": ids}).status_code == 200
-    assert api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"thesis": THESIS, "ratings": RATINGS}).status_code == 200
-    body = api.get(f"/api/audits/{AUDIT}/verdict").json()
+def test_the_review_inputs_persist_and_come_back_on_the_next_read(run_api):
+    ready_for_review(run_api)
+    ids = run_api.get(f"/api/audits/{AUDIT}/verdict").json()["verdict"]["top5"]["proposed"]
+    assert run_api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"top5": ids}).status_code == 200
+    assert run_api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"thesis": THESIS, "ratings": RATINGS}).status_code == 200
+    body = run_api.get(f"/api/audits/{AUDIT}/verdict").json()
     assert body["verdict"]["top5"]["confirmed"] and body["verdict"]["top5"]["claim_ids"] == ids
     assert body["ic_inputs"]["thesis"] == THESIS and body["ic_inputs"]["ratings"] == RATINGS
-    assert api.db["audits"].docs[0]["ic_inputs"]["ratings"] == RATINGS, "stored on the audit, not in the browser"
+    assert run_api.db["audits"].docs[0]["ic_inputs"]["ratings"] == RATINGS, "stored on the audit, not in the browser"
 
 
-def test_a_gate_set_on_the_review_screen_is_the_registers_gate(api):
-    ready_for_review(api)
-    open_claim = next(c for c in candidates(api) if c["status"] == "pending")
-    assert api.put(f"/api/audits/{AUDIT}/decks/candidates/{open_claim['id']}", json={"status": "approved"}).status_code == 200
-    row = next(r for r in api.get(f"/api/audits/{AUDIT}/claims").json()["register"] if r["evidence_label"] != "Verified")
+def test_a_gate_set_on_the_review_screen_is_the_registers_gate(run_api):
+    ready_for_review(run_api)
+    open_claim = next(c for c in candidates(run_api) if c["status"] == "pending")
+    assert run_api.put(f"/api/audits/{AUDIT}/decks/candidates/{open_claim['id']}", json={"status": "approved"}).status_code == 200
+    row = next(r for r in run_api.get(f"/api/audits/{AUDIT}/claims").json()["register"] if r["evidence_label"] != "Verified")
     body = {"gate_threshold": 100.0, "gate_budget_decision": "the Series B hiring plan", "gate_date": "2024-06-30"}
     cid = row["claim_id"].replace("#", "%23")
-    assert api.put(f"/api/audits/{AUDIT}/claims/{cid}", json=body).status_code == 200
-    saved = next(r for r in api.get(f"/api/audits/{AUDIT}/claims").json()["register"] if r["claim_id"] == row["claim_id"])
+    assert run_api.put(f"/api/audits/{AUDIT}/claims/{cid}", json=body).status_code == 200
+    saved = next(r for r in run_api.get(f"/api/audits/{AUDIT}/claims").json()["register"] if r["claim_id"] == row["claim_id"])
     assert saved["gate_saved"] and saved["gate_threshold"] == 100.0
 
 
 # --- narratives run only from their button -----------------------------------------------------------------------------------
 
-def test_opening_the_review_screen_runs_no_narrative_and_the_estimate_makes_no_call(api):
-    ready_for_review(api)
+def test_opening_the_review_screen_runs_no_narrative_and_the_estimate_makes_no_call(run_api):
+    ready_for_review(run_api)
     for path in (f"/api/audits/{AUDIT}/review", f"/api/audits/{AUDIT}/verdict", f"/api/audits/{AUDIT}/claims",
                  f"/api/runs/{AUDIT}/narratives/estimate", f"/api/runs/{AUDIT}/narrative/growth_engine",
                  f"/api/runs/{AUDIT}/narrative/data_inventory", f"/api/runs/{AUDIT}/narrative/data_integrity"):
-        assert api.get(path).status_code == 200, path
-    narrative_calls = [p for p in api.adapter.payloads if "valid_source_keys" in p]
-    assert narrative_calls == [] and api.db["llm_narratives"].docs == []
+        assert run_api.get(path).status_code == 200, path
+    narrative_calls = [p for p in run_api.adapter.payloads if "valid_source_keys" in p]
+    assert narrative_calls == [] and run_api.db["llm_narratives"].docs == []
 
 
 def write_all(client):
@@ -377,46 +363,46 @@ def write_all(client):
     return est, out
 
 
-def test_write_all_narratives_runs_every_enabled_step_through_the_gateway_and_a_second_press_costs_nothing(api):
-    ready_for_review(api)
-    est = api.get(f"/api/runs/{AUDIT}/narratives/estimate").json()
+def test_write_all_narratives_runs_every_enabled_step_through_the_gateway_and_a_second_press_costs_nothing(run_api):
+    ready_for_review(run_api)
+    est = run_api.get(f"/api/runs/{AUDIT}/narratives/estimate").json()
     enabled = [s for s, c in gateway.STEP_CONFIG.items() if c.get("enabled")]
     assert [s["step"] for s in est["steps"]] == enabled and set(enabled) == {"growth_engine", "data_inventory", "data_integrity"}
     assert est["total_usd"] == round(sum(s["estimate_usd"] for s in est["steps"]), 4) > 0
     assert all(s["cached"] is False and s["estimate_usd"] > 0 for s in est["steps"])
-    _, done = write_all(api)
+    _, done = write_all(run_api)
     assert done == {step: "ok" for step in enabled}, done
-    assert len([p for p in api.adapter.payloads if "valid_source_keys" in p]) == len(enabled)
-    calls = len(api.adapter.payloads)
-    est2, again = write_all(api)
-    assert len(api.adapter.payloads) == calls, "the cache serves the second press"
+    assert len([p for p in run_api.adapter.payloads if "valid_source_keys" in p]) == len(enabled)
+    calls = len(run_api.adapter.payloads)
+    est2, again = write_all(run_api)
+    assert len(run_api.adapter.payloads) == calls, "the cache serves the second press"
     assert est2["total_usd"] == 0 and all(s["cached"] for s in est2["steps"])
-    assert {c["status"] for c in api.db["llm_calls"].docs} <= {"ok", "flagged"}
+    assert {c["status"] for c in run_api.db["llm_calls"].docs} <= {"ok", "flagged"}
 
 
-def test_write_all_narratives_keeps_the_spend_cap_and_a_refusal_degrades_to_the_metrics(api, monkeypatch):
+def test_write_all_narratives_keeps_the_spend_cap_and_a_refusal_degrades_to_the_metrics(run_api, monkeypatch):
     from app.llm import guards
 
     async def refuse(db):
         raise guards.GuardRefusal("daily_spend_cap_exceeded", "daily spend cap reached")
-    ready_for_review(api)
+    ready_for_review(run_api)
     monkeypatch.setattr(guards, "check_spend_cap", refuse)
-    _, done = write_all(api)
-    assert set(done.values()) == {"unavailable"} and not [p for p in api.adapter.payloads if "valid_source_keys" in p]
-    assert api.get(f"/api/audits/{AUDIT}/results").status_code == 200, "every computed metric still renders"
+    _, done = write_all(run_api)
+    assert set(done.values()) == {"unavailable"} and not [p for p in run_api.adapter.payloads if "valid_source_keys" in p]
+    assert run_api.get(f"/api/audits/{AUDIT}/results").status_code == 200, "every computed metric still renders"
 
 
 def est_steps(est):
     return {s["step"] for s in est["steps"]}
 
 
-def test_the_estimate_is_an_upper_bound_not_a_cost_and_is_not_logged_as_a_call(api):
-    ready_for_review(api)
-    est = api.get(f"/api/runs/{AUDIT}/narratives/estimate").json()
-    before = len(api.db["llm_calls"].docs)
-    assert "upper bound" in est["basis"] and len(api.db["llm_calls"].docs) == before, "an estimate is not a call"
-    write_all(api)
-    spent = sum(c["estimated_cost_usd"] for c in api.db["llm_calls"].docs if c["step"] in est_steps(est))
+def test_the_estimate_is_an_upper_bound_not_a_cost_and_is_not_logged_as_a_call(run_api):
+    ready_for_review(run_api)
+    est = run_api.get(f"/api/runs/{AUDIT}/narratives/estimate").json()
+    before = len(run_api.db["llm_calls"].docs)
+    assert "upper bound" in est["basis"] and len(run_api.db["llm_calls"].docs) == before, "an estimate is not a call"
+    write_all(run_api)
+    spent = sum(c["estimated_cost_usd"] for c in run_api.db["llm_calls"].docs if c["step"] in est_steps(est))
     assert 0 < spent <= est["total_usd"], (spent, est["total_usd"])
 
 
@@ -426,24 +412,24 @@ def memo(client):
     return client.get(f"/api/audits/{AUDIT}/memo.md")
 
 
-def test_the_memo_is_refused_until_ratings_are_entered_and_then_built(api):
-    ready_for_review(api, only_verified=True)
-    ids = api.get(f"/api/audits/{AUDIT}/verdict").json()["verdict"]["top5"]["proposed"]
-    api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"top5": ids, "thesis": THESIS, "judgment": JUDGMENT})
-    r = memo(api)
+def test_the_memo_is_refused_until_ratings_are_entered_and_then_built(run_api):
+    ready_for_review(run_api, only_verified=True)
+    ids = run_api.get(f"/api/audits/{AUDIT}/verdict").json()["verdict"]["top5"]["proposed"]
+    run_api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"top5": ids, "thesis": THESIS, "judgment": JUDGMENT})
+    r = memo(run_api)
     assert r.status_code == 409 and "rate Data reliability, Growth engine" in r.json()["detail"]
-    api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"ratings": RATINGS})
-    r = memo(api)
+    run_api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"ratings": RATINGS})
+    r = memo(run_api)
     assert r.status_code == 200, r.text
 
 
-def test_the_reconciliation_blocker_is_on_the_review_summary_and_in_the_memo_not_hidden(api):
-    ready_for_review(api, only_verified=True)
-    kinds = [b["kind"] for b in review(api)["blockers"]]
+def test_the_reconciliation_blocker_is_on_the_review_summary_and_in_the_memo_not_hidden(run_api):
+    ready_for_review(run_api, only_verified=True)
+    kinds = [b["kind"] for b in review(run_api)["blockers"]]
     assert "revenue_reconciliation" in kinds, "the sample files differ from the sample P&L by more than 2%"
-    ids = api.get(f"/api/audits/{AUDIT}/verdict").json()["verdict"]["top5"]["proposed"]
-    api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"top5": ids, "thesis": THESIS, "ratings": RATINGS, "judgment": JUDGMENT})
-    r = memo(api)
+    ids = run_api.get(f"/api/audits/{AUDIT}/verdict").json()["verdict"]["top5"]["proposed"]
+    run_api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"top5": ids, "thesis": THESIS, "ratings": RATINGS, "judgment": JUDGMENT})
+    r = memo(run_api)
     assert r.status_code == 200 and "Revenue file and P&L differ by" in r.text.split("## Key gates")[1].split("## Data gaps")[0]
 
 
@@ -527,8 +513,8 @@ def analyst_flow(client, only_verified):
     return clicks, gated
 
 
-def test_a_clean_testco_audit_goes_from_upload_to_the_memo_in_no_more_than_15_clicks(api):
-    clicks, gated = analyst_flow(api, only_verified=True)
+def test_a_clean_testco_audit_goes_from_upload_to_the_memo_in_no_more_than_15_clicks(run_api):
+    clicks, gated = analyst_flow(run_api, only_verified=True)
     print(f"\nCLICKS clean TestCo: {clicks.n} -> {clicks.log}")
     assert gated == [], "fixture: a clean audit has no top-5 claim outside tolerance, so no gate to set"
     assert clicks.n <= MAX_CLICKS, f"{clicks.n} clicks: {clicks.log}"
@@ -543,12 +529,12 @@ def test_the_click_count_fails_above_15():
         assert spent.n <= MAX_CLICKS
 
 
-def test_the_full_testco_audit_with_contradicted_top_5_claims_needs_more_clicks_than_a_clean_one(api):
-    clicks, gated = analyst_flow(api, only_verified=False)
+def test_the_full_testco_audit_with_contradicted_top_5_claims_needs_more_clicks_than_a_clean_one(run_api):
+    clicks, gated = analyst_flow(run_api, only_verified=False)
     print(f"\nCLICKS full TestCo (33 claims, top 5 outside tolerance): {clicks.n}")
     assert len(gated) == 5 and clicks.n > MAX_CLICKS, "the budget decision of each gate is the analyst's: more than the clean audit"
 
 
-def test_the_full_testco_audit_goes_from_upload_to_the_memo_in_no_more_than_23_clicks(api):
-    clicks, _ = analyst_flow(api, only_verified=False)
+def test_the_full_testco_audit_goes_from_upload_to_the_memo_in_no_more_than_23_clicks(run_api):
+    clicks, _ = analyst_flow(run_api, only_verified=False)
     assert clicks.n <= MAX_CLICKS_FULL, f"{clicks.n} clicks: {clicks.log}"

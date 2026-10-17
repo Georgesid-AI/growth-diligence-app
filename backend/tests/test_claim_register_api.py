@@ -10,9 +10,6 @@ import pytest
 pytest.importorskip("fastapi")
 pytest.importorskip("motor")
 
-from fastapi.testclient import TestClient  # noqa: E402
-
-import server  # noqa: E402
 import test_llm_gateway as t  # noqa: E402
 from claim_matching_support import engine_results  # noqa: E402
 from test_claim_matching import RUNS, candidates_for  # noqa: E402
@@ -25,8 +22,9 @@ AUDIT = "audit-cm"
 RUN = RUNS["A"]
 
 
-@pytest.fixture()
-def api(monkeypatch):
+def starting_db():
+    """The `register_api` fixture's database (tests/conftest.py): run A's audit, revenue file and claims, and one rejected and
+    one pending claim."""
     db = t.FakeDB()
     db["audits"].docs.append({"id": AUDIT, "reporting_currency": "EUR", "fiscal_year_end": 12, "as_of_month": None,
                               "results": copy.deepcopy(engine_results())})
@@ -37,8 +35,7 @@ def api(monkeypatch):
         {"audit_id": AUDIT, "id": "rejected", "status": "rejected", "claim_type": "revenue", "value": 1, "file": "testco_board.pptx"})
     db[decks.CANDIDATES_COLLECTION].docs.append(
         {"audit_id": AUDIT, "id": "pending", "status": "pending", "claim_type": "revenue", "value": 1, "file": "testco_board.pptx"})
-    monkeypatch.setattr(server, "db", db)
-    return TestClient(server.app, raise_server_exceptions=False), db
+    return db
 
 
 def _get(client):
@@ -51,8 +48,8 @@ def _put(client, claim_id, body):
     return client.put(f"/api/audits/{AUDIT}/claims/{claim_id.replace('#', '%23')}", json=body)
 
 
-def test_the_claims_endpoint_returns_the_register_in_rank_order_beside_todays_claims(api):
-    client, _ = api
+def test_the_claims_endpoint_returns_the_register_in_rank_order_beside_todays_claims(register_api):
+    client, _ = register_api
     body = _get(client)
     assert len(body["claims"]) == len(candidates_for(RUN)) and "claims" in body
     register = body["register"]
@@ -63,21 +60,21 @@ def test_the_claims_endpoint_returns_the_register_in_rank_order_beside_todays_cl
         assert (row["evidence_label"], row["rank"]) == (expected[row["claim_id"]]["label"], expected[row["claim_id"]]["rank"])
 
 
-def test_a_register_row_carries_no_deck_text(api):
-    client, _ = api
+def test_a_register_row_carries_no_deck_text(register_api):
+    client, _ = register_api
     row = _get(client)["register"][0]
     assert "snippet" not in row and "label_from" not in row and "sources" not in row and "date_from" not in row
 
 
-def test_an_audit_with_no_results_has_no_register_rows_but_keeps_its_claims(api):
-    client, db = api
+def test_an_audit_with_no_results_has_no_register_rows_but_keeps_its_claims(register_api):
+    client, db = register_api
     db["audits"].docs[0]["results"] = None
     body = _get(client)
     assert body["register"] == [] and len(body["claims"]) == len(candidates_for(RUN))
 
 
-def test_an_unknown_audit_is_a_404(api):
-    client, _ = api
+def test_an_unknown_audit_is_a_404(register_api):
+    client, _ = register_api
     assert client.get("/api/audits/nope/claims").status_code == 404
     assert client.get("/api/audits/nope/claims.csv").status_code == 404
     assert client.put("/api/audits/nope/claims/x", json={"segment": WHOLE}).status_code == 404
@@ -86,8 +83,8 @@ def test_an_unknown_audit_is_a_404(api):
 WHOLE = cm.WHOLE
 
 
-def test_the_analyst_sets_a_segment_and_the_row_follows(api):
-    client, db = api
+def test_the_analyst_sets_a_segment_and_the_row_follows(register_api):
+    client, db = register_api
     # a claim with no period is not matched (claim-types-and-correction.md section 2): the NRR claim is dated at the as-of month
     claim = next(c for c in db[decks.CANDIDATES_COLLECTION].docs if c["id"] == "c17")
     claim.update(target_date="2024-02", period_text="Feb 2024", period_start="2024-02-01", period_end="2024-02-29")
@@ -105,8 +102,8 @@ def test_the_analyst_sets_a_segment_and_the_row_follows(api):
     assert row == next(x for x in _get(client)["register"] if x["claim_id"] == "c17"), "the next read gives the same row"
 
 
-def test_the_analyst_sets_the_metric_in_the_claims_unit_or_none(api):
-    client, _ = api
+def test_the_analyst_sets_the_metric_in_the_claims_unit_or_none(register_api):
+    client, _ = register_api
     r = _put(client, "c14", {"metric": "none"})
     assert r.status_code == 200 and next(x for x in r.json()["register"] if x["claim_id"] == "c14")["metric_set_by"] == "analyst"
     assert _put(client, "c14", {"metric": "ARR"}).status_code == 200          # TAM €2bn is an amount: ARR fits its unit
@@ -114,15 +111,15 @@ def test_the_analyst_sets_the_metric_in_the_claims_unit_or_none(api):
     assert _put(client, "c14", {"metric": "Net happiness"}).status_code == 400
 
 
-def test_a_segment_must_be_in_the_data_or_one_of_the_two_markers(api):
-    client, _ = api
+def test_a_segment_must_be_in_the_data_or_one_of_the_two_markers(register_api):
+    client, _ = register_api
     for ok in ("Whole company", "Not in the data", "Mid-Market"):
         assert _put(client, "c01", {"segment": ok}).status_code == 200, ok
     assert _put(client, "c01", {"segment": "Public sector"}).status_code == 400
 
 
-def test_the_gate_is_the_analysts_threshold_budget_decision_and_date(api):
-    client, _ = api
+def test_the_gate_is_the_analysts_threshold_budget_decision_and_date(register_api):
+    client, _ = register_api
     row = next(x for x in _get(client)["register"] if x["claim_id"] == "c01")
     assert (row["gate_sentence"], row["gate_threshold"], row["gate_saved"]) == (None, None, False), "no proposed gate"
     body = {"gate_threshold": 195000, "gate_budget_decision": "the Series B hiring plan", "gate_date": "2024-06-30"}
@@ -139,8 +136,8 @@ def test_the_gate_is_the_analysts_threshold_budget_decision_and_date(api):
     assert (row["gate_threshold"], row["gate_date"], row["gate_saved"]) == (None, None, False), "the app proposes no date"
 
 
-def test_a_gate_is_not_saved_without_its_date(api):
-    client, _ = api
+def test_a_gate_is_not_saved_without_its_date(register_api):
+    client, _ = register_api
     r = _put(client, "c01", {"gate_threshold": 195000, "gate_budget_decision": "the Series B hiring plan"})
     row = next(x for x in r.json()["register"] if x["claim_id"] == "c01")
     assert (row["gate_saved"], row["gate_sentence"], row["gate_date"]) == (False, None, None)
@@ -148,22 +145,22 @@ def test_a_gate_is_not_saved_without_its_date(api):
 
 @pytest.mark.parametrize("body", [{"gate_budget_decision": "x" * 201}, {"gate_date": "next quarter"}, {"gate_date": "2024-13-40"}, {"gate_date": "0001-01-01"}, {"gate_date": "2101-01-01"},
                                   {"gate_threshold": "lots"}, {}, {"unknown_field": 1}])
-def test_a_gate_or_input_that_is_not_valid_is_refused(api, body):
-    client, db = api
+def test_a_gate_or_input_that_is_not_valid_is_refused(register_api, body):
+    client, db = register_api
     before = copy.deepcopy(db[decks.CANDIDATES_COLLECTION].docs)
     assert _put(client, "c01", body).status_code in (400, 422)
     assert db[decks.CANDIDATES_COLLECTION].docs == before
 
 
-def test_a_budget_decision_of_200_characters_is_kept_and_a_blank_one_is_not_a_decision(api):
-    client, _ = api
+def test_a_budget_decision_of_200_characters_is_kept_and_a_blank_one_is_not_a_decision(register_api):
+    client, _ = register_api
     assert _put(client, "c01", {"gate_budget_decision": "x" * 200, "gate_threshold": 1}).status_code == 200
     r = _put(client, "c01", {"gate_budget_decision": "   "})
     assert next(x for x in r.json()["register"] if x["claim_id"] == "c01")["gate_budget_decision"] is None
 
 
-def test_inputs_of_a_table_row_value_sit_on_its_row_under_its_own_claim_id(api):
-    client, db = api
+def test_inputs_of_a_table_row_value_sit_on_its_row_under_its_own_claim_id(register_api):
+    client, db = register_api
     assert _put(client, "c19#2", {"segment": "Enterprise"}).status_code == 200
     stored = next(c for c in db[decks.CANDIDATES_COLLECTION].docs if c["id"] == "c19")
     assert stored["claim_inputs"] == {"c19#2": {"segment": "Enterprise"}}
@@ -171,21 +168,21 @@ def test_inputs_of_a_table_row_value_sit_on_its_row_under_its_own_claim_id(api):
     assert rows["c19#2"]["segment"] == "Enterprise" and rows["c19#1"]["segment"] == "Whole company"
 
 
-def test_a_claim_that_is_not_in_the_register_has_no_inputs(api):
-    client, _ = api
+def test_a_claim_that_is_not_in_the_register_has_no_inputs(register_api):
+    client, _ = register_api
     for claim_id in ("rejected", "pending", "nope", "c19", "c19#9"):
         assert _put(client, claim_id, {"segment": "Whole company"}).status_code == 404, claim_id
     assert _put(client, "c01", {"segment": "Whole company"}).status_code == 200
 
 
-def test_inputs_need_a_computed_audit(api):
-    client, db = api
+def test_inputs_need_a_computed_audit(register_api):
+    client, db = register_api
     db["audits"].docs[0]["results"] = None
     assert _put(client, "c01", {"segment": "Whole company"}).status_code == 409
 
 
-def test_an_edit_in_the_approval_list_leaves_the_analysts_inputs(api):
-    client, db = api
+def test_an_edit_in_the_approval_list_leaves_the_analysts_inputs(register_api):
+    client, db = register_api
     _put(client, "c01", {"segment": "Enterprise"})
     r = client.put(f"/api/audits/{AUDIT}/decks/candidates/c01", json={"value": 205000})
     assert r.status_code == 200
@@ -212,8 +209,8 @@ def _baseline(client):
     return r.text
 
 
-def test_the_csv_is_the_register_in_rank_order_then_the_data_gaps_with_the_header_of_the_verdict_spec(api):
-    client, _ = api
+def test_the_csv_is_the_register_in_rank_order_then_the_data_gaps_with_the_header_of_the_verdict_spec(register_api):
+    client, _ = register_api
     register = _get(client)["register"]
     rows = list(csv.reader(io.StringIO(_baseline(client))))
     assert rows[0] == ["row_type", *cm.FIELDS, "in_top5", "gap_item", "gap_why", "gap_requested", "gap_target_date",
@@ -229,8 +226,8 @@ def test_the_csv_is_the_register_in_rank_order_then_the_data_gaps_with_the_heade
     assert all(line[1 + len(cm.FIELDS) + 1] and line[-5] for line in gaps), "a gap row names its item and why"
 
 
-def test_the_csv_holds_numbers_unformatted_and_dates_in_iso(api):
-    client, _ = api
+def test_the_csv_holds_numbers_unformatted_and_dates_in_iso(register_api):
+    client, _ = register_api
     rows = list(csv.DictReader(io.StringIO(_baseline(client))))
     one = next(r for r in rows if r["claim_id"] == "c01")
     assert one["claimed_value"] == "200000" and one["observed_value"] == "202125.48" and one["gap"] == "-2125.48"
@@ -241,8 +238,8 @@ def test_the_csv_holds_numbers_unformatted_and_dates_in_iso(api):
     assert one["evidence_source_key"] == "mrr_series.data.total" and one["evidence_analysis"] == "Monthly MRR by Segment"
 
 
-def test_the_csv_round_trips_every_field_of_every_row_and_writes_the_same_bytes(api):
-    client, _ = api
+def test_the_csv_round_trips_every_field_of_every_row_and_writes_the_same_bytes(register_api):
+    client, _ = register_api
     _put(client, "c01", {"gate_threshold": 195000, "gate_budget_decision": "the Series B, \"hiring\"\nplan", "gate_date": "2024-06-30"})
     _put(client, "c01", {"key_gate": True})
     client.put(f"/api/audits/{AUDIT}/ic-inputs", json={"first_quarterly_review": "2024-09-30"})
@@ -256,8 +253,8 @@ def test_the_csv_round_trips_every_field_of_every_row_and_writes_the_same_bytes(
     assert verdict_mod.rewrite_baseline(claims, gaps, review) == text, "the same bytes"
 
 
-def test_the_register_log_line_holds_counts_per_label_never_a_value_or_gate_text(api, caplog):
-    client, _ = api
+def test_the_register_log_line_holds_counts_per_label_never_a_value_or_gate_text(register_api, caplog):
+    client, _ = register_api
     _put(client, "c01", {"gate_threshold": 195000, "gate_budget_decision": "the Series B hiring plan"})
     with caplog.at_level(logging.DEBUG):
         _get(client)
@@ -279,8 +276,8 @@ def test_the_screens_metric_table_is_pinned_to_the_matching_module():
     assert list(shown) == list(cm.METRICS), "same order: the select lists them in it"
 
 
-def test_a_refused_claim_input_names_the_field(api):
-    client, _ = api
+def test_a_refused_claim_input_names_the_field(register_api):
+    client, _ = register_api
     r = _put(client, "c01", {"metric": "Customer count"})
     assert r.status_code == 400 and r.json()["detail"].startswith("metric: "), r.text
     r = _put(client, "c01", {"segment": "No such segment"})

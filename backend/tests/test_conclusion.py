@@ -12,7 +12,7 @@ import pytest
 pytest.importorskip("fastapi")
 pytest.importorskip("motor")
 
-from test_claim_register_api import AUDIT, api  # noqa: E402,F401  (the fixture)
+from test_claim_register_api import AUDIT  # noqa: E402
 from test_ic_memo import RATINGS, THESIS  # noqa: E402
 
 from app import decks  # noqa: E402
@@ -38,8 +38,8 @@ def _confirmed(client):
     return r.json()
 
 
-def test_plan_1_five_verified_selected_claims_and_one_contradicted_unselected_show_supported_and_the_contradiction_in_one_block(api):  # noqa: F811
-    client, db = api
+def test_plan_1_five_verified_selected_claims_and_one_contradicted_unselected_show_supported_and_the_contradiction_in_one_block(register_api):
+    client, db = register_api
     _only(db, SELECTED + [UNSELECTED_CONTRADICTED])
     body = _confirmed(client)
     block = body["verdict"]
@@ -63,15 +63,15 @@ def test_plan_1_five_verified_selected_claims_and_one_contradicted_unselected_sh
     assert f"Reasons: {JUDGMENT['reasons']}" in summary and f"Unresolved questions: {JUDGMENT['unresolved_questions']}" in summary
 
 
-def test_no_other_contradiction_reads_none_found_among_tested_claims(api):  # noqa: F811
-    client, db = api
+def test_no_other_contradiction_reads_none_found_among_tested_claims(register_api):
+    client, db = register_api
     _only(db, SELECTED)
     block = _confirmed(client)["verdict"]
     assert block["other_contradictions"] == [] and block["other_contradictions_text"] == "None found among tested claims."
 
 
-def test_the_memo_refuses_without_both_judgment_fields_and_never_prefills_them(api):  # noqa: F811
-    client, db = api
+def test_the_memo_refuses_without_both_judgment_fields_and_never_prefills_them(register_api):
+    client, db = register_api
     _only(db, SELECTED)
     body = _confirmed(client)
     assert body["ic_inputs"].get("judgment") in (None, {}), "never pre-filled"
@@ -80,8 +80,8 @@ def test_the_memo_refuses_without_both_judgment_fields_and_never_prefills_them(a
     assert r.status_code == 409 and r.json()["detail"] == "Memo not exported: write the analyst judgment: Unresolved questions."
 
 
-def test_the_five_words_never_appear_in_the_conclusion_response_or_the_memo(api):  # noqa: F811
-    client, db = api
+def test_the_five_words_never_appear_in_the_conclusion_response_or_the_memo(register_api):
+    client, db = register_api
     _only(db, SELECTED + [UNSELECTED_CONTRADICTED])
     body = _confirmed(client)
     client.put(f"/api/audits/{AUDIT}/ic-inputs", json={"ratings": RATINGS, "thesis": THESIS, "judgment": JUDGMENT})

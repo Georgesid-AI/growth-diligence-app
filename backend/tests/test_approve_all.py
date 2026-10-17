@@ -9,9 +9,6 @@ import pytest
 pytest.importorskip("fastapi")
 pytest.importorskip("motor")
 
-from fastapi.testclient import TestClient  # noqa: E402
-
-import server  # noqa: E402
 import test_llm_gateway as t  # noqa: E402
 from claim_matching_support import engine_results, fixture  # noqa: E402
 
@@ -34,8 +31,9 @@ def claim(cid, claim_type="revenue", **over):
     return c
 
 
-@pytest.fixture()
-def api(monkeypatch):
+def starting_db():
+    """The `approve_api` fixture's database (tests/conftest.py): run A's audit and revenue file, and a claim of each kind the
+    approve-all call meets."""
     db = t.FakeDB()
     db["audits"].docs.append({"id": AUDIT, "reporting_currency": "EUR", "fiscal_year_end": 12, "as_of_month": None,
                               "results": copy.deepcopy(engine_results(tuple(RUN["files"]), RUN["as_of_month"]))})
@@ -50,16 +48,15 @@ def api(monkeypatch):
              claim("f1", "use_of_funds", value=40, currency=None, unit="%", snippet="Hiring (40%)", target_date=None, period_text=None),
              claim("o1", "other", value=7, currency=None, snippet="7 things", target_date=None, period_text=None),
              claim("e1", "revenue", value=180000, status="pending", parsed={"claim_type": "revenue", "value": 18000})]
-    monkeypatch.setattr(server, "db", db)
-    return TestClient(server.app, raise_server_exceptions=False), db
+    return db
 
 
 def status(db, cid):
     return next(c for c in db[decks.CANDIDATES_COLLECTION].docs if c["id"] == cid)["status"]
 
 
-def test_one_call_approves_every_claim_to_review_of_the_category_and_nothing_else(api):
-    client, db = api
+def test_one_call_approves_every_claim_to_review_of_the_category_and_nothing_else(approve_api):
+    client, db = approve_api
     r = client.post(URL, json={"group": REVENUE})
     assert r.status_code == 200, r.text
     body = r.json()
@@ -69,15 +66,15 @@ def test_one_call_approves_every_claim_to_review_of_the_category_and_nothing_els
     assert [status(db, c) for c in ("c1", "a1", "a2", "f1", "o1")] == ["pending"] * 5, "other categories are untouched"
 
 
-def test_the_deck_tab_limits_the_call_to_that_decks_claims(api):
-    client, db = api
+def test_the_deck_tab_limits_the_call_to_that_decks_claims(approve_api):
+    client, db = approve_api
     body = client.post(URL, json={"group": CHANNELS, "deck_id": "d2"}).json()
     assert body["approved_ids"] == ["a2"] and status(db, "a1") == "pending"
     assert client.post(URL, json={"group": CHANNELS}).json()["approved_ids"] == ["a1"], "no deck: every deck"
 
 
-def test_a_turnover_claim_without_a_revenue_or_volume_answer_is_skipped_until_it_is_answered(api):
-    client, db = api
+def test_a_turnover_claim_without_a_revenue_or_volume_answer_is_skipped_until_it_is_answered(approve_api):
+    client, db = approve_api
     db[decks.CANDIDATES_COLLECTION].docs.append(claim("g1", snippet="GMV EUR 900,000", value=900000))
     body = client.post(URL, json={"group": REVENUE}).json()
     assert (body["approved"], body["skipped"], body["skipped_ids"]) == (3, 1, ["g1"]) and status(db, "g1") == "pending"
@@ -86,10 +83,10 @@ def test_a_turnover_claim_without_a_revenue_or_volume_answer_is_skipped_until_it
     assert client.post(URL, json={"group": REVENUE}).json()["approved_ids"] == ["g1"]
 
 
-def test_a_claim_with_an_open_definition_check_is_approved_and_counted_and_the_check_stays_open(api):
+def test_a_claim_with_an_open_definition_check_is_approved_and_counted_and_the_check_stays_open(approve_api):
     """claim-matching.md section 4.1 (George, 2026-10-14): Approve all approves it; its open check enters the register and blocks the
     verdict. The reply counts it as `open_definition`, not as a skip."""
-    client, db = api
+    client, db = approve_api
     db[decks.CANDIDATES_COLLECTION].docs.append(claim("b1", value=1000, snippet="Revenue EUR 1,000"))      # observed 187,701
     view = next(c for c in client.get(f"/api/audits/{AUDIT}/decks").json()["candidates"] if c["id"] == "b1")["definition"]
     assert view == [{"claim_id": "b1", "period": "FY2023", "definition_check": "ask",
@@ -105,10 +102,10 @@ def test_a_claim_with_an_open_definition_check_is_approved_and_counted_and_the_c
     assert (row["definition_check"], row["evidence_label"], row["gap_kind"]) == ("yes", "Verified", "beat")
 
 
-def test_the_open_definition_count_is_taken_on_the_status_the_claim_has_once_approved(api):
+def test_the_open_definition_count_is_taken_on_the_status_the_claim_has_once_approved(approve_api):
     """A claim read as an AI suggestion while pending shows no check (claim-matching.md section 4.1, D3); approved, its check opens.
     The count is of the checks as the register holds them after the approval."""
-    client, db = api
+    client, db = approve_api
     db[decks.CANDIDATES_COLLECTION].docs.append(
         claim("s1", value=1000, snippet="Revenue EUR 1,000", origin="ai", parsed={"claim_type": "revenue", "value": 1000}))
     before = next(c for c in client.get(f"/api/audits/{AUDIT}/decks").json()["candidates"] if c["id"] == "s1")
@@ -119,17 +116,17 @@ def test_the_open_definition_count_is_taken_on_the_status_the_claim_has_once_app
     assert after["definition_check"] == "ask"
 
 
-def test_an_other_figure_is_neither_approved_nor_counted_by_approve_all_as_a_single_approve_refuses_it(api):
+def test_an_other_figure_is_neither_approved_nor_counted_by_approve_all_as_a_single_approve_refuses_it(approve_api):
     """claim-types-and-correction.md section 4: an Other figure is never a task."""
-    client, db = api
+    client, db = approve_api
     one = client.put(f"/api/audits/{AUDIT}/decks/candidates/o1", json={"status": "approved"})
     assert one.status_code == 400
     body = client.post(URL, json={"group": OTHER}).json()
     assert (body["approved"], body["skipped_ids"]) == (0, []) and status(db, "o1") == "pending"
 
 
-def test_a_claim_whose_save_fails_stays_to_review_and_the_rest_are_approved(api, monkeypatch):
-    client, db = api
+def test_a_claim_whose_save_fails_stays_to_review_and_the_rest_are_approved(approve_api, monkeypatch):
+    client, db = approve_api
     collection = db[decks.CANDIDATES_COLLECTION]
     real = collection.update_one
 
@@ -144,8 +141,8 @@ def test_a_claim_whose_save_fails_stays_to_review_and_the_rest_are_approved(api,
     assert (status(db, "r1"), status(db, "r2")) == ("pending", "approved")
 
 
-def test_the_register_and_the_csv_hold_the_approved_claims_as_a_single_approve_leaves_them(api):
-    client, db = api
+def test_the_register_and_the_csv_hold_the_approved_claims_as_a_single_approve_leaves_them(approve_api):
+    client, db = approve_api
     one = client.put(f"/api/audits/{AUDIT}/decks/candidates/r2", json={"status": "approved"}).json()
     client.post(URL, json={"group": REVENUE})
     first = next(c for c in db[decks.CANDIDATES_COLLECTION].docs if c["id"] == "r1")
@@ -157,8 +154,8 @@ def test_the_register_and_the_csv_hold_the_approved_claims_as_a_single_approve_l
     assert {"r1", "r2", "e1"} <= {r.get("claim_id") for r in rows}
 
 
-def test_a_bad_request_is_refused_and_a_missing_audit_is_a_404(api):
-    client, db = api
+def test_a_bad_request_is_refused_and_a_missing_audit_is_a_404(approve_api):
+    client, db = approve_api
     for body in ({}, {"group": 0}, {"group": 99}, {"group": "revenue"}, {"group": REVENUE, "extra": 1}):
         assert client.post(URL, json=body).status_code == 422, body
     assert client.post("/api/audits/nope/decks/candidates/approve-all", json={"group": REVENUE}).status_code == 404
