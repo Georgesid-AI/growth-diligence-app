@@ -91,6 +91,10 @@ export function anomalyFlags(results) {
       detail: a.revenue_gap_then_resume.slice(0, 8).join(", ") },
     { label: "Revenue lines missing customer ID", count: a.revenue_missing_customer_id.count },
     { label: "Deals with close before created (excluded)", count: a.deals_close_before_created.excluded_count },
+    // Rows repeating a deal's ID, stage and dates, counted once (crm-dedup-clustering.md section 1). Results stored before the flag
+    // existed carry none, and show no row rather than a zero that was never computed.
+    ...(a.deals_duplicate_id ? [{ label: "CRM rows sharing a deal ID", count: a.deals_duplicate_id.collapsed,
+      detail: `${fmtCount(a.deals_duplicate_id.distinct_ids)} distinct deal IDs` }] : []),
     { label: "Date columns with day/month order set from the data", count: dates.length,
       detail: dates.map((n) => `${n.field} (${n.dataset}): ${n.order}, ${fmtCount(n.rows)} rows`).join("; ") },
   ];

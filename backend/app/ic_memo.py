@@ -355,6 +355,7 @@ def anomaly_count(results: dict) -> Optional[int]:
     return (len(a.get("negative_mrr_months") or ()) + len(a.get("revenue_gap_then_resume") or ())
             + ((a.get("revenue_missing_customer_id") or {}).get("count") or 0)
             + ((a.get("deals_close_before_created") or {}).get("excluded_count") or 0)
+            + ((a.get("deals_duplicate_id") or {}).get("collapsed") or 0)
             + len(a.get("date_order_from_data") or ()))
 
 

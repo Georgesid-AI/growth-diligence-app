@@ -30,8 +30,8 @@ REASONS = {
 SMOOTHNESS_MONTHS = 13              # smoothness.md section 1: 12 month-on-month changes need 13 consecutive months
 SMOOTHNESS_LABEL = "provisional threshold, 3 synthetic series"    # shown beside the result, on screen and in the memo (George, 15 Oct 2026)
 SMOOTHNESS_LIMIT_POINTS = 0.5       # below this deviation of the growth rate, in points, revenue is unusually smooth (provisional, section 1)
-CLUSTERING_MIN_DEALS = 20           # crm-dedup-clustering.md section 2: fewer won deals and the check does not complete
-CLUSTERING_FEW = "Not enough deals ({n})"
+CLUSTERING_MIN_DEALS = 20           # crm-dedup-clustering.md section 2: fewer won deals and the check is Not applicable
+CLUSTERING_FEW = f"Fewer than {CLUSTERING_MIN_DEALS} won deals ({{n}})"     # the reason of that row (George, 17 Oct 2026)
 CLUSTERING_AMBER_PCT, CLUSTERING_RED_PCT = 20, 35      # Green below 20%, Amber 20% to 35%, Red above 35% (whole percents)
 CLUSTERING_FINDING = "{share}% of {n} won deals closed in the last 10 days of a quarter (chance: 11%)"
 MIN_COMPLETED = 4                   # section 2: fewer completed applicable checks is insufficient coverage
@@ -173,10 +173,13 @@ def assess(results: Optional[dict], deck_count: int, candidates: List[dict], fis
     deals = clustering(results, fiscal_year_end)
     ran = {RECONCILIATION: _reconciliation(results), GAPS: _gaps(results), CLUSTERING: _clustering(deals), SMOOTHNESS: _smoothness(results),
            DECKS: _decks(candidates) if deck_count else None}
-    reasons = {**REASONS, **({CLUSTERING: CLUSTERING_FEW.format(n=deals["won"])} if deals else {})}
+    # Below CLUSTERING_MIN_DEALS won deals the clustering check is Not applicable: no data request, out of the denominator.
+    few = deals is not None and deals["result"] is None
+    reasons = {**REASONS, **({CLUSTERING: CLUSTERING_FEW.format(n=deals["won"])} if few else {})}
     coverage = []
     for check in CHECKS:
-        status = NOT_APPLICABLE if check == BENFORD else COMPLETED if ran[check] else BLOCKED
+        status = (NOT_APPLICABLE if check == BENFORD or (check == CLUSTERING and few)
+                  else COMPLETED if ran[check] else BLOCKED)
         coverage.append({"check": check, "status": status, "reason": None if status == COMPLETED else reasons[check],
                          "result": ran[check]["result"] if status == COMPLETED else None})
     block_a = [{"check": check, **ran[check]} for check in CHECKS if ran.get(check)]

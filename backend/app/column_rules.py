@@ -43,9 +43,10 @@ FIELD_DEFS = {
             "created_date": ["created", "create date", "created date", "open date", "deal created", "deal deal created"],
             "close_date": ["close date", "closed", "won date", "close", "deal deal closed on"],
             "stage": ["stage", "status", "outcome", "deal stage", "pipeline stage"],
-            "amount": ["amount", "value", "deal value", "acv", "deal amount"],
         },
         "optional": {
+            # No calculation reads a deal's amount: optional since 2026-10-17 (George), first here so the field list keeps its order.
+            "amount": ["amount", "value", "deal value", "acv", "deal amount"],
             "segment": ["segment", "tier", "size"],
             "founder_involved": ["founder", "founder involved", "founder-led", "exec involved"],
         },

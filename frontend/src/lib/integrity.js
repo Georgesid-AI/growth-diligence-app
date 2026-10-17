@@ -10,7 +10,7 @@ export const RESULT_COLUMNS = ["Check", "Result", "Finding", "Source"];
 export const COVERAGE_COLUMNS = ["Check", "Status", "Reason"];
 export const NO_RESULTS = "No check could be completed with the files supplied.";
 
-// Red is the reconciliation's hard blocker only; Amber is anything found; Green is nothing found.
+// Red is the reconciliation's hard blocker or quarter-end clustering above 35%; Amber is anything found; Green is nothing found.
 export const RESULT_STYLE = { Green: "text-emerald-700", Amber: "text-amber-800", Red: "text-rose-700" };
 
 /** "Blocked: Revenue reconciliation, Smoothness", or null when nothing is blocked. */

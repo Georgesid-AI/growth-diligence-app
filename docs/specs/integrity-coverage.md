@@ -31,8 +31,8 @@ Status values, with the reason the row prints:
 | Status | Meaning | Reason (word for word) |
 |---|---|---|
 | Completed | the check ran | – (its result is in Block A) |
-| Not applicable | the check cannot apply to this company by design; a stated reason is required | Benford: "No transaction-level file: the app ingests revenue by customer and month, not transactions." |
-| Blocked — company data missing | names the file or field that would unblock it; a data request, not a negative finding | 1: "P&L with a revenue line, overlapping the revenue file's months"; 2: "Revenue file mapped (customer ID, invoice date, amount)"; 3: "CRM file mapped (stage, close date)", or "Not enough deals ({n})" below 20 won deals; 4: "Revenue file with at least 13 consecutive months of revenue"; 6: "At least one board deck" |
+| Not applicable | the check cannot apply to this company by design, or (3) has too few deals to read; a stated reason is required | Benford: "No transaction-level file: the app ingests revenue by customer and month, not transactions."; 3: "Fewer than 20 won deals ({n})" (crm-dedup-clustering.md §6, George, 17 Oct 2026) |
+| Blocked — company data missing | names the file or field that would unblock it; a data request, not a negative finding | 1: "P&L with a revenue line, overlapping the revenue file's months"; 2: "Revenue file mapped (customer ID, invoice date, amount)"; 3: "CRM file mapped (stage, close date)"; 4: "Revenue file with at least 13 consecutive months of revenue"; 6: "At least one board deck" |
 | Not available in the app | product limitation; printed as such, never as a company finding | none since crm-dedup-clustering.md |
 
 Denominator: applicable checks only (every status but Not applicable). Display: "Completed {x} of {y} applicable checks",
@@ -86,7 +86,8 @@ are no longer printed there. On the Dashboard the data-integrity narrative no lo
 ## 8. Consequences to know
 - Benford is Not applicable. With smoothness (smoothness.md) and quarter-end clustering (crm-dedup-clustering.md) built, all 5
   applicable checks can complete; an audit reads "Insufficient assessment coverage (x of 5)" while fewer than 4 complete or the
-  reconciliation is not among them.
+  reconciliation is not among them. Below 20 won deals clustering is Not applicable too (crm-dedup-clustering.md §6): 4 checks are
+  applicable and a conclusion needs all four, as it needed the same four before.
 
 ## Files
 `backend/app/integrity.py` (new), `backend/server.py`, `backend/app/ic_memo.py`, `frontend/src/components/IntegrityCoverage.jsx`

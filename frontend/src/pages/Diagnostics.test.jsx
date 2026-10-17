@@ -74,3 +74,20 @@ test("the anomaly flags show the citation of the revenue file", async () => {
   await act(async () => { root.render(<Diagnostics />); });
   expect(q("provenance-hover-diagnostics-anomalies")).not.toBeNull();
 });
+
+test("CRM rows sharing a deal ID show their collapsed rows and distinct IDs next to the deals closed before created", async () => {
+  api.getAudit.mockResolvedValue({ id: "a1" });
+  api.getResults.mockResolvedValue({ audit: {}, results: { reporting_currency: "EUR", missing_data: [], revenue_reconciliation: null,
+    anomalies: { negative_mrr_months: [], revenue_gap_then_resume: [], revenue_missing_customer_id: { count: 0, rows: [] },
+      deals_close_before_created: { excluded_count: 0, rows: [] }, deals_duplicate_id: { rows: 9, distinct_ids: 3, collapsed: 6, rows_list: [2] },
+      source: { ...src("rev.csv", "rows 2–9"), rule: "Flags" } } } });
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  await act(async () => { root.render(<Diagnostics />); });
+  const row = q("diagnostics-deal-repeats");
+  expect(row.textContent).toContain("CRM rows sharing a deal ID");
+  expect(q("diagnostics-deal-repeats-count").textContent).toBe("6");
+  expect(q("diagnostics-deal-repeats-detail").textContent).toBe("3 distinct deal IDs");
+  expect(row.previousElementSibling.textContent).toContain("Deals close-before-created");
+});

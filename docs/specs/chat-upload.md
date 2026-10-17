@@ -1,7 +1,7 @@
 # Spec: Chat-style upload and column mapping
 Status: Final (2026-10-08); decisions applied (§12); amended 2026-10-08 for the mapping-screen wording, the delete dialog
 and the banner (§12, §13, S5, S9, S15, S16a, S16d, S18, S18b, S23–S25), and 2026-10-09 for §15 and §16, and 2026-10-11 for §17 (claims list and parser), and 2026-10-16 for §19 (file type, every sheet, wide tables, units and the miss message) and §20 (forecast tables read as claims, issue #114), and 2026-10-17 for §21 (deal ID and stage, and a rule confidence of exactly 80) and §22 (every column to the model, and mapping calls
-outside the daily spend cap). Location: docs/specs/chat-upload.md.
+outside the daily spend cap), and the same day for the CRM required fields (§4.1) and the CRM fields box (S29; crm-dedup-clustering.md §6). Location: docs/specs/chat-upload.md.
 Replaces the content of the MappingWizard page. Supersedes in part docs/specs/llm-structure-reading.md §1 for
 the column-mapping path only: which columns are sent, from how many rows and with which rule hint (§4.2), and, for a column
 mapping, the daily spend cap of its circuit breaker (§4.2, 2026-10-17). Everything else in that spec stands, including the
@@ -54,7 +54,8 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
   S3 (§11).
 - Analyst bubble, one per file: file name, size, and a type icon (xlsx or csv).
 - System bubble, one per file: the detected type, rows and months found (S5), then the info box "Why this step
-  matters" (S25, above the first mapping table of the page only), then the mapping table (§4). For a revenue file,
+  matters" (S25, above the first mapping table of the page only), then, for a CRM file, the info box "Fields used in this
+  analysis" (S29, open by default), then the mapping table (§4). For a revenue file,
   the billing-terms block follows the table unchanged. The FX rates are not part of the bubble: they sit in their own FX settings section
   of the page, below the chat, and belong to the audit (§16). A status line ends the bubble (S13).
 - Mapping table columns (S23): In your file · Means · Confidence · Mapped by · action. "Mapped by" is one of the four
@@ -110,6 +111,11 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
 
 ## 4. Mapping rule
 ### 4.1 Step 1: rules (Python)
+- Required fields (`FIELD_DEFS`): revenue customer id, invoice date, amount, currency; CRM deal id, created date, close date,
+  stage; P&L month, S&M expense, revenue, cost of revenue. A file is ready for calculation when each is mapped (S13). The CRM
+  amount is optional since 2026-10-17 (George; crm-dedup-clustering.md §6): no calculation reads it. It keeps its aliases, its
+  numeric kind and the turnover/volume question (§15), and the field list shows it first among the optional fields, after the
+  required ones.
 - Header score: the existing `_score`, the best over a field's aliases (100, 80, 60, 40 or 30). A header that
   pandas de-duplicated ("Customer ID.1") is scored on its cell text, so duplicate headers tie. An underscore is
   punctuation: "deal_stage" is read as "deal stage" (§21).
@@ -377,6 +383,7 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 | S28b | under S28a, over the cap (§20.2) | The table holds {total} claims; the first 60 by row order are read. |
 | S28c | the Show claims list (§20.4) | One row per line, a checkbox each, ticked: the line as in the file, then each year and its value, then its cells. Under it the button "Save claims" (George, 2026-10-16; it was "Confirm"), off while no line is ticked |
 | S28d | after Save claims (§20.4) | Saved {n} claims as Unverified. ("1 claim" for one) It is the file's status line (S13) from then on, in green (§20.5) |
+| S29 | info box, CRM file | Title: Fields used in this analysis. A collapsible box, open by default, above a CRM file's mapping table (George, 2026-10-17, crm-dedup-clustering.md §6). Text, word for word, six paragraphs: "Match Created date, Close date, and Stage / status to calculate sales cycles and win rates." / "Segment is optional. If mapped (for example a plan tier or company size), the sales cycle is also shown per segment with its median, spread and deal count. If not mapped, only the overall sales cycle is shown." / "Founder involved is optional. If mapped, it must hold yes or no per deal (yes / y / true / 1, no / n / false / 0); the app then compares the win rate of deals with and without the founder. Values it cannot read are listed and left out. If not mapped, the founder comparison reads Missing." / "Deal ID is used to remove repeated rows: rows that share a deal ID with the same stage and dates (for example one row per product line) count as one deal, and the number of rows collapsed is reported under Worth flagging." / "Close date is also used for the quarter-end clustering check: the share of won deals closed in the last 10 days of a quarter, by the company's fiscal year-end (needs at least 20 won deals)." / "Amount can be mapped but is not used in any calculation." |
 
 ## 12. Decisions of 2026-10-08
 | Q | Question | Decision |

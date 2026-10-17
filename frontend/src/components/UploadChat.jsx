@@ -8,7 +8,7 @@ import {
   S1_TEXT_REPLY, S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE, S6_UNKNOWN_TYPE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S_UPLOAD_RETRY, RUN_DECK_EXTENSIONS, RUN_DROP_ZONE, RUN_REFUSED,
   S20_NOTE_PLACEHOLDER, S21_NOTE_REFUSED, NOTE_MAX, ALLOWED_EXTENSIONS, REASONS, TYPE_LABELS, S5_head, S8_replace,
   S9_confidence, S13_status, S26_type, S26_CHANGE, S26_sheet, S27_miss, S27_SHOW_COLUMNS, S28_read, S28_SHOW_CLAIMS, S28_cap, S28_CONFIRM,
-  forecastValueText, forecastCells, MAP_LABEL, CALCULATE_LABEL, CALCULATE_CLASS, SEND_TOOLTIP, setCalculatePressed, S14_same, MAPPING_HEADERS, S25_TITLE, S25_PARAGRAPHS, mappedBy, sortColumns, fieldName, fmtBytes, extensionOf, heldFields,
+  forecastValueText, forecastCells, MAP_LABEL, CALCULATE_LABEL, CALCULATE_CLASS, SEND_TOOLTIP, setCalculatePressed, S14_same, MAPPING_HEADERS, S25_TITLE, S25_PARAGRAPHS, S29_TITLE, S29_PARAGRAPHS, mappedBy, sortColumns, fieldName, fmtBytes, extensionOf, heldFields,
 } from "@/lib/chatUpload";
 
 const NONE = "";
@@ -327,6 +327,7 @@ function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide, 
       )}
       {modelFailed && <p className="text-xs text-amber-700 mt-1" data-testid="bubble-ai-failed">{S12_MODEL_FAILED}</p>}
       {showInfo && <WhyThisMatters />}
+      {view.dtype === "crm" && <CrmFieldsHelp />}
       <div className="overflow-x-auto mt-3">
         <table className="w-full text-xs" data-testid={`mapping-table-${view.dtype}`}>
           {view.sheet && <caption className="text-left text-slate-500 pb-1" data-testid={`mapping-sheet-${view.dtype}`}>{S26_sheet(view)}</caption>}
@@ -481,6 +482,18 @@ function WhyThisMatters() {
       <summary className="cursor-pointer font-medium text-slate-900" data-testid="why-this-matters-title">{S25_TITLE}</summary>
       <div className="mt-2 space-y-2">
         {S25_PARAGRAPHS.map((p) => <p key={p}>{p}</p>)}
+      </div>
+    </details>
+  );
+}
+
+/** S29: the fields a CRM file feeds and what each is used for; one box above the CRM file's mapping table, open until folded. */
+function CrmFieldsHelp() {
+  return (
+    <details open data-testid="crm-fields-help" className="mt-3 rounded-md border border-sky-200 bg-sky-50/60 px-3 py-2 text-xs text-slate-700">
+      <summary className="cursor-pointer font-medium text-slate-900" data-testid="crm-fields-help-title">{S29_TITLE}</summary>
+      <div className="mt-2 space-y-2">
+        {S29_PARAGRAPHS.map((p) => <p key={p}>{p}</p>)}
       </div>
     </details>
   );

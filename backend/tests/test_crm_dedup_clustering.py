@@ -16,6 +16,7 @@ BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 sys.path.insert(0, str(BACKEND / "tests"))
 
+import contract_fixtures as cf  # noqa: E402
 import growth_engine as ge  # noqa: E402
 import server  # noqa: E402
 from app import integrity as ig  # noqa: E402
@@ -132,12 +133,19 @@ def test_an_even_spread_of_close_dates_is_green():
     assert ran["finding"] == "10% of 40 won deals closed in the last 10 days of a quarter (chance: 11%)"
 
 
-def test_eight_won_deals_are_not_enough_and_the_check_is_blocked_not_completed():
+def test_eight_won_deals_are_not_applicable_and_out_of_the_requests_and_the_count():
+    """George, 17 Oct 2026 (follow-up to PR 123): below 20 won deals the row reads Not applicable – fewer than 20 won deals (N); it is
+    no data request and leaves the denominator, so it is neither completed nor missing."""
     results = _run(_won(LATE[:4] + NOT_LATE[:4]) + [(f"L{i}", "2024-01-10", "2024-03-01", "Closed Lost", 50) for i in range(30)])
     row, ran, assessed = _row(results)
-    assert (row["status"], row["reason"], row["result"]) == (ig.BLOCKED, "Not enough deals (8)", None)
+    assert (row["status"], row["reason"], row["result"]) == (ig.NOT_APPLICABLE, "Fewer than 20 won deals (8)", None)
     assert ran is None, "a check that did not complete is not in Block A"
-    assert "Quarter-end clustering: Not enough deals (8)" in assessed["data_requests"]
+    assert not [r for r in assessed["data_requests"] if r.startswith("Quarter-end clustering")]
+    assert "Quarter-end clustering" not in assessed["blocked"]
+    statuses = {r["check"]: r["status"] for r in assessed["coverage"]}
+    assert assessed["applicable"] == sum(1 for s in statuses.values() if s != ig.NOT_APPLICABLE) == 4
+    nineteen = _row(_closes(19, 0))[0]
+    assert (nineteen["status"], nineteen["reason"]) == (ig.NOT_APPLICABLE, "Fewer than 20 won deals (19)")
 
 
 def test_line_item_repeats_that_would_push_a_green_file_to_amber_are_collapsed():
@@ -215,17 +223,19 @@ def test_sample_data_is_unchanged_and_its_clustering_is_green():
     assert (ran["result"], ran["finding"]) == ("Green", "14% of 36 won deals closed in the last 10 days of a quarter (chance: 11%)")
 
 
-def test_the_memo_lists_not_enough_deals_as_a_request_and_still_exports():
-    """integrity-coverage.md section 3: a Blocked reason is a request in Appendix B. The count is the won deals' row count in the
-    block's own citation, so the memo's number check finds it in the stored results."""
+def test_the_memo_leaves_fewer_than_20_won_deals_out_of_the_requests_and_still_exports():
+    """integrity-coverage.md section 3: a Not applicable check is never a request, so Appendix B does not list the clustering check
+    below 20 won deals; the memo still exports."""
     from app import ic_memo as im
     from test_ic_memo import inputs
     stored = copy.deepcopy(engine_results())        # cached: never changed in place
     deals = server.normalize([dict(zip(HEADERS, r)) for r in _won(LATE + NOT_LATE[:5])], "crm", CRM_MAP)
     stored["won_deal_closes"] = server.sanitize(ge.compute_all(_revenue(), deals, None, CFG, SOURCES))["won_deal_closes"]
     assert stored["won_deal_closes"]["source"]["rows"] == "rows 2–16 (15 rows)"
-    appendix_b = im.build_memo(**inputs(stored=stored)).split("## Appendix B")[1].split("## Appendix C")[0]
-    assert "- Quarter-end clustering: Not enough deals (15)" in appendix_b
+    text = im.build_memo(**inputs(stored=stored))
+    assert "Quarter-end clustering" not in text.split("## Appendix B")[1].split("## Appendix C")[0]
+    row = next(line for line in text.split("\n") if line.startswith("| Data reliability"))
+    assert "Completed 4 of 4 applicable checks" in row, "the check leaves the denominator"
 
 
 def test_the_endpoint_reads_the_audits_fiscal_year_end(register_api):
@@ -235,3 +245,24 @@ def test_the_endpoint_reads_the_audits_fiscal_year_end(register_api):
     assert finding().startswith("14% of 36 won deals")
     db["audits"].docs[0]["fiscal_year_end"] = 2
     assert finding().startswith("17% of 36 won deals"), "quarters ending in Feb, May, Aug and Nov"
+
+
+# --- follow-up to PR 123: the repeated rows on screen, in the xlsx and in the memo's count ----------------------------------------
+
+REPEATS = {"rows": 9, "distinct_ids": 3, "collapsed": 6, "rows_list": [2, 3, 4]}
+
+
+def test_the_xlsx_anomalies_sheet_lists_crm_rows_sharing_a_deal_id_after_the_deals_closed_before_created():
+    import openpyxl
+    stored = cf.stored(anomalies=cf.anomalies(deals_duplicate_id=REPEATS))
+    wb = openpyxl.load_workbook(server.build_export_workbook({"company_name": "Acme"}, stored))
+    rows = [tuple(c.value for c in r) for r in wb["Anomalies"].iter_rows(min_row=2)]
+    labels = [r[0] for r in rows]
+    at = labels.index("Deals close-before-created (excluded)")
+    assert rows[at + 1] == ("CRM rows sharing a deal ID", 6, "3 distinct deal IDs")
+
+
+def test_the_memo_anomaly_count_adds_the_collapsed_rows_as_the_screen_lists_them():
+    from app import ic_memo as im
+    assert im.anomaly_count(cf.stored(anomalies=cf.anomalies(deals_duplicate_id=REPEATS))) == 6
+    assert im.anomaly_count(cf.stored(anomalies=cf.anomalies())) == 0

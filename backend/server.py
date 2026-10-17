@@ -2842,6 +2842,8 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
             ("Customers with gaps > 2 months then resume", len(an.get("revenue_gap_then_resume", [])), ", ".join(an.get("revenue_gap_then_resume", [])[:50])),
             ("Revenue lines missing customer ID", an.get("revenue_missing_customer_id", {}).get("count"), ""),
             ("Deals close-before-created (excluded)", an.get("deals_close_before_created", {}).get("excluded_count"), ""),
+            *([("CRM rows sharing a deal ID", an["deals_duplicate_id"].get("collapsed"),
+                f"{an['deals_duplicate_id'].get('distinct_ids')} distinct deal IDs")] if an.get("deals_duplicate_id") else []),
             ("Date columns with day/month order set from the data", len(an.get("date_order_from_data", [])),
              "; ".join(f"{n['field']} ({n['dataset']}): {n['order']}, {n['rows']} rows" for n in an.get("date_order_from_data", []))),
         ]
