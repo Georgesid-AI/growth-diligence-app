@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Paperclip, FileSpreadsheet, FileText, Loader2, Send, ChevronRight, ChevronDown, X } from "lucide-react";
+import { Paperclip, FileSpreadsheet, FileText, Loader2, ChevronRight, ChevronDown, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { BLOCKERS_CHANGED } from "@/components/BlockerBanner";
 import { uploadChatFile, getDatasets, decideColumns, reportUsage, changeDatasetType, confirmForecastClaims } from "@/lib/api";
 import {
-  S1_TEXT_REPLY, S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE, S4_DROP_ZONE_LEAD, S4_DROP_ZONE_BOLD, S6_UNKNOWN_TYPE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S_UPLOAD_RETRY, RUN_DECK_EXTENSIONS, RUN_DROP_ZONE, RUN_REFUSED,
+  S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE_LEAD, S4_DROP_ZONE_BOLD, S6_UNKNOWN_TYPE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S_UPLOAD_RETRY,
   S20_NOTE_PLACEHOLDER, S21_NOTE_REFUSED, NOTE_MAX, ALLOWED_EXTENSIONS, REASONS, TYPE_LABELS, S5_head, S8_replace,
-  S9_confidence, S13_status, S26_type, S26_CHANGE, S26_sheet, S27_miss, S27_SHOW_COLUMNS, S28_read, S28_SHOW_CLAIMS, S28_cap, S28_CONFIRM,
-  forecastValueText, forecastCells, MAP_LABEL, CALCULATE_LABEL, CALCULATE_CLASS, SEND_TOOLTIP, setCalculatePressed, S14_same, MAPPING_HEADERS, S25_TITLE, S25_PARAGRAPHS, S29_TITLE, S29_PARAGRAPHS, mappedBy, sortColumns, fieldName, fmtBytes, extensionOf, heldFields,
+  S9_confidence, S13_status, S13_READY, S26_type, S26_CHANGE, S26_sheet, S27_miss, S27_SHOW_COLUMNS, S28_read, S28_SHOW_CLAIMS, S28_cap, S28_CONFIRM,
+  forecastValueText, forecastCells, MAP_LABEL, CALCULATE_CLASS, ALL_CONFIRMED_LINE, mappingComplete, setCalculatePressed, S14_same, MAPPING_HEADERS, S25_TITLE, S25_PARAGRAPHS, S29_TITLE, S29_PARAGRAPHS, mappedBy, sortColumns, fieldName, fmtBytes, extensionOf, heldFields,
 } from "@/lib/chatUpload";
 
 const NONE = "";
@@ -18,17 +18,15 @@ const uid = () => `m${nextId++}`;
 
 /**
  * The chat-style upload (docs/specs/chat-upload.md section 2): one message list, files in, one analyst bubble and one
- * system bubble per file, the mapping table in the system bubble. Typed text is answered on the page (S1) and goes
- * nowhere else. `extras(view)` renders what follows the table of a revenue file (FX rates, billing terms).
+ * system bubble per file, the mapping table in the system bubble. The bar below holds the paperclip and Map; there is no text
+ * field. `extras(view)` renders what follows the table of a revenue file (FX rates, billing terms).
  *
  * `onFiles(files)` hands the attached files up; the page's Run audit reads them and then passes `leftover` (the files it did not
- * send): the bubbles of every other file are dropped, and the stored files are read again. `deferred` is the older use of the box
- * with decks accepted too and no Map or Calculate button; no page uses it now.
+ * send): the bubbles of every other file are dropped, and the stored files are read again.
  */
-export default function UploadChat({ audit, extras, onViews, onCalculate, onStaged, onMapping, mapButton, calculateButton, computing,
-  deferred = false, onFiles, leftover }) {
+export default function UploadChat({ audit, extras, onViews, onStaged, onMapping, mapButton, onFiles, leftover }) {
   const [messages, setMessages] = useState([]);
-  const [text, setText] = useState("");
+  const [decided, setDecided] = useState(false);          // the analyst confirmed or corrected a column on this page
   const [busy, setBusy] = useState(0);
   const [dragging, setDragging] = useState(false);
   const staged = useRef(new Map());                   // bubble id -> File: attached, not yet read (nothing runs until Map)
@@ -39,6 +37,8 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, onStag
   const picker = useRef(null);
   const queue = useRef(Promise.resolve());
   const consent = audit.structure_reading_consent === true;
+  const views = messages.filter((m) => m.kind === "system" && m.view).map((m) => m.view);
+  const allConfirmed = decided && mappingComplete({ attached: messages.filter((m) => m.staged).length, views });   // after the last open column
   const firstTable = messages.find((m) => m.kind === "system" && m.view)?.id;       // the info box sits above the first table
 
   const push = useCallback((m) => setMessages((all) => [...all, { id: uid(), ...m }]), []);
@@ -46,7 +46,6 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, onStag
 
   // On reload: one analyst bubble and one system bubble per stored dataset. Text replies and refused files are not kept.
   useEffect(() => {
-    if (deferred) return;                               // the page lists the stored files itself
     getDatasets(audit.id).then((views) => {
       setMessages(views.flatMap((v) => [
         { id: uid(), kind: "analyst", dtype: v.dtype, file: v.file, size: v.size_bytes, ext: v.ext },
@@ -102,15 +101,13 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, onStag
     }
   };
 
-  const allowed = deferred ? [...ALLOWED_EXTENSIONS, ...RUN_DECK_EXTENSIONS] : ALLOWED_EXTENSIONS;
-
   // Files go one at a time, in drop order.
   const takeFiles = (files) => {
     for (const file of Array.from(files || [])) {
       const ext = extensionOf(file.name);
-      if (!allowed.includes(ext)) {
+      if (!ALLOWED_EXTENSIONS.includes(ext)) {
         push({ kind: "analyst", file: file.name, size: file.size, ext });
-        push({ kind: "text", role: "system", text: ext === "xls" ? S7B_XLS_REFUSED : deferred ? RUN_REFUSED : S7_REFUSED });
+        push({ kind: "text", role: "system", text: ext === "xls" ? S7B_XLS_REFUSED : S7_REFUSED });
         reportUsage(audit.id, { rejected_extension: ext || "other" });
         continue;
       }
@@ -133,7 +130,6 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, onStag
     if (!leftover) return;
     for (const [bubble, file] of [...staged.current]) if (!leftover.includes(file)) staged.current.delete(bubble);
     setMessages((all) => all.filter((m) => !m.staged || staged.current.has(m.id)));
-    if (deferred) return;
     getDatasets(audit.id).then((views) => setMessages((all) => [
       ...views.flatMap((v) => [
         { id: uid(), kind: "analyst", dtype: v.dtype, file: v.file, size: v.size_bytes, ext: v.ext },
@@ -145,7 +141,7 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, onStag
 
   // Map: read the attached files one at a time, in drop order; each loads with its mapping table and confirmation list.
   // The banner is refreshed once, after the last file, and not while a file still waits for its type or a replace answer:
-  // "Revenue file missing" would then show while that file is being asked about. Computing is Calculate's job, not this one's.
+  // "Revenue file missing" would then show while that file is being asked about. Computing is Run audit's job, not this one's.
   const map = async () => {
     if (mappingRef.current) return;                     // a second press while files are being read does nothing
     mappingRef.current = true;
@@ -166,18 +162,8 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, onStag
     }
   };
 
-  const submitText = (e) => {
-    e.preventDefault();
-    const typed = text.trim();
-    if (!typed) return;
-    // Typed text is answered here. It is never sent to the server, stored or logged.
-    push({ kind: "text", role: "analyst", text: typed });
-    push({ kind: "text", role: "system", text: S1_TEXT_REPLY });
-    setText("");
-  };
-
-  // After Save claims the stored file is read as claims (chat-upload.md section 20): its view is read again, so its status line and
-  // Calculate follow the server.
+  // After Save claims the stored file is read as claims (chat-upload.md section 20): its view is read again, so its status line
+  // follows the server.
   const claimsSaved = async (view) => {
     const fresh = (await getDatasets(audit.id).catch(() => [])).find((v) => v.dtype === view.dtype);
     if (fresh) setMessages((all) => all.map((m) => (m.kind === "system" && m.dtype === view.dtype ? { ...m, view: fresh } : m)));
@@ -186,6 +172,7 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, onStag
 
   const decide = async (view, decisions) => {
     const next = await decideColumns(audit.id, view.dtype, decisions);
+    setDecided(true);
     setMessages((all) => all.map((m) => (m.kind === "system" && m.dtype === view.dtype ? { ...m, view: next } : m)));
     announce();
     return next;
@@ -216,7 +203,7 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, onStag
       <div data-testid="chat-messages" className="px-5 py-4 space-y-3 min-h-[240px]">
         {/* The drop zone stays after a drop: more files can be attached until Map is pressed. */}
         <div data-testid="chat-drop-zone" className={`border border-dashed rounded-lg text-center text-slate-500 ${messages.length === 0 ? "py-14 text-sm" : "py-3 text-xs"} ${dragging ? "border-sky-500 bg-sky-50" : "border-[#D1D5DB]"}`}>
-          {deferred ? RUN_DROP_ZONE : <>{S4_DROP_ZONE_LEAD}<strong>{S4_DROP_ZONE_BOLD}</strong></>}
+          {S4_DROP_ZONE_LEAD}<strong>{S4_DROP_ZONE_BOLD}</strong>
         </div>
         {messages.map((m) => (
           <Message key={m.id} m={m} audit={audit} unstage={unstage} extras={extras} lastReason={lastReason} setLastReason={setLastReason}
@@ -226,33 +213,21 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, onStag
             onKeep={() => { openPrompts.current.delete(m.bubble); setMessages((all) => all.filter((x) => x.id !== m.id && x.id !== m.bubble)); }} />
         ))}
         {busy > 0 && <div className="text-xs text-slate-500 flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Reading…</div>}
+        {allConfirmed && <p className="text-xs text-emerald-700" data-testid="all-confirmed">{ALL_CONFIRMED_LINE}</p>}
       </div>
-      <form onSubmit={submitText} className="border-t border-[#E5E7EB] px-3 py-3 flex items-center gap-2">
-        <input ref={picker} type="file" multiple accept={allowed.map((e) => `.${e}`).join(",")} className="hidden" data-testid="chat-file-input"
+      <div className="border-t border-[#E5E7EB] px-3 py-3 flex items-center gap-2">
+        <input ref={picker} type="file" multiple accept={ALLOWED_EXTENSIONS.map((e) => `.${e}`).join(",")} className="hidden" data-testid="chat-file-input"
           onChange={(e) => { takeFiles(e.target.files); e.target.value = ""; }} />
         <button type="button" aria-label="Attach files" data-testid="chat-paperclip" onClick={() => picker.current?.click()}
           className="p-2 rounded-md text-slate-600 hover:bg-slate-100"><Paperclip className="h-4 w-4" /></button>
-        <Input data-testid="chat-text-input" value={text} onChange={(e) => setText(e.target.value)} placeholder={deferred ? RUN_DROP_ZONE : S4_DROP_ZONE}
-          className="h-9 bg-white border-[#E5E7EB]" />
         {/* A disabled button shows no tooltip of its own, so the wrapper carries it. */}
-        <span title={SEND_TOOLTIP} data-testid="chat-send-wrap">
-          <Button type="submit" size="sm" aria-label="Send" data-testid="chat-send" variant="outline" disabled={!text.trim()} title={SEND_TOOLTIP}><Send className="h-4 w-4" /></Button>
-        </span>
-        {!deferred && <>
         <span title={mapButton.tooltip} data-testid="chat-map-wrap">
           <Button type="button" size="sm" data-testid="chat-map" disabled={mapButton.disabled} onClick={map}
             className={CALCULATE_CLASS} title={mapButton.tooltip}>
             {mapping ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{MAP_LABEL}
           </Button>
         </span>
-        <span title={calculateButton.tooltip} data-testid="chat-calculate-wrap">
-          <Button type="button" size="sm" data-testid="chat-calculate" disabled={calculateButton.disabled} onClick={onCalculate}
-            className={CALCULATE_CLASS} title={calculateButton.tooltip}>
-            {computing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{CALCULATE_LABEL}
-          </Button>
-        </span>
-        </>}
-      </form>
+      </div>
     </section>
   );
 }
@@ -260,9 +235,7 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, onStag
 function Message({ m, audit, unstage, extras, lastReason, setLastReason, decide, retype, claimsSaved, showInfo, onType, onReplace, onKeep }) {
   if (m.kind === "analyst") return <AnalystBubble m={m} unstage={unstage} />;
   if (m.kind === "text") {
-    return m.role === "analyst"
-      ? <Bubble side="right" testid="chat-text-analyst">{m.text}</Bubble>
-      : <Bubble side="left" testid="chat-text-system">{m.text}</Bubble>;
+    return <Bubble side="left" testid="chat-text-system">{m.text}</Bubble>;
   }
   if (m.kind === "unknown") {
     return (
@@ -373,7 +346,7 @@ function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide, 
       {view.forecast_claims && !view.read_as_claims && (
         <ForecastClaims key={`${view.file}:${view.uploaded_at}`} view={view} auditId={audit.id} onSaved={() => claimsSaved?.(view)} />)}
       {view.dtype === "revenue" && extras?.(view)}
-      <div className={`mt-3 text-xs font-mono ${status === "Ready for calculation" || view.read_as_claims ? "text-emerald-700" : "text-amber-700"}`} data-testid={`status-${view.dtype}`}>
+      <div className={`mt-3 text-xs font-mono ${status === S13_READY || view.read_as_claims ? "text-emerald-700" : "text-amber-700"}`} data-testid={`status-${view.dtype}`}>
         {status}
       </div>
     </Bubble>

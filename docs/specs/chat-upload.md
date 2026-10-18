@@ -34,7 +34,7 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
 | Usage log as its own collection; a totals page | The Storage row (every collection is listed) and the Frontend row (four pages) | Usage counters on the audit document (`audits.usage`), tokens and cost read from `llm_calls`, and totals as a section of the audit list (AuditHub) |
 
 ## 2. Screen
-- The MappingWizard page keeps its route, its title and the header bar (Calculate). Below the header, at the top of
+- The MappingWizard page keeps its route and its title (the header Calculate button was removed 2026-10-18, §25). Below the title, at the top of
   the page, sit the audit's set-up fields (2026-10-09, George): Reporting currency, Target ARR, Target date, As-of month,
   Fiscal year-end and First quarterly review (2026-10-11, George: required, default the audit's creation date plus 90 days, editable; clearing it returns the default; it is stored as the audit's `ic_inputs.first_quarterly_review` and gives the date of every gate prefill), each with one line of help under it, then the FX settings (§16), then the chat panel: a pure white message
   list with the input bar at the bottom. The deck panel stays below the chat panel, unchanged. The page uses the existing
@@ -46,9 +46,8 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
   "Maps FY labels in the deck to months. A wrong setting shifts every FY claim." The creation dialog asks for the project or company
   name only (amended 2026-10-18, §23); the consent tick is in this set-up section; the five fields start at EUR, 0, no date, no as-of month and
   December.
-- Input bar: a paperclip (a file picker that accepts several files), a drop zone over the whole panel, and a text
-  field. Text sent from the field gets a system reply, word for word: "This window accepts files and mapping
-  confirmations." The text is never sent to the server, stored or logged.
+- Input bar: a paperclip (a file picker that accepts several files) and the Map button (§16), and a drop zone over the whole panel.
+  There is no text field and no send button (amended 2026-10-18, §25); the S1 text reply and its code path are removed.
 - An explainer line sits above the drop zone and is tied to `structure_reading_consent`. The consent tick sits in the set-up
   section at the top of the page (amended 2026-10-18, §23), so this panel only shows its state. When ticked, the panel shows explainer S2; when unticked,
   S3 (§11).
@@ -112,7 +111,7 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
 ## 4. Mapping rule
 ### 4.1 Step 1: rules (Python)
 - Required fields (`FIELD_DEFS`): revenue customer id, invoice date, amount, currency; CRM deal id, created date, close date,
-  stage; P&L month, S&M expense, revenue, cost of revenue. A file is ready for calculation when each is mapped (S13). The CRM
+  stage; P&L month, S&M expense, revenue, cost of revenue. A file is ready (S13) when each is mapped. The CRM
   amount is optional since 2026-10-17 (George; crm-dedup-clustering.md §6): no calculation reads it. It keeps its aliases, its
   numeric kind and the turnover/volume question (§15), and the field list shows it first among the optional fields, after the
   required ones.
@@ -344,10 +343,10 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 ## 11. Screen wording (S1–S22 approved 2026-10-08; S5, S9, S15, S16a, S18 amended and S16d, S18b, S23–S25 added the same day)
 | Id | Where | Text |
 |---|---|---|
-| S1 | text reply | This window accepts files and mapping confirmations. (as given) |
+| S1 | text reply | Removed 2026-10-18 (§25): the bar has no text field. |
 | S2 | explainer, consent ticked | The model reads every column header and a masked sample to propose the mapping. When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table. (First sentence given by George on 2026-10-17, §22, in place of "Mapping is done by rules first. Where rules cannot decide, the AI sees only those columns' headers, up to 3 example numbers or dates per column and a pattern for text columns – never your full file and never a name – and you confirm those columns."; last sentence added 2026-10-16, §19, its "which can contain the company name" clause removed the same day, because the company name is masked.) |
 | S3 | explainer, consent unticked | Mapping is done by rules only: AI-assisted reading is off for this audit. You map the columns the rules cannot decide. |
-| S4 | drop zone | Drop files here or use the paperclip. Required: Revenue by customer (monthly, 24–36 months). The audit will not run without a revenue file. Optional: CRM export and P&L. **.xlsx or .csv only** (George, 2026-10-18; only ".xlsx or .csv only" is bold; the input's placeholder carries it as plain text) |
+| S4 | drop zone | Drop files here or use the paperclip. Required: Revenue by customer (monthly, 24–36 months). The audit will not run without a revenue file. Optional: CRM export and P&L. **.xlsx or .csv only** (George, 2026-10-18; only ".xlsx or .csv only" is bold). Shown once, in the drop zone; the bar has no placeholder (§25) |
 | S5 | bubble head | Detected: Revenue lines · 1,240 rows · 24 months (Jan 2023 – Dec 2024). Before the date column is confirmed the months are left out: "Detected: Revenue lines · 1,240 rows". |
 | S6 | unknown type | Could not tell what this file holds. Pick its type: Revenue lines / CRM deals / P&L (monthly). |
 | S7 | refused file | This window takes .xlsx and .csv files. Decks go in the deck panel below. |
@@ -357,7 +356,7 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 | S10 | buttons | Confirm · Correct · Not used (n) |
 | S11 | reason codes | Header is misleading · Another column is the right one · Values do not fit this field · Wrong kind of date · Column not needed · Other (opens S20) |
 | S12 | model failed | AI reading unavailable – these columns need your decision. |
-| S13 | status line | Ready for calculation · {n} columns wait for your decision · Required field not mapped: {field} |
+| S13 | status line | Ready – press Run audit (2026-10-18, §25; before: Ready for calculation) · {n} columns wait for your decision · Required field not mapped: {field} |
 | S14 | same file | Same file as before: saved mapping v{n} applied. |
 | S15 | AI row | AI suggestion – confirm (the column "Mapped by", S24; amended 2026-10-08, it was "AI suggestion, not verified"). The label "AI suggestion, not verified" stays on model-read claim values, rule 18. |
 | S16a | banner | Revenue file missing: upload and map it to compute metrics. (Only when no revenue file exists; shown from the first Map, §16.) |
@@ -459,21 +458,19 @@ Revenue: the column maps as before. Volume: the column is Not used and the engin
 (`money_kind`) is saved with the mapping version and reused for the same file and the same headers. Closed codes only
 (revenue, volume): no free text. Decision `{column, action: "confirm", money_kind}`.
 
-## 16. Map, Calculate, the revenue banner and the FX rates (amended 2026-10-09, George)
+## 16. Map, the revenue banner and the FX rates (amended 2026-10-09, George)
 - A file dropped in the chat (or picked with the paperclip) is only attached: it shows as an attachment, "attached – not read
   yet", with a remove button. Nothing is read, mapped, stored or computed until the analyst presses Map. The drop zone stays
   after a drop.
 - **Map** reads the attached files one at a time in drop order and maps them (rules, then the AI for the columns the rules
   cannot decide, then the confirmation list of §4). It never computes. It is enabled when at least one file is attached or
   loaded, and not while a press is being worked.
-- **Calculate** computes the metrics. It is enabled only when the mapping is complete: a revenue file is loaded, no attached
-  file is unread, and no column of any loaded file waits for a decision or has a required field unmapped. Otherwise it is
-  disabled with the tooltip "Map the revenue file and confirm every column that waits for you first." The header button and the
-  chat button are both Calculate and share one state: they are always both enabled or both disabled. A second press while a
-  press is being worked does nothing.
+- **Calculate** was removed on 2026-10-18 (§25): the header button and the chat button are gone, and Run audit is the only way to
+  calculate. Map's tooltip reads "Reads the attached files and maps their columns. Run audit follows once every column is confirmed."
+  A second press of Map while a press is being worked does nothing.
 - Banner (supersedes the "every audit view" timing of §6.2 and rule 21 for the S16a wording only): "Revenue file missing" (S16a)
   is not shown when the screen opens. It shows after Map has been pressed (kept per audit for the browser tab's session;
-  it is never reset by a compute) and the server still reports it, on every audit view, until a file is uploaded. "Revenue file
+  it is never reset by a run) and the server still reports it, on every audit view, until a file is uploaded. "Revenue file
   uploaded – confirm the mapping" (S16d) always shows when the server reports it: a stored file means Map was pressed, here
   or in another tab. The flag is set after the last attached file is read, and not while a file still waits for its type or a
   replace answer, so "missing" never shows while a file is being asked about; the banner is refreshed once after the last file
@@ -486,7 +483,7 @@ Revenue: the column maps as before. Volume: the column is Not used and the engin
   are still read, under the audit's own rates. Cause found: a re-upload wrote `fx: {}` over the saved rates, and rates could
   only be entered once a revenue file was loaded.
 - Saving the FX rates marks a computed audit's metrics stale and recomputes it, as the existing rule does for any input the engine
-  reads (PUT /fx). This is the one computation that does not wait for Calculate; "nothing is read until Map" covers files
+  reads (PUT /fx). This is the one computation that does not wait for Run audit; "nothing is read until Map" covers files
   attached in the chat. The deck panel reads the claims again after a save, so converted figures replace "FX rate needed". PUT /fx
   saves the whole set the screen shows: rates an older version saved with the revenue file move to the audit and the file's copy
   is cleared, so a removed rate stays removed.
@@ -657,7 +654,7 @@ line, its values by period), and the register treats the claims as it treats Use
   file's view is then read again, the list is gone and the status line shows S28d (§20.5). A file whose claims are saved shows S28d on reload. No model call is made: the reading is rules
   only, nothing new reaches the gateway (`GATEWAY_READABLE_FIELDS` unchanged), and the log line holds the run and two counts.
 - **20.5 After review (2026-10-16, George).** (1) A file read as claims (one whose bytes have saved forecast-table claims) no longer counts
-  toward Calculate: compute does not read it (it is no engine input), Run audit's mapping stage and the review screen's counts and mapping
+  toward the mapping: compute does not read it (it is no engine input), Run audit's mapping stage and the review screen's counts and mapping
   summary leave it out, and the revenue banner treats a revenue-typed file read as claims as no revenue file (S16a). Its view carries
   `read_as_claims` {lines, claims} with nothing pending and no required field missing; the miss message stays, and its status line reads S28d.
   Saving claims brings a computed audit up to date (the stale rule of §16). (2) Forecast-table claims selectable for the top 5 once the
@@ -671,7 +668,7 @@ line, its values by period), and the register treats the claims as it treats Use
   stored before Save claims, unticked lines dropped, 400, 409), the register row, the memo and the CSV; `test_gateway_data_boundary.py` (no model
   call, the reason, the log line, nothing gateway-readable); `MappingWizard.test.jsx` (S28a–S28d, the list, Save claims with unticked lines),
   `deckClaims.test.js` (the sheet source, the type), `claimRegister.test.js` (the reading); for 20.5 `test_forecast_claims.py` (compute, Run
-  audit, the review counts, the banner, a Save with no line), `MappingWizard.test.jsx` (Calculate, the status line, Save claims off with no
+  audit, the review counts, the banner, a Save with no line), `MappingWizard.test.jsx` (the status line, Save claims off with no
   line) and `review.test.js` (the mapping summary).
 
 ## 21. Deal ID and stage, and a rule confidence of exactly 80 (2026-10-17, George)
@@ -796,9 +793,9 @@ the Audit") and the tests. The route `/audit/:id/dashboard` is unchanged.
 **Upload & Mapping is the entry point.** Creating an audit, the hub's "Run audit" button and its "Open" button all land on
 `/audit/:id/mapping`. The one-click "Run audit" button and its three stages (File mapping, Engine calculations, Claim extraction from
 decks, with Retry stage) move from the Run audit page to the Upload & Mapping page, at the bottom (George, 2026-10-18): below the deck panel (the
-Board deck box). Everything above keeps its order: set-up section, FX settings, the file box with its column-by-column mapping, the deck panel. The Map and Calculate buttons stay as they are. The page
+Board deck box). Everything above keeps its order: set-up section, FX settings, the file box with its column-by-column mapping, the deck panel. The Map button stays as it is (Calculate was removed, §25). The page
 has one file box: files attached in it are read by Map, or by Run audit (spreadsheets only; decks are added in the deck panel and
-read by the claims stage). While Run audit runs, Map and Calculate wait, and the other way round. When it finishes with Done or Needs
+read by the claims stage). While Run audit runs, Map waits, and the other way round. When it finishes with Done or Needs
 review it opens the review screen, as before; "Go to the review screen" and the "Files already uploaded" list of the old page are
 dropped (the Review tab and the file box already show both). The Run audit page is removed; `/audit/:id/run` redirects to
 `/audit/:id/mapping`. The review screen's "Back to Run audit" reads "Back to Upload & Mapping" and goes there.
@@ -811,3 +808,26 @@ not set or 0, and a Target date that is not set, read "n.a.". The audit list alr
 and names of the tabs, no Details, no Run audit tab, All audits button and app name both go to "/"), `MappingWizard.test.jsx` (the Run
 audit button and stages sit at the bottom, below the deck panel, the old page is gone; the drop-zone text with only ".xlsx or .csv only" bold), `App` redirect test, `AuditHub.test.jsx`
 (Target ARR, Target date, the empty line, Created, with "n.a.", the buttons land on /mapping), `Review.test.jsx` (link names).
+
+## 25. Upload bar clean-up and Calculate removed (2026-10-18, George)
+Decided by George with the task. The architecture and the engine are unchanged.
+1. **Upload bar.** The text field and the send button are removed; the paperclip (file picker) and Map stay. The S1 text reply and its code
+   path are removed. The upload help text (S4) is shown once, inside the drop zone; the duplicate placeholder is removed.
+2. **Calculate is removed** (§16): the button next to Map, the header button and `CALCULATE_LABEL`. `CALCULATE_CLASS` stays: it is the
+   shared button style (Map, the register's claim-type buttons).
+3. **Run audit is the only way to calculate.** It carries on from the first stage that is not done (File mapping, Engine calculations,
+   Claim extraction from decks). A spreadsheet still attached counts against File mapping; with every stage done it runs the claims stage
+   again, which accepts nothing twice. It reads the audit's state when pressed, so a mapping confirmed after the page loaded counts. **The
+   engine stage counts as not done when a mapping was confirmed or corrected after the last calculation**: the review summary carries
+   `engine_stale` (a file's `mapped_at` is later than the audit's `computed_at`, or `metrics_stale` is set because an automatic
+   recompute could not run); no results means the stage is simply not done. Decks already read are served from the cache
+   (llm-structure-reading.md), so a second Run audit makes no new AI call for them; a second press with nothing attached uploads nothing.
+4. **After the last open mapping is confirmed**, one line sits next to the mapping list: "All columns confirmed. Press Run audit at the
+   bottom of the page to calculate." It shows once the analyst has confirmed or corrected a column on the page and no column, required field
+   or unread file is left; a mapping that was complete on arrival shows only the status line.
+5. **Wording.** S13 "Ready for calculation" reads "Ready – press Run audit"; Map's tooltip and the Run audit lines no longer mention Calculate.
+6. **Removed leftovers of PR #129:** the old Run audit drop-zone text, its deck-extension list and refusal text, and the `deferred` mode of the
+   box that used them (no page used it).
+- **Tests.** `test_run_audit.py` (`engine_stale`: before and after the calculation, the recompute flag, no results), `MappingWizard.test.jsx` (the
+  bar holds the paperclip and Map only, no Calculate text on the page, the help text once, S13, the all-confirmed line), `MappingWizard.runAudit.test.jsx`
+  (the first stage not done, a stale engine, a second press sends no file and no deck).

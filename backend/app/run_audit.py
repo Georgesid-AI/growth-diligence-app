@@ -39,6 +39,18 @@ def mapping_counts(datasets: Iterable[dict]) -> Dict:
     return {"auto": auto, "open": open_, "missing_required": missing}
 
 
+def engine_stale(audit: dict, datasets: Iterable[dict]) -> bool:
+    """True when the stored results are older than the mapping: a column was confirmed or corrected (a file's `mapped_at`) after
+    `computed_at`, or the audit is flagged `metrics_stale` (an automatic recompute could not run). Run audit then counts the engine
+    stage as not done and calculates again. No results: nothing is stale, the stage is simply not done."""
+    if not audit.get("results"):
+        return False
+    if audit.get("metrics_stale"):
+        return True
+    computed = audit.get("computed_at") or ""
+    return any((ds.get("mapped_at") or "") > computed for ds in datasets)
+
+
 def within_tolerance_ids(rows: List[dict], candidate_ids: Iterable[str]) -> List[str]:
     """The candidates whose every register row is Verified within the claim's tolerance: ±5% of the claimed value for
     amounts, counts and durations, ±1 percentage point for rates. A beat (Verified, marked beat, however the analyst answered a

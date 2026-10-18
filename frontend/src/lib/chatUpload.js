@@ -4,7 +4,6 @@
  */
 import { seeGlossary } from "./glossary";
 
-export const S1_TEXT_REPLY = "This window accepts files and mapping confirmations.";
 export const S2_EXPLAINER_CONSENT =
   "The model reads every column header and a masked sample to propose the mapping. When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table.";
 export const S3_EXPLAINER_NO_CONSENT =
@@ -12,12 +11,6 @@ export const S3_EXPLAINER_NO_CONSENT =
 export const S4_DROP_ZONE_LEAD =
   "Drop files here or use the paperclip. Required: Revenue by customer (monthly, 24–36 months). The audit will not run without a revenue file. Optional: CRM export and P&L. ";
 export const S4_DROP_ZONE_BOLD = ".xlsx or .csv only";      // the only bold part of the text
-export const S4_DROP_ZONE = S4_DROP_ZONE_LEAD + S4_DROP_ZONE_BOLD;   // plain text, for the input's placeholder
-// Run audit uses the same box, with decks accepted: the files wait there until Run audit reads them (no Map or Calculate button).
-export const RUN_DECK_EXTENSIONS = ["pptx", "pdf", "docx"];
-export const RUN_DROP_ZONE =
-  "Drop files here or use the paperclip. Required: revenue by customer (.xlsx or .csv). Also useful: CRM export, P&L, board decks (.pptx, .pdf or .docx). Press Run audit to read them.";
-export const RUN_REFUSED = "This window takes .xlsx, .csv, .pptx, .pdf and .docx files.";
 export const S6_UNKNOWN_TYPE = "Could not tell what this file holds. Pick its type:";
 export const S7_REFUSED = "This window takes .xlsx and .csv files. Decks go in the deck panel below.";
 export const S7B_XLS_REFUSED = "Save as .xlsx or .csv and upload again.";
@@ -144,12 +137,13 @@ export const S29_PARAGRAPHS = [
   "Close date is also used for the quarter-end clustering check: the share of won deals closed in the last 10 days of a quarter, by the company's fiscal year-end (needs at least 20 won deals).",
   "Amount can be mapped but is not used in any calculation.",
 ];
+export const S13_READY = "Ready – press Run audit";
 export const S13_status = (view) => {
   if (view.read_as_claims) return S28_saved(view.read_as_claims.claims);     // read as claims: it waits for nothing (section 20)
   if (view.miss && view.miss.missing.length > 0) return `Required field not mapped: ${view.miss.missing.map(fieldName).join(", ")}`;
   if (view.pending > 0) return `${view.pending} columns wait for your decision`;
   if (view.missing_required.length > 0) return `Required field not mapped: ${view.missing_required.map(fieldName).join(", ")}`;
-  return "Ready for calculation";
+  return S13_READY;
 };
 export const S14_same = (version) => `Same file as before: saved mapping v${version} applied.`;
 export const S16a_MISSING = "Revenue file missing: upload and map it to compute metrics.";
@@ -184,16 +178,12 @@ export function heldFields(columns, except) {
   return out;
 }
 
-// Map and Calculate (task of 2026-10-09): files dropped in the chat are only attached; nothing is read until the analyst
-// presses Map, which reads them and maps their columns (rules, then the AI for what is left, then the confirmation list).
-// Calculate computes the metrics and waits until the mapping is complete. The "revenue file missing" banner appears
-// only after Map has been pressed.
+// Map: files dropped in the chat are only attached; nothing is read until the analyst presses Map, which reads them and maps
+// their columns (rules, then the AI for what is left, then the confirmation list). Run audit is the only way to calculate.
+// The "revenue file missing" banner appears only after Map has been pressed.
 export const MAP_LABEL = "Map";
-export const MAP_TOOLTIP = "Reads the attached files and maps their columns. Calculate follows once every column is confirmed.";
+export const MAP_TOOLTIP = "Reads the attached files and maps their columns. Run audit follows once every column is confirmed.";
 export const MAP_NO_FILE_TOOLTIP = "Attach the revenue file first. It is the only required file.";
-export const CALCULATE_LABEL = "Calculate";
-export const CALCULATE_TOOLTIP = "Computes the metrics from the mapped files.";
-export const CALCULATE_NOT_MAPPED_TOOLTIP = "Map the revenue file and confirm every column that waits for you first.";
 /** Map: off while nothing is attached and nothing is loaded, or while a press is being worked. */
 export const mapState = ({ attached, loaded, busy }) => {
   const noFile = attached === 0 && loaded === 0;
@@ -203,13 +193,9 @@ export const mapState = ({ attached, loaded, busy }) => {
  *  the analyst's decision and no required field unmapped (section 4.3). */
 export const mappingComplete = ({ attached, views }) => attached === 0 && views.some((v) => v.dtype === "revenue" && !v.read_as_claims)
   && views.every((v) => v.pending === 0 && v.missing_required.length === 0);
-/** Both Calculate buttons (header and chat) show this one state: on only when the mapping is complete and nothing is running. */
-export const calculateState = ({ attached, views, busy }) => {
-  const ready = mappingComplete({ attached, views });
-  return { disabled: !ready || busy, tooltip: ready ? CALCULATE_TOOLTIP : CALCULATE_NOT_MAPPED_TOOLTIP };
-};
-export const CALCULATE_CLASS = "bg-sky-600 hover:bg-sky-500 gap-2";      // the header button and the chat buttons look the same
-export const SEND_TOOLTIP = "Send a message (for answering the chat's questions)";
+export const CALCULATE_CLASS = "bg-sky-600 hover:bg-sky-500 gap-2";      // the Map button and the register's claim-type buttons look the same
+/** Shown beside the mapping list once the analyst has confirmed the last open column (section 24.5). */
+export const ALL_CONFIRMED_LINE = "All columns confirmed. Press Run audit at the bottom of the page to calculate.";
 export const REVENUE_REQUIRED_NOTE = seeGlossary("The revenue file is the only required file. Every metric in the audit – ARR, NRR, churn, CAC payback – is computed from it; without it nothing can be calculated or verified.");
 const pressedKey = (auditId) => `calculate-pressed:${auditId}`;
 export function calculatePressed(auditId) {

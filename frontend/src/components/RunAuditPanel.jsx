@@ -6,16 +6,17 @@ import { Button } from "@/components/ui/button";
 import * as apiModule from "@/lib/api";
 import { getDatasets, getDecks, getReview } from "@/lib/api";
 import { setCalculatePressed } from "@/lib/chatUpload";
-import { RETRY_LABEL, RUN_LABEL, STAGES, STAGE_STATUS_TEXT, idleStages, runAudit, stagesFromState } from "@/lib/runAudit";
+import { RETRY_LABEL, RUN_LABEL, STAGES, STAGE_STATUS_TEXT, firstStageNotDone, idleStages, runAudit, stagesFromState } from "@/lib/runAudit";
 
 /**
  * Run audit, on the Upload & Mapping page (docs/specs/chat-upload.md section 24): one button, then the files attached in the
  * page's box are mapped, the metrics calculated and the deck claims read, in that order; the review screen opens when the run is
- * done or waits for the analyst. Each stage shows its progress; one that fails says what to do and has a Retry stage button.
+ * done or waits for the analyst. It is the only way to calculate: it carries on from the first stage that is not done, and the
+ * engine counts as not done when a mapping was confirmed or corrected after the last calculation. Each stage shows its progress; one that fails says what to do and has a Retry stage button.
  * On load each stage shows what the audit already holds (stagesFromState).
  *
  * `pick` is a ref to {data, decks}, the attached files not yet sent; `onRan(leftover)` hands back the ones the run did not send;
- * `onRunning(bool)` lets the page hold Map and Calculate while a run is in progress; `blocked` holds this button while they run.
+ * `onRunning(bool)` lets the page hold Map while a run is in progress; `blocked` holds this button while it runs.
  */
 export default function RunAuditPanel({ auditId, pick, onRan, onRunning, blocked = false }) {
   const nav = useNavigate();
@@ -26,19 +27,28 @@ export default function RunAuditPanel({ auditId, pick, onRan, onRunning, blocked
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
   // The audit's real state: its datasets, its results and its deck claims. A read that fails leaves that stage "Not started".
-  useEffect(() => {
+  const readState = useCallback(() => {
     const safe = (p, fallback) => p.catch(() => fallback);
-    Promise.all([safe(getDatasets(auditId), []), safe(getReview(auditId), null), safe(getDecks(auditId), { decks: [], candidates: [] })])
-      .then(([views, summary, deckData]) => { if (alive.current && !started.current) setStages(stagesFromState({ views, summary, deckData })); });
+    return Promise.all([safe(getDatasets(auditId), []), safe(getReview(auditId), null), safe(getDecks(auditId), { decks: [], candidates: [] })])
+      .then(([views, summary, deckData]) => stagesFromState({ views, summary, deckData }));
   }, [auditId]);
+  useEffect(() => {
+    readState().then((read) => { if (alive.current && !started.current) setStages(read); });
+  }, [readState]);
 
   const update = useCallback((key, result) => { if (alive.current) setStages((s) => ({ ...s, [key]: result })); }, []);
-  const start = useCallback(async (from) => {
+  const start = useCallback(async (stage) => {
     if (running) return;
     setRunning(true);
     onRunning?.(true);
     started.current = true;
-    if (from === "mapping") setStages(idleStages());
+    // Run audit asks the audit where it stands now (a mapping may have been confirmed since the last run) and carries on from there.
+    let from = stage;
+    if (!from) {
+      const read = await readState();
+      from = firstStageNotDone(read, pick.current);
+      if (alive.current) setStages(read);
+    }
     setCalculatePressed(auditId);                  // the "revenue file missing" blocker shows from the first run, as after Map
     const out = await runAudit({ api: apiModule, auditId, pick: pick.current, from, onUpdate: update });
     window.dispatchEvent(new Event(BLOCKERS_CHANGED));
@@ -47,7 +57,7 @@ export default function RunAuditPanel({ auditId, pick, onRan, onRunning, blocked
     setRunning(false);
     onRan?.([...pick.current.data, ...pick.current.decks]);
     if (out.status === "done" || out.status === "needs_review") nav(`/audit/${auditId}/review`);
-  }, [auditId, running, update, nav, pick, onRan, onRunning]);
+  }, [auditId, running, update, nav, pick, onRan, onRunning, readState]);
 
   const failed = STAGES.find((s) => stages[s.key].status === "failed");
   return (
@@ -56,7 +66,7 @@ export default function RunAuditPanel({ auditId, pick, onRan, onRunning, blocked
         Attach the files in the box below and press Run audit. The columns are mapped, the metrics calculated and the deck claims read.
         You stop only where a decision is yours, on the review screen.
       </p>
-      <Button data-testid="run-audit" onClick={() => start("mapping")} disabled={running || blocked} className="bg-sky-600 hover:bg-sky-500 gap-2">
+      <Button data-testid="run-audit" onClick={() => start()} disabled={running || blocked} className="bg-sky-600 hover:bg-sky-500 gap-2">
         {running && <Loader2 className="h-4 w-4 animate-spin" />}{RUN_LABEL}
       </Button>
 
