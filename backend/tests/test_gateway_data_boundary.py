@@ -1059,14 +1059,14 @@ def test_a_provider_error_reaches_llm_calls_and_the_log_as_a_status_and_a_type_c
 
 
 # The reason a cap refusal's "structure not read" line gives: a closed word per guard, never the guard's message.
-CAP_REASONS = frozenset({"spend_cap", "token_cap"})
+CAP_REASONS = frozenset({"spend_cap", "token_cap", "allowance"})
 
 
 def test_a_cap_refusal_logs_a_closed_reason_and_no_text(monkeypatch, caplog):
     import logging
     from datetime import datetime, timezone
     assert set(gateway.CAP_REASONS.values()) == CAP_REASONS
-    assert set(gateway.CAP_REASONS) == {"daily_spend_cap_exceeded", "structure_token_cap_reached"}
+    assert set(gateway.CAP_REASONS) == {"daily_spend_cap_exceeded", "structure_token_cap_reached", "monthly_allowance_reached"}
     db = _structure_db()
     db["llm_calls"].docs.append({"run_id": STRUCTURE_AUDIT["id"], "step": "structures", "cache_hit": False,
                                  "input_tokens": 398000, "output_tokens": 0, "estimated_cost_usd": 0.0,
@@ -1082,6 +1082,21 @@ def test_a_cap_refusal_logs_a_closed_reason_and_no_text(monkeypatch, caplog):
     assert [line.split("reason=")[1] for line in lines] == ["token_cap status=- type=-", "spend_cap status=- type=-"]
     for needle in ("Revenue", "£1,200,000", "400,000-token", "spent today", "$"):
         assert needle not in "".join(lines), f"{needle!r} was logged"
+
+
+def test_an_allowance_refusal_logs_the_closed_word_and_no_amount_label_or_id(caplog):
+    import logging
+    db = _structure_db()
+    db["access_tokens"].docs.append({"id": "tester-9", "label": "Label Nine", "ledger": {
+        "all": {"cost_usd": 10.0}, __import__("app.allowance", fromlist=["x"]).month_key(): {"cost_usd": 10.0}}})
+    db["audits"].docs[0]["owner"] = "tester-9"
+    with caplog.at_level(logging.DEBUG):
+        result, adapter = _send(db, GOOD_ITEMS)
+    lines = "".join(r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:"))
+    assert result.status == "not_read" and adapter.calls == 0
+    assert "reason=allowance status=- type=-" in lines
+    for needle in ("tester-9", "Label Nine", "10.0", "USD", "$"):
+        assert needle not in "".join(r.getMessage() for r in caplog.records), f"{needle!r} was logged"
 
 
 # The check a "structure not read" line names for a reply that fails validation (issue #64): a closed word, never the
@@ -1173,7 +1188,7 @@ def test_the_structure_path_never_reads_parsed_deck_text():
     assert not touched & {decks.TEXT_COLLECTION, decks.CANDIDATES_COLLECTION}, touched
     audit_reads = [projection for name, projection, _ in reads if name == "audits"]
     assert audit_reads and all(set(p) - {"_id"} <= {"id", "company_name", "client_name",
-                                                       "structure_reading_consent"} for p in audit_reads)
+                                                       "structure_reading_consent", "owner"} for p in audit_reads)
     assert DECK_SENTINEL not in adapter.payloads[0] and DECK_FILE not in adapter.payloads[0]
 
 

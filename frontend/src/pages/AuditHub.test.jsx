@@ -4,13 +4,12 @@ import { createRoot } from "react-dom/client";
 import AuditHub from "./AuditHub";
 import * as api from "@/lib/api";
 import { CONSENT_EXPLAINER, CONSENT_LABEL } from "@/lib/auditForm";
-import { S18_MISMATCH, S19_USAGE_OWN, S19_USAGE_ALL, S19_USAGE_EXPLAINER_OWN, S19_USAGE_EXPLAINER_ALL } from "@/lib/chatUpload";
+import { S18_MISMATCH } from "@/lib/chatUpload";
 
 jest.mock("@/lib/api", () => ({
   listAudits: jest.fn(),
   createAudit: jest.fn(),
   deleteAudit: jest.fn(),
-  getUsageTotals: jest.fn(),
 }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
 jest.mock("react-router-dom", () => ({ useNavigate: () => jest.fn() }), { virtual: true });
@@ -120,7 +119,7 @@ describe("AI-assisted reading explainer", () => {
 });
 
 
-describe("delete audit and the usage totals", () => {
+describe("delete audit", () => {
   const AUDITS = [{ id: "a1", company_name: "Acme SaaS Inc.", status: "draft", reporting_currency: "EUR", target_arr: 1000000 }];
   let host, root;
   beforeEach(async () => {
@@ -184,56 +183,11 @@ describe("delete audit and the usage totals", () => {
     expect(api.deleteAudit).toHaveBeenCalledWith("a1", "Acme SaaS Inc.");
   });
 
-  test("the usage totals are folded, asked for only when opened, and list the notes", async () => {
-    api.getUsageTotals.mockResolvedValue({
-      files: { uploaded: { revenue: 2 }, rejected: { pptx: 1 } }, columns: { rules: 9, saved: 1, ai: 2, confirmed: 3, corrected: 1, reasons: { other: 1 } },
-      steps: { compute: { runs: 4, failures: { KeyError: 1 } }, mapping_ai: { read: 2 } }, evidence_labels: { Verified: 3 }, metrics_missing: 2,
-      analyst_changes: 5, median_days_to_export: 1.5, tokens_and_cost_by_step: { structures: { input_tokens: 10, output_tokens: 5, cost_usd: 0.014 } },
-      other_notes: [{ note: "Adj is not it", at: "t" }], scope: "own",
-    });
-    const details = q("usage-totals");
-    expect(details.querySelector("summary").textContent).toBe("Your usage");
-    expect([S19_USAGE_OWN, S19_USAGE_ALL]).toEqual(["Your usage", "Usage totals (all testers)"]);
-    expect(q("usage-explainer").textContent).toBe(S19_USAGE_EXPLAINER_OWN);
-    expect(S19_USAGE_EXPLAINER_OWN).toBe("Totals for your audits since counting began. Counts and costs only — no file names, figures or company names. Kept to improve the app.");
-    expect(details.open).toBe(false);
-    expect(api.getUsageTotals).not.toHaveBeenCalled();
-    await act(async () => { details.open = true; details.dispatchEvent(new Event("toggle", { bubbles: true })); });
-    await act(async () => { await Promise.resolve(); });
-    expect(api.getUsageTotals).toHaveBeenCalledTimes(1);
-    expect(q("usage-notes").textContent).toContain("Adj is not it");
-    expect(details.textContent).toContain("revenue 2");
-    expect(details.textContent).toContain("pptx 1");
-    expect(details.textContent).toContain("Verified 3 · Unverified 0 · Unsupported 0 · Contradicted 0 · Metrics missing 2");
-    expect(details.textContent).toContain("15 tokens · $0.01");
-    expect(details.textContent).not.toContain("0.014");
-    expect(details.textContent).not.toContain("Acme");
+  test("the hub has no usage section: a tester's usage is not shown here, and nothing asks for the totals", async () => {
+    expect(q("usage-totals")).toBeNull();
+    expect(document.body.textContent).not.toContain("Your usage");
+    expect(api.getUsageTotals).toBeUndefined();
   });
-
-  test("the usage title follows the scope the server answers: a tester reads Your usage, the owner token's totals read all testers", async () => {
-    api.getUsageTotals.mockResolvedValue({ scope: "all", files: {}, columns: {}, steps: {}, other_notes: [] });
-    const details = q("usage-totals");
-    expect(details.querySelector("summary").textContent).toBe("Your usage");          // before anything is asked
-    await act(async () => { details.open = true; details.dispatchEvent(new Event("toggle", { bubbles: true })); });
-    await act(async () => { await Promise.resolve(); });
-    expect(details.querySelector("summary").textContent).toBe("Usage totals (all testers)");
-    expect(q("usage-explainer").textContent).toBe(S19_USAGE_EXPLAINER_ALL);
-    expect(S19_USAGE_EXPLAINER_ALL).toBe("Totals across all testers since counting began. Counts and costs only — no file names, figures or company names. Kept to improve the app.");
-  });
-});
-
-test("under React.StrictMode the usage totals still render once opened (alive ref is re-armed on the second mount)", async () => {
-  api.listAudits.mockResolvedValue([]);
-  api.getUsageTotals.mockResolvedValue({ files: { uploaded: { revenue: 2 } }, other_notes: [{ note: "strict note", at: "t" }] });
-  const host = document.createElement("div");
-  document.body.appendChild(host);
-  const root = createRoot(host);
-  await act(async () => { root.render(<React.StrictMode><AuditHub /></React.StrictMode>); });
-  const details = q("usage-totals");
-  await act(async () => { details.open = true; details.dispatchEvent(new Event("toggle", { bubbles: true })); });
-  await act(async () => { await Promise.resolve(); });
-  expect(q("usage-notes").textContent).toContain("strict note");
-  await act(async () => { root.unmount(); host.remove(); });
 });
 
 describe("the audit list when it cannot be read", () => {

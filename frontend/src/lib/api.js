@@ -79,7 +79,8 @@ export const confirmForecastClaims = (id, dtype, rows) =>
 export const getBlockers = (id) => api.get(`/audits/${id}/blockers`).then((r) => r.data.blockers);
 // Usage counters: the screen the analyst is on, or the extension of a file the browser refused. Never a name or a value.
 export const reportUsage = (id, event) => api.post(`/audits/${id}/usage`, event).then((r) => r.data).catch(() => null);
-export const getUsageTotals = () => api.get("/usage/totals").then((r) => r.data);
+// The tester's monthly AI allowance and use (docs/specs/usage-and-allowance.md section 4); 404 for the owner token.
+export const getAllowance = () => api.get("/allowance").then((r) => r.data);
 
 // Board decks: upload parses the file and lists candidate claims; the analyst approves,
 // rejects or edits each one.
@@ -160,3 +161,5 @@ export const ownerTesters = (token) => api.get("/admin/testers", asOwner(token))
 export const ownerIssueTester = (token, label) => api.post("/admin/testers", { label }, asOwner(token)).then((r) => r.data);
 export const ownerRevokeTester = (token, id) => api.post(`/admin/testers/${id}/revoke`, null, asOwner(token)).then((r) => r.data);
 export const ownerReissueTester = (token, id) => api.post(`/admin/testers/${id}/reissue`, null, asOwner(token)).then((r) => r.data);
+export const ownerUsage = (token) => api.get("/admin/usage", asOwner(token)).then((r) => r.data);
+export const ownerSetAllowance = (token, id, allowance_usd) => api.post(`/admin/testers/${id}/allowance`, { allowance_usd }, asOwner(token)).then((r) => r.data);

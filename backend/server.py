@@ -34,6 +34,7 @@ from app import decks
 from app import structures
 from app import column_rules as cr
 from app import forecast_claims
+from app import allowance as allowance_mod
 from app import usage as usage_mod
 from app.decks import claims as deck_claims
 from app.decks import parser as deck_parser
@@ -429,6 +430,39 @@ async def reissue_tester(tester_id: str, request: Request):
     if token is None:
         raise HTTPException(404, "Not found")
     return {"id": tester_id, "link": _link(request, token)}
+
+
+class AllowanceSet(BaseModel):
+    model_config = {"extra": "forbid"}
+    allowance_usd: float = Field(ge=0, le=allowance_mod.MAX_ALLOWANCE_USD)
+
+    @field_validator("allowance_usd")
+    @classmethod
+    def _cents(cls, v: float) -> float:
+        if round(v, 2) != v:
+            raise ValueError("at most two decimals")
+        return v
+
+
+@api.get("/admin/usage")
+async def admin_usage():
+    """The owner's Usage section: counts, tokens and USD per tester link label, this month and all time. No audit field."""
+    return await allowance_mod.report(db)
+
+
+@api.post("/admin/testers/{tester_id}/allowance")
+async def set_tester_allowance(tester_id: str, payload: AllowanceSet):
+    if not await allowance_mod.set_allowance(db, tester_id, payload.allowance_usd):
+        raise HTTPException(404, "Not found")
+    return {"ok": True, "allowance_usd": round(payload.allowance_usd, 2)}
+
+
+@api.get("/allowance")
+async def my_allowance(request: Request):
+    """The caller's monthly AI allowance and use (usage-and-allowance.md section 4). The owner token gets 404 from the guard."""
+    who = getattr(request.state, "principal", None)
+    doc = await db[access_mod.COLLECTION].find_one({"id": who[1]}) if who and who[1] else None
+    return allowance_mod.status(doc) if doc else {"state": "off"}
 
 
 @api.get("/audits")
@@ -900,6 +934,7 @@ async def _load(a: dict, audit_id: str, chosen: str, sheet: "cr.Sheet", filename
             if kind and s["state"] in cr.MAPPED:
                 usage_mod.record_columns(u, kind)
     await _usage_update(audit_id, count)
+    await allowance_mod.record_for_audit(db, audit_id, files=1)
     version = await _commit_mapping(audit_id, chosen, background)
     await _mark_stale_and_maybe_recompute(audit_id)
     logger.info("upload: run_id=%s type=%s detected=%s source=%s pending=%d ai=%s type_ai=%s", audit_id, chosen, detected,
@@ -1283,6 +1318,7 @@ async def upload_deck(audit_id: str, background: BackgroundTasks, file: UploadFi
              "order": len(reviewed) + order, "status": "pending"})
     # Its structures are read by the model after the response, or wait for the revenue file
     # (llm-structure-reading.md section 3); with consent unticked, Python's candidates stand alone.
+    await allowance_mod.record_for_audit(db, audit_id, files=1)
     background.add_task(structures.process_deck_safely, db, audit_id, deck_id)
     return {"deck_id": deck_id, "file": deck["file"], "format": deck["format"], "page_unit": deck["page_unit"],
             "pages": deck["pages"], "candidates": len(candidates), "kept_reviewed": len(reviewed),
