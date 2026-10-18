@@ -156,29 +156,13 @@ def _seed_usage(access):
     return a_audit
 
 
-def test_a_tester_sees_only_their_own_usage_and_notes_and_the_owner_sees_all(access):
+def test_usage_totals_are_for_the_owner_token_only_and_a_tester_gets_404(access):
     client = access["client"]
     _seed_usage(access)
-    mine = client.get("/api/usage/totals", headers=access["a"])
-    assert mine.status_code == 200
-    assert "NOTE-OF-A" in mine.text and "NOTE-OF-B" not in mine.text, "no tester sees another tester's notes"
-    assert mine.json()["tokens_and_cost_by_step"]["growth_engine"]["cost_usd"] == 1.0, "only the calls of their own audits"
-    theirs = client.get("/api/usage/totals", headers=access["b"])
-    assert "NOTE-OF-B" in theirs.text and "NOTE-OF-A" not in theirs.text
-    assert theirs.json()["tokens_and_cost_by_step"]["growth_engine"]["cost_usd"] == 2.0
+    for tester in (access["a"], access["b"]):
+        denied = client.get("/api/usage/totals", headers=tester)
+        assert denied.status_code == 404 and "NOTE-OF" not in denied.text, "no tester reads any notes, calls or counts"
     everyone = client.get("/api/usage/totals", headers=access["owner"])
     assert "NOTE-OF-A" in everyone.text and "NOTE-OF-B" in everyone.text
-    assert everyone.json()["tokens_and_cost_by_step"]["growth_engine"]["cost_usd"] == 3.0
-    assert (mine.json()["scope"], theirs.json()["scope"], everyone.json()["scope"]) == ("own", "own", "all"), "the title follows the scope"
+    assert everyone.json()["tokens_and_cost_by_step"]["growth_engine"]["cost_usd"] == 3.0 and "scope" not in everyone.json()
     assert client.get("/api/usage/totals").status_code == 401
-
-
-def test_a_tester_with_no_audit_sees_empty_totals(access):
-    client = access["client"]
-    _seed_usage(access)                         # other testers hold notes and cost: an empty tester must see none of it
-    new_id = client.post("/api/admin/testers", json={"label": "Tester C"}, headers=access["owner"]).json()["id"]
-    link = client.post(f"/api/admin/testers/{new_id}/reissue", headers=access["owner"]).json()["link"]
-    empty = client.get("/api/usage/totals", headers={"Authorization": f"Bearer {link.rsplit('/t/', 1)[1]}"})
-    assert empty.status_code == 200 and "NOTE-OF" not in empty.text
-    assert empty.json()["tokens_and_cost_by_step"] == {}, "no cost of another tester's audits"
-    assert empty.json()["scope"] == "own"

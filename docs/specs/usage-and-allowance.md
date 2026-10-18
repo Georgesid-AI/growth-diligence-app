@@ -7,7 +7,7 @@ The architecture and the engine (growth_engine.py, metric fields) do not change.
 - Needed: testers share one app-wide daily cap of USD 5, so one tester can starve the rest, and the owner cannot see who uses what.
   Simpler version: one counter per tester link, one number to edit, one check before each model call.
 - Deleted first: the "Your usage" fold on the Audit Hub (the tester's own totals nobody asked for, §1) and the "0% Heuristics" header
-  badge (a claim the product does not need, §1). Nothing else is removed. `GET /api/usage/totals` stays as it is (open decision D3).
+  badge (a claim the product does not need, §1). Nothing else is removed. `GET /api/usage/totals` becomes owner-only (D3).
 
 ## 1. Removals (screen)
 1. Layout header: the "0% Heuristics" badge is gone. The header keeps the company line.
@@ -28,7 +28,7 @@ months in UTC. Counts and USD only. No company name, file name, audit name, audi
 - Re-issue and revoke keep the ledger and the allowance (same document). Deleting an audit leaves the ledger untouched.
 - **Architecture note (rule 1):** the Storage row of docs/architecture.md describes `access_tokens` as "token hashes with id, label and
   expiry". This adds two fields (the allowance and the counters) to the same collection and no new collection. docs/architecture.md is
-  **not** edited by this PR; its wording needs George's approval (D1).
+  George approved this on 18 Oct 2026 (D1) and the Storage row of docs/architecture.md now says so.
 
 ## 3. Owner page: "Usage"
 - `GET /api/admin/usage` (owner token only; tester 404, no token 401): `{month, totals: {this_month: T, all_time: T},
@@ -95,14 +95,14 @@ New closed strings, added to `test_gateway_data_boundary.py`: guard code `monthl
 | Header has no "Heuristics" badge; the hub has no "Your usage" | `Layout.test.jsx`, `AuditHub.test.jsx` |
 | Owner page shows totals and per-tester rows, saves an allowance | `OwnerPage.test.jsx` |
 
-## 8. Open decisions (for George, one block)
-| # | Decision | Recommendation |
+## 8. Decisions (George, 18 Oct 2026, on PR #126)
+| # | Decision | Outcome |
 |---|---|---|
-| D1 | The Storage row of docs/architecture.md says `access_tokens` holds hashes, id, label and expiry. This PR adds `allowance_usd` and the counters to that document (no new collection) because a deleted audit takes its call log with it. Approve the wording change? | Approve: one collection, counts and USD only, removed with the collection at the move to accounts. The alternative (counting from `llm_calls`) lets a tester reset the allowance by deleting audits. |
-| D2 | Should the column-mapping call stay exempt from the USD 5 daily cap (chat-upload.md §4.2)? | Keep the exemption: the allowance now bounds it per tester. |
-| D3 | `GET /api/usage/totals` has no screen for a tester any more. Remove the tester access, or the whole route? | Keep the route for now (the owner token still reads all-tester step cost and notes through it); remove the tester scope in a later change. |
-| D4 | Where the 80% line sits: under the header on every tester screen, apart from the three blockers (rule 21 says nothing else renders in the blocker banner). | As built: a separate line, not in the blocker list. |
-| D5 | The month resets at 00:00 UTC on the 1st. | Keep UTC; one clock for owner and tester. |
+| D1 | Allowance and usage counters live on `access_tokens` records. | **Approved.** The Storage row of docs/architecture.md now reads: hashes, id, label, expiry, and per-link AI usage counters and allowance (counts and costs only, no names or figures). |
+| D2 | The column-mapping call stays exempt from the USD 5 daily cap (chat-upload.md §4.2). | **Approved.** The per-tester allowance limits it. |
+| D3 | `GET /api/usage/totals` and tester access. | **Decided:** remove tester access in this PR. Owner token only; a tester gets 404 (access-links.md §3 updated). The route and its owner reading stay. |
+| D4 | The 80% line is a separate component, not in the blocker list (rule 21). | As built. |
+| D5 | The month resets at 00:00 UTC on the 1st. | **Approved:** UTC. |
 
 ## Files
 `backend/app/allowance.py` (new), `backend/app/llm/guards.py`, `backend/app/llm/gateway.py` (log_call, two checks, cap word),

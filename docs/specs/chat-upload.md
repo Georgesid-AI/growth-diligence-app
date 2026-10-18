@@ -275,8 +275,8 @@ deck_text, column_mappings (every saved version) and the rest. There is no mappi
   register labels, and the metrics with status Missing); analyst changes (mapping corrections, plus claims edited
   or rejected, plus register metric or segment overrides).
 - `GET /api/usage/totals` returns sums across audits, the median time from first upload to first export, and the
-  50 newest "Other" notes across audits. It has no per-audit rows, names or ids. AuditHub shows the totals as a
-  folded usage section (S19; "Your usage" for a tester, "Usage totals (all testers)" for the owner token).
+  50 newest "Other" notes across audits. It has no per-audit rows, names or ids. It is owner-token only (a tester gets
+  404); no audit screen shows it any more (S19 removed 18 Oct 2026, usage-and-allowance.md §1 and D3).
 - Delete audit removes the counters with the audit (§6.3).
 
 ## 8. Privacy
@@ -367,7 +367,7 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 | S17 | narrative failed | Today's text, unchanged: "Narrative could not be generated. The computed metrics below are unaffected — they come from the calculation engine, not the narrative." |
 | S18 | delete dialog | Title: Delete {company name}? Body: Deleting this audit with its files, mappings and results cannot be undone. Type **{company name}** to confirm. (the name in bold, in both; body reworded 2026-10-09, George) |
 | S18b | delete dialog | Name does not match (under the box, after about a second without typing or when the box loses focus, while the trimmed text is not empty and is not the name exactly) |
-| S19 | audit list | Title (folded): "Your usage" for a tester token; "Usage totals (all testers)" when the server answers `scope: "all"` (the owner token), George 15 Oct 2026; the explainer reads "Totals for your audits since counting began." for a tester and "Totals across all testers since counting began." for the owner token, then, for both: "Counts and costs only — no file names, figures or company names. Kept to improve the app." (George, 15 Oct 2026). Explainer under the title: as just given. Content: files uploaded and refused by type; columns by rules, saved, AI, corrected (by reason); compute runs and failures; evidence labels as five named counts in a row, Verified · Unverified · Unsupported · Contradicted · Metrics missing; analyst changes; median days from first upload to export; tokens and cost by step (cost to 2 decimals); "Other" notes, newest first (at most 50). |
+| S19 | audit list | **Removed 18 Oct 2026 (usage-and-allowance.md §1).** Was: title (folded): "Your usage" for a tester token; "Usage totals (all testers)" when the server answers `scope: "all"` (the owner token), George 15 Oct 2026; the explainer reads "Totals for your audits since counting began." for a tester and "Totals across all testers since counting began." for the owner token, then, for both: "Counts and costs only — no file names, figures or company names. Kept to improve the app." (George, 15 Oct 2026). Explainer under the title: as just given. Content: files uploaded and refused by type; columns by rules, saved, AI, corrected (by reason); compute runs and failures; evidence labels as five named counts in a row, Verified · Unverified · Unsupported · Contradicted · Metrics missing; analyst changes; median days from first upload to export; tokens and cost by step (cost to 2 decimals); "Other" notes, newest first (at most 50). |
 | S20 | "Other" box placeholder | Why? Up to 60 characters; no file names, figures or names. |
 | S21 | "Other" note refused | Leave out file names, figures and cell values: this note is kept with the usage counts. |
 | S22 | Diagnostics section | Revenue reconciliation · columns: Month · Revenue file · P&L · Gap · Gap % · last row: Window total |
