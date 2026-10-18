@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   S26_lines, S30a_sent, S30B_HEADERS, S30c_checks, S30D_TOO_LONG, S30E_ONE_PERIOD, S30_confidence, LINE_ROLES, LINE_MEANINGS,
-  meaningName,
+  meaningName, CONFIRM_ALL, usedText,
 } from "@/lib/chatUpload";
 
 /**
@@ -12,12 +12,35 @@ import {
  */
 export default function SheetMap({ view, decideLines }) {
   const map = view.sheet_map;
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const waiting = map.lines.filter((l) => l.pending);
+  // Confirm all: every line that waits, in one request.
+  const confirmAll = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await decideLines(view, waiting.map((l) => ({ row: l.row, action: "confirm" })));
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      setError(typeof detail === "string" ? detail : "The decisions could not be saved.");
+    } finally {
+      setSaving(false);
+    }
+  };
   return (
     <div className="mt-3" data-testid={`sheet-map-${view.dtype}`}>
       <p className="text-xs text-slate-500" data-testid={`sheet-map-caption-${view.dtype}`}>{S26_lines(view)}</p>
       {map.counts && <p className="text-xs text-slate-600 mt-1" data-testid="sheet-map-sent">{S30a_sent(map.counts)}</p>}
       {map.too_long && <p className="text-xs text-amber-700 mt-1" data-testid="sheet-map-too-long">{S30D_TOO_LONG}</p>}
       {map.one_period && <p className="text-xs text-amber-700 mt-1" data-testid="sheet-map-one-period">{S30E_ONE_PERIOD}</p>}
+      {waiting.length > 0 && (
+        <div className="mt-2">
+          <Button size="sm" variant="outline" className="h-7" disabled={saving} data-testid={`lines-confirm-all-${view.dtype}`}
+            onClick={confirmAll}>{CONFIRM_ALL}</Button>
+          {error && <span className="ml-2 text-xs text-rose-700" data-testid={`lines-confirm-all-error-${view.dtype}`}>{error}</span>}
+        </div>
+      )}
       <div className="overflow-x-auto mt-2">
         <table className="w-full text-xs" data-testid={`sheet-lines-${view.dtype}`}>
           <thead>
@@ -64,6 +87,7 @@ function LineRow({ line, view, decideLines }) {
       <td className="py-1.5 pr-3" style={{ paddingLeft: `${(line.indent || 0) * 12}px` }} data-testid={`line-label-${line.row}`}>{line.label}</td>
       <td className="py-1.5 pr-3">{select("role", LINE_ROLES, "Role")}</td>
       <td className="py-1.5 pr-3">{select("meaning", LINE_MEANINGS, "Meaning")}</td>
+      <td className="py-1.5 pr-3" data-testid={`line-used-${line.row}`}>{usedText(line)}</td>
       <td className={`py-1.5 pr-3 ${line.pending ? "text-amber-700" : ""}`} data-testid={`line-confidence-${line.row}`}>{S30_confidence(line)}</td>
       <td className={`py-1.5 pr-3 ${failed ? "text-rose-700" : "text-slate-600"}`} data-testid={`line-checks-${line.row}`}>
         {checks.join(" · ")}

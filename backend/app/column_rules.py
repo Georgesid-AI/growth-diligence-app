@@ -64,6 +64,8 @@ FIELD_DEFS = {
         "dates": ["month"],
         "numeric": ["sm_expense", "revenue", "cost_of_revenue"],
     },
+    # A KPI sheet (monthly) is read as a statement only (chat-upload.md section 26.14): it has no column fields.
+    "kpi": {"required": {}, "optional": {}, "dates": [], "numeric": []},
 }
 
 MAPPING_THRESHOLD = 80          # a rule confidence above this, untied, needs no click (Q3); exactly 80 is unsure (2026-10-17)
@@ -762,7 +764,7 @@ def best_sheet(sheets: List[Sheet], dtype: str) -> Sheet:
     def fit(item):
         i, sheet = item
         hits = sum(1 for f in required if max([field_score(dtype, f, t) for t in sheet.headers] or [0]) >= MAPPING_THRESHOLD)
-        return (-hits, -type_shares(sheet)[dtype], -len(sheet.frame), i)
+        return (-hits, -type_shares(sheet).get(dtype, 0), -len(sheet.frame), i)
     return min(enumerate(sheets), key=fit)[1]
 
 

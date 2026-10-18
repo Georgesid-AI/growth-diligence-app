@@ -9,7 +9,7 @@ import {
   S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE_LEAD, S4_DROP_ZONE_BOLD, S6_UNKNOWN_TYPE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S_UPLOAD_RETRY,
   S20_NOTE_PLACEHOLDER, S21_NOTE_REFUSED, NOTE_MAX, ALLOWED_EXTENSIONS, REASONS, TYPE_LABELS, S5_head, S8_replace,
   S9_confidence, S13_status, S13_READY, S26_type, S26_CHANGE, S26_sheet, S27_miss, S27_SHOW_COLUMNS, S28_read, S28_SHOW_CLAIMS, S28_cap, S28_CONFIRM,
-  forecastValueText, forecastCells, MAP_LABEL, CALCULATE_CLASS, ALL_CONFIRMED_LINE, mappingComplete, setCalculatePressed, S14_same, MAPPING_HEADERS, S25_TITLE, S25_PARAGRAPHS, S29_TITLE, S29_PARAGRAPHS, mappedBy, sortColumns, fieldName, fmtBytes, extensionOf, heldFields,
+  forecastValueText, forecastCells, MAP_LABEL, CALCULATE_CLASS, ALL_CONFIRMED_LINE, mappingComplete, setCalculatePressed, S14_same, MAPPING_HEADERS, S25_TITLE, S25_PARAGRAPHS, S25_STATEMENT_PARAGRAPHS, S29_TITLE, S29_PARAGRAPHS, mappedBy, sortColumns, fieldName, fmtBytes, extensionOf, heldFields,
 } from "@/lib/chatUpload";
 
 const NONE = "";
@@ -319,7 +319,7 @@ function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide, 
         <p className="text-xs text-slate-600 mt-1" data-testid="bubble-same">{S14_same(view.version)}</p>
       )}
       {modelFailed && <p className="text-xs text-amber-700 mt-1" data-testid="bubble-ai-failed">{S12_MODEL_FAILED}</p>}
-      {showInfo && <WhyThisMatters />}
+      {showInfo && <WhyThisMatters statement={!!view.sheet_map} />}
       {view.dtype === "crm" && <CrmFieldsHelp />}
       {view.sheet_map && <SheetMap view={view} decideLines={decideLines} />}
       {!view.sheet_map && <div className="overflow-x-auto mt-3">
@@ -470,12 +470,12 @@ function TypeLine({ view, retype }) {
 }
 
 /** S25: why the mapping step matters; one box above the first mapping table, open until the analyst folds it. */
-function WhyThisMatters() {
+function WhyThisMatters({ statement }) {
   return (
     <details open data-testid="why-this-matters" className="mt-3 rounded-md border border-sky-200 bg-sky-50/60 px-3 py-2 text-xs text-slate-700">
       <summary className="cursor-pointer font-medium text-slate-900" data-testid="why-this-matters-title">{S25_TITLE}</summary>
       <div className="mt-2 space-y-2">
-        {S25_PARAGRAPHS.map((p) => <p key={p}>{p}</p>)}
+        {(statement ? S25_STATEMENT_PARAGRAPHS : S25_PARAGRAPHS).map((p) => <p key={p}>{p}</p>)}
       </div>
     </details>
   );
