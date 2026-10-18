@@ -13,7 +13,7 @@ import requests
 
 # Every audit names its client (llm-structure-reading.md section 4). Consent is off so an
 # integration run never sends anything to a model provider.
-ENGAGEMENT = {"client_name": "TEST_Client", "structure_reading_consent": False}
+ENGAGEMENT = {"structure_reading_consent": False}
 
 # Where the backend would be, if it is running. Configuration only — reachability
 # is established by `require_live_backend` below.

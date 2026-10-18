@@ -236,7 +236,7 @@ def _validate_as_of_month(v: Optional[str]) -> Optional[str]:
 
 
 def _required_text(v: Optional[str]) -> Optional[str]:
-    """A required name or reference: trimmed, and never blank."""
+    """A required name: trimmed, and never blank."""
     if v is None:
         return v
     v = v.strip()
@@ -271,14 +271,12 @@ class AuditCreate(BaseModel):
     # The month the company's fiscal year ends in (deck-parser.md section 2). FY25 is the fiscal year
     # that ends in 2025; with December it is the calendar year.
     fiscal_year_end: int = Field(default=12, ge=1, le=12)
-    # The investor commissioning the audit; the name never reaches the model.
-    client_name: str
     structure_reading_consent: bool = True
 
     _check_target_date = field_validator("target_date")(_validate_target_date)
     _check_as_of_month = field_validator("as_of_month")(_validate_as_of_month)
     _check_analysis_date = field_validator("analysis_date")(_validate_analysis_date)
-    _check_required = field_validator("client_name")(_required_text)
+    _check_required = field_validator("company_name")(_required_text)
 
 
 class AuditUpdate(BaseModel):
@@ -290,13 +288,12 @@ class AuditUpdate(BaseModel):
     analysis_date: Optional[str] = None
     last_month_complete: Optional[bool] = None
     fiscal_year_end: Optional[int] = Field(default=None, ge=1, le=12)
-    client_name: Optional[str] = None
     structure_reading_consent: Optional[bool] = None
 
     _check_target_date = field_validator("target_date")(_validate_target_date)
     _check_as_of_month = field_validator("as_of_month")(_validate_as_of_month)
     _check_analysis_date = field_validator("analysis_date")(_validate_analysis_date)
-    _check_required = field_validator("client_name")(_required_text)
+    _check_required = field_validator("company_name")(_required_text)
 
 
 def _consent_entry(value: bool) -> dict:
@@ -356,7 +353,6 @@ async def create_audit(payload: AuditCreate, request: Request):
         "analysis_date": payload.analysis_date,
         "last_month_complete": payload.last_month_complete,
         "fiscal_year_end": payload.fiscal_year_end,
-        "client_name": payload.client_name,
         "structure_reading_consent": payload.structure_reading_consent,
         "consent_log": [_consent_entry(payload.structure_reading_consent)],
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -479,7 +475,7 @@ async def get_audit(audit_id: str):
 
 
 @api.put("/audits/{audit_id}")
-async def update_audit(audit_id: str, payload: AuditUpdate):
+async def update_audit(audit_id: str, payload: AuditUpdate, background: BackgroundTasks):
     a = await db.audits.find_one({"id": audit_id})
     if not a:
         raise HTTPException(404, "Audit not found")
@@ -489,6 +485,7 @@ async def update_audit(audit_id: str, payload: AuditUpdate):
     if "analysis_date" in payload.model_fields_set and payload.analysis_date is None:
         updates["analysis_date"] = None     # an explicit null returns the requested analysis date to today
     consent = updates.get("structure_reading_consent")
+    ticked_later = consent is True and a.get("structure_reading_consent") is not True
     if consent is not None and consent != (a.get("structure_reading_consent") is True):
         await db.audits.update_one({"id": audit_id},
                                    {"$set": {"consent_log": list(a.get("consent_log") or []) + [_consent_entry(consent)]}})
@@ -498,6 +495,11 @@ async def update_audit(audit_id: str, payload: AuditUpdate):
             await _mark_stale_and_maybe_recompute(audit_id)
         if "fiscal_year_end" in updates and updates["fiscal_year_end"] != _fiscal_year_end(a):
             await _remap_periods(audit_id, updates["fiscal_year_end"])
+    if ticked_later:
+        # Consent false to true (chat-upload.md section 23): every deck already uploaded is read through the normal
+        # structure path, after the response. Mapped data files are not touched.
+        for deck_id in await structures.queue_decks(db, audit_id):
+            background.add_task(structures.process_deck_safely, db, audit_id, deck_id)
     return await audit_public(await db.audits.find_one({"id": audit_id}))
 
 
@@ -780,7 +782,7 @@ async def _ask_model(audit: dict, dtype: str, sheet: "cr.Sheet", rows: list, sta
     hints = {p.column: (p.field, p.confidence) for p in proposals if p.field}
     text = structures.column_mapping_text(
         sheet.columns, rows, audit.get("company_name"), await llm_redaction.get_map(db, audit["id"]),
-        tuple(cr.customer_columns(sheet, proposals)), structures.redact.withheld_values(audit), hints)
+        tuple(cr.customer_columns(sheet, proposals)), (), hints)
     try:
         read = await asyncio.wait_for(llm_gateway.read_structure(db, audit["id"], text, "column_mapping"),
                                       MAPPING_AI_SECONDS)
@@ -1057,7 +1059,7 @@ async def _check_notes(audit_id: str, audit: dict, notes: list) -> list:
     try:
         for n in cleaned:
             usage_mod.check_note(n, headers=headers, file_names=[d.get("file") for d in files] + [d.get("file") for d in deck_files],
-                                 cell_texts=cells, names=[audit.get("company_name"), audit.get("client_name")])
+                                 cell_texts=cells, names=[audit.get("company_name")])
     except usage_mod.NoteRefused:
         raise HTTPException(400, NOTE_REFUSED)
     return cleaned
@@ -1334,9 +1336,6 @@ async def list_deck_candidates(audit_id: str):
         d["sent_pages"] = sorted({s["page"] for s in d.pop("sent", None) or [] if s.get("page") is not None})
         usage = by_deck.get(d["deck_id"])
         d["ai_cost_usd"] = usage.estimated_cost_usd if usage else 0.0
-        # Uploaded while AI reading was off (or before it existed) and not read since: re-upload to read.
-        d["uploaded_before_consent"] = audit.get("structure_reading_consent") is True and \
-            d.get("ai_status") in (None, structures.PYTHON_ONLY)
     rank = {d["deck_id"]: i for i, d in enumerate(found)}
     candidates = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0}).to_list(10000)
     fx = await _fx(audit_id, audit)
@@ -3029,14 +3028,15 @@ app.add_middleware(
 )
 
 
-# 4: demo audits carry a client name, consent and a fiscal year-end.
+# 4: demo audits carry consent and a fiscal year-end (the client name is gone since 11).
 # 5: demo P&L revenue reconciles with the revenue file (one demo audit keeps a deliberate 5% gap).
 # 6: results carry contract_version 1 (percents as fractions, whole counts and days).
 # 7: results carry contract_version 2 (a citation on every result block).
 # 8: demo audits carry no engagement reference (the field is gone).
 # 9: results carry contract_version 3 (the latest valid source period and the period of every metric).
 # 10: results carry contract_version 4 (repeated CRM rows counted once and flagged, won deals by close month).
-SEED_VERSION = 10
+# 11: demo audits carry no client name (the field is gone).
+SEED_VERSION = 11
 
 
 @app.on_event("startup")
@@ -3081,7 +3081,7 @@ async def seed_demo():
         await db.audits.insert_one({
             "id": audit_id, "company_name": spec["company_name"], "reporting_currency": spec["reporting_currency"],
             "target_arr": spec["target_arr"], "target_date": spec["target_date"],
-            "fiscal_year_end": spec["fiscal_year_end"], "client_name": spec["client_name"],
+            "fiscal_year_end": spec["fiscal_year_end"],
             "structure_reading_consent": True,
             "consent_log": [_consent_entry(True)],
             "created_at": datetime.now(timezone.utc).isoformat(), "status": "computed",

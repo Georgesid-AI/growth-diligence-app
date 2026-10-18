@@ -64,20 +64,28 @@ export const MONTHS = ["January", "February", "March", "April", "May", "June", "
   "October", "November", "December"];
 export const DEFAULT_FISCAL_YEAR_END = 12;
 
-// AI-assisted reading (docs/specs/llm-structure-reading.md section 4): one checkbox per audit, ticked by
-// default, directly above the create button. Word for word from the spec.
-export const CONSENT_EXPLAINER = "This app reads tables and charts in the uploaded decks with an AI model. Every number is checked by code against its source cell; anything that does not match is marked as unverified. Emails, phone numbers, personal names and the customers named in the uploaded data files are replaced before anything is sent.";
-export const CONSENT_LABEL = "AI-assisted reading enabled per engagement terms. Uncheck if the client requires code-based extraction only; this may identify fewer findings.";
+// AI-assisted reading (docs/specs/chat-upload.md section 23): one checkbox per audit, ticked by default at creation, in the
+// set-up section at the top of the Upload page. Word for word from the spec.
+export const CONSENT_LABEL = "Use AI to read deck tables and charts and to suggest column matches. Untick if the client requires code-based extraction only; this may find fewer figures. Narratives use AI on computed results either way.";
+export const VERIFIED_LINE = "Every extracted number is checked by code against its source cell. Numbers that don't match are marked unverified for review.";
 
-// The client (the investor commissioning the audit) is required.
+// The text above the name field of the creation dialog (chat-upload.md section 23), word for word.
+export const NEW_AUDIT_TITLE = "Create a new audit";
+export const NEW_AUDIT_PARAGRAPHS = [
+  "Start by entering your project or company name.",
+  "Once you upload your files, the app identifies file types, matches data columns to the fields used in the audit, and uses AI to read tables and charts in your decks. You'll review any column matches that need confirmation before calculations begin.",
+  "Before content is sent to the AI model, the app replaces email addresses, phone numbers, personal names and customer names found in your uploaded data files.",
+  "On the next screen, you can add your files and review the upload requirements.",
+];
+
+// The project or company name is the only field of the creation dialog.
 export function requiredFieldError(form) {
   if (!form.company_name?.trim()) return "Company name is required";
-  if (!form.client_name?.trim()) return "Client name is required";
   return null;
 }
 
 // The audit's set-up fields sit at the top of the upload and mapping page (docs/specs/chat-upload.md section 2), each with
-// one line of help. The creation dialog asks for the audit name only (and the client and the consent, which are not set-up).
+// one line of help. The creation dialog asks for the audit name only.
 export const SETUP_HELP = {
   reporting_currency: "All figures are converted to this currency. Use the company's home currency; the verdict and memo use it.",
   target_arr: seeGlossary("The plan figure the audit tests. Every claim's VaS is measured against it."),
@@ -93,5 +101,6 @@ export const SETUP_LABELS = {
   reporting_currency: "Reporting currency", target_arr: "Target ARR", target_date: "Target date", as_of_month: "As-of month",
   fiscal_year_end: "Fiscal year-end", first_quarterly_review: "First quarterly review",
   analysis_date: "Requested analysis date", last_month_complete: "Last month is complete",
+  structure_reading_consent: "AI reading",
 };
 export const REPORTING_CURRENCIES = ["EUR", "USD", "GBP", "JPY"];

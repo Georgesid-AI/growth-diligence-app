@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import AuditHub from "./AuditHub";
 import * as api from "@/lib/api";
-import { CONSENT_EXPLAINER, CONSENT_LABEL } from "@/lib/auditForm";
+import { NEW_AUDIT_TITLE, NEW_AUDIT_PARAGRAPHS } from "@/lib/auditForm";
 import { S18_MISMATCH } from "@/lib/chatUpload";
 
 jest.mock("@/lib/api", () => ({
@@ -72,10 +72,10 @@ describe("new-audit dates and fields", () => {
     expect(q("audit-dialog").textContent).not.toMatch(/engagement reference/i);
   });
 
-  test("the dialog asks for the names and the consent only: the set-up fields are at the top of the mapping page", () => {
+  test("the dialog asks for the project or company name only: the set-up fields are at the top of the mapping page", () => {
     for (const gone of ["reporting-currency-select", "audit-target-arr-input", "audit-target-date-input", "audit-asof-month-input",
       "audit-fiscal-year-end-select"]) expect(q(gone)).toBeNull();
-    expect(q("audit-dialog-body").querySelectorAll("input:not([type=checkbox])").length).toBe(2);   // company, client
+    expect(q("audit-dialog-body").querySelectorAll("input").length).toBe(1);   // the name alone: no client name, no consent tick
     expect(q("audit-dialog").textContent).not.toMatch(/Reporting currency|Target ARR|Target date|As-of month|Fiscal year-end/);
   });
 
@@ -86,35 +86,37 @@ describe("new-audit dates and fields", () => {
       q(id).dispatchEvent(new Event("input", { bubbles: true }));
     });
     await set("audit-company-input", "TestCo");
-    await set("audit-client-input", "Fund");
     await act(async () => { q("submit-audit-button").click(); });
     expect(api.createAudit).toHaveBeenCalledWith({
-      company_name: "TestCo", client_name: "Fund", reporting_currency: "EUR", target_arr: 0, target_date: null, as_of_month: null,
+      company_name: "TestCo", reporting_currency: "EUR", target_arr: 0, target_date: null, as_of_month: null,
       fiscal_year_end: 12, structure_reading_consent: true,
     });
   });
 });
 
-describe("AI-assisted reading explainer", () => {
+describe("the text above the name field and the consent default", () => {
   let cleanup;
-  beforeEach(async () => { cleanup = await openDialog(); });
+  beforeEach(async () => { jest.clearAllMocks(); cleanup = await openDialog(); });
   afterEach(async () => { await cleanup(); });
 
-  test("tick line is always shown; explainer is collapsed by default", () => {
-    expect(q("audit-consent").textContent).toContain(CONSENT_LABEL);
-    expect(q("audit-consent-checkbox")).not.toBeNull();
-    expect(document.body.textContent).not.toContain(CONSENT_EXPLAINER);
-    expect(q("audit-consent-toggle").textContent).toBe("What is sent");
-    expect(q("audit-consent-toggle").getAttribute("aria-expanded")).toBe("false");
+  test("the title and the four paragraphs are the spec's words and stand above the name field", () => {
+    expect(q("audit-dialog").textContent).toContain(NEW_AUDIT_TITLE);
+    const intro = q("audit-dialog-intro");
+    expect([...intro.querySelectorAll("p")].map((p) => p.textContent)).toEqual(NEW_AUDIT_PARAGRAPHS);
+    expect(intro.compareDocumentPosition(q("audit-company-input")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  test("clicking 'What is sent' expands the unchanged text inline, and again collapses it", async () => {
-    await act(async () => { q("audit-consent-toggle").click(); });
-    expect(q("audit-consent-explainer").textContent).toBe(CONSENT_EXPLAINER);
-    expect(q("audit-consent").contains(q("audit-consent-explainer"))).toBe(true);
-    expect(q("audit-consent-toggle").getAttribute("aria-expanded")).toBe("true");
-    await act(async () => { q("audit-consent-toggle").click(); });
-    expect(document.body.textContent).not.toContain(CONSENT_EXPLAINER);
+  test("there is no client name field and no consent tick or explainer in the dialog", () => {
+    for (const gone of ["audit-client-input", "audit-consent", "audit-consent-checkbox", "audit-consent-toggle", "audit-consent-explainer"]) {
+      expect(q(gone)).toBeNull();
+    }
+    expect(q("audit-dialog").querySelector('[role="checkbox"]')).toBeNull();
+    expect(q("audit-dialog").textContent).not.toMatch(/client name|What is sent/i);
+  });
+
+  test("a blank name is refused before anything is sent", async () => {
+    await act(async () => { q("submit-audit-button").click(); });
+    expect(api.createAudit).not.toHaveBeenCalled();
   });
 });
 

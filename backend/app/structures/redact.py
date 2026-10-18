@@ -528,21 +528,15 @@ def pseudonymise_cells(cells: List[Dict], mapping: Dict[str, str], company_name:
     return out, total
 
 
-def withheld_values(audit: Dict) -> Tuple[str, ...]:
-    """The audit's client name: never sent to the model, so a cell holding it is sent with [redacted] in its place."""
-    return tuple(str(audit.get(k)).strip() for k in ("client_name",)
-                 if audit.get(k) is not None and str(audit.get(k)).strip())
-
-
 def file_type_withheld(audit: Dict) -> Tuple[str, ...]:
-    """What the file-type text withholds (chat-upload.md section 19): the client name and the target company's own name,
-    which often stands in a sheet name or a title row ("<Company> LTD - April 2024 Report"). Unit markers are untouched."""
+    """What the file-type text withholds (chat-upload.md section 19): the target company's own name, which often stands in
+    a sheet name or a title row ("<Company> LTD - April 2024 Report"). Unit markers are untouched."""
     company = str(audit.get("company_name") or "").strip()
-    return withheld_values(audit) + ((company,) if company else ())
+    return (company,) if company else ()
 
 
 def withhold_cells(cells: List[Dict], withheld: Tuple[str, ...]) -> Tuple[List[Dict], int]:
-    """(cells, count): each withheld value (the client name) becomes
+    """(cells, count): each withheld value (the target company's name, in the file-type text) becomes
     [redacted] wherever it stands as a whole word, in any case. The target's own name does not shield
     it; placeholders and pseudonyms are left alone."""
     words = [(w, REDACTED) for w in withheld if w and w.strip()]
@@ -556,8 +550,8 @@ def withhold_cells(cells: List[Dict], withheld: Tuple[str, ...]) -> Tuple[List[D
 
 def redact_structure(cells: List[Dict], company_name: Optional[str], mapping: Dict[str, str],
                      withheld: Tuple[str, ...] = ()) -> Tuple[List[Dict], Dict[str, int]]:
-    """Every redaction rule on a structure's cells: the client name
-    (`withheld`, see withheld_values), then emails and phone numbers, then customer names, then
+    """Every redaction rule on a structure's cells: the withheld values
+    (`withheld`, see file_type_withheld), then emails and phone numbers, then customer names, then
     personal names. What the gateway runs again before a call."""
     # The withheld values go first, so no other rule can split one; emails and phones next, so a
     # customer name inside an address goes with it; customer names before personal names, so a

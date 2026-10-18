@@ -189,7 +189,7 @@ def test_a_gate_saved_by_save_all_equals_the_same_gate_saved_alone(run_api):
 # --- the first quarterly review, an audit set-up field -------------------------------------------------------------------------
 
 def test_a_new_audit_has_a_first_quarterly_review_90_days_after_its_creation(run_api):
-    r = run_api.post("/api/audits", json={"company_name": "NewCo", "client_name": "Fund"})
+    r = run_api.post("/api/audits", json={"company_name": "NewCo"})
     assert r.status_code == 200
     created = r.json()["created_at"][:10]
     from datetime import date, timedelta

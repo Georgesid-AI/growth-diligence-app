@@ -459,7 +459,7 @@ async def run(decks, passes, db, adapter=None, pause=0.0, sleep=None, diagnostic
     for d, file in enumerate(decks, 1):
         deck = parser.parse_deck((DECKS / file).read_bytes(), file)
         audit_id = f"consistency-{Path(file).stem}"
-        audit = {"id": audit_id, "company_name": Path(file).stem, "client_name": "Consistency run",
+        audit = {"id": audit_id, "company_name": Path(file).stem,
                  "structure_reading_consent": True}
         await db["audits"].insert_one(dict(audit))
         usage = per_deck.setdefault(file, {"structures": len(deck["structures"]), "input_tokens": 0, "output_tokens": 0,
@@ -468,7 +468,7 @@ async def run(decks, passes, db, adapter=None, pause=0.0, sleep=None, diagnostic
         for i, structure in enumerate(deck["structures"]):
             where = (file, i)
             types[where], pages[where] = structure["type"], structure.get("slide") or structure.get("page")
-            cells, _ = redact.redact_structure(structure["cells"], Path(file).stem, {}, redact.withheld_values(audit))
+            cells, _ = redact.redact_structure(structure["cells"], Path(file).stem, {})
             redacted = {**structure, "cells": cells}
             listings[where] = structure_items.list_items(redacted)
             texts[where], structures[where] = {redact.cell_id(c): c["text"] for c in cells}, structure
@@ -797,14 +797,14 @@ async def probe(decks, pages=None, out=print):
     db, adapter = MemoryDB(), FakeAdapter()
     for file in decks:
         deck = parser.parse_deck((DECKS / file).read_bytes(), file)
-        audit = {"id": f"probe-{Path(file).stem}", "company_name": Path(file).stem, "client_name": "Probe",
+        audit = {"id": f"probe-{Path(file).stem}", "company_name": Path(file).stem,
                  "structure_reading_consent": True}
         await db["audits"].insert_one(dict(audit))
         for structure in deck["structures"]:
             page = structure.get("slide") or structure.get("page")
             if pages and page not in pages:
                 continue
-            cells, _ = redact.redact_structure(structure["cells"], Path(file).stem, {}, redact.withheld_values(audit))
+            cells, _ = redact.redact_structure(structure["cells"], Path(file).stem, {})
             redacted = {**structure, "cells": cells}
             listed = structure_items.list_items(redacted)
             text = structure_items.text(redacted, listed)

@@ -43,14 +43,14 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
   currency; the verdict and memo use it." · Target ARR "The plan figure the audit tests. Every claim's value at stake is
   measured against it." · Target date "When the plan says Target ARR is reached. Sets the forecast horizon." · As-of month
   "Last month of actual data. Metrics are computed up to this month. Defaults to the last P&L month." · Fiscal year-end
-  "Maps FY labels in the deck to months. A wrong setting shifts every FY claim." The creation dialog asks for the company
-  (audit) name and the client, and holds the consent tick; the five fields start at EUR, 0, no date, no as-of month and
+  "Maps FY labels in the deck to months. A wrong setting shifts every FY claim." The creation dialog asks for the project or company
+  name only (amended 2026-10-18, §23); the consent tick is in this set-up section; the five fields start at EUR, 0, no date, no as-of month and
   December.
 - Input bar: a paperclip (a file picker that accepts several files), a drop zone over the whole panel, and a text
   field. Text sent from the field gets a system reply, word for word: "This window accepts files and mapping
   confirmations." The text is never sent to the server, stored or logged.
-- An explainer line sits above the drop zone and is tied to `structure_reading_consent`. The consent tick stays on
-  the creation screen, so this panel only shows its state. When ticked, the panel shows explainer S2; when unticked,
+- An explainer line sits above the drop zone and is tied to `structure_reading_consent`. The consent tick sits in the set-up
+  section at the top of the page (amended 2026-10-18, §23), so this panel only shows its state. When ticked, the panel shows explainer S2; when unticked,
   S3 (§11).
 - Analyst bubble, one per file: file name, size, and a type icon (xlsx or csv).
 - System bubble, one per file: the detected type, rows and months found (S5), then the info box "Why this step
@@ -184,7 +184,7 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
   note, with a 400 and S21, when it holds any of these: a digit (also inside a header, so "Revenue 2024" cannot be
   quoted); a file name of the audit, with or without its extension; a cell text from the data rows of an uploaded
   file of the audit (a whole word, any case, 4 or more characters, the same boundaries as the redaction rules);
-  the company name or client name. A refused note saves nothing. A kept note goes only to
+  the company name. A refused note saves nothing. A kept note goes only to
   the usage counters (§7). The mapping version keeps the code "other" and not the note.
 - "Needs your decision" rows show the field dropdown, preset to "Not used".
 - Compute waits for two things: no AI or unsure row left unconfirmed in any uploaded file, and every required
@@ -298,7 +298,7 @@ violation:
   response hold no file name, cell value or company name, and hold header text only inside a kept note. A reason
   code outside the fixed list is refused.
 - An "Other" note is refused when, after its headers are set aside, it holds a digit, a file name, a cell text from
-  a data row, or the company or client name, or when it is over 60 characters. A note
+  a data row, or the company name, or when it is over 60 characters. A note
   that quotes a header is kept, including a header that contains a cell word; a header with a digit is refused. A
   kept note is found only in `audits.usage.other_notes` and the totals response: never in a log line,
   `llm_calls`, `column_mappings` or a model call.
@@ -581,7 +581,7 @@ maps nothing.
   The text, built in memory and never stored or logged: per sheet (at most 6) its name, the title rows above the header (at most 6 rows, cells
   cut at 200 characters), the header row (at most 40 columns) and the masked sample of §4.2 (3 numbers or dates per numeric or date column, a
   profile per text column; a wide sheet sends its header as written and the profile of its first column only). Nothing else: no data row text,
-  no file name. Redaction is the one of §4.2 and the gateway runs it again (the client name becomes [redacted], addresses and phone numbers
+  no file name. Redaction is the one of §4.2 and the gateway runs it again (addresses and phone numbers
   are masked, customer names take their pseudonyms, and the target company's own name becomes [redacted] in the sheet names, title rows and
   headers, so it never reaches the model in clear text; unit markers such as "EUR thousands" are left as written, and the x1,000 scaling reads
   the stored title rows, not the masked text). The reply is one closed word: revenue, crm, pnl or unknown (`FileTypeReply`). Its own prompt, `file_type` (prompt-store.md; the
@@ -740,3 +740,45 @@ first: the undecided-only filter of the text (`only`), and the boundary assertio
   out, is logged and counted, and a deck structure and a file-type call are refused. `test_gateway_data_boundary.py`: the text
   holds every column, the masked samples and closed hints; a bad hint is refused. `MappingWizard.test.jsx`: S2, an AI
   suggestion's confidence cell ("AI suggestion – confirm" with or without a number from the server), and its row order.
+
+## 23. New audit dialog, consent on the Upload page, no client name, re-read on consent (2026-10-18, George)
+Decided by George with the task. The architecture and the engine are unchanged.
+
+**Dialog.** The creation dialog holds the project or company name field and nothing else: no client name field, no AI
+consent tick. Above the name field, word for word: "Create a new audit" · "Start by entering your project or company name." ·
+"Once you upload your files, the app identifies file types, matches data columns to the fields used in the audit, and uses AI to
+read tables and charts in your decks. You'll review any column matches that need confirmation before calculations begin." ·
+"Before content is sent to the AI model, the app replaces email addresses, phone numbers, personal names and customer names found
+in your uploaded data files." · "On the next screen, you can add your files and review the upload requirements." A new audit starts
+with `structure_reading_consent` true, logged in `consent_log` as before (the creation entry). The request body may still carry
+`structure_reading_consent`; the dialog sends none.
+
+**Upload page.** The consent tick moves into the set-up section at the top (both the Map and the Run audit pages use it).
+Label, word for word: "Use AI to read deck tables and charts and to suggest column matches. Untick if the client requires
+code-based extraction only; this may find fewer figures. Narratives use AI on computed results either way." Under the set-up
+fields, one line: "Every extracted number is checked by code against its source cell. Numbers that don't match are marked
+unverified for review." The old explainer (`CONSENT_EXPLAINER` and its "What is sent" toggle) is removed with the dialog block that
+used it. The consent change is saved like the other set-up fields (PUT /audits/{id}) and logged in `consent_log` as today.
+
+**Client name removed.** The field is gone from the dialog, `AuditCreate`/`AuditUpdate` (a body that still sends it is ignored),
+the audit record of new audits, the demo data, `withheld_values`, the gateway's `client_name` check and its context field, the
+"Other" note check and `scripts/`. An audit stored with one keeps the value; nothing reads it. The target company's own name stays
+withheld in the file-type text (§19): `file_type_withheld` returns it alone (it never named only the client). Everything else of
+redaction (emails, phones, customer and personal names) is unchanged.
+
+**Ticking consent later.** When a save changes `structure_reading_consent` from false (or never set) to true, every deck already
+uploaded to the audit is read through the normal structure path (`process_deck`: redaction, gateway, verification, the tester's
+monthly allowance and the daily caps), in the background after the response. A deck that waits for the revenue file waits as at
+upload. A structure already read is served from the cache, and a candidate already listed is not listed twice. Data files already
+mapped are not re-mapped. Unticking stops new AI calls only (`process_deck` and the mapping path check the flag) and keeps every
+result already read. The line "Uploaded before AI reading was enabled; re-upload to read." and the field `uploaded_before_consent`
+are removed.
+
+**Decided (engineering, rule 19).** The re-read touches no allowance counter of files (no file is uploaded); the allowance
+guard in the gateway decides per call. A deck whose reading is in progress ("reading") is not queued a second time.
+
+- **Tests.** `test_gateway_data_boundary.py`: no `client_name` in the context read and in the text checks; a text with the old
+  client word passes. `test_structure_reading.py`: a new audit is ticked and logged; false to true reads every deck, each once,
+  through the gateway, and a mapped data file is untouched; true to false makes no call and keeps results; a tester at the
+  allowance is stopped at the guard. `AuditHub.test.jsx`: the dialog text, the single field, no tick, the create body. `AuditSetup`
+  tests: the label, the line, the saved patch. `auditForm.test.js`: the name alone is required.

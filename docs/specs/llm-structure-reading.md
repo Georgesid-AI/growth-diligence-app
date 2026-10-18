@@ -84,27 +84,19 @@ Customer names are pseudonymised (Customer_01, Customer_02…) through the narra
   Once the revenue file is mapped, queued decks are processed. Column-mapping calls are not queued. A deck already
   read is not re-sent when a CRM file is mapped later.
 
-The client name is replaced with "[redacted]" wherever it appears as a whole word, case-insensitive, in any text cell
-sent to the model, and the structure is still read. The gateway refuses a text in which it still stands as a whole word,
-with the same boundaries. (The engagement reference was removed on 2026-10-08: no audit field holds one.)
+(The client name and the engagement reference were removed: no audit field holds either; chat-upload.md §23.)
 
 The mapping stays server-side and is removed by Delete audit. The gateway runs redaction again and refuses the call if
 anything changes.
 
-**4. Consent.** `structure_reading_consent` is one checkbox per audit, ticked by default. It covers decks and spreadsheets.
-It sits on the audit creation screen, directly above the Create audit button. Audit creation requires a client name (a
-field: the investor commissioning the audit). The company name stays the target company. The basis for sending is the
-engagement terms, recorded by this per-audit checkbox (CLAUDE.md rule 16). The engagement reference field was removed on
-2026-10-08; ticking the box needs no reference.
-- Explainer above the checkbox, word for word: "This app reads tables and charts in the uploaded decks with an AI model. Every
-  number is checked by code against its source cell; anything that does not match is marked as unverified. Emails, phone
-  numbers, personal names and the customers named in the uploaded data files are replaced before anything is sent."
-- Checkbox label, word for word: "AI-assisted reading enabled per engagement terms. Uncheck if the client requires code-based
-  extraction only; this may identify fewer findings."
+**4. Consent.** `structure_reading_consent` is one checkbox per audit, ticked by default at creation (the creation dialog has no tick:
+chat-upload.md §23). It covers decks and spreadsheets. It sits in the set-up section at the top of the Upload page. The basis for
+sending is the engagement terms, recorded by this per-audit checkbox (CLAUDE.md rule 16).
+- Label and the verification line: chat-upload.md §23, word for word.
 - Every change to the checkbox, including the value at creation, is logged with its time. The user field is added when
   user accounts exist (Phase 2); until then there is no user to record.
 - Audits created before the checkbox existed have no consent field, so they stay unticked.
-- Unticked means the Python-only path: no `read_structure` call is made. Stored results stay until Delete audit.
+- Unticked means the Python-only path: no `read_structure` call is made. Stored results stay until Delete audit. Ticked later, every deck already uploaded is read (chat-upload.md §23).
 - Each structure sent is recorded with its deck, page, type and time (no text). The deck panel shows "Sent to the model: slides 4, 7, 12".
 
 **5. Prompt-injection defence.** *Superseded in part: the cited-cell check is replaced, for deck structures, by the item id and pair checks of docs/specs/structure-labelling.md §3.* No tools. Structured outputs (`output_config.format`). The prompt says cell text is
@@ -149,8 +141,7 @@ corrected and cost. `scripts/consistency_run.py` reports the periods corrected t
 **10. Boundary test and docstrings.** `test_gateway_data_boundary.py` keeps every existing assertion.
 - It must pass when redacted structure cells reach the provider, and when a column-mapping text within the §1 limits does.
 - It must fail on raw bytes, a full page, a prose snippet, a cell over 200 characters, one more header row, sample or
-  text cell value than §1 allows on the column-mapping path, a file name, an unredacted email, phone number, name or customer name, the
-  client name, any call without consent, sent text in a log or in `llm_structures`, and
+  text cell value than §1 allows on the column-mapping path, a file name, an unredacted email, phone number, name or customer name, any call without consent, sent text in a log or in `llm_structures`, and
   anything but an ISO code in `unit_other`.
 
 The docstrings in `gateway.py`, `decks/__init__.py` and `prompt_store.py` restate rules 16–18.

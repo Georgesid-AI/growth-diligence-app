@@ -7,6 +7,7 @@ in-memory Mongo stub and the fake adapter - no test can reach a real provider.
 """
 import asyncio
 import copy
+import inspect
 import json
 import os
 import sys
@@ -746,7 +747,7 @@ def test_the_gateway_reads_no_deck_text_snippet_or_source():
 from app.structures import redact as structure_redact  # noqa: E402
 from app import structures  # noqa: E402
 
-STRUCTURE_AUDIT = {"id": "audit-boundary", "company_name": "Target Co", "client_name": "Northbridge Capital",
+STRUCTURE_AUDIT = {"id": "audit-boundary", "company_name": "Target Co",
                    "structure_reading_consent": True, "results": None}
 GOOD_STRUCTURE = "r1c2: FY2025\nr1c3: FY2026\nr2c1: Revenue\nr2c2: £1,200,000\nr2c3: £1,500,000"
 GOOD_MAPPING = ("r1c1: Customer\nr1c2: Invoice Date\nr1c3: Amount\nc2 sample: 2025-01-31\nc2 sample: 2025-02-28\n"
@@ -760,7 +761,7 @@ MAPPING_REPLY = json.dumps({"type": "column_mapping", "items": [
     {"metric": "customer_id", "period": None, "value": None, "unit": None, "actual_or_forecast": "unknown",
      "unit_other": None, "value_cell": "r1c1", "period_cells": [], "proposed_flags": []}]})
 # Every reason a structure text is refused: codes, never text from the structure.
-STRUCTURE_REFUSALS = frozenset({"not_text", "empty", "raw_bytes", "file_name", "client_name",
+STRUCTURE_REFUSALS = frozenset({"not_text", "empty", "raw_bytes", "file_name",
                                 "not_cells", "cell_too_long", "redaction_changed", "too_many_header_rows",
                                 "too_many_samples", "text_value", "bad_item_line", "bad_hint"})
 # A deck structure's item list (docs/specs/structure-labelling.md section 3): one line per figure Python listed, its
@@ -804,24 +805,15 @@ def test_redacted_structure_cells_reach_the_provider_as_cell_lines_only():
     assert all(re.match(r"^r\d+c\d+: ", line) for line in sent["text"].splitlines())
 
 
-def test_the_client_name_reaches_the_provider_only_as_redacted():
-    cells = [{"row": 1, "col": 1, "text": "Prepared for Northbridge Capital"}, {"row": 1, "col": 2, "text": "FY2025"},
-             {"row": 2, "col": 1, "text": "Revenue, ref ENG-2026-041"}, {"row": 2, "col": 2, "text": "£1,200,000"}]
-    # An engagement reference is no longer an audit field: a cell holding one is plain text.
-    redacted, counts = structure_redact.redact_structure(cells, "Target Co", {},
-                                                         structure_redact.withheld_values(STRUCTURE_AUDIT))
-    text = structure_redact.structure_text(redacted)
-    result, adapter = _send(_structure_db(), text, reply=NO_LABELS)
-    assert result.status == "read" and adapter.calls == 1 and counts["withheld"] == 1, result.reason
-    sent = json.loads(adapter.payloads[0])["text"]
-    assert sent == "r1c1: Prepared for [redacted]\nr1c2: FY2025\nr2c1: Revenue, ref ENG-2026-041\nr2c2: £1,200,000"
-    assert "northbridge" not in sent.lower(), "the client name reached the provider"
-
-
-def test_a_longer_word_holding_the_client_name_is_not_refused():
-    for text in ("r1c1: Northbridge Capitalists\nr1c2: £1M",):
-        result, adapter = _send(_structure_db(), text, reply=NO_LABELS)
-        assert (result.status, adapter.calls) == ("read", 1), text
+def test_no_client_name_is_read_or_refused_and_a_stored_one_on_an_old_audit_changes_nothing():
+    """Chat-upload.md section 23: the client name is gone from the context, the checks and the refusal reasons."""
+    text = "r1c1: Prepared for Northbridge Capital\nr1c2: FY2025\nr2c1: Revenue\nr2c2: £1,200,000"
+    for extra in ({}, {"client_name": "Northbridge Capital"}):
+        result, adapter = _send(_structure_db(**extra), text, reply=NO_LABELS)
+        assert result.status == "read" and adapter.calls == 1, result.reason
+    assert "client_name" not in STRUCTURE_REFUSALS
+    assert "client_name" not in inspect.getsource(gateway.load_structure_context)
+    assert "client_name" not in inspect.getsource(gateway.structure_text_problem)
 
 
 def test_a_column_mapping_text_within_the_caps_reaches_the_provider():
@@ -855,11 +847,6 @@ def test_a_sheet_built_by_the_app_sends_no_text_cell_value():
     ("an unredacted phone number", "r1c1: +44 20 7946 0958", "table", "redaction_changed"),
     ("an unredacted name", "r1c1: Michael Smith", "table", "redaction_changed"),
     ("an unredacted customer name", "r1c1: Northwind Trading renewed", "table", "redaction_changed"),
-    # Sent as written (not through redaction), the client name is refused as a whole word, with the boundaries redaction uses.
-    ("the client name", "r1c1: Prepared for Northbridge Capital", "table", "client_name"),
-    ("the client name in any case", "r1c1: NORTHBRIDGE CAPITAL", "table", "client_name"),
-    ("the client name in a column-mapping header", GOOD_MAPPING + "\nr1c4: Northbridge Capital share", "column_mapping",
-     "client_name"),
     ("more than 3 samples", GOOD_MAPPING + "\nc3 sample: 1\nc3 sample: 2\nc3 sample: 3", "column_mapping",
      "too_many_samples"),
     ("more than 3 header rows", GOOD_MAPPING + "\nr4c1: Customer name", "column_mapping", "too_many_header_rows"),
@@ -892,7 +879,6 @@ def test_a_sheet_built_by_the_app_sends_no_text_cell_value():
      "bad_item_line"),
     ("a title mark out of format", "title r1c1: 2011 Estimated Revenue\nr1c2: $7m", "kpi_panel", "not_cells"),
     ("an unredacted name in a title", "r1c1 title: Michael Smith\nr1c2: $7m", "kpi_panel", "redaction_changed"),
-    ("the client name in a title", "r1c1 title: Northbridge Capital plan\nr1c2: $7m", "kpi_panel", "client_name"),
     ("a title over 200 characters", "r1c1 title: " + "x" * 201 + "\nr1c2: $7m", "kpi_panel", "cell_too_long"),
 ])
 def test_the_structure_path_refuses_what_rule_16_does_not_allow(name, text, kind, reason):
@@ -1179,7 +1165,7 @@ def test_the_structure_path_never_reads_parsed_deck_text():
     """read_structure is handed the text; it reads consent and names from the audit, the pseudonym map,
     its own cache and the call log, never the parsed-text or candidate collections."""
     db, reads = _recording_db()
-    db["audits"].docs[0].update({"company_name": "Target Co", "client_name": "Northbridge Capital",
+    db["audits"].docs[0].update({"company_name": "Target Co",
                                  "structure_reading_consent": True})
     adapter = t.FakeAdapter(replies=[STRUCTURE_REPLY])
     asyncio.run(gateway.read_structure(db, RUN_ID, GOOD_ITEMS, "table", adapter=adapter, sleep=t._noop_sleep))
@@ -1187,7 +1173,7 @@ def test_the_structure_path_never_reads_parsed_deck_text():
     touched = {name for name, _, _ in reads}
     assert not touched & {decks.TEXT_COLLECTION, decks.CANDIDATES_COLLECTION}, touched
     audit_reads = [projection for name, projection, _ in reads if name == "audits"]
-    assert audit_reads and all(set(p) - {"_id"} <= {"id", "company_name", "client_name",
+    assert audit_reads and all(set(p) - {"_id"} <= {"id", "company_name",
                                                        "structure_reading_consent", "owner"} for p in audit_reads)
     assert DECK_SENTINEL not in adapter.payloads[0] and DECK_FILE not in adapter.payloads[0]
 
@@ -1753,7 +1739,7 @@ def test_chat_log_lines_hold_no_file_name_header_cell_value_company_name_or_note
     api.request("DELETE", f"/api/audits/{chat.AUDIT}", json={"confirm": chat.COMPANY})
     log = "\n".join(r.getMessage() for r in caplog.records)
     assert "upload: run_id=" in log and "decisions: run_id=" in log, "the new lines were written"
-    secrets = [*FIXTURE_FILES, *FIXTURE_CELLS, "Customer ID", "Invoice Date", "Adj", chat.COMPANY, "Northbridge", "ENG-2026-041",
+    secrets = [*FIXTURE_FILES, *FIXTURE_CELLS, "Customer ID", "Invoice Date", "Adj", chat.COMPANY, "ENG-2026-041",
                note, "pptx.", "wide.csv"]
     for secret in secrets:
         assert secret not in log, f"{secret!r} reached a log line"
@@ -1769,7 +1755,7 @@ def test_chat_the_counters_and_the_totals_hold_no_file_name_cell_value_or_compan
     totals = api.get("/api/usage/totals").json()
     for name, doc in (("audits.usage", usage), ("totals", totals)):
         blob = json.dumps(doc)
-        for secret in (*FIXTURE_FILES, *FIXTURE_CELLS, chat.COMPANY, "Northbridge", "ENG-2026-041", "Customer ID", "Invoice Date"):
+        for secret in (*FIXTURE_FILES, *FIXTURE_CELLS, chat.COMPANY, "ENG-2026-041", "Customer ID", "Invoice Date"):
             assert secret not in blob, f"{secret!r} in {name}"
         assert blob.count("Adj") == blob.count(note) == 1, f"header text only inside the kept note ({name})"
     assert usage["columns"]["reasons"] == {"other": 1}
@@ -1782,7 +1768,7 @@ def test_chat_the_counters_and_the_totals_hold_no_file_name_cell_value_or_compan
 @pytest.mark.parametrize("note,refused", [
     ("Revenue 2024 is wrong", True), ("a" * 61, True), ("Adj is not the type", False),
     ("see blank_vs_zero", True), ("see blank_vs_zero.csv", True), ("Alder is wrong", True),
-    ("Fixture Target Ltd", True), ("Northbridge Capital", True), ("ENG-2026-041", True),
+    ("Fixture Target Ltd", True), ("ENG-2026-041", True),
 ])
 def test_chat_an_other_note_is_refused_for_a_digit_a_file_name_a_cell_text_a_name_or_length(api, note, refused):
     chat.upload(api, "blank_vs_zero.csv")
@@ -2308,12 +2294,12 @@ def test_the_prompt_upload_route_logs_the_name_and_version_only():
 
 # ---------------------------------------------------------------------------
 # The file type (docs/specs/chat-upload.md section 19, 2026-10-16): the model may read spreadsheet sheet names, title rows and header
-# rows and the masked sample, with the client name and the company name masked. Nothing else, and none of it is kept.
+# rows and the masked sample, with the company name masked. Nothing else, and none of it is kept.
 # ---------------------------------------------------------------------------
 import mapping_shapes as shapes  # noqa: E402
 
 FILE_TYPE_TITLES = ("Revenue through 31 December 2028", "Accounts through 31 December 2028", "EUR; accounts anonymised")
-FILE_TYPE_CONTEXT = {"company_name": "Fixture Target Ltd", "client_name": "Northbridge Capital"}
+FILE_TYPE_CONTEXT = {"company_name": "Fixture Target Ltd"}
 
 
 def _file_type_text(**sheet):
@@ -2334,7 +2320,6 @@ def test_chat_a_file_type_text_passes_with_title_rows_headers_a_masked_sample_an
     ({"titles": [{"row": r, "col": 1, "text": "t"} for r in range(1, 8)]}, "too_many_header_rows"),
     ({"headers": [{"row": 5, "col": 1, "text": "a"}, {"row": 6, "col": 1, "text": "b"}]}, "too_many_header_rows"),
     ({"titles": [{"row": 2, "col": 1, "text": "x" * 201}]}, "cell_too_long"),
-    ({"titles": [{"row": 2, "col": 1, "text": "Report for Northbridge Capital"}]}, "client_name"),
     ({"titles": [{"row": 2, "col": 1, "text": "Contact jane.doe@example.com"}]}, "redaction_changed"),
     ({"name": "export.xlsx"}, "file_name"),
 ])
@@ -2362,12 +2347,12 @@ def _file_type_upload(api):
     return chat.upload(api, "CRM_Anonymous_to_2028.xlsx", shapes.crm_anonymous_to_2028())
 
 
-def test_chat_the_file_type_text_holds_titles_and_headers_and_no_data_text_file_name_or_client_name(api):
+def test_chat_the_file_type_text_holds_titles_and_headers_and_no_data_text_or_file_name(api):
     _file_type_upload(api)
     text = chat.model_text(api)
     parsed = structure_redact.parse_file_type_text(text)
     assert any("Accounts through" in c["text"] for c in parsed[0]["titles"]), "the title rows are sent"
-    for secret in ("ACC-0001", "Mid-market", "no contradiction found", "Owner A", "Claimed", "CRM_Anonymous", ".xlsx", "Northbridge"):
+    for secret in ("ACC-0001", "Mid-market", "no contradiction found", "Owner A", "Claimed", "CRM_Anonymous", ".xlsx"):
         assert secret not in text, secret
     assert gateway.structure_text_problem(text, "file_type", FILE_TYPE_CONTEXT, {}) is None
 
@@ -2391,12 +2376,12 @@ def test_chat_no_collection_holds_the_file_type_text_and_the_kept_answer_is_a_ha
     assert set(row) <= LLM_CALLS_KEYS and row["status"] == "ok"
 
 
-def test_chat_a_title_row_holding_the_client_name_or_an_address_reaches_the_model_masked(api):
+def test_chat_a_title_row_holding_an_address_reaches_the_model_masked(api):
     from openpyxl import Workbook
     import io
     wb = Workbook()
     ws = wb.active
-    ws["C2"] = "Monthly pack for Northbridge Capital, contact jane.doe@example.com"
+    ws["C2"] = "Monthly pack, contact jane.doe@example.com"
     ws["C3"] = "Fixture Target Ltd management accounts"
     for j, h in enumerate(["Line", "2023", "2024", "2025"]):
         ws.cell(5, 3 + j, h)
@@ -2408,7 +2393,7 @@ def test_chat_a_title_row_holding_the_client_name_or_an_address_reaches_the_mode
     api.state["adapter"] = t.FakeAdapter(replies=[json.dumps({"type": "file_type", "file_type": "unknown"})])
     chat.upload(api, "x.xlsx", buf.getvalue())
     text = chat.model_text(api)
-    assert "Northbridge" not in text and "jane.doe" not in text and "[redacted]" in text and "[email]" in text
+    assert "jane.doe" not in text and "[redacted]" in text and "[email]" in text
     assert "Fixture Target Ltd" not in text, "the company's own name is masked in the file-type text (chat-upload.md section 19)"
 
 
