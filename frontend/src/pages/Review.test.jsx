@@ -259,7 +259,7 @@ test("no narrative is written by opening the screen; the one button writes every
   expect(q("write-all-estimate")).toBeNull();
   expect(q("review-finish").textContent).not.toMatch(/\$|USD|Estimated cost/);
   expect(q("write-all-narratives").textContent).toBe("Write all narratives");
-  expect(q("write-all-help").textContent).toContain("Costs one AI request");
+  expect(q("write-all-help").textContent).toContain("Uses one AI request");
   api.generateNarrative.mockResolvedValue({ narrative_status: "ok" });
   await act(async () => { q("write-all-narratives").click(); });
   await act(async () => { await Promise.resolve(); await Promise.resolve(); });

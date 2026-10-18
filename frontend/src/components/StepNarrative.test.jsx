@@ -39,7 +39,7 @@ test.each(["data_inventory", "data_integrity"])("%s has one Write narrative butt
   expect(host.querySelectorAll("button")).toHaveLength(1);
   const helper = q(`narrative-helper-${step}`).textContent;
   expect(helper).toContain("Writes a short summary of the numbers below, in plain English.");
-  expect(helper).toContain("Costs one AI request");
+  expect(helper).toContain("Uses one AI request");
   // The same words as the growth-engine control.
   const growth = document.createElement("div");
   const r2 = createRoot(growth);

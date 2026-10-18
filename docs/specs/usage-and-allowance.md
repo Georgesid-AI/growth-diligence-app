@@ -58,15 +58,15 @@ months in UTC. Counts and USD only. No company name, file name, audit name, audi
   `You have used X% of this month's AI allowance.` X is the rounded-down percent. No amount (§9, amended 18 Oct 2026).
 - `blocked`: the message below replaces the line, word for word:
 
-> You’ve reached your monthly AI allowance.
+> Monthly AI allowance reached.
 >
-> AI features are paused for now, including column suggestions, reading board decks, and writing narratives.
+> AI steps are paused: AI column suggestions, reading board decks, and writing narratives.
 >
-> Everything else still works at no extra cost: all metrics (revenue, NRR, churn, CAC payback, sales cycle, and win rate), data checks, saved mappings, review, and exports.
+> Everything else still works: all metrics (revenue, NRR, churn, CAC payback, sales cycle, win rate), data checks, saved mappings, your review and exports. These are calculated in Python from your files.
 >
-> You can still upload new files. The app will match columns using its built-in rules and ask you to confirm any uncertain matches.
+> New files can still be mapped by the app's rules; you confirm any column it is unsure about yourself.
 >
-> Need a higher allowance? Contact the app owner.
+> To raise your allowance, contact the app owner.
 
 - At 100% only new AI calls stop. Never blocked: uploads, rules mapping, saved mappings, all metrics, data checks, review, exports,
   stored narratives (read from cache, no call).
@@ -109,7 +109,7 @@ token receives or sees changes. The architecture and the engine are unchanged.
 
 **Screens.** Removed: the "AI usage and cost" table of the Audit page (`UsagePanel`) and its request; the cost estimate on "Write all
 narratives" (the line "Estimated cost: up to ..." and the estimate in the API); the "Cost:" line of a deck's AI log. The
-narrative helper wording "Costs one AI request" stays, without an amount. The 80% line reads `You have used X% of this month's AI
+narrative helper wording "Costs one AI request" becomes "Uses one AI request" (amended 18 Oct 2026, below). The 80% line reads `You have used X% of this month's AI
 allowance.` and the 100% message is unchanged. No tester screen mentions that cost figures exist or can be requested.
 
 **Memo and exports.** Appendix D of the IC memo no longer carries "AI usage and cost (this audit)" (verdict-and-memo.md §8 and W20 are
@@ -139,6 +139,11 @@ the response. The numbers come from `llm_calls`, which deleting an audit purges,
 | Memo and xlsx hold no usage table; `/allowance` has percent and state only; the estimate has no amount | `test_ic_memo.py`, `test_tester_cost_hidden.py`, `test_usage_allowance.py` |
 | Audit costs: one row per audit with tester label, time, calls, tokens, cost; no name or id; owner only | `test_usage_allowance.py`, `test_owner_page_api.py` |
 | Screens: no usage table, no estimate, no USD in the banner, no deck cost line; owner list renders | `Dashboard.test.jsx`, `Review.test.jsx`, `AllowanceBanner.test.jsx`, `DeckPanel.test.jsx`, `OwnerPage.test.jsx` |
+
+**Amended (George, 18 Oct 2026, PR #128).** No tester screen mentions cost. The 100% message above replaces the earlier one word for word
+("no extra cost" is gone); "Costs one AI request" and "costs another AI request" read "Uses one AI request" and "uses another AI request"; "for free"
+is dropped. `AllowanceBanner.test.jsx` holds the five lines and a no-"cost" check; `Review.test.jsx` and `StepNarrative.test.jsx` hold the
+helper wording.
 
 ## Files
 `backend/app/allowance.py` (new), `backend/app/llm/guards.py`, `backend/app/llm/gateway.py` (log_call, two checks, cap word),
