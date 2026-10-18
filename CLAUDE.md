@@ -12,6 +12,10 @@
     (numeric and date columns only) or a profile (distinct count, typical length, shape
     pattern) for text columns — only after redaction, only with per-audit consent, only
     as extracted text with cell positions. Never raw files, full pages or prose slides.
+    For the sheet_structure step only (approved by George, 2026-10-18), the model may receive
+    every text cell of a sheet (title rows, headers, row labels, indents, num/blank markers),
+    after redaction and the withhold rule; never any figure; cap 400 labelled rows per sheet.
+    All other steps keep the boundary above.
     The deck parser has no direct link to the gateway.
 17. Logs and MongoDB store model JSON output (values with cell references), prompt
     version, model version, content hash, token counts and cost. Never deck text sent to

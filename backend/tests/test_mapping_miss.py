@@ -170,6 +170,9 @@ def test_the_three_files_that_missed_end_in_one_miss_message_that_names_what_is_
     api.state["adapter"] = t.FakeAdapter(replies=[type_reply(word), mapping_reply()])
     body = upload(api, name, content).json()
     assert body["dtype"] == word and body["sheet"] in ("Revenue", "P&L", "Accounts", "Annual tracker")
+    if word == "pnl":       # a P&L statement is no longer a miss: its line table replaces the message (chat-upload.md section 26)
+        assert body["miss"] is None and body["sheet_map"]["lines"] and body["pnl_grain"] == "yearly"
+        return
     miss = body["miss"]
     assert miss and missing <= set(miss["missing"]), miss
     assert miss["looks"]["shape"] == ("summary" if word != "crm" else "table")

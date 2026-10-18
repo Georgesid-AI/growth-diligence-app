@@ -92,11 +92,30 @@ def _demo_raws() -> dict:
     return out
 
 
+@lru_cache(maxsize=None)
+def _yearly_raw() -> dict:
+    """The sample revenue and CRM files with a yearly P&L read as a statement (chat-upload.md section 26.8): no monthly P&L."""
+    from app import column_rules as cr
+    from app.structures import sheet as sh
+    uploads = {}
+    for dtype in ("revenue", "crm"):
+        df, sheet = server.parse_file((SAMPLE / FILES[dtype]).read_bytes(), FILES[dtype])
+        uploads[dtype] = {"file": FILES[dtype], "sheet": sheet, "columns": list(df.columns), "rows": server.df_to_records(df),
+                          "mapping": server.suggest_mapping(dtype, list(df.columns))}
+    norm = {d: server.normalize(u["rows"], d, u["mapping"]) for d, u in uploads.items()}
+    name = "yearly_pnl_by_product.csv"
+    s = cr.read_workbook((BACKEND / "tests" / "fixtures" / "mapping" / name).read_bytes(), name)[0]
+    yearly = sh.feed(sh.build(sh.read(s.grid, s.fmt, 12)), 12, 1000, {"file": name, "sheet": "CSV"})["yearly"]
+    sources = {d: {"file": u["file"], "sheet": u["sheet"]} for d, u in uploads.items()}
+    return ge.compute_all_raw(norm["revenue"], norm["crm"], pd.DataFrame(), _config(), sources,
+                              files=server.candidate_views(uploads), yearly=yearly)
+
+
 def all_raws() -> dict:
-    return {"sample": _sample_raw(), **_demo_raws()}
+    return {"sample": _sample_raw(), "sample-yearly": _yearly_raw(), **_demo_raws()}
 
 
-RUNS = ["sample"] + [f"demo{i}{v}" for i in range(len(demo_data.DEMO_AUDITS))
+RUNS = ["sample", "sample-yearly"] + [f"demo{i}{v}" for i in range(len(demo_data.DEMO_AUDITS))
                      for v in ("", "-no-pnl", "-no-crm", "-bad-target-date", "-8-months", "-14-months")]
 
 
@@ -143,7 +162,8 @@ def test_the_sample_run_exercises_the_blocks_the_contract_exists_for():
 
 CITED_BLOCKS = ("arr", "nrr", "gross_churn", "cac_payback", "sales_cycle", "win_rate", "acv_path", "segment_paths",
                 "anomalies", "mrr_series", "revenue_series", "customers_series", "cohort_retention",
-                "won_deal_closes")                                  # docs/specs/crm-dedup-clustering.md: the won deals' rows
+                "won_deal_closes",                                  # docs/specs/crm-dedup-clustering.md: the won deals' rows
+                "yearly_basis")                                     # chat-upload.md section 26.8: the statement's line rows
 CITATION_BESIDE_BLOCK = {"new_mrr_by_quarter": "new_mrr_by_quarter_source"}      # a dict keyed by quarter has no room for a key
 NO_OWN_CITATION = {"revenue_reconciliation": "its months and its window carry both sides' citations",
                    "founder_win_rate": "optional twin of win_rate", "missing_data": "gaps, no figure",
@@ -158,10 +178,11 @@ def test_every_block_with_a_figure_carries_a_citation_in_the_model_and_in_the_en
     fields = set(MetricsPayload.model_fields)
     decided = set(CITED_BLOCKS) | set(CITATION_BESIDE_BLOCK) | set(CITATION_BESIDE_BLOCK.values()) | set(NO_OWN_CITATION)
     assert fields == decided, f"decide whether these blocks cite a source: {sorted(fields ^ decided)}"
-    for run in ("sample", "demo0-no-pnl", "demo1-no-crm", "demo1-14-months"):
+    assert stored_form(all_raws()["sample-yearly"])["yearly_basis"]["years"], "fixture: the yearly run holds the block"
+    for run in ("sample", "sample-yearly", "demo0-no-pnl", "demo1-no-crm", "demo1-14-months"):
         stored = stored_form(all_raws()[run])
         for block in CITED_BLOCKS:
-            if stored[block] is None:                              # a failed calculation is Missing, not cited
+            if stored.get(block) is None:                          # a failed calculation is Missing, not cited; a block not set
                 continue
             assert stored[block]["source"]["rule"] and stored[block]["source"]["rows"], f"{run}: {block} has no citation"
         assert stored["new_mrr_by_quarter_source"]["rule"], run

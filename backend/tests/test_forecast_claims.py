@@ -92,11 +92,12 @@ def test_an_annual_forecast_reads_each_plan_line_and_year_from_its_cell_scaled_b
 
 def test_the_upload_view_lists_the_claims_and_nothing_is_stored_before_confirm(api):
     out = upload(api, ANNUAL, (FORECAST / ANNUAL).read_bytes()).json()
-    assert out["dtype"] == "pnl" and out["miss"]["looks"]["shape"] == "summary"
+    # A P&L read as a statement (section 26.6): its actual-tagged years 2023A and 2024A are company-reported actuals, no claims.
+    assert out["dtype"] == "pnl" and out["miss"] is None and out["sheet_map"] and out["pnl_grain"] == "yearly"
     claims = out["forecast_claims"]
-    assert (claims["count"], claims["sheet"], claims["range"], claims["saved"], claims["saved_lines"]) == (48, "CSV", "C5:H18", 0, 0)
+    assert (claims["count"], claims["sheet"], claims["range"], claims["saved"], claims["saved_lines"]) == (32, "CSV", "E5:H18", 0, 0)
     assert [x["row"] for x in claims["lines"]] == PLAN_ROWS
-    assert view(api, "pnl")["forecast_claims"]["count"] == 48, "the list is rebuilt on reload from the stored rows"
+    assert view(api, "pnl")["forecast_claims"]["count"] == 32, "the list is rebuilt on reload from the stored rows"
     assert forecast_candidates(api) == [], "nothing is stored until the analyst confirms"
     assert not any("forecast" in str(k) for d in api.db["datasets"].docs for k in d), "the list itself is not stored"
 
@@ -104,17 +105,17 @@ def test_the_upload_view_lists_the_claims_and_nothing_is_stored_before_confirm(a
 def test_confirm_stores_the_ticked_lines_in_the_table_row_shape_and_drops_the_unticked(api):
     upload(api, ANNUAL, (FORECAST / ANNUAL).read_bytes())
     res = api.post(f"/api/audits/{AUDIT}/datasets/pnl/forecast-claims", json={"rows": [5, 16]})
-    assert res.status_code == 200 and res.json() == {"saved": 12, "lines": 2}
+    assert res.status_code == 200 and res.json() == {"saved": 8, "lines": 2}, "the four forecast years of each line"
     made = sorted(forecast_candidates(api), key=lambda c: c["sheet_row"])
     assert [c["snippet"] for c in made] == ["Revenue", "Headcount (FTE)"], "unticked lines are dropped; the label is as in the file"
     revenue = made[0]
     assert (revenue["status"], revenue["deck_id"], revenue["claim_type"], revenue["currency"], revenue["value"]) == \
         ("approved", None, "revenue", "EUR", None)
-    first = revenue["by_period"][2]
-    assert (first["value"], first["target_date"], first["period_text"]) == (1980000, "2025", "2025F")
+    first = revenue["by_period"][0]
+    assert (first["value"], first["target_date"], first["period_text"], first["tag"]) == (1980000, "2025", "2025F", "forecast")
     assert (first["period_start"], first["period_end"]) == ("2025-01-01", "2025-12-31")
     assert first["source"] == {"file": ANNUAL, "sheet": "CSV", "cell": "E5", "kind": "sheet"}
-    assert view(api, "pnl")["forecast_claims"]["saved"] == 12, "a reload shows what was saved"
+    assert view(api, "pnl")["forecast_claims"]["saved"] == 8, "a reload shows what was saved"
     listed = api.get(f"/api/audits/{AUDIT}/decks")
     assert listed.status_code == 200, "the deck list reads candidates with no deck and sheet sources"
     assert {c["snippet"] for c in listed.json()["candidates"]} == {"Revenue", "Headcount (FTE)"}
@@ -264,7 +265,8 @@ def test_the_ic_memo_and_the_baseline_csv_carry_forecast_claims_whose_overlaps_a
 
 
 # ---------------------------------------------------------------------------
-# After review (2026-10-16, George, decision 1): a file read as claims no longer counts toward Calculate
+# After review (2026-10-16, George, decision 1): a file read as claims no longer counts toward Calculate. The forecast table is
+# typed as a CRM file here: a P&L is now read as a statement and stays an engine input (section 26.6, test_sheet_structure.py).
 # ---------------------------------------------------------------------------
 def _confirm(client, dtype, rows):
     return client.post(f"/api/audits/{AUDIT}/datasets/{dtype}/forecast-claims", json={"rows": rows})
@@ -272,13 +274,13 @@ def _confirm(client, dtype, rows):
 
 def test_a_file_read_as_claims_no_longer_holds_calculate_and_is_no_engine_input(api):
     assert upload(api, "blank_vs_zero.csv").json()["pending"] == 0, "fixture: a revenue file that maps with nothing pending"
-    upload(api, ANNUAL, (FORECAST / ANNUAL).read_bytes())
-    before = view(api, "pnl")
+    upload(api, ANNUAL, (FORECAST / ANNUAL).read_bytes(), dtype="crm")
+    before = view(api, "crm")
     assert before["read_as_claims"] is None and before["missing_required"], "fixture: the forecast table is a miss"
     assert api.post(f"/api/audits/{AUDIT}/compute").status_code == 409, "a miss holds Calculate until its claims are saved"
     assert api.post(f"/api/audits/{AUDIT}/run/mapping").json()["status"] == "needs_review"
-    assert _confirm(api, "pnl", [5, 16]).json() == {"saved": 12, "lines": 2}
-    after = view(api, "pnl")
+    assert _confirm(api, "crm", [5, 16]).json() == {"saved": 12, "lines": 2}
+    after = view(api, "crm")
     assert after["read_as_claims"] == {"lines": 2, "claims": 12}
     assert (after["pending"], after["missing_required"]) == (0, []), "a file read as claims waits for nothing"
     assert after["miss"] is not None, "the miss message stays: the file is still not a P&L"
@@ -291,9 +293,9 @@ def test_a_file_read_as_claims_no_longer_holds_calculate_and_is_no_engine_input(
 
 def test_a_confirm_with_no_line_ticked_saves_nothing_and_the_file_still_counts(api):
     upload(api, "blank_vs_zero.csv")
-    upload(api, ANNUAL, (FORECAST / ANNUAL).read_bytes())
-    assert _confirm(api, "pnl", []).json() == {"saved": 0, "lines": 0}
-    assert view(api, "pnl")["read_as_claims"] is None
+    upload(api, ANNUAL, (FORECAST / ANNUAL).read_bytes(), dtype="crm")
+    assert _confirm(api, "crm", []).json() == {"saved": 0, "lines": 0}
+    assert view(api, "crm")["read_as_claims"] is None
     assert api.post(f"/api/audits/{AUDIT}/compute").status_code == 409
 
 
@@ -309,8 +311,8 @@ def test_a_revenue_typed_file_read_as_claims_is_no_revenue_file(api):
 def test_saving_claims_brings_a_computed_audit_up_to_date(api):
     upload(api, "blank_vs_zero.csv")
     assert api.post(f"/api/audits/{AUDIT}/compute").status_code == 200
-    upload(api, ANNUAL, (FORECAST / ANNUAL).read_bytes())
+    upload(api, ANNUAL, (FORECAST / ANNUAL).read_bytes(), dtype="crm")
     assert api.db["audits"].docs[0]["metrics_stale"] is True, "fixture: the miss holds the recompute, so the results are stale"
-    _confirm(api, "pnl", [5])
+    _confirm(api, "crm", [5])
     assert api.db["audits"].docs[0]["metrics_stale"] is False, "the file no longer counts: the audit is recomputed without it"
 

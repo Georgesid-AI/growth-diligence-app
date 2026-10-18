@@ -3,7 +3,8 @@ import { Paperclip, FileSpreadsheet, FileText, Loader2, ChevronRight, ChevronDow
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { BLOCKERS_CHANGED } from "@/components/BlockerBanner";
-import { uploadChatFile, getDatasets, decideColumns, reportUsage, changeDatasetType, confirmForecastClaims } from "@/lib/api";
+import SheetMap from "@/components/SheetMap";
+import { uploadChatFile, getDatasets, decideColumns, decideLines, reportUsage, changeDatasetType, confirmForecastClaims } from "@/lib/api";
 import {
   S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE_LEAD, S4_DROP_ZONE_BOLD, S6_UNKNOWN_TYPE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S_UPLOAD_RETRY,
   S20_NOTE_PLACEHOLDER, S21_NOTE_REFUSED, NOTE_MAX, ALLOWED_EXTENSIONS, REASONS, TYPE_LABELS, S5_head, S8_replace,
@@ -170,6 +171,15 @@ export default function UploadChat({ audit, extras, onViews, onStaged, onMapping
     announce();
   };
 
+  // A statement file's lines (section 26.7): the same refresh as a column decision.
+  const decideSheetLines = async (view, decisions) => {
+    const next = await decideLines(audit.id, view.dtype, decisions);
+    setDecided(true);
+    setMessages((all) => all.map((m) => (m.kind === "system" && m.dtype === view.dtype ? { ...m, view: next } : m)));
+    announce();
+    return next;
+  };
+
   const decide = async (view, decisions) => {
     const next = await decideColumns(audit.id, view.dtype, decisions);
     setDecided(true);
@@ -207,7 +217,7 @@ export default function UploadChat({ audit, extras, onViews, onStaged, onMapping
         </div>
         {messages.map((m) => (
           <Message key={m.id} m={m} audit={audit} unstage={unstage} extras={extras} lastReason={lastReason} setLastReason={setLastReason}
-            decide={decide} retype={retype} claimsSaved={claimsSaved} showInfo={m.id === firstTable}
+            decide={decide} decideLines={decideSheetLines} retype={retype} claimsSaved={claimsSaved} showInfo={m.id === firstTable}
             onType={(file, dtype) => { setMessages((all) => all.filter((x) => x.id !== m.id)); send(file, { dtype }, m.bubble); }}
             onReplace={(file, dtype) => { setMessages((all) => all.filter((x) => x.id !== m.id)); send(file, { dtype, replace: true }, m.bubble); }}
             onKeep={() => { openPrompts.current.delete(m.bubble); setMessages((all) => all.filter((x) => x.id !== m.id && x.id !== m.bubble)); }} />
@@ -232,7 +242,7 @@ export default function UploadChat({ audit, extras, onViews, onStaged, onMapping
   );
 }
 
-function Message({ m, audit, unstage, extras, lastReason, setLastReason, decide, retype, claimsSaved, showInfo, onType, onReplace, onKeep }) {
+function Message({ m, audit, unstage, extras, lastReason, setLastReason, decide, decideLines, retype, claimsSaved, showInfo, onType, onReplace, onKeep }) {
   if (m.kind === "analyst") return <AnalystBubble m={m} unstage={unstage} />;
   if (m.kind === "text") {
     return <Bubble side="left" testid="chat-text-system">{m.text}</Bubble>;
@@ -260,7 +270,8 @@ function Message({ m, audit, unstage, extras, lastReason, setLastReason, decide,
       </Bubble>
     );
   }
-  return <SystemBubble view={m.view} audit={audit} extras={extras} lastReason={lastReason} setLastReason={setLastReason} decide={decide} retype={retype}
+  return <SystemBubble view={m.view} audit={audit} extras={extras} lastReason={lastReason} setLastReason={setLastReason} decide={decide}
+    decideLines={decideLines} retype={retype}
     claimsSaved={claimsSaved} showInfo={showInfo} />;
 }
 
@@ -290,7 +301,7 @@ function AnalystBubble({ m, unstage }) {
   );
 }
 
-function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide, retype, claimsSaved, showInfo }) {
+function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide, decideLines, retype, claimsSaved, showInfo }) {
   const [openUnused, setOpenUnused] = useState(false);
   const [showColumns, setShowColumns] = useState(false);       // a miss hides the rows behind its message until asked
   const shown = sortColumns(view.columns.filter((c) => c.state !== "unused"));
@@ -310,7 +321,8 @@ function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide, 
       {modelFailed && <p className="text-xs text-amber-700 mt-1" data-testid="bubble-ai-failed">{S12_MODEL_FAILED}</p>}
       {showInfo && <WhyThisMatters />}
       {view.dtype === "crm" && <CrmFieldsHelp />}
-      <div className="overflow-x-auto mt-3">
+      {view.sheet_map && <SheetMap view={view} decideLines={decideLines} />}
+      {!view.sheet_map && <div className="overflow-x-auto mt-3">
         <table className="w-full text-xs" data-testid={`mapping-table-${view.dtype}`}>
           {view.sheet && <caption className="text-left text-slate-500 pb-1" data-testid={`mapping-sheet-${view.dtype}`}>{S26_sheet(view)}</caption>}
           <thead>
@@ -342,7 +354,7 @@ function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide, 
             {!missed && openUnused && unused.map((c) => <ColumnRow key={c.column} row={c} {...props} />)}
           </tbody>
         </table>
-      </div>
+      </div>}
       {view.forecast_claims && !view.read_as_claims && (
         <ForecastClaims key={`${view.file}:${view.uploaded_at}`} view={view} auditId={audit.id} onSaved={() => claimsSaved?.(view)} />)}
       {view.dtype === "revenue" && extras?.(view)}

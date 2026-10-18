@@ -12,7 +12,10 @@ labels, KPI panels, roadmaps and timelines, hiring, unit-economics and use-of-fu
 spreadsheet sheet names, title rows and header rows (at most 3 header rows) with, per column, up to 3 sample values (numeric and date
 columns only) or a profile (distinct count, typical length, shape pattern) for text columns. Only
 after redaction, only with the audit's consent, only as extracted text with cell positions; never
-raw files, full pages or prose slides. A deck structure's text carries, below its cells, the item
+raw files, full pages or prose slides. For the sheet_structure step only (George, 2026-10-18;
+chat-upload.md section 26): every text cell of one sheet (title rows, headers, row labels, indents,
+num/blank markers), after redaction and the withhold rule, never a figure, at most 400 rows with
+text; checked again here (structures/redact.sheet_text_problem). A deck structure's text carries, below its cells, the item
 list Python made (docs/specs/structure-labelling.md): one line per figure with its cell, its raw
 text cut from the redacted cell, its values and header cells, and a roadmap's date cells and text
 lines; an item line out of format, or whose raw text is not a figure inside its cell, is refused
@@ -57,8 +60,8 @@ from schemas.metrics import safe_problems
 from .. import allowance, disclosure, formatting
 from ..structures import redact as structure_redact
 from . import cache, guards, prompt_store, redaction, schemas, step_payloads
-from .schemas import (FILE_TYPE, MAPPING_FIELDS, STRUCTURE_TYPES, DeckUsage, FileTypeReply, LabellingReply, Narrative, NarrativeResponse,
-                      StructureRead, StructureReply, UsageResponse, narrative_output_schema)
+from .schemas import (FILE_TYPE, MAPPING_FIELDS, SHEET_STRUCTURE, STRUCTURE_TYPES, DeckUsage, FileTypeReply, LabellingReply, Narrative,
+                      NarrativeResponse, SheetStructureReply, StructureRead, StructureReply, UsageResponse, narrative_output_schema)
 
 logger = logging.getLogger("growth.llm")
 
@@ -1408,10 +1411,13 @@ async def disclosure_for_run(db, run_id: str) -> Optional[dict]:
 STRUCTURE_MODEL = "claude-sonnet-5-5"
 STRUCTURE_PROMPT = "structure_reading"
 FILE_TYPE_PROMPT = "file_type"
+SHEET_STRUCTURE_PROMPT = "sheet_structure"
 STRUCTURE_STEP = guards.STRUCTURE_STEP
 STRUCTURE_MAX_TOKENS = 4000
 STRUCTURE_INPUT_CAP = 4000          # tokens of structure text plus item list, by the provider's token counter
 STRUCTURE_CELL_MAX = 200            # a longer cell is prose
+SHEET_INPUT_CAP = 12_000            # a sheet skeleton: tokens of its text, by the provider's token counter (chat-upload.md 26.4)
+SHEET_MAX_TOKENS = 12_000           # ... and of its reply (a role, parent and meaning for up to 400 lines)
 STRUCTURES_COLLECTION = cache.STRUCTURES_COLLECTION
 NOT_READ = "Not read by AI"
 TOO_LARGE = "Too large for AI reading"
@@ -1476,6 +1482,16 @@ def structure_text_problem(text: Any, structure_type: str, context: dict, mappin
     if _FILE_NAME.search(text):
         return "file_name"
     company = context.get("company_name")
+    if structure_type == SHEET_STRUCTURE:
+        # Every text cell of one sheet, never a figure, at most 400 rows with text, the withhold rule and the redaction run again.
+        problem = structure_redact.sheet_text_problem(text)
+        if problem:
+            return problem
+        cells = structure_redact.parse_sheet_text(text)["cells"]
+        if any(len(c["text"]) > STRUCTURE_CELL_MAX for c in cells):
+            return "cell_too_long"
+        redacted, _ = structure_redact.redact_structure(cells, company, mapping, structure_redact.file_type_withheld(context))
+        return "redaction_changed" if redacted != cells else None
     if structure_type == FILE_TYPE:
         problem = structure_redact.file_type_text_problem(text)
         if problem:
@@ -1527,7 +1543,7 @@ def _schema_check(exc: Exception) -> str:
     """"metric_list" when the schema fails on a metric outside the list and nothing else, else "schema". Read from
     the error locations and types only, never from the input they quote."""
     errors = exc.errors() if hasattr(exc, "errors") else []
-    if errors and all(e["type"] == "literal_error" and e["loc"][-1:] == ("metric",) for e in errors):
+    if errors and all(e["type"] == "literal_error" and e["loc"][-1:] in (("metric",), ("meaning",), ("role",)) for e in errors):
         return "metric_list"
     return "schema"
 
@@ -1535,6 +1551,8 @@ def _schema_check(exc: Exception) -> str:
 def parse_structure_reply(reply: str, structure_type: str, text: str):
     """The validated reply for the type Python sent, or raise GatewayError("parse_failed"): a labelling reply for
     a deck structure (parse_labelling_reply), the column-mapping reply for a column mapping, the file-type word for a file."""
+    if structure_type == SHEET_STRUCTURE:
+        return parse_sheet_reply(reply, text)
     if structure_type == FILE_TYPE:
         try:
             return FileTypeReply.model_validate(json.loads((reply or "").strip()))
@@ -1558,6 +1576,28 @@ def parse_structure_reply(reply: str, structure_type: str, text: str):
     for item in parsed.items:
         if item.value_cell not in known or any(c not in known for c in item.period_cells):
             raise GatewayError("parse_failed", "reply cites a cell that is not in the structure", check="other")
+    return parsed
+
+
+def parse_sheet_reply(reply: str, text: str) -> SheetStructureReply:
+    """Validate a sheet skeleton's reply (chat-upload.md section 26.4), or raise GatewayError("parse_failed"): the schema (extra
+    fields forbidden), then every row, parent and column one the skeleton holds, no row twice and no row its own parent."""
+    try:
+        parsed = SheetStructureReply.model_validate(json.loads((reply or "").strip()))
+    except Exception as exc:
+        raise GatewayError("parse_failed", f"reply did not match the schema: {type(exc).__name__}", check=_schema_check(exc))
+    sent = structure_redact.parse_sheet_text(text) or {"cells": [], "rows": {}, "withheld": {}}
+    rows = set(sent["rows"]) | {c["row"] for c in sent["cells"]}
+    cols = {c["col"] for c in sent["cells"]} | set(sent["withheld"]) | \
+        {c for r in sent["rows"].values() for c in r["num"] + r["blank"]}
+    named = [r.row for r in parsed.rows]
+    if len(set(named)) != len(named):
+        raise GatewayError("parse_failed", "a row is named twice", check="item_count")
+    if parsed.header_row not in rows or parsed.label_col not in cols or any(p.col not in cols for p in parsed.periods):
+        raise GatewayError("parse_failed", "reply names a row or column that is not in the skeleton", check="other")
+    if any(r.row not in rows or (r.parent_row is not None and (r.parent_row not in rows or r.parent_row == r.row))
+           for r in parsed.rows):
+        raise GatewayError("parse_failed", "reply names a row or parent that is not in the skeleton", check="other")
     return parsed
 
 
@@ -1608,7 +1648,7 @@ async def _count_tokens(adapter, sleep, **kwargs) -> int:
             await sleep(_backoff_seconds(exc, attempts))
 
 
-async def _structure_call(adapter, prompt, user_payload, structure_type, text, sleep):
+async def _structure_call(adapter, prompt, user_payload, structure_type, text, sleep, max_tokens=STRUCTURE_MAX_TOKENS):
     """(reply, input tokens, output tokens) summed over every billed attempt. Network or 5xx: up to
     MAX_PROVIDER_RETRIES with backoff. A reply that fails validation: one reask, then GatewayError."""
     schema = schemas.output_schema(structure_type)
@@ -1619,7 +1659,7 @@ async def _structure_call(adapter, prompt, user_payload, structure_type, text, s
             try:
                 reply, in_tok, out_tok = await _to_thread(
                     adapter.complete, model=STRUCTURE_MODEL, system=prompt.text, user_payload=user_payload,
-                    max_tokens=STRUCTURE_MAX_TOKENS, temperature=None, json_schema=schema)
+                    max_tokens=max_tokens, temperature=None, json_schema=schema)
             except (RetryableProviderError, GatewayError):
                 raise
             except Exception as raw:
@@ -1653,6 +1693,8 @@ def _reading(output: dict) -> dict:
     """The fields of a stored or new reply: a deck structure's labels and pairs, a column mapping's items."""
     if "file_type" in output:
         return {"file_type": output["file_type"]}
+    if "header_row" in output:
+        return {"sheet": output}
     if "labels" in output:
         return {"labels": output["labels"], "pairs": output.get("pairs") or []}
     return {"items": output.get("items") or []}
@@ -1684,7 +1726,7 @@ async def read_structure(
     """
     import asyncio
     sleep = sleep or asyncio.sleep
-    if structure_type not in STRUCTURE_TYPES and structure_type != FILE_TYPE:
+    if structure_type not in STRUCTURE_TYPES and structure_type not in (FILE_TYPE, SHEET_STRUCTURE):
         return _structure_result("not_read", structure_type, f"unknown structure type {structure_type!r}")
     context = await load_structure_context(db, audit_id)
     if context.get("structure_reading_consent") is not True:
@@ -1695,7 +1737,8 @@ async def read_structure(
         logger.warning("structure refused: run_id=%s step=%s reason=%s", audit_id, STRUCTURE_STEP, problem)
         return _structure_result("refused", structure_type, f"refused: {problem}")
     try:
-        prompt = await prompt_store.load(db, FILE_TYPE_PROMPT if structure_type == FILE_TYPE else STRUCTURE_PROMPT)
+        prompt = await prompt_store.load(db, {FILE_TYPE: FILE_TYPE_PROMPT, SHEET_STRUCTURE: SHEET_STRUCTURE_PROMPT}.get(
+            structure_type, STRUCTURE_PROMPT))
     except prompt_store.PromptMissing:
         return _structure_result("not_read", structure_type, NOT_READ)
     if STRUCTURE_MODEL not in MODEL_PRICING_USD:
@@ -1715,11 +1758,13 @@ async def read_structure(
 
     user_payload = cache.canonical_json({"type": structure_type, "text": text})
     adapter = adapter or AnthropicAdapter()
+    sheet = structure_type == SHEET_STRUCTURE
+    input_cap, max_tokens = (SHEET_INPUT_CAP, SHEET_MAX_TOKENS) if sheet else (STRUCTURE_INPUT_CAP, STRUCTURE_MAX_TOKENS)
     try:
         # The 4,000-token cap is on the structure text plus its item list; the 400,000 cap counts the whole call.
         text_tokens = await _count_tokens(adapter, sleep, model=STRUCTURE_MODEL, system=None, user_payload=text,
                                           json_schema=None)
-        if text_tokens > STRUCTURE_INPUT_CAP:
+        if text_tokens > input_cap:
             return _structure_result("too_large", structure_type, TOO_LARGE, input_tokens=0, **base)
         counted = await _count_tokens(adapter, sleep, model=STRUCTURE_MODEL, system=prompt.text,
                                       user_payload=user_payload, json_schema=schemas.output_schema(structure_type))
@@ -1746,7 +1791,7 @@ async def read_structure(
             await guards.check_allowance(db, audit_id)
             if structure_type != "column_mapping":
                 await guards.check_spend_cap(db)
-            await guards.check_structure_token_cap(db, audit_id, counted, STRUCTURE_MAX_TOKENS)
+            await guards.check_structure_token_cap(db, audit_id, counted, max_tokens)
         except guards.GuardRefusal as refusal:
             await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version,
                            model=STRUCTURE_MODEL, input_tokens=0, output_tokens=0, estimated_cost_usd=0.0,
@@ -1758,7 +1803,7 @@ async def read_structure(
             return _structure_result("stopped" if stopped else "not_read", structure_type,
                                      refusal.detail if stopped else NOT_READ, **base)
         try:
-            parsed, in_tok, out_tok = await _structure_call(adapter, prompt, user_payload, structure_type, text, sleep)
+            parsed, in_tok, out_tok = await _structure_call(adapter, prompt, user_payload, structure_type, text, sleep, max_tokens)
         except GatewayError as exc:
             # Codes only: the reason, the HTTP status, the provider's error type and the check a reply failed (issue
             # #64); never the message.
@@ -1775,7 +1820,7 @@ async def read_structure(
             return _structure_result("not_read", structure_type, NOT_READ, input_tokens=billed[0],
                                      output_tokens=billed[1], estimated_cost_usd=cost, **base)
         cost = estimate_cost_usd(STRUCTURE_MODEL, in_tok, out_tok)
-        model_type = parsed.type if parsed.type != structure_type else None
+        model_type = parsed.type if parsed.type != structure_type else None      # a sheet's type is fixed by its schema
         output = parsed.model_dump()
         await _store_structure(db, audit_id=audit_id, key=key, digest=digest, structure_type=structure_type,
                                model_type=model_type, output=output, prompt_version=prompt.version,
@@ -1843,7 +1888,8 @@ async def usage_for_run(db, run_id: str) -> UsageResponse:
     for r in rows:
         name = r.get("step")
         if name == STRUCTURE_STEP:
-            name = "deck_structure" if r.get("deck_id") else FILE_TYPE if r.get("structure_type") == FILE_TYPE else "column_mapping"
+            kind = r.get("structure_type")
+            name = "deck_structure" if r.get("deck_id") else kind if kind in (FILE_TYPE, SHEET_STRUCTURE) else "column_mapping"
         step = by_step.setdefault(name, DeckUsage())
         step.calls += 0 if r.get("cache_hit") else 1
         step.cache_hits += 1 if r.get("cache_hit") else 0

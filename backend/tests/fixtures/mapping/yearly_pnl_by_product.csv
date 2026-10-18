@@ -1,0 +1,15 @@
+Product P&L (EUR thousands),,,,forecast,forecast,forecast
+Line,FY2021,FY2022,FY2023,FY2024,FY2025,FY2026
+Revenue,800,1000,1300,1700,2200,2800
+  Product A,500,600,750,950,1200,1500
+  Product B,300,400,550,750,1000,1300
+Cost of revenue,240,290,360,450,560,700
+Gross profit,560,710,940,1250,1640,2100
+Gross margin as % of revenue,0.7,0.71,0.723,0.735,0.745,0.75
+Operating expenses,500,640,820,1000,1250,1500
+  Sales,,,300,360,450,540
+    Sales team,,,200,240,300,360
+    Sales tools,,,100,120,150,180
+  Marketing,,,250,300,380,460
+  General and administrative,,,270,340,420,500
+EBITDA,60,70,120,250,390,600

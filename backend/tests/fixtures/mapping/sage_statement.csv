@@ -1,0 +1,18 @@
+Fixture Target Ltd,,,
+Profit and Loss,,,
+Period 6 2026,,,
+Account,Description,Period To Date,Year To Date
+4000,Sales Type A,12500.00,71000.00
+4010,Sales Type B,4200.00,25000.00
+,Total Sales,16700.00,96000.00
+,,,
+5000,Cost of Sales,6100.00,35500.00
+,Gross Profit,10600.00,60500.00
+,,,
+7000,Salaries,4000.00,24000.00
+7100,Rent,1200.00,7200.00
+7200,Advertising,800.00,4300.00
+8000,Depreciation,300.00,1800.00
+,Total Overheads,6300.00,37300.00
+,,,
+,Net Profit,4300.00,23200.00

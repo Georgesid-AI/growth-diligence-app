@@ -20,6 +20,7 @@ import ClaimRegister from "@/components/ClaimRegister";
 import DataGaps from "@/components/DataGaps";
 import Verdict from "@/components/Verdict";
 import IntegrityCoverage from "@/components/IntegrityCoverage";
+import YearlyBasis from "@/components/YearlyBasis";
 import { describeRequestError, logRequestFailure } from "@/lib/requestError";
 import { metricLabel, metricQualifier, bracketed } from "@/lib/metricNames";
 import { ANOMALIES_NOT_COMPUTED, NONE, anomalyFlags, missingRows, questionRows, questionsEmptyText } from "@/lib/gapLists";
@@ -536,6 +537,9 @@ export default function Dashboard() {
           ) : <NotComputable label="P&L not provided" />}
         </Card>
       </div>
+
+      {/* Yearly-basis metrics: a yearly P&L read as a statement, with no monthly P&L (chat-upload.md section 26.8) */}
+      <YearlyBasis block={r.yearly_basis} ccy={ccy} />
 
       {/* Segment mix paths to target ARR - hidden for results computed before it existed */}
       {r.segment_paths && <SegmentPaths sp={r.segment_paths} ccy={ccy} period={periods.segment_paths} />}

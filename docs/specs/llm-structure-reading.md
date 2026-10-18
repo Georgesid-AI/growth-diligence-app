@@ -2,6 +2,9 @@
 Status: Draft. Location: docs/specs/llm-structure-reading.md. Implements CLAUDE.md rules 16–18.
 Superseded in part by docs/specs/structure-labelling.md (Python lists the items, the model labels them): §1, §2, §5, §7, §9 and §11
 each say which part. §3, §4, §6, §8 and the 400,000-token audit cap are unchanged.
+Amended 2026-10-18 for a third spreadsheet text, the sheet skeleton (`sheet_structure`, chat-upload.md §26): §1, §3, §7, §9 and §10
+each say what it adds. The skeleton sends row labels: George approved the wider boundary for this step only on 2026-10-18, and
+CLAUDE.md rule 16 and docs/architecture.md name it (chat-upload.md §26).
 
 **1. Gateway function.** *Superseded for deck structures: the item fields, the output and one schema for all types are replaced by docs/specs/structure-labelling.md §3; a column mapping keeps the schema below.* `gateway.read_structure(text, type) → JSON`, plus the db and audit id every gateway call
 carries. There is one prompt (`prompts/structure_reading.md`) and one schema, and `type` is an input field. Types:
@@ -29,6 +32,13 @@ change (§9). Each item has exactly these fields:
 - `proposed_flags`: `total_mismatch` or `growth_mismatch`.
 
 No field is free text, so model output cannot carry deck prose into a log.
+
+*Added 2026-10-18 (chat-upload.md §26.3–26.4):* a fourth type, `sheet_structure`, outside STRUCTURE_TYPES like `file_type`, with
+its own prompt (`sheet_structure`) and schema (`SheetStructureReply`). Its text is the skeleton of one sheet the rules cannot map:
+one `r<row>c<col>: <text>` line per non-blank text cell (title rows, headers and row labels), one
+`r<row> indent <n> num <columns> blank <columns>` line per row with content, and one `c<col> withheld: text, <N> distinct values`
+line per withheld column. No figure: a number is only "num" in its row's line. At most 400 rows with text. Its reply names rows,
+columns and closed words only; Python rebuilds every period from its header cell and reads every figure from its cell.
 
 **2. Verifier (Python, pure).** *Superseded: value and period matched against cited cells and the model's proposed flags are replaced by docs/specs/structure-labelling.md §4; the normalisation below moves to its §1.* A value is matched against its `value_cell` only: it matches when that cell exists and holds the same number after
 normalisation:
@@ -89,6 +99,12 @@ Customer names are pseudonymised (Customer_01, Customer_02…) through the narra
 The mapping stays server-side and is removed by Delete audit. The gateway runs redaction again and refuses the call if
 anything changes.
 
+*Added 2026-10-18 (chat-upload.md §26.3), the sheet skeleton only:* the target company's name is withheld as in the file-type text
+(§19), and a column with 30 or more distinct texts, under 20% of which hold a finance word, is withheld: its title and header cells
+stay, its other cells go, and one line gives its distinct count. A cell over 200 characters is left out. The gateway runs both rules
+again and refuses a skeleton they would change (`redaction_changed`, `withhold_missed`), a figure in a cell line (`figure`) and more
+than 400 rows (`too_many_rows`). The redaction and withheld counts are shown to the analyst.
+
 **4. Consent.** `structure_reading_consent` is one checkbox per audit, ticked by default at creation (the creation dialog has no tick:
 chat-upload.md §23). It covers decks and spreadsheets. It sits in the set-up section at the top of the Upload page. The basis for
 sending is the engagement terms, recorded by this per-audit checkbox (CLAUDE.md rule 16).
@@ -114,6 +130,8 @@ input + its `max_tokens` fit under the cap. Otherwise the analyst sees: "AI read
 measured with the provider's token counter on the structure text alone (the prompt and schema are not counted). A
 larger one is not sent and is marked "Too large for AI reading". The 400,000-token cap counts the whole call's input.
 The token cap governs structure calls. The 15-call cap per run (`MAX_CALLS_PER_RUN`) counts narrative calls only.
+*Added 2026-10-18:* a sheet skeleton has its own caps, 12,000 tokens of text (`SHEET_INPUT_CAP`) and 12,000 of reply
+(`SHEET_MAX_TOKENS`), and stays under the daily spend cap.
 The existing circuit breaker applies: per-audit lock (step `structures`), daily spend cap, retry policy.
 
 **8. Cache.** The key is sha256 of text, type, prompt cache tag, model and a hash of the output schema, so a schema
@@ -134,12 +152,17 @@ failed (issue #64): `schema` (not JSON, or not the reply schema: a field missing
 metric that is not a sheet field), `item_count` (the labels do not name each listed item exactly once: one left out,
 labelled twice or not listed) or `other` (pairs on a structure not sent as a roadmap, a pair that is not one listed
 line and one listed date, a line paired twice; for a column mapping a changed type or a cell not in the structure).
-Every other failed call logs `check=-`. The word is a code: never the reply, the check's message or cell text. Sent text is never stored. `GET /api/runs/{id}/llm-usage` gains `by_deck`, and
+Every other failed call logs `check=-`. *Added 2026-10-18:* a sheet skeleton's reply fails `metric_list` on a meaning or role
+outside its list, `item_count` on a row named twice, and `other` on a row or column not in the skeleton or a row that is its own
+parent. The word is a code: never the reply, the check's message or cell text. Sent text is never stored. `GET /api/runs/{id}/llm-usage` gains `by_deck`, and
 the run log on the deck panel shows each deck's status ("waiting for revenue file", read, not read), its periods
 corrected and cost. `scripts/consistency_run.py` reports the periods corrected too.
 
 **10. Boundary test and docstrings.** `test_gateway_data_boundary.py` keeps every existing assertion.
 - It must pass when redacted structure cells reach the provider, and when a column-mapping text within the §1 limits does.
+- *Added 2026-10-18:* it must pass when a sheet skeleton within chat-upload.md §26.3 reaches the provider, and fail on a figure in
+  a cell line, a 401st row, an unredacted email, phone number, name, customer or company name, a column the withhold rule would
+  withhold, a file name, and the skeleton in a log or a collection.
 - It must fail on raw bytes, a full page, a prose snippet, a cell over 200 characters, one more header row, sample or
   text cell value than §1 allows on the column-mapping path, a file name, an unredacted email, phone number, name or customer name, any call without consent, sent text in a log or in `llm_structures`, and
   anything but an ISO code in `unit_other`.

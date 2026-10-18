@@ -279,6 +279,7 @@ SERVER_ONLY_TOP_LEVEL = frozenset({"contract_version",                   # inter
                                    "revenue_reconciliation",                # chat-upload.md section 6.2; data_integrity reads a summary (step_payloads.py)
                                    "source_period", "metric_periods",       # dates-and-periods.md sections 2-3: months as text, no figure
                                    "won_deal_closes",                       # crm-dedup-clustering.md: data_integrity reads a closed sentence
+                                   "yearly_basis",                          # chat-upload.md section 26.8: no narrative reads it
                                    "as_of_month"})                          # the analyst's setting: the model is told evidence_to and last_month_status instead
 SERVER_ONLY_FIELDS = frozenset({
     "file", "sheet", "columns", "rows", "row_numbers", "unlocked_by",
@@ -887,6 +888,115 @@ def test_the_structure_path_refuses_what_rule_16_does_not_allow(name, text, kind
     result, adapter = _send(db, text, kind)
     assert adapter.calls == 0 and getattr(adapter, "counted", 0) == 0, f"{name} reached the provider"
     assert (result.status, result.reason) == ("refused", f"refused: {reason}"), name
+
+
+# ---------------------------------------------------------------------------
+# The sheet skeleton (chat-upload.md section 26; CLAUDE.md rule 16 as amended 2026-10-18, George): for the sheet_structure step
+# only, every text cell of one sheet (titles, headers, row labels), indents and num/blank markers, after redaction and the
+# withhold rule; never a figure; at most 400 rows with text.
+# ---------------------------------------------------------------------------
+GOOD_SHEET = ("r1c1: Product P&L\nr1 indent 0 blank c2-c3\nr2c1: Line\nr2c2: FY2021\nr2c3: FY2022\nr2 indent 0\n"
+              "r3c1: Revenue\nr3 indent 0 num c2-c3\nr4c1: Product A\nr4 indent 1 num c2-c3\nc5 withheld: text, 40 distinct values")
+SHEET_REPLY = json.dumps({"type": "sheet_structure", "header_row": 2, "label_col": 1,
+                          "periods": [{"col": 2, "grain": "year", "start": "2021-01", "tag": "actual"}],
+                          "rows": [{"row": 3, "role": "total", "parent_row": None, "meaning": "revenue"},
+                                   {"row": 4, "role": "subline", "parent_row": 3, "meaning": "revenue"}]})
+SHEET_REFUSALS = frozenset({"not_cells", "too_many_rows", "figure", "withhold_missed", "cell_too_long", "redaction_changed",
+                            "file_name", "raw_bytes"})
+_CUSTOMER_COLUMN = "\n".join(f"r{r}c1: Shop {chr(65 + r % 26)}{chr(65 + r // 26)} Ltd" for r in range(3, 40))
+
+
+def test_a_sheet_skeleton_within_the_limits_reaches_the_provider_as_sent():
+    result, adapter = _send(_structure_db(), GOOD_SHEET, "sheet_structure", SHEET_REPLY)
+    assert result.status == "read" and adapter.calls == 1, result.reason
+    sent = json.loads(adapter.payloads[0])
+    assert set(sent) == {"type", "text"} and sent == {"type": "sheet_structure", "text": GOOD_SHEET}
+    assert adapter.requests[0]["max_tokens"] == gateway.SHEET_MAX_TOKENS
+    assert result.sheet["rows"][0] == {"row": 3, "role": "total", "parent_row": None, "meaning": "revenue"}
+
+
+@pytest.mark.parametrize("name,text,reason", [
+    ("a figure in a cell line", GOOD_SHEET + "\nr3c2: 1,200", "figure"),
+    ("an amount with a currency", GOOD_SHEET + "\nr3c2: £1,200,000", "figure"),
+    ("a 401st row with text", "\n".join(f"r{r}c1: Line {r}" for r in range(1, 402)), "too_many_rows"),
+    ("a customer list not withheld", "r1c1: Customer\n" + _CUSTOMER_COLUMN, "withhold_missed"),
+    ("an unredacted email", GOOD_SHEET + "\nr5c1: jane.doe@northwind.com", "redaction_changed"),
+    ("an unredacted phone number", GOOD_SHEET + "\nr5c1: +44 20 7946 0958", "redaction_changed"),
+    ("an unredacted name", GOOD_SHEET + "\nr5c1: Michael Smith", "redaction_changed"),
+    ("a customer name, not its pseudonym", GOOD_SHEET + "\nr5c1: Northwind Trading revenue", "redaction_changed"),
+    ("the company name", "r1c1: Target Co P&L\n" + GOOD_SHEET, "redaction_changed"),
+    ("a file name", GOOD_SHEET + "\nr5c1: see pnl_2025.xlsx", "file_name"),
+    ("a cell over 200 characters", GOOD_SHEET + "\nr5c1: " + "x" * 201, "cell_too_long"),
+    ("prose that is no line", GOOD_SHEET + "\nRevenue grew strongly in 2025", "not_cells"),
+    ("a title mark", "r1c1 title: Product P&L\nr2c1: Revenue", "not_cells"),
+])
+def test_the_sheet_path_refuses_what_the_amended_rule_16_does_not_allow(name, text, reason):
+    assert reason in SHEET_REFUSALS
+    result, adapter = _send(_structure_db({"Northwind Trading": "Customer_01"}), text, "sheet_structure", SHEET_REPLY)
+    assert adapter.calls == 0 and getattr(adapter, "counted", 0) == 0, f"{name} reached the provider"
+    assert (result.status, result.reason) == ("refused", f"refused: {reason}"), name
+
+
+def test_a_year_header_is_a_period_and_the_skeleton_of_a_statement_passes_with_a_customer_pseudonym():
+    text = "r1c1: Line\nr1c2: 2024\nr1c3: 2025B\nr2c1: Customer_01 revenue\nr2 indent 0 num c2-c3"
+    result, adapter = _send(_structure_db({"Northwind Trading": "Customer_01"}), text, "sheet_structure", SHEET_REPLY.replace(
+        '"row": 4, "role": "subline", "parent_row": 3', '"row": 2, "role": "subline", "parent_row": null').replace(
+        '"header_row": 2', '"header_row": 1').replace('"row": 3, "role": "total"', '"row": 1, "role": "heading"'))
+    assert result.status == "read" and adapter.calls == 1, result.reason
+
+
+@pytest.mark.parametrize("reply,check", [
+    ({"rows": [{"row": 9, "role": "total", "parent_row": None, "meaning": "revenue"}]}, "other"),
+    ({"rows": [{"row": 3, "role": "total", "parent_row": 3, "meaning": "revenue"}]}, "other"),
+    ({"rows": [{"row": 3, "role": "total", "parent_row": None, "meaning": "revenue"}] * 2}, "item_count"),
+    ({"rows": [{"row": 3, "role": "total", "parent_row": None, "meaning": "profit"}]}, "metric_list"),
+    ({"label_col": 9}, "other"),
+    ({"rows": [{"row": 3, "role": "total", "parent_row": None, "meaning": "revenue", "label": "Revenue"}]}, "schema"),
+])
+def test_a_sheet_reply_naming_anything_not_sent_or_carrying_text_is_rejected_with_a_closed_check(reply, check, caplog):
+    import logging
+    bad = json.dumps({**json.loads(SHEET_REPLY), **reply})
+    with caplog.at_level(logging.WARNING):
+        result, adapter = _send(_structure_db(), GOOD_SHEET, "sheet_structure", bad)
+    assert result.status == "not_read" and adapter.calls == 2, "one reask, then not read"
+    assert f"check={check}" in caplog.text and "Revenue" not in caplog.text
+
+
+def test_no_sheet_skeleton_or_label_in_a_log_llm_calls_llm_structures_or_a_dataset(api, caplog):
+    import logging
+    from app.structures import sheet as sheet_mod
+    name = "yearly_pnl_by_product.csv"
+    content = (BACKEND / "tests" / "fixtures" / "mapping" / name).read_bytes()
+    with caplog.at_level(logging.DEBUG):
+        chat.upload(api, name, content, dtype="pnl")
+    (payload,) = [json.loads(p) for p in chat.adapter_of(api).payloads if json.loads(p)["type"] == "sheet_structure"][:1]
+    sent = payload["text"]
+    assert "r10c1: Sales" in sent and not any(structure_redact.sheet_figure(c["text"])
+                                               for c in structure_redact.parse_sheet_text(sent)["cells"])
+    logs = caplog.text + "".join(r.getMessage() for r in caplog.records)
+    for needle in ("Product A", "Sales team", "General and administrative", name):
+        assert needle not in logs, f"{needle!r} was logged"
+    for coll in ("llm_calls", gateway.STRUCTURES_COLLECTION, "column_mappings", "audits"):
+        assert "Product A" not in json.dumps(api.db[coll].docs, default=str), f"a label reached {coll}"
+    assert sent not in json.dumps(api.db["datasets"].docs, default=str), "the skeleton is never stored"
+    assert "sheet=statement" in caplog.text
+    assert sheet_mod.MAX_ROWS == structure_redact.SHEET_MAX_ROWS == 400
+
+
+def test_the_yearly_basis_block_never_reaches_a_narrative_payload():
+    from schemas.metrics import MetricsPayload
+    assert "yearly_basis" in MetricsPayload.model_fields and "yearly_basis" in SERVER_ONLY_TOP_LEVEL
+    assert "yearly_basis" not in gateway.OUTBOUND_TOP_LEVEL and "yearly_basis" not in gateway.OUTBOUND_FIELDS
+
+
+def test_the_sheet_lines_log_line_names_the_run_the_type_and_two_counts():
+    tree = ast.parse((BACKEND / "server.py").read_text(encoding="utf-8"))
+    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "decide_lines")
+    calls = [n for n in ast.walk(fn) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr in _LOG_LEVELS
+             and isinstance(n.func.value, ast.Name) and "log" in n.func.value.id.lower()]
+    (call,) = calls
+    assert {ast.unparse(a) for a in call.args[1:]} == {"audit_id", "dtype", "len(decisions)",
+                                                       "sheet_mod.pending_count(sheet_map)"}, ast.unparse(call)
 
 
 def test_an_item_list_in_format_reaches_the_provider():
@@ -2466,9 +2576,12 @@ def test_forecast_claims_are_read_and_saved_with_no_model_call_and_no_log_line_h
     caplog.set_level(logging.DEBUG)
     out = chat.upload(api, "Zephyr_plan.csv", _forecast_file(), dtype="pnl").json()     # the type as the analyst picks it (S6)
     assert out["forecast_claims"]["count"] == 6, "fixture: two plan lines over three years"
+    # A P&L statement makes its one sheet_structure call at upload (section 26.4); the claims are read by rules (section 20.4).
+    made = chat.adapter_of(api).calls
+    assert all(json.loads(p)["type"] == "sheet_structure" for p in chat.adapter_of(api).payloads)
     saved = api.post(f"/api/audits/{chat.AUDIT}/datasets/{out['dtype']}/forecast-claims", json={"rows": [5, 7]})
     assert saved.json() == {"saved": 6, "lines": 2}
-    assert chat.adapter_of(api).calls == 0, "reading and saving a forecast table calls no model (section 20.4)"
+    assert chat.adapter_of(api).calls == made, "reading and saving the claims calls no model (section 20.4)"
     log = "\n".join(r.getMessage() for r in caplog.records)
     assert "forecast claims: run_id=" in log
     for secret in (FORECAST_SENTINEL, "Zephyr", "4321000", "4321", "Zephyr_plan.csv", "E5", "Customers"):

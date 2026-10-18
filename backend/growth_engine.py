@@ -8,6 +8,8 @@ carries a `source` reference (file / sheet / rows).
 
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import pandas as pd
 
@@ -1379,6 +1381,113 @@ def dedupe_deals(deals: pd.DataFrame):
 
 
 # ---------------------------------------------------------------------------
+# Yearly-basis metrics (docs/specs/chat-upload.md section 26.8): from the actual-tagged year columns of a P&L read as a
+# statement, when no monthly P&L is mapped. Never a split of a year into months; every figure and row carries its basis.
+# ---------------------------------------------------------------------------
+YEARLY_BASIS = "yearly basis, not monthly"
+NEEDS_MONTHLY = "Missing: monthly P&L / revenue by customer, last 24 months"
+YEARLY_FIELD_NAMES = {"revenue": "Revenue", "cost_of_revenue": "Cost of revenue", "sm_expense": "S&M expense",
+                      "gross_margin": "Gross margin", "opex": "Operating expenses", "ebitda": "EBITDA"}
+
+
+def _yearly_source(yearly: dict, cells: list, rule: str) -> dict:
+    s = SourceRef(yearly.get("file") or "pnl", yearly.get("sheet"))
+    s.add_rows(int(re.sub(r"^[A-Z]+", "", c)) for c in cells)
+    return s.to_dict(f"{rule}; cells {', '.join(cells)} · {YEARLY_BASIS}" if cells else f"{rule} · {YEARLY_BASIS}")
+
+
+def _gross_margin(fields: dict):
+    """(margin as a fraction, its cells): revenue less cost of revenue, or the money gross margin line, over revenue."""
+    rev = (fields.get("revenue") or {}).get("value")
+    if not rev:
+        return None, []
+    if "cost_of_revenue" in fields:
+        return (rev - fields["cost_of_revenue"]["value"]) / rev, fields["revenue"]["cells"] + fields["cost_of_revenue"]["cells"]
+    if "gross_margin" in fields:
+        return fields["gross_margin"]["value"] / rev, fields["revenue"]["cells"] + fields["gross_margin"]["cells"]
+    return None, []
+
+
+def compute_yearly_basis(yearly: dict | None, results: dict, revenue_series: dict | None) -> dict | None:
+    """The yearly-basis block: per actual year revenue, new revenue, S&M as % of revenue, gross margin and its change, and CAC
+    payback (yearly basis) = 12 × yearly S&M ÷ (new revenue × gross margin), in months, shown only when new revenue and the margin
+    are positive; past forecasts against actuals; the company-reported actuals against the revenue file; and the metrics that need
+    monthly data and were not computed. None without an actual year."""
+    if not yearly or not yearly.get("actual"):
+        return None
+    years, by_year = [], {}
+    for item in sorted(yearly["actual"], key=lambda y: y.get("year") or 0):
+        fields = item["fields"]
+        rev = (fields.get("revenue") or {}).get("value")
+        gm, gm_cells = _gross_margin(fields)
+        sm = fields.get("sm_expense")
+        prev = by_year.get((item.get("year") or 0) - 1)
+        prev_rev = ((prev or {}).get("fields", {}).get("revenue") or {}).get("value")
+        new_rev = rev - prev_rev if rev is not None and prev_rev is not None else None
+        row = {"period": item["period"], "revenue": _round(rev) if rev is not None else None,
+               "new_revenue": _round(new_rev) if new_rev is not None else None,
+               "sm_pct_revenue": _round(sm["value"] / rev, 4) if sm and rev else None,
+               "gross_margin_pct": _round(gm, 4) if gm is not None else None,
+               "gross_margin_change": None, "cac_payback_months": None, "cac_payback_reason": None, "basis": YEARLY_BASIS}
+        prev_gm = _gross_margin(prev["fields"])[0] if prev else None
+        if gm is not None and prev_gm is not None:
+            row["gross_margin_change"] = _round(gm - prev_gm, 4)
+        if not sm:
+            row["cac_payback_reason"] = "no S&M line"
+        elif new_rev is None:
+            row["cac_payback_reason"] = "no revenue for the year before"
+        elif new_rev <= 0:
+            row["cac_payback_reason"] = "new revenue not positive"
+        elif gm is None or gm <= 0:
+            row["cac_payback_reason"] = "gross margin not positive or missing"
+        else:
+            row["cac_payback_months"] = _round(12 * sm["value"] / (new_rev * gm))
+        cells = sorted({c for f in fields.values() for c in f["cells"]} | set(gm_cells), key=lambda c: (len(c), c))
+        row["source"] = _yearly_source(yearly, cells, "S&M % = S&M ÷ revenue; gross margin = (revenue − cost of revenue) ÷ revenue; "
+                                                      "CAC payback = 12 × S&M ÷ (revenue − last year's revenue) × gross margin")
+        years.append(row)
+        if item.get("year") is not None:
+            by_year[item["year"]] = item
+    track = []
+    for plan in yearly.get("planned") or ():
+        actual = by_year.get(plan.get("year"))
+        if not actual:
+            continue
+        for field, name in YEARLY_FIELD_NAMES.items():
+            f, a = plan["fields"].get(field), actual["fields"].get(field)
+            if not f or not a:
+                continue
+            gap = a["value"] - f["value"]
+            track.append({"period": actual["period"], "line": name, "tag": plan["tag"], "forecast": _round(f["value"]),
+                          "actual": _round(a["value"]), "gap": _round(gap),
+                          "gap_pct": _round(gap / abs(f["value"]), 4) if f["value"] else None, "basis": YEARLY_BASIS,
+                          "source": _yearly_source(yearly, f["cells"] + a["cells"], f"Gap = actual − {plan['tag']}")})
+    reported = []
+    by_month = {r["month"]: r["total"] for r in (revenue_series or {}).get("data") or ()}
+    for item in yearly.get("reported") or ():
+        if not item.get("start") or not item.get("end"):
+            continue
+        months = [_period_str(m) for m in pd.period_range(item["start"], item["end"], freq="M")]
+        if not all(m in by_month for m in months):
+            continue
+        file_total = sum(by_month[m] for m in months)
+        value = item["revenue"]["value"]
+        reported.append({"period": item["period"], "reported": _round(value), "revenue_file": _round(file_total),
+                         "gap": _round(file_total - value), "gap_pct": _round((file_total - value) / abs(value), 4) if value else None,
+                         "basis": YEARLY_BASIS,
+                         "source": _yearly_source(yearly, item["revenue"]["cells"],
+                                                  f"Revenue file over {months[0]}–{months[-1]} against the reported revenue")})
+    rec = results.get("revenue_reconciliation") or {}
+    needs = (("NRR (12-month)", results.get("nrr")), ("Gross revenue churn", results.get("gross_churn")),
+             ("Integrity tests (revenue reconciliation)", rec if rec.get("available") else None),
+             ("Median sales cycle", results.get("sales_cycle")), ("CAC payback (monthly)", results.get("cac_payback")))
+    return {"basis": YEARLY_BASIS, "years": years, "track_record": track, "reported_vs_file": reported,
+            "missing": [{"metric": name, "text": NEEDS_MONTHLY} for name, found in needs if not found],
+            "source": _yearly_source(yearly, [f"A{r}" for r in yearly.get("rows") or ()],
+                                     "Actual-tagged year columns of the P&L read as a statement, the rows of its lines")}
+
+
+# ---------------------------------------------------------------------------
 # Compute before Missing (V6). Before an item stays in missing_data, every uploaded
 # file is tested for the columns the analysis needs - not only the file it normally
 # comes from. If one can answer it, the figure is computed from that file and
@@ -1558,9 +1667,10 @@ def resolve_missing(missing_data: list, results: dict, files: dict | None, **ctx
 
 
 def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, config: dict, sources: dict,
-                    files: dict | None = None, on_error=None):
+                    files: dict | None = None, on_error=None, yearly: dict | None = None):
     """Run the full engine, before the contract (see compute_all). `sources` maps dataset -> {file, sheet}; `files` is every
-    upload read as each dataset type (see can_compute), for compute-before-Missing.
+    upload read as each dataset type (see can_compute), for compute-before-Missing. `yearly` is the actual years of a P&L read
+    as a statement (chat-upload.md section 26.8), read only when no monthly P&L is given.
     A metric whose calculation raises is reported as Missing and the rest still compute;
     `on_error(exc)`, if given, receives each such exception (the server logs it)."""
     billing_terms = config.get("billing_terms", {})
@@ -1741,7 +1851,8 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
         cac = guarded("CAC payback", pnl_src.get("file"), None, compute_cac_payback, new_mrr_q, pnl,
                       int(config.get("default_l", 1)))
         if cac:
-            cac["source"] = src(pnl_src, pnl.get("_row", []).tolist() if "_row" in pnl.columns else [],
+            # A statement P&L names the rows of its lines (config "pnl_rows"); a column P&L the rows of its months.
+            cac["source"] = src(pnl_src, config.get("pnl_rows") or (pnl.get("_row", []).tolist() if "_row" in pnl.columns else []),
                                  "CAC payback = lagged S&M ÷ (new MRR × gross margin %)")
         results["cac_payback"] = cac
         if cac:
@@ -1880,12 +1991,23 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
         default_l=config.get("default_l", 1))
     results["source_period"] = source
     results["metric_periods"] = metric_periods(results, rev, pnl, deals, source)
+    if pnl.empty and yearly:
+        try:
+            results["yearly_basis"] = compute_yearly_basis(yearly, results, revenue_series)
+        except Exception as exc:            # Missing, never the whole run (as `guarded`, after the missing list is built)
+            if on_error:
+                on_error(exc)
+            results["yearly_basis"] = None
+            results["missing_data"].append({
+                "metric": "Yearly-basis metrics (calculation error)", "status": MISSING_STATUS,
+                "reason": f"The calculation stopped on an unexpected {type(exc).__name__}; reported as Missing, not estimated",
+                "unlocked_by": "Not computable from the data as supplied; the server log has the run id", "file": yearly.get("file")})
     return results
 
 
 def compute_all(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, config: dict, sources: dict,
-                files: dict | None = None, on_error=None):
+                files: dict | None = None, on_error=None, yearly: dict | None = None):
     """The engine's output as stored: `compute_all_raw` built into schemas.metrics.MetricsPayload
     (docs/specs/interface-contracts.md). Percents are fractions; counts and days are integers, rounded once, here.
     A field the metric functions emit that the model does not declare raises a ValidationError."""
-    return contract.build(compute_all_raw(rev, deals, pnl, config, sources, files=files, on_error=on_error))
+    return contract.build(compute_all_raw(rev, deals, pnl, config, sources, files=files, on_error=on_error, yearly=yearly))

@@ -123,7 +123,6 @@ def read(ds: Dict, fiscal_year_end: int = 12) -> Optional[Dict]:
         return None
     monthly = bool(wide.get("monthly"))
     headers = ds.get("raw_headers") or []
-    first = int(ds.get("first_col") or 1)
     col_of: Dict = {}
     for j, h in enumerate(headers):
         found = cr.parse_period(h) if h else None
@@ -145,6 +144,14 @@ def read(ds: Dict, fiscal_year_end: int = 12) -> Optional[Dict]:
         j = col_of.get(day if monthly else text)
         if part and j is not None:
             line["parts"].append({"fy": part[0], "grain": part[1], "index": part[2], "value": value, "j": j, "header": headers[j]})
+    return assemble(lines, ds, fiscal_year_end)
+
+
+def assemble(lines: Dict[int, Dict], ds: Dict, fiscal_year_end: int = 12) -> Optional[Dict]:
+    """The claims of `lines` ({sheet row: {"row", "label", "metric", "parts"}}, each part {"fy", "grain", "index", "value", "j",
+    "header"} and, from a statement read by structures/sheet.py, its column's "tag"): one claim per line and fiscal year, capped,
+    with the range they cite. None when no line has a claim."""
+    first = int(ds.get("first_col") or 1)
     out, total = [], 0
     for n in sorted(lines):
         line = lines[n]
@@ -222,8 +229,12 @@ def _years(line: Dict, fiscal_year_end: int, first: int, row: int, scale: float)
             value = value * scale
         cols = sorted(p["j"] for p in used)
         cell = _cell(first, cols[0], row) if len(cols) == 1 else f"{_cell(first, cols[0], row)}:{_cell(first, cols[-1], row)}"
-        out.append({"target_date": str(fy), "period": period, "period_text": text, "value": _clean(value), "cell": cell,
-                    "cols": (cols[0], cols[-1])})
+        claim = {"target_date": str(fy), "period": period, "period_text": text, "value": _clean(value), "cell": cell,
+                 "cols": (cols[0], cols[-1])}
+        tags = {p["tag"] for p in used if p.get("tag")}
+        if tags:                                    # a statement's column tag (chat-upload.md section 26.6)
+            claim["tag"] = tags.pop() if len(tags) == 1 else "unknown"
+        out.append(claim)
     return out
 
 
@@ -239,6 +250,8 @@ def candidates(found: Dict, rows: List[int], ds: Dict, fiscal_year_end: int = 12
             source = {"file": ds.get("file"), "sheet": found["sheet"], "cell": v["cell"], "kind": SOURCE_KIND}
             item = {"value": v["value"], "value_high": None, "target_date": v["target_date"], "period": v["period"],
                     "period_text": v["period_text"], "source": source, "_stated": v["period_text"] is not None}
+            if v.get("tag"):
+                item["tag"] = v["tag"]
             by_period.append(deck_claims.resolve_period(item, fiscal_year_end))
         out.append({
             "claim_type": line["claim_type"], "value": None, "value_high": None, "unit": line["unit"], "currency": line["currency"],

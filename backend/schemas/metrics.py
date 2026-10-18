@@ -502,6 +502,59 @@ class CohortRetention(Block):
 
 
 # ---------------------------------------------------------------------------
+# Yearly-basis metrics (docs/specs/chat-upload.md section 26.8): from the actual years of a P&L read as a statement, when no
+# monthly P&L is mapped. Server-only: no narrative reads them. Every row carries its basis, "yearly basis, not monthly".
+# ---------------------------------------------------------------------------
+class YearlyYear(Block):
+    period: str
+    revenue: Optional[Currency]
+    new_revenue: Optional[Currency]
+    sm_pct_revenue: Optional[GapFraction]           # S&M ÷ revenue: a young company can spend more than it earns
+    gross_margin_pct: Optional[SignedFraction]
+    gross_margin_change: Optional[GapFraction]      # this year's margin less last year's, as a fraction (points ÷ 100)
+    cac_payback_months: Optional[Months]
+    cac_payback_reason: Optional[str]
+    basis: str
+    source: Citation
+
+
+class YearlyTrack(Block):
+    period: str
+    line: str
+    tag: str
+    forecast: Currency
+    actual: Currency
+    gap: Currency
+    gap_pct: Optional[GapFraction]
+    basis: str
+    source: Citation
+
+
+class YearlyReported(Block):
+    period: str
+    reported: Currency
+    revenue_file: Currency
+    gap: Currency
+    gap_pct: Optional[GapFraction]
+    basis: str
+    source: Citation
+
+
+class YearlyMissing(Block):
+    metric: str
+    text: str
+
+
+class YearlyBasis(Block):
+    basis: str
+    years: List[YearlyYear]
+    track_record: List[YearlyTrack]
+    reported_vs_file: List[YearlyReported]
+    missing: List[YearlyMissing]
+    source: Citation
+
+
+# ---------------------------------------------------------------------------
 # What could not be computed
 # ---------------------------------------------------------------------------
 class MissingItem(Block):
@@ -569,6 +622,7 @@ class MetricsPayload(Block):
     questions_for_management: List[Question]
     source_period: Optional[SourcePeriod] = None
     metric_periods: Dict[str, MetricPeriod] = Field(default_factory=dict)
+    yearly_basis: Optional[YearlyBasis] = None      # a P&L read as a statement with actual years and no monthly P&L (section 26.8)
 
 
 def build(raw: dict) -> dict:

@@ -316,3 +316,45 @@ test("W14 is not shown when no other claim needs a gate", async () => {
   expect(host.querySelector('[data-testid="verdict-other-gates"]')).toBeNull();
   await unmount();
 });
+
+
+// Section 26.8: the yearly-basis metrics of a P&L read as a statement, each row labelled with its basis (S30g).
+const CITE = { file: "plan.csv", sheet: "CSV", rows: "rows 3–13 (7 rows)", row_numbers: [3, 13], rule: "x · yearly basis, not monthly" };
+const YEARLY = {
+  basis: "yearly basis, not monthly", source: CITE,
+  years: [
+    { period: "FY2022", revenue: 1000000, new_revenue: 200000, sm_pct_revenue: null, gross_margin_pct: 0.71, gross_margin_change: 0.01,
+      cac_payback_months: null, cac_payback_reason: "no S&M line", basis: "yearly basis, not monthly", source: CITE },
+    { period: "FY2023", revenue: 1300000, new_revenue: 300000, sm_pct_revenue: 0.4231, gross_margin_pct: 0.7231, gross_margin_change: 0.0131,
+      cac_payback_months: 30.43, cac_payback_reason: null, basis: "yearly basis, not monthly", source: CITE },
+  ],
+  track_record: [{ period: "2023 Actual", line: "Revenue", tag: "budget", forecast: 1000, actual: 900, gap: -100, gap_pct: -0.1,
+    basis: "yearly basis, not monthly", source: CITE }],
+  reported_vs_file: [],
+  missing: [{ metric: "CAC payback (monthly)", text: "Missing: monthly P&L / revenue by customer, last 24 months" }],
+};
+
+test("the yearly-basis section shows each year, the track record and the missing lines, every row labelled (S30g)", async () => {
+  const results = { ...sample, results: { ...sample.results, yearly_basis: YEARLY } };
+  const { host, unmount } = await mountDashboard(results, OK);
+  const section = host.querySelector('[data-testid="yearly-basis"]');
+  expect(section.textContent).toContain("Yearly basis (P&L summary)");
+  const labels = [...section.querySelectorAll('[data-testid="yearly-basis-label"]')].map((x) => x.textContent);
+  expect(labels).toEqual(Array(3).fill("yearly basis, not monthly"));
+  const y23 = section.querySelector('[data-testid="yearly-year-FY2023"]').textContent;
+  expect(y23).toContain("42%");
+  expect(y23).toContain("+1.3 pts");
+  expect(y23).toContain("30.4 months");
+  expect(section.querySelector('[data-testid="yearly-year-FY2022"]').textContent).toContain("n/c");
+  expect(section.querySelector('[data-testid="yearly-track"]').textContent).toContain("(budget)");
+  expect(section.querySelector('[data-testid="yearly-reported"]')).toBeNull();
+  expect(section.querySelector('[data-testid="yearly-missing"]').textContent)
+    .toBe("CAC payback (monthly) – Missing: monthly P&L / revenue by customer, last 24 months");
+  await unmount();
+});
+
+test("without a yearly statement there is no yearly-basis section", async () => {
+  const { host, unmount } = await mountDashboard(sample, OK);
+  expect(host.querySelector('[data-testid="yearly-basis"]')).toBeNull();
+  await unmount();
+});

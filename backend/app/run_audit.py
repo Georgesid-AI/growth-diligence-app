@@ -8,6 +8,7 @@ from typing import Dict, Iterable, List, Optional
 
 from app import claim_matching as cm
 from app import column_rules as cr
+from app.structures import sheet as sheet_mod
 
 STAGES = ("mapping", "engine", "claims")
 DONE, NEEDS_REVIEW, WAITING, RUNNING, FAILED = "done", "needs_review", "waiting", "running", "failed"
@@ -29,6 +30,9 @@ def mapping_counts(datasets: Iterable[dict]) -> Dict:
     auto = open_ = 0
     missing: List[str] = []
     for ds in datasets:
+        if ds.get("sheet_map"):                    # a statement file waits for its lines only (chat-upload.md section 26.6)
+            open_ += sheet_mod.pending_count(ds["sheet_map"])
+            continue
         states = ds.get("columns_state")
         if states is None:                         # stored before the chat upload: confirmed by the analyst
             continue

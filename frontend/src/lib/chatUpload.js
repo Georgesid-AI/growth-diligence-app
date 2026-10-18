@@ -39,16 +39,19 @@ export const REASONS = [
 ];
 
 export const TYPE_LABELS = { revenue: "Revenue lines", crm: "CRM deals", pnl: "P&L (monthly)" };
+// Section 26.6: a P&L with no month column is a yearly summary; the type picker (S6) keeps the three type names.
+export const PNL_YEARLY_LABEL = "P&L (yearly summary)";
+export const typeLabel = (view) => (view.dtype === "pnl" && view.pnl_grain === "yearly" ? PNL_YEARLY_LABEL : TYPE_LABELS[view.dtype]);
 const LOADED_LABELS = { revenue: "A revenue file", crm: "A CRM file", pnl: "A P&L file" };
 
 // S5: the month range appears once the date column is confirmed; before that the line ends on the row count.
 export const S5_head = (view) => {
-  const head = `Detected: ${TYPE_LABELS[view.dtype]} · ${view.row_count.toLocaleString("en-US")} rows`;
+  const head = `Detected: ${typeLabel(view)} · ${view.row_count.toLocaleString("en-US")} ${view.sheet_map ? "lines" : "rows"}`;
   return view.months ? `${head} · ${view.months.count} months (${fmtMonth(view.months.first)} – ${fmtMonth(view.months.last)})` : head;
 };
 // S26a-c (2026-10-16): the detected type with its source and the Change button; the sheet read; what a miss says.
 export const TYPE_SOURCES = { rules: "by rules", ai: "AI suggestion", you: "your choice" };
-export const S26_type = (view) => `Type: ${TYPE_LABELS[view.dtype]}${TYPE_SOURCES[view.type_source] ? ` (${TYPE_SOURCES[view.type_source]})` : ""}`;
+export const S26_type = (view) => `Type: ${typeLabel(view)}${TYPE_SOURCES[view.type_source] ? ` (${TYPE_SOURCES[view.type_source]})` : ""}`;
 export const S26_CHANGE = "Change";
 export const S26_sheet = (view) => `Sheet "${view.sheet}" · header on row ${view.header_row}`;
 const LOOKS = {
@@ -59,7 +62,7 @@ export const S27_SHOW_COLUMNS = "Show columns";
 export const S27_miss = (view) => {
   const looks = view.miss.looks || {};
   const what = LOOKS[looks.shape] || `a table of ${(looks.rows ?? 0).toLocaleString("en-US")} rows and ${looks.columns ?? 0} columns`;
-  return `Could not read this file as ${TYPE_LABELS[view.dtype]}. Missing: ${view.miss.missing.map(fieldName).join(", ")}. It looks like ${what}.`;
+  return `Could not read this file as ${typeLabel(view)}. Missing: ${view.miss.missing.map(fieldName).join(", ")}. It looks like ${what}.`;
 };
 // S28a-d (2026-10-16, section 20): a forecast table read as claims, one plan line × one year; nothing is saved before Confirm.
 const claimsWord = (n) => `${n.toLocaleString("en-US")} ${n === 1 ? "claim" : "claims"}`;
@@ -73,7 +76,7 @@ export const S28_saved = (n) => `Saved ${claimsWord(n)} as Unverified.`;
 export const forecastValueText = (line, v) => {
   const n = Number(v.value).toLocaleString("en-US", { maximumFractionDigits: 2 });
   const figure = line.unit === "%" ? `${n}%` : [n, line.currency || line.unit].filter(Boolean).join(" ");
-  return `${v.period_text || `FY${v.target_date}`} ${figure}`;
+  return `${v.period_text || `FY${v.target_date}`} ${figure}${v.tag && v.tag !== "unknown" ? ` (${v.tag})` : ""}`;
 };
 /** The cells a line's claims cite, first to last: "C5:H5", "H5:BC5". */
 export const forecastCells = (line) => {
@@ -139,6 +142,7 @@ export const S29_PARAGRAPHS = [
 ];
 export const S13_READY = "Ready – press Run audit";
 export const S13_status = (view) => {
+  if (view.sheet_map) return S30h_status(view);                              // a statement file (section 26)
   if (view.read_as_claims) return S28_saved(view.read_as_claims.claims);     // read as claims: it waits for nothing (section 20)
   if (view.miss && view.miss.missing.length > 0) return `Required field not mapped: ${view.miss.missing.map(fieldName).join(", ")}`;
   if (view.pending > 0) return `${view.pending} columns wait for your decision`;
@@ -146,6 +150,55 @@ export const S13_status = (view) => {
   return S13_READY;
 };
 export const S14_same = (version) => `Same file as before: saved mapping v${version} applied.`;
+
+// S30a-h (2026-10-18, section 26): a P&L read as a statement, one row per line. Wording chosen under rule 19 for George's review.
+const plural = (n, one, many) => `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
+export const S30a_sent = (c) => `Sent to the AI: ${plural(c.lines, "line", "lines")}. Masked: ${plural(c.email, "email", "emails")}, `
+  + `${plural(c.phone, "phone number", "phone numbers")}, ${plural(c.person, "name", "names")}, ${plural(c.customer, "customer name", "customer names")}, `
+  + `${plural(c.company, "company name", "company names")}. Withheld: ${plural(c.columns, "column", "columns")}, ${plural(c.long, "long cell", "long cells")}.`;
+export const S30B_HEADERS = ["Line", "Role", "Meaning", "Confidence", "Checks"];
+const CHECKS = {
+  total_mismatch: (p) => `Total ≠ sum of sub-lines (${p.join(", ")})`,
+  no_breakdown: (p) => `No breakdown (${p.join(", ")})`,
+  sign_differs: () => "Sign differs from sub-lines",
+  sign_convention: () => "Costs written as negatives",
+};
+export const S30C_RATE = "Rate: never read as money";
+/** The checks cell of a line: Python's checks, the rate note, the KPI series label. */
+export const S30c_checks = (line) => [
+  ...Object.entries(line.checks || {}).map(([code, periods]) => (CHECKS[code] ? CHECKS[code](periods) : code)),
+  ...(line.role === "rate" ? [S30C_RATE] : []),
+  ...(line.series ? [S30F_SERIES] : []),
+];
+export const S30D_TOO_LONG = "Sheet too long: first 400 rows read";
+export const S30E_ONE_PERIOD = "One period only: export the P&L with one column per month and upload again.";
+export const S30F_SERIES = "Company-reported series · Unverified";
+export const S30H_YEARLY = "Read as P&L (yearly summary): yearly-basis metrics after Run audit";
+export const S30h_status = (view) => {
+  const map = view.sheet_map;
+  if (view.pending > 0) return `${plural(view.pending, "line waits", "lines wait")} for your decision`;
+  if (view.read_as_claims) return S28_saved(view.read_as_claims.claims);
+  if (map.one_period) return S30E_ONE_PERIOD;
+  if (map.monthly_pnl) return S13_READY;
+  if (map.yearly) return S30H_YEARLY;
+  if (map.missing_fields?.length) return `No monthly P&L: no line read as ${map.missing_fields.map(fieldName).join(", ")}`;
+  return S13_READY;
+};
+/** A line's confidence cell, never a dash (as S9): Python's number, the model's meaning until decided, a decided line, a saved map. */
+export const S30_confidence = (line) => {
+  if (line.source === "saved") return "reused";
+  if (line.decision) return "confirmed";
+  if (line.source === "ai") return MAPPED_BY.ai;
+  return String(line.confidence ?? 0);
+};
+export const LINE_ROLES = ["heading", "total", "subline", "rate", "note", "other"];
+export const LINE_MEANINGS = ["revenue", "cost_of_revenue", "sm_expense", "gross_margin", "opex", "ebitda", "arr", "mrr", "new_arr",
+  "churned_mrr", "churn_rate", "growth_rate", "bookings", "acv", "tcv", "customers", "headcount", "cash_balance", "other"];
+const MEANING_NAMES = { sm_expense: "S&M expense", cost_of_revenue: "cost of revenue", gross_margin: "gross margin", opex: "OPEX",
+  ebitda: "EBITDA", arr: "ARR", mrr: "MRR", new_arr: "new ARR", churned_mrr: "churned MRR", churn_rate: "churn rate",
+  growth_rate: "growth rate", acv: "ACV", tcv: "TCV", cash_balance: "cash balance" };
+export const meaningName = (m) => MEANING_NAMES[m] || fieldName(m);
+export const S26_lines = (view) => `Sheet "${view.sheet}" · header on row ${view.header_row} · labels in column ${view.sheet_map.label_col}`;
 export const S16a_MISSING = "Revenue file missing: upload and map it to compute metrics.";
 export const S16d_UNCONFIRMED = "Revenue file uploaded – confirm the mapping to compute metrics.";
 

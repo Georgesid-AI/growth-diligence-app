@@ -563,3 +563,142 @@ def redact_structure(cells: List[Dict], company_name: Optional[str], mapping: Di
     second, more = _redact(named, company_name, ("person",))
     counts["person"] = more["person"]
     return second, counts
+
+
+# ---------------------------------------------------------------------------
+# The sheet skeleton (chat-upload.md section 26): a P&L the rules cannot map, read as a statement. One line per non-blank text
+# cell (title rows, headers and every row label), one line per row with content giving its indent and which columns hold a number
+# or are blank, and one line per withheld column. Never a figure: a number is only "num" in its row's line.
+#     r1c1: Product P&L, EUR thousands
+#     r2c2: FY2021
+#     r4c1: Revenue
+#     r4 indent 0 num c2-c7
+#     c1 withheld: text, 35 distinct values
+# The lines are written and checked here, so the gateway checks them with no link to the sheet reader.
+# ---------------------------------------------------------------------------
+SHEET_MAX_ROWS = 400                # rows with text, title and header rows included; past it, the first 400 are read
+WITHHOLD_DISTINCT = 30              # a column with 30 or more distinct texts ...
+WITHHOLD_FINANCE_SHARE = 0.2        # ... under 20% of which hold a finance word is withheld: its body cells are never sent
+_COLS = r"c[1-9]\d*(?:-c[1-9]\d*)?(?:,c[1-9]\d*(?:-c[1-9]\d*)?)*"
+_SHEET_ROW = re.compile(rf"^r(?P<row>[1-9]\d*) indent (?P<indent>\d+)(?: num (?P<num>{_COLS}))?(?: blank (?P<blank>{_COLS}))?$")
+_WITHHELD = re.compile(r"^c(?P<col>[1-9]\d*) withheld: text, (?P<n>\d+) distinct values$")
+# A year header, with a tag letter or not ("2024", "2024B"), is a period and not a figure, even where it reads as one ("2024B" as
+# billions). Below the header row the reader sends no such text: it is a number there.
+_PERIOD_FIGURE = re.compile(r"^(?:19|20)\d{2}(?:\.0)?(?:\s?[AFBE])?$")
+# The finance words of the withhold rule and of the label column (chat-upload.md section 26.10).
+FINANCE_WORDS = frozenset("""
+revenue revenues sales cost costs cogs goods sold direct services marketing advertising expense expenses margin gross profit
+ebitda adjusted operating opex overheads general administrative g&a research development r&d personnel payroll salaries s&m
+arr mrr recurring annual monthly churn churned lost growth yoy mom bookings booking acv tcv contract value customers customer
+clients subscribers logos headcount fte ftes employees cash balance closing ending income loss total net tax interest
+depreciation amortisation amortization fees rent wages bonus commission hosting software licences licenses subscriptions travel
+insurance legal contractors other
+""".split())
+
+
+def sheet_figure(text: str) -> bool:
+    """True when a cell's text is a figure the skeleton never sends: one figure and nothing else, other than a year header."""
+    text = (text or "").strip()
+    return is_figure(text) and not _PERIOD_FIGURE.match(text)
+
+
+def has_finance_word(text: str) -> bool:
+    return any(w in FINANCE_WORDS for w in re.findall(r"[a-z0-9&]+", (text or "").lower()))
+
+
+def withheld_columns(cells: List[Dict]) -> Dict[int, int]:
+    """{column: distinct texts} for every column the withhold rule takes: 30 or more distinct texts, under 20% of them holding a
+    finance word (a customer list, a list of names). Read on the cells as they are sent, after redaction."""
+    by_col: Dict[int, set] = {}
+    for c in cells:
+        text = cell_text(c)
+        if text:
+            by_col.setdefault(c["col"], set()).add(text)
+    return {col: len(texts) for col, texts in by_col.items() if len(texts) >= WITHHOLD_DISTINCT
+            and sum(1 for t in texts if has_finance_word(t)) < WITHHOLD_FINANCE_SHARE * len(texts)}
+
+
+def col_ranges(cols) -> str:
+    """Columns as a row line writes them: [2, 3, 4, 6] -> "c2-c4,c6"."""
+    out, cols = [], sorted(set(cols))
+    i = 0
+    while i < len(cols):
+        j = i
+        while j + 1 < len(cols) and cols[j + 1] == cols[j] + 1:
+            j += 1
+        out.append(f"c{cols[i]}" if i == j else f"c{cols[i]}-c{cols[j]}")
+        i = j + 1
+    return ",".join(out)
+
+
+def _parse_cols(text: Optional[str]) -> List[int]:
+    out = []
+    for part in (text or "").split(","):
+        if not part:
+            continue
+        a, _, b = part.partition("-")
+        lo, hi = int(a[1:]), int(b[1:]) if b else int(a[1:])
+        if hi < lo:
+            return []
+        out += range(lo, hi + 1)
+    return out
+
+
+def sheet_text(cells: List[Dict], rows: List[Dict], withheld: Dict[int, int]) -> str:
+    """The skeleton for cells (row, col, text and a span), rows ({"row", "indent", "num", "blank"}) and the withheld columns: per
+    row its cell lines and then its row line, in sheet order; the withheld lines last."""
+    by_row: Dict[int, List[Dict]] = {}
+    for c in cells:
+        by_row.setdefault(c["row"], []).append(c)
+    lines = []
+    row_lines = {r["row"]: r for r in rows}
+    for n in sorted(set(by_row) | set(row_lines)):
+        if n in by_row:
+            lines.append(structure_text(by_row[n]))
+        r = row_lines.get(n)
+        if r:
+            line = f"r{n} indent {int(r.get('indent') or 0)}"
+            if r.get("num"):
+                line += f" num {col_ranges(r['num'])}"
+            if r.get("blank"):
+                line += f" blank {col_ranges(r['blank'])}"
+            lines.append(line)
+    lines += [f"c{col} withheld: text, {n} distinct values" for col, n in sorted(withheld.items())]
+    return "\n".join(line for line in lines if line)
+
+
+def parse_sheet_text(text: str) -> Optional[Dict]:
+    """{"cells": [...], "rows": {row: {"indent", "num", "blank"}}, "withheld": {col: n}}, or None when a line is of no kind above, a
+    row line comes twice or a column list is out of order."""
+    cells, rows, withheld = [], {}, {}
+    for line in (text or "").split("\n"):
+        row, held = _SHEET_ROW.match(line), _WITHHELD.match(line)
+        if row:
+            n = int(row.group("row"))
+            num, blank = _parse_cols(row.group("num")), _parse_cols(row.group("blank"))
+            if n in rows or (row.group("num") and not num) or (row.group("blank") and not blank):
+                return None
+            rows[n] = {"indent": int(row.group("indent")), "num": num, "blank": blank}
+        elif held:
+            withheld[int(held.group("col"))] = int(held.group("n"))
+        else:
+            found = parse_structure_text(line)
+            if not found or any(c.get("title") for c in found):
+                return None
+            cells += found
+    return {"cells": cells, "rows": rows, "withheld": withheld}
+
+
+def sheet_text_problem(text: str) -> Optional[str]:
+    """Why a sheet skeleton may not reach the model, or None: a line of no kind, no text cell, more than 400 rows with text, a
+    cell line that is a figure, or a column the withhold rule would take still sent."""
+    parsed = parse_sheet_text(text)
+    if parsed is None or not parsed["cells"]:
+        return "not_cells"
+    if len({c["row"] for c in parsed["cells"]}) > SHEET_MAX_ROWS:
+        return "too_many_rows"
+    if any(sheet_figure(c["text"]) for c in parsed["cells"]):
+        return "figure"
+    if withheld_columns(parsed["cells"]):
+        return "withhold_missed"
+    return None
