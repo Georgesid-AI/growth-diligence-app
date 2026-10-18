@@ -1799,6 +1799,7 @@ async def review_summary(audit_id: str):
         "claims": {"auto_accepted": len(auto), "auto_accepted_ids": auto, "open": len(pending),
                    "turnover_open": len(open_turnover & {c["id"] for c in pending})},
         "computed": bool(audit.get("results")),
+        "engine_stale": run_audit.engine_stale(audit, datasets),
         "blockers": await _blocker_list(audit_id, audit)})
 
 

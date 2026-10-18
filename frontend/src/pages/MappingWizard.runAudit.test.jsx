@@ -7,7 +7,7 @@ import { RunToMapping } from "@/App";
 import * as api from "@/lib/api";
 
 // Run audit on the Upload & Mapping page (docs/specs/chat-upload.md section 24): the button and its stages sit below the set-up
-// section and above the mapping; Map and Calculate stay.
+// section and above the mapping; Map stays, Calculate is gone and Run audit is the only way to calculate.
 const mockNavigate = jest.fn();
 jest.mock("@/lib/api", () => ({
   getAudit: jest.fn(), updateAudit: jest.fn(), reportUsage: jest.fn(), getBlockers: jest.fn(),
@@ -67,7 +67,7 @@ const attach = async (...names) => {
 const press = async (id) => { await act(async () => { q(id).click(); }); await act(async () => { await Promise.resolve(); }); };
 const follows = (a, b) => !!(q(a).compareDocumentPosition(q(b)) & Node.DOCUMENT_POSITION_FOLLOWING);
 
-test("Run audit and its stages sit at the bottom of the page, below the Board deck box; Map and Calculate stay", async () => {
+test("Run audit and its stages sit at the bottom of the page, below the Board deck box; Map stays and there is no Calculate button", async () => {
   await mount();
   expect(document.body.querySelectorAll('[data-testid="run-audit"]')).toHaveLength(1);
   expect(q("run-audit").textContent).toBe("Run audit");
@@ -77,8 +77,9 @@ test("Run audit and its stages sit at the bottom of the page, below the Board de
   expect(follows("upload-chat", "deck-panel")).toBe(true);
   expect(follows("deck-panel", "run-audit-panel")).toBe(true);
   expect(q("chat-map")).not.toBeNull();
-  expect(q("chat-calculate")).not.toBeNull();
-  expect(q("compute-button")).not.toBeNull();
+  expect(q("chat-calculate")).toBeNull();
+  expect(q("compute-button")).toBeNull();
+  expect(document.body.textContent).not.toMatch(/Calculate/);
   expect(q("upload-chat").textContent).not.toMatch(/Files already uploaded/);
   expect([...q("run-stages").querySelectorAll("li")].map((li) => li.getAttribute("data-testid"))).toEqual(["stage-mapping", "stage-engine", "stage-claims"]);
   expect(q("stage-mapping").textContent).toContain("File mapping");
@@ -191,7 +192,7 @@ test("a deck is not attached in the box (the deck panel takes it) and a file rem
   expect(api.uploadDeck).not.toHaveBeenCalled();
 });
 
-test("while a run is in progress Map and Calculate wait, and Run audit waits while a file is being read", async () => {
+test("while a run is in progress Map waits, and Run audit waits while a file is being read", async () => {
   let release;
   api.runStage.mockImplementation(() => new Promise((resolve) => { release = () => resolve({ stage: "mapping", status: "needs_review" }); }));
   await mount();
@@ -200,8 +201,62 @@ test("while a run is in progress Map and Calculate wait, and Run audit waits whi
   await act(async () => { await Promise.resolve(); });
   expect(q("run-audit").disabled).toBe(true);
   expect(q("chat-map").disabled).toBe(true);
-  expect(q("compute-button").disabled).toBe(true);
   await act(async () => { release(); });
   await act(async () => { await Promise.resolve(); });
   expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/review");
+});
+
+// --- Run audit continues from the first stage that is not done (chat-upload.md section 24) ----------------------------------------------
+
+const ranStages = () => api.runStage.mock.calls.map((c) => c[1]);
+const allDone = () => {
+  api.getDatasets.mockResolvedValue([VIEW("revenue")]);
+  api.getReview.mockResolvedValue({ computed: true, engine_stale: false });
+  api.getDecks.mockResolvedValue({ decks: [DECK], candidates: [{ id: "c1", status: "approved" }] });
+  api.runStage.mockImplementation(async (id, key) => ({ stage: key, status: "done" }));
+};
+
+test("with the mapping done and the engine not, Run audit starts at the engine and does not map again", async () => {
+  api.getDatasets.mockResolvedValue([VIEW("revenue")]);
+  api.runStage.mockImplementation(async (id, key) => ({ stage: key, status: "done" }));
+  await mount();
+  await press("run-audit");
+  expect(ranStages()).toEqual(["engine", "claims"]);
+  expect(api.uploadChatFile).not.toHaveBeenCalled();
+});
+
+test("a mapping confirmed or corrected after the last calculation makes the engine stage not done: Run audit calculates again", async () => {
+  allDone();
+  await mount();
+  expect(stageOf()).toEqual(["done", "done", "done"]);
+  api.getReview.mockResolvedValue({ computed: true, engine_stale: true });          // the analyst confirmed a column since
+  await press("run-audit");
+  expect(ranStages()).toEqual(["engine", "claims"]);
+  expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/review");
+});
+
+test("the engine of a stale audit shows as not done on load, not Done", async () => {
+  allDone();
+  api.getReview.mockResolvedValue({ computed: true, engine_stale: true });
+  await mount();
+  expect(stageOf()).toEqual(["done", "idle", "done"]);
+});
+
+test("a second Run audit with nothing new sends no file and reads no deck again: the decks already read are served from the cache", async () => {
+  allDone();
+  await mount();
+  await press("run-audit");
+  await press("run-audit");
+  expect(ranStages()).toEqual(["claims", "claims"]);
+  expect(api.uploadDeck).not.toHaveBeenCalled();
+  expect(api.uploadChatFile).not.toHaveBeenCalled();
+});
+
+test("a file attached after a finished run goes through the mapping stage first, then the rest", async () => {
+  allDone();
+  await mount();
+  await attach("revenue.csv");
+  await press("run-audit");
+  expect(api.uploadChatFile).toHaveBeenCalledTimes(1);
+  expect(ranStages()).toEqual(["mapping", "engine", "claims"]);
 });

@@ -6,7 +6,7 @@ import * as api from "@/lib/api";
 import { toast } from "sonner";
 import { SETUP_HELP } from "@/lib/auditForm";
 import {
-  S1_TEXT_REPLY, S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S_UPLOAD_RETRY, S21_NOTE_REFUSED, REASONS,
+  S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE_LEAD, S4_DROP_ZONE_BOLD, ALL_CONFIRMED_LINE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S_UPLOAD_RETRY, S21_NOTE_REFUSED, REASONS,
   S5_head, S9_confidence, mappedBy, sortColumns, S25_PARAGRAPHS, S27_miss, S28_read, S28_cap, S28_saved, mappingComplete,
 } from "@/lib/chatUpload";
 
@@ -93,11 +93,13 @@ describe("the screen", () => {
     await mount();
     expect(q("fiscal-year-end-select")).not.toBeNull();
     expect(q("asof-month-input")).not.toBeNull();
-    expect(q("compute-button")).not.toBeNull();
+    expect(q("compute-button")).toBeNull();
     const chat = q("upload-chat");
     expect(chat.compareDocumentPosition(q("deck-panel")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(q("chat-drop-zone").textContent).toBe(S4_DROP_ZONE);
-    expect(S4_DROP_ZONE).toBe("Drop files here or use the paperclip. Required: Revenue by customer (monthly, 24–36 months). The audit will not run without a revenue file. Optional: CRM export and P&L. .xlsx or .csv only");
+    const help = "Drop files here or use the paperclip. Required: Revenue by customer (monthly, 24–36 months). The audit will not run without a revenue file. Optional: CRM export and P&L. .xlsx or .csv only";
+    expect(q("chat-drop-zone").textContent).toBe(help);
+    expect(S4_DROP_ZONE_LEAD + S4_DROP_ZONE_BOLD).toBe(help);
+    expect(document.body.textContent.split("Drop files here").length - 1).toBe(1);        // the help text is shown once, in the drop zone
     // only ".xlsx or .csv only" is bold
     const bold = [...q("chat-drop-zone").querySelectorAll("strong, b")].map((n) => n.textContent);
     expect(bold).toEqual([".xlsx or .csv only"]);
@@ -211,45 +213,47 @@ describe("the screen", () => {
     expect(q("chat-explainer").textContent).toBe(S3_EXPLAINER_NO_CONSENT);
   });
 
-  test("the chat has Map and Calculate, the header has Calculate; the Calculate buttons look the same and share one tooltip", async () => {
+  test("the bar under the drop zone holds the paperclip and Map; there is no text field, no send button and no Calculate button", async () => {
     await mount();
-    const header = q("compute-button"), chat = q("chat-calculate");
+    const bar = q("chat-paperclip").parentElement;
+    expect([...bar.querySelectorAll("button")].map((b) => b.getAttribute("data-testid"))).toEqual(["chat-paperclip", "chat-map"]);
     expect(q("chat-map").textContent).toBe("Map");
-    expect(header.textContent).toBe("Calculate");
-    expect(chat.textContent).toBe("Calculate");
-    expect(chat.title).toBe(header.title);
-    expect(header.className).toBe(chat.className);
-    expect(q("chat-map").className).toBe(chat.className);
+    expect(bar.querySelector("input:not([type=file])")).toBeNull();
+    for (const id of ["chat-text-input", "chat-send", "chat-send-wrap", "chat-calculate", "chat-calculate-wrap", "compute-button", "compute-button-wrap"]) expect(q(id)).toBeNull();
+    expect(document.body.textContent).not.toMatch(/Calculate/);
+    expect(document.body.textContent).not.toContain("This window accepts files and mapping confirmations.");
   });
 
-  test("with no file attached and none loaded, Map is off with its tooltip and Calculate is off with its own", async () => {
+  test("with no file attached and none loaded, Map is off with its tooltip", async () => {
     await mount();
     expect(q("chat-map").disabled).toBe(true);
     expect(q("chat-map").title).toBe("Attach the revenue file first. It is the only required file.");
     expect(q("chat-map-wrap").title).toBe(q("chat-map").title);
-    expect(q("compute-button").disabled).toBe(true);
-    expect(q("chat-calculate").disabled).toBe(true);
-    expect(q("compute-button").title).toBe("Map the revenue file and confirm every column that waits for you first.");
-    expect(q("compute-button-wrap").title).toBe(q("compute-button").title);
-    expect(q("chat-calculate-wrap").title).toBe(q("compute-button").title);
   });
 
-  test("Map is on with a file attached; Calculate stays off until the mapping is saved, in the header and the chat alike", async () => {
+  test("Map is on with a file attached; the last Confirm shows the line that points to Run audit", async () => {
     api.uploadChatFile.mockResolvedValue(PENDING_VIEW());
     api.decideColumns.mockResolvedValue(VIEW());
     await mount();
     await pick([file("rev.csv")]);
     expect(q("chat-map").disabled).toBe(false);
-    expect([q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([true, true]);
     await act(async () => { q("chat-map").click(); });
     await flush();
     expect(q("chat-map").disabled).toBe(false);                 // a file is loaded
-    expect([q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([true, true]);      // two columns still wait
+    expect(q("status-revenue").textContent).toBe("2 columns wait for your decision");
+    expect(q("all-confirmed")).toBeNull();
     await click(q("confirm-Amount"));
     await flush();
-    expect([q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([false, false]);    // mapping saved
-    expect(q("compute-button").title).toBe("Computes the metrics from the mapped files.");
-    expect(q("chat-calculate").title).toBe(q("compute-button").title);
+    expect(q("status-revenue").textContent).toBe("Ready – press Run audit");
+    expect(q("all-confirmed").textContent).toBe("All columns confirmed. Press Run audit at the bottom of the page to calculate.");
+    expect(q("all-confirmed").textContent).toBe(ALL_CONFIRMED_LINE);
+    expect(q("chat-map-wrap").title).not.toMatch(/Calculate/);
+  });
+
+  test("a mapping that was complete on arrival (nothing confirmed here) shows no all-confirmed line", async () => {
+    await mount({ datasets: [VIEW()] });
+    expect(q("status-revenue").textContent).toBe("Ready – press Run audit");
+    expect(q("all-confirmed")).toBeNull();
   });
 
   test("a file removed from the chat switches Map off again; a loaded file keeps it on", async () => {
@@ -261,37 +265,11 @@ describe("the screen", () => {
     await act(async () => { root.unmount(); }); host.remove();
     await mount({ datasets: [VIEW()] });
     expect(q("chat-map").disabled).toBe(false);
-    expect([q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([false, false]);     // stored mapping is complete
-  });
-
-  test("Send is greyed out while the text box is empty and carries its tooltip", async () => {
-    await mount();
-    const send = q("chat-send");
-    expect(send.disabled).toBe(true);
-    expect(send.title).toBe("Send a message (for answering the chat's questions)");
-    expect(q("chat-send-wrap").title).toBe(send.title);          // a disabled button shows no tooltip of its own
-    await change(q("chat-text-input"), "   ");
-    expect(send.disabled).toBe(true);
-    await change(q("chat-text-input"), "hello");
-    expect(send.disabled).toBe(false);
   });
 
   test("the mapping panel has no scroll of its own: the page scrolls as one", async () => {
     await mount();
     expect(q("chat-messages").className).not.toMatch(/overflow|max-h/);
-  });
-
-  test("typed text gets the system reply and causes no API call", async () => {
-    await mount();
-    const calls = Object.values(api).flatMap((f) => (f.mock ? f.mock.calls.length : 0)).reduce((a, b) => a + b, 0);
-    await change(q("chat-text-input"), "hello, map my columns");
-    await act(async () => { q("chat-send").click(); });
-    expect(q("chat-text-analyst").textContent).toBe("hello, map my columns");
-    expect(q("chat-text-system").textContent).toBe(S1_TEXT_REPLY);
-    expect(q("chat-text-input").value).toBe("");
-    const after = Object.values(api).flatMap((f) => (f.mock ? f.mock.calls.length : 0)).reduce((a, b) => a + b, 0);
-    expect(after).toBe(calls);
-    expect(api.uploadChatFile).not.toHaveBeenCalled();
   });
 
   test("reload rebuilds one analyst bubble and one system bubble per stored file", async () => {
@@ -325,7 +303,7 @@ describe("a file", () => {
     await click(q("unused-toggle-revenue"));
     expect(q("column-row-Memo")).not.toBeNull();
     expect(q("correct-Memo")).not.toBeNull();
-    expect(q("status-revenue").textContent).toBe("Ready for calculation");
+    expect(q("status-revenue").textContent).toBe("Ready – press Run audit");
     expect(q("revenue-settings")).not.toBeNull();
   });
 
@@ -613,15 +591,14 @@ describe("a forecast table read as claims (chat-upload.md section 20)", () => {
     expect(api.confirmForecastClaims).not.toHaveBeenCalled();
   });
 
-  test("a file read as claims no longer holds Calculate; a revenue-typed one is no revenue file", async () => {
+  test("a file read as claims no longer holds the mapping; a revenue-typed one is no revenue file", async () => {
     await mount({ datasets: [VIEW(), SUMMARY()] });
     await flush();
-    expect(q("chat-calculate").disabled).toBe(true);                // the forecast table is still a miss: Calculate waits
+    expect(q("status-pnl").textContent).toMatch(/^Required field not mapped/);      // the forecast table is still a miss: it holds the mapping
     await act(async () => { root.unmount(); });
     host.remove();
     await mount({ datasets: [VIEW(), READ_AS_CLAIMS(2, 6)] });
     await flush();
-    expect([q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([false, false]);
     expect(mappingComplete({ attached: 0, views: [READ_AS_CLAIMS(1, 3, { dtype: "revenue" })] })).toBe(false);
     expect(mappingComplete({ attached: 0, views: [VIEW(), READ_AS_CLAIMS(1, 3)] })).toBe(true);
   });
@@ -646,7 +623,7 @@ describe("a forecast table read as claims (chat-upload.md section 20)", () => {
     expect(q("forecast-show-pnl")).toBeNull();
     expect(q("mapping-miss-pnl")).not.toBeNull();                  // the file is still not a P&L: its message stays
     expect(q("forecast-claims-revenue")).toBeNull();
-    expect(q("status-revenue").textContent).toBe("Ready for calculation");
+    expect(q("status-revenue").textContent).toBe("Ready – press Run audit");
   });
 });
 
@@ -696,7 +673,7 @@ describe("the FX settings", () => {
   });
 });
 
-describe("Map and Calculate", () => {
+describe("Map", () => {
   test("a dropped file is only attached: nothing is read, the box stays usable, and Map reads the files in drop order without computing", async () => {
     api.uploadChatFile.mockResolvedValue(VIEW());
     api.getDatasets.mockResolvedValue([VIEW()]);
@@ -709,7 +686,6 @@ describe("Map and Calculate", () => {
     await pick([file("b.csv")]);
     expect(all("chat-analyst-bubble").length).toBe(2);
     expect(api.uploadChatFile).not.toHaveBeenCalled();
-    expect(api.computeAudit).not.toHaveBeenCalled();
     await act(async () => { q("chat-map").click(); });
     await flush();
     expect(api.uploadChatFile.mock.calls.map((c) => c[1].name)).toEqual(["a.csv", "b.csv"]);
@@ -726,29 +702,21 @@ describe("Map and Calculate", () => {
     expect(api.uploadChatFile).not.toHaveBeenCalled();
   });
 
-  test("with a revenue file whose columns all have a decision, Calculate computes the metrics, from the chat and from the header", async () => {
+  test("with a revenue file whose columns all have a decision, Map reads it and nothing is computed: Run audit is the only way to calculate", async () => {
     api.uploadChatFile.mockResolvedValue(VIEW());
-    api.updateAudit.mockResolvedValue({});
-    api.computeAudit.mockResolvedValue({});
     await mount();
     await pickAndMap([file("rev.csv")]);
     for (let i = 0; i < 5; i += 1) await flush();
+    expect(q("status-revenue").textContent).toBe("Ready – press Run audit");
     expect(api.computeAudit).not.toHaveBeenCalled();
-    await act(async () => { q("chat-calculate").click(); });
-    for (let i = 0; i < 5; i += 1) await flush();
-    expect(api.computeAudit).toHaveBeenCalledTimes(1);
-    expect(api.computeAudit).toHaveBeenCalledWith("a1");
-    await act(async () => { q("compute-button").click(); });
-    for (let i = 0; i < 5; i += 1) await flush();
-    expect(api.computeAudit).toHaveBeenCalledTimes(2);
+    expect(q("run-audit")).not.toBeNull();
   });
 
-  test("with a column still waiting, Map reads the file and Calculate stays off", async () => {
+  test("with a column still waiting, Map reads the file and the status says how many wait", async () => {
     api.uploadChatFile.mockResolvedValue(PENDING_VIEW());
     await mount();
     await pickAndMap([file("rev.csv")]);
-    expect(q("chat-calculate").disabled).toBe(true);
-    await act(async () => { q("chat-calculate").click(); q("compute-button").click(); });
+    expect(q("status-revenue").textContent).toBe("2 columns wait for your decision");
     expect(api.computeAudit).not.toHaveBeenCalled();
   });
 
@@ -760,7 +728,6 @@ describe("Map and Calculate", () => {
     await mount({ datasets: [VIEW({ dtype: "crm", file: "crm.csv" })] });      // a file is loaded, but not the revenue file
     expect(calculatePressed("a1")).toBe(false);
     expect(q("chat-map").disabled).toBe(false);
-    expect(q("chat-calculate").disabled).toBe(true);           // no revenue file: nothing to calculate
     await act(async () => { q("chat-map").click(); });
     await flush();
     window.removeEventListener("blockers:changed", seen);
@@ -779,10 +746,9 @@ describe("the mapping table", () => {
     await pickAndMap([file("rev.csv")]);
   };
 
-  test("AI, unsure and undecided rows wait for a click; the status says how many and Calculate stays off", async () => {
+  test("AI, unsure and undecided rows wait for a click; the status says how many", async () => {
     await mountPending();
     expect(q("status-revenue").textContent).toBe("2 columns wait for your decision");
-    expect([q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([true, true]);
     expect(api.computeAudit).not.toHaveBeenCalled();
     expect(q("bubble-head").textContent).toBe("Detected: Revenue lines · 1,240 rows");
     expect(q("bubble-head").textContent).not.toContain("confirmed");
@@ -906,7 +872,7 @@ describe("the mapping table", () => {
       "Close date is also used for the quarter-end clustering check: the share of won deals closed in the last 10 days of a quarter, by the company's fiscal year-end (needs at least 20 won deals).",
       "Amount can be mapped but is not used in any calculation.",
     ]);
-    expect(q("status-crm").textContent).toBe("Ready for calculation");
+    expect(q("status-crm").textContent).toBe("Ready – press Run audit");
   });
 
   test("a CRM field list offers the required fields, then the optional ones, amount among them", async () => {
@@ -925,14 +891,13 @@ describe("the mapping table", () => {
     expect(q("confidence-Amount").textContent).toBe("0 · 0 of 20 values are numbers");
   });
 
-  test("Confirm sends one decision and the new state replaces the bubble; Calculate enables once nothing waits", async () => {
+  test("Confirm sends one decision and the new state replaces the bubble", async () => {
     await mountPending();
     api.decideColumns.mockResolvedValue(VIEW());
     await click(q("confirm-Amount"));
     await flush();
     expect(api.decideColumns).toHaveBeenCalledWith("a1", "revenue", [{ column: "Amount", action: "confirm", field: "amount" }]);
-    expect(q("status-revenue").textContent).toBe("Ready for calculation");
-    expect(q("compute-button").disabled).toBe(false);
+    expect(q("status-revenue").textContent).toBe("Ready – press Run audit");
   });
 
   test("an amount column named turnover or volume asks once, revenue or volume, and sends the closed answer", async () => {
@@ -1035,35 +1000,16 @@ describe("the mapping table", () => {
     await mount();
     await pickAndMap([file("rev.csv")]);
     expect(q("status-revenue").textContent).toBe("Required field not mapped: currency");
-    expect([q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([true, true]);
     expect(api.computeAudit).not.toHaveBeenCalled();
   });
 });
 
-describe("the header Calculate button is the chat's Calculate (always the same state)", () => {
-  test("with a revenue file loaded and a new one attached, Calculate waits for Map, then computes on the new file", async () => {
-    const order = [];
-    api.uploadChatFile.mockImplementation(async () => { order.push("read"); return VIEW({ file: "new.csv" }); });
-    api.updateAudit.mockResolvedValue({});
-    api.computeAudit.mockImplementation(async () => { order.push("compute"); return {}; });
-    await mount({ datasets: [VIEW({ file: "old.csv" })] });
-    await flush();
-    expect(q("compute-button").disabled).toBe(false);          // ready on the old file
-    await pick([file("new.csv")]);
-    expect([q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([true, true]);    // an unread file: map it first
-    await act(async () => { q("chat-map").click(); });
-    for (let i = 0; i < 5; i += 1) await flush();
-    expect([q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([false, false]);
-    await act(async () => { q("compute-button").click(); });
-    for (let i = 0; i < 5; i += 1) await flush();
-    expect(order).toEqual(["read", "compute"]);
-  });
-
-  test("the two Calculate buttons never differ, and Map is only on with a file attached or loaded", async () => {
+describe("Map is the only button of the bar next to the paperclip", () => {
+  test("Map is only on with a file attached or loaded", async () => {
     await mount();
-    expect([q("chat-map").disabled, q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([true, true, true]);
+    expect(q("chat-map").disabled).toBe(true);
     await pick([file("rev.csv")]);
-    expect([q("chat-map").disabled, q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([false, true, true]);
+    expect(q("chat-map").disabled).toBe(false);
   });
 });
 
@@ -1078,15 +1024,10 @@ describe("the revenue banner timing (decision D)", () => {
   };
   beforeEach(() => window.sessionStorage.clear());
 
-  test("computing does not reset the flag that Map set", async () => {
+  test("Map sets the flag that releases 'Revenue file missing'", async () => {
     api.uploadChatFile.mockResolvedValue(VIEW());
-    api.updateAudit.mockResolvedValue({});
-    api.computeAudit.mockResolvedValue({});
     await mount();
     await pickAndMap([file("rev.csv")]);
-    await act(async () => { q("chat-calculate").click(); });
-    for (let i = 0; i < 5; i += 1) await flush();
-    expect(api.computeAudit).toHaveBeenCalled();
     expect(calculatePressed("a1")).toBe(true);
   });
 
@@ -1131,24 +1072,19 @@ describe("the revenue banner timing (decision D)", () => {
 });
 
 describe("one press at a time", () => {
-  test("while files are being read Map and both Calculate buttons are off and nothing is read twice; Calculate then computes once", async () => {
+  test("while files are being read Map is off and nothing is read twice", async () => {
     let release;
     api.uploadChatFile.mockImplementation(() => new Promise((resolve) => { release = () => resolve(VIEW()); }));
-    api.updateAudit.mockResolvedValue({});
-    api.computeAudit.mockResolvedValue({});
     await mount({ datasets: [VIEW()] });
     await flush();
     await pick([file("rev.csv")]);
     expect(q("chat-map").disabled).toBe(false);
     await act(async () => { q("chat-map").click(); });
-    expect([q("chat-map").disabled, q("compute-button").disabled, q("chat-calculate").disabled]).toEqual([true, true, true]);
-    await act(async () => { q("chat-map").click(); q("compute-button").click(); q("chat-calculate").click(); });     // second presses do nothing
+    expect(q("chat-map").disabled).toBe(true);
+    await act(async () => { q("chat-map").click(); });     // a second press does nothing
     await act(async () => { release(); });
     for (let i = 0; i < 6; i += 1) await flush();
     expect(api.uploadChatFile).toHaveBeenCalledTimes(1);
     expect(api.computeAudit).not.toHaveBeenCalled();
-    await act(async () => { q("compute-button").click(); q("chat-calculate").click(); });
-    for (let i = 0; i < 6; i += 1) await flush();
-    expect(api.computeAudit).toHaveBeenCalledTimes(1);
   });
 });

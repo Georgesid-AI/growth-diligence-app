@@ -30,7 +30,8 @@ export const idleStages = () => Object.fromEntries(STAGES.map((s) => [s.key, { s
 /**
  * The stages as the audit stands now, for a page that is opened or reloaded: done once the work exists, needs_review while
  * something waits for the analyst, idle only when nothing was done. `views` are the stored datasets, `summary` the review
- * summary (its `computed` is whether results exist), `deckData` the decks and their candidates.
+ * summary (its `computed` is whether results exist, its `engine_stale` whether a mapping was confirmed or corrected after
+ * the last calculation: the engine is then not done), `deckData` the decks and their candidates.
  */
 export function stagesFromState({ views = [], summary = null, deckData = { decks: [], candidates: [] } } = {}) {
   const stages = idleStages();
@@ -38,12 +39,21 @@ export function stagesFromState({ views = [], summary = null, deckData = { decks
     const open = views.some((v) => v.pending > 0 || (v.missing_required || []).length > 0);
     stages.mapping = { status: open ? "needs_review" : "done", message: null };
   }
-  if (summary?.computed) stages.engine = { status: "done", message: null };
+  if (summary?.computed && !summary.engine_stale) stages.engine = { status: "done", message: null };
   if ((deckData.decks || []).length || (deckData.candidates || []).length) {
     const waiting = (deckData.candidates || []).some((c) => c.status === "pending");
     stages.claims = { status: waiting ? "needs_review" : "done", message: null };
   }
   return stages;
+}
+
+/**
+ * Where Run audit carries on: the first stage that is not done. Files still attached count against their stage (spreadsheets:
+ * mapping, decks: claims). With every stage done it runs the last one again, which accepts nothing twice and costs nothing.
+ */
+export function firstStageNotDone(stages, pick = { data: [], decks: [] }) {
+  const attached = { mapping: pick.data.length > 0, claims: pick.decks.length > 0 };
+  return STAGES.find((s) => stages[s.key].status !== "done" || attached[s.key])?.key || STAGES[STAGES.length - 1].key;
 }
 
 const detailOf = (e, fallback) => {

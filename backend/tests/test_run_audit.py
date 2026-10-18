@@ -159,6 +159,28 @@ def test_a_stage_asked_out_of_order_waits_and_does_nothing(run_api):
     assert stage(run_api, "claims")["status"] == "done"
 
 
+def test_a_mapping_confirmed_or_corrected_after_the_last_calculation_makes_the_engine_stale_until_it_runs_again(run_api):
+    upload_files(run_api)
+    confirm_open_columns(run_api)
+    assert review(run_api)["engine_stale"] is False, "no results yet: the engine is not done, but nothing is stale"
+    run_audit_button(run_api)
+    assert (review(run_api)["computed"], review(run_api)["engine_stale"]) == (True, False)
+    revenue = next(d for d in run_api.db["datasets"].docs if d["dtype"] == "revenue")
+    revenue["mapped_at"] = usage_mod.now()                           # a column confirmed or corrected after the calculation
+    assert (review(run_api)["computed"], review(run_api)["engine_stale"]) == (True, True)
+    assert stage(run_api, "engine")["status"] == "done"
+    assert review(run_api)["engine_stale"] is False, "the calculation that follows the decision clears it"
+
+
+def test_engine_stale_follows_the_flag_of_a_recompute_that_could_not_run():
+    audit = {"results": {"x": 1}, "computed_at": "2026-10-11T08:00:00+00:00", "metrics_stale": True}
+    datasets = [{"mapped_at": "2026-10-11T07:00:00+00:00"}, {"mapped_at": None}]
+    assert run_audit.engine_stale(audit, datasets) is True
+    assert run_audit.engine_stale({**audit, "metrics_stale": False}, datasets) is False
+    assert run_audit.engine_stale({**audit, "metrics_stale": False}, datasets + [{"mapped_at": "2026-10-11T09:00:00+00:00"}]) is True
+    assert run_audit.engine_stale({"results": None, "metrics_stale": True}, datasets) is False
+
+
 def test_an_unknown_stage_is_a_404_and_an_unknown_audit_too(run_api):
     assert run_api.post(f"/api/audits/{AUDIT}/run/launch").status_code == 404
     assert run_api.post("/api/audits/nope/run/mapping").status_code == 404
