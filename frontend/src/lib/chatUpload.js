@@ -9,8 +9,10 @@ export const S2_EXPLAINER_CONSENT =
   "The model reads every column header and a masked sample to propose the mapping. When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table.";
 export const S3_EXPLAINER_NO_CONSENT =
   "Mapping is done by rules only: AI-assisted reading is off for this audit. You map the columns the rules cannot decide.";
-export const S4_DROP_ZONE =
-  "Drop files here or use the paperclip. Required: revenue by customer (monthly, 24–36 months). Also useful: CRM export, P&L. Board decks go to the Deck panel. .xlsx or .csv only.";
+export const S4_DROP_ZONE_LEAD =
+  "Drop files here or use the paperclip. Required: Revenue by customer (monthly, 24–36 months). The audit will not run without a revenue file. Optional: CRM export and P&L. ";
+export const S4_DROP_ZONE_BOLD = ".xlsx or .csv only";      // the only bold part of the text
+export const S4_DROP_ZONE = S4_DROP_ZONE_LEAD + S4_DROP_ZONE_BOLD;   // plain text, for the input's placeholder
 // Run audit uses the same box, with decks accepted: the files wait there until Run audit reads them (no Map or Calculate button).
 export const RUN_DECK_EXTENSIONS = ["pptx", "pdf", "docx"];
 export const RUN_DROP_ZONE =

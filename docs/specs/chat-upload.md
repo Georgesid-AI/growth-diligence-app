@@ -347,7 +347,7 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 | S1 | text reply | This window accepts files and mapping confirmations. (as given) |
 | S2 | explainer, consent ticked | The model reads every column header and a masked sample to propose the mapping. When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table. (First sentence given by George on 2026-10-17, §22, in place of "Mapping is done by rules first. Where rules cannot decide, the AI sees only those columns' headers, up to 3 example numbers or dates per column and a pattern for text columns – never your full file and never a name – and you confirm those columns."; last sentence added 2026-10-16, §19, its "which can contain the company name" clause removed the same day, because the company name is masked.) |
 | S3 | explainer, consent unticked | Mapping is done by rules only: AI-assisted reading is off for this audit. You map the columns the rules cannot decide. |
-| S4 | drop zone | Drop files here or use the paperclip. Required: revenue by customer (monthly, 24–36 months). Also useful: CRM export, P&L. Board decks go to the Deck panel. .xlsx or .csv only. |
+| S4 | drop zone | Drop files here or use the paperclip. Required: Revenue by customer (monthly, 24–36 months). The audit will not run without a revenue file. Optional: CRM export and P&L. **.xlsx or .csv only** (George, 2026-10-18; only ".xlsx or .csv only" is bold; the input's placeholder carries it as plain text) |
 | S5 | bubble head | Detected: Revenue lines · 1,240 rows · 24 months (Jan 2023 – Dec 2024). Before the date column is confirmed the months are left out: "Detected: Revenue lines · 1,240 rows". |
 | S6 | unknown type | Could not tell what this file holds. Pick its type: Revenue lines / CRM deals / P&L (monthly). |
 | S7 | refused file | This window takes .xlsx and .csv files. Decks go in the deck panel below. |
@@ -795,19 +795,19 @@ the Audit") and the tests. The route `/audit/:id/dashboard` is unchanged.
 
 **Upload & Mapping is the entry point.** Creating an audit, the hub's "Run audit" button and its "Open" button all land on
 `/audit/:id/mapping`. The one-click "Run audit" button and its three stages (File mapping, Engine calculations, Claim extraction from
-decks, with Retry stage) move from the Run audit page to the top of the Upload & Mapping page: below the set-up section, above the FX
-settings, the file box with its column-by-column mapping and the deck panel. The Map and Calculate buttons stay as they are. The page
+decks, with Retry stage) move from the Run audit page to the Upload & Mapping page, at the bottom (George, 2026-10-18): below the deck panel (the
+Board deck box). Everything above keeps its order: set-up section, FX settings, the file box with its column-by-column mapping, the deck panel. The Map and Calculate buttons stay as they are. The page
 has one file box: files attached in it are read by Map, or by Run audit (spreadsheets only; decks are added in the deck panel and
 read by the claims stage). While Run audit runs, Map and Calculate wait, and the other way round. When it finishes with Done or Needs
 review it opens the review screen, as before; "Go to the review screen" and the "Files already uploaded" list of the old page are
 dropped (the Review tab and the file box already show both). The Run audit page is removed; `/audit/:id/run` redirects to
 `/audit/:id/mapping`. The review screen's "Back to Run audit" reads "Back to Upload & Mapping" and goes there.
 
-**Audit Hub tile.** The tile shows three lines: "Created" (date and time in the viewer's local time, `18 Oct 2026, 14:32`: day,
-short English month, year, 24-hour clock), "Target ARR" and "Target date". A Target ARR that is not set or 0, and a Target date that is
-not set, read "n.a.". The audit list already returns `created_at`.
+**Audit Hub tile.** The tile shows, in this order (George, 2026-10-18): "Target ARR", "Target date", one empty line, then "Created"
+(date and time in the viewer's local time, `18 Oct 2026, 14:32`: day, short English month, year, 24-hour clock). A Target ARR that is
+not set or 0, and a Target date that is not set, read "n.a.". The audit list already returns `created_at`.
 
 **Cost is not shown to testers (George, 18 Oct 2026).** See usage-and-allowance.md §9. This section's tests: `Layout.test.jsx` (order
 and names of the tabs, no Details, no Run audit tab, All audits button and app name both go to "/"), `MappingWizard.test.jsx` (the Run
-audit button and stages sit between the set-up section and the mapping, the old page is gone), `App` redirect test, `AuditHub.test.jsx`
-(Created, Target ARR and Target date with "n.a.", the buttons land on /mapping), `Review.test.jsx` (link names).
+audit button and stages sit at the bottom, below the deck panel, the old page is gone; the drop-zone text with only ".xlsx or .csv only" bold), `App` redirect test, `AuditHub.test.jsx`
+(Target ARR, Target date, the empty line, Created, with "n.a.", the buttons land on /mapping), `Review.test.jsx` (link names).

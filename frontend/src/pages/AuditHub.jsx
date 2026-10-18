@@ -160,12 +160,13 @@ export default function AuditHub() {
               </div>
 
               <dl className="mt-4 pt-4 border-t border-[#E5E7EB] grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs" data-testid={`audit-facts-${a.id}`}>
-                <dt className="uppercase tracking-wider text-slate-500 font-mono text-[10px] self-center">Created</dt>
-                <dd className="font-mono text-slate-900" data-testid="audit-created">{formatCreated(a.created_at)}</dd>
                 <dt className="uppercase tracking-wider text-slate-500 font-mono text-[10px] self-center">Target ARR</dt>
                 <dd className="font-mono text-slate-900" data-testid="audit-target-arr">{Number(a.target_arr) ? fmtCurrency(a.target_arr, a.reporting_currency) : NOT_SET}</dd>
                 <dt className="uppercase tracking-wider text-slate-500 font-mono text-[10px] self-center">Target date</dt>
                 <dd className="font-mono text-slate-900" data-testid="audit-target-date">{a.target_date || NOT_SET}</dd>
+                <dd className="col-span-2 h-3" aria-hidden="true" data-testid="audit-facts-gap" />
+                <dt className="uppercase tracking-wider text-slate-500 font-mono text-[10px] self-center">Created</dt>
+                <dd className="font-mono text-slate-900" data-testid="audit-created">{formatCreated(a.created_at)}</dd>
               </dl>
               <div className="mt-3 flex justify-end">
                 <div className="flex gap-2">
