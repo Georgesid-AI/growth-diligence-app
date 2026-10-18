@@ -223,6 +223,10 @@ class Sheet:
     raw_headers: Optional[List[str]] = None     # the header row as written, kept for a wide sheet (its columns are melted)
     first_col: int = 1              # the sheet column of the first column kept (1 = A): leading empty columns are dropped
     currency: Optional[str] = None  # the currency code the title rows name, if any (a forecast table's claims, section 20)
+    # In memory only, never stored: every row of the sheet as read (index i is sheet row i + 1) and, for a workbook, the indent of
+    # each cell {(row, col): n} and the merged spans [(row1, col1, row2, col2)], 1-based. A statement reads them (section 26).
+    grid: Optional[List[List]] = None
+    fmt: Optional[Dict] = None
 
 
 class SheetError(Exception):
@@ -233,8 +237,9 @@ def _blank(v) -> bool:
     return v is None or (isinstance(v, float) and v != v) or (isinstance(v, str) and not v.strip())
 
 
-def _grids(content: bytes, filename: str) -> Tuple[List[Tuple[str, List[List]]], bool]:
-    """([(sheet name, rows as cell lists)], is_csv), every sheet of the file. Index i of a grid is sheet row i + 1."""
+def _grids(content: bytes, filename: str) -> Tuple[List[Tuple[str, List[List], Dict]], bool]:
+    """([(sheet name, rows as cell lists, format)], is_csv), every sheet of the file. Index i of a grid is sheet row i + 1. The
+    format of a workbook sheet holds each cell's indent and the merged spans (Sheet.fmt); a CSV has none."""
     name = (filename or "").lower()
     try:
         if name.endswith(".csv"):
@@ -243,15 +248,25 @@ def _grids(content: bytes, filename: str) -> Tuple[List[Tuple[str, List[List]]],
             except UnicodeDecodeError:
                 text = content.decode("latin-1")
             grid = [[None if _blank(c) else c for c in row] for row in csv.reader(io.StringIO(text))]
-            return [("CSV", grid)], True
+            return [("CSV", grid, {})], True
         if name.endswith(".xlsx"):
             from openpyxl import load_workbook
             wb = load_workbook(io.BytesIO(content), data_only=True)
-            return [(ws.title, [[None if _blank(c) else c for c in row] for row in ws.iter_rows(values_only=True)])
-                    for ws in wb.worksheets], False
+            out = []
+            for ws in wb.worksheets:
+                grid, indents = [], {}
+                for r, row in enumerate(ws.iter_rows(), 1):
+                    grid.append([None if _blank(c.value) else c.value for c in row])
+                    for c, cell in enumerate(row, 1):
+                        indent = getattr(getattr(cell, "alignment", None), "indent", 0) or 0
+                        if indent and not _blank(cell.value):
+                            indents[(r, c)] = int(indent)
+                merged = [(m.min_row, m.min_col, m.max_row, m.max_col) for m in ws.merged_cells.ranges]
+                out.append((ws.title, grid, {"indents": indents, "merged": merged}))
+            return out, False
         xls = pd.ExcelFile(io.BytesIO(content))
         return [(sheet, [[None if _blank(c) else c for c in row]
-                         for row in xls.parse(sheet, header=None, dtype=object).itertuples(index=False)])
+                         for row in xls.parse(sheet, header=None, dtype=object).itertuples(index=False)], {})
                 for sheet in xls.sheet_names], False
     except SheetError:
         raise
@@ -275,15 +290,36 @@ def _has_number(row: List) -> bool:
     return False
 
 
+PERIOD_HEADER_MIN = 3           # a row of 3 or more period headers below the chosen header is the header (section 26)
+
+
+def period_headers(row: List) -> int:
+    """How many distinct period headers (a year, quarter, half, month or year to date) a row of labels holds: 0 for a row with a
+    number other than a year, which is a data row (three dates of one deal are no period headers)."""
+    if _has_number(row):
+        return 0
+    found = {(p[0], p[1], _header_text(c).lower() if p[1] is None else None)
+             for c in row if (p := parse_period(_header_text(c)))}
+    return len(found)
+
+
 def find_header_row(grid: List[List]) -> int:
     """Index in the grid of the header row: among the first 10 rows, the first that fills at least half of the
-    widest row's cells and holds no number other than a year. The first row when none qualifies."""
+    widest row's cells and holds no number other than a year. The first row when none qualifies. When a row below it,
+    within the first 10 rows, holds 3 or more period headers and the chosen row fewer, that row is the header
+    (chat-upload.md section 26: a title or tag row above the periods is not the header)."""
     top = grid[:HEADER_SCAN_ROWS]
     widest = max((_filled(r) for r in top), default=0)
+    chosen = 0
     for i, row in enumerate(top):
         if _filled(row) and 2 * _filled(row) >= widest and not _has_number(row):
-            return i
-    return 0
+            chosen = i
+            break
+    if top and period_headers(top[chosen]) < PERIOD_HEADER_MIN:
+        for i in range(chosen + 1, len(top)):
+            if period_headers(top[i]) >= PERIOD_HEADER_MIN:
+                return i
+    return chosen
 
 
 def _header_text(v) -> str:
@@ -434,7 +470,7 @@ def _unique(headers: List[str]) -> List[str]:
     return columns
 
 
-def _read_grid(grid: List[List], name: str, is_csv: bool) -> Optional[Sheet]:
+def _read_grid(grid: List[List], name: str, is_csv: bool, fmt: Optional[Dict] = None) -> Optional[Sheet]:
     """One sheet as a header, its columns and its data rows with their sheet row numbers; None when it is empty.
 
     Read without a header, short rows padded, blank lines counted: a one-cell title row cannot break a CSV.
@@ -469,7 +505,7 @@ def _read_grid(grid: List[List], name: str, is_csv: bool) -> Optional[Sheet]:
         columns = _unique(long_headers)
         frame = pd.DataFrame(data, columns=columns, dtype=object)
         return Sheet(name, h + 1, columns, texts, frame, numbers, titles, scale, note, wide, headers, lead + 1,
-                     title_currency(t for _, _, t in titles))
+                     title_currency(t for _, _, t in titles), grid, fmt or {})
     columns = _unique(headers)
     frame = pd.DataFrame([r for _, r in rows], columns=columns, dtype=object)
     if is_csv:                                   # CSV cells are text: a column that is all numbers is numeric
@@ -481,14 +517,14 @@ def _read_grid(grid: List[List], name: str, is_csv: bool) -> Optional[Sheet]:
                 if conv.notna().sum() == present.sum():
                     frame[c] = conv
     return Sheet(name, h + 1, columns, headers, frame, [n for n, _ in rows], titles, scale, note, None, None, lead + 1,
-                 title_currency(t for _, _, t in titles))
+                 title_currency(t for _, _, t in titles), grid, fmt or {})
 
 
 def read_workbook(content: bytes, filename: str) -> List[Sheet]:
     """Every sheet of a file that holds anything, in workbook order (a CSV is one sheet). Raises SheetError
     when none does."""
     grids, is_csv = _grids(content, filename)
-    sheets = [s for name, grid in grids if (s := _read_grid(grid, name, is_csv))]
+    sheets = [s for name, grid, fmt in grids if (s := _read_grid(grid, name, is_csv, fmt))]
     if not sheets:
         raise SheetError("empty")
     return sheets

@@ -70,6 +70,9 @@ export const uploadChatFile = (id, file, { dtype, replace } = {}) => {
 export const getDatasets = (id) => api.get(`/audits/${id}/datasets`, { timeout: READ_TIMEOUT_MS }).then((r) => r.data.datasets);
 export const decideColumns = (id, dtype, decisions) =>
   api.post(`/audits/${id}/datasets/${dtype}/decisions`, decisions).then((r) => r.data);
+// A statement file's lines (chat-upload.md section 26.7): [{row, action: "confirm" | "change", role, meaning}].
+export const decideLines = (id, dtype, decisions) =>
+  api.post(`/audits/${id}/datasets/${dtype}/lines`, decisions).then((r) => r.data);
 // The analyst changes the type a stored file was read as; a type already loaded needs replace (chat-upload.md section 19).
 export const changeDatasetType = (id, dtype, to, replace = false) =>
   api.post(`/audits/${id}/datasets/${dtype}/type`, { to, replace }).then((r) => r.data);

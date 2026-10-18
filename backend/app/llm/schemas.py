@@ -8,7 +8,7 @@ never the model's - see `gateway.numeric_guard`.
 import copy
 import math
 import re
-from typing import Any, Dict, List, Literal, Optional, Sequence
+from typing import Annotated, Any, Dict, List, Literal, Optional, Sequence
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -294,6 +294,90 @@ class FileTypeReply(BaseModel):
     file_type: Literal[FILE_TYPES]
 
 
+# The sheet skeleton (chat-upload.md section 26): a P&L the rules cannot map, read as a statement. Its own schema and prompt, outside
+# STRUCTURE_TYPES like the file type, so no other schema or cache key moves. The reply names rows, columns and closed words only:
+# Python rebuilds every period from its header cell and reads every figure from its cell (rule 18).
+SHEET_STRUCTURE = "sheet_structure"
+SHEET_GRAINS = ("month", "quarter", "half", "year", "ytd", "period_to_date")
+SHEET_TAGS = ("actual", "forecast", "budget", "unknown")
+SHEET_ROLES = ("heading", "total", "subline", "rate", "note", "other")
+SHEET_MEANINGS = ("revenue", "cost_of_revenue", "sm_expense", "gross_margin", "opex", "ebitda", "arr", "mrr", "new_arr",
+                  "churned_mrr", "churn_rate", "growth_rate", "bookings", "acv", "tcv", "customers", "headcount", "cash_balance",
+                  "other")
+_SHEET_START = re.compile(r"^\d{4}-(?:0[1-9]|1[0-2])(?:-\d{2})?$")
+SheetPosition = Annotated[int, Field(ge=1, strict=True)]
+
+
+class SheetPeriod(BaseModel):
+    """A period column as the model reads it: its column, grain, first month and tag. Python keeps only what it rebuilds."""
+
+    model_config = {"extra": "forbid"}
+
+    col: SheetPosition
+    grain: Literal[SHEET_GRAINS]
+    start: Optional[str]
+    tag: Literal[SHEET_TAGS]
+
+    @field_validator("start")
+    @classmethod
+    def _start(cls, v):
+        if v is not None and not _SHEET_START.match(v):
+            raise ValueError("start must be YYYY-MM or YYYY-MM-DD")
+        return v
+
+
+class SheetRow(BaseModel):
+    """What one line of the sheet is: its role, the line it hangs from and its meaning. No figure, no text."""
+
+    model_config = {"extra": "forbid"}
+
+    row: SheetPosition
+    role: Literal[SHEET_ROLES]
+    parent_row: Optional[SheetPosition]
+    meaning: Literal[SHEET_MEANINGS]
+
+
+class SheetStructureReply(BaseModel):
+    """What the model must return for a sheet skeleton. No extra keys. The gateway also checks every row and column against the
+    skeleton it sent (gateway.parse_sheet_reply)."""
+
+    model_config = {"extra": "forbid"}
+
+    type: Literal["sheet_structure"]
+    header_row: SheetPosition
+    label_col: SheetPosition
+    periods: List[SheetPeriod]
+    rows: List[SheetRow]
+
+
+def sheet_output_schema() -> dict:
+    """The sheet skeleton's JSON schema, written by hand like the others: the start format, the positions and the rows against
+    the skeleton are checked after the reply arrives."""
+    period = {
+        "type": "object",
+        "properties": {"col": {"type": "integer"}, "grain": {"type": "string", "enum": list(SHEET_GRAINS)},
+                       "start": _nullable({"type": "string"}), "tag": {"type": "string", "enum": list(SHEET_TAGS)}},
+        "required": ["col", "grain", "start", "tag"],
+        "additionalProperties": False,
+    }
+    row = {
+        "type": "object",
+        "properties": {"row": {"type": "integer"}, "role": {"type": "string", "enum": list(SHEET_ROLES)},
+                       "parent_row": _nullable({"type": "integer"}),
+                       "meaning": {"type": "string", "enum": list(SHEET_MEANINGS)}},
+        "required": ["row", "role", "parent_row", "meaning"],
+        "additionalProperties": False,
+    }
+    return {
+        "type": "object",
+        "properties": {"type": {"type": "string", "enum": [SHEET_STRUCTURE]}, "header_row": {"type": "integer"},
+                       "label_col": {"type": "integer"}, "periods": {"type": "array", "items": period},
+                       "rows": {"type": "array", "items": row}},
+        "required": ["type", "header_row", "label_col", "periods", "rows"],
+        "additionalProperties": False,
+    }
+
+
 class StructureLabel(BaseModel):
     """What one listed item measures. Exactly these fields: no value, cell id or flag (the values and cells are
     Python's, the flags Python's to compute). `item` must be a listed id: the gateway checks it."""
@@ -382,6 +466,8 @@ def output_schema(structure_type: str) -> dict:
     """The schema a call sends for its type: a column mapping and a file type keep their own, every deck type is labelled."""
     if structure_type == FILE_TYPE:
         return file_type_output_schema()
+    if structure_type == SHEET_STRUCTURE:
+        return sheet_output_schema()
     return structure_output_schema() if structure_type == "column_mapping" else labelling_output_schema()
 
 
@@ -441,6 +527,7 @@ class StructureRead(BaseModel):
     type: str
     model_type: Optional[str] = None
     file_type: Optional[str] = None
+    sheet: Optional[dict] = None            # a sheet skeleton's reply: header row, label column, periods and rows
     items: List[dict] = Field(default_factory=list)
     labels: List[dict] = Field(default_factory=list)
     pairs: List[dict] = Field(default_factory=list)

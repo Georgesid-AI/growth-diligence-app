@@ -1,7 +1,7 @@
 # Spec: Chat-style upload and column mapping
 Status: Final (2026-10-08); decisions applied (§12); amended 2026-10-08 for the mapping-screen wording, the delete dialog
 and the banner (§12, §13, S5, S9, S15, S16a, S16d, S18, S18b, S23–S25), and 2026-10-09 for §15 and §16, and 2026-10-11 for §17 (claims list and parser), and 2026-10-16 for §19 (file type, every sheet, wide tables, units and the miss message) and §20 (forecast tables read as claims, issue #114), and 2026-10-17 for §21 (deal ID and stage, and a rule confidence of exactly 80) and §22 (every column to the model, and mapping calls
-outside the daily spend cap), and the same day for the CRM required fields (§4.1) and the CRM fields box (S29; crm-dedup-clustering.md §6). Location: docs/specs/chat-upload.md.
+outside the daily spend cap), and the same day for the CRM required fields (§4.1) and the CRM fields box (S29; crm-dedup-clustering.md §6), and 2026-10-18 for §26 (sheet structure reading and yearly-basis metrics). Location: docs/specs/chat-upload.md.
 Replaces the content of the MappingWizard page. Supersedes in part docs/specs/llm-structure-reading.md §1 for
 the column-mapping path only: which columns are sent, from how many rows and with which rule hint (§4.2), and, for a column
 mapping, the daily spend cap of its circuit breaker (§4.2, 2026-10-17). Everything else in that spec stands, including the
@@ -831,3 +831,212 @@ Decided by George with the task. The architecture and the engine are unchanged.
 - **Tests.** `test_run_audit.py` (`engine_stale`: before and after the calculation, the recompute flag, no results), `MappingWizard.test.jsx` (the
   bar holds the paperclip and Map only, no Calculate text on the page, the help text once, S13, the all-confirmed line), `MappingWizard.runAudit.test.jsx`
   (the first stage not done, a stale engine, a second press sends no file and no deck).
+
+## 26. Sheet structure reading and yearly-basis metrics (2026-10-18, George)
+Decided by George with the task: a P&L the rules cannot map is read as a statement (lines down the rows, periods across the
+columns). Python reads its skeleton, the model labels each line through the gateway, Python checks every figure and builds the
+engine input, and the analyst confirms one row per line. Yearly or quarterly columns are never split into months; the actual
+years give yearly-basis metrics. The task asked for "a new §23"; §23–§25 exist, so this is §26. This section amends §19 (a P&L
+statement is no longer a miss), §20 (its actual-tagged columns are no claims), §20.5 (it stays an engine input after Save claims)
+and llm-structure-reading.md §1, §3, §7, §9 and §10 for the new structure type.
+
+**Architecture (rule 1): approved by George, 2026-10-18.** The skeleton sends every non-blank text cell of the sheet: title rows,
+headers and every row label. Until this section, rule 16 and docs/architecture.md allowed, for a spreadsheet, sheet names, title rows
+and header rows only, with a text column sent as a profile. George approved widening the boundary for the `sheet_structure` step
+only, and the same PR records it in CLAUDE.md rule 16 and in docs/architecture.md ("Data boundary" and "The amendment of
+2026-10-18"): every text cell of a sheet (title rows, headers, row labels, indents, num/blank markers), after redaction and the
+withhold rule; never any figure; at most 400 labelled rows per sheet. Every other step keeps the boundary as it was.
+
+**Challenge (rule 4).** Needed: a P&L laid out as a statement is a miss today (§19), so its monthly lines never reach the engine
+and its yearly figures are lost unless they are read as claims. Simpler: Python reads the statement and decides alone without
+consent; the model labels lines only (role, parent, meaning) and never gives a figure; no new page, the bubble's mapping table
+gives way to a line table. Deleted first: the miss message for a P&L statement, the claim reading of actual-tagged columns, and
+the "P&L (monthly)" label on a file with no months.
+
+### 26.1 When
+- Rules first: a P&L upload whose rules map every required field (month, S&M expense, revenue, cost of revenue) at 80 or more is
+  read by columns, as before (§4). No sheet call.
+- Otherwise, when Python finds a statement in the stored sheet (a label column and at least one period column, 26.2), the file is
+  read as a statement: Python's reading, then, with consent, one `sheet_structure` call, then the analyst. Revenue and CRM files
+  are unchanged. The Change path (§19) has no title rows: it reads columns, as before.
+- The same bytes again: the saved line map (26.7) is applied, with no model call.
+
+### 26.2 Python's reading (pure, `backend/app/structures/sheet.py`)
+- Grid: every row of the sheet, with the indent of each text cell (the Excel indent; in a CSV, the leading spaces, two per level)
+  and merged spans. Columns and rows are sheet positions (A = 1).
+- Header row: the row of §3; when a row below it, within the first 10 rows, holds 3 or more period headers and the chosen row
+  fewer, that row is the header.
+- Period headers: those of §19 (year, quarter, half, month, year to date) and period to date ("Period to date", "PTD", "Month to
+  date", "MTD", "Current period", "Current month"). A tag in the header itself ("2025F", "FY24 B", "2023 Actual") is read as its
+  tag and left out of the period.
+- Tag (rule 4): text above a period cell, in the rows above the header (a merged cell over its whole span): forecast, forecasts,
+  fcst, estimate, F, E → forecast; actual, actuals, act, A → actual; budget, plan, B → budget. A merged tag covers its span and no
+  further; an untagged column after a tagged one that is not merged takes the tag of the nearest tagged column on its left; untagged
+  columns before the first forecast column are actual. No tag in the sheet: unknown.
+- Period start: the first month of the period, by the audit's fiscal year-end (a year names the year it ends in, deck-parser.md
+  §2); none for year to date and period to date.
+- Label column: of the columns before the first period column, the one with the most text cells below the header; a tie goes to
+  the one with more finance words (26.10), then to the left one.
+- Lines: every row below the header that holds a text cell, at most 400 (`MAX_SHEET_ROWS`, counted with the title and header rows):
+  its label, indent and, per period column, its number (read as the engine reads a number) or blank.
+- Fallbacks, used without consent, when the model cannot be read and for every row a reply leaves out:
+  - meaning by the synonyms of 26.10, first match: 100 when the label, a leading "total" left out, is a synonym; 80 when a synonym
+    stands in it as whole words; else `other` at 0. A subline with no meaning of its own takes its parent's, at 60;
+  - role: `rate` (below); `heading` for a line with no number; `note` for a label over 60 characters with no number; `total` for a
+    label starting with "total" or a line other lines hang from; `subline` for a line that hangs from another; else `other`;
+  - parent: in a sheet with indents, the nearest row above with a smaller indent; without indents, a "Total" line is the parent of
+    the lines directly above it, up to the previous heading, total, result line (gross profit, EBITDA, net or operating profit) or
+    empty row.
+- Rules that win over the reply (rule 4): the whole label "Sales" inside a cost or OPEX section (a parent or heading above whose
+  label holds cost, costs, expense, expenses, opex, overheads or operating) is S&M expense, never revenue. A rate line (its label
+  holds "%", "as % of", rate, ratio, growth, or margin other than "gross margin", or it is a gross margin line whose every value is
+  between −1 and 1) is role `rate` whatever the reply says, and no money input reads it, gross margin included: a "Gross margin %"
+  line beside a money gross margin line is the rate, never the money.
+
+### 26.3 The skeleton (what the model reads)
+- One line per non-blank text cell, `r<row>c<col>: <text>` (a merged cell carries its span, as a deck structure's does), title rows,
+  headers and every row label included, then one line per row with content, `r<row> indent <n> num <columns> blank <columns>`, the
+  columns as `c2-c7,c9` and each part left out when empty. Never a figure: a number is "num" in its row's line, a text cell that
+  reads as a number counts as one, and a year or a date header is a period, not a figure.
+- Redaction: `redact_structure` as for the file type (§19): the target company's name becomes [redacted], emails [email], phone
+  numbers [phone], names under a person-role header and bundled first names [person], customer names their pseudonyms.
+- Withheld column (new rule): a column with 30 or more distinct texts, under 20% of which hold a finance word (26.10), keeps the
+  cells of its title and header rows; its other cells are left out and one line says `c<col> withheld: text, <N> distinct values`.
+  A cell over 200 characters is left out and counted.
+- Sheet too long: past 400 rows with text, the first 400 are read, by Python and by the model, and the table shows S30d.
+- The gateway runs the same checks on the text it is given and refuses the call on any difference: the line format, no figure,
+  at most 400 rows, the redaction (a change refuses), the withhold rule (a column it would withhold refuses), no file name, no cell
+  over 200 characters. The text is built in memory and never stored or logged.
+- The redaction and withheld counts (emails, phone numbers, names, customer names, the company name, columns and long cells
+  withheld, lines sent) are stored on the file and shown (S30a). Counts only.
+
+### 26.4 The call
+- Prompt `sheet_structure` (prompt-store.md: the owner uploads it; until then no call is made and Python's reading stands). The
+  repository holds a test-only stub.
+- Reply (`SheetStructureReply`, llm/schemas.py): `header_row`; `label_col`; `periods` [{col, grain: month|quarter|half|year|ytd|
+  period_to_date, start, tag: actual|forecast|budget|unknown}]; `rows` [{row, role: heading|total|subline|rate|note|other,
+  parent_row, meaning}], meaning one of revenue, cost_of_revenue, sm_expense, gross_margin, opex, ebitda, arr, mrr, new_arr,
+  churned_mrr, churn_rate, growth_rate, bookings, acv, tcv, customers, headcount, cash_balance, other. No free text. The gateway
+  refuses a reply that names a row or a column not in the text, a row twice, or a row as its own parent (`check=`: `schema`,
+  `metric_list` for a meaning outside the list, `item_count` for a row twice, `other`).
+- Python keeps only what it can rebuild: of Python's and the model's header row, the one with more period headers (Python's on a
+  tie); the model's label column when it holds a text cell below the header; every period from its header cell (a column Python
+  cannot read as a period is no period); the model's tag only where Python found none; each row's role, parent and meaning from
+  the reply, then the rules of 26.2.
+- Caps: the text at most 12,000 tokens (`SHEET_INPUT_CAP`), the reply at most 12,000 (`SHEET_MAX_TOKENS`); the daily spend cap,
+  the lock, the tester's allowance and the 400,000-token audit cap apply. Budget 60 s (`SHEET_AI_SECONDS`). On any failure the
+  rules' reading stands and the bubble shows S12.
+- Stored, as for every structure call: the reply (rows, columns and closed words) in `llm_structures`, the call in `llm_calls`;
+  usage counts it under its own step, `sheet_structure`.
+
+### 26.5 Python checks (no model)
+- Per period, a total (role `total`) equals the sum of its sublines (the lines that hang from it; for a total with none, the lines
+  that hang from the heading above it) within 0.5%; else `total_mismatch`, with the periods. A period where the total has a figure and
+  every subline is blank: `no_breakdown`, with the periods. A blank subline beside filled ones is left out of the sum.
+- A sum that matches with the opposite sign, or in absolute values, is `sign_differs`: a note, not an error.
+- A rate line never feeds a money input. Every number is read from its cell.
+- Lines with a failed check (`total_mismatch`, `no_breakdown`) come first in the table.
+
+### 26.6 Use of the map
+- Monthly columns tagged actual or unknown (forecast and budget months are never engine input): a monthly P&L feeds the engine
+  when the map holds revenue, cost of revenue and S&M expense. Per field, the lines of that meaning that do not hang from a line of
+  the same meaning are summed, so S&M is the sum of the Sales and Marketing total rows when there is no single S&M row. A cost line
+  written as negative figures is read as positive amounts (its checks note `sign_convention`). The title units of §19 apply. The
+  citations name the file, the sheet and the rows of the lines used.
+- Monthly KPI lines (arr, mrr, new_arr, churn_rate) that do not hang from a line of the same meaning are stored on the file as
+  company-reported series, labelled Unverified, and marked in the table (S30f). The engine does not read them.
+- Year, half-year and quarter columns are never split into months (no division by 12 or 4). Columns tagged forecast, budget or
+  unknown are read as claims (§20, its plan lines by its own rules, no model; a line the map reads as a cost, such as "Sales" in an
+  OPEX section, is none), each claim carrying its column's tag; actual-tagged columns are
+  company-reported actuals: shown in the table, compared with the revenue file when one is mapped, and the actual years feed 26.8.
+- Type label (S5, S26a): "P&L (monthly)" when month columns were found, otherwise "P&L (yearly summary)". A P&L read by columns
+  stays "P&L (monthly)". A statement with no month, quarter, half or year column (period to date and year to date only) shows S30e.
+- Compute: a statement file waits for its pending lines only and never holds a required field. Without a monthly P&L it is no P&L
+  input, and its actual years are the yearly input. Saving its claims (§20.4) keeps it an engine input (amends §20.5 for statement
+  files only).
+
+### 26.7 The table (the confirm screen)
+- In the file's bubble, in place of the mapping table: the caption S26b with the label column, S30a, S30d or S30e when they apply,
+  then one row per line: Line (as in the file, indented by its level) · Role · Meaning · Confidence · Checks. Role and Meaning are
+  drop-downs that save on change (one click): `POST /api/audits/{id}/datasets/{dtype}/lines` with `[{row, action: "confirm" |
+  "change", role, meaning}]`. A pending line also has Confirm.
+- Pending: a line the map uses (a monthly P&L field, a KPI series, a yearly input) whose meaning is the model's and not Python's,
+  or Python's at 80 or below, and that the analyst has not decided. Confidence: Python's number; the model's meaning reads "AI
+  suggestion – confirm" until decided, then "confirmed"; a saved map reads "reused".
+- Order: failed checks, then pending lines, then sheet order.
+- The map saves when nothing is pending, and on every later change: a version in `column_mappings` (`kind: "sheet_map"`, the file
+  hash, per line its row, role, meaning, parent, source and decision; no text). The same bytes again apply it with no model call and
+  no click (S14).
+
+### 26.8 Yearly-basis metrics (engine, Python only)
+When no monthly P&L is mapped and the statement has actual-tagged year columns, the results hold `yearly_basis`
+(schemas/metrics.py `YearlyBasis`; server-only, no narrative reads it):
+- per actual year: revenue; S&M as % of revenue; gross margin (revenue − cost of revenue, or the money gross margin line, ÷
+  revenue) and its change from the year before, in points; new revenue = revenue this year − revenue the year before; CAC payback
+  (yearly basis) = yearly S&M ÷ (yearly new revenue × gross margin), in months (×12, the unit of the monthly figure), shown only
+  when new revenue and the gross margin are positive;
+- past forecasts against yearly actuals (the forecast track record): each line and year the sheet holds both as actual and as
+  forecast or budget: forecast, actual, gap and gap %;
+- company-reported actuals against the revenue file: each actual year, half or quarter with a revenue line, against the revenue
+  file's revenue over the same months when it covers all of them;
+- `missing`: NRR, gross churn, the integrity tests (the revenue reconciliation), the median sales cycle and CAC payback (monthly)
+  when the engine did not compute them, each "Missing: monthly P&L / revenue by customer, last 24 months".
+Every figure and row carries `basis: "yearly basis, not monthly"`, shown on each row of the Audit tab's section (S30g).
+
+### 26.9 Screen wording (new; chosen under rule 19 for George's review)
+| Id | Where | Text |
+|---|---|---|
+| S30a | above the line table, consent ticked and the text sent | Sent to the AI: {n} lines. Masked: {e} emails, {p} phone numbers, {m} names, {c} customer names, {k} company name. Withheld: {w} columns, {l} long cells. |
+| S30b | line table headers | Line · Role · Meaning · Confidence · Checks |
+| S30c | checks | Total ≠ sum of sub-lines ({periods}) · No breakdown ({periods}) · Sign differs from sub-lines · Costs written as negatives · Rate: never read as money |
+| S30d | over the cap | Sheet too long: first 400 rows read |
+| S30e | no month, quarter, half or year column | One period only: export the P&L with one column per month and upload again. |
+| S30f | a KPI series line | Company-reported series · Unverified |
+| S30g | Audit tab section | Title "Yearly basis (P&L summary)", each row ending "yearly basis, not monthly"; tables Years (Year · Revenue · New revenue · S&M % of revenue · Gross margin · Change · CAC payback), Past forecasts (Year · Line · Forecast · Actual · Gap · Gap %), Reported vs revenue file (Period · Reported · Revenue file · Gap %); the missing lines "{metric} – Missing: monthly P&L / revenue by customer, last 24 months" |
+| S30h | status line (S13) of a statement file | {n} lines wait for your decision · Ready – press Run audit (a monthly P&L) · Read as P&L (yearly summary): yearly-basis metrics after Run audit · No monthly P&L: no line read as {fields} |
+
+### 26.10 Words (in `structures/sheet.py`, one list each)
+- Meaning synonyms, first match in this order: cost_of_revenue (cost of revenue, cost of sales, cost of goods sold, cogs, direct
+  costs, cost of services) · sm_expense (sales and marketing, sales & marketing, s&m, marketing, marketing expenses, advertising,
+  sales expenses) · gross_margin (gross margin, gross profit) · ebitda (ebitda, adjusted ebitda) · opex (operating expenses, opex,
+  overheads, general and administrative, g&a, research and development, r&d, personnel costs, payroll, salaries) · new_arr (new arr,
+  net new arr, new business arr) · churned_mrr (churned mrr, lost mrr, churned arr) · churn_rate (churn rate, churn) · growth_rate
+  (growth, growth rate, yoy, mom) · arr · mrr · bookings · acv · tcv · revenue (revenue, revenues, net sales, total revenue; the
+  whole label sales) · customers (customers, clients, subscribers, logos) · headcount (headcount, fte, ftes, employees) ·
+  cash_balance (cash balance, closing cash, cash).
+- Finance words (the withhold rule and the label column): those synonyms and cost, costs, expense, expenses, income, profit, loss,
+  margin, total, net, gross, tax, interest, depreciation, amortisation, amortization, fees, rent, salaries, wages, bonus, commission,
+  hosting, software, licences, licenses, subscriptions, services, travel, insurance, legal, contractors, other.
+
+### 26.11 Decided (engineering, rule 19)
+The cap counts rows with text, title and header rows included; a tag carries to the right; unknown monthly columns feed the engine
+as a column P&L's months do; forecast, budget and unknown yearly columns stay claims, so a plain forecast table reads as before; a
+blank subline is left out of a sum, never read as 0; costs written as negatives are read as positive; the model's periods are
+never used for a figure; yearly CAC payback is in months; the line table replaces the mapping table only for a statement file;
+the KPI series are shown in the table only (not in the register or on the Audit tab); the track record compares the sheet's own
+columns only (not deck claims); the memo's "Forecast track record" row is unchanged.
+
+### 26.12 Tests
+Fixtures in `backend/tests/fixtures/mapping/` (synthetic, invented names, rule 15):
+| Fixture | Content | Expected |
+|---|---|---|
+| `sage_statement.csv` | account-code and label columns, Period To Date and Year To Date | one period only: S30e, no engine input, "P&L (yearly summary)" |
+| `monthly_kpi.csv` | MRR sub-lines and total MRR, new ARR lines, rates, by month | series stored, sub-lines checked against the total (a mismatch flagged), no monthly P&L |
+| `yearly_pnl_by_product.csv` | a title row, "forecast" above the FY columns, a "Sales" cost section with sub-lines, a "% of revenue" line, an OPEX breakdown blank in the early years | header row 2, actual and forecast tags, Sales = S&M, no breakdown flagged, yearly-basis metrics labelled, no monthly split |
+| `customer_list.csv` | revenue per customer by year, 35 customers | the customer column withheld |
+`test_sheet_structure.py` (the reading, the rules, the checks, the use of the map, the upload, the call with a recorded reply and
+without consent, the line decisions, the saved map), `test_gateway_data_boundary.py` (rule 14: the skeleton within the limits
+reaches the provider; a figure, a 401st row, an unredacted name, a column not withheld and a file name are refused; no sent text
+is stored or logged), `test_interface_contracts.py` (the block), `test_prompt_store.py` (the name), `MappingWizard.test.jsx` (the
+line table, one click, the labels), `Dashboard.test.jsx` (the section and its labels).
+
+### 26.13 Files
+New: `backend/app/structures/sheet.py`, `backend/tests/test_sheet_structure.py`, the four fixtures,
+`backend/tests/fixtures/prompts/sheet_structure.md` (a stub), `frontend/src/components/SheetMap.jsx`,
+`frontend/src/components/YearlyBasis.jsx`. Changed: `backend/app/column_rules.py` (the grid with indents),
+`backend/app/structures/redact.py` (the skeleton text and its checks), `backend/app/llm/{gateway,schemas,prompt_store}.py`,
+`backend/server.py`, `backend/growth_engine.py`, `backend/schemas/metrics.py`, `backend/app/run_audit.py`,
+`backend/tests/test_gateway_data_boundary.py`, `backend/tests/test_interface_contracts.py`, `backend/tests/test_forecast_claims.py`
+(an annual P&L's actual years are no claims), `frontend/src/components/UploadChat.jsx`, `frontend/src/lib/{chatUpload,api}.js`,
+`frontend/src/pages/Dashboard.jsx`. Changed by George's approval of 2026-10-18: CLAUDE.md rule 16 and docs/architecture.md (the
+boundary of the `sheet_structure` step).

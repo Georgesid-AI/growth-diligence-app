@@ -8,10 +8,11 @@ import { SETUP_HELP } from "@/lib/auditForm";
 import {
   S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE_LEAD, S4_DROP_ZONE_BOLD, ALL_CONFIRMED_LINE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S_UPLOAD_RETRY, S21_NOTE_REFUSED, REASONS,
   S5_head, S9_confidence, mappedBy, sortColumns, S25_PARAGRAPHS, S27_miss, S28_read, S28_cap, S28_saved, mappingComplete,
+  S30a_sent, S30B_HEADERS, S30D_TOO_LONG, S30E_ONE_PERIOD, S30F_SERIES, S30H_YEARLY, S30C_RATE,
 } from "@/lib/chatUpload";
 
 jest.mock("@/lib/api", () => ({
-  getAudit: jest.fn(), getDatasets: jest.fn(), uploadChatFile: jest.fn(), decideColumns: jest.fn(), reportUsage: jest.fn(), changeDatasetType: jest.fn(),
+  getAudit: jest.fn(), getDatasets: jest.fn(), uploadChatFile: jest.fn(), decideColumns: jest.fn(), decideLines: jest.fn(), reportUsage: jest.fn(), changeDatasetType: jest.fn(),
   confirmForecastClaims: jest.fn(), getReview: jest.fn(), getDecks: jest.fn(), runStage: jest.fn(), uploadDeck: jest.fn(),
   saveMapping: jest.fn(), saveFx: jest.fn(), computeAudit: jest.fn(), getRevenueCustomers: jest.fn(), updateAudit: jest.fn(), putIcInputs: jest.fn(),
 }));
@@ -1086,5 +1087,95 @@ describe("one press at a time", () => {
     for (let i = 0; i < 6; i += 1) await flush();
     expect(api.uploadChatFile).toHaveBeenCalledTimes(1);
     expect(api.computeAudit).not.toHaveBeenCalled();
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// Section 26: a P&L read as a statement shows one row per line in place of the mapping table
+// ---------------------------------------------------------------------------
+const line = (row, label, over = {}) => ({
+  row, label, indent: 0, role: "other", meaning: "other", parent_row: null, source: "rules", confidence: 100, decision: null,
+  checks: {}, pending: false, series: false, ...over,
+});
+const STATEMENT = (over = {}, map = {}) => VIEW({
+  dtype: "pnl", file: "plan.csv", row_count: 13, months: null, header_row: 2, columns: [], miss: null, pnl_grain: "yearly", sheet: "CSV",
+  fields: { required: ["month", "sm_expense", "revenue", "cost_of_revenue"], optional: [] },
+  sheet_map: {
+    header_row: 2, label_col: "A", periods: [], pending: 0, too_long: false, grain: "yearly", monthly_pnl: false, missing_fields: [],
+    one_period: false, yearly: true, series: 0,
+    counts: { lines: 24, email: 0, phone: 0, person: 1, customer: 2, company: 1, columns: 1, long: 0 },
+    lines: [
+      line(9, "Operating expenses", { role: "total", meaning: "opex", checks: { no_breakdown: ["FY2021", "FY2022"] } }),
+      line(3, "Revenue", { role: "total", meaning: "revenue" }),
+      line(10, "Sales", { indent: 1, role: "total", meaning: "sm_expense", parent_row: 9 }),
+      line(8, "Gross margin as % of revenue", { role: "rate", meaning: "gross_margin", confidence: 80 }),
+    ],
+    ...map,
+  },
+  ...over,
+});
+
+describe("a P&L read as a statement (section 26)", () => {
+  test("shows the line table in place of the mapping table, with its type label, counts, checks and status", async () => {
+    await mount({ datasets: [STATEMENT()] });
+    await flush();
+    expect(q("mapping-table-pnl")).toBeNull();
+    const table = q("sheet-lines-pnl");
+    expect([...table.querySelectorAll("thead th")].map((th) => th.textContent)).toEqual([...S30B_HEADERS, ""]);
+    expect(q("bubble-head").textContent).toBe("Detected: P&L (yearly summary) · 13 lines");
+    expect(q("type-label-pnl").textContent).toContain("Type: P&L (yearly summary)");
+    expect(q("sheet-map-caption-pnl").textContent).toBe('Sheet "CSV" · header on row 2 · labels in column A');
+    expect(q("sheet-map-sent").textContent).toBe(S30a_sent(STATEMENT().sheet_map.counts));
+    expect(q("sheet-map-sent").textContent).toBe("Sent to the AI: 24 lines. Masked: 0 emails, 0 phone numbers, 1 name, 2 customer names, "
+      + "1 company name. Withheld: 1 column, 0 long cells.");
+    expect(q("line-checks-9").textContent).toBe("No breakdown (FY2021, FY2022)");
+    expect(q("line-checks-8").textContent).toBe(S30C_RATE);
+    expect(q("line-label-10").style.paddingLeft).toBe("12px");
+    expect([...table.querySelectorAll("tbody tr")].map((tr) => tr.dataset.testid)).toEqual(
+      ["line-row-9", "line-row-3", "line-row-10", "line-row-8"]);          // the server's order: failed checks first
+    expect(q("line-meaning-10").value).toBe("sm_expense");
+    expect(q("status-pnl").textContent).toBe(S30H_YEARLY);
+    expect(q("sheet-map-too-long")).toBeNull();
+  });
+
+  test("a monthly statement keeps the P&L (monthly) label; a long sheet, one period and a KPI series say so", async () => {
+    await mount({ datasets: [STATEMENT({ pnl_grain: "monthly" }, {
+      too_long: true, one_period: true, lines: [line(6, "Total MRR", { meaning: "mrr", series: true })] })] });
+    await flush();
+    expect(q("bubble-head").textContent).toBe("Detected: P&L (monthly) · 13 lines");
+    expect(q("sheet-map-too-long").textContent).toBe(S30D_TOO_LONG);
+    expect(q("sheet-map-one-period").textContent).toBe(S30E_ONE_PERIOD);
+    expect(q("line-checks-6").textContent).toBe(S30F_SERIES);
+    expect(q("status-pnl").textContent).toBe(S30E_ONE_PERIOD);
+  });
+
+  test("one click changes a meaning or a role; Confirm on a line that waits; the table follows the server", async () => {
+    const waiting = STATEMENT({ pending: 1 }, {
+      pending: 1, lines: [line(7, "New ARR - inbound", { meaning: "new_arr", confidence: 80, pending: true, series: true })] });
+    await mount({ datasets: [waiting] });
+    await flush();
+    expect(q("status-pnl").textContent).toBe("1 line waits for your decision");
+    expect(q("line-confidence-7").textContent).toBe("80");
+    expect(q("line-row-7").dataset.pending).toBe("1");
+    api.decideLines.mockResolvedValue(STATEMENT({ pending: 0 }, {
+      lines: [line(7, "New ARR - inbound", { meaning: "new_arr", source: "you", decision: "confirm", series: true })] }));
+    await click(q("line-confirm-7"));
+    expect(api.decideLines).toHaveBeenCalledWith("a1", "pnl", [{ row: 7, action: "confirm" }]);
+    expect(q("line-confidence-7").textContent).toBe("confirmed");
+    expect(q("line-confirm-7")).toBeNull();
+    await change(q("line-meaning-7"), "arr");
+    expect(api.decideLines).toHaveBeenLastCalledWith("a1", "pnl", [{ row: 7, action: "change", meaning: "arr" }]);
+    await change(q("line-role-7"), "subline");
+    expect(api.decideLines).toHaveBeenLastCalledWith("a1", "pnl", [{ row: 7, action: "change", role: "subline" }]);
+    expect(api.decideColumns).not.toHaveBeenCalled();
+  });
+
+  test("an AI meaning reads AI suggestion – confirm and a saved map reads reused; never a dash", async () => {
+    await mount({ datasets: [STATEMENT({}, { lines: [line(3, "Revenue", { source: "ai", confidence: null, pending: true }),
+                                                      line(4, "Cost", { source: "saved" })] })] });
+    await flush();
+    expect(q("line-confidence-3").textContent).toBe("AI suggestion – confirm");
+    expect(q("line-confidence-4").textContent).toBe("reused");
   });
 });

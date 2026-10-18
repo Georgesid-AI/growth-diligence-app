@@ -32,6 +32,7 @@ from app import integrity as integrity_mod
 from app import verdict as verdict_mod
 from app import decks
 from app import structures
+from app.structures import sheet as sheet_mod
 from app import column_rules as cr
 from app import forecast_claims
 from app import allowance as allowance_mod
@@ -40,6 +41,7 @@ from app import tester_view
 from app.decks import claims as deck_claims
 from app.decks import parser as deck_parser
 from app.llm import gateway as llm_gateway
+from app.llm import schemas as schemas_llm
 from app.llm import prompt_store
 from app.llm import redaction as llm_redaction
 from app.logsafety import install_secret_redaction
@@ -148,6 +150,17 @@ def normalize(rows: list, dtype: str, mapping: dict, row_numbers: Optional[list]
             out[f] = pd.to_numeric(out[f], errors="coerce") * (unit_scale or 1)
     out.attrs["date_formats"] = {f: v for f, v in date_formats.items() if v}
     return out
+
+
+def statement_pnl(statement: dict) -> pd.DataFrame:
+    """A statement file's monthly P&L as the engine reads a P&L (chat-upload.md section 26.6): one row per month column, each
+    field the sum of its lines, `_row` the revenue line's sheet row. Empty when the map holds no monthly P&L."""
+    if not statement.get("pnl"):
+        return pd.DataFrame()
+    frame = pd.DataFrame(statement["pnl"])
+    frame.insert(0, "_row", statement.get("revenue_row"))
+    frame["month"] = pd.to_datetime(frame["month"] + "-01")
+    return frame
 
 
 # 03/04/2024, 3.4.24, 03-04-2024 (+ optional time): day and month in either order.
@@ -642,13 +655,15 @@ async def usage_totals():
 ALLOWED_EXTENSIONS = ("xlsx", "csv")
 XLS_REFUSED = "Save as .xlsx or .csv and upload again."       # an old .xls workbook (2026-10-08)
 MAPPING_AI_SECONDS = 20          # the model's budget for one column mapping (section 4.2)
+SHEET_AI_SECONDS = 60            # ... and for one sheet skeleton: up to 400 lines labelled (section 26.4)
 NOTE_REFUSED = "Leave out file names, figures and cell values: this note is kept with the usage counts."
 DTYPE_ORDER = ("revenue", "crm", "pnl")
 
 
 async def _versions(audit_id: str, dtype: str) -> list:
     """The audit's saved mapping versions of one file type, oldest first (earlier versions are kept)."""
-    found = await db[structures.COLUMN_MAPPINGS_COLLECTION].find({"audit_id": audit_id, "dtype": dtype}, {"_id": 0}).to_list(100000)
+    found = await db[structures.COLUMN_MAPPINGS_COLLECTION].find({"audit_id": audit_id, "dtype": dtype, "kind": {"$exists": False}},
+                                                                  {"_id": 0}).to_list(100000)
     return sorted(found, key=lambda v: v.get("version") or 0)
 
 
@@ -692,9 +707,11 @@ def _legacy_states(ds: dict) -> list:
             for c in ds.get("columns") or []]
 
 
-def _dataset_view(ds: dict, version: Optional[int] = None, status: str = "ok", forecast: Optional[dict] = None) -> dict:
+def _dataset_view(ds: dict, version: Optional[int] = None, status: str = "ok", forecast: Optional[dict] = None,
+                  fiscal_year_end: int = 12) -> dict:
     """What the chat shows for one stored file: its bubble data and its mapping table. No rows (the preview
-    is the first 8). `forecast`: the claims a forecast table reads as (chat-upload.md section 20), or None."""
+    is the first 8). `forecast`: the claims a forecast table reads as (chat-upload.md section 20), or None. A statement file
+    (section 26) shows its line table in place of the mapping table."""
     dtype = ds["dtype"]
     states = ds.get("columns_state") or _legacy_states(ds)
     mapping = ds.get("mapping") or cr.mapping_of(dtype, states)
@@ -702,7 +719,7 @@ def _dataset_view(ds: dict, version: Optional[int] = None, status: str = "ok", f
     for i, s in enumerate(states):
         rows.append({**s, "position": i + 1, "pending": s["state"] in cr.PENDING or cr.needs_money(s),
                      "money_ask": cr.asks_money(s)})
-    return {
+    view = {
         "status": status, "dtype": dtype, "file": ds.get("file"), "size_bytes": ds.get("size_bytes"),
         "ext": usage_mod.extension_of(ds.get("file") or ""), "row_count": ds.get("row_count"),
         "header_row": ds.get("header_row"), "months": ds.get("months"), "columns": rows,
@@ -713,14 +730,22 @@ def _dataset_view(ds: dict, version: Optional[int] = None, status: str = "ok", f
         "fx": ds.get("fx") or {}, "billing_terms": ds.get("billing_terms") or {}, "preview": ds.get("preview") or [],
         "saved": bool(ds.get("mapped_at")), "sheet": ds.get("sheet"), "type_source": ds.get("type_source"),
         "unit_note": ds.get("unit_note"), "looks": ds.get("looks"), "miss": _miss(dtype, states, mapping, ds.get("looks")),
-        "forecast_claims": forecast, "read_as_claims": None,
+        "forecast_claims": forecast, "read_as_claims": None, "pnl_grain": "monthly" if dtype == "pnl" else None,
+        "sheet_map": None,
     }
+    if ds.get("sheet_map"):
+        read = sheet_mod.view(ds["sheet_map"], fiscal_year_end, ds.get("unit_scale") or 1)
+        view.update(columns=[], pending=read["pending"], missing_required=[], miss=None, pnl_grain=read["grain"],
+                    sheet_map={**read, "counts": ds["sheet_map"].get("counts")})
+    return view
 
 
 async def _forecast_found(audit_id: str, dtype: str, fiscal_year_end: int) -> tuple:
     """(stored dataset with its rows, the claims it reads as) for a miss whose periods run across the columns (chat-upload.md
     section 20), read on request from the stored rows: nothing is stored before the analyst confirms. (dataset, None) otherwise."""
     ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype}, {"_id": 0})
+    if ds and ds.get("sheet_map"):          # a statement: its plan lines over the columns not tagged actual (section 26.6)
+        return ds, sheet_mod.claims(ds["sheet_map"], ds, fiscal_year_end)
     if not ds or (ds.get("looks") or {}).get("shape") not in forecast_claims.SHAPES:
         return ds, None
     states = ds.get("columns_state") or _legacy_states(ds)
@@ -744,25 +769,29 @@ async def _claims_files(audit_id: str) -> set:
 
 
 async def _counted(audit_id: str, datasets: list) -> list:
-    """The stored files that count toward Calculate: every one but a file read as claims (section 20)."""
+    """The stored files that count toward Calculate: every one but a file read as claims (section 20). A statement file whose
+    claims are saved still counts: its actual columns are engine input (section 26.6)."""
     read = await _claims_files(audit_id)
-    return [d for d in datasets if d.get("file_hash") not in read]
+    return [d for d in datasets if d.get("file_hash") not in read or d.get("sheet_map")]
 
 
 async def _view(audit_id: str, ds: dict, version: Optional[int] = None, status: str = "ok") -> dict:
     """_dataset_view with the forecast claims of section 20: the list to confirm, and what was saved from these bytes. A file whose
     claims are saved is read as claims: it waits for nothing (no pending column, no required field), so it no longer holds Calculate."""
-    if (ds.get("looks") or {}).get("shape") not in forecast_claims.SHAPES:
+    if (ds.get("looks") or {}).get("shape") not in forecast_claims.SHAPES and not ds.get("sheet_map"):
         return _dataset_view(ds, version, status)
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "fiscal_year_end": 1})
-    _, found = await _forecast_found(audit_id, ds["dtype"], _fiscal_year_end(audit))
+    fiscal_year_end = _fiscal_year_end(audit)
+    _, found = await _forecast_found(audit_id, ds["dtype"], fiscal_year_end)
     saved = await _saved_forecast(audit_id, ds.get("file_hash"))
     claims = sum(len(c.get("by_period") or []) for c in saved)
     if found and found.get("count"):
         found = {**found, "saved_lines": len(saved), "saved": claims}
-    view = _dataset_view(ds, version, status, found or None)
+    view = _dataset_view(ds, version, status, found or None, fiscal_year_end)
     if saved:
-        view.update(read_as_claims={"lines": len(saved), "claims": claims}, pending=0, missing_required=[])
+        # A statement file still waits for its own lines (section 26.6); any other file read as claims waits for nothing.
+        view.update(read_as_claims={"lines": len(saved), "claims": claims},
+                    **({} if ds.get("sheet_map") else {"pending": 0, "missing_required": []}))
     return view
 
 
@@ -802,6 +831,65 @@ async def _ask_model(audit: dict, dtype: str, sheet: "cr.Sheet", rows: list, sta
     proposed = structures.proposed_mapping(read.items, sheet.columns, list(FIELD_DEFS[dtype]["required"]) +
                                            list(FIELD_DEFS[dtype]["optional"]))
     return cr.apply_model(dtype, sheet, proposals, proposed), {"status": "read", "reason": read.reason}
+
+
+async def _saved_sheet_map(audit_id: str, digest: str) -> Optional[dict]:
+    """The latest saved line map of these bytes (chat-upload.md section 26.7), or None."""
+    found = await db[structures.COLUMN_MAPPINGS_COLLECTION].find(
+        {"audit_id": audit_id, "kind": "sheet_map", "file_hash": digest}, {"_id": 0}).to_list(1000)
+    return max(found, key=lambda v: v.get("version") or 0) if found else None
+
+
+async def _write_sheet_version(audit_id: str, dtype: str, ds: dict) -> int:
+    """Save a statement file's line map unless the latest version of its bytes already says the same: per line its row, role,
+    meaning, parent, source and decision, and the header row and label column. No text."""
+    sheet_map = ds["sheet_map"]
+    lines = sheet_mod.saved_lines(sheet_map)
+    latest = await _saved_sheet_map(audit_id, ds.get("file_hash"))
+    key = lambda found: [(x["row"], x["role"], x["meaning"], x["parent_row"]) for x in found]  # noqa: E731
+    if latest and key(latest["lines"]) == key(lines) and latest.get("header_row") == sheet_map["header_row"]:
+        return latest["version"]
+    found = await db[structures.COLUMN_MAPPINGS_COLLECTION].find(
+        {"audit_id": audit_id, "kind": "sheet_map"}, {"_id": 0, "version": 1}).to_list(10000)
+    number = max([v.get("version") or 0 for v in found] or [0]) + 1
+    await db[structures.COLUMN_MAPPINGS_COLLECTION].insert_one({
+        "audit_id": audit_id, "kind": "sheet_map", "sheet_dtype": dtype, "file_hash": ds.get("file_hash"), "version": number,
+        "header_row": sheet_map["header_row"], "label_col": sheet_map["label_col"], "lines": lines, "saved_at": usage_mod.now()})
+    return number
+
+
+async def _read_statement(a: dict, sheet: "cr.Sheet", digest: str) -> Optional[dict]:
+    """A P&L the rules cannot map by columns, read as a statement (chat-upload.md section 26): Python's reading, then the saved
+    map of the same bytes, else, with consent, one sheet_structure call. None when the rules map every required field at 80 or
+    more (26.1) or the sheet is no statement. The skeleton is built in memory; it is never stored or logged."""
+    if sheet.grid is None or sheet_mod.rules_cover(cr.analyse("pnl", sheet)[0]):
+        return None
+    fiscal_year_end = _fiscal_year_end(a)
+    reading = sheet_mod.read(sheet.grid, sheet.fmt, fiscal_year_end)
+    if reading is None:
+        return None
+    scale, note = cr.read_units(reading["titles"])
+    units = {"unit_scale": scale, "unit_note": note, "title_currency": cr.title_currency(t for _, _, t in reading["titles"])}
+    saved = await _saved_sheet_map(a["id"], digest)
+    if saved:                 # the same bytes again: the saved map, no model call, no click
+        if (saved.get("header_row"), saved.get("label_col")) != (reading["header_row"], reading["label_col"]):
+            reading = sheet_mod.read(sheet.grid, sheet.fmt, fiscal_year_end, saved.get("header_row"), saved.get("label_col")) \
+                or reading
+        lines = [{**x, "source": "saved"} for x in saved["lines"]]
+        return {"map": {**sheet_mod.build(reading, None, lines), "counts": None}, "ai": "stored", **units}
+    if a.get("structure_reading_consent") is not True:
+        return {"map": {**sheet_mod.build(reading), "counts": None}, "ai": "no_consent", **units}
+    text, counts = sheet_mod.skeleton(reading, a.get("company_name"), await llm_redaction.get_map(db, a["id"]),
+                                      structures.redact.file_type_withheld(a))
+    try:
+        read = await asyncio.wait_for(llm_gateway.read_structure(db, a["id"], text, "sheet_structure"), SHEET_AI_SECONDS)
+    except asyncio.TimeoutError:
+        return {"map": {**sheet_mod.build(reading), "counts": counts}, "ai": "timeout", **units}
+    if read.status != "read" or not read.sheet:
+        return {"map": {**sheet_mod.build(reading), "counts": counts}, "ai": read.status, **units}
+    await llm_gateway.record_verification(db, a["id"], read.key, ["suggestion"] * len(read.sheet.get("rows") or []))
+    again = sheet_mod.merged(sheet.grid, sheet.fmt, fiscal_year_end, reading, read.sheet)
+    return {"map": {**sheet_mod.build(again, read.sheet), "counts": counts}, "ai": "read", **units}
 
 
 async def _stored_file_type(audit_id: str, digest: str) -> Optional[dict]:
@@ -881,6 +969,9 @@ async def _load(a: dict, audit_id: str, chosen: str, sheet: "cr.Sheet", filename
     read), then the analyst. `drop` is the type this file was stored as before, when the analyst changed its type."""
     existing = await db.datasets.find_one({"audit_id": audit_id, "dtype": chosen}, {"_id": 0, "rows": 0})
     versions = await _versions(audit_id, chosen)
+    if existing and existing.get("file_hash") == digest and drop is None and existing.get("sheet_map"):
+        saved = await _saved_sheet_map(audit_id, digest)
+        return await _view(audit_id, existing, saved["version"] if saved else None, "same_file")
     if existing and existing.get("file_hash") == digest and drop is None:
         same = [v for v in versions if v.get("file_hash") == digest]
         if same:        # the latest saved version is applied again: no rules, no model, no clicks
@@ -898,11 +989,17 @@ async def _load(a: dict, audit_id: str, chosen: str, sheet: "cr.Sheet", filename
     headers = [v for v in versions if v.get("header_key") == key]
     looks = cr.describe(sheet)
     ai_reading = {"status": "rules", "reason": None}
+    statement = await _read_statement(a, sheet, digest) if chosen == "pnl" else None
     # A saved mapping that is itself a miss (at most half of the required fields mapped, as when every column was left
     # out as "Not used") is no mapping to reuse: the rules and the model run again for this file.
     reusable = [v for v in (same or headers)
                 if not cr.is_miss(chosen, {c.get("field"): c["column"] for c in _saved_columns(v) if c.get("field")}, looks)]
-    if reusable and (same or headers):
+    if statement is not None:            # a statement: its line map replaces the column mapping (section 26)
+        states, ai_reading = [], {"status": statement["ai"], "reason": None}
+        if statement["ai"] not in ("no_consent", "stored"):
+            await _usage_update(audit_id, lambda u: u["steps"]["mapping_ai"].__setitem__(
+                statement["ai"], u["steps"]["mapping_ai"].get(statement["ai"], 0) + 1))
+    elif reusable and (same or headers):
         states = cr.states_from_saved(chosen, sheet, _saved_columns(reusable[-1]), scale=not any(v in same for v in reusable))
         ai_reading = {"status": "stored", "reason": None}
     else:
@@ -925,6 +1022,11 @@ async def _load(a: dict, audit_id: str, chosen: str, sheet: "cr.Sheet", filename
            "uploaded_at": usage_mod.now(), "mapped_at": None, "type_source": type_source, "looks": looks,
            "unit_scale": sheet.unit_scale, "unit_note": sheet.unit_note, "wide": sheet.wide, "raw_headers": sheet.raw_headers,
            "first_col": sheet.first_col, "title_currency": sheet.currency}
+    if statement is not None:
+        sheet_map = statement["map"]
+        doc.update(sheet_map=sheet_map, mapping={}, header_row=sheet_map["header_row"], row_count=len(sheet_map["lines"]),
+                   months=sheet_mod.months_found(sheet_map), unit_scale=statement["unit_scale"], unit_note=statement["unit_note"],
+                   title_currency=statement["title_currency"] or sheet.currency)
     await db.datasets.replace_one({"audit_id": audit_id, "dtype": chosen}, doc, upsert=True)
     if drop and drop != chosen:
         await db.datasets.delete_one({"audit_id": audit_id, "dtype": drop})
@@ -939,8 +1041,9 @@ async def _load(a: dict, audit_id: str, chosen: str, sheet: "cr.Sheet", filename
     await allowance_mod.record_for_audit(db, audit_id, files=1)
     version = await _commit_mapping(audit_id, chosen, background)
     await _mark_stale_and_maybe_recompute(audit_id)
-    logger.info("upload: run_id=%s type=%s detected=%s source=%s pending=%d ai=%s type_ai=%s", audit_id, chosen, detected,
-                type_source, cr.pending_count(states), ai_reading["status"], type_status or "-")
+    logger.info("upload: run_id=%s type=%s detected=%s source=%s pending=%d ai=%s type_ai=%s sheet=%s", audit_id, chosen, detected,
+                type_source, cr.pending_count(states) + sheet_mod.pending_count(doc.get("sheet_map")), ai_reading["status"],
+                type_status or "-", "statement" if statement is not None else "-")
     stored = await db.datasets.find_one({"audit_id": audit_id, "dtype": chosen}, {"_id": 0, "rows": 0})
     return await _view(audit_id, stored, version)
 
@@ -951,6 +1054,12 @@ async def _commit_mapping(audit_id: str, dtype: str, background: Optional[Backgr
     ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype})
     if not ds:
         return None
+    if ds.get("sheet_map"):              # a statement file saves its line map (section 26.7)
+        if sheet_mod.pending_count(ds["sheet_map"]):
+            return None
+        version = await _write_sheet_version(audit_id, dtype, ds)
+        await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype}, {"$set": {"mapped_at": usage_mod.now()}})
+        return version
     states = ds.get("columns_state")
     if states is None or cr.pending_count(states):
         return None
@@ -1115,6 +1224,45 @@ async def _apply_decisions(audit_id: str, dtype: str, ds: dict, raw: list, kept_
     version = await _commit_mapping(audit_id, dtype, background)
     await _mark_stale_and_maybe_recompute(audit_id)
     logger.info("decisions: run_id=%s type=%s columns=%d pending=%d", audit_id, dtype, len(changed), cr.pending_count(states))
+    stored = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype}, {"_id": 0, "rows": 0})
+    return sanitize(await _view(audit_id, stored, version))
+
+
+class LineDecision(BaseModel):
+    """One line of a statement file decided by the analyst (chat-upload.md section 26.7): confirmed as it is, or changed to a role
+    or a meaning of the closed lists. No text."""
+    model_config = {"extra": "forbid"}
+    row: int
+    action: Literal["confirm", "change"]
+    role: Optional[str] = None
+    meaning: Optional[str] = None
+
+
+@api.post("/audits/{audit_id}/datasets/{dtype}/lines")
+async def decide_lines(audit_id: str, dtype: str, decisions: List[LineDecision], background: BackgroundTasks):
+    """Apply the analyst's decisions to a statement file's line table. The map saves when nothing waits, and on every later
+    change; a computed audit is brought up to date."""
+    ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype}, {"_id": 0, "rows": 0})
+    if not ds or not ds.get("sheet_map"):
+        raise HTTPException(404, "No sheet lines to decide")
+    sheet_map = ds["sheet_map"]
+    by_row = {line["row"]: line for line in sheet_map["lines"]}
+    for d in decisions:
+        if d.row not in by_row:
+            raise HTTPException(400, "Not a line of this sheet")
+        if (d.role is not None and d.role not in schemas_llm.SHEET_ROLES) or \
+                (d.meaning is not None and d.meaning not in schemas_llm.SHEET_MEANINGS):
+            raise HTTPException(400, "Choose one of the listed roles and meanings")
+    for d in decisions:
+        line = by_row[d.row]
+        if d.action == "change":
+            line.update({k: v for k, v in (("role", d.role), ("meaning", d.meaning)) if v is not None})
+        line.update(source="you", decision=d.action)
+    await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype}, {"$set": {"sheet_map": sheet_map}})
+    version = await _commit_mapping(audit_id, dtype, background)
+    await _mark_stale_and_maybe_recompute(audit_id)
+    logger.info("sheet lines: run_id=%s type=%s lines=%d pending=%d", audit_id, dtype, len(decisions),
+                sheet_mod.pending_count(sheet_map))
     stored = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype}, {"_id": 0, "rows": 0})
     return sanitize(await _view(audit_id, stored, version))
 
@@ -2427,10 +2575,15 @@ async def _run_compute(audit_id: str) -> dict:
     if not a:
         raise HTTPException(404, "Audit not found")
     read = await _claims_files(audit_id)        # a file read as claims is not an engine input (chat-upload.md section 20)
-    ds = {d["dtype"]: d for d in await db.datasets.find({"audit_id": audit_id}).to_list(10) if d.get("file_hash") not in read}
+    ds = {d["dtype"]: d for d in await db.datasets.find({"audit_id": audit_id}).to_list(10)
+          if d.get("file_hash") not in read or d.get("sheet_map")}       # a statement file stays an input (section 26.6)
     if "revenue" not in ds:
         raise HTTPException(409, "Revenue lines are required before compute")
     for d in ds.values():          # a file read by the chat upload waits for the analyst (chat-upload.md section 4.3)
+        if d.get("sheet_map"):
+            if sheet_mod.pending_count(d["sheet_map"]):
+                raise HTTPException(409, "Lines wait for your decision before compute")
+            continue
         states = d.get("columns_state")
         if states is not None and cr.pending_count(states):
             raise HTTPException(409, "Columns wait for your decision before compute")
@@ -2442,7 +2595,12 @@ async def _run_compute(audit_id: str) -> dict:
         return normalize(d["rows"], dtype, d["mapping"], d.get("row_numbers"), d.get("unit_scale") or 1)
     rev = read("revenue")
     crm = read("crm") if "crm" in ds else pd.DataFrame()
-    pnl = read("pnl") if "pnl" in ds else pd.DataFrame()
+    statement = sheet_mod.feed(ds["pnl"]["sheet_map"], _fiscal_year_end(a), ds["pnl"].get("unit_scale") or 1,
+                               {"file": ds["pnl"]["file"], "sheet": ds["pnl"]["sheet"]}) if ds.get("pnl", {}).get("sheet_map") else None
+    if statement:                  # a statement: its monthly P&L, never a split of a year or a quarter (section 26.6)
+        pnl = statement_pnl(statement)
+    else:
+        pnl = read("pnl") if "pnl" in ds else pd.DataFrame()
 
     fx = merged_fx(a, ds["revenue"].get("fx"))
     config = {
@@ -2452,6 +2610,8 @@ async def _run_compute(audit_id: str) -> dict:
         "as_of_month": a.get("as_of_month"),
         "last_month_complete": bool(a.get("last_month_complete")),
     }
+    if statement and statement["rows"]:
+        config["pnl_rows"] = statement["rows"]          # the sheet rows of the P&L lines: the P&L citations name them
     sources = {t: {"file": ds[t]["file"], "sheet": ds[t]["sheet"]} for t in ds}
     failures = []
 
@@ -2459,7 +2619,9 @@ async def _run_compute(audit_id: str) -> dict:
         failures.append(type(exc).__name__)
         _log_metric_error(exc, audit_id)
     try:
-        results = sanitize(ge.compute_all(rev, crm, pnl, config, sources, files=candidate_views(ds), on_error=on_error))
+        views = candidate_views({t: d for t, d in ds.items() if not d.get("sheet_map")})
+        results = sanitize(ge.compute_all(rev, crm, pnl, config, sources, files=views, on_error=on_error,
+                                          yearly=(statement or {}).get("yearly")))
     except Exception as exc:
         failed = failures + [type(exc).__name__]        # bound before the lambda: `exc` is unbound once the block ends
         await _usage_update(audit_id, lambda u: usage_mod.record_compute(u, failed))
