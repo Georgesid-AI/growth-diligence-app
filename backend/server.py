@@ -34,6 +34,7 @@ from app import decks
 from app import structures
 from app import column_rules as cr
 from app import forecast_claims
+from app import allowance as allowance_mod
 from app import usage as usage_mod
 from app.decks import claims as deck_claims
 from app.decks import parser as deck_parser
@@ -66,9 +67,7 @@ async def access_guard(request: Request):
         raise HTTPException(401, "Invalid or missing access link")
     role, tester_id = who
     request.state.principal = who
-    if path == "/api/usage/totals":
-        return                      # a tester reads the totals of their own audits, the owner token those of all (usage_totals)
-    if path.startswith("/api/admin/"):
+    if path.startswith("/api/admin/") or path == "/api/usage/totals":      # owner token only; a tester gets 404
         if role != access_mod.OWNER:
             raise HTTPException(404, "Not found")
         return
@@ -431,6 +430,39 @@ async def reissue_tester(tester_id: str, request: Request):
     return {"id": tester_id, "link": _link(request, token)}
 
 
+class AllowanceSet(BaseModel):
+    model_config = {"extra": "forbid"}
+    allowance_usd: float = Field(ge=0, le=allowance_mod.MAX_ALLOWANCE_USD)
+
+    @field_validator("allowance_usd")
+    @classmethod
+    def _cents(cls, v: float) -> float:
+        if round(v, 2) != v:
+            raise ValueError("at most two decimals")
+        return v
+
+
+@api.get("/admin/usage")
+async def admin_usage():
+    """The owner's Usage section: counts, tokens and USD per tester link label, this month and all time. No audit field."""
+    return await allowance_mod.report(db)
+
+
+@api.post("/admin/testers/{tester_id}/allowance")
+async def set_tester_allowance(tester_id: str, payload: AllowanceSet):
+    if not await allowance_mod.set_allowance(db, tester_id, payload.allowance_usd):
+        raise HTTPException(404, "Not found")
+    return {"ok": True, "allowance_usd": round(payload.allowance_usd, 2)}
+
+
+@api.get("/allowance")
+async def my_allowance(request: Request):
+    """The caller's monthly AI allowance and use (usage-and-allowance.md section 4). The owner token gets 404 from the guard."""
+    who = getattr(request.state, "principal", None)
+    doc = await db[access_mod.COLLECTION].find_one({"id": who[1]}) if who and who[1] else None
+    return allowance_mod.status(doc) if doc else {"state": "off"}
+
+
 @api.get("/audits")
 async def list_audits(request: Request):
     who = getattr(request.state, "principal", None)
@@ -565,18 +597,13 @@ async def report_usage(audit_id: str, event: UsageEvent):
 
 
 @api.get("/usage/totals")
-async def usage_totals(request: Request):
+async def usage_totals():
     """Sums across audits, the median days from first upload to first export and the 50 newest "Other" notes. No
     per-audit rows, names or ids (chat-upload.md section 7). Tokens and cost come from the call log; evidence
-    labels and analyst changes are computed on read from what the audits hold. A tester token sums its own audits
-    only, notes included; the owner token sums all (access-links.md section 3)."""
-    who = getattr(request.state, "principal", None)
-    mine = {"owner": who[1]} if who and who[0] == access_mod.TESTER else {}
-    audits = await db.audits.find(mine, {"_id": 0}).to_list(100000)
+    labels and analyst changes are computed on read from what the audits hold. Owner token only: a tester gets 404 from the
+    guard (usage-and-allowance.md D3)."""
+    audits = await db.audits.find({}, {"_id": 0}).to_list(100000)
     calls = await db[llm_gateway.CALLS_COLLECTION].find({}, {"_id": 0}).to_list(1000000)
-    if mine:
-        own = {a["id"] for a in audits}
-        calls = [c for c in calls if c.get("run_id") in own]
     steps: dict = {}
     for c in calls:
         step = steps.setdefault(str(c.get("step") or "other"), {"calls": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0})
@@ -595,8 +622,7 @@ async def usage_totals(request: Request):
             sum(len(c.get("claim_inputs") or {}) for c in claims)
         changes += usage_mod.get(a)["columns"]["corrected"]
     return sanitize(usage_mod.totals([usage_mod.get(a) for a in audits], {
-        "tokens_and_cost_by_step": steps, "evidence_labels": labels, "metrics_missing": missing, "analyst_changes": changes,
-        "scope": "own" if mine else "all"}))       # the screen words its title from this
+        "tokens_and_cost_by_step": steps, "evidence_labels": labels, "metrics_missing": missing, "analyst_changes": changes}))
 
 
 # ---------------------------------------------------------------------------
@@ -900,6 +926,7 @@ async def _load(a: dict, audit_id: str, chosen: str, sheet: "cr.Sheet", filename
             if kind and s["state"] in cr.MAPPED:
                 usage_mod.record_columns(u, kind)
     await _usage_update(audit_id, count)
+    await allowance_mod.record_for_audit(db, audit_id, files=1)
     version = await _commit_mapping(audit_id, chosen, background)
     await _mark_stale_and_maybe_recompute(audit_id)
     logger.info("upload: run_id=%s type=%s detected=%s source=%s pending=%d ai=%s type_ai=%s", audit_id, chosen, detected,
@@ -1283,6 +1310,7 @@ async def upload_deck(audit_id: str, background: BackgroundTasks, file: UploadFi
              "order": len(reviewed) + order, "status": "pending"})
     # Its structures are read by the model after the response, or wait for the revenue file
     # (llm-structure-reading.md section 3); with consent unticked, Python's candidates stand alone.
+    await allowance_mod.record_for_audit(db, audit_id, files=1)
     background.add_task(structures.process_deck_safely, db, audit_id, deck_id)
     return {"deck_id": deck_id, "file": deck["file"], "format": deck["format"], "page_unit": deck["page_unit"],
             "pages": deck["pages"], "candidates": len(candidates), "kept_reviewed": len(reviewed),

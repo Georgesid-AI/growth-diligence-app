@@ -74,6 +74,16 @@ def _set_paths(doc, values):
         target[parts[-1]] = value
 
 
+def _inc_paths(doc, values):
+    """Mongo's $inc: a dotted key adds to a nested number, creating it at zero."""
+    for key, value in values.items():
+        parts = key.split(".")
+        target = doc
+        for part in parts[:-1]:
+            target = target.setdefault(part, {})
+        target[parts[-1]] = target.get(parts[-1], 0) + value
+
+
 class FakeResult:
     def __init__(self, modified_count=0, deleted_count=0, upserted_id=None):
         self.modified_count = modified_count
@@ -124,6 +134,7 @@ class FakeCollection:
         for d in self.docs:
             if _matches(d, flt):
                 _set_paths(d, update.get("$set", {}))
+                _inc_paths(d, update.get("$inc", {}))
                 return FakeResult(modified_count=1)
         if upsert:
             # Like Mongo: an upsert seeds the new document from the filter's

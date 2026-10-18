@@ -3,9 +3,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  ownerIssueTester, ownerPrompts, ownerReissueTester, ownerRevokeTester, ownerTesters, ownerUploadPrompt,
+  ownerIssueTester, ownerPrompts, ownerReissueTester, ownerRevokeTester, ownerSetAllowance, ownerTesters, ownerUploadPrompt, ownerUsage,
 } from "@/lib/api";
 import { describeRequestError } from "@/lib/requestError";
+import OwnerUsage from "@/components/OwnerUsage";
 
 // The owner page (docs/specs/prompt-store.md section 3). The owner token lives in this component's state only: never in
 // storage, never in the address. The page shows the prompt store and the tester links and no audit data; prompt text goes up
@@ -26,6 +27,7 @@ export default function OwnerPage() {
   const [error, setError] = useState(null);
   const [prompts, setPrompts] = useState(null);   // { names, prompts, missing }
   const [testers, setTesters] = useState(null);
+  const [usage, setUsage] = useState(null);       // GET /api/admin/usage: counts and USD by tester link
   const [name, setName] = useState("");
   const [text, setText] = useState("");
   const [fileName, setFileName] = useState(null);
@@ -44,6 +46,7 @@ export default function OwnerPage() {
       setPrompts(list);
       setName(list.names[0] || "");
       setTesters(await ownerTesters(entered));
+      setUsage(await ownerUsage(entered));
       setToken(entered);
       setDraftToken("");
     } catch (e) {
@@ -85,6 +88,20 @@ export default function OwnerPage() {
       setShown({ label: out.label, link: linkOf(out.link) });
       setLabel("");
       setTesters(await ownerTesters(token));
+      setUsage(await ownerUsage(token));
+    } catch (e) {
+      fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveAllowance = async (tester, value) => {
+    setError(null);
+    setBusy(true);
+    try {
+      await ownerSetAllowance(token, tester.id, value);
+      setUsage(await ownerUsage(token));
     } catch (e) {
       fail(e);
     } finally {
@@ -99,6 +116,7 @@ export default function OwnerPage() {
       const out = await call(token, tester.id);
       if (out.link) setShown({ label: tester.label, link: linkOf(out.link) });
       setTesters(await ownerTesters(token));
+      setUsage(await ownerUsage(token));
     } catch (e) {
       fail(e);
     } finally {
@@ -204,6 +222,8 @@ export default function OwnerPage() {
           </tbody>
         </table>
       </section>
+
+      <OwnerUsage usage={usage} busy={busy} onSave={saveAllowance} />
     </main>
   );
 }

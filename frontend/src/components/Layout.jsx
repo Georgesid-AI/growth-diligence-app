@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Activity, ChevronDown, Terminal } from "lucide-react";
+import { ChevronDown, Terminal } from "lucide-react";
 import { fmtCurrency } from "@/lib/format";
 import { evidenceToText } from "@/lib/periods";
 import BlockerBanner from "@/components/BlockerBanner";
+import AllowanceBanner from "@/components/AllowanceBanner";
 
 export function Layout({ audit, children }) {
   const nav = useNavigate();
@@ -121,14 +122,11 @@ export function Layout({ audit, children }) {
                 </div>
               </div>
             )}
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30">
-              <Activity className="h-3 w-3 text-emerald-700 animate-pulse" />
-              <span className="text-[10px] font-mono text-emerald-700 uppercase tracking-wide">0% Heuristics</span>
-            </div>
           </div>
         </div>
         {id && <BlockerBanner key={`${id}-${loc.pathname}`} auditId={id} />}
       </header>
+      <AllowanceBanner key={loc.pathname} />
       <main className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-6">{children}</main>
     </div>
   );

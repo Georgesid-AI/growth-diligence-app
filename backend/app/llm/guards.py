@@ -1,9 +1,10 @@
 """Cost and loop guards.
 
-Four independent brakes, all backed by Mongo so they hold across workers:
+Five independent brakes, all backed by Mongo so they hold across workers:
 
   * a hard per-run call cap on narrative calls (the 16th is refused, never queued or retried);
   * a per-audit token cap on structure reading calls (400,000 billed tokens, input and output);
+  * a monthly AI allowance per tester link (every call, column mappings included: usage-and-allowance.md);
   * a daily spend ceiling across all runs (column mappings are exempt but counted: chat-upload.md section 4.2);
   * a per-run+step advisory lock, so a second request that arrives while one is
     in flight waits for that result instead of issuing another provider call. Structure
@@ -20,6 +21,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from pymongo.errors import DuplicateKeyError
+
+from .. import allowance
 
 logger = logging.getLogger("growth.llm")
 
@@ -117,6 +120,14 @@ async def check_spend_cap(db) -> None:
             "daily_spend_cap_exceeded",
             f"${spent:.4f} spent today against a ${cap:.2f} cap",
         )
+
+
+async def check_allowance(db, run_id: str) -> None:
+    """The tester's monthly AI allowance (docs/specs/usage-and-allowance.md section 4). Every model call is checked, a column
+    mapping included. An audit with no tester has no allowance."""
+    current = await allowance.status_for_audit(db, run_id)
+    if current and current["state"] == allowance.BLOCKED:
+        raise GuardRefusal("monthly_allowance_reached")
 
 
 async def acquire(db, run_id: str, step: str) -> Optional[str]:

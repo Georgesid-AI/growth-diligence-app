@@ -54,7 +54,7 @@ from typing import Any, Dict, Iterable, List, NamedTuple, Optional, Tuple
 
 from schemas.metrics import safe_problems
 
-from .. import disclosure, formatting
+from .. import allowance, disclosure, formatting
 from ..structures import redact as structure_redact
 from . import cache, guards, prompt_store, redaction, schemas, step_payloads
 from .schemas import (FILE_TYPE, MAPPING_FIELDS, STRUCTURE_TYPES, DeckUsage, FileTypeReply, LabellingReply, Narrative, NarrativeResponse,
@@ -950,6 +950,10 @@ async def log_call(
         "unmatched_numbers": list(unmatched_numbers or []),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     })
+    if not cache_hit and (input_tokens or output_tokens):
+        # A billed call counts against the tester's allowance, kept on the tester and not on the audit (usage-and-allowance.md).
+        await allowance.record_for_audit(db, run_id, calls=1, tokens=int(input_tokens) + int(output_tokens),
+                                         cost_usd=float(estimated_cost_usd))
 
 
 def estimate_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
@@ -1037,6 +1041,7 @@ async def generate_narrative(
     try:
         try:
             await guards.check_call_cap(db, run_id)
+            await guards.check_allowance(db, run_id)
             await guards.check_spend_cap(db)
         except guards.GuardRefusal as refusal:
             await log_call(
@@ -1419,7 +1424,8 @@ STRUCTURES_COLLECTION = cache.STRUCTURES_COLLECTION
 NOT_READ = "Not read by AI"
 TOO_LARGE = "Too large for AI reading"
 # The reason a cap refusal's "structure not read" line gives, per guard code (llm_calls keeps the code).
-CAP_REASONS = {"daily_spend_cap_exceeded": "spend_cap", "structure_token_cap_reached": "token_cap"}
+CAP_REASONS = {"daily_spend_cap_exceeded": "spend_cap", "structure_token_cap_reached": "token_cap",
+               "monthly_allowance_reached": "allowance"}
 # A file name in the text means it was built from the wrong thing: refused.
 _FILE_NAME = re.compile(r"(?i)\b[\w\-. ]{1,80}\.(?:pptx?|pdf|docx?|xlsx?|xlsm|xls|csv)\b")
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
@@ -1751,6 +1757,7 @@ async def read_structure(
     billed = (0, 0)
     try:
         try:
+            await guards.check_allowance(db, audit_id)
             if structure_type != "column_mapping":
                 await guards.check_spend_cap(db)
             await guards.check_structure_token_cap(db, audit_id, counted, STRUCTURE_MAX_TOKENS)

@@ -87,6 +87,12 @@ async def reissue(db, tester_id: str) -> Optional[str]:
     return token
 
 
+def status_of(doc: dict) -> str:
+    if doc.get("revoked_at"):
+        return "revoked"
+    return "expired" if datetime.fromisoformat(doc["expires_at"]) <= utcnow() else "active"
+
+
 async def testers(db) -> list:
     docs = await db[COLLECTION].find({}, {"_id": 0, "hash": 0}).to_list(1000)
-    return [{k: v for k, v in d.items() if k not in ("hash", "_id")} for d in docs]
+    return [{k: v for k, v in d.items() if k not in ("hash", "_id", "ledger")} for d in docs]

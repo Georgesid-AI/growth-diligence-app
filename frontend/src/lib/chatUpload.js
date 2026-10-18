@@ -26,12 +26,6 @@ export const S17_NARRATIVE_FAILED_TITLE = "Narrative could not be generated.";
 export const S18_TITLE = (company) => `Delete ${company}?`;
 export const S18_BODY = ["Deleting this audit with its files, mappings and results cannot be undone. Type ", " to confirm."];
 export const S18_MISMATCH = "Name does not match";
-// S19 title by scope (George, 15 Oct 2026): a tester token sums its own audits, the owner token all of them.
-export const S19_USAGE_OWN = "Your usage";
-export const S19_USAGE_ALL = "Usage totals (all testers)";
-const S19_USAGE_REST = " Counts and costs only — no file names, figures or company names. Kept to improve the app.";
-export const S19_USAGE_EXPLAINER_OWN = `Totals for your audits since counting began.${S19_USAGE_REST}`;
-export const S19_USAGE_EXPLAINER_ALL = `Totals across all testers since counting began.${S19_USAGE_REST}`;
 export const S20_NOTE_PLACEHOLDER = "Why? Up to 60 characters; no file names, figures or names.";
 export const S21_NOTE_REFUSED = "Leave out file names, figures and cell values: this note is kept with the usage counts.";
 export const S22_RECONCILIATION = "Revenue reconciliation";

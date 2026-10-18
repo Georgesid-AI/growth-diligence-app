@@ -6,7 +6,7 @@ import { BLOCKERS_CHANGED } from "./BlockerBanner";
 import * as api from "@/lib/api";
 import { REVENUE_REQUIRED_NOTE, setCalculatePressed } from "@/lib/chatUpload";
 
-jest.mock("@/lib/api", () => ({ getBlockers: jest.fn() }));
+jest.mock("@/lib/api", () => ({ getBlockers: jest.fn(), getAllowance: jest.fn() }));
 const mockNavigate = jest.fn();
 jest.mock("react-router-dom", () => ({
   useNavigate: () => mockNavigate,
@@ -162,4 +162,21 @@ describe("the Details menu", () => {
     expect(mockNavigate).toHaveBeenCalledWith(path);
     expect(q("details-menu")).toBeNull();
   });
+});
+
+test("the header has no Heuristics badge", async () => {
+  api.getBlockers.mockResolvedValue([]);
+  api.getAllowance.mockResolvedValue({ state: "ok", percent: 0, used_usd: 0, allowance_usd: 10 });
+  await mount(AUDIT);
+  expect(document.body.textContent.toLowerCase()).not.toContain("heuristics");
+  expect(q("header-target-line")).not.toBeNull();
+});
+
+test("the allowance line sits under the header on an audit screen and the blockers stay apart from it", async () => {
+  api.getBlockers.mockResolvedValue(BLOCKERS.slice(1, 2));
+  api.getAllowance.mockResolvedValue({ state: "warn", percent: 85, used_usd: 8.5, allowance_usd: 10 });
+  await mount(AUDIT);
+  expect(q("allowance-warn").closest("header")).toBeNull();
+  expect(q("blocker-banner").contains(q("allowance-warn"))).toBe(false);
+  expect(q("blocker-banner").querySelectorAll("li").length).toBe(1);
 });

@@ -10,6 +10,7 @@ import * as api from "@/lib/api";
 jest.mock("@/lib/api", () => ({
   ownerPrompts: jest.fn(), ownerUploadPrompt: jest.fn(), ownerTesters: jest.fn(),
   ownerIssueTester: jest.fn(), ownerRevokeTester: jest.fn(), ownerReissueTester: jest.fn(),
+  ownerUsage: jest.fn(), ownerSetAllowance: jest.fn(),
 }));
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -25,6 +26,12 @@ const TESTERS = [{ id: "t1", label: "Tester One", created_at: "x", expires_at: "
   { id: "t2", label: "Tester Two", created_at: "x", expires_at: "2999-11-14T09:30:00+00:00", revoked_at: "2026-10-15T10:00:00+00:00" },
   { id: "t3", label: "Tester Three", created_at: "x", expires_at: "2020-01-01T00:00:00+00:00", revoked_at: null }];
 
+// the shape of GET /api/admin/usage (usage-and-allowance.md section 3)
+const T = (files, calls, tokens, cost_usd) => ({ files, calls, tokens, cost_usd });
+const USAGE = { month: "2026-10", totals: { this_month: T(3, 4, 1500, 1.75), all_time: T(5, 9, 4000, 5.75) },
+  testers: [{ id: "t1", label: "Tester One", status: "active", allowance_usd: 10, this_month: T(2, 3, 1000, 1.25), all_time: T(4, 8, 3500, 5.25) },
+            { id: "t2", label: "Tester Two", status: "revoked", allowance_usd: 25.5, this_month: T(1, 1, 500, 0.5), all_time: T(1, 1, 500, 0.5) }] };
+
 function setValue(el, value) {
   const proto = { TEXTAREA: window.HTMLTextAreaElement, SELECT: window.HTMLSelectElement }[el.tagName] || window.HTMLInputElement;
   Object.getOwnPropertyDescriptor(proto.prototype, "value").set.call(el, value);
@@ -36,6 +43,7 @@ beforeEach(async () => {
   Object.values(api).filter((f) => typeof f === "function").forEach((f) => f.mockReset());
   api.ownerPrompts.mockResolvedValue(LIST);
   api.ownerTesters.mockResolvedValue(TESTERS);
+  api.ownerUsage.mockResolvedValue(USAGE);
   window.localStorage.clear();
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -164,4 +172,29 @@ test("the page shows no audit data: it imports only the owner calls and renders 
   expect(imported.length).toBeGreaterThan(0);
   expect(imported.every((name) => name.startsWith("owner"))).toBe(true);
   expect(host.textContent.toLowerCase()).not.toMatch(/company|revenue|deck|claim/);
+});
+
+test("the Usage section lists totals and one row per tester label, this month and all time, in USD", async () => {
+  await enter();
+  const cellsOf = (tr) => [...tr.querySelectorAll("td")].map((td) => td.textContent);
+  expect(cellsOf(q("owner-usage-totals")).slice(0, 9)).toEqual(["All testers", "3", "4", "1,500", "USD 1.75", "5", "9", "4,000", "USD 5.75"]);
+  expect(qa("owner-usage-row").map((tr) => cellsOf(tr).slice(0, 9))).toEqual([
+    ["Tester One", "2", "3", "1,000", "USD 1.25", "4", "8", "3,500", "USD 5.25"],
+    ["Tester Two", "1", "1", "500", "USD 0.50", "1", "1", "500", "USD 0.50"]]);
+  expect(q("owner-usage").textContent).not.toMatch(/\.xlsx|\.pptx/);
+  expect(qa("owner-allowance-input").map((i) => i.value)).toEqual(["10", "25.5"]);
+});
+
+test("an allowance is saved per link, only when it is a valid changed USD amount, and the usage is read again", async () => {
+  api.ownerSetAllowance.mockResolvedValue({ ok: true });
+  await enter();
+  const [save] = qa("owner-allowance-save");
+  expect(save.disabled).toBe(true);
+  await act(async () => { setValue(qa("owner-allowance-input")[0], "1001"); });
+  expect(qa("owner-allowance-save")[0].disabled).toBe(true);
+  await act(async () => { setValue(qa("owner-allowance-input")[0], "15.5"); });
+  expect(qa("owner-allowance-save")[0].disabled).toBe(false);
+  await act(async () => { qa("owner-allowance-save")[0].click(); });
+  expect(api.ownerSetAllowance).toHaveBeenCalledWith("owner-secret", "t1", 15.5);
+  expect(api.ownerUsage).toHaveBeenCalledTimes(2);
 });

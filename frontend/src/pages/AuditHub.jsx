@@ -9,8 +9,8 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger,
 } from "@/components/ui/dialog";
-import { listAudits, createAudit, deleteAudit, getUsageTotals } from "@/lib/api";
-import { S18_TITLE, S18_BODY, S18_MISMATCH, S19_USAGE_OWN, S19_USAGE_ALL, S19_USAGE_EXPLAINER_OWN, S19_USAGE_EXPLAINER_ALL } from "@/lib/chatUpload";
+import { listAudits, createAudit, deleteAudit } from "@/lib/api";
+import { S18_TITLE, S18_BODY, S18_MISMATCH } from "@/lib/chatUpload";
 import { fmtCurrency } from "@/lib/format";
 import { describeRequestError } from "@/lib/requestError";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -218,7 +218,6 @@ export default function AuditHub() {
           ))}
         </div>
       )}
-      <UsageTotals />
     </Layout>
   );
 }
@@ -263,45 +262,3 @@ function DeleteAudit({ audit, onDelete }) {
     </Dialog>
   );
 }
-
-const EVIDENCE_COUNTS = [["Verified", "Verified"], ["Unverified", "Unverified"], ["Unsupported", "Unsupported"], ["Contradicted", "Contradicted"], ["missing", "Metrics missing"]];
-const pairs = (o) => Object.entries(o || {}).map(([k, v]) => `${k} ${v}`).join(" · ") || "none";
-
-/** S19: usage totals across audits, folded. Counts and codes only; no per-audit rows. */
-function UsageTotals() {
-  const [totals, setTotals] = useState(null);
-  const [open, setOpen] = useState(false);
-  const alive = useRef(true);
-  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
-  useEffect(() => {
-    if (open && !totals) getUsageTotals().then((t) => alive.current && setTotals(t)).catch(() => alive.current && setTotals(false));
-  }, [open]); // eslint-disable-line
-  return (
-    <details data-testid="usage-totals" className="mt-10 border border-[#E5E7EB] rounded-lg bg-white" onToggle={(e) => setOpen(e.currentTarget.open)}>
-      <summary className="px-5 py-3 cursor-pointer text-sm font-medium text-slate-800">{totals?.scope === "all" ? S19_USAGE_ALL : S19_USAGE_OWN}</summary>
-      <p data-testid="usage-explainer" className="px-5 pb-3 text-xs text-slate-500">{totals?.scope === "all" ? S19_USAGE_EXPLAINER_ALL : S19_USAGE_EXPLAINER_OWN}</p>
-      {open && totals === false && <p className="px-5 pb-4 text-xs text-slate-500">Not available.</p>}
-      {open && totals && (
-        <dl className="px-5 pb-5 grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 text-xs text-slate-700">
-          <Row label="Files uploaded" value={pairs(totals.files?.uploaded)} />
-          <Row label="Files refused (by extension)" value={pairs(totals.files?.rejected)} />
-          <Row label="Columns by rules, saved, AI, confirmed, corrected" value={["rules", "saved", "ai", "confirmed", "corrected"].map((k) => `${k} ${totals.columns?.[k] ?? 0}`).join(" · ")} />
-          <Row label="Corrections by reason" value={pairs(totals.columns?.reasons)} />
-          <Row label="Compute runs" value={String(totals.steps?.compute?.runs ?? 0)} />
-          <Row label="Compute failures" value={pairs(totals.steps?.compute?.failures)} />
-          <Row label="AI mapping calls by status" value={pairs(totals.steps?.mapping_ai)} />
-          <Row label="Evidence labels" value={EVIDENCE_COUNTS.map(([k, label]) => `${label} ${k === "missing" ? totals.metrics_missing ?? 0 : totals.evidence_labels?.[k] ?? 0}`).join(" · ")} />
-          <Row label="Analyst changes" value={String(totals.analyst_changes ?? 0)} />
-          <Row label="Median days from first upload to export" value={totals.median_days_to_export == null ? "—" : String(totals.median_days_to_export)} />
-          <Row label="Tokens and cost by step" value={Object.entries(totals.tokens_and_cost_by_step || {}).map(([k, v]) => `${k} ${v.input_tokens + v.output_tokens} tokens · $${Number(v.cost_usd).toFixed(2)}`).join(" · ") || "none"} />
-          <div className="md:col-span-2" data-testid="usage-notes">
-            <dt className="text-slate-500">“Other” notes, newest first</dt>
-            <dd><ul className="mt-1 space-y-0.5">{(totals.other_notes || []).map((n, i) => <li key={i}>{n.note}</li>)}</ul></dd>
-          </div>
-        </dl>
-      )}
-    </details>
-  );
-}
-
-const Row = ({ label, value }) => (<div><dt className="text-slate-500">{label}</dt><dd className="font-mono">{value}</dd></div>);
