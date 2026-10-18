@@ -324,7 +324,7 @@ export const DECK_AI_STATUS = {
   python_only: "not read (AI-assisted reading is off for this audit)",
 };
 
-/** ["AI reading: read", "Sent to the model: slides 4, 7, 12", "Cost: $0.0123"] for one deck; the stop
+/** ["AI reading: read", "Sent to the model: slides 4, 7, 12"] for one deck (no cost: usage-and-allowance.md section 9); the stop
  *  message when the audit reached its token limit; how many of the model's periods Python replaced
  *  with the one its header cells give. */
 export function deckRunLog(deck) {
@@ -333,7 +333,6 @@ export function deckRunLog(deck) {
   if (deck.ai_status === "stopped" && deck.ai_message) lines.push(deck.ai_message);
   if (deck.sent_pages?.length) lines.push(`Sent to the model: ${deck.page_unit || "slide"}s ${deck.sent_pages.join(", ")}`);
   if (deck.periods_corrected) lines.push(`Periods corrected from the header cells: ${deck.periods_corrected}`);
-  if (deck.ai_cost_usd) lines.push(`Cost: $${Number(deck.ai_cost_usd).toFixed(2)}`);
   return lines;
 }
 

@@ -13,7 +13,7 @@ import { listAudits, createAudit, deleteAudit } from "@/lib/api";
 import { S18_TITLE, S18_BODY, S18_MISMATCH } from "@/lib/chatUpload";
 import { fmtCurrency } from "@/lib/format";
 import { describeRequestError } from "@/lib/requestError";
-import { DEFAULT_FISCAL_YEAR_END, NEW_AUDIT_TITLE, NEW_AUDIT_PARAGRAPHS, requiredFieldError } from "@/lib/auditForm";
+import { DEFAULT_FISCAL_YEAR_END, NEW_AUDIT_TITLE, NEW_AUDIT_PARAGRAPHS, NOT_SET, formatCreated, requiredFieldError } from "@/lib/auditForm";
 
 export default function AuditHub() {
   const nav = useNavigate();
@@ -50,7 +50,7 @@ export default function AuditHub() {
       toast.success("Audit created");
       setOpen(false);
       setForm(blank);
-      nav(`/audit/${a.id}/run`);
+      nav(`/audit/${a.id}/mapping`);
     } catch (e) {
       const detail = e.response?.data?.detail;
       const msg = Array.isArray(detail) ? detail.map((d) => d.msg).join("; ") : detail;
@@ -159,17 +159,21 @@ export default function AuditHub() {
                 <DeleteAudit audit={a} onDelete={remove} />
               </div>
 
-              <div className="mt-4 pt-4 border-t border-[#E5E7EB] flex items-center justify-between">
-                <div>
-                  <div className="text-[10px] uppercase tracking-wider text-slate-500 font-mono">Target ARR</div>
-                  <div className="text-lg font-mono font-semibold text-slate-900">{fmtCurrency(a.target_arr, a.reporting_currency)}</div>
-                  {a.target_date && <div className="text-[10px] font-mono text-slate-500 mt-0.5">by {a.target_date}</div>}
-                </div>
+              <dl className="mt-4 pt-4 border-t border-[#E5E7EB] grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs" data-testid={`audit-facts-${a.id}`}>
+                <dt className="uppercase tracking-wider text-slate-500 font-mono text-[10px] self-center">Created</dt>
+                <dd className="font-mono text-slate-900" data-testid="audit-created">{formatCreated(a.created_at)}</dd>
+                <dt className="uppercase tracking-wider text-slate-500 font-mono text-[10px] self-center">Target ARR</dt>
+                <dd className="font-mono text-slate-900" data-testid="audit-target-arr">{Number(a.target_arr) ? fmtCurrency(a.target_arr, a.reporting_currency) : NOT_SET}</dd>
+                <dt className="uppercase tracking-wider text-slate-500 font-mono text-[10px] self-center">Target date</dt>
+                <dd className="font-mono text-slate-900" data-testid="audit-target-date">{a.target_date || NOT_SET}</dd>
+              </dl>
+              <div className="mt-3 flex justify-end">
                 <div className="flex gap-2">
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => nav(`/audit/${a.id}/run`)}
+                    data-testid={`run-audit-${a.id}`}
+                    onClick={() => nav(`/audit/${a.id}/mapping`)}
                     className="bg-transparent border-[#E5E7EB] text-slate-700 hover:bg-sky-50 hover:text-slate-900"
                   >
                     Run audit
@@ -177,7 +181,7 @@ export default function AuditHub() {
                   <Button
                     data-testid={`open-dashboard-${a.id}`}
                     size="sm"
-                    onClick={() => nav(`/audit/${a.id}/review`)}
+                    onClick={() => nav(`/audit/${a.id}/mapping`)}
                     className="bg-sky-600 hover:bg-sky-500 gap-1"
                   >
                     Open <ArrowRight className="h-3.5 w-3.5" />

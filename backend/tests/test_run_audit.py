@@ -368,15 +368,15 @@ def test_write_all_narratives_runs_every_enabled_step_through_the_gateway_and_a_
     est = run_api.get(f"/api/runs/{AUDIT}/narratives/estimate").json()
     enabled = [s for s, c in gateway.STEP_CONFIG.items() if c.get("enabled")]
     assert [s["step"] for s in est["steps"]] == enabled and set(enabled) == {"growth_engine", "data_inventory", "data_integrity"}
-    assert est["total_usd"] == round(sum(s["estimate_usd"] for s in est["steps"]), 4) > 0
-    assert all(s["cached"] is False and s["estimate_usd"] > 0 for s in est["steps"])
+    assert all(s["cached"] is False and s["available"] for s in est["steps"])
+    assert set(est) == {"model", "steps"} and all(set(s) == {"step", "label", "cached", "available"} for s in est["steps"]), "no amount"
     _, done = write_all(run_api)
     assert done == {step: "ok" for step in enabled}, done
     assert len([p for p in run_api.adapter.payloads if "valid_source_keys" in p]) == len(enabled)
     calls = len(run_api.adapter.payloads)
     est2, again = write_all(run_api)
     assert len(run_api.adapter.payloads) == calls, "the cache serves the second press"
-    assert est2["total_usd"] == 0 and all(s["cached"] for s in est2["steps"])
+    assert all(s["cached"] for s in est2["steps"])
     assert {c["status"] for c in run_api.db["llm_calls"].docs} <= {"ok", "flagged"}
 
 
@@ -396,14 +396,14 @@ def est_steps(est):
     return {s["step"] for s in est["steps"]}
 
 
-def test_the_estimate_is_an_upper_bound_not_a_cost_and_is_not_logged_as_a_call(run_api):
+def test_the_estimate_is_not_logged_as_a_call_and_the_calls_keep_their_cost_in_the_log(run_api):
     ready_for_review(run_api)
     est = run_api.get(f"/api/runs/{AUDIT}/narratives/estimate").json()
     before = len(run_api.db["llm_calls"].docs)
-    assert "upper bound" in est["basis"] and len(run_api.db["llm_calls"].docs) == before, "an estimate is not a call"
+    assert len(run_api.db["llm_calls"].docs) == before, "an estimate is not a call"
     write_all(run_api)
     spent = sum(c["estimated_cost_usd"] for c in run_api.db["llm_calls"].docs if c["step"] in est_steps(est))
-    assert 0 < spent <= est["total_usd"], (spent, est["total_usd"])
+    assert spent > 0, "the app keeps calculating and storing the cost; only testers no longer see it"
 
 
 # --- the memo ----------------------------------------------------------------------------------------------------------------

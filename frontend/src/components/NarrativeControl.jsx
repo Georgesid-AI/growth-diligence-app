@@ -27,7 +27,7 @@ export function NarrativeControl({ status, generatedAt, superseded, supersededRe
         </button>
         <p className="mt-1.5 text-xs text-slate-500">
           Written {formatWrittenDate(generatedAt)}. Only regenerate if the data has
-          changed — it costs another AI request.
+          changed — it uses another AI request.
         </p>
       </div>
     );
@@ -54,8 +54,8 @@ export function NarrativeControl({ status, generatedAt, superseded, supersededRe
         ) : (
           <>
             Writes a short summary of the numbers below, in plain English. The numbers
-            themselves are calculated by the app, not written by AI. Costs one AI request —
-            after that you can open this audit as often as you like for free.
+            themselves are calculated by the app, not written by AI. Uses one AI request —
+            after that you can open this audit as often as you like.
           </>
         )}
       </p>

@@ -10,7 +10,7 @@ import * as api from "@/lib/api";
 jest.mock("@/lib/api", () => ({
   ownerPrompts: jest.fn(), ownerUploadPrompt: jest.fn(), ownerTesters: jest.fn(),
   ownerIssueTester: jest.fn(), ownerRevokeTester: jest.fn(), ownerReissueTester: jest.fn(),
-  ownerUsage: jest.fn(), ownerSetAllowance: jest.fn(),
+  ownerUsage: jest.fn(), ownerSetAllowance: jest.fn(), ownerAuditCosts: jest.fn(),
 }));
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -32,6 +32,11 @@ const USAGE = { month: "2026-10", totals: { this_month: T(3, 4, 1500, 1.75), all
   testers: [{ id: "t1", label: "Tester One", status: "active", allowance_usd: 10, this_month: T(2, 3, 1000, 1.25), all_time: T(4, 8, 3500, 5.25) },
             { id: "t2", label: "Tester Two", status: "revoked", allowance_usd: 25.5, this_month: T(1, 1, 500, 0.5), all_time: T(1, 1, 500, 0.5) }] };
 
+// the shape of GET /api/admin/audit-costs (usage-and-allowance.md section 9): no audit id, company or file name
+const COSTS = { audits: [
+  { tester: "Tester One", created_at: "2026-10-18T14:32:00", calls: 3, tokens: 1500, cost_usd: 1.25 },
+  { tester: null, created_at: "2026-01-05T09:07:00", calls: 0, tokens: 0, cost_usd: 0 }] };
+
 function setValue(el, value) {
   const proto = { TEXTAREA: window.HTMLTextAreaElement, SELECT: window.HTMLSelectElement }[el.tagName] || window.HTMLInputElement;
   Object.getOwnPropertyDescriptor(proto.prototype, "value").set.call(el, value);
@@ -44,6 +49,7 @@ beforeEach(async () => {
   api.ownerPrompts.mockResolvedValue(LIST);
   api.ownerTesters.mockResolvedValue(TESTERS);
   api.ownerUsage.mockResolvedValue(USAGE);
+  api.ownerAuditCosts.mockResolvedValue(COSTS);
   window.localStorage.clear();
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -197,4 +203,23 @@ test("an allowance is saved per link, only when it is a valid changed USD amount
   await act(async () => { qa("owner-allowance-save")[0].click(); });
   expect(api.ownerSetAllowance).toHaveBeenCalledWith("owner-secret", "t1", 15.5);
   expect(api.ownerUsage).toHaveBeenCalledTimes(2);
+});
+
+test("Cost per audit lists tester label, creation time, AI calls, tokens and USD, and never an audit, company or file name", async () => {
+  await enter();
+  expect(api.ownerAuditCosts).toHaveBeenCalledWith("owner-secret");
+  const rows = qa("owner-audit-cost-row").map((tr) => [...tr.children].map((c) => c.textContent));
+  expect(rows).toEqual([
+    ["Tester One", "18 Oct 2026, 14:32", "3", "1,500", "USD 1.25"],
+    ["no tester", "5 Jan 2026, 09:07", "0", "0", "USD 0.00"],
+  ]);
+  expect([...q("owner-audit-costs-table").querySelectorAll("th")].map((th) => th.textContent)).toEqual(["Tester", "Audit created", "AI calls", "Tokens", "Cost"]);
+  expect(q("owner-audit-costs").textContent).not.toMatch(/\.xlsx|\.pptx|\.csv|company/i);
+});
+
+test("a failed read of the cost list leaves the rest of the owner page working", async () => {
+  api.ownerAuditCosts.mockRejectedValue(new Error("500"));
+  await enter();
+  expect(q("owner-audit-costs")).toBeNull();
+  expect(q("owner-usage")).not.toBeNull();
 });

@@ -11,7 +11,7 @@ import sample from "./fixtures/sample_results.json";
 jest.mock("@/lib/api", () => ({
   getAudit: jest.fn(), getResults: jest.fn(), readNarrative: jest.fn(), generateNarrative: jest.fn(), getDisclosure: jest.fn(),
   getClaimRegister: jest.fn(), updateClaimInputs: jest.fn(), claimsCsvUrl: () => "x", exportUrl: () => "x", reportUsage: jest.fn(),
-  getVerdict: jest.fn(), putIcInputs: jest.fn(), getMemo: jest.fn(), getLlmUsage: jest.fn(), getIntegrity: jest.fn(),
+  getVerdict: jest.fn(), putIcInputs: jest.fn(), getMemo: jest.fn(), getIntegrity: jest.fn(),
   NARRATIVE_TIMEOUT_MS: 150000, NARRATIVE_EXPECTED_SECONDS: 33,
 }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
@@ -42,8 +42,6 @@ async function mountDashboard(data) {
   api.getDisclosure.mockResolvedValue(null);
   api.getClaimRegister.mockResolvedValue({ claims: [], register: [] });
   api.getVerdict.mockResolvedValue(null);
-  api.getLlmUsage.mockResolvedValue({ run_id: "a1", calls: 0, structure_calls: 0, cache_hits: 0, input_tokens: 0, output_tokens: 0,
-    estimated_cost_usd: 0, by_step: {} });
   api.getIntegrity.mockResolvedValue(null);
   const host = document.createElement("div");
   document.body.appendChild(host);

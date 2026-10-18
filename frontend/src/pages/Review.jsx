@@ -20,7 +20,7 @@ import { useGateEdits } from "@/lib/useGateEdits";
 import { S13_status, MAPPING_HEADERS, REASONS, fieldName, heldFields, sortColumns } from "@/lib/chatUpload";
 import { describeRequestError, READ_TIMEOUT_MS } from "@/lib/requestError";
 import { runAudit } from "@/lib/runAudit";
-import { mappingSummary, summaryHeadline, DTYPE_SHORT, writeAllLabel, estimateText, allWritten, ALL_WRITTEN_LEAD, ALL_WRITTEN_LINK, WRITE_ALL_HELP, MEMO_LABEL, MEMO_WAITING, RECONCILIATION_NOTE } from "@/lib/review";
+import { mappingSummary, summaryHeadline, DTYPE_SHORT, writeAllLabel, allWritten, ALL_WRITTEN_LEAD, ALL_WRITTEN_LINK, WRITE_ALL_HELP, MEMO_LABEL, MEMO_WAITING, RECONCILIATION_NOTE } from "@/lib/review";
 
 const GROUP_TITLE = Object.fromEntries(CLAIM_GROUPS);
 
@@ -107,7 +107,7 @@ export default function Review() {
           <h1 className="font-heading text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">Review</h1>
           <p className="text-sm text-slate-600 mt-1 max-w-3xl">Only what needs a decision from you is open below. Everything else is a count you can open with Show.</p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => nav(`/audit/${id}/run`)} data-testid="review-to-run">Back to Run audit</Button>
+        <Button variant="outline" size="sm" onClick={() => nav(`/audit/${id}/mapping`)} data-testid="review-to-mapping">Back to Upload & Mapping</Button>
       </div>
       {proceeding && <p className="mb-4 flex items-center gap-2 text-sm text-slate-600" data-testid="review-continuing"><Loader2 className="h-4 w-4 animate-spin" /> Continuing the run…</p>}
 
@@ -125,7 +125,7 @@ export default function Review() {
         </>
       ) : (
         <p className="text-sm text-slate-600 border border-dashed border-[#D1D5DB] rounded-md px-4 py-6" data-testid="review-not-computed">
-          The metrics are not calculated yet. Decide what is open above, or go back to Run audit.
+          The metrics are not calculated yet. Decide what is open above, or go back to Upload & Mapping.
         </p>
       )}
     </Layout>
@@ -412,7 +412,7 @@ function JudgmentSection({ verdict, save }) {
   );
 }
 
-/** Write all narratives (with its cost estimate) and Generate IC memo (on once both ratings are entered). */
+/** Write all narratives and Generate IC memo (on once both ratings are entered). */
 function Finish({ auditId, verdict, summary, estimate, reload }) {
   const [writing, setWriting] = useState(null);       // "2 of 3: Data inventory" while it runs
   const [outcome, setOutcome] = useState({});
@@ -447,7 +447,6 @@ function Finish({ auditId, verdict, summary, estimate, reload }) {
           {writing !== null ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4 text-sky-700" />}
           {writeAllLabel(writing)}
         </Button>
-        {estimateText(estimate) && <span className="text-xs font-mono text-slate-700" data-testid="write-all-estimate">{estimateText(estimate)}</span>}
         {(allWritten(estimate) || wroteSome) && (
           <span className="text-xs text-slate-700" data-testid="write-all-done">
             {ALL_WRITTEN_LEAD}

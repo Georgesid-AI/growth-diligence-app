@@ -782,3 +782,32 @@ guard in the gateway decides per call. A deck whose reading is in progress ("rea
   through the gateway, and a mapped data file is untouched; true to false makes no call and keeps results; a tester at the
   allowance is stopped at the guard. `AuditHub.test.jsx`: the dialog text, the single field, no tick, the create body. `AuditSetup`
   tests: the label, the line, the saved patch. `auditForm.test.js`: the name alone is required.
+
+## 24. Navigation, Upload & Mapping as the entry point, Audit tile (2026-10-18, George)
+Decided by George with the task. The architecture and the engine are unchanged; no route is added and one is removed.
+
+**Top bar of an open audit.** From the left: the app name (a button to the Audit Hub, as today), an "All audits" button (also to the
+Audit Hub, `data-testid="nav-all-audits"`), then the tabs in this order, word for word: "Upload & Mapping" · "Review" · "Audit" ·
+"Diagnostics". The "Details" drop-down and the "Run audit" tab are removed. The Audit Hub itself shows no "All audits" button.
+
+**Audit.** "Growth Dashboard" is renamed "Audit" in the tab, the link text of the review screen ("All narratives are written – read them on
+the Audit") and the tests. The route `/audit/:id/dashboard` is unchanged.
+
+**Upload & Mapping is the entry point.** Creating an audit, the hub's "Run audit" button and its "Open" button all land on
+`/audit/:id/mapping`. The one-click "Run audit" button and its three stages (File mapping, Engine calculations, Claim extraction from
+decks, with Retry stage) move from the Run audit page to the top of the Upload & Mapping page: below the set-up section, above the FX
+settings, the file box with its column-by-column mapping and the deck panel. The Map and Calculate buttons stay as they are. The page
+has one file box: files attached in it are read by Map, or by Run audit (spreadsheets only; decks are added in the deck panel and
+read by the claims stage). While Run audit runs, Map and Calculate wait, and the other way round. When it finishes with Done or Needs
+review it opens the review screen, as before; "Go to the review screen" and the "Files already uploaded" list of the old page are
+dropped (the Review tab and the file box already show both). The Run audit page is removed; `/audit/:id/run` redirects to
+`/audit/:id/mapping`. The review screen's "Back to Run audit" reads "Back to Upload & Mapping" and goes there.
+
+**Audit Hub tile.** The tile shows three lines: "Created" (date and time in the viewer's local time, `18 Oct 2026, 14:32`: day,
+short English month, year, 24-hour clock), "Target ARR" and "Target date". A Target ARR that is not set or 0, and a Target date that is
+not set, read "n.a.". The audit list already returns `created_at`.
+
+**Cost is not shown to testers (George, 18 Oct 2026).** See usage-and-allowance.md §9. This section's tests: `Layout.test.jsx` (order
+and names of the tabs, no Details, no Run audit tab, All audits button and app name both go to "/"), `MappingWizard.test.jsx` (the Run
+audit button and stages sit between the set-up section and the mapping, the old page is gone), `App` redirect test, `AuditHub.test.jsx`
+(Created, Target ARR and Target date with "n.a.", the buttons land on /mapping), `Review.test.jsx` (link names).

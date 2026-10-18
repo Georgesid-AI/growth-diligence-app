@@ -6,6 +6,7 @@ import { Layout } from "@/components/Layout";
 import DeckPanel from "@/components/DeckPanel";
 import AuditSetup from "@/components/AuditSetup";
 import UploadChat from "@/components/UploadChat";
+import RunAuditPanel from "@/components/RunAuditPanel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -13,6 +14,7 @@ import { getAudit, saveMapping, computeAudit, getRevenueCustomers, updateAudit, 
 import { asOfInputValue } from "@/lib/auditForm";
 import { CALCULATE_CLASS, CALCULATE_LABEL, calculateState, mapState } from "@/lib/chatUpload";
 import { seeGlossary } from "@/lib/glossary";
+import { splitFiles } from "@/lib/runAudit";
 
 export default function MappingWizard() {
   const { id } = useParams();
@@ -25,13 +27,17 @@ export default function MappingWizard() {
   const [mapping, setMapping] = useState(false);        // Map is reading files: both buttons wait
   const [attached, setAttached] = useState(0);        // files attached in the chat and not read yet
   const [fxVersion, setFxVersion] = useState(0);      // bumped when a rate is saved: the deck panel reloads
+  const [running, setRunning] = useState(false);      // Run audit is in progress: Map and Calculate wait (and it waits for them)
+  const [leftover, setLeftover] = useState(null);     // the attached files the last run did not send; the box keeps only those
+  const pick = useRef({ data: [], decks: [] });       // the files attached in the box, for Run audit
+  const attach = useCallback((files) => { pick.current = splitFiles(files); }, []);
 
   const load = useCallback(() => getAudit(id).then((a) => { setAudit(a); setAsOf(asOfInputValue(a.as_of_month)); }), [id]);
   useEffect(() => { load(); reportUsage(id, { screen: "mapping" }); }, [load, id]);
 
   // Calculate waits for the analyst: no AI or unsure row left, every required field of each file mapped (section 4.3).
   // One state for both Calculate buttons (this header one and the chat's); Map is on whenever a file is attached or loaded.
-  const busy = computing || mapping;
+  const busy = computing || mapping || running;
   const map = mapState({ attached, loaded: views.length, busy });
   const calc = calculateState({ attached, views, busy });
 
@@ -60,7 +66,7 @@ export default function MappingWizard() {
     <Layout audit={audit}>
       <div className="flex items-end justify-between mb-6 flex-wrap gap-3">
         <div>
-          <h1 className="font-heading text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">Upload & Column Mapping</h1>
+          <h1 className="font-heading text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">Upload & Mapping</h1>
         </div>
         <div className="flex items-end gap-3">
           {/* A disabled button shows no tooltip of its own, so the wrapper carries it. */}
@@ -75,9 +81,12 @@ export default function MappingWizard() {
 
       <AuditSetup audit={audit} setAudit={setAudit} asOf={asOf} setAsOf={setAsOf} />
 
-      <div className="space-y-5">
+      <RunAuditPanel auditId={audit.id} pick={pick} onRan={setLeftover} onRunning={setRunning} blocked={computing || mapping} />
+
+      <div className="mt-5 space-y-5">
         <FxSettings audit={audit} onSaved={() => setFxVersion((n) => n + 1)} />
         <UploadChat audit={audit} onViews={setViews} onCalculate={runCompute} onStaged={setAttached} onMapping={setMapping}
+          onFiles={attach} leftover={leftover}
           mapButton={map} calculateButton={calc} computing={computing}
           extras={(view) => <RevenueSettings key={`${view.file}-${view.uploaded_at}`} audit={audit} view={view} />} />
         <DeckPanel auditId={audit.id} reloadKey={fxVersion} />

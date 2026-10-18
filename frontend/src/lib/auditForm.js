@@ -104,3 +104,14 @@ export const SETUP_LABELS = {
   structure_reading_consent: "AI reading",
 };
 export const REPORTING_CURRENCIES = ["EUR", "USD", "GBP", "JPY"];
+
+export const NOT_SET = "n.a.";
+const SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "2026-10-18T12:32:00+00:00" -> "18 Oct 2026, 14:32" in the viewer's local time (docs/specs/chat-upload.md section 24); "n.a." when unreadable. */
+export function formatCreated(value) {
+  const d = value ? new Date(value) : null;
+  if (!d || Number.isNaN(d.getTime())) return NOT_SET;
+  const two = (n) => String(n).padStart(2, "0");
+  return `${d.getDate()} ${SHORT_MONTHS[d.getMonth()]} ${d.getFullYear()}, ${two(d.getHours())}:${two(d.getMinutes())}`;
+}

@@ -36,6 +36,7 @@ from app import column_rules as cr
 from app import forecast_claims
 from app import allowance as allowance_mod
 from app import usage as usage_mod
+from app import tester_view
 from app.decks import claims as deck_claims
 from app.decks import parser as deck_parser
 from app.llm import gateway as llm_gateway
@@ -444,6 +445,12 @@ async def admin_usage():
     return await allowance_mod.report(db)
 
 
+@api.get("/admin/audit-costs")
+async def admin_audit_costs():
+    """The owner's cost per audit: tester label, creation time, billed calls, tokens and USD. No audit id, company or file name."""
+    return await allowance_mod.audit_costs(db)
+
+
 @api.post("/admin/testers/{tester_id}/allowance")
 async def set_tester_allowance(tester_id: str, payload: AllowanceSet):
     if not await allowance_mod.set_allowance(db, tester_id, payload.allowance_usd):
@@ -453,10 +460,11 @@ async def set_tester_allowance(tester_id: str, payload: AllowanceSet):
 
 @api.get("/allowance")
 async def my_allowance(request: Request):
-    """The caller's monthly AI allowance and use (usage-and-allowance.md section 4). The owner token gets 404 from the guard."""
+    """The caller's monthly AI allowance as a percentage and a state, no amount (usage-and-allowance.md sections 4 and 9). The owner
+    token gets 404 from the guard."""
     who = getattr(request.state, "principal", None)
     doc = await db[access_mod.COLLECTION].find_one({"id": who[1]}) if who and who[1] else None
-    return allowance_mod.status(doc) if doc else {"state": "off"}
+    return {k: v for k, v in allowance_mod.status(doc).items() if k in ("percent", "state")} if doc else {"state": "off"}
 
 
 @api.get("/audits")
@@ -1330,12 +1338,9 @@ async def list_deck_candidates(audit_id: str):
                    "ai_status": 1, "ai_message": 1, "sent": 1, "periods_corrected": 1}
     found = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, deck_fields).to_list(100)
     found.sort(key=lambda d: d.get("uploaded_at") or "", reverse=True)
-    by_deck = (await llm_gateway.usage_for_run(db, audit_id)).by_deck
     for d in found:
-        # The deck panel's run log: status, the pages sent to the model (no text) and the cost.
+        # The deck panel's run log: status and the pages sent to the model (no text, no cost: usage-and-allowance.md section 9).
         d["sent_pages"] = sorted({s["page"] for s in d.pop("sent", None) or [] if s.get("page") is not None})
-        usage = by_deck.get(d["deck_id"])
-        d["ai_cost_usd"] = usage.estimated_cost_usd if usage else 0.0
     rank = {d["deck_id"]: i for i, d in enumerate(found)}
     candidates = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0}).to_list(10000)
     fx = await _fx(audit_id, audit)
@@ -2382,7 +2387,6 @@ async def export_memo(audit_id: str):
             narratives = [n.model_dump() for n in await llm_gateway.narratives_for_run(db, audit_id)]
         except Exception:                                 # the memo never depends on the narrative service
             narratives = []
-        usage = (await llm_gateway.usage_for_run(db, audit_id)).model_dump()
         datasets = await db.datasets.find({"audit_id": audit_id}, {"dtype": 1, "file": 1, "sheet": 1, "_id": 0}).to_list(10)
         deck_docs = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, {"file": 1, "_id": 0}).to_list(100)
         meta = {**audit, "results": results}
@@ -2393,7 +2397,7 @@ async def export_memo(audit_id: str):
         text = ic_memo.build_memo(
             audit=audit, results=results, rows=rows, ver=verdict_mod.verdict(rows, results, ctx["ic"].get("top5")),
             key=verdict_mod.key_gates(rows), gaps=ctx["gaps"], ic=ctx["ic"],
-            blockers=await _blocker_list(audit_id, audit), narratives=narratives, usage=usage,
+            blockers=await _blocker_list(audit_id, audit), narratives=narratives,
             files=[{"dtype": d["dtype"], "file": d.get("file"), "sheet": d.get("sheet")} for d in datasets],
             decks=[{"file": d.get("file")} for d in deck_docs], tables=tables, today=analysis_date(audit),
             integrity=await _integrity(audit_id, results, _fiscal_year_end(audit)))
@@ -3017,6 +3021,19 @@ async def log_unexpected_errors(request, call_next):
             status_code=500,
             content={"detail": f"Unexpected server error ({type(exc).__name__}); the details are in the server log"},
         )
+
+
+@app.middleware("http")
+async def hide_cost_from_testers(request, call_next):
+    """No cost, token or USD field in a response to anyone but the owner token (usage-and-allowance.md section 9). The owner token
+    reaches the admin routes only; everyone else, a request with access control off included, gets the JSON without those keys."""
+    response = await call_next(request)
+    who = getattr(request.state, "principal", None)
+    if (who and who[0] == access_mod.OWNER) or not response.headers.get("content-type", "").startswith("application/json"):
+        return response
+    body = b"".join([chunk async for chunk in response.body_iterator])
+    headers = {k: v for k, v in response.headers.items() if k.lower() != "content-length"}
+    return Response(content=tester_view.strip_body(body), status_code=response.status_code, headers=headers)
 
 
 app.add_middleware(

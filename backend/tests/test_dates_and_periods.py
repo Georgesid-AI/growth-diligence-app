@@ -20,7 +20,7 @@ import server  # noqa: E402
 from claim_matching_support import SAMPLE, FILES  # noqa: E402
 from test_claim_matching import run_claim  # noqa: E402
 from test_claim_register_api import AUDIT, _get, _put  # noqa: E402
-from test_ic_memo import USAGE, _ready  # noqa: E402
+from test_ic_memo import _ready  # noqa: E402
 
 from app import claim_matching as cm  # noqa: E402
 from app import decks  # noqa: E402
@@ -123,7 +123,7 @@ def test_plan_3_regression_revenue_to_june_2019_on_an_october_2026_machine_is_la
     tables = im.workbook_tables(server.build_export_workbook({**audit, "results": results}, results))
     text = im.build_memo(audit=audit, results=results, rows=rows, ver=vd.verdict(rows, results, {"claim_ids": top}),
                          key=vd.key_gates(rows), gaps=vd.data_gaps(results, rows, top), ic=ic, blockers=[], narratives=[],
-                         usage=copy.deepcopy(USAGE), files=[{"dtype": "revenue", "file": "revenue.csv", "sheet": "CSV"}],
+                         files=[{"dtype": "revenue", "file": "revenue.csv", "sheet": "CSV"}],
                          decks=[{"file": "synthco_deck.pdf"}], tables=tables, today=MACHINE_DATE)
     lines = text.split("\n")
     assert lines[1] == f"Date: {MACHINE_DATE}" and lines[2] == "Evidence to June 2019"

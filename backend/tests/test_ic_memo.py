@@ -23,8 +23,6 @@ THESIS = {"plan": "Reach the target ARR with the current segment mix.", "evidenc
           "condition": "The contradicted claims are re-based before closing."}
 RATINGS = {"data_reliability": "Adequate", "growth_engine": "Weak"}
 JUDGMENT = {"reasons": "The revenue claims of the five agree with the revenue file.", "unresolved_questions": "Why the deck ARR differs from the file."}
-USAGE = {"calls": 0, "structure_calls": 0, "cache_hits": 0, "input_tokens": 0, "output_tokens": 0, "estimated_cost_usd": 0.0,
-         "by_step": {}}
 FILES = [{"dtype": "revenue", "file": "revenue.csv", "sheet": "CSV"}, {"dtype": "crm", "file": "crm.csv", "sheet": "CSV"},
          {"dtype": "pnl", "file": "pnl.csv", "sheet": "CSV"}]
 DECKS = [{"file": "testco_board.pptx"}]
@@ -37,7 +35,7 @@ def narrative(headline="The growth engine is steady.", flagging=("Win rate is be
                           "next_actions": [], "source_keys": []}}
 
 
-def inputs(run="A", decision=GATE_DECISION, ratings=None, thesis=None, key=5, narratives=(), files=None, decks_=None, usage=None,
+def inputs(run="A", decision=GATE_DECISION, ratings=None, thesis=None, key=5, narratives=(), files=None, decks_=None,
            blockers=(), tables=(), stored=None, answers=None, judgment=None, **extra):
     """Everything build_memo reads, for one fixture run: the proposed top 5 confirmed and gated, `key` of them marked key. `answers`:
     the analyst's Definition check answers by claim id (claim-matching.md section 4.1)."""
@@ -66,7 +64,7 @@ def inputs(run="A", decision=GATE_DECISION, ratings=None, thesis=None, key=5, na
     return dict(audit={"company_name": "TestCo", "target_arr": 1_000_000, "target_date": "2026-12-31", "as_of_month": "2024-02"},
                 results=results, rows=rows, ver=ver, key=vd.key_gates(rows), ic=ic, today="2026-10-08",
                 gaps=vd.data_gaps(results, rows, state["in_force"]), blockers=list(blockers), narratives=list(narratives),
-                usage=usage or copy.deepcopy(USAGE), files=files if files is not None else FILES,
+                files=files if files is not None else FILES,
                 decks=decks_ if decks_ is not None else DECKS, tables=list(tables), **extra)
 
 
@@ -194,13 +192,11 @@ def test_a_thesis_sentence_carrying_a_number_absent_from_the_stored_results_refu
     assert exc.code == "numbers" and exc.unmatched == ["37"]
 
 
-def test_a_thesis_number_must_be_in_the_results_the_register_or_the_cost_log_not_in_the_analysts_deal_terms():
+def test_a_thesis_number_must_be_in_the_results_or_the_register_not_in_the_analysts_deal_terms_and_not_in_the_cost_log():
     assert "202,125" in memo(thesis={**THESIS, "evidence": "ARR is 202,125 EUR now."})
     exc = refusal(thesis={**THESIS, "plan": "Fund the 2025 plan."}, decision="the 2025 plan")
     assert exc.unmatched == ["2025"], "a number of the budget decision is a deal term, not evidence"
-    cost = copy.deepcopy(USAGE)
-    cost["by_step"] = {"growth_engine": {"calls": 1, "cache_hits": 0, "input_tokens": 4321, "output_tokens": 98, "estimated_cost_usd": 0.07}}
-    assert "4321" in memo(thesis={**THESIS, "condition": "The audit used 4321 tokens."}, usage=cost)
+    assert refusal(thesis={**THESIS, "condition": "The audit used 4321 tokens."}).unmatched == ["4321"], "the cost log is not evidence"
 
 
 def test_a_number_in_a_budget_decision_passes_and_is_cited_set_by_the_analyst():
@@ -218,7 +214,7 @@ def test_a_gate_metric_name_number_is_a_deal_term_too():
 
 def test_a_figure_written_as_the_formatter_writes_it_is_accepted_by_its_kind_and_nothing_else_is():
     kw = inputs()
-    allowed = im.allowed_numbers(kw["audit"], kw["results"], kw["rows"], kw["gaps"], kw["ic"], kw["usage"], kw["files"], kw["decks"],
+    allowed = im.allowed_numbers(kw["audit"], kw["results"], kw["rows"], kw["gaps"], kw["ic"], kw["files"], kw["decks"],
                                  thesis=False)
     assert im.unmatched("ARR 202,125 EUR, NRR 113%, gross margin 78%, 59 days (58.5 days stored)", allowed) == []
     assert im.unmatched("37% and 4,100 EUR and 113.2%", allowed) == ["37", "4,100", "113.2"]
@@ -379,21 +375,17 @@ def test_value_at_risk_reads_not_yet_computed_in_the_summary_and_appendix_d_with
     assert "Overlap groups: #1, #7;" in text
 
 
-def test_the_appendices_carry_the_register_the_gaps_the_tables_and_the_cost_table():
-    cost = copy.deepcopy(USAGE)
-    cost["by_step"] = {"growth_engine": {"calls": 1, "cache_hits": 0, "input_tokens": 1200, "output_tokens": 300, "estimated_cost_usd": 0.0456},
-                       "deck_structure": {"calls": 2, "cache_hits": 1, "input_tokens": 80, "output_tokens": 20, "estimated_cost_usd": 0.01}}
-    cost.update(calls=1, structure_calls=2, cache_hits=1, input_tokens=1280, output_tokens=320, estimated_cost_usd=0.0556)
+def test_the_appendices_carry_the_register_the_gaps_and_the_tables_and_no_cost_table():
     tables = [{"sheet": "Headline", "rows": [["Metric", "Value"], ["Company", "TestCo"]]}]
-    text = memo(usage=cost, tables=tables)
+    text = memo(tables=tables)
     a = text.split("## Appendix A")[1].split("## Appendix B")[0]
     assert a.count("\n| #") == 33 + 1 and "top 5" in a and "key" in a
     b = text.split("## Appendix B")[1].split("## Appendix C")[0]
     assert "First quarterly review: 2024-09-30" in b and "Required vs observed net-new customers (12m)" in b
     assert "Headline[^" in text.split("## Appendix C")[1]
     d = text.split("## Appendix D")[1]
-    assert "| Narrative – growth_engine | 1 | 0 | 1,200 | 300 | 0.05 |" in d
-    assert "| Deck structure reading | 2 | 1 | 80 | 20 | 0.01 |" in d and "| Total | 3 | 1 |" in d
+    assert not re.search(r"(?i)AI usage|Cost \(USD\)|Input tokens|Output tokens|\btokens\b", text), "cost is hidden from testers (usage-and-allowance.md section 9)"
+    assert "Deck structure reading" not in d and "Column mapping" not in d
 
 
 # --- the endpoint -----------------------------------------------------------------------------------------------------------------------------------

@@ -8,7 +8,7 @@ import sample from "./fixtures/sample_results.json";
 jest.mock("@/lib/api", () => ({
   getAudit: jest.fn(), getResults: jest.fn(), readNarrative: jest.fn(), generateNarrative: jest.fn(), getDisclosure: jest.fn(),
   getClaimRegister: jest.fn(), updateClaimInputs: jest.fn(), claimsCsvUrl: () => "x", exportUrl: () => "x", reportUsage: jest.fn(),
-  getVerdict: jest.fn(), putIcInputs: jest.fn(), getMemo: jest.fn(), getLlmUsage: jest.fn(), getIntegrity: jest.fn(),
+  getVerdict: jest.fn(), putIcInputs: jest.fn(), getMemo: jest.fn(), getIntegrity: jest.fn(),
   NARRATIVE_TIMEOUT_MS: 150000, NARRATIVE_EXPECTED_SECONDS: 33,
 }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
@@ -18,7 +18,7 @@ jest.mock("recharts", () => new Proxy({}, { get: () => ({ children }) => <div>{c
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-// What GET /audits/{id}/verdict and GET /runs/{id}/llm-usage answer (docs/specs/verdict-and-memo.md). The server tests, ranks and words.
+// What GET /audits/{id}/verdict and GET answer (docs/specs/verdict-and-memo.md). The server tests, ranks and words.
 const TOP = {
   proposed: ["c1", "c2"], confirmed: false, void: false, claim_ids: [], set_at: null, in_force: ["c1", "c2"],
 };
@@ -37,12 +37,6 @@ const VERDICT_BASE = {
   thesis_max: 300,
 };
 const VERDICT_NONE = VERDICT_BASE;
-const USAGE = {
-  run_id: "a1", calls: 1, structure_calls: 2, cache_hits: 1, input_tokens: 2300, output_tokens: 410, estimated_cost_usd: 0.0556,
-  by_step: { growth_engine: { calls: 1, cache_hits: 0, input_tokens: 1200, output_tokens: 300, estimated_cost_usd: 0.0456 },
-    deck_structure: { calls: 1, cache_hits: 1, input_tokens: 800, output_tokens: 80, estimated_cost_usd: 0.01 },
-    column_mapping: { calls: 1, cache_hits: 0, input_tokens: 300, output_tokens: 30, estimated_cost_usd: 0.0 } },
-};
 
 // Degrade, don't die (CLAUDE.md rule 20): the gateway fails, every computed metric still renders with its citation.
 test("when the narrative cannot be generated the metrics render with their sources and S17 says why", async () => {
@@ -52,7 +46,6 @@ test("when the narrative cannot be generated the metrics render with their sourc
   api.getDisclosure.mockResolvedValue(null);
   api.getClaimRegister.mockResolvedValue({ claims: [], register: [] });
   api.getVerdict.mockResolvedValue(VERDICT_NONE);
-  api.getLlmUsage.mockResolvedValue(USAGE);
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
@@ -92,7 +85,6 @@ async function mountDashboard(results, verdict = VERDICT_NONE, audit = sample.au
   api.getDisclosure.mockResolvedValue(null);
   api.getClaimRegister.mockResolvedValue({ claims: [], register: [] });
   api.getVerdict.mockResolvedValue(verdict);
-  api.getLlmUsage.mockResolvedValue(USAGE);
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
@@ -108,7 +100,6 @@ test("the Data integrity section shows the server's conclusion and both blocks a
   api.getDisclosure.mockResolvedValue(null);
   api.getClaimRegister.mockResolvedValue({ claims: [], register: [] });
   api.getVerdict.mockResolvedValue(VERDICT_NONE);
-  api.getLlmUsage.mockResolvedValue(USAGE);
   api.getIntegrity.mockResolvedValue({ conclusion: "Insufficient assessment coverage (3 of 5)", code: "insufficient", completed: 3, applicable: 5,
     completed_text: "Completed 3 of 5 applicable checks", blocked: [], data_requests: [], results: [], coverage: [] });
   const host = document.createElement("div");
@@ -312,30 +303,11 @@ test("Data gaps: a refused date shows the server's wording (W7)", async () => {
   await unmount();
 });
 
-test("AI usage and cost (this audit): one row per step, then the total, cost with 2 decimals (W20)", async () => {
+test("the Audit page shows no AI usage and cost table and asks for none (usage-and-allowance.md section 9)", async () => {
   const { host, unmount } = await mountDashboard(sample, OK);
-  const section = host.querySelector('[data-testid="usage-panel"]');
-  expect(section.querySelector("h2").textContent).toBe("AI usage and cost (this audit)");
-  expect([...section.querySelectorAll("th")].map((th) => th.textContent)).toEqual(["Step", "Calls", "Cache hits", "Input tokens", "Output tokens", "Cost (USD)"]);
-  const rows = [...section.querySelectorAll('[data-testid="usage-row"]')].map((r) => [...r.children].map((c) => c.textContent));
-  expect(rows).toEqual([
-    ["Narrative – growth_engine", "1", "0", "1,200", "300", "0.05"],
-    ["Deck structure reading", "1", "1", "800", "80", "0.01"],
-    ["Column mapping", "1", "0", "300", "30", "0.00"],
-    ["Total", "3", "1", "2,300", "410", "0.06"],
-  ]);
-  await unmount();
-});
-
-test("the AI usage and cost table is the very end of the page: after every analysis, the memo section and the glossary", async () => {
-  const { host, unmount } = await mountDashboard(sample, OK);
-  const usage = host.querySelector('[data-testid="usage-panel"]');
-  const after = [...host.querySelectorAll("[data-testid]")].filter((el) => !usage.contains(el)
-    && (usage.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING));
-  expect(after.map((el) => el.getAttribute("data-testid"))).toEqual([]);
-  for (const id of ["verdict", "verdict-memo", "claim-register", "glossary", "mrr-by-segment-chart"]) {
-    expect(host.querySelector(`[data-testid="${id}"]`).compareDocumentPosition(usage) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  }
+  expect(host.querySelector('[data-testid="usage-panel"]')).toBeNull();
+  expect(host.textContent).not.toMatch(/AI usage and cost|Cost \(USD\)|Input tokens|Output tokens/);
+  expect(api.getLlmUsage).toBeUndefined();
   await unmount();
 });
 

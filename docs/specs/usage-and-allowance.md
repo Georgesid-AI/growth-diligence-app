@@ -50,24 +50,23 @@ months in UTC. Counts and USD only. No company name, file name, audit name, audi
   Calls already in flight finish, so one call per concurrent request can overshoot the allowance; the daily cap is the net above it.
 - The app-wide daily cap of USD 5 is unchanged and still applies on top, including the existing exemption of the column-mapping call
   (chat-upload.md §4.2). The allowance has no exemption.
-- `GET /api/allowance` (tester token; owner 404; no token 401): `{allowance_usd, used_usd, percent, state}` for the caller's month.
-  With access control off: `{state: "off"}`.
+- `GET /api/allowance` (tester token; owner 404; no token 401): `{percent, state}` for the caller's month (the USD fields were removed
+  from the tester response, §9). With access control off: `{state: "off"}`.
 
 ## 5. What the tester sees
 - `warn`: one line at the top of every tester screen, under the header and apart from the three blockers of rule 21 (it is not a blocker):
-  `You have used X% of this month's AI allowance (USD Y of USD 10).` X is the rounded-down percent, Y the used amount with two
-  decimals, the last number is the allowance (no decimals when whole, else two).
+  `You have used X% of this month's AI allowance.` X is the rounded-down percent. No amount (§9, amended 18 Oct 2026).
 - `blocked`: the message below replaces the line, word for word:
 
-> You’ve reached your monthly AI allowance.
+> Monthly AI allowance reached.
 >
-> AI features are paused for now, including column suggestions, reading board decks, and writing narratives.
+> AI steps are paused: AI column suggestions, reading board decks, and writing narratives.
 >
-> Everything else still works at no extra cost: all metrics (revenue, NRR, churn, CAC payback, sales cycle, and win rate), data checks, saved mappings, review, and exports.
+> Everything else still works: all metrics (revenue, NRR, churn, CAC payback, sales cycle, win rate), data checks, saved mappings, your review and exports. These are calculated in Python from your files.
 >
-> You can still upload new files. The app will match columns using its built-in rules and ask you to confirm any uncertain matches.
+> New files can still be mapped by the app's rules; you confirm any column it is unsure about yourself.
 >
-> Need a higher allowance? Contact the app owner.
+> To raise your allowance, contact the app owner.
 
 - At 100% only new AI calls stop. Never blocked: uploads, rules mapping, saved mappings, all metrics, data checks, review, exports,
   stored narratives (read from cache, no call).
@@ -104,10 +103,53 @@ New closed strings, added to `test_gateway_data_boundary.py`: guard code `monthl
 | D4 | The 80% line is a separate component, not in the blocker list (rule 21). | As built. |
 | D5 | The month resets at 00:00 UTC on the 1st. | **Approved:** UTC. |
 
+## 9. Cost is hidden from testers; per-audit cost list for the owner (2026-10-18, George)
+Decided by George with the task. The app keeps calculating and storing tokens and cost (`llm_calls`, the ledger); only what a tester
+token receives or sees changes. The architecture and the engine are unchanged.
+
+**Screens.** Removed: the "AI usage and cost" table of the Audit page (`UsagePanel`) and its request; the cost estimate on "Write all
+narratives" (the line "Estimated cost: up to ..." and the estimate in the API); the "Cost:" line of a deck's AI log. The
+narrative helper wording "Costs one AI request" becomes "Uses one AI request" (amended 18 Oct 2026, below). The 80% line reads `You have used X% of this month's AI
+allowance.` and the 100% message is unchanged. No tester screen mentions that cost figures exist or can be requested.
+
+**Memo and exports.** Appendix D of the IC memo no longer carries "AI usage and cost (this audit)" (verdict-and-memo.md §8 and W20 are
+withdrawn for the memo and the Audit page); the disclosure block stays. The xlsx export has no usage sheet and stays without one; a test
+holds that. `build_memo` no longer takes the usage.
+
+**API.** A tester token (and a request with access control off) never receives a cost, token or USD field, on any route: one filter on
+the JSON of the response removes the closed key set `input_tokens, output_tokens, estimated_cost_usd, ai_cost_usd, cost_usd,
+estimate_usd, total_usd, structure_tokens, structure_token_cap, tokens, allowance_usd, used_usd`, at any depth. `GET /runs/{id}/llm-usage` stays and
+returns calls, cache hits and caps only; `GET /runs/{id}/narratives/estimate` returns the steps (label, cached, available) and no
+amount; `GET /allowance` returns `{percent, state}`. The owner token keeps `/admin/usage`, `/admin/audit-costs` and `/usage/totals`.
+A new key that carries a cost, a token count or USD is added to the set and to `test_gateway_data_boundary.py` in the same PR (rule 14).
+Test: `test_tester_cost_hidden.py` calls every tester route that can carry them with a tester token and fails on any key matching
+`cost|usd|token` outside a short list of names that are not AI figures.
+
+**Owner page: "Cost per audit".** `GET /api/admin/audit-costs` (owner token only; tester 404; no token 401):
+`{audits: [{tester, created_at, calls, tokens, cost_usd}]}`, newest first, one row per stored audit. `tester` is the tester link label
+(`null` for an audit with no tester, shown as "no tester"); `created_at` is the audit's creation time (ISO, UTC), shown in the viewer's
+local time as on the Audit Hub tile; `calls` are billed model calls of that audit (cache hits and refusals are not calls),
+`tokens` input plus output, `cost_usd` the sum, shown `USD 1.23`. No audit id, company name, file name or audit name is in the row or
+the response. The numbers come from `llm_calls`, which deleting an audit purges, so a deleted audit leaves the list; the tester ledger
+(§2) keeps the totals. The owner token still gets 404 on every audit route.
+
+| Test | File |
+|---|---|
+| No tester-token response holds a cost, token or USD field (every route that could); the owner routes still do | `test_tester_cost_hidden.py` |
+| Memo and xlsx hold no usage table; `/allowance` has percent and state only; the estimate has no amount | `test_ic_memo.py`, `test_tester_cost_hidden.py`, `test_usage_allowance.py` |
+| Audit costs: one row per audit with tester label, time, calls, tokens, cost; no name or id; owner only | `test_usage_allowance.py`, `test_owner_page_api.py` |
+| Screens: no usage table, no estimate, no USD in the banner, no deck cost line; owner list renders | `Dashboard.test.jsx`, `Review.test.jsx`, `AllowanceBanner.test.jsx`, `DeckPanel.test.jsx`, `OwnerPage.test.jsx` |
+
+**Amended (George, 18 Oct 2026, PR #128).** No tester screen mentions cost. The 100% message above replaces the earlier one word for word
+("no extra cost" is gone); "Costs one AI request" and "costs another AI request" read "Uses one AI request" and "uses another AI request"; "for free"
+is dropped. `AllowanceBanner.test.jsx` holds the five lines and a no-"cost" check; `Review.test.jsx` and `StepNarrative.test.jsx` hold the
+helper wording.
+
 ## Files
 `backend/app/allowance.py` (new), `backend/app/llm/guards.py`, `backend/app/llm/gateway.py` (log_call, two checks, cap word),
 `backend/app/access.py`, `backend/server.py` (routes, upload counts), `frontend/src/components/AllowanceBanner.jsx`, `OwnerUsage.jsx` and `lib/allowance.js` (new),
-`Layout.jsx`, `AuditHub.jsx`, `OwnerPage.jsx`, `lib/api.js`, `lib/chatUpload.js`, and the tests above.
+`Layout.jsx`, `AuditHub.jsx`, `OwnerPage.jsx`, `lib/api.js`, `lib/chatUpload.js`, and the tests above. §9 adds `backend/app/tester_view.py`
+(the filter), `OwnerAuditCosts.jsx`, and removes `UsagePanel.jsx`.
 
 ## Done when
 §7 passes with the full suites (frontend with --no-cache), and the checks of .github/workflows/tests.yml are green.

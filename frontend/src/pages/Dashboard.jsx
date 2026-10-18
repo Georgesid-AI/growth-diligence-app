@@ -18,7 +18,6 @@ import { GLOSSARY, seeGlossary } from "@/lib/glossary";
 import { SegmentPaths } from "@/components/SegmentPaths";
 import ClaimRegister from "@/components/ClaimRegister";
 import DataGaps from "@/components/DataGaps";
-import UsagePanel from "@/components/UsagePanel";
 import Verdict from "@/components/Verdict";
 import IntegrityCoverage from "@/components/IntegrityCoverage";
 import { describeRequestError, logRequestFailure } from "@/lib/requestError";
@@ -609,9 +608,6 @@ export default function Dashboard() {
           {disclosure.text}
         </p>
       )}
-
-      {/* AI usage and cost (section 8): the very end of the page, after every analysis and the memo section */}
-      <UsagePanel auditId={id} refresh={verdictTick} />
     </Layout>
   );
 }

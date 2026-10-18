@@ -42,10 +42,10 @@ const VERDICT = {
 };
 const REGISTER = { register: [{ claim_id: "c1", rank: 1, claim: "Revenue 100", evidence_label: "Contradicted", gate_needed: true, gate_saved: false, key_gate: false,
   reason: "x", claimed_value: 100, unit: null, currency: "EUR", observed_value: 50, metric: "Revenue", gap: -50 }] };
-const ESTIMATE = { model: "claude-sonnet-5-5", total_usd: 0.1234, basis: "upper bound", steps: [
-  { step: "growth_engine", label: "Growth engine", cached: false, estimate_usd: 0.05, available: true },
-  { step: "data_inventory", label: "Data inventory", cached: false, estimate_usd: 0.04, available: true },
-  { step: "data_integrity", label: "Data integrity", cached: false, estimate_usd: 0.0334, available: true }] };
+const ESTIMATE = { model: "claude-sonnet-5-5", steps: [
+  { step: "growth_engine", label: "Growth engine", cached: false, available: true },
+  { step: "data_inventory", label: "Data inventory", cached: false, available: true },
+  { step: "data_integrity", label: "Data integrity", cached: false, available: true }] };
 const SUMMARY = { mappings: { auto: 5, open: 0, missing_required: [] }, claims: { auto_accepted: 12, auto_accepted_ids: ["x1"], open: 1, turnover_open: 0 }, computed: true, blockers: [] };
 
 let state, root, host;
@@ -253,12 +253,13 @@ test("Generate IC memo downloads the memo the server builds", async () => {
   expect(api.getMemo).toHaveBeenCalledWith("a1");
 });
 
-test("no narrative is written by opening the screen; the one button writes every enabled step in order, with the estimate beside it", async () => {
+test("no narrative is written by opening the screen; the one button writes every enabled step in order, with no cost estimate beside it", async () => {
   await mount();
   expect(api.generateNarrative).not.toHaveBeenCalled();
-  expect(q("write-all-estimate").textContent).toBe("Estimated cost: up to $0.12 for 3 narratives");
+  expect(q("write-all-estimate")).toBeNull();
+  expect(q("review-finish").textContent).not.toMatch(/\$|USD|Estimated cost/);
   expect(q("write-all-narratives").textContent).toBe("Write all narratives");
-  expect(q("write-all-help").textContent).toContain("Costs one AI request");
+  expect(q("write-all-help").textContent).toContain("Uses one AI request");
   api.generateNarrative.mockResolvedValue({ narrative_status: "ok" });
   await act(async () => { q("write-all-narratives").click(); });
   await act(async () => { await Promise.resolve(); await Promise.resolve(); });
@@ -275,10 +276,10 @@ test("a narrative that cannot be written says so, the others are still written a
   expect(q("write-all-unavailable").textContent).toContain("computed metrics are unaffected");
 });
 
-test("when every narrative is stored the screen says so, with a link to the Growth Dashboard and no cost estimate", async () => {
-  state.estimate = { ...ESTIMATE, total_usd: 0, steps: ESTIMATE.steps.map((s) => ({ ...s, cached: true, estimate_usd: 0 })) };
+test("when every narrative is stored the screen says so, with a link to the Audit and no cost estimate", async () => {
+  state.estimate = { ...ESTIMATE, steps: ESTIMATE.steps.map((s) => ({ ...s, cached: true })) };
   await mount();
-  expect(q("write-all-done").textContent).toBe("All narratives are written – read them on the Growth Dashboard");
+  expect(q("write-all-done").textContent).toBe("All narratives are written – read them on the Audit");
   expect(q("write-all-link").getAttribute("href")).toBe("/audit/a1/dashboard");
   expect(q("write-all-estimate")).toBeNull();
 });
@@ -289,7 +290,7 @@ test("narratives still to write: no dashboard link until a write succeeds, then 
   api.generateNarrative.mockResolvedValue({ narrative_status: "ok" });
   await act(async () => { q("write-all-narratives").click(); });
   await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-  expect(q("write-all-done").textContent).toBe("All narratives are written – read them on the Growth Dashboard");
+  expect(q("write-all-done").textContent).toBe("All narratives are written – read them on the Audit");
   expect(q("write-all-link").getAttribute("href")).toBe("/audit/a1/dashboard");
 });
 

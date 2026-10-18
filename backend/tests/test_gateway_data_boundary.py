@@ -1085,6 +1085,21 @@ def test_an_allowance_refusal_logs_the_closed_word_and_no_amount_label_or_id(cap
         assert needle not in "".join(r.getMessage() for r in caplog.records), f"{needle!r} was logged"
 
 
+def test_the_owner_audit_cost_rows_hold_a_closed_key_set_and_the_tester_filter_covers_every_cost_key(caplog):
+    """usage-and-allowance.md section 9: the owner's row has the tester label, a time and three counts, never an audit, company or
+    file name; and every cost, token or USD key the app writes to the call log is in the set a tester never receives."""
+    from app import allowance, tester_view
+    db = t.FakeDB()
+    db["audits"].docs.append({"id": "a1", "owner": "t1", "created_at": "2026-10-18T12:32:00+00:00", "company_name": "Acme Zed"})
+    db["access_tokens"].docs.append({"id": "t1", "label": "Label One"})
+    db["llm_calls"].docs.append({"run_id": "a1", "cache_hit": False, "input_tokens": 5, "output_tokens": 5, "estimated_cost_usd": 0.1,
+                                 "file": "deck_zed.pptx"})
+    rows = asyncio.run(allowance.audit_costs(db))["audits"]
+    assert rows == [{"tester": "Label One", "created_at": "2026-10-18T12:32:00+00:00", "calls": 1, "tokens": 10, "cost_usd": 0.1}]
+    assert "Acme Zed" not in json.dumps(rows) and "deck_zed" not in json.dumps(rows)
+    assert {"input_tokens", "output_tokens", "estimated_cost_usd"} <= tester_view.HIDDEN_KEYS
+
+
 # The check a "structure not read" line names for a reply that fails validation (issue #64): a closed word, never the
 # reply, the check's message or cell text.
 PARSE_CHECKS = frozenset({"schema", "metric_list", "item_count", "other"})

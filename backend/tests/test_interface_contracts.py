@@ -756,7 +756,7 @@ def test_a_memo_is_built_from_every_engine_run_the_contract_covers_with_no_false
         audit={"company_name": "TestCo", "target_arr": 1e6, "target_date": "2026-12-31", "as_of_month": stored["as_of_month"]},
         results=stored, rows=rows, ver=vd.verdict(rows, stored, {"claim_ids": top}), key=vd.key_gates(rows),
         gaps=vd.data_gaps(stored, rows, state["in_force"]), ic={"ratings": icm.RATINGS, "thesis": {"plan": "p", "evidence": "e", "condition": "c"}, "judgment": icm.JUDGMENT},
-        blockers=[], narratives=[], usage=icm.USAGE, files=icm.FILES, decks=icm.DECKS, tables=tables, today="2026-10-08")
+        blockers=[], narratives=[], files=icm.FILES, decks=icm.DECKS, tables=tables, today="2026-10-08")
     assert ic_memo.word_count_of(text) <= 1500 and "## Appendix D" in text
 
 

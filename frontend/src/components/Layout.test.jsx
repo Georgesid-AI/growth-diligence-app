@@ -115,58 +115,52 @@ test.each([0, null, undefined])("the header reads 'target not set' when Target A
   expect(q("header-target-line").textContent).toMatch(/^EUR · target .*1,?000,?000.* ARR$/);
 });
 
-test("Run audit and Review are the tabs; every earlier page is under the Details menu, none removed", async () => {
+test("an open audit has four tabs in this order, no Details menu and no Run audit tab", async () => {
   api.getBlockers.mockResolvedValue([]);
   await mount(AUDIT);
-  expect(q("nav-tab-run-audit").textContent).toBe("Run audit");
-  expect(q("nav-tab-review").textContent).toBe("Review");
+  expect(["nav-tab-mapping-wizard", "nav-tab-review", "nav-tab-audit", "nav-tab-missing-data"].map((id) => q(id).textContent))
+    .toEqual(["Upload & Mapping", "Review", "Audit", "Diagnostics"]);
+  expect([...q("nav-tab-review").parentElement.children].map((b) => b.textContent)).toEqual(["Upload & Mapping", "Review", "Audit", "Diagnostics"]);
+  expect(q("nav-details")).toBeNull();
   expect(q("details-menu")).toBeNull();
-  await act(async () => { q("nav-details").click(); });
-  expect(["nav-tab-growth-dashboard", "nav-tab-mapping-wizard", "nav-tab-missing-data"].map((id) => q(id).textContent))
-    .toEqual(["Growth Dashboard", "Upload & Mapping", "Diagnostics"]);
-  await act(async () => { q("nav-details").click(); });
-  expect(q("details-menu")).toBeNull();
+  expect(q("nav-tab-run-audit")).toBeNull();
+  expect(document.body.textContent).not.toMatch(/Details|Run audit|Growth Dashboard/);
 });
 
-describe("the Details menu", () => {
-  beforeEach(() => { api.getBlockers.mockResolvedValue([]); });
+test.each([
+  ["nav-tab-mapping-wizard", "/audit/a1/mapping"],
+  ["nav-tab-review", "/audit/a1/review"],
+  ["nav-tab-audit", "/audit/a1/dashboard"],
+  ["nav-tab-missing-data", "/audit/a1/diagnostics"],
+])("the %s tab navigates to %s", async (testid, path) => {
+  api.getBlockers.mockResolvedValue([]);
+  mockNavigate.mockClear();
+  await mount(AUDIT);
+  await act(async () => { q(testid).click(); });
+  expect(mockNavigate).toHaveBeenCalledWith(path);
+});
 
-  test("a click outside the menu closes it; a click inside it does not", async () => {
-    await mount(AUDIT);
-    await act(async () => { q("nav-details").click(); });
-    expect(q("details-menu")).not.toBeNull();
-    await act(async () => { q("details-menu").dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); });
-    expect(q("details-menu")).not.toBeNull();
-    await act(async () => { q("page").dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); });
-    expect(q("details-menu")).toBeNull();
-  });
+test("an audit page has an All audits button next to the app name, and both open the Audit Hub", async () => {
+  api.getBlockers.mockResolvedValue([]);
+  mockNavigate.mockClear();
+  await mount(AUDIT);
+  expect(q("nav-all-audits").textContent.trim()).toBe("All audits");
+  expect(q("nav-all-audits").parentElement).toBe(q("nav-tab-audit-list").parentElement);
+  await act(async () => { q("nav-all-audits").click(); });
+  await act(async () => { q("nav-tab-audit-list").click(); });
+  expect(mockNavigate.mock.calls).toEqual([["/"], ["/"]]);
+});
 
-  test("Escape closes it and returns focus to the Details button", async () => {
-    await mount(AUDIT);
-    await act(async () => { q("nav-details").click(); });
-    expect(q("details-menu")).not.toBeNull();
-    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
-    expect(q("details-menu")).toBeNull();
-    expect(document.activeElement).toBe(q("nav-details"));
-  });
-
-  test.each([
-    ["nav-tab-growth-dashboard", "/audit/a1/dashboard"],
-    ["nav-tab-mapping-wizard", "/audit/a1/mapping"],
-    ["nav-tab-missing-data", "/audit/a1/diagnostics"],
-  ])("choosing %s navigates to %s and closes the menu", async (testid, path) => {
-    mockNavigate.mockClear();
-    await mount(AUDIT);
-    await act(async () => { q("nav-details").click(); });
-    await act(async () => { q(testid).click(); });
-    expect(mockNavigate).toHaveBeenCalledWith(path);
-    expect(q("details-menu")).toBeNull();
-  });
+test("the Audit Hub itself has no All audits button and no tabs", async () => {
+  await mount(undefined);
+  expect(q("nav-all-audits")).toBeNull();
+  expect(q("nav-tab-review")).toBeNull();
+  expect(q("nav-tab-audit-list")).not.toBeNull();
 });
 
 test("the header has no Heuristics badge", async () => {
   api.getBlockers.mockResolvedValue([]);
-  api.getAllowance.mockResolvedValue({ state: "ok", percent: 0, used_usd: 0, allowance_usd: 10 });
+  api.getAllowance.mockResolvedValue({ state: "ok", percent: 0 });
   await mount(AUDIT);
   expect(document.body.textContent.toLowerCase()).not.toContain("heuristics");
   expect(q("header-target-line")).not.toBeNull();
@@ -174,7 +168,7 @@ test("the header has no Heuristics badge", async () => {
 
 test("the allowance line sits under the header on an audit screen and the blockers stay apart from it", async () => {
   api.getBlockers.mockResolvedValue(BLOCKERS.slice(1, 2));
-  api.getAllowance.mockResolvedValue({ state: "warn", percent: 85, used_usd: 8.5, allowance_usd: 10 });
+  api.getAllowance.mockResolvedValue({ state: "warn", percent: 85 });
   await mount(AUDIT);
   expect(q("allowance-warn").closest("header")).toBeNull();
   expect(q("blocker-banner").contains(q("allowance-warn"))).toBe(false);

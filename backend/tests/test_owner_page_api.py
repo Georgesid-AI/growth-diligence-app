@@ -21,7 +21,7 @@ OWNER = "owner-token-for-the-test-suite-only"
 SECRET = "SECRET-METHODOLOGY-SENTINEL-4471"
 ADMIN_ROUTES = [("GET", "/api/admin/prompts"), ("POST", "/api/admin/prompts"), ("GET", "/api/admin/testers"),
                 ("POST", "/api/admin/testers"), ("POST", "/api/admin/testers/x/revoke"), ("POST", "/api/admin/testers/x/reissue"),
-                ("GET", "/api/admin/usage"), ("POST", "/api/admin/testers/x/allowance")]
+                ("GET", "/api/admin/usage"), ("POST", "/api/admin/testers/x/allowance"), ("GET", "/api/admin/audit-costs")]
 
 
 @pytest.fixture()
