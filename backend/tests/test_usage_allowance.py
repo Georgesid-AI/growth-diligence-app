@@ -169,8 +169,9 @@ def test_the_usage_never_carries_a_company_file_or_audit_name(owner):
 def test_the_owner_sets_an_allowance_within_range_and_nobody_else_can(owner):
     tid, tester = make_tester(owner)
     url = f"/api/admin/testers/{tid}/allowance"
-    assert owner.post(url, json={"allowance_usd": 25.5}, headers=owner.headers_owner).status_code == 200
-    assert owner.get("/api/allowance", headers=tester).json()["allowance_usd"] == 25.5
+    saved = owner.post(url, json={"allowance_usd": 25.5}, headers=owner.headers_owner)
+    assert saved.status_code == 200 and saved.json()["allowance_usd"] == 25.5
+    assert owner.db[access.COLLECTION].docs[0]["allowance_usd"] == 25.5 and "allowance_usd" not in owner.get("/api/allowance", headers=tester).json()
     for bad in (-1, 1000.01, 1.234, "ten", None):
         assert owner.post(url, json={"allowance_usd": bad}, headers=owner.headers_owner).status_code == 422, bad
     assert owner.post(url, json={"allowance_usd": 1, "x": 1}, headers=owner.headers_owner).status_code == 422
@@ -179,6 +180,32 @@ def test_the_owner_sets_an_allowance_within_range_and_nobody_else_can(owner):
     assert owner.post(url, json={"allowance_usd": 5}, headers=tester).status_code == 404
     owner.post(url, json={"allowance_usd": 0}, headers=owner.headers_owner)
     assert owner.get("/api/allowance", headers=tester).json()["state"] == "blocked"
+
+
+def test_the_owner_audit_costs_list_one_row_per_audit_with_label_time_calls_tokens_and_cost_and_no_name(owner):
+    a_id, a = make_tester(owner, "Alpha")
+    _, b = make_tester(owner, "Beta")
+    first = owner.post("/api/audits", json={"company_name": "Zorblax Holdings"}, headers=a).json()
+    second = owner.post("/api/audits", json={"company_name": "Quuxfund"}, headers=b).json()
+    calls = owner.db["llm_calls"].docs
+    calls += [{"run_id": first["id"], "step": "growth_engine", "cache_hit": False, "input_tokens": 1000, "output_tokens": 200,
+               "estimated_cost_usd": 0.25, "status": "ok", "file": "secret_deck.pptx"},
+              {"run_id": first["id"], "step": "data_inventory", "cache_hit": False, "input_tokens": 300, "output_tokens": 100,
+               "estimated_cost_usd": 0.5, "status": "ok"},
+              {"run_id": first["id"], "step": "growth_engine", "cache_hit": True, "input_tokens": 0, "output_tokens": 0,
+               "estimated_cost_usd": 0.0, "status": "ok"},
+              {"run_id": first["id"], "step": "growth_engine", "cache_hit": False, "input_tokens": 0, "output_tokens": 0,
+               "estimated_cost_usd": 0.0, "status": "monthly_allowance_reached"}]
+    res = owner.get("/api/admin/audit-costs", headers=owner.headers_owner)
+    assert res.status_code == 200 and set(res.json()) == {"audits"}
+    rows = {r["tester"]: r for r in res.json()["audits"]}
+    assert set(rows) == {"Alpha", "Beta"} and all(set(r) == {"tester", "created_at", "calls", "tokens", "cost_usd"} for r in rows.values())
+    assert (rows["Alpha"]["calls"], rows["Alpha"]["tokens"], rows["Alpha"]["cost_usd"]) == (2, 1600, 0.75), "billed calls only"
+    assert (rows["Beta"]["calls"], rows["Beta"]["tokens"], rows["Beta"]["cost_usd"]) == (0, 0, 0.0)
+    assert rows["Alpha"]["created_at"] == owner.db["audits"].docs[0]["created_at"]
+    for needle in ("Zorblax", "Quuxfund", "secret_deck", first["id"], second["id"]):
+        assert needle not in res.text
+    assert owner.get("/api/admin/audit-costs").status_code == 401 and owner.get("/api/admin/audit-costs", headers=a).status_code == 404
 
 
 def test_a_reissued_or_revoked_link_keeps_the_ledger_and_the_allowance(owner):
@@ -196,7 +223,7 @@ def test_my_allowance_is_401_without_a_token_and_404_for_the_owner_token(owner):
     _, tester = make_tester(owner)
     assert owner.get("/api/allowance").status_code == 401
     assert owner.get("/api/allowance", headers=owner.headers_owner).status_code == 404
-    assert owner.get("/api/allowance", headers=tester).json() == {"allowance_usd": 10.0, "used_usd": 0.0, "percent": 0, "state": "ok"}
+    assert owner.get("/api/allowance", headers=tester).json() == {"percent": 0, "state": "ok"}, "a percentage and a state, no amount"
 
 
 def test_a_tester_cannot_read_another_testers_usage_and_the_guard_codes_are_closed_words():

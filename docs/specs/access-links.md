@@ -45,6 +45,7 @@ generate memo, export CSV/xlsx, delete audit, and every other `/audits/{audit_id
 | A tester token on an audit another token owns (or an audit id that does not exist) | 404, the same body as a missing audit, so the answer never reveals that the audit exists |
 | The owner token on any audit route | 404 |
 | The owner token on `GET /api/usage/totals` and the admin routes | 200: usage totals only (counts and cost, no company, file or claim), the product stance "we cannot see your deals"; the totals sum all audits |
+| The owner token on `GET /api/admin/audit-costs` | 200: per audit the tester label, creation time, calls, tokens and cost; no audit, company or file name (usage-and-allowance.md §9) |
 | A tester token on `GET /api/usage/totals` | 404, as on the admin routes: the route is owner-only (George, 18 Oct 2026, usage-and-allowance.md D3; it replaced the 15 Oct rule of own-audit totals) |
 | `GET /api/` (health) and `GET /api/fields` (the field list, no audit data) | open (George, 15 Oct 2026, decision 2a: they stay open; neither holds audit data) |
 List audits returns only the token's own audits; the owner token gets 404 on it too (George, 15 Oct 2026).

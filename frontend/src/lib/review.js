@@ -8,23 +8,13 @@ export const MEMO_LABEL = "Generate IC memo";
 export const MEMO_WAITING = "Enter both ratings to generate the memo.";
 export const RECONCILIATION_NOTE = "A reconciliation gap over 2% is reported in the memo; it does not block it.";
 
-const usd = (v) => `$${Number(v).toFixed(2)}`;
-
 export const ALL_WRITTEN_LEAD = "All narratives are written – read them on the ";
-export const ALL_WRITTEN_LINK = "Growth Dashboard";
+export const ALL_WRITTEN_LINK = "Audit";
 
 /** True when at least one narrative can be written and every one that can is already stored. */
 export function allWritten(estimate) {
   const steps = (estimate?.steps || []).filter((s) => s.available);
   return steps.length > 0 && steps.every((s) => s.cached);
-}
-
-/** "Estimated cost: up to $0.08 for 3 narratives" / "" while unknown, or when all are written (the screen says so with a link). */
-export function estimateText(estimate) {
-  if (!estimate || allWritten(estimate)) return "";
-  const todo = (estimate.steps || []).filter((s) => s.available && !s.cached);
-  if (todo.length === 0) return "";
-  return `Estimated cost: up to ${usd(estimate.total_usd)} for ${todo.length} narrative${todo.length === 1 ? "" : "s"}`;
 }
 
 // Mapping summary (chat-upload.md section 18).

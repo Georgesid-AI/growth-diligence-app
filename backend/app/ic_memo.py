@@ -1,6 +1,6 @@
 """The IC memo (docs/specs/verdict-and-memo.md section 7, method A11).
 
-A pure module: it is handed the register, the verdict, the stored results, the audit, the stored narratives and the usage,
+A pure module: it is handed the register, the verdict, the stored results, the audit, the stored narratives,
 and returns Markdown, or refuses and says why. It imports nothing from `app.llm`, calls no model, stores nothing and
 generates no narrative. Python never rates: the two assessed rows carry the analyst's rating, the other four say "Not
 assessed". Every number is checked against the stored data before the text is returned (section 7.4).
@@ -384,7 +384,7 @@ def _needs(ic: dict, rows: List[dict], key: dict) -> None:
         raise MemoRefused("inputs", WORDING_NOT_IN_W["judgment"].format(parts=", ".join(unwritten)))
 
 
-def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, usage, files, decks, tables, today, integrity,
+def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, files, decks, tables, today, integrity,
            thesis: Dict[str, str]) -> Tuple[str, str]:
     """(sections 1-6 with the title, the whole text) for one view of the thesis."""
     notes = Notes()
@@ -553,7 +553,6 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, us
     groups = overlap_groups(rows)
     app += ["Value at risk: de-duplication", W16_VALUE_AT_RISK,
             "Overlap groups: " + ("; ".join(", ".join(f"#{n}" for n in g) for g in groups) if groups else "none"), ""]
-    app += ["AI usage and cost (this audit)", _usage_table(usage), ""]
     block = disclosure.build_disclosure([{"step": n["step"] if isinstance(n, dict) else n.step,
                                           "model": (n if isinstance(n, dict) else n.model_dump()).get("model"),
                                           "generated_at": (n if isinstance(n, dict) else n.model_dump()).get("generated_at")}
@@ -583,27 +582,14 @@ def _glossed(lines: List[str], keep: Iterable[str] = ()) -> List[str]:
     return [fmt.see_glossary(line) if line and line not in keep and not line.startswith(("#", "|", "[^")) else line for line in lines]
 
 
-def _usage_table(usage: dict) -> str:
-    labels = {"deck_structure": "Deck structure reading", "column_mapping": "Column mapping"}
-    rows = []
-    for step, u in (usage.get("by_step") or {}).items():
-        name = labels.get(step) or f"Narrative – {step}"
-        rows.append([name, u["calls"], u["cache_hits"], fmt.fmt_count(u["input_tokens"]), fmt.fmt_count(u["output_tokens"]),
-                     f"{u['estimated_cost_usd']:.2f}"])
-    rows.append(["Total", usage.get("calls", 0) + usage.get("structure_calls", 0), usage.get("cache_hits", 0),
-                 fmt.fmt_count(usage.get("input_tokens", 0)), fmt.fmt_count(usage.get("output_tokens", 0)),
-                 f"{usage.get('estimated_cost_usd', 0):.2f}"])
-    return _table(["Step", "Calls", "Cache hits", "Input tokens", "Output tokens", "Cost (USD)"], rows)
-
-
-def allowed_numbers(audit: dict, results: dict, rows: List[dict], gaps: List[dict], ic: dict, usage: dict, files: List[dict],
+def allowed_numbers(audit: dict, results: dict, rows: List[dict], gaps: List[dict], ic: dict, files: List[dict],
                     decks: List[dict], thesis: bool, tables: Optional[List[dict]] = None) -> Allowed:
     """The numbers a memo may state. `thesis=True` is the set for a thesis sentence: (a)-(c) and (e), without the analyst's deal terms."""
     allowed = Allowed().results(contract.MetricsPayload.model_validate(results), results)
     allowed.tree({k: audit.get(k) for k in ("company_name", "target_arr", "target_date", "as_of_month")})
     analyst_fields = ("gate_threshold", "gate_budget_decision", "gate_metric_name", "gate_sentence", "gate_date")
     allowed.tree([{k: v for k, v in r.items() if thesis is False or k not in analyst_fields} for r in rows])
-    allowed.tree(gaps).tree(usage).tree([f["file"] for f in files]).tree([d["file"] for d in decks])
+    allowed.tree(gaps).tree([f["file"] for f in files]).tree([d["file"] for d in decks])
     for n in FIXED_NUMERALS:
         allowed.number(n)
     for n in range(0, max(len(rows), len(gaps), len(files) + len(decks), 8) + 1):
@@ -618,7 +604,7 @@ def allowed_numbers(audit: dict, results: dict, rows: List[dict], gaps: List[dic
 
 
 def build_memo(*, audit: dict, results: dict, rows: List[dict], ver: dict, key: dict, gaps: List[dict], ic: dict,
-               blockers: List[dict], narratives: List, usage: dict, files: List[dict], decks: List[dict], tables: List[dict],
+               blockers: List[dict], narratives: List, files: List[dict], decks: List[dict], tables: List[dict],
                today: str, integrity: Optional[dict] = None) -> str:
     """The IC memo as Markdown, or `MemoRefused` (section 7.1). Built on request from the functions of the register and the verdict;
     nothing is stored. `integrity`: the Data integrity assessment (integrity-coverage.md); None reads it from the results and the
@@ -641,14 +627,14 @@ def build_memo(*, audit: dict, results: dict, rows: List[dict], ver: dict, key: 
         integrity = integrity_mod.assess(results, deck_count=len(decks), candidates=[],
                                          fiscal_year_end=int((audit or {}).get("fiscal_year_end") or 12))
     common = dict(audit=audit, results=results, rows=rows, ver=ver, key=key, gaps=gaps, ic=ic, blockers=blockers,
-                  narratives=narratives, usage=usage, files=files, decks=decks, tables=tables, today=today, integrity=integrity)
+                  narratives=narratives, files=files, decks=decks, tables=tables, today=today, integrity=integrity)
     # A number in a thesis sentence must be in the results, the register or the cost log: checked sentence by sentence.
-    strict = allowed_numbers(audit, results, rows, gaps, ic, usage, files, decks, thesis=True)
+    strict = allowed_numbers(audit, results, rows, gaps, ic, files, decks, thesis=True)
     bad = [t for part in vd.THESIS_PARTS for t in unmatched(ic["thesis"][part], strict)]
     # Everything else, appendices included, against the full set; the date line is the one line the check skips.
     _, blank = _build(**common, thesis={k: "" for k in vd.THESIS_PARTS})
     checked = "\n".join(line for line in blank.split("\n") if not line.startswith("Date: "))
-    bad += [t for t in unmatched(checked, allowed_numbers(audit, results, rows, gaps, ic, usage, files, decks, thesis=False, tables=tables))
+    bad += [t for t in unmatched(checked, allowed_numbers(audit, results, rows, gaps, ic, files, decks, thesis=False, tables=tables))
             if t not in bad]
     if bad:
         raise MemoRefused("numbers", W19_NUMBERS.format(n=len(bad), list=", ".join(bad)), unmatched=bad)

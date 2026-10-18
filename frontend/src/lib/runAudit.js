@@ -1,5 +1,5 @@
 /**
- * Run audit: the three stages the analyst starts with one button, in order. The files go through the endpoints that already
+ * Run audit, on the Upload & Mapping page: the three stages the analyst starts with one button, in order. The files go through the endpoints that already
  * exist; each stage then answers through POST /audits/{id}/run/{stage}. The runner stops at the first stage that is not done:
  * needs_review sends the analyst to the review screen, failed shows a plain-English message and a Retry stage button.
  */
@@ -62,7 +62,7 @@ async function uploadData(api, auditId, pick) {
       return { status: "failed", message: detailOf(e, `${file.name} could not be read. Retry this stage.`) };
     }
     if (res.status === "unknown_type") {
-      return { status: "failed", message: `Could not tell what ${file.name} holds. Choose its type under Details, Upload & Mapping, then run the audit again.` };
+      return { status: "failed", message: `Could not tell what ${file.name} holds. Press Map to choose its type, then run the audit again.` };
     }
     pick.data.shift();
   }

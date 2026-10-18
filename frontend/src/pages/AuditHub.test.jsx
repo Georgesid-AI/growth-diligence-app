@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import AuditHub from "./AuditHub";
 import * as api from "@/lib/api";
-import { NEW_AUDIT_TITLE, NEW_AUDIT_PARAGRAPHS } from "@/lib/auditForm";
+import { NEW_AUDIT_TITLE, NEW_AUDIT_PARAGRAPHS, formatCreated } from "@/lib/auditForm";
 import { S18_MISMATCH } from "@/lib/chatUpload";
 
 jest.mock("@/lib/api", () => ({
@@ -12,7 +12,8 @@ jest.mock("@/lib/api", () => ({
   deleteAudit: jest.fn(),
 }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
-jest.mock("react-router-dom", () => ({ useNavigate: () => jest.fn() }), { virtual: true });
+const mockNavigate = jest.fn();
+jest.mock("react-router-dom", () => ({ useNavigate: () => mockNavigate }), { virtual: true });
 jest.mock("@/components/Layout", () => ({ Layout: ({ children }) => <div>{children}</div> }));
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -91,6 +92,7 @@ describe("new-audit dates and fields", () => {
       company_name: "TestCo", reporting_currency: "EUR", target_arr: 0, target_date: null, as_of_month: null,
       fiscal_year_end: 12, structure_reading_consent: true,
     });
+    expect(mockNavigate).toHaveBeenCalledWith("/audit/new1/mapping");
   });
 });
 
@@ -232,5 +234,55 @@ describe("the audit list when it cannot be read", () => {
     await act(async () => { root.render(<React.StrictMode><AuditHub /></React.StrictMode>); });
     await act(async () => { await Promise.resolve(); });
     expect(q("audits-load-error")).not.toBeNull();
+  });
+});
+
+describe("the audit tile (docs/specs/chat-upload.md section 24)", () => {
+  let root, host;
+  const AUDITS = [
+    { id: "a1", company_name: "Acme", status: "draft", reporting_currency: "EUR", target_arr: 2500000, target_date: "2027-06-30", created_at: "2026-10-18T14:32:00" },
+    { id: "a2", company_name: "Beta", status: "draft", reporting_currency: "EUR", target_arr: 0, target_date: null, created_at: "2026-01-05T09:07:00" },
+    { id: "a3", company_name: "Gamma", status: "draft", reporting_currency: "EUR", target_arr: null, created_at: null },
+  ];
+  beforeEach(async () => {
+    mockNavigate.mockClear();
+    api.listAudits.mockResolvedValue(AUDITS);
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => { root.render(<AuditHub />); });
+    await act(async () => { await Promise.resolve(); });
+  });
+  afterEach(async () => { await act(async () => { root.unmount(); }); host.remove(); });
+  const tile = (id) => q(`audit-row-${id}`);
+  const field = (id, key) => tile(id).querySelector(`[data-testid="${key}"]`).textContent;
+
+  test("it shows Created with date and time, Target ARR and Target date", () => {
+    expect(field("a1", "audit-created")).toBe("18 Oct 2026, 14:32");
+    expect(field("a1", "audit-target-arr")).toMatch(/2,?500,?000/);
+    expect(field("a1", "audit-target-date")).toBe("2027-06-30");
+    expect([...tile("a1").querySelectorAll("dt")].map((d) => d.textContent)).toEqual(["Created", "Target ARR", "Target date"]);
+    expect(field("a2", "audit-created")).toBe("5 Jan 2026, 09:07");
+  });
+
+  test("a Target ARR that is 0, null or missing, and a Target date that is not set, read n.a.", () => {
+    expect(field("a2", "audit-target-arr")).toBe("n.a.");
+    expect(field("a2", "audit-target-date")).toBe("n.a.");
+    expect(field("a3", "audit-target-arr")).toBe("n.a.");
+    expect(field("a3", "audit-target-date")).toBe("n.a.");
+    expect(field("a3", "audit-created")).toBe("n.a.");
+  });
+
+  test("a time with an offset is shown in the viewer's local time", () => {
+    const d = new Date("2026-10-18T23:30:00+00:00");
+    const two = (n) => String(n).padStart(2, "0");
+    expect(formatCreated("2026-10-18T23:30:00+00:00")).toBe(`${d.getDate()} Oct 2026, ${two(d.getHours())}:${two(d.getMinutes())}`);
+    expect(formatCreated("not a date")).toBe("n.a.");
+  });
+
+  test("Run audit and Open both land on Upload & Mapping", async () => {
+    await act(async () => { q("run-audit-a1").click(); });
+    await act(async () => { q("open-dashboard-a1").click(); });
+    expect(mockNavigate.mock.calls).toEqual([["/audit/a1/mapping"], ["/audit/a1/mapping"]]);
   });
 });

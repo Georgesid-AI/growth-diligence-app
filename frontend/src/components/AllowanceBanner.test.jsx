@@ -21,25 +21,27 @@ async function mount() {
 afterEach(async () => { await act(async () => { root.unmount(); }); host.remove(); jest.clearAllMocks(); });
 
 test("below 80% nothing is shown", async () => {
-  api.getAllowance.mockResolvedValue({ state: "ok", percent: 79, used_usd: 7.9, allowance_usd: 10 });
+  api.getAllowance.mockResolvedValue({ state: "ok", percent: 79 });
   await mount();
   expect(host.textContent).toBe("");
 });
 
-test("from 80% one line with the exact words, rounded-down percent, USD with two decimals and a whole allowance", async () => {
-  api.getAllowance.mockResolvedValue({ state: "warn", percent: 83, used_usd: 8.3, allowance_usd: 10 });
+test("from 80% one line with the exact words and the rounded-down percent, no amount", async () => {
+  api.getAllowance.mockResolvedValue({ state: "warn", percent: 83 });
   await mount();
-  expect(q("allowance-warn").textContent).toBe("You have used 83% of this month's AI allowance (USD 8.30 of USD 10).");
-  expect(allowanceLine({ percent: 90, used_usd: 11.25, allowance_usd: 12.5 })).toBe("You have used 90% of this month's AI allowance (USD 11.25 of USD 12.50).");
+  expect(q("allowance-warn").textContent).toBe("You have used 83% of this month's AI allowance.");
+  expect(allowanceLine({ percent: 90 })).toBe("You have used 90% of this month's AI allowance.");
+  expect(host.textContent).not.toMatch(/USD|\$|\d\.\d\d/);
   expect(q("allowance-reached")).toBeNull();
 });
 
 test("at 100% the full message replaces the line, word for word", async () => {
-  api.getAllowance.mockResolvedValue({ state: "blocked", percent: 100, used_usd: 10, allowance_usd: 10 });
+  api.getAllowance.mockResolvedValue({ state: "blocked", percent: 100 });
   await mount();
   expect(q("allowance-warn")).toBeNull();
   const paragraphs = [...q("allowance-reached").querySelectorAll("p")].map((p) => p.textContent);
   expect(paragraphs).toEqual(ALLOWANCE_REACHED);
+  expect(host.textContent).not.toMatch(/USD|\$/);
   expect(paragraphs).toEqual([
     "You’ve reached your monthly AI allowance.",
     "AI features are paused for now, including column suggestions, reading board decks, and writing narratives.",
@@ -53,7 +55,7 @@ test("a failed read (the owner token's 404, access off) shows nothing, and the s
   api.getAllowance.mockRejectedValueOnce(new Error("404"));
   await mount();
   expect(host.textContent).toBe("");
-  api.getAllowance.mockResolvedValue({ state: "warn", percent: 80, used_usd: 8, allowance_usd: 10 });
+  api.getAllowance.mockResolvedValue({ state: "warn", percent: 80 });
   await act(async () => { window.dispatchEvent(new Event(BLOCKERS_CHANGED)); });
   expect(q("allowance-warn")).not.toBeNull();
 });

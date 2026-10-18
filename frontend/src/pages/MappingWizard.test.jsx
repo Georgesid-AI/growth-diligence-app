@@ -12,7 +12,7 @@ import {
 
 jest.mock("@/lib/api", () => ({
   getAudit: jest.fn(), getDatasets: jest.fn(), uploadChatFile: jest.fn(), decideColumns: jest.fn(), reportUsage: jest.fn(), changeDatasetType: jest.fn(),
-  confirmForecastClaims: jest.fn(),
+  confirmForecastClaims: jest.fn(), getReview: jest.fn(), getDecks: jest.fn(), runStage: jest.fn(), uploadDeck: jest.fn(),
   saveMapping: jest.fn(), saveFx: jest.fn(), computeAudit: jest.fn(), getRevenueCustomers: jest.fn(), updateAudit: jest.fn(), putIcInputs: jest.fn(),
 }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
@@ -55,6 +55,8 @@ async function mount({ audit = AUDIT, datasets = [] } = {}) {
   api.getAudit.mockResolvedValue(audit);
   api.getDatasets.mockResolvedValue(datasets);
   api.reportUsage.mockResolvedValue({});
+  api.getReview.mockResolvedValue({ computed: false });
+  api.getDecks.mockResolvedValue({ decks: [], candidates: [] });
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);

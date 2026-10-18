@@ -166,7 +166,7 @@ def test_reading_and_estimating_without_a_prompt_spend_nothing_and_say_not_gener
 
     read, estimate = run(go())
     assert read.narrative_status == "not_generated" and read.narrative is None
-    assert all(s["available"] is False and s["estimate_usd"] == 0 for s in estimate["steps"])
+    assert all(s["available"] is False for s in estimate["steps"])
 
 
 def test_the_structure_path_reads_nothing_without_its_prompt():

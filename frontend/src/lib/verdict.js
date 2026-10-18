@@ -1,5 +1,5 @@
 /**
- * The claim-review conclusion, Data gaps and AI usage and cost sections of the Dashboard (docs/specs/verdict-and-memo.md sections 4,
+ * The claim-review conclusion, Data gaps sections of the Dashboard (docs/specs/verdict-and-memo.md sections 4,
  * 6.4 and 8; docs/specs/claim-review-conclusion.md).
  * The wording is W7, W8, W20, W21, W23 and W24 as approved; the part names are those of section 6.4. Everything shown is a
  * register row, a gap row, a stored input or a count from the server; nothing is rated, ranked or tested here.
@@ -33,26 +33,6 @@ export const REVIEW_LABEL = "First quarterly review";
 
 export const RATING_OPTIONS = ["Strong", "Adequate", "Weak"];
 export const THESIS_MAX = 300;
-
-export const USAGE_HEADING = "AI usage and cost (this audit)";
-export const USAGE_COLUMNS = ["Step", "Calls", "Cache hits", "Input tokens", "Output tokens", "Cost (USD)"];
-const STEP_NAMES = { deck_structure: "Deck structure reading", column_mapping: "Column mapping" };
-
-export const stepName = (step) => STEP_NAMES[step] || `Narrative – ${step}`;
-
-/** The cost table: one row per step the server counted, then the total (cost in USD with 2 decimals). */
-export function usageRows(usage) {
-  if (!usage) return [];
-  const rows = Object.entries(usage.by_step || {}).map(([step, u]) => ({
-    key: step, step: stepName(step), calls: u.calls, cacheHits: u.cache_hits, input: u.input_tokens, output: u.output_tokens,
-    cost: u.estimated_cost_usd.toFixed(2),
-  }));
-  rows.push({
-    key: "total", step: "Total", calls: usage.calls + (usage.structure_calls || 0), cacheHits: usage.cache_hits, input: usage.input_tokens,
-    output: usage.output_tokens, cost: usage.estimated_cost_usd.toFixed(2),
-  });
-  return rows;
-}
 
 /** The top 5 as the pick shows it: the stored or proposed set, or the draft the analyst is editing. */
 export const initialPicks = (verdict) => [...(verdict?.top5?.in_force || [])];

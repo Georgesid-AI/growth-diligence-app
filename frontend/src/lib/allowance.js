@@ -1,9 +1,5 @@
-// The tester's monthly AI allowance (docs/specs/usage-and-allowance.md section 5). Amounts are USD only.
-const usd = (n) => Number(n).toFixed(2);
-const whole = (n) => (Number.isInteger(Number(n)) ? String(Number(n)) : usd(n));
-
-export const allowanceLine = ({ percent, used_usd, allowance_usd }) =>
-  `You have used ${percent}% of this month's AI allowance (USD ${usd(used_usd)} of USD ${whole(allowance_usd)}).`;
+// The tester's monthly AI allowance (docs/specs/usage-and-allowance.md sections 5 and 9). A percentage only: no amount on a tester screen.
+export const allowanceLine = ({ percent }) => `You have used ${percent}% of this month's AI allowance.`;
 
 export const ALLOWANCE_REACHED = [
   "You’ve reached your monthly AI allowance.",
@@ -13,4 +9,3 @@ export const ALLOWANCE_REACHED = [
   "Need a higher allowance? Contact the app owner.",
 ];
 
-export const usdText = (n) => `USD ${usd(n)}`;

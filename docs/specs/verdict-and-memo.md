@@ -260,6 +260,8 @@ Table pipes and heading marks are not words; a footnote marker counts as one wor
 words pass; 1,501 are refused, and the refusal shows the count (W19).
 
 ## 8. Cost panel
+> **Withdrawn for testers (18 Oct 2026, usage-and-allowance.md §9).** The Audit page section and Appendix D no longer show this table; `by_step` stays in the call log and the owner's figures. W20 is not rendered.
+
 `GET /runs/{id}/llm-usage` gains `by_step`. Each step has billed calls, cache hits, input tokens, output tokens and
 cost. The steps are each narrative step by name, plus `structures` split into deck reading (`deck_id` set) and column
 mapping (no `deck_id`). The steps sum to the existing totals. The Dashboard section "AI usage and cost" and Appendix D

@@ -21,9 +21,9 @@ const uid = () => `m${nextId++}`;
  * system bubble per file, the mapping table in the system bubble. Typed text is answered on the page (S1) and goes
  * nowhere else. `extras(view)` renders what follows the table of a revenue file (FX rates, billing terms).
  *
- * `deferred` is the Run audit page's use of the same box: decks are accepted too, there is no Map or Calculate button, and
- * nothing is read here. The attached files are handed up through `onFiles(files)`; the page reads them when Run audit is pressed
- * and then passes `leftover` (the files it did not send); the bubbles of every other file are dropped.
+ * `onFiles(files)` hands the attached files up; the page's Run audit reads them and then passes `leftover` (the files it did not
+ * send): the bubbles of every other file are dropped, and the stored files are read again. `deferred` is the older use of the box
+ * with decks accepted too and no Map or Calculate button; no page uses it now.
  */
 export default function UploadChat({ audit, extras, onViews, onCalculate, onStaged, onMapping, mapButton, calculateButton, computing,
   deferred = false, onFiles, leftover }) {
@@ -127,12 +127,21 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, onStag
   useEffect(() => { onStaged?.(messages.filter((m) => m.staged).length); }, [messages]); // eslint-disable-line
   useEffect(() => { onFiles?.([...staged.current.values()]); }, [messages]); // eslint-disable-line
 
-  // The page has read the files: only those it did not send stay attached.
+  // The page has read the files: only those it did not send stay attached. On the Upload & Mapping page the files it sent are now
+  // stored, so the stored bubbles are read again beside the ones still attached.
   useEffect(() => {
     if (!leftover) return;
     for (const [bubble, file] of [...staged.current]) if (!leftover.includes(file)) staged.current.delete(bubble);
     setMessages((all) => all.filter((m) => !m.staged || staged.current.has(m.id)));
-  }, [leftover]);
+    if (deferred) return;
+    getDatasets(audit.id).then((views) => setMessages((all) => [
+      ...views.flatMap((v) => [
+        { id: uid(), kind: "analyst", dtype: v.dtype, file: v.file, size: v.size_bytes, ext: v.ext },
+        { id: uid(), kind: "system", dtype: v.dtype, view: v },
+      ]),
+      ...all.filter((m) => m.staged),
+    ])).catch(() => {});
+  }, [leftover]); // eslint-disable-line
 
   // Map: read the attached files one at a time, in drop order; each loads with its mapping table and confirmation list.
   // The banner is refreshed once, after the last file, and not while a file still waits for its type or a replace answer:

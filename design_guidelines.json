@@ -115,7 +115,7 @@
       "elements": [
         "Brand Logo: 'GROWTH DILIGENCE' with terminal node icon and institutional badge ('v1.0 Deterministic Engine')",
         "Active Audit Selector: Dropdown showing target ARR, reporting currency, and company name with quick switch",
-        "Primary Tab Navigation: 'Audit Hub' | 'Upload & Mapping' | 'Growth Dashboard' | 'Missing Data & Diagnostics'",
+        "Primary Tab Navigation: 'Audit Hub' | 'Upload & Mapping' | 'Audit' | 'Missing Data & Diagnostics'",
         "Live Status Indicator: Green pulsing node 'Deterministic Model Active — 0% Heuristics'",
         "CTA Button: '+ New Audit' button (sharp corners, border-slate-700 bg-sky-600 hover:bg-sky-500 text-white font-medium)"
       ]
@@ -300,7 +300,7 @@
     }
   },
   "instructions_to_main_agent": [
-    "1. Structure the application around 4 primary tabs: 'Audit Management' (list, create, delete audits), 'Data Ingestion & Mapping' (multi-file upload, field mapper, FX rates, terms), 'Growth Dashboard' (KPIs with provenance hover, segment breakdown, cohort retention heatmap, stacked MRR and trajectory charts), and 'Forensic Diagnostics & Missing Data' (uncomputable metrics with unlocking prerequisites).",
+    "1. Structure the application around 4 primary tabs: 'Audit Management' (list, create, delete audits), 'Data Ingestion & Mapping' (multi-file upload, field mapper, FX rates, terms), 'Audit' (KPIs with provenance hover, segment breakdown, cohort retention heatmap, stacked MRR and trajectory charts), and 'Forensic Diagnostics & Missing Data' (uncomputable metrics with unlocking prerequisites).",
     "2. Ensure EVERY metric number on the dashboard includes the interactive provenance hover card (data-testid='provenance-hover-{metric-id}'). When hovered, it must reveal the exact file name, sheet tab, row boundaries, and deterministic mathematical formula used.",
     "3. Use JetBrains Mono or monospace font for all financial figures, cohort retention percentages, dates, and currency values with tabular-nums.",
     "4. Implement mock initial audits (e.g. 'Apex Cloud Corp — Series B Diligence', 'OmniData Systems — Growth Buyout Review', 'Vanguard SaaS — Q3 Checkup') with preloaded deterministic data so the user can immediately experience the interactive lineage and cohort heatmap without needing to upload files first.",

@@ -1516,7 +1516,7 @@ def test_a_deck_waits_for_the_mapped_revenue_file_and_is_read_once_it_is(monkeyp
     assert adapter.calls == calls_for_mapping + upload["structures"], "every structure read once"
     deck = _deck(client)["decks"][0]
     assert deck["ai_status"] == "read" and deck["sent_pages"] == [11, 17, 19, 22]
-    assert deck["ai_cost_usd"] == pytest.approx(upload["structures"] * gateway.estimate_cost_usd("claude-sonnet-5-5", 1200, 300))
+    assert "ai_cost_usd" not in deck, "the deck's AI log shows no cost to a tester (usage-and-allowance.md section 9)"
     usage = client.get(f"/api/runs/{AUDIT}/llm-usage").json()
     assert usage["by_deck"][upload["deck_id"]]["calls"] == upload["structures"] and usage["calls"] == 0
     assert usage["structure_calls"] == upload["structures"] + calls_for_mapping

@@ -139,7 +139,6 @@ export const NARRATIVE_EXPECTED_SECONDS = 33;
 export const NARRATIVE_TIMEOUT_MS = 150_000;
 export const generateNarrative = (id, step) =>
   api.post(`/runs/${id}/narrative/${step}`, null, { timeout: NARRATIVE_TIMEOUT_MS }).then((r) => r.data);
-export const getLlmUsage = (id) => api.get(`/runs/${id}/llm-usage`).then((r) => r.data);
 // AI-provenance block (model + generation time) for the foot of the analysis.
 // Read-only; the same text is written into the exports.
 export const getDisclosure = (id) => api.get(`/runs/${id}/disclosure`).then((r) => r.data.disclosure);
@@ -162,4 +161,5 @@ export const ownerIssueTester = (token, label) => api.post("/admin/testers", { l
 export const ownerRevokeTester = (token, id) => api.post(`/admin/testers/${id}/revoke`, null, asOwner(token)).then((r) => r.data);
 export const ownerReissueTester = (token, id) => api.post(`/admin/testers/${id}/reissue`, null, asOwner(token)).then((r) => r.data);
 export const ownerUsage = (token) => api.get("/admin/usage", asOwner(token)).then((r) => r.data);
+export const ownerAuditCosts = (token) => api.get("/admin/audit-costs", asOwner(token)).then((r) => r.data);
 export const ownerSetAllowance = (token, id, allowance_usd) => api.post(`/admin/testers/${id}/allowance`, { allowance_usd }, asOwner(token)).then((r) => r.data);
