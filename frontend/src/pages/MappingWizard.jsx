@@ -81,8 +81,6 @@ export default function MappingWizard() {
 
       <AuditSetup audit={audit} setAudit={setAudit} asOf={asOf} setAsOf={setAsOf} />
 
-      <RunAuditPanel auditId={audit.id} pick={pick} onRan={setLeftover} onRunning={setRunning} blocked={computing || mapping} />
-
       <div className="mt-5 space-y-5">
         <FxSettings audit={audit} onSaved={() => setFxVersion((n) => n + 1)} />
         <UploadChat audit={audit} onViews={setViews} onCalculate={runCompute} onStaged={setAttached} onMapping={setMapping}
@@ -91,6 +89,8 @@ export default function MappingWizard() {
           extras={(view) => <RevenueSettings key={`${view.file}-${view.uploaded_at}`} audit={audit} view={view} />} />
         <DeckPanel auditId={audit.id} reloadKey={fxVersion} />
       </div>
+
+      <RunAuditPanel auditId={audit.id} pick={pick} onRan={setLeftover} onRunning={setRunning} blocked={computing || mapping} />
     </Layout>
   );
 }

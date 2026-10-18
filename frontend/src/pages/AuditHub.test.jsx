@@ -257,11 +257,15 @@ describe("the audit tile (docs/specs/chat-upload.md section 24)", () => {
   const tile = (id) => q(`audit-row-${id}`);
   const field = (id, key) => tile(id).querySelector(`[data-testid="${key}"]`).textContent;
 
-  test("it shows Created with date and time, Target ARR and Target date", () => {
+  test("it shows Target ARR, Target date, an empty line, then Created with date and time", () => {
     expect(field("a1", "audit-created")).toBe("18 Oct 2026, 14:32");
     expect(field("a1", "audit-target-arr")).toMatch(/2,?500,?000/);
     expect(field("a1", "audit-target-date")).toBe("2027-06-30");
-    expect([...tile("a1").querySelectorAll("dt")].map((d) => d.textContent)).toEqual(["Created", "Target ARR", "Target date"]);
+    expect([...tile("a1").querySelectorAll("dt")].map((d) => d.textContent)).toEqual(["Target ARR", "Target date", "Created"]);
+    // one empty line between Target date and Created
+    const kids = [...q("audit-facts-a1").children].map((c) => c.getAttribute("data-testid") || c.tagName);
+    expect(kids.indexOf("audit-facts-gap")).toBe(kids.indexOf("audit-target-date") + 1);
+    expect(q("audit-facts-a1").children[kids.indexOf("audit-facts-gap")].textContent).toBe("");
     expect(field("a2", "audit-created")).toBe("5 Jan 2026, 09:07");
   });
 

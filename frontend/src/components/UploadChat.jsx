@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { BLOCKERS_CHANGED } from "@/components/BlockerBanner";
 import { uploadChatFile, getDatasets, decideColumns, reportUsage, changeDatasetType, confirmForecastClaims } from "@/lib/api";
 import {
-  S1_TEXT_REPLY, S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE, S6_UNKNOWN_TYPE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S_UPLOAD_RETRY, RUN_DECK_EXTENSIONS, RUN_DROP_ZONE, RUN_REFUSED,
+  S1_TEXT_REPLY, S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE, S4_DROP_ZONE_LEAD, S4_DROP_ZONE_BOLD, S6_UNKNOWN_TYPE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S_UPLOAD_RETRY, RUN_DECK_EXTENSIONS, RUN_DROP_ZONE, RUN_REFUSED,
   S20_NOTE_PLACEHOLDER, S21_NOTE_REFUSED, NOTE_MAX, ALLOWED_EXTENSIONS, REASONS, TYPE_LABELS, S5_head, S8_replace,
   S9_confidence, S13_status, S26_type, S26_CHANGE, S26_sheet, S27_miss, S27_SHOW_COLUMNS, S28_read, S28_SHOW_CLAIMS, S28_cap, S28_CONFIRM,
   forecastValueText, forecastCells, MAP_LABEL, CALCULATE_LABEL, CALCULATE_CLASS, SEND_TOOLTIP, setCalculatePressed, S14_same, MAPPING_HEADERS, S25_TITLE, S25_PARAGRAPHS, S29_TITLE, S29_PARAGRAPHS, mappedBy, sortColumns, fieldName, fmtBytes, extensionOf, heldFields,
@@ -216,7 +216,7 @@ export default function UploadChat({ audit, extras, onViews, onCalculate, onStag
       <div data-testid="chat-messages" className="px-5 py-4 space-y-3 min-h-[240px]">
         {/* The drop zone stays after a drop: more files can be attached until Map is pressed. */}
         <div data-testid="chat-drop-zone" className={`border border-dashed rounded-lg text-center text-slate-500 ${messages.length === 0 ? "py-14 text-sm" : "py-3 text-xs"} ${dragging ? "border-sky-500 bg-sky-50" : "border-[#D1D5DB]"}`}>
-          {deferred ? RUN_DROP_ZONE : S4_DROP_ZONE}
+          {deferred ? RUN_DROP_ZONE : <>{S4_DROP_ZONE_LEAD}<strong>{S4_DROP_ZONE_BOLD}</strong></>}
         </div>
         {messages.map((m) => (
           <Message key={m.id} m={m} audit={audit} unstage={unstage} extras={extras} lastReason={lastReason} setLastReason={setLastReason}

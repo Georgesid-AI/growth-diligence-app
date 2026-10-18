@@ -67,14 +67,15 @@ const attach = async (...names) => {
 const press = async (id) => { await act(async () => { q(id).click(); }); await act(async () => { await Promise.resolve(); }); };
 const follows = (a, b) => !!(q(a).compareDocumentPosition(q(b)) & Node.DOCUMENT_POSITION_FOLLOWING);
 
-test("Run audit and its stages sit below the set-up section and above the mapping; Map and Calculate stay", async () => {
+test("Run audit and its stages sit at the bottom of the page, below the Board deck box; Map and Calculate stay", async () => {
   await mount();
   expect(document.body.querySelectorAll('[data-testid="run-audit"]')).toHaveLength(1);
   expect(q("run-audit").textContent).toBe("Run audit");
   expect(follows("audit-setup", "run-audit-panel")).toBe(true);
-  expect(follows("run-audit-panel", "fx-settings")).toBe(true);
-  expect(follows("run-audit-panel", "upload-chat")).toBe(true);
-  expect(follows("run-audit-panel", "deck-panel")).toBe(true);
+  expect(follows("audit-setup", "fx-settings")).toBe(true);
+  expect(follows("fx-settings", "upload-chat")).toBe(true);
+  expect(follows("upload-chat", "deck-panel")).toBe(true);
+  expect(follows("deck-panel", "run-audit-panel")).toBe(true);
   expect(q("chat-map")).not.toBeNull();
   expect(q("chat-calculate")).not.toBeNull();
   expect(q("compute-button")).not.toBeNull();
