@@ -157,7 +157,7 @@ def test_the_owner_usage_lists_totals_and_one_row_per_label_with_counts_and_usd_
 
 def test_the_usage_never_carries_a_company_file_or_audit_name(owner):
     a_id, a = make_tester(owner)
-    created = owner.post("/api/audits", json={"company_name": "Zorblax Holdings", "client_name": "Quuxfund"}, headers=a).json()
+    created = owner.post("/api/audits", json={"company_name": "Zorblax Holdings"}, headers=a).json()
     owner.db["llm_calls"].docs.append({"run_id": created["id"], "step": "growth_engine", "cache_hit": False, "input_tokens": 1,
                                        "output_tokens": 1, "estimated_cost_usd": 0.1, "status": "ok", "file": "secret_deck.pptx"})
     asyncio.run(allowance.record(owner.db, a_id, files=1, calls=1, tokens=2, cost_usd=0.1))

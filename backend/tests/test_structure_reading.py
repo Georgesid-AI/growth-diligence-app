@@ -26,7 +26,7 @@ import test_llm_gateway as t  # noqa: E402
 REPLIES = BACKEND / "tests" / "fixtures" / "structure_replies"
 DECKS = BACKEND.parent / "tests" / "fixtures" / "decks" / "decks"
 AUDIT = "audit-s"
-AUDIT_DOC = {"id": AUDIT, "company_name": "Zero2Hero", "client_name": "Northbridge Capital",
+AUDIT_DOC = {"id": AUDIT, "company_name": "Zero2Hero",
              "structure_reading_consent": True, "fiscal_year_end": 12,
              "results": None}
 # A structure as the model reads it: its cells, then the items Python listed (docs/specs/structure-labelling.md).
@@ -1311,7 +1311,7 @@ def test_the_aliases_keep_their_fields_and_the_model_fills_the_rest(monkeypatch)
 # ---------------------------------------------------------------------------
 # Consent (spec section 4)
 # ---------------------------------------------------------------------------
-NEW_AUDIT = {"company_name": "Zero2Hero", "client_name": "Northbridge Capital"}
+NEW_AUDIT = {"company_name": "Zero2Hero"}
 
 
 def test_consent_is_ticked_at_creation_by_default_and_every_change_is_logged_with_its_time(monkeypatch):
@@ -1319,7 +1319,7 @@ def test_consent_is_ticked_at_creation_by_default_and_every_change_is_logged_wit
     created = client.post("/api/audits", json=NEW_AUDIT).json()
     assert created["structure_reading_consent"] is True
     assert [e["value"] for e in created["consent_log"]] == [True] and created["consent_log"][0]["at"]
-    assert created["client_name"] == "Northbridge Capital" and "engagement_reference" not in created
+    assert "client_name" not in created and "engagement_reference" not in created
     client.put(f"/api/audits/{created['id']}", json={"structure_reading_consent": False})
     client.put(f"/api/audits/{created['id']}", json={"structure_reading_consent": False})      # no change: no entry
     stored = next(a for a in db["audits"].docs if a["id"] == created["id"])
@@ -1328,10 +1328,13 @@ def test_consent_is_ticked_at_creation_by_default_and_every_change_is_logged_wit
     assert unticked["structure_reading_consent"] is False and [e["value"] for e in unticked["consent_log"]] == [False]
 
 
-def test_audit_creation_refuses_a_missing_client_name(monkeypatch):
-    client, _, _ = _api(monkeypatch, [])
-    assert client.post("/api/audits", json={"company_name": "Zero2Hero"}).status_code == 422
-    assert client.post("/api/audits", json={**NEW_AUDIT, "client_name": " "}).status_code == 422
+def test_audit_creation_needs_a_company_name_alone_and_ignores_a_client_name_in_the_body(monkeypatch):
+    client, db, _ = _api(monkeypatch, [])
+    assert client.post("/api/audits", json={"company_name": " "}).status_code == 422
+    assert client.post("/api/audits", json={}).status_code == 422
+    made = client.post("/api/audits", json={**NEW_AUDIT, "client_name": "Northbridge Capital"})
+    assert made.status_code == 200 and "client_name" not in made.json()
+    assert all("client_name" not in a for a in db["audits"].docs if a["id"] == made.json()["id"]), "the record holds none"
 
 
 def test_an_audit_created_before_consent_stays_unticked_until_consent_is_ticked(monkeypatch):
@@ -1398,30 +1401,25 @@ def _deck(client):
     return client.get(f"/api/audits/{AUDIT}/decks").json()
 
 
-def test_a_client_name_in_a_deck_cell_goes_out_as_redacted_and_the_structure_is_read():
+def test_a_client_name_stored_on_an_old_audit_is_not_read_by_redaction():
+    """Old audits may keep the stored value; nothing reads it (chat-upload.md section 23): the text sent is the same."""
     from app import structures
     from app.decks import TEXT_COLLECTION
-    db = _db()
-    db["datasets"].docs.append({"audit_id": AUDIT, "dtype": "revenue", "mapping": REVENUE_MAPPING,
-                                "mapped_at": "2026-10-05T00:00:00"})
-    cells = [{"row": 1, "col": 1, "text": "Prepared for Northbridge Capital"}, {"row": 1, "col": 2, "text": "FY2025"},
-             {"row": 2, "col": 1, "text": "Revenue (northbridge capital)"}, {"row": 2, "col": 2, "text": "£1,200,000"}]
-    db[TEXT_COLLECTION].docs.append({"audit_id": AUDIT, "deck_id": "d1", "file": "plan.pptx", "page_unit": "slide",
-                                     "structures": [{"type": "table", "slide": 1, "header_rows": 1, "cells": cells}]})
-    adapter = RecordedAdapter()
-    status = asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
-    assert (status, adapter.calls) == (structures.READ, 1)
-    assert json.loads(adapter.payloads[0])["text"] == \
-        "r1c1: Prepared for [redacted]\nr1c2: FY2025\nr2c1: Revenue ([redacted])\nr2c2: £1,200,000\nitems:\n" \
-        'i1 r2c2 "1,200,000" 1200000 h r2c1 r1c2', "the item list is built from the redacted cells"
-
-
-def test_a_client_name_in_a_spreadsheet_header_goes_out_as_redacted(monkeypatch):
-    client, _, adapter = _api(monkeypatch, [MAPPING_REPLY])
-    sheet = "Kunde,Rechnungsdatum,Betrag Northbridge Capital,Waehrung\nAcme,2025-01-31,1,EUR\n"
-    client.post(f"/api/audits/{AUDIT}/datasets/revenue/upload", files={"file": ("r.csv", sheet)})
-    sent = json.loads(adapter.payloads[0])["text"]
-    assert "r1c3: Betrag [redacted]" in sent and "Northbridge" not in sent
+    sent = []
+    for extra in ({}, {"client_name": "Northbridge Capital"}):
+        db = _db(**extra)
+        db["datasets"].docs.append({"audit_id": AUDIT, "dtype": "revenue", "mapping": REVENUE_MAPPING,
+                                    "mapped_at": "2026-10-05T00:00:00"})
+        cells = [{"row": 1, "col": 1, "text": "Prepared for Northbridge Capital"}, {"row": 1, "col": 2, "text": "FY2025"},
+                 {"row": 2, "col": 1, "text": "Revenue"}, {"row": 2, "col": 2, "text": "£1,200,000"}]
+        db[TEXT_COLLECTION].docs.append({"audit_id": AUDIT, "deck_id": "d1", "file": "plan.pptx", "page_unit": "slide",
+                                         "structures": [{"type": "table", "slide": 1, "header_rows": 1, "cells": cells}]})
+        adapter = RecordedAdapter()
+        status = asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
+        assert (status, adapter.calls) == (structures.READ, 1)
+        sent.append(json.loads(adapter.payloads[0])["text"])
+    assert sent[0] == sent[1]
+    assert "Prepared for [redacted]" not in sent[1], "the old client name is no longer withheld as such"
 
 
 def test_a_corrected_period_is_verified_counted_on_the_deck_and_the_models_period_stays_stored(monkeypatch):
@@ -1454,21 +1452,56 @@ def test_a_corrected_period_is_verified_counted_on_the_deck_and_the_models_perio
     assert (row["ai_label"], row["target_date"], row["period_start"]) == ("Verified", "FY2025-04", "2025-04-01")
 
 
-def test_a_deck_uploaded_while_consent_was_off_is_flagged_once_consent_is_on_and_is_not_read(monkeypatch):
-    from app.decks import TEXT_COLLECTION
+def test_ticking_consent_later_reads_every_deck_already_uploaded_and_unticking_keeps_the_results(monkeypatch):
+    from app.decks import TEXT_COLLECTION, CANDIDATES_COLLECTION
     client, db, adapter = _deck_api(monkeypatch, consent=False)
     _upload_deck(client)
     db[TEXT_COLLECTION].docs.append({"audit_id": AUDIT, "deck_id": "old", "file": "old.pptx", "structures": [],
                                      "uploaded_at": "2020-01-01T00:00:00"})      # uploaded before AI reading existed
-    assert [d["uploaded_before_consent"] for d in _deck(client)["decks"]] == [False, False], "off: nothing to say"
-    client.put(f"/api/audits/{AUDIT}", json={"structure_reading_consent": True})
     _map_revenue(client)
-    assert [d["uploaded_before_consent"] for d in _deck(client)["decks"]] == [True, True]
     deck_reads = lambda: [p for p in adapter.payloads if json.loads(p)["type"] != "column_mapping"]  # noqa: E731
-    assert deck_reads() == [], "not read until it is uploaded again"
+    assert deck_reads() == [] and all("uploaded_before_consent" not in d for d in _deck(client)["decks"])
+    mapped = [dict(d) for d in db["datasets"].docs]
+    assert client.put(f"/api/audits/{AUDIT}", json={"structure_reading_consent": True}).status_code == 200
+    assert deck_reads(), "ticked later: the deck already uploaded is read"
+    decks = _deck(client)["decks"]
+    assert {d["file"]: d["ai_status"] for d in decks} == {"05-zero2hero.pdf": "read", "old.pptx": "not_read"}, \
+        "every deck was queued; one with no structure holds nothing to read"
+    assert all("uploaded_before_consent" not in d for d in decks)
+    assert any(d["sent_pages"] for d in decks), "the pages sent to the model are recorded on the deck"
+    assert db["datasets"].docs == mapped, "data files already mapped are not re-mapped"
+    assert not [p for p in adapter.payloads if json.loads(p)["type"] == "column_mapping"]
+    calls, listed = adapter.calls, len(db[CANDIDATES_COLLECTION].docs)
+    client.put(f"/api/audits/{AUDIT}", json={"structure_reading_consent": False})
+    assert (adapter.calls, len(db[CANDIDATES_COLLECTION].docs)) == (calls, listed), "unticked: no call, results kept"
+    client.put(f"/api/audits/{AUDIT}", json={"structure_reading_consent": True})
+    assert (adapter.calls, len(db[CANDIDATES_COLLECTION].docs)) == (calls, listed), "ticked again: served from the cache"
+    assert [e["value"] for e in next(a for a in db["audits"].docs if a["id"] == AUDIT)["consent_log"]] == [True, False, True]
+
+
+def test_ticking_consent_later_stops_at_the_testers_allowance_like_any_structure_call(monkeypatch):
+    from app import access, allowance
+    client, db, adapter = _deck_api(monkeypatch, consent=False)
     _upload_deck(client)
-    newest = _deck(client)["decks"][0]
-    assert (newest["ai_status"], newest["uploaded_before_consent"]) == ("read", False) and deck_reads()
+    _map_revenue(client)
+    month = allowance.month_key()
+    db[access.COLLECTION].docs.append({"id": "tester-1", "label": "T", "hash": "x", "created_at": "2026-10-01T00:00:00+00:00",
+                                       "expires_at": "2099-01-01T00:00:00+00:00", "revoked_at": None,
+                                       "ledger": {"all": {"cost_usd": 10.0}, month: {"cost_usd": 10.0}}})
+    db["audits"].docs[0]["owner"] = "tester-1"
+    client.put(f"/api/audits/{AUDIT}", json={"structure_reading_consent": True})
+    assert adapter.calls == 0, "the allowance is spent: no provider call"
+    assert _deck(client)["decks"][0]["ai_status"] == "not_read"
+    assert {c["status"] for c in db["llm_calls"].docs} == {"monthly_allowance_reached"}
+
+
+def test_ticking_consent_while_the_revenue_file_is_unmapped_makes_the_decks_wait_and_a_second_tick_save_queues_nothing(monkeypatch):
+    client, db, adapter = _deck_api(monkeypatch, consent=False)
+    _upload_deck(client)
+    client.put(f"/api/audits/{AUDIT}", json={"structure_reading_consent": True})
+    assert _deck(client)["decks"][0]["ai_status"] == "waiting" and adapter.calls == 0
+    client.put(f"/api/audits/{AUDIT}", json={"structure_reading_consent": True, "target_arr": 5})       # no change in consent
+    assert _deck(client)["decks"][0]["ai_status"] == "waiting" and adapter.calls == 0
 
 
 def test_a_deck_waits_for_the_mapped_revenue_file_and_is_read_once_it_is(monkeypatch):
@@ -2605,18 +2638,6 @@ def test_a_background_failure_marks_the_deck_not_read_and_logs_the_error_type_on
     assert _deck(client)["decks"][0]["ai_status"] == "not_read", "never left 'reading'"
     assert "structure reading failed: run_id=audit-s" in caplog.text and "error=RuntimeError" in caplog.text
     assert "Jane Doe" not in caplog.text
-
-
-def test_a_short_client_name_is_withheld_as_a_word_and_never_inside_one():
-    db = _db(client_name="E7")
-    result, adapter = _read(db, "r1c1: Plan E7\nr1c2: £1M")
-    assert (result.reason, adapter.calls) == ("refused: client_name", 0), "sent as written, it is refused"
-    cells, _ = redact.redact_structure([{"row": 1, "col": 1, "text": "Plan E7"}, {"row": 1, "col": 2, "text": "£1M"}],
-                                       "Zero2Hero", {}, redact.withheld_values(db["audits"].docs[0]))
-    result, adapter = _read(db, redact.structure_text(cells), replies=[NOTHING])
-    assert result.status == "read" and json.loads(adapter.payloads[0])["text"] == "r1c1: Plan [redacted]\nr1c2: £1M"
-    result, adapter = _read(db, "r1c1: Plan E70\nr1c2: £1M", replies=[NOTHING])
-    assert result.status == "read", "E70 is not the reference"
 
 
 def test_ordinary_text_with_a_dot_is_not_taken_for_a_file_name():

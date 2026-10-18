@@ -255,12 +255,12 @@ def test_the_model_saying_unknown_leaves_the_type_to_the_analyst(api):
     assert upload(api, "CRM.xlsx", crm_anonymous_to_2028()).json()["status"] == "unknown_type"
 
 
-def test_the_company_and_client_names_in_a_title_row_are_masked_before_the_model_reads_them(api):
+def test_the_company_name_in_a_title_row_is_masked_before_the_model_reads_them(api):
     from openpyxl import Workbook
     import io
     wb = Workbook()
     ws = wb.active
-    ws["C2"] = "Fixture Target Ltd monthly report for Northbridge Capital"
+    ws["C2"] = "Fixture Target Ltd monthly report"
     ws.append([])
     for j, h in enumerate(["Line", "2023", "2024", "2025"]):
         ws.cell(5, 3 + j, h)
@@ -272,7 +272,7 @@ def test_the_company_and_client_names_in_a_title_row_are_masked_before_the_model
     api.state["adapter"] = t.FakeAdapter(replies=[type_reply("unknown")])
     upload(api, "x.xlsx", buf.getvalue())
     text = json.loads(adapter_of(api).payloads[0])["text"]
-    assert "Northbridge" not in text and "[redacted]" in text
+    assert "Fixture Target Ltd" not in text and "[redacted]" in text
 
 
 # ---------------------------------------------------------------------------

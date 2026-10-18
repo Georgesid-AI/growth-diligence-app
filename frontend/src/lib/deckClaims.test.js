@@ -1,5 +1,5 @@
 import {
-  ALL_DECKS, AI_SUGGESTION_LABEL, CLAIM_TYPES, INCONSISTENCY_LABEL, UPLOADED_BEFORE_CONSENT, VERIFIED_LABEL, deckRunLog, REMOVE_DECK_CONFIRM, claimPeriod, conversionHover, claimSections, claimsForDeck, periodLabel, directionText, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, newClaimPayload, sourceRef, statusCounts, typeLabel,
+  ALL_DECKS, AI_SUGGESTION_LABEL, CLAIM_TYPES, INCONSISTENCY_LABEL, VERIFIED_LABEL, deckRunLog, REMOVE_DECK_CONFIRM, claimPeriod, conversionHover, claimSections, claimsForDeck, periodLabel, directionText, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, newClaimPayload, sourceRef, statusCounts, typeLabel,
   approveAllToast, toReview, DECK_SCOPE_CANNOT, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, EDIT_TYPES, isOther, readingChoices, confidenceText, otherFiguresTitle,
   claimFields, editLogText,
 } from "./deckClaims";
@@ -205,13 +205,10 @@ describe("model readings in the approval list (docs/specs/llm-structure-reading.
     expect(deckRunLog({ ai_status: "read", periods_corrected: 0 })).toEqual(["AI reading: read"]);
   });
 
-  test("a deck uploaded while AI reading was off says to re-upload it once reading is on", () => {
-    const line = "Uploaded before AI reading was enabled; re-upload to read.";
-    expect(UPLOADED_BEFORE_CONSENT).toBe(line);
-    expect(deckRunLog({ ai_status: "python_only", uploaded_before_consent: true })).toEqual(["AI reading: not read", line]);
-    expect(deckRunLog({ uploaded_before_consent: true })).toEqual(["AI reading: not read", line]);
-    expect(deckRunLog({ ai_status: "python_only", uploaded_before_consent: false }))
-      .toEqual(["AI reading: not read (AI-assisted reading is off for this audit)"]);
+  test("a deck not read because AI reading is off says so, and no line asks for a re-upload (it is read when reading is ticked)", () => {
+    expect(deckRunLog({ ai_status: "python_only" })).toEqual(["AI reading: not read (AI-assisted reading is off for this audit)"]);
+    expect(deckRunLog({ ai_status: "python_only", uploaded_before_consent: true }).join(" ")).not.toContain("re-upload");
+    expect(deckRunLog({})).toEqual([]);
   });
 });
 

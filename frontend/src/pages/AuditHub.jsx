@@ -13,16 +13,14 @@ import { listAudits, createAudit, deleteAudit } from "@/lib/api";
 import { S18_TITLE, S18_BODY, S18_MISMATCH } from "@/lib/chatUpload";
 import { fmtCurrency } from "@/lib/format";
 import { describeRequestError } from "@/lib/requestError";
-import { Checkbox } from "@/components/ui/checkbox";
-import { DEFAULT_FISCAL_YEAR_END, CONSENT_EXPLAINER, CONSENT_LABEL, requiredFieldError } from "@/lib/auditForm";
+import { DEFAULT_FISCAL_YEAR_END, NEW_AUDIT_TITLE, NEW_AUDIT_PARAGRAPHS, requiredFieldError } from "@/lib/auditForm";
 
 export default function AuditHub() {
   const nav = useNavigate();
   const [audits, setAudits] = useState(null);
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [explainerOpen, setExplainerOpen] = useState(false);
-  const blank = { company_name: "", client_name: "", structure_reading_consent: true };
+  const blank = { company_name: "" };
   const [form, setForm] = useState(blank);
 
   const [loadError, setLoadError] = useState(null);   // why the list could not be read: shown instead of a spinner, with Retry
@@ -46,8 +44,8 @@ export default function AuditHub() {
         target_date: null,
         as_of_month: null,
         fiscal_year_end: DEFAULT_FISCAL_YEAR_END,
-        client_name: form.client_name.trim(),
-        structure_reading_consent: form.structure_reading_consent,
+        // New audits start with AI reading on (logged as the first consent entry); it is changed on the Upload page.
+        structure_reading_consent: true,
       });
       toast.success("Audit created");
       setOpen(false);
@@ -93,14 +91,16 @@ export default function AuditHub() {
             className="bg-white border-[#E5E7EB] text-slate-900 flex flex-col max-h-[100dvh] overflow-hidden"
           >
             <DialogHeader className="shrink-0">
-              <DialogTitle className="font-heading">Create Growth Audit</DialogTitle>
-              <DialogDescription className="text-slate-600">
-                Name the company and the client. The plan target and dates are set at the top of the next page.
-              </DialogDescription>
+              <DialogTitle className="font-heading">{NEW_AUDIT_TITLE}</DialogTitle>
             </DialogHeader>
             <div data-testid="audit-dialog-body" className="space-y-4 py-2 flex-1 min-h-0 overflow-y-auto">
+              <DialogDescription asChild>
+                <div data-testid="audit-dialog-intro" className="text-slate-600 space-y-3 text-sm">
+                  {NEW_AUDIT_PARAGRAPHS.map((p) => <p key={p}>{p}</p>)}
+                </div>
+              </DialogDescription>
               <div>
-                <Label className="text-slate-700">Company name</Label>
+                <Label className="text-slate-700">Project or company name</Label>
                 <Input
                   data-testid="audit-company-input"
                   value={form.company_name}
@@ -108,36 +108,6 @@ export default function AuditHub() {
                   placeholder="Acme SaaS Inc."
                   className="mt-1.5 bg-white border-[#E5E7EB]"
                 />
-              </div>
-              <div>
-                <Label className="text-slate-700">Client name <span className="text-slate-500 text-xs">(the investor commissioning the audit)</span></Label>
-                <Input
-                  data-testid="audit-client-input"
-                  value={form.client_name}
-                  onChange={(e) => setForm({ ...form, client_name: e.target.value })}
-                  className="mt-1.5 bg-white border-[#E5E7EB]"
-                />
-              </div>
-              <div className="rounded-md border border-[#E5E7EB] bg-slate-50 p-3 space-y-2" data-testid="audit-consent">
-                <label className="flex items-start gap-2 text-xs text-slate-800 cursor-pointer">
-                  <Checkbox
-                    data-testid="audit-consent-checkbox"
-                    checked={form.structure_reading_consent}
-                    onCheckedChange={(v) => setForm({ ...form, structure_reading_consent: v === true })}
-                    className="mt-0.5"
-                  />
-                  <span>{CONSENT_LABEL}</span>
-                </label>
-                <button
-                  type="button"
-                  data-testid="audit-consent-toggle"
-                  aria-expanded={explainerOpen}
-                  onClick={() => setExplainerOpen((v) => !v)}
-                  className="text-xs text-sky-700 underline underline-offset-2"
-                >What is sent</button>
-                {explainerOpen && (
-                  <p data-testid="audit-consent-explainer" className="text-xs text-slate-600">{CONSENT_EXPLAINER}</p>
-                )}
               </div>
             </div>
             <DialogFooter data-testid="audit-dialog-footer" className="shrink-0">

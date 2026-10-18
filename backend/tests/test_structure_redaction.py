@@ -135,26 +135,27 @@ def test_the_target_name_inside_a_longer_customer_name_does_not_protect_it():
 
 
 # ---------------------------------------------------------------------------
-# The client name: [redacted], and the structure is still read
+# Withheld values: the target company's name in the file-type text. There is no client name (chat-upload.md section 23).
 # ---------------------------------------------------------------------------
-AUDIT = {"company_name": "Target Ltd", "client_name": "Northbridge Capital", "engagement_reference": "ENG-2026-041"}   # a stored old field is ignored
+AUDIT = {"company_name": "Target Ltd", "client_name": "Northbridge Capital", "engagement_reference": "ENG-2026-041"}   # old stored fields are ignored
 
 
-def test_the_client_name_becomes_redacted_as_a_whole_word():
-    withheld = redact.withheld_values(AUDIT)
-    assert withheld == ("Northbridge Capital",), "an engagement reference left on an old record is not withheld"
-    cells = _cells("Prepared for NORTHBRIDGE CAPITAL", "Ref ENG-2026-041.", "Northbridge Capitals")
+def test_only_the_target_company_name_is_withheld_and_a_stored_client_name_is_not():
+    assert not hasattr(redact, "withheld_values")
+    withheld = redact.file_type_withheld(AUDIT)
+    assert withheld == ("Target Ltd",)
+    assert redact.file_type_withheld({"company_name": " "}) == ()
+    cells = _cells("Prepared for NORTHBRIDGE CAPITAL", "Target Ltd report", "Target Ltds")
     out, counts = redact.redact_structure(cells, "Target Ltd", MAPPING, withheld)
-    assert _texts(out) == ["Prepared for [redacted]", "Ref ENG-2026-041.", "Northbridge Capitals"]
+    assert "NORTHBRIDGE CAPITAL" in _texts(out)[0] and _texts(out)[1] == "[redacted] report" and _texts(out)[2] == "Target Ltds"
     assert counts["withheld"] == 1
     again, more = redact.redact_structure(out, "Target Ltd", MAPPING, withheld)
     assert again == out and not any(more.values()), "a second pass changes nothing"
-    assert redact.withheld_values({"company_name": "Old Co"}) == (), "an audit without a client name withholds nothing"
     kept, _ = redact.pseudonymise_cells(out, {"Redacted": "Customer_09"}, "Target Ltd")
     assert kept == out, "the placeholder is never rewritten, even by a name that matches it"
 
 
-def test_the_target_name_never_shields_the_client_name():
+def test_a_withheld_name_is_replaced_as_a_whole_word_whatever_shields_it():
     out, _ = redact.redact_structure(_cells("Hill Partners plan"), "Hill Partners", {}, ("Hill",))
     assert _texts(out) == ["[redacted] Partners plan"]
 

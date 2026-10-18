@@ -136,8 +136,8 @@ def column_mapping_input(columns: List[str], rows: List[Dict], customer_columns:
 def column_mapping_text(columns: List[str], rows: List[Dict], company_name: Optional[str], mapping: Dict[str, str],
                         customer_columns: Tuple[str, ...] = (), withheld: Tuple[str, ...] = (),
                         hints: Optional[Dict[str, Tuple[str, int]]] = None) -> str:
-    """The redacted column-mapping text the model reads, every column of the sheet (`withheld`: the client name, see
-    redact.withheld_values; `hints`: {column: (field, confidence)}, the rules' proposal per column, sent as a hint)."""
+    """The redacted column-mapping text the model reads, every column of the sheet (`withheld`: values to replace, see
+    redact.file_type_withheld; `hints`: {column: (field, confidence)}, the rules' proposal per column, sent as a hint)."""
     headers, samples, profiles = column_mapping_input(columns, rows, customer_columns)
     headers, _ = redact.redact_structure(headers, company_name, mapping, withheld)
     by_position = {c: (hints or {})[name] for c, name in enumerate(columns, 1) if name in (hints or {})}
@@ -229,7 +229,7 @@ async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None
     verified". A deck already read is not sent again (a re-read is served from the cache).
     """
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "id": 1, "company_name": 1, "fiscal_year_end": 1,
-                                                       "structure_reading_consent": 1, "client_name": 1})
+                                                       "structure_reading_consent": 1})
     deck = await db[TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id},
                                               {"_id": 0, "structures": 1, "file": 1, "page_unit": 1, "blocks": 1})
     if not audit or not deck:
@@ -252,8 +252,7 @@ async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None
         if stopped_message:
             statuses.append({"status": STOPPED, "reason": stopped_message})
             continue
-        cells, _ = redact.redact_structure(structure["cells"], audit.get("company_name"), mapping,
-                                           redact.withheld_values(audit))
+        cells, _ = redact.redact_structure(structure["cells"], audit.get("company_name"), mapping)
         redacted = {**structure, "cells": cells}
         listed = structure_items.list_items(redacted)
         result = await gateway.read_structure(db, audit_id, structure_items.text(redacted, listed), structure["type"],
@@ -323,6 +322,16 @@ async def _deck_status(db, audit_id: str, deck_id: str, status: str, message: Op
     await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id},
                                          {"$set": {"ai_status": status, "ai_message": message}})
     return status
+
+
+async def queue_decks(db, audit_id: str) -> List[str]:
+    """Mark every deck of the audit that is not being read as "reading" and return their ids, for the caller to read
+    (consent ticked after the upload, chat-upload.md section 23). A deck already being read is not queued twice."""
+    found = await db[TEXT_COLLECTION].find({"audit_id": audit_id}, {"_id": 0, "deck_id": 1, "ai_status": 1}).to_list(1000)
+    queued = [d["deck_id"] for d in found if d.get("ai_status") != "reading"]
+    for deck_id in queued:
+        await _deck_status(db, audit_id, deck_id, "reading")
+    return queued
 
 
 async def process_waiting_decks(db, audit_id: str, adapter=None, sleep=None) -> List[str]:

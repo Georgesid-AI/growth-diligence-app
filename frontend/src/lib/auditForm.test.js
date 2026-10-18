@@ -1,4 +1,4 @@
-import { isIsoDate, asOfInputValue, targetDateError, plainNumber, groupThousands, storedNumberInput, CONSENT_EXPLAINER, CONSENT_LABEL,
+import { isIsoDate, asOfInputValue, targetDateError, plainNumber, groupThousands, storedNumberInput, CONSENT_LABEL, VERIFIED_LINE, NEW_AUDIT_TITLE, NEW_AUDIT_PARAGRAPHS,
   requiredFieldError } from "./auditForm";
 
 // The reported case: target 31/12/2027, as-of 30/06/2026, as the date inputs deliver them.
@@ -62,15 +62,21 @@ test("Target ARR never keeps a leading zero; a stored 0 or an empty value shows 
   expect(storedNumberInput(40000000)).toBe("40000000");
 });
 
-// docs/specs/llm-structure-reading.md section 4, word for word.
-test("the consent explainer and label are the spec's words", () => {
-  expect(CONSENT_EXPLAINER).toBe("This app reads tables and charts in the uploaded decks with an AI model. Every number is checked by code against its source cell; anything that does not match is marked as unverified. Emails, phone numbers, personal names and the customers named in the uploaded data files are replaced before anything is sent.");
-  expect(CONSENT_LABEL).toBe("AI-assisted reading enabled per engagement terms. Uncheck if the client requires code-based extraction only; this may identify fewer findings.");
+// docs/specs/chat-upload.md section 23, word for word.
+test("the consent label, the verification line and the dialog text are the spec's words", () => {
+  expect(CONSENT_LABEL).toBe("Use AI to read deck tables and charts and to suggest column matches. Untick if the client requires code-based extraction only; this may find fewer figures. Narratives use AI on computed results either way.");
+  expect(VERIFIED_LINE).toBe("Every extracted number is checked by code against its source cell. Numbers that don't match are marked unverified for review.");
+  expect(NEW_AUDIT_TITLE).toBe("Create a new audit");
+  expect(NEW_AUDIT_PARAGRAPHS).toEqual([
+    "Start by entering your project or company name.",
+    "Once you upload your files, the app identifies file types, matches data columns to the fields used in the audit, and uses AI to read tables and charts in your decks. You'll review any column matches that need confirmation before calculations begin.",
+    "Before content is sent to the AI model, the app replaces email addresses, phone numbers, personal names and customer names found in your uploaded data files.",
+    "On the next screen, you can add your files and review the upload requirements.",
+  ]);
 });
 
-test("a company name and a client name are required, and there is no engagement reference", () => {
-  const form = { company_name: "Acme", client_name: "Northbridge Capital" };
-  expect(requiredFieldError(form)).toBeNull();
-  expect(requiredFieldError({ ...form, client_name: " " })).toBe("Client name is required");
-  expect(requiredFieldError({ ...form, company_name: "" })).toBe("Company name is required");
+test("the company name is the only required field; a client name is not asked for", () => {
+  expect(requiredFieldError({ company_name: "Acme" })).toBeNull();
+  expect(requiredFieldError({ company_name: " " })).toBe("Company name is required");
+  expect(requiredFieldError({ company_name: "Acme", client_name: " " })).toBeNull();
 });

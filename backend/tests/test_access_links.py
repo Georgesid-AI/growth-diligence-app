@@ -54,7 +54,7 @@ def access(monkeypatch):
 
     a_id, a = issue("Tester A")
     b_id, b = issue("Tester B")
-    created = client.post("/api/audits", json={"company_name": "BetaCo", "client_name": "Fund B"}, headers=b)
+    created = client.post("/api/audits", json={"company_name": "BetaCo"}, headers=b)
     assert created.status_code == 200, created.text
     return {"client": client, "db": db, "owner": owner, "a": a, "b": b, "b_id": b_id, "audit_b": created.json()["id"]}
 
@@ -67,7 +67,7 @@ def test_1_no_token_is_401_on_every_route(access):
     client = access["client"]
     assert len(audit_routes()) >= 35, "the router lists the audit routes"
     assert client.get("/api/audits").status_code == 401
-    assert client.post("/api/audits", json={"company_name": "X", "client_name": "Y"}).status_code == 401
+    assert client.post("/api/audits", json={"company_name": "X"}).status_code == 401
     wrong = {m + " " + p: _call(client, m, fill(p, access["audit_b"])).status_code for m, p in audit_routes()}
     assert {k: v for k, v in wrong.items() if v != 401} == {}
     invalid = {"Authorization": "Bearer not-a-token"}
@@ -145,7 +145,7 @@ def _seed_usage(access):
     """Tester A and tester B each hold one audit with a note and one model call; A's note and B's note are told apart."""
     from app import usage as usage_mod
     db, client = access["db"], access["client"]
-    a_audit = client.post("/api/audits", json={"company_name": "AlphaCo", "client_name": "Fund A"}, headers=access["a"]).json()["id"]
+    a_audit = client.post("/api/audits", json={"company_name": "AlphaCo"}, headers=access["a"]).json()["id"]
     for audit_id, note, cost in ((a_audit, "NOTE-OF-A", 1.0), (access["audit_b"], "NOTE-OF-B", 2.0)):
         doc = next(d for d in db["audits"].docs if d["id"] == audit_id)
         doc["usage"] = usage_mod.empty()

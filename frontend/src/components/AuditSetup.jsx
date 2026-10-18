@@ -6,7 +6,7 @@ import DateField from "@/components/DateField";
 import { getAudit, putIcInputs, updateAudit } from "@/lib/api";
 import { describeRequestError } from "@/lib/requestError";
 import {
-  DEFAULT_FISCAL_YEAR_END, MONTHS, REPORTING_CURRENCIES, SETUP_HELP, SETUP_LABELS, asOfInputValue, groupThousands, plainNumber, storedNumberInput,
+  CONSENT_LABEL, VERIFIED_LINE, DEFAULT_FISCAL_YEAR_END, MONTHS, REPORTING_CURRENCIES, SETUP_HELP, SETUP_LABELS, asOfInputValue, groupThousands, plainNumber, storedNumberInput,
   targetDateError,
 } from "@/lib/auditForm";
 
@@ -15,7 +15,8 @@ const help = "mt-1 text-[11px] leading-snug text-slate-500";
 
 /**
  * The audit's set-up fields at the top of the upload and mapping page: reporting currency, Target ARR, target date, as-of
- * month (with "Last month is complete"), the requested analysis date and fiscal year-end, each with one line of help. Each saves as it changes; a save that fails names the field and
+ * month (with "Last month is complete"), the requested analysis date and fiscal year-end, each with one line of help, then the
+ * AI reading tick and the line on how extracted numbers are checked (chat-upload.md section 23). Each saves as it changes; a save that fails names the field and
  * the server's reason. The as-of month is held by the page (`asOf`, `setAsOf`), which also sends it when it computes.
  */
 export default function AuditSetup({ audit, setAudit, asOf, setAsOf }) {
@@ -120,6 +121,14 @@ export default function AuditSetup({ audit, setAudit, asOf, setAsOf }) {
           <DateField testId="setup-review-date-input" value={audit.ic_inputs?.first_quarterly_review || ""} onChange={saveReview} className="!mt-1" />
           <p className={help} data-testid="setup-help-first_quarterly_review">{SETUP_HELP.first_quarterly_review}</p>
         </div>
+      </div>
+      <div className="mt-5 pt-4 border-t border-[#E5E7EB]">
+        <label className="flex items-start gap-2 text-xs text-slate-800">
+          <input type="checkbox" data-testid="setup-consent-checkbox" className="mt-0.5" checked={audit.structure_reading_consent === true}
+            onChange={(e) => save("structure_reading_consent", { structure_reading_consent: e.target.checked })} />
+          <span data-testid="setup-consent-label">{CONSENT_LABEL}</span>
+        </label>
+        <p className={help} data-testid="setup-verified-line">{VERIFIED_LINE}</p>
       </div>
     </section>
   );

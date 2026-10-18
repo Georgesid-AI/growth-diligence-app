@@ -33,7 +33,7 @@ AUDIT = "audit-chat"
 COMPANY = "Fixture Target Ltd"
 CUSTOMERS = ["Alder Works", "Birch Labs", "Cedar Foods", "Dune Print", "Elm Studio", "Fern Tools", "Birch Labs Ltd"]
 
-AUDIT_DOC = {"id": AUDIT, "company_name": COMPANY, "client_name": "Northbridge Capital",
+AUDIT_DOC = {"id": AUDIT, "company_name": COMPANY,
              "structure_reading_consent": True, "fiscal_year_end": 12,
              "reporting_currency": "EUR", "target_arr": 1000000, "target_date": "2027-12-31", "as_of_month": None,
              "results": None, "status": "draft", "usage": usage_mod.empty()}
@@ -781,7 +781,7 @@ def _notes(api):
 
 @pytest.mark.parametrize("note", [
     "the 2024 column", "see blank_vs_zero.csv", "same as blank_vs_zero", "Alder Works is wrong", "birch", "x" * 61,
-    "belongs to Fixture Target Ltd", "ask Northbridge Capital", "per ENG-2026-041",
+    "belongs to Fixture Target Ltd", "per ENG-2026-041",
 ])
 def test_a_note_with_a_digit_a_file_name_a_cell_text_a_name_or_over_60_characters_is_refused_and_saves_nothing(api, note):
     upload(api, "blank_vs_zero.csv")
@@ -845,7 +845,7 @@ def test_the_counters_hold_counts_and_codes_and_the_totals_hold_no_name_and_no_p
     totals = api.get("/api/usage/totals")
     assert totals.status_code == 200
     blob = json.dumps(totals.json())
-    for secret in (COMPANY, "blank_vs_zero", "Alder", AUDIT, "Northbridge"):
+    for secret in (COMPANY, "blank_vs_zero", "Alder", AUDIT):
         assert secret not in blob
     assert totals.json()["audits"] == 1 and totals.json()["files"]["uploaded"] == {"revenue": 1}
     assert "audit_rows" not in totals.json() and totals.json()["median_days_to_export"] is not None

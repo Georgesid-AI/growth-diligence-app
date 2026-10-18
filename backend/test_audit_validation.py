@@ -9,8 +9,8 @@ from pydantic import ValidationError
 
 import server
 
-# Every audit names its client (the investor) (llm-structure-reading.md section 4).
-REQUIRED = {"company_name": "Acme", "client_name": "Northbridge Capital"}
+# An audit is named by its project or company name alone (chat-upload.md section 23).
+REQUIRED = {"company_name": "Acme"}
 
 
 @pytest.mark.parametrize("bad_date", [
@@ -83,12 +83,15 @@ def test_fiscal_year_end_outside_1_to_12_is_refused(bad):
 
 
 # Consent and the names it rests on (llm-structure-reading.md section 4).
-def test_audit_creation_requires_a_client_name_and_has_no_engagement_reference():
+def test_audit_creation_requires_a_company_name_and_has_no_client_name_or_engagement_reference():
     with pytest.raises(ValidationError):
-        server.AuditCreate(**{k: v for k, v in REQUIRED.items() if k != "client_name"})
+        server.AuditCreate()
     with pytest.raises(ValidationError):
-        server.AuditCreate(**{**REQUIRED, "client_name": "   "})
-    assert "engagement_reference" not in server.AuditCreate.model_fields
+        server.AuditCreate(company_name="   ")
+    assert server.AuditCreate(company_name=" Acme ").company_name == "Acme"
+    for gone in ("client_name", "engagement_reference"):
+        assert gone not in server.AuditCreate.model_fields and gone not in server.AuditUpdate.model_fields
+    assert not hasattr(server.AuditCreate(**REQUIRED, client_name="Ignored"), "client_name"), "an old client's body is ignored"
     assert "engagement_reference" not in server.AuditUpdate.model_fields
 
 

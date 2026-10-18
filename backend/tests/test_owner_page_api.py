@@ -92,7 +92,7 @@ def test_there_is_no_route_to_delete_change_or_read_a_prompt(owner):
 
 def test_the_owner_page_calls_show_no_audit_data(owner):
     audit = owner.post("/api/admin/testers", json={"label": "T"}, headers=owner.headers_owner).json()
-    created = owner.post("/api/audits", json={"company_name": "AuditedCo", "client_name": "Fund"}, headers=bearer(token_of(audit)))
+    created = owner.post("/api/audits", json={"company_name": "AuditedCo"}, headers=bearer(token_of(audit)))
     assert created.status_code == 200
     seen = [owner.get(p, headers=owner.headers_owner).text for p in ("/api/admin/prompts", "/api/admin/testers")]
     assert "AuditedCo" not in "".join(seen) and "Fund" not in "".join(seen)

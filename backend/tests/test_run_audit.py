@@ -22,7 +22,7 @@ from app.llm import gateway  # noqa: E402
 BACKEND = Path(__file__).resolve().parents[1]
 SAMPLE = BACKEND.parent / "sample_data"
 AUDIT = "audit-run"
-AUDIT_DOC = {"id": AUDIT, "company_name": "TestCo", "client_name": "Northbridge Capital", "structure_reading_consent": True,
+AUDIT_DOC = {"id": AUDIT, "company_name": "TestCo", "structure_reading_consent": True,
              "fiscal_year_end": 12, "reporting_currency": "EUR", "target_arr": 1000000, "target_date": "2026-12-31",
              "as_of_month": None, "results": None, "status": "draft", "usage": usage_mod.empty(),
              "created_at": "2026-10-11T08:00:00+00:00", "ic_inputs": {"first_quarterly_review": "2027-01-09"}}      # as create_audit stores it
