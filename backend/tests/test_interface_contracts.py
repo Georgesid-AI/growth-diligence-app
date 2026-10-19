@@ -170,7 +170,9 @@ NO_OWN_CITATION = {"revenue_reconciliation": "its months and its window carry bo
                    "questions_for_management": "text, no figure", "contract_version": "", "reporting_currency": "",
                    "as_of_month": "",
                    # docs/specs/dates-and-periods.md sections 2-3: months as text, read from the uploads, no figure
-                   "source_period": "months as text, no figure", "metric_periods": "months as text, no figure"}
+                   "source_period": "months as text, no figure", "metric_periods": "months as text, no figure",
+                   # docs/specs/revenue-file-recognition.md section 9: closed words and counts about how the revenue was read
+                   "recognition": "closed words and counts, no figure"}
 
 
 def test_every_block_with_a_figure_carries_a_citation_in_the_model_and_in_the_engine_output():
@@ -201,7 +203,7 @@ def test_the_engine_rounds_counts_and_days_once_and_percents_are_fractions():
     assert isinstance(s["acv_path"]["required_net_new_per_year"], int)
     assert 0 < s["nrr"]["overall_pct"] < 10 and 0 <= s["win_rate"]["win_rate_pct"] <= 1
     assert all(0 <= v <= 10 for r in s["cohort_retention"]["data"] for v in r["values"].values())
-    assert s["contract_version"] == metrics.CONTRACT_VERSION == 4 and s["reporting_currency"] == "EUR"
+    assert s["contract_version"] == metrics.CONTRACT_VERSION == 5 and s["reporting_currency"] == "EUR"
 
 
 @pytest.mark.parametrize("model, value, expected", [
@@ -355,6 +357,16 @@ VIOLATIONS = {
     "mrr_series without a citation": _drop("mrr_series.source"),
     "anomalies without a citation": _drop("anomalies.source"),
     "a citation without its rule": _drop("mrr_series.source.rule"),
+    # docs/specs/revenue-file-recognition.md section 9: closed words, never a string from a file
+    "a revenue series basis that is not one of the five": _set("revenue_series.basis", "guess"),
+    "a revenue series file type that is a file name": _set("revenue_series.file_type", "ledger.xlsx"),
+    "a growth label that is free text": _set("revenue_series.growth_label", "Revenue growth of Acme"),
+    "a reconciliation status that is not on the list": _set("revenue_reconciliation.status", "maybe"),
+    "a recognition block holding a file name": _set("recognition", {"file_type": "ledger.xlsx", "series_basis": "row", "periods": 12,
+                                                                   "excluded_columns": 0, "currency_confirmed": True, "source": "pnl"}),
+    "a recognition block with a text field": _set("recognition", {"file_type": "monthly_revenue_report", "series_basis": "row", "periods": 12,
+                                                                 "excluded_columns": 0, "currency_confirmed": True, "source": "pnl",
+                                                                 "label": "Recognised revenue"}),
 }
 
 
@@ -569,7 +581,15 @@ def test_results_stored_before_the_crm_collapse_are_recomputed_on_the_first_read
     they are recomputed, so the win rate and the sales cycle count each deal once and the clustering check can run."""
     api.db["audits"].docs[0]["results"] = {**cf.stored(nrr=cf.nrr(1.0641, 100)), "contract_version": 3}
     r = api.get(f"/api/audits/{AUDIT_ID}/results")
-    assert r.status_code == 200 and api.recomputed == [AUDIT_ID] and r.json()["results"]["contract_version"] == 4
+    assert r.status_code == 200 and api.recomputed == [AUDIT_ID] and r.json()["results"]["contract_version"] == metrics.CONTRACT_VERSION
+
+
+def test_results_stored_before_the_revenue_file_recognition_are_recomputed_on_the_first_read(api):
+    """Version 4 results hold no basis for the revenue series, no reconciliation status and no recognition block
+    (revenue-file-recognition.md section 9): they are recomputed, so every audit says how its revenue was read."""
+    api.db["audits"].docs[0]["results"] = {**cf.stored(nrr=cf.nrr(1.0641, 100)), "contract_version": 4}
+    r = api.get(f"/api/audits/{AUDIT_ID}/results")
+    assert r.status_code == 200 and api.recomputed == [AUDIT_ID] and r.json()["results"]["contract_version"] == 5
 
 
 def test_the_contract_declares_the_repeat_flag_and_the_won_deal_counts():

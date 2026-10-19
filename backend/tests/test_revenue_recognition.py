@@ -3,9 +3,7 @@ reporting reference and a number (section 2), and it is then classified into one
 labels of its rows read as metric names or as entities (section 4). Python checks every proposal of the model before anything is
 used (section 6). Synthetic files only (CLAUDE.md rule 15): tests/fixtures/recognition/ and the workbooks built here.
 
-Written before the implementation: every test fails today because app/recognition.py and the recognition endpoint do not exist.
-The module is imported through the `rec` fixture, so each test fails on its own and not as one collection error. The payload the
-model reads is tested in test_gateway_data_boundary.py (rule 14)."""
+The module is imported through the `rec` fixture. The payload the model reads is tested in test_gateway_data_boundary.py (rule 14)."""
 import importlib
 import io
 import json
@@ -25,8 +23,6 @@ from app import column_rules as cr  # noqa: E402
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "recognition"
 MAPPING = Path(__file__).resolve().parent / "fixtures" / "mapping"
 SAMPLE = Path(__file__).resolve().parents[2] / "sample_data"
-AWAITING = "awaiting implementation: revenue-file recognition"
-pytestmark = pytest.mark.xfail(strict=True, reason=AWAITING)       # the implementation PR removes this marker
 MONTHLY = "monthly_report_actual_forecast.csv"
 AS_OF = "2025-06-30"                        # the last actual month of MONTHLY is June 2025
 AS_OF_YEAR_END = "2025-12-31"
@@ -627,6 +623,7 @@ def test_a_recognition_call_counts_toward_the_tester_allowance_and_stops_at_100_
     assert total["files"] == 1 and total["calls"] == 1 and total["cost_usd"] > 0
     api.db[access.COLLECTION].docs[0].update(spent(10))
     calls = adapter_of(api).calls
+    api.db["datasets"].docs.clear()          # as the tests above: a second revenue file with other bytes needs `replace` otherwise
     body = upload(api, "monthly_report_no_currency.csv", (FIXTURES / "monthly_report_no_currency.csv").read_bytes()).json()
     assert adapter_of(api).calls == calls, "no provider call at 100%"
     assert body["recognition"]["recognised"] and api.db["llm_calls"].docs[-1]["status"] == "monthly_allowance_reached"
@@ -818,3 +815,32 @@ def test_delete_audit_removes_the_kept_recognition_and_the_decisions(api):
     assert api.request("DELETE", f"/api/audits/{AUDIT}", json={"confirm": COMPANY}).status_code == 200
     for name, col in api.db._cols.items():
         assert not [d for d in col.docs if AUDIT in json.dumps(d, default=str)], f"{name} still holds a document of the audit"
+
+
+# ---------------------------------------------------------------------------
+# Run audit without a revenue file (follow-up of the specification PR)
+# ---------------------------------------------------------------------------
+def run_stage(api, stage):
+    return api.post(f"/api/audits/{AUDIT}/run/{stage}").json()
+
+
+def test_run_audit_without_a_revenue_file_stops_at_the_mapping_stage_with_the_missing_file_message(api):
+    rules_only(api)
+    assert run_stage(api, "mapping")["message"] == "No file has been uploaded yet. Add the revenue file and run the audit again."
+    body = upload(api, "pnl_multi_period.csv", (FIXTURES / "pnl_multi_period.csv").read_bytes()).json()
+    assert body["dtype"] == "pnl" and body["recognition"]["recognised"]
+    first = run_stage(api, "mapping")
+    assert (first["status"], first["message"]) == ("failed", "The revenue file is missing. Add it and run the audit again."), \
+        "a recognised P&L that the analyst has not confirmed is not a revenue file"
+    assert run_stage(api, "engine")["status"] == "waiting", "nothing is calculated without a revenue file"
+
+
+def test_a_confirmed_pnl_lets_run_audit_past_the_mapping_stage_and_the_engine_reads_its_revenue(api):
+    rules_only(api)
+    upload(api, "pnl_multi_period.csv", (FIXTURES / "pnl_multi_period.csv").read_bytes())
+    assert decide(api, dtype="pnl", action="confirm", part="revenue_row").status_code == 200
+    assert run_stage(api, "mapping")["status"] == "done"
+    assert run_stage(api, "engine")["status"] == "done"
+    results = api.db["audits"].docs[0]["results"]
+    assert results["revenue_reconciliation"]["status"] == "not_applicable", "the P&L is the only revenue source"
+    assert results["recognition"]["source"] == "pnl" and results["recognition"]["file_type"] == "financial_statements"

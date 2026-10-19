@@ -846,10 +846,29 @@ def compute_revenue_reconciliation(series: dict, month_rows: dict, pnl: pd.DataF
     return {
         "available": True, "first": window[0], "last": window[-1], "tolerance_pct": RECONCILIATION_TOLERANCE_PCT,
         "file_total": _round(file_total), "pnl_total": _round(pnl_total), "gap": _round(gap), "gap_pct": gap_pct,
-        "blocker": blocker, "by_month": by_month,
+        "blocker": blocker, "by_month": by_month, "status": "computed",
         "source": {"revenue_file": ref(rev_src, all_file, "Revenue by month, summed over the window"),
                    "pnl": ref(pnl_src, all_pnl, "P&L revenue column, summed over the window")},
     }
+
+
+SAME_SOURCE = "Not applicable – same source"
+
+
+def revenue_series_from_recognition(feed: dict, as_of) -> dict:
+    """The monthly revenue series of a recognised file with no customer rows (docs/specs/revenue-file-recognition.md sections 8, 9):
+    one value per month up to the boundary, read from the confirmed row, rows or column, with its citation. Months only: a yearly,
+    half-yearly or quarterly column is never split into months (chat-upload.md 26.6)."""
+    limit = _period_str(as_of) if as_of is not None else None
+    data = [{"month": x["month"], "total": _round(float(x["value"]))} for x in sorted(feed.get("series") or [], key=lambda x: x["month"])
+            if limit is None or x["month"] <= limit]
+    out = {"months": [d["month"] for d in data], "segments": [], "data": data, "basis": feed["basis"], "file_type": feed["file_type"]}
+    if feed.get("growth_label"):
+        out["growth_label"] = feed["growth_label"]
+    ref = SourceRef(feed["file"], feed.get("sheet"))
+    ref.add_rows(feed.get("rows") or [] if data else [])
+    out["source"] = ref.to_dict(feed.get("rule") or "")
+    return out
 
 
 def _monthly_by_segment(frame: pd.DataFrame, seg_map: dict, count: bool = False) -> dict:
@@ -1973,11 +1992,23 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
     month_rows = revenue_series.pop("month_rows", {})
     revenue_series["source"] = src(rev_src, rows, "Revenue = recurring lines spread over their service months as for MRR; "
                                                   "one-off lines in their invoice month")
+    feed = config.get("recognition")
+    if feed and not revenue_series.get("data"):          # a recognised file with no customer rows supplies the series (section 8)
+        revenue_series = guarded("Revenue by month", feed.get("file"), revenue_series, revenue_series_from_recognition, feed, as_of)
+        rev_src = {"file": feed["file"], "sheet": feed.get("sheet")}
+        month_rows = {}
     results["revenue_series"] = revenue_series
     # Server-only like the two series: the revenue file against the P&L, window total and evidence table.
     results["revenue_reconciliation"] = guarded("Revenue reconciliation", pnl_src.get("file"), None,
                                                 compute_revenue_reconciliation, revenue_series, month_rows, pnl,
                                                 rev_src, pnl_src)
+    if feed and feed.get("from_pnl"):         # the P&L is the only revenue source: it would be compared with itself
+        results["revenue_reconciliation"] = {"available": False, "status": "not_applicable", "reason": SAME_SOURCE, "by_month": []}
+    if feed:                                  # closed words and counts: the basis the memo and the export state
+        results["recognition"] = {"file_type": feed["file_type"], "series_basis": feed["basis"], "periods": feed["periods"],
+                                  "excluded_columns": feed["excluded_columns"], "currency_confirmed": feed["currency_confirmed"],
+                                  "source": "pnl" if feed.get("from_pnl") else "revenue_file"}
+        missing_data.extend({**item, "file": feed.get("file")} for item in feed.get("missing") or [])
     customers_series = guarded("Customers by month", rev_src.get("file"), {"months": [], "segments": [], "data": []},
                                compute_customers_series, mrr, seg_map)
     customers_series["source"] = src(rev_src, contrib_rows, "Customers = customers with MRR above 0 in the month")

@@ -21,6 +21,7 @@ from test_chat_upload import AUDIT, COMPANY, upload, view  # noqa: E402
 
 MAPPING = Path(__file__).resolve().parent / "fixtures" / "mapping"
 SAGE, KPI, YEARLY, CUSTOMERS = "sage_statement.csv", "monthly_kpi.csv", "yearly_pnl_by_product.csv", "customer_list.csv"
+KPI_NO_REVENUE = "kpi_no_revenue.csv"      # customers, churn and subscriptions: no revenue, MRR or ARR row (revenue-file-recognition.md decision 3)
 NAMES = ("Alder Works", "Birch Labs", "Jasmine Tea", "Heather Spa")
 
 
@@ -520,16 +521,27 @@ def test_a_sheet_of_kpi_lines_is_a_kpi_sheet_and_a_pnl_is_not():
 
 
 def test_one_audit_keeps_a_pnl_and_a_kpi_sheet(api):
-    file_type = json.dumps({"type": "file_type", "file_type": "pnl"})
+    """A KPI sheet with no revenue, invoiced or MRR/ARR row keeps chat-upload.md 26.14 (one with such a row is a monthly revenue report)."""
+    file_type = json.dumps({"type": "file_recognition", "sheet": 1, "file_type": "pnl", "revenue_row": None, "last_actual_column": None,
+                            "currency": None, "non_revenue_rows": []})
     api.state["adapter"] = t.FakeAdapter(replies=[YEARLY_REPLY, file_type, "{}"])
     assert put(api, YEARLY, dtype="pnl").json()["dtype"] == "pnl"
-    out = put(api, KPI).json()
+    out = put(api, KPI_NO_REVENUE).json()
     assert out["dtype"] == "kpi" and out["sheet_map"] and out["type_source"] == "ai"
     kinds = {d["dtype"]: d for d in api.get(f"/api/audits/{AUDIT}/datasets").json()["datasets"]}
-    assert sorted(kinds) == ["kpi", "pnl"] and kinds["pnl"]["file"] == YEARLY and kinds["kpi"]["file"] == KPI
-    assert all(line["series"] for line in kinds["kpi"]["sheet_map"]["lines"] if line["label"] == "Total MRR")
-    same = put(api, KPI).json()
+    assert sorted(kinds) == ["kpi", "pnl"] and kinds["pnl"]["file"] == YEARLY and kinds["kpi"]["file"] == KPI_NO_REVENUE
+    assert all(line["series"] for line in kinds["kpi"]["sheet_map"]["lines"] if line["label"] == "Logo churn rate %")
+    same = put(api, KPI_NO_REVENUE).json()
     assert same["dtype"] == "kpi" and same["status"] == "same_file", "the same bytes again are the KPI sheet, no replace prompt"
+
+
+def test_a_kpi_sheet_with_an_mrr_row_is_a_monthly_revenue_report_and_the_revenue_file(api):
+    file_type = json.dumps({"type": "file_recognition", "sheet": 1, "file_type": "pnl", "revenue_row": None, "last_actual_column": None,
+                            "currency": None, "non_revenue_rows": []})
+    api.state["adapter"] = t.FakeAdapter(replies=[file_type])
+    out = put(api, KPI).json()
+    assert out["dtype"] == "revenue" and out["recognition"]["file_type"] == "monthly_revenue_report"
+    assert out["recognition"]["revenue_row"]["kind"] == "recurring", "an MRR row is a recurring row, never recognised revenue"
 
 
 def test_a_kpi_sheet_does_not_feed_the_engine_and_waits_for_its_pending_lines(api):

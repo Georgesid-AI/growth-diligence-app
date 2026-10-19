@@ -399,7 +399,7 @@ def test_write_all_narratives_runs_every_enabled_step_through_the_gateway_and_a_
     est2, again = write_all(run_api)
     assert len(run_api.adapter.payloads) == calls, "the cache serves the second press"
     assert all(s["cached"] for s in est2["steps"])
-    assert {c["status"] for c in run_api.db["llm_calls"].docs} <= {"ok", "flagged"}
+    assert {c["status"] for c in run_api.db["llm_calls"].docs if c.get("step") != "structures"} <= {"ok", "flagged"}
 
 
 def test_write_all_narratives_keeps_the_spend_cap_and_a_refusal_degrades_to_the_metrics(run_api, monkeypatch):

@@ -60,7 +60,7 @@ from schemas.metrics import safe_problems
 from .. import allowance, disclosure, formatting
 from ..structures import redact as structure_redact
 from . import cache, guards, prompt_store, redaction, schemas, step_payloads
-from .schemas import (FILE_TYPE, MAPPING_FIELDS, SHEET_STRUCTURE, STRUCTURE_TYPES, DeckUsage, FileTypeReply, LabellingReply, Narrative,
+from .schemas import (FILE_RECOGNITION, FILE_TYPE, MAPPING_FIELDS, FileRecognitionReply, SHEET_STRUCTURE, STRUCTURE_TYPES, DeckUsage, FileTypeReply, LabellingReply, Narrative,
                       NarrativeResponse, SheetStructureReply, StructureRead, StructureReply, UsageResponse, narrative_output_schema)
 
 logger = logging.getLogger("growth.llm")
@@ -1418,6 +1418,8 @@ STRUCTURE_INPUT_CAP = 4000          # tokens of structure text plus item list, b
 STRUCTURE_CELL_MAX = 200            # a longer cell is prose
 SHEET_INPUT_CAP = 12_000            # a sheet skeleton: tokens of its text, by the provider's token counter (chat-upload.md 26.4)
 SHEET_MAX_TOKENS = 12_000           # ... and of its reply (a role, parent and meaning for up to 400 lines)
+RECOGNITION_INPUT_CAP = 12_000      # a file recognition text: tokens, by the provider's token counter (revenue-file-recognition.md 5.5)
+RECOGNITION_MAX_TOKENS = 1_000      # ... and of its reply
 STRUCTURES_COLLECTION = cache.STRUCTURES_COLLECTION
 NOT_READ = "Not read by AI"
 TOO_LARGE = "Too large for AI reading"
@@ -1492,6 +1494,20 @@ def structure_text_problem(text: Any, structure_type: str, context: dict, mappin
             return "cell_too_long"
         redacted, _ = structure_redact.redact_structure(cells, company, mapping, structure_redact.file_type_withheld(context))
         return "redaction_changed" if redacted != cells else None
+    if structure_type == FILE_RECOGNITION:
+        # The file-type text with the row labels of a metric-labelled sheet, "Row n" for every other sheet, redaction run again (5.4).
+        problem = structure_redact.recognition_text_problem(text)
+        if problem:
+            return problem
+        withheld = structure_redact.file_type_withheld(context)
+        for sheet in structure_redact.parse_recognition_text(text):
+            cells = structure_redact.recognition_cells(sheet)
+            if any(len(c["text"]) > STRUCTURE_CELL_MAX for c in cells):
+                return "cell_too_long"
+            redacted, _ = structure_redact.redact_structure(cells, company, mapping, withheld)
+            if redacted != cells:
+                return "redaction_changed"
+        return None
     if structure_type == FILE_TYPE:
         problem = structure_redact.file_type_text_problem(text)
         if problem:
@@ -1553,6 +1569,12 @@ def parse_structure_reply(reply: str, structure_type: str, text: str):
     a deck structure (parse_labelling_reply), the column-mapping reply for a column mapping, the file-type word for a file."""
     if structure_type == SHEET_STRUCTURE:
         return parse_sheet_reply(reply, text)
+    if structure_type == FILE_RECOGNITION:
+        try:
+            return FileRecognitionReply.model_validate(json.loads((reply or "").strip()))
+        except Exception as exc:
+            raise GatewayError("parse_failed", f"reply did not match the schema: {type(exc).__name__}",
+                               check=_schema_check(exc))
     if structure_type == FILE_TYPE:
         try:
             return FileTypeReply.model_validate(json.loads((reply or "").strip()))
@@ -1691,6 +1713,8 @@ def _structure_result(status, structure_type, reason=None, **fields) -> Structur
 
 def _reading(output: dict) -> dict:
     """The fields of a stored or new reply: a deck structure's labels and pairs, a column mapping's items."""
+    if output.get("type") == FILE_RECOGNITION:
+        return {"recognition": output}
     if "file_type" in output:
         return {"file_type": output["file_type"]}
     if "header_row" in output:
@@ -1726,7 +1750,7 @@ async def read_structure(
     """
     import asyncio
     sleep = sleep or asyncio.sleep
-    if structure_type not in STRUCTURE_TYPES and structure_type not in (FILE_TYPE, SHEET_STRUCTURE):
+    if structure_type not in STRUCTURE_TYPES and structure_type not in (FILE_TYPE, SHEET_STRUCTURE, FILE_RECOGNITION):
         return _structure_result("not_read", structure_type, f"unknown structure type {structure_type!r}")
     context = await load_structure_context(db, audit_id)
     if context.get("structure_reading_consent") is not True:
@@ -1737,7 +1761,7 @@ async def read_structure(
         logger.warning("structure refused: run_id=%s step=%s reason=%s", audit_id, STRUCTURE_STEP, problem)
         return _structure_result("refused", structure_type, f"refused: {problem}")
     try:
-        prompt = await prompt_store.load(db, {FILE_TYPE: FILE_TYPE_PROMPT, SHEET_STRUCTURE: SHEET_STRUCTURE_PROMPT}.get(
+        prompt = await prompt_store.load(db, {FILE_TYPE: FILE_TYPE_PROMPT, FILE_RECOGNITION: FILE_TYPE_PROMPT, SHEET_STRUCTURE: SHEET_STRUCTURE_PROMPT}.get(
             structure_type, STRUCTURE_PROMPT))
     except prompt_store.PromptMissing:
         return _structure_result("not_read", structure_type, NOT_READ)
@@ -1760,6 +1784,8 @@ async def read_structure(
     adapter = adapter or AnthropicAdapter()
     sheet = structure_type == SHEET_STRUCTURE
     input_cap, max_tokens = (SHEET_INPUT_CAP, SHEET_MAX_TOKENS) if sheet else (STRUCTURE_INPUT_CAP, STRUCTURE_MAX_TOKENS)
+    if structure_type == FILE_RECOGNITION:
+        input_cap, max_tokens = RECOGNITION_INPUT_CAP, RECOGNITION_MAX_TOKENS
     try:
         # The 4,000-token cap is on the structure text plus its item list; the 400,000 cap counts the whole call.
         text_tokens = await _count_tokens(adapter, sleep, model=STRUCTURE_MODEL, system=None, user_payload=text,
@@ -1822,8 +1848,11 @@ async def read_structure(
         cost = estimate_cost_usd(STRUCTURE_MODEL, in_tok, out_tok)
         model_type = parsed.type if parsed.type != structure_type else None      # a sheet's type is fixed by its schema
         output = parsed.model_dump()
+        stored = output
+        if structure_type == FILE_RECOGNITION and output.get("revenue_row"):
+            stored = {**output, "revenue_row": {"row": output["revenue_row"]["row"]}}        # the label echo is never kept (5.5)
         await _store_structure(db, audit_id=audit_id, key=key, digest=digest, structure_type=structure_type,
-                               model_type=model_type, output=output, prompt_version=prompt.version,
+                               model_type=model_type, output=stored, prompt_version=prompt.version,
                                input_tokens=in_tok, output_tokens=out_tok, cost=cost, deck_id=deck_id, page=page)
         await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version, model=STRUCTURE_MODEL,
                        input_tokens=in_tok, output_tokens=out_tok, estimated_cost_usd=cost, cache_hit=False,
@@ -1889,7 +1918,7 @@ async def usage_for_run(db, run_id: str) -> UsageResponse:
         name = r.get("step")
         if name == STRUCTURE_STEP:
             kind = r.get("structure_type")
-            name = "deck_structure" if r.get("deck_id") else kind if kind in (FILE_TYPE, SHEET_STRUCTURE) else "column_mapping"
+            name = "deck_structure" if r.get("deck_id") else kind if kind in (FILE_TYPE, SHEET_STRUCTURE, FILE_RECOGNITION) else "column_mapping"
         step = by_step.setdefault(name, DeckUsage())
         step.calls += 0 if r.get("cache_hit") else 1
         step.cache_hits += 1 if r.get("cache_hit") else 0

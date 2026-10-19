@@ -124,12 +124,12 @@ def test_at_100_percent_an_upload_still_works_the_rules_map_alone_and_open_colum
     assert api.state["adapter"].calls == 0 and api.db["llm_calls"].docs[-1]["status"] == "monthly_allowance_reached"
 
 
-def test_an_upload_below_100_percent_counts_the_file_and_the_mapping_call(api):
+def test_an_upload_below_100_percent_counts_the_file_the_mapping_call_and_the_recognition_call(api):
     own(api.db)
     api.state["adapter"] = t.FakeAdapter(replies=[mapping_reply(("revenue_type", 6))])
     upload(api, FILE)
     total = ledger(api.db)["all"]
-    assert total["files"] == 1 and total["calls"] == 1 and total["cost_usd"] > 0, "mapping counts toward the allowance"
+    assert total["files"] == 1 and total["calls"] == 2 and total["cost_usd"] > 0, "the mapping call and the recognition call count toward the allowance"
 
 
 # --- the routes -------------------------------------------------------------------------------------------------------

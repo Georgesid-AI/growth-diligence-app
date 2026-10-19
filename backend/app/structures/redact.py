@@ -347,6 +347,101 @@ def file_type_text_problem(text: str) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
+# The recognition text (docs/specs/revenue-file-recognition.md section 5): the file-type text above, plus a labels line per sheet and
+# one label line per row label. A sheet whose labels the rules read as metric names sends them as written (after redaction); any other
+# sheet sends "Row 1", "Row 2" ...; a records layout has no labels line at all. The gateway checks these lines with no link to the sheet reader.
+#     s1 labels: metric                      (or: s1 labels: masked)
+#     s1 label r4: Recognised revenue (EUR)  (masked: s1 label r4: Row 1)
+# ---------------------------------------------------------------------------
+RECOGNITION_MAX_ROWS = 400              # rows with text per sheet, title and header rows included
+_RC_LABELS = re.compile(r"^s(?P<s>\d+) labels: (?P<mode>metric|masked)$")
+_RC_LABEL = re.compile(r"^s(?P<s>\d+) label r(?P<row>[1-9]\d*): (?P<text>.+)$")
+_MASKED_LABEL = re.compile(r"^Row [1-9]\d*$")
+
+
+def recognition_text(sheets: List[Dict]) -> str:
+    """The text for [{"name", "titles", "headers", "labels": None | "metric" | "masked", "label_rows": [(row, text)], "samples",
+    "profiles"}]: the lines of file_type_text, and after a sheet's headers its labels line and its label lines."""
+    lines = []
+    for k, sheet in enumerate(sheets, 1):
+        lines.append(f"s{k}: {cell_text({'text': sheet['name']})}")
+        lines += [f"s{k} title r{c['row']}c{c['col']}: {cell_text(c)}" for c in sheet["titles"] if cell_text(c)]
+        lines += [f"s{k} header r{c['row']}c{c['col']}: {cell_text(c)}" for c in sheet["headers"] if cell_text(c)]
+        if sheet.get("labels"):
+            lines.append(f"s{k} labels: {sheet['labels']}")
+            lines += [f"s{k} label r{row}: {text}" for row, text in sheet.get("label_rows") or [] if text]
+        lines += [f"s{k} c{col} sample: {v}" for col in sorted(sheet["samples"]) for v in sheet["samples"][col]]
+        lines += [f"s{k} c{col} profile: distinct {p['distinct']}, typical length {p['length']}, shape {p['shape']}"
+                  for col, p in sorted(sheet["profiles"].items())]
+    return "\n".join(lines)
+
+
+def parse_recognition_text(text: str) -> Optional[List[Dict]]:
+    """The sheets of a recognition text, or None when a line is of no kind, a sheet line is out of order or a label line comes
+    before its sheet's labels line."""
+    sheets: Dict[int, Dict] = {}
+    for line in (text or "").split("\n"):
+        for kind, rx in (("name", _FT_SHEET), ("titles", _FT_TITLE), ("headers", _FT_HEADER), ("sample", _FT_SAMPLE),
+                         ("profile", _FT_PROFILE), ("mode", _RC_LABELS), ("label", _RC_LABEL)):
+            m = rx.match(line)
+            if m:
+                break
+        else:
+            return None
+        k = int(m.group("s"))
+        if kind == "name":
+            if k in sheets or k != len(sheets) + 1:
+                return None
+            sheets[k] = {"name": m.group("text"), "titles": [], "headers": [], "samples": {}, "profiles": {}, "labels": None,
+                         "label_rows": []}
+            continue
+        if k not in sheets:
+            return None
+        sheet = sheets[k]
+        if kind in ("titles", "headers"):
+            sheet[kind].append({"row": int(m.group("row")), "col": int(m.group("col")), "text": m.group("text")})
+        elif kind == "sample":
+            sheet["samples"].setdefault(int(m.group("col")), []).append(m.group("value"))
+        elif kind == "profile":
+            sheet["profiles"][int(m.group("col"))] = {"distinct": int(m.group("distinct")), "length": int(m.group("length")),
+                                                      "shape": m.group("shape")}
+        elif kind == "mode":
+            if sheet["labels"] is not None:
+                return None
+            sheet["labels"] = m.group("mode")
+        else:
+            if sheet["labels"] is None:
+                return None
+            sheet["label_rows"].append((int(m.group("row")), m.group("text")))
+    return list(sheets.values()) or None
+
+
+def recognition_cells(sheet: Dict) -> List[Dict]:
+    """The text cells of one sheet in the order redaction reads them: the name, titles, headers and the label lines (column 0)."""
+    return file_type_cells(sheet) + [{"row": row, "col": 0, "text": text} for row, text in sheet.get("label_rows") or []]
+
+
+def recognition_text_problem(text: str) -> Optional[str]:
+    """Why a recognition text may not reach the model, or None: the problems of the file-type text, a label line on a masked sheet
+    that is not "Row n", a label that is a figure, or more than 400 rows with text on one sheet."""
+    sheets = parse_recognition_text(text)
+    if sheets is None:
+        return "not_cells"
+    problem = file_type_text_problem("\n".join(l for l in text.split("\n") if not (_RC_LABELS.match(l) or _RC_LABEL.match(l))))
+    if problem:
+        return problem
+    for sheet in sheets:
+        if sheet["labels"] == "masked" and any(not _MASKED_LABEL.match(t) for _, t in sheet["label_rows"]):
+            return "label_on_masked_sheet"
+        if any(is_figure(t) for _, t in sheet["label_rows"]):
+            return "figure_in_label"
+        rows = {c["row"] for c in sheet["titles"] + sheet["headers"]} | {r for r, _ in sheet["label_rows"]}
+        if len(rows) > RECOGNITION_MAX_ROWS:
+            return "too_many_rows"
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Redaction (spec section 3)
 # ---------------------------------------------------------------------------
 EMAIL, PHONE, PERSON, REDACTED = "[email]", "[phone]", "[person]", "[redacted]"
