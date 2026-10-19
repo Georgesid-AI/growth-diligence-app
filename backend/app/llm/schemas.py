@@ -303,7 +303,10 @@ SHEET_TAGS = ("actual", "forecast", "budget", "unknown")
 SHEET_ROLES = ("heading", "total", "subline", "rate", "note", "other")
 SHEET_MEANINGS = ("revenue", "cost_of_revenue", "sm_expense", "gross_margin", "opex", "ebitda", "arr", "mrr", "new_arr",
                   "churned_mrr", "churn_rate", "growth_rate", "bookings", "acv", "tcv", "customers", "headcount", "cash_balance",
-                  "other")
+                  "arpa", "subscriptions", "contracted_revenue", "other")
+# How a line is measured (chat-upload.md section 26.15): month, quarter, ytd (running total for the year), ltm (last 12 months),
+# lifetime, balance (value at period end).
+SHEET_BASES = ("month", "quarter", "ytd", "ltm", "lifetime", "balance")
 _SHEET_START = re.compile(r"^\d{4}-(?:0[1-9]|1[0-2])(?:-\d{2})?$")
 SheetPosition = Annotated[int, Field(ge=1, strict=True)]
 
@@ -335,6 +338,7 @@ class SheetRow(BaseModel):
     role: Literal[SHEET_ROLES]
     parent_row: Optional[SheetPosition]
     meaning: Literal[SHEET_MEANINGS]
+    basis: Optional[Literal[SHEET_BASES]] = None     # a reply without it keeps Python's reading from the label (26.15)
 
 
 class SheetStructureReply(BaseModel):
@@ -364,8 +368,9 @@ def sheet_output_schema() -> dict:
         "type": "object",
         "properties": {"row": {"type": "integer"}, "role": {"type": "string", "enum": list(SHEET_ROLES)},
                        "parent_row": _nullable({"type": "integer"}),
-                       "meaning": {"type": "string", "enum": list(SHEET_MEANINGS)}},
-        "required": ["row", "role", "parent_row", "meaning"],
+                       "meaning": {"type": "string", "enum": list(SHEET_MEANINGS)},
+                       "basis": _nullable({"type": "string", "enum": list(SHEET_BASES)})},
+        "required": ["row", "role", "parent_row", "meaning", "basis"],
         "additionalProperties": False,
     }
     return {

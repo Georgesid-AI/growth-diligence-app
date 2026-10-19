@@ -2,6 +2,7 @@
 Status: Draft. Location: docs/specs/llm-structure-reading.md. Implements CLAUDE.md rules 16–18.
 Superseded in part by docs/specs/structure-labelling.md (Python lists the items, the model labels them): §1, §2, §5, §7, §9 and §11
 each say which part. §3, §4, §6, §8 and the 400,000-token audit cap are unchanged.
+Amended 2026-10-19 for the sheet reply: a per-row `basis` and three meanings (§1; chat-upload.md §26.15).
 Amended 2026-10-18 for a third spreadsheet text, the sheet skeleton (`sheet_structure`, chat-upload.md §26): §1, §3, §7, §9 and §10
 each say what it adds. The skeleton sends row labels: George approved the wider boundary for this step only on 2026-10-18, and
 CLAUDE.md rule 16 and docs/architecture.md name it (chat-upload.md §26).
@@ -39,6 +40,11 @@ one `r<row>c<col>: <text>` line per non-blank text cell (title rows, headers and
 `r<row> indent <n> num <columns> blank <columns>` line per row with content, and one `c<col> withheld: text, <N> distinct values`
 line per withheld column. No figure: a number is only "num" in its row's line. At most 400 rows with text. Its reply names rows,
 columns and closed words only; Python rebuilds every period from its header cell and reads every figure from its cell.
+
+*Amended 2026-10-19 (chat-upload.md §26.15):* each row of the reply has `basis` (month, quarter, ytd, ltm, lifetime, balance, or null),
+a closed word like `role` and `meaning`, and `meaning` gains arpa, subscriptions and contracted_revenue. A reply without `basis` is
+valid; a `basis` outside the list is `check=metric_list`. Nothing else is sent or stored: the skeleton is unchanged, and the row tag
+(forecast, budget) is read by Python from the label and is not in the reply.
 
 **2. Verifier (Python, pure).** *Superseded: value and period matched against cited cells and the model's proposed flags are replaced by docs/specs/structure-labelling.md §4; the normalisation below moves to its §1.* A value is matched against its `value_cell` only: it matches when that cell exists and holds the same number after
 normalisation:

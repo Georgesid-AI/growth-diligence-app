@@ -846,11 +846,11 @@ async def _saved_sheet_map(audit_id: str, digest: str) -> Optional[dict]:
 
 async def _write_sheet_version(audit_id: str, dtype: str, ds: dict) -> int:
     """Save a statement file's line map unless the latest version of its bytes already says the same: per line its row, role,
-    meaning, parent, source and decision, and the header row and label column. No text."""
+    meaning, basis, parent, source and decision, and the header row and label column. No text."""
     sheet_map = ds["sheet_map"]
     lines = sheet_mod.saved_lines(sheet_map)
     latest = await _saved_sheet_map(audit_id, ds.get("file_hash"))
-    key = lambda found: [(x["row"], x["role"], x["meaning"], x["parent_row"]) for x in found]  # noqa: E731
+    key = lambda found: [(x["row"], x["role"], x["meaning"], x.get("basis"), x["parent_row"]) for x in found]  # noqa: E731
     if latest and key(latest["lines"]) == key(lines) and latest.get("header_row") == sheet_map["header_row"]:
         return latest["version"]
     found = await db[structures.COLUMN_MAPPINGS_COLLECTION].find(
@@ -1264,6 +1264,7 @@ class LineDecision(BaseModel):
     action: Literal["confirm", "change"]
     role: Optional[str] = None
     meaning: Optional[str] = None
+    basis: Optional[str] = None
 
 
 @api.post("/audits/{audit_id}/datasets/{dtype}/lines")
@@ -1279,12 +1280,13 @@ async def decide_lines(audit_id: str, dtype: str, decisions: List[LineDecision],
         if d.row not in by_row:
             raise HTTPException(400, "Not a line of this sheet")
         if (d.role is not None and d.role not in schemas_llm.SHEET_ROLES) or \
-                (d.meaning is not None and d.meaning not in schemas_llm.SHEET_MEANINGS):
-            raise HTTPException(400, "Choose one of the listed roles and meanings")
+                (d.meaning is not None and d.meaning not in schemas_llm.SHEET_MEANINGS) or \
+                (d.basis is not None and d.basis not in schemas_llm.SHEET_BASES):
+            raise HTTPException(400, "Choose one of the listed roles, meanings and bases")
     for d in decisions:
         line = by_row[d.row]
         if d.action == "change":
-            line.update({k: v for k, v in (("role", d.role), ("meaning", d.meaning)) if v is not None})
+            line.update({k: v for k, v in (("role", d.role), ("meaning", d.meaning), ("basis", d.basis)) if v is not None})
         line.update(source="you", decision=d.action)
     await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype}, {"$set": {"sheet_map": sheet_map}})
     version = await _commit_mapping(audit_id, dtype, background)

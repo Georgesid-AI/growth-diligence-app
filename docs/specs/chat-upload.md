@@ -838,7 +838,8 @@ columns). Python reads its skeleton, the model labels each line through the gate
 engine input, and the analyst confirms one row per line. Yearly or quarterly columns are never split into months; the actual
 years give yearly-basis metrics. The task asked for "a new §23"; §23–§25 exist, so this is §26. This section amends §19 (a P&L
 statement is no longer a miss), §20 (its actual-tagged columns are no claims), §20.5 (it stays an engine input after Save claims)
-and llm-structure-reading.md §1, §3, §7, §9 and §10 for the new structure type.
+and llm-structure-reading.md §1, §3, §7, §9 and §10 for the new structure type. Amended 2026-10-19 (George): §26.15 adds how each
+line is measured (basis), row-level forecast tags and three meanings; §26.4, §26.6, §26.7, §26.9, §26.10 and §26.12 say what changes.
 
 **Architecture (rule 1): approved by George, 2026-10-18.** The skeleton sends every non-blank text cell of the sheet: title rows,
 headers and every row label. Until this section, rule 16 and docs/architecture.md allowed, for a spreadsheet, sheet names, title rows
@@ -915,14 +916,16 @@ the "P&L (monthly)" label on a file with no months.
   repository holds a test-only stub.
 - Reply (`SheetStructureReply`, llm/schemas.py): `header_row`; `label_col`; `periods` [{col, grain: month|quarter|half|year|ytd|
   period_to_date, start, tag: actual|forecast|budget|unknown}]; `rows` [{row, role: heading|total|subline|rate|note|other,
-  parent_row, meaning}], meaning one of revenue, cost_of_revenue, sm_expense, gross_margin, opex, ebitda, arr, mrr, new_arr,
-  churned_mrr, churn_rate, growth_rate, bookings, acv, tcv, customers, headcount, cash_balance, other. No free text. The gateway
+  parent_row, meaning, basis}], meaning one of revenue, cost_of_revenue, sm_expense, gross_margin, opex, ebitda, arr, mrr, new_arr,
+  churned_mrr, churn_rate, growth_rate, bookings, acv, tcv, customers, headcount, cash_balance, arpa, subscriptions,
+  contracted_revenue, other; basis one of month, quarter, ytd, ltm, lifetime, balance, or null (a reply without it keeps Python's,
+  26.15). No free text. The gateway
   refuses a reply that names a row or a column not in the text, a row twice, or a row as its own parent (`check=`: `schema`,
   `metric_list` for a meaning outside the list, `item_count` for a row twice, `other`).
 - Python keeps only what it can rebuild: of Python's and the model's header row, the one with more period headers (Python's on a
   tie); the model's label column when it holds a text cell below the header; every period from its header cell (a column Python
   cannot read as a period is no period); the model's tag only where Python found none; each row's role, parent and meaning from
-  the reply, then the rules of 26.2.
+  the reply, then the rules of 26.2; its basis from the reply, except where the label says one (26.15).
 - Caps: the text at most 12,000 tokens (`SHEET_INPUT_CAP`), the reply at most 12,000 (`SHEET_MAX_TOKENS`); the daily spend cap,
   the lock, the tester's allowance and the 400,000-token audit cap apply. Budget 60 s (`SHEET_AI_SECONDS`). On any failure the
   rules' reading stands and the bubble shows S12.
@@ -960,10 +963,11 @@ the "P&L (monthly)" label on a file with no months.
 
 ### 26.7 The table (the confirm screen)
 - In the file's bubble, in place of the mapping table: the caption S26b with the label column, S30a, S30d or S30e when they apply,
-  then one row per line: Line (as in the file, indented by its level) · Role · Meaning · Used · Confidence · Checks. Used is Yes when the
-  calculations use the line (`used_rows`: the monthly P&L fields, the KPI series, the yearly inputs), else No. Role and Meaning are
-  drop-downs that save on change (one click): `POST /api/audits/{id}/datasets/{dtype}/lines` with `[{row, action: "confirm" |
-  "change", role, meaning}]`. A pending line also has Confirm. Above the table, **Confirm all** (shown while a line waits) sends
+  then one row per line: Line (as in the file, indented by its level) · Role · Meaning · Basis · Used · Confidence · Checks. Used is Yes
+  when the calculations use the line (`used_rows`: the monthly P&L fields, the KPI series, the yearly inputs); "Not used: <basis>"
+  (or "Not used: forecast" / "Not used: budget") when the line has a meaning the calculations read but its basis or row tag keeps it
+  out (26.15); else No. Role, Meaning and Basis are drop-downs that save on change (one click; no Basis on a line with no figure):
+  `POST /api/audits/{id}/datasets/{dtype}/lines` with `[{row, action: "confirm" | "change", role, meaning, basis}]`. A pending line also has Confirm. Above the table, **Confirm all** (shown while a line waits) sends
   one request with a confirm for every pending line.
 - Pending: a line the map uses (a monthly P&L field, a KPI series, a yearly input) whose meaning is the model's and not Python's,
   or Python's at 80 or below, and that the analyst has not decided. Confidence: Python's number; the model's meaning reads "AI
@@ -993,8 +997,9 @@ Every figure and row carries `basis: "yearly basis, not monthly"`, shown on each
 | Id | Where | Text |
 |---|---|---|
 | S30a | above the line table, consent ticked and the text sent | Sent to the AI: {n} lines. Masked: {e} emails, {p} phone numbers, {m} names, {c} customer names, {k} company name. Withheld: {w} columns, {l} long cells. |
-| S30b | line table headers | Line · Role · Meaning · Used · Confidence · Checks |
-| S30c | checks | Total ≠ sum of sub-lines ({periods}) · No breakdown ({periods}) · Sign differs from sub-lines · Costs written as negatives · Rate: never read as money |
+| S30b | line table headers | Line · Role · Meaning · Basis · Used · Confidence · Checks (Basis added 2026-10-19) |
+| S30c | checks | Total ≠ sum of sub-lines ({periods}) · No breakdown ({periods}) · Sign differs from sub-lines · Costs written as negatives · Rate: never read as money · YTD ≠ sum of months ({periods}) · LTM ≠ last 12 months ({periods}) |
+| S30i | the Used cell (added 2026-10-19) | Yes · No · Not used: {basis} (ytd, ltm, quarter, lifetime, balance) · Not used: forecast · Not used: budget |
 | S30d | over the cap | Sheet too long: first 400 rows read |
 | S30e | no month, quarter, half or year column | One period only: export the P&L with one column per month and upload again. |
 | S30f | a KPI series line | Company-reported series · Unverified |
@@ -1009,7 +1014,9 @@ Every figure and row carries `basis: "yearly basis, not monthly"`, shown on each
   net new arr, new business arr) · churned_mrr (churned mrr, lost mrr, churned arr) · churn_rate (churn rate, churn) · growth_rate
   (growth, growth rate, yoy, mom) · arr · mrr · bookings · acv · tcv · revenue (revenue, revenues, net sales, total revenue; the
   whole label sales) · customers (customers, clients, subscribers, logos) · headcount (headcount, fte, ftes, employees) ·
-  cash_balance (cash balance, closing cash, cash).
+  cash_balance (cash balance, closing cash, cash). Added 2026-10-19: arpa (arpa, average revenue per ...) and contracted_revenue
+  (contracted revenue), both before revenue; subscriptions (subscriptions), after customers; acv gains "annual contract value".
+  Whole-label rules first (26.15): "NEW ... (ARR)" = new_arr, "New ... (ACV)" = acv, a "% share" line = other.
 - Finance words (the withhold rule and the label column): those synonyms and cost, costs, expense, expenses, income, profit, loss,
   margin, total, net, gross, tax, interest, depreciation, amortisation, amortization, fees, rent, salaries, wages, bonus, commission,
   hosting, software, licences, licenses, subscriptions, services, travel, insurance, legal, contractors, other.
@@ -1030,6 +1037,7 @@ Fixtures in `backend/tests/fixtures/mapping/` (synthetic, invented names, rule 1
 | `monthly_kpi.csv` | MRR sub-lines and total MRR, new ARR lines, rates, by month | series stored, sub-lines checked against the total (a mismatch flagged), no monthly P&L |
 | `yearly_pnl_by_product.csv` | a title row, "forecast" above the FY columns, a "Sales" cost section with sub-lines, a "% of revenue" line, an OPEX breakdown blank in the early years | header row 2, actual and forecast tags, Sales = S&M, no breakdown flagged, yearly-basis metrics labelled, no monthly split |
 | `customer_list.csv` | revenue per customer by year, 35 customers | the customer column withheld |
+| `kpi_bases.csv` | Jan–Dec 2024: a monthly revenue line, its ytd, ltm and quarterly versions, a forecast revenue row, ARR, NEW ... (ARR), ARPA, ACV, subscriptions, contracted revenue, a % share line, a lifetime line | only the monthly line is used (the others say Not used: <basis>); the ytd and ltm checks pass and a wrong December flags; the forecast row is a claim; new_arr, acv, arpa and the others read right |
 `test_sheet_structure.py` (the reading, the rules, the checks, the use of the map, the upload, the call with a recorded reply and
 without consent, the line decisions, the saved map), `test_gateway_data_boundary.py` (rule 14: the skeleton within the limits
 reaches the provider; a figure, a 401st row, an unredacted name, a column not withheld and a file name are refused; no sent text
@@ -1051,7 +1059,7 @@ line table, one click, the labels), `Dashboard.test.jsx` (the section and its la
 - Help box S25 for a statement file says "lines" for "columns" and names the example "a sales cost line read as revenue".
 
 ### 26.13 Files
-New: `backend/app/structures/sheet.py`, `backend/tests/test_sheet_structure.py`, the four fixtures,
+New: `backend/app/structures/sheet.py`, `backend/tests/test_sheet_structure.py`, the four fixtures (a fifth, `kpi_bases.csv`, 26.15),
 `backend/tests/fixtures/prompts/sheet_structure.md` (a stub), `frontend/src/components/SheetMap.jsx`,
 `frontend/src/components/YearlyBasis.jsx`. Changed: `backend/app/column_rules.py` (the grid with indents),
 `backend/app/structures/redact.py` (the skeleton text and its checks), `backend/app/llm/{gateway,schemas,prompt_store}.py`,
@@ -1060,3 +1068,49 @@ New: `backend/app/structures/sheet.py`, `backend/tests/test_sheet_structure.py`,
 (an annual P&L's actual years are no claims), `frontend/src/components/UploadChat.jsx`, `frontend/src/lib/{chatUpload,api}.js`,
 `frontend/src/pages/Dashboard.jsx`. Changed by George's approval of 2026-10-18: CLAUDE.md rule 16 and docs/architecture.md (the
 boundary of the `sheet_structure` step).
+
+### 26.15 Basis, row tags and more meanings (2026-10-19, George)
+Decided by George with the task. A line the sheet gives by the month, by the year so far or by the last 12 months was summed with the
+monthly line of the same meaning; this reads how each line is measured and keeps one measure per meaning. Amends 26.2, 26.4, 26.6,
+26.7, 26.9, 26.10 and 26.12 (each says what), and llm-structure-reading.md §1 (the reply has `basis`).
+**Challenge (rule 4).** Needed: the yearly and rolling lines of a KPI sheet are real, and summing them is wrong. Simpler: Python reads
+the basis and the tag from the label and the values; the model's reply carries a basis only as a hint. Deleted first: any new tag
+column or tag drop-down (the row tag comes from the label, and Meaning/Basis already let the analyst correct a line), and any
+change to which meanings feed the engine.
+- **Basis** (per line with a figure; none for a heading or a note): month · quarter · ytd (running total for the year) · ltm (last 12
+  months) · lifetime · balance (value at period end). Python's reading, first match: the label says it ("current year", "YTD", "year to
+  date" = ytd; "last 12 months", "LTM", "TTM" = ltm; "lifetime", "total ... achieved" = lifetime; "quarterly" = quarter); else
+  balance for arr, mrr, customers and cash_balance; else quarter when the line holds a value only in every 3rd month column (at
+  least two values, six month columns); else month. A cue in the label wins over the reply; otherwise the reply's basis, then
+  Python's. The analyst changes it in the Basis drop-down; the decision is saved in the line map (a saved map of before has none: its
+  lines read as month).
+- **Row tag** (Python only, not in the reply): a label holding forecast or target (forecast), or budget as a word, or plan (budget) only as the plan figure
+  (the label starts with plan, planned or business plan, or holds "(plan)" or "plan:"; never a pricing or subscription plan such as
+  "ANNUAL PLAN SUBSCRIPTIONS" or "MRR - Pro plan"), tags the
+  row, its sub-lines included, and overrides its columns' tags. A row tag is never an actual: the row is not picked (below), is not a
+  KPI series, is not a sub-line of a total that is not tagged the same, and becomes a claim (26.6) in every column it has a figure
+  in, whatever the column's tag, cited to its cells. A claim is per fiscal year as in §20.2: twelve months of the row make the year's
+  claim; a part of a year makes none. When a monthly P&L feeds the engine (26.6), these rows are the only claims of the file.
+- **Meanings** added: arpa (money per customer; money), subscriptions (a count), contracted_revenue (money). Python: a label of the form
+  "NEW ... (ARR)" = new_arr; "New ... (ACV)" = acv, "Annual Contract Value" = acv; "ARPA", "average revenue per ..." = arpa;
+  "subscriptions" = subscriptions; "contracted revenue" = contracted_revenue; a line with "%" and "share" = role rate, meaning other
+  (whatever the reply says). None of arpa, acv, contracted_revenue, tcv, new_arr is a plan line for the forecast claims, whatever its
+  label holds.
+- **Picking** (replaces "the lines of that meaning" in 26.6): of the lines of a meaning, only those with basis month (month or
+  balance for arr, mrr, customers, cash_balance, headcount, subscriptions) and no forecast or budget row tag feed the monthly P&L, a
+  KPI series or the yearly inputs, and of those the highest-level ones (a line that hangs from a line of the same meaning is not
+  picked). Every other line of a meaning the calculations read shows "Not used: <basis>" (or forecast, budget) in Used and is never
+  summed. Read this way, "one line per meaning" keeps what 26.6 and 26.14 already do for several unrelated top-level lines of one
+  meaning (the Sales and Marketing totals summed; two NEW ARR segments as two series): one measure per meaning, not one row.
+- **Python checks** (26.5, beside it): the last month of a fiscal year of a ytd line equals the sum of the picked monthly line over
+  that year within 0.5% (a year with all 12 months only); an ltm line equals the sum over its last 12 months at every month with 12
+  months behind it; else `ytd_mismatch` / `ltm_mismatch` with the periods (S30c). A line that fails is listed first. Costs are compared
+  as positive amounts. No check without a picked monthly line of the same meaning.
+- **Model reply and prompt.** `basis` is a closed word (a value outside the list is `check=metric_list`). The prompt `sheet_structure`
+  lives in the prompt store (rule 26): the owner asks it for `basis` on the owner page; until then every basis is Python's.
+- **Decided (rule 19).** Quarter by values is read from month columns only; "plan" tags a row only as above, so a pricing-plan
+  line ("MRR - Pro plan") is an actual row; subscriptions is not a balance by the label
+  rule; the forecast S&M sum (26.6) still reads rows with no row tag only.
+Files: `backend/app/structures/sheet.py`, `backend/app/llm/{schemas,gateway}.py`, `backend/server.py` (the lines decision and the saved
+map), `frontend/src/components/SheetMap.jsx`, `frontend/src/lib/chatUpload.js`, `backend/tests/{test_sheet_structure,test_gateway_data_boundary}.py`,
+`frontend/src/pages/MappingWizard.test.jsx`, `backend/tests/fixtures/mapping/kpi_bases.csv`.
