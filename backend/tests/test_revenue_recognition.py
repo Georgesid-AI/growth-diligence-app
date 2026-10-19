@@ -1007,9 +1007,11 @@ Cost of sales,30,31,32
 """
 
 
-def test_a_revenue_summary_from_a_metrics_sheet_sums_only_the_revenue_rows(rec):
+def test_a_revenue_summary_from_a_metrics_sheet_reads_the_revenue_row_and_never_sums_rows(rec):
     sheets = csv_sheets(METRICS_SUMMARY, "metrics.csv")
     got = rec.recognise(sheets, as_of_month="2025-03-31", decisions={"file_type": "revenue_summary"})
-    assert got["file_type"] == "revenue_summary" and got["label_mode"] == "metric" and got["series_basis"] == "sum_of_rows"
-    assert [s["value"] for s in got["series"]] == [150, 170, 190], "the two revenue rows; never MRR, ARR, customers, % or cost rows"
-    assert got["series_rows"] == [3, 4]
+    assert got["file_type"] == "revenue_summary" and got["label_mode"] == "metric" and got["series_basis"] == "row"
+    assert got["revenue_row"]["state"] == "click" and got["revenue_row"]["reason"] == "tie", "two revenue rows: the analyst chooses"
+    assert [s["value"] for s in got["series"]] == [100, 110, 120] and got["series_rows"] == [3], "never MRR, ARR, customers, % or cost rows"
+    chosen = rec.recognise(sheets, as_of_month="2025-03-31", decisions={"file_type": "revenue_summary", "revenue_row": 4})
+    assert [s["value"] for s in chosen["series"]] == [50, 60, 70] and chosen["series_rows"] == [4]

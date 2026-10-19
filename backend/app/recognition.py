@@ -60,7 +60,8 @@ _KIND_WORDS = (
 _RECURRING = ("mrr", "arr", "recurring revenue")
 _INVOICED = ("invoiced", "invoicing", "billing", "billed")
 _RECOGNISED = ("revenue", "revenues", "sales", "turnover", "net sales")
-_EXCLUDED = ("new", "net new", "lost", "churn", "churned", "added", "expansion", "contraction", "growth", "per", "average", "avg", "share",
+_BALANCES = ("deferred", "unbilled", "accrued")      # balances, not the month's revenue: never a revenue row, never added (re-check Q1)
+_EXCLUDED = _BALANCES + ("new", "net new", "lost", "churn", "churned", "added", "expansion", "contraction", "growth", "per", "average", "avg", "share",
              "ratio", "rate", "margin", "cost", "costs", "cogs", "expense", "expenses", "marketing", "payroll", "commission")
 _SYNONYMS = frozenset(("revenue", "revenues", "net revenue", "recognised revenue", "recognized revenue", "net sales", "sales", "turnover",
                        "invoiced revenue", "invoiced", "recurring revenue", "mrr", "arr", "monthly recurring revenue",
@@ -157,6 +158,24 @@ def _codes(texts) -> Set[str]:
         text = str(text or "")
         out |= {m.upper() for m in _CURRENCY_CODE.findall(text)}
         out |= {code for sign, code in _SYMBOLS.items() if sign in text}
+    return out
+
+
+_AMOUNT_WITH_CURRENCY = re.compile(
+    r"[€£$]\s*[-(]?\d|\d\s*[€£$]|(?<![A-Za-z])(?:EUR|USD|GBP|CHF|SEK|NOK|DKK|PLN)\s*[-(]?\d|\d\s*(?:EUR|USD|GBP|CHF|SEK|NOK|DKK|PLN)(?![A-Za-z])")
+
+
+def currency_scan(sheet) -> Set[str]:
+    """Every currency a sheet shows, in any layout (re-check, owner decision on the currency): its title rows and headers, the sign or
+    code written in an amount cell ("€1,200", "EUR 1200", "1,200.00 EUR") and the title currency the sheet carries. A text cell that
+    is no amount (a customer called "USD Logistics") shows none."""
+    out = _codes(_title_texts(sheet) + [str(h or "") for h in sheet.headers])
+    if getattr(sheet, "currency", None):
+        out.add(sheet.currency)
+    cells = (c for row in sheet.grid for c in row) if sheet.grid else (c for row in sheet.frame.itertuples(index=False) for c in row)
+    for cell in cells:
+        if isinstance(cell, str) and _AMOUNT_WITH_CURRENCY.search(cell):
+            out |= _codes([cell])
     return out
 
 
@@ -359,8 +378,6 @@ def _records_info(sheet) -> Dict:
     if currency_col is not None:
         seen = {str(r[currency_col]).strip().upper() for _, r in rows if isinstance(r[currency_col], str)
                 and re.fullmatch(r"[A-Za-z]{3}", r[currency_col].strip())}
-    in_amounts = _codes([r[amount] for _, r in rows if isinstance(r[amount], str)]) if amount is not None else set()   # "€1,200" (review L3)
-    seen |= in_amounts
     months = cr.months_of([r[date_col] for _, r in rows]) if date_col is not None else None
     return {"layout": "records", "sheet": sheet, "amount": amount, "date": date_col, "reference": reference, "customer": customer,
             "header_row": sheet.header_row, "periods": [], "titles": titles, "currency_values": seen,
@@ -371,9 +388,12 @@ def _records_info(sheet) -> Dict:
 def analyse(sheet, fye: int = 12) -> Dict:
     """The layout of one sheet and the facts its rules need, in the fixed reading order: labels, snapshot, columns, records."""
     rd = sheet_mod.read(sheet.grid, sheet.fmt, fye) if sheet.grid else None
-    if rd is not None:
-        return _labels_info(sheet, rd, fye)
-    return _snapshot_info(sheet) or _columns_info(sheet) or _records_info(sheet)
+    info = _labels_info(sheet, rd, fye) if rd is not None else (_snapshot_info(sheet) or _columns_info(sheet) or _records_info(sheet))
+    shown = currency_scan(sheet)      # the same in every layout: two currencies anywhere in the file are mixed currencies
+    info["codes"] = set(info["codes"]) | shown
+    info["currency_values"] = set(info.get("currency_values") or ()) | info["codes"]
+    info["multi_currency"] = len(info["currency_values"]) > 1
+    return info
 
 
 # ---------------------------------------------------------------------------
@@ -624,11 +644,11 @@ def read_periods(info: Dict, last_col: Optional[int]) -> List[Tuple[int, Dict]]:
 
 
 def _sum_series(info: Dict, last_col: Optional[int], marked: Set[int]) -> Tuple[List[Dict], List[Dict], List[int]]:
-    """(series, total_rows, rows used) of a sheet whose revenue is the sum of its rows: total rows and rows marked forecast, budget,
-    bookings, pipeline, contract value or run-rate are never added, and on a metrics sheet neither is any row that is not a revenue row (section 6.1, review H2 and H3)."""
-    lines = [ln for ln in info["lines"] if ln["row"] not in marked and not non_revenue_kind(ln["label"])]
-    if info["mode"] == "metric":        # a metrics sheet: only rows labelled as revenue; MRR, ARR, counts, % and costs are never added
-        lines = [ln for ln in lines if is_candidate_label(ln["label"]) and revenue_kind(ln["label"]) != "recurring"]
+    """(series, total_rows, rows used) of a sheet whose revenue is the sum of its rows (products, regions, customers): total rows, rows
+    marked forecast, budget, bookings, pipeline, contract value or run-rate and balance rows (deferred, unbilled, accrued) are never
+    added (section 6.1, review H2 and H3). A metrics sheet never sums: it reads its revenue row (re-check, owner decision)."""
+    lines = [ln for ln in info["lines"] if ln["row"] not in marked and not non_revenue_kind(ln["label"])
+             and not _has(_clean(ln["label"]), _BALANCES)]
     values = [ln["values"] for ln in lines]
     totals = _totals([ln["label"] for ln in lines], values)
     used = [i for i in range(len(lines)) if i not in totals]
@@ -679,7 +699,7 @@ def _finalize_labels(info: Dict, ctx: Dict) -> Dict:
     if dec.get("file_type") in RECOGNITION_TYPES:
         ftype, tstate, treason, tsource, tcands = dec["file_type"], "auto", None, "you", []
         tstate = "auto"
-    has_row = ftype in ("monthly_revenue_report", "financial_statements")
+    has_row = ftype in ("monthly_revenue_report", "financial_statements") or mode == "metric"      # a metrics sheet never sums its rows
     revenue_row, row_values = None, None
     if has_row:
         revenue_row = _row_decision(cands, info, (prop or {}).get("revenue_row") if mode == "metric" else None, marked, len(periods),

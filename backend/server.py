@@ -749,14 +749,25 @@ def _dataset_view(ds: dict, version: Optional[int] = None, status: str = "ok", f
         "forecast_claims": forecast, "read_as_claims": None, "pnl_grain": "monthly" if dtype == "pnl" else None,
         "sheet_map": None, "recognition": recognition, "recognition_only": bool(ds.get("recognition_only")),
     }
-    if (dtype == "revenue" and recognition and recognition.get("recognised") and recognition["currency"]["state"] == "confirm"
-            and not recognition["currency"].get("mixed") and view["missing_required"] == ["currency"] and not ds.get("recognition_only")):
-        # No currency column: the analyst confirms the currency (S31k) in place of "Required field not mapped: currency".
-        view.update(missing_required=[], currency_pending=True)
+    if dtype == "revenue" and "currency" in view["missing_required"] and not ds.get("recognition_only"):
+        # No currency column. Several currencies in the file block compute and the status names them; otherwise the analyst answers the
+        # currency question (S31k) in place of "Required field not mapped: currency", whatever else is missing and whether or not a
+        # recognition read the file: no currency message without a way to answer it.
+        seen = (recognition["currency"] if recognition and recognition.get("recognised") else {})
+        codes = seen.get("codes") if seen.get("mixed") else ds.get("currency_found") or []
+        if len(codes) > 1:
+            view["currency_mixed"] = sorted(codes)
+        else:
+            missing = [f for f in view["missing_required"] if f != "currency"]
+            view.update(missing_required=missing, currency_pending=True)
+            if view["miss"]:
+                view["miss"] = {**view["miss"], "missing": [f for f in view["miss"]["missing"] if f != "currency"]}
     if ds.get("recognition_only"):        # a file read by recognition only has no column mapping (revenue-file-recognition.md section 8)
         waiting = rec.choices_waiting(recognition) if recognition else 0
         view.update(columns=[], pending=waiting, missing_required=[], miss=None, mapping={}, suggested_mapping={}, fields={"required": [], "optional": []},
                     saved=bool(recognition and recognition["recognised"] and not recognition["needs_click"]))
+    if ds.get("recognition_only") and ((recognition or {}).get("currency") or {}).get("mixed"):
+        view["currency_mixed"] = sorted(recognition["currency"]["codes"])        # blocks like any mixed file; no choice clears it
     if ds.get("sheet_map"):
         read = sheet_mod.view(ds["sheet_map"], fiscal_year_end, ds.get("unit_scale") or 1)
         view.update(columns=[], pending=read["pending"], missing_required=[], miss=None, pnl_grain=read["grain"],
@@ -1076,6 +1087,8 @@ async def _ingest(audit_id: str, upload: UploadFile, dtype: Optional[str], repla
             type_status = recognition["status"]
             if word in ("crm", "pnl"):
                 chosen, source = word, "ai"
+            elif _model_typed_a_records_file(recognition, word):
+                chosen, source = "revenue", "ai"
             elif rec.has_monthly_series(recognition["result"]) or recognition["result"]["file_type"] == "financial_statements":
                 chosen = "revenue"      # a file with no monthly series (a snapshot, a yearly report) gets the type picker; a statement is the P&L
     if chosen is None:
@@ -1110,6 +1123,14 @@ async def _ingest(audit_id: str, upload: UploadFile, dtype: Optional[str], repla
             ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": chosen}, {"_id": 0, "rows": 0})
             view = await _view(audit_id, ds, view.get("version"), view.get("status", "ok"))
     return view
+
+
+def _model_typed_a_records_file(recognition: dict, word: Optional[str]) -> bool:
+    """An invoice list the rules cannot type is the revenue file when the model's type, checked by Python, is the type Python read and the
+    list covers two months or more. Without consent or after a failed call there is no model type: the analyst picks (re-check, N1)."""
+    result = recognition["result"]
+    return bool(word and word == result.get("file_type") and result.get("recognised") and result.get("series_basis") == "records"
+                and result.get("periods", 0) >= 2)
 
 
 async def _store_recognised(a: dict, audit_id: str, filename: str, size: int, digest: str, replace: bool, recognition: dict,
@@ -1180,8 +1201,10 @@ async def _load(a: dict, audit_id: str, chosen: str, sheet: "cr.Sheet", filename
             states = cr.states_from_saved(chosen, sheet, _saved_columns(same[-1]), scale=False)
             existing = {**existing, "columns_state": states, "mapping": cr.mapping_of(chosen, states),
                         "mapping_source": _source_map(states)}
+            if existing.get("constants"):         # the currency every row took stays, whatever the saved mapping says of the columns
+                existing.update(_with_currency_column(existing, next(iter(existing["constants"].values()))))
             await db.datasets.update_one({"audit_id": audit_id, "dtype": chosen}, {"$set": {
-                "columns_state": states, "mapping": existing["mapping"], "mapping_source": existing["mapping_source"]}})
+                "columns_state": existing["columns_state"], "mapping": existing["mapping"], "mapping_source": existing["mapping_source"]}})
         return await _view(audit_id, existing, same[-1]["version"] if same else None, "same_file")
     if existing and not replace:
         raise HTTPException(409, {"code": "type_loaded", "dtype": chosen, "file": existing.get("file")})
@@ -1218,6 +1241,13 @@ async def _load(a: dict, audit_id: str, chosen: str, sheet: "cr.Sheet", filename
             await _usage_update(audit_id, lambda u: u["steps"]["mapping_ai"].__setitem__(
                 ai_reading["status"], u["steps"]["mapping_ai"].get(ai_reading["status"], 0) + 1))
     mapping = cr.mapping_of(chosen, states)
+    shown = sorted(rec.currency_scan(sheet)) if statement is None else []
+    doc_currency = {}
+    if chosen == "revenue" and len(shown) == 1 and not mapping.get("currency"):
+        # The file shows one currency (title, header, sign or code) and has no currency column: every row takes it, and the required
+        # field is never reported missing (owner decision on the currency, re-check of PR 135).
+        doc_currency = _with_currency_column({"columns_state": states, "columns": sheet.columns}, shown[0])
+        states, mapping = doc_currency["columns_state"], doc_currency["mapping"]
     doc = {"audit_id": audit_id, "dtype": chosen, "file": filename, "sheet": sheet.sheet, "columns": sheet.columns,
            "headers": sheet.headers, "header_row": sheet.header_row, "rows": rows, "row_numbers": sheet.row_numbers,
            "row_count": len(rows), "mapping": mapping, "fx": (existing or {}).get("fx") or {},
@@ -1226,7 +1256,8 @@ async def _load(a: dict, audit_id: str, chosen: str, sheet: "cr.Sheet", filename
            "months": _months_for(chosen, states, sheet.columns, rows), "file_hash": digest, "size_bytes": size,
            "uploaded_at": usage_mod.now(), "mapped_at": None, "type_source": type_source, "looks": looks,
            "unit_scale": sheet.unit_scale, "unit_note": sheet.unit_note, "wide": sheet.wide, "raw_headers": sheet.raw_headers,
-           "first_col": sheet.first_col, "title_currency": sheet.currency}
+           "first_col": sheet.first_col, "title_currency": sheet.currency, "currency_found": shown}
+    doc.update(doc_currency)
     doc.update(extra or {})
     if statement is not None:
         sheet_map = statement["map"]
@@ -1351,7 +1382,7 @@ def _recognition_decision(current: dict, body: RecognitionDecision, decisions: d
 # with this message: nothing is cut and nothing is stored (decision of the owner on PR 135). The size is the BSON size MongoDB counts, not
 # the length of the JSON (review H7); the margin below 16 MiB leaves room for the fields that are added later.
 DATASET_MAX_BYTES = 15 * 1024 * 1024
-DATASET_TOO_LARGE = "This file is too large to store with its recognition. Split it or remove empty rows and upload again."
+DATASET_TOO_LARGE = "This file is too large to store. Split it or remove empty rows and upload again."
 DATASET_UNSTORABLE = "This file holds a value that cannot be stored. Remove it and upload again."
 
 
@@ -1367,15 +1398,19 @@ def _check_dataset_size(doc: dict) -> None:
 CONFIRMED_CURRENCY = "Currency (confirmed)"
 
 
-async def _confirm_currency_column(audit_id: str, ds: dict, code: str, background: Optional[BackgroundTasks]) -> None:
-    """A revenue file with a column mapping and no currency column takes the currency the analyst confirmed for every row: a constant
-    column, mapped as the currency field, so the required field is met by the analyst's answer and not by a guess."""
+def _with_currency_column(ds: dict, code: str) -> dict:
+    """The fields of a dataset once it takes `code` for every row: a constant column mapped as the currency field."""
     states = [s for s in (ds.get("columns_state") or []) if s["column"] != CONFIRMED_CURRENCY]
     states.append(cr.new_state(CONFIRMED_CURRENCY, "currency", "decision", "confirmed"))
     columns = [c for c in (ds.get("columns") or []) if c != CONFIRMED_CURRENCY] + [CONFIRMED_CURRENCY]
-    await db.datasets.update_one({"audit_id": audit_id, "dtype": "revenue"}, {"$set": {
-        "constants": {CONFIRMED_CURRENCY: code}, "columns": columns, "columns_state": states,
-        "mapping": cr.mapping_of("revenue", states), "mapping_source": _source_map(states)}})
+    return {"constants": {CONFIRMED_CURRENCY: code}, "columns": columns, "columns_state": states,
+            "mapping": cr.mapping_of("revenue", states), "mapping_source": _source_map(states)}
+
+
+async def _confirm_currency_column(audit_id: str, ds: dict, code: str, background: Optional[BackgroundTasks]) -> None:
+    """A revenue file with a column mapping and no currency column takes the currency the analyst confirmed for every row: a constant
+    column, mapped as the currency field, so the required field is met by the analyst's answer and not by a guess."""
+    await db.datasets.update_one({"audit_id": audit_id, "dtype": "revenue"}, {"$set": _with_currency_column(ds, code)})
     await _commit_mapping(audit_id, "revenue", background)
 
 
@@ -1387,7 +1422,9 @@ async def decide_recognition(audit_id: str, dtype: str, body: RecognitionDecisio
         raise HTTPException(400, "Unknown dataset type")
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
     ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype}, {"_id": 0, "rows": 0})
-    if not audit or not ds or not (ds.get("recognition_sheets") or ds.get("recognition_facts")):
+    if audit and ds and not (ds.get("recognition_sheets") or ds.get("recognition_facts")):
+        return await _answer_currency_without_recognition(audit_id, dtype, ds, body, background)
+    if not audit or not ds:
         raise HTTPException(404, "Dataset not found")
     current = await _recognition_of(audit_id, audit, ds)
     decisions = _recognition_decision(current, body, ds.get("recognition_decisions") or {})
@@ -1396,6 +1433,24 @@ async def decide_recognition(audit_id: str, dtype: str, body: RecognitionDecisio
     if body.part == "currency" and dtype == "revenue" and not ds.get("recognition_only") and not (ds.get("mapping") or {}).get("currency"):
         await _confirm_currency_column(audit_id, ds, decisions["currency"], background)
     await _settle_recognition(audit_id, dtype, background)
+    await _mark_stale_and_maybe_recompute(audit_id)
+    logger.info("recognition: run_id=%s dtype=%s action=%s part=%s", audit_id, dtype, body.action, body.part)
+    stored = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype}, {"_id": 0, "rows": 0})
+    return sanitize(await _view(audit_id, stored, None))
+
+
+async def _answer_currency_without_recognition(audit_id: str, dtype: str, ds: dict, body: RecognitionDecision,
+                                               background: BackgroundTasks):
+    """A revenue file with a column mapping that no recognition read (a customers-by-month sheet with no revenue word, a file the analyst
+    typed) is asked its currency all the same: no message without a way to answer it. Mixed currencies have no single answer."""
+    if (dtype != "revenue" or ds.get("recognition_only") or body.part != "currency" or body.action != "change"
+            or (ds.get("mapping") or {}).get("currency")):
+        raise HTTPException(404, "Dataset not found")
+    if body.currency not in rec.ISO_CURRENCIES or len(ds.get("currency_found") or []) > 1:
+        raise HTTPException(400, "That choice is not one of the options offered")
+    await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype}, {"$set": {
+        "recognition_decisions": {"currency": body.currency}, "recognition_decided_at": usage_mod.now()}})
+    await _confirm_currency_column(audit_id, ds, body.currency, background)
     await _mark_stale_and_maybe_recompute(audit_id)
     logger.info("recognition: run_id=%s dtype=%s action=%s part=%s", audit_id, dtype, body.action, body.part)
     stored = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype}, {"_id": 0, "rows": 0})
@@ -1430,7 +1485,7 @@ async def change_dataset_type(audit_id: str, dtype: str, body: RetypeBody, backg
         await _mark_stale_and_maybe_recompute(audit_id)
         stored = await db.datasets.find_one({"audit_id": audit_id, "dtype": body.to}, {"_id": 0, "rows": 0})
         return await _view(audit_id, stored, version)
-    columns = ds.get("columns") or []
+    columns = [c for c in ds.get("columns") or [] if c not in (ds.get("constants") or {})]       # the sheet's own columns, not a currency added
     frame = pd.DataFrame([[r.get(c) for c in columns] for r in ds.get("rows") or []], columns=columns, dtype=object)
     sheet = cr.Sheet(ds.get("sheet") or "", ds.get("header_row") or 1, columns, ds.get("headers") or columns, frame,
                      ds.get("row_numbers") or [], [], ds.get("unit_scale") or 1, ds.get("unit_note"), ds.get("wide"),

@@ -1014,6 +1014,45 @@ describe("the mapping table", () => {
   });
 });
 
+describe("the currency rule for every file (re-check of PR 135)", () => {
+  test("three currencies are named with 'several', as approved", async () => {
+    api.uploadChatFile.mockResolvedValue(VIEW({ missing_required: ["currency"], currency_mixed: ["EUR", "GBP", "USD"] }));
+    await mount();
+    await pickAndMap([file("rev.csv")]);
+    expect(q("status-revenue").textContent).toBe("This file has amounts in several currencies (EUR, GBP and USD). Upload one file per currency, or add a currency column.");
+  });
+
+  test("mixed currencies in a file read by recognition only block with the mixed message, not '1 choice waits'", async () => {
+    api.uploadChatFile.mockResolvedValue(VIEW({ recognition_only: true, columns: [], mapping: {}, row_count: 0, months: null, fields: { required: [], optional: [] },
+      pending: 1, currency_mixed: ["EUR", "USD"], recognition: null }));
+    await mount();
+    await pickAndMap([file("report.csv")]);
+    expect(q("status-revenue").textContent).toBe("This file has amounts in two currencies (EUR and USD). Upload one file per currency, or add a currency column.");
+  });
+
+  test("a file no recognition read still shows the currency question with a picker, and answering it sends the currency", async () => {
+    api.uploadChatFile.mockResolvedValue(VIEW({ currency_pending: true, missing_required: [], recognition: null }));
+    await mount();
+    await pickAndMap([file("rev.csv")]);
+    expect(q("currency-question-revenue").textContent).toContain("Currency not found in the file. Confirm the currency:");
+    expect(q("status-revenue").textContent).toBe("1 choice waits for you");
+    expect(document.body.textContent).not.toContain("Required field not mapped");
+    api.decideRecognition.mockResolvedValue(VIEW({ recognition: null }));
+    await change(q("currency-question-select-revenue"), "EUR");
+    expect(api.decideRecognition).toHaveBeenCalledWith("a1", "revenue", { action: "change", part: "currency", currency: "EUR" });
+    expect(q("status-revenue").textContent).toBe("Ready – press Run audit");
+  });
+
+  test("a file missing the customer ID and the currency names the customer ID and asks the currency", async () => {
+    api.uploadChatFile.mockResolvedValue(VIEW({ currency_pending: true, missing_required: ["customer_id"], recognition: null }));
+    await mount();
+    await pickAndMap([file("rev.csv")]);
+    expect(q("status-revenue").textContent).toMatch(/^Required field not mapped: /);
+    expect(q("status-revenue").textContent).not.toMatch(/currency/i);
+    expect(q("currency-question-select-revenue")).not.toBeNull();
+  });
+});
+
 describe("Map is the only button of the bar next to the paperclip", () => {
   test("Map is only on with a file attached or loaded", async () => {
     await mount();

@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { BLOCKERS_CHANGED } from "@/components/BlockerBanner";
 import SheetMap from "@/components/SheetMap";
 import RecognitionLine from "@/components/RecognitionLine";
+import { CURRENCY_NOT_FOUND, currencyChoices } from "@/lib/recognition";
 import { uploadChatFile, getDatasets, decideColumns, decideLines, decideRecognition, reportUsage, changeDatasetType, confirmForecastClaims } from "@/lib/api";
 import {
   S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE_LEAD, S4_DROP_ZONE_BOLD, S6_UNKNOWN_TYPE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S_UPLOAD_RETRY,
@@ -310,6 +311,35 @@ function AnalystBubble({ m, unstage }) {
   );
 }
 
+/** S31k for a file the recognition line does not show (none read it, or it shows a currency the file never mapped): the same question and picker. */
+function CurrencyQuestion({ view, decide, reportingCurrency }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const send = async (currency) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await decide(view, { action: "change", part: "currency", currency });
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      setError(typeof detail === "string" ? detail : "The choice could not be saved.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="mt-1 text-xs text-slate-700" data-testid={`currency-question-${view.dtype}`}>
+      {CURRENCY_NOT_FOUND}
+      <select data-testid={`currency-question-select-${view.dtype}`} disabled={busy} defaultValue=""
+        onChange={(e) => e.target.value && send(e.target.value)} className="ml-1.5 h-6 border border-[#D1D5DB] rounded bg-white text-xs">
+        <option value="">Choose</option>
+        {currencyChoices(reportingCurrency).map((c) => <option key={c} value={c} label={c} />)}
+      </select>
+      {error && <p className="text-rose-700" data-testid={`currency-question-error-${view.dtype}`}>{error}</p>}
+    </div>
+  );
+}
+
 function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide, decideLines, decideRecognition, retype, claimsSaved, showInfo }) {
   const [openUnused, setOpenUnused] = useState(false);
   const [showColumns, setShowColumns] = useState(false);       // a miss hides the rows behind its message until asked
@@ -324,6 +354,8 @@ function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide, 
       <div className="font-medium text-slate-900" data-testid="bubble-head">{S5_head(view)}</div>
       {!view.recognition_only && <TypeLine view={view} retype={retype} />}
       <RecognitionLine view={view} decide={decideRecognition} reportingCurrency={audit.reporting_currency} />
+      {view.currency_pending && !(view.recognition && view.recognition.recognised && view.recognition.currency?.state === "confirm") && (
+        <CurrencyQuestion view={view} decide={decideRecognition} reportingCurrency={audit.reporting_currency} />)}
       {view.unit_note && <p className="text-xs text-slate-600 mt-1" data-testid="bubble-units">{view.unit_note}</p>}
       {view.status === "same_file" && view.version != null && (
         <p className="text-xs text-slate-600 mt-1" data-testid="bubble-same">{S14_same(view.version)}</p>

@@ -100,7 +100,7 @@ def test_h2_every_marked_kind_is_left_out_of_a_sum(rec, label):
 
 def test_h2_the_monthly_report_changed_to_a_revenue_summary_does_not_sum_forecast_bookings_or_pipeline(rec):
     got = rec.recognise(rec_sheets(MONTHLY), as_of_month="2025-06-30", decisions={"file_type": "revenue_summary"})
-    assert got["series_basis"] == "sum_of_rows"
+    assert got["series_basis"] == "row", "a metrics sheet reads its revenue row and never sums (re-check, owner decision)"
     assert not {9, 10, 11} & set(got["series_rows"]), "Forecast revenue, Bookings and Pipeline are rows 9, 10 and 11"
     assert got["series_rows"] == [4], "the revenue row only: no MRR, ARR, customers, % rows and no forecast, bookings or pipeline rows"
     assert got["series"][0]["value"] == 10570

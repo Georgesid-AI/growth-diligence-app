@@ -160,7 +160,7 @@ def test_thousands_scale_the_money_fields_in_the_engine_input_and_leave_the_stor
 # Fix 7: the miss message in place of the empty mapping rows
 # ---------------------------------------------------------------------------
 MISSED = [
-    (revenue_to_2028(), "Revenue_to_2028.xlsx", "revenue", {"customer_id", "invoice_date", "currency"}),
+    (revenue_to_2028(), "Revenue_to_2028.xlsx", "revenue", {"customer_id", "invoice_date"}),
     (pnl_to_2028(), "PnL_to_2028.xlsx", "pnl", {"sm_expense", "revenue", "cost_of_revenue"}),
     (crm_anonymous_to_2028(), "CRM_Anonymous_to_2028.xlsx", "crm", {"created_date", "close_date", "stage"}),
 ]
@@ -181,6 +181,7 @@ def test_the_three_files_that_missed_end_in_one_miss_message_that_names_what_is_
         return
     miss = body["miss"]
     assert miss and missing <= set(miss["missing"]), miss
+    assert "currency" not in miss["missing"], "the currency is asked, never listed as a field not mapped (re-check, owner decision)"
     assert miss["looks"]["shape"] == ("summary" if word != "crm" else "table")
     assert not any(c["column"].startswith("Unnamed") for c in body["columns"])
 
