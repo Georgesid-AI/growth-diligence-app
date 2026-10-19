@@ -27,6 +27,8 @@ NOTE_LENGTH = 60                # a label over 60 characters with no number is a
 INHERITED = 60                  # the confidence of a meaning a sub-line takes from its parent
 PNL_FIELDS = ("revenue", "cost_of_revenue", "sm_expense")       # the monthly P&L the engine reads
 KPI_SERIES = ("arr", "mrr", "new_arr", "churn_rate")            # stored as company-reported series, never engine input
+SM_CLAIM_LABEL = "S&M (sum of Sales and Marketing)"
+KPI_MEANINGS = ("arr", "mrr", "new_arr", "churned_mrr", "churn_rate", "customers")   # what makes a sheet a KPI sheet (26.14)
 COSTS = ("cost_of_revenue", "sm_expense", "opex")               # a cost line written as negatives is read as positive
 MONEY = ("revenue", "cost_of_revenue", "sm_expense", "gross_margin", "opex", "ebitda", "arr", "mrr", "new_arr", "churned_mrr",
          "bookings", "acv", "tcv", "cash_balance")
@@ -688,6 +690,14 @@ def used_rows(lines: List[Dict], periods: List[Dict]) -> set:
     return used
 
 
+def is_kpi_sheet(lines: List[Dict]) -> bool:
+    """True when most mapped lines (a meaning other than `other`, a role that is no heading or note, a figure in some period) read as
+    ARR, MRR, new ARR, churned MRR, churn rate or customers and none reads as cost of revenue or S&M expense (26.14)."""
+    mapped = [x for x in lines if x["meaning"] != "other" and x["role"] not in NOT_LINES and _has_values(x)]
+    kpi = [x for x in mapped if x["meaning"] in KPI_MEANINGS]
+    return bool(kpi) and len(kpi) * 2 > len(mapped) and not any(x["meaning"] in ("cost_of_revenue", "sm_expense") for x in mapped)
+
+
 def pending(line: Dict, used: set) -> bool:
     """A line waits for the analyst when the map uses it and its meaning is the model's (not Python's) or Python's at 80 or
     below, and it is not decided."""
@@ -730,7 +740,7 @@ def claims_found(lines: List[Dict], periods: List[Dict], ds: Dict, fiscal_year_e
     cost ("Sales" in an OPEX section) is none either. The shape of forecast_claims.read, each value with its column's tag."""
     found = {}
     for line in lines:
-        metric = forecast_claims.metric_of(line["label"]) if line["meaning"] not in COSTS else None
+        metric = forecast_claims.metric_of(line["label"]) if line["meaning"] not in COSTS and line["role"] != "rate" else None
         if not metric:
             continue
         parts = []
@@ -745,7 +755,29 @@ def claims_found(lines: List[Dict], periods: List[Dict], ds: Dict, fiscal_year_e
                               "header": p["header"], "tag": p["tag"]})
         if parts:
             found[line["row"]] = {"row": line["row"], "label": line["label"], "metric": metric, "parts": parts}
+    plan = _sm_claim(lines, periods, fiscal_year_end)
+    if plan:
+        found[plan["row"]] = plan
     return forecast_claims.assemble(found, {**ds, "first_col": 1}, fiscal_year_end)
+
+
+def _sm_claim(lines: List[Dict], periods: List[Dict], fiscal_year_end: int) -> Optional[Dict]:
+    """The S&M plan line (26.6): per forecast, budget or unknown period, the sum of the S&M total lines (`pick`), cited to their
+    cells. A period where one of them is blank has no claim. The shape of a plan line of forecast_claims.assemble."""
+    chosen = pick(lines, "sm_expense")
+    if not chosen:
+        return None
+    parts = []
+    for k, p in enumerate(periods):
+        if p["tag"] == "actual" or p["grain"] not in ("year", "quarter", "half", "month"):
+            continue
+        value = _field_values(chosen, k, 1, "sm_expense")
+        part = forecast_claims._part(p["header"], date.fromisoformat(p["start"] + "-01") if p["grain"] == "month" else None,
+                                      fiscal_year_end)
+        if value is not None and part:
+            parts.append({"fy": part[0], "grain": part[1], "index": part[2], "value": value, "j": p["col"] - 1, "header": p["header"],
+                          "tag": p["tag"], "cells": [f"{get_column_letter(p['col'])}{x['row']}" for x in chosen]})
+    return {"row": chosen[0]["row"], "label": SM_CLAIM_LABEL, "metric": "sm_expense", "parts": parts} if parts else None
 
 
 # ---------------------------------------------------------------------------
@@ -798,7 +830,7 @@ def merged(grid: List[List], fmt: Optional[Dict], fiscal_year_end: int, reading:
 def build(reading: Dict, reply: Optional[Dict] = None, decided: Optional[List[Dict]] = None) -> Dict:
     """The stored map of a statement file: its reading with every line labelled (the reply, then the analyst's decisions)."""
     lines = apply_decisions(label_lines(reading, reply), decided or [])
-    return {"header_row": reading["header_row"], "label_col": reading["label_col"],
+    return {"header_row": reading["header_row"], "label_col": reading["label_col"], "ai_read": reply is not None,
             "periods": [{k: p[k] for k in ("col", "header", "grain", "tag", "tag_how")} for p in reading["periods"]],
             "lines": [{k: line.get(k) for k in ("row", "label", "indent", "values", "role", "meaning", "parent_row", "source",
                                                 "confidence", "decision", "python")} for line in lines],
@@ -816,6 +848,7 @@ def view(sheet_map: Dict, fiscal_year_end: int, scale: float) -> Dict:
     for line in lines:
         line["pending"] = pending(line, used)
         line["series"] = line["row"] in series
+        line["used"] = line["row"] in used
     order = sorted(lines, key=lambda x: (0 if any(c in x["checks"] for c in FAILED_CHECKS) else 1 if x["pending"] else 2,
                                          x["row"]))
     months = [p for p in periods if p["grain"] == "month"]
@@ -825,7 +858,8 @@ def view(sheet_map: Dict, fiscal_year_end: int, scale: float) -> Dict:
             "periods": [{"col": get_column_letter(p["col"]), "header": p["header"], "grain": p["grain"], "tag": p["tag"]}
                         for p in periods],
             "lines": [{k: x.get(k) for k in ("row", "label", "indent", "role", "meaning", "parent_row", "source", "confidence",
-                                             "decision", "checks", "pending", "series")} for x in order],
+                                             "decision", "checks", "pending", "series", "used")} for x in order],
+            "ai_read": bool(sheet_map.get("ai_read")),
             "pending": sum(1 for x in lines if x["pending"]), "too_long": bool(sheet_map.get("too_long")),
             "grain": "monthly" if months else "yearly", "monthly_pnl": bool(pnl),
             "missing_fields": [] if pnl or not months else [f for f in PNL_FIELDS if not pick(lines, f)],

@@ -945,9 +945,12 @@ the "P&L (monthly)" label on a file with no months.
   citations name the file, the sheet and the rows of the lines used.
 - Monthly KPI lines (arr, mrr, new_arr, churn_rate) that do not hang from a line of the same meaning are stored on the file as
   company-reported series, labelled Unverified, and marked in the table (S30f). The engine does not read them.
+- S&M claim (2026-10-18, George): per forecast, budget or unknown period, one claim, "S&M (sum of Sales and Marketing)": the sum of
+  the S&M total lines of 26.6 (`pick`), claim type costs, cited to their cells ("E10+E13"). A period where one of those lines is blank
+  has none.
 - Year, half-year and quarter columns are never split into months (no division by 12 or 4). Columns tagged forecast, budget or
   unknown are read as claims (§20, its plan lines by its own rules, no model; a line the map reads as a cost, such as "Sales" in an
-  OPEX section, is none), each claim carrying its column's tag; actual-tagged columns are
+  OPEX section, is none; a line with role `rate` is never a claim, gross margin % included), each claim carrying its column's tag; actual-tagged columns are
   company-reported actuals: shown in the table, compared with the revenue file when one is mapped, and the actual years feed 26.8.
 - Type label (S5, S26a): "P&L (monthly)" when month columns were found, otherwise "P&L (yearly summary)". A P&L read by columns
   stays "P&L (monthly)". A statement with no month, quarter, half or year column (period to date and year to date only) shows S30e.
@@ -957,12 +960,15 @@ the "P&L (monthly)" label on a file with no months.
 
 ### 26.7 The table (the confirm screen)
 - In the file's bubble, in place of the mapping table: the caption S26b with the label column, S30a, S30d or S30e when they apply,
-  then one row per line: Line (as in the file, indented by its level) · Role · Meaning · Confidence · Checks. Role and Meaning are
+  then one row per line: Line (as in the file, indented by its level) · Role · Meaning · Used · Confidence · Checks. Used is Yes when the
+  calculations use the line (`used_rows`: the monthly P&L fields, the KPI series, the yearly inputs), else No. Role and Meaning are
   drop-downs that save on change (one click): `POST /api/audits/{id}/datasets/{dtype}/lines` with `[{row, action: "confirm" |
-  "change", role, meaning}]`. A pending line also has Confirm.
+  "change", role, meaning}]`. A pending line also has Confirm. Above the table, **Confirm all** (shown while a line waits) sends
+  one request with a confirm for every pending line.
 - Pending: a line the map uses (a monthly P&L field, a KPI series, a yearly input) whose meaning is the model's and not Python's,
   or Python's at 80 or below, and that the analyst has not decided. Confidence: Python's number; the model's meaning reads "AI
-  suggestion – confirm" until decided, then "confirmed"; a saved map reads "reused".
+  suggestion – confirm" while the line waits, "AI suggestion" (no "– confirm") when the line is not used and nobody decided it, then
+  "confirmed"; a saved map reads "reused".
 - Order: failed checks, then pending lines, then sheet order.
 - The map saves when nothing is pending, and on every later change: a version in `column_mappings` (`kind: "sheet_map"`, the file
   hash, per line its row, role, meaning, parent, source and decision; no text). The same bytes again apply it with no model call and
@@ -987,7 +993,7 @@ Every figure and row carries `basis: "yearly basis, not monthly"`, shown on each
 | Id | Where | Text |
 |---|---|---|
 | S30a | above the line table, consent ticked and the text sent | Sent to the AI: {n} lines. Masked: {e} emails, {p} phone numbers, {m} names, {c} customer names, {k} company name. Withheld: {w} columns, {l} long cells. |
-| S30b | line table headers | Line · Role · Meaning · Confidence · Checks |
+| S30b | line table headers | Line · Role · Meaning · Used · Confidence · Checks |
 | S30c | checks | Total ≠ sum of sub-lines ({periods}) · No breakdown ({periods}) · Sign differs from sub-lines · Costs written as negatives · Rate: never read as money |
 | S30d | over the cap | Sheet too long: first 400 rows read |
 | S30e | no month, quarter, half or year column | One period only: export the P&L with one column per month and upload again. |
@@ -1029,6 +1035,20 @@ without consent, the line decisions, the saved map), `test_gateway_data_boundary
 reaches the provider; a figure, a 401st row, an unredacted name, a column not withheld and a file name are refused; no sent text
 is stored or logged), `test_interface_contracts.py` (the block), `test_prompt_store.py` (the name), `MappingWizard.test.jsx` (the
 line table, one click, the labels), `Dashboard.test.jsx` (the section and its labels).
+
+### 26.14 KPI sheet and labels (2026-10-18, George)
+- Type "KPI sheet (monthly)" (`dtype: "kpi"`), separate from P&L: both can be stored in one audit. It exists only as a statement (a line
+  map); it has no column fields. A P&L read as a statement whose mapped lines (a meaning other than `other`, a role that is no heading
+  or note, a figure in some period) are mostly arr, mrr, new_arr, churned_mrr, churn_rate or customers, with no cost_of_revenue or
+  sm_expense line, is stored as a KPI sheet (`structures/sheet.py is_kpi_sheet`). A type the analyst chose (picker, typed upload) is
+  never changed. The analyst changes it in the Change picker: a statement keeps its line map under the other name; a sheet with no
+  statement cannot become one (400). The same bytes again are the same KPI sheet, with no replace prompt.
+- KPI series stay "Company-reported series · Unverified" (S30f), are shown in the table only, and do not feed the engine. Its pending
+  lines (the series lines) hold Run audit as for any statement file.
+- The model's file-type list stays revenue, crm, pnl: a KPI sheet is decided by Python after the line map.
+- The type line (S26a) of a statement file says "(AI suggestion)" when the sheet_structure call ran (`ai_read`, kept with the saved
+  map), "(by rules)" only when it did not, and "(your choice)" for the analyst's choice.
+- Help box S25 for a statement file says "lines" for "columns" and names the example "a sales cost line read as revenue".
 
 ### 26.13 Files
 New: `backend/app/structures/sheet.py`, `backend/tests/test_sheet_structure.py`, the four fixtures,

@@ -43,12 +43,12 @@ NOT_CLAIMS = frozenset(("cost", "costs", "cogs", "expense", "expenses", "opex", 
                         "added", "flow", "burn", "deferred", "ltv", "cac", "lifetime", "retention"))
 _RATE = re.compile(r"%|\b(?:margin|ratio|rate)\b")      # a rate: only gross margin may be one
 _BRACKETS = re.compile(r"[(\[][^)\]]*[)\]]")
-FLOWS = ("revenue", "bookings", "gross_margin", "ebitda")     # summed over a year; the other lines are balances or counts
-MONEY = ("revenue", "arr", "mrr", "bookings", "gross_margin", "ebitda", "cash_balance")
+FLOWS = ("revenue", "bookings", "gross_margin", "ebitda", "sm_expense")     # summed over a year; the other lines are balances or counts
+MONEY = ("revenue", "arr", "mrr", "bookings", "gross_margin", "ebitda", "cash_balance", "sm_expense")
 COUNT_UNITS = {"headcount": "people", "installed_units": "units", "customers": "customers"}
 CLAIM_TYPES = {"revenue": "revenue", "arr": "revenue", "mrr": "revenue", "bookings": "revenue", "gross_margin": "gross_profit",
                "ebitda": "ebitda", "cash_balance": "cash", "headcount": "people", "installed_units": deck_claims.INSTALLED_UNITS,
-               "customers": "customers"}
+               "customers": "customers", "sm_expense": "costs"}
 RATE_TYPE = "gross_margin"      # a gross margin line read as a rate
 PARTS = {"quarter": 4, "half": 2, "month": 12}      # the parts of a year a missing year column is rolled up from
 
@@ -229,6 +229,8 @@ def _years(line: Dict, fiscal_year_end: int, first: int, row: int, scale: float)
             value = value * scale
         cols = sorted(p["j"] for p in used)
         cell = _cell(first, cols[0], row) if len(cols) == 1 else f"{_cell(first, cols[0], row)}:{_cell(first, cols[-1], row)}"
+        if any(p.get("cells") for p in used):       # a sum of several lines (the S&M plan line): its cells, one by one
+            cell = "+".join(c for p in used for c in p["cells"])
         claim = {"target_date": str(fy), "period": period, "period_text": text, "value": _clean(value), "cell": cell,
                  "cols": (cols[0], cols[-1])}
         tags = {p["tag"] for p in used if p.get("tag")}

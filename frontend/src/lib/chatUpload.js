@@ -38,11 +38,11 @@ export const REASONS = [
   { code: "other", label: "Other" },
 ];
 
-export const TYPE_LABELS = { revenue: "Revenue lines", crm: "CRM deals", pnl: "P&L (monthly)" };
+export const TYPE_LABELS = { revenue: "Revenue lines", crm: "CRM deals", pnl: "P&L (monthly)", kpi: "KPI sheet (monthly)" };
 // Section 26.6: a P&L with no month column is a yearly summary; the type picker (S6) keeps the three type names.
 export const PNL_YEARLY_LABEL = "P&L (yearly summary)";
 export const typeLabel = (view) => (view.dtype === "pnl" && view.pnl_grain === "yearly" ? PNL_YEARLY_LABEL : TYPE_LABELS[view.dtype]);
-const LOADED_LABELS = { revenue: "A revenue file", crm: "A CRM file", pnl: "A P&L file" };
+const LOADED_LABELS = { revenue: "A revenue file", crm: "A CRM file", pnl: "A P&L file", kpi: "A KPI sheet" };
 
 // S5: the month range appears once the date column is confirmed; before that the line ends on the row count.
 export const S5_head = (view) => {
@@ -51,7 +51,9 @@ export const S5_head = (view) => {
 };
 // S26a-c (2026-10-16): the detected type with its source and the Change button; the sheet read; what a miss says.
 export const TYPE_SOURCES = { rules: "by rules", ai: "AI suggestion", you: "your choice" };
-export const S26_type = (view) => `Type: ${typeLabel(view)}${TYPE_SOURCES[view.type_source] ? ` (${TYPE_SOURCES[view.type_source]})` : ""}`;
+// A statement file (section 26) says "AI suggestion" when the sheet_structure call ran, "by rules" only when it did not.
+const typeSource = (view) => (view.sheet_map && view.type_source !== "you" ? (view.sheet_map.ai_read ? "ai" : "rules") : view.type_source);
+export const S26_type = (view) => `Type: ${typeLabel(view)}${TYPE_SOURCES[typeSource(view)] ? ` (${TYPE_SOURCES[typeSource(view)]})` : ""}`;
 export const S26_CHANGE = "Change";
 export const S26_sheet = (view) => `Sheet "${view.sheet}" · header on row ${view.header_row}`;
 const LOOKS = {
@@ -130,6 +132,13 @@ export const S25_PARAGRAPHS = [
   "No calculations begin until all required columns are confirmed.",
   "Your choices are saved with the audit and automatically reused if you upload the same file again.",
 ];
+// S25 for a statement file (section 26.7): lines in place of columns, and its own example.
+export const S25_STATEMENT_PARAGRAPHS = [
+  "Every figure in this audit depends on how the lines are interpreted. If a line is mapped incorrectly—for example, a sales cost line read as revenue—the resulting calculations may look correct but be wrong.",
+  "The app suggests a role and a meaning for each line and indicates its confidence level. High-confidence lines are accepted automatically, but you can change them. Lines that need your review appear at the top of the table.",
+  "No calculations begin until all lines the calculations use are confirmed.",
+  "Your choices are saved with the audit and automatically reused if you upload the same file again.",
+];
 // S29: the fields a CRM file feeds, in an info box above its mapping table, open by default (George, 2026-10-17, word for word).
 export const S29_TITLE = "Fields used in this analysis";
 export const S29_PARAGRAPHS = [
@@ -156,7 +165,9 @@ const plural = (n, one, many) => `${n.toLocaleString("en-US")} ${n === 1 ? one :
 export const S30a_sent = (c) => `Sent to the AI: ${plural(c.lines, "line", "lines")}. Masked: ${plural(c.email, "email", "emails")}, `
   + `${plural(c.phone, "phone number", "phone numbers")}, ${plural(c.person, "name", "names")}, ${plural(c.customer, "customer name", "customer names")}, `
   + `${plural(c.company, "company name", "company names")}. Withheld: ${plural(c.columns, "column", "columns")}, ${plural(c.long, "long cell", "long cells")}.`;
-export const S30B_HEADERS = ["Line", "Role", "Meaning", "Confidence", "Checks"];
+export const S30B_HEADERS = ["Line", "Role", "Meaning", "Used", "Confidence", "Checks"];
+export const CONFIRM_ALL = "Confirm all";
+export const usedText = (line) => (line.used ? "Yes" : "No");
 const CHECKS = {
   total_mismatch: (p) => `Total ≠ sum of sub-lines (${p.join(", ")})`,
   no_breakdown: (p) => `No breakdown (${p.join(", ")})`,
@@ -188,7 +199,7 @@ export const S30h_status = (view) => {
 export const S30_confidence = (line) => {
   if (line.source === "saved") return "reused";
   if (line.decision) return "confirmed";
-  if (line.source === "ai") return MAPPED_BY.ai;
+  if (line.source === "ai") return line.pending ? MAPPED_BY.ai : "AI suggestion";      // "– confirm" only for a line that waits
   return String(line.confidence ?? 0);
 };
 export const LINE_ROLES = ["heading", "total", "subline", "rate", "note", "other"];

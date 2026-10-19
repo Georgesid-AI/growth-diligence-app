@@ -23,6 +23,7 @@ from app import verdict as vd  # noqa: E402
 FORECAST = Path(__file__).resolve().parent / "fixtures" / "forecast"
 ANNUAL, MONTHLY, EIGHTY = "annual_forecast.csv", "monthly_model.csv", "eighty_lines.csv"
 PLAN_ROWS = [5, 7, 8, 12, 15, 16, 17, 18]          # the annual fixture's plan lines, by sheet row
+STATEMENT_ROWS = [5, 7, 10, 12, 15, 16, 17, 18]    # read as a statement (26.6): no rate line (row 8), the S&M sum is cited from row 10
 SETTINGS = {"fiscal_year_end": 12, "reporting_currency": "EUR", "fx": {"EUR": 1.0}, "as_of_month": None}
 
 
@@ -96,7 +97,7 @@ def test_the_upload_view_lists_the_claims_and_nothing_is_stored_before_confirm(a
     assert out["dtype"] == "pnl" and out["miss"] is None and out["sheet_map"] and out["pnl_grain"] == "yearly"
     claims = out["forecast_claims"]
     assert (claims["count"], claims["sheet"], claims["range"], claims["saved"], claims["saved_lines"]) == (32, "CSV", "E5:H18", 0, 0)
-    assert [x["row"] for x in claims["lines"]] == PLAN_ROWS
+    assert [x["row"] for x in claims["lines"]] == STATEMENT_ROWS
     assert view(api, "pnl")["forecast_claims"]["count"] == 32, "the list is rebuilt on reload from the stored rows"
     assert forecast_candidates(api) == [], "nothing is stored until the analyst confirms"
     assert not any("forecast" in str(k) for d in api.db["datasets"].docs for k in d), "the list itself is not stored"

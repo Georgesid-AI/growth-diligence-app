@@ -207,7 +207,7 @@ def candidate_views(datasets: dict) -> dict:
     files = {}
     for dtype, d in datasets.items():
         views = {}
-        for as_type in FIELD_DEFS:
+        for as_type in DTYPE_ORDER:
             mapping = (d.get("mapping") or {}) if as_type == dtype else suggest_mapping(as_type, d.get("columns") or [])
             mapping = {f: c for f, c in mapping.items() if c}
             views[as_type] = {"mapping": mapping, "frame": normalize(d.get("rows") or [], as_type, mapping, d.get("row_numbers"), d.get("unit_scale") or 1)}
@@ -658,6 +658,8 @@ MAPPING_AI_SECONDS = 20          # the model's budget for one column mapping (se
 SHEET_AI_SECONDS = 60            # ... and for one sheet skeleton: up to 400 lines labelled (section 26.4)
 NOTE_REFUSED = "Leave out file names, figures and cell values: this note is kept with the usage counts."
 DTYPE_ORDER = ("revenue", "crm", "pnl")
+KPI_NOT_A_STATEMENT = "A KPI sheet needs its lines down the rows and its months across the columns."
+STORED_ORDER = DTYPE_ORDER + ("kpi",)        # a KPI sheet (section 26.14) is never offered by the model or the unknown-type picker
 
 
 async def _versions(audit_id: str, dtype: str) -> list:
@@ -805,7 +807,9 @@ def _miss(dtype: str, states: list, mapping: dict, looks: Optional[dict]) -> Opt
 
 def _months_for(dtype: str, states: list, columns: list, rows: list) -> Optional[dict]:
     """The months of the date column, once that column is decided (S5: not before)."""
-    field = {"revenue": "invoice_date", "crm": "close_date", "pnl": "month"}[dtype]
+    field = {"revenue": "invoice_date", "crm": "close_date", "pnl": "month"}.get(dtype)
+    if field is None:
+        return None
     state = next((s for s in states if s["field"] == field and s["state"] in ("auto", "confirmed", "corrected")), None)
     return cr.months_of([r.get(state["column"]) for r in rows]) if state else None
 
@@ -854,15 +858,17 @@ async def _write_sheet_version(audit_id: str, dtype: str, ds: dict) -> int:
     number = max([v.get("version") or 0 for v in found] or [0]) + 1
     await db[structures.COLUMN_MAPPINGS_COLLECTION].insert_one({
         "audit_id": audit_id, "kind": "sheet_map", "sheet_dtype": dtype, "file_hash": ds.get("file_hash"), "version": number,
-        "header_row": sheet_map["header_row"], "label_col": sheet_map["label_col"], "lines": lines, "saved_at": usage_mod.now()})
+        "header_row": sheet_map["header_row"], "label_col": sheet_map["label_col"], "lines": lines,
+        "ai_read": bool(sheet_map.get("ai_read")), "saved_at": usage_mod.now()})
     return number
 
 
-async def _read_statement(a: dict, sheet: "cr.Sheet", digest: str) -> Optional[dict]:
+async def _read_statement(a: dict, sheet: "cr.Sheet", digest: str, kpi: bool = False) -> Optional[dict]:
     """A P&L the rules cannot map by columns, read as a statement (chat-upload.md section 26): Python's reading, then the saved
     map of the same bytes, else, with consent, one sheet_structure call. None when the rules map every required field at 80 or
-    more (26.1) or the sheet is no statement. The skeleton is built in memory; it is never stored or logged."""
-    if sheet.grid is None or sheet_mod.rules_cover(cr.analyse("pnl", sheet)[0]):
+    more (26.1) or the sheet is no statement. A KPI sheet (`kpi`, 26.14) has no column fields, so the rules never cover it. The
+    skeleton is built in memory; it is never stored or logged."""
+    if sheet.grid is None or (not kpi and sheet_mod.rules_cover(cr.analyse("pnl", sheet)[0])):
         return None
     fiscal_year_end = _fiscal_year_end(a)
     reading = sheet_mod.read(sheet.grid, sheet.fmt, fiscal_year_end)
@@ -876,7 +882,8 @@ async def _read_statement(a: dict, sheet: "cr.Sheet", digest: str) -> Optional[d
             reading = sheet_mod.read(sheet.grid, sheet.fmt, fiscal_year_end, saved.get("header_row"), saved.get("label_col")) \
                 or reading
         lines = [{**x, "source": "saved"} for x in saved["lines"]]
-        return {"map": {**sheet_mod.build(reading, None, lines), "counts": None}, "ai": "stored", **units}
+        return {"map": {**sheet_mod.build(reading, None, lines), "ai_read": bool(saved.get("ai_read")), "counts": None},
+                "ai": "stored", **units}
     if a.get("structure_reading_consent") is not True:
         return {"map": {**sheet_mod.build(reading), "counts": None}, "ai": "no_consent", **units}
     text, counts = sheet_mod.skeleton(reading, a.get("company_name"), await llm_redaction.get_map(db, a["id"]),
@@ -967,6 +974,14 @@ async def _load(a: dict, audit_id: str, chosen: str, sheet: "cr.Sheet", filename
     """A sheet stored as the audit's file of one type: the saved mapping of its bytes or its headers, else the rules, then
     the model for the columns the rules could not decide (unless the sheet is a summary table, which no column mapping can
     read), then the analyst. `drop` is the type this file was stored as before, when the analyst changed its type."""
+    statement = None
+    if chosen == "pnl" and type_source != "you":      # a P&L read as a statement whose lines are mostly KPIs is a KPI sheet (26.14)
+        if await db.datasets.find_one({"audit_id": audit_id, "dtype": "kpi", "file_hash": digest}, {"_id": 1}):
+            chosen = "kpi"
+        elif not await db.datasets.find_one({"audit_id": audit_id, "dtype": "pnl", "file_hash": digest}, {"_id": 1}):
+            statement = await _read_statement(a, sheet, digest)
+            if statement is not None and sheet_mod.is_kpi_sheet(statement["map"]["lines"]):
+                chosen = "kpi"
     existing = await db.datasets.find_one({"audit_id": audit_id, "dtype": chosen}, {"_id": 0, "rows": 0})
     versions = await _versions(audit_id, chosen)
     if existing and existing.get("file_hash") == digest and drop is None and existing.get("sheet_map"):
@@ -989,7 +1004,10 @@ async def _load(a: dict, audit_id: str, chosen: str, sheet: "cr.Sheet", filename
     headers = [v for v in versions if v.get("header_key") == key]
     looks = cr.describe(sheet)
     ai_reading = {"status": "rules", "reason": None}
-    statement = await _read_statement(a, sheet, digest) if chosen == "pnl" else None
+    if statement is None and chosen in ("pnl", "kpi"):
+        statement = await _read_statement(a, sheet, digest, kpi=chosen == "kpi")
+    if chosen == "kpi" and statement is None:
+        raise HTTPException(400, KPI_NOT_A_STATEMENT)
     # A saved mapping that is itself a miss (at most half of the required fields mapped, as when every column was left
     # out as "Not used") is no mapping to reuse: the rules and the model run again for this file.
     reusable = [v for v in (same or headers)
@@ -1098,6 +1116,16 @@ async def change_dataset_type(audit_id: str, dtype: str, body: RetypeBody, backg
         raise HTTPException(404, "Dataset not found")
     if body.to == dtype:
         return await _view(audit_id, {k: v for k, v in ds.items() if k not in ("_id", "rows")}, None)
+    if ds.get("sheet_map") and {dtype, body.to} == {"pnl", "kpi"}:       # a statement keeps its line map under the other name (26.14)
+        other = await db.datasets.find_one({"audit_id": audit_id, "dtype": body.to}, {"_id": 0, "rows": 0})
+        if other and not body.replace:
+            raise HTTPException(409, {"code": "type_loaded", "dtype": body.to, "file": other.get("file")})
+        await db.datasets.delete_one({"audit_id": audit_id, "dtype": body.to})
+        await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype}, {"$set": {"dtype": body.to, "type_source": "you"}})
+        version = await _commit_mapping(audit_id, body.to, background)
+        await _mark_stale_and_maybe_recompute(audit_id)
+        stored = await db.datasets.find_one({"audit_id": audit_id, "dtype": body.to}, {"_id": 0, "rows": 0})
+        return await _view(audit_id, stored, version)
     columns = ds.get("columns") or []
     frame = pd.DataFrame([[r.get(c) for c in columns] for r in ds.get("rows") or []], columns=columns, dtype=object)
     sheet = cr.Sheet(ds.get("sheet") or "", ds.get("header_row") or 1, columns, ds.get("headers") or columns, frame,
@@ -1120,7 +1148,7 @@ async def list_datasets(audit_id: str):
     if not await db.audits.find_one({"id": audit_id}, {"id": 1}):
         raise HTTPException(404, "Audit not found")
     found = await db.datasets.find({"audit_id": audit_id}, {"_id": 0, "rows": 0}).to_list(10)
-    found.sort(key=lambda d: DTYPE_ORDER.index(d["dtype"]) if d["dtype"] in DTYPE_ORDER else 9)
+    found.sort(key=lambda d: STORED_ORDER.index(d["dtype"]) if d["dtype"] in STORED_ORDER else 9)
     views = []
     for d in found:
         same = [v for v in await _versions(audit_id, d["dtype"]) if v.get("file_hash") == d.get("file_hash")]
@@ -1130,7 +1158,7 @@ async def list_datasets(audit_id: str):
 
 @api.get("/fields")
 async def get_fields():
-    return {dt: {"required": list(v["required"]), "optional": list(v["optional"])} for dt, v in FIELD_DEFS.items()}
+    return {dt: {"required": list(v["required"]), "optional": list(v["optional"])} for dt, v in FIELD_DEFS.items() if dt != "kpi"}
 
 
 @api.get("/audits/{audit_id}/datasets/revenue/customers")

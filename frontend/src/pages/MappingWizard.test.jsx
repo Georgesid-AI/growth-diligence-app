@@ -8,7 +8,7 @@ import { SETUP_HELP } from "@/lib/auditForm";
 import {
   S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE_LEAD, S4_DROP_ZONE_BOLD, ALL_CONFIRMED_LINE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S_UPLOAD_RETRY, S21_NOTE_REFUSED, REASONS,
   S5_head, S9_confidence, mappedBy, sortColumns, S25_PARAGRAPHS, S27_miss, S28_read, S28_cap, S28_saved, mappingComplete,
-  S30a_sent, S30B_HEADERS, S30D_TOO_LONG, S30E_ONE_PERIOD, S30F_SERIES, S30H_YEARLY, S30C_RATE,
+  S25_STATEMENT_PARAGRAPHS, S30a_sent, S30B_HEADERS, S30D_TOO_LONG, S30E_ONE_PERIOD, S30F_SERIES, S30H_YEARLY, S30C_RATE,
 } from "@/lib/chatUpload";
 
 jest.mock("@/lib/api", () => ({
@@ -440,7 +440,8 @@ describe("the type, the sheet and the miss (2026-10-16)", () => {
     await flush();
     await click(q("type-change-revenue"));
     expect(q("type-pick-revenue")).toBeNull();
-    expect(["type-pick-crm", "type-pick-pnl"].map((id) => q(id).textContent)).toEqual(["CRM deals", "P&L (monthly)"]);
+    expect(["type-pick-crm", "type-pick-pnl", "type-pick-kpi"].map((id) => q(id).textContent)).toEqual(
+      ["CRM deals", "P&L (monthly)", "KPI sheet (monthly)"]);
     await click(q("type-pick-pnl"));
     await flush();
     expect(api.changeDatasetType).toHaveBeenCalledWith("a1", "revenue", "pnl", false);
@@ -1169,6 +1170,80 @@ describe("a P&L read as a statement (section 26)", () => {
     await change(q("line-role-7"), "subline");
     expect(api.decideLines).toHaveBeenLastCalledWith("a1", "pnl", [{ row: 7, action: "change", role: "subline" }]);
     expect(api.decideColumns).not.toHaveBeenCalled();
+  });
+
+  test("the Used column says Yes or No; an AI line the calculations do not use reads AI suggestion without – confirm", async () => {
+    await mount({ datasets: [STATEMENT({ pending: 1 }, { pending: 1, lines: [
+      line(3, "Revenue", { source: "ai", confidence: null, pending: true, used: true }),
+      line(4, "Headcount", { source: "ai", confidence: null, meaning: "headcount", used: false }),
+      line(5, "Cost", { used: false })] })] });
+    await flush();
+    expect(S30B_HEADERS).toEqual(["Line", "Role", "Meaning", "Used", "Confidence", "Checks"]);
+    expect([3, 4, 5].map((r) => q(`line-used-${r}`).textContent)).toEqual(["Yes", "No", "No"]);
+    expect(q("line-confidence-3").textContent).toBe("AI suggestion – confirm");
+    expect(q("line-confidence-4").textContent).toBe("AI suggestion");
+    expect(q("line-confirm-4")).toBeNull();
+  });
+
+  test("Confirm all confirms every pending line in one request", async () => {
+    const waiting = STATEMENT({ pending: 2 }, { pending: 2, lines: [
+      line(3, "Revenue", { source: "ai", pending: true, used: true }),
+      line(4, "MRR", { source: "ai", pending: true, used: true, meaning: "mrr" }),
+      line(5, "Cost", { used: false })] });
+    await mount({ datasets: [waiting] });
+    await flush();
+    api.decideLines.mockResolvedValue(STATEMENT({ pending: 0 }, { lines: [
+      line(3, "Revenue", { source: "you", decision: "confirm", used: true }),
+      line(4, "MRR", { source: "you", decision: "confirm", used: true, meaning: "mrr" }),
+      line(5, "Cost", { used: false })] }));
+    await click(q("lines-confirm-all-pnl"));
+    expect(api.decideLines).toHaveBeenCalledTimes(1);
+    expect(api.decideLines).toHaveBeenCalledWith("a1", "pnl", [{ row: 3, action: "confirm" }, { row: 4, action: "confirm" }]);
+    expect(q("lines-confirm-all-pnl")).toBeNull();
+    expect(q("line-confidence-3").textContent).toBe("confirmed");
+  });
+
+  test("no Confirm all when nothing waits", async () => {
+    await mount({ datasets: [STATEMENT()] });
+    await flush();
+    expect(q("lines-confirm-all-pnl")).toBeNull();
+  });
+
+  test("the type line says AI suggestion when the sheet call ran and by rules only when it did not", async () => {
+    await mount({ datasets: [STATEMENT({ type_source: "rules" }, { ai_read: true })] });
+    await flush();
+    expect(q("type-label-pnl").textContent).toBe("Type: P&L (yearly summary) (AI suggestion)");
+  });
+
+  test("a statement without the sheet call reads by rules", async () => {
+    await mount({ datasets: [STATEMENT({ type_source: "ai" }, { ai_read: false })] });
+    await flush();
+    expect(q("type-label-pnl").textContent).toBe("Type: P&L (yearly summary) (by rules)");
+  });
+
+  test("the analyst's own choice of type stays", async () => {
+    await mount({ datasets: [STATEMENT({ type_source: "you" }, { ai_read: true })] });
+    await flush();
+    expect(q("type-label-pnl").textContent).toBe("Type: P&L (yearly summary) (your choice)");
+  });
+
+  test("the help text of a statement says lines and names a sales cost line read as revenue", async () => {
+    await mount({ datasets: [STATEMENT()] });
+    await flush();
+    const text = q("why-this-matters").textContent;
+    expect(text).toContain("a sales cost line read as revenue");
+    expect(text).toContain("how the lines are interpreted");
+    expect(text).not.toMatch(/column/i);
+    expect(S25_STATEMENT_PARAGRAPHS).toHaveLength(4);
+  });
+
+  test("a KPI sheet is typed KPI sheet (monthly) beside the P&L, and its series stay Unverified", async () => {
+    await mount({ datasets: [STATEMENT({ pnl_grain: "monthly" }), STATEMENT({ dtype: "kpi", file: "kpi.csv", pnl_grain: "monthly" }, {
+      grain: "monthly", lines: [line(6, "Total MRR", { meaning: "mrr", series: true, used: true })] })] });
+    await flush();
+    expect(q("type-label-pnl").textContent).toContain("Type: P&L (monthly)");
+    expect(q("type-label-kpi").textContent).toContain("Type: KPI sheet (monthly)");
+    expect(q("line-checks-6").textContent).toBe(S30F_SERIES);
   });
 
   test("an AI meaning reads AI suggestion – confirm and a saved map reads reused; never a dash", async () => {

@@ -135,6 +135,44 @@ def test_the_forecast_columns_alone_become_claims_each_with_its_tag():
     assert not any(line["label"] in ("Sales", "Marketing", "Operating expenses") for line in found["lines"]), "cost lines"
 
 
+FOUR_FORECASTS = (MAPPING / YEARLY).read_bytes().replace(b",,,,forecast,forecast,forecast", b",,,forecast,forecast,forecast,forecast")
+
+
+def test_a_yearly_pnl_gives_revenue_gross_profit_and_ebitda_claims_plus_the_sm_sum_and_no_rate_claim():
+    """The yearly P&L with four forecast years (FY2023 to FY2026): 3 lines x 4 years = 12, and 4 S&M sums."""
+    m = sh.build(reading("yearly_four_forecasts.csv", FOUR_FORECASTS))
+    found = sh.claims(m, {"sheet": "CSV", "unit_scale": 1000, "title_currency": "EUR"}, 12)
+    by_label = {line["label"]: line for line in found["lines"]}
+    sm = by_label[sh.SM_CLAIM_LABEL]
+    assert sorted(by_label) == sorted(["Revenue", "Gross profit", "EBITDA", sh.SM_CLAIM_LABEL]), "no rate line is a claim"
+    assert sum(len(line["values"]) for label, line in by_label.items() if label != sh.SM_CLAIM_LABEL) == 12
+    assert len(sm["values"]) == 4 and found["count"] == 16
+    assert [(v["target_date"], v["value"], v["cell"], v["tag"]) for v in sm["values"]] == [
+        ("2023", 550000, "D10+D13", "forecast"), ("2024", 660000, "E10+E13", "forecast"),
+        ("2025", 830000, "F10+F13", "forecast"), ("2026", 1000000, "G10+G13", "forecast")]
+    assert (sm["claim_type"], sm["currency"]) == ("costs", "EUR")
+
+
+def test_the_sm_claim_is_cited_to_its_cells_and_saved_as_a_sheet_candidate():
+    from app import forecast_claims as fc
+    m = sh.build(reading("yearly_four_forecasts.csv", FOUR_FORECASTS))
+    ds = {"sheet": "CSV", "unit_scale": 1000, "title_currency": "EUR", "file": "p.csv", "file_hash": "h", "dtype": "pnl"}
+    found = sh.claims(m, ds, 12)
+    (made,) = fc.candidates(found, [next(x["row"] for x in found["lines"] if x["label"] == sh.SM_CLAIM_LABEL)], ds, 12)
+    assert made["snippet"] == sh.SM_CLAIM_LABEL and made["claim_type"] == "costs" and made["origin"] == fc.ORIGIN
+    assert [s["cell"] for s in made["sources"]] == ["D10+D13", "E10+E13", "F10+F13", "G10+G13"]
+
+
+def test_a_line_with_the_role_rate_is_never_a_claim_whatever_its_label_says():
+    m = stored_map(YEARLY)
+    for line in m["lines"]:
+        if line["label"] == "Revenue":
+            line["role"] = "rate"       # the analyst (or the reply) calls the revenue line a rate
+    found = sh.claims(m, {"sheet": "CSV", "unit_scale": 1000, "title_currency": "EUR"}, 12)
+    assert "Revenue" not in [line["label"] for line in found["lines"]]
+    assert "Gross margin as % of revenue" not in [line["label"] for line in found["lines"]], "gross margin % included"
+
+
 def test_a_customer_list_column_is_withheld_and_counted():
     text, counts = sh.skeleton(reading(CUSTOMERS), COMPANY, {}, (COMPANY,))
     assert not any(name in text for name in NAMES)
@@ -335,7 +373,7 @@ def test_a_yearly_statement_is_read_with_one_call_and_the_reply_labels_the_lines
     assert out["sheet_map"]["counts"]["lines"] > 0 and out["columns"] == [] and out["miss"] is None
     assert out["pending"] == 0 and out["saved"], "every used line agrees with Python at 100: the map saves"
     assert [line["label"] for line in out["sheet_map"]["lines"]][:1] == ["Operating expenses"], "a failed check comes first"
-    assert out["forecast_claims"]["count"] == 12, "Revenue, Gross profit, the margin % and EBITDA over three forecast years"
+    assert out["forecast_claims"]["count"] == 12, "Revenue, Gross profit and EBITDA (9) and S&M (3) over three forecast years, no rate"
 
 
 def test_the_company_name_in_a_title_is_masked_in_the_sent_skeleton(api):
@@ -437,3 +475,84 @@ def test_the_sheet_call_has_its_own_caps_and_stays_under_the_daily_spend_cap(api
     out = put(api, YEARLY, dtype="pnl").json()
     assert out["ai_reading"]["status"] == "not_read" and api.state["adapter"].calls == 0
     assert gateway.SHEET_INPUT_CAP == gateway.SHEET_MAX_TOKENS == 12_000
+
+
+# ---------------------------------------------------------------------------
+# The line table (26.7): the Used column's data, Confirm all, the labels; the KPI sheet (26.14)
+
+
+def test_every_line_says_whether_the_calculations_use_it(api):
+    out = put(api, KPI, dtype="pnl").json()
+    lines = lines_by_label(out["sheet_map"])
+    assert lines["Total MRR"]["used"] is True and lines["New ARR - inbound"]["used"] is True
+    assert lines["Customers"]["used"] is False, "customers is no stored series"
+    assert lines["MRR growth % MoM"]["used"] is False
+    assert all(isinstance(line["used"], bool) for line in out["sheet_map"]["lines"])
+
+
+def test_confirm_all_clears_every_pending_line_in_one_request(api):
+    out = put(api, KPI, dtype="pnl").json()
+    waiting = [line["row"] for line in out["sheet_map"]["lines"] if line["pending"]]
+    assert len(waiting) > 1 and not out["saved"]
+    r = api.post(f"/api/audits/{AUDIT}/datasets/pnl/lines", json=[{"row": n, "action": "confirm"} for n in waiting])
+    assert r.status_code == 200
+    out = r.json()
+    assert out["pending"] == 0 and out["sheet_map"]["pending"] == 0 and out["saved"]
+    assert not [line for line in out["sheet_map"]["lines"] if line["pending"]]
+    assert {line["decision"] for line in out["sheet_map"]["lines"] if line["row"] in waiting} == {"confirm"}
+
+
+def test_the_map_remembers_whether_the_sheet_call_ran(api):
+    api.state["adapter"] = t.FakeAdapter(replies=[YEARLY_REPLY])
+    assert put(api, YEARLY, dtype="pnl").json()["sheet_map"]["ai_read"] is True
+    api.db["audits"].docs[0]["structure_reading_consent"] = False
+    assert put(api, KPI, dtype="pnl", replace="true").json()["sheet_map"]["ai_read"] is False
+
+
+def test_a_sheet_of_kpi_lines_is_a_kpi_sheet_and_a_pnl_is_not():
+    assert sh.is_kpi_sheet(sh.build(reading(KPI))["lines"])
+    assert not sh.is_kpi_sheet(sh.build(reading(YEARLY))["lines"])
+    mixed = sh.build(reading(KPI))["lines"]
+    for line in mixed:
+        if line["label"] == "Customers":
+            line["meaning"] = "sm_expense"
+    assert not sh.is_kpi_sheet(mixed), "an S&M expense line makes it a P&L"
+
+
+def test_one_audit_keeps_a_pnl_and_a_kpi_sheet(api):
+    file_type = json.dumps({"type": "file_type", "file_type": "pnl"})
+    api.state["adapter"] = t.FakeAdapter(replies=[YEARLY_REPLY, file_type, "{}"])
+    assert put(api, YEARLY, dtype="pnl").json()["dtype"] == "pnl"
+    out = put(api, KPI).json()
+    assert out["dtype"] == "kpi" and out["sheet_map"] and out["type_source"] == "ai"
+    kinds = {d["dtype"]: d for d in api.get(f"/api/audits/{AUDIT}/datasets").json()["datasets"]}
+    assert sorted(kinds) == ["kpi", "pnl"] and kinds["pnl"]["file"] == YEARLY and kinds["kpi"]["file"] == KPI
+    assert all(line["series"] for line in kinds["kpi"]["sheet_map"]["lines"] if line["label"] == "Total MRR")
+    same = put(api, KPI).json()
+    assert same["dtype"] == "kpi" and same["status"] == "same_file", "the same bytes again are the KPI sheet, no replace prompt"
+
+
+def test_a_kpi_sheet_does_not_feed_the_engine_and_waits_for_its_pending_lines(api):
+    upload(api, "blank_vs_zero.csv")
+    put(api, YEARLY, dtype="pnl")
+    out = put(api, KPI, dtype="kpi").json()
+    assert out["dtype"] == "kpi" and out["pending"] > 0
+    assert api.post(f"/api/audits/{AUDIT}/compute").status_code == 409, "a line the calculations use waits for the analyst"
+    waiting = [line["row"] for line in out["sheet_map"]["lines"] if line["pending"]]
+    api.post(f"/api/audits/{AUDIT}/datasets/kpi/lines", json=[{"row": n, "action": "confirm"} for n in waiting])
+    results = api.post(f"/api/audits/{AUDIT}/compute").json()
+    assert [y["period"] for y in results["yearly_basis"]["years"]] == ["FY2021", "FY2022", "FY2023"], "the P&L alone is the input"
+
+
+def test_the_analyst_changes_a_statement_between_pnl_and_kpi_sheet(api):
+    put(api, KPI, dtype="pnl")
+    r = api.post(f"/api/audits/{AUDIT}/datasets/pnl/type", json={"to": "kpi"})
+    assert r.status_code == 200 and r.json()["dtype"] == "kpi" and r.json()["type_source"] == "you"
+    assert [d["dtype"] for d in api.get(f"/api/audits/{AUDIT}/datasets").json()["datasets"]] == ["kpi"]
+    back = api.post(f"/api/audits/{AUDIT}/datasets/kpi/type", json={"to": "pnl"})
+    assert back.status_code == 200 and back.json()["dtype"] == "pnl" and back.json()["sheet_map"]
+
+
+def test_a_sheet_with_no_statement_cannot_be_a_kpi_sheet(api):
+    r = upload(api, "blank_vs_zero.csv", dtype="kpi")
+    assert r.status_code == 400 and "KPI sheet" in r.json()["detail"]
