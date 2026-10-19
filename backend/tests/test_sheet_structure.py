@@ -556,3 +556,164 @@ def test_the_analyst_changes_a_statement_between_pnl_and_kpi_sheet(api):
 def test_a_sheet_with_no_statement_cannot_be_a_kpi_sheet(api):
     r = upload(api, "blank_vs_zero.csv", dtype="kpi")
     assert r.status_code == 400 and "KPI sheet" in r.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# 26.15: how a line is measured (basis), row tags and the new meanings. kpi_bases.csv is synthetic (rule 15): one monthly revenue
+# line, its ytd, ltm and quarterly versions, a forecast row, NEW ... (ARR), ARPA, ACV and the other new meanings, Jan-24 to Dec-24.
+# ---------------------------------------------------------------------------
+BASES = "kpi_bases.csv"
+COST_ROWS = "\nCost of revenue," + ",".join(["40"] * 12) + "\nSales and marketing," + ",".join(["30"] * 12) + "\n"
+
+
+def bases_map(content: bytes = None, reply=None) -> dict:
+    return sh.build(reading(BASES, content), reply)
+
+
+def bases_view(m: dict = None) -> dict:
+    return lines_by_label(sh.view(m or bases_map(), 12, 1))
+
+
+def test_every_line_gets_its_basis_from_its_label_its_meaning_or_its_values():
+    lines = bases_view()
+    assert {k: lines[k]["basis"] for k in lines} == {
+        "Revenue (monthly)": "month", "Revenue current year (YTD)": "ytd", "Revenue last 12 months (LTM)": "ltm",
+        "Revenue - quarterly": "quarter", "Forecast revenue": "month", "ARR": "balance", "NEW Enterprise (ARR)": "month",
+        "NEW SMB (ARR)": "month", "ARPA": "month", "ARPA - Enterprise": "month", "New sales (ACV)": "month",
+        "Annual Contract Value": "month", "Subscriptions": "month", "Contracted revenue": "month",
+        "Enterprise % share of ARR": "month", "Net promoter score": "quarter", "Total customers achieved": "lifetime"}
+    assert sh.basis_cue("Revenue TTM") == "ltm" and sh.basis_cue("Bookings, last 12 months") == "ltm"
+    assert sh.basis_cue("Revenue YTD") == "ytd" and sh.basis_cue("Revenue") is None
+
+
+def test_new_arr_acv_arpa_and_the_other_new_meanings_read_right():
+    lines = bases_view()
+    assert {k: lines[k]["meaning"] for k in ("NEW Enterprise (ARR)", "NEW SMB (ARR)", "New sales (ACV)", "Annual Contract Value", "ARPA",
+                                             "ARPA - Enterprise", "Subscriptions", "Contracted revenue", "ARR")} == {
+        "NEW Enterprise (ARR)": "new_arr", "NEW SMB (ARR)": "new_arr", "New sales (ACV)": "acv", "Annual Contract Value": "acv",
+        "ARPA": "arpa", "ARPA - Enterprise": "arpa", "Subscriptions": "subscriptions", "Contracted revenue": "contracted_revenue",
+        "ARR": "arr"}
+    assert sh.meaning_of("Average revenue per user")[0] == "arpa" and sh.meaning_of("NEW logos (ARR)")[0] == "new_arr"
+    share = lines["Enterprise % share of ARR"]
+    assert (share["role"], share["meaning"]) == ("rate", "other"), "a % share line is a rate, never ARR"
+    assert not share["used"] and not share["series"]
+    assert "arpa" in sh.MONEY and "contracted_revenue" in sh.MONEY and "subscriptions" not in sh.MONEY, "ARPA is money; subscriptions a count"
+
+
+def test_a_label_with_forecast_budget_plan_or_target_tags_its_row_over_its_columns():
+    lines = bases_view()
+    assert {k for k, v in lines.items() if v["tag"] != "actual"} == {"Forecast revenue"}
+    assert [sh.row_tag(x) for x in ("Revenue forecast", "Budget revenue", "ARR plan", "Target ARR", "Revenue", "Planning")] == [
+        "forecast", "budget", "budget", "forecast", "actual", "actual"]
+
+
+def test_only_the_monthly_line_feeds_the_engine_the_others_say_not_used_and_are_never_summed():
+    m = bases_map(content=(MAPPING / BASES).read_bytes() + COST_ROWS.encode())
+    periods = sh.with_periods(m["periods"], 12)
+    assert [x["row"] for x in sh.pick(m["lines"], "revenue")] == [3], "not the ytd, ltm, quarterly or forecast line"
+    pnl = sh.feed(m, 12, 1, {"file": BASES, "sheet": "CSV"})["pnl"]
+    assert [r["revenue"] for r in pnl] == [100 + 10 * i for i in range(12)], "never 100 + 100 + ... summed with the ytd line"
+    assert pnl[0]["cost_of_revenue"] == 40 and pnl[0]["sm_expense"] == 30
+    view = lines_by_label(sh.view(m, 12, 1))
+    assert view["Revenue (monthly)"]["used"] and view["Revenue (monthly)"]["not_used"] is None
+    assert {k: view[k]["not_used"] for k in ("Revenue current year (YTD)", "Revenue last 12 months (LTM)", "Revenue - quarterly",
+                                             "Forecast revenue")} == {
+        "Revenue current year (YTD)": "ytd", "Revenue last 12 months (LTM)": "ltm", "Revenue - quarterly": "quarter",
+        "Forecast revenue": "forecast"}
+    assert not any(view[k]["used"] for k in ("Revenue current year (YTD)", "Revenue last 12 months (LTM)", "Forecast revenue"))
+    assert periods[0]["grain"] == "month"
+
+
+def test_a_balance_feeds_the_series_for_arr_but_a_ytd_arr_line_does_not():
+    m = bases_map()
+    assert [(s["meaning"], s["row"]) for s in sh.kpi_series(m["lines"], sh.with_periods(m["periods"], 12), 1)] == [
+        ("arr", 9), ("new_arr", 10), ("new_arr", 11)]
+    ytd = bases_map(content=(MAPPING / BASES).read_bytes().replace(b"ARR,1200", b"ARR YTD,1200"))
+    assert "arr" not in [s["meaning"] for s in sh.kpi_series(ytd["lines"], sh.with_periods(ytd["periods"], 12), 1)]
+
+
+def test_the_december_of_a_ytd_line_and_the_last_12_months_of_an_ltm_line_match_the_monthly_line():
+    m = bases_map()
+    periods = sh.with_periods(m["periods"], 12)
+    found = sh.basis_checks(m["lines"], periods)
+    assert [(c["row"], c["basis"], c["period"], c["line"], c["reference"], c["ok"]) for c in found] == [
+        (4, "ytd", "Dec-24", 1860, 1860, True), (5, "ltm", "Dec-24", 1860, 1860, True)], "Jan-Nov LTM has no 12 months: not checked"
+    lines = bases_view(m)
+    assert lines["Revenue current year (YTD)"]["checks"] == {} and lines["Revenue last 12 months (LTM)"]["checks"] == {}
+
+
+def test_a_ytd_or_ltm_line_off_by_more_than_half_a_percent_is_flagged():
+    lines = (MAPPING / BASES).read_text().split("\n")
+    lines[3] = lines[3].rsplit(",", 1)[0] + ",1900"        # YTD December 1,900 against 1,860 = +2.2%
+    lines[4] = lines[4].rsplit(",", 1)[0] + ",1865"        # LTM December 1,865 against 1,860 = +0.27%, inside the tolerance
+    bad = bases_view(bases_map("\n".join(lines).encode()))
+    assert bad["Revenue current year (YTD)"]["checks"] == {"ytd_mismatch": ["Dec-24"]}
+    assert bad["Revenue last 12 months (LTM)"]["checks"] == {}
+    lines[4] = lines[4].rsplit(",", 1)[0] + ",1700"
+    worse = bases_view(bases_map("\n".join(lines).encode()))
+    assert worse["Revenue last 12 months (LTM)"]["checks"] == {"ltm_mismatch": ["Dec-24"]}
+    order = [x["label"] for x in sh.view(bases_map("\n".join(lines).encode()), 12, 1)["lines"]][:2]
+    assert order == ["Revenue current year (YTD)", "Revenue last 12 months (LTM)"], "lines with a failed check come first"
+
+
+def test_a_forecast_row_never_feeds_actuals_or_series_and_becomes_a_claim_for_the_months_it_covers():
+    m = bases_map()
+    periods = sh.with_periods(m["periods"], 12)
+    assert 7 not in [x["row"] for x in sh.pick(m["lines"], "revenue")] and sh.pick(m["lines"], "revenue", "forecast")[0]["row"] == 7
+    assert 7 not in sh.used_rows(m["lines"], periods)
+    found = {c["label"]: c for c in sh.claims(m, {}, 12)["lines"]}
+    plan = found["Forecast revenue"]
+    assert (plan["metric"], plan["claim_type"]) == ("revenue", "revenue")
+    assert [(v["period"], v["value"], v["cell"], v["tag"]) for v in plan["values"]] == [("Jan-24–Dec-24", 1920, "B7:M7", "forecast")], \
+        "the twelve months of the row summed, cited to its cells, tagged forecast"
+    assert not {"Revenue current year (YTD)", "Revenue last 12 months (LTM)", "Revenue - quarterly", "Contracted revenue",
+                "ARPA"} & set(found), "other bases and money-per-customer lines are no plan line"
+
+
+def test_when_a_monthly_pnl_feeds_the_engine_only_the_forecast_rows_are_claims():
+    m = bases_map(content=(MAPPING / BASES).read_bytes() + COST_ROWS.encode())
+    found = sh.claims(m, {}, 12)
+    assert [c["label"] for c in found["lines"]] == ["Forecast revenue"], "the monthly P&L is engine input, not a claim"
+    assert found["lines"][0]["values"][0]["tag"] == "forecast"
+
+
+def test_a_stored_map_from_before_basis_and_tag_is_still_read():
+    m = bases_map()
+    for line in m["lines"]:
+        line.pop("basis"), line.pop("tag")
+    view = sh.view(m, 12, 1)
+    assert all(line["not_used"] is None for line in view["lines"]) and view["series"] >= 1
+
+
+def test_a_reply_basis_is_used_but_a_cue_in_the_label_wins_and_a_reply_without_one_keeps_pythons():
+    reply = {"type": "sheet_structure", "header_row": 2, "label_col": 1, "periods": [],
+             "rows": [{"row": 3, "role": "other", "parent_row": None, "meaning": "revenue", "basis": "ltm"},
+                      {"row": 4, "role": "other", "parent_row": None, "meaning": "revenue", "basis": "month"},
+                      {"row": 6, "role": "other", "parent_row": None, "meaning": "revenue"}]}
+    lines = bases_view(bases_map(reply=reply))
+    assert lines["Revenue (monthly)"]["basis"] == "ltm", "the model's reading"
+    assert lines["Revenue current year (YTD)"]["basis"] == "ytd", "the label says YTD"
+    assert lines["Revenue - quarterly"]["basis"] == "quarter", "no basis in the reply: Python's"
+
+
+def test_the_analyst_changes_a_basis_in_one_click_and_the_saved_map_keeps_it(api):
+    out = put(api, BASES, dtype="pnl").json()
+    assert lines_by_label(out["sheet_map"])["Revenue (monthly)"]["basis"] == "month"
+    r = api.post(f"/api/audits/{AUDIT}/datasets/pnl/lines", json=[{"row": 3, "action": "change", "basis": "ytd"}])
+    assert r.status_code == 200
+    changed = lines_by_label(r.json()["sheet_map"])["Revenue (monthly)"]
+    assert (changed["basis"], changed["not_used"], changed["decision"]) == ("ytd", "ytd", "change")
+    assert api.post(f"/api/audits/{AUDIT}/datasets/pnl/lines", json=[{"row": 3, "action": "change", "basis": "yearly"}]).status_code == 400
+
+
+def test_the_saved_line_map_holds_the_basis_and_no_label(api):
+    out = put(api, BASES, dtype="pnl").json()
+    api.post(f"/api/audits/{AUDIT}/datasets/pnl/lines", json=[{"row": line["row"], "action": "confirm"}
+                                                             for line in out["sheet_map"]["lines"] if line["pending"]])
+    versions = lambda: sorted((v for v in api.db["column_mappings"].docs if v.get("kind") == "sheet_map"), key=lambda v: v["version"])  # noqa: E731
+    assert len(versions()) == 1
+    api.post(f"/api/audits/{AUDIT}/datasets/pnl/lines", json=[{"row": 3, "action": "change", "basis": "ltm"}])
+    assert len(versions()) == 2, "a change of basis alone is a new version"
+    saved = versions()[-1]
+    assert {line["basis"] for line in saved["lines"] if line["row"] == 3} == {"ltm"}
+    assert "Revenue" not in json.dumps(saved["lines"]) and "Forecast" not in json.dumps(saved["lines"])

@@ -165,14 +165,17 @@ const plural = (n, one, many) => `${n.toLocaleString("en-US")} ${n === 1 ? one :
 export const S30a_sent = (c) => `Sent to the AI: ${plural(c.lines, "line", "lines")}. Masked: ${plural(c.email, "email", "emails")}, `
   + `${plural(c.phone, "phone number", "phone numbers")}, ${plural(c.person, "name", "names")}, ${plural(c.customer, "customer name", "customer names")}, `
   + `${plural(c.company, "company name", "company names")}. Withheld: ${plural(c.columns, "column", "columns")}, ${plural(c.long, "long cell", "long cells")}.`;
-export const S30B_HEADERS = ["Line", "Role", "Meaning", "Used", "Confidence", "Checks"];
+export const S30B_HEADERS = ["Line", "Role", "Meaning", "Basis", "Used", "Confidence", "Checks"];
 export const CONFIRM_ALL = "Confirm all";
-export const usedText = (line) => (line.used ? "Yes" : "No");
+// Not used: <basis or tag> for a line the calculations could read but do not (a ytd line beside the monthly one, a forecast row).
+export const usedText = (line) => (line.used ? "Yes" : line.not_used ? `Not used: ${line.not_used}` : "No");
 const CHECKS = {
   total_mismatch: (p) => `Total ≠ sum of sub-lines (${p.join(", ")})`,
   no_breakdown: (p) => `No breakdown (${p.join(", ")})`,
   sign_differs: () => "Sign differs from sub-lines",
   sign_convention: () => "Costs written as negatives",
+  ytd_mismatch: (p) => `YTD ≠ sum of months (${p.join(", ")})`,
+  ltm_mismatch: (p) => `LTM ≠ last 12 months (${p.join(", ")})`,
 };
 export const S30C_RATE = "Rate: never read as money";
 /** The checks cell of a line: Python's checks, the rate note, the KPI series label. */
@@ -204,10 +207,12 @@ export const S30_confidence = (line) => {
 };
 export const LINE_ROLES = ["heading", "total", "subline", "rate", "note", "other"];
 export const LINE_MEANINGS = ["revenue", "cost_of_revenue", "sm_expense", "gross_margin", "opex", "ebitda", "arr", "mrr", "new_arr",
-  "churned_mrr", "churn_rate", "growth_rate", "bookings", "acv", "tcv", "customers", "headcount", "cash_balance", "other"];
+  "churned_mrr", "churn_rate", "growth_rate", "bookings", "acv", "tcv", "customers", "headcount", "cash_balance", "arpa", "subscriptions",
+  "contracted_revenue", "other"];
+export const LINE_BASES = ["month", "quarter", "ytd", "ltm", "lifetime", "balance"];
 const MEANING_NAMES = { sm_expense: "S&M expense", cost_of_revenue: "cost of revenue", gross_margin: "gross margin", opex: "OPEX",
   ebitda: "EBITDA", arr: "ARR", mrr: "MRR", new_arr: "new ARR", churned_mrr: "churned MRR", churn_rate: "churn rate",
-  growth_rate: "growth rate", acv: "ACV", tcv: "TCV", cash_balance: "cash balance" };
+  growth_rate: "growth rate", acv: "ACV", tcv: "TCV", cash_balance: "cash balance", arpa: "ARPA", contracted_revenue: "contracted revenue" };
 export const meaningName = (m) => MEANING_NAMES[m] || fieldName(m);
 export const S26_lines = (view) => `Sheet "${view.sheet}" · header on row ${view.header_row} · labels in column ${view.sheet_map.label_col}`;
 export const S16a_MISSING = "Revenue file missing: upload and map it to compute metrics.";

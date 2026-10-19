@@ -912,7 +912,16 @@ def test_a_sheet_skeleton_within_the_limits_reaches_the_provider_as_sent():
     sent = json.loads(adapter.payloads[0])
     assert set(sent) == {"type", "text"} and sent == {"type": "sheet_structure", "text": GOOD_SHEET}
     assert adapter.requests[0]["max_tokens"] == gateway.SHEET_MAX_TOKENS
-    assert result.sheet["rows"][0] == {"row": 3, "role": "total", "parent_row": None, "meaning": "revenue"}
+    assert result.sheet["rows"][0] == {"row": 3, "role": "total", "parent_row": None, "meaning": "revenue", "basis": None}
+
+
+def test_a_sheet_reply_may_carry_a_basis_from_the_closed_list_and_nothing_else():
+    with_basis = json.loads(SHEET_REPLY)
+    with_basis["rows"][0]["basis"] = "ytd"
+    result, adapter = _send(_structure_db(), GOOD_SHEET, "sheet_structure", json.dumps(with_basis))
+    assert result.status == "read" and result.sheet["rows"][0]["basis"] == "ytd", result.reason
+    from app.llm import schemas
+    assert set(schemas.SHEET_BASES) == {"month", "quarter", "ytd", "ltm", "lifetime", "balance"}
 
 
 @pytest.mark.parametrize("name,text,reason", [
@@ -950,6 +959,7 @@ def test_a_year_header_is_a_period_and_the_skeleton_of_a_statement_passes_with_a
     ({"rows": [{"row": 3, "role": "total", "parent_row": 3, "meaning": "revenue"}]}, "other"),
     ({"rows": [{"row": 3, "role": "total", "parent_row": None, "meaning": "revenue"}] * 2}, "item_count"),
     ({"rows": [{"row": 3, "role": "total", "parent_row": None, "meaning": "profit"}]}, "metric_list"),
+    ({"rows": [{"row": 3, "role": "total", "parent_row": None, "meaning": "revenue", "basis": "last year"}]}, "metric_list"),
     ({"label_col": 9}, "other"),
     ({"rows": [{"row": 3, "role": "total", "parent_row": None, "meaning": "revenue", "label": "Revenue"}]}, "schema"),
 ])

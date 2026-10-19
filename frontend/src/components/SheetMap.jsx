@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
-  S26_lines, S30a_sent, S30B_HEADERS, S30c_checks, S30D_TOO_LONG, S30E_ONE_PERIOD, S30_confidence, LINE_ROLES, LINE_MEANINGS,
+  S26_lines, S30a_sent, S30B_HEADERS, S30c_checks, S30D_TOO_LONG, S30E_ONE_PERIOD, S30_confidence, LINE_ROLES, LINE_MEANINGS, LINE_BASES,
   meaningName, CONFIRM_ALL, usedText,
 } from "@/lib/chatUpload";
 
 /**
  * A P&L read as a statement (docs/specs/chat-upload.md section 26.7): one row per sheet line, in place of the mapping table. Line
- * (as in the file, indented by its level) · Role · Meaning · Confidence · Checks. Role and Meaning save on change (one click); a
+ * (as in the file, indented by its level) · Role · Meaning · Basis · Used · Confidence · Checks. Role, Meaning and Basis save on change (one click); a
  * line that waits has Confirm. The server orders the lines: failed checks, then the lines that wait, then sheet order.
  */
 export default function SheetMap({ view, decideLines }) {
@@ -62,7 +62,7 @@ function LineRow({ line, view, decideLines }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const checks = S30c_checks(line);
-  const failed = Object.keys(line.checks || {}).some((c) => c === "total_mismatch" || c === "no_breakdown");
+  const failed = Object.keys(line.checks || {}).some((c) => ["total_mismatch", "no_breakdown", "ytd_mismatch", "ltm_mismatch"].includes(c));
   const send = async (decision) => {
     setSaving(true);
     setError(null);
@@ -87,6 +87,7 @@ function LineRow({ line, view, decideLines }) {
       <td className="py-1.5 pr-3" style={{ paddingLeft: `${(line.indent || 0) * 12}px` }} data-testid={`line-label-${line.row}`}>{line.label}</td>
       <td className="py-1.5 pr-3">{select("role", LINE_ROLES, "Role")}</td>
       <td className="py-1.5 pr-3">{select("meaning", LINE_MEANINGS, "Meaning")}</td>
+      <td className="py-1.5 pr-3">{line.basis ? select("basis", LINE_BASES, "Basis") : null}</td>
       <td className="py-1.5 pr-3" data-testid={`line-used-${line.row}`}>{usedText(line)}</td>
       <td className={`py-1.5 pr-3 ${line.pending ? "text-amber-700" : ""}`} data-testid={`line-confidence-${line.row}`}>{S30_confidence(line)}</td>
       <td className={`py-1.5 pr-3 ${failed ? "text-rose-700" : "text-slate-600"}`} data-testid={`line-checks-${line.row}`}>

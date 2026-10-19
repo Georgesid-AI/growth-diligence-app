@@ -1543,7 +1543,7 @@ def _schema_check(exc: Exception) -> str:
     """"metric_list" when the schema fails on a metric outside the list and nothing else, else "schema". Read from
     the error locations and types only, never from the input they quote."""
     errors = exc.errors() if hasattr(exc, "errors") else []
-    if errors and all(e["type"] == "literal_error" and e["loc"][-1:] in (("metric",), ("meaning",), ("role",)) for e in errors):
+    if errors and all(e["type"] == "literal_error" and e["loc"][-1:] in (("metric",), ("meaning",), ("role",), ("basis",)) for e in errors):
         return "metric_list"
     return "schema"
 

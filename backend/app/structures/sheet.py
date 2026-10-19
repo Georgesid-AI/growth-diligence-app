@@ -17,7 +17,7 @@ from openpyxl.utils import get_column_letter
 
 from .. import column_rules as cr
 from .. import forecast_claims
-from ..llm.schemas import SHEET_MEANINGS, SHEET_ROLES
+from ..llm.schemas import SHEET_BASES, SHEET_MEANINGS, SHEET_ROLES
 from . import redact
 
 MAX_ROWS = redact.SHEET_MAX_ROWS
@@ -28,14 +28,20 @@ INHERITED = 60                  # the confidence of a meaning a sub-line takes f
 PNL_FIELDS = ("revenue", "cost_of_revenue", "sm_expense")       # the monthly P&L the engine reads
 KPI_SERIES = ("arr", "mrr", "new_arr", "churn_rate")            # stored as company-reported series, never engine input
 SM_CLAIM_LABEL = "S&M (sum of Sales and Marketing)"
-KPI_MEANINGS = ("arr", "mrr", "new_arr", "churned_mrr", "churn_rate", "customers")   # what makes a sheet a KPI sheet (26.14)
+NOT_PLAN_LINES = ("arpa", "contracted_revenue", "acv", "tcv", "new_arr")    # their label may hold "revenue", but they are no plan line
+KPI_MEANINGS = ("arr", "mrr", "new_arr", "churned_mrr", "churn_rate", "customers", "arpa", "subscriptions")   # what makes a sheet a KPI sheet (26.14)
 COSTS = ("cost_of_revenue", "sm_expense", "opex")               # a cost line written as negatives is read as positive
 MONEY = ("revenue", "cost_of_revenue", "sm_expense", "gross_margin", "opex", "ebitda", "arr", "mrr", "new_arr", "churned_mrr",
-         "bookings", "acv", "tcv", "cash_balance")
+         "bookings", "acv", "tcv", "cash_balance", "arpa", "contracted_revenue")
 YEARLY_FIELDS = ("revenue", "cost_of_revenue", "sm_expense", "gross_margin")     # what the yearly-basis metrics read
 TRACK_FIELDS = ("revenue", "cost_of_revenue", "sm_expense", "gross_margin", "opex", "ebitda")
-FAILED_CHECKS = ("total_mismatch", "no_breakdown")              # these lines come first in the table
+FAILED_CHECKS = ("total_mismatch", "no_breakdown", "ytd_mismatch", "ltm_mismatch")              # these lines come first in the table
 NOT_LINES = ("heading", "note")
+# How a line is measured and which lines feed anything (26.15).
+BALANCE_MEANINGS = ("arr", "mrr", "customers", "cash_balance")      # their basis is balance unless the label says otherwise
+STOCK_MEANINGS = BALANCE_MEANINGS + ("headcount", "subscriptions")  # a balance basis is read for these
+FEEDS = PNL_FIELDS + KPI_SERIES + ("gross_margin", "opex", "ebitda")    # the meanings a line can feed (a monthly P&L, a series, a yearly input)
+ROW_TAGS = ("forecast", "budget")
 
 # Meaning synonyms (26.10), first match in this order. "words" stand in the label as whole words; "whole" is the whole label.
 MEANING_DEFS = (
@@ -48,19 +54,34 @@ MEANING_DEFS = (
     ("opex", {"words": ("operating expenses", "opex", "overheads", "general and administrative", "general & administrative", "g&a",
                         "research and development", "r&d", "personnel costs", "payroll", "salaries")}),
     ("new_arr", {"words": ("new arr", "net new arr", "new business arr")}),
+    ("arpa", {"words": ("arpa", "average revenue per account", "average revenue per customer", "average revenue per user",
+                        "average revenue per")}),
+    ("contracted_revenue", {"words": ("contracted revenue",)}),
     ("churn_rate", {"words": ("churn rate",)}),
     ("churned_mrr", {"words": ("churned mrr", "lost mrr", "churned arr", "mrr churn")}),
     ("growth_rate", {"words": ("growth", "growth rate", "yoy", "mom")}),
     ("arr", {"words": ("arr", "annual recurring revenue")}),
     ("mrr", {"words": ("mrr", "monthly recurring revenue")}),
     ("bookings", {"words": ("bookings", "booking")}),
-    ("acv", {"words": ("acv", "average contract value")}),
+    ("acv", {"words": ("acv", "average contract value", "annual contract value")}),
     ("tcv", {"words": ("tcv", "total contract value")}),
     ("revenue", {"words": ("revenue", "revenues", "net sales", "total revenue"), "whole": ("sales",)}),
     ("customers", {"words": ("customers", "customer count", "clients", "subscribers", "logos")}),
+    ("subscriptions", {"words": ("subscriptions", "subscription count")}),
     ("headcount", {"words": ("headcount", "head count", "fte", "ftes", "employees")}),
     ("cash_balance", {"words": ("cash balance", "closing cash", "ending cash"), "whole": ("cash",)}),
 )
+# Labels that name a meaning whatever else stands in them (26.15): "NEW ... (ARR)", "New sales (ACV)", a "% share" line.
+_NEW_ARR = re.compile(r"^new\b.*\barr$")
+_NEW_ACV = re.compile(r"^new\b.*\bacv$")
+_SHARE = re.compile(r"%.*\bshare\b|\bshare\b.*%")
+# Basis cues in a label (26.15), first match in this order; a cue wins over the reply.
+_BASIS_CUES = ((re.compile(r"\bytd\b|\bcurrent year\b|\byear to date\b"), "ytd"),
+               (re.compile(r"\bltm\b|\bttm\b|\blast 12 months\b|\blast twelve months\b|\btrailing (?:12|twelve) months\b"), "ltm"),
+               (re.compile(r"\blifetime\b|\btotal\b.*\bachieved\b"), "lifetime"),
+               (re.compile(r"\bquarterly\b"), "quarter"))
+_TAG_CUES = ((re.compile(r"\bforecast(?:s|ed)?\b"), "forecast"), (re.compile(r"\btargets?\b"), "forecast"),
+             (re.compile(r"\bbudget(?:s|ed)?\b"), "budget"), (re.compile(r"\bplan(?:ned)?\b"), "budget"))
 _RATE = re.compile(r"%|\bas % of\b|\b(?:rate|ratio|growth|yoy|mom)\b")
 _MARGIN = re.compile(r"\bmargin\b")
 _COST_SECTION = re.compile(r"(?i)\b(?:costs?|expenses?|opex|overheads|operating)\b")
@@ -291,6 +312,12 @@ def meaning_of(label: str) -> Tuple[str, int]:
     text = _norm(label)
     bare = re.sub(r"^(?:total|sum)\s+", "", text)
     padded = f" {text} "
+    if _SHARE.search((label or "").lower()):
+        return "other", 100
+    if _NEW_ARR.match(text):
+        return "new_arr", 100
+    if _NEW_ACV.match(text):
+        return "acv", 100
     for meaning, defs in MEANING_DEFS:
         whole = defs.get("whole", ())
         if bare in defs["words"] or bare in whole or text in whole:
@@ -311,6 +338,82 @@ def is_rate(label: str, meaning: str, values: List[Optional[float]]) -> bool:
     present = [v for v in values if v is not None]
     return meaning in ("gross_margin", "churn_rate", "churned_mrr", "growth_rate") and bool(present) \
         and all(-1 <= v <= 1 for v in present)
+
+
+def basis_cue(label: str) -> Optional[str]:
+    """The basis a label says outright (26.15): current year / YTD = ytd; last 12 months / LTM / TTM = ltm; lifetime / total ...
+    achieved = lifetime; quarterly = quarter. None when it says none."""
+    text = _norm(label)
+    return next((basis for rx, basis in _BASIS_CUES if rx.search(text)), None)
+
+
+def _every_third_month(line: Dict, periods: List[Dict]) -> bool:
+    """True when the line holds a value only in every 3rd month column (at least two values, six month columns)."""
+    months = []
+    for k, p in enumerate(periods or []):
+        found = period_of(p["header"]) if p.get("grain") == "month" else None
+        if found:
+            months.append((int(found["start"][:4]) * 12 + int(found["start"][5:]), line["values"][k]))
+    present = sorted(m for m, v in months if v is not None)
+    return len(months) >= 6 and len(present) >= 2 and all(b - a == 3 for a, b in zip(present, present[1:]))
+
+
+def basis_of(line: Dict, meaning: str, periods: Optional[List[Dict]] = None) -> Optional[str]:
+    """Python's reading of how a line is measured (26.15), None for a line with no figure: the label's cue; else balance for ARR, MRR,
+    customers and cash; else quarter for values only in every 3rd month; else month."""
+    if not _has_values(line):
+        return None
+    cue = basis_cue(line["label"])
+    if cue:
+        return cue
+    if meaning in BALANCE_MEANINGS:
+        return "balance"
+    return "quarter" if _every_third_month(line, periods) else "month"
+
+
+def row_tag(label: str) -> str:
+    """A label that holds forecast, target (forecast) or budget, plan (budget) as a word tags the whole row, whatever its columns
+    say (26.15). "actual" when it holds none."""
+    text = _norm(label)
+    found = sorted((m.start(), tag) for rx, tag in _TAG_CUES for m in [rx.search(text)] if m)
+    return found[0][1] if found else "actual"
+
+
+def line_tag(line: Dict) -> str:
+    """The row tag of a stored line: forecast, budget or actual (no row tag; the columns' tags apply)."""
+    return line.get("tag") if line.get("tag") in ROW_TAGS else "actual"
+
+
+def cell_tag(line: Dict, period: Dict) -> str:
+    """The tag of one figure: its row's when the row is tagged forecast or budget, else its column's."""
+    return line_tag(line) if line_tag(line) != "actual" else period["tag"]
+
+
+def not_used(line: Dict) -> Optional[str]:
+    """Why a line the engine could read is not read (26.15): its row tag (forecast, budget) or its basis (quarter, ytd, ltm, lifetime,
+    balance for a meaning that is no balance). None when it is read. Only month, or balance for a balance, feeds anything."""
+    return line_tag(line) if line_tag(line) != "actual" else basis_unused(line)
+
+
+def basis_unused(line: Dict) -> Optional[str]:
+    """The line's basis when it is none the engine reads (26.15), else None."""
+    basis = line.get("basis")
+    if basis is None or basis == "month" or (basis == "balance" and line["meaning"] in STOCK_MEANINGS):
+        return None
+    return basis
+
+
+def _tag_lines(lines: List[Dict]) -> None:
+    """Each line's row tag, in place: from its label, else its nearest parent's."""
+    by_row = {line["row"]: line for line in lines}
+    for line in lines:
+        line["tag"] = row_tag(line["label"])
+    for line in lines:
+        if line["tag"] == "actual":
+            for a in _ancestors(line, by_row):
+                if row_tag(a["label"]) != "actual":
+                    line["tag"] = row_tag(a["label"])
+                    break
 
 
 def label_column(grid: List[List], header: int, period_cols: List[int], width: int) -> Optional[int]:
@@ -448,8 +551,8 @@ def _section(line: Dict, by_row: Dict[int, Dict], lines: List[Dict], parent_of=l
     return " · ".join(out)
 
 
-def python_labels(lines: List[Dict]) -> None:
-    """Python's role, parent and meaning for every line, in place, under "python" (26.2)."""
+def python_labels(lines: List[Dict], periods: Optional[List[Dict]] = None) -> None:
+    """Python's role, parent, meaning and basis for every line, in place, under "python" (26.2, 26.15)."""
     indented = any(line["indent"] for line in lines)
     parents = _parents_by_indent(lines) if indented else _parents_by_blocks(lines)
     children = {}
@@ -471,6 +574,7 @@ def python_labels(lines: List[Dict]) -> None:
         else:
             role = "other"
         line["python"] = {"role": role, "parent_row": parents[line["row"]], "meaning": meaning, "confidence": confidence}
+
     for line in lines:                       # "Sales" alone in a cost or OPEX section is S&M expense (rule 4)
         if _norm(line["label"]) == "sales" and _COST_SECTION.search(
                 _section(line, by_row, lines, lambda x: x["python"]["parent_row"])):
@@ -481,13 +585,15 @@ def python_labels(lines: List[Dict]) -> None:
                 own["meaning"] == "other" or (own["meaning"] == "opex" and parent["python"]["meaning"] in ("sm_expense",
                                                                                                          "cost_of_revenue"))):
             own.update(meaning=parent["python"]["meaning"], confidence=INHERITED)
+    for line in lines:                       # the basis reads the final meaning, a sub-line's inherited one included
+        line["python"]["basis"] = basis_of(line, line["python"]["meaning"], periods)
 
 
 def label_lines(reading: Dict, reply: Optional[Dict] = None) -> List[Dict]:
     """Every line with its role, parent and meaning: the reply's for the rows it names (`source` "ai" where its meaning is not
     Python's), Python's for the others, then the rules that win (26.2). Returns the lines (a copy)."""
     lines = [dict(line) for line in reading["lines"]]
-    python_labels(lines)
+    python_labels(lines, reading.get("periods"))
     rows = {line["row"] for line in lines}
     replied = {r["row"]: r for r in (reply or {}).get("rows") or [] if r.get("row") in rows}
     for line in lines:
@@ -498,12 +604,22 @@ def label_lines(reading: Dict, reply: Optional[Dict] = None) -> List[Dict]:
                         parent_row=parent if parent in rows and parent != line["row"] else None)
             agrees = theirs["meaning"] == mine["meaning"]
             line.update(source="rules" if agrees else "ai", confidence=mine["confidence"] if agrees else None)
+            line["basis"] = _reply_basis(line, theirs.get("basis"), mine["basis"])
         else:
             line.update(role=mine["role"], meaning=mine["meaning"], parent_row=mine["parent_row"], source="rules",
-                        confidence=mine["confidence"])
+                        confidence=mine["confidence"], basis=mine["basis"])
     _break_cycles(lines)
     _rules_win(lines)
+    _tag_lines(lines)
     return lines
+
+
+def _reply_basis(line: Dict, basis: Optional[str], python: Optional[str]) -> Optional[str]:
+    """The basis of a line the reply names (26.15): a cue in the label wins, then the reply's, then Python's. None for a line with
+    no figure."""
+    if not _has_values(line):
+        return None
+    return basis_cue(line["label"]) or (basis if basis in SHEET_BASES else None) or python
 
 
 def _break_cycles(lines: List[Dict]) -> None:
@@ -529,6 +645,8 @@ def _rules_win(lines: List[Dict]) -> None:
                 line.update(meaning="sm_expense", source="rules", confidence=100)
         if is_rate(line["label"], line["meaning"], line["values"]) and line["role"] != "rate":
             line["role"] = "rate"
+        if _SHARE.search(line["label"].lower()) and line["meaning"] != "other":
+            line.update(meaning="other", source="rules", confidence=100)      # a "% share" line is a rate, never a figure
 
 
 def apply_decisions(lines: List[Dict], decided: List[Dict]) -> List[Dict]:
@@ -543,8 +661,11 @@ def apply_decisions(lines: List[Dict], decided: List[Dict]) -> List[Dict]:
                 line[key] = d[key]
         if "parent_row" in d:
             line["parent_row"] = d["parent_row"]
+        if d.get("basis") in SHEET_BASES and _has_values(line):
+            line["basis"] = d["basis"]
         line.update(source=d.get("source") or line.get("source"), decision=d.get("decision"))
     _break_cycles(lines)
+    _tag_lines(lines)
     return lines
 
 
@@ -554,7 +675,7 @@ def apply_decisions(lines: List[Dict], decided: List[Dict]) -> List[Dict]:
 def sublines(total: Dict, lines: List[Dict]) -> List[Dict]:
     """The lines a total adds up: those that hang from it; for a total with none, those that hang from the heading above it."""
     def counted(line):
-        return line["role"] not in ("rate", "heading", "note") and _has_values(line)
+        return line["role"] not in ("rate", "heading", "note") and _has_values(line) and line_tag(line) == line_tag(total)
     own = [x for x in lines if x.get("parent_row") == total["row"] and counted(x)]
     if own:
         return own
@@ -594,6 +715,58 @@ def check(lines: List[Dict], periods: List[Dict]) -> None:
     for line in lines:
         if line["meaning"] in COSTS and _negative(line):
             line["checks"]["sign_convention"] = []
+    for found in basis_checks(lines, periods):
+        if not found["ok"]:
+            by_row = next(x for x in lines if x["row"] == found["row"])
+            by_row["checks"].setdefault(f"{found['basis']}_mismatch", []).append(found["period"])
+
+
+def basis_checks(lines: List[Dict], periods: List[Dict]) -> List[Dict]:
+    """The yearly and rolling lines against the monthly line of the same meaning (26.15): the last month of a fiscal year of a ytd line
+    equals the sum of the monthly line over that year, an ltm line equals the sum over its last 12 months, each within 0.5%.
+    [{"row", "basis", "period", "line", "reference", "ok"}]; a period whose months are not all there is not checked. Costs are
+    compared as positive amounts."""
+    months = {periods[k]["start"]: k for k in monthly_columns(periods) if periods[k].get("start")}
+    out = []
+    for line in lines:
+        if line.get("basis") not in ("ytd", "ltm") or line_tag(line) != "actual" or line["role"] in NOT_LINES + ("rate",):
+            continue
+        reference = pick(lines, line["meaning"])
+        if not reference or not months:
+            continue
+        starts = sorted(months)
+
+        def monthly(start_list):
+            """The monthly line(s) summed over these months, None when one month is blank."""
+            total = 0.0
+            for start in start_list:
+                for ref in reference:
+                    v = ref["values"][months[start]]
+                    if v is None:
+                        return None
+                    total += v
+            return total
+
+        def compare(k, window):
+            value, ref = line["values"][k], monthly(window)
+            if value is None or ref is None:
+                return
+            a, b = (abs(value), abs(ref)) if line["meaning"] in COSTS else (value, ref)
+            out.append({"row": line["row"], "basis": line["basis"], "period": periods[k]["header"], "line": value, "reference": ref,
+                        "ok": abs(a - b) <= TOLERANCE * abs(b) + 1e-9})
+        if line["basis"] == "ytd":
+            years = {}
+            for start in starts:
+                years.setdefault(periods[months[start]]["year"], []).append(start)
+            for year_months in years.values():
+                if len(year_months) == 12:
+                    compare(months[year_months[-1]], year_months)
+        else:
+            for i, start in enumerate(starts):
+                window = starts[i - 11:i + 1]
+                if i >= 11 and _ym(_add_months(int(window[0][:4]), int(window[0][5:]), 11)) == start:
+                    compare(months[start], window)
+    return out
 
 
 def _negative(line: Dict) -> bool:
@@ -613,12 +786,16 @@ def _ancestors(line: Dict, by_row: Dict[int, Dict]) -> List[Dict]:
     return out
 
 
-def pick(lines: List[Dict], meaning: str) -> List[Dict]:
+def pick(lines: List[Dict], meaning: str, tag: str = "actual") -> List[Dict]:
     """The lines of a meaning that do not hang from a line of the same meaning, rates, headings and notes left out: summed, they
-    are the field (S&M is the sum of the Sales and Marketing totals when no single S&M line holds both)."""
+    are the field (S&M is the sum of the Sales and Marketing totals when no single S&M line holds both). Only a line measured by
+    the month (a balance for ARR, MRR, customers and the like) and with no forecast or budget row tag is read (26.15): a ytd, ltm,
+    quarter or lifetime line, or a forecast row, is never summed with them. `tag` "forecast" or "budget" picks the rows with that
+    row tag instead (their basis still month or balance)."""
     by_row = {line["row"]: line for line in lines}
     return [x for x in lines if x["meaning"] == meaning and x["role"] not in ("rate",) + NOT_LINES and _has_values(x)
-            and not any(a["meaning"] == meaning for a in _ancestors(x, by_row))]
+            and line_tag(x) == tag and basis_unused(x) is None
+            and not any(a["meaning"] == meaning and line_tag(a) == tag for a in _ancestors(x, by_row))]
 
 
 def _field_values(chosen: List[Dict], k: int, scale: float, meaning: str) -> Optional[float]:
@@ -667,7 +844,7 @@ def kpi_series(lines: List[Dict], periods: List[Dict], scale: float) -> List[Dic
     by_row = {line["row"]: line for line in lines}
     out = []
     for line in lines:
-        if line["meaning"] not in KPI_SERIES or line["role"] in NOT_LINES or not _has_values(line):
+        if line["meaning"] not in KPI_SERIES or line["role"] in NOT_LINES or not _has_values(line) or not_used(line):
             continue
         if any(a["meaning"] == line["meaning"] for a in _ancestors(line, by_row)):
             continue
@@ -734,28 +911,32 @@ def yearly_input(lines: List[Dict], periods: List[Dict], scale: float, meta: Dic
             "reported": [r for r in reported if r["revenue"]]}
 
 
-def claims_found(lines: List[Dict], periods: List[Dict], ds: Dict, fiscal_year_end: int) -> Optional[Dict]:
+def claims_found(lines: List[Dict], periods: List[Dict], ds: Dict, fiscal_year_end: int, rows_only: bool = False) -> Optional[Dict]:
     """The forecast-table claims of a statement (section 20, amended by 26.6): its plan lines, found by section 20's own rules (no
     model), over the columns tagged forecast, budget or unknown; an actual-tagged column is no claim, and a line the map reads as a
-    cost ("Sales" in an OPEX section) is none either. The shape of forecast_claims.read, each value with its column's tag."""
+    cost ("Sales" in an OPEX section) is none either. The shape of forecast_claims.read, each value with its column's tag. A row tagged
+    forecast or budget (26.15) is a claim in every column it has a figure in, whatever its column's tag; with `rows_only` (a monthly
+    P&L feeds the engine) those rows are the only claims. A line not measured by the month is none."""
     found = {}
     for line in lines:
-        metric = forecast_claims.metric_of(line["label"]) if line["meaning"] not in COSTS and line["role"] != "rate" else None
+        metric = forecast_claims.metric_of(line["label"]) if line["meaning"] not in COSTS + NOT_PLAN_LINES and line["role"] != "rate" \
+            and not basis_unused(line) and (line_tag(line) != "actual" or not rows_only) else None
         if not metric:
             continue
         parts = []
         for k, p in enumerate(periods):
             value = line["values"][k]
-            if value is None or p["tag"] == "actual" or p["grain"] not in ("year", "quarter", "half", "month"):
+            tag = cell_tag(line, p)
+            if value is None or tag == "actual" or p["grain"] not in ("year", "quarter", "half", "month"):
                 continue
             day = date.fromisoformat(p["start"] + "-01") if p["grain"] == "month" else None
             part = forecast_claims._part(p["header"], day, fiscal_year_end)
             if part:
                 parts.append({"fy": part[0], "grain": part[1], "index": part[2], "value": value, "j": p["col"] - 1,
-                              "header": p["header"], "tag": p["tag"]})
+                              "header": p["header"], "tag": tag})
         if parts:
             found[line["row"]] = {"row": line["row"], "label": line["label"], "metric": metric, "parts": parts}
-    plan = _sm_claim(lines, periods, fiscal_year_end)
+    plan = None if rows_only else _sm_claim(lines, periods, fiscal_year_end)
     if plan:
         found[plan["row"]] = plan
     return forecast_claims.assemble(found, {**ds, "first_col": 1}, fiscal_year_end)
@@ -832,8 +1013,8 @@ def build(reading: Dict, reply: Optional[Dict] = None, decided: Optional[List[Di
     lines = apply_decisions(label_lines(reading, reply), decided or [])
     return {"header_row": reading["header_row"], "label_col": reading["label_col"], "ai_read": reply is not None,
             "periods": [{k: p[k] for k in ("col", "header", "grain", "tag", "tag_how")} for p in reading["periods"]],
-            "lines": [{k: line.get(k) for k in ("row", "label", "indent", "values", "role", "meaning", "parent_row", "source",
-                                                "confidence", "decision", "python")} for line in lines],
+            "lines": [{k: line.get(k) for k in ("row", "label", "indent", "values", "role", "meaning", "basis", "tag", "parent_row",
+                                                "source", "confidence", "decision", "python")} for line in lines],
             "too_long": reading["too_long"]}
 
 
@@ -849,6 +1030,8 @@ def view(sheet_map: Dict, fiscal_year_end: int, scale: float) -> Dict:
         line["pending"] = pending(line, used)
         line["series"] = line["row"] in series
         line["used"] = line["row"] in used
+        feeds = line["meaning"] in FEEDS and line["role"] not in ("rate",) + NOT_LINES and _has_values(line)
+        line["not_used"] = not_used(line) if feeds and not line["used"] else None
     order = sorted(lines, key=lambda x: (0 if any(c in x["checks"] for c in FAILED_CHECKS) else 1 if x["pending"] else 2,
                                          x["row"]))
     months = [p for p in periods if p["grain"] == "month"]
@@ -857,8 +1040,9 @@ def view(sheet_map: Dict, fiscal_year_end: int, scale: float) -> Dict:
     return {"header_row": sheet_map["header_row"], "label_col": get_column_letter(sheet_map["label_col"]),
             "periods": [{"col": get_column_letter(p["col"]), "header": p["header"], "grain": p["grain"], "tag": p["tag"]}
                         for p in periods],
-            "lines": [{k: x.get(k) for k in ("row", "label", "indent", "role", "meaning", "parent_row", "source", "confidence",
-                                             "decision", "checks", "pending", "series", "used")} for x in order],
+            "lines": [{k: x.get(k) for k in ("row", "label", "indent", "role", "meaning", "basis", "tag", "parent_row", "source",
+                                             "confidence", "decision", "checks", "pending", "series", "used", "not_used")}
+                      for x in order],
             "ai_read": bool(sheet_map.get("ai_read")),
             "pending": sum(1 for x in lines if x["pending"]), "too_long": bool(sheet_map.get("too_long")),
             "grain": "monthly" if months else "yearly", "monthly_pnl": bool(pnl),
@@ -880,16 +1064,17 @@ def feed(sheet_map: Dict, fiscal_year_end: int, scale: float, meta: Dict) -> Dic
 
 
 def claims(sheet_map: Dict, ds: Dict, fiscal_year_end: int) -> Optional[Dict]:
-    """The forecast claims of a stored statement file, or None when it feeds a monthly P&L (its months are engine input)."""
+    """The forecast claims of a stored statement file. When it feeds a monthly P&L (its months are engine input) only its rows tagged
+    forecast or budget are claims (26.15)."""
     periods = with_periods(sheet_map["periods"], fiscal_year_end)
-    if monthly_pnl(sheet_map["lines"], periods, 1):
-        return None
-    return claims_found(sheet_map["lines"], periods, ds, fiscal_year_end)
+    pnl = monthly_pnl(sheet_map["lines"], periods, 1)
+    return claims_found(sheet_map["lines"], periods, ds, fiscal_year_end, rows_only=bool(pnl))
 
 
 def saved_lines(sheet_map: Dict) -> List[Dict]:
     """A map as column_mappings keeps it: per line its row, role, meaning, parent, source and decision. No text."""
-    return [{k: line.get(k) for k in ("row", "role", "meaning", "parent_row", "source", "decision")} for line in sheet_map["lines"]]
+    return [{k: line.get(k) for k in ("row", "role", "meaning", "basis", "parent_row", "source", "decision")}
+            for line in sheet_map["lines"]]
 
 
 def pending_count(sheet_map: Optional[Dict]) -> int:

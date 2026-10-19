@@ -1172,13 +1172,37 @@ describe("a P&L read as a statement (section 26)", () => {
     expect(api.decideColumns).not.toHaveBeenCalled();
   });
 
+  test("Basis is a drop-down that saves in one click; a line the calculations could read but do not says Not used: <basis>", async () => {
+    const lines = [
+      line(3, "Revenue (monthly)", { meaning: "revenue", basis: "month", used: true }),
+      line(4, "Revenue current year (YTD)", { meaning: "revenue", basis: "ytd", not_used: "ytd" }),
+      line(7, "Forecast revenue", { meaning: "revenue", basis: "month", tag: "forecast", not_used: "forecast" }),
+      line(5, "Revenue last 12 months (LTM)", { meaning: "revenue", basis: "ltm", not_used: "ltm", checks: { ltm_mismatch: ["Dec-24"] } }),
+      line(9, "Section", { role: "heading", basis: null }),
+    ];
+    await mount({ datasets: [STATEMENT({}, { lines })] });
+    await flush();
+    expect(S30B_HEADERS.slice(0, 4)).toEqual(["Line", "Role", "Meaning", "Basis"]);
+    expect(q("line-basis-3").value).toBe("month");
+    expect([...q("line-basis-3").options].map((o) => o.value)).toEqual(["month", "quarter", "ytd", "ltm", "lifetime", "balance"]);
+    expect(q("line-used-3").textContent).toBe("Yes");
+    expect(q("line-used-4").textContent).toBe("Not used: ytd");
+    expect(q("line-used-7").textContent).toBe("Not used: forecast");
+    expect(q("line-checks-5").textContent).toBe("LTM ≠ last 12 months (Dec-24)");
+    expect(q("line-basis-9")).toBeNull();            // a heading has no figure, so no basis
+    api.decideLines.mockResolvedValue(STATEMENT({}, { lines: lines.map((l) => (l.row === 4 ? { ...l, basis: "month", not_used: null, used: true } : l)) }));
+    await change(q("line-basis-4"), "month");
+    expect(api.decideLines).toHaveBeenLastCalledWith("a1", "pnl", [{ row: 4, action: "change", basis: "month" }]);
+    expect(q("line-used-4").textContent).toBe("Yes");
+  });
+
   test("the Used column says Yes or No; an AI line the calculations do not use reads AI suggestion without – confirm", async () => {
     await mount({ datasets: [STATEMENT({ pending: 1 }, { pending: 1, lines: [
       line(3, "Revenue", { source: "ai", confidence: null, pending: true, used: true }),
       line(4, "Headcount", { source: "ai", confidence: null, meaning: "headcount", used: false }),
       line(5, "Cost", { used: false })] })] });
     await flush();
-    expect(S30B_HEADERS).toEqual(["Line", "Role", "Meaning", "Used", "Confidence", "Checks"]);
+    expect(S30B_HEADERS).toEqual(["Line", "Role", "Meaning", "Basis", "Used", "Confidence", "Checks"]);
     expect([3, 4, 5].map((r) => q(`line-used-${r}`).textContent)).toEqual(["Yes", "No", "No"]);
     expect(q("line-confidence-3").textContent).toBe("AI suggestion – confirm");
     expect(q("line-confidence-4").textContent).toBe("AI suggestion");
