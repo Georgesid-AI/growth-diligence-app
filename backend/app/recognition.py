@@ -949,7 +949,6 @@ def model_text(sheets, company_name: Optional[str], mapping: Dict[str, str], wit
 # ---------------------------------------------------------------------------
 # What the server stores and hands on (sections 5.5, 8 and 9): no I/O, closed words and numbers
 # ---------------------------------------------------------------------------
-GRID_ROWS = 2000                    # rows of a sheet kept to read the file again (the first 2,000; a statement is far shorter)
 NO_MAPPING_TYPES = ("monthly_revenue_report", "revenue_summary", "financial_statements", "arr_mrr_snapshot")
 SAME_SOURCE = "Not applicable – same source"
 CONFIRM_ONLY = ("confidence_80", "no_as_of_month")          # the reasons that wait for a confirmation only (section 7)
@@ -961,12 +960,12 @@ SERIES_RULES = {
 
 
 def pack_sheets(sheets) -> List[Dict]:
-    """The sheets of a file as the dataset keeps them to read the file again: name, whether it was a CSV, the first GRID_ROWS rows,
+    """The sheets of a file as the dataset keeps them to read the file again: name, whether it was a CSV, every row (the caller refuses a dataset over the size limit; nothing is cut),
     each cell's indent and the merged spans (JSON-safe lists)."""
     out = []
     for s in sheets:
         fmt = s.fmt or {}
-        out.append({"name": s.sheet, "csv": s.raw_headers is None and not fmt, "grid": [list(r) for r in (s.grid or [])[:GRID_ROWS]],
+        out.append({"name": s.sheet, "csv": s.raw_headers is None and not fmt, "grid": [list(r) for r in (s.grid or [])],
                     "indents": [[r, c, n] for (r, c), n in (fmt.get("indents") or {}).items()],
                     "merged": [list(m) for m in fmt.get("merged") or []]})
     return out

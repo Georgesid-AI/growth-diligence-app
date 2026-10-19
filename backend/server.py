@@ -1071,6 +1071,7 @@ async def _store_recognised(a: dict, audit_id: str, filename: str, size: int, di
            "file_hash": digest, "size_bytes": size, "uploaded_at": usage_mod.now(), "mapped_at": None, "type_source": type_source,
            "looks": {"shape": "table", "rows": 0, "columns": 0}, "unit_scale": 1, "unit_note": None, "wide": None, "raw_headers": None,
            "first_col": 1, "title_currency": None, "recognition_only": True, **_recognition_fields(recognition)}
+    _check_dataset_size(doc)
     await db.datasets.replace_one({"audit_id": audit_id, "dtype": "revenue"}, doc, upsert=True)
     await _usage_update(audit_id, lambda u: usage_mod.record_upload(u, "revenue"))
     await allowance_mod.record_for_audit(db, audit_id, files=1)
@@ -1173,6 +1174,8 @@ async def _load(a: dict, audit_id: str, chosen: str, sheet: "cr.Sheet", filename
         doc.update(sheet_map=sheet_map, mapping={}, header_row=sheet_map["header_row"], row_count=len(sheet_map["lines"]),
                    months=sheet_mod.months_found(sheet_map), unit_scale=statement["unit_scale"], unit_note=statement["unit_note"],
                    title_currency=statement["title_currency"] or sheet.currency)
+    if extra:
+        _check_dataset_size(doc)
     await db.datasets.replace_one({"audit_id": audit_id, "dtype": chosen}, doc, upsert=True)
     if drop and drop != chosen:
         await db.datasets.delete_one({"audit_id": audit_id, "dtype": drop})
@@ -1284,6 +1287,18 @@ def _recognition_decision(current: dict, body: RecognitionDecision, decisions: d
     else:
         raise bad
     return out
+
+
+# A dataset is one MongoDB document (16 MB); the stored sheets of a recognised file are part of it. Over the limit the upload stops with
+# this message: nothing is cut and nothing is stored (decision of the owner on PR 135).
+DATASET_MAX_BYTES = 15 * 1024 * 1024
+DATASET_TOO_LARGE = "This file is too large to store with its recognition. Split it or remove empty rows and upload again."
+
+
+def _check_dataset_size(doc: dict) -> None:
+    import json
+    if len(json.dumps(doc, default=str)) > DATASET_MAX_BYTES:
+        raise HTTPException(413, DATASET_TOO_LARGE)
 
 
 CONFIRMED_CURRENCY = "Currency (confirmed)"

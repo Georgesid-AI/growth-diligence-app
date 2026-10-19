@@ -501,3 +501,5 @@ docs/architecture.md (recorded in this PR).
    only a missing currency holds the audit (decision for the owner, see the pull request).
 7. The recognition call of a file the rules type comes after its column-mapping call (one call per new file, §5.5); a file the rules cannot type is asked first (§5.6).
 
+
+8. **Stored sheets** (owner decision on PR 135): the dataset keeps every row of each recognised sheet, never a cut. A dataset is one MongoDB document; over `DATASET_MAX_BYTES` (15 MB) the upload stops with a clear message (413) and nothing is stored. Stored sheets are deleted with the audit and follow the retention of other datasets.

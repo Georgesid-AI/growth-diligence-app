@@ -969,3 +969,25 @@ def test_the_upload_stores_both_tables_and_the_choice_travels_to_the_engine_and_
     assert results["recognition"]["series_source"] == "dated_list" and results["recognition"]["cross_check"] == "mismatch"
     assert [d["total"] for d in results["revenue_series"]["data"]] == [12010, 12615, 12250, 12370, 11865, 12610]
     assert results["revenue_series"]["basis"] == "column"
+
+
+# ---------------------------------------------------------------------------
+# The stored sheets: the whole sheet within the dataset size limit, never cut (owner decision on PR 135)
+# ---------------------------------------------------------------------------
+def test_a_sheet_over_the_size_limit_is_refused_with_a_message_and_nothing_is_stored_or_cut(api, monkeypatch):
+    import server
+    rules_only(api)
+    monkeypatch.setattr(server, "DATASET_MAX_BYTES", 2000)
+    for name, content in ((MONTHLY, monthly_bytes()), ("pnl_multi_period.csv", (FIXTURES / "pnl_multi_period.csv").read_bytes())):
+        res = upload(api, name, content)
+        assert res.status_code == 413 and res.json()["detail"] == server.DATASET_TOO_LARGE, name
+    assert api.db["datasets"].docs == [], "nothing is stored"
+
+
+def test_a_long_sheet_under_the_limit_is_kept_whole(api):
+    rules_only(api, "2025-12-31")
+    rows = "".join(f"Customer {i},{10000 + i},{20000 + i},{30000 + i}\n" for i in range(2600))
+    text = "Revenue by customer (EUR),,,\nCustomer,Jan-25,Feb-25,Mar-25\n" + rows
+    assert upload(api, "long.csv", text.encode()).status_code == 200
+    kept = api.db["datasets"].docs[0]["recognition_sheets"][0]["grid"]
+    assert len(kept) == 2602, "every row of the sheet is kept"
