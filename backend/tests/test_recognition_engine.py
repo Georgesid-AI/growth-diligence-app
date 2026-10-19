@@ -105,3 +105,21 @@ def test_no_narrative_slice_carries_the_recognition_block_or_the_basis_of_the_se
         text = json.dumps(gateway._slice_for_step(out, step), default=str)
         for word in ("series_basis", "currency_confirmed", "excluded_columns", "monthly_revenue_report"):
             assert word not in text, f"{word!r} reached the {step} slice"
+
+
+def test_the_memo_lists_a_dated_list_that_does_not_match_the_revenue_row_under_worth_flagging():
+    """Revenue-file-recognition.md section 6.7: the mismatch is a finding, never a banner blocker (CLAUDE.md rule 21)."""
+    from test_ic_memo import inputs
+    from claim_matching_support import engine_results
+    from app import ic_memo
+    sheets = cr.read_workbook((FIXTURES / "recognition" / "two_tables_side_mismatch.csv").read_bytes(), "two.csv")
+    result = rec.recognise(sheets, as_of_month="2025-12-31", decisions={"series_source": "dated_list"})
+    stored = {**engine_results(), "recognition": {"file_type": "monthly_revenue_report", "series_basis": "column", "periods": 6,
+                                                  "excluded_columns": 0, "currency_confirmed": True, "source": "revenue_file",
+                                                  "series_source": "dated_list", "cross_check": "mismatch", "cross_check_months": 6}}
+    text = ic_memo.build_memo(**inputs(stored=stored))
+    flagged = text.split("## Worth flagging")[1].split("## Data gaps")[0]
+    assert ic_memo.S_TABLES_DIFFER.format(n=6, table="dated list") in flagged
+    assert result["series_source"]["cross_check"]["status"] == "mismatch"
+    matched = ic_memo.build_memo(**inputs(stored={**stored, "recognition": {**stored["recognition"], "cross_check": "match"}}))
+    assert "do not match month by month" not in matched

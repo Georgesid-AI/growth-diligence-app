@@ -503,6 +503,9 @@ class RecognitionSummary(Block):
     excluded_columns: Plain
     currency_confirmed: bool
     source: Literal["revenue_file", "pnl"]
+    series_source: Optional[Literal["metrics_block", "dated_list"]] = None     # a sheet with two tables: which one supplies the series
+    cross_check: Optional[Literal["match", "mismatch"]] = None                  # the other table against it, month by month (6.7)
+    cross_check_months: Optional[Plain] = None
 
 
 class CohortRow(Block):

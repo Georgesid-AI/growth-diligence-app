@@ -844,3 +844,128 @@ def test_a_confirmed_pnl_lets_run_audit_past_the_mapping_stage_and_the_engine_re
     results = api.db["audits"].docs[0]["results"]
     assert results["revenue_reconciliation"]["status"] == "not_applicable", "the P&L is the only revenue source"
     assert results["recognition"]["source"] == "pnl" and results["recognition"]["file_type"] == "financial_statements"
+
+
+# ---------------------------------------------------------------------------
+# A missing currency asks the analyst to confirm it (owner request of 19 Oct 2026)
+# ---------------------------------------------------------------------------
+NO_CURRENCY_COLUMN = ("Customer,Invoice Date,Amount\n" + "".join(
+    f"Customer {c},2025-{m:02d}-05,{1000 + 10 * c + m}\n" for m in range(1, 7) for c in range(1, 5))).encode()
+
+
+def test_a_file_with_no_currency_column_asks_to_confirm_the_currency_and_never_says_a_required_field_is_not_mapped(api):
+    rules_only(api, "2025-06-30")
+    body = upload(api, "no_currency.csv", NO_CURRENCY_COLUMN).json()
+    assert body["dtype"] == "revenue" and body["missing_required"] == [] and body["currency_pending"] is True
+    assert body["recognition"]["currency"] == {"code": None, "state": "confirm"}
+    assert run_stage(api, "mapping")["status"] == "needs_review", "the audit does not run on a currency nobody confirmed"
+    done = decide(api, action="change", part="currency", currency="EUR").json()
+    assert done["mapping"]["currency"] == "Currency (confirmed)" and not done.get("currency_pending")
+    assert done["recognition"]["currency"] == {"code": "EUR", "state": "you"}
+    assert run_stage(api, "mapping")["status"] == "done" and run_stage(api, "engine")["status"] == "done"
+    results = api.db["audits"].docs[0]["results"]
+    assert not any("unmapped currency" in m["metric"] for m in results["missing_data"]), "every row took the confirmed currency"
+    assert results["revenue_series"]["data"], "the confirmed currency reached the engine"
+
+
+def test_a_monthly_revenue_report_needs_no_customer_id_column_and_holds_no_required_field(api):
+    rules_only(api, AS_OF)
+    body = upload(api, MONTHLY, monthly_bytes()).json()
+    assert body["dtype"] == "revenue" and body["recognition_only"] is True
+    assert body["missing_required"] == [] and body["miss"] is None and body["columns"] == [] and body["fields"]["required"] == []
+    assert "customer_id" not in body["mapping"] and body["pending"] == 0 and body["saved"] is True
+    summary = upload(api, "revenue_summary_by_product.csv", (FIXTURES / "revenue_summary_by_product.csv").read_bytes(), replace="true").json()
+    assert summary["recognition"]["file_type"] == "revenue_summary" and summary["missing_required"] == [] and summary["fields"]["required"] == []
+
+
+# ---------------------------------------------------------------------------
+# Section 6.7: a sheet with a metrics block and a dated list (owner request of 19 Oct 2026)
+# ---------------------------------------------------------------------------
+REVENUE_ROW = [12010, 12130, 12250, 12370, 12490, 12610]
+STACKED, SIDE = "two_tables_stacked_match.csv", "two_tables_side_mismatch.csv"
+
+
+def test_a_sheet_with_a_metrics_block_and_a_dated_list_detects_both_and_classifies_each(rec):
+    for name in (STACKED, SIDE):
+        got = recognise(rec, name)
+        assert got["recognised"] and got["label_mode"] == "metric", f"{name}: the rows of the list are no labels of the block"
+        assert [t["kind"] for t in got["tables"]] == ["metrics_block", "dated_list"], name
+        assert [t["file_type"] for t in got["tables"]] == ["monthly_revenue_report", "monthly_revenue_report"], name
+        assert got["tables"][1]["months"] == 6
+        assert (got["revenue_row"]["row"], got["revenue_row"]["label"]) == (3, "Recognised revenue"), name
+
+
+def test_a_dated_list_that_sums_to_the_recognised_revenue_row_month_by_month_is_a_cross_check_and_not_a_second_source(rec):
+    got = recognise(rec, STACKED)
+    assert got["series_source"]["supplier"] == "metrics_block" and got["series_source"]["state"] == "auto"
+    assert got["series_source"]["cross_check"] == {"status": "match", "months": 6, "months_off": 0, "max_gap_pct": 0}
+    assert got["series_basis"] == "row" and [s["value"] for s in got["series"]] == REVENUE_ROW
+    assert got["needs_click"] is False and rec.choices_waiting(got) == 0, "a match asks the analyst nothing"
+
+
+def test_a_dated_list_within_one_percent_of_the_row_still_matches_and_one_over_does_not(rec):
+    near = STACKED_TEXT.replace("2025-01-10,9010", "2025-01-10,9100")           # Jan: 12,100 against 12,010 is 0.7% over
+    far = STACKED_TEXT.replace("2025-01-10,9010", "2025-01-10,9300")            # Jan: 12,300 against 12,010 is 2.4% over
+    assert rec.recognise(csv_sheets(near), as_of_month=AS_OF_YEAR_END)["series_source"]["cross_check"]["status"] == "match"
+    off = rec.recognise(csv_sheets(far), as_of_month=AS_OF_YEAR_END)["series_source"]
+    assert (off["cross_check"]["status"], off["cross_check"]["months_off"], off["state"]) == ("mismatch", 1, "click")
+
+
+STACKED_TEXT = (FIXTURES / STACKED).read_text()
+
+
+def test_a_dated_list_that_does_not_match_leaves_the_choice_to_the_analyst_until_it_is_made(rec):
+    got = recognise(rec, SIDE)
+    source = got["series_source"]
+    assert (source["supplier"], source["state"]) == ("metrics_block", "click")
+    assert source["cross_check"]["status"] == "mismatch" and source["cross_check"]["months_off"] == 2
+    assert source["cross_check"]["max_gap_pct"] == pytest.approx(0.05, abs=1e-4)
+    assert got["needs_click"] is True and rec.choices_waiting(got) == 1
+    assert [s["value"] for s in got["series"]] == REVENUE_ROW, "until the choice, the revenue row is the series"
+
+
+@pytest.mark.parametrize("choice, basis, first", [("metrics_block", "row", 12010), ("dated_list", "column", 12010)])
+def test_the_analysts_choice_decides_which_table_supplies_the_series(rec, choice, basis, first):
+    got = rec.recognise(sheets_of(SIDE), as_of_month=AS_OF_YEAR_END, decisions={"series_source": choice})
+    assert (got["series_source"]["supplier"], got["series_source"]["state"]) == (choice, "you")
+    assert got["series_basis"] == basis and got["needs_click"] is False
+    assert got["series"][0]["value"] == first and got["series"][0]["month"] == "2025-01"
+    values = [s["value"] for s in got["series"]]
+    assert values == (REVENUE_ROW if choice == "metrics_block" else [12010, 12615, 12250, 12370, 11865, 12610])
+    if choice == "dated_list":
+        assert got["series_rows"] == [3, 4, 5, 6, 7, 8], "the citation names the rows of the list"
+
+
+def test_a_row_that_is_not_recognised_revenue_never_wins_by_itself_even_when_the_list_matches(rec):
+    text = STACKED_TEXT.replace("Recognised revenue", "MRR")
+    got = rec.recognise(csv_sheets(text), as_of_month=AS_OF_YEAR_END)
+    assert got["revenue_row"]["kind"] == "recurring" and got["series_source"]["cross_check"]["status"] == "match"
+    assert got["series_source"]["state"] == "click", "an MRR row does not win: the analyst chooses"
+
+
+def test_a_sheet_with_one_table_has_no_series_source_and_no_tables(rec):
+    got = recognise(rec, MONTHLY, as_of=AS_OF)
+    assert got["tables"] == [] and got["series_source"] is None
+
+
+def test_the_list_beside_the_block_is_sent_without_its_dates_as_labels(rec):
+    """The block's labels go to the model as written; the dated list is not a label column (rule 14, section 5.3)."""
+    text = rec.model_text(sheets_of(SIDE), company_name="Fixture Target Ltd", mapping={}, withheld=(), file_hash="0" * 64)
+    labels = [line.split(": ", 1)[1] for line in text.split("\n") if " label r" in line]
+    assert labels == ["Recognised revenue", "Customers", "Logo churn %"]
+
+
+def test_the_upload_stores_both_tables_and_the_choice_travels_to_the_engine_and_the_memo(api):
+    rules_only(api)
+    body = upload(api, SIDE, (FIXTURES / SIDE).read_bytes()).json()
+    got = body["recognition"]
+    assert [t["kind"] for t in got["tables"]] == ["metrics_block", "dated_list"] and got["series_source"]["state"] == "click"
+    assert body["pending"] == 1 and run_stage(api, "mapping")["status"] == "needs_review", "the audit waits for the choice"
+    assert decide(api, part="series_source", action="change", series_source="maybe").status_code == 400
+    done = decide(api, action="change", part="series_source", series_source="dated_list").json()["recognition"]
+    assert done["series_source"]["supplier"] == "dated_list" and done["needs_click"] is False
+    assert run_stage(api, "mapping")["status"] == "done" and run_stage(api, "engine")["status"] == "done"
+    results = api.db["audits"].docs[0]["results"]
+    assert results["recognition"]["series_source"] == "dated_list" and results["recognition"]["cross_check"] == "mismatch"
+    assert [d["total"] for d in results["revenue_series"]["data"]] == [12010, 12615, 12250, 12370, 11865, 12610]
+    assert results["revenue_series"]["basis"] == "column"

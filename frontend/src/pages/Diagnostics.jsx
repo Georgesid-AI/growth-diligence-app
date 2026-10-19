@@ -4,7 +4,7 @@ import { Loader2, ShieldAlert, CheckCircle2, ArrowRight } from "lucide-react";
 import { Layout } from "@/components/Layout";
 import { Provenance } from "@/components/Provenance";
 import { getAudit, getResults, reportUsage } from "@/lib/api";
-import { S22_RECONCILIATION } from "@/lib/chatUpload";
+import { S22_RECONCILIATION, S22_SAME_SOURCE } from "@/lib/chatUpload";
 import { fmtCount, fmtCurrency } from "@/lib/format";
 import { ANOMALIES_NOT_COMPUTED } from "@/lib/gapLists";
 import { seeGlossary } from "@/lib/glossary";
@@ -124,7 +124,8 @@ export function ReconciliationTable({ rec, currency }) {
   return (
     <section data-testid="reconciliation" className="bg-white border border-[#E5E7EB] rounded-lg p-5 mb-6">
       <h3 className="font-heading font-semibold text-slate-900 text-sm mb-4">{S22_RECONCILIATION}</h3>
-      {!rec.available ? <p className="text-xs text-slate-600">{seeGlossary(rec.reason)}</p> : (
+      {rec.status === "not_applicable" ? <p className="text-xs text-slate-600" data-testid="reconciliation-not-applicable">{S22_SAME_SOURCE}</p>
+        : !rec.available ? <p className="text-xs text-slate-600">{seeGlossary(rec.reason)}</p> : (
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>

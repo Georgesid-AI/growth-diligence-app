@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { BLOCKERS_CHANGED } from "@/components/BlockerBanner";
 import SheetMap from "@/components/SheetMap";
-import { uploadChatFile, getDatasets, decideColumns, decideLines, reportUsage, changeDatasetType, confirmForecastClaims } from "@/lib/api";
+import RecognitionLine from "@/components/RecognitionLine";
+import { uploadChatFile, getDatasets, decideColumns, decideLines, decideRecognition, reportUsage, changeDatasetType, confirmForecastClaims } from "@/lib/api";
 import {
   S2_EXPLAINER_CONSENT, S3_EXPLAINER_NO_CONSENT, S4_DROP_ZONE_LEAD, S4_DROP_ZONE_BOLD, S6_UNKNOWN_TYPE, S7_REFUSED, S7B_XLS_REFUSED, S12_MODEL_FAILED, S_UPLOAD_RETRY,
   S20_NOTE_PLACEHOLDER, S21_NOTE_REFUSED, NOTE_MAX, ALLOWED_EXTENSIONS, REASONS, TYPE_LABELS, S5_head, S8_replace,
@@ -188,6 +189,14 @@ export default function UploadChat({ audit, extras, onViews, onStaged, onMapping
     return next;
   };
 
+  // One decision about the recognition of a file (revenue-file-recognition.md section 6.6): the server answers the dataset view.
+  const decideRecognitionPart = async (view, body) => {
+    const next = await decideRecognition(audit.id, view.dtype, body);
+    setMessages((all) => all.map((m) => (m.kind === "system" && m.dtype === view.dtype ? { ...m, view: next } : m)));
+    announce();
+    return next;
+  };
+
   // The analyst changes the type a stored file was read as: the stored sheet is read again as the new type.
   const retype = async (view, to, replace = false) => {
     const next = await changeDatasetType(audit.id, view.dtype, to, replace);
@@ -217,7 +226,7 @@ export default function UploadChat({ audit, extras, onViews, onStaged, onMapping
         </div>
         {messages.map((m) => (
           <Message key={m.id} m={m} audit={audit} unstage={unstage} extras={extras} lastReason={lastReason} setLastReason={setLastReason}
-            decide={decide} decideLines={decideSheetLines} retype={retype} claimsSaved={claimsSaved} showInfo={m.id === firstTable}
+            decide={decide} decideLines={decideSheetLines} decideRecognition={decideRecognitionPart} retype={retype} claimsSaved={claimsSaved} showInfo={m.id === firstTable}
             onType={(file, dtype) => { setMessages((all) => all.filter((x) => x.id !== m.id)); send(file, { dtype }, m.bubble); }}
             onReplace={(file, dtype) => { setMessages((all) => all.filter((x) => x.id !== m.id)); send(file, { dtype, replace: true }, m.bubble); }}
             onKeep={() => { openPrompts.current.delete(m.bubble); setMessages((all) => all.filter((x) => x.id !== m.id && x.id !== m.bubble)); }} />
@@ -242,7 +251,7 @@ export default function UploadChat({ audit, extras, onViews, onStaged, onMapping
   );
 }
 
-function Message({ m, audit, unstage, extras, lastReason, setLastReason, decide, decideLines, retype, claimsSaved, showInfo, onType, onReplace, onKeep }) {
+function Message({ m, audit, unstage, extras, lastReason, setLastReason, decide, decideLines, decideRecognition, retype, claimsSaved, showInfo, onType, onReplace, onKeep }) {
   if (m.kind === "analyst") return <AnalystBubble m={m} unstage={unstage} />;
   if (m.kind === "text") {
     return <Bubble side="left" testid="chat-text-system">{m.text}</Bubble>;
@@ -271,7 +280,7 @@ function Message({ m, audit, unstage, extras, lastReason, setLastReason, decide,
     );
   }
   return <SystemBubble view={m.view} audit={audit} extras={extras} lastReason={lastReason} setLastReason={setLastReason} decide={decide}
-    decideLines={decideLines} retype={retype}
+    decideLines={decideLines} decideRecognition={decideRecognition} retype={retype}
     claimsSaved={claimsSaved} showInfo={showInfo} />;
 }
 
@@ -301,7 +310,7 @@ function AnalystBubble({ m, unstage }) {
   );
 }
 
-function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide, decideLines, retype, claimsSaved, showInfo }) {
+function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide, decideLines, decideRecognition, retype, claimsSaved, showInfo }) {
   const [openUnused, setOpenUnused] = useState(false);
   const [showColumns, setShowColumns] = useState(false);       // a miss hides the rows behind its message until asked
   const shown = sortColumns(view.columns.filter((c) => c.state !== "unused"));
@@ -313,7 +322,8 @@ function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide, 
   return (
     <Bubble side="left" testid={`chat-system-${view.dtype}`}>
       <div className="font-medium text-slate-900" data-testid="bubble-head">{S5_head(view)}</div>
-      <TypeLine view={view} retype={retype} />
+      {!view.recognition_only && <TypeLine view={view} retype={retype} />}
+      <RecognitionLine view={view} decide={decideRecognition} reportingCurrency={audit.reporting_currency} />
       {view.unit_note && <p className="text-xs text-slate-600 mt-1" data-testid="bubble-units">{view.unit_note}</p>}
       {view.status === "same_file" && view.version != null && (
         <p className="text-xs text-slate-600 mt-1" data-testid="bubble-same">{S14_same(view.version)}</p>
@@ -322,7 +332,7 @@ function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide, 
       {showInfo && <WhyThisMatters statement={!!view.sheet_map} />}
       {view.dtype === "crm" && <CrmFieldsHelp />}
       {view.sheet_map && <SheetMap view={view} decideLines={decideLines} />}
-      {!view.sheet_map && <div className="overflow-x-auto mt-3">
+      {!view.sheet_map && !view.recognition_only && <div className="overflow-x-auto mt-3">
         <table className="w-full text-xs" data-testid={`mapping-table-${view.dtype}`}>
           {view.sheet && <caption className="text-left text-slate-500 pb-1" data-testid={`mapping-sheet-${view.dtype}`}>{S26_sheet(view)}</caption>}
           <thead>
@@ -357,7 +367,7 @@ function SystemBubble({ view, audit, extras, lastReason, setLastReason, decide, 
       </div>}
       {view.forecast_claims && !view.read_as_claims && (
         <ForecastClaims key={`${view.file}:${view.uploaded_at}`} view={view} auditId={audit.id} onSaved={() => claimsSaved?.(view)} />)}
-      {view.dtype === "revenue" && extras?.(view)}
+      {view.dtype === "revenue" && !view.recognition_only && extras?.(view)}
       <div className={`mt-3 text-xs font-mono ${status === S13_READY || view.read_as_claims ? "text-emerald-700" : "text-amber-700"}`} data-testid={`status-${view.dtype}`}>
         {status}
       </div>

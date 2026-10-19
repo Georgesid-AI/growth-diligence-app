@@ -5,11 +5,12 @@
 import { seeGlossary } from "./glossary";
 
 export const S2_EXPLAINER_CONSENT =
-  "The model reads every column header and a masked sample to propose the mapping. When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table.";
+  "The model reads every column header and a masked sample to propose the mapping. When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table. "
+  + "In a revenue file the AI also sees the row labels when they are metric names such as revenue, ARR or customers; where the rows may be customers it sees Row 1, Row 2 instead, never a name.";
 export const S3_EXPLAINER_NO_CONSENT =
   "Mapping is done by rules only: AI-assisted reading is off for this audit. You map the columns the rules cannot decide.";
 export const S4_DROP_ZONE_LEAD =
-  "Drop files here or use the paperclip. Required: Revenue by customer (monthly, 24–36 months). The audit will not run without a revenue file. Optional: CRM export and P&L. ";
+  "Drop files here or use the paperclip. Required: a revenue file – revenue by customer, invoices or a monthly revenue report (24–36 months). The audit will not run without a revenue file. Optional: CRM export and P&L. ";
 export const S4_DROP_ZONE_BOLD = ".xlsx or .csv only";      // the only bold part of the text
 export const S6_UNKNOWN_TYPE = "Could not tell what this file holds. Pick its type:";
 export const S7_REFUSED = "This window takes .xlsx and .csv files. Decks go in the deck panel below.";
@@ -24,6 +25,7 @@ export const S18_MISMATCH = "Name does not match";
 export const S20_NOTE_PLACEHOLDER = "Why? Up to 60 characters; no file names, figures or names.";
 export const S21_NOTE_REFUSED = "Leave out file names, figures and cell values: this note is kept with the usage counts.";
 export const S22_RECONCILIATION = "Revenue reconciliation";
+export const S22_SAME_SOURCE = "Not applicable – same source";      // the P&L is the only revenue source (revenue-file-recognition.md section 8)
 export const NOTE_MAX = 60;
 
 export const ALLOWED_EXTENSIONS = ["xlsx", "csv"];
@@ -46,6 +48,7 @@ const LOADED_LABELS = { revenue: "A revenue file", crm: "A CRM file", pnl: "A P&
 
 // S5: the month range appears once the date column is confirmed; before that the line ends on the row count.
 export const S5_head = (view) => {
+  if (view.recognition_only) return "Detected: Revenue file";                    // no rows, no columns: its recognition line says the rest
   const head = `Detected: ${typeLabel(view)} · ${view.row_count.toLocaleString("en-US")} ${view.sheet_map ? "lines" : "rows"}`;
   return view.months ? `${head} · ${view.months.count} months (${fmtMonth(view.months.first)} – ${fmtMonth(view.months.last)})` : head;
 };
@@ -150,9 +153,12 @@ export const S29_PARAGRAPHS = [
   "Amount can be mapped but is not used in any calculation.",
 ];
 export const S13_READY = "Ready – press Run audit";
+const S31j_status = (n) => (n === 1 ? "1 choice waits for you" : `${n} choices wait for you`);
 export const S13_status = (view) => {
+  if (view.recognition_only) return view.pending > 0 ? S31j_status(view.pending) : S13_READY;      // S31j: the choices of its recognition
   if (view.sheet_map) return S30h_status(view);                              // a statement file (section 26)
   if (view.read_as_claims) return S28_saved(view.read_as_claims.claims);     // read as claims: it waits for nothing (section 20)
+  if (view.currency_pending) return S31j_status(view.pending + 1);          // no currency column: the analyst confirms the currency (S31k)
   if (view.miss && view.miss.missing.length > 0) return `Required field not mapped: ${view.miss.missing.map(fieldName).join(", ")}`;
   if (view.pending > 0) return `${view.pending} columns wait for your decision`;
   if (view.missing_required.length > 0) return `Required field not mapped: ${view.missing_required.map(fieldName).join(", ")}`;

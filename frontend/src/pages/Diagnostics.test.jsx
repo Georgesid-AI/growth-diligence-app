@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import Diagnostics from "./Diagnostics";
 import * as api from "@/lib/api";
-import { S22_RECONCILIATION } from "@/lib/chatUpload";
+import { S22_RECONCILIATION, S22_SAME_SOURCE } from "@/lib/chatUpload";
 
 jest.mock("@/lib/api", () => ({ getAudit: jest.fn(), getResults: jest.fn(), reportUsage: jest.fn() }));
 jest.mock("react-router-dom", () => ({ useParams: () => ({ id: "a1" }), useNavigate: () => jest.fn() }), { virtual: true });
@@ -55,6 +55,17 @@ test("a month above 2% with a window total under 2% shows in the table and raise
 test("a gap % of a month whose P&L figure is 0 reads as a dash", async () => {
   await mount({ ...REC, by_month: [month("2024-01", 100, 0)] });
   expect(q("reconciliation-row").children[4].textContent).toBe("—");
+});
+
+test("a P&L that is the only revenue source shows Not applicable – same source in place of the table", async () => {
+  await mount({ available: false, status: "not_applicable", reason: S22_SAME_SOURCE, by_month: [] });
+  expect(S22_SAME_SOURCE).toBe("Not applicable – same source");
+  const section = q("reconciliation");
+  expect(section.querySelector("h3").textContent).toBe(S22_RECONCILIATION);
+  expect(q("reconciliation-not-applicable").textContent).toBe("Not applicable – same source");
+  expect(section.querySelector("table")).toBeNull();
+  expect(q("reconciliation-row")).toBeNull();
+  expect(document.body.querySelector('[role="alert"]')).toBeNull();
 });
 
 test("without a P&L the section is hidden", async () => {

@@ -60,8 +60,8 @@ from schemas.metrics import safe_problems
 from .. import allowance, disclosure, formatting
 from ..structures import redact as structure_redact
 from . import cache, guards, prompt_store, redaction, schemas, step_payloads
-from .schemas import (FILE_RECOGNITION, FILE_TYPE, MAPPING_FIELDS, FileRecognitionReply, SHEET_STRUCTURE, STRUCTURE_TYPES, DeckUsage, FileTypeReply, LabellingReply, Narrative,
-                      NarrativeResponse, SheetStructureReply, StructureRead, StructureReply, UsageResponse, narrative_output_schema)
+from .schemas import (FILE_RECOGNITION, FILE_TYPE, MAPPING_FIELDS, SHEET_STRUCTURE, STRUCTURE_TYPES, DeckUsage, FileRecognitionReply,
+                      FileTypeReply, LabellingReply, Narrative, NarrativeResponse, SheetStructureReply, StructureRead, StructureReply, UsageResponse, narrative_output_schema)
 
 logger = logging.getLogger("growth.llm")
 

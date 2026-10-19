@@ -1,5 +1,5 @@
 # Spec: Revenue file recognition, separate from classification
-Status: **Draft for review (2026-10-19). Spec and failing tests only; no implementation.** Source: George's request of 19 Oct 2026. Location:
+Status: **Implemented (2026-10-19, with the additions of section 6.7 and the amendments listed in section 15).** Source: George's request of 19 Oct 2026. Location:
 docs/specs/revenue-file-recognition.md. Extends docs/specs/chat-upload.md §3, §4.2, §16, §19 and §26 and amends its S2 (§11). The numbers of the
 screen lines continue chat-upload.md: S31a–S31k. The owner's decisions of 2026-10-19 are in §14.
 
@@ -196,7 +196,7 @@ s1 c1 profile: distinct 12, typical length 14, shape Aa Aa
   the per-column samples of §5.1, drawn from different rows and never from the same row in two neighbouring columns (decisions 5 and 7, §14).
 - At most 400 rows with text per sheet, title rows and header row included (as chat-upload.md §26.11): the first 400 are read, by Python and by the
   model.
-- A records layout has no row labels: its rows are data, never sent beyond the sample.
+- A records layout has no row labels: its rows are data, never sent beyond the sample. A snapshot sends no label lines either (its rows carry no information the sample does not).
 
 ### 5.4 The gateway checks the text again
 `structure_text_problem(text, "file_recognition", context, mapping)` refuses, with a closed problem code: a line of no kind (`not_cells`); more than 6
@@ -343,8 +343,27 @@ If the model cannot be read, the rules' outcome stands, with the same thresholds
 | `{action: "change", part: "currency", currency}` | an ISO code (`ISO_CURRENCIES`); else 400 |
 | `{action: "change", part: "money_kind", money_kind}` | `revenue` or `volume` (chat-upload.md §15); else 400 |
 | `{action: "change", part: "sheet", sheet}` | a recognised sheet of the workbook; else 400 |
+| `{action: "change", part: "series_source", series_source}` | `metrics_block` or `dated_list`, on a sheet with two tables (section 6.7); else 400 |
 The server re-checks every choice (a row must be a candidate, a column a period up to the as-of month) and answers with the dataset view. Decisions
 are saved with the dataset (`recognition_decisions`) and survive a reload; a replaced file clears them. Typed text is never accepted.
+
+### 6.7 A sheet with two tables: a dated list and a metrics block (owner request of 19 Oct 2026)
+A sheet may hold a **dated list** (a header reading Date, Month or Period beside a text header such as Value, and below it at least three rows
+holding a date and a number; the dates may be days, they are summed by month) and a **metrics block** (labels down a column, periods across,
+read as §2 to §4 read any labels sheet; its header row is found by the existing rule, within the first ten rows). The list sits below the block or
+beside it, and its rows are never labels of the block: they leave the label statistics (§4.2) and the text the model reads (§5.3).
+- **Detect both, classify each.** The result carries `tables` `[{kind: "metrics_block" | "dated_list", file_type, header_row, ...}]`, positions and counts only, never text.
+  The block is typed by §3; a dated list is a `monthly_revenue_report`.
+- **Which table supplies the revenue series (`series_source` `{supplier, state, cross_check}`).** A metrics row of **recognised revenue** (kind `recognised`, §2.1) wins.
+  When the dated list sums to that row **month by month within 1%** (`SOURCE_TOLERANCE`; every month of the row up to the boundary must be in the list),
+  the list is recorded as a **cross-check** (`cross_check.status` `match`), not a second source: `supplier` is `metrics_block`, `state` `auto`, no click.
+  When they do not match (`mismatch`, with `months`, `months_off` and the largest `max_gap_pct`), or the row is not recognised revenue (an MRR or ARR row never wins
+  by itself), `state` is `click`: **the analyst chooses** (`POST …/recognition` `{action: "change", part: "series_source"}`), the revenue row stands until the choice, and
+  the audit waits for it like for any other click. The choice is `you`. A list that supplies the series gives `series_basis` `column` and cites its own rows (`series_rows`).
+- **The mismatch appears in Worth flagging.** The engine keeps `series_source`, `cross_check` and `cross_check_months` in the `recognition` block (§9); the memo
+  lists the mismatch under Worth flagging in one closed sentence naming the table the series is read from. It is a finding, never a banner blocker (rule 21).
+- Not built: a list whose header is not within reach of the block's header rule, more than one dated list per sheet (only the first is compared) and a
+  list beside a metrics block that is itself a dated-rows table.
 
 ## 7. What the analyst sees
 On Upload & Mapping, under the file's bubble head (above the mapping table where there is one), `frontend/src/components/RecognitionLine.jsx` renders
@@ -353,7 +372,7 @@ to find the cell. (Wording chosen under rule 19, as chat-upload.md §13 did; Geo
 
 | Id | Where | Text |
 |---|---|---|
-| S31a | the type line | Type: {Invoice transactions / Customer revenue / Monthly revenue report / Revenue summary / Financial statements / ARR/MRR snapshot} ({by rules / AI suggestion / your choice}) and a **Change** button that offers the other five types. An unclassed type reads "Type: choose the type" with a drop-down of the two candidates. A type waiting for a click reads "Type: {type} ({source}). {reason}" with Correct and Change (`TYPE_REASON_TEXT`: `rules_and_model_disagree` Two readings differ. Choose the type. · `type_unsure` Choose the type.) |
+| S31a | the type line | Type: {Invoice transactions / Customer revenue / Monthly revenue report / Revenue summary / Financial statements / ARR/MRR snapshot} ({by rules / AI suggestion, not verified / your choice}) and a **Change** button that offers the other five types. An unclassed type reads "Type: choose the type" with a drop-down of the two candidates. A type waiting for a click reads "Type: {type} ({source}). {reason}" with Correct and Change (`TYPE_REASON_TEXT`: `rules_and_model_disagree` Two readings differ. Choose the type. · `type_unsure` Choose the type.). An AI suggestion always says "not verified" (CLAUDE.md rule 18) |
 | S31b | what it supports and blocks, one line | (a `monthly_series` item reads "monthly series missing, needs one column per month") Supports: {trend analysis (MRR/ARR, growth, run-rate) / customer-level analysis (NRR, gross churn, concentration, cohorts) and trend analysis (…) / claim matching only}. Blocked: {analysis}, needs {data}; {analysis}, needs {data}. — the "Blocked" part is left out when nothing is blocked; the data is the closed `needs` text of §3.1 |
 | S31c | the revenue row | Revenue row: {label} (row {n}) — for kind `recurring` "Recurring row: {label} (row {n})" — with **Correct** and **Change** (Change opens the candidates: "{label} (row {n})"). Waiting only for confirmation (`confidence_80`): the same line followed by the reason, no drop-down until Change. Needs a choice (any other reason): "Revenue row: choose the row. {reason}" with the drop-down and no Correct. Decided: Change only. Not shown for a type with no revenue row |
 | S31d | the last actual month | Last actual month: {Mon YYYY}. Columns after it are not used. with **Correct** and **Change** (the candidate months). Waiting only for confirmation (`no_as_of_month`): the same line followed by the reason, no drop-down until Change. Needs a choice (`after_as_of`, `not_a_period`, `rules_and_model_disagree`): "Last actual month: choose the month. {reason}" with the drop-down and no Correct. Decided: Change only. The second sentence is left out when no column follows |
@@ -362,8 +381,9 @@ to find the cell. (Wording chosen under rule 19, as chat-upload.md §13 did; Geo
 | S31g | other sheets | Other sheets in this file: {sheet} ({type}) **Use this sheet**, one per recognised sheet. Left out when there is none |
 | S31h | the consent explainer | The sentence of §5.8 added to S2 |
 | S31i | rows kept out of revenue | {n} rows ({kinds}) are not used as revenue and are kept as claims for matching. — "1 row ({kind}) is not used as revenue and is kept as a claim for matching." for one. The kinds are the closed words, in sheet order, without repeats. Left out when none |
-| S31j | the S13 status line of a file with a click open | (a turnover row's row and money kind are one choice, one answer settles both; with a column mapping also open, S13's "{n} columns wait for your decision" and this count are added; `choices_waiting(result)` counts the recognition's) {n} choices wait for you · Ready – press Run audit (S13 of chat-upload.md; the count is the parts in `click`: type, revenue row, last actual month, currency, money kind) |
-| S31k | currency | Currency: {code}. Or, with none found: Currency not found in the file. Confirm the currency: {drop-down of ISO codes, the audit's reporting currency first} |
+| S31j | the S13 status line of a file with a click open | (a turnover row's row and money kind are one choice, one answer settles both; with a column mapping also open, S13's "{n} columns wait for your decision" and this count are added; `choices_waiting(result)` counts the recognition's) {n} choices wait for you · Ready – press Run audit (S13 of chat-upload.md; the count is the parts in `click`: type, revenue row, last actual month, currency, money kind, series source). A file read by recognition only (section 8) has no mapping table, no billing-terms block and no "Map the customer ID column first": the monthly report and the revenue summary need no customer ID column |
+| S31k | currency | Currency: {code}. Or, with none found: Currency not found in the file. Confirm the currency: {drop-down of ISO codes, the audit's reporting currency first}. A file with a column mapping and no currency column shows the same question in place of "Required field not mapped: currency" (the answer becomes a constant column mapped as the currency field) |
+| S31l | two tables on one sheet (section 6.7) | Two tables on this sheet: a metrics block and a dated list. Then, when the revenue row wins: Revenue series: the revenue row of the metrics block. The dated list matches it month by month ({n} months). — when the analyst chooses: {The dated list and the revenue row differ in {k} of {n} months. / The dated list matches the row month by month ({n} months).} Choose which table supplies the revenue series: with the buttons Use the revenue row and Use the dated list; after the choice: Revenue series: {the revenue row of the metrics block / the dated list}. The dated list and the revenue row differ in {k} of {n} months. |
 
 **One Correct button (decision 4, §14).** Where one or more parts wait only for confirmation (reasons `confidence_80` and `no_as_of_month`, the *confirm-only* reasons), the parts keep their lines and Change, and the file shows one **Correct** button (`part: "pending"`, §6.6) instead of one per part. Correct on an auto part (the accepted proposals above) keeps its own button.
 
@@ -374,7 +394,7 @@ nothing open clears it. No banner kind is added.
 - **Upload.** `POST /api/audits/{id}/datasets/upload` runs recognition (§2, §3) on every sheet of every file that the rules do not type as CRM. The
   view of a dataset gains `recognition`: `{recognised, missing, message, sheet, header_row, file_type, type_state, type_source, type_candidates,
   label_mode, label_share, confidence, series_basis, periods, revenue_row, last_actual, excluded_columns, currency, money_kind, non_revenue_rows,
-  supports, blocked, other_sheets, needs_click, type_reason, series, total_rows, revenue_column}`. `type_source` is `rules` (Python decided, with the model silent or agreeing), `ai` (the type is the
+  supports, blocked, other_sheets, needs_click, type_reason, series, series_rows, total_rows, revenue_column, tables, series_source}`. `type_source` is `rules` (Python decided, with the model silent or agreeing), `ai` (the type is the
   model's choice among candidates), or `you`. `money_kind` is `{asked, answer?}`. A file that is not recognised and gets no type answers
   `{status: "unknown_type", recognition: {recognised: false, missing, message}}` and stores nothing.
 - **Routing (decided, §14 item 3).** A recognised file is stored as the audit's revenue file (`dtype: "revenue"`) with its
@@ -403,7 +423,7 @@ This PR changes no schema (CLAUDE.md rule 23; docs/specs/interface-contracts.md)
   rows and the columns up to the boundary (file, sheet, rows, rule), as every cited block.
 - `missing_data`: entries with the lines of §3.2 (`metric`, `status: "Missing"`, `reason`, `unlocked_by` = the `needs` text, `file`); no new key.
 - `recognition` (a summary on the audit's results, closed words and counts only: type code, `series_basis`, the periods used, the count of excluded
-  columns, `currency_confirmed`) so the memo and the export can state the basis. Not in any narrative slice; the boundary test is extended (rule 14).
+  columns, `currency_confirmed`, `source` `revenue_file` or `pnl`, and for a sheet with two tables `series_source`, `cross_check`, `cross_check_months`) so the memo and the export can state the basis. Not in any narrative slice; the boundary test is extended (rule 14).
 - `revenue_reconciliation`: a `status` (`computed` · `not_applicable`) and, for `not_applicable`, the reason "Not applicable – same source"; `available`
   stays false then, `by_month` (required today, `schemas/metrics.py` `RevenueReconciliation`) is an empty list, and `integrity.assess` reads the status (decision of 2026-10-19).
 - `growth_label` (text, the closed list of §6.1) on the growth figure of `revenue_series`, so the screen never says "revenue growth" for an MRR or ARR row. A closed word, not file text.
@@ -411,7 +431,7 @@ This PR changes no schema (CLAUDE.md rule 23; docs/specs/interface-contracts.md)
   customers (decision 1).
 File text (labels, titles, sheet names) is never a contract field; the closed words above are.
 
-## 10. Tests (written first; each is a strict expected failure until the implementation: `xfail(strict=True, reason="awaiting implementation: revenue-file recognition")`; the implementation PR removes the markers)
+## 10. Tests (written first as strict expected failures; the implementation PR removed the markers and all of them pass)
 The frontend file uses a helper with the same effect (jest 27 has no `test.failing`); it loads the component inside each test so a missing module fails the test, not the suite.
 | Area | Test file | Fails today because |
 |---|---|---|
@@ -468,3 +488,16 @@ docs/architecture.md (recorded in this PR).
 9. **The S6 type picker stays** as the fallback when Python recognises no type; S31f sits above it (§7).
 10. **Two confirm-only reasons on one file collapse into one Correct button** (§7, §6.6 `pending`).
 11. **Every new test is `xfail(strict=True, reason="awaiting implementation: revenue-file recognition")`**; the implementation PR removes the markers.
+
+## 15. Amendments made with the implementation (owner request of 19 Oct 2026)
+1. **S31a** reads "AI suggestion, not verified" (CLAUDE.md rule 18), not "(AI suggestion)".
+2. **Section 6.7**: a sheet with a dated list and a metrics block (above).
+3. **Currency** (S31k): a missing currency asks the analyst to confirm it; "Required field not mapped: currency" is no longer shown. A revenue file with a column mapping and no
+   currency column keeps the currency field required, and the analyst's answer supplies it as a constant column ("Currency (confirmed)"), so the audit waits for the answer as it did for the mapping.
+4. **Customer ID**: a file read by recognition only (monthly revenue report, revenue summary, financial statements, ARR/MRR snapshot) holds no required field, shows no billing-terms block and never says
+   "Map the customer ID column first".
+5. **The reply** is parsed with exactly the keys of §5.7 and nothing else (`FileRecognitionReply`, `extra="forbid"`, no `confidence`); the label echo is compared and dropped before anything is stored (§5.5).
+6. **Recognition clicks gate Run audit for a file read by recognition only and for a P&L carrying the revenue file**; for a file with a column mapping (invoices, customers by periods) the recognition line is shown and
+   only a missing currency holds the audit (decision for the owner, see the pull request).
+7. The recognition call of a file the rules type comes after its column-mapping call (one call per new file, §5.5); a file the rules cannot type is asked first (§5.6).
+

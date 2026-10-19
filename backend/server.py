@@ -127,13 +127,19 @@ def df_to_records(df: pd.DataFrame):
     return recs
 
 
-def normalize(rows: list, dtype: str, mapping: dict, row_numbers: Optional[list] = None, unit_scale: int = 1) -> pd.DataFrame:
+def normalize(rows: list, dtype: str, mapping: dict, row_numbers: Optional[list] = None, unit_scale: int = 1,
+              constants: Optional[dict] = None) -> pd.DataFrame:
     """The stored rows read through a mapping. `_row` is the row's number in the sheet it came from
     (`row_numbers`, kept at upload); without it the header is taken to be row 1 with no blank lines. `unit_scale` is
-    1,000 when the title rows of the file said the figures are in thousands: the money fields are multiplied by it."""
+    1,000 when the title rows of the file said the figures are in thousands: the money fields are multiplied by it. `constants` are
+    columns the analyst supplied for every row ({"Currency (confirmed)": "EUR"}): a file with no currency column takes the currency
+    the analyst confirmed (revenue-file-recognition.md section 2)."""
     if not rows:
         return pd.DataFrame()
     raw = pd.DataFrame(rows)
+    for column, value in (constants or {}).items():
+        if column not in raw.columns:
+            raw[column] = value
     defs = FIELD_DEFS[dtype]
     out = pd.DataFrame()
     out["_row"] = list(row_numbers) if row_numbers is not None and len(row_numbers) == len(raw) else range(2, len(raw) + 2)
@@ -211,7 +217,8 @@ def candidate_views(datasets: dict) -> dict:
         for as_type in DTYPE_ORDER:
             mapping = (d.get("mapping") or {}) if as_type == dtype else suggest_mapping(as_type, d.get("columns") or [])
             mapping = {f: c for f, c in mapping.items() if c}
-            views[as_type] = {"mapping": mapping, "frame": normalize(d.get("rows") or [], as_type, mapping, d.get("row_numbers"), d.get("unit_scale") or 1)}
+            views[as_type] = {"mapping": mapping, "frame": normalize(d.get("rows") or [], as_type, mapping, d.get("row_numbers"), d.get("unit_scale") or 1,
+                                                                 d.get("constants"))}
         files[dtype] = {"file": d.get("file"), "sheet": d.get("sheet"), "views": views}
     return files
 
@@ -736,9 +743,13 @@ def _dataset_view(ds: dict, version: Optional[int] = None, status: str = "ok", f
         "forecast_claims": forecast, "read_as_claims": None, "pnl_grain": "monthly" if dtype == "pnl" else None,
         "sheet_map": None, "recognition": recognition, "recognition_only": bool(ds.get("recognition_only")),
     }
+    if (dtype == "revenue" and recognition and recognition.get("recognised") and recognition["currency"]["state"] == "confirm"
+            and view["missing_required"] == ["currency"] and not ds.get("recognition_only")):
+        # No currency column: the analyst confirms the currency (S31k) in place of "Required field not mapped: currency".
+        view.update(missing_required=[], currency_pending=True)
     if ds.get("recognition_only"):        # a file read by recognition only has no column mapping (revenue-file-recognition.md section 8)
         waiting = rec.choices_waiting(recognition) if recognition else 0
-        view.update(columns=[], pending=waiting, missing_required=[], miss=None, mapping={}, suggested_mapping={},
+        view.update(columns=[], pending=waiting, missing_required=[], miss=None, mapping={}, suggested_mapping={}, fields={"required": [], "optional": []},
                     saved=bool(recognition and recognition["recognised"] and not recognition["needs_click"]))
     if ds.get("sheet_map"):
         read = sheet_mod.view(ds["sheet_map"], fiscal_year_end, ds.get("unit_scale") or 1)
@@ -1220,13 +1231,14 @@ class RecognitionDecision(BaseModel):
     the lists the server offers. No typed text: a sheet name, a currency and a type are checked against the file's own lists."""
     model_config = {"extra": "forbid"}
     action: Literal["confirm", "change"]
-    part: Literal["revenue_row", "last_actual", "file_type", "currency", "pending", "money_kind", "sheet"]
+    part: Literal["revenue_row", "last_actual", "file_type", "currency", "pending", "money_kind", "sheet", "series_source"]
     row: Optional[int] = None
     column: Optional[int] = None
     file_type: Optional[str] = None
     currency: Optional[str] = None
     money_kind: Optional[str] = None
     sheet: Optional[str] = None
+    series_source: Optional[str] = None
 
 
 def _recognition_decision(current: dict, body: RecognitionDecision, decisions: dict) -> dict:
@@ -1265,11 +1277,28 @@ def _recognition_decision(current: dict, body: RecognitionDecision, decisions: d
         out["currency"] = body.currency
     elif body.part == "money_kind" and body.money_kind in cr.MONEY_KINDS and (current.get("money_kind") or {}).get("asked"):
         out["money_kind"] = body.money_kind
+    elif body.part == "series_source" and (current.get("series_source") or {}) and body.series_source in ("metrics_block", "dated_list"):
+        out["series_source"] = body.series_source
     elif body.part == "sheet" and body.sheet in [current.get("sheet")] + [o["sheet"] for o in current.get("other_sheets") or []]:
         out = {"sheet": body.sheet}
     else:
         raise bad
     return out
+
+
+CONFIRMED_CURRENCY = "Currency (confirmed)"
+
+
+async def _confirm_currency_column(audit_id: str, ds: dict, code: str, background: Optional[BackgroundTasks]) -> None:
+    """A revenue file with a column mapping and no currency column takes the currency the analyst confirmed for every row: a constant
+    column, mapped as the currency field, so the required field is met by the analyst's answer and not by a guess."""
+    states = [s for s in (ds.get("columns_state") or []) if s["column"] != CONFIRMED_CURRENCY]
+    states.append(cr.new_state(CONFIRMED_CURRENCY, "currency", "decision", "confirmed"))
+    columns = [c for c in (ds.get("columns") or []) if c != CONFIRMED_CURRENCY] + [CONFIRMED_CURRENCY]
+    await db.datasets.update_one({"audit_id": audit_id, "dtype": "revenue"}, {"$set": {
+        "constants": {CONFIRMED_CURRENCY: code}, "columns": columns, "columns_state": states,
+        "mapping": cr.mapping_of("revenue", states), "mapping_source": _source_map(states)}})
+    await _commit_mapping(audit_id, "revenue", background)
 
 
 @api.post("/audits/{audit_id}/datasets/{dtype}/recognition")
@@ -1286,6 +1315,8 @@ async def decide_recognition(audit_id: str, dtype: str, body: RecognitionDecisio
     decisions = _recognition_decision(current, body, ds.get("recognition_decisions") or {})
     await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype}, {"$set": {
         "recognition_decisions": decisions, "recognition_decided_at": usage_mod.now()}})
+    if body.part == "currency" and dtype == "revenue" and not ds.get("recognition_only") and not (ds.get("mapping") or {}).get("currency"):
+        await _confirm_currency_column(audit_id, ds, decisions["currency"], background)
     await _settle_recognition(audit_id, dtype, background)
     await _mark_stale_and_maybe_recompute(audit_id)
     logger.info("recognition: run_id=%s dtype=%s action=%s part=%s", audit_id, dtype, body.action, body.part)
@@ -2855,7 +2886,7 @@ async def _run_compute(audit_id: str) -> dict:
 
     def read(dtype):
         d = ds[dtype]
-        return normalize(d["rows"], dtype, d["mapping"], d.get("row_numbers"), d.get("unit_scale") or 1)
+        return normalize(d["rows"], dtype, d["mapping"], d.get("row_numbers"), d.get("unit_scale") or 1, d.get("constants"))
     revenue_ds = ds.get("revenue") or {}
     rev = pd.DataFrame() if revenue_ds.get("recognition_only") or "revenue" not in ds else read("revenue")
     crm = read("crm") if "crm" in ds else pd.DataFrame()

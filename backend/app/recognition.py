@@ -201,6 +201,35 @@ def _header_cell(grid, header_row: int, col: int) -> str:
     return sheet_mod.cell_text(_cell(grid, header_row, col)) if not cr._blank(_cell(grid, header_row, col)) else ""
 
 
+LIST_MIN_ROWS = 3                   # a dated list holds at least three dated rows
+SOURCE_TOLERANCE = 0.01             # the dated list sums to the revenue row month by month within 1% (section 6.7)
+SERIES_SOURCES = ("metrics_block", "dated_list")
+
+
+def _dated_lists(grid) -> List[Dict]:
+    """The dated lists of a sheet (section 6.7): a header reading Date, Month or Period beside a text header, and below it at least three
+    rows holding a date and a number. A list is read by its rows: its dates and values are summed by month."""
+    found = []
+    for r, row in enumerate(grid, 1):
+        for c, cell in enumerate(row, 1):
+            if not isinstance(cell, str) or _clean(cell) not in _PERIOD_HEADERS:
+                continue
+            beside = _cell(grid, r, c + 1)
+            if not isinstance(beside, str) or not beside.strip() or cr.parse_period(beside.strip()):
+                continue
+            rows, rr = [], r + 1
+            while rr <= len(grid) and _month_key(_cell(grid, rr, c)) and _num(_cell(grid, rr, c + 1)) is not None:
+                rows.append((rr, _month_key(_cell(grid, rr, c)), _num(_cell(grid, rr, c + 1))))
+                rr += 1
+            if len(rows) >= LIST_MIN_ROWS:
+                months: Dict[str, float] = {}
+                for _, month, value in rows:
+                    months[month] = months.get(month, 0.0) + value
+                found.append({"header_row": r, "date_col": c, "value_col": c + 1, "first_row": rows[0][0], "last_row": rows[-1][0],
+                              "rows": [x[0] for x in rows], "months": months})
+    return found
+
+
 def _labels_info(sheet, rd: Dict, fye: int) -> Dict:
     grid = sheet.grid
     periods = []
@@ -209,8 +238,12 @@ def _labels_info(sheet, rd: Dict, fye: int) -> Dict:
         periods.append({"col": p["col"], "header": p["header"], "grain": p["grain"], "tag": p["tag"],
                         "end": found["end"] if found else None})
     pcols = [p["col"] for p in periods]
+    lists = _dated_lists(grid)
+    listed = {r for x in lists if x["date_col"] == rd["label_col"] for r in [x["header_row"]] + x["rows"]}
     lines = []
     for ln in rd["lines"]:
+        if ln["row"] in listed:
+            continue                                          # the rows of a dated list under the labels are another table
         cells = [_cell(grid, ln["row"], c) for c in pcols]
         if all(cr._blank(c) for c in cells):
             continue                                          # a note or a heading: not a label row (section 4.2)
@@ -221,7 +254,7 @@ def _labels_info(sheet, rd: Dict, fye: int) -> Dict:
     marked = [{"row": ln["row"], "label": ln["label"], "kind": non_revenue_kind(ln["label"])} for ln in lines
               if mode == "metric" and non_revenue_kind(ln["label"])]
     texts = [t for _, _, t in rd["titles"]] + [h for h in [head] if h] + [p["header"] for p in periods]
-    return {"layout": "labels", "sheet": sheet, "rd": rd, "periods": periods, "lines": lines, "mode": mode, "share": share,
+    return {"layout": "labels", "sheet": sheet, "rd": rd, "periods": periods, "lines": lines, "lists": lists, "mode": mode, "share": share,
             "hits": hits, "confidence": confidence, "head": head, "marked": marked, "header_row": rd["header_row"],
             "label_col": rd["label_col"], "codes": _codes(texts + [ln["label"] for ln in lines]),
             "titles": [t for _, _, t in rd["titles"]]}
@@ -417,6 +450,7 @@ def choices_waiting(result: Dict) -> int:
     n += 1 if asked else 0
     n += 1 if (result.get("last_actual") or {}).get("state") == "click" else 0
     n += 1 if (result.get("currency") or {}).get("state") == "confirm" else 0
+    n += 1 if (result.get("series_source") or {}).get("state") == "click" else 0
     return n
 
 
@@ -427,7 +461,7 @@ def _blank_result(info: Dict, missing: List[str], marked: List[Dict]) -> Dict:
             "series_basis": None, "periods": 0, "revenue_row": None, "revenue_column": None, "last_actual": None,
             "excluded_columns": [], "currency": {"code": None, "state": "confirm"}, "money_kind": {"asked": False},
             "non_revenue_rows": marked, "supports": [], "blocked": [], "other_sheets": [], "needs_click": False, "series": [],
-            "series_rows": [], "total_rows": []}
+            "series_rows": [], "total_rows": [], "tables": [], "series_source": None}
 
 
 def message_for(missing: List[str]) -> Optional[str]:
@@ -626,6 +660,15 @@ def _finalize_labels(info: Dict, ctx: Dict) -> Dict:
         basis = "sum_of_rows"
         skip = {t["row"] for t in total_rows}
         series_rows = [ln["row"] for ln in info["lines"] if ln["row"] not in skip]
+    source = None
+    if has_row and revenue_row["row"] is not None and info["lists"]:
+        source = _series_source(info, revenue_row, row_values, last, dec.get("series_source"))
+        if source["supplier"] == "dated_list":
+            listed = info["lists"][0]
+            limit = last["month"] if last["month"] else None
+            series = [{"column": None, "month": m, "grain": "month", "value": _round(v)} for m, v in sorted(listed["months"].items())
+                      if limit is None or m <= limit]
+            basis, series_rows = "column", listed["rows"]
     month_cols = [p for p in periods if p["grain"] == "month"]
     supports, blocked = _supports("labels", ftype, len(periods), False, bool(periods) and not month_cols)
     currency = _currency(info, ftype, ctx.get("reporting_currency"), dec.get("currency"))
@@ -640,15 +683,51 @@ def _finalize_labels(info: Dict, ctx: Dict) -> Dict:
         "periods": len(periods), "revenue_row": revenue_row, "revenue_column": None, "last_actual": last,
         "excluded_columns": excluded, "currency": currency, "money_kind": money_kind, "non_revenue_rows": marked_list,
         "supports": supports, "blocked": blocked, "other_sheets": [], "series": series, "total_rows": total_rows,
-        "series_rows": series_rows}
+        "series_rows": series_rows, "tables": _tables(info, ftype), "series_source": source}
     return _finish(result)
 
 
+def _tables(info: Dict, ftype: Optional[str]) -> List[Dict]:
+    """The tables a sheet holds (section 6.7): the metrics block, and each dated list, each classified. Positions only, no text."""
+    if not info["lists"]:
+        return []
+    block = {"kind": "metrics_block", "file_type": ftype, "header_row": info["header_row"], "label_col": info["label_col"]}
+    return [block] + [{"kind": "dated_list", "file_type": "monthly_revenue_report", "header_row": x["header_row"], "date_col": x["date_col"],
+                       "value_col": x["value_col"], "first_row": x["first_row"], "last_row": x["last_row"], "months": len(x["months"])}
+                      for x in info["lists"]]
+
+
+def _series_source(info: Dict, row: Dict, row_values: Optional[List[Optional[float]]], last: Dict, decided: Optional[str]) -> Dict:
+    """Which table supplies the revenue series (section 6.7). A metrics row of recognised revenue wins; when the dated list sums to it
+    month by month within 1% the list is a cross-check, not a second source. When they differ, or the row is not recognised revenue,
+    the analyst chooses."""
+    listed = info["lists"][0]
+    limit = last.get("month")
+    pairs = [(p["end"], row_values[k]) for k, p in enumerate(info["periods"])
+             if p["grain"] == "month" and p["end"] and row_values[k] is not None and (limit is None or p["end"] <= limit)]
+    gaps = []
+    for month, value in pairs:
+        have = listed["months"].get(month)
+        gaps.append(None if have is None else abs(have - value) / abs(value) if value else (0.0 if have == 0 else 1.0))
+    matched = bool(pairs) and all(g is not None and g <= SOURCE_TOLERANCE for g in gaps)
+    cross = {"status": "match" if matched else "mismatch", "months": len(pairs),
+             "months_off": sum(1 for g in gaps if g is None or g > SOURCE_TOLERANCE),
+             "max_gap_pct": round(max((g for g in gaps if g is not None), default=0.0), 4)}
+    wins = row.get("kind") == "recognised" and matched
+    if decided in SERIES_SOURCES:
+        return {"supplier": decided, "state": "you", "cross_check": cross}
+    return {"supplier": "metrics_block", "state": "auto" if wins else "click", "cross_check": cross}
+
+
 def _finish(result: Dict) -> Dict:
+    result.setdefault("tables", [])
+    result.setdefault("series_source", None)
     row = result.get("revenue_row") or result.get("revenue_column")
     last = result.get("last_actual")
+    source = result.get("series_source")
     result["needs_click"] = bool(
         result["type_state"] == "click" or (row and row["state"] == "click") or (last and last["state"] == "click")
+        or (source and source["state"] == "click")
         or result["currency"]["state"] == "confirm" or (result["money_kind"].get("asked") and "answer" not in result["money_kind"]))
     return result
 
@@ -956,5 +1035,8 @@ def engine_feed(result: Dict, file: str, sheet_name: str, unit_scale: int = 1, f
             "excluded_columns": len(result.get("excluded_columns") or []),
             "currency_confirmed": result["currency"]["state"] in ("seen", "you", "audit"),
             "monthly": bool(series), "from_pnl": from_pnl,
+            "series_source": (result.get("series_source") or {}).get("supplier"),
+            "cross_check": ((result.get("series_source") or {}).get("cross_check") or {}).get("status"),
+            "cross_check_months": ((result.get("series_source") or {}).get("cross_check") or {}).get("months"),
             "missing": [{"metric": ANALYSIS_NAMES[b["analysis"]], "reason": line, "unlocked_by": b["needs"]}
                         for b, line in zip(result.get("blocked") or [], missing_lines(result))]}

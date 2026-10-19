@@ -427,7 +427,8 @@ def recognition_text_problem(text: str) -> Optional[str]:
     sheets = parse_recognition_text(text)
     if sheets is None:
         return "not_cells"
-    problem = file_type_text_problem("\n".join(l for l in text.split("\n") if not (_RC_LABELS.match(l) or _RC_LABEL.match(l))))
+    plain = [line for line in text.split("\n") if not (_RC_LABELS.match(line) or _RC_LABEL.match(line))]
+    problem = file_type_text_problem("\n".join(plain))
     if problem:
         return problem
     for sheet in sheets:

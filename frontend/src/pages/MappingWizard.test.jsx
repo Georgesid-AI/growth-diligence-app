@@ -12,7 +12,7 @@ import {
 } from "@/lib/chatUpload";
 
 jest.mock("@/lib/api", () => ({
-  getAudit: jest.fn(), getDatasets: jest.fn(), uploadChatFile: jest.fn(), decideColumns: jest.fn(), decideLines: jest.fn(), reportUsage: jest.fn(), changeDatasetType: jest.fn(),
+  getAudit: jest.fn(), getDatasets: jest.fn(), uploadChatFile: jest.fn(), decideColumns: jest.fn(), decideLines: jest.fn(), decideRecognition: jest.fn(), reportUsage: jest.fn(), changeDatasetType: jest.fn(),
   confirmForecastClaims: jest.fn(), getReview: jest.fn(), getDecks: jest.fn(), runStage: jest.fn(), uploadDeck: jest.fn(),
   saveMapping: jest.fn(), saveFx: jest.fn(), computeAudit: jest.fn(), getRevenueCustomers: jest.fn(), updateAudit: jest.fn(), putIcInputs: jest.fn(),
 }));
@@ -97,7 +97,7 @@ describe("the screen", () => {
     expect(q("compute-button")).toBeNull();
     const chat = q("upload-chat");
     expect(chat.compareDocumentPosition(q("deck-panel")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    const help = "Drop files here or use the paperclip. Required: Revenue by customer (monthly, 24–36 months). The audit will not run without a revenue file. Optional: CRM export and P&L. .xlsx or .csv only";
+    const help = "Drop files here or use the paperclip. Required: a revenue file – revenue by customer, invoices or a monthly revenue report (24–36 months). The audit will not run without a revenue file. Optional: CRM export and P&L. .xlsx or .csv only";
     expect(q("chat-drop-zone").textContent).toBe(help);
     expect(S4_DROP_ZONE_LEAD + S4_DROP_ZONE_BOLD).toBe(help);
     expect(document.body.textContent.split("Drop files here").length - 1).toBe(1);        // the help text is shown once, in the drop zone
@@ -1276,5 +1276,54 @@ describe("a P&L read as a statement (section 26)", () => {
     await flush();
     expect(q("line-confidence-3").textContent).toBe("AI suggestion – confirm");
     expect(q("line-confidence-4").textContent).toBe("reused");
+  });
+});
+
+describe("a revenue file with no customer rows or no currency column (revenue-file-recognition.md, owner request of 19 Oct 2026)", () => {
+  const RECOGNISED = (over = {}) => ({
+    recognised: true, missing: [], message: null, sheet: "KPIs", header_row: 3, file_type: "monthly_revenue_report", type_state: "auto",
+    type_source: "rules", type_candidates: [], label_mode: "metric", series_basis: "row", periods: 12,
+    revenue_row: { row: 4, label: "Recognised revenue", kind: "recognised", confidence: 100, state: "auto", reason: null,
+                   candidates: [{ row: 4, label: "Recognised revenue", kind: "recognised", confidence: 100 }] },
+    last_actual: { column: 7, month: "2025-06", state: "auto", reason: null, candidates: [{ column: 7, month: "2025-06" }] },
+    excluded_columns: [], currency: { code: "EUR", state: "seen" }, money_kind: { asked: false }, non_revenue_rows: [],
+    supports: ["trend"], blocked: [], other_sheets: [], needs_click: false, ...over,
+  });
+  const REPORT = (over = {}) => VIEW({ recognition_only: true, columns: [], mapping: {}, row_count: 0, months: null, fields: { required: [], optional: [] },
+    recognition: RECOGNISED(), ...over });
+
+  test("a monthly revenue report needs no customer ID: no billing terms block, no 'Map the customer ID column first', no required field", async () => {
+    api.uploadChatFile.mockResolvedValue(REPORT());
+    await mount();
+    await pickAndMap([file("report.csv")]);
+    expect(q("recognition-type-revenue").textContent).toBe("Type: Monthly revenue report (by rules)");
+    expect(q("status-revenue").textContent).toBe("Ready – press Run audit");
+    expect(q("revenue-settings")).toBeNull();
+    expect(q("billing-terms-section")).toBeNull();
+    expect(q("mapping-table-revenue")).toBeNull();
+    expect(document.body.textContent).not.toContain("Map the customer ID column first");
+    expect(document.body.textContent).not.toContain("Required field not mapped");
+  });
+
+  test("a report with a choice open says how many choices wait, and never a column or a required field", async () => {
+    api.uploadChatFile.mockResolvedValue(REPORT({ pending: 2 }));
+    await mount();
+    await pickAndMap([file("report.csv")]);
+    expect(q("status-revenue").textContent).toBe("2 choices wait for you");
+  });
+
+  test("a file with no currency column asks the analyst to confirm the currency and does not say a required field is not mapped", async () => {
+    api.uploadChatFile.mockResolvedValue(VIEW({ currency_pending: true, missing_required: [],
+      recognition: RECOGNISED({ currency: { code: null, state: "confirm" }, file_type: "customer_revenue", series_basis: "sum_of_rows" }) }));
+    await mount();
+    await pickAndMap([file("rev.csv")]);
+    expect(q("recognition-currency-revenue").textContent).toContain("Currency not found in the file. Confirm the currency:");
+    expect(q("status-revenue").textContent).toBe("1 choice waits for you");
+    expect(document.body.textContent).not.toContain("Required field not mapped");
+    api.decideRecognition.mockResolvedValue(VIEW({ recognition: RECOGNISED({ currency: { code: "EUR", state: "you" } }) }));
+    await change(q("recognition-currency-select-revenue"), "EUR");
+    expect(api.decideRecognition).toHaveBeenCalledWith("a1", "revenue", { action: "change", part: "currency", currency: "EUR" });
+    expect(q("recognition-currency-revenue").textContent).toBe("Currency: EUR");
+    expect(q("status-revenue").textContent).toBe("Ready – press Run audit");
   });
 });
