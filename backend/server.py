@@ -7,11 +7,15 @@ import os
 import io
 import re
 import asyncio
+import bson
+import copy
 import hashlib
+import json
 import logging
 import uuid
+from collections import OrderedDict
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import date as date_type, datetime, time as time_type, timedelta, timezone
 from typing import Dict, List, Literal, Optional
 
 import pandas as pd
@@ -120,8 +124,10 @@ def df_to_records(df: pd.DataFrame):
     recs = d.to_dict("records")
     for r in recs:
         for k, v in r.items():
-            if isinstance(v, (pd.Timestamp, datetime)):
+            if isinstance(v, (pd.Timestamp, datetime, date_type, time_type)):
                 r[k] = v.isoformat()
+            elif isinstance(v, timedelta):
+                r[k] = v.total_seconds()
             elif isinstance(v, float) and (v != v or v in (float("inf"), float("-inf"))):
                 r[k] = None
     return recs
@@ -346,7 +352,7 @@ async def audit_public(a: dict) -> dict:
     a.pop("usage", None)          # the counters, notes included, are read only through the usage totals
     if a.get("created_at"):
         a["ic_inputs"] = verdict_mod.with_review(a, a.get("ic_inputs"))
-    ds = await db.datasets.find({"audit_id": a["id"]}, {"rows": 0, "_id": 0}).to_list(10)
+    ds = await db.datasets.find({"audit_id": a["id"]}, {"rows": 0, "recognition_sheets": 0, "_id": 0}).to_list(10)
     a["datasets"] = {
         d["dtype"]: {k: d.get(k) for k in ("file", "sheet", "columns", "mapping", "fx", "billing_terms", "preview", "row_count",
                                            "mapping_source", "ai_reading")}
@@ -744,7 +750,7 @@ def _dataset_view(ds: dict, version: Optional[int] = None, status: str = "ok", f
         "sheet_map": None, "recognition": recognition, "recognition_only": bool(ds.get("recognition_only")),
     }
     if (dtype == "revenue" and recognition and recognition.get("recognised") and recognition["currency"]["state"] == "confirm"
-            and view["missing_required"] == ["currency"] and not ds.get("recognition_only")):
+            and not recognition["currency"].get("mixed") and view["missing_required"] == ["currency"] and not ds.get("recognition_only")):
         # No currency column: the analyst confirms the currency (S31k) in place of "Required field not mapped: currency".
         view.update(missing_required=[], currency_pending=True)
     if ds.get("recognition_only"):        # a file read by recognition only has no column mapping (revenue-file-recognition.md section 8)
@@ -802,14 +808,42 @@ async def _effective_as_of(audit_id: str, audit: Optional[dict]) -> Optional[str
     return ((pnl or {}).get("months") or {}).get("last")
 
 
+_RECOGNITION_CACHE: "OrderedDict[str, dict]" = OrderedDict()
+RECOGNITION_CACHE_SIZE = 32
+
+
 async def _recognition_of(audit_id: str, audit: Optional[dict], ds: dict) -> Optional[dict]:
     """The recognition block of a stored file: the sheets it was read from, read again with the model's kept proposal, the analyst's
-    decisions and the audit as it stands now (a changed as-of month re-checks a decided boundary, section 6.2)."""
-    sheets = rec.unpack_sheets(ds.get("recognition_sheets"))
-    if not sheets:
-        return None
-    return rec.recognise(sheets, await _effective_as_of(audit_id, audit), ds.get("recognition_proposal"),
-                         (audit or {}).get("reporting_currency"), ds.get("recognition_decisions"), _fiscal_year_end(audit))
+    decisions and the audit as it stands now (a changed as-of month re-checks a decided boundary, section 6.2). Python is deterministic,
+    so the last results are kept by everything they depend on and the sheets are not read again for the same inputs (review L6)."""
+    as_of = await _effective_as_of(audit_id, audit)
+    currency, fye = (audit or {}).get("reporting_currency"), _fiscal_year_end(audit)
+    key = json.dumps([audit_id, ds.get("dtype"), ds.get("file_hash"), as_of, currency, fye, ds.get("recognition_decisions"),
+                      ds.get("recognition_proposal"), bool(ds.get("recognition_facts"))], sort_keys=True, default=str)
+    if key in _RECOGNITION_CACHE:
+        _RECOGNITION_CACHE.move_to_end(key)
+        return copy.deepcopy(_RECOGNITION_CACHE[key])
+    if ds.get("recognition_facts"):
+        result = rec.recognise_facts(ds["recognition_facts"], as_of, currency, ds.get("recognition_decisions"))
+    else:
+        sheets = rec.unpack_sheets(ds.get("recognition_sheets"))
+        if not sheets:
+            return None
+        result = rec.recognise(sheets, as_of, ds.get("recognition_proposal"), currency, ds.get("recognition_decisions"), fye)
+    _RECOGNITION_CACHE[key] = copy.deepcopy(result)
+    while len(_RECOGNITION_CACHE) > RECOGNITION_CACHE_SIZE:
+        _RECOGNITION_CACHE.popitem(last=False)
+    return result
+
+
+async def _is_revenue_file(audit_id: str, audit: Optional[dict], ds: Optional[dict]) -> bool:
+    """A stored revenue file counts for the banner and Run audit when it keeps a column mapping or its recognition gives a monthly revenue
+    series (owner decision 1 on PR 135)."""
+    if not ds:
+        return False
+    if not ds.get("recognition_only"):
+        return True
+    return rec.has_monthly_series(await _recognition_of(audit_id, audit, ds))
 
 
 async def _view(audit_id: str, ds: dict, version: Optional[int] = None, status: str = "ok") -> dict:
@@ -975,19 +1009,42 @@ async def _recognise_file(a: dict, sheets: list, digest: str, call) -> dict:
     as_of = await _effective_as_of(a["id"], a)
     rules = rec.recognise(sheets, as_of, None, a.get("reporting_currency"), None, fiscal_year_end)
     asks = call is True or (call == "recognised" and rules["recognised"])
+    if asks and rules["recognised"]:
+        # A file whose recognised sheets alone are over the limit stops here, before the model is called and anything is kept (review L4)
+        _check_dataset_size(_sheets_to_keep(sheets, rules, _keeps_rows({"result": rules}), fiscal_year_end))
     proposal, status = (await _ask_recognition(a, sheets, digest, fiscal_year_end)) if asks else (None, "not_asked")
     if status not in ("not_asked", "no_consent", "stored"):
         await _usage_update(a["id"], lambda u: u["steps"].setdefault("recognition", {}).__setitem__(
             status, u["steps"]["recognition"].get(status, 0) + 1))
     result = rec.recognise(sheets, as_of, proposal, a.get("reporting_currency"), None, fiscal_year_end) if proposal else rules
-    return {"result": result, "proposal": proposal, "status": status, "sheets": rec.pack_sheets(sheets)}
+    return {"result": result, "proposal": proposal, "status": status, "raw": sheets}
 
 
-def _recognition_fields(recognition: dict) -> dict:
-    """What a dataset keeps to read the file again (revenue-file-recognition.md section 8): the sheets, the model's kept proposal
-    without its label echo and the analyst's decisions, which start empty."""
-    return {"recognition_sheets": recognition["sheets"], "recognition_proposal": recognition["proposal"],
+def _sheets_to_keep(sheets: list, result: dict, keep_rows: bool, fiscal_year_end: int = 12) -> dict:
+    """The sheets a dataset keeps to read the file again (owner decision 3 on PR 135): the recognised sheets only. A records layout
+    (one row per invoice) that keeps its rows keeps only a few facts; customers by period keep the one sheet recognition read."""
+    if keep_rows and result.get("series_basis") == "records":
+        sheet = next((x for x in sheets if x.sheet == result["sheet"]), None)
+        info = rec.analyse(sheet, fiscal_year_end) if sheet is not None else None
+        if info is not None and info["layout"] == "records":
+            return {"recognition_sheets": [], "recognition_facts": rec.records_facts(info)}
+    names = rec.kept_names(result, keep_rows)
+    return {"recognition_sheets": rec.pack_sheets([x for x in sheets if x.sheet in names])}
+
+
+def _recognition_fields(recognition: dict, keep_rows: bool = False, fiscal_year_end: int = 12) -> dict:
+    """What a dataset keeps to read the file again (revenue-file-recognition.md section 8): the recognised sheets, the model's kept
+    proposal without its label echo and the analyst's decisions, which start empty. A file that keeps its rows (invoices, customers by
+    period) keeps no sheet beyond the one recognition read (owner decision 3 on PR 135)."""
+    kept = _sheets_to_keep(recognition["raw"], recognition["result"], keep_rows, fiscal_year_end)
+    names = rec.kept_names(recognition["result"], keep_rows)
+    return {**kept, "recognition_proposal": rec.renumber_proposal(recognition["proposal"], recognition["raw"], names),
             "recognition_decisions": {}, "recognition_ai": recognition["status"]}
+
+
+def _keeps_rows(recognition: dict) -> bool:
+    """Whether the dataset of this file keeps the rows of its sheet: invoices and customers by period do (column mapping)."""
+    return recognition["result"].get("file_type") in ("invoice_transactions", "customer_revenue")
 
 
 async def _ingest(audit_id: str, upload: UploadFile, dtype: Optional[str], replace: bool, background: BackgroundTasks):
@@ -1019,8 +1076,8 @@ async def _ingest(audit_id: str, upload: UploadFile, dtype: Optional[str], repla
             type_status = recognition["status"]
             if word in ("crm", "pnl"):
                 chosen, source = word, "ai"
-            elif recognition["result"]["recognised"]:
-                chosen = "revenue"
+            elif rec.has_monthly_series(recognition["result"]) or recognition["result"]["file_type"] == "financial_statements":
+                chosen = "revenue"      # a file with no monthly series (a snapshot, a yearly report) gets the type picker; a statement is the P&L
     if chosen is None:
         found = recognition["result"] if recognition else {}
         return {"status": "unknown_type", "file": filename, "size_bytes": len(content), "row_count": len(sheets[0].frame),
@@ -1033,10 +1090,10 @@ async def _ingest(audit_id: str, upload: UploadFile, dtype: Optional[str], repla
             chosen = "revenue"                     # a KPI sheet with a revenue, invoiced or MRR/ARR row is a revenue report (decision 3)
         elif dtype is None and chosen == "revenue" and result["file_type"] == "financial_statements":
             chosen = "pnl"                         # a statement-shaped P&L stays the audit's P&L and carries the recognition (section 8)
-        if dtype is None and chosen == "revenue" and result["file_type"] in rec.NO_MAPPING_TYPES:
+        if dtype is None and chosen == "revenue" and result["file_type"] in rec.NO_MAPPING_TYPES and rec.has_monthly_series(result):
             return await _store_recognised(a, audit_id, filename, len(content), digest, replace, recognition, source, background,
                                            type_status)
-        extra = _recognition_fields(recognition)
+        extra = _recognition_fields(recognition, _keeps_rows(recognition), _fiscal_year_end(a))
     view = await _load(a, audit_id, chosen, cr.best_sheet(sheets, chosen), filename, len(content), digest, replace,
                        background, source, detected == chosen, type_status, extra=extra)
     if extra and dtype is None and detected is not None and recognition["result"]["recognised"]:
@@ -1047,8 +1104,9 @@ async def _ingest(audit_id: str, upload: UploadFile, dtype: Optional[str], repla
             if status not in ("no_consent", "stored"):
                 await _usage_update(audit_id, lambda u: u["steps"].setdefault("recognition", {}).__setitem__(
                     status, u["steps"]["recognition"].get(status, 0) + 1))
+            names = [x["name"] for x in ds.get("recognition_sheets") or []] or [(ds.get("recognition_facts") or {}).get("sheet")]
             await db.datasets.update_one({"audit_id": audit_id, "dtype": chosen, "file_hash": digest}, {"$set": {
-                "recognition_proposal": proposal, "recognition_ai": status}})
+                "recognition_proposal": rec.renumber_proposal(proposal, sheets, names), "recognition_ai": status}})
             ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": chosen}, {"_id": 0, "rows": 0})
             view = await _view(audit_id, ds, view.get("version"), view.get("status", "ok"))
     return view
@@ -1070,7 +1128,8 @@ async def _store_recognised(a: dict, audit_id: str, filename: str, size: int, di
            "ai_reading": {"status": recognition["status"], "reason": None}, "columns_state": [], "months": None,
            "file_hash": digest, "size_bytes": size, "uploaded_at": usage_mod.now(), "mapped_at": None, "type_source": type_source,
            "looks": {"shape": "table", "rows": 0, "columns": 0}, "unit_scale": 1, "unit_note": None, "wide": None, "raw_headers": None,
-           "first_col": 1, "title_currency": None, "recognition_only": True, **_recognition_fields(recognition)}
+           "first_col": 1, "title_currency": None, "recognition_only": True,
+           **_recognition_fields(recognition, False, _fiscal_year_end(a))}
     _check_dataset_size(doc)
     await db.datasets.replace_one({"audit_id": audit_id, "dtype": "revenue"}, doc, upsert=True)
     await _usage_update(audit_id, lambda u: usage_mod.record_upload(u, "revenue"))
@@ -1174,8 +1233,7 @@ async def _load(a: dict, audit_id: str, chosen: str, sheet: "cr.Sheet", filename
         doc.update(sheet_map=sheet_map, mapping={}, header_row=sheet_map["header_row"], row_count=len(sheet_map["lines"]),
                    months=sheet_mod.months_found(sheet_map), unit_scale=statement["unit_scale"], unit_note=statement["unit_note"],
                    title_currency=statement["title_currency"] or sheet.currency)
-    if extra:
-        _check_dataset_size(doc)
+    _check_dataset_size(doc)               # every upload: a document over the limit is refused with the message, never a raw error (review M2)
     await db.datasets.replace_one({"audit_id": audit_id, "dtype": chosen}, doc, upsert=True)
     if drop and drop != chosen:
         await db.datasets.delete_one({"audit_id": audit_id, "dtype": drop})
@@ -1250,7 +1308,7 @@ def _recognition_decision(current: dict, body: RecognitionDecision, decisions: d
     row = current.get("revenue_row") or current.get("revenue_column")
     key = "column" if current.get("revenue_column") else "row"
     last = current.get("last_actual")
-    last_key = "row" if current.get("series_basis") == "column" else "column"
+    last_key = "row" if "row" in (last or {}) else "column"          # dates down the rows: a row; periods across: a column (review M3)
     out = dict(decisions)
     bad = HTTPException(400, "That choice is not one of the options offered")
     if body.action == "confirm":
@@ -1276,7 +1334,7 @@ def _recognition_decision(current: dict, body: RecognitionDecision, decisions: d
         out["last_actual"] = body.column
     elif body.part == "file_type" and body.file_type in rec.RECOGNITION_TYPES:
         out["file_type"] = body.file_type
-    elif body.part == "currency" and body.currency in rec.ISO_CURRENCIES:
+    elif body.part == "currency" and body.currency in rec.ISO_CURRENCIES and not (current.get("currency") or {}).get("mixed"):
         out["currency"] = body.currency
     elif body.part == "money_kind" and body.money_kind in cr.MONEY_KINDS and (current.get("money_kind") or {}).get("asked"):
         out["money_kind"] = body.money_kind
@@ -1289,15 +1347,20 @@ def _recognition_decision(current: dict, body: RecognitionDecision, decisions: d
     return out
 
 
-# A dataset is one MongoDB document (16 MB); the stored sheets of a recognised file are part of it. Over the limit the upload stops with
-# this message: nothing is cut and nothing is stored (decision of the owner on PR 135).
+# A dataset is one MongoDB document (16 MB of BSON); the stored sheets of a recognised file are part of it. Over the limit the upload stops
+# with this message: nothing is cut and nothing is stored (decision of the owner on PR 135). The size is the BSON size MongoDB counts, not
+# the length of the JSON (review H7); the margin below 16 MiB leaves room for the fields that are added later.
 DATASET_MAX_BYTES = 15 * 1024 * 1024
 DATASET_TOO_LARGE = "This file is too large to store with its recognition. Split it or remove empty rows and upload again."
+DATASET_UNSTORABLE = "This file holds a value that cannot be stored. Remove it and upload again."
 
 
 def _check_dataset_size(doc: dict) -> None:
-    import json
-    if len(json.dumps(doc, default=str)) > DATASET_MAX_BYTES:
+    try:
+        size = len(bson.encode(doc))
+    except (bson.errors.InvalidDocument, OverflowError):
+        raise HTTPException(400, DATASET_UNSTORABLE)
+    if size > DATASET_MAX_BYTES:
         raise HTTPException(413, DATASET_TOO_LARGE)
 
 
@@ -1324,7 +1387,7 @@ async def decide_recognition(audit_id: str, dtype: str, body: RecognitionDecisio
         raise HTTPException(400, "Unknown dataset type")
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
     ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype}, {"_id": 0, "rows": 0})
-    if not audit or not ds or not ds.get("recognition_sheets"):
+    if not audit or not ds or not (ds.get("recognition_sheets") or ds.get("recognition_facts")):
         raise HTTPException(404, "Dataset not found")
     current = await _recognition_of(audit_id, audit, ds)
     decisions = _recognition_decision(current, body, ds.get("recognition_decisions") or {})
@@ -1442,6 +1505,10 @@ async def _check_notes(audit_id: str, audit: dict, notes: list) -> list:
         headers += [str(h) for h in d.get("headers") or []] + [str(c) for c in d.get("columns") or []]
         headers += [c["text"] for c in structures.column_mapping_input(d.get("columns") or [], d.get("rows") or [], (), 0)[0]]
         cells += [v for r in d.get("rows") or [] for v in r.values() if isinstance(v, str)]
+        for sheet in rec.unpack_sheets(d.get("recognition_sheets")):          # a file read by recognition only keeps no rows (review M5)
+            shown = {str(h) for h in sheet.headers}
+            headers += sorted(shown)
+            cells += [v for r in sheet.grid or [] for v in r if isinstance(v, str) and v not in shown]
     try:
         for n in cleaned:
             usage_mod.check_note(n, headers=headers, file_names=[d.get("file") for d in files] + [d.get("file") for d in deck_files],
@@ -2157,7 +2224,8 @@ async def _mapping_counts(audit_id: str, audit: dict, datasets: list) -> tuple:
             result = await _recognition_of(audit_id, audit, d)
             waiting[d["dtype"]] = rec.choices_waiting(result) if result else 0
     pnl = next((d for d in datasets if d["dtype"] == "pnl"), None)
-    has_revenue = any(d["dtype"] == "revenue" for d in datasets) or bool(
+    revenue = next((d for d in datasets if d["dtype"] == "revenue"), None)
+    has_revenue = await _is_revenue_file(audit_id, audit, revenue) or bool(
         pnl and rec.pnl_confirmed(await _recognition_of(audit_id, audit, pnl)))
     return run_audit.mapping_counts(datasets, waiting), has_revenue
 
@@ -2658,6 +2726,8 @@ async def _blocker_list(audit_id: str, audit: dict) -> list:
     revenue = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"}, {"_id": 0, "rows": 0})
     if revenue and revenue.get("file_hash") in await _claims_files(audit_id):
         revenue = None                  # read as claims (chat-upload.md section 20): no revenue file counts
+    if revenue and not await _is_revenue_file(audit_id, audit, revenue):
+        revenue = None                  # a file with no monthly series is no revenue file (decision 1 on PR 135)
     if not revenue:
         pnl = await db.datasets.find_one({"audit_id": audit_id, "dtype": "pnl"}, {"_id": 0, "rows": 0})
         # A P&L confirmed with two or more periods is the revenue file (revenue-file-recognition.md section 8, decision 3)
@@ -2874,6 +2944,8 @@ async def _run_compute(audit_id: str) -> dict:
     ds = {d["dtype"]: d for d in await db.datasets.find({"audit_id": audit_id}).to_list(10)
           if d.get("file_hash") not in read or d.get("sheet_map")}       # a statement file stays an input (section 26.6)
     recognised_ds, recognised, from_pnl = None, None, False
+    if "revenue" in ds and not await _is_revenue_file(audit_id, a, ds["revenue"]):
+        del ds["revenue"]                      # a file with no monthly series is no revenue file (decision 1 on PR 135)
     if "revenue" in ds and ds["revenue"].get("recognition_only"):
         recognised_ds = ds["revenue"]
     elif "revenue" not in ds and ds.get("pnl") and ds["pnl"].get("recognition_sheets"):

@@ -220,6 +220,12 @@ describe("currency, other sheets, rows kept out of revenue", () => {
     expect(decide).toHaveBeenLastCalledWith(expect.objectContaining({ dtype: "revenue" }), { action: "change", part: "currency", currency: "EUR" });
   });
 
+  test("a file that shows several currencies asks for none: the required field stays open (review L3)", async () => {
+    await mount({ ...CLICK, currency: { code: null, state: "confirm", mixed: true } });
+    expect(q("recognition-currency-revenue")).toBeNull();
+    expect(q("recognition-currency-select-revenue")).toBeNull();
+  });
+
   test("the other sheets of the workbook are listed and each can be used instead", async () => {
     await mount(AUTO);
     expect(q("recognition-others-revenue").textContent).toBe("Other sheets in this file: P&L (Financial statements) Use this sheet");

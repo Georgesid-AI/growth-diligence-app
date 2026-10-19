@@ -172,12 +172,12 @@ MISSED = [
 def test_the_three_files_that_missed_end_in_one_miss_message_that_names_what_is_missing(api, content, name, word, missing):
     api.state["adapter"] = t.FakeAdapter(replies=[type_reply(word), mapping_reply()])
     body = upload(api, name, content).json()
+    if word == "revenue":   # years and quarters across the columns: no monthly series, so no revenue file (decision 1 on PR 135); the picker
+        assert body["status"] == "unknown_type" and api.db["datasets"].docs == []
+        body = upload(api, name, content, dtype="revenue").json()
     assert body["dtype"] == word and body["sheet"] in ("Revenue", "P&L", "Accounts", "Annual tracker")
     if word == "pnl":       # a P&L statement is no longer a miss: its line table replaces the message (chat-upload.md section 26)
         assert body["miss"] is None and body["sheet_map"]["lines"] and body["pnl_grain"] == "yearly"
-        return
-    if word == "revenue":   # months and years across the columns, no customer ID: recognised as a revenue report, no miss (recognition spec)
-        assert body["miss"] is None and body["recognition"]["recognised"] and body["recognition"]["file_type"] == "monthly_revenue_report"
         return
     miss = body["miss"]
     assert miss and missing <= set(miss["missing"]), miss
@@ -196,7 +196,8 @@ def test_a_file_that_maps_cleanly_has_no_miss(api):
 def test_rules_decide_the_type_and_the_model_is_not_asked_when_they_reach_80(api):
     upload(api, "accountant_pnl.csv", (FIXTURES / "accountant_pnl.csv").read_bytes())
     types = [json.loads(p)["type"] for p in adapter_of(api).payloads]
-    assert types[0] == "column_mapping" and "file_type" not in types, "no file-type call: the one recognition call comes after the mapping"
+    assert types[0] == "column_mapping" and set(types[1:]) == {"file_recognition"}, \
+        "no file-type call: only the recognition call (and its one retry) comes after the mapping"
 
 
 def test_a_file_the_rules_cannot_place_is_sent_once_and_the_answer_is_kept_by_the_file_hash(api):
@@ -246,26 +247,23 @@ def test_the_file_type_text_is_never_stored_and_its_title_is_never_logged(api, c
     assert any(r.get("structure_type") == "file_recognition" for r in api.db["llm_calls"].docs)
 
 
-MYSTERY = b"Alpha,Beta\n1,2\n"      # neither a typed file nor a revenue file: recognition finds no revenue measure
-
-
 def test_no_consent_no_model_and_the_analyst_is_asked_for_the_type(api):
     api.db["audits"].docs[0]["structure_reading_consent"] = False
-    body = upload(api, "mystery.csv", MYSTERY).json()
+    body = upload(api, "CRM.xlsx", crm_anonymous_to_2028()).json()
     assert body["status"] == "unknown_type" and adapter_of(api).calls == 0
 
 
 def test_a_failed_type_call_leaves_the_type_to_the_analyst(api):
     api.state["adapter"] = t.FakeAdapter(replies=["not json"])
-    body = upload(api, "mystery.csv", MYSTERY).json()
+    body = upload(api, "CRM.xlsx", crm_anonymous_to_2028()).json()
     assert body["status"] == "unknown_type" and api.db["datasets"].docs == []
-    again = upload(api, "mystery.csv", MYSTERY, dtype="crm").json()
+    again = upload(api, "CRM.xlsx", crm_anonymous_to_2028(), dtype="crm").json()
     assert again["dtype"] == "crm" and again["type_source"] == "you"
 
 
 def test_the_model_saying_unknown_leaves_the_type_to_the_analyst(api):
     api.state["adapter"] = t.FakeAdapter(replies=[type_reply("unknown")])
-    assert upload(api, "mystery.csv", MYSTERY).json()["status"] == "unknown_type"
+    assert upload(api, "CRM.xlsx", crm_anonymous_to_2028()).json()["status"] == "unknown_type"
 
 
 def test_the_company_name_in_a_title_row_is_masked_before_the_model_reads_them(api):
@@ -293,7 +291,7 @@ def test_the_company_name_in_a_title_row_is_masked_before_the_model_reads_them(a
 # ---------------------------------------------------------------------------
 def test_the_analyst_changes_the_type_and_the_stored_sheet_is_read_as_the_new_type(api):
     api.state["adapter"] = t.FakeAdapter(replies=[type_reply("revenue"), mapping_reply()])
-    first = upload(api, "CRM.xlsx", crm_anonymous_to_2028()).json()
+    first = upload(api, "CRM.xlsx", crm_anonymous_to_2028(), dtype="revenue").json()
     assert first["dtype"] == "revenue"
     resp = api.post(f"/api/audits/{AUDIT}/datasets/revenue/type", json={"to": "crm"})
     assert resp.status_code == 200, resp.text

@@ -172,7 +172,7 @@ NO_OWN_CITATION = {"revenue_reconciliation": "its months and its window carry bo
                    # docs/specs/dates-and-periods.md sections 2-3: months as text, read from the uploads, no figure
                    "source_period": "months as text, no figure", "metric_periods": "months as text, no figure",
                    # docs/specs/revenue-file-recognition.md section 9: closed words and counts about how the revenue was read
-                   "recognition": "closed words and counts, no figure"}
+                   "recognition": "closed words and counts; a sheet with two tables that differ adds, per month, both figures and their cell positions"}
 
 
 def test_every_block_with_a_figure_carries_a_citation_in_the_model_and_in_the_engine_output():
@@ -367,6 +367,14 @@ VIOLATIONS = {
     "a recognition block with a text field": _set("recognition", {"file_type": "monthly_revenue_report", "series_basis": "row", "periods": 12,
                                                                  "excluded_columns": 0, "currency_confirmed": True, "source": "pnl",
                                                                  "label": "Recognised revenue"}),
+    "a recognition gap whose source is text from the file": _set("recognition", {
+        "file_type": "monthly_revenue_report", "series_basis": "column", "periods": 6, "excluded_columns": 0, "currency_confirmed": True,
+        "source": "revenue_file", "series_source": "dated_list", "cross_check": "mismatch", "cross_check_months": 6,
+        "cross_check_gaps": [{"month": "2025-02", "row_value": 1.0, "list_value": 2.0, "row_cell": "Recognised revenue", "list_cells": "J4"}]}),
+    "a recognition gap with a month that is not a month": _set("recognition", {
+        "file_type": "monthly_revenue_report", "series_basis": "column", "periods": 6, "excluded_columns": 0, "currency_confirmed": True,
+        "source": "revenue_file", "series_source": "dated_list", "cross_check": "mismatch", "cross_check_months": 6,
+        "cross_check_gaps": [{"month": "February", "row_value": 1.0, "list_value": 2.0, "row_cell": "C3", "list_cells": "J4"}]}),
 }
 
 

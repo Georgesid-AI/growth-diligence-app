@@ -141,7 +141,7 @@ export default function RecognitionLine({ view, decide, reportingCurrency }) {
             onClick={() => send({ action: "confirm", part: "pending" })}>Correct</Button>
         </div>
       )}
-      {currency.state === "confirm" ? (
+      {currency.state === "confirm" && currency.mixed ? null : currency.state === "confirm" ? (
         <div data-testid={id("currency")}>
           {CURRENCY_NOT_FOUND}
           <select data-testid={id("currency-select")} disabled={busy} defaultValue=""

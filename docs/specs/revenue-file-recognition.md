@@ -62,13 +62,13 @@ Python decides recognition, per sheet (`app/recognition.py`, pure, no I/O). The 
 A row (or a sheet column header) is *recognised but never used as revenue* when its label holds a word of one of six kinds (`NON_REVENUE_KINDS`), checked before any revenue
 word and so winning over it ("Forecast revenue" is a forecast, "Sales pipeline" a pipeline). First match in this order:
 
-| Kind | Words (whole words, any case, punctuation as one space, a bracket's content left out) |
+| Kind | Words (whole words, any case, punctuation as one space; the whole label is read, a bracket's content included: "Revenue (forecast)" is a forecast row) |
 |---|---|
 | `forecast` | forecast, forecasts, fcst, projected, projection, estimate, estimates, outlook |
 | `budget` | budget, budgeted, target |
 | `bookings` | booking, bookings, booked |
 | `pipeline` | pipeline, backlog, opportunity, opportunities |
-| `contract_value` | contract value, contracted revenue, total contract value, annual contract value, TCV, ACV |
+| `contract_value` | contract value, contracted revenue, total contract value, annual contract value, TCV, ACV, contracted ARR, committed ARR, committed MRR, CARR |
 | `run_rate` | run rate, run-rate, annualised, annualized |
 
 "Plan" is not on the list: a pricing plan ("MRR - Pro plan") is an actual row (chat-upload.md §26.15). A recognised row of these kinds is listed in
@@ -76,7 +76,7 @@ word and so winning over it ("Forecast revenue" is a forecast, "Sales pipeline" 
 either side marks is out. Such rows are kept for claim matching: they enter the claim register through the existing path (Save claims,
 chat-upload.md §20.4 and §26.15), as Unverified; this spec adds no claim code.
 
-**Revenue candidates** (labels layout): a row that is not marked, whose label (bracket content left out) holds a revenue word and none of: new, net
+**Revenue candidates** (labels layout): a row that is not marked, whose label (bracket content left out for the revenue word and the exclusion words below, not for the six kinds above) holds a revenue word and none of: new, net
 new, lost, churn, churned, added, expansion, contraction, growth, per, average, avg, share, ratio, rate, margin, cost, costs, cogs, expense, expenses,
 marketing, payroll, commission, or a "%" ("Sales and marketing", "New ARR - inbound", "Revenue per customer" are not candidates). Its kind:
 `recurring` (MRR, ARR, recurring revenue), else `invoiced` (invoiced, invoicing, billing, billed), else `recognised` (revenue, revenues, sales,
@@ -289,12 +289,15 @@ take no part in the checks. The reason codes below are the closed list `REASONS`
 - Types with no revenue row (`invoice_transactions`, `customer_revenue`, `revenue_summary`, `arr_mrr_snapshot`) have `revenue_row: null` and
   `series_basis` `records`, `sum_of_rows` (the customer or category rows are summed), `sum_of_rows` and `snapshot`. For `monthly_revenue_report` and
   `financial_statements` it is `row` (or `column`, §2). The five values of `series_basis` are `records`, `row`, `column`, `sum_of_rows`, `snapshot`.
-- **Total rows (review H5).** When a series is a sum of rows (`sum_of_rows`, and the snapshot value), a *total row* is never added to it. A row is a
-  total row when its label starts with "Total" or "Sum" (whole word, any case), or when its values equal the sum of the rows above it in every period
-  column, within rounding (0.5%, chat-upload.md §26.5). Total rows are listed in `total_rows` `[{row, label, matches}]`, where `matches` says whether the
-  total equals the sum of the rows used, within the same tolerance: the cross-check stays available, and a total that does not match is shown to
-  the analyst. A row-basis series may itself be a total ("Total revenue" is a good revenue row); the rule is for sums. The result carries `series`
-  `[{column, value}]` (the used rows summed, or the row's own values, per period column up to the boundary; the snapshot's one value), so the
+- **Total rows (review H3).** When a series is a sum of rows (`sum_of_rows`, and the snapshot value), a *total row* is never added to it. A row is a
+  total row when its label holds the word total, totals, subtotal, grand total or sum anywhere (whole word, any case), or when its values equal the sum of two or
+  more rows since the previous total, or of two or more total rows above it, in every period column it has a figure in, within rounding (0.5%,
+  chat-upload.md §26.5); a row equal to the single row above it is never a total. Total rows are listed in `total_rows` `[{row, label, matches}]`, where `matches` says
+  whether the total equals the sum of the rows it adds up (the rows since the previous total, all the rows used, or the totals above), within the same tolerance: the cross-check stays
+  available, and a total that does not match is shown to the analyst. A row-basis series may itself be a total ("Total revenue" is a good revenue row); the rule is for sums.
+- **Marked rows are never summed (review H2).** A sum of rows leaves out every row whose label holds a word of the six kinds of §2.1 (forecast, budget, bookings, pipeline, contract value,
+  run-rate), on a metric-labelled or an entity-labelled sheet, and every row the model marked. The citation (`series_rows`) names the rows used.
+- The result carries `series` `[{column, value}]` (the used rows summed, or the row's own values, per period column up to the boundary; the snapshot's one value), so the
   value is testable: a summary or snapshot with a total row gives the sum of its category rows once, never twice.
 
 ### 6.2 The last actual column and the boundary
@@ -312,6 +315,8 @@ take no part in the checks. The reason codes below are the closed list `REASONS`
 - `last_actual` = `{column, month, state, reason, candidates}` with `candidates` `[{column, month}]`. `month` is the period's end month, YYYY-MM.
   Only the labels layout has period columns: a records or snapshot layout has `last_actual: null` and `excluded_columns: []` (the engine's as-of
   rule cuts invoice dates as it does for every revenue file).
+- **Columns tagged forecast or budget are excluded wherever they sit** (review H5), before the boundary too: they are never read, never the last actual column, and one
+  column per month is read (the first). In the dates-down layout the analyst's last actual month ends the series (review H4).
 - **Columns after the boundary are excluded** from Run audit (`excluded_columns`), the same treatment as the forecast tables of PR #116 (chat-upload.md
   §20, §26.6). A file whose boundary waits for a click gives Run audit no column until the click (stage File mapping not done, as for a pending
   mapping). A later change of the as-of month re-checks a decided boundary on read: one now after the as-of month is `click` again.
@@ -360,8 +365,8 @@ beside it, and its rows are never labels of the block: they leave the label stat
   When they do not match (`mismatch`, with `months`, `months_off` and the largest `max_gap_pct`), or the row is not recognised revenue (an MRR or ARR row never wins
   by itself), `state` is `click`: **the analyst chooses** (`POST …/recognition` `{action: "change", part: "series_source"}`), the revenue row stands until the choice, and
   the audit waits for it like for any other click. The choice is `you`. A list that supplies the series gives `series_basis` `column` and cites its own rows (`series_rows`).
-- **The mismatch appears in Worth flagging.** The engine keeps `series_source`, `cross_check` and `cross_check_months` in the `recognition` block (§9); the memo
-  lists the mismatch under Worth flagging in one closed sentence naming the table the series is read from. It is a finding, never a banner blocker (rule 21).
+- **The mismatch appears in Worth flagging.** The engine keeps `series_source`, `cross_check`, `cross_check_months` and `cross_check_gaps` in the `recognition` block (§9); the memo
+  lists the mismatch under Worth flagging in one sentence: "{k} of {n} months differ between the dated list and the revenue row on the same sheet: {month}: revenue row {value} ({sheet}, {cell}) vs dated list {value} ({sheet}, {cells}), …; the revenue series is read from the {table}." Each month that differs is named with both figures and both sources as cell positions (owner decision 4 on PR 135). It is a finding, never a banner blocker (rule 21).
 - Not built: a list whose header is not within reach of the block's header rule, more than one dated list per sheet (only the first is compared) and a
   list beside a metrics block that is itself a dated-rows table.
 
@@ -423,7 +428,7 @@ This PR changes no schema (CLAUDE.md rule 23; docs/specs/interface-contracts.md)
   rows and the columns up to the boundary (file, sheet, rows, rule), as every cited block.
 - `missing_data`: entries with the lines of §3.2 (`metric`, `status: "Missing"`, `reason`, `unlocked_by` = the `needs` text, `file`); no new key.
 - `recognition` (a summary on the audit's results, closed words and counts only: type code, `series_basis`, the periods used, the count of excluded
-  columns, `currency_confirmed`, `source` `revenue_file` or `pnl`, and for a sheet with two tables `series_source`, `cross_check`, `cross_check_months`) so the memo and the export can state the basis. Not in any narrative slice; the boundary test is extended (rule 14).
+  columns, `currency_confirmed`, `source` `revenue_file` or `pnl`, and for a sheet with two tables `series_source`, `cross_check`, `cross_check_months` and `cross_check_gaps` `[{month, row_value, list_value, row_cell, list_cells}]`: cell positions and two figures per month that differs, never file text) so the memo and the export can state the basis. Not in any narrative slice; the boundary test is extended (rule 14).
 - `revenue_reconciliation`: a `status` (`computed` · `not_applicable`) and, for `not_applicable`, the reason "Not applicable – same source"; `available`
   stays false then, `by_month` (required today, `schemas/metrics.py` `RevenueReconciliation`) is an empty list, and `integrity.assess` reads the status (decision of 2026-10-19).
 - `growth_label` (text, the closed list of §6.1) on the growth figure of `revenue_series`, so the screen never says "revenue growth" for an MRR or ARR row. A closed word, not file text.
@@ -502,4 +507,7 @@ docs/architecture.md (recorded in this PR).
 7. The recognition call of a file the rules type comes after its column-mapping call (one call per new file, §5.5); a file the rules cannot type is asked first (§5.6).
 
 
-8. **Stored sheets** (owner decision on PR 135): the dataset keeps every row of each recognised sheet, never a cut. A dataset is one MongoDB document; over `DATASET_MAX_BYTES` (15 MB) the upload stops with a clear message (413) and nothing is stored. Stored sheets are deleted with the audit and follow the retention of other datasets.
+8. **Stored sheets** (owner decisions on PR 135): the dataset keeps every row of each **recognised** sheet, never a cut, and no other tab of the workbook. A file that already keeps its rows keeps no sheet beyond the one recognition read:
+   customers by period keep that one sheet, and one row per invoice keeps only a few facts (the columns found, the month count, the currency codes), no sheet. Every cell is stored as a number, text, a boolean or a datetime (a time of day becomes text, a duration seconds). A dataset is one MongoDB document; its size is measured in BSON bytes, as MongoDB counts it. Over `DATASET_MAX_BYTES` (15 MB) any upload stops with a clear message (413) before the model is called and nothing is stored. Stored sheets are deleted with the audit and follow the retention of other datasets.
+9. **A file with no monthly revenue series is not the revenue file** (owner decision 1 on PR 135): a snapshot, a yearly or quarterly report and a sheet read as a snapshot get the type picker (S6) as before the recognition, and a stored P&L with only yearly periods does not satisfy the banner (S16a) or Run audit. A statement-shaped P&L is still the audit's P&L.
+10. **Mixed currencies** (review L3): amounts that show two currencies (signs or codes in the amount cells) have no single currency to confirm; the required field stays open as before. A column headed Name is entity-labelled whatever its values (review L1).

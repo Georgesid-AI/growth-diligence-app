@@ -2010,7 +2010,8 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
                                   "source": "pnl" if feed.get("from_pnl") else "revenue_file"}
         if feed.get("series_source"):         # a sheet with a metrics block and a dated list (section 6.7)
             results["recognition"].update(series_source=feed["series_source"], cross_check=feed["cross_check"],
-                                          cross_check_months=feed["cross_check_months"])
+                                          cross_check_months=feed["cross_check_months"],
+                                          cross_check_gaps=feed["cross_check_gaps"])
         missing_data.extend({**item, "file": feed.get("file")} for item in feed.get("missing") or [])
     customers_series = guarded("Customers by month", rev_src.get("file"), {"months": [], "segments": [], "data": []},
                                compute_customers_series, mrr, seg_map)

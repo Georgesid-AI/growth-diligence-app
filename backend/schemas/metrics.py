@@ -493,9 +493,24 @@ class RevenueReconciliation(Block):
     source: Optional[ReconciliationSource] = None
 
 
+A1_CELL = r"^[A-Z]{1,3}[1-9][0-9]*$"
+A1_RANGE = r"^[A-Z]{1,3}[1-9][0-9]*(?::[A-Z]{1,3}[1-9][0-9]*)?$"
+
+
+class RecognitionGap(Block):
+    """One month in which the dated list and the revenue row of a sheet differ (revenue-file-recognition.md section 6.7, review M4):
+    both figures and both sources as cell positions, never text from a file."""
+    month: str = Field(pattern=r"^\d{4}-\d{2}$")
+    row_value: Currency
+    list_value: Optional[Currency] = None               # None: the dated list has no entry for the month
+    row_cell: str = Field(pattern=A1_CELL)
+    list_cells: Optional[str] = Field(default=None, pattern=A1_RANGE)
+
+
 class RecognitionSummary(Block):
     """What the memo and the export state about how the revenue was read (revenue-file-recognition.md section 9): closed words and
-    counts, no figure and no text from a file. Server-only."""
+    counts, no text from a file; for a sheet with two tables that differ, the months that differ with both figures and cell
+    positions. Server-only."""
     file_type: Literal["invoice_transactions", "customer_revenue", "monthly_revenue_report", "revenue_summary",
                        "financial_statements", "arr_mrr_snapshot"]
     series_basis: Literal["records", "row", "column", "sum_of_rows", "snapshot"]
@@ -506,6 +521,7 @@ class RecognitionSummary(Block):
     series_source: Optional[Literal["metrics_block", "dated_list"]] = None     # a sheet with two tables: which one supplies the series
     cross_check: Optional[Literal["match", "mismatch"]] = None                  # the other table against it, month by month (6.7)
     cross_check_months: Optional[Plain] = None
+    cross_check_gaps: Optional[List[RecognitionGap]] = None
 
 
 class CohortRow(Block):

@@ -338,11 +338,11 @@ def test_compute_is_refused_while_a_row_waits_and_runs_once_it_is_decided(api):
 
 def test_a_required_field_that_is_not_mapped_stops_compute_and_the_status_names_it(api):
     body = upload(api, "mixed_currency.csv").json()
-    # A missing currency is no "Required field not mapped: currency" any more: the analyst confirms the currency (recognition S31k).
-    assert body["missing_required"] == [] and body["currency_pending"] is True
-    assert body["recognition"]["currency"]["state"] == "confirm"
+    # Amounts in two currencies have no single currency to confirm (review L3): the required field stays open, as before the recognition PR.
+    assert body["missing_required"] == ["currency"] and not body.get("currency_pending")
+    assert body["recognition"]["currency"] == {"code": None, "state": "confirm", "mixed": True}
     decide_all(api, body)
-    assert api.post(f"/api/audits/{AUDIT}/compute").status_code == 409, "nothing computes before the currency is confirmed"
+    assert api.post(f"/api/audits/{AUDIT}/compute").status_code == 409
 
 
 # CRM amount is optional (George, 17 Oct 2026, follow-up to PR 123): no calculation reads it.

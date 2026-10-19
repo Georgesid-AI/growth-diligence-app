@@ -1913,6 +1913,23 @@ def test_chat_an_other_note_is_refused_for_a_digit_a_file_name_a_cell_text_a_nam
     assert (r.status_code == 400) is refused, r.text
 
 
+def test_chat_a_note_quoting_a_label_of_a_file_read_by_recognition_only_is_refused(api):
+    """Review M5 on PR 135: such a file keeps no rows, only its recognised sheets, and the note filter reads their text too."""
+    import server
+    from mapping_shapes import FIXTURES as MAPPING_FILES
+    api.db["audits"].docs[0]["structure_reading_consent"] = False
+    api.db["audits"].docs[0]["as_of_month"] = "2025-03-31"
+    summary = b"Revenue by product line (EUR),,,\nProduct line,Jan-25,Feb-25,Mar-25\nPlatform licences,10,11,12\nSupport plans,20,21,22\n"
+    assert chat.upload(api, "summary.csv", summary).json()["recognition_only"] is True
+    assert api.db["datasets"].docs[0]["rows"] == [], "the label is in no row: only the stored sheet holds it"
+    chat.upload(api, "hubspot_deals.csv", (MAPPING_FILES / "hubspot_deals.csv").read_bytes())
+    url = f"/api/audits/{chat.AUDIT}/datasets/crm/decisions"
+    refused = api.post(url, json=[{"column": "Deal owner", "action": "correct", "field": None, "reason": "other", "note": "Platform licences is wrong"}])
+    assert refused.status_code == 400 and refused.json()["detail"] == server.NOTE_REFUSED
+    kept = api.post(url, json=[{"column": "Deal owner", "action": "correct", "field": None, "reason": "other", "note": "That column is not needed"}])
+    assert kept.status_code == 200
+
+
 def test_chat_a_note_that_quotes_a_header_is_kept_including_a_header_holding_a_cell_word_and_one_with_a_digit_is_refused(api):
     head = "Customer ID,Invoice Date,Amount,Currency,Segment,Large Account Flag,Plan 2024\nAlder Works,2024-01-01,5,EUR,Large,x,y\n"
     chat.upload(api, "h.csv", head.encode())

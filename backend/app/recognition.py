@@ -10,10 +10,13 @@ chooses between, never in a reason, a type or a log line (rule 14).
 """
 import hashlib
 import re
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
+from decimal import Decimal
+from types import SimpleNamespace
 from typing import Dict, List, Optional, Set, Tuple
 
 import pandas as pd
+from openpyxl.utils import get_column_letter
 
 from . import column_rules as cr
 from .llm.schemas import NON_REVENUE_KINDS, RECOGNITION_TYPES  # noqa: F401  (the closed lists live beside the reply schema)
@@ -51,7 +54,8 @@ _KIND_WORDS = (
     ("budget", ("budget", "budgeted", "target")),
     ("bookings", ("booking", "bookings", "booked")),
     ("pipeline", ("pipeline", "backlog", "opportunity", "opportunities")),
-    ("contract_value", ("contract value", "contracted revenue", "total contract value", "annual contract value", "tcv", "acv")),
+    ("contract_value", ("contract value", "contracted revenue", "total contract value", "annual contract value", "tcv", "acv",
+                        "contracted arr", "committed arr", "committed mrr", "carr")),
     ("run_rate", ("run rate", "annualised", "annualized")))
 _RECURRING = ("mrr", "arr", "recurring revenue")
 _INVOICED = ("invoiced", "invoicing", "billing", "billed")
@@ -68,6 +72,7 @@ contract contracted run-rate annualised annualized cost costs cogs expense expen
 salaries growth income invoiced billing billings rent""".split()) + ("run rate",)
 _CUSTOMER_WORDS = ("customer", "customers", "client", "clients", "account", "accounts", "company", "companies", "subscriber",
                    "subscribers", "logo", "logos", "buyer", "buyers")
+_NAME_HEADERS = ("name", "names")      # a column headed Name is entity-labelled, whatever its values (review L1)
 _CATEGORY_WORDS = ("product", "products", "service", "services", "region", "regions", "country", "countries", "segment", "segments",
                    "channel", "channels", "category", "categories", "business unit", "division", "divisions", "geography", "tier",
                    "tiers", "line", "lines")
@@ -75,7 +80,8 @@ _AMOUNT_WORDS = ("amount", "net", "gross", "total", "value", "price", "revenue",
 _CRM_WORDS = ("deal", "opportunity", "pipeline", "quote", "forecast", "stage")
 _REFERENCE_WORDS = ("invoice", "transaction", "order", "receipt", "reference", "ref")
 _PERIOD_HEADERS = ("month", "period", "date", "fiscal month")
-_TOTAL_WORD = re.compile(r"(?i)^\s*(?:total|sum)\b")
+_TOTAL_WORD = re.compile(r"(?i)\b(?:sub[\s-]?total|grand[\s-]?total|total|totals|sum)\b")
+EXCLUDED_TAGS = ("forecast", "budget")          # the period columns tagged so are never read (section 6.2, review H5)
 _CURRENCY_CODE = re.compile(r"(?<![A-Za-z])(EUR|USD|GBP|CHF|SEK|NOK|DKK|PLN)(?![A-Za-z])")
 _SYMBOLS = {"€": "EUR", "£": "GBP", "$": "USD"}
 _YEAR_IN_TEXT = re.compile(r"(?<!\d)(?:19|20)\d{2}(?!\d)")
@@ -92,8 +98,9 @@ def _has(clean: str, words) -> bool:
 
 
 def non_revenue_kind(label) -> Optional[str]:
-    """The kind of a label that is recognised but never used as revenue (section 2.1), first match in the order of NON_REVENUE_KINDS."""
-    clean = _clean(label)
+    """The kind of a label that is recognised but never used as revenue (section 2.1), first match in the order of NON_REVENUE_KINDS.
+    The whole label is read, a bracket's content included: "Revenue (forecast)" is a forecast row (review H1)."""
+    clean = cr._norm(str(label or ""))
     return next((kind for kind, words in _KIND_WORDS if _has(clean, words)), None)
 
 
@@ -182,18 +189,27 @@ def _label_mode(lines: List[Dict], customer_header: bool) -> Tuple[str, float, i
 
 
 def _totals(labels: List[str], values: List[List[Optional[float]]]) -> Dict[int, bool]:
-    """{index of a total row: whether it equals the sum of the rows used}: a row starting with Total or Sum, or equal to the sum of the
-    rows above it in every column it has a figure (section 6.1, review H5)."""
+    """{index of a total row: whether it equals the sum of the rows it adds up}. A total row is a row whose label holds the word total,
+    subtotal, grand total or sum anywhere, or an unlabelled row whose figures equal the sum of two or more rows since the previous total,
+    or of two or more totals above it (section 6.1, review H3); one row above is never enough."""
     out: Dict[int, bool] = {}
-    used: List[int] = []
+    block: List[int] = []                    # the rows since the previous total
+    rows: List[int] = []                     # every row used so far
     for i, label in enumerate(labels):
-        sums = [sum(values[j][k] or 0 for j in used) for k in range(len(values[i]))]
         figures = [k for k, v in enumerate(values[i]) if v is not None]
-        equal = bool(used and figures) and all(_close(values[i][k], sums[k]) for k in figures)
-        if _TOTAL_WORD.match(label) or (equal and used):
-            out[i] = equal
+
+        def adds_up(group: List[int]) -> bool:
+            return bool(group and figures) and all(_close(values[i][k], sum(values[j][k] or 0 for j in group)) for k in figures)
+
+        sums = [g for g in (block, rows, list(out)) if g]
+        labelled = bool(_TOTAL_WORD.search(label))
+        by_value = (len(block) >= 2 and adds_up(block)) or (len(out) >= 2 and adds_up(list(out)))
+        if labelled or by_value:
+            out[i] = any(adds_up(g) for g in sums)
+            block = []
         else:
-            used.append(i)
+            block.append(i)
+            rows.append(i)
     return out
 
 
@@ -223,10 +239,12 @@ def _dated_lists(grid) -> List[Dict]:
                 rr += 1
             if len(rows) >= LIST_MIN_ROWS:
                 months: Dict[str, float] = {}
-                for _, month, value in rows:
+                month_rows: Dict[str, List[int]] = {}
+                for row_no, month, value in rows:
                     months[month] = months.get(month, 0.0) + value
+                    month_rows.setdefault(month, []).append(row_no)
                 found.append({"header_row": r, "date_col": c, "value_col": c + 1, "first_row": rows[0][0], "last_row": rows[-1][0],
-                              "rows": [x[0] for x in rows], "months": months})
+                              "rows": [x[0] for x in rows], "months": months, "month_rows": month_rows})
     return found
 
 
@@ -249,7 +267,7 @@ def _labels_info(sheet, rd: Dict, fye: int) -> Dict:
             continue                                          # a note or a heading: not a label row (section 4.2)
         lines.append({"row": ln["row"], "label": ln["label"], "cells": cells, "values": [_num(c) for c in cells]})
     head = _header_cell(grid, rd["header_row"], rd["label_col"])
-    customer_header = _has(_clean(head), _CUSTOMER_WORDS)
+    customer_header = _has(_clean(head), _CUSTOMER_WORDS) or _clean(head) in _NAME_HEADERS
     mode, share, hits, confidence = _label_mode(lines, customer_header)
     marked = [{"row": ln["row"], "label": ln["label"], "kind": non_revenue_kind(ln["label"])} for ln in lines
               if mode == "metric" and non_revenue_kind(ln["label"])]
@@ -341,6 +359,8 @@ def _records_info(sheet) -> Dict:
     if currency_col is not None:
         seen = {str(r[currency_col]).strip().upper() for _, r in rows if isinstance(r[currency_col], str)
                 and re.fullmatch(r"[A-Za-z]{3}", r[currency_col].strip())}
+    in_amounts = _codes([r[amount] for _, r in rows if isinstance(r[amount], str)]) if amount is not None else set()   # "€1,200" (review L3)
+    seen |= in_amounts
     months = cr.months_of([r[date_col] for _, r in rows]) if date_col is not None else None
     return {"layout": "records", "sheet": sheet, "amount": amount, "date": date_col, "reference": reference, "customer": customer,
             "header_row": sheet.header_row, "periods": [], "titles": titles, "currency_values": seen,
@@ -471,6 +491,8 @@ def message_for(missing: List[str]) -> Optional[str]:
 
 
 def _currency(info: Dict, ftype: Optional[str], reporting_currency: Optional[str], decided: Optional[str]) -> Dict:
+    if info.get("multi_currency"):            # several currencies in one file: no single currency to confirm (review L3)
+        return {"code": None, "state": "confirm", "mixed": True}
     if decided in ISO_CURRENCIES:
         return {"code": decided, "state": "you"}
     codes = info["codes"]
@@ -485,19 +507,21 @@ def _boundary(info: Dict, row_values: Optional[List[Optional[float]]], as_of: Op
               decided: Optional[int]) -> Dict:
     """The last actual column and the columns after it (section 6.2); `row_values` are the revenue row's values by period."""
     periods = info["periods"]
-    usable = [p for p in periods if p["end"]]
-    by_col = {p["col"]: p for p in usable}
+    dated = [p for p in periods if p["end"]]
+    usable = [p for p in dated if p["tag"] not in EXCLUDED_TAGS]      # a forecast or budget column is never the last actual column
+    by_col = {p["col"]: p for p in dated}
     if not usable:
         return {"column": None, "month": None, "state": "click", "reason": "not_a_period", "candidates": []}
+    readable = {p["col"] for p in usable}
     actual = [p for p in usable if p["tag"] == "actual"]
     if actual:
         rules = actual[-1]["col"]
     else:
-        have = [p["col"] for k, p in enumerate(periods) if p["end"] and row_values is not None and row_values[k] is not None]
+        have = [p["col"] for k, p in enumerate(periods) if p in usable and row_values is not None and row_values[k] is not None]
         rules = have[-1] if have else usable[-1]["col"]
     candidates = [{"column": p["col"], "month": p["end"]} for p in usable if as_of is None or p["end"] <= as_of]
     column, state, reason = rules, "auto", None
-    if decided in by_col:
+    if decided in readable:
         column, state = decided, "you"
         if as_of is not None and by_col[decided]["end"] > as_of:
             state, reason = "click", "after_as_of"
@@ -505,6 +529,8 @@ def _boundary(info: Dict, row_values: Optional[List[Optional[float]]], as_of: Op
         if proposed is not None:
             if proposed in by_col:
                 column = proposed
+                if proposed not in readable and (as_of is None or by_col[proposed]["end"] <= as_of):
+                    column, reason = rules, "not_a_period"
             else:
                 reason = "not_a_period"
         if reason is None and as_of is None:
@@ -583,20 +609,34 @@ def _model_marks(info: Dict, prop: Optional[Dict], rules_marked: List[Dict]) -> 
     return sorted(out, key=lambda m: m["row"])
 
 
-def _sum_series(info: Dict, last_col: Optional[int]) -> Tuple[List[Dict], List[Dict]]:
-    """(series, total_rows) of a sheet whose revenue is the sum of its rows: totals are never added (section 6.1)."""
-    lines = info["lines"]
+def read_periods(info: Dict, last_col: Optional[int]) -> List[Tuple[int, Dict]]:
+    """(index, period) of the columns a series reads: a dated period up to the boundary, not tagged forecast or budget, and one column
+    per month, the first (section 6.2, review H5)."""
+    out, seen = [], set()
+    for k, p in enumerate(info["periods"]):
+        if not p["end"] or p["tag"] in EXCLUDED_TAGS or (last_col is not None and p["col"] > last_col):
+            continue
+        if p["grain"] == "month" and p["end"] in seen:
+            continue
+        seen.add(p["end"])
+        out.append((k, p))
+    return out
+
+
+def _sum_series(info: Dict, last_col: Optional[int], marked: Set[int]) -> Tuple[List[Dict], List[Dict], List[int]]:
+    """(series, total_rows, rows used) of a sheet whose revenue is the sum of its rows: total rows and rows marked forecast, budget,
+    bookings, pipeline, contract value or run-rate are never added (section 6.1, review H2 and H3)."""
+    lines = [ln for ln in info["lines"] if ln["row"] not in marked and not non_revenue_kind(ln["label"])]
     values = [ln["values"] for ln in lines]
     totals = _totals([ln["label"] for ln in lines], values)
     used = [i for i in range(len(lines)) if i not in totals]
     series = []
-    for k, p in enumerate(info["periods"]):
-        if not p["end"] or (last_col is not None and p["col"] > last_col):
-            continue
+    for k, p in read_periods(info, last_col):
         figures = [values[i][k] for i in used if values[i][k] is not None]
         if figures:
             series.append({"column": p["col"], "month": p["end"], "grain": p["grain"], "value": _round(sum(figures))})
-    return series, [{"row": lines[i]["row"], "label": lines[i]["label"], "matches": ok} for i, ok in sorted(totals.items())]
+    return (series, [{"row": lines[i]["row"], "label": lines[i]["label"], "matches": ok} for i, ok in sorted(totals.items())],
+            [lines[i]["row"] for i in used])
 
 
 def _round(v: float):
@@ -646,20 +686,19 @@ def _finalize_labels(info: Dict, ctx: Dict) -> Dict:
             row_values = next(ln["values"] for ln in info["lines"] if ln["row"] == revenue_row["row"])
     last = _boundary(info, row_values, ctx.get("as_of"), (prop or {}).get("last_actual_column"), dec.get("last_actual"))
     last_col = last["column"]
-    excluded = [p["col"] for p in info["periods"] if last_col is not None and p["col"] > last_col]
+    read = {p["col"] for _, p in read_periods(info, last_col)}
+    excluded = [p["col"] for p in info["periods"] if p["end"] and p["col"] not in read]
     if has_row:
         series = []
         if revenue_row["row"] is not None:
-            for k, p in enumerate(info["periods"]):
-                if p["end"] and (last_col is None or p["col"] <= last_col) and row_values[k] is not None:
+            for k, p in read_periods(info, last_col):
+                if row_values[k] is not None:
                     series.append({"column": p["col"], "month": p["end"], "grain": p["grain"], "value": _round(row_values[k])})
         basis, total_rows = "row", []
         series_rows = [revenue_row["row"]] if revenue_row["row"] is not None else []
     else:
-        series, total_rows = _sum_series(info, last_col)
+        series, total_rows, series_rows = _sum_series(info, last_col, set(marked))
         basis = "sum_of_rows"
-        skip = {t["row"] for t in total_rows}
-        series_rows = [ln["row"] for ln in info["lines"] if ln["row"] not in skip]
     source = None
     if has_row and revenue_row["row"] is not None and info["lists"]:
         source = _series_source(info, revenue_row, row_values, last, dec.get("series_source"))
@@ -668,7 +707,7 @@ def _finalize_labels(info: Dict, ctx: Dict) -> Dict:
             limit = last["month"] if last["month"] else None
             series = [{"column": None, "month": m, "grain": "month", "value": _round(v)} for m, v in sorted(listed["months"].items())
                       if limit is None or m <= limit]
-            basis, series_rows = "column", listed["rows"]
+            basis, series_rows = "column", sorted(r for x in series for r in listed["month_rows"][x["month"]])      # rows after the boundary are not cited
     month_cols = [p for p in periods if p["grain"] == "month"]
     supports, blocked = _supports("labels", ftype, len(periods), False, bool(periods) and not month_cols)
     currency = _currency(info, ftype, ctx.get("reporting_currency"), dec.get("currency"))
@@ -703,20 +742,29 @@ def _series_source(info: Dict, row: Dict, row_values: Optional[List[Optional[flo
     the analyst chooses."""
     listed = info["lists"][0]
     limit = last.get("month")
-    pairs = [(p["end"], row_values[k]) for k, p in enumerate(info["periods"])
-             if p["grain"] == "month" and p["end"] and row_values[k] is not None and (limit is None or p["end"] <= limit)]
-    gaps = []
-    for month, value in pairs:
-        have = listed["months"].get(month)
-        gaps.append(None if have is None else abs(have - value) / abs(value) if value else (0.0 if have == 0 else 1.0))
-    matched = bool(pairs) and all(g is not None and g <= SOURCE_TOLERANCE for g in gaps)
+    pairs = [(p, row_values[k]) for k, p in enumerate(info["periods"])
+             if p["grain"] == "month" and p["end"] and p["tag"] not in EXCLUDED_TAGS and row_values[k] is not None
+             and (limit is None or p["end"] <= limit)]
+    gaps, off = [], []
+    for p, value in pairs:
+        have = listed["months"].get(p["end"])
+        gap = None if have is None else abs(have - value) / abs(value) if value else (0.0 if have == 0 else 1.0)
+        off.append(gap)
+        if gap is None or gap > SOURCE_TOLERANCE:         # both figures and both sources, for each month that differs (review M4)
+            found = listed["month_rows"].get(p["end"]) or []
+            col = get_column_letter(listed["value_col"])
+            gaps.append({"month": p["end"], "row_value": _round(value), "list_value": None if have is None else _round(have),
+                         "row_cell": f"{get_column_letter(p['col'])}{row['row']}",
+                         "list_cells": (f"{col}{min(found)}" if len(set(found)) < 2 else f"{col}{min(found)}:{col}{max(found)}")
+                         if found else None})
+    matched = bool(pairs) and all(g is not None and g <= SOURCE_TOLERANCE for g in off)
     cross = {"status": "match" if matched else "mismatch", "months": len(pairs),
-             "months_off": sum(1 for g in gaps if g is None or g > SOURCE_TOLERANCE),
-             "max_gap_pct": round(max((g for g in gaps if g is not None), default=0.0), 4)}
+             "months_off": sum(1 for g in off if g is None or g > SOURCE_TOLERANCE),
+             "max_gap_pct": round(max((g for g in off if g is not None), default=0.0), 4)}
     wins = row.get("kind") == "recognised" and matched
     if decided in SERIES_SOURCES:
-        return {"supplier": decided, "state": "you", "cross_check": cross}
-    return {"supplier": "metrics_block", "state": "auto" if wins else "click", "cross_check": cross}
+        return {"supplier": decided, "state": "you", "cross_check": cross, "gaps": gaps}
+    return {"supplier": "metrics_block", "state": "auto" if wins else "click", "cross_check": cross, "gaps": gaps}
 
 
 def _finish(result: Dict) -> Dict:
@@ -808,7 +856,9 @@ def _finalize_columns(info: Dict, ctx: Dict) -> Dict:
         last_state, last_reason = "you", None
     last = {"row": last_row[0] if last_row else None, "month": last_row[2] if last_row else None, "state": last_state,
             "reason": last_reason, "candidates": candidates}
-    series = [{"row": n, "month": mth, "grain": "month", "value": _round(_num(r[idx]))} for n, r, mth in (upto if as_of is not None else usable)]
+    limit = last["month"]                    # the analyst's last actual month ends the series too (review H4)
+    series = [{"row": n, "month": mth, "grain": "month", "value": _round(_num(r[idx]))}
+              for n, r, mth in (upto if as_of is not None else usable) if limit is None or mth <= limit]
     ftype = dec["file_type"] if dec.get("file_type") in RECOGNITION_TYPES else \
         ("financial_statements" if info["groups"] >= 2 else "monthly_revenue_report")
     supports, blocked = _supports("columns", ftype, len(info["months"]), False, False)
@@ -959,16 +1009,75 @@ SERIES_RULES = {
     "column": "Revenue = the confirmed revenue column, one value per month up to the last actual month"}
 
 
+def storable(value):
+    """A cell as MongoDB can keep it: a number, text, a boolean, a datetime or nothing. A time of day or a duration (not BSON) becomes
+    text or seconds, a date a datetime, a decimal or a numpy number a plain number, anything else text (review H8)."""
+    if value is None or isinstance(value, (bool, str)):
+        return value
+    if isinstance(value, datetime):
+        return value.to_pydatetime() if isinstance(value, pd.Timestamp) else value
+    if isinstance(value, date):
+        return datetime(value.year, value.month, value.day)
+    if isinstance(value, time):
+        return value.isoformat()
+    if isinstance(value, timedelta):
+        return value.total_seconds()
+    if hasattr(value, "item") and not isinstance(value, (int, float)):
+        try:
+            return storable(value.item())
+        except (ValueError, TypeError):
+            return str(value)
+    if isinstance(value, int):
+        return value if -2 ** 63 <= value < 2 ** 63 else float(value)
+    if isinstance(value, (float, Decimal)):
+        return float(value)
+    return str(value)
+
+
 def pack_sheets(sheets) -> List[Dict]:
     """The sheets of a file as the dataset keeps them to read the file again: name, whether it was a CSV, every row (the caller refuses a dataset over the size limit; nothing is cut),
-    each cell's indent and the merged spans (JSON-safe lists)."""
+    each cell's indent and the merged spans. Every value is one MongoDB can store (review H8)."""
     out = []
     for s in sheets:
         fmt = s.fmt or {}
-        out.append({"name": s.sheet, "csv": s.raw_headers is None and not fmt, "grid": [list(r) for r in (s.grid or [])],
+        out.append({"name": s.sheet, "csv": s.raw_headers is None and not fmt, "grid": [[storable(c) for c in r] for r in (s.grid or [])],
                     "indents": [[r, c, n] for (r, c), n in (fmt.get("indents") or {}).items()],
                     "merged": [list(m) for m in fmt.get("merged") or []]})
     return out
+
+
+def kept_names(result: Dict, keep_rows: bool) -> List[str]:
+    """The sheets a dataset keeps (owner decision 3 on PR 135): the recognised sheets only, and for a file that already keeps its rows
+    (invoices, customers by period) the one sheet recognition read."""
+    return [result["sheet"]] + ([] if keep_rows else [o["sheet"] for o in result.get("other_sheets") or []])
+
+
+def renumber_proposal(proposal: Optional[Dict], sheets, names: List[str]) -> Optional[Dict]:
+    """The model's kept proposal with its `sheet` counted among the kept sheets; one that named a sheet not kept names none (0)."""
+    if not proposal:
+        return proposal
+    position = proposal.get("sheet")
+    named = sheets[position - 1].sheet if isinstance(position, int) and 1 <= position <= len(sheets) else None
+    return {**proposal, "sheet": names.index(named) + 1 if named in names else 0}
+
+
+def records_facts(info: Dict) -> Dict:
+    """The few facts of a records layout (one row per invoice) that its recognition needs: the dataset already keeps the rows, so the
+    sheet is not kept a second time (owner decision 3 on PR 135)."""
+    return {"sheet": info["sheet"].sheet, "header_row": info["header_row"], "amount": info["amount"], "date": info["date"],
+            "reference": info["reference"], "customer": info["customer"], "month_count": info["month_count"],
+            "multi_currency": info["multi_currency"], "currency_values": sorted(info["currency_values"]), "codes": sorted(info["codes"])}
+
+
+def recognise_facts(facts: Dict, as_of_month: Optional[str] = None, reporting_currency: Optional[str] = None,
+                    decisions: Optional[Dict] = None) -> Dict:
+    """The recognition of a records layout from its stored facts: the same result as recognising the sheet."""
+    info = {**facts, "layout": "records", "sheet": SimpleNamespace(sheet=facts["sheet"]), "periods": [], "titles": [],
+            "currency_values": set(facts["currency_values"]), "codes": set(facts["codes"]), "rows": []}
+    dec = {k: v for k, v in (decisions or {}).items() if k != "sheet"}
+    result = _finalize_records(info, {"as_of": _asof(as_of_month), "reporting_currency": reporting_currency, "decisions": dec})
+    result["other_sheets"] = []
+    return result
 
 
 def unpack_sheets(stored: List[Dict]):
@@ -1006,10 +1115,17 @@ def proposal_from(reply: Dict, sheets, company_name: Optional[str], mapping: Dic
     return out
 
 
+def has_monthly_series(result: Optional[Dict]) -> bool:
+    """Whether a recognition gives a monthly revenue series. A snapshot, a yearly or quarterly report and a sheet with no revenue figure
+    by month give none, and such a file is not the revenue file for the banner or Run audit (owner decision 1 on PR 135)."""
+    return bool(result and result.get("recognised") and any(x.get("month") and x.get("grain") == "month" for x in result.get("series") or []))
+
+
 def pnl_confirmed(result: Optional[Dict]) -> bool:
-    """A P&L satisfies the required revenue file when its recognition is confirmed with two or more periods (section 8): no part in
-    click and the revenue row or column decided by the analyst."""
-    if not result or not result.get("recognised") or result.get("periods", 0) < 2 or result.get("needs_click"):
+    """A P&L satisfies the required revenue file when its recognition is confirmed with two or more periods and gives a monthly series
+    (section 8): no part in click and the revenue row or column decided by the analyst."""
+    if not result or not result.get("recognised") or result.get("periods", 0) < 2 or result.get("needs_click") \
+            or not has_monthly_series(result):
         return False
     row = result.get("revenue_row") or result.get("revenue_column")
     return bool(row and row["state"] == "you")
@@ -1037,5 +1153,8 @@ def engine_feed(result: Dict, file: str, sheet_name: str, unit_scale: int = 1, f
             "series_source": (result.get("series_source") or {}).get("supplier"),
             "cross_check": ((result.get("series_source") or {}).get("cross_check") or {}).get("status"),
             "cross_check_months": ((result.get("series_source") or {}).get("cross_check") or {}).get("months"),
+            "cross_check_gaps": [{**g, "row_value": g["row_value"] * unit_scale,
+                                  "list_value": None if g["list_value"] is None else g["list_value"] * unit_scale}
+                                 for g in (result.get("series_source") or {}).get("gaps") or []],
             "missing": [{"metric": ANALYSIS_NAMES[b["analysis"]], "reason": line, "unlocked_by": b["needs"]}
                         for b, line in zip(result.get("blocked") or [], missing_lines(result))]}

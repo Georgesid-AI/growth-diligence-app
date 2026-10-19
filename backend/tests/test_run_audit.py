@@ -54,6 +54,9 @@ class EchoAdapter(t.FakeAdapter):
         self.calls += 1
         self.payloads.append(user_payload)
         sent = json.loads(user_payload)
+        if sent.get("type") == "file_recognition":     # a recognition call (revenue-file-recognition.md 5.7): a valid reply that names only the type
+            return json.dumps({"type": "file_recognition", "sheet": 1, "file_type": "financial_statements", "revenue_row": None,
+                               "last_actual_column": None, "currency": None, "non_revenue_rows": []}), 100, 20
         if "valid_source_keys" not in sent:            # a column-mapping call: the model proposes the S&M column of the P&L
             item = {"metric": "sm_expense", "period": None, "value": None, "unit": None, "actual_or_forecast": "unknown",
                     "value_cell": "r1c2", "unit_other": None, "period_cells": [], "proposed_flags": []}
@@ -399,7 +402,8 @@ def test_write_all_narratives_runs_every_enabled_step_through_the_gateway_and_a_
     est2, again = write_all(run_api)
     assert len(run_api.adapter.payloads) == calls, "the cache serves the second press"
     assert all(s["cached"] for s in est2["steps"])
-    assert {c["status"] for c in run_api.db["llm_calls"].docs if c.get("step") != "structures"} <= {"ok", "flagged"}
+    assert {c["status"] for c in run_api.db["llm_calls"].docs} <= {"ok", "flagged"}, "the recognition calls end ok too, none parse_failed"
+    assert any(c.get("structure_type") == "file_recognition" for c in run_api.db["llm_calls"].docs), "a valid recognition reply was read"
 
 
 def test_write_all_narratives_keeps_the_spend_cap_and_a_refusal_degrades_to_the_metrics(run_api, monkeypatch):
