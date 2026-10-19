@@ -1004,6 +1004,14 @@ describe("the mapping table", () => {
     expect(q("status-revenue").textContent).toBe("Required field not mapped: currency");
     expect(api.computeAudit).not.toHaveBeenCalled();
   });
+
+  test("amounts in two currencies still block compute and the status line names the currencies found", async () => {
+    api.uploadChatFile.mockResolvedValue(VIEW({ missing_required: ["currency"], recognition: { currency: { code: null, state: "confirm", mixed: true, codes: ["EUR", "USD"] } } }));
+    await mount();
+    await pickAndMap([file("rev.csv")]);
+    expect(q("status-revenue").textContent).toBe("This file has amounts in two currencies (EUR and USD). Upload one file per currency, or add a currency column.");
+    expect(api.computeAudit).not.toHaveBeenCalled();
+  });
 });
 
 describe("Map is the only button of the bar next to the paperclip", () => {

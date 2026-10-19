@@ -340,7 +340,7 @@ def test_a_required_field_that_is_not_mapped_stops_compute_and_the_status_names_
     body = upload(api, "mixed_currency.csv").json()
     # Amounts in two currencies have no single currency to confirm (review L3): the required field stays open, as before the recognition PR.
     assert body["missing_required"] == ["currency"] and not body.get("currency_pending")
-    assert body["recognition"]["currency"] == {"code": None, "state": "confirm", "mixed": True}
+    assert body["recognition"]["currency"] == {"code": None, "state": "confirm", "mixed": True, "codes": ["EUR", "USD"]}
     decide_all(api, body)
     assert api.post(f"/api/audits/{AUDIT}/compute").status_code == 409
 

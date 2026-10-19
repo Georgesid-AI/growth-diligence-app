@@ -992,3 +992,24 @@ def test_a_long_sheet_under_the_limit_is_kept_whole(api):
     assert upload(api, "long.csv", text.encode()).status_code == 200
     kept = api.db["datasets"].docs[0]["recognition_sheets"][0]["grid"]
     assert len(kept) == 2602, "every row of the sheet is kept"
+
+
+METRICS_SUMMARY = """Test Co - metrics,,,
+Metric,Jan-25,Feb-25,Mar-25
+Product A revenue (EUR),100,110,120
+Product B revenue (EUR),50,60,70
+MRR,900,910,920
+ARR,10800,10920,11040
+Customers,40,41,42
+Logo churn %,0.05,0.04,0.03
+Gross margin %,0.6,0.61,0.62
+Cost of sales,30,31,32
+"""
+
+
+def test_a_revenue_summary_from_a_metrics_sheet_sums_only_the_revenue_rows(rec):
+    sheets = csv_sheets(METRICS_SUMMARY, "metrics.csv")
+    got = rec.recognise(sheets, as_of_month="2025-03-31", decisions={"file_type": "revenue_summary"})
+    assert got["file_type"] == "revenue_summary" and got["label_mode"] == "metric" and got["series_basis"] == "sum_of_rows"
+    assert [s["value"] for s in got["series"]] == [150, 170, 190], "the two revenue rows; never MRR, ARR, customers, % or cost rows"
+    assert got["series_rows"] == [3, 4]

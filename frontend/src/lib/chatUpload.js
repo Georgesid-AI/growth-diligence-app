@@ -154,11 +154,19 @@ export const S29_PARAGRAPHS = [
 ];
 export const S13_READY = "Ready – press Run audit";
 const S31j_status = (n) => (n === 1 ? "1 choice waits for you" : `${n} choices wait for you`);
+// Mixed currencies still block compute; the currencies named are the ones found in the file.
+export const S13_mixed_currency = (codes) => {
+  const n = codes.length;
+  const named = n > 1 ? `${codes.slice(0, -1).join(", ")} and ${codes[n - 1]}` : codes.join("");
+  return `This file has amounts in ${n === 2 ? "two" : "several"} currencies (${named}). Upload one file per currency, or add a currency column.`;
+};
 export const S13_status = (view) => {
   if (view.recognition_only) return view.pending > 0 ? S31j_status(view.pending) : S13_READY;      // S31j: the choices of its recognition
   if (view.sheet_map) return S30h_status(view);                              // a statement file (section 26)
   if (view.read_as_claims) return S28_saved(view.read_as_claims.claims);     // read as claims: it waits for nothing (section 20)
   if (view.currency_pending) return S31j_status(view.pending + 1);          // no currency column: the analyst confirms the currency (S31k)
+  const cur = view.recognition && view.recognition.currency;
+  if (cur && cur.mixed && Array.isArray(cur.codes) && cur.codes.length > 1 && (view.missing_required || []).includes("currency")) return S13_mixed_currency(cur.codes);
   if (view.miss && view.miss.missing.length > 0) return `Required field not mapped: ${view.miss.missing.map(fieldName).join(", ")}`;
   if (view.pending > 0) return `${view.pending} columns wait for your decision`;
   if (view.missing_required.length > 0) return `Required field not mapped: ${view.missing_required.map(fieldName).join(", ")}`;

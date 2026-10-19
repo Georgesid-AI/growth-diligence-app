@@ -492,7 +492,7 @@ def message_for(missing: List[str]) -> Optional[str]:
 
 def _currency(info: Dict, ftype: Optional[str], reporting_currency: Optional[str], decided: Optional[str]) -> Dict:
     if info.get("multi_currency"):            # several currencies in one file: no single currency to confirm (review L3)
-        return {"code": None, "state": "confirm", "mixed": True}
+        return {"code": None, "state": "confirm", "mixed": True, "codes": sorted(info.get("currency_values") or [])}
     if decided in ISO_CURRENCIES:
         return {"code": decided, "state": "you"}
     codes = info["codes"]
@@ -625,8 +625,10 @@ def read_periods(info: Dict, last_col: Optional[int]) -> List[Tuple[int, Dict]]:
 
 def _sum_series(info: Dict, last_col: Optional[int], marked: Set[int]) -> Tuple[List[Dict], List[Dict], List[int]]:
     """(series, total_rows, rows used) of a sheet whose revenue is the sum of its rows: total rows and rows marked forecast, budget,
-    bookings, pipeline, contract value or run-rate are never added (section 6.1, review H2 and H3)."""
+    bookings, pipeline, contract value or run-rate are never added, and on a metrics sheet neither is any row that is not a revenue row (section 6.1, review H2 and H3)."""
     lines = [ln for ln in info["lines"] if ln["row"] not in marked and not non_revenue_kind(ln["label"])]
+    if info["mode"] == "metric":        # a metrics sheet: only rows labelled as revenue; MRR, ARR, counts, % and costs are never added
+        lines = [ln for ln in lines if is_candidate_label(ln["label"]) and revenue_kind(ln["label"]) != "recurring"]
     values = [ln["values"] for ln in lines]
     totals = _totals([ln["label"] for ln in lines], values)
     used = [i for i in range(len(lines)) if i not in totals]

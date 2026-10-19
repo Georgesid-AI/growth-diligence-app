@@ -102,7 +102,8 @@ def test_h2_the_monthly_report_changed_to_a_revenue_summary_does_not_sum_forecas
     got = rec.recognise(rec_sheets(MONTHLY), as_of_month="2025-06-30", decisions={"file_type": "revenue_summary"})
     assert got["series_basis"] == "sum_of_rows"
     assert not {9, 10, 11} & set(got["series_rows"]), "Forecast revenue, Bookings and Pipeline are rows 9, 10 and 11"
-    assert got["series_rows"] == [4, 5, 6, 7, 8, 12], "every row but the forecast, bookings and pipeline rows"
+    assert got["series_rows"] == [4], "the revenue row only: no MRR, ARR, customers, % rows and no forecast, bookings or pipeline rows"
+    assert got["series"][0]["value"] == 10570
 
 
 def rec_sheets(name):
@@ -476,7 +477,7 @@ def test_l3_a_file_whose_amounts_show_two_currencies_asks_for_no_single_currency
     rules_only(api, "2024-12-31")
     from test_chat_upload import MESSY
     body = upload(api, "mixed_currency.csv", (MESSY / "mixed_currency.csv").read_bytes()).json()
-    assert body["recognition"]["currency"] == {"code": None, "state": "confirm", "mixed": True}
+    assert body["recognition"]["currency"] == {"code": None, "state": "confirm", "mixed": True, "codes": ["EUR", "USD"]}
     assert body["missing_required"] == ["currency"] and not body.get("currency_pending")
     assert decide(api, action="change", part="currency", currency="EUR").status_code == 400
     assert api.post(f"/api/audits/{AUDIT}/compute").status_code == 409
