@@ -23,6 +23,10 @@ from test_chat_upload import AUDIT, adapter_of, upload  # noqa: E402
 from app import column_rules as cr  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "recognition"
+MAPPING = Path(__file__).resolve().parent / "fixtures" / "mapping"
+SAMPLE = Path(__file__).resolve().parents[2] / "sample_data"
+AWAITING = "awaiting implementation: revenue-file recognition"
+pytestmark = pytest.mark.xfail(strict=True, reason=AWAITING)       # the implementation PR removes this marker
 MONTHLY = "monthly_report_actual_forecast.csv"
 AS_OF = "2025-06-30"                        # the last actual month of MONTHLY is June 2025
 AS_OF_YEAR_END = "2025-12-31"
@@ -90,6 +94,7 @@ def test_forecast_bookings_and_pipeline_rows_are_recorded_and_never_a_revenue_ca
 def test_customers_by_periods_is_customer_revenue_and_the_customer_level_analyses_are_enabled(rec):
     got = recognise(rec, "customer_revenue_months.csv")
     assert got["recognised"] and got["file_type"] == "customer_revenue" and got["label_mode"] == "entity"
+    assert got["label_share"] == pytest.approx(1 / 12, abs=1e-4) and got["confidence"] == 92, "one name of twelve holds a metric word"
     assert got["supports"] == ["customer_level", "trend"] and got["blocked"] == []
     assert got["series_basis"] == "sum_of_rows" and got["revenue_row"] is None, "the series is the sum of the customer rows"
 
@@ -389,6 +394,116 @@ def test_a_row_the_model_marks_as_non_revenue_is_kept_as_a_claim_row_with_its_cl
     assert (12, "run_rate") in {(r["row"], r["kind"]) for r in got["non_revenue_rows"]}
 
 
+@pytest.mark.parametrize("header", ["Month", "Period", "Date"])
+def test_a_header_reading_month_period_or_date_is_a_reporting_reference(rec, header):
+    text = f"{header},Revenue,Cost of sales,Payroll\n2025-01-01,100,40,20\n2025-02-01,110,44,20\n2025-03-01,120,48,20\n"
+    got = rec.recognise(csv_sheets(text), as_of_month="2025-03-31")
+    assert got["recognised"] is True and "reference" not in got["missing"], got["message"]
+
+
+def test_a_pnl_with_dates_down_the_rows_and_measures_across_is_recognised_as_financial_statements(rec):
+    sheets = cr.read_workbook((MAPPING / "accountant_pnl.csv").read_bytes(), "accountant_pnl.csv")
+    got = rec.recognise(sheets, as_of_month="2024-12-31")
+    assert got["recognised"] is True and got["missing"] == [] and got["message"] is None
+    assert got["file_type"] == "financial_statements" and got["series_basis"] == "column"
+    assert got["revenue_column"]["label"] == "Revenue" and got["revenue_row"] is None
+
+
+def last_date(path, column):
+    rows = [line.split(",") for line in path.read_text().splitlines()[1:] if line.strip()]
+    return max(r[column][:10] for r in rows)
+
+
+@pytest.mark.parametrize("name, column", [("pnl.csv", 0), ("revenue.csv", 1)])
+def test_the_clean_run_files_get_no_click_and_no_not_a_revenue_file_line(rec, name, column):
+    """sample_data: the P&L (dates down the rows, no currency in the file) and the revenue file (customer, date, amount, currency)."""
+    path = SAMPLE / name
+    got = rec.recognise(cr.read_workbook(path.read_bytes(), name), as_of_month=last_date(path, column), reporting_currency="EUR")
+    assert got["recognised"] is True and got["message"] is None
+    assert got["needs_click"] is False, "recognition adds no click to a clean run"
+    assert got["file_type"] == {"pnl.csv": "financial_statements", "revenue.csv": "invoice_transactions"}[name]
+    if name == "pnl.csv":
+        assert got["currency"] == {"code": "EUR", "state": "audit"}, "a P&L takes the audit's reporting currency, as it does today"
+
+
+def test_the_extra_unsure_sheets_are_unsure_with_confidence_zero_and_their_labels_are_masked(rec):
+    for name, share in (("unsure_share_labels.csv", 0.3), ("unsure_few_hits.csv", 2 / 3)):
+        got = recognise(rec, name, as_of="2025-04-30")
+        assert got["label_mode"] == "unsure" and got["confidence"] == 0, name
+        assert got["label_share"] == pytest.approx(share, abs=1e-4), name
+    assert recognise(rec, "unsure_few_hits.csv", as_of="2025-03-31")["label_share"] > rec.METRIC_LABEL_SHARE, "above 0.5 but only 2 hits"
+
+
+def category_sums(rec, name):
+    sheet = sheets_of(name)[0]
+    body = [r for r in sheet.grid[sheet.header_row:] if r and r[0] and not str(r[0]).startswith("Total")]
+    return [sum(float(r[c]) for r in body) for c in range(1, 4)]
+
+
+def test_a_total_row_is_never_added_to_the_series_and_stays_available_for_the_cross_check(rec):
+    got = recognise(rec, "revenue_summary_by_product.csv")
+    assert [s["value"] for s in got["series"]] == category_sums(rec, "revenue_summary_by_product.csv"), "the categories once, not twice"
+    assert got["total_rows"] == [{"row": 9, "label": "Total revenue", "matches": True}]
+    snap = recognise(rec, "arr_snapshot.csv", as_of="2025-06-30")
+    assert [s["value"] for s in snap["series"]] == [1070000], "120000 + 340000 + 610000, not 2,140,000"
+    assert snap["total_rows"] == [{"row": 6, "label": "Total ARR", "matches": True}]
+
+
+def test_a_row_whose_values_equal_the_sum_of_the_rows_above_is_a_total_row_even_without_the_word(rec):
+    text = ("Revenue by product line (EUR),,,\nProduct line,FY2023,FY2024,FY2025\nHardware,100,110,120\nSoftware,200,210,220\n"
+            "Services,300,310,320\nAll products,600,630,660\n")
+    got = rec.recognise(csv_sheets(text), as_of_month=AS_OF_YEAR_END)
+    assert [s["value"] for s in got["series"]] == [600, 630, 660]
+    assert got["total_rows"] == [{"row": 6, "label": "All products", "matches": True}]
+
+
+def test_a_total_that_does_not_match_its_rows_is_excluded_and_flagged(rec):
+    text = ("Revenue by product line (EUR),,,\nProduct line,FY2023,FY2024,FY2025\nHardware,100,110,120\nSoftware,200,210,220\n"
+            "Total,999,630,660\n")
+    got = rec.recognise(csv_sheets(text), as_of_month=AS_OF_YEAR_END)
+    assert [s["value"] for s in got["series"]] == [300, 320, 340]
+    assert got["total_rows"] == [{"row": 5, "label": "Total", "matches": False}]
+
+
+def test_the_model_naming_another_type_than_the_rules_makes_the_type_a_click_with_both_candidates(rec):
+    got = recognise(rec, MONTHLY, as_of=AS_OF, proposal=proposal(file_type="revenue_summary"))
+    assert (got["file_type"], got["type_state"], got["type_reason"], got["type_source"]) == \
+        ("monthly_revenue_report", "click", "rules_and_model_disagree", "rules")
+    assert set(got["type_candidates"]) == {"monthly_revenue_report", "revenue_summary"} and got["needs_click"] is True
+
+
+def test_with_no_rules_type_the_models_choice_among_the_candidates_is_an_ai_suggestion_that_waits(rec):
+    base = dict(revenue_row=None, last_actual_column=5, currency=None, non_revenue_rows=[])
+    got = recognise(rec, "unclassed_names_by_quarter.csv", proposal=proposal(file_type="customer_revenue", **base))
+    assert (got["file_type"], got["type_state"], got["type_reason"], got["type_source"]) == ("customer_revenue", "click", "type_unsure", "ai")
+    outside = recognise(rec, "unclassed_names_by_quarter.csv", proposal=proposal(file_type="monthly_revenue_report", **base))
+    assert outside["file_type"] is None and outside["type_state"] == "click", "a type outside the candidates is ignored"
+
+
+def test_with_two_periods_a_row_numeric_in_only_one_is_unsure(rec):
+    text = "Line,FY2024,FY2025\nRevenue,100,\nCost of sales,50,55\nPayroll,20,22\nEBITDA,30,33\n"
+    got = rec.recognise(csv_sheets(text), as_of_month=AS_OF_YEAR_END,
+                        proposal=proposal(revenue_row={"row": 2, "label": "Revenue"}, last_actual_column=3, currency=None, non_revenue_rows=[]))
+    assert (got["revenue_row"]["state"], got["revenue_row"]["reason"]) == ("click", "not_numeric_enough")
+
+
+def test_the_choices_waiting_count_a_turnover_rows_two_clicks_as_one(rec):
+    text = "Metric,Jan-25,Feb-25,Mar-25,Apr-25\nTurnover (EUR),1100,1200,1300,1400\nCustomers,4,5,6,7\nChurn,1,2,3,4\nCash,5,6,7,8\n"
+    got = rec.recognise(csv_sheets(text), as_of_month="2025-04-30")
+    assert got["revenue_row"]["state"] == "click" and got["money_kind"]["asked"] is True
+    assert rec.choices_waiting(got) == 1
+    assert rec.choices_waiting(recognise(rec, MONTHLY, as_of=AS_OF)) == 0
+    assert rec.choices_waiting(recognise(rec, MONTHLY, as_of=None)) == 1, "only the boundary waits"
+
+
+def test_growth_labels_name_the_row_and_never_call_a_recurring_row_revenue(rec):
+    assert rec.growth_label(recognise(rec, MONTHLY, as_of=AS_OF)) == "Revenue growth"
+    mrr = rec.recognise(csv_sheets("Metric,Jan-25,Feb-25,Mar-25\nMRR,100,110,120\nCustomers,4,5,6\nChurn,1,2,3\nCash,5,6,7\n"), as_of_month="2025-03-31")
+    arr = rec.recognise(csv_sheets("Metric,Jan-25,Feb-25,Mar-25\nARR,100,110,120\nCustomers,4,5,6\nChurn,1,2,3\nCash,5,6,7\n"), as_of_month="2025-03-31")
+    assert (rec.growth_label(mrr), rec.growth_label(arr)) == ("MRR growth", "ARR growth")
+    assert mrr["revenue_row"]["kind"] == "recurring" and arr["revenue_row"]["kind"] == "recurring"
+
+
 # ---------------------------------------------------------------------------
 # Determinism
 # ---------------------------------------------------------------------------
@@ -440,7 +555,7 @@ def test_the_same_file_twice_makes_one_model_call_and_a_new_file_makes_another(a
     assert len(recognition_calls(api)) == 1, "the answer is kept by the file hash"
     kept = [d for d in api.db["column_mappings"].docs if d.get("kind") == "file_recognition"]
     assert len(kept) == 1 and len(kept[0]["file_hash"]) == 64
-    assert set(kept[0]) <= {"audit_id", "kind", "file_hash", "reply", "saved_at"}
+    assert set(kept[0]) <= {"audit_id", "kind", "file_hash", "prompt_tag", "reply", "saved_at"} and kept[0]["prompt_tag"]
     other = (FIXTURES / "monthly_report_no_currency.csv").read_bytes()
     api.db["datasets"].docs.clear()
     upload(api, "monthly_report_no_currency.csv", other)
@@ -491,6 +606,7 @@ def test_a_file_the_rules_do_not_recognise_is_never_made_a_revenue_file_by_the_m
     assert body["status"] == "unknown_type" and body["recognition"]["recognised"] is False
     assert body["recognition"]["missing"] == ["revenue_measure"] and "revenue measure" in body["recognition"]["message"]
     assert len(recognition_calls(api)) == 1 and api.db["datasets"].docs == [], "nothing is stored"
+    assert set(body["types"]) >= {"revenue", "crm", "pnl"}, "the S6 type picker stays as the fallback"
 
 
 def test_without_consent_a_file_the_rules_do_not_recognise_makes_no_call_and_shows_the_same_message(api):
@@ -519,8 +635,8 @@ def test_a_recognition_call_counts_toward_the_tester_allowance_and_stops_at_100_
 # ---------------------------------------------------------------------------
 # The analyst: Correct / Change (section 7)
 # ---------------------------------------------------------------------------
-def decide(api, **body):
-    return api.post(f"/api/audits/{AUDIT}/datasets/revenue/recognition", json=body)
+def decide(api, dtype="revenue", **body):
+    return api.post(f"/api/audits/{AUDIT}/datasets/{dtype}/recognition", json=body)
 
 
 def test_correct_confirms_a_part_and_change_chooses_among_the_candidates(api):
@@ -562,18 +678,120 @@ def test_the_analyst_confirms_the_currency_and_the_boundary_when_the_file_names_
     assert final["last_actual"]["state"] == "you" and final["excluded_columns"] == []
 
 
-def test_the_analyst_can_use_another_sheet_of_the_workbook_and_a_proposal_for_a_sheet_python_did_not_pick_is_dropped(api):
+def rules_only(api, as_of=AS_OF_YEAR_END):
+    """No consent: the rules recognise the file alone, so the test reads Python's outcome and makes no model call."""
+    api.db["audits"].docs[0]["structure_reading_consent"] = False
+    set_as_of(api, as_of)
+
+
+def test_a_workbook_stored_as_the_pnl_is_recognised_through_the_pnl_path_and_another_sheet_can_be_used(api):
+    rules_only(api)
+    body = upload(api, "pack.xlsx", kpi_and_pnl_bytes()).json()
+    assert body["dtype"] == "pnl", "a P&L stays the P&L (section 8)"
+    got = body["recognition"]
+    assert got["sheet"] == "P&L" and got["file_type"] == "financial_statements"
+    assert got["other_sheets"] == [{"sheet": "KPIs", "file_type": "monthly_revenue_report", "recognised": True}]
+    other = decide(api, dtype="pnl", action="change", part="sheet", sheet="KPIs")
+    assert other.status_code == 200, other.text
+    assert other.json()["recognition"]["sheet"] == "KPIs" and other.json()["recognition"]["file_type"] == "monthly_revenue_report"
+    assert decide(api, dtype="pnl", action="change", part="sheet", sheet="Missing").status_code == 400
+    assert decide(api, action="confirm", part="revenue_row").status_code == 404, "there is no revenue dataset: the P&L has its own recognition"
+
+
+def test_a_proposal_for_a_sheet_python_did_not_pick_is_dropped(api):
     set_as_of(api, AS_OF_YEAR_END)
     api.state["adapter"] = t.FakeAdapter(replies=[recognition_reply(sheet=1, revenue_row={"row": 3, "label": "MRR"}, last_actual_column=13,
                                                                     non_revenue_rows=[])])
     got = upload(api, "pack.xlsx", kpi_and_pnl_bytes()).json()["recognition"]
-    assert got["sheet"] == "P&L" and got["file_type"] == "financial_statements" and got["type_source"] == "rules"
+    assert got["sheet"] == "P&L" and got["type_source"] == "rules"
     assert got["revenue_row"]["row"] == 3 and got["revenue_row"]["state"] == "auto", "the proposal named the KPIs sheet: it is not applied to P&L"
-    assert got["other_sheets"] == [{"sheet": "KPIs", "file_type": "monthly_revenue_report", "recognised": True}]
-    other = decide(api, action="change", part="sheet", sheet="KPIs").json()["recognition"]
-    assert other["sheet"] == "KPIs" and other["file_type"] == "monthly_revenue_report"
-    assert other["other_sheets"] == [{"sheet": "P&L", "file_type": "financial_statements", "recognised": True}]
-    assert decide(api, action="change", part="sheet", sheet="Missing").status_code == 400
+
+
+def blocker_kinds(api):
+    return [b["kind"] for b in api.get(f"/api/audits/{AUDIT}/blockers").json()["blockers"]]
+
+
+def test_a_pnl_with_two_or_more_periods_satisfies_the_revenue_file_once_the_analyst_confirms_its_recognition(api):
+    rules_only(api)
+    body = upload(api, "pnl_multi_period.csv", (FIXTURES / "pnl_multi_period.csv").read_bytes()).json()
+    assert body["dtype"] == "pnl" and body["recognition"]["recognised"] and body["recognition"]["periods"] == 3
+    assert "revenue_file_missing" in blocker_kinds(api), "recognised is not confirmed"
+    done = decide(api, dtype="pnl", action="confirm", part="revenue_row")
+    assert done.status_code == 200 and done.json()["recognition"]["revenue_row"]["state"] == "you"
+    assert "revenue_file_missing" not in blocker_kinds(api), "a confirmed P&L with 2+ periods is the revenue file"
+
+
+def test_a_pnl_with_one_period_never_satisfies_the_revenue_file(api):
+    rules_only(api)
+    body = upload(api, "pnl_single_period.csv", (FIXTURES / "pnl_single_period.csv").read_bytes()).json()
+    assert body["dtype"] == "pnl" and body["recognition"]["periods"] == 1
+    decide(api, dtype="pnl", action="confirm", part="revenue_row")
+    assert "revenue_file_missing" in blocker_kinds(api)
+
+
+def test_two_confirm_only_reasons_on_one_file_are_settled_by_one_correct(api):
+    api.db["audits"].docs[0]["structure_reading_consent"] = False        # no as-of month stored, no P&L: the boundary needs confirming
+    text = "Metric,Jan-25,Feb-25,Mar-25,Apr-25\nRevenue - EMEA (EUR),100,110,120,130\nCustomers,4,5,6,7\nChurn,1,2,3,4\nCash,5,6,7,8\n"
+    got = upload(api, "emea.csv", text.encode()).json()["recognition"]
+    assert (got["revenue_row"]["state"], got["revenue_row"]["reason"]) == ("click", "confidence_80")
+    assert (got["last_actual"]["state"], got["last_actual"]["reason"]) == ("click", "no_as_of_month")
+    done = decide(api, action="confirm", part="pending")
+    assert done.status_code == 200, done.text
+    after = done.json()["recognition"]
+    assert (after["revenue_row"]["state"], after["last_actual"]["state"]) == ("you", "you") and after["needs_click"] is False
+
+
+def test_one_correct_does_not_settle_a_part_that_needs_a_choice(api):
+    set_as_of(api)
+    api.state["adapter"] = t.FakeAdapter(replies=[recognition_reply(revenue_row={"row": 5, "label": "MRR"})])
+    upload(api, MONTHLY, monthly_bytes())
+    after = decide(api, action="confirm", part="pending").json()["recognition"]
+    assert (after["revenue_row"]["state"], after["revenue_row"]["reason"]) == ("click", "rules_and_model_disagree")
+
+
+def test_a_new_prompt_version_asks_again_for_the_same_bytes(api):
+    set_as_of(api)
+    api.state["adapter"] = t.FakeAdapter(replies=[recognition_reply()])
+    upload(api, MONTHLY, monthly_bytes())
+    api.db["datasets"].docs.clear()
+    api.db["prompts"].docs.append({"name": "file_type", "version": "v2", "text": "<!-- TEST ONLY --> v2 stub", "uploaded_at": "2026-02-01T00:00:00+00:00",
+                                   "sha256": "0" * 64})
+    upload(api, MONTHLY, monthly_bytes())
+    assert len(recognition_calls(api)) == 2, "the cached answer belongs to the prompt version that gave it"
+    tags = {d["prompt_tag"] for d in api.db["column_mappings"].docs if d.get("kind") == "file_recognition"}
+    assert len(tags) == 2, "one kept answer per prompt version"
+
+
+def test_an_entity_labelled_upload_stores_and_logs_no_customer_name(api, caplog):
+    caplog.set_level(logging.DEBUG)
+    set_as_of(api, AS_OF_YEAR_END)
+    api.state["adapter"] = t.FakeAdapter(replies=[recognition_reply(file_type="customer_revenue", revenue_row=None, last_actual_column=13,
+                                                                    non_revenue_rows=[])])
+    upload(api, "customer_revenue_months.csv", (FIXTURES / "customer_revenue_months.csv").read_bytes())
+    decide(api, action="confirm", part="last_actual")
+    sent = " ".join(json.loads(p)["text"] for p in recognition_calls(api))
+    stored = json.dumps([api.db[n].docs for n in ("llm_structures", "llm_calls", "column_mappings", "audits")], default=str)
+    log = "\n".join(r.getMessage() for r in caplog.records)
+    names = ("Alder Works", "Birch Labs", "Cedar Foods", "Dune Print", "Elm Studio", "Fern Tools", "Gorse Yard", "Heath Pumps", "Iris Optics",
+             "Juniper Mills", "Margin Foods", "Larch Freight")
+    for name in names:
+        assert name not in sent, f"{name!r} reached the model"
+        assert name not in stored, f"{name!r} reached a collection"
+        assert name not in log, f"{name!r} reached a log line"
+    assert "Row 1" in sent
+
+
+def test_the_decision_endpoint_logs_codes_only(api, caplog):
+    caplog.set_level(logging.DEBUG)
+    set_as_of(api)
+    api.state["adapter"] = t.FakeAdapter(replies=[recognition_reply()])
+    upload(api, MONTHLY, monthly_bytes())
+    caplog.clear()
+    assert decide(api, action="change", part="revenue_row", row=5).status_code == 200
+    assert decide(api, action="confirm", part="last_actual").status_code == 200
+    log = "\n".join(r.getMessage() for r in caplog.records)
+    for secret in ("Recognised revenue", "MRR", "Forecast revenue", "Northwind", MONTHLY):
+        assert secret not in log, f"{secret!r} reached a log line"
 
 
 def test_the_analyst_answers_the_turnover_question_and_the_row_is_then_decided(api):

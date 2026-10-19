@@ -24,8 +24,9 @@ what is written here is an architecture change: a session that needs one stops a
 George approved (19 Oct 2026, decision 2 on PR #134, docs/specs/revenue-file-recognition.md §5) widening the spreadsheet boundary for one more
 step. For the `file_recognition` step only, the model may also receive the row labels of a sheet whose labels the rules read as metric names
 (revenue, ARR, MRR, customers, churn, bookings, forecast, budget, cost, margin, cash and their common variants), after redaction; for every other
-sheet the labels are sent as "Row 1", "Row 2" with no value tied to a row. Never a figure beyond the per-column sample of rule 16; at most 400 rows
-with text per sheet. All other steps keep the boundary as it was. CLAUDE.md rule 16 carries the same wording.
+sheet the labels are sent as "Row 1", "Row 2". No value is tied to a row on any sheet: the up to 3 sample values of a column are drawn from different rows,
+chosen deterministically from the file hash, never the same row in two neighbouring columns. Never a figure beyond the per-column sample of rule 16; at most
+400 rows with text per sheet. All other steps keep the boundary as it was. CLAUDE.md rule 16 carries the same wording.
 
 ## The amendment of 2026-10-18
 
