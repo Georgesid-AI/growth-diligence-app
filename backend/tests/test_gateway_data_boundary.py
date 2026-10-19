@@ -2810,3 +2810,24 @@ def test_recognition_the_reply_is_closed_json_with_no_confidence_and_no_free_tex
     kinds = ("forecast", "budget", "bookings", "pipeline", "contract_value", "run_rate")
     for kind in kinds:
         assert parse({**good, "non_revenue_rows": [{"row": 9, "kind": kind}]})
+
+
+def test_recognition_the_words_a_result_can_carry_are_closed_lists_and_hold_no_text_from_a_file():
+    """A result key, a reason string or a kind that is not on a closed list could carry file text into a log or a reply (rule 14)."""
+    rec = importlib.import_module("app.recognition")
+    assert rec.RECOGNITION_TYPES == ("invoice_transactions", "customer_revenue", "monthly_revenue_report", "revenue_summary",
+                                     "financial_statements", "arr_mrr_snapshot")
+    assert rec.NON_REVENUE_KINDS == ("forecast", "budget", "bookings", "pipeline", "contract_value", "run_rate")
+    assert set(rec.REASONS) == {"no_candidate", "tie", "confidence_80", "row_missing", "label_mismatch", "marked_not_revenue",
+                                "not_numeric_enough", "no_revenue_word", "rules_and_model_disagree", "no_as_of_month", "after_as_of",
+                                "not_a_period", "turnover_question", "type_unsure"}
+    assert all(re.fullmatch(r"[a-z0-9_]+", w) for w in rec.REASONS + rec.RECOGNITION_TYPES + rec.NON_REVENUE_KINDS)
+    for name in MASKED_FIXTURES + METRIC_FIXTURES + ("arr_snapshot.csv", "invoice_transactions.csv", "pnl_single_period.csv"):
+        got = rec.recognise(_recognition_sheets(name), as_of_month="2025-12-31")
+        assert set(got["missing"]) <= {"revenue_measure", "reference", "numbers"}
+        for part in (got["revenue_row"], got["last_actual"]):
+            assert part is None or part["reason"] is None or part["reason"] in rec.REASONS
+        assert all(r["kind"] in rec.NON_REVENUE_KINDS for r in got["non_revenue_rows"])
+        assert got["file_type"] is None or got["file_type"] in rec.RECOGNITION_TYPES
+        assert all(b["analysis"] in ("customer_level", "trend") for b in got["blocked"])
+        assert set(got["supports"]) <= {"customer_level", "trend", "claim_matching"}

@@ -53,7 +53,7 @@ Python decides recognition, per sheet (`app/recognition.py`, pure, no I/O). The 
   row is not revenue; the file is recognised again without it, and is rejected on A if nothing else qualifies.
 
 ### 2.1 Actuals against everything else
-A row (or a sheet column header) is *recognised but never used as revenue* when its label holds a word of one of six kinds, checked before any revenue
+A row (or a sheet column header) is *recognised but never used as revenue* when its label holds a word of one of six kinds (`NON_REVENUE_KINDS`), checked before any revenue
 word and so winning over it ("Forecast revenue" is a forecast, "Sales pipeline" a pipeline). First match in this order:
 
 | Kind | Words (whole words, any case, punctuation as one space, a bracket's content left out) |
@@ -77,7 +77,7 @@ marketing, payroll, commission, or a "%" ("Sales and marketing", "New ARR - inbo
 turnover, net sales). Rank: recognised 0, invoiced 1, recurring 2. Candidates are ordered by rank, then confidence (§6.1), then sheet order.
 
 ## 3. Classification: six types, per sheet
-Classification runs on a recognised sheet and is independent of recognition. The table is the agreed one; the last two columns are fixed lists.
+Classification runs on a recognised sheet and is independent of recognition. The table is the agreed one; the last two columns are fixed lists. The codes are `RECOGNITION_TYPES`.
 
 | Type (code) | Structure | Customer-level analysis | Trend analysis |
 |---|---|---|---|
@@ -242,7 +242,7 @@ by the implementation PR once approved.
 
 ## 6. Python checks every proposal before anything is used
 Python builds its own reading first (rules), then compares it with the proposal of §5.7. Everything runs in Python; the deck parser and the gateway
-take no part in the checks.
+take no part in the checks. The reason codes below are the closed list `REASONS` (14 words); a result carries no other string from a file (rule 14).
 
 ### 6.1 The revenue row (types `monthly_revenue_report` and `financial_statements`)
 - **Rules' reading.** The first candidate of §2.1, with `confidence` = label score × value fit: the label score is 100 when the label, bracket content
@@ -368,7 +368,7 @@ Labels and titles are never a contract field.
 |---|---|---|
 | The fifteen cases of the request, recognition and classification, the checks of §6, determinism | `backend/tests/test_revenue_recognition.py` (pure, on `backend/tests/fixtures/recognition/*.csv` and workbooks built in the test) | `app/recognition.py` does not exist (ModuleNotFoundError) |
 | Upload, one call per file, cache by hash, nothing stored or logged, consent, failure, allowance, Correct / Change, delete audit | `backend/tests/test_revenue_recognition.py` (API, `api` fixture, fake adapter) | no `recognition` in the view, no endpoint (404) |
-| The model's text: no row label on an entity sheet, labels on a metric sheet, nothing beyond the sample rule, redaction, 400-row cap, the gateway's refusals, the closed reply | `backend/tests/test_gateway_data_boundary.py` (rule 14) | `app/recognition.py` does not exist; no `file_recognition` structure type |
+| The model's text: no row label on an entity sheet, labels on a metric sheet, nothing beyond the sample rule, redaction, 400-row cap, the gateway's refusals, the closed reply, the closed lists of types, kinds and reasons | `backend/tests/test_gateway_data_boundary.py` (rule 14) | `app/recognition.py` does not exist; no `file_recognition` structure type |
 | The type line, supports/blocks line, Correct / Change, reasons, other sheets, S2 | `frontend/src/components/RecognitionLine.test.jsx` (`yarn test --no-cache`, rule 25) | `RecognitionLine` and `lib/recognition` do not exist |
 Fixtures (synthetic, invented names, every figure unique so a leaked value can be told from another; rule 15): `monthly_report_actual_forecast`
 (metrics × months, actual and forecast columns, forecast/bookings/pipeline rows), `customer_revenue_months` (12 customers, one named with a metric
