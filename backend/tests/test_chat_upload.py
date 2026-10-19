@@ -71,6 +71,11 @@ def by_column(body):
     return {c["column"]: c for c in body["columns"]}
 
 
+def mapping_calls(client):
+    """The column-mapping calls that reached the provider: a recognised file also makes its one recognition call after them."""
+    return [p for p in adapter_of(client).payloads if json.loads(p)["type"] == "column_mapping"]
+
+
 def model_text(client, n=0):
     return json.loads(adapter_of(client).payloads[n])["text"]
 
@@ -157,7 +162,7 @@ def test_the_rules_keep_their_100s_and_every_column_is_sent_once_with_the_rules_
     assert {c for c, s in states.items() if s["state"] == "auto"} == clean
     columns = list(states)
     text = model_text(api)
-    assert sent_positions(text) == list(range(1, len(columns) + 1)) and adapter_of(api).calls == 1
+    assert sent_positions(text) == list(range(1, len(columns) + 1)) and len(mapping_calls(api)) == 1
     sheet = cr.read_sheet((MESSY / name).read_bytes(), name)
     assert hints(text, columns) == {p.column: (p.field, p.confidence) for p in cr.analyse("revenue", sheet)[0] if p.field}
     assert sorted(set(columns) - set(hints(text, columns))) == unproposed
@@ -305,7 +310,7 @@ def test_on_a_day_over_the_spend_cap_the_mapping_call_still_goes_out_logged_and_
     api.state["adapter"] = t.FakeAdapter(replies=[mapping_reply(("revenue_type", 6))])
     body = upload(api, "blank_vs_zero.csv").json()
     assert body["ai_reading"]["status"] == "read" and by_column(body)["Adj"]["field"] == "revenue_type", "the file maps"
-    logged = api.db["llm_calls"].docs[-1]
+    logged = next(c for c in api.db["llm_calls"].docs if c.get("structure_type") == "column_mapping")
     assert (logged["structure_type"], logged["status"], logged["cache_hit"]) == ("column_mapping", "ok", False)
     assert asyncio.run(guards.spend_today_usd(api.db)) == pytest.approx(1.0 + logged["estimated_cost_usd"])
     assert api.get(f"/api/runs/{AUDIT}/llm-usage").json()["by_step"]["column_mapping"]["calls"] == 1
@@ -313,7 +318,7 @@ def test_on_a_day_over_the_spend_cap_the_mapping_call_still_goes_out_logged_and_
     assert deck.status == "not_read" and api.db["llm_calls"].docs[-1]["status"] == "daily_spend_cap_exceeded"
     assert upload(api, "mystery.csv", b"Alpha,Beta\n1,2\n").json()["status"] == "unknown_type"
     assert (api.db["llm_calls"].docs[-1]["structure_type"], api.db["llm_calls"].docs[-1]["status"]) == \
-        ("file_type", "daily_spend_cap_exceeded"), "a file's type stays under the cap"
+        ("file_recognition", "daily_spend_cap_exceeded"), "a file's type and its recognition stay under the cap"
     assert adapter_of(api).calls == 1, "only the mapping call reached the provider"
 
 
@@ -333,7 +338,9 @@ def test_compute_is_refused_while_a_row_waits_and_runs_once_it_is_decided(api):
 
 def test_a_required_field_that_is_not_mapped_stops_compute_and_the_status_names_it(api):
     body = upload(api, "mixed_currency.csv").json()
-    assert body["missing_required"] == ["currency"] or "currency" in body["missing_required"]
+    # Amounts in two currencies have no single currency to confirm (review L3): the required field stays open, as before the recognition PR.
+    assert body["missing_required"] == ["currency"] and not body.get("currency_pending")
+    assert body["recognition"]["currency"] == {"code": None, "state": "confirm", "mixed": True, "codes": ["EUR", "USD"]}
     decide_all(api, body)
     assert api.post(f"/api/audits/{AUDIT}/compute").status_code == 409
 
@@ -381,7 +388,7 @@ def test_a_crm_mapping_saved_with_an_amount_still_applies_to_the_same_headers(ap
     calls = adapter_of(api).calls
     body = upload(api, "deals.csv", CRM_WITH_AMOUNT).json()
     rows = by_column(body)
-    assert adapter_of(api).calls == calls, "no model call for a saved mapping"
+    assert len(mapping_calls(api)) == calls, "no mapping call for a saved mapping"
     assert (rows["Amount"]["field"], rows["Amount"]["source"]) == ("amount", "saved")
     assert (body["missing_required"], body["pending"]) == ([], 0)
 
@@ -457,11 +464,11 @@ def test_a_mapping_saved_before_versions_existed_is_still_applied_to_the_same_he
         "audit_id": AUDIT, "dtype": "revenue", "header_key": structures.header_key("revenue", sheet.columns),
         "mapping": {"customer_id": "Customer ID", "invoice_date": "Invoice Date", "amount": "Amount", "currency": "Currency",
                     "revenue_type": "Adj"}, "saved_at": "2026-10-01T00:00:00"})
-    calls = adapter_of(api).calls
+    calls = len(mapping_calls(api))
     body = upload(api, "blank_vs_zero.csv")
     assert body.status_code == 200, body.text
     rows = by_column(body.json())
-    assert adapter_of(api).calls == calls and rows["Adj"]["field"] == "revenue_type" and rows["Adj"]["source"] == "saved"
+    assert len(mapping_calls(api)) == calls and rows["Adj"]["field"] == "revenue_type" and rows["Adj"]["source"] == "saved"
     assert rows["Segment"]["state"] == "unused", "a column the old mapping left out stays unused"
 
 

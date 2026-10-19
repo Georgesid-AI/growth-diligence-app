@@ -3,23 +3,12 @@ import { createRoot } from "react-dom/client";
 
 import { S2_EXPLAINER_CONSENT, S4_DROP_ZONE_LEAD } from "@/lib/chatUpload";
 
-// The component and its wording module do not exist yet: they are loaded inside each test, and every test is a strict expected failure
-// (the pytest xfail(strict=True) of the backend tests; jest 27 has no test.failing). The implementation PR removes `xfail` below.
-const AWAITING = "awaiting implementation: revenue-file recognition";
 const load = () => ({ RecognitionLine: require("./RecognitionLine").default, ...require("@/lib/recognition") });
-function xfail(name, fn) {
-  test(name, async () => {
-    let passed = true;
-    try { await fn(); } catch (err) { passed = false; }
-    if (passed) throw new Error(`strict xfail (${AWAITING}): this test passed, remove its marker`);
-  });
-}
 
 /**
  * The detected-type line and the Correct / Change controls under a revenue file (docs/specs/revenue-file-recognition.md section 7,
  * S31a-S31k). The component renders from a fixed API response (the `recognition` block of a dataset view) and sends each decision
- * through the `decide(view, body)` it is given. Written before the implementation: it fails today because RecognitionLine and
- * lib/recognition do not exist. Run with --no-cache (CLAUDE.md rule 25).
+ * through the `decide(view, body)` it is given. Run with --no-cache (CLAUDE.md rule 25).
  */
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -85,7 +74,7 @@ async function mount(recognition, over) {
 afterEach(unmount);
 
 describe("the detected-type line", () => {
-  xfail("shows the type with how it was found and a Change button that offers the other five types", async () => {
+  test("shows the type with how it was found and a Change button that offers the other five types", async () => {
     await mount(AUTO);
     expect(q("recognition-type-revenue").textContent).toBe("Type: Monthly revenue report (by rules)");
     expect(q("recognition-type-change-revenue").textContent).toBe("Change");
@@ -96,17 +85,17 @@ describe("the detected-type line", () => {
     expect(decide).toHaveBeenCalledWith(expect.objectContaining({ dtype: "revenue" }), { action: "change", part: "file_type", file_type: "customer_revenue" });
   });
 
-  xfail("names the six types and the source of the type: rules, AI suggestion or your choice", async () => {
+  test("names the six types and the source of the type: rules, AI suggestion or your choice", async () => {
     const { TYPE_LABELS } = load();
     expect(Object.values(TYPE_LABELS)).toEqual(["Invoice transactions", "Customer revenue", "Monthly revenue report", "Revenue summary",
       "Financial statements", "ARR/MRR snapshot"]);
     await mount({ ...AUTO, type_source: "ai", type_state: "click", type_reason: "type_unsure", needs_click: true });
-    expect(q("recognition-type-revenue").textContent).toBe("Type: Monthly revenue report (AI suggestion). Choose the type.");
+    expect(q("recognition-type-revenue").textContent).toBe("Type: Monthly revenue report (AI suggestion, not verified). Choose the type.");
     await mount({ ...AUTO, type_source: "you" });
     expect(q("recognition-type-revenue").textContent).toBe("Type: Monthly revenue report (your choice)");
   });
 
-  xfail("a type the rules could not class asks for a choice between the two candidates", async () => {
+  test("a type the rules could not class asks for a choice between the two candidates", async () => {
     await mount({ ...AUTO, file_type: null, type_state: "click", type_candidates: ["customer_revenue", "revenue_summary"], needs_click: true });
     expect(q("recognition-type-revenue").textContent).toBe("Type: choose the type");
     const options = [...q("recognition-type-select-revenue").querySelectorAll("option")].map((o) => o.value).filter(Boolean);
@@ -115,14 +104,14 @@ describe("the detected-type line", () => {
 });
 
 describe("what the file supports and what it blocks", () => {
-  xfail("one line: the analyses it supports, then each blocked analysis with the data that would unblock it", async () => {
+  test("one line: the analyses it supports, then each blocked analysis with the data that would unblock it", async () => {
     await mount(AUTO);
     expect(q("recognition-supports-revenue").textContent).toBe(
       "Supports: trend analysis (MRR/ARR, growth, run-rate). Blocked: customer-level analysis (NRR, gross churn, concentration, cohorts), " +
       "needs revenue by customer and month (one row per customer, or one row per invoice with a customer column).");
   });
 
-  xfail("a file that supports everything has no Blocked part, and a snapshot supports claim matching only", async () => {
+  test("a file that supports everything has no Blocked part, and a snapshot supports claim matching only", async () => {
     await mount({ ...AUTO, file_type: "customer_revenue", supports: ["customer_level", "trend"], blocked: [] });
     expect(q("recognition-supports-revenue").textContent).toBe(
       "Supports: customer-level analysis (NRR, gross churn, concentration, cohorts) and trend analysis (MRR/ARR, growth, run-rate).");
@@ -135,7 +124,7 @@ describe("what the file supports and what it blocks", () => {
 });
 
 describe("yearly columns and recurring rows (decisions of 19 Oct 2026)", () => {
-  xfail("a file with yearly columns supports trend and its blocked part says the monthly series is missing", async () => {
+  test("a file with yearly columns supports trend and its blocked part says the monthly series is missing", async () => {
     await mount({ ...AUTO, file_type: "financial_statements", supports: ["trend"], blocked: [
       { analysis: "customer_level", needs: "revenue by customer and month" }, { analysis: "monthly_series", needs: "one column per month" }] });
     expect(q("recognition-supports-revenue").textContent).toBe(
@@ -143,7 +132,7 @@ describe("yearly columns and recurring rows (decisions of 19 Oct 2026)", () => {
       "needs revenue by customer and month; monthly series missing, needs one column per month.");
   });
 
-  xfail("a recurring row is called a recurring row and never a revenue row", async () => {
+  test("a recurring row is called a recurring row and never a revenue row", async () => {
     await mount({ ...AUTO, revenue_row: { ...AUTO.revenue_row, row: 5, label: "MRR", kind: "recurring" } });
     expect(q("recognition-row-revenue").textContent).toBe("Recurring row: MRR (row 5)");
     expect(q("recognition-row-correct-revenue").textContent).toBe("Correct");
@@ -152,7 +141,7 @@ describe("yearly columns and recurring rows (decisions of 19 Oct 2026)", () => {
 });
 
 describe("the proposed revenue row and the last actual month", () => {
-  xfail("an accepted proposal shows the row and the month with Correct and Change", async () => {
+  test("an accepted proposal shows the row and the month with Correct and Change", async () => {
     await mount(AUTO);
     expect(q("recognition-row-revenue").textContent).toBe("Revenue row: Recognised revenue (EUR) (row 4)");
     expect(q("recognition-last-revenue").textContent).toBe("Last actual month: Jun 2025. Columns after it are not used.");
@@ -162,7 +151,7 @@ describe("the proposed revenue row and the last actual month", () => {
     expect(q("recognition-last-change-revenue").textContent).toBe("Change");
   });
 
-  xfail("Correct confirms the part and sends nothing else", async () => {
+  test("Correct confirms the part and sends nothing else", async () => {
     await mount(AUTO);
     await click(q("recognition-row-correct-revenue"));
     expect(decide).toHaveBeenLastCalledWith(expect.objectContaining({ dtype: "revenue" }), { action: "confirm", part: "revenue_row" });
@@ -171,7 +160,7 @@ describe("the proposed revenue row and the last actual month", () => {
     expect(decide).toHaveBeenCalledTimes(2);
   });
 
-  xfail("Change opens the candidate rows and the candidate months and sends the choice", async () => {
+  test("Change opens the candidate rows and the candidate months and sends the choice", async () => {
     await mount(AUTO);
     await click(q("recognition-row-change-revenue"));
     const rows = [...q("recognition-row-select-revenue").querySelectorAll("option")].filter((o) => o.value).map((o) => [o.value, o.textContent]);
@@ -185,7 +174,7 @@ describe("the proposed revenue row and the last actual month", () => {
     expect(decide).toHaveBeenLastCalledWith(expect.objectContaining({ dtype: "revenue" }), { action: "change", part: "last_actual", column: 6 });
   });
 
-  xfail("an unsure row or month asks the analyst to choose, with the reason, and offers no Correct", async () => {
+  test("an unsure row or month asks the analyst to choose, with the reason, and offers no Correct", async () => {
     await mount(CLICK);
     expect(q("recognition-row-revenue").textContent).toBe("Revenue row: choose the row. Two readings differ. Choose the revenue row.");
     expect(q("recognition-last-revenue").textContent).toBe(
@@ -198,7 +187,7 @@ describe("the proposed revenue row and the last actual month", () => {
     expect(decide).toHaveBeenLastCalledWith(expect.objectContaining({ dtype: "revenue" }), { action: "change", part: "revenue_row", row: 4 });
   });
 
-  xfail("after the analyst decides, the part reads as decided and only Change stays", async () => {
+  test("after the analyst decides, the part reads as decided and only Change stays", async () => {
     await mount({ ...AUTO, revenue_row: { ...AUTO.revenue_row, state: "you" }, last_actual: { ...AUTO.last_actual, state: "you" } });
     expect(q("recognition-row-correct-revenue")).toBeNull();
     expect(q("recognition-row-change-revenue").textContent).toBe("Change");
@@ -206,14 +195,14 @@ describe("the proposed revenue row and the last actual month", () => {
     expect(q("recognition-last-change-revenue").textContent).toBe("Change");
   });
 
-  xfail("a file with no revenue row (customers by periods) shows no revenue-row line", async () => {
+  test("a file with no revenue row (customers by periods) shows no revenue-row line", async () => {
     await mount({ ...AUTO, file_type: "customer_revenue", revenue_row: null, series_basis: "sum_of_rows", non_revenue_rows: [],
                   supports: ["customer_level", "trend"], blocked: [] });
     expect(q("recognition-row-revenue")).toBeNull();
     expect(q("recognition-last-revenue")).not.toBeNull();
   });
 
-  xfail("a turnover row asks the revenue or volume question and sends the answer", async () => {
+  test("a turnover row asks the revenue or volume question and sends the answer", async () => {
     await mount({ ...AUTO, money_kind: { asked: true }, revenue_row: { ...AUTO.revenue_row, label: "Turnover", state: "click", reason: "turnover_question" } });
     expect(q("recognition-money-kind-revenue").textContent).toContain("Is this money the company earned (revenue) or the value of transactions processed (volume)?");
     await click(q("recognition-money-kind-revenue-revenue"));
@@ -222,7 +211,7 @@ describe("the proposed revenue row and the last actual month", () => {
 });
 
 describe("currency, other sheets, rows kept out of revenue", () => {
-  xfail("a currency in the file is shown; one that is not asks the analyst to confirm it", async () => {
+  test("a currency in the file is shown; one that is not asks the analyst to confirm it", async () => {
     await mount(AUTO);
     expect(q("recognition-currency-revenue").textContent).toBe("Currency: EUR");
     await mount(CLICK);
@@ -231,19 +220,25 @@ describe("currency, other sheets, rows kept out of revenue", () => {
     expect(decide).toHaveBeenLastCalledWith(expect.objectContaining({ dtype: "revenue" }), { action: "change", part: "currency", currency: "EUR" });
   });
 
-  xfail("the other sheets of the workbook are listed and each can be used instead", async () => {
+  test("a file that shows several currencies asks for none: the required field stays open (review L3)", async () => {
+    await mount({ ...CLICK, currency: { code: null, state: "confirm", mixed: true } });
+    expect(q("recognition-currency-revenue")).toBeNull();
+    expect(q("recognition-currency-select-revenue")).toBeNull();
+  });
+
+  test("the other sheets of the workbook are listed and each can be used instead", async () => {
     await mount(AUTO);
     expect(q("recognition-others-revenue").textContent).toBe("Other sheets in this file: P&L (Financial statements) Use this sheet");
     await click(q("recognition-use-sheet-revenue-P&L"));
     expect(decide).toHaveBeenLastCalledWith(expect.objectContaining({ dtype: "revenue" }), { action: "change", part: "sheet", sheet: "P&L" });
   });
 
-  xfail("no other sheet, no line", async () => {
+  test("no other sheet, no line", async () => {
     await mount({ ...AUTO, other_sheets: [] });
     expect(q("recognition-others-revenue")).toBeNull();
   });
 
-  xfail("forecast, bookings and other rows are counted as not used as revenue and kept as claims", async () => {
+  test("forecast, bookings and other rows are counted as not used as revenue and kept as claims", async () => {
     await mount(AUTO);
     expect(q("recognition-claims-revenue").textContent).toBe("2 rows (forecast, bookings) are not used as revenue and are kept as claims for matching.");
     await mount({ ...AUTO, non_revenue_rows: [{ row: 9, label: "Forecast revenue", kind: "forecast" }] });
@@ -254,7 +249,7 @@ describe("currency, other sheets, rows kept out of revenue", () => {
 });
 
 describe("a file that is not a revenue file", () => {
-  xfail("shows the server's message, which names what is missing, and none of the other lines", async () => {
+  test("shows the server's message, which names what is missing, and none of the other lines", async () => {
     const message = "Not a revenue file. Missing: a revenue measure (recognised revenue, invoiced revenue, sales, turnover, recurring revenue, MRR or ARR).";
     await mount({ recognised: false, missing: ["revenue_measure"], message, sheet: "CSV", file_type: null, revenue_row: null, last_actual: null,
                   non_revenue_rows: [{ row: 3, label: "Bookings", kind: "bookings" }], supports: [], blocked: [], other_sheets: [], needs_click: false });
@@ -266,14 +261,14 @@ describe("a file that is not a revenue file", () => {
 });
 
 describe("wording", () => {
-  xfail("no line mentions the model's confidence or a cost", async () => {
+  test("no line mentions the model's confidence or a cost", async () => {
     for (const recognition of [AUTO, CLICK, { ...AUTO, type_source: "ai", file_type: "arr_mrr_snapshot", supports: ["claim_matching"] }]) {
       await mount(recognition);
       expect(host.textContent).not.toMatch(/confiden|cost|token|\$|USD|price/i);
     }
   });
 
-  xfail("every reason code has a closed text that names what to do and mentions neither confidence nor cost", () => {
+  test("every reason code has a closed text that names what to do and mentions neither confidence nor cost", () => {
     const { REASON_TEXT } = load();
     const codes = ["no_candidate", "tie", "confidence_80", "row_missing", "label_mismatch", "marked_not_revenue", "not_numeric_enough",
       "no_revenue_word", "rules_and_model_disagree", "no_as_of_month", "after_as_of", "not_a_period", "turnover_question", "type_unsure"];
@@ -284,7 +279,7 @@ describe("wording", () => {
     }
   });
 
-  xfail("the consent explainer says the AI also sees row labels that are metric names, and Row 1, Row 2 where rows may be customers", () => {
+  test("the consent explainer says the AI also sees row labels that are metric names, and Row 1, Row 2 where rows may be customers", () => {
     expect(S2_EXPLAINER_CONSENT).toContain(
       "In a revenue file the AI also sees the row labels when they are metric names such as revenue, ARR or customers; " +
       "where the rows may be customers it sees Row 1, Row 2 instead, never a name.");
@@ -294,7 +289,7 @@ describe("wording", () => {
 });
 
 describe("review follow-ups (second round, 19 Oct 2026)", () => {
-  xfail("a type that waits for a click shows its reason with Correct and Change, for a suggestion and for a disagreement", async () => {
+  test("a type that waits for a click shows its reason with Correct and Change, for a suggestion and for a disagreement", async () => {
     const { TYPE_REASON_TEXT } = load();
     expect(TYPE_REASON_TEXT).toEqual({ rules_and_model_disagree: "Two readings differ. Choose the type.", type_unsure: "Choose the type." });
     await mount({ ...AUTO, type_state: "click", type_reason: "rules_and_model_disagree", type_candidates: ["monthly_revenue_report", "revenue_summary"], needs_click: true });
@@ -304,7 +299,7 @@ describe("review follow-ups (second round, 19 Oct 2026)", () => {
     expect(decide).toHaveBeenLastCalledWith(expect.objectContaining({ dtype: "revenue" }), { action: "confirm", part: "file_type" });
   });
 
-  xfail("two parts that wait only for a confirmation share one Correct button", async () => {
+  test("two parts that wait only for a confirmation share one Correct button", async () => {
     await mount(CONFIRM_ONLY);
     expect(q("recognition-row-revenue").textContent).toBe("Revenue row: Recognised revenue (EUR) (row 4). Please confirm the revenue row.");
     expect(q("recognition-last-revenue").textContent).toBe(
@@ -321,13 +316,13 @@ describe("review follow-ups (second round, 19 Oct 2026)", () => {
     expect(decide).toHaveBeenLastCalledWith(expect.objectContaining({ dtype: "revenue" }), { action: "confirm", part: "pending" });
   });
 
-  xfail("a part that needs a choice keeps its drop-down beside the shared Correct of a confirm-only part", async () => {
+  test("a part that needs a choice keeps its drop-down beside the shared Correct of a confirm-only part", async () => {
     await mount({ ...CONFIRM_ONLY, revenue_row: { ...AUTO.revenue_row, state: "click", reason: "rules_and_model_disagree" } });
     expect(q("recognition-row-select-revenue")).not.toBeNull();
     expect(q("recognition-correct-revenue")).not.toBeNull();
   });
 
-  xfail("a P&L carries its own recognition line, with ids and decisions of its own dtype", async () => {
+  test("a P&L carries its own recognition line, with ids and decisions of its own dtype", async () => {
     await mount({ ...AUTO, file_type: "financial_statements", other_sheets: [] }, { dtype: "pnl", file: "pnl.csv" });
     expect(q("recognition-type-pnl").textContent).toBe("Type: Financial statements (by rules)");
     expect(q("recognition-type-revenue")).toBeNull();
@@ -335,9 +330,46 @@ describe("review follow-ups (second round, 19 Oct 2026)", () => {
     expect(decide).toHaveBeenLastCalledWith(expect.objectContaining({ dtype: "pnl" }), { action: "confirm", part: "revenue_row" });
   });
 
-  xfail("S4 says what the audit now accepts and keeps the rest of the drop-zone text", () => {
+  test("S4 says what the audit now accepts and keeps the rest of the drop-zone text", () => {
     expect(S4_DROP_ZONE_LEAD).toBe(
       "Drop files here or use the paperclip. Required: a revenue file – revenue by customer, invoices or a monthly revenue report (24–36 months). " +
       "The audit will not run without a revenue file. Optional: CRM export and P&L. ");
+  });
+});
+
+describe("a sheet with a metrics block and a dated list (section 6.7, owner request of 19 Oct 2026)", () => {
+  const TABLES = [{ kind: "metrics_block", file_type: "monthly_revenue_report" }, { kind: "dated_list", file_type: "monthly_revenue_report" }];
+  const MATCH = { status: "match", months: 6, months_off: 0, max_gap_pct: 0 };
+  const MISMATCH = { status: "mismatch", months: 6, months_off: 2, max_gap_pct: 0.05 };
+
+  test("a list that matches the revenue row is a cross-check: the row supplies the series and nothing is asked", async () => {
+    await mount({ ...AUTO, tables: TABLES, series_source: { supplier: "metrics_block", state: "auto", cross_check: MATCH } });
+    expect(q("recognition-tables-revenue").textContent).toBe("Two tables on this sheet: a metrics block and a dated list.");
+    expect(q("recognition-source-revenue").textContent).toBe(
+      "Revenue series: the revenue row of the metrics block. The dated list matches it month by month (6 months).");
+    expect(q("recognition-source-revenue-dated_list")).toBeNull();
+  });
+
+  test("a list that does not match asks the analyst which table supplies the series and sends the choice", async () => {
+    await mount({ ...AUTO, needs_click: true, tables: TABLES, series_source: { supplier: "metrics_block", state: "click", cross_check: MISMATCH } });
+    expect(q("recognition-source-revenue").textContent).toBe(
+      "The dated list and the revenue row differ in 2 of 6 months. Choose which table supplies the revenue series:");
+    expect(q("recognition-source-revenue-metrics_block").textContent).toBe("Use the revenue row");
+    await click(q("recognition-source-revenue-dated_list"));
+    expect(decide).toHaveBeenLastCalledWith(expect.objectContaining({ dtype: "revenue" }),
+      { action: "change", part: "series_source", series_source: "dated_list" });
+  });
+
+  test("after the choice the line says which table is read and the mismatch stays visible", async () => {
+    await mount({ ...AUTO, tables: TABLES, series_source: { supplier: "dated_list", state: "you", cross_check: MISMATCH } });
+    expect(q("recognition-source-revenue").textContent).toBe(
+      "Revenue series: the dated list. The dated list and the revenue row differ in 2 of 6 months.");
+    expect(q("recognition-source-revenue-dated_list").disabled).toBe(true);
+    expect(q("recognition-source-revenue-metrics_block").disabled).toBe(false);
+  });
+
+  test("a sheet with one table shows no tables line", async () => {
+    await mount({ ...AUTO, tables: [], series_source: null });
+    expect(q("recognition-tables-revenue")).toBeNull();
   });
 });

@@ -280,6 +280,7 @@ SERVER_ONLY_TOP_LEVEL = frozenset({"contract_version",                   # inter
                                    "source_period", "metric_periods",       # dates-and-periods.md sections 2-3: months as text, no figure
                                    "won_deal_closes",                       # crm-dedup-clustering.md: data_integrity reads a closed sentence
                                    "yearly_basis",                          # chat-upload.md section 26.8: no narrative reads it
+                                   "recognition",                           # revenue-file-recognition.md section 9: closed words and counts, in no slice
                                    "as_of_month"})                          # the analyst's setting: the model is told evidence_to and last_month_status instead
 SERVER_ONLY_FIELDS = frozenset({
     "file", "sheet", "columns", "rows", "row_numbers", "unlocked_by",
@@ -1912,6 +1913,23 @@ def test_chat_an_other_note_is_refused_for_a_digit_a_file_name_a_cell_text_a_nam
     assert (r.status_code == 400) is refused, r.text
 
 
+def test_chat_a_note_quoting_a_label_of_a_file_read_by_recognition_only_is_refused(api):
+    """Review M5 on PR 135: such a file keeps no rows, only its recognised sheets, and the note filter reads their text too."""
+    import server
+    from mapping_shapes import FIXTURES as MAPPING_FILES
+    api.db["audits"].docs[0]["structure_reading_consent"] = False
+    api.db["audits"].docs[0]["as_of_month"] = "2025-03-31"
+    summary = b"Revenue by product line (EUR),,,\nProduct line,Jan-25,Feb-25,Mar-25\nPlatform licences,10,11,12\nSupport plans,20,21,22\n"
+    assert chat.upload(api, "summary.csv", summary).json()["recognition_only"] is True
+    assert api.db["datasets"].docs[0]["rows"] == [], "the label is in no row: only the stored sheet holds it"
+    chat.upload(api, "hubspot_deals.csv", (MAPPING_FILES / "hubspot_deals.csv").read_bytes())
+    url = f"/api/audits/{chat.AUDIT}/datasets/crm/decisions"
+    refused = api.post(url, json=[{"column": "Deal owner", "action": "correct", "field": None, "reason": "other", "note": "Platform licences is wrong"}])
+    assert refused.status_code == 400 and refused.json()["detail"] == server.NOTE_REFUSED
+    kept = api.post(url, json=[{"column": "Deal owner", "action": "correct", "field": None, "reason": "other", "note": "That column is not needed"}])
+    assert kept.status_code == 200
+
+
 def test_chat_a_note_that_quotes_a_header_is_kept_including_a_header_holding_a_cell_word_and_one_with_a_digit_is_refused(api):
     head = "Customer ID,Invoice Date,Amount,Currency,Segment,Large Account Flag,Plan 2024\nAlder Works,2024-01-01,5,EUR,Large,x,y\n"
     chat.upload(api, "h.csv", head.encode())
@@ -2477,19 +2495,25 @@ def test_chat_the_file_type_reply_is_one_closed_word():
     assert gateway.parse_structure_reply('{"type":"file_type","file_type":"crm"}', "file_type", "").file_type == "crm"
 
 
+def _recognition_word(word):
+    """The reply of the file_type prompt v2 (revenue-file-recognition.md 5.7) that names only the file's type."""
+    return json.dumps({"type": "file_recognition", "sheet": 1, "file_type": word, "revenue_row": None, "last_actual_column": None,
+                       "currency": None, "non_revenue_rows": []})
+
+
 def _file_type_upload(api):
-    api.state["adapter"] = t.FakeAdapter(replies=[json.dumps({"type": "file_type", "file_type": "crm"}), chat.mapping_reply()])
+    api.state["adapter"] = t.FakeAdapter(replies=[_recognition_word("crm"), chat.mapping_reply()])
     return chat.upload(api, "CRM_Anonymous_to_2028.xlsx", shapes.crm_anonymous_to_2028())
 
 
 def test_chat_the_file_type_text_holds_titles_and_headers_and_no_data_text_or_file_name(api):
     _file_type_upload(api)
     text = chat.model_text(api)
-    parsed = structure_redact.parse_file_type_text(text)
+    parsed = structure_redact.parse_recognition_text(text)
     assert any("Accounts through" in c["text"] for c in parsed[0]["titles"]), "the title rows are sent"
     for secret in ("ACC-0001", "Mid-market", "no contradiction found", "Owner A", "Claimed", "CRM_Anonymous", ".xlsx"):
         assert secret not in text, secret
-    assert gateway.structure_text_problem(text, "file_type", FILE_TYPE_CONTEXT, {}) is None
+    assert gateway.structure_text_problem(text, "file_recognition", FILE_TYPE_CONTEXT, {}) is None
 
 
 def test_chat_no_collection_holds_the_file_type_text_and_the_kept_answer_is_a_hash_and_a_word(api, caplog):
@@ -2502,12 +2526,14 @@ def test_chat_no_collection_holds_the_file_type_text_and_the_kept_answer_is_a_ha
     for title in FILE_TYPE_TITLES + ("Source inputs", "Annual tracker", "Funnel and evidence"):
         for name in ("llm_structures", "llm_calls", "column_mappings", "audits"):
             assert title not in stored.get(name, ""), (title, name)
-    kept = [d for d in api.db["column_mappings"].docs if d.get("kind") == "file_type"]
-    assert len(kept) == 1 and set(kept[0]) <= {"audit_id", "kind", "file_hash", "file_type", "saved_at"} and kept[0]["file_type"] == "crm"
+    kept = [d for d in api.db["column_mappings"].docs if d.get("kind") == "file_recognition"]
+    assert len(kept) == 1 and set(kept[0]) <= {"audit_id", "kind", "file_hash", "prompt_tag", "reply", "saved_at"}
+    assert kept[0]["reply"]["file_type"] == "crm" and set(kept[0]["reply"]) <= {"sheet", "file_type", "revenue_row", "last_actual_column", "currency",
+                                                                              "non_revenue_rows"}
     log = "\n".join(r.getMessage() for r in caplog.records)
     for title in FILE_TYPE_TITLES + ("Source inputs", "Annual tracker", "Funnel and evidence", "Account ID", "CRM_Anonymous", chat.COMPANY):
         assert title not in log, f"{title!r} reached a log line"
-    row = next(c for c in api.db["llm_calls"].docs if c.get("structure_type") == "file_type")
+    row = next(c for c in api.db["llm_calls"].docs if c.get("structure_type") == "file_recognition")
     assert set(row) <= LLM_CALLS_KEYS and row["status"] == "ok"
 
 
@@ -2550,13 +2576,13 @@ def _name_workbook(sheet_name, title):
 
 
 def test_chat_the_company_name_in_a_sheet_name_or_a_title_row_never_reaches_the_model_and_the_unit_marker_stays(api):
-    api.state["adapter"] = t.FakeAdapter(replies=[json.dumps({"type": "file_type", "file_type": "unknown"})])
+    api.state["adapter"] = t.FakeAdapter(replies=[_recognition_word("not_revenue")])
     chat.upload(api, "x.xlsx", _name_workbook("Fixture Target Ltd P&L", "Fixture Target Ltd \u2013 April 2024 Report, EUR thousands"))
     text = chat.model_text(api)
     assert "fixture target" not in text.lower(), "the company name is absent from the model payload"
-    titles = [c["text"] for s in structure_redact.parse_file_type_text(text) for c in s["titles"]]
+    titles = [c["text"] for s in structure_redact.parse_recognition_text(text) for c in s["titles"]]
     assert any("[redacted]" in x and "EUR thousands" in x for x in titles), titles
-    assert gateway.structure_text_problem(text, "file_type", FILE_TYPE_CONTEXT, {}) is None
+    assert gateway.structure_text_problem(text, "file_recognition", FILE_TYPE_CONTEXT, {}) is None
 
 
 def test_chat_a_file_type_text_still_holding_the_company_name_is_refused():
@@ -2646,7 +2672,7 @@ def test_the_forecast_reason_is_a_closed_sentence_and_the_line_label_never_reach
 # ---------------------------------------------------------------------------
 # Revenue file recognition (docs/specs/revenue-file-recognition.md section 5, CLAUDE.md rule 14). The text the model reads is built in
 # memory by app/recognition.py `model_text`; the gateway checks it again (`structure_text_problem`, structure type "file_recognition").
-# Written before the implementation: each test fails today because app/recognition.py does not exist.
+
 # ---------------------------------------------------------------------------
 import importlib  # noqa: E402
 import hashlib  # noqa: E402
@@ -2657,7 +2683,6 @@ RECOGNITION_CONTEXT = {"company_name": RECOGNITION_COMPANY}
 RECOGNITION_WITHHELD = (RECOGNITION_COMPANY,)       # what structure_redact.file_type_withheld(RECOGNITION_CONTEXT) returns
 MASKED_FIXTURES = ("customer_revenue_months.csv", "unclassed_names_by_quarter.csv", "revenue_summary_by_product.csv",
                    "unsure_share_labels.csv", "unsure_few_hits.csv")      # the last two: label mode "unsure" (review H4)
-AWAITING = pytest.mark.xfail(strict=True, reason="awaiting implementation: revenue-file recognition")
 FILE_HASH = hashlib.sha256(b"synthetic file one").hexdigest()
 OTHER_HASH = hashlib.sha256(b"synthetic file two").hexdigest()
 METRIC_FIXTURES = ("monthly_report_actual_forecast.csv", "pnl_multi_period.csv", "bookings_pipeline_only.csv")
@@ -2700,7 +2725,6 @@ def _numbers_by_column(sheet):
     return out
 
 
-@AWAITING
 @pytest.mark.parametrize("name", MASKED_FIXTURES)
 def test_recognition_an_entity_labelled_sheet_sends_no_row_label_text_only_row_1_row_2(name):
     sheet = _recognition_sheets(name)[0]
@@ -2712,7 +2736,6 @@ def test_recognition_an_entity_labelled_sheet_sends_no_row_label_text_only_row_1
         assert original not in text, f"the row label {original!r} reached the model text"
 
 
-@AWAITING
 def test_recognition_a_label_column_headed_customer_is_masked_even_when_every_name_holds_a_metric_word():
     rec = importlib.import_module("app.recognition")
     sheets = cr_mod.read_workbook(("Revenue by customer,,,\nCustomer,Jan-25,Feb-25,Mar-25\nRevenue Partners,1,2,3\nSales Hub,4,5,6\n"
@@ -2724,7 +2747,6 @@ def test_recognition_a_label_column_headed_customer_is_masked_even_when_every_na
         assert name not in text
 
 
-@AWAITING
 @pytest.mark.parametrize("name", METRIC_FIXTURES)
 def test_recognition_a_metric_labelled_sheet_sends_its_row_labels(name):
     sheet = _recognition_sheets(name)[0]
@@ -2757,7 +2779,6 @@ def _source_rows(sheet):
 ALL_FIXTURES = MASKED_FIXTURES + METRIC_FIXTURES + ("arr_snapshot.csv", "pnl_single_period.csv")
 
 
-@AWAITING
 @pytest.mark.parametrize("name", ALL_FIXTURES)
 def test_recognition_samples_are_never_tied_to_a_row_no_two_neighbouring_columns_share_a_source_row(name):
     """Review H3, decision of 2026-10-19: on every sheet the example values of a column come from different rows chosen from the file hash,
@@ -2783,7 +2804,6 @@ def test_recognition_samples_are_never_tied_to_a_row_no_two_neighbouring_columns
     assert not found, f"figures beyond the sample rule: {sorted(found)[:5]}"
 
 
-@AWAITING
 def test_recognition_the_sample_rows_come_from_the_file_hash_not_from_the_sheet_order():
     name = "customer_revenue_months.csv"
     sheet = _recognition_sheets(name)[0]
@@ -2796,7 +2816,6 @@ def test_recognition_the_sample_rows_come_from_the_file_hash_not_from_the_sheet_
     assert any(one[c] != first_rows[c] for c in one), "not simply the first three rows of every column"
 
 
-@AWAITING
 def test_recognition_the_text_holds_sheet_names_title_rows_and_headers_with_the_company_name_redacted():
     text = _recognition_text("monthly_report_actual_forecast.csv")
     assert RECOGNITION_COMPANY not in text and "Northwind" not in text and "[redacted]" in text
@@ -2805,7 +2824,6 @@ def test_recognition_the_text_holds_sheet_names_title_rows_and_headers_with_the_
     assert [m.group(1) for m in (re.match(r"^s1 header r3c(\d+): ", line) for line in text.split("\n")) if m] == [str(c) for c in range(1, 14)]
 
 
-@AWAITING
 def test_recognition_the_customer_names_the_audit_already_pseudonymises_take_their_pseudonyms_in_the_title_and_headers():
     rec = importlib.import_module("app.recognition")
     sheets = cr_mod.read_workbook(b"Revenue of Alder Works by month,,\nMetric,Jan-25,Feb-25\nRevenue,1,2\nCustomers,3,4\nChurn,5,6\n", "x.csv")
@@ -2814,7 +2832,6 @@ def test_recognition_the_customer_names_the_audit_already_pseudonymises_take_the
     assert "Alder Works" not in text and "Customer_01" in text
 
 
-@AWAITING
 def test_recognition_at_most_400_row_labels_are_sent_for_a_sheet():
     rec = importlib.import_module("app.recognition")
     rows = "".join(f"Customer {i},{10000 + i},{20000 + i}\n" for i in range(450))
@@ -2823,19 +2840,16 @@ def test_recognition_at_most_400_row_labels_are_sent_for_a_sheet():
     assert len(_labels(text)) == 398 and _labels(text)[-1] == "Row 398", "400 rows with text, the title row and the header row included"
 
 
-@AWAITING
 def test_recognition_the_text_is_built_the_same_twice():
     for name in MASKED_FIXTURES + METRIC_FIXTURES:
         assert _recognition_text(name) == _recognition_text(name)
 
 
-@AWAITING
 @pytest.mark.parametrize("name", MASKED_FIXTURES + METRIC_FIXTURES)
 def test_recognition_the_gateway_accepts_the_text_the_builder_writes(name):
     assert gateway.structure_text_problem(_recognition_text(name), "file_recognition", RECOGNITION_CONTEXT, {}) is None
 
 
-@AWAITING
 def test_recognition_the_gateway_refuses_a_row_label_on_a_masked_sheet_a_figure_a_file_name_an_unredacted_name_and_a_401st_row():
     masked = _recognition_text("customer_revenue_months.csv")
     metric = _recognition_text("monthly_report_actual_forecast.csv")
@@ -2850,7 +2864,6 @@ def test_recognition_the_gateway_refuses_a_row_label_on_a_masked_sheet_a_figure_
     assert check(metric + "\nfree prose about the company") == "not_cells"
 
 
-@AWAITING
 def test_recognition_the_reply_is_closed_json_with_no_confidence_and_no_free_text():
     good = {"type": "file_recognition", "sheet": 1, "file_type": "monthly_revenue_report",
             "revenue_row": {"row": 4, "label": "Recognised revenue (EUR)"}, "last_actual_column": 7, "currency": "EUR",
@@ -2871,7 +2884,6 @@ def test_recognition_the_reply_is_closed_json_with_no_confidence_and_no_free_tex
         assert parse({**good, "non_revenue_rows": [{"row": 9, "kind": kind}]})
 
 
-@AWAITING
 def test_recognition_the_words_a_result_can_carry_are_closed_lists_and_hold_no_text_from_a_file():
     """A result key, a reason string or a kind that is not on a closed list could carry file text into a log or a reply (rule 14)."""
     rec = importlib.import_module("app.recognition")

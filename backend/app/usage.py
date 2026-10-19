@@ -27,7 +27,7 @@ def empty() -> Dict:
     return {"first_upload_at": None, "first_export_at": None, "last_screen": None,
             "files": {"uploaded": {}, "rejected": {}},
             "columns": {"rules": 0, "saved": 0, "ai": 0, "confirmed": 0, "corrected": 0, "reasons": {}},
-            "other_notes": [], "steps": {"compute": {"runs": 0, "failures": {}}, "mapping_ai": {}}}
+            "other_notes": [], "steps": {"compute": {"runs": 0, "failures": {}}, "mapping_ai": {}, "recognition": {}}}
 
 
 def _bump(counts: Dict, key: str, n: int = 1) -> None:

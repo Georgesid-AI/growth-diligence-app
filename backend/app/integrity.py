@@ -40,6 +40,7 @@ INSUFFICIENT_NOTE = ("Insufficient assessment coverage is not a finding about th
                      "be completed.")
 CONCLUSIONS = {"reliable": "Reliable", "needs_clarification": "Needs clarification", "material_concerns": "Material concerns"}
 COMPLETED_TEXT = "Completed {x} of {y} applicable checks"
+SAME_SOURCE = "Not applicable – same source"      # the P&L is the only revenue source: the reconciliation would compare it with itself
 
 
 def _cite(source: Optional[dict]) -> str:
@@ -175,10 +176,12 @@ def assess(results: Optional[dict], deck_count: int, candidates: List[dict], fis
            DECKS: _decks(candidates) if deck_count else None}
     # Below CLUSTERING_MIN_DEALS won deals the clustering check is Not applicable: no data request, out of the denominator.
     few = deals is not None and deals["result"] is None
-    reasons = {**REASONS, **({CLUSTERING: CLUSTERING_FEW.format(n=deals["won"])} if few else {})}
+    same = (results.get("revenue_reconciliation") or {}).get("status") == "not_applicable"
+    reasons = {**REASONS, **({CLUSTERING: CLUSTERING_FEW.format(n=deals["won"])} if few else {}),
+               **({RECONCILIATION: SAME_SOURCE} if same else {})}
     coverage = []
     for check in CHECKS:
-        status = (NOT_APPLICABLE if check == BENFORD or (check == CLUSTERING and few)
+        status = (NOT_APPLICABLE if check == BENFORD or (check == CLUSTERING and few) or (check == RECONCILIATION and same)
                   else COMPLETED if ran[check] else BLOCKED)
         coverage.append({"check": check, "status": status, "reason": None if status == COMPLETED else reasons[check],
                          "result": ran[check]["result"] if status == COMPLETED else None})

@@ -294,6 +294,46 @@ class FileTypeReply(BaseModel):
     file_type: Literal[FILE_TYPES]
 
 
+# Revenue file recognition (docs/specs/revenue-file-recognition.md section 5): the same prompt as the file type (`file_type`, version 2) asks
+# one question per file and the reply names a sheet, a row, a column and closed words, never a confidence or free text. The label echo of
+# `revenue_row` is compared by Python and dropped before anything is stored (section 5.5).
+FILE_RECOGNITION = "file_recognition"
+RECOGNITION_TYPES = ("invoice_transactions", "customer_revenue", "monthly_revenue_report", "revenue_summary", "financial_statements",
+                     "arr_mrr_snapshot")
+RECOGNITION_REPLY_TYPES = RECOGNITION_TYPES + ("crm", "pnl", "not_revenue")
+NON_REVENUE_KINDS = ("forecast", "budget", "bookings", "pipeline", "contract_value", "run_rate")
+RECOGNITION_MAX_SHEETS = 6
+RECOGNITION_MAX_ROWS = 400
+
+
+class RecognitionRow(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    row: int = Field(ge=1)
+    label: str = Field(min_length=1, max_length=200)
+
+
+class RecognitionNonRevenue(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    row: int = Field(ge=1)
+    kind: Literal[NON_REVENUE_KINDS]
+
+
+class FileRecognitionReply(BaseModel):
+    """What the model must return for a file (spec section 5.7): exactly these keys, no confidence, no free text."""
+
+    model_config = {"extra": "forbid"}
+
+    type: Literal["file_recognition"]
+    sheet: int = Field(ge=1, le=RECOGNITION_MAX_SHEETS)
+    file_type: Literal[RECOGNITION_REPLY_TYPES]
+    revenue_row: Optional[RecognitionRow]
+    last_actual_column: Optional[int] = Field(ge=1)
+    currency: Optional[str] = Field(pattern=r"^[A-Z]{3}$")
+    non_revenue_rows: List[RecognitionNonRevenue] = Field(max_length=RECOGNITION_MAX_ROWS)
+
+
 # The sheet skeleton (chat-upload.md section 26): a P&L the rules cannot map, read as a statement. Its own schema and prompt, outside
 # STRUCTURE_TYPES like the file type, so no other schema or cache key moves. The reply names rows, columns and closed words only:
 # Python rebuilds every period from its header cell and reads every figure from its cell (rule 18).
@@ -473,7 +513,31 @@ def output_schema(structure_type: str) -> dict:
         return file_type_output_schema()
     if structure_type == SHEET_STRUCTURE:
         return sheet_output_schema()
+    if structure_type == FILE_RECOGNITION:
+        return file_recognition_output_schema()
     return structure_output_schema() if structure_type == "column_mapping" else labelling_output_schema()
+
+
+def file_recognition_output_schema() -> dict:
+    """The recognition JSON schema (spec section 5.7): written by hand like the others; the limits are checked by FileRecognitionReply."""
+    nullable = _nullable
+    return {
+        "type": "object",
+        "properties": {
+            "type": {"type": "string", "enum": [FILE_RECOGNITION]},
+            "sheet": {"type": "integer"},
+            "file_type": {"type": "string", "enum": list(RECOGNITION_REPLY_TYPES)},
+            "revenue_row": nullable({"type": "object", "properties": {"row": {"type": "integer"}, "label": {"type": "string"}},
+                                     "required": ["row", "label"], "additionalProperties": False}),
+            "last_actual_column": nullable({"type": "integer"}),
+            "currency": nullable({"type": "string"}),
+            "non_revenue_rows": {"type": "array", "items": {
+                "type": "object", "properties": {"row": {"type": "integer"}, "kind": {"type": "string", "enum": list(NON_REVENUE_KINDS)}},
+                "required": ["row", "kind"], "additionalProperties": False}},
+        },
+        "required": ["type", "sheet", "file_type", "revenue_row", "last_actual_column", "currency", "non_revenue_rows"],
+        "additionalProperties": False,
+    }
 
 
 def file_type_output_schema() -> dict:
@@ -533,6 +597,7 @@ class StructureRead(BaseModel):
     model_type: Optional[str] = None
     file_type: Optional[str] = None
     sheet: Optional[dict] = None            # a sheet skeleton's reply: header row, label column, periods and rows
+    recognition: Optional[dict] = None      # a file recognition reply (spec 5.7); in memory it still holds the label echo, stored it does not
     items: List[dict] = Field(default_factory=list)
     labels: List[dict] = Field(default_factory=list)
     pairs: List[dict] = Field(default_factory=list)

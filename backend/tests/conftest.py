@@ -26,6 +26,7 @@ def api(monkeypatch):
     db = t.FakeDB()
     db["audits"].docs.append({**AUDIT_DOC, "usage": usage_mod.empty()})
     monkeypatch.setattr(server, "db", db)
+    server._RECOGNITION_CACHE.clear()
     state = {"adapter": t.FakeAdapter(replies=[mapping_reply()])}
     monkeypatch.setattr(gateway, "AnthropicAdapter", lambda *a, **k: state["adapter"])
     client = TestClient(server.app, raise_server_exceptions=False)

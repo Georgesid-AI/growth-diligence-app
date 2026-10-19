@@ -7,11 +7,15 @@ import os
 import io
 import re
 import asyncio
+import bson
+import copy
 import hashlib
+import json
 import logging
 import uuid
+from collections import OrderedDict
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import date as date_type, datetime, time as time_type, timedelta, timezone
 from typing import Dict, List, Literal, Optional
 
 import pandas as pd
@@ -34,6 +38,7 @@ from app import decks
 from app import structures
 from app.structures import sheet as sheet_mod
 from app import column_rules as cr
+from app import recognition as rec
 from app import forecast_claims
 from app import allowance as allowance_mod
 from app import usage as usage_mod
@@ -119,20 +124,28 @@ def df_to_records(df: pd.DataFrame):
     recs = d.to_dict("records")
     for r in recs:
         for k, v in r.items():
-            if isinstance(v, (pd.Timestamp, datetime)):
+            if isinstance(v, (pd.Timestamp, datetime, date_type, time_type)):
                 r[k] = v.isoformat()
+            elif isinstance(v, timedelta):
+                r[k] = v.total_seconds()
             elif isinstance(v, float) and (v != v or v in (float("inf"), float("-inf"))):
                 r[k] = None
     return recs
 
 
-def normalize(rows: list, dtype: str, mapping: dict, row_numbers: Optional[list] = None, unit_scale: int = 1) -> pd.DataFrame:
+def normalize(rows: list, dtype: str, mapping: dict, row_numbers: Optional[list] = None, unit_scale: int = 1,
+              constants: Optional[dict] = None) -> pd.DataFrame:
     """The stored rows read through a mapping. `_row` is the row's number in the sheet it came from
     (`row_numbers`, kept at upload); without it the header is taken to be row 1 with no blank lines. `unit_scale` is
-    1,000 when the title rows of the file said the figures are in thousands: the money fields are multiplied by it."""
+    1,000 when the title rows of the file said the figures are in thousands: the money fields are multiplied by it. `constants` are
+    columns the analyst supplied for every row ({"Currency (confirmed)": "EUR"}): a file with no currency column takes the currency
+    the analyst confirmed (revenue-file-recognition.md section 2)."""
     if not rows:
         return pd.DataFrame()
     raw = pd.DataFrame(rows)
+    for column, value in (constants or {}).items():
+        if column not in raw.columns:
+            raw[column] = value
     defs = FIELD_DEFS[dtype]
     out = pd.DataFrame()
     out["_row"] = list(row_numbers) if row_numbers is not None and len(row_numbers) == len(raw) else range(2, len(raw) + 2)
@@ -210,7 +223,8 @@ def candidate_views(datasets: dict) -> dict:
         for as_type in DTYPE_ORDER:
             mapping = (d.get("mapping") or {}) if as_type == dtype else suggest_mapping(as_type, d.get("columns") or [])
             mapping = {f: c for f, c in mapping.items() if c}
-            views[as_type] = {"mapping": mapping, "frame": normalize(d.get("rows") or [], as_type, mapping, d.get("row_numbers"), d.get("unit_scale") or 1)}
+            views[as_type] = {"mapping": mapping, "frame": normalize(d.get("rows") or [], as_type, mapping, d.get("row_numbers"), d.get("unit_scale") or 1,
+                                                                 d.get("constants"))}
         files[dtype] = {"file": d.get("file"), "sheet": d.get("sheet"), "views": views}
     return files
 
@@ -338,7 +352,7 @@ async def audit_public(a: dict) -> dict:
     a.pop("usage", None)          # the counters, notes included, are read only through the usage totals
     if a.get("created_at"):
         a["ic_inputs"] = verdict_mod.with_review(a, a.get("ic_inputs"))
-    ds = await db.datasets.find({"audit_id": a["id"]}, {"rows": 0, "_id": 0}).to_list(10)
+    ds = await db.datasets.find({"audit_id": a["id"]}, {"rows": 0, "recognition_sheets": 0, "_id": 0}).to_list(10)
     a["datasets"] = {
         d["dtype"]: {k: d.get(k) for k in ("file", "sheet", "columns", "mapping", "fx", "billing_terms", "preview", "row_count",
                                            "mapping_source", "ai_reading")}
@@ -710,7 +724,7 @@ def _legacy_states(ds: dict) -> list:
 
 
 def _dataset_view(ds: dict, version: Optional[int] = None, status: str = "ok", forecast: Optional[dict] = None,
-                  fiscal_year_end: int = 12) -> dict:
+                  fiscal_year_end: int = 12, recognition: Optional[dict] = None) -> dict:
     """What the chat shows for one stored file: its bubble data and its mapping table. No rows (the preview
     is the first 8). `forecast`: the claims a forecast table reads as (chat-upload.md section 20), or None. A statement file
     (section 26) shows its line table in place of the mapping table."""
@@ -733,8 +747,27 @@ def _dataset_view(ds: dict, version: Optional[int] = None, status: str = "ok", f
         "saved": bool(ds.get("mapped_at")), "sheet": ds.get("sheet"), "type_source": ds.get("type_source"),
         "unit_note": ds.get("unit_note"), "looks": ds.get("looks"), "miss": _miss(dtype, states, mapping, ds.get("looks")),
         "forecast_claims": forecast, "read_as_claims": None, "pnl_grain": "monthly" if dtype == "pnl" else None,
-        "sheet_map": None,
+        "sheet_map": None, "recognition": recognition, "recognition_only": bool(ds.get("recognition_only")),
     }
+    if dtype == "revenue" and "currency" in view["missing_required"] and not ds.get("recognition_only"):
+        # No currency column. Several currencies in the file block compute and the status names them; otherwise the analyst answers the
+        # currency question (S31k) in place of "Required field not mapped: currency", whatever else is missing and whether or not a
+        # recognition read the file: no currency message without a way to answer it.
+        seen = (recognition["currency"] if recognition and recognition.get("recognised") else {})
+        codes = seen.get("codes") if seen.get("mixed") else ds.get("currency_found") or []
+        if len(codes) > 1:
+            view["currency_mixed"] = sorted(codes)
+        else:
+            missing = [f for f in view["missing_required"] if f != "currency"]
+            view.update(missing_required=missing, currency_pending=True)
+            if view["miss"]:
+                view["miss"] = {**view["miss"], "missing": [f for f in view["miss"]["missing"] if f != "currency"]}
+    if ds.get("recognition_only"):        # a file read by recognition only has no column mapping (revenue-file-recognition.md section 8)
+        waiting = rec.choices_waiting(recognition) if recognition else 0
+        view.update(columns=[], pending=waiting, missing_required=[], miss=None, mapping={}, suggested_mapping={}, fields={"required": [], "optional": []},
+                    saved=bool(recognition and recognition["recognised"] and not recognition["needs_click"]))
+    if ds.get("recognition_only") and ((recognition or {}).get("currency") or {}).get("mixed"):
+        view["currency_mixed"] = sorted(recognition["currency"]["codes"])        # blocks like any mixed file; no choice clears it
     if ds.get("sheet_map"):
         read = sheet_mod.view(ds["sheet_map"], fiscal_year_end, ds.get("unit_scale") or 1)
         view.update(columns=[], pending=read["pending"], missing_required=[], miss=None, pnl_grain=read["grain"],
@@ -777,19 +810,67 @@ async def _counted(audit_id: str, datasets: list) -> list:
     return [d for d in datasets if d.get("file_hash") not in read or d.get("sheet_map")]
 
 
+async def _effective_as_of(audit_id: str, audit: Optional[dict]) -> Optional[str]:
+    """The as-of month recognition reads the boundary against (revenue-file-recognition.md section 6.2): the audit's, else its default,
+    the last month of the P&L (chat-upload.md section 2); None when there is neither."""
+    if (audit or {}).get("as_of_month"):
+        return audit["as_of_month"]
+    pnl = await db.datasets.find_one({"audit_id": audit_id, "dtype": "pnl"}, {"_id": 0, "months": 1})
+    return ((pnl or {}).get("months") or {}).get("last")
+
+
+_RECOGNITION_CACHE: "OrderedDict[str, dict]" = OrderedDict()
+RECOGNITION_CACHE_SIZE = 32
+
+
+async def _recognition_of(audit_id: str, audit: Optional[dict], ds: dict) -> Optional[dict]:
+    """The recognition block of a stored file: the sheets it was read from, read again with the model's kept proposal, the analyst's
+    decisions and the audit as it stands now (a changed as-of month re-checks a decided boundary, section 6.2). Python is deterministic,
+    so the last results are kept by everything they depend on and the sheets are not read again for the same inputs (review L6)."""
+    as_of = await _effective_as_of(audit_id, audit)
+    currency, fye = (audit or {}).get("reporting_currency"), _fiscal_year_end(audit)
+    key = json.dumps([audit_id, ds.get("dtype"), ds.get("file_hash"), as_of, currency, fye, ds.get("recognition_decisions"),
+                      ds.get("recognition_proposal"), bool(ds.get("recognition_facts"))], sort_keys=True, default=str)
+    if key in _RECOGNITION_CACHE:
+        _RECOGNITION_CACHE.move_to_end(key)
+        return copy.deepcopy(_RECOGNITION_CACHE[key])
+    if ds.get("recognition_facts"):
+        result = rec.recognise_facts(ds["recognition_facts"], as_of, currency, ds.get("recognition_decisions"))
+    else:
+        sheets = rec.unpack_sheets(ds.get("recognition_sheets"))
+        if not sheets:
+            return None
+        result = rec.recognise(sheets, as_of, ds.get("recognition_proposal"), currency, ds.get("recognition_decisions"), fye)
+    _RECOGNITION_CACHE[key] = copy.deepcopy(result)
+    while len(_RECOGNITION_CACHE) > RECOGNITION_CACHE_SIZE:
+        _RECOGNITION_CACHE.popitem(last=False)
+    return result
+
+
+async def _is_revenue_file(audit_id: str, audit: Optional[dict], ds: Optional[dict]) -> bool:
+    """A stored revenue file counts for the banner and Run audit when it keeps a column mapping or its recognition gives a monthly revenue
+    series (owner decision 1 on PR 135)."""
+    if not ds:
+        return False
+    if not ds.get("recognition_only"):
+        return True
+    return rec.has_monthly_series(await _recognition_of(audit_id, audit, ds))
+
+
 async def _view(audit_id: str, ds: dict, version: Optional[int] = None, status: str = "ok") -> dict:
     """_dataset_view with the forecast claims of section 20: the list to confirm, and what was saved from these bytes. A file whose
     claims are saved is read as claims: it waits for nothing (no pending column, no required field), so it no longer holds Calculate."""
-    if (ds.get("looks") or {}).get("shape") not in forecast_claims.SHAPES and not ds.get("sheet_map"):
-        return _dataset_view(ds, version, status)
-    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "fiscal_year_end": 1})
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "fiscal_year_end": 1, "as_of_month": 1, "reporting_currency": 1})
     fiscal_year_end = _fiscal_year_end(audit)
+    recognition = await _recognition_of(audit_id, audit, ds)
+    if (ds.get("looks") or {}).get("shape") not in forecast_claims.SHAPES and not ds.get("sheet_map"):
+        return _dataset_view(ds, version, status, None, fiscal_year_end, recognition)
     _, found = await _forecast_found(audit_id, ds["dtype"], fiscal_year_end)
     saved = await _saved_forecast(audit_id, ds.get("file_hash"))
     claims = sum(len(c.get("by_period") or []) for c in saved)
     if found and found.get("count"):
         found = {**found, "saved_lines": len(saved), "saved": claims}
-    view = _dataset_view(ds, version, status, found or None, fiscal_year_end)
+    view = _dataset_view(ds, version, status, found or None, fiscal_year_end, recognition)
     if saved:
         # A statement file still waits for its own lines (section 26.6); any other file read as claims waits for nothing.
         view.update(read_as_claims={"lines": len(saved), "claims": claims},
@@ -899,44 +980,82 @@ async def _read_statement(a: dict, sheet: "cr.Sheet", digest: str, kpi: bool = F
     return {"map": {**sheet_mod.build(again, read.sheet), "counts": counts}, "ai": "read", **units}
 
 
-async def _stored_file_type(audit_id: str, digest: str) -> Optional[dict]:
-    """The type the model gave this file (by its hash) earlier in this audit, kept with the saved mappings."""
-    return await db[structures.COLUMN_MAPPINGS_COLLECTION].find_one(
-        {"audit_id": audit_id, "kind": "file_type", "file_hash": digest}, {"_id": 0})
-
-
-def _file_type_sheets(audit: dict, sheets: list, mapping: dict) -> str:
-    """The text the model reads to tell the file's type (chat-upload.md section 19): sheet names, the title rows above
-    each header, the header row and the masked sample. Built in memory; never stored, never logged."""
-    parts = []
-    for sheet in sheets[:structures.redact.FILE_MAX_SHEETS]:
-        rows = df_to_records(sheet.frame.head(structures.MAPPING_SAMPLE_ROWS))
-        parts.append(structures.file_type_sheet(
-            sheet.sheet, sheet.titles, sheet.header_row, sheet.headers, sheet.columns, rows,
-            tuple(cr.customer_columns(sheet, cr.analyse("revenue", sheet)[0])) if not sheet.wide else (), sheet.raw_headers))
-    return structures.file_type_text(parts, audit.get("company_name"), mapping, structures.redact.file_type_withheld(audit))
-
-
-async def _ask_file_type(audit: dict, sheets: list, digest: str):
-    """The rules found no type at 80: the model is asked once for the file, with the consent of the audit, and the answer is
-    kept by the file's hash (it is not asked again for the same bytes). Returns (type or None, status). A file the model
-    cannot place, a failure, a timeout or no consent leaves the type to the analyst (S6)."""
+async def _ask_recognition(audit: dict, sheets: list, digest: str, fiscal_year_end: int):
+    """The one model call per new file (revenue-file-recognition.md section 5.5), with the audit's consent: it proposes the file's
+    type, the revenue row, the last actual column, the currency and the rows that are not revenue. The answer is kept by the file's
+    hash and the prompt version, without the label echo, so the same bytes make no second call. Returns (proposal or None, status):
+    a failure, a refusal, a timeout, no prompt or no consent leave the rules' outcome standing (section 6.5)."""
     if audit.get("structure_reading_consent") is not True:
         return None, "no_consent"
-    kept = await _stored_file_type(audit["id"], digest)
-    if kept:
-        return (kept.get("file_type") if kept.get("file_type") in DTYPE_ORDER else None), "stored"
-    text = _file_type_sheets(audit, sheets, await llm_redaction.get_map(db, audit["id"]))
     try:
-        read = await asyncio.wait_for(llm_gateway.read_structure(db, audit["id"], text, "file_type"), MAPPING_AI_SECONDS)
+        prompt = await prompt_store.load(db, llm_gateway.FILE_TYPE_PROMPT)
+    except prompt_store.PromptMissing:
+        return None, "not_read"
+    tag = prompt_store.cache_tag(prompt)
+    kept = await db[structures.COLUMN_MAPPINGS_COLLECTION].find_one(
+        {"audit_id": audit["id"], "kind": "file_recognition", "file_hash": digest, "prompt_tag": tag}, {"_id": 0})
+    if kept:
+        return kept["reply"], "stored"
+    mapping, withheld = await llm_redaction.get_map(db, audit["id"]), structures.redact.file_type_withheld(audit)
+    text = rec.model_text(sheets, audit.get("company_name"), mapping, withheld, digest, fiscal_year_end)
+    try:
+        read = await asyncio.wait_for(llm_gateway.read_structure(db, audit["id"], text, "file_recognition", use_cache=False),
+                                      MAPPING_AI_SECONDS)
     except asyncio.TimeoutError:
         return None, "timeout"
-    if read.status != "read":
-        return None, read.status
+    proposal = rec.proposal_from(read.recognition, sheets, audit.get("company_name"), mapping, withheld, fiscal_year_end) \
+        if read.status == "read" and read.recognition else None
+    if proposal is None:
+        return None, read.status if read.status != "read" else "not_read"
     await db[structures.COLUMN_MAPPINGS_COLLECTION].insert_one({
-        "audit_id": audit["id"], "kind": "file_type", "file_hash": digest, "file_type": read.file_type,
+        "audit_id": audit["id"], "kind": "file_recognition", "file_hash": digest, "prompt_tag": tag, "reply": proposal,
         "saved_at": usage_mod.now()})
-    return (read.file_type if read.file_type in DTYPE_ORDER else None), "read"
+    return proposal, "read"
+
+
+async def _recognise_file(a: dict, sheets: list, digest: str, call) -> dict:
+    """Python's recognition of every sheet of a file (sections 2, 3), then the model's proposal checked by Python (section 6) when
+    `call` is True, or "recognised" and Python recognised the file. The model decides nothing: the result is Python's."""
+    fiscal_year_end = _fiscal_year_end(a)
+    as_of = await _effective_as_of(a["id"], a)
+    rules = rec.recognise(sheets, as_of, None, a.get("reporting_currency"), None, fiscal_year_end)
+    asks = call is True or (call == "recognised" and rules["recognised"])
+    if asks and rules["recognised"]:
+        # A file whose recognised sheets alone are over the limit stops here, before the model is called and anything is kept (review L4)
+        _check_dataset_size(_sheets_to_keep(sheets, rules, _keeps_rows({"result": rules}), fiscal_year_end))
+    proposal, status = (await _ask_recognition(a, sheets, digest, fiscal_year_end)) if asks else (None, "not_asked")
+    if status not in ("not_asked", "no_consent", "stored"):
+        await _usage_update(a["id"], lambda u: u["steps"].setdefault("recognition", {}).__setitem__(
+            status, u["steps"]["recognition"].get(status, 0) + 1))
+    result = rec.recognise(sheets, as_of, proposal, a.get("reporting_currency"), None, fiscal_year_end) if proposal else rules
+    return {"result": result, "proposal": proposal, "status": status, "raw": sheets}
+
+
+def _sheets_to_keep(sheets: list, result: dict, keep_rows: bool, fiscal_year_end: int = 12) -> dict:
+    """The sheets a dataset keeps to read the file again (owner decision 3 on PR 135): the recognised sheets only. A records layout
+    (one row per invoice) that keeps its rows keeps only a few facts; customers by period keep the one sheet recognition read."""
+    if keep_rows and result.get("series_basis") == "records":
+        sheet = next((x for x in sheets if x.sheet == result["sheet"]), None)
+        info = rec.analyse(sheet, fiscal_year_end) if sheet is not None else None
+        if info is not None and info["layout"] == "records":
+            return {"recognition_sheets": [], "recognition_facts": rec.records_facts(info)}
+    names = rec.kept_names(result, keep_rows)
+    return {"recognition_sheets": rec.pack_sheets([x for x in sheets if x.sheet in names])}
+
+
+def _recognition_fields(recognition: dict, keep_rows: bool = False, fiscal_year_end: int = 12) -> dict:
+    """What a dataset keeps to read the file again (revenue-file-recognition.md section 8): the recognised sheets, the model's kept
+    proposal without its label echo and the analyst's decisions, which start empty. A file that keeps its rows (invoices, customers by
+    period) keeps no sheet beyond the one recognition read (owner decision 3 on PR 135)."""
+    kept = _sheets_to_keep(recognition["raw"], recognition["result"], keep_rows, fiscal_year_end)
+    names = rec.kept_names(recognition["result"], keep_rows)
+    return {**kept, "recognition_proposal": rec.renumber_proposal(recognition["proposal"], recognition["raw"], names),
+            "recognition_decisions": {}, "recognition_ai": recognition["status"]}
+
+
+def _keeps_rows(recognition: dict) -> bool:
+    """Whether the dataset of this file keeps the rows of its sheet: invoices and customers by period do (column mapping)."""
+    return recognition["result"].get("file_type") in ("invoice_transactions", "customer_revenue")
 
 
 async def _ingest(audit_id: str, upload: UploadFile, dtype: Optional[str], replace: bool, background: BackgroundTasks):
@@ -958,19 +1077,108 @@ async def _ingest(audit_id: str, upload: UploadFile, dtype: Optional[str], repla
     digest = hashlib.sha256(content).hexdigest()
     detected, _, _ = cr.detect_workbook(sheets)
     chosen, source, type_status = dtype or detected, "you" if dtype else "rules", None
+    recognition = None
+    if chosen != "crm" and dtype in (None, "revenue", "pnl"):
+        # Every file the rules do not type as CRM is recognised (revenue-file-recognition.md section 8). A file the rules cannot type
+        # asks the model first (section 5.6); a file they type is stored first and the model is asked once after it (section 5.5).
+        recognition = await _recognise_file(a, sheets, digest, call=True if (dtype is None and detected is None) else False)
+        if chosen is None:
+            word = (recognition["proposal"] or {}).get("file_type")
+            type_status = recognition["status"]
+            if word in ("crm", "pnl"):
+                chosen, source = word, "ai"
+            elif _model_typed_a_records_file(recognition, word):
+                chosen, source = "revenue", "ai"
+            elif rec.has_monthly_series(recognition["result"]) or recognition["result"]["file_type"] == "financial_statements":
+                chosen = "revenue"      # a file with no monthly series (a snapshot, a yearly report) gets the type picker; a statement is the P&L
     if chosen is None:
-        chosen, type_status = await _ask_file_type(a, sheets, digest)
-        source = "ai"
-    if chosen is None:
+        found = recognition["result"] if recognition else {}
         return {"status": "unknown_type", "file": filename, "size_bytes": len(content), "row_count": len(sheets[0].frame),
-                "ext": ext, "types": list(DTYPE_ORDER), "sheets": len(sheets)}
-    return await _load(a, audit_id, chosen, cr.best_sheet(sheets, chosen), filename, len(content), digest, replace,
-                       background, source, detected == chosen, type_status)
+                "ext": ext, "types": list(DTYPE_ORDER), "sheets": len(sheets),
+                "recognition": {k: found.get(k) for k in ("recognised", "missing", "message")}}
+    extra = None
+    if recognition and chosen in ("revenue", "pnl") and recognition["result"]["recognised"]:
+        result = recognition["result"]
+        if dtype is None and chosen == "pnl" and result["file_type"] == "monthly_revenue_report":
+            chosen = "revenue"                     # a KPI sheet with a revenue, invoiced or MRR/ARR row is a revenue report (decision 3)
+        elif dtype is None and chosen == "revenue" and result["file_type"] == "financial_statements":
+            chosen = "pnl"                         # a statement-shaped P&L stays the audit's P&L and carries the recognition (section 8)
+        if dtype is None and chosen == "revenue" and result["file_type"] in rec.NO_MAPPING_TYPES and rec.has_monthly_series(result):
+            return await _store_recognised(a, audit_id, filename, len(content), digest, replace, recognition, source, background,
+                                           type_status)
+        extra = _recognition_fields(recognition, _keeps_rows(recognition), _fiscal_year_end(a))
+    view = await _load(a, audit_id, chosen, cr.best_sheet(sheets, chosen), filename, len(content), digest, replace,
+                       background, source, detected == chosen, type_status, extra=extra)
+    if extra and dtype is None and detected is not None and recognition["result"]["recognised"]:
+        # The rules typed the file and its mapping is done: the one recognition call of the new file comes after it.
+        ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": chosen}, {"_id": 0, "rows": 0})
+        if ds and ds.get("file_hash") == digest and ds.get("recognition_ai") == "not_asked":
+            proposal, status = await _ask_recognition(a, sheets, digest, _fiscal_year_end(a))
+            if status not in ("no_consent", "stored"):
+                await _usage_update(audit_id, lambda u: u["steps"].setdefault("recognition", {}).__setitem__(
+                    status, u["steps"]["recognition"].get(status, 0) + 1))
+            names = [x["name"] for x in ds.get("recognition_sheets") or []] or [(ds.get("recognition_facts") or {}).get("sheet")]
+            await db.datasets.update_one({"audit_id": audit_id, "dtype": chosen, "file_hash": digest}, {"$set": {
+                "recognition_proposal": rec.renumber_proposal(proposal, sheets, names), "recognition_ai": status}})
+            ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": chosen}, {"_id": 0, "rows": 0})
+            view = await _view(audit_id, ds, view.get("version"), view.get("status", "ok"))
+    return view
+
+
+def _model_typed_a_records_file(recognition: dict, word: Optional[str]) -> bool:
+    """An invoice list the rules cannot type is the revenue file when the model's type, checked by Python, is the type Python read and the
+    list covers two months or more. Without consent or after a failed call there is no model type: the analyst picks (re-check, N1)."""
+    result = recognition["result"]
+    return bool(word and word == result.get("file_type") and result.get("recognised") and result.get("series_basis") == "records"
+                and result.get("periods", 0) >= 2)
+
+
+async def _store_recognised(a: dict, audit_id: str, filename: str, size: int, digest: str, replace: bool, recognition: dict,
+                            type_source: str, background: Optional[BackgroundTasks], type_status: Optional[str]):
+    """A recognised file with no customer rows (a monthly report, a summary, a statement, an ARR snapshot) is the audit's revenue
+    file with no column mapping: it holds no required field and waits only for the clicks of its recognition (section 8)."""
+    existing = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"}, {"_id": 0, "rows": 0})
+    if existing and existing.get("file_hash") == digest:
+        return await _view(audit_id, existing, None, "same_file")
+    if existing and not replace:
+        raise HTTPException(409, {"code": "type_loaded", "dtype": "revenue", "file": existing.get("file")})
+    result = recognition["result"]
+    doc = {"audit_id": audit_id, "dtype": "revenue", "file": filename, "sheet": result["sheet"], "columns": [], "headers": [],
+           "header_row": result["header_row"], "rows": [], "row_numbers": [], "row_count": 0, "mapping": {},
+           "fx": (existing or {}).get("fx") or {}, "billing_terms": {}, "preview": [], "mapping_source": {},
+           "ai_reading": {"status": recognition["status"], "reason": None}, "columns_state": [], "months": None,
+           "file_hash": digest, "size_bytes": size, "uploaded_at": usage_mod.now(), "mapped_at": None, "type_source": type_source,
+           "looks": {"shape": "table", "rows": 0, "columns": 0}, "unit_scale": 1, "unit_note": None, "wide": None, "raw_headers": None,
+           "first_col": 1, "title_currency": None, "recognition_only": True,
+           **_recognition_fields(recognition, False, _fiscal_year_end(a))}
+    _check_dataset_size(doc)
+    await db.datasets.replace_one({"audit_id": audit_id, "dtype": "revenue"}, doc, upsert=True)
+    await _usage_update(audit_id, lambda u: usage_mod.record_upload(u, "revenue"))
+    await allowance_mod.record_for_audit(db, audit_id, files=1)
+    await _settle_recognition(audit_id, "revenue", background)
+    await _mark_stale_and_maybe_recompute(audit_id)
+    logger.info("upload: run_id=%s type=revenue source=%s recognition=%s file_type=%s ai=%s", audit_id, type_source,
+                "recognised", result["file_type"] or "-", type_status or "-")
+    return await _view(audit_id, await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"}, {"_id": 0, "rows": 0}), None)
+
+
+async def _settle_recognition(audit_id: str, dtype: str, background: Optional[BackgroundTasks]) -> None:
+    """A file read by recognition only counts as mapped when no choice waits for the analyst (the banner S16d reads it); the decks
+    that waited for the revenue file are read then, as for a mapping saved."""
+    ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype}, {"_id": 0, "rows": 0})
+    if not ds or not ds.get("recognition_only"):
+        return
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
+    result = await _recognition_of(audit_id, audit, ds)
+    done = bool(result and result["recognised"] and not result["needs_click"])
+    await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype}, {"$set": {"mapped_at": usage_mod.now() if done else None}})
+    if done and dtype == "revenue" and background is not None:
+        background.add_task(structures.process_waiting_decks_safely, db, audit_id)
 
 
 async def _load(a: dict, audit_id: str, chosen: str, sheet: "cr.Sheet", filename: str, size: int, digest: str, replace: bool,
                 background: Optional[BackgroundTasks], type_source: str, detected: bool, type_status: Optional[str] = None,
-                drop: Optional[str] = None):
+                drop: Optional[str] = None, extra: Optional[dict] = None):
     """A sheet stored as the audit's file of one type: the saved mapping of its bytes or its headers, else the rules, then
     the model for the columns the rules could not decide (unless the sheet is a summary table, which no column mapping can
     read), then the analyst. `drop` is the type this file was stored as before, when the analyst changed its type."""
@@ -993,8 +1201,10 @@ async def _load(a: dict, audit_id: str, chosen: str, sheet: "cr.Sheet", filename
             states = cr.states_from_saved(chosen, sheet, _saved_columns(same[-1]), scale=False)
             existing = {**existing, "columns_state": states, "mapping": cr.mapping_of(chosen, states),
                         "mapping_source": _source_map(states)}
+            if existing.get("constants"):         # the currency every row took stays, whatever the saved mapping says of the columns
+                existing.update(_with_currency_column(existing, next(iter(existing["constants"].values()))))
             await db.datasets.update_one({"audit_id": audit_id, "dtype": chosen}, {"$set": {
-                "columns_state": states, "mapping": existing["mapping"], "mapping_source": existing["mapping_source"]}})
+                "columns_state": existing["columns_state"], "mapping": existing["mapping"], "mapping_source": existing["mapping_source"]}})
         return await _view(audit_id, existing, same[-1]["version"] if same else None, "same_file")
     if existing and not replace:
         raise HTTPException(409, {"code": "type_loaded", "dtype": chosen, "file": existing.get("file")})
@@ -1031,6 +1241,13 @@ async def _load(a: dict, audit_id: str, chosen: str, sheet: "cr.Sheet", filename
             await _usage_update(audit_id, lambda u: u["steps"]["mapping_ai"].__setitem__(
                 ai_reading["status"], u["steps"]["mapping_ai"].get(ai_reading["status"], 0) + 1))
     mapping = cr.mapping_of(chosen, states)
+    shown = sorted(rec.currency_scan(sheet)) if statement is None else []
+    doc_currency = {}
+    if chosen == "revenue" and len(shown) == 1 and not mapping.get("currency"):
+        # The file shows one currency (title, header, sign or code) and has no currency column: every row takes it, and the required
+        # field is never reported missing (owner decision on the currency, re-check of PR 135).
+        doc_currency = _with_currency_column({"columns_state": states, "columns": sheet.columns}, shown[0])
+        states, mapping = doc_currency["columns_state"], doc_currency["mapping"]
     doc = {"audit_id": audit_id, "dtype": chosen, "file": filename, "sheet": sheet.sheet, "columns": sheet.columns,
            "headers": sheet.headers, "header_row": sheet.header_row, "rows": rows, "row_numbers": sheet.row_numbers,
            "row_count": len(rows), "mapping": mapping, "fx": (existing or {}).get("fx") or {},
@@ -1039,12 +1256,15 @@ async def _load(a: dict, audit_id: str, chosen: str, sheet: "cr.Sheet", filename
            "months": _months_for(chosen, states, sheet.columns, rows), "file_hash": digest, "size_bytes": size,
            "uploaded_at": usage_mod.now(), "mapped_at": None, "type_source": type_source, "looks": looks,
            "unit_scale": sheet.unit_scale, "unit_note": sheet.unit_note, "wide": sheet.wide, "raw_headers": sheet.raw_headers,
-           "first_col": sheet.first_col, "title_currency": sheet.currency}
+           "first_col": sheet.first_col, "title_currency": sheet.currency, "currency_found": shown}
+    doc.update(doc_currency)
+    doc.update(extra or {})
     if statement is not None:
         sheet_map = statement["map"]
         doc.update(sheet_map=sheet_map, mapping={}, header_row=sheet_map["header_row"], row_count=len(sheet_map["lines"]),
                    months=sheet_mod.months_found(sheet_map), unit_scale=statement["unit_scale"], unit_note=statement["unit_note"],
                    title_currency=statement["title_currency"] or sheet.currency)
+    _check_dataset_size(doc)               # every upload: a document over the limit is refused with the message, never a raw error (review M2)
     await db.datasets.replace_one({"audit_id": audit_id, "dtype": chosen}, doc, upsert=True)
     if drop and drop != chosen:
         await db.datasets.delete_one({"audit_id": audit_id, "dtype": drop})
@@ -1098,6 +1318,145 @@ async def upload_chat_file(audit_id: str, background: BackgroundTasks, file: Upl
     return await _ingest(audit_id, file, dtype, replace, background)
 
 
+class RecognitionDecision(BaseModel):
+    """One decision about the recognition of a file (revenue-file-recognition.md section 6.6): a part to confirm, or a choice among
+    the lists the server offers. No typed text: a sheet name, a currency and a type are checked against the file's own lists."""
+    model_config = {"extra": "forbid"}
+    action: Literal["confirm", "change"]
+    part: Literal["revenue_row", "last_actual", "file_type", "currency", "pending", "money_kind", "sheet", "series_source"]
+    row: Optional[int] = None
+    column: Optional[int] = None
+    file_type: Optional[str] = None
+    currency: Optional[str] = None
+    money_kind: Optional[str] = None
+    sheet: Optional[str] = None
+    series_source: Optional[str] = None
+
+
+def _recognition_decision(current: dict, body: RecognitionDecision, decisions: dict) -> dict:
+    """The analyst's decisions after this one, or a 400. The server re-checks every choice against the lists of the current
+    recognition: a row must be a candidate, a column a period up to the as-of month, a type one of the six."""
+    row = current.get("revenue_row") or current.get("revenue_column")
+    key = "column" if current.get("revenue_column") else "row"
+    last = current.get("last_actual")
+    last_key = "row" if "row" in (last or {}) else "column"          # dates down the rows: a row; periods across: a column (review M3)
+    out = dict(decisions)
+    bad = HTTPException(400, "That choice is not one of the options offered")
+    if body.action == "confirm":
+        if body.part == "pending":
+            if row and row["state"] == "click" and row["reason"] in rec.CONFIRM_ONLY and row.get(key) is not None:
+                out["revenue_row"] = row[key]
+            if last and last["state"] == "click" and last["reason"] in rec.CONFIRM_ONLY and last.get(last_key) is not None:
+                out["last_actual"] = last[last_key]
+        elif body.part == "revenue_row" and row and row.get(key) is not None:
+            out["revenue_row"] = row[key]
+        elif body.part == "last_actual" and last and last.get(last_key) is not None:
+            out["last_actual"] = last[last_key]
+        elif body.part == "file_type" and current.get("file_type"):
+            out["file_type"] = current["file_type"]
+        elif body.part == "currency" and (current.get("currency") or {}).get("code"):
+            out["currency"] = current["currency"]["code"]
+        else:
+            raise bad
+        return out
+    if body.part == "revenue_row" and row and body.row in [c.get(key) for c in row["candidates"]]:
+        out["revenue_row"] = body.row
+    elif body.part == "last_actual" and last and body.column in [c.get(last_key) for c in last["candidates"]]:
+        out["last_actual"] = body.column
+    elif body.part == "file_type" and body.file_type in rec.RECOGNITION_TYPES:
+        out["file_type"] = body.file_type
+    elif body.part == "currency" and body.currency in rec.ISO_CURRENCIES and not (current.get("currency") or {}).get("mixed"):
+        out["currency"] = body.currency
+    elif body.part == "money_kind" and body.money_kind in cr.MONEY_KINDS and (current.get("money_kind") or {}).get("asked"):
+        out["money_kind"] = body.money_kind
+    elif body.part == "series_source" and (current.get("series_source") or {}) and body.series_source in ("metrics_block", "dated_list"):
+        out["series_source"] = body.series_source
+    elif body.part == "sheet" and body.sheet in [current.get("sheet")] + [o["sheet"] for o in current.get("other_sheets") or []]:
+        out = {"sheet": body.sheet}
+    else:
+        raise bad
+    return out
+
+
+# A dataset is one MongoDB document (16 MB of BSON); the stored sheets of a recognised file are part of it. Over the limit the upload stops
+# with this message: nothing is cut and nothing is stored (decision of the owner on PR 135). The size is the BSON size MongoDB counts, not
+# the length of the JSON (review H7); the margin below 16 MiB leaves room for the fields that are added later.
+DATASET_MAX_BYTES = 15 * 1024 * 1024
+DATASET_TOO_LARGE = "This file is too large to store. Split it or remove empty rows and upload again."
+DATASET_UNSTORABLE = "This file holds a value that cannot be stored. Remove it and upload again."
+
+
+def _check_dataset_size(doc: dict) -> None:
+    try:
+        size = len(bson.encode(doc))
+    except (bson.errors.InvalidDocument, OverflowError):
+        raise HTTPException(400, DATASET_UNSTORABLE)
+    if size > DATASET_MAX_BYTES:
+        raise HTTPException(413, DATASET_TOO_LARGE)
+
+
+CONFIRMED_CURRENCY = "Currency (confirmed)"
+
+
+def _with_currency_column(ds: dict, code: str) -> dict:
+    """The fields of a dataset once it takes `code` for every row: a constant column mapped as the currency field."""
+    states = [s for s in (ds.get("columns_state") or []) if s["column"] != CONFIRMED_CURRENCY]
+    states.append(cr.new_state(CONFIRMED_CURRENCY, "currency", "decision", "confirmed"))
+    columns = [c for c in (ds.get("columns") or []) if c != CONFIRMED_CURRENCY] + [CONFIRMED_CURRENCY]
+    return {"constants": {CONFIRMED_CURRENCY: code}, "columns": columns, "columns_state": states,
+            "mapping": cr.mapping_of("revenue", states), "mapping_source": _source_map(states)}
+
+
+async def _confirm_currency_column(audit_id: str, ds: dict, code: str, background: Optional[BackgroundTasks]) -> None:
+    """A revenue file with a column mapping and no currency column takes the currency the analyst confirmed for every row: a constant
+    column, mapped as the currency field, so the required field is met by the analyst's answer and not by a guess."""
+    await db.datasets.update_one({"audit_id": audit_id, "dtype": "revenue"}, {"$set": _with_currency_column(ds, code)})
+    await _commit_mapping(audit_id, "revenue", background)
+
+
+@api.post("/audits/{audit_id}/datasets/{dtype}/recognition")
+async def decide_recognition(audit_id: str, dtype: str, body: RecognitionDecision, background: BackgroundTasks):
+    """Correct or change one part of a file's recognition (revenue-file-recognition.md section 6.6). A revenue file and a P&L carry
+    their own; decisions are saved with the dataset and a replaced file clears them."""
+    if dtype not in ("revenue", "pnl"):
+        raise HTTPException(400, "Unknown dataset type")
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
+    ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype}, {"_id": 0, "rows": 0})
+    if audit and ds and not (ds.get("recognition_sheets") or ds.get("recognition_facts")):
+        return await _answer_currency_without_recognition(audit_id, dtype, ds, body, background)
+    if not audit or not ds:
+        raise HTTPException(404, "Dataset not found")
+    current = await _recognition_of(audit_id, audit, ds)
+    decisions = _recognition_decision(current, body, ds.get("recognition_decisions") or {})
+    await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype}, {"$set": {
+        "recognition_decisions": decisions, "recognition_decided_at": usage_mod.now()}})
+    if body.part == "currency" and dtype == "revenue" and not ds.get("recognition_only") and not (ds.get("mapping") or {}).get("currency"):
+        await _confirm_currency_column(audit_id, ds, decisions["currency"], background)
+    await _settle_recognition(audit_id, dtype, background)
+    await _mark_stale_and_maybe_recompute(audit_id)
+    logger.info("recognition: run_id=%s dtype=%s action=%s part=%s", audit_id, dtype, body.action, body.part)
+    stored = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype}, {"_id": 0, "rows": 0})
+    return sanitize(await _view(audit_id, stored, None))
+
+
+async def _answer_currency_without_recognition(audit_id: str, dtype: str, ds: dict, body: RecognitionDecision,
+                                               background: BackgroundTasks):
+    """A revenue file with a column mapping that no recognition read (a customers-by-month sheet with no revenue word, a file the analyst
+    typed) is asked its currency all the same: no message without a way to answer it. Mixed currencies have no single answer."""
+    if (dtype != "revenue" or ds.get("recognition_only") or body.part != "currency" or body.action != "change"
+            or (ds.get("mapping") or {}).get("currency")):
+        raise HTTPException(404, "Dataset not found")
+    if body.currency not in rec.ISO_CURRENCIES or len(ds.get("currency_found") or []) > 1:
+        raise HTTPException(400, "That choice is not one of the options offered")
+    await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype}, {"$set": {
+        "recognition_decisions": {"currency": body.currency}, "recognition_decided_at": usage_mod.now()}})
+    await _confirm_currency_column(audit_id, ds, body.currency, background)
+    await _mark_stale_and_maybe_recompute(audit_id)
+    logger.info("recognition: run_id=%s dtype=%s action=%s part=%s", audit_id, dtype, body.action, body.part)
+    stored = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype}, {"_id": 0, "rows": 0})
+    return sanitize(await _view(audit_id, stored, None))
+
+
 class RetypeBody(BaseModel):
     to: str
     replace: bool = False
@@ -1126,7 +1485,7 @@ async def change_dataset_type(audit_id: str, dtype: str, body: RetypeBody, backg
         await _mark_stale_and_maybe_recompute(audit_id)
         stored = await db.datasets.find_one({"audit_id": audit_id, "dtype": body.to}, {"_id": 0, "rows": 0})
         return await _view(audit_id, stored, version)
-    columns = ds.get("columns") or []
+    columns = [c for c in ds.get("columns") or [] if c not in (ds.get("constants") or {})]       # the sheet's own columns, not a currency added
     frame = pd.DataFrame([[r.get(c) for c in columns] for r in ds.get("rows") or []], columns=columns, dtype=object)
     sheet = cr.Sheet(ds.get("sheet") or "", ds.get("header_row") or 1, columns, ds.get("headers") or columns, frame,
                      ds.get("row_numbers") or [], [], ds.get("unit_scale") or 1, ds.get("unit_note"), ds.get("wide"),
@@ -1201,6 +1560,10 @@ async def _check_notes(audit_id: str, audit: dict, notes: list) -> list:
         headers += [str(h) for h in d.get("headers") or []] + [str(c) for c in d.get("columns") or []]
         headers += [c["text"] for c in structures.column_mapping_input(d.get("columns") or [], d.get("rows") or [], (), 0)[0]]
         cells += [v for r in d.get("rows") or [] for v in r.values() if isinstance(v, str)]
+        for sheet in rec.unpack_sheets(d.get("recognition_sheets")):          # a file read by recognition only keeps no rows (review M5)
+            shown = {str(h) for h in sheet.headers}
+            headers += sorted(shown)
+            cells += [v for r in sheet.grid or [] for v in r if isinstance(v, str) and v not in shown]
     try:
         for n in cleaned:
             usage_mod.check_note(n, headers=headers, file_names=[d.get("file") for d in files] + [d.get("file") for d in deck_files],
@@ -1907,6 +2270,21 @@ async def _accept_within_tolerance(audit_id: str, audit: dict) -> dict:
             "turnover_open": len(skipped_turnover & {c["id"] for c in pending})}
 
 
+async def _mapping_counts(audit_id: str, audit: dict, datasets: list) -> tuple:
+    """(the mapping counts of Run audit, whether a revenue file is there). A file read by recognition only has no column to map: it
+    waits for the choices of its recognition. A P&L confirmed with two or more periods is the revenue file (section 8)."""
+    waiting = {}
+    for d in datasets:
+        if d.get("recognition_only"):
+            result = await _recognition_of(audit_id, audit, d)
+            waiting[d["dtype"]] = rec.choices_waiting(result) if result else 0
+    pnl = next((d for d in datasets if d["dtype"] == "pnl"), None)
+    revenue = next((d for d in datasets if d["dtype"] == "revenue"), None)
+    has_revenue = await _is_revenue_file(audit_id, audit, revenue) or bool(
+        pnl and rec.pnl_confirmed(await _recognition_of(audit_id, audit, pnl)))
+    return run_audit.mapping_counts(datasets, waiting), has_revenue
+
+
 @api.post("/audits/{audit_id}/run/{stage}")
 async def run_stage(audit_id: str, stage: str):
     """One stage of Run audit, in order: mapping (checks the files are mapped), engine (the calculations), claims (the deck claims
@@ -1919,14 +2297,14 @@ async def run_stage(audit_id: str, stage: str):
     if not audit:
         raise HTTPException(404, "Audit not found")
     datasets = await _counted(audit_id, await db.datasets.find({"audit_id": audit_id}, {"_id": 0, "rows": 0}).to_list(10))
-    counts = run_audit.mapping_counts(datasets)
-    mapped = bool(datasets) and any(d["dtype"] == "revenue" for d in datasets) and not counts["open"] and not counts["missing_required"]
+    counts, has_revenue = await _mapping_counts(audit_id, audit, datasets)
+    mapped = bool(datasets) and has_revenue and not counts["open"] and not counts["missing_required"]
     result = None
     try:
         if stage == "mapping":
             if not datasets:
                 result = run_audit.stage_result(stage, run_audit.FAILED, run_audit.NO_FILES, **counts)
-            elif not any(d["dtype"] == "revenue" for d in datasets):
+            elif not has_revenue:
                 result = run_audit.stage_result(stage, run_audit.FAILED, run_audit.NO_REVENUE, **counts)
             elif not mapped:
                 result = run_audit.stage_result(stage, run_audit.NEEDS_REVIEW, None, **counts)
@@ -1973,7 +2351,7 @@ async def review_summary(audit_id: str):
     pending = [c for c in found if c.get("status") == "pending" and c.get("claim_type") not in deck_claims.OTHER_TYPES]
     open_turnover = await _open_turnover_ids(audit_id, audit, found) if pending else set()
     return sanitize({
-        "mappings": run_audit.mapping_counts(datasets),
+        "mappings": (await _mapping_counts(audit_id, audit, datasets))[0],
         "claims": {"auto_accepted": len(auto), "auto_accepted_ids": auto, "open": len(pending),
                    "turnover_open": len(open_turnover & {c["id"] for c in pending})},
         "computed": bool(audit.get("results")),
@@ -2387,17 +2765,30 @@ async def audit_blockers(audit_id: str):
     return sanitize({"blockers": await _blocker_list(audit_id, audit)})
 
 
+async def _is_mapped(audit_id: str, audit: dict, ds: dict) -> bool:
+    """A file's mapping is saved; a file read by recognition only is mapped when none of its choices waits (section 8)."""
+    if ds.get("recognition_only"):
+        result = await _recognition_of(audit_id, audit, ds)
+        return bool(result and result["recognised"] and not result["needs_click"])
+    return bool(ds.get("mapped_at"))
+
+
 async def _blocker_list(audit_id: str, audit: dict) -> list:
     """The banner's hard blockers. The claim blocker reads rows 1-5 of the pre-sort, so the analyst's top 5 never hides one
     (docs/specs/verdict-and-memo.md section 6.1)."""
     audit = await _current_audit(audit_id, audit, strict=False)
     out = []
-    revenue = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"}, {"_id": 0, "mapped_at": 1, "file_hash": 1})
+    revenue = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"}, {"_id": 0, "rows": 0})
     if revenue and revenue.get("file_hash") in await _claims_files(audit_id):
         revenue = None                  # read as claims (chat-upload.md section 20): no revenue file counts
+    if revenue and not await _is_revenue_file(audit_id, audit, revenue):
+        revenue = None                  # a file with no monthly series is no revenue file (decision 1 on PR 135)
     if not revenue:
-        out.append({"kind": "revenue_file_missing", "text": "Revenue file missing: upload and map it to compute metrics."})
-    elif not revenue.get("mapped_at"):
+        pnl = await db.datasets.find_one({"audit_id": audit_id, "dtype": "pnl"}, {"_id": 0, "rows": 0})
+        # A P&L confirmed with two or more periods is the revenue file (revenue-file-recognition.md section 8, decision 3)
+        if not (pnl and rec.pnl_confirmed(await _recognition_of(audit_id, audit, pnl))):
+            out.append({"kind": "revenue_file_missing", "text": "Revenue file missing: upload and map it to compute metrics."})
+    elif not await _is_mapped(audit_id, audit, revenue):
         # The file is there; its mapping waits for the analyst. Still the same hard blocker, worded as what is left to do.
         out.append({"kind": "revenue_file_missing", "text": "Revenue file uploaded – confirm the mapping to compute metrics."})
     if audit.get("results"):
@@ -2416,13 +2807,13 @@ async def _blocker_list(audit_id: str, audit: dict) -> list:
                             "text": f"Top-5 claim contradicted: {r['claim_type']} {claimed} vs "
                                     f"{_figure(r['observed_value'], r['unit'], observed_currency)} observed "
                                     f"({r['deck_file']}, {r['page_ref']})."})
-    rec = (audit.get("results") or {}).get("revenue_reconciliation")
-    if rec and rec.get("available") and rec.get("blocker"):
-        pct = "—" if rec["gap_pct"] is None else f"{abs(rec['gap_pct']) * 100:g}"    # a fraction, shown as a percent
+    recon = (audit.get("results") or {}).get("revenue_reconciliation")
+    if recon and recon.get("available") and recon.get("blocker"):
+        pct = "—" if recon["gap_pct"] is None else f"{abs(recon['gap_pct']) * 100:g}"    # a fraction, shown as a percent
         ccy = audit.get("reporting_currency") or ""
-        out.append({"kind": "revenue_reconciliation", "citation": rec["source"], "link": f"/audit/{audit_id}/diagnostics",
-                    "text": f"Revenue file and P&L differ by {pct}% over {rec['first']}–{rec['last']} "
-                            f"({rec['file_total']:,.0f} {ccy} vs {rec['pnl_total']:,.0f} {ccy})."})
+        out.append({"kind": "revenue_reconciliation", "citation": recon["source"], "link": f"/audit/{audit_id}/diagnostics",
+                    "text": f"Revenue file and P&L differ by {pct}% over {recon['first']}–{recon['last']} "
+                            f"({recon['file_total']:,.0f} {ccy} vs {recon['pnl_total']:,.0f} {ccy})."})
     return out
 
 
@@ -2607,9 +2998,24 @@ async def _run_compute(audit_id: str) -> dict:
     read = await _claims_files(audit_id)        # a file read as claims is not an engine input (chat-upload.md section 20)
     ds = {d["dtype"]: d for d in await db.datasets.find({"audit_id": audit_id}).to_list(10)
           if d.get("file_hash") not in read or d.get("sheet_map")}       # a statement file stays an input (section 26.6)
-    if "revenue" not in ds:
+    recognised_ds, recognised, from_pnl = None, None, False
+    if "revenue" in ds and not await _is_revenue_file(audit_id, a, ds["revenue"]):
+        del ds["revenue"]                      # a file with no monthly series is no revenue file (decision 1 on PR 135)
+    if "revenue" in ds and ds["revenue"].get("recognition_only"):
+        recognised_ds = ds["revenue"]
+    elif "revenue" not in ds and ds.get("pnl") and ds["pnl"].get("recognition_sheets"):
+        recognised_ds, from_pnl = ds["pnl"], True          # a P&L confirmed with two or more periods is the revenue file (section 8)
+    if recognised_ds is not None:
+        recognised = await _recognition_of(audit_id, a, recognised_ds)
+        if from_pnl and not rec.pnl_confirmed(recognised):
+            recognised_ds = recognised = None
+    if "revenue" not in ds and recognised is None:
         raise HTTPException(409, "Revenue lines are required before compute")
     for d in ds.values():          # a file read by the chat upload waits for the analyst (chat-upload.md section 4.3)
+        if d.get("recognition_only"):
+            if not recognised or recognised["needs_click"]:
+                raise HTTPException(409, "Choices wait for your decision before compute")
+            continue
         if d.get("sheet_map"):
             if sheet_mod.pending_count(d["sheet_map"]):
                 raise HTTPException(409, "Lines wait for your decision before compute")
@@ -2622,8 +3028,9 @@ async def _run_compute(audit_id: str) -> dict:
 
     def read(dtype):
         d = ds[dtype]
-        return normalize(d["rows"], dtype, d["mapping"], d.get("row_numbers"), d.get("unit_scale") or 1)
-    rev = read("revenue")
+        return normalize(d["rows"], dtype, d["mapping"], d.get("row_numbers"), d.get("unit_scale") or 1, d.get("constants"))
+    revenue_ds = ds.get("revenue") or {}
+    rev = pd.DataFrame() if revenue_ds.get("recognition_only") or "revenue" not in ds else read("revenue")
     crm = read("crm") if "crm" in ds else pd.DataFrame()
     statement = sheet_mod.feed(ds["pnl"]["sheet_map"], _fiscal_year_end(a), ds["pnl"].get("unit_scale") or 1,
                                {"file": ds["pnl"]["file"], "sheet": ds["pnl"]["sheet"]}) if ds.get("pnl", {}).get("sheet_map") else None
@@ -2632,14 +3039,18 @@ async def _run_compute(audit_id: str) -> dict:
     else:
         pnl = read("pnl") if "pnl" in ds else pd.DataFrame()
 
-    fx = merged_fx(a, ds["revenue"].get("fx"))
+    fx = merged_fx(a, revenue_ds.get("fx"))
     config = {
         "reporting_currency": a["reporting_currency"], "target_arr": a["target_arr"],
         "target_date": a["target_date"], "fx": fx,
-        "billing_terms": ds["revenue"].get("billing_terms", {}), "default_l": 1,
+        "billing_terms": revenue_ds.get("billing_terms", {}), "default_l": 1,
         "as_of_month": a.get("as_of_month"),
         "last_month_complete": bool(a.get("last_month_complete")),
     }
+    if recognised is not None:     # the series of a recognised file with no customer rows, read to its confirmed boundary
+        best = next((x for x in rec.unpack_sheets(recognised_ds["recognition_sheets"]) if x.sheet == recognised["sheet"]), None)
+        config["recognition"] = rec.engine_feed(recognised, recognised_ds["file"], recognised["sheet"],
+                                                best.unit_scale if best else 1, from_pnl)
     if statement and statement["rows"]:
         config["pnl_rows"] = statement["rows"]          # the sheet rows of the P&L lines: the P&L citations name them
     sources = {t: {"file": ds[t]["file"], "sheet": ds[t]["sheet"]} for t in ds}

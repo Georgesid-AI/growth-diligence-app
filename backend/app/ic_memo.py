@@ -25,6 +25,11 @@ FIXED_NUMERALS = (5, 7, 12)             # the top 5, the 7 evidence categories, 
 
 # Screen wording W15-W19 (section 11), as approved.
 TITLE = "Investment committee memo: {company}"
+S_TABLES_DIFFER = ("{k} of {n} months differ between the dated list and the revenue row on the same sheet: {items}; the revenue series "
+                   "is read from the {table}.")
+S_GAP = "{month}: revenue row {row} ({sheet}, {row_cell}) vs dated list {listed} ({sheet}, {list_cells})"
+S_NO_ENTRY = "no entry"
+SERIES_SOURCE_WORDS = {"metrics_block": "metrics block", "dated_list": "dated list"}
 HEADINGS = ("Summary", "Deal thesis", "Scorecard", "Key gates and deal terms", "Worth flagging", "Data gaps and requests")
 APPENDICES = ("Appendix A – Claim register and gates", "Appendix B – Data gaps and data request list",
               "Appendix C – Detailed analysis tables", "Appendix D – Source key list and value-at-risk de-duplication")
@@ -483,6 +488,11 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
             flagged.append(f"{b['text']}{notes.source('Revenue reconciliation', 'revenue_reconciliation', (b.get('citation') or {}).get('revenue_file'))}")
         else:
             flagged.append(b["text"])
+    # A sheet with a metrics block and a dated list that do not sum to each other (revenue-file-recognition.md section 6.7)
+    recognition = results.get("recognition") or {}
+    if recognition.get("cross_check") == "mismatch":
+        flagged.append(_tables_differ(recognition, results)
+                       + notes.source("Revenue file recognition", "recognition", (results.get("revenue_series") or {}).get("source")))
     # Every Verified beat outside tolerance, so a large beat stays visible (amended 2026-10-13, George), and every row whose
     # Definition check the analyst answered Yes (claim-matching.md section 4.1), each once
     flagged += [f"{vd.flag_text(r)}{notes.register([r['rank']])}" for r in vd.flagged_rows(rows, listed)]
@@ -601,6 +611,19 @@ def allowed_numbers(audit: dict, results: dict, rows: List[dict], gaps: List[dic
         allowed.tree(ic.get("gap_target_dates") or {}).tree(ic.get("first_quarterly_review"))
         allowed.tree(ic.get("judgment") or {})          # the analyst's own text: its numbers are the analyst's (section 7.4 d)
     return allowed
+
+
+def _tables_differ(recognition: dict, results: dict) -> str:
+    """The Worth flagging line of a sheet whose dated list and revenue row differ: how many months, and for each one both figures with
+    both sources as cell positions (revenue-file-recognition.md section 6.7, owner decision 4 on PR 135)."""
+    ccy = results.get("reporting_currency")
+    sheet = ((results.get("revenue_series") or {}).get("source") or {}).get("sheet") or "the sheet"
+    gaps = recognition.get("cross_check_gaps") or []
+    items = [S_GAP.format(month=fmt.fmt_month_name(g["month"]), row=fmt.fmt_currency(g["row_value"], ccy), sheet=sheet, row_cell=g["row_cell"],
+                          listed=S_NO_ENTRY if g["list_value"] is None else fmt.fmt_currency(g["list_value"], ccy),
+                          list_cells=g["list_cells"] or S_NO_ENTRY) for g in gaps]
+    return S_TABLES_DIFFER.format(k=len(gaps), n=recognition.get("cross_check_months"), items="; ".join(items),
+                                  table=SERIES_SOURCE_WORDS[recognition["series_source"]])
 
 
 def build_memo(*, audit: dict, results: dict, rows: List[dict], ver: dict, key: dict, gaps: List[dict], ic: dict,

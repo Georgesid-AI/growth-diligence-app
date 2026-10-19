@@ -74,6 +74,8 @@ export const decideColumns = (id, dtype, decisions) =>
 export const decideLines = (id, dtype, decisions) =>
   api.post(`/audits/${id}/datasets/${dtype}/lines`, decisions).then((r) => r.data);
 // The analyst changes the type a stored file was read as; a type already loaded needs replace (chat-upload.md section 19).
+/** One decision about the recognition of a file (revenue-file-recognition.md section 6.6); answers the dataset view. */
+export const decideRecognition = (id, dtype, body) => api.post(`/audits/${id}/datasets/${dtype}/recognition`, body).then((r) => r.data);
 export const changeDatasetType = (id, dtype, to, replace = false) =>
   api.post(`/audits/${id}/datasets/${dtype}/type`, { to, replace }).then((r) => r.data);
 // A forecast table read as claims: the sheet rows of the ticked lines; the server reads the values again (chat-upload.md section 20).

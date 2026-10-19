@@ -24,7 +24,7 @@ from typing import Annotated, Any, Dict, Iterator, List, Literal, Optional, Tupl
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, ValidationInfo
 
-CONTRACT_VERSION = 4
+CONTRACT_VERSION = 5          # 5: revenue-file recognition (revenue_series basis and file type, reconciliation status, the recognition block)
 
 # Display kinds: the same names app/formatting.py and frontend/src/lib/format.js use.
 CURRENCY, COUNT, COUNT_UP, DAYS, MONTHS, PCT, RATIO, PLAIN = (
@@ -448,7 +448,12 @@ class MrrSeries(Block):
 
 
 class RevenueSeries(MrrSeries):
-    pass
+    """The revenue by month. A series read from a recognised file with no customer rows (docs/specs/revenue-file-recognition.md
+    section 9) says how it was read: the basis, the file type and the name of its growth figure; all closed words, none from a file."""
+    basis: Optional[Literal["records", "row", "column", "sum_of_rows", "snapshot"]] = None
+    file_type: Optional[Literal["invoice_transactions", "customer_revenue", "monthly_revenue_report", "revenue_summary",
+                                "financial_statements", "arr_mrr_snapshot"]] = None
+    growth_label: Optional[Literal["Revenue growth", "MRR growth", "ARR growth", "Recurring revenue growth"]] = None
 
 
 class CustomersSeries(Block):
@@ -474,6 +479,7 @@ class ReconciliationMonth(Block):
 
 class RevenueReconciliation(Block):
     available: bool
+    status: Optional[Literal["computed", "not_applicable"]] = None      # not_applicable: the P&L is the only revenue source (section 8)
     reason: Optional[str] = None
     by_month: List[ReconciliationMonth]
     first: Optional[str] = None
@@ -485,6 +491,37 @@ class RevenueReconciliation(Block):
     gap_pct: Optional[GapFraction] = None
     blocker: Optional[bool] = None
     source: Optional[ReconciliationSource] = None
+
+
+A1_CELL = r"^[A-Z]{1,3}[1-9][0-9]*$"
+A1_RANGE = r"^[A-Z]{1,3}[1-9][0-9]*(?::[A-Z]{1,3}[1-9][0-9]*)?$"
+
+
+class RecognitionGap(Block):
+    """One month in which the dated list and the revenue row of a sheet differ (revenue-file-recognition.md section 6.7, review M4):
+    both figures and both sources as cell positions, never text from a file."""
+    month: str = Field(pattern=r"^\d{4}-\d{2}$")
+    row_value: Currency
+    list_value: Optional[Currency] = None               # None: the dated list has no entry for the month
+    row_cell: str = Field(pattern=A1_CELL)
+    list_cells: Optional[str] = Field(default=None, pattern=A1_RANGE)
+
+
+class RecognitionSummary(Block):
+    """What the memo and the export state about how the revenue was read (revenue-file-recognition.md section 9): closed words and
+    counts, no text from a file; for a sheet with two tables that differ, the months that differ with both figures and cell
+    positions. Server-only."""
+    file_type: Literal["invoice_transactions", "customer_revenue", "monthly_revenue_report", "revenue_summary",
+                       "financial_statements", "arr_mrr_snapshot"]
+    series_basis: Literal["records", "row", "column", "sum_of_rows", "snapshot"]
+    periods: Plain
+    excluded_columns: Plain
+    currency_confirmed: bool
+    source: Literal["revenue_file", "pnl"]
+    series_source: Optional[Literal["metrics_block", "dated_list"]] = None     # a sheet with two tables: which one supplies the series
+    cross_check: Optional[Literal["match", "mismatch"]] = None                  # the other table against it, month by month (6.7)
+    cross_check_months: Optional[Plain] = None
+    cross_check_gaps: Optional[List[RecognitionGap]] = None
 
 
 class CohortRow(Block):
@@ -597,7 +634,7 @@ class MetricPeriod(Block):
 
 class MetricsPayload(Block):
     """The full engine output. A block the engine could not compute is null; the reason is in `missing_data`."""
-    contract_version: Literal[4]
+    contract_version: Literal[5]
     reporting_currency: str                         # the one currency code; no value repeats it
     as_of_month: Optional[str]
     arr: Optional[Arr]
@@ -623,6 +660,7 @@ class MetricsPayload(Block):
     source_period: Optional[SourcePeriod] = None
     metric_periods: Dict[str, MetricPeriod] = Field(default_factory=dict)
     yearly_basis: Optional[YearlyBasis] = None      # a P&L read as a statement with actual years and no monthly P&L (section 26.8)
+    recognition: Optional[RecognitionSummary] = None    # a recognised file with no customer rows supplies the revenue series (section 9)
 
 
 def build(raw: dict) -> dict:

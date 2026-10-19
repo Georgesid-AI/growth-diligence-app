@@ -1,0 +1,6 @@
+2026-10-19, claude/ecstatic-heisenberg-e8hx4v (PR 135, decisions on the fix round: revenue summary sums only revenue rows; mixed-currency message names the currencies)
+Deleted: nothing; the sum of every row of a metrics sheet is replaced by the sum of its revenue rows.
+Decided: on a metrics sheet (label mode metric) a row is added only when its label is a revenue candidate and not recurring, so MRR, ARR, counts, % and cost rows never enter; entity-labelled sheets (products, regions) still add every row. The recognition currency of a mixed file carries `codes` (the codes found, sorted) and the status line builds the owner's sentence from them; "two" for two currencies, "several" above that.
+Slow or unclear: the earlier H2 test pinned the old row list (MRR, ARR, customers and margin rows added); it now pins the revenue row alone.
+Root cause and the rule that prevents it next time: the H2 fix excluded rows by kind words only, so rows with no kind word passed; the new test uses a metrics sheet with MRR, ARR, customers, churn %, margin % and cost rows and fails when the recurring check is removed.
+Process change to propose: a spec line stating, per label mode, which rows a sum of rows may add, so the test and the code read the same list.

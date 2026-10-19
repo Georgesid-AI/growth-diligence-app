@@ -1,5 +1,5 @@
 # Spec: Revenue file recognition, separate from classification
-Status: **Draft for review (2026-10-19). Spec and failing tests only; no implementation.** Source: George's request of 19 Oct 2026. Location:
+Status: **Implemented (2026-10-19, with the additions of section 6.7 and the amendments listed in section 15).** Source: George's request of 19 Oct 2026. Location:
 docs/specs/revenue-file-recognition.md. Extends docs/specs/chat-upload.md §3, §4.2, §16, §19 and §26 and amends its S2 (§11). The numbers of the
 screen lines continue chat-upload.md: S31a–S31k. The owner's decisions of 2026-10-19 are in §14.
 
@@ -62,13 +62,13 @@ Python decides recognition, per sheet (`app/recognition.py`, pure, no I/O). The 
 A row (or a sheet column header) is *recognised but never used as revenue* when its label holds a word of one of six kinds (`NON_REVENUE_KINDS`), checked before any revenue
 word and so winning over it ("Forecast revenue" is a forecast, "Sales pipeline" a pipeline). First match in this order:
 
-| Kind | Words (whole words, any case, punctuation as one space, a bracket's content left out) |
+| Kind | Words (whole words, any case, punctuation as one space; the whole label is read, a bracket's content included: "Revenue (forecast)" is a forecast row) |
 |---|---|
 | `forecast` | forecast, forecasts, fcst, projected, projection, estimate, estimates, outlook |
 | `budget` | budget, budgeted, target |
 | `bookings` | booking, bookings, booked |
 | `pipeline` | pipeline, backlog, opportunity, opportunities |
-| `contract_value` | contract value, contracted revenue, total contract value, annual contract value, TCV, ACV |
+| `contract_value` | contract value, contracted revenue, total contract value, annual contract value, TCV, ACV, contracted ARR, committed ARR, committed MRR, CARR |
 | `run_rate` | run rate, run-rate, annualised, annualized |
 
 "Plan" is not on the list: a pricing plan ("MRR - Pro plan") is an actual row (chat-upload.md §26.15). A recognised row of these kinds is listed in
@@ -76,7 +76,7 @@ word and so winning over it ("Forecast revenue" is a forecast, "Sales pipeline" 
 either side marks is out. Such rows are kept for claim matching: they enter the claim register through the existing path (Save claims,
 chat-upload.md §20.4 and §26.15), as Unverified; this spec adds no claim code.
 
-**Revenue candidates** (labels layout): a row that is not marked, whose label (bracket content left out) holds a revenue word and none of: new, net
+**Revenue candidates** (labels layout): a row that is not marked, whose label (bracket content left out for the revenue word and the exclusion words below, not for the six kinds above) holds a revenue word and none of: new, net
 new, lost, churn, churned, added, expansion, contraction, growth, per, average, avg, share, ratio, rate, margin, cost, costs, cogs, expense, expenses,
 marketing, payroll, commission, or a "%" ("Sales and marketing", "New ARR - inbound", "Revenue per customer" are not candidates). Its kind:
 `recurring` (MRR, ARR, recurring revenue), else `invoiced` (invoiced, invoicing, billing, billed), else `recognised` (revenue, revenues, sales,
@@ -196,7 +196,7 @@ s1 c1 profile: distinct 12, typical length 14, shape Aa Aa
   the per-column samples of §5.1, drawn from different rows and never from the same row in two neighbouring columns (decisions 5 and 7, §14).
 - At most 400 rows with text per sheet, title rows and header row included (as chat-upload.md §26.11): the first 400 are read, by Python and by the
   model.
-- A records layout has no row labels: its rows are data, never sent beyond the sample.
+- A records layout has no row labels: its rows are data, never sent beyond the sample. A snapshot sends no label lines either (its rows carry no information the sample does not).
 
 ### 5.4 The gateway checks the text again
 `structure_text_problem(text, "file_recognition", context, mapping)` refuses, with a closed problem code: a line of no kind (`not_cells`); more than 6
@@ -289,12 +289,15 @@ take no part in the checks. The reason codes below are the closed list `REASONS`
 - Types with no revenue row (`invoice_transactions`, `customer_revenue`, `revenue_summary`, `arr_mrr_snapshot`) have `revenue_row: null` and
   `series_basis` `records`, `sum_of_rows` (the customer or category rows are summed), `sum_of_rows` and `snapshot`. For `monthly_revenue_report` and
   `financial_statements` it is `row` (or `column`, §2). The five values of `series_basis` are `records`, `row`, `column`, `sum_of_rows`, `snapshot`.
-- **Total rows (review H5).** When a series is a sum of rows (`sum_of_rows`, and the snapshot value), a *total row* is never added to it. A row is a
-  total row when its label starts with "Total" or "Sum" (whole word, any case), or when its values equal the sum of the rows above it in every period
-  column, within rounding (0.5%, chat-upload.md §26.5). Total rows are listed in `total_rows` `[{row, label, matches}]`, where `matches` says whether the
-  total equals the sum of the rows used, within the same tolerance: the cross-check stays available, and a total that does not match is shown to
-  the analyst. A row-basis series may itself be a total ("Total revenue" is a good revenue row); the rule is for sums. The result carries `series`
-  `[{column, value}]` (the used rows summed, or the row's own values, per period column up to the boundary; the snapshot's one value), so the
+- **Total rows (review H3).** When a series is a sum of rows (`sum_of_rows`, and the snapshot value), a *total row* is never added to it. A row is a
+  total row when its label holds the word total, totals, subtotal, grand total or sum anywhere (whole word, any case), or when its values equal the sum of two or
+  more rows since the previous total, or of two or more total rows above it, in every period column it has a figure in, within rounding (0.5%,
+  chat-upload.md §26.5); a row equal to the single row above it is never a total. Total rows are listed in `total_rows` `[{row, label, matches}]`, where `matches` says
+  whether the total equals the sum of the rows it adds up (the rows since the previous total, all the rows used, or the totals above), within the same tolerance: the cross-check stays
+  available, and a total that does not match is shown to the analyst. A row-basis series may itself be a total ("Total revenue" is a good revenue row); the rule is for sums.
+- **Marked rows are never summed (review H2).** A sum of rows leaves out every row whose label holds a word of the six kinds of §2.1 (forecast, budget, bookings, pipeline, contract value,
+  run-rate), on a metric-labelled or an entity-labelled sheet, and every row the model marked. The citation (`series_rows`) names the rows used.
+- The result carries `series` `[{column, value}]` (the used rows summed, or the row's own values, per period column up to the boundary; the snapshot's one value), so the
   value is testable: a summary or snapshot with a total row gives the sum of its category rows once, never twice.
 
 ### 6.2 The last actual column and the boundary
@@ -312,6 +315,8 @@ take no part in the checks. The reason codes below are the closed list `REASONS`
 - `last_actual` = `{column, month, state, reason, candidates}` with `candidates` `[{column, month}]`. `month` is the period's end month, YYYY-MM.
   Only the labels layout has period columns: a records or snapshot layout has `last_actual: null` and `excluded_columns: []` (the engine's as-of
   rule cuts invoice dates as it does for every revenue file).
+- **Columns tagged forecast or budget are excluded wherever they sit** (review H5), before the boundary too: they are never read, never the last actual column, and one
+  column per month is read (the first). In the dates-down layout the analyst's last actual month ends the series (review H4).
 - **Columns after the boundary are excluded** from Run audit (`excluded_columns`), the same treatment as the forecast tables of PR #116 (chat-upload.md
   §20, §26.6). A file whose boundary waits for a click gives Run audit no column until the click (stage File mapping not done, as for a pending
   mapping). A later change of the as-of month re-checks a decided boundary on read: one now after the as-of month is `click` again.
@@ -343,8 +348,27 @@ If the model cannot be read, the rules' outcome stands, with the same thresholds
 | `{action: "change", part: "currency", currency}` | an ISO code (`ISO_CURRENCIES`); else 400 |
 | `{action: "change", part: "money_kind", money_kind}` | `revenue` or `volume` (chat-upload.md §15); else 400 |
 | `{action: "change", part: "sheet", sheet}` | a recognised sheet of the workbook; else 400 |
+| `{action: "change", part: "series_source", series_source}` | `metrics_block` or `dated_list`, on a sheet with two tables (section 6.7); else 400 |
 The server re-checks every choice (a row must be a candidate, a column a period up to the as-of month) and answers with the dataset view. Decisions
 are saved with the dataset (`recognition_decisions`) and survive a reload; a replaced file clears them. Typed text is never accepted.
+
+### 6.7 A sheet with two tables: a dated list and a metrics block (owner request of 19 Oct 2026)
+A sheet may hold a **dated list** (a header reading Date, Month or Period beside a text header such as Value, and below it at least three rows
+holding a date and a number; the dates may be days, they are summed by month) and a **metrics block** (labels down a column, periods across,
+read as §2 to §4 read any labels sheet; its header row is found by the existing rule, within the first ten rows). The list sits below the block or
+beside it, and its rows are never labels of the block: they leave the label statistics (§4.2) and the text the model reads (§5.3).
+- **Detect both, classify each.** The result carries `tables` `[{kind: "metrics_block" | "dated_list", file_type, header_row, ...}]`, positions and counts only, never text.
+  The block is typed by §3; a dated list is a `monthly_revenue_report`.
+- **Which table supplies the revenue series (`series_source` `{supplier, state, cross_check}`).** A metrics row of **recognised revenue** (kind `recognised`, §2.1) wins.
+  When the dated list sums to that row **month by month within 1%** (`SOURCE_TOLERANCE`; every month of the row up to the boundary must be in the list),
+  the list is recorded as a **cross-check** (`cross_check.status` `match`), not a second source: `supplier` is `metrics_block`, `state` `auto`, no click.
+  When they do not match (`mismatch`, with `months`, `months_off` and the largest `max_gap_pct`), or the row is not recognised revenue (an MRR or ARR row never wins
+  by itself), `state` is `click`: **the analyst chooses** (`POST …/recognition` `{action: "change", part: "series_source"}`), the revenue row stands until the choice, and
+  the audit waits for it like for any other click. The choice is `you`. A list that supplies the series gives `series_basis` `column` and cites its own rows (`series_rows`).
+- **The mismatch appears in Worth flagging.** The engine keeps `series_source`, `cross_check`, `cross_check_months` and `cross_check_gaps` in the `recognition` block (§9); the memo
+  lists the mismatch under Worth flagging in one sentence: "{k} of {n} months differ between the dated list and the revenue row on the same sheet: {month}: revenue row {value} ({sheet}, {cell}) vs dated list {value} ({sheet}, {cells}), …; the revenue series is read from the {table}." Each month that differs is named with both figures and both sources as cell positions (owner decision 4 on PR 135). It is a finding, never a banner blocker (rule 21).
+- Not built: a list whose header is not within reach of the block's header rule, more than one dated list per sheet (only the first is compared) and a
+  list beside a metrics block that is itself a dated-rows table.
 
 ## 7. What the analyst sees
 On Upload & Mapping, under the file's bubble head (above the mapping table where there is one), `frontend/src/components/RecognitionLine.jsx` renders
@@ -353,7 +377,7 @@ to find the cell. (Wording chosen under rule 19, as chat-upload.md §13 did; Geo
 
 | Id | Where | Text |
 |---|---|---|
-| S31a | the type line | Type: {Invoice transactions / Customer revenue / Monthly revenue report / Revenue summary / Financial statements / ARR/MRR snapshot} ({by rules / AI suggestion / your choice}) and a **Change** button that offers the other five types. An unclassed type reads "Type: choose the type" with a drop-down of the two candidates. A type waiting for a click reads "Type: {type} ({source}). {reason}" with Correct and Change (`TYPE_REASON_TEXT`: `rules_and_model_disagree` Two readings differ. Choose the type. · `type_unsure` Choose the type.) |
+| S31a | the type line | Type: {Invoice transactions / Customer revenue / Monthly revenue report / Revenue summary / Financial statements / ARR/MRR snapshot} ({by rules / AI suggestion, not verified / your choice}) and a **Change** button that offers the other five types. An unclassed type reads "Type: choose the type" with a drop-down of the two candidates. A type waiting for a click reads "Type: {type} ({source}). {reason}" with Correct and Change (`TYPE_REASON_TEXT`: `rules_and_model_disagree` Two readings differ. Choose the type. · `type_unsure` Choose the type.). An AI suggestion always says "not verified" (CLAUDE.md rule 18) |
 | S31b | what it supports and blocks, one line | (a `monthly_series` item reads "monthly series missing, needs one column per month") Supports: {trend analysis (MRR/ARR, growth, run-rate) / customer-level analysis (NRR, gross churn, concentration, cohorts) and trend analysis (…) / claim matching only}. Blocked: {analysis}, needs {data}; {analysis}, needs {data}. — the "Blocked" part is left out when nothing is blocked; the data is the closed `needs` text of §3.1 |
 | S31c | the revenue row | Revenue row: {label} (row {n}) — for kind `recurring` "Recurring row: {label} (row {n})" — with **Correct** and **Change** (Change opens the candidates: "{label} (row {n})"). Waiting only for confirmation (`confidence_80`): the same line followed by the reason, no drop-down until Change. Needs a choice (any other reason): "Revenue row: choose the row. {reason}" with the drop-down and no Correct. Decided: Change only. Not shown for a type with no revenue row |
 | S31d | the last actual month | Last actual month: {Mon YYYY}. Columns after it are not used. with **Correct** and **Change** (the candidate months). Waiting only for confirmation (`no_as_of_month`): the same line followed by the reason, no drop-down until Change. Needs a choice (`after_as_of`, `not_a_period`, `rules_and_model_disagree`): "Last actual month: choose the month. {reason}" with the drop-down and no Correct. Decided: Change only. The second sentence is left out when no column follows |
@@ -362,8 +386,9 @@ to find the cell. (Wording chosen under rule 19, as chat-upload.md §13 did; Geo
 | S31g | other sheets | Other sheets in this file: {sheet} ({type}) **Use this sheet**, one per recognised sheet. Left out when there is none |
 | S31h | the consent explainer | The sentence of §5.8 added to S2 |
 | S31i | rows kept out of revenue | {n} rows ({kinds}) are not used as revenue and are kept as claims for matching. — "1 row ({kind}) is not used as revenue and is kept as a claim for matching." for one. The kinds are the closed words, in sheet order, without repeats. Left out when none |
-| S31j | the S13 status line of a file with a click open | (a turnover row's row and money kind are one choice, one answer settles both; with a column mapping also open, S13's "{n} columns wait for your decision" and this count are added; `choices_waiting(result)` counts the recognition's) {n} choices wait for you · Ready – press Run audit (S13 of chat-upload.md; the count is the parts in `click`: type, revenue row, last actual month, currency, money kind) |
-| S31k | currency | Currency: {code}. Or, with none found: Currency not found in the file. Confirm the currency: {drop-down of ISO codes, the audit's reporting currency first} |
+| S31j | the S13 status line of a file with a click open | (a turnover row's row and money kind are one choice, one answer settles both; with a column mapping also open, S13's "{n} columns wait for your decision" and this count are added; `choices_waiting(result)` counts the recognition's) {n} choices wait for you · Ready – press Run audit (S13 of chat-upload.md; the count is the parts in `click`: type, revenue row, last actual month, currency, money kind, series source). A file read by recognition only (section 8) has no mapping table, no billing-terms block and no "Map the customer ID column first": the monthly report and the revenue summary need no customer ID column |
+| S31k | currency | Currency: {code}. Or, with none found: Currency not found in the file. Confirm the currency: {drop-down of ISO codes, the audit's reporting currency first}. A file with a column mapping and no currency column shows the same question in place of "Required field not mapped: currency" (the answer becomes a constant column mapped as the currency field) |
+| S31l | two tables on one sheet (section 6.7) | Two tables on this sheet: a metrics block and a dated list. Then, when the revenue row wins: Revenue series: the revenue row of the metrics block. The dated list matches it month by month ({n} months). — when the analyst chooses: {The dated list and the revenue row differ in {k} of {n} months. / The dated list matches the row month by month ({n} months).} Choose which table supplies the revenue series: with the buttons Use the revenue row and Use the dated list; after the choice: Revenue series: {the revenue row of the metrics block / the dated list}. The dated list and the revenue row differ in {k} of {n} months. |
 
 **One Correct button (decision 4, §14).** Where one or more parts wait only for confirmation (reasons `confidence_80` and `no_as_of_month`, the *confirm-only* reasons), the parts keep their lines and Change, and the file shows one **Correct** button (`part: "pending"`, §6.6) instead of one per part. Correct on an auto part (the accepted proposals above) keeps its own button.
 
@@ -374,7 +399,7 @@ nothing open clears it. No banner kind is added.
 - **Upload.** `POST /api/audits/{id}/datasets/upload` runs recognition (§2, §3) on every sheet of every file that the rules do not type as CRM. The
   view of a dataset gains `recognition`: `{recognised, missing, message, sheet, header_row, file_type, type_state, type_source, type_candidates,
   label_mode, label_share, confidence, series_basis, periods, revenue_row, last_actual, excluded_columns, currency, money_kind, non_revenue_rows,
-  supports, blocked, other_sheets, needs_click, type_reason, series, total_rows, revenue_column}`. `type_source` is `rules` (Python decided, with the model silent or agreeing), `ai` (the type is the
+  supports, blocked, other_sheets, needs_click, type_reason, series, series_rows, total_rows, revenue_column, tables, series_source}`. `type_source` is `rules` (Python decided, with the model silent or agreeing), `ai` (the type is the
   model's choice among candidates), or `you`. `money_kind` is `{asked, answer?}`. A file that is not recognised and gets no type answers
   `{status: "unknown_type", recognition: {recognised: false, missing, message}}` and stores nothing.
 - **Routing (decided, §14 item 3).** A recognised file is stored as the audit's revenue file (`dtype: "revenue"`) with its
@@ -403,7 +428,7 @@ This PR changes no schema (CLAUDE.md rule 23; docs/specs/interface-contracts.md)
   rows and the columns up to the boundary (file, sheet, rows, rule), as every cited block.
 - `missing_data`: entries with the lines of §3.2 (`metric`, `status: "Missing"`, `reason`, `unlocked_by` = the `needs` text, `file`); no new key.
 - `recognition` (a summary on the audit's results, closed words and counts only: type code, `series_basis`, the periods used, the count of excluded
-  columns, `currency_confirmed`) so the memo and the export can state the basis. Not in any narrative slice; the boundary test is extended (rule 14).
+  columns, `currency_confirmed`, `source` `revenue_file` or `pnl`, and for a sheet with two tables `series_source`, `cross_check`, `cross_check_months` and `cross_check_gaps` `[{month, row_value, list_value, row_cell, list_cells}]`: cell positions and two figures per month that differs, never file text) so the memo and the export can state the basis. Not in any narrative slice; the boundary test is extended (rule 14).
 - `revenue_reconciliation`: a `status` (`computed` · `not_applicable`) and, for `not_applicable`, the reason "Not applicable – same source"; `available`
   stays false then, `by_month` (required today, `schemas/metrics.py` `RevenueReconciliation`) is an empty list, and `integrity.assess` reads the status (decision of 2026-10-19).
 - `growth_label` (text, the closed list of §6.1) on the growth figure of `revenue_series`, so the screen never says "revenue growth" for an MRR or ARR row. A closed word, not file text.
@@ -411,7 +436,7 @@ This PR changes no schema (CLAUDE.md rule 23; docs/specs/interface-contracts.md)
   customers (decision 1).
 File text (labels, titles, sheet names) is never a contract field; the closed words above are.
 
-## 10. Tests (written first; each is a strict expected failure until the implementation: `xfail(strict=True, reason="awaiting implementation: revenue-file recognition")`; the implementation PR removes the markers)
+## 10. Tests (written first as strict expected failures; the implementation PR removed the markers and all of them pass)
 The frontend file uses a helper with the same effect (jest 27 has no `test.failing`); it loads the component inside each test so a missing module fails the test, not the suite.
 | Area | Test file | Fails today because |
 |---|---|---|
@@ -468,3 +493,23 @@ docs/architecture.md (recorded in this PR).
 9. **The S6 type picker stays** as the fallback when Python recognises no type; S31f sits above it (§7).
 10. **Two confirm-only reasons on one file collapse into one Correct button** (§7, §6.6 `pending`).
 11. **Every new test is `xfail(strict=True, reason="awaiting implementation: revenue-file recognition")`**; the implementation PR removes the markers.
+
+## 15. Amendments made with the implementation (owner request of 19 Oct 2026)
+1. **S31a** reads "AI suggestion, not verified" (CLAUDE.md rule 18), not "(AI suggestion)".
+2. **Section 6.7**: a sheet with a dated list and a metrics block (above).
+3. **Currency** (S31k): a missing currency asks the analyst to confirm it; "Required field not mapped: currency" is no longer shown. A revenue file with a column mapping and no
+   currency column keeps the currency field required, and the analyst's answer supplies it as a constant column ("Currency (confirmed)"), so the audit waits for the answer as it did for the mapping.
+4. **Customer ID**: a file read by recognition only (monthly revenue report, revenue summary, financial statements, ARR/MRR snapshot) holds no required field, shows no billing-terms block and never says
+   "Map the customer ID column first".
+5. **The reply** is parsed with exactly the keys of §5.7 and nothing else (`FileRecognitionReply`, `extra="forbid"`, no `confidence`); the label echo is compared and dropped before anything is stored (§5.5).
+6. **Recognition clicks gate Run audit for a file read by recognition only and for a P&L carrying the revenue file**; for a file with a column mapping (invoices, customers by periods) the recognition line is shown and
+   only a missing currency holds the audit (decision for the owner, see the pull request).
+7. The recognition call of a file the rules type comes after its column-mapping call (one call per new file, §5.5); a file the rules cannot type is asked first (§5.6).
+
+
+8. **Stored sheets** (owner decisions on PR 135): the dataset keeps every row of each **recognised** sheet, never a cut, and no other tab of the workbook. A file that already keeps its rows keeps no sheet beyond the one recognition read:
+   customers by period keep that one sheet, and one row per invoice keeps only a few facts (the columns found, the month count, the currency codes), no sheet. Every cell is stored as a number, text, a boolean or a datetime (a time of day becomes text, a duration seconds). A dataset is one MongoDB document; its size is measured in BSON bytes, as MongoDB counts it. Over `DATASET_MAX_BYTES` (15 MB) any upload stops with a clear message (413) before the model is called and nothing is stored. Stored sheets are deleted with the audit and follow the retention of other datasets.
+9. **A file with no monthly revenue series is not the revenue file** (owner decision 1 on PR 135): a snapshot, a yearly or quarterly report and a sheet read as a snapshot get the type picker (S6) as before the recognition, and a stored P&L with only yearly periods does not satisfy the banner (S16a) or Run audit. A statement-shaped P&L is still the audit's P&L.
+10. **Currency, every file type** (owner decisions on the re-check of PR 135): a currency found anywhere (a currency column, a title, a header, a sign € $ £, or a code written with an amount such as "EUR 1200" or "1,200.00 EUR") means "Required field not mapped: currency" never appears; a file with a column mapping and one currency found takes it for every row. None found: the analyst sees the currency question (S31k) with a picker, whatever else is missing and whether or not a recognition read the file. Several currencies found, from signs and codes in any layout (customers by month included), block compute and the status line names them ("two currencies (EUR and USD)", "several currencies (EUR, GBP and USD)" from three); no choice clears it. A column headed Name is entity-labelled whatever its values (review L1).
+11. **Revenue summary from a metrics sheet** (owner decision): it reads the confirmed revenue row only and never sums rows; summing stays for product, region and customer sheets. Deferred, unbilled and accrued revenue rows are balances: never a revenue row and never added to a summed series.
+12. **An invoice list the rules cannot type** (N1): with consent the model's type, checked by Python against what it read (one row per invoice, two months or more), makes it the revenue file; without consent or after a failed call the analyst picks the type (S6).

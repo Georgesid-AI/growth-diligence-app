@@ -22,7 +22,10 @@ TITLE = "Revenue through 31 December 2028"
 
 
 def type_reply(word):
-    return json.dumps({"type": "file_type", "file_type": word})
+    """The reply of the file_type prompt v2 (revenue-file-recognition.md section 5.7) that names only the file's type: the old word
+    "revenue" is a monthly revenue report, "unknown" is not_revenue."""
+    return json.dumps({"type": "file_recognition", "sheet": 1, "file_type": {"revenue": "monthly_revenue_report", "unknown": "not_revenue"}.get(word, word),
+                       "revenue_row": None, "last_actual_column": None, "currency": None, "non_revenue_rows": []})
 
 
 def sheets_of(content, name):
@@ -157,7 +160,7 @@ def test_thousands_scale_the_money_fields_in_the_engine_input_and_leave_the_stor
 # Fix 7: the miss message in place of the empty mapping rows
 # ---------------------------------------------------------------------------
 MISSED = [
-    (revenue_to_2028(), "Revenue_to_2028.xlsx", "revenue", {"customer_id", "invoice_date", "currency"}),
+    (revenue_to_2028(), "Revenue_to_2028.xlsx", "revenue", {"customer_id", "invoice_date"}),
     (pnl_to_2028(), "PnL_to_2028.xlsx", "pnl", {"sm_expense", "revenue", "cost_of_revenue"}),
     (crm_anonymous_to_2028(), "CRM_Anonymous_to_2028.xlsx", "crm", {"created_date", "close_date", "stage"}),
 ]
@@ -169,12 +172,16 @@ MISSED = [
 def test_the_three_files_that_missed_end_in_one_miss_message_that_names_what_is_missing(api, content, name, word, missing):
     api.state["adapter"] = t.FakeAdapter(replies=[type_reply(word), mapping_reply()])
     body = upload(api, name, content).json()
+    if word == "revenue":   # years and quarters across the columns: no monthly series, so no revenue file (decision 1 on PR 135); the picker
+        assert body["status"] == "unknown_type" and api.db["datasets"].docs == []
+        body = upload(api, name, content, dtype="revenue").json()
     assert body["dtype"] == word and body["sheet"] in ("Revenue", "P&L", "Accounts", "Annual tracker")
     if word == "pnl":       # a P&L statement is no longer a miss: its line table replaces the message (chat-upload.md section 26)
         assert body["miss"] is None and body["sheet_map"]["lines"] and body["pnl_grain"] == "yearly"
         return
     miss = body["miss"]
     assert miss and missing <= set(miss["missing"]), miss
+    assert "currency" not in miss["missing"], "the currency is asked, never listed as a field not mapped (re-check, owner decision)"
     assert miss["looks"]["shape"] == ("summary" if word != "crm" else "table")
     assert not any(c["column"].startswith("Unnamed") for c in body["columns"])
 
@@ -189,17 +196,19 @@ def test_a_file_that_maps_cleanly_has_no_miss(api):
 # ---------------------------------------------------------------------------
 def test_rules_decide_the_type_and_the_model_is_not_asked_when_they_reach_80(api):
     upload(api, "accountant_pnl.csv", (FIXTURES / "accountant_pnl.csv").read_bytes())
-    assert [json.loads(p)["type"] for p in adapter_of(api).payloads] == ["column_mapping"], "no file-type call"
+    types = [json.loads(p)["type"] for p in adapter_of(api).payloads]
+    assert types[0] == "column_mapping" and set(types[1:]) == {"file_recognition"}, \
+        "no file-type call: only the recognition call (and its one retry) comes after the mapping"
 
 
 def test_a_file_the_rules_cannot_place_is_sent_once_and_the_answer_is_kept_by_the_file_hash(api):
     api.state["adapter"] = t.FakeAdapter(replies=[type_reply("crm"), mapping_reply()])
     body = upload(api, "CRM_Anonymous_to_2028.xlsx", crm_anonymous_to_2028()).json()
     assert body["dtype"] == "crm" and body["type_source"] == "ai"
-    type_calls = [p for p in adapter_of(api).payloads if json.loads(p)["type"] == "file_type"]
+    type_calls = [p for p in adapter_of(api).payloads if json.loads(p)["type"] == "file_recognition"]
     assert len(type_calls) == 1, "one model call for the file's type"
-    kept = [d for d in api.db["column_mappings"].docs if d.get("kind") == "file_type"]
-    assert len(kept) == 1 and kept[0]["file_type"] == "crm" and len(kept[0]["file_hash"]) == 64
+    kept = [d for d in api.db["column_mappings"].docs if d.get("kind") == "file_recognition"]
+    assert len(kept) == 1 and kept[0]["reply"]["file_type"] == "crm" and len(kept[0]["file_hash"]) == 64
     calls = adapter_of(api).calls
     again = upload(api, "CRM_Anonymous_to_2028.xlsx", crm_anonymous_to_2028())
     assert again.status_code == 200, again.text
@@ -212,21 +221,21 @@ def test_the_cached_type_is_used_for_the_same_bytes_without_a_model_call(api):
     api.db["datasets"].docs.clear()
     calls = adapter_of(api).calls
     upload(api, "CRM.xlsx", crm_anonymous_to_2028())
-    assert [p for p in adapter_of(api).payloads[calls:] if json.loads(p)["type"] == "file_type"] == []
+    assert [p for p in adapter_of(api).payloads[calls:] if json.loads(p)["type"] == "file_recognition"] == []
 
 
 def test_what_the_model_reads_for_a_file_type_is_sheet_names_title_rows_headers_and_the_masked_sample(api):
     api.state["adapter"] = t.FakeAdapter(replies=[type_reply("crm"), mapping_reply()])
     upload(api, "CRM.xlsx", crm_anonymous_to_2028())
     text = json.loads(adapter_of(api).payloads[0])["text"]
-    parsed = redact.parse_file_type_text(text)
+    parsed = redact.parse_recognition_text(text)
     assert [s["name"] for s in parsed] == ["Accounts", "Annual tracker", "Funnel and evidence"]
     assert [c["text"] for c in parsed[0]["titles"]] == ["Accounts through 31 December 2028", "EUR; accounts anonymised"]
     assert parsed[0]["headers"][0]["text"] == "Account ID" and len({c["row"] for c in parsed[0]["headers"]}) == 1
     assert all(len(v) <= 3 for s in parsed for v in s["samples"].values())
     for value in ("ACC-0001", "Mid-market", "no contradiction found", "Owner A", "email 2024-01-02", "Claimed"):
         assert value not in text, "no text cell value of a data row is sent"
-    assert redact.file_type_text_problem(text) is None
+    assert redact.recognition_text_problem(text) is None
 
 
 def test_the_file_type_text_is_never_stored_and_its_title_is_never_logged(api, caplog):
@@ -236,7 +245,7 @@ def test_the_file_type_text_is_never_stored_and_its_title_is_never_logged(api, c
     stored = json.dumps([api.db[n].docs for n in ("llm_structures", "llm_calls", "column_mappings")], default=str)
     assert TITLE not in stored and "Source inputs" not in stored and "Revenue through" not in stored
     assert "Revenue through" not in caplog.text and "Source inputs" not in caplog.text
-    assert any(r.get("structure_type") == "file_type" for r in api.db["llm_calls"].docs)
+    assert any(r.get("structure_type") == "file_recognition" for r in api.db["llm_calls"].docs)
 
 
 def test_no_consent_no_model_and_the_analyst_is_asked_for_the_type(api):
@@ -283,7 +292,7 @@ def test_the_company_name_in_a_title_row_is_masked_before_the_model_reads_them(a
 # ---------------------------------------------------------------------------
 def test_the_analyst_changes_the_type_and_the_stored_sheet_is_read_as_the_new_type(api):
     api.state["adapter"] = t.FakeAdapter(replies=[type_reply("revenue"), mapping_reply()])
-    first = upload(api, "CRM.xlsx", crm_anonymous_to_2028()).json()
+    first = upload(api, "CRM.xlsx", crm_anonymous_to_2028(), dtype="revenue").json()
     assert first["dtype"] == "revenue"
     resp = api.post(f"/api/audits/{AUDIT}/datasets/revenue/type", json={"to": "crm"})
     assert resp.status_code == 200, resp.text

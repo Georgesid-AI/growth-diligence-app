@@ -24,12 +24,16 @@ DECKS_READING = "The decks are still being read."
 NO_DECKS = "No deck was uploaded: there are no claims to read."
 
 
-def mapping_counts(datasets: Iterable[dict]) -> Dict:
+def mapping_counts(datasets: Iterable[dict], recognition_open: Optional[Dict[str, int]] = None) -> Dict:
     """Columns accepted by the rules or a saved mapping (state auto: confidence at or above the threshold, no tie), columns
-    waiting for the analyst, and the files with a required field still unmapped."""
+    waiting for the analyst, and the files with a required field still unmapped. A file read by recognition only has no column: it
+    waits for its recognition's choices (`recognition_open`, by file type; revenue-file-recognition.md section 8)."""
     auto = open_ = 0
     missing: List[str] = []
     for ds in datasets:
+        if ds.get("recognition_only"):
+            open_ += (recognition_open or {}).get(ds["dtype"], 0)
+            continue
         if ds.get("sheet_map"):                    # a statement file waits for its lines only (chat-upload.md section 26.6)
             open_ += sheet_mod.pending_count(ds["sheet_map"])
             continue
@@ -52,7 +56,7 @@ def engine_stale(audit: dict, datasets: Iterable[dict]) -> bool:
     if audit.get("metrics_stale"):
         return True
     computed = audit.get("computed_at") or ""
-    return any((ds.get("mapped_at") or "") > computed for ds in datasets)
+    return any(max(ds.get("mapped_at") or "", ds.get("recognition_decided_at") or "") > computed for ds in datasets)
 
 
 def within_tolerance_ids(rows: List[dict], candidate_ids: Iterable[str]) -> List[str]:
