@@ -603,7 +603,7 @@ def test_new_arr_acv_arpa_and_the_other_new_meanings_read_right():
 def test_a_label_with_forecast_budget_plan_or_target_tags_its_row_over_its_columns():
     lines = bases_view()
     assert {k for k, v in lines.items() if v["tag"] != "actual"} == {"Forecast revenue"}
-    assert [sh.row_tag(x) for x in ("Revenue forecast", "Budget revenue", "ARR plan", "Target ARR", "Revenue", "Planning")] == [
+    assert [sh.row_tag(x) for x in ("Revenue forecast", "Budget revenue", "Plan ARR", "Target ARR", "Revenue", "Planning")] == [
         "forecast", "budget", "budget", "forecast", "actual", "actual"]
 
 
@@ -717,3 +717,9 @@ def test_the_saved_line_map_holds_the_basis_and_no_label(api):
     saved = versions()[-1]
     assert {line["basis"] for line in saved["lines"] if line["row"] == 3} == {"ltm"}
     assert "Revenue" not in json.dumps(saved["lines"]) and "Forecast" not in json.dumps(saved["lines"])
+
+
+def test_plan_tags_a_row_only_as_the_plan_figure_never_a_pricing_or_subscription_plan():
+    assert [sh.row_tag(x) for x in ("NEW ANNUAL PLAN SUBSCRIPTIONS (ARR)", "MRR - Pro plan", "ARR plan")] == ["actual"] * 3
+    assert [sh.row_tag(x) for x in ("Plan: revenue", "Revenue (plan)", "Planned ARR", "Business plan revenue", "Revenue plan: 2026")] == ["budget"] * 5
+    assert sh.row_tag("Revenue budget") == "budget" and sh.row_tag("Revenue target") == "forecast"

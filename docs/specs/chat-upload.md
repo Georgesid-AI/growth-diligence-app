@@ -1084,7 +1084,9 @@ change to which meanings feed the engine.
   least two values, six month columns); else month. A cue in the label wins over the reply; otherwise the reply's basis, then
   Python's. The analyst changes it in the Basis drop-down; the decision is saved in the line map (a saved map of before has none: its
   lines read as month).
-- **Row tag** (Python only, not in the reply): a label holding forecast or target (forecast), budget or plan (budget) as a word tags the
+- **Row tag** (Python only, not in the reply): a label holding forecast or target (forecast), or budget as a word, or plan (budget) only as the plan figure
+  (the label starts with plan, planned or business plan, or holds "(plan)" or "plan:"; never a pricing or subscription plan such as
+  "ANNUAL PLAN SUBSCRIPTIONS" or "MRR - Pro plan"), tags the
   row, its sub-lines included, and overrides its columns' tags. A row tag is never an actual: the row is not picked (below), is not a
   KPI series, is not a sub-line of a total that is not tagged the same, and becomes a claim (26.6) in every column it has a figure
   in, whatever the column's tag, cited to its cells. A claim is per fiscal year as in §20.2: twelve months of the row make the year's
@@ -1106,8 +1108,8 @@ change to which meanings feed the engine.
   as positive amounts. No check without a picked monthly line of the same meaning.
 - **Model reply and prompt.** `basis` is a closed word (a value outside the list is `check=metric_list`). The prompt `sheet_structure`
   lives in the prompt store (rule 26): the owner asks it for `basis` on the owner page; until then every basis is Python's.
-- **Decided (rule 19).** Quarter by values is read from month columns only; "plan" is a word anywhere in the label, so a pricing-plan
-  line ("MRR - Pro plan") is a budget row until the analyst sets its Meaning to other; subscriptions is not a balance by the label
+- **Decided (rule 19).** Quarter by values is read from month columns only; "plan" tags a row only as above, so a pricing-plan
+  line ("MRR - Pro plan") is an actual row; subscriptions is not a balance by the label
   rule; the forecast S&M sum (26.6) still reads rows with no row tag only.
 Files: `backend/app/structures/sheet.py`, `backend/app/llm/{schemas,gateway}.py`, `backend/server.py` (the lines decision and the saved
 map), `frontend/src/components/SheetMap.jsx`, `frontend/src/lib/chatUpload.js`, `backend/tests/{test_sheet_structure,test_gateway_data_boundary}.py`,

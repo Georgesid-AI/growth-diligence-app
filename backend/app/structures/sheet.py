@@ -81,7 +81,10 @@ _BASIS_CUES = ((re.compile(r"\bytd\b|\bcurrent year\b|\byear to date\b"), "ytd")
                (re.compile(r"\blifetime\b|\btotal\b.*\bachieved\b"), "lifetime"),
                (re.compile(r"\bquarterly\b"), "quarter"))
 _TAG_CUES = ((re.compile(r"\bforecast(?:s|ed)?\b"), "forecast"), (re.compile(r"\btargets?\b"), "forecast"),
-             (re.compile(r"\bbudget(?:s|ed)?\b"), "budget"), (re.compile(r"\bplan(?:ned)?\b"), "budget"))
+             (re.compile(r"\bbudget(?:s|ed)?\b"), "budget"))
+# "plan" tags a row only as the plan figure (26.15), never a pricing or subscription plan: it starts the label, or is "(plan)" or "plan:".
+_PLAN_LABEL = re.compile(r"(?i)^\W*(?:plan(?:ned)?|business plan)\b|\(\s*plan\s*\)|\bplan\s*:")
+_PLAN_WORD = re.compile(r"\bplan(?:ned)?\b")
 _RATE = re.compile(r"%|\bas % of\b|\b(?:rate|ratio|growth|yoy|mom)\b")
 _MARGIN = re.compile(r"\bmargin\b")
 _COST_SECTION = re.compile(r"(?i)\b(?:costs?|expenses?|opex|overheads|operating)\b")
@@ -372,10 +375,13 @@ def basis_of(line: Dict, meaning: str, periods: Optional[List[Dict]] = None) -> 
 
 
 def row_tag(label: str) -> str:
-    """A label that holds forecast, target (forecast) or budget, plan (budget) as a word tags the whole row, whatever its columns
-    say (26.15). "actual" when it holds none."""
+    """A label that holds forecast, target (forecast) or budget as a word, or starts with plan, planned or business plan, or holds
+    "(plan)" or "plan:" (budget), tags the whole row, whatever its columns say (26.15). "actual" when it holds none."""
     text = _norm(label)
     found = sorted((m.start(), tag) for rx, tag in _TAG_CUES for m in [rx.search(text)] if m)
+    plan = _PLAN_WORD.search(text) if _PLAN_LABEL.search(label or "") else None
+    if plan:
+        found = sorted(found + [(plan.start(), "budget")])
     return found[0][1] if found else "actual"
 
 
