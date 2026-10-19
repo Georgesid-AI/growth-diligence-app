@@ -2641,3 +2641,172 @@ def test_the_forecast_reason_is_a_closed_sentence_and_the_line_label_never_reach
     for where, text in (("read by the gateway", returned), ("sent to the provider", adapter.payloads[0]), ("logged", logs)):
         assert FORECAST_SENTINEL not in text, f"the line label was {where}"
         assert claim_matching.FORECAST_NOTE not in text and "plan.csv" not in text, f"the reason or the file was {where}"
+
+
+# ---------------------------------------------------------------------------
+# Revenue file recognition (docs/specs/revenue-file-recognition.md section 5, CLAUDE.md rule 14). The text the model reads is built in
+# memory by app/recognition.py `model_text`; the gateway checks it again (`structure_text_problem`, structure type "file_recognition").
+# Written before the implementation: each test fails today because app/recognition.py does not exist.
+# ---------------------------------------------------------------------------
+import importlib  # noqa: E402
+
+RECOGNITION_FIXTURES = BACKEND / "tests" / "fixtures" / "recognition"
+RECOGNITION_COMPANY = "Northwind Test Co"
+RECOGNITION_CONTEXT = {"company_name": RECOGNITION_COMPANY}
+RECOGNITION_WITHHELD = (RECOGNITION_COMPANY,)       # what structure_redact.file_type_withheld(RECOGNITION_CONTEXT) returns
+MASKED_FIXTURES = ("customer_revenue_months.csv", "unclassed_names_by_quarter.csv", "revenue_summary_by_product.csv")
+METRIC_FIXTURES = ("monthly_report_actual_forecast.csv", "pnl_multi_period.csv", "bookings_pipeline_only.csv")
+
+
+def _recognition_sheets(name):
+    return cr_mod.read_workbook((RECOGNITION_FIXTURES / name).read_bytes(), name)
+
+
+def _recognition_text(name, mapping=None):
+    rec = importlib.import_module("app.recognition")
+    return rec.model_text(_recognition_sheets(name), company_name=RECOGNITION_COMPANY, mapping=mapping or {}, withheld=RECOGNITION_WITHHELD)
+
+
+def _labels(text):
+    return [m.group(2) for m in (re.match(r"^s1 label r(\d+): (.*)$", line) for line in text.split("\n")) if m]
+
+
+def _label_cells(sheet):
+    """The row labels of a sheet as written: the text of the first column below the header."""
+    return [str(row[0]) for r, row in enumerate(sheet.grid, 1) if r > sheet.header_row and row and row[0] not in (None, "")]
+
+
+def _number(v):
+    try:
+        return float(str(v).replace(",", ""))
+    except ValueError:
+        return None
+
+
+def _numbers_by_column(sheet):
+    out = {}
+    for r, row in enumerate(sheet.grid, 1):
+        if r <= sheet.header_row:
+            continue
+        for c, v in enumerate(row, 1):
+            if c > 1 and _number(v) is not None:
+                out.setdefault(c, []).append(_number(v))
+    return out
+
+
+@pytest.mark.parametrize("name", MASKED_FIXTURES)
+def test_recognition_an_entity_labelled_sheet_sends_no_row_label_text_only_row_1_row_2(name):
+    sheet = _recognition_sheets(name)[0]
+    text = _recognition_text(name)
+    assert "s1 labels: masked" in text.split("\n")
+    labels = _labels(text)
+    assert labels == [f"Row {i}" for i in range(1, len(_label_cells(sheet)) + 1)]
+    for original in _label_cells(sheet):
+        assert original not in text, f"the row label {original!r} reached the model text"
+
+
+def test_recognition_a_label_column_headed_customer_is_masked_even_when_every_name_holds_a_metric_word():
+    rec = importlib.import_module("app.recognition")
+    sheets = cr_mod.read_workbook(("Revenue by customer,,,\nCustomer,Jan-25,Feb-25,Mar-25\nRevenue Partners,1,2,3\nSales Hub,4,5,6\n"
+                                   "Cash Converters,7,8,9\nMargin Foods,1,2,3\n").encode(), "x.csv")
+    text = rec.model_text(sheets, company_name=RECOGNITION_COMPANY, mapping={}, withheld=RECOGNITION_WITHHELD)
+    assert _labels(text) == ["Row 1", "Row 2", "Row 3", "Row 4"]
+    for name in ("Revenue Partners", "Sales Hub", "Cash Converters", "Margin Foods"):
+        assert name not in text
+
+
+@pytest.mark.parametrize("name", METRIC_FIXTURES)
+def test_recognition_a_metric_labelled_sheet_sends_its_row_labels(name):
+    sheet = _recognition_sheets(name)[0]
+    text = _recognition_text(name)
+    assert "s1 labels: metric" in text.split("\n")
+    assert _labels(text) == _label_cells(sheet)
+
+
+@pytest.mark.parametrize("name", MASKED_FIXTURES + METRIC_FIXTURES)
+def test_recognition_no_cell_value_beyond_the_sample_rule_reaches_the_model(name):
+    """At most 3 numbers per column, each one of the first 3 of that column; no other figure of the sheet appears (every figure of
+    these fixtures is unique, so a value that leaked cannot be mistaken for another)."""
+    sheet = _recognition_sheets(name)[0]
+    text = _recognition_text(name)
+    samples = {}
+    for line in text.split("\n"):
+        m = re.match(r"^s1 c(\d+) sample: (.+)$", line)
+        if m:
+            samples.setdefault(int(m.group(1)), []).append(_number(m.group(2)))
+    by_column = _numbers_by_column(sheet)
+    leaked = set()
+    for column, values in by_column.items():
+        first = values[:3]
+        assert len(samples.get(column, [])) <= 3, f"column {column}: more than 3 samples"
+        assert all(v in first for v in samples.get(column, [])), f"column {column}: a sample that is not one of the first 3 figures"
+        leaked |= set(values[3:]) - set(first)
+    assert set(samples) <= set(by_column), "a sample line for a column without a figure"
+    unsampled = "\n".join(line for line in text.split("\n") if "sample:" not in line)
+    found = {float(x) for x in re.findall(r"\d+(?:\.\d+)?", unsampled)} & leaked
+    assert not found, f"figures beyond the sample rule: {sorted(found)[:5]}"
+
+
+def test_recognition_the_text_holds_sheet_names_title_rows_and_headers_with_the_company_name_redacted():
+    text = _recognition_text("monthly_report_actual_forecast.csv")
+    assert RECOGNITION_COMPANY not in text and "Northwind" not in text and "[redacted]" in text
+    assert text.split("\n")[0] == "s1: CSV"
+    assert any(line.startswith("s1 title r1c1: ") for line in text.split("\n"))
+    assert [m.group(1) for m in (re.match(r"^s1 header r3c(\d+): ", line) for line in text.split("\n")) if m] == [str(c) for c in range(1, 14)]
+
+
+def test_recognition_the_customer_names_the_audit_already_pseudonymises_take_their_pseudonyms_in_the_title_and_headers():
+    rec = importlib.import_module("app.recognition")
+    sheets = cr_mod.read_workbook(b"Revenue of Alder Works by month,,\nMetric,Jan-25,Feb-25\nRevenue,1,2\nCustomers,3,4\nChurn,5,6\n", "x.csv")
+    text = rec.model_text(sheets, company_name=RECOGNITION_COMPANY, mapping={"Alder Works": "Customer_01"}, withheld=RECOGNITION_WITHHELD)
+    assert "Alder Works" not in text and "Customer_01" in text
+
+
+def test_recognition_at_most_400_row_labels_are_sent_for_a_sheet():
+    rec = importlib.import_module("app.recognition")
+    rows = "".join(f"Customer {i},{10000 + i},{20000 + i}\n" for i in range(450))
+    text = rec.model_text(cr_mod.read_workbook(("Revenue by customer,,\nCustomer,Jan-25,Feb-25\n" + rows).encode(), "x.csv"),
+                          company_name=RECOGNITION_COMPANY, mapping={}, withheld=RECOGNITION_WITHHELD)
+    assert len(_labels(text)) == 398 and _labels(text)[-1] == "Row 398", "400 rows with text, the title row and the header row included"
+
+
+def test_recognition_the_text_is_built_the_same_twice():
+    for name in MASKED_FIXTURES + METRIC_FIXTURES:
+        assert _recognition_text(name) == _recognition_text(name)
+
+
+@pytest.mark.parametrize("name", MASKED_FIXTURES + METRIC_FIXTURES)
+def test_recognition_the_gateway_accepts_the_text_the_builder_writes(name):
+    assert gateway.structure_text_problem(_recognition_text(name), "file_recognition", RECOGNITION_CONTEXT, {}) is None
+
+
+def test_recognition_the_gateway_refuses_a_row_label_on_a_masked_sheet_a_figure_a_file_name_an_unredacted_name_and_a_401st_row():
+    masked = _recognition_text("customer_revenue_months.csv")
+    metric = _recognition_text("monthly_report_actual_forecast.csv")
+    check = lambda text: gateway.structure_text_problem(text, "file_recognition", RECOGNITION_CONTEXT, {})  # noqa: E731
+    assert check(masked.replace("s1 label r3: Row 1", "s1 label r3: Alder Works")) == "label_on_masked_sheet"
+    assert check(metric.replace("s1 label r4: Recognised revenue (EUR)", "s1 label r4: 10570")) == "figure_in_label"
+    assert check(metric.replace("Recognised revenue (EUR)", "ledger_2025.xlsx")) == "file_name"
+    assert check(metric.replace("[redacted]", RECOGNITION_COMPANY)) == "redaction_changed"
+    extra = "\n".join(f"s1 label r{500 + i}: Row {i}" for i in range(401))
+    assert check(masked + "\n" + extra) == "too_many_rows"
+    assert check("s1 labels: metric\ns1 label r4: Revenue") == "not_cells", "a line before the sheet line"
+    assert check(metric + "\nfree prose about the company") == "not_cells"
+
+
+def test_recognition_the_reply_is_closed_json_with_no_confidence_and_no_free_text():
+    good = {"type": "file_recognition", "sheet": 1, "file_type": "monthly_revenue_report",
+            "revenue_row": {"row": 4, "label": "Recognised revenue (EUR)"}, "last_actual_column": 7, "currency": "EUR",
+            "non_revenue_rows": [{"row": 9, "kind": "forecast"}]}
+    parse = lambda body: gateway.parse_structure_reply(json.dumps(body), "file_recognition", "")  # noqa: E731
+    assert parse(good).file_type == "monthly_revenue_report"
+    assert parse({**good, "file_type": "not_revenue", "revenue_row": None, "last_actual_column": None, "currency": None,
+                  "non_revenue_rows": []}).file_type == "not_revenue"
+    for bad in ({**good, "confidence": 90}, {**good, "note": "x"}, {**good, "file_type": "crm"}, {**good, "currency": "EURO"},
+                {**good, "non_revenue_rows": [{"row": 9, "kind": "maybe"}]}, {**good, "non_revenue_rows": [{"row": 9, "kind": "forecast", "why": "x"}]},
+                {**good, "last_actual_column": 0}, {**good, "revenue_row": {"row": 4}}, {**good, "sheet": 0}):
+        with pytest.raises(gateway.GatewayError):
+            parse(bad)
+    kinds = ("forecast", "budget", "bookings", "pipeline", "contract_value", "run_rate")
+    for kind in kinds:
+        assert parse({**good, "non_revenue_rows": [{"row": 9, "kind": kind}]})
