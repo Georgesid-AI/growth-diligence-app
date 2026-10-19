@@ -1,7 +1,7 @@
 # Spec: Chat-style upload and column mapping
 Status: Final (2026-10-08); decisions applied (§12); amended 2026-10-08 for the mapping-screen wording, the delete dialog
 and the banner (§12, §13, S5, S9, S15, S16a, S16d, S18, S18b, S23–S25), and 2026-10-09 for §15 and §16, and 2026-10-11 for §17 (claims list and parser), and 2026-10-16 for §19 (file type, every sheet, wide tables, units and the miss message) and §20 (forecast tables read as claims, issue #114), and 2026-10-17 for §21 (deal ID and stage, and a rule confidence of exactly 80) and §22 (every column to the model, and mapping calls
-outside the daily spend cap), and the same day for the CRM required fields (§4.1) and the CRM fields box (S29; crm-dedup-clustering.md §6), and 2026-10-18 for §26 (sheet structure reading and yearly-basis metrics). Location: docs/specs/chat-upload.md.
+outside the daily spend cap), and the same day for the CRM required fields (§4.1) and the CRM fields box (S29; crm-dedup-clustering.md §6), and 2026-10-18 for §26 (sheet structure reading and yearly-basis metrics), and 2026-10-19 for §27 (revenue file recognition: S2 amended, S31a–S31k in docs/specs/revenue-file-recognition.md). Location: docs/specs/chat-upload.md.
 Replaces the content of the MappingWizard page. Supersedes in part docs/specs/llm-structure-reading.md §1 for
 the column-mapping path only: which columns are sent, from how many rows and with which rule hint (§4.2), and, for a column
 mapping, the daily spend cap of its circuit breaker (§4.2, 2026-10-17). Everything else in that spec stands, including the
@@ -344,7 +344,7 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 | Id | Where | Text |
 |---|---|---|
 | S1 | text reply | Removed 2026-10-18 (§25): the bar has no text field. |
-| S2 | explainer, consent ticked | The model reads every column header and a masked sample to propose the mapping. When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table. (First sentence given by George on 2026-10-17, §22, in place of "Mapping is done by rules first. Where rules cannot decide, the AI sees only those columns' headers, up to 3 example numbers or dates per column and a pattern for text columns – never your full file and never a name – and you confirm those columns."; last sentence added 2026-10-16, §19, its "which can contain the company name" clause removed the same day, because the company name is masked.) |
+| S2 | explainer, consent ticked | The model reads every column header and a masked sample to propose the mapping. When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table. In a revenue file the AI also sees the row labels when they are metric names such as revenue, ARR or customers; where the rows may be customers it sees Row 1, Row 2 instead, never a name. (Last sentence added 2026-10-19, revenue-file-recognition.md §5.8; it goes into the screen text with that spec's implementation. First sentence given by George on 2026-10-17, §22, in place of "Mapping is done by rules first. Where rules cannot decide, the AI sees only those columns' headers, up to 3 example numbers or dates per column and a pattern for text columns – never your full file and never a name – and you confirm those columns."; last sentence added 2026-10-16, §19, its "which can contain the company name" clause removed the same day, because the company name is masked.) |
 | S3 | explainer, consent unticked | Mapping is done by rules only: AI-assisted reading is off for this audit. You map the columns the rules cannot decide. |
 | S4 | drop zone | Drop files here or use the paperclip. Required: Revenue by customer (monthly, 24–36 months). The audit will not run without a revenue file. Optional: CRM export and P&L. **.xlsx or .csv only** (George, 2026-10-18; only ".xlsx or .csv only" is bold). Shown once, in the drop zone; the bar has no placeholder (§25) |
 | S5 | bubble head | Detected: Revenue lines · 1,240 rows · 24 months (Jan 2023 – Dec 2024). Before the date column is confirmed the months are left out: "Detected: Revenue lines · 1,240 rows". |
@@ -1114,3 +1114,9 @@ change to which meanings feed the engine.
 Files: `backend/app/structures/sheet.py`, `backend/app/llm/{schemas,gateway}.py`, `backend/server.py` (the lines decision and the saved
 map), `frontend/src/components/SheetMap.jsx`, `frontend/src/lib/chatUpload.js`, `backend/tests/{test_sheet_structure,test_gateway_data_boundary}.py`,
 `frontend/src/pages/MappingWizard.test.jsx`, `backend/tests/fixtures/mapping/kpi_bases.csv`.
+
+## 27. Revenue file recognition (2026-10-19; spec only, not built)
+Recognition of a revenue file (three essentials), its classification into six types, the row-label rule for what the model sees, Python's checks of
+the model's proposal and the screen lines S31a–S31k are specified in docs/specs/revenue-file-recognition.md. It extends §3 (a file without customer ID
+is no longer rejected for that), §4.2 and §19 (one call per new file answers the file type and the recognition), §16 (S16d counts an open recognition
+click) and §26 (a P&L stays the P&L and carries its own recognition line; decision 3 of that spec). S2 above carries the one sentence it adds; S4 changes to "Required: a revenue file – revenue by customer, invoices or a monthly revenue report (24–36 months)." with the implementation (decision 4); S31f sits above the S6 type picker, which stays.

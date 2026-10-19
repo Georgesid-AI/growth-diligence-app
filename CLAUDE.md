@@ -15,6 +15,10 @@
     For the sheet_structure step only (approved by George, 2026-10-18), the model may receive
     every text cell of a sheet (title rows, headers, row labels, indents, num/blank markers),
     after redaction and the withhold rule; never any figure; cap 400 labelled rows per sheet.
+    For the file_recognition step only (approved by George, 2026-10-19), the model may also receive the row labels of a sheet the rules read as
+    metric names (revenue, ARR, MRR, customers, churn, bookings, forecast, budget, cost, margin, cash and common variants), after redaction; every
+    other sheet's labels go as "Row 1", "Row 2"; on every sheet the 3 sample values of a column come from different rows chosen from the file hash, never the
+    same row in two neighbouring columns; never a figure beyond the per-column sample; at most 400 rows with text.
     All other steps keep the boundary above.
     The deck parser has no direct link to the gateway.
 17. Logs and MongoDB store model JSON output (values with cell references), prompt

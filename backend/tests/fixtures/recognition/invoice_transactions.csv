@@ -1,0 +1,25 @@
+Invoice number,Invoice date,Customer,Description,Net amount,Currency
+INV-1000,2025-01-05,Alder Works,Annual licence,10329,EUR
+INV-1001,2025-01-11,Birch Labs,Support plan,10466,EUR
+INV-1002,2025-01-17,Cedar Foods,Implementation,10603,EUR
+INV-1003,2025-01-23,Dune Print,Training day,10740,EUR
+INV-1004,2025-02-05,Elm Studio,Annual licence,10877,EUR
+INV-1005,2025-02-11,Fern Tools,Support plan,11014,EUR
+INV-1006,2025-02-17,Alder Works,Implementation,11151,EUR
+INV-1007,2025-02-23,Birch Labs,Training day,11288,EUR
+INV-1008,2025-03-05,Cedar Foods,Annual licence,11425,EUR
+INV-1009,2025-03-11,Dune Print,Support plan,11562,EUR
+INV-1010,2025-03-17,Elm Studio,Implementation,11699,EUR
+INV-1011,2025-03-23,Fern Tools,Training day,11836,EUR
+INV-1012,2025-04-05,Alder Works,Annual licence,11973,EUR
+INV-1013,2025-04-11,Birch Labs,Support plan,12110,EUR
+INV-1014,2025-04-17,Cedar Foods,Implementation,12247,EUR
+INV-1015,2025-04-23,Dune Print,Training day,12384,EUR
+INV-1016,2025-05-05,Elm Studio,Annual licence,12521,EUR
+INV-1017,2025-05-11,Fern Tools,Support plan,12658,EUR
+INV-1018,2025-05-17,Alder Works,Implementation,12795,EUR
+INV-1019,2025-05-23,Birch Labs,Training day,12932,EUR
+INV-1020,2025-06-05,Cedar Foods,Annual licence,13069,EUR
+INV-1021,2025-06-11,Dune Print,Support plan,13206,EUR
+INV-1022,2025-06-17,Elm Studio,Implementation,13343,EUR
+INV-1023,2025-06-23,Fern Tools,Training day,13480,EUR

@@ -266,3 +266,31 @@ def test_the_memo_labels_the_smoothness_threshold_as_provisional():
     from app import ic_memo as im
     row = next(line for line in im.build_memo(**inputs()).split("\n") if line.startswith("| Data reliability"))
     assert "Smoothness: Amber (provisional threshold, 3 synthetic series)." in row
+
+
+# --- the P&L as the only revenue source (docs/specs/revenue-file-recognition.md section 8, decision of 19 Oct 2026) -------------------------
+
+SAME_SOURCE = "Not applicable – same source"
+AWAITING = pytest.mark.xfail(strict=True, reason="awaiting implementation: revenue-file recognition")
+
+
+def _same_source():
+    return {**engine_results(), "revenue_reconciliation": {"available": False, "status": "not_applicable", "reason": SAME_SOURCE}}
+
+
+@AWAITING
+def test_when_the_pnl_is_the_only_revenue_source_the_reconciliation_is_not_applicable_and_never_green():
+    out = _integrity().assess(_same_source(), deck_count=1, candidates=[])
+    row = next(r for r in out["coverage"] if r["check"] == "Revenue reconciliation")
+    assert (row["status"], row["reason"], row["result"]) == ("Not applicable", SAME_SOURCE, None)
+    assert "Revenue reconciliation" not in [r["check"] for r in out["results"]], "not in Block A, so never Green"
+    assert "Revenue reconciliation" not in out["blocked"] and not any("Revenue reconciliation" in d for d in out["data_requests"])
+
+
+@AWAITING
+def test_a_same_source_reconciliation_is_not_a_completed_check_and_cannot_supply_the_one_the_conclusion_needs():
+    out = _integrity().assess(_same_source(), deck_count=1, candidates=[])
+    normal = _integrity().assess(engine_results(), deck_count=1, candidates=[])
+    assert out["applicable"] == normal["applicable"] - 1, "Not applicable leaves the denominator"
+    assert out["completed"] == normal["completed"] - 1
+    assert out["code"] == "insufficient", "the conclusion needs the reconciliation among the completed checks"
