@@ -1,11 +1,11 @@
 # Spec: Revenue file recognition, separate from classification
 Status: **Draft for review (2026-10-19). Spec and failing tests only; no implementation.** Source: George's request of 19 Oct 2026. Location:
 docs/specs/revenue-file-recognition.md. Extends docs/specs/chat-upload.md §3, §4.2, §16, §19 and §26 and amends its S2 (§11). The numbers of the
-screen lines continue chat-upload.md: S31a–S31k. Open questions for the owner are in §14.
+screen lines continue chat-upload.md: S31a–S31k. The owner's decisions of 2026-10-19 are in §14.
 
-**Architecture note (CLAUDE.md rule 1).** The model reading row labels is a change of the data boundary of docs/architecture.md ("Data boundary")
-and of CLAUDE.md rule 16, as the amendment of 2026-10-18 was for `sheet_structure`. This spec does not change either file. The implementation
-PR changes them only after George answers Q2 (§14); the wording proposed there is in §5.9. Until then nothing in this spec reaches the gateway.
+**Architecture (CLAUDE.md rule 1).** The model reading row labels widens the data boundary. George approved it on 2026-10-19 (decision 2, §14) and
+asked for it as a dated amendment, like the amendment of 2026-10-18. This PR records it in docs/architecture.md ("The amendment of 2026-10-19")
+and in CLAUDE.md rule 16, as that amendment did, and changes no code. Wording: §5.9.
 
 ## 0. Challenge and deletions (CLAUDE.md rule 4)
 - Needed: real company files are one worksheet with line labels down column A and months across the top, with no customer ID. The rules of §3
@@ -117,11 +117,15 @@ Classification runs on a recognised sheet and is independent of recognition. The
 | `customer_level`, invoices with no customer column | `NEEDS_CUSTOMER_COLUMN` = "a customer column (name or ID) on each invoice row" |
 | `trend`, one period (financial statements, summary, report) | `NEEDS_PERIODS` = "the same figures for at least one more period (a prior year, or one column per month)" |
 | `trend`, the snapshot | `NEEDS_SNAPSHOT_SERIES` = "ARR or MRR for at least two periods (one column per month)" |
+| `monthly_series`, a labels sheet none of whose period columns is a month (yearly, half-year or quarterly columns only) | `NEEDS_MONTHLY` = "one column per month" |
+Yearly, half-year and quarterly columns support trend when there are two or more (decision of 2026-10-19), and the blocked list still says the monthly
+series is missing: `{analysis: "monthly_series", needs: NEEDS_MONTHLY}`, named "Monthly series missing" on screen and in the data inventory. It
+follows `customer_level` and `trend` in the list. A snapshot and a records layout never carry it.
 The snapshot supports `["claim_matching"]` only; every other type supports what its row of the table says.
 
 ### 3.2 The data inventory (V6)
 Each `blocked` entry is written to the engine's `missing_data` as one line, "{analysis name} – Missing: {needs}", by `missing_lines(result)`, with the
-analysis names "Customer-level analysis (NRR, gross churn, concentration, cohorts)" and "Trend analysis (MRR/ARR, growth, run-rate)". Never "Missing"
+analysis names "Customer-level analysis (NRR, gross churn, concentration, cohorts)", "Trend analysis (MRR/ARR, growth, run-rate)" and "Monthly series missing". Never "Missing"
 without the data. The existing metrics (NRR, gross churn, ARR) keep their own Missing lines of the engine; the lines here add the reason this file
 cannot supply them.
 
@@ -177,7 +181,7 @@ s1 c1 profile: distinct 12, typical length 14, shape Aa Aa
 - **Metric-labelled** sheet (§4.2): its row labels are sent as written, after the redaction above.
 - **Entity-labelled or unsure** sheet: row labels are sent masked, "Row 1", "Row 2" ... in sheet order, numbering label rows; no label text of any kind
   reaches the model. **No customer name ever reaches the model.** "Masked values" is read strictly: no value is tied to a row; the only figures are
-  the per-column samples of §5.1 (Q5, §14).
+  the per-column samples of §5.1 (decision 5, §14).
 - At most 400 rows with text per sheet, title rows and header row included (as chat-upload.md §26.11): the first 400 are read, by Python and by the
   model.
 - A records layout has no row labels: its rows are data, never sent beyond the sample.
@@ -233,12 +237,11 @@ S2 of chat-upload.md §11 gains one sentence (applied to chat-upload.md in this 
 "In a revenue file the AI also sees the row labels when they are metric names such as revenue, ARR or customers; where the rows may be customers it
 sees Row 1, Row 2 instead, never a name." It follows the existing two sentences; nothing else of S2 changes.
 
-### 5.9 Proposed amendment of the boundary (for Q2)
+### 5.9 Amendment of the boundary (approved 2026-10-19, decision 2)
 Same form as the amendment of 2026-10-18: "For the `file_recognition` step only, the model may also receive the row labels of a sheet whose labels the
 rules read as metric names (revenue, ARR, MRR, customers, churn, bookings, forecast, budget, cost, margin, cash and their common variants), after
 redaction; for every other sheet the labels are sent as 'Row 1', 'Row 2' with no value tied to a row. Never a figure beyond the per-column sample of
-rule 16; at most 400 rows with text per sheet." To be placed in CLAUDE.md rule 16 and docs/architecture.md ("Data boundary" and a dated amendment)
-by the implementation PR once approved.
+rule 16; at most 400 rows with text per sheet." Placed in CLAUDE.md rule 16 and docs/architecture.md ("Data boundary" and "The amendment of 2026-10-19") by this PR, on George's instruction.
 
 ## 6. Python checks every proposal before anything is used
 Python builds its own reading first (rules), then compares it with the proposal of §5.7. Everything runs in Python; the deck parser and the gateway
@@ -264,6 +267,11 @@ take no part in the checks. The reason codes below are the closed list `REASONS`
 - `revenue_row` = `{row, label, kind, confidence, state, reason, candidates}`. `row` is the row Python would use when the analyst confirms (the rules'
   first candidate, or null with no candidate); `state: "click"` means no row is used until the analyst decides. `candidates` is the list the analyst
   chooses from: the unmarked candidates (`{row, label, kind, confidence}`). A model-marked row is removed from it.
+- **A recurring row (decision of 2026-10-19).** A row of kind `recurring` (MRR, ARR, recurring revenue) may be the revenue row and the trend series. It
+  is never shown or named as recognised revenue: S31c calls it a recurring row, its citation says it is read from an MRR or ARR line, and any growth
+  computed from it is labelled by the row: "MRR growth" for an MRR row, "ARR growth" for an ARR row, "Recurring revenue growth" for a recurring
+  revenue row, never "revenue growth". `growth_label(result)` returns the label ("Revenue growth" only for kinds `recognised` and `invoiced` and for
+  the sum of customer or category rows).
 - Types with no revenue row (`invoice_transactions`, `customer_revenue`, `revenue_summary`, `arr_mrr_snapshot`) have `revenue_row: null` and
   `series_basis` `records`, `sum_of_rows` (the customer or category rows are summed), `sum_of_rows` and `snapshot`. For the other two it is `row`.
 
@@ -320,8 +328,8 @@ to find the cell. (Wording chosen under rule 19, as chat-upload.md §13 did; Geo
 | Id | Where | Text |
 |---|---|---|
 | S31a | the type line | Type: {Invoice transactions / Customer revenue / Monthly revenue report / Revenue summary / Financial statements / ARR/MRR snapshot} ({by rules / AI suggestion / your choice}) and a **Change** button that offers the other five types. An unclassed type reads "Type: choose the type" with a drop-down of the two candidates |
-| S31b | what it supports and blocks, one line | Supports: {trend analysis (MRR/ARR, growth, run-rate) / customer-level analysis (NRR, gross churn, concentration, cohorts) and trend analysis (…) / claim matching only}. Blocked: {analysis}, needs {data}; {analysis}, needs {data}. — the "Blocked" part is left out when nothing is blocked; the data is the closed `needs` text of §3.1 |
-| S31c | the revenue row | Revenue row: {label} (row {n}) with **Correct** and **Change** (Change opens the candidates: "{label} (row {n})"). Needs a click: "Revenue row: choose the row. {reason}" with the drop-down and no Correct. Decided: Change only. Not shown for a type with no revenue row |
+| S31b | what it supports and blocks, one line | (a `monthly_series` item reads "monthly series missing, needs one column per month") Supports: {trend analysis (MRR/ARR, growth, run-rate) / customer-level analysis (NRR, gross churn, concentration, cohorts) and trend analysis (…) / claim matching only}. Blocked: {analysis}, needs {data}; {analysis}, needs {data}. — the "Blocked" part is left out when nothing is blocked; the data is the closed `needs` text of §3.1 |
+| S31c | the revenue row | Revenue row: {label} (row {n}) — for kind `recurring` "Recurring row: {label} (row {n})" — with **Correct** and **Change** (Change opens the candidates: "{label} (row {n})"). Needs a click: "Revenue row: choose the row. {reason}" with the drop-down and no Correct. Decided: Change only. Not shown for a type with no revenue row |
 | S31d | the last actual month | Last actual month: {Mon YYYY}. Columns after it are not used. with **Correct** and **Change** (the candidate months). Needs a click: "Last actual month: choose the month. {reason}" with the drop-down and no Correct. Decided: Change only. The second sentence is left out when no column follows |
 | S31e | the reasons, closed texts (`REASON_TEXT` in `lib/recognition.js`, one per code of §6) | no_candidate: No row looks like revenue. Choose the revenue row. · tie: Two rows fit equally. Choose the revenue row. · confidence_80: Please confirm the revenue row. · row_missing, label_mismatch: The proposed row could not be matched to the sheet. Choose the revenue row. · marked_not_revenue: The proposed row is a forecast, budget, bookings, pipeline, contract value or run-rate row. Choose the revenue row. · not_numeric_enough: The proposed row has too few numbers. Choose the revenue row. · no_revenue_word: The proposed row has no revenue word in its label. Choose the revenue row. · rules_and_model_disagree: Two readings differ. Choose the revenue row. (for the month: … Choose the last actual month.) · no_as_of_month: The audit has no as-of month, so this month needs your confirmation. · after_as_of: The proposed month is after the as-of month. Choose a month up to it. · not_a_period: The proposed column is not a month. Choose the last actual month. · turnover_question: the question of chat-upload.md §15 with the buttons Revenue / Volume · type_unsure: Choose the type. |
 | S31f | not a revenue file | the server's message of §2: "Not a revenue file. Missing: {names}." It replaces S6 and every other line of the recognition |
@@ -341,11 +349,16 @@ nothing open clears it. No banner kind is added.
   supports, blocked, other_sheets, needs_click}`. `type_source` is `rules` (Python decided, with the model silent or agreeing), `ai` (the type is the
   model's choice among candidates), or `you`. `money_kind` is `{asked, answer?}`. A file that is not recognised and gets no type answers
   `{status: "unknown_type", recognition: {recognised: false, missing, message}}` and stores nothing.
-- **Routing (decided under rule 19, flagged in Q3).** A recognised file is stored as the audit's revenue file (`dtype: "revenue"`) with its
+- **Routing (decided, §14 item 3).** A recognised file is stored as the audit's revenue file (`dtype: "revenue"`) with its
   recognition. Types with customer rows (`invoice_transactions`, `customer_revenue`) keep the column mapping of chat-upload.md §4 beside the
   recognition line; the other four types have no column mapping, hold no required field (as a statement file, chat-upload.md §26.6) and wait only for
   the clicks of §7. A P&L the rules type by its columns, or a statement-shaped P&L (financial statements) that the P&L path of §26 reads, stays the
-  audit's P&L (CAC payback needs it) and also carries its `recognition` block; whether it also satisfies the required revenue file is Q3.
+  audit's P&L (CAC payback needs it) and also carries its `recognition` block; it satisfies the required revenue file once its recognition is confirmed with two or more periods (decision 3, §14). Banner kinds are unchanged (rule 21).
+- **When the P&L is the only revenue source** (no separate revenue file; the recognised revenue comes from the P&L), the revenue-versus-P&L
+  reconciliation compares a source with itself. `revenue_reconciliation` then carries `status: "not_applicable"` and the text "Not applicable – same
+  source", Diagnostics shows that text instead of the table (S22), and the integrity check "Revenue reconciliation" (integrity-coverage.md) is
+  **Not applicable**, not Completed: never Green, not in Block A, not counted in "Completed x of y applicable checks", and it cannot supply the
+  reconciliation the conclusion needs. It is not a blocker (rule 21 holds).
 - **Run audit.** Reads, for the four types without a customer mapping, the confirmed revenue row (or the sum of rows, or the snapshot value) in the
   period columns up to the boundary, as a revenue series with its cells as the citation. Excluded columns are never read. Trend analyses
   (MRR/ARR, growth, run-rate) read the series; customer-level analyses report the Missing line of §3.2.
@@ -359,8 +372,11 @@ This PR changes no schema (CLAUDE.md rule 23; docs/specs/interface-contracts.md)
 - `missing_data`: entries with the lines of §3.2 (`metric`, `status: "Missing"`, `reason`, `unlocked_by` = the `needs` text, `file`); no new key.
 - `recognition` (a summary on the audit's results, closed words and counts only: type code, `series_basis`, the periods used, the count of excluded
   columns, `currency_confirmed`) so the memo and the export can state the basis. Not in any narrative slice; the boundary test is extended (rule 14).
+- `revenue_reconciliation`: a `status` (`computed` · `not_applicable`) and, for `not_applicable`, the reason "Not applicable – same source"; `available`
+  stays false then, and `integrity.assess` reads the status (decision of 2026-10-19).
+- A growth label on any growth figure computed from a recurring row ("MRR growth", "ARR growth"; `growth_label`).
 - `mrr_series` and `arr` from a `recurring` revenue row: their `source` says the figure is read from a row labelled MRR or ARR, not computed from
-  customers (Q1).
+  customers (decision 1).
 Labels and titles are never a contract field.
 
 ## 10. Tests (written first; all fail today for the reason in the last column)
@@ -386,7 +402,7 @@ The vocabulary and the exclusion words (§2.1, §4.1, measured on the fixtures);
 guard; the label-row definition; the confidence formula (§6.1); the check orders of §6.1 and §6.2; "min(3, periods)" for the numeric-column check;
 the best-sheet order (§3); one call per new file shared with §19; no call without consent; the model's proposal for a sheet Python did not pick is
 dropped; the currency of the model is a cross-check only; the label echo is checked and never stored; the text grammar and problem codes; routing
-(flagged in Q3); typed text is never accepted.
+(decided, §14 item 3); typed text is never accepted.
 
 ## 13. Not built here
 Column-oriented layouts with dates down the rows and measures across (the accountant P&L): the existing rules of chat-upload.md §4 keep reading them.
@@ -398,25 +414,18 @@ Files the implementation PR will add or change: new `backend/app/recognition.py`
 grammar), `backend/server.py` (ingest, the recognition endpoint, the dataset view, Run audit input), `backend/growth_engine.py` and
 `backend/schemas/metrics.py` with `backend/tests/test_interface_contracts.py` (§9), `backend/app/usage.py` (step `recognition`), `frontend/src/components/
 RecognitionLine.jsx`, `frontend/src/lib/{recognition,chatUpload,api}.js`, `frontend/src/components/UploadChat.jsx`, CLAUDE.md rule 16 and
-docs/architecture.md only after Q2.
+docs/architecture.md (recorded in this PR).
 
-## 14. Open questions for the owner (question first, recommendation second)
-1. **May a row labelled ARR or MRR be the revenue row, and the series for trend analysis, when the sheet has no recognised-revenue, invoiced-revenue or
-   sales row?** *Recommendation: yes.* It ranks below recognised and invoiced revenue, is kept as kind `recurring`, shown as "Revenue row: MRR (row 5)",
-   and its source says it is read from an MRR or ARR line, never from customers; it is never labelled as recognised revenue. A row labelled run-rate,
-   annualised, contract value, bookings, pipeline, forecast or budget is never used (§2.1). (What counts as a metric, rule 19.1.)
-2. **Do you approve widening rule 16 and the architecture's data boundary for the new `file_recognition` step, as in §5.9?** The model would receive the
-   row labels of sheets the rules read as metric names, and "Row 1", "Row 2" for every other sheet, never a figure beyond the sample. *Recommendation:
-   yes,* with the wording of §5.9 and the same dated-amendment form as 2026-10-18; the thresholds of §4 lean to masking and the gateway refuses a label
-   on a masked sheet. Without your yes the implementation cannot send labels and I would stop. (Sending file text to the model, rule 19.2.)
-3. **Where do a P&L and a KPI sheet go, and may a P&L satisfy the required revenue file?** Today a labels × periods file with cost lines is the P&L
-   (§26) and one with only KPI lines is a KPI sheet (§26.14); both are revenue-bearing under §1. *Recommendation:* a P&L stays the audit's P&L and also
-   carries the recognition block; it satisfies the required revenue file (banner S16a/S16d) when its recognition is confirmed and trend analysis is
-   possible (two or more periods); a KPI sheet with a recognised, invoiced or MRR/ARR row becomes a Monthly revenue report and the revenue file; a KPI
-   sheet without one keeps §26.14. This changes which type label and which banner text an analyst sees. (What the analyst sees, rule 19.3.)
-4. **S4, the drop-zone text, says "Required: Revenue by customer (monthly, 24–36 months)". May it say what the audit now accepts?** *Recommendation:*
-   "Required: a revenue file – revenue by customer, invoices or a monthly revenue report (24–36 months)." Everything else in S4 stays. (What the analyst
-   sees, rule 19.3.)
-5. **"Row 1, Row 2 ... with their masked values": do you accept the strict reading, no value tied to a row?** *Recommendation: yes.* The model then sees
-   only the per-column samples of the existing rule, so it cannot link a figure to a customer row; the cost is that on an entity-labelled sheet it
-   proposes a type, a boundary and a currency but no revenue row, which such sheets (customer revenue, summaries) do not have. (Client data, rule 19.2.)
+## 14. Decisions of the owner (19 Oct 2026, on PR #134)
+1. **A row labelled ARR or MRR may be the revenue row and the trend series**, kind `recurring`, never shown as recognised revenue; growth from it is
+   labelled "ARR growth" or "MRR growth", not "revenue growth" (§6.1, S31c, §9).
+2. **Rule 16 and the data boundary are widened for the `file_recognition` step** as a dated amendment (19 Oct 2026), recorded in the frozen
+   architecture like the `access_tokens` amendment (§5.9; docs/architecture.md and CLAUDE.md rule 16 in this PR).
+3. **A P&L stays the P&L and carries the recognition; it satisfies the required revenue file once confirmed with two or more periods.** When it is the
+   only revenue source the reconciliation reads "Not applicable – same source", is not Green and does not count as a completed integrity check (§8).
+   Yearly periods support trend, and the blocked list says the monthly series is missing (§3.1). A KPI sheet with a recognised, invoiced or MRR/ARR
+   row becomes a Monthly revenue report and the revenue file; a KPI sheet without one keeps chat-upload.md §26.14.
+4. **S4 changes** to "Required: a revenue file – revenue by customer, invoices or a monthly revenue report (24–36 months)." (the rest of S4 stays),
+   with the implementation.
+5. **The strict reading of "masked values"** (no value tied to a row) stands (§5.3).
+6. **"Lesser of 3 and the period count"** for the numeric-column check is accepted (§6.1).

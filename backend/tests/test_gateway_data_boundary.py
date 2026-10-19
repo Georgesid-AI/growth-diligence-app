@@ -2829,5 +2829,5 @@ def test_recognition_the_words_a_result_can_carry_are_closed_lists_and_hold_no_t
             assert part is None or part["reason"] is None or part["reason"] in rec.REASONS
         assert all(r["kind"] in rec.NON_REVENUE_KINDS for r in got["non_revenue_rows"])
         assert got["file_type"] is None or got["file_type"] in rec.RECOGNITION_TYPES
-        assert all(b["analysis"] in ("customer_level", "trend") for b in got["blocked"])
+        assert all(b["analysis"] in ("customer_level", "trend", "monthly_series") for b in got["blocked"])
         assert set(got["supports"]) <= {"customer_level", "trend", "claim_matching"}

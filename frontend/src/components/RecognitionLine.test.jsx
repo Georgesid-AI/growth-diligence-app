@@ -115,6 +115,23 @@ describe("what the file supports and what it blocks", () => {
   });
 });
 
+describe("yearly columns and recurring rows (decisions of 19 Oct 2026)", () => {
+  test("a file with yearly columns supports trend and its blocked part says the monthly series is missing", async () => {
+    await mount({ ...AUTO, file_type: "financial_statements", supports: ["trend"], blocked: [
+      { analysis: "customer_level", needs: "revenue by customer and month" }, { analysis: "monthly_series", needs: "one column per month" }] });
+    expect(q("recognition-supports-revenue").textContent).toBe(
+      "Supports: trend analysis (MRR/ARR, growth, run-rate). Blocked: customer-level analysis (NRR, gross churn, concentration, cohorts), " +
+      "needs revenue by customer and month; monthly series missing, needs one column per month.");
+  });
+
+  test("a recurring row is called a recurring row and never a revenue row", async () => {
+    await mount({ ...AUTO, revenue_row: { ...AUTO.revenue_row, row: 5, label: "MRR", kind: "recurring" } });
+    expect(q("recognition-row-revenue").textContent).toBe("Recurring row: MRR (row 5)");
+    expect(q("recognition-row-correct-revenue").textContent).toBe("Correct");
+    expect(host.textContent).not.toMatch(/Revenue row/);
+  });
+});
+
 describe("the proposed revenue row and the last actual month", () => {
   test("an accepted proposal shows the row and the month with Correct and Change", async () => {
     await mount(AUTO);

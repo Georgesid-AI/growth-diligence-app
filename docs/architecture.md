@@ -19,6 +19,14 @@ what is written here is an architecture change: a session that needs one stops a
 | Storage | MongoDB | `audits`, `datasets`, `deck_text` (parsed text and structures), `deck_candidates`, `llm_narratives`, `llm_structures`, `llm_calls`, `llm_locks`, `pseudonym_map`, `column_mappings`, `prompts` (the model prompts; no `audit_id`), `access_tokens` (tester-phase token hashes, id, label, expiry, and per-link AI usage counters and allowance (counts and costs only, no names or figures); never a token; removed at the move to accounts; no `audit_id`). Delete audit removes an audit's documents in every collection that holds any; `prompts` and `access_tokens` hold no audit data and stay. |
 | Manual tooling | `scripts/consistency_run.py` | Live consistency runs (paid), `--fake` replays, `--diagnostic` and `--probe` on the 10 public test decks. Reports are committed to docs/test-runs/. |
 
+## The amendment of 2026-10-19
+
+George approved (19 Oct 2026, decision 2 on PR #134, docs/specs/revenue-file-recognition.md §5) widening the spreadsheet boundary for one more
+step. For the `file_recognition` step only, the model may also receive the row labels of a sheet whose labels the rules read as metric names
+(revenue, ARR, MRR, customers, churn, bookings, forecast, budget, cost, margin, cash and their common variants), after redaction; for every other
+sheet the labels are sent as "Row 1", "Row 2" with no value tied to a row. Never a figure beyond the per-column sample of rule 16; at most 400 rows
+with text per sheet. All other steps keep the boundary as it was. CLAUDE.md rule 16 carries the same wording.
+
 ## The amendment of 2026-10-18
 
 George approved (18 Oct 2026, with the task of docs/specs/chat-upload.md §26) widening the spreadsheet boundary for one step. For the
@@ -56,7 +64,8 @@ Two paths reach the gateway and each has its own fields (docs/specs/deck-parser.
   positions, only with per-audit consent. What the text may hold is defined in docs/specs/llm-structure-reading.md
   §1 and §3. For the `sheet_structure` step only (the amendment of 2026-10-18 above): every text cell of a sheet (title rows,
   headers, row labels, indents, num/blank markers), after redaction and the withhold rule; never any figure; at most 400
-  labelled rows per sheet.
+  labelled rows per sheet. For the `file_recognition` step only (the amendment of 2026-10-19 above): the row labels of a
+  metric-labelled sheet, "Row n" for every other sheet, never a figure beyond the per-column sample.
 
 What is stored (rule 17): model JSON output with cell references, the item list without raw text, prompt version,
 model version, content hash, token counts and cost. Never deck text sent to the model. The boundary is enforced in

@@ -112,8 +112,8 @@ def test_invoices_without_a_customer_column_are_recognised_and_only_the_customer
 def test_categories_by_periods_is_a_revenue_summary_with_trend_and_no_customer_level(rec):
     got = recognise(rec, "revenue_summary_by_product.csv")
     assert got["recognised"] and got["file_type"] == "revenue_summary" and got["label_mode"] == "entity"
-    assert got["supports"] == ["trend"] and [b["analysis"] for b in got["blocked"]] == ["customer_level"]
-    assert got["blocked"][0]["needs"] == rec.NEEDS_BY_CUSTOMER
+    assert got["supports"] == ["trend"] and [b["analysis"] for b in got["blocked"]] == ["customer_level", "monthly_series"]
+    assert got["blocked"][0]["needs"] == rec.NEEDS_BY_CUSTOMER and got["blocked"][1]["needs"] == rec.NEEDS_MONTHLY
 
 
 def test_a_multi_period_pnl_is_financial_statements_and_trend_is_enabled(rec):
@@ -121,6 +121,18 @@ def test_a_multi_period_pnl_is_financial_statements_and_trend_is_enabled(rec):
     assert got["recognised"] and got["file_type"] == "financial_statements" and got["label_mode"] == "metric"
     assert got["periods"] == 3 and got["supports"] == ["trend"]
     assert (got["revenue_row"]["row"], got["revenue_row"]["state"]) == (3, "auto")
+
+
+def test_yearly_periods_support_trend_and_the_blocked_list_says_the_monthly_series_is_missing(rec):
+    got = recognise(rec, "pnl_multi_period.csv")
+    assert got["supports"] == ["trend"], "three yearly columns: trend is supported"
+    assert {"analysis": "monthly_series", "needs": rec.NEEDS_MONTHLY} in got["blocked"]
+    assert rec.NEEDS_MONTHLY == "one column per month"
+    assert any(line.startswith("Monthly series missing") and line.endswith("one column per month") for line in rec.missing_lines(got))
+    for name in (MONTHLY, "customer_revenue_months.csv", "monthly_report_no_currency.csv"):
+        assert "monthly_series" not in [b["analysis"] for b in recognise(rec, name)["blocked"]], name
+    for name in ("arr_snapshot.csv", "invoice_transactions.csv"):
+        assert "monthly_series" not in [b["analysis"] for b in recognise(rec, name)["blocked"]], name
 
 
 def test_a_single_period_pnl_blocks_trend_and_names_the_data_that_would_unblock_it(rec):
