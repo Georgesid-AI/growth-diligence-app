@@ -1,6 +1,7 @@
 # Spec: Claim matching: approved claims tested against the computed metrics
 Status: Draft; decisions of 2026-10-07 applied (§10). Location: docs/specs/claim-matching.md.
 Follows deck-parser.md §6.
+Amended 2026-10-20 (George): a Revenue or revenue-growth claim while the engine holds no `revenue_series` is Unverified, "Not computed – revenue series not available"; no figure is read from any other block, and no gap or "Same metric and period?" is shown (table 2b).
 Amended 2026-10-20 (George's decisions of 2026-10-19 on issue #136): every observed figure carries its own citation, `observed_citation`
 "(source key, sheet, rows, period)", beside the number in the register, the banner (chat-upload.md S16b), the CSV and the memo (§6); a new
 metric "Contract value" (annual or total contract value, contracted revenue, contracted or committed ARR or MRR, TCV, ACV, CARR) is typed
@@ -87,6 +88,7 @@ the whole-company figure and marked "whole company".
 | Claim | Rule (table 2b) |
 |---|---|
 | Period end month | the metric's value in that month |
+| No revenue series (2026-10-20) | Revenue and the revenue growths: the engine holds no `revenue_series` (none, or no month): Unverified, "Not computed – revenue series not available"; no observed figure, gap or question |
 | Sum over the period's months | every month of the period lies in the data; if months are missing (before the first month, or a gap) the claim is Unverified and the reason names them ("months missing from the data: 2022-04 to 2022-12") |
 | Quarter | the period's months equal one calendar quarter of the engine (every fiscal quarter does with a year-end in March, June, September or December) |
 | As-of | the period ends in the as-of month |
