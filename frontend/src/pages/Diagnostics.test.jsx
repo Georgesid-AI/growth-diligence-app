@@ -102,3 +102,21 @@ test("CRM rows sharing a deal ID show their collapsed rows and distinct IDs next
   expect(q("diagnostics-deal-repeats-detail").textContent).toBe("3 distinct deal IDs");
   expect(row.previousElementSibling.textContent).toContain("Deals close-before-created");
 });
+
+test("stale results read Stale – re-run audit, not Not computed yet; no results at all read Not computed yet", async () => {
+  api.getAudit.mockResolvedValue({ id: "a1" });
+  api.getResults.mockRejectedValue({ response: { status: 409, data: { detail: { code: "results_stale", message: "Stale – re-run audit" } } } });
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  await act(async () => { root.render(<Diagnostics />); });
+  expect(q("diagnostics-stale").textContent).toBe("Stale – re-run audit");
+  expect(document.body.textContent).not.toContain("Not computed yet");
+  await act(async () => { root.unmount(); }); host.remove();
+  api.getResults.mockRejectedValue({ response: { status: 404 } });
+  host = document.createElement("div");
+  document.body.appendChild(host);
+  root = createRoot(host);
+  await act(async () => { root.render(<Diagnostics />); });
+  expect(document.body.textContent).toContain("Not computed yet.");
+});

@@ -1,6 +1,7 @@
 import { useNavigate, useLocation } from "react-router-dom";
 import { LayoutList, Terminal } from "lucide-react";
 import { fmtCurrency } from "@/lib/format";
+import { STALE_LABEL } from "@/lib/deckClaims";
 import { evidenceToText } from "@/lib/periods";
 import BlockerBanner from "@/components/BlockerBanner";
 import AllowanceBanner from "@/components/AllowanceBanner";
@@ -80,7 +81,7 @@ export function Layout({ audit, children }) {
                   <div className="text-[10px] font-mono text-slate-500" data-testid="header-target-line">
                     {audit.reporting_currency} · {Number(audit.target_arr) ? `target ${fmtCurrency(audit.target_arr, audit.reporting_currency)} ARR` : "target not set"}
                     {/* the data's own end, never the as-of setting (docs/specs/dates-and-periods.md section 2) */}
-                    {audit.results?.source_period ? ` · evidence to ${evidenceToText(audit.results)}` : ""}
+                    {audit.results_stale ? ` · ${STALE_LABEL}` : audit.results?.source_period ? ` · evidence to ${evidenceToText(audit.results)}` : ""}
                   </div>
                 </div>
               )}

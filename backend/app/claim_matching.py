@@ -1382,9 +1382,10 @@ def _overlaps(rows: List[dict]) -> None:
 
 def is_untested(row: dict) -> bool:
     """A row that is never matched, ranked among the tested ones, gated or put in the top 5: use of funds, acquisition channels, a
-    claim read from a forecast table (chat-upload.md section 20) and unit economics (ARPA, ARPU; George, 2026-10-20)."""
+    claim read from a forecast table (chat-upload.md section 20), unit economics (ARPA, ARPU) and a pipeline column (George,
+    2026-10-20)."""
     return row.get("claim_type") in UNTESTED_TYPES or row.get("deck_reading") == FORECAST_READING \
-        or row.get("claim_type") in UNIT_ECONOMICS or row.get("metric") in UNIT_ECONOMICS.values()
+        or row.get("claim_type") in UNIT_ECONOMICS or row.get("claim_type") == "pipeline" or row.get("metric") in UNIT_ECONOMICS.values()
 
 
 def _rank(rows: List[dict]) -> List[dict]:

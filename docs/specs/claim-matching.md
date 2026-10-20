@@ -385,3 +385,6 @@ rejected claim, 400 for a claim that is not a turnover claim.
 ## Done when
 - Every fixture row gives its label, gap, gloss and rank (`backend/tests/test_claim_matching.py`).
 - The boundary tests pass; the CSV equals the register; the screen follows §8.
+
+Amended 2026-10-20 (George, review of the unit-economics change): pipeline rows are untested like ARPA and ARPU (`is_untested`): never in the
+top 5, never gated.

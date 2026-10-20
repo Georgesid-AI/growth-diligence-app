@@ -360,3 +360,10 @@ describe("installed units (chat-upload.md section 20)", () => {
     expect(EDIT_TYPES).not.toContain("installed_units");
   });
 });
+
+describe("stale results (George, 2026-10-20)", () => {
+  test("a conversion date that would come from stale results reads Stale – re-run audit", () => {
+    const fx = { rate: 1.14, date: null, date_stale: true, currency: "EUR" };
+    expect(conversionHover({ currency: "GBP", fx })).toBe("Rate used: 1 GBP = 1.14 EUR on Stale – re-run audit");
+  });
+});

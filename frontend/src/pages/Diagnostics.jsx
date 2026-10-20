@@ -5,6 +5,7 @@ import { Layout } from "@/components/Layout";
 import { Provenance } from "@/components/Provenance";
 import { getAudit, getResults, reportUsage } from "@/lib/api";
 import { S22_RECONCILIATION, S22_SAME_SOURCE } from "@/lib/chatUpload";
+import { STALE_LABEL } from "@/lib/deckClaims";
 import { fmtCount, fmtCurrency } from "@/lib/format";
 import { ANOMALIES_NOT_COMPUTED } from "@/lib/gapLists";
 import { seeGlossary } from "@/lib/glossary";
@@ -18,10 +19,11 @@ export default function Diagnostics() {
   useEffect(() => {
     reportUsage(id, { screen: "diagnostics" });
     getAudit(id).then(setAudit).catch(() => {});
-    getResults(id).then(setData).catch(() => setData(false));
+    getResults(id).then(setData).catch((e) => setData(e.response?.data?.detail?.code === "results_stale" ? "stale" : false));
   }, [id]);
 
   if (data === null) return <Layout audit={audit}><div className="flex justify-center py-32 text-slate-500"><Loader2 className="h-6 w-6 animate-spin" /></div></Layout>;
+  if (data === "stale") return <Layout audit={audit}><div className="py-24 text-center text-slate-600" data-testid="diagnostics-stale">{STALE_LABEL}</div></Layout>;
   if (data === false) return <Layout audit={audit}><div className="py-24 text-center text-slate-600">Not computed yet.</div></Layout>;
 
   const r = data.results;

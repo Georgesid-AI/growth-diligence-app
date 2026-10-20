@@ -157,3 +157,8 @@ read 100 times too large). Tests: `test_interface_contracts.py` section 6, `test
 ## 9. Rule
 CLAUDE.md rule 23: any change to engine output fields changes `backend/schemas/metrics.py` and the contract test in
 the same PR.
+
+Amended 2026-10-20 (George, review): `GET /audits/{id}` and the review summary carry `results_stale`; with stale results `results` is null on
+`GET /audits/{id}`, so no stored figure reaches the browser. The header's "evidence to <month>" and the deck list's conversion date (when
+the as-of month is defaulted: `fx.date_stale`) read "Stale – re-run audit"; the Review, Diagnostics, the verdict and the memo name it in place
+of "compute the audit first" when results exist but are stale. `SEED_VERSION` 12 reseeds demo audits held under contract 4.

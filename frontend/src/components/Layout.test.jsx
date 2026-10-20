@@ -174,3 +174,10 @@ test("the allowance line sits under the header on an audit screen and the blocke
   expect(q("blocker-banner").contains(q("allowance-warn"))).toBe(false);
   expect(q("blocker-banner").querySelectorAll("li").length).toBe(1);
 });
+
+test("the header reads Stale – re-run audit where evidence to <month> would stand when the results are stale, and never a month from them", async () => {
+  api.getBlockers.mockResolvedValue([]);
+  await mount({ ...AUDIT, results: null, results_stale: true });
+  expect(q("header-target-line").textContent).toContain("Stale – re-run audit");
+  expect(q("header-target-line").textContent).not.toContain("evidence to");
+});

@@ -92,8 +92,8 @@ def test_arpa_and_pipeline_claims_are_unsupported_unmatched_unranked_and_have_no
     assert {r["metric"] for r in arpa} == {"ARPA"} and {r["reason"] for r in arpa} == {cm.UNIT_ECONOMICS_REASON}
     assert not any(r["gate_needed"] for r in arpa)
     top5 = vd.proposal(rows)
-    assert not {r["claim_id"] for r in arpa} & set(top5) and len(top5) == 4          # the four pipeline rows are all that is left
-    assert all(r["rank"] > max(rank for c, rank in [(x["claim_id"], x["rank"]) for x in rows] if c in top5) for r in arpa)
+    assert top5 == [], "ARPA and pipeline rows are never in the top 5 (George, 2026-10-20)"
+    assert all(cm.is_untested(r) for r in arpa + pipeline)
     assert cm.UNIT_ECONOMICS_REASON == "Unit economics – not computed by the app"
     assert not any(r["claim_type"] == "revenue" for r in rows)
 
@@ -104,3 +104,47 @@ def test_arpa_and_arpu_are_metrics_that_are_never_computed():
     assert cm.propose_metric("arpu", "currency", "Revenue per user") == "ARPU"
     assert cm.propose_metric("revenue", "currency", "Revenue per user") in (None, "Revenue")
     assert "ARPA" not in cm.EVIDENCE and "ARPU" not in cm.EVIDENCE
+
+
+# --- Review of 20 Oct: the per-unit term must END the phrase; breakdowns stay Revenue ---------------------------------------------
+
+@pytest.mark.parametrize("title", [
+    "Revenue per customer segment", "Revenue per client type", "Revenue per customer cohort", "Revenue per user group",
+    "Revenue per account manager", "Revenue per segment", "Revenue by customer segment"])
+def test_a_breakdown_title_with_a_noun_after_the_per_unit_term_stays_revenue(title):
+    found = detect(title)
+    assert values_of(found, "revenue") == [1100, 1250, 1400, 1650]
+    assert not any(c["claim_type"] in ("arpa", "arpu") for c in found)
+
+
+@pytest.mark.parametrize("title, family", [
+    ("ARR per customer", "arpa"), ("Average revenue per paying customer", "arpa"), ("Average revenue per active user", "arpu"),
+    ("Revenue / customer", "arpa"), ("Revenue / user", "arpu"), ("MRR per account", "arpa"), ("Bookings per client", "arpa"),
+    ("Revenue per customer (EUR)", "arpa"), ("Revenue per customer, by year", "arpa"), ("Average revenue per customer segment", "arpa")])
+def test_the_per_unit_variants_are_arpa_or_arpu(title, family):
+    found = detect(title)
+    assert values_of(found, family) == [1100, 1250, 1400, 1650]
+    assert not any(c["claim_type"] == "revenue" for c in found)
+
+
+def test_a_line_with_arr_per_customer_is_arpa_and_a_count_per_account_is_not():
+    assert [c["claim_type"] for c in claims.line_candidates("€45k ARR per customer", [(0, 21, {})])] == ["arpa"]
+    for line in ("Licences per customer", "Seats per account: 42", "Users per account: 12"):
+        assert not any(c["claim_type"] in ("arpa", "arpu") for c in claims.line_candidates(line, [(0, len(line), {})])), line
+
+
+def table_values(header, rows, family):
+    table, rects = ruled_table([("Name", header)] + rows, top=400, col_widths=(200, 270))
+    found = claims.detect_candidates(parse_deck(pdf_page([(50, 560, 22, "Overview")] + table, rects), "deck.pdf")["blocks"], "deck.pdf")
+    return sorted(v["value"] for c in found if c["claim_type"] == family for v in claims.claim_values(c)), found
+
+
+def test_a_revenue_per_client_column_over_rows_that_name_clients_is_revenue_not_arpa():
+    values, found = table_values("Revenue per client", [("Acme", "$500,000"), ("Beta", "$800,000")], "revenue")
+    assert values == [500000, 800000]
+    assert not any(c["claim_type"] in ("arpa", "arpu") for c in found)
+
+
+def test_a_revenue_per_client_column_over_rows_that_are_years_is_still_arpa():
+    values, _ = table_values("Revenue per client", [("2021", "$1,400"), ("2022", "$1,650")], "arpa")
+    assert values == [1400, 1650]

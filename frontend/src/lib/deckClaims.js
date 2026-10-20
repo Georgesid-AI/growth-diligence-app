@@ -150,10 +150,13 @@ export const fxPair = (c) => (c?.fx && c.currency && !c.unit && c.fx.rate == nul
  *  "FX settings" are shown as a link to the audit's FX settings (FX_SETTINGS_LABEL). */
 export const rateMissingText = (pair) => `${pair} rate missing – enter it in ${FX_SETTINGS_LABEL} at the top of the page`;
 
+/** What a screen reads where the stored results are of an older engine contract (George, 2026-10-20). */
+export const STALE_LABEL = "Stale – re-run audit";
+
 /** The rate behind a converted figure, for hover: "1 GBP = 1.14 EUR on 30 Jun 2026". Null when the claim is not converted. */
 export function conversionHover(c) {
   if (!c?.fx || !c.currency || c.unit || c.fx.rate == null) return null;
-  const on = displayDate(c.fx.date);
+  const on = c.fx.date_stale ? STALE_LABEL : displayDate(c.fx.date);
   return `Rate used: 1 ${c.currency} = ${figure(c.fx.rate)} ${c.fx.currency}${on ? ` on ${on}` : ""}`;
 }
 

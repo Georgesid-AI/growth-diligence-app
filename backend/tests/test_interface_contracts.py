@@ -805,3 +805,66 @@ def test_the_memo_summary_counts_inconclusive_under_unverified_with_the_count_in
     unverified = sum(counts.get(label, 0) for label in shared["memo_groups"]["Unverified"])
     assert f"{unverified} Unverified ({counts['Inconclusive']} Inconclusive) of {len(rows)} in the register" in text
     assert "Unverified (0 Inconclusive)" in ic_memo.build_memo(**icm.inputs()), "the bracket is printed when none is Inconclusive"
+
+
+def test_get_audit_never_sends_stale_results_to_the_browser(api):
+    """Review of 20 Oct (M1): the stored results of an older contract version are dropped from `GET /audits/{id}`, and the audit says
+    `results_stale`; current results go out with `results_stale` false."""
+    r = api.get(f"/api/audits/{AUDIT_ID}")
+    assert r.status_code == 200 and "106.41" not in r.text
+    body = r.json()
+    assert body["results"] is None and body["results_stale"] is True
+    api.db["audits"].docs[0]["results"] = cf.stored(nrr=cf.nrr(1.0641, 100))
+    body = api.get(f"/api/audits/{AUDIT_ID}").json()
+    assert body["results"]["nrr"] and body["results_stale"] is False
+    assert api.put(f"/api/audits/{AUDIT_ID}", json={"company_name": "Acme"}).json()["results_stale"] is False
+
+
+def test_run_audit_engine_on_a_stale_audit_clears_the_flag_through_to_results(api, monkeypatch):
+    """Review of 20 Oct (L2): the stale flag clears when the engine stage runs, and /results answers 200 afterwards."""
+    api.db["audits"].docs[0]["status"] = "mapped"
+    api.db["datasets"].docs.append({"audit_id": AUDIT_ID, "dtype": "revenue", "mapped_at": "2026-01-01"})
+
+    async def counts(audit_id, audit, datasets=None):
+        return {"open": 0, "missing_required": 0}, True
+
+    async def compute(audit_id):
+        fresh = cf.stored(nrr=cf.nrr(1.0641, 100))
+        api.db["audits"].docs[0]["results"] = fresh
+        api.recomputed.append(audit_id)
+        return fresh
+
+    monkeypatch.setattr(server, "_mapping_counts", counts)
+    monkeypatch.setattr(server, "_run_compute", compute)
+    assert api.get(f"/api/audits/{AUDIT_ID}/results").status_code == 409
+    r = api.post(f"/api/audits/{AUDIT_ID}/run/engine")
+    assert r.status_code == 200 and r.json()["status"] == "done" and api.recomputed == [AUDIT_ID]
+    assert api.get(f"/api/audits/{AUDIT_ID}/results").status_code == 200
+    assert api.get(f"/api/audits/{AUDIT_ID}").json()["results_stale"] is False
+
+
+def test_stale_results_read_stale_re_run_audit_on_the_review_the_verdict_and_the_memo_not_compute_the_audit_first(api):
+    """Decision of 20 Oct (George): where results exist but are stale, the Review summary says so, and the verdict and the memo name
+    "Stale – re-run audit" instead of "compute the audit first"; with no results at all the old wording stands."""
+    summary = api.get(f"/api/audits/{AUDIT_ID}/review").json()
+    assert summary["computed"] is True and summary["results_stale"] is True
+    verdict = api.get(f"/api/audits/{AUDIT_ID}/verdict").json()["verdict"]
+    assert verdict["status"] == "no_verdict" and STALE in verdict["message"] and "compute the audit first" not in verdict["message"]
+    memo = api.get(f"/api/audits/{AUDIT_ID}/memo.md")
+    assert memo.status_code == 409 and STALE in memo.json()["detail"] and "compute the audit first" not in memo.json()["detail"]
+    api.db["audits"].docs[0]["results"] = None
+    assert api.get(f"/api/audits/{AUDIT_ID}/review").json()["results_stale"] is False
+    assert "compute the audit first" in api.get(f"/api/audits/{AUDIT_ID}/memo.md").json()["detail"]
+    assert "compute the audit first" in api.get(f"/api/audits/{AUDIT_ID}/verdict").json()["verdict"]["message"]
+
+
+def test_the_demo_audits_seeded_before_contract_5_are_reseeded_and_the_seeded_ones_are_current(monkeypatch):
+    """Review of 20 Oct (L2): SEED_VERSION 11 (18 Oct) seeded results of contract 4; the version moves with the contract so a deployed
+    database reseeds its demo audits instead of opening them as Stale."""
+    from app import run_audit
+    assert server.SEED_VERSION > 11
+    db = t.FakeDB()
+    monkeypatch.setattr(server, "db", db)
+    import asyncio
+    asyncio.run(server.seed_demo())
+    assert db["audits"].docs and not any(run_audit.results_stale(a) for a in db["audits"].docs)

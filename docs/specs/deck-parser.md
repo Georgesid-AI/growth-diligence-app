@@ -549,3 +549,12 @@ Amended 2026-10-20 (George, finding A and finding D after issue #136; tests `bac
   "weighted pipeline" and "weighted opportunity / value". A table column header names a figure's type before the page title, so the
   columns of a pipeline table under a revenue title are Pipeline, never Revenue or Bookings. The bare word "pipeline" stays a Sales
   keyword.
+
+Amended 2026-10-20 (George, review of the unit-economics change; tests `backend/tests/test_unit_economics_pipeline.py`,
+`backend/tests/test_structure_reading.py`):
+- A title, header or line types `arpa` or `arpu` only for "ARPA", "ARPU", "average revenue per", or a revenue word (revenue, sales, income,
+  spend, ARR, MRR, bookings) followed by "per" or "/", at most one of paying, active, new, existing or average, and the noun account, client,
+  customer or user where that noun ENDS the phrase (nothing, a mark, a figure or a period word such as "by year" follows). "Revenue per
+  customer segment", "per client type", "per customer cohort", "per user group" stay Revenue; "Seats per account" is no unit economics.
+- A column header "Revenue per client" over rows that name a client ("Acme") types each figure Revenue; over rows that are periods it stays ARPA.
+- A model label of arpa, arpu or pipeline stands only when the cell or one of its headers holds the keyword; otherwise it is listed as Other.

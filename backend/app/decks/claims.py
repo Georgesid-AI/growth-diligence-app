@@ -68,6 +68,9 @@ _LABEL_MAX = SNIPPET_MAX
 # "market" is a whole word: "marketing" and "marketplace" do not count.
 # Where two keywords overlap, the longer one counts: "paying users" is customers, not users;
 # "customer lifetime value" is ltv, not customers or customer_lifetime; "LTV / CAC", "LTV:CAC" is ltv_cac.
+# A revenue word, "per" or "/", and at most one adjective; the noun must then end the phrase: nothing, a mark, a figure or a period word follows.
+_PER_UNIT = r"\b(?:revenues?|sales|income|spend|ARR|MRR|bookings?)\s*(?:per|/)\s*(?:(?:paying|active|new|existing|average) )?"
+_ENDS = r"(?=\s*(?:$|[^\w\s]|\d|\b(?:by|in|per|over|for|at|monthly|annual|annually|quarterly|yearly|yoy|mom|ytd|ttm|fy|year|month|quarter|q[1-4]|h[12])\b))"
 _FAMILIES = [
     ("growth", r"\bCAGR\b|(?i:\bgrowth\b|\bgr(?:ow|ows|owing|own|ew)\b)"),
     ("revenue", r"\b(?:ARR|MRR)\b|(?i:\brevenues?\b|\bbookings?\b|\bturnover\b|\bGMV\b|\bTPV\b|\b(?:trading|payment|transaction) volume\b)"),
@@ -97,10 +100,12 @@ _FAMILIES = [
     ("customer_lifetime", r"(?i:\bcustomer life(?:time)?s?\b)"),
     ("ltv_cac", r"\bLTV\s*(?:/|:|\bto\b)\s*CAC\b"),
     ("trials_per_day", r"(?i:\btrials?\s*(?:per|/)\s*day\b)"),
-    # George, 2026-10-20: a "per account / client / customer" or "per user" title or label is unit economics (ARPA, ARPU), whatever
-    # revenue word it holds ("Average Revenue Per Account"): the phrase is longer than "Revenue", so it counts over it.
-    ("arpa", r"\bARPAs?\b|(?i:\b(?:(?:revenues?|sales|income|spend)\s+)?per\s+(?:account|client|customer)s?\b)"),
-    ("arpu", r"\bARPUs?\b|(?i:\b(?:(?:revenues?|sales|income|spend)\s+)?per\s+users?\b)"),
+    # George, 2026-10-20: a title, header or line is unit economics (ARPA, ARPU) when it says ARPA or ARPU, "average revenue per", or a
+    # revenue word per customer, client, account or user ("Revenue / customer", "ARR per customer") and that noun ENDS the phrase:
+    # "Revenue per customer segment", "per client type", "per user group" are breakdowns and stay Revenue. A count per account
+    # ("Seats per account") has no revenue word and is no unit economics.
+    ("arpa", r"\bARPAs?\b|(?i:\baverage (?:\w+ )?revenues? per\b(?!\s+(?:paying |active )?users?\b)|" + _PER_UNIT + r"(?:account|client|customer)s?" + _ENDS + ")"),
+    ("arpu", r"\bARPUs?\b|(?i:\baverage (?:\w+ )?revenues? per\s+(?:paying |active )?users?\b|" + _PER_UNIT + r"users?" + _ENDS + ")"),
     # The columns of a pipeline table, never revenue or bookings (George, 2026-10-20); "weighted pipeline" is longer than "pipeline" (Sales).
     ("pipeline", r"(?i:\bsize of (?:the )?opportunit(?:y|ies)\b|\bopportunity size\b|\bweighted (?:in )?(?:the )?(?:forecast|pipeline)\b"
                  r"|\bweighted (?:opportunit(?:y|ies)|value)\b)"),
@@ -731,6 +736,23 @@ def _shared_cell_periods(numbers: List[Dict], dates: List[Dict], refs: List, hea
     return out
 
 
+_REVENUE_WORD = re.compile(r"(?i)\b(?:revenues?|ARR|MRR|bookings?)\b")
+_AVERAGE_WORD = re.compile(r"(?i)\b(?:ARPA|ARPU|average|avg|mean|blended|total|overall)\b")
+
+
+def _names_a_unit(line: str, pos: int, header: str) -> bool:
+    """A column header "Revenue per client" over a row that names its client ("Acme | $500,000") gives that client's revenue: the figure
+    is Revenue, not ARPA (George, 2026-10-20). A row label that is a date, holds a figure or a keyword, or says average does not name one."""
+    label = line.split(" | ")[0]
+    if pos < len(label) + 3 or not _revenue_header(header) or _AVERAGE_WORD.search(header + " " + label):
+        return False
+    return bool(_WORD.search(label)) and not find_dates(label, table=True) and not find_numbers(label, []) and not _keywords(label)
+
+
+def _revenue_header(header: str) -> bool:
+    return bool(_REVENUE_WORD.search(header))
+
+
 def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), headers: Optional[Dict] = None,
                     box_period: Optional[str] = None, column_periods: Optional[Dict] = None,
                     bar_label: Optional[str] = None, percent_type: Optional[str] = None) -> List[Dict]:
@@ -782,6 +804,8 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
             family = percent_type
         else:
             continue
+        if family in ("arpa", "arpu") and borrowed and header and borrowed[1] is header and _names_a_unit(line, n["pos"], header):
+            family = "revenue"
         if family == "gross_margin" and n["currency"] and _GROSS_MARGIN.search(borrowed[1] if borrowed else line):
             family = "gross_profit"
         if family == "ebitda" and n["unit"] == "months" and \
