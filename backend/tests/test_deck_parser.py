@@ -2377,3 +2377,35 @@ def test_two_platforms_with_the_same_number_are_two_claims_and_the_same_platform
 def test_acquisition_cues_do_not_change_a_use_of_funds_slide():
     found = _funds_candidates([_funds_slide(P22_TEXT, P22_CHART)])
     assert _types(found) == {"use_of_funds"} and not _channels([_funds_slide(P22_TEXT, P22_CHART)])
+
+
+# ---------------------------------------------------------------------------
+# The same figure read at two precisions on one page (GoodVision p3: 501,378 and 501,378.04)
+# ---------------------------------------------------------------------------
+def _two_readings(first, second, page_a=3, page_b=3, period_b="2021"):
+    """The first figure in the page's text, the second in a table cell (a chart's data label and its table read the same number)."""
+    def cell(r, c, text):
+        return {"page": page_b, "kind": "table", "table": 1, "row": r, "col": c, "text": text}
+    return claims.detect_candidates(
+        [{"page": page_a, "kind": "text", "text": f"Revenue 2021: €{first}", "box": 1},
+         cell(1, 2, period_b), cell(2, 1, "Revenue"), cell(2, 2, f"€ {second}")], "deck.pdf")
+
+
+def test_one_figure_read_at_two_precisions_on_one_page_is_one_claim_with_the_more_precise_value_and_both_sources():
+    for order in (("501,378", "501,378.04"), ("501,378.04", "501,378")):
+        one, = _two_readings(*order)
+        assert (one["value"], one["claim_type"], one["currency"]) == (501378.04, "revenue", "EUR")
+        assert sorted(s["kind"] for s in one["sources"]) == ["table", "text"] and {s["page"] for s in one["sources"]} == {3}
+        assert one["inconsistent_dates"] == []
+
+
+def test_the_rounded_merge_never_joins_other_pages_other_periods_other_values_or_rates():
+    assert len(_two_readings("501,378", "501,378.04", page_b=4)) == 2, "another page"
+    assert len(_two_readings("501,378", "501,378.04", period_b="2022")) == 2, "another period"
+    assert len(_two_readings("501,378", "501,379")) == 2, "another whole number"
+    rates = claims.detect_candidates([{"page": 3, "kind": "text", "text": "Churn 2021: 12.4%", "box": 1},
+                                      {"page": 3, "kind": "text", "text": "Churn 2021: 12.0%", "box": 2}], "deck.pdf")
+    assert sorted(c["value"] for c in rates) == [12.0, 12.4], "a rate is not rounded to whole units"
+    ratio = claims.detect_candidates([{"page": 3, "kind": "text", "text": "LTV/CAC 2021: 2.6x", "box": 1},
+                                      {"page": 3, "kind": "text", "text": "LTV/CAC 2021: 3.1x", "box": 2}], "deck.pdf")
+    assert sorted(c["value"] for c in ratio) == [2.6, 3.1], "a ratio is not rounded to whole units"

@@ -55,7 +55,7 @@ import calendar
 import copy
 import re
 from datetime import date
-from math import hypot
+from math import floor, hypot
 from typing import Dict, Iterable, List, Optional, Tuple
 
 SNIPPET_MAX = 300
@@ -1276,7 +1276,7 @@ def detect_candidates(blocks: List[Dict], file: str, fiscal_year_end: int = 12) 
                 kept["_stated"] = kept["_stated"] or c["_stated"]
                 for a, b in zip(kept.get("by_period") or (), c.get("by_period") or ()):
                     a["_stated"] = a["_stated"] or b["_stated"]
-    found = _merge_unknown(list(merged.values()))
+    found = _merge_unknown(_merge_rounded(list(merged.values())))
     _apply_label_units(found)
     _flag_inconsistencies(found)
     _flag_funds_inconsistencies(found)
@@ -1328,6 +1328,47 @@ def same_claim(a: Dict, b: Dict) -> Optional[Dict]:
                                                                                      y["period_start"], y["period_end"]):
                 return x
     return None
+
+
+def _whole(value: Optional[float]) -> Optional[int]:
+    return None if value is None else int(floor(value + 0.5))
+
+
+def _decimals(value: float) -> int:
+    text = repr(float(value))
+    return 0 if "e" in text or "." not in text else len(text.split(".")[1].rstrip("0"))
+
+
+def _pages(candidate: Dict) -> set:
+    return {s.get("slide") or s.get("page") for s in candidate.get("sources") or ()} - {None}
+
+
+def _merge_rounded(found: List[Dict]) -> List[Dict]:
+    """The same figure read at two precisions on one page ("501,378" and "501,378.04"): same type, unit, currency and period, values
+    equal after rounding to whole units, and a page in common is one claim. The more precise value is kept and the other's source
+    location joins its sources, which are its evidence. Only money amounts, where a whole unit is small against the figure: never a rate, a ratio or a count (whole units would join
+    12.4% and 12.0%, or a 2.6 ratio and a 3.1 one). Never across pages or periods, never a table row's values by period."""
+    def rest(c):
+        return (c["claim_type"], _whole(c["value"]), _whole(c["value_high"]), c["unit"], c["currency"], c["target_date"],
+                c["period_start"], c["period_end"], c.get("channel"), c.get("qualifier"))
+    out, kept = [], {}
+    for c in found:
+        if c.get("by_period") or c["value"] is None or not c["currency"] or not _pages(c):
+            out.append(c)
+            continue
+        into = next((k for k in kept.get(rest(c), ()) if _pages(k) & _pages(c)), None)
+        if into is None:
+            kept.setdefault(rest(c), []).append(c)
+            out.append(c)
+            continue
+        if (_decimals(c["value"]), _decimals(c["value_high"] or 0)) > (_decimals(into["value"]), _decimals(into["value_high"] or 0)):
+            sources = into["sources"]
+            into.update({k: v for k, v in c.items() if k not in ("sources", "_stated")})
+            into["sources"] = list(c["sources"]) + [s for s in sources if s not in c["sources"]]
+        else:
+            into["sources"] = list(into["sources"]) + [s for s in c["sources"] if s not in into["sources"]]
+        into["_stated"] = into["_stated"] or c["_stated"]
+    return out
 
 
 def _merge_unknown(found: List[Dict]) -> List[Dict]:
