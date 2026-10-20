@@ -311,6 +311,10 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
                         <Provenance source={row.observed_source}>{observed.value}</Provenance>
                         {observed.at && <span className="text-[10px] text-slate-500"> · {observed.at}</span>}
                       </div>
+                      {/* the figure's own citation, beside the number: source key, sheet, rows, period (George, 2026-10-19, issue #136) */}
+                      {row.observed_citation && (
+                        <div className="text-[10px] font-mono text-slate-500 break-words" data-testid="register-observed-citation">{row.observed_citation}</div>
+                      )}
                       {/* the months of the claim's period the data lacks, beside the value (dates-and-periods.md section 4) */}
                       {missingText({ missing: row.months_missing }) && (
                         <div className="text-[10px] font-mono text-amber-800" data-testid="register-months-missing">{missingText({ missing: row.months_missing })}</div>

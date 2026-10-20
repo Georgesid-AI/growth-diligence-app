@@ -52,7 +52,9 @@ final). Location: docs/specs/claim-types-and-correction.md. Amends deck-parser.m
   | Growth basis | dates-and-periods.md §5 | no cue, or cues of two bases |
 - Order on a register row: direction only; turnover question; use of funds and acquisition channels (unchanged); no app
   metric (Unsupported); then the R fields: any Unknown → Unverified, reason `required field unknown: {fields}; set it with
-  Edit in the claims list` (growth basis alone keeps its own reason and one-click task, dates-and-periods.md §5); then the
+  Edit in the claims list`; a period Unknown reads `Period not read – set it in the claim row` first, the other fields after it
+  (George, 2026-10-19, issue #136; a date the parser could not read is the same case, no longer Unsupported "period not readable")
+  (growth basis alone keeps its own reason and one-click task, dates-and-periods.md §5); then the
   matching of claim-matching.md with coverage (dates-and-periods.md §4).
 - Figure type Target: a period after the as-of month is a forecast, as today (claim-matching.md table 2b). A period that is
   not after the as-of month: Unverified, reason `target figure: the deck states a plan for this period, not a result`; the

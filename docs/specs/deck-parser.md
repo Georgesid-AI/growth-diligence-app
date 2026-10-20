@@ -523,3 +523,12 @@ the 3-word reach, the phrase break, a column header, zero2hero p19), `test_claim
 qualifier reaches no gateway read, payload or log).
 The same rule applies to a model-read claim (structure-labelling.md): one the model labels `customers` whose row header or own
 cell holds a qualified customers noun is Users with its `qualifier`, so it is tested like the parser's and merges with it.
+
+## Amended 2026-10-20 (George, 2026-10-19, issue #136): figures that share one table cell
+A borderless PDF table can be read with a row's figures in one cell, under a header cell that holds every period. Before, every
+figure of the cell took the header's first period (four quarterly values all read as Q1). Now the k-th figure of one unit and currency
+in a cell takes the k-th period of its column header, or of the header cells from its column rightwards, when the counts match;
+otherwise none of them takes a period (no fallback: claim-matching.md table 2b, "Period not read – set it in the claim row") and
+the value's shown period is empty. A figure with a date of its own is unchanged. A revenue-type figure whose label or line holds a
+contract-value term reads "Contract value" for the deck inconsistency rule, so it is never compared with a revenue figure.
+Tests: `backend/tests/test_issue_136.py`.

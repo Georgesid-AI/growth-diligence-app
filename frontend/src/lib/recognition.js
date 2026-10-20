@@ -18,6 +18,9 @@ export const TYPE_LABELS = {
 export const TYPE_SOURCE_TEXT = { rules: "by rules", ai: "AI suggestion, not verified", you: "your choice" };
 export const TYPE_REASON_TEXT = { rules_and_model_disagree: "Two readings differ. Choose the type.", type_unsure: "Choose the type." };
 export const TYPE_CHOOSE = "Type: choose the type";
+// Under the type choice of a metrics sheet with a customer-style header, and once the report is chosen (George, 20 Oct 2026, issue #136).
+export const REUPLOAD_NOTE = "Switching back to Customer revenue needs a re-upload.";
+export const offersReport = (rec) => (rec.type_candidates || []).includes("monthly_revenue_report") && (rec.type_candidates || []).includes("customer_revenue");
 
 export const TURNOVER_QUESTION = "Is this money the company earned (revenue) or the value of transactions processed (volume)?";
 // S31e: one closed text per reason code of the server (`REASONS` in app/recognition.py).

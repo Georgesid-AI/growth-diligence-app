@@ -17,7 +17,7 @@ from typing import Dict, List, Optional, Tuple
 FIELDS = (
     "claim_id", "deck_file", "page_ref", "claim_type", "status", "deck_reading", "extraction_confidence", "claimed_value", "claimed_high",
     "claim_direction", "unit", "currency", "claimed_converted", "claimed_converted_high", "fx_rate", "fx_date", "period", "period_start", "period_end", "period_note", "segment", "segment_set_by", "metric",
-    "metric_set_by", "direction", "observed_value", "observed_at", "observed_source", "gap", "gap_normalised",
+    "metric_set_by", "direction", "observed_value", "observed_at", "observed_source", "observed_citation", "gap", "gap_normalised",
     "gap_kind", "gloss", "evidence_label", "reason", "tolerance", "rank", "value_at_stake_arr", "shortfall",
     "overlaps_with", "evidence_analysis", "evidence_source_key", "gate_sentence", "gate_threshold",
     "gate_budget_decision", "gate_date", "gate_saved", "gate_metric_name", "gate_direction", "key_gate", "gate_needed",
@@ -36,6 +36,13 @@ SOURCE_FIELDS = frozenset({"observed_source"})
 
 WHOLE, NOT_IN_DATA = "Whole company", "Not in the data"
 NO_PERIOD = "no period stated"
+# George, 2026-10-19 (issue #136, decision 3): a claim whose period cannot be read is Unverified with this text and is never read at
+# the as-of month or the evidence end; the 7 Oct fallback to the whole company applies to the segment only.
+PERIOD_NOT_READ = "Period not read – set it in the claim row"
+# George, 2026-10-19 (issue #136, decision 2): a contract value (annual or total contract value, contracted revenue, contracted or
+# committed ARR or MRR, CARR) is typed but not computed: never matched to engine revenue, Unsupported with this reason.
+CONTRACT_VALUE = "Contract value"
+CONTRACT_REASON = "Contract value – not computed by the app"
 FX_NEEDED = "FX rate needed"
 USE_OF_FUNDS = "use_of_funds"
 USE_OF_FUNDS_NOTE = "use of funds: an allocation share of the raise, no engine metric to test it against"
@@ -133,6 +140,8 @@ METRICS: Dict[str, dict] = {
     "CAC payback": dict(kind="quarter", unit="months", direction="lower", seg=False, missing=("cac payback",)),
     # Section 11: no engine source exists, so a claim measured here is always Unsupported.
     "Transaction volume": dict(kind="sum", unit="currency", direction="higher", seg=False, missing=()),
+    # Issue #136 (George, 2026-10-19): typed, never computed; always Unsupported, "Contract value – not computed by the app".
+    "Contract value": dict(kind="sum", unit="currency", direction="higher", seg=False, missing=()),
     # dates-and-periods.md section 5: growth of a monthly series on the claim's basis, in percentage points
     "Revenue growth": dict(kind="growth", unit="%", direction="higher", seg=False, missing=("arr / mrr",), base="Revenue"),
     "ARR growth": dict(kind="growth", unit="%", direction="higher", seg=False, missing=("arr / mrr",), base="ARR"),
@@ -452,6 +461,43 @@ def evidence_key(metric: str, segment: str, observed_at: Optional[str], default_
     return analysis, key.format(seg=segment, q=observed_at or "", l=default_l)
 
 
+def period_words(observed_at: Optional[str]) -> Optional[str]:
+    """An observed period in month names (issue #136): "2024-02" -> "Feb 2024"; "2023-Q4" and "2023-10 to 2023-12" -> "Oct–Dec 2023";
+    "2022-04 to 2023-03" -> "Apr 2022–Mar 2023"; a comparison keeps its "vs"; a note in brackets stays. Any other text stands."""
+    if not observed_at:
+        return observed_at
+
+    def month(m: str) -> str:
+        return _label_of(_mi(m))
+
+    def span(first: str, last: str) -> str:
+        if first == last:
+            return month(first)
+        if first[:4] == last[:4]:
+            return f"{calendar.month_abbr[int(first[5:7])]}–{month(last)}"
+        return f"{month(first)}–{month(last)}"
+
+    def one(text: str) -> str:
+        text = text.strip()
+        if _QUARTER.match(text):
+            first = _mi(_quarter_first_month(text))
+            return span(_ms(first), _ms(first + 2))
+        found = re.fullmatch(r"(\d{4}-\d{2}) to (\d{4}-\d{2})(?P<note> \(.*\))?", text)
+        if found:
+            return span(found.group(1), found.group(2)) + (found.group("note") or "")
+        return month(text) if _MONTH.match(text) else text
+    return " vs ".join(one(part) for part in observed_at.split(" vs "))
+
+
+def citation(source_key: Optional[str], source: Optional[dict], observed_at: Optional[str]) -> Optional[str]:
+    """The citation beside an observed figure (George, 2026-10-19, issue #136): "(source key, sheet, rows, period)", the period in
+    month names; a part that is unknown is left out. None with no source key and no source."""
+    src = source or {}
+    parts = [source_key, src.get("sheet"), src.get("rows"), period_words(observed_at)]
+    kept = [str(p) for p in parts if p]
+    return f"({', '.join(kept)})" if kept else None
+
+
 def _missing_item(results: dict, metric: str) -> Optional[dict]:
     """The engine's Missing Data item that stands for the metric (the one `_missing` reads `unlocked_by` from)."""
     for item in results.get("missing_data") or ():
@@ -632,10 +678,13 @@ def data_segments(results: dict) -> List[str]:
 
 def propose_metric(claim_type: str, claim_unit: Optional[str], text: str) -> Optional[str]:
     """The metric a claim names by its type, a keyword in its snippet or borrowed label, and its unit (table 2a)."""
+    from .decks.claims import CONTRACT_TERM
     metric = None
     if claim_type == "revenue":
         plain = _RECURRING.sub(" ", text)
-        if _NEW_MRR.search(text):
+        if CONTRACT_TERM.search(text):               # issue #136: a contracted or committed figure is a contract value, not revenue
+            metric = CONTRACT_VALUE
+        elif _NEW_MRR.search(text):
             metric = "New MRR"
         elif _MRR.search(text):
             metric = "MRR"
@@ -899,7 +948,12 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
                            implied_take_rate_source=(f"revenue: {src.get('file')} · {src.get('sheet')} · {src.get('rows')}; "
                                                      f"volume: {out['deck_file']} · {out['page_ref']}"))
         return finish("Unsupported", VOLUME_REASON)
+    if metric == CONTRACT_VALUE:                # issue #136: typed, never computed, never matched to engine revenue
+        return finish("Unsupported", CONTRACT_REASON)
     if [f for f in required if f != "growth basis"]:      # not matched until every required field is known (section 2)
+        others = [f for f in required if f != "period"]
+        if "period" in required:                # decision 3 of 2026-10-19: its own text, never the as-of month
+            return finish("Unverified", PERIOD_NOT_READ + (f"; {REQUIRED_REASON.format(fields=', '.join(others))}" if others else ""))
         return finish("Unverified", REQUIRED_REASON.format(fields=", ".join(required)))
     if not _fits(spec["unit"], claim_unit):
         return finish("Unsupported", "metric does not fit the claim's unit")
@@ -908,7 +962,7 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
     if segment != WHOLE and not spec["seg"]:
         return finish("Unsupported", "not computed by segment")
     if c.get("target_date") and (start is None or end is None):
-        return finish("Unsupported", "period not readable")
+        return finish("Unverified", PERIOD_NOT_READ)       # a date the parser could not read: the analyst sets it
 
     if fx and fx["rate"] is None:
         return finish("Unverified", f"{FX_NEEDED}: {currency}→{fx['currency']}")       # names the pair (the rate to set)
@@ -948,6 +1002,8 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
     found = evidence_key(metric, segment, observed_at, (results.get("cac_payback") or {}).get("default_l", 1))
     if found:
         out.update(evidence_analysis=found[0], evidence_source_key=found[1])
+        if observed is not None:
+            out["observed_citation"] = citation(found[1], source, observed_at)
     if claimed_low is None:
         return finish("Unsupported", "no claimed value")
     if partly:                                          # section 4: the figure over the months present, no test
@@ -1113,6 +1169,8 @@ def _observe(figures: "_Figures", spec: dict, metric: str, start: Optional[int],
     span = span or _Span(figures.results, metric)
     if as_of_i is None:
         return None, "missing", None, None
+    if end is None:                 # decision 3 of 2026-10-19: no as-of or latest figure stands in for a period that was not read
+        return f"Unverified|{PERIOD_NOT_READ}", None, None, None
     forecast = end is not None and end > as_of_i
 
     if kind == "asof":
@@ -1162,8 +1220,8 @@ def _observe(figures: "_Figures", spec: dict, metric: str, start: Optional[int],
         values, source, why = got
         if why == "segment not in the data":
             return "Unsupported|segment not in the data", None, None, None
-        if start is None or end is None:
-            return "Unverified|no period stated", None, None, None
+        if start is None:
+            return f"Unverified|{PERIOD_NOT_READ}", None, None, None
         months = sorted(values, key=_mi)
         first = _mi(months[0]) if months else None
         if forecast:
@@ -1221,7 +1279,9 @@ def _growth(figures: "_Figures", spec: dict, basis: str, start: Optional[int], e
     values, source, why = got
     if why == "segment not in the data":
         return "Unsupported|segment not in the data", None, None, None
-    if end is not None and end > as_of_i:
+    if end is None:
+        return f"Unverified|{PERIOD_NOT_READ}", None, None, None
+    if end > as_of_i:
         return None, None, source, None                 # a forecast: the caller says so
     e = span.last_month(as_of_i) if end is None else end
     s = e if start is None or end is None else start

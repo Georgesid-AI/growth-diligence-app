@@ -79,7 +79,7 @@
      "analyst": {},
      "expect": {
       "label": "Unverified",
-      "reason": "required field unknown: period",
+      "reason": "Period not read",
       "observed": null,
       "rank": 15,
       "metric": "Median sales cycle",
@@ -115,7 +115,7 @@
      "analyst": {},
      "expect": {
       "label": "Unverified",
-      "reason": "required field unknown: period",
+      "reason": "Period not read",
       "observed": null,
       "rank": 16,
       "metric": "Win rate",
@@ -227,7 +227,7 @@
      "analyst": {},
      "expect": {
       "label": "Unverified",
-      "reason": "required field unknown: period",
+      "reason": "Period not read",
       "observed": null,
       "rank": 17,
       "metric": "Median sales cycle",
@@ -520,7 +520,7 @@
      "analyst": {},
      "expect": {
       "label": "Unverified",
-      "reason": "required field unknown: period, population",
+      "reason": "Period not read",
       "observed": null,
       "rank": 22
      }
@@ -589,7 +589,7 @@
      },
      "expect": {
       "label": "Unverified",
-      "reason": "required field unknown: period",
+      "reason": "Period not read",
       "observed": null,
       "rank": 24,
       "segment": "Not in the data"
@@ -623,7 +623,7 @@
      "analyst": {},
      "expect": {
       "label": "Unverified",
-      "reason": "required field unknown: period",
+      "reason": "Period not read",
       "observed": null,
       "rank": 25,
       "metric": "Win rate",
@@ -826,7 +826,7 @@
      "analyst": {},
      "expect": {
       "label": "Unverified",
-      "reason": "required field unknown: period",
+      "reason": "Period not read",
       "observed": null,
       "rank": 27,
       "metric": "Win rate"
@@ -932,7 +932,7 @@
      "analyst": {},
      "expect": {
       "label": "Unverified",
-      "reason": "required field unknown: period",
+      "reason": "Period not read",
       "observed": null,
       "rank": 28,
       "metric": "ARR",
@@ -1313,7 +1313,7 @@
      "analyst": {},
      "expect": {
       "label": "Unverified",
-      "reason": "required field unknown: period",
+      "reason": "Period not read",
       "observed": null,
       "rank": 1,
       "metric": "Win rate"
@@ -1599,7 +1599,7 @@
      "analyst": {},
      "expect": {
       "label": "Unverified",
-      "reason": "required field unknown: period",
+      "reason": "Period not read",
       "observed": null,
       "rank": 8,
       "metric": "ACV",
@@ -1635,7 +1635,7 @@
      "analyst": {},
      "expect": {
       "label": "Unverified",
-      "reason": "required field unknown: period",
+      "reason": "Period not read",
       "observed": null,
       "rank": 9,
       "metric": "ACV",
@@ -1707,7 +1707,7 @@
      "analyst": {},
      "expect": {
       "label": "Unverified",
-      "reason": "required field unknown: period",
+      "reason": "Period not read",
       "observed": null,
       "rank": 10,
       "metric": "NRR (12-month)",
@@ -1818,7 +1818,7 @@
      "analyst": {},
      "expect": {
       "label": "Unverified",
-      "reason": "required field unknown: period",
+      "reason": "Period not read",
       "observed": null,
       "rank": 11,
       "metric": "Revenue"

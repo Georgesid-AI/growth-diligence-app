@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   TYPE_LABELS, TYPE_SOURCE_TEXT, TYPE_REASON_TEXT, TYPE_CHOOSE, REASON_TEXT, MONTH_REASON_TEXT, CONFIRM_ONLY, TURNOVER_QUESTION,
-  supportsText, rowText, rowChoice, monthText, claimsText, currencyChoices, CURRENCY_NOT_FOUND, TABLES_TEXT, sourceText, SOURCE_CHOICES,
+  REUPLOAD_NOTE, offersReport, supportsText, rowText, rowChoice, monthText, claimsText, currencyChoices, CURRENCY_NOT_FOUND, TABLES_TEXT, sourceText, SOURCE_CHOICES,
 } from "@/lib/recognition";
 
 const SMALL = "h-6 px-2 ml-1.5";
@@ -94,6 +94,7 @@ export default function RecognitionLine({ view, decide, reportingCurrency }) {
             onClick={() => send({ action: "confirm", part: "file_type" })}>Correct</Button>)}
         {(unclassed || open.type) && select(id("type-select"), typeOptions, pickType)}
       </div>
+      {((unclassed && offersReport(rec)) || view.mapping_dropped) && <p data-testid={id("reupload-note")}>{REUPLOAD_NOTE}</p>}
       {rec.file_type && rec.supports && rec.supports.length > 0 && <p data-testid={id("supports")}>{supportsText(rec)}</p>}
       {rec.series_source && (rec.tables || []).length > 1 && (
         <div>

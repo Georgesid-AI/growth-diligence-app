@@ -1448,6 +1448,9 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             # docs/specs/claim-review-conclusion.md: the analyst judgment and the contradictions outside the five
                             "judgment", "reasons", "unresolved_questions", "other_contradictions", "other_contradictions_text",
                             "JUDGMENT_PARTS", "JUDGMENT_LABELS", "SCOPE_SENTENCE", "NO_OTHER_CONTRADICTIONS",
+                            # issue #136: the citation beside an observed figure, the period that was not read, the contract value
+                            "observed_citation", "period_words", "citation", "PERIOD_NOT_READ", "CONTRACT_VALUE", "CONTRACT_REASON",
+                            "CONTRACT_TERM", "CONTRACT_LABEL", "_type_choice_open", "metric_labels",
                             *MATCHING_SERVER_ONLY})
 # The functions that log about the register, and the only things their log calls may name.
 REGISTER_LOGGERS = frozenset({"_claim_rows", "claim_register", "claim_register_csv", "update_claim_inputs", "answer_turnover",
@@ -1693,7 +1696,9 @@ def test_the_required_field_target_and_population_reasons_are_closed_sentences_w
         deck_claims.resolve_period(c, 12)
         rows.append(claim_matching.build_register([c], _results_with_the_series(),
                                                   {"fiscal_year_end": 12, "reporting_currency": "EUR", "fx": {"EUR": 1.0}})[0])
-    assert re.fullmatch(r"required field unknown: [a-z ,]+; set it with Edit in the claims list", rows[0]["reason"]), rows[0]["reason"]
+    # issue #136: a period that was not read has its own closed sentence, the other unknown fields follow it
+    assert re.fullmatch(r"Period not read – set it in the claim row(; required field unknown: [a-z ,]+; set it with Edit in the claims list)?",
+                        rows[0]["reason"]), rows[0]["reason"]
     assert rows[1]["reason"] == claim_matching.TARGET_REASON
     assert rows[2]["reason"] == claim_matching.POPULATION_REASON.format(population="registered users", measured="paying customers")
     assert sentinel not in json.dumps(rows, default=str)

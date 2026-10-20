@@ -748,6 +748,7 @@ def _dataset_view(ds: dict, version: Optional[int] = None, status: str = "ok", f
         "unit_note": ds.get("unit_note"), "looks": ds.get("looks"), "miss": _miss(dtype, states, mapping, ds.get("looks")),
         "forecast_claims": forecast, "read_as_claims": None, "pnl_grain": "monthly" if dtype == "pnl" else None,
         "sheet_map": None, "recognition": recognition, "recognition_only": bool(ds.get("recognition_only")),
+        "mapping_dropped": bool(ds.get("mapping_dropped")),      # the column mapping was dropped for the report type (decision of 20 Oct)
     }
     if dtype == "revenue" and "currency" in view["missing_required"] and not ds.get("recognition_only"):
         # No currency column. Several currencies in the file block compute and the status names them; otherwise the analyst answers the
@@ -845,6 +846,14 @@ async def _recognition_of(audit_id: str, audit: Optional[dict], ds: dict) -> Opt
     while len(_RECOGNITION_CACHE) > RECOGNITION_CACHE_SIZE:
         _RECOGNITION_CACHE.popitem(last=False)
     return result
+
+
+async def _type_choice_open(audit_id: str, audit: Optional[dict], ds: dict) -> bool:
+    """A mapped revenue file whose recognition offers "Monthly revenue report" beside "Customer revenue" (metric labels under a
+    customer-style header, decision 4 of 2026-10-19): its label rows are never summed as customers until the analyst chooses."""
+    found = await _recognition_of(audit_id, audit, ds)
+    return bool(found and found["recognised"] and found.get("type_state") == "click" and not found.get("file_type")
+                and "monthly_revenue_report" in (found.get("type_candidates") or []))
 
 
 async def _is_revenue_file(audit_id: str, audit: Optional[dict], ds: Optional[dict]) -> bool:
@@ -1430,6 +1439,13 @@ async def decide_recognition(audit_id: str, dtype: str, body: RecognitionDecisio
     decisions = _recognition_decision(current, body, ds.get("recognition_decisions") or {})
     await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype}, {"$set": {
         "recognition_decisions": decisions, "recognition_decided_at": usage_mod.now()}})
+    if dtype == "revenue" and not ds.get("recognition_only") and body.part == "file_type" \
+            and decisions.get("file_type") in rec.NO_MAPPING_TYPES:
+        # Decision 4 of 2026-10-19 (issue #136): a mapped file the analyst types as a report with no customer rows drops its column
+        # mapping and is read by its recognition only, so its label rows are never summed as customers.
+        await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype}, {"$set": {
+            "recognition_only": True, "mapping_dropped": True, "mapping": {}, "columns_state": [], "mapping_source": {}, "mapped_at": None}})
+        ds = {**ds, "recognition_only": True}
     if body.part == "currency" and dtype == "revenue" and not ds.get("recognition_only") and not (ds.get("mapping") or {}).get("currency"):
         await _confirm_currency_column(audit_id, ds, decisions["currency"], background)
     await _settle_recognition(audit_id, dtype, background)
@@ -2803,10 +2819,11 @@ async def _blocker_list(audit_id: str, audit: dict) -> list:
                 # An amount is observed in the audit's currency, whatever currency the deck states the claim in.
                 observed_currency = reporting if (claim_matching.METRICS.get(r.get("metric") or "") or {}).get("unit") == "currency" \
                     else r["currency"]
+                cited = f"{r['observed_citation']} " if r.get("observed_citation") else ""      # issue #136: the figure's own citation
                 out.append({"kind": "claim_contradicted", "citation": r["observed_source"], "claim_id": r["claim_id"],
                             "text": f"Top-5 claim contradicted: {r['claim_type']} {claimed} vs "
                                     f"{_figure(r['observed_value'], r['unit'], observed_currency)} observed "
-                                    f"({r['deck_file']}, {r['page_ref']})."})
+                                    f"{cited}({r['deck_file']}, {r['page_ref']})."})
     recon = (audit.get("results") or {}).get("revenue_reconciliation")
     if recon and recon.get("available") and recon.get("blocker"):
         pct = "—" if recon["gap_pct"] is None else f"{abs(recon['gap_pct']) * 100:g}"    # a fraction, shown as a percent
@@ -3016,6 +3033,9 @@ async def _run_compute(audit_id: str) -> dict:
             if not recognised or recognised["needs_click"]:
                 raise HTTPException(409, "Choices wait for your decision before compute")
             continue
+        if d["dtype"] == "revenue" and (d.get("recognition_sheets") or d.get("recognition_facts")) \
+                and await _type_choice_open(audit_id, a, d):
+            raise HTTPException(409, "Choices wait for your decision before compute")
         if d.get("sheet_map"):
             if sheet_mod.pending_count(d["sheet_map"]):
                 raise HTTPException(409, "Lines wait for your decision before compute")

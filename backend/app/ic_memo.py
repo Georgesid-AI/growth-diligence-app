@@ -518,7 +518,8 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     reg = [[f"#{r['rank']}", vd.claim_name(r) + f" – {vd.claimed_text(r, results.get('reporting_currency'))}", r["evidence_label"],
             "not yet computed" + (f" · shortfall {r['shortfall'] * 100:.1f}%" if r["shortfall"] is not None else ""),
             ", ".join(f"#{by_id[o]['rank']}" for o in r["overlaps_with"] or () if o in by_id) or "—",
-            f"{r['evidence_analysis']} · {r['evidence_source_key']} ({r['observed_at']})" if r["evidence_analysis"] and r["observed_at"]
+            f"{r['evidence_analysis']} {r['observed_citation']}" if r["evidence_analysis"] and r.get("observed_citation")      # issue #136
+            else f"{r['evidence_analysis']} · {r['evidence_source_key']} ({r['observed_at']})" if r["evidence_analysis"] and r["observed_at"]
             else (f"{r['evidence_analysis']} · {r['evidence_source_key']}" if r["evidence_analysis"] else r["reason"]),
             r["gate_sentence"] or (vd.W4_GATE_NEEDED if r["gate_needed"] else "—"),
             "key" if r["claim_id"] in {g["claim_id"] for g in key["gates"]} else "", "top 5" if r["claim_id"] in {f["claim_id"] for f in ver["five"]} else ""]

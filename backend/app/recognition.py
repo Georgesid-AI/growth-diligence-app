@@ -67,6 +67,11 @@ _SYNONYMS = frozenset(("revenue", "revenues", "net revenue", "recognised revenue
                        "invoiced revenue", "invoiced", "recurring revenue", "mrr", "arr", "monthly recurring revenue",
                        "annual recurring revenue", "subscription revenue"))
 _RANK = {"recognised": 0, "invoiced": 1, "recurring": 2}
+# A cumulative or rolling line (issue #136): a running total for the year, the last 12 months, a lifetime or a cumulative figure is
+# never the revenue row, whatever its revenue word (the whole label is read, a bracket's content included: "(current year)"). Summing
+# such a line month by month multiplies the year.
+_CUMULATIVE = re.compile(r"\b(?:ytd|year to date|current year|to date|cumulative|lifetime|ltm|ttm|last (?:12|twelve) months"
+                         r"|trailing(?: (?:12|twelve))? months?|rolling|running total)\b")
 _VOCABULARY = tuple("""revenue revenues sales turnover mrr arr arpa acv tcv customer customers client clients subscriber subscribers
 subscription subscriptions logo logos churn churned retention nrr grr booking bookings booked forecast fcst budget pipeline backlog
 contract contracted run-rate annualised annualized cost costs cogs expense expenses opex margin profit ebitda cash headcount fte payroll
@@ -116,9 +121,9 @@ def revenue_kind(label) -> Optional[str]:
 
 
 def is_candidate_label(label) -> bool:
-    """A label that may be the revenue row: a revenue word, none of the exclusion words and no "%"."""
+    """A label that may be the revenue row: a revenue word, none of the exclusion words, no "%" and no cumulative or rolling cue."""
     return revenue_kind(label) is not None and not _has(_clean(label), _EXCLUDED) and "%" not in str(label or "") \
-        and non_revenue_kind(label) is None
+        and non_revenue_kind(label) is None and not _CUMULATIVE.search(cr._norm(str(label or "")))
 
 
 def label_score(label) -> int:
@@ -195,6 +200,18 @@ def _title_texts(sheet) -> List[str]:
 def _cost_groups(texts) -> int:
     labels = [cr._norm(t) for t in texts]
     return len({i for i, rx in enumerate(cr._COST_LINES) if any(rx.search(t) for t in labels)})
+
+
+_METRIC_WORDS = tuple(w for w in _VOCABULARY if w not in _CUSTOMER_WORDS)
+
+
+def _metric_labels(lines: List[Dict]) -> bool:
+    """Decision 4 of 2026-10-19 (issue #136): the labels under a customer-style header read as metric names when their share of labels
+    holding a vocabulary word other than a customer word passes the metric threshold and one of them is a revenue candidate ("Customer 1"
+    is a customer; "Recognised revenue", "ARR", "Forecast revenue" are metrics)."""
+    hits = sum(1 for ln in lines if _has(_clean(ln["label"]), _METRIC_WORDS))
+    return bool(lines) and hits / len(lines) > METRIC_LABEL_SHARE and hits >= MIN_METRIC_HITS \
+        and any(is_candidate_label(ln["label"]) for ln in lines)
 
 
 def _label_mode(lines: List[Dict], customer_header: bool) -> Tuple[str, float, int, int]:
@@ -288,11 +305,15 @@ def _labels_info(sheet, rd: Dict, fye: int) -> Dict:
     head = _header_cell(grid, rd["header_row"], rd["label_col"])
     customer_header = _has(_clean(head), _CUSTOMER_WORDS) or _clean(head) in _NAME_HEADERS
     mode, share, hits, confidence = _label_mode(lines, customer_header)
+    # Decision 4 of 2026-10-19 (issue #136): the header says customer but the labels say metrics; the analyst chooses the type, and
+    # until then the rows are never summed as customers.
+    metric_labels = customer_header and _metric_labels(lines)
     marked = [{"row": ln["row"], "label": ln["label"], "kind": non_revenue_kind(ln["label"])} for ln in lines
-              if mode == "metric" and non_revenue_kind(ln["label"])]
+              if (mode == "metric" or metric_labels) and non_revenue_kind(ln["label"])]
     texts = [t for _, _, t in rd["titles"]] + [h for h in [head] if h] + [p["header"] for p in periods]
     return {"layout": "labels", "sheet": sheet, "rd": rd, "periods": periods, "lines": lines, "lists": lists, "mode": mode, "share": share,
             "hits": hits, "confidence": confidence, "head": head, "marked": marked, "header_row": rd["header_row"],
+            "metric_labels": metric_labels,
             "label_col": rd["label_col"], "codes": _codes(texts + [ln["label"] for ln in lines]),
             "titles": [t for _, _, t in rd["titles"]]}
 
@@ -399,9 +420,10 @@ def analyse(sheet, fye: int = 12) -> Dict:
 # ---------------------------------------------------------------------------
 # Candidates for the revenue row
 # ---------------------------------------------------------------------------
-def _candidates(info: Dict, out: Set[int]) -> List[Dict]:
-    """The unmarked candidate rows of a metric-labelled sheet (section 2.1), ordered by rank, confidence and sheet order."""
-    if info["mode"] != "metric":
+def _candidates(info: Dict, out: Set[int], metric: Optional[bool] = None) -> List[Dict]:
+    """The unmarked candidate rows of a metric-labelled sheet (section 2.1), ordered by rank, confidence and sheet order. `metric`
+    reads the rows as metric labels whatever the sheet's mode (a customer-style header over metric labels, decision 4 of 2026-10-19)."""
+    if not (info["mode"] == "metric" if metric is None else metric):
         return []
     ncols = len(info["periods"]) or 1
     found = []
@@ -672,28 +694,35 @@ def _finalize_labels(info: Dict, ctx: Dict) -> Dict:
     money = dec.get("money_kind")
     out = set(marked)
     volume: Set[int] = set()
-    cands = _candidates(info, out)
+    mode = info["mode"]
+    chosen_type = dec.get("file_type") if dec.get("file_type") in RECOGNITION_TYPES else None
+    # Decision 4 of 2026-10-19 (issue #136): metric labels under a customer-style header are read as metrics until the analyst says
+    # the rows are customers; "Monthly revenue report" makes the sheet a metrics sheet.
+    unsure_metrics = bool(info.get("metric_labels")) and mode != "metric"
+    if unsure_metrics and chosen_type == "monthly_revenue_report":
+        mode = "metric"
+    as_metrics = mode == "metric" or (unsure_metrics and chosen_type is None)
+    cands = _candidates(info, out, as_metrics)
     turnover_first = bool(cands and cands[0]["turnover"])
     if money == "volume" and turnover_first:
         volume = {c["row"] for c in cands if c["turnover"]}
-        cands = _candidates(info, out | volume)
-    mode = info["mode"]
+        cands = _candidates(info, out | volume, as_metrics)
     labels_text = _title_texts(info["sheet"]) + ([info["head"]] if info["head"] else [])
-    a_ok = bool(cands) if mode == "metric" else any(revenue_kind(t) for t in labels_text)
+    a_ok = bool(cands) if as_metrics else (chosen_type is not None or any(revenue_kind(t) for t in labels_text))
     anynum = any(v is not None for ln in info["lines"] for v in ln["values"])
-    c_ok = any(c["numbers"] for c in cands) if (mode == "metric" and cands) else anynum
+    c_ok = any(c["numbers"] for c in cands) if (as_metrics and cands) else anynum
     missing = [name for name, ok in (("revenue_measure", a_ok), ("reference", True), ("numbers", c_ok)) if not ok]
     if missing:
         return _blank_result(info, missing, marked_list)
     periods = [p for p in info["periods"] if p["end"]]
-    rules_type = _type_of_labels(info)
+    rules_type = None if (unsure_metrics and chosen_type is None) else _type_of_labels({**info, "mode": mode})
     model_type = prop["file_type"] if prop and prop.get("file_type") in RECOGNITION_TYPES else None
     ftype, tstate, treason, tsource, tcands = rules_type, "auto", None, "rules", []
     if rules_type:
         if model_type and model_type != rules_type:
             tstate, treason, tcands = "click", "rules_and_model_disagree", [rules_type, model_type]
     else:
-        tstate, tcands = "click", ["customer_revenue", "revenue_summary"]
+        tstate, tcands = "click", (["customer_revenue", "monthly_revenue_report"] if unsure_metrics else ["customer_revenue", "revenue_summary"])
         if model_type in tcands:
             ftype, treason, tsource = model_type, "type_unsure", "ai"
     if dec.get("file_type") in RECOGNITION_TYPES:

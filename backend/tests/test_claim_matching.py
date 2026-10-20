@@ -335,7 +335,7 @@ def test_a_figure_with_no_period_waits_for_its_period_and_is_marked():
 def test_revenue_is_a_sum_so_with_no_period_it_is_unverified_not_unsupported():
     row = run_claim({"claim_type": "revenue", "snippet": "Revenue €1M"})
     assert (row["evidence_label"], row["observed_value"]) == ("Unverified", None)
-    assert row["reason"] == "required field unknown: period; set it with Edit in the claims list"
+    assert row["reason"] == cm.PERIOD_NOT_READ == "Period not read – set it in the claim row"       # George, 2026-10-19 (issue #136)
     assert row["period_note"] == "no period stated"
 
 
@@ -611,7 +611,7 @@ def test_a_register_row_has_exactly_the_fields_of_section_6_and_the_verdict_spec
     section_6 = ("claim_id deck_file page_ref claim_type status deck_reading extraction_confidence claimed_value claimed_high claim_direction unit "
                  "currency claimed_converted claimed_converted_high fx_rate fx_date period "
                  "period_start period_end period_note segment segment_set_by metric metric_set_by direction observed_value "
-                 "observed_at observed_source gap gap_normalised gap_kind gloss evidence_label reason tolerance rank "
+                 "observed_at observed_source observed_citation gap gap_normalised gap_kind gloss evidence_label reason tolerance rank "
                  "value_at_stake_arr shortfall overlaps_with evidence_analysis evidence_source_key gate_sentence gate_threshold "
                  "gate_budget_decision gate_date gate_saved gate_metric_name gate_direction key_gate gate_needed as_of_month "
                  "as_of_defaulted turnover_state turnover_note turnover_set_by turnover_reason implied_take_rate "

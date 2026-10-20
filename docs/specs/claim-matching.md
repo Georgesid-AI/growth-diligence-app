@@ -1,6 +1,12 @@
 # Spec: Claim matching: approved claims tested against the computed metrics
 Status: Draft; decisions of 2026-10-07 applied (§10). Location: docs/specs/claim-matching.md.
 Follows deck-parser.md §6.
+Amended 2026-10-20 (George's decisions of 2026-10-19 on issue #136): every observed figure carries its own citation, `observed_citation`
+"(source key, sheet, rows, period)", beside the number in the register, the banner (chat-upload.md S16b), the CSV and the memo (§6); a new
+metric "Contract value" (annual or total contract value, contracted revenue, contracted or committed ARR or MRR, TCV, ACV, CARR) is typed
+but never computed and never matched to engine revenue: Unsupported, "Contract value – not computed by the app" (table 2a); a claim
+whose period was not read is Unverified "Period not read – set it in the claim row" and no metric is read at the as-of month or the
+evidence end in its place (table 2b; the 7 Oct fallback to the whole company applies to the segment only).
 Amended 2026-10-15 (docs/specs/dates-and-periods.md): claim-period coverage (Covered / Partly covered → Inconclusive / Not covered →
 Unverified "claim period not in supplied data: …") replaces table 2b's "before {metric}'s first month" and "months missing" reasons
 and Q2; a claim with no period reads the evidence end, never an as-of month the data does not reach; table 2a gains Revenue, ARR, MRR
@@ -75,6 +81,7 @@ the whole-company figure and marked "whole company".
 | Gross margin | gross margin, in % | % | `cac_payback.quarters[q].gross_margin_pct` | quarter | no | higher |
 | CAC payback | sales: "payback" | months | `cac_payback.quarters[q]` at the default L | quarter | no | lower |
 | Transaction volume | a turnover term (§11), once the analyst or the rules of §11 say volume | currency | no engine source: always Unsupported | | | |
+| Contract value | revenue: a contract-value term (annual or total contract value, contracted revenue, contracted or committed ARR or MRR, TCV, ACV, CARR), read before any revenue word (2026-10-20, issue #136) | currency | no engine source: always Unsupported, "Contract value – not computed by the app"; the analyst may pick it | | | |
 | none | every other claim type, growth rates and users among them; "bookings" alone; "retention" or "churn" without "net", "revenue" or "gross" | | | | | |
 
 | Claim | Rule (table 2b) |
@@ -84,7 +91,7 @@ the whole-company figure and marked "whole company".
 | Quarter | the period's months equal one calendar quarter of the engine (every fiscal quarter does with a year-end in March, June, September or December) |
 | As-of | the period ends in the as-of month |
 | Period ends after the as-of month | forecast; observed is the as-of figure, for a sum the period's months up to the as-of month ("to date"; none yet: "—"), for a quarter metric the latest complete quarter (CAC payback: its headline quarter) |
-| No period | the as-of figure (a quarter metric: the latest complete quarter; CAC payback: the headline quarter), marked "no period stated"; revenue, a sum, has no as-of figure: Unverified, reason "no period stated" |
+| No period, or a period that could not be read | Unverified, reason "Period not read – set it in the claim row", marked "no period stated"; no metric of any kind is read at the as-of month or the evidence end in its place (George, 2026-10-19, issue #136; replaces D4 and Q1). A figure of a table row whose cell held several figures takes the header period of its own position, else none (deck-parser.md, amended 2026-10-20) |
 | Other currency | converted at the saved FX rate before matching (the rate to the reporting currency, from the audit's FX settings on the mapping screen, chat-upload.md §16). The row shows both figures, "150,000 GBP (171,000 EUR)": the claimed amount and the converted amount, rounded to whole units (2026-10-09, George). The rate and the date it applies at (the as-of month's last day) are on hover, and stay in the stored row (`fx_rate`, `fx_date`), the CSV and the memo; the rate date never stands where the claim's date is expected. The Period column reads the claim's own period, or "no date" when it states none. A range converts at both ends. With no rate saved the row is Unverified, reason "FX rate needed", before any observed figure is read, whatever the period |
 | No saved rate (2026-10-09) | the reason names the pair, "FX rate needed: GBP→EUR" (claim currency, reporting currency), and the screens link to the FX settings (chat-upload.md §16). The claim's own cell reads "150,000 BRL (BRL→EUR rate missing – enter it in FX settings at the top of the page)", with "FX settings" as the link |
 | Direction with no figure | "Positive EBITDA" (deck-parser.md §2): no value, `claim_direction` "positive" or "negative". No metric is read and no gap is computed: the row is Unverified, reason "direction only: the claim states no figure to test", whatever the claim type. A figure typed over it by an edit ends the direction and the claim is tested as any other |
@@ -190,6 +197,7 @@ under `register`, beside today's `claims`; `register` is empty when the audit ha
 | `direction` | str or null | higher, lower |
 | `observed_value`, `observed_at` | float or null, str | "2024-02", "2023-Q4", "2024-01 to 2024-02" |
 | `observed_source` | object | file, sheet, rows, rule |
+| `observed_citation` | str or null | "(source key, sheet, rows, period)", the figure's own citation, the period in month names ("Oct–Dec 2023", "Feb 2024", "Jan–Mar 2023 (3 of 12 months)"); null with no figure. Shown beside the number in the register, in the banner, the CSV (its own column after `observed_source`) and the memo (2026-10-20, issue #136) |
 | `gap`, `gap_normalised`, `gap_kind` | float or null | miss, beat, to go |
 | `gloss` | str or null | table 3 |
 | `evidence_label`, `reason`, `tolerance` | str | table 4 (null while a Definition check is open, §4.1); "±5%", "±1 pp" |

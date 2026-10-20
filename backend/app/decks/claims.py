@@ -693,6 +693,34 @@ def _borrow_date(texts: Iterable[str]) -> Optional[Tuple[str, str, str]]:
     return None
 
 
+def _shared_cell_periods(numbers: List[Dict], dates: List[Dict], refs: List, headers: Dict) -> Dict[int, Optional[Tuple[str, str, str]]]:
+    """id(number) -> the period of a figure that shares its table cell with other figures of the same unit and currency (a borderless
+    PDF table read into one cell, issue #136). The k-th figure takes the k-th period of its column header, or of the header cells
+    from its column rightwards, when the counts match; otherwise every figure of the cell gets none: no figure takes the header's
+    first period (decision 3 of 2026-10-19: a period that cannot be read is not read). A figure with a date of its own is left out."""
+    def col_of(n):
+        return next((r.get("col") for s, e, r in refs if s <= n["pos"] < e), None)
+    groups: Dict[Tuple, List[Dict]] = {}
+    for n in numbers:
+        if not _nearest(dates, n):
+            groups.setdefault((col_of(n), n["unit"], n["currency"]), []).append(n)
+    out: Dict[int, Optional[Tuple[str, str, str]]] = {}
+    for (col, _, _), members in groups.items():
+        if col is None or len(members) < 2:
+            continue
+        own = find_dates(headers.get(col) or "", table=True)
+        across = [d for c in sorted(c for c in headers if c >= col) for d in find_dates(headers[c] or "", table=True)]
+        for found in (own, across):
+            if len(found) == len(members):
+                for n, d in zip(sorted(members, key=lambda m: m["pos"]), found):
+                    out[id(n)] = (d["date"], d["text"], d["text"])
+                break
+        else:
+            for n in members:
+                out[id(n)] = None
+    return out
+
+
 def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), headers: Optional[Dict] = None,
                     box_period: Optional[str] = None, column_periods: Optional[Dict] = None,
                     bar_label: Optional[str] = None, percent_type: Optional[str] = None) -> List[Dict]:
@@ -725,6 +753,7 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
                 **({"qualifier": qualifier} if qualifier else {})}
 
     out = []
+    shared = _shared_cell_periods(numbers, dates, refs, headers) if table else {}
     for n in numbers:
         own = _nearest(keywords, n)
         header = headers.get(ref_at(n["pos"]).get("col"))
@@ -753,7 +782,11 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
                  "value_high": -n["value"] if n["value_high"] is not None else None}
         own_date = _nearest(dates, n)
         stacked = (column_periods or {}).get(ref_at(n["pos"]).get("col"))
-        if own_date or stacked is None:
+        if id(n) in shared:
+            # Figures that share one table cell: each takes the period of its own position in the header, or none (issue #136)
+            own_date, date = None, shared[id(n)]
+            stated = date is not None
+        elif own_date or stacked is None:
             # The year label under a bar is the figure's own date: taken after its own date, column header and box period, before
             # any text further away, and "stated", so it is compared for a deck inconsistency (docs/specs/deck-parser.md section 2).
             date = None if own_date else _borrow_date(nearby) or _borrow_date([box_period] if box_period else []) \
@@ -1333,15 +1366,22 @@ def _in_stack(unit: Dict) -> bool:
 
 _TURNOVER_TERM = re.compile(r"(?i)\b(?:turnover|GMV|TPV|gross merchandise (?:value|volume)|(?:total )?(?:trading|payment|transaction) volume)\b")
 _RECURRING_TERM = re.compile(r"\b(?:ARR|MRR)\b")
+# A contract value (George, 2026-10-19, issue #136): a figure the deck labels as contracted or committed is a contract value, never
+# revenue. The words of docs/specs/revenue-file-recognition.md section 2.1, whole words, any case.
+CONTRACT_TERM = re.compile(r"(?i)\b(?:(?:annual|total)?\s*contract(?:ed)?\s+values?|contracted\s+revenues?|contracted\s+(?:arr|mrr)"
+                           r"|committed\s+(?:arr|mrr)|tcv|acv|carr)\b")
+CONTRACT_LABEL = "Contract value"
 
 
 def deck_label(c: Dict) -> Optional[str]:
-    """The word the deck uses for a revenue-type figure: "Turnover" when its label or line holds a turnover term (and no
-    ARR or MRR), else "Revenue". None for every other type. A turnover figure is never compared with a revenue figure
-    for a deck inconsistency (docs/specs/claim-matching.md section 11)."""
+    """The word the deck uses for a revenue-type figure: "Contract value" when its label or line holds a contract-value term,
+    "Turnover" when it holds a turnover term (and no ARR or MRR), else "Revenue". None for every other type. A contract value or a
+    turnover figure is never compared with a revenue figure for a deck inconsistency (docs/specs/claim-matching.md section 11)."""
     if c.get("claim_type") != "revenue":
         return None
     text = f"{c.get('label_from') or ''} {c.get('snippet') or ''}"
+    if CONTRACT_TERM.search(text):
+        return CONTRACT_LABEL
     return "Turnover" if _TURNOVER_TERM.search(text) and not _RECURRING_TERM.search(text) else "Revenue"
 
 
@@ -1635,6 +1675,8 @@ def _row_series(found: List[Dict], headers: Dict) -> List[Dict]:
             out.append(c)
         elif c is group[0]:
             def period(item):
+                if item["target_date"] is None:
+                    return None                             # no period was read: none is shown (issue #136)
                 header = headers.get(item["sources"][0].get("col"))
                 if item["period_text"] and item["date_from"] == item["period_text"]:
                     return item["period_text"]          # the header stack's period ("Q3 2025")

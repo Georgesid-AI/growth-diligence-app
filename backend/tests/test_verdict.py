@@ -116,7 +116,7 @@ def test_the_three_reasons_are_the_claims_that_made_the_rule_fire_each_citing_it
     v = vd.verdict(rows, results_for(RUNS["A"]), {"claim_ids": vd.proposal(rows)})
     assert v["outcome"] == "Selected claims not supported" and len(v["reasons"]) == 3
     assert v["reasons"][0] == ("#1 Revenue, Q4 2023: Contradicted, €49,047 against €60,000 (€10,953 lower (miss)). "
-                               "Evidence: Revenue by month · revenue_series.data.total (revenue.csv · CSV · rows 2–71 (70 rows)).")
+                               "Evidence: Revenue by month (revenue_series.data.total, CSV, rows 2–71 (70 rows), Oct–Dec 2023).")
     unsupported = [row(1, "Unsupported", gate=True), *[row(i, "Verified") for i in range(2, 6)]]
     again = vd.verdict(unsupported, {"reporting_currency": "EUR"}, {"claim_ids": [r["claim_id"] for r in unsupported]})
     assert again["reasons"][0] == "#1 ARR, Feb 2024: Unsupported, reason 1. No figure in the supplied files."

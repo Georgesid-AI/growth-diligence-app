@@ -100,6 +100,16 @@ describe("the detected-type line", () => {
     expect(q("recognition-type-revenue").textContent).toBe("Type: choose the type");
     const options = [...q("recognition-type-select-revenue").querySelectorAll("option")].map((o) => o.value).filter(Boolean);
     expect(options).toEqual(["customer_revenue", "revenue_summary"]);
+    expect(q("recognition-reupload-note-revenue")).toBeNull();
+  });
+
+  test("metric labels under a customer header say that switching back to Customer revenue needs a re-upload (issue #136)", async () => {
+    await mount({ ...AUTO, file_type: null, type_state: "click", type_candidates: ["customer_revenue", "monthly_revenue_report"], needs_click: true });
+    expect(q("recognition-reupload-note-revenue").textContent).toBe("Switching back to Customer revenue needs a re-upload.");
+    await mount({ ...AUTO, type_source: "you" }, { mapping_dropped: true });       // the report chosen: the mapping was dropped
+    expect(q("recognition-reupload-note-revenue").textContent).toBe("Switching back to Customer revenue needs a re-upload.");
+    await mount({ ...AUTO, type_source: "you" });
+    expect(q("recognition-reupload-note-revenue")).toBeNull();
   });
 });
 

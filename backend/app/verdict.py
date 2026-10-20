@@ -135,7 +135,9 @@ def reason_text(row: dict, reporting_currency: Optional[str]) -> str:
     gap = f" ({row['gloss']})" if row.get("gloss") else ""
     text = f"{head}, {observed_text(row, reporting_currency)} against {claimed_text(row, reporting_currency)}{gap}."
     src = row.get("observed_source") or {}
-    if row.get("evidence_analysis") and src:
+    if row.get("evidence_analysis") and row.get("observed_citation"):      # issue #136: source key, sheet, rows and the period
+        text += f" Evidence: {row['evidence_analysis']} {row['observed_citation']}."
+    elif row.get("evidence_analysis") and src:
         text += f" Evidence: {row['evidence_analysis']} · {row['evidence_source_key']} ({src.get('file')} · {src.get('sheet')} · {src.get('rows')})."
     return text
 
@@ -267,9 +269,11 @@ def _plural(n: int, one: str, many: str) -> str:
 
 
 def _source_text(row: dict) -> str:
-    """Where a contradiction's figures come from: analysis · source key · file · sheet · rows, then the deck and its page."""
+    """Where a contradiction's figures come from: the analysis, the figure's citation (source key, sheet, rows, period; issue #136) and
+    its file, then the deck and its page. A row with no citation names analysis · source key · file · sheet · rows."""
     src = row.get("observed_source") or {}
-    parts = [row.get("evidence_analysis"), row.get("evidence_source_key"), src.get("file"), src.get("sheet"), src.get("rows")]
+    parts = [row.get("evidence_analysis"), row.get("observed_citation"), src.get("file")] if row.get("observed_citation") else \
+        [row.get("evidence_analysis"), row.get("evidence_source_key"), src.get("file"), src.get("sheet"), src.get("rows")]
     deck = " ".join(str(x) for x in (row.get("deck_file"), row.get("page_ref")) if x)
     return " · ".join(str(p) for p in parts + [deck] if p)
 
