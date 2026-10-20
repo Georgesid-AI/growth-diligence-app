@@ -110,7 +110,9 @@ def test_arpa_and_arpu_are_metrics_that_are_never_computed():
 
 @pytest.mark.parametrize("title", [
     "Revenue per customer segment", "Revenue per client type", "Revenue per customer cohort", "Revenue per user group",
-    "Revenue per account manager", "Revenue per segment", "Revenue by customer segment"])
+    "Revenue per account manager", "Revenue by customer segment", "Average revenue per customer segment",
+    "Revenue per customer-segment", "Revenue per customer/segment", "Average revenue per customer-segment", "Revenue per employee type",
+    "Revenue per employee-type", "Revenue per order/region"])
 def test_a_breakdown_title_with_a_noun_after_the_per_unit_term_stays_revenue(title):
     found = detect(title)
     assert values_of(found, "revenue") == [1100, 1250, 1400, 1650]
@@ -120,7 +122,8 @@ def test_a_breakdown_title_with_a_noun_after_the_per_unit_term_stays_revenue(tit
 @pytest.mark.parametrize("title, family", [
     ("ARR per customer", "arpa"), ("Average revenue per paying customer", "arpa"), ("Average revenue per active user", "arpu"),
     ("Revenue / customer", "arpa"), ("Revenue / user", "arpu"), ("MRR per account", "arpa"), ("Bookings per client", "arpa"),
-    ("Revenue per customer (EUR)", "arpa"), ("Revenue per customer, by year", "arpa"), ("Average revenue per customer segment", "arpa")])
+    ("Revenue per customer (EUR)", "arpa"), ("Revenue per customer, by year", "arpa"),
+    ("Revenue per subscriber", "arpu"), ("Average revenue per subscriber", "arpu"), ("Average revenue per customer (EUR)", "arpa")])
 def test_the_per_unit_variants_are_arpa_or_arpu(title, family):
     found = detect(title)
     assert values_of(found, family) == [1100, 1250, 1400, 1650]
@@ -157,3 +160,83 @@ def test_under_a_pipeline_column_every_row_is_pipeline_whatever_its_row_label_sa
     found = claims.detect_candidates(parse_deck(pdf_page([(50, 560, 22, "Overview")] + table, rects), "deck.pdf")["blocks"], "deck.pdf")
     assert values_of(found, "pipeline") == [500000, 800000]
     assert not any(c["claim_type"] in ("revenue", "arpa") for c in found)
+
+
+# --- Review of 20 Oct, round 3: the noun after "per" decides (George, 2026-10-20) ----------------------------------------------------
+
+@pytest.mark.parametrize("title", [
+    "Average revenue per month", "Average revenue per year", "Average revenue per quarter", "Revenue per month", "ARR per year",
+    "Average monthly revenue per quarter"])
+def test_a_period_after_per_is_revenue(title):
+    found = detect(title)
+    assert values_of(found, "revenue") == [1100, 1250, 1400, 1650]
+    assert not any(c["claim_type"] in ("arpa", "arpu", "other") for c in found)
+
+
+@pytest.mark.parametrize("title", [
+    "Average revenue per employee", "Average revenue per order", "Average revenue per region", "Average revenue per segment",
+    "Average monthly revenue per store", "Revenue per employee", "Revenue per segment", "ARR per store", "Bookings per order"])
+def test_any_other_noun_after_per_is_other_never_revenue_or_arpa(title):
+    found = detect(title)
+    assert values_of(found, "other") == [1100, 1250, 1400, 1650]
+    assert not any(c["claim_type"] in ("revenue", "arpa", "arpu") and c["value"] < 250000 for c in found)
+
+
+def test_a_line_with_a_period_or_another_noun_after_per():
+    def kinds(line):
+        return [c["claim_type"] for c in claims.line_candidates(line, [(0, len(line), {})])]
+    assert kinds("Average revenue per month $400k") == ["revenue"]
+    assert kinds("Average revenue per employee $400k") == ["other"]
+    assert kinds("Average revenue per customer-segment $400k") == ["revenue"]
+    assert kinds("Revenue per customer/segment $400k") == ["revenue"]
+    assert kinds("Average revenue per customer $400k") == ["arpa"]
+
+
+def test_other_claims_are_listed_but_never_enter_the_register_or_the_top_5():
+    found, rows = register_of("Average revenue per employee")
+    other = [c for c in found if c["claim_type"] == "other"]
+    assert len(other) == 4 and claims.type_group("other") == claims.OTHER_GROUP
+    ids = {c["id"] for c in other}
+    assert not [r for r in rows if r["claim_id"].split("#")[0] in ids]
+    assert not [r for r in vd.proposal(rows) if r["claim_id"].split("#")[0] in ids]
+
+
+# Named rows and named bars: a revenue word per client over one row or bar per named entity is that entity's revenue.
+
+@pytest.mark.parametrize("header", ["Sales per client", "Income per client", "ARR per customer", "MRR per account", "Bookings per client",
+                                    "Revenue per client"])
+def test_every_revenue_word_per_unit_over_named_rows_is_revenue(header):
+    values, found = table_values(header, [("Acme", "$500,000"), ("Beta", "$800,000")], "revenue")
+    assert values == [500000, 800000]
+    assert not any(c["claim_type"] in ("arpa", "arpu") for c in found)
+
+
+def named_bars_page(title, names=("Acme", "Beta", "Gamma", "Delta")):
+    texts = [(50, 560, 22, title)]
+    for i, (name, (_, label)) in enumerate(zip(names, BARS)):
+        texts += [(90 + 150 * i, 380, 12, label), (90 + 150 * i, 340, 12, name)]
+    return claims.detect_candidates(parse_deck(pdf_page(texts, []), "deck.pdf")["blocks"], "deck.pdf")
+
+
+@pytest.mark.parametrize("title", ["Revenue per client", "Sales per client", "Income per customer", "ARR per customer", "MRR per account",
+                                   "Bookings per client", "Revenue / client"])
+def test_a_chart_titled_with_a_revenue_word_per_unit_with_one_bar_per_named_entity_is_revenue(title):
+    found = named_bars_page(title)
+    assert values_of(found, "revenue") == [1100, 1250, 1400, 1650]
+    assert not any(c["claim_type"] in ("arpa", "arpu") for c in found)
+
+
+@pytest.mark.parametrize("title", ["Average revenue per client", "ARPA"])
+def test_named_bars_do_not_override_an_average_title(title):
+    found = named_bars_page(title)
+    assert values_of(found, "arpa") == [1100, 1250, 1400, 1650]
+
+
+def test_a_per_client_chart_with_year_bars_stays_arpa():
+    assert values_of(named_bars_page("Sales per client", names=("2019", "2020", "2021", "2022")), "arpa") == [1100, 1250, 1400, 1650]
+
+
+def test_sales_marketing_and_income_expenses_are_no_per_unit_phrases():
+    for line in ("Sales/Marketing Investments", "Sales / Marketing $400k", "Income/expenses $400k"):
+        assert not any(c["claim_type"] in ("revenue", "arpa", "arpu", "other") for c in
+                       claims.line_candidates(line, [(0, len(line), {})])), line
