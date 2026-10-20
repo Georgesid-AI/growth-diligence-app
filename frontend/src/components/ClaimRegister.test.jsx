@@ -22,6 +22,7 @@ const ROW = {
   claim_id: "c01", claim_type: "revenue", claimed_value: 200000, claimed_high: null, unit: null, currency: "EUR", period: "Feb 2024",
   period_note: null, segment: "Whole company", segment_set_by: "python", metric: "ARR", metric_set_by: "python", direction: "higher",
   observed_value: 202125.48, observed_at: "2024-02", observed_source: { file: "revenue.csv", sheet: "CSV", rows: "rows 2–71", rule: "ARR" },
+  observed_citation: "(mrr_series.data.total, CSV, rows 2–71, Feb 2024)",
   gap: -2125.48, gap_normalised: -0.010627, gap_kind: "beat", gloss: "€2,125 better than claimed", evidence_label: "Verified",
   reason: "within ±5% of the claim", tolerance: "±5%", rank: 1, value_at_stake_arr: null, shortfall: null, overlaps_with: [],
   evidence_analysis: "Monthly MRR by Segment", evidence_source_key: "mrr_series.data.total",
@@ -58,6 +59,8 @@ test("the section has its title, the download button and one row per claim with 
   expect(row.textContent).toContain("slide 4");
   expect(row.textContent).toContain("Read by the parser");
   expect(row.querySelector('[data-testid="register-observed"]').textContent).toContain("202,125 EUR");
+  // issue #136: the figure's own citation stands beside the number, not only on hover
+  expect(row.querySelector('[data-testid="register-observed-citation"]').textContent).toBe("(mrr_series.data.total, CSV, rows 2–71, Feb 2024)");
   expect(row.querySelector('[data-testid="register-gap"]').textContent).toBe("beat 2,125 EUR · 1.1%");
   expect(row.querySelector('[data-testid="register-gloss"]').textContent).toBe("€2,125 better than claimed");
   expect(row.querySelector('[data-testid="register-evidence"]').textContent).toBe("Verified");
@@ -140,7 +143,7 @@ test("the segment and metric are selects of the right options; the rest is text"
   expect([...segment.options].map((o) => o.value)).toEqual(["Whole company", "Enterprise", "SMB", "Not in the data"]);
   const metric = host.querySelector('[data-testid="register-metric"]');
   expect(metric.value).toBe("ARR");
-  expect([...metric.options].map((o) => o.value)).toEqual(["Revenue", "ARR", "MRR", "New MRR", "ACV", "Transaction volume", "none"]);
+  expect([...metric.options].map((o) => o.value)).toEqual(["Revenue", "ARR", "MRR", "New MRR", "ACV", "Transaction volume", "Contract value", "none"]);
   expect(host.querySelectorAll("select").length).toBe(2);
 });
 

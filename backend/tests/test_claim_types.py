@@ -13,6 +13,7 @@ pytest.importorskip("motor")
 from test_claim_matching import run_claim  # noqa: E402
 from test_claim_register_api import AUDIT, _get  # noqa: E402
 
+from app import claim_matching as cm  # noqa: E402
 from app import decks  # noqa: E402
 from app.decks import claims as deck_claims  # noqa: E402
 
@@ -130,7 +131,7 @@ def test_add_from_deck_takes_a_stored_line_only(register_api):
 def test_a_claim_with_no_period_is_not_matched_until_its_period_is_set():
     row = run_claim({"claim_type": "sales", "value": 45, "unit": "days", "currency": None, "snippet": "Sales cycle 45 days"})
     assert row["evidence_label"] == "Unverified" and "period" in row["required_unknown"]
-    assert row["reason"] == "required field unknown: period; set it with Edit in the claims list"
+    assert row["reason"] == cm.PERIOD_NOT_READ        # George, 2026-10-19 (issue #136): the period has its own text
     assert row["observed_value"] is None
 
 

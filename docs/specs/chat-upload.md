@@ -361,7 +361,7 @@ Tests (backend: `test_chat_upload.py`; frontend: `MappingWizard.test.jsx`, `Layo
 | S15 | AI row | AI suggestion – confirm (the column "Mapped by", S24; amended 2026-10-08, it was "AI suggestion, not verified"). The label "AI suggestion, not verified" stays on model-read claim values, rule 18. |
 | S16a | banner | Revenue file missing: upload and map it to compute metrics. (Only when no revenue file exists; shown from the first Map, §16.) |
 | S16d | banner | Revenue file uploaded – confirm the mapping to compute metrics. (A revenue file exists and its mapping is not confirmed; always shown, in every tab and on every day: a stored file means Map was pressed.) |
-| S16b | banner | Top-5 claim contradicted: {claim type} {claimed} vs {observed} observed ({deck}, {page}). |
+| S16b | banner | Top-5 claim contradicted: {claim type} {claimed} vs {observed} observed {citation} ({deck}, {page}). — {citation} is the figure's `observed_citation` of claim-matching.md §6, "(source key, sheet, rows, period)" (2026-10-20, issue #136) |
 | S16c | banner | Revenue file and P&L differ by {x}% over {first}–{last} ({file total} vs {P&L total}). |
 | S17 | narrative failed | Today's text, unchanged: "Narrative could not be generated. The computed metrics below are unaffected — they come from the calculation engine, not the narrative." |
 | S18 | delete dialog | Title: Delete {company name}? Body: Deleting this audit with its files, mappings and results cannot be undone. Type **{company name}** to confirm. (the name in bold, in both; body reworded 2026-10-09, George) |
