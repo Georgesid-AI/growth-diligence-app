@@ -162,3 +162,6 @@ Amended 2026-10-20 (George, review): `GET /audits/{id}` and the review summary c
 `GET /audits/{id}`, so no stored figure reaches the browser. The header's "evidence to <month>" and the deck list's conversion date (when
 the as-of month is defaulted: `fx.date_stale`) read "Stale – re-run audit"; the Review, Diagnostics, the verdict and the memo name it in place
 of "compute the audit first" when results exist but are stale. `SEED_VERSION` 12 reseeds demo audits held under contract 4.
+
+Amended 2026-10-20 (George): while the results are stale the banner shows exactly one line, "Stale – re-run audit" (`kind` `results_stale`),
+and no blocker. It is a replacement of the blockers, not a fourth blocker, so CLAUDE.md rule 21 holds. Test: `test_interface_contracts.py` section 6.

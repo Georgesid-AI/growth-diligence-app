@@ -181,3 +181,10 @@ test("the header reads Stale – re-run audit where evidence to <month> would st
   expect(q("header-target-line").textContent).toContain("Stale – re-run audit");
   expect(q("header-target-line").textContent).not.toContain("evidence to");
 });
+
+test("while results are stale the banner is the one line the server sends, Stale – re-run audit", async () => {
+  api.getBlockers.mockResolvedValue([{ kind: "results_stale", text: "Stale – re-run audit" }]);
+  await mount(AUDIT);
+  expect(q("blocker-banner").querySelectorAll("li").length).toBe(1);
+  expect(q("blocker-results_stale").textContent).toBe("Stale – re-run audit");
+});

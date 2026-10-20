@@ -602,9 +602,11 @@ def test_the_contract_version_alone_decides_and_run_audit_counts_the_engine_stag
     assert run_audit.results_stale({"results": None}) is False, "no results: nothing is stale, the audit is not computed"
 
 
-def test_the_banner_keeps_working_when_results_are_stale(api):
+def test_the_banner_is_one_stale_line_and_no_blockers_while_results_are_stale(api):
     r = api.get(f"/api/audits/{AUDIT_ID}/blockers")
-    assert r.status_code == 200 and [b["kind"] for b in r.json()["blockers"]] == ["revenue_file_missing"]
+    assert r.status_code == 200 and r.json()["blockers"] == [{"kind": "results_stale", "text": STALE}], "one line, no blockers"
+    api.db["audits"].docs[0]["results"] = None
+    assert [b["kind"] for b in api.get(f"/api/audits/{AUDIT_ID}/blockers").json()["blockers"]] == ["revenue_file_missing"]
 
 
 def test_the_contract_declares_the_repeat_flag_and_the_won_deal_counts():

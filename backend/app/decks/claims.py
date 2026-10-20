@@ -790,6 +790,8 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
         own = _nearest(keywords, n)
         header = headers.get(ref_at(n["pos"]).get("col"))
         nearby = [header] if header else []
+        if own and header and (_borrow_keyword(nearby, nearest=False) or (None,))[0] == "pipeline":
+            own = None          # under a pipeline column every row is Pipeline, whatever its row label says (George, 2026-10-20)
         borrowed = None if own else _borrow_keyword(nearby, nearest=False) or _borrow_keyword(context)
         qualifier = None
         if own:

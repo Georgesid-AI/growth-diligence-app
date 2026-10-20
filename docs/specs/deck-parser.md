@@ -558,3 +558,6 @@ Amended 2026-10-20 (George, review of the unit-economics change; tests `backend/
   customer segment", "per client type", "per customer cohort", "per user group" stay Revenue; "Seats per account" is no unit economics.
 - A column header "Revenue per client" over rows that name a client ("Acme") types each figure Revenue; over rows that are periods it stays ARPA.
 - A model label of arpa, arpu or pipeline stands only when the cell or one of its headers holds the keyword; otherwise it is listed as Other.
+
+Amended 2026-10-20 (George): a figure under a pipeline column header ("Size of opportunity", "Weighted in forecast") is Pipeline whatever its
+row label says ("ARR expansion Acme"); the header wins over the row's own keyword for that type only. Test: `test_unit_economics_pipeline.py`.

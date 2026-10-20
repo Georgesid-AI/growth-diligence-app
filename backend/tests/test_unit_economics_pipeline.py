@@ -148,3 +148,12 @@ def test_a_revenue_per_client_column_over_rows_that_name_clients_is_revenue_not_
 def test_a_revenue_per_client_column_over_rows_that_are_years_is_still_arpa():
     values, _ = table_values("Revenue per client", [("2021", "$1,400"), ("2022", "$1,650")], "arpa")
     assert values == [1400, 1650]
+
+
+def test_under_a_pipeline_column_every_row_is_pipeline_whatever_its_row_label_says():
+    """Review L3, decision of 20 Oct (George): "ARR expansion Acme" and "Bookings renewal Beta" under "Size of opportunity" are Pipeline."""
+    table, rects = ruled_table([("Opportunity", "Size of opportunity"), ("ARR expansion Acme", "$500,000"), ("Bookings renewal Beta", "$800,000")],
+                               top=400, col_widths=(300, 270))
+    found = claims.detect_candidates(parse_deck(pdf_page([(50, 560, 22, "Overview")] + table, rects), "deck.pdf")["blocks"], "deck.pdf")
+    assert values_of(found, "pipeline") == [500000, 800000]
+    assert not any(c["claim_type"] in ("revenue", "arpa") for c in found)

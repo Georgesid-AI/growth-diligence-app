@@ -2801,6 +2801,8 @@ async def _blocker_list(audit_id: str, audit: dict) -> list:
     """The banner's hard blockers. The claim blocker reads rows 1-5 of the pre-sort, so the analyst's top 5 never hides one
     (docs/specs/verdict-and-memo.md section 6.1)."""
     audit = await _current_audit(audit_id, audit, strict=False)
+    if audit.get("results_stale"):      # a replacement, not a fourth blocker: one line and no blockers while results are stale
+        return [{"kind": "results_stale", "text": run_audit.STALE_LABEL}]
     out = []
     revenue = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"}, {"_id": 0, "rows": 0})
     if revenue and revenue.get("file_hash") in await _claims_files(audit_id):

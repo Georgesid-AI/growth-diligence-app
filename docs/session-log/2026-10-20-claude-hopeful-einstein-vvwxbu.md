@@ -4,3 +4,4 @@ Decided: the per-unit term must end the phrase and needs a revenue word, so brea
 Slow or unclear: "ends the phrase" needed a closed list of period words after the noun; the banner still shows no stale note (rule 21).
 Root cause and the rule that prevents it next time: a keyword added without an anchor matched wherever the words appeared, and a results field was filtered at every reader but not at the API; each new reader or keyword now gets a negative test (breakdown titles, the stale GET) that failed before the fix.
 Process change to propose: a review of a typing rule lists the must-stay-as-before titles next to the new ones, so both sets are tests from the first commit.
+Follow-up (George): L3 built as decided (a pipeline column header beats the row label); the stale banner is one line "Stale – re-run audit" and no blockers, written into the spec; the commit rides on PR 141's own branch.
