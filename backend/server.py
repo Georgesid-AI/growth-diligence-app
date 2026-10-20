@@ -2469,7 +2469,8 @@ async def claim_register(audit_id: str):
     review = verdict_mod.with_review(audit, audit.get("ic_inputs")).get("first_quarterly_review")
     # The gate fields' starting values and the budget dropdown sit beside the register, never in it: the CSV and the memo read rows.
     return sanitize({"claims": claims, "register": rows, "gate_prefill": verdict_mod.gate_prefill(rows, review),
-                     "budget_decisions": verdict_mod.budget_decisions(rows)})
+                     "budget_decisions": verdict_mod.budget_decisions(rows),
+                     "results_stale": run_audit.results_stale(audit)})      # no rows then: the figures are not shown as current
 
 
 def _csv_cell(value) -> str:
@@ -3097,30 +3098,16 @@ async def _run_compute(audit_id: str) -> dict:
 
 
 async def _current_audit(audit_id: str, audit: dict, strict: bool = True) -> dict:
-    """The audit with results of the current engine contract (schemas/metrics.py). Results stored before it hold
-    whole-number percents, which every reader would show 100 times too large; they are recomputed from the stored files
-    on first read (deterministic Python, no model, no cost). If that is not possible the read fails (409), or with
-    strict=False the audit is returned without results: they are never shown, and a caller that must keep working (the
-    banner, the usage totals) reads "not computed" instead of a figure 100 times too large."""
-    results = audit.get("results")
-    if not results or results.get("contract_version") == contract.CONTRACT_VERSION:
+    """The audit with results of the current engine contract (schemas/metrics.py). Results stored under an older contract are stale
+    (George, 2026-10-20): never recomputed on a read and never shown as current (the percents of version 0 would read 100 times too
+    large). A strict read answers 409 "Stale – re-run audit"; with strict=False the audit is returned without results and with
+    `results_stale` set, so a caller that must keep working (the banner, the usage totals) reads "not computed" instead of a figure.
+    Run audit calculates again from the stored files (deterministic Python, no model, no cost) and clears it."""
+    if not run_audit.results_stale(audit):
         return audit
-    try:
-        results = await _run_compute(audit_id)
-    except HTTPException:
-        if strict:
-            raise HTTPException(409, "Results predate the current engine contract; recompute needed")
-        return {**audit, "results": None}
-    return {**audit, "results": results, "metrics_stale": False}
-
-
-async def _recompute_if_old(audit_id: str) -> None:
-    """Results stored before the engine contract are recomputed before the gateway reads them, so a narrative is never
-    refused for a payload the dashboard is about to replace. A recompute that is not possible is left to the gateway,
-    which refuses the old payload."""
-    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "id": 1, "results": 1})
-    if audit and audit.get("results"):
-        await _current_audit(audit_id, audit, strict=False)
+    if strict:
+        raise HTTPException(409, {"code": run_audit.STALE_CODE, "message": run_audit.STALE_LABEL})
+    return {**audit, "results": None, "results_stale": True}
 
 
 @api.post("/audits/{audit_id}/compute")
@@ -3557,7 +3544,6 @@ async def generate_narrative(run_id: str, step: str):
     Returns 200 with narrative_status="unavailable" on any LLM-side failure -
     the computed metrics still come back, so the dashboard is never blocked.
     """
-    await _recompute_if_old(run_id)
     try:
         result = await llm_gateway.generate_narrative(db, run_id, step)
     except llm_gateway.GatewayError as exc:
@@ -3572,7 +3558,6 @@ async def generate_narrative(run_id: str, step: str):
 @api.get("/runs/{run_id}/narratives/estimate")
 async def narratives_estimate(run_id: str):
     """The steps "Write all narratives" would run and what they would cost at most. Read-only: no provider call."""
-    await _recompute_if_old(run_id)
     try:
         return await llm_gateway.estimate_narratives(db, run_id)
     except llm_gateway.GatewayError as exc:
@@ -3588,7 +3573,6 @@ async def read_narrative(run_id: str, step: str):
     Never calls a provider, so a dashboard load can never spend. Generation is
     the POST below, which is the only path that can.
     """
-    await _recompute_if_old(run_id)
     try:
         result = await llm_gateway.read_cached_narrative(db, run_id, step)
     except llm_gateway.GatewayError as exc:

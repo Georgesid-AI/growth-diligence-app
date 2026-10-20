@@ -71,7 +71,7 @@ export const TYPE_LABELS = {
   gross_profit: "Gross profit", costs: "Costs", ebitda: "EBITDA", net_profit: "Net profit", usage: "Usage",
   people: "People", product: "Product", market: "Market size", cash: "Cash", burn: "Burn", runway: "Runway", ltv: "LTV",
   cac: "CAC", customer_lifetime: "Customer lifetime", ltv_cac: "LTV/CAC", trials_per_day: "Trials per day",
-  months_to_profitability: "Months to profitability", acquisition_channels: "Acquisition channels", use_of_funds: "Use of funds",
+  months_to_profitability: "Months to profitability", arpa: "ARPA", arpu: "ARPU", pipeline: "Pipeline", acquisition_channels: "Acquisition channels", use_of_funds: "Use of funds",
   installed_units: "Installed units",       // read from a forecast table only (chat-upload.md section 20), in no type list
   other: "Other",
   unknown: "Other",

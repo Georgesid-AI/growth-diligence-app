@@ -140,10 +140,12 @@ written as integers and days are rounded up at the write. Any code that reads a 
 | `app/claim_matching.py` | NRR, churn, win rate, gross margin are read as percent points (x100), as the claims are |
 | banner text for the reconciliation blocker | prints `gap_pct` x 100, same words |
 
-Stored audits computed before this change hold whole-number percents. They are recomputed on first read (`/results`,
-the claim register, the export): the compute is deterministic Python, no model, no cost. If the recompute is not
-possible (a mapping was cleared) the read answers 409 "Results predate the current engine contract; recompute needed",
-never a 100x figure.
+Amended 2026-10-20 (George): results stored under another `contract_version` than the code running are no longer recomputed on a
+read. They are "Stale – re-run audit" until Run audit calculates again (deterministic Python, no model, no cost): `/results` and the
+export answer 409 `{"code": "results_stale", "message": "Stale – re-run audit"}`, the claim register answers no rows and
+`results_stale: true`, the dashboard and the register say "Stale – re-run audit", every other reader sees "not computed", and the
+review summary reports `engine_stale`. No stored figure is shown as current, whatever its version (the percents of version 0 would
+read 100 times too large). Tests: `test_interface_contracts.py` section 6, `test_run_audit.py`, `test_recognition_review.py` L2.
 
 ## 8. Consequences to know
 - Sales-cycle days (`median_days`, `iqr`) are stored unrounded, so claim matching reads the unrounded median and its

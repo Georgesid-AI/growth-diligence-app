@@ -8,6 +8,11 @@ metric "Contract value" (annual or total contract value, contracted revenue, con
 but never computed and never matched to engine revenue: Unsupported, "Contract value – not computed by the app" (table 2a); a claim
 whose period was not read is Unverified "Period not read – set it in the claim row" and no metric is read at the as-of month or the
 evidence end in its place (table 2b; the 7 Oct fallback to the whole company applies to the segment only).
+Amended 2026-10-20 (George, findings A and D): metrics "ARPA" and "ARPU" (claim types `arpa`, `arpu`, deck-parser.md §2) are typed but never
+computed: Unsupported, "Unit economics – not computed by the app", no value at stake, no gate, never in the top 5 (`is_untested`, ranked
+after the tested rows, as use of funds is). A claim whose figure shared a table cell with a different number of header periods has no
+period and reads "Period unclear – confirm" in place of "Period not read – set it in the claim row". Pipeline claims have no metric:
+Unsupported, "no metric".
 Amended 2026-10-15 (docs/specs/dates-and-periods.md): claim-period coverage (Covered / Partly covered → Inconclusive / Not covered →
 Unverified "claim period not in supplied data: …") replaces table 2b's "before {metric}'s first month" and "months missing" reasons
 and Q2; a claim with no period reads the evidence end, never an as-of month the data does not reach; table 2a gains Revenue, ARR, MRR

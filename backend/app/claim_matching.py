@@ -39,11 +39,16 @@ NO_PERIOD = "no period stated"
 # George, 2026-10-19 (issue #136, decision 3): a claim whose period cannot be read is Unverified with this text and is never read at
 # the as-of month or the evidence end; the 7 Oct fallback to the whole company applies to the segment only.
 PERIOD_NOT_READ = "Period not read – set it in the claim row"
+# George, 2026-10-20 (finding A): the figures of one table cell whose header holds a different number of periods have none, and read this.
+PERIOD_UNCLEAR = "Period unclear – confirm"
 # George, 2026-10-19 (issue #136, decision 2): a contract value (annual or total contract value, contracted revenue, contracted or
 # committed ARR or MRR, CARR) is typed but not computed: never matched to engine revenue, Unsupported with this reason.
 CONTRACT_VALUE = "Contract value"
 CONTRACT_REASON = "Contract value – not computed by the app"
 NO_REVENUE_SERIES = "Not computed – revenue series not available"     # no revenue_series: no observed figure, no question
+# George, 2026-10-20: revenue per account, client, customer or user (ARPA, ARPU) is typed but not computed: never matched to engine revenue.
+UNIT_ECONOMICS_REASON = "Unit economics – not computed by the app"
+UNIT_ECONOMICS = {"arpa": "ARPA", "arpu": "ARPU"}      # claim type -> metric
 FX_NEEDED = "FX rate needed"
 USE_OF_FUNDS = "use_of_funds"
 USE_OF_FUNDS_NOTE = "use of funds: an allocation share of the raise, no engine metric to test it against"
@@ -100,7 +105,7 @@ METRIC_POPULATION = {"Customer count": "paying", "Customer growth": "paying", "M
                      "Win rate": "all closed"}
 POPULATION_TYPES = ("customers", "users", "user_growth")
 # The types whose figure is an amount: with no currency and no unit, the currency is the field still unknown.
-MONEY_TYPES = ("revenue", "costs", "burn", "cash", "gross_profit", "ebitda", "net_profit", "ltv", "cac")
+MONEY_TYPES = ("revenue", "costs", "burn", "cash", "gross_profit", "ebitda", "net_profit", "ltv", "cac", "arpa", "arpu", "pipeline")
 # The types whose period may stay unknown (the plan's table: optional or "–").
 PERIOD_OPTIONAL_TYPES = ("market", "use_of_funds", "acquisition_channels", "product")
 # Section 5: growth claims. The basis is the analyst's, else the parser's, else read from the claim's own words on read.
@@ -143,6 +148,9 @@ METRICS: Dict[str, dict] = {
     "Transaction volume": dict(kind="sum", unit="currency", direction="higher", seg=False, missing=()),
     # Issue #136 (George, 2026-10-19): typed, never computed; always Unsupported, "Contract value – not computed by the app".
     "Contract value": dict(kind="sum", unit="currency", direction="higher", seg=False, missing=()),
+    # George, 2026-10-20: unit economics, typed and never computed; always Unsupported, "Unit economics – not computed by the app".
+    "ARPA": dict(kind="sum", unit="currency", direction="higher", seg=False, missing=()),
+    "ARPU": dict(kind="sum", unit="currency", direction="higher", seg=False, missing=()),
     # dates-and-periods.md section 5: growth of a monthly series on the claim's basis, in percentage points
     "Revenue growth": dict(kind="growth", unit="%", direction="higher", seg=False, missing=("arr / mrr",), base="Revenue"),
     "ARR growth": dict(kind="growth", unit="%", direction="higher", seg=False, missing=("arr / mrr",), base="ARR"),
@@ -693,6 +701,8 @@ def propose_metric(claim_type: str, claim_unit: Optional[str], text: str) -> Opt
             metric = "ARR"
         elif _REVENUE.search(plain) and not re.search(r"(?i)\brecurring revenue\b", plain):
             metric = "Revenue"
+    elif claim_type in UNIT_ECONOMICS:
+        metric = UNIT_ECONOMICS[claim_type]
     elif claim_type in ("customers", "users"):          # users: the population decides (claim-types-and-correction.md section 2)
         metric = "Customer count"
     elif claim_type == "user_growth":
@@ -753,6 +763,7 @@ def _expand(candidates: List[dict]) -> List[dict]:
                                                       "period_end")}, "claim_id": f"{c['id']}#{n}"}
             if (item.get("source") or {}).get("file"):
                 claim["sources"] = [item["source"]]
+            claim["period_unclear"] = bool(item.get("period_unclear"))
             out.append(claim)
     return out
 
@@ -951,10 +962,15 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         return finish("Unsupported", VOLUME_REASON)
     if metric == CONTRACT_VALUE:                # issue #136: typed, never computed, never matched to engine revenue
         return finish("Unsupported", CONTRACT_REASON)
+    if metric in UNIT_ECONOMICS.values():       # 2026-10-20: ARPA and ARPU are never computed, never matched, never ranked
+        finish("Unsupported", UNIT_ECONOMICS_REASON)
+        out["gate_needed"] = False
+        return out
     if [f for f in required if f != "growth basis"]:      # not matched until every required field is known (section 2)
         others = [f for f in required if f != "period"]
         if "period" in required:                # decision 3 of 2026-10-19: its own text, never the as-of month
-            return finish("Unverified", PERIOD_NOT_READ + (f"; {REQUIRED_REASON.format(fields=', '.join(others))}" if others else ""))
+            words = PERIOD_UNCLEAR if c.get("period_unclear") else PERIOD_NOT_READ
+            return finish("Unverified", words + (f"; {REQUIRED_REASON.format(fields=', '.join(others))}" if others else ""))
         return finish("Unverified", REQUIRED_REASON.format(fields=", ".join(required)))
     if not _fits(spec["unit"], claim_unit):
         return finish("Unsupported", "metric does not fit the claim's unit")
@@ -1365,9 +1381,10 @@ def _overlaps(rows: List[dict]) -> None:
 # --- the register -----------------------------------------------------------------------------------------------------
 
 def is_untested(row: dict) -> bool:
-    """A row that is never matched, ranked among the tested ones, gated or put in the top 5: use of funds, acquisition channels and a
-    claim read from a forecast table (chat-upload.md section 20)."""
-    return row.get("claim_type") in UNTESTED_TYPES or row.get("deck_reading") == FORECAST_READING
+    """A row that is never matched, ranked among the tested ones, gated or put in the top 5: use of funds, acquisition channels, a
+    claim read from a forecast table (chat-upload.md section 20) and unit economics (ARPA, ARPU; George, 2026-10-20)."""
+    return row.get("claim_type") in UNTESTED_TYPES or row.get("deck_reading") == FORECAST_READING \
+        or row.get("claim_type") in UNIT_ECONOMICS or row.get("metric") in UNIT_ECONOMICS.values()
 
 
 def _rank(rows: List[dict]) -> List[dict]:

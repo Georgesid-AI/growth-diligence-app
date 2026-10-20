@@ -185,7 +185,7 @@ FILE_TYPES = ("revenue", "crm", "pnl", "unknown")
 CLAIM_METRICS = ("revenue", "revenue_growth", "growth", "retention", "sales", "customers", "users", "user_growth",
                  "gross_margin", "gross_profit", "costs", "ebitda", "net_profit", "people", "product", "market",
                  "cash", "burn", "runway", "ltv", "cac", "customer_lifetime", "ltv_cac", "trials_per_day",
-                 "months_to_profitability")
+                 "months_to_profitability", "arpa", "arpu", "pipeline")
 MAPPING_FIELDS = ("customer_id", "invoice_date", "amount", "currency", "service_start", "service_end", "segment",
                   "revenue_type", "deal_id", "created_date", "close_date", "stage", "founder_involved", "month",
                   "sm_expense", "revenue", "cost_of_revenue")

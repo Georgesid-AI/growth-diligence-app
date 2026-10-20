@@ -143,7 +143,7 @@ test("the segment and metric are selects of the right options; the rest is text"
   expect([...segment.options].map((o) => o.value)).toEqual(["Whole company", "Enterprise", "SMB", "Not in the data"]);
   const metric = host.querySelector('[data-testid="register-metric"]');
   expect(metric.value).toBe("ARR");
-  expect([...metric.options].map((o) => o.value)).toEqual(["Revenue", "ARR", "MRR", "New MRR", "ACV", "Transaction volume", "Contract value", "none"]);
+  expect([...metric.options].map((o) => o.value)).toEqual(["Revenue", "ARR", "MRR", "New MRR", "ACV", "Transaction volume", "Contract value", "ARPA", "ARPU", "none"]);
   expect(host.querySelectorAll("select").length).toBe(2);
 });
 
@@ -228,6 +228,17 @@ test("a qualified Users row asks for the metric and its direction too, as the se
 test("no claim yet gives a line that says so", async () => {
   const { host } = await mount([]);
   expect(host.querySelector('[data-testid="claim-register-empty"]')).not.toBeNull();
+  expect(host.querySelector("table")).toBeNull();
+});
+
+test("stored figures of an older engine contract are marked stale, never shown as current (George, 2026-10-20)", async () => {
+  api.getClaimRegister.mockResolvedValue({ claims: [], register: [], results_stale: true });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => { root.render(<ClaimRegister auditId="a1" results={null} />); });
+  expect(host.querySelector('[data-testid="claim-register-stale"]').textContent).toBe("Stale – re-run audit");
+  expect(host.querySelector('[data-testid="claim-register-empty"]')).toBeNull();
   expect(host.querySelector("table")).toBeNull();
 });
 

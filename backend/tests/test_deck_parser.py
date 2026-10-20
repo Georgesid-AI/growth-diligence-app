@@ -772,8 +772,8 @@ def test_every_claim_type_has_its_group():
     assert {g: sorted(t for t, x in groups.items() if x == g) for g in range(1, 10)} == {
         1: ["revenue", "revenue_growth"],
         2: ["burn", "cash", "costs", "ebitda", "gross_margin", "gross_profit", "months_to_profitability", "net_profit", "runway"],
-        3: ["cac", "customer_lifetime", "customers", "growth", "ltv", "ltv_cac", "retention", "sales", "trials_per_day", "usage",
-            "user_growth", "users"],
+        3: ["arpa", "arpu", "cac", "customer_lifetime", "customers", "growth", "ltv", "ltv_cac", "pipeline", "retention", "sales",
+            "trials_per_day", "usage", "user_growth", "users"],
         4: ["people", "product"], 5: ["market"], 6: [], 7: ["acquisition_channels"], 8: ["use_of_funds"], 9: ["other", "unknown"]}
     assert claims.COLLAPSED_GROUPS == (9,), "Other is one collapsed section (claim-types-and-correction.md section 4)"
     assert list(claims.GROUPS.values())[-3:] == ["acquisition channels", "use of funds", "other"], "Acquisition channels, then Use of funds, then Other"
@@ -1193,7 +1193,7 @@ NEW_TYPES = ("cash", "burn", "runway", "ltv", "cac", "customer_lifetime", "ltv_c
 def test_the_new_claim_types_follow_the_old_ones():
     assert claims.CLAIM_TYPES == ("revenue", "revenue_growth", "growth", "retention", "sales", "customers", "users",
                                   "user_growth", "gross_margin", "gross_profit", "costs", "ebitda", "net_profit",
-                                  "people", "product", "market") + NEW_TYPES
+                                  "people", "product", "market") + NEW_TYPES + ("arpa", "arpu", "pipeline")
 
 
 @pytest.mark.parametrize("text, family, value, unit, currency", [

@@ -1451,6 +1451,8 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             # issue #136: the citation beside an observed figure, the period that was not read, the contract value
                             "observed_citation", "period_words", "citation", "PERIOD_NOT_READ", "CONTRACT_VALUE", "CONTRACT_REASON",
                             "CONTRACT_TERM", "CONTRACT_LABEL", "_type_choice_open", "metric_labels",
+                            # 2026-10-20: the period that cannot be paired, the unit-economics reason, the stale marker
+                            "PERIOD_UNCLEAR", "period_unclear", "UNIT_ECONOMICS_REASON", "UNIT_ECONOMICS", "results_stale",
                             *MATCHING_SERVER_ONLY})
 # The functions that log about the register, and the only things their log calls may name.
 REGISTER_LOGGERS = frozenset({"_claim_rows", "claim_register", "claim_register_csv", "update_claim_inputs", "answer_turnover",
@@ -1678,6 +1680,14 @@ def test_the_qualified_users_reason_holds_two_closed_words_and_the_qualifier_nev
     for where, text in (("read by the gateway", returned), ("sent to the provider", adapter.payloads[0]), ("logged", logs)):
         assert sentinel not in text and '"qualifier"' not in text, f"the row label or its qualifier was {where}"
         assert "is not paying customers" not in text, f"the register reason was {where}"
+
+
+def test_the_period_unclear_unit_economics_and_stale_texts_are_closed_sentences():
+    """2026-10-20: three fixed texts, none built from a deck line, a figure or a file name, so none carries client text."""
+    from app import run_audit
+    assert claim_matching.PERIOD_UNCLEAR == "Period unclear – confirm"
+    assert claim_matching.UNIT_ECONOMICS_REASON == "Unit economics – not computed by the app"
+    assert run_audit.STALE_LABEL == "Stale – re-run audit"
 
 
 def test_the_required_field_target_and_population_reasons_are_closed_sentences_with_no_deck_text():

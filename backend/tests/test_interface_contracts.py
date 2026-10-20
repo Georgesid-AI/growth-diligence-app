@@ -538,7 +538,7 @@ def test_the_integrity_smoothness_is_the_integrity_modules_own_with_no_second_ca
 
 
 # ---------------------------------------------------------------------------
-# 6. Results stored before the contract are recomputed on read, never shown 100 times too large
+# 6. Results stored under an older contract are marked stale, never recomputed on a read, never shown as current (George, 2026-10-20)
 # ---------------------------------------------------------------------------
 OLD_RESULTS = {"reporting_currency": "EUR", "nrr": {"overall_pct": 106.41, "n": 100}}
 AUDIT_ID = "audit-1"
@@ -563,41 +563,48 @@ def api(monkeypatch):
     return client
 
 
-def test_old_results_are_recomputed_on_the_first_read(api):
+STALE = "Stale – re-run audit"
+
+
+@pytest.mark.parametrize("stored_version", [None, 1, 2, 3, 4])
+def test_results_of_an_older_contract_are_stale_not_recomputed_and_not_shown(api, stored_version):
+    """Version 0 (no version) holds whole-number percents, 1 to 4 lack the fields added since: whichever it is, a read never calculates
+    and never answers with the figures, and `/results` says "Stale – re-run audit" until Run audit calculates again."""
+    stored = cf.stored(nrr=cf.nrr(1.0641, 100))
+    api.db["audits"].docs[0]["results"] = {**stored, "contract_version": stored_version} if stored_version else copy.deepcopy(OLD_RESULTS)
     r = api.get(f"/api/audits/{AUDIT_ID}/results")
-    assert r.status_code == 200 and api.recomputed == [AUDIT_ID]
-    assert r.json()["results"]["nrr"]["overall_pct"] == 1.0641 and r.json()["results"]["contract_version"] == metrics.CONTRACT_VERSION
+    assert r.status_code == 409 and r.json()["detail"] == {"code": "results_stale", "message": STALE}
+    assert "106.41" not in r.text and "1.0641" not in r.text and api.recomputed == []
+    assert api.get(f"/api/audits/{AUDIT_ID}/export").status_code == 409 and api.recomputed == []
+    claims = api.get(f"/api/audits/{AUDIT_ID}/claims").json()
+    assert (claims["results_stale"], claims["register"]) == (True, []) and api.recomputed == []
 
 
-def test_results_stored_before_the_citations_were_added_are_recomputed_on_the_first_read(api):
-    """Version 1 results have no citation on five blocks: they would fail the gateway and the export, so they are recomputed."""
-    api.db["audits"].docs[0]["results"] = {**cf.stored(nrr=cf.nrr(1.0641, 100)), "contract_version": 1}
-    r = api.get(f"/api/audits/{AUDIT_ID}/results")
-    assert r.status_code == 200 and api.recomputed == [AUDIT_ID] and r.json()["results"]["contract_version"] == metrics.CONTRACT_VERSION
+def test_the_narrative_endpoints_do_not_recompute_stale_results(api):
+    api.get(f"/api/runs/{AUDIT_ID}/narrative/growth_engine")
+    api.post(f"/api/runs/{AUDIT_ID}/narrative/growth_engine")
+    assert api.recomputed == []
 
 
-def test_results_stored_before_the_periods_were_added_are_recomputed_on_the_first_read(api):
-    """Version 2 results have no latest valid source period and no period per metric (dates-and-periods.md section 7): they are
-    recomputed, so every audit shows where its evidence ends."""
-    api.db["audits"].docs[0]["results"] = {**cf.stored(nrr=cf.nrr(1.0641, 100)), "contract_version": 2}
-    r = api.get(f"/api/audits/{AUDIT_ID}/results")
-    assert r.status_code == 200 and api.recomputed == [AUDIT_ID] and r.json()["results"]["contract_version"] == metrics.CONTRACT_VERSION
+def test_current_results_are_not_stale_and_not_recomputed(api):
+    api.db["audits"].docs[0]["results"] = cf.stored(nrr=cf.nrr(1.0641, 100))
+    assert api.get(f"/api/audits/{AUDIT_ID}/results").status_code == 200 and api.recomputed == []
+    assert api.get(f"/api/audits/{AUDIT_ID}/claims").json()["results_stale"] is False
 
 
-def test_results_stored_before_the_crm_collapse_are_recomputed_on_the_first_read(api):
-    """Version 3 results count a deal once per repeated CRM row and hold no won-deal counts (crm-dedup-clustering.md section 3):
-    they are recomputed, so the win rate and the sales cycle count each deal once and the clustering check can run."""
-    api.db["audits"].docs[0]["results"] = {**cf.stored(nrr=cf.nrr(1.0641, 100)), "contract_version": 3}
-    r = api.get(f"/api/audits/{AUDIT_ID}/results")
-    assert r.status_code == 200 and api.recomputed == [AUDIT_ID] and r.json()["results"]["contract_version"] == metrics.CONTRACT_VERSION
+def test_the_contract_version_alone_decides_and_run_audit_counts_the_engine_stage_as_not_done(api):
+    from app import run_audit
+    audit = api.db["audits"].docs[0]
+    assert run_audit.STALE_LABEL == STALE and run_audit.results_stale(audit) is True
+    assert run_audit.engine_stale(audit, []) is True
+    audit["results"] = cf.stored(nrr=cf.nrr(1.0641, 100))
+    assert (run_audit.results_stale(audit), run_audit.engine_stale({**audit, "metrics_stale": False}, [])) == (False, False)
+    assert run_audit.results_stale({"results": None}) is False, "no results: nothing is stale, the audit is not computed"
 
 
-def test_results_stored_before_the_revenue_file_recognition_are_recomputed_on_the_first_read(api):
-    """Version 4 results hold no basis for the revenue series, no reconciliation status and no recognition block
-    (revenue-file-recognition.md section 9): they are recomputed, so every audit says how its revenue was read."""
-    api.db["audits"].docs[0]["results"] = {**cf.stored(nrr=cf.nrr(1.0641, 100)), "contract_version": 4}
-    r = api.get(f"/api/audits/{AUDIT_ID}/results")
-    assert r.status_code == 200 and api.recomputed == [AUDIT_ID] and r.json()["results"]["contract_version"] == 5
+def test_the_banner_keeps_working_when_results_are_stale(api):
+    r = api.get(f"/api/audits/{AUDIT_ID}/blockers")
+    assert r.status_code == 200 and [b["kind"] for b in r.json()["blockers"]] == ["revenue_file_missing"]
 
 
 def test_the_contract_declares_the_repeat_flag_and_the_won_deal_counts():
@@ -608,38 +615,6 @@ def test_the_contract_declares_the_repeat_flag_and_the_won_deal_counts():
     assert sample["anomalies"]["deals_duplicate_id"] == {"rows": 0, "distinct_ids": 0, "collapsed": 0, "rows_list": []}
     assert sample["won_deal_closes"]["source"]["file"] == "crm.csv" and sample["won_deal_closes"]["by_month"]
     assert stored_form(all_raws()["demo1-no-crm"])["won_deal_closes"] is None, "no CRM, no won-deal counts"
-
-
-def test_the_narrative_endpoints_recompute_old_results_before_the_gateway_reads_them(api):
-    api.get(f"/api/runs/{AUDIT_ID}/narrative/growth_engine")
-    assert api.recomputed == [AUDIT_ID]
-    api.recomputed.clear()
-    api.post(f"/api/runs/{AUDIT_ID}/narrative/growth_engine")
-    assert api.recomputed == [AUDIT_ID]
-
-
-def test_current_results_are_not_recomputed(api):
-    api.db["audits"].docs[0]["results"] = cf.stored(nrr=cf.nrr(1.0641, 100))
-    assert api.get(f"/api/audits/{AUDIT_ID}/results").status_code == 200 and api.recomputed == []
-
-
-def test_old_results_that_cannot_be_recomputed_are_refused_not_shown(api, monkeypatch):
-    async def cannot(audit_id):
-        raise server.HTTPException(409, "A required field is not mapped")
-
-    monkeypatch.setattr(server, "_run_compute", cannot)
-    r = api.get(f"/api/audits/{AUDIT_ID}/results")
-    assert r.status_code == 409 and "106.41" not in r.text and "predate the current engine contract" in r.text
-    assert api.get(f"/api/audits/{AUDIT_ID}/export").status_code == 409
-
-
-def test_the_banner_keeps_working_when_old_results_cannot_be_recomputed(api, monkeypatch):
-    async def cannot(audit_id):
-        raise server.HTTPException(409, "A required field is not mapped")
-
-    monkeypatch.setattr(server, "_run_compute", cannot)
-    r = api.get(f"/api/audits/{AUDIT_ID}/blockers")
-    assert r.status_code == 200 and [b["kind"] for b in r.json()["blockers"]] == ["revenue_file_missing"]
 
 
 def test_the_export_endpoint_answers_with_the_reason_and_no_workbook_on_a_violation(api, caplog):
@@ -745,8 +720,8 @@ def test_every_source_key_of_the_memos_evidence_table_is_a_path_the_model_declar
     for metric, (_, whole, by_segment) in cm.EVIDENCE.items():
         for key in filter(None, (whole, by_segment)):
             assert _declared(MetricsPayload, _pattern(key).split(".")), f"{metric}: {key} is not declared by MetricsPayload"
-    assert set(cm.EVIDENCE) == set(cm.METRICS) - {cm.VOLUME, cm.CONTRACT_VALUE}, \
-        "every metric of the register has an evidence row, but transaction volume and contract value (no engine source)"
+    assert set(cm.EVIDENCE) == set(cm.METRICS) - {cm.VOLUME, cm.CONTRACT_VALUE, *cm.UNIT_ECONOMICS.values()}, \
+        "every metric of the register has an evidence row, but transaction volume, contract value, ARPA and ARPU (no engine source)"
 
 
 def test_a_wrong_source_key_is_caught_by_the_declared_path_check():

@@ -26,6 +26,7 @@ import { metricLabel, metricQualifier, bracketed } from "@/lib/metricNames";
 import { ANOMALIES_NOT_COMPUTED, NONE, anomalyFlags, missingRows, questionRows, questionsEmptyText } from "@/lib/gapLists";
 import { fmtCurrency, fmtCount, fmtCountUp, fmtDays, fmtDaysNumber, fmtMonths, fmtPct, fmtRatio, bandRangeLabel } from "@/lib/format";
 import { datesLine, evidenceToText } from "@/lib/periods";
+import { STALE_LABEL } from "@/lib/claimRegister";
 
 const SEG_COLORS = ["#0284C7", "#059669", "#D97706", "#DB2777", "#475569"];
 
@@ -77,7 +78,8 @@ export default function Dashboard() {
     getAudit(id).then(setAudit).catch(() => {});
     getResults(id)
       .then(setData)
-      .catch((e) => setError(e.response?.status === 409 ? "not_computed" : "error"));
+      .catch((e) => setError(e.response?.data?.detail?.code === "results_stale" ? "stale"
+        : e.response?.status === 409 ? "not_computed" : "error"));
   }, [id]);
 
   // Read-only on load: this returns a narrative someone already generated, or
@@ -128,6 +130,19 @@ export default function Dashboard() {
         <div className="border border-dashed border-[#E5E7EB] rounded-xl py-24 text-center">
           <AlertTriangle className="h-10 w-10 text-amber-500 mx-auto mb-4" />
           <p className="text-slate-700 mb-4">This audit hasn't been computed yet.</p>
+          <button onClick={() => nav(`/audit/${id}/mapping`)} className="text-sky-700 hover:text-sky-800 underline">
+            Go to Upload & Mapping →
+          </button>
+        </div>
+      </Layout>
+    );
+  }
+  if (error === "stale") {
+    return (
+      <Layout audit={audit}>
+        <div className="border border-dashed border-[#E5E7EB] rounded-xl py-24 text-center" data-testid="stale-results">
+          <AlertTriangle className="h-10 w-10 text-amber-500 mx-auto mb-4" />
+          <p className="text-slate-700 mb-4">{STALE_LABEL}</p>
           <button onClick={() => nav(`/audit/${id}/mapping`)} className="text-sky-700 hover:text-sky-800 underline">
             Go to Upload & Mapping →
           </button>

@@ -55,6 +55,8 @@ test("type labels", () => {
   expect(typeLabel("gross_margin")).toBe("Gross margin");
   expect(typeLabel("customers")).toBe("Customers");
   expect(typeLabel("usage")).toBe("Usage");
+  // George, 2026-10-20: unit economics per account or user, and the pipeline columns of a deck table.
+  expect(["arpa", "arpu", "pipeline"].map(typeLabel)).toEqual(["ARPA", "ARPU", "Pipeline"]);
 });
 
 test("every column has a header", () => {
@@ -128,7 +130,7 @@ test("the analyst chooses among plan claim types only; old usage claims keep the
   expect(CLAIM_TYPES).toEqual(["revenue", "revenue_growth", "growth", "retention", "sales", "customers", "users",
     "user_growth", "gross_margin", "gross_profit", "costs", "ebitda", "net_profit", "people", "product", "market",
     "cash", "burn", "runway", "ltv", "cac", "customer_lifetime", "ltv_cac", "trials_per_day", "months_to_profitability",
-    "acquisition_channels"]);
+    "arpa", "arpu", "pipeline", "acquisition_channels"]);
   expect(typeLabel("acquisition_channels")).toBe("Acquisition channels");
   // Issue #45 (deck-parser.md section 2): the new claim types and their labels.
   expect(["cash", "burn", "runway", "ltv", "cac", "customer_lifetime", "ltv_cac", "trials_per_day",

@@ -97,6 +97,13 @@ _FAMILIES = [
     ("customer_lifetime", r"(?i:\bcustomer life(?:time)?s?\b)"),
     ("ltv_cac", r"\bLTV\s*(?:/|:|\bto\b)\s*CAC\b"),
     ("trials_per_day", r"(?i:\btrials?\s*(?:per|/)\s*day\b)"),
+    # George, 2026-10-20: a "per account / client / customer" or "per user" title or label is unit economics (ARPA, ARPU), whatever
+    # revenue word it holds ("Average Revenue Per Account"): the phrase is longer than "Revenue", so it counts over it.
+    ("arpa", r"\bARPAs?\b|(?i:\b(?:(?:revenues?|sales|income|spend)\s+)?per\s+(?:account|client|customer)s?\b)"),
+    ("arpu", r"\bARPUs?\b|(?i:\b(?:(?:revenues?|sales|income|spend)\s+)?per\s+users?\b)"),
+    # The columns of a pipeline table, never revenue or bookings (George, 2026-10-20); "weighted pipeline" is longer than "pipeline" (Sales).
+    ("pipeline", r"(?i:\bsize of (?:the )?opportunit(?:y|ies)\b|\bopportunity size\b|\bweighted (?:in )?(?:the )?(?:forecast|pipeline)\b"
+                 r"|\bweighted (?:opportunit(?:y|ies)|value)\b)"),
 ]
 # A customers noun that one of these words precedes, in its own cell or phrase, within QUALIFIER_REACH words and with no figure
 # between them, counts people who are not paying customers ("Registered Institutions", "40 trial accounts"): the figure is Users,
@@ -112,7 +119,7 @@ _GROWTH_OF = {"revenue": "revenue_growth", "users": "user_growth"}
 CLAIM_TYPES = ("revenue", "revenue_growth", "growth", "retention", "sales", "customers", "users", "user_growth",
                "gross_margin", "gross_profit", "costs", "ebitda", "net_profit", "people", "product", "market",
                "cash", "burn", "runway", "ltv", "cac", "customer_lifetime", "ltv_cac", "trials_per_day",
-               "months_to_profitability")
+               "months_to_profitability", "arpa", "arpu", "pipeline")
 # A figure no line and no heading names a type for: listed as "unknown" and approved only once the analyst chooses a
 # type (docs/specs/deck-parser.md section 2), like the model's "other" (structure-labelling.md section 4).
 UNKNOWN = "unknown"
@@ -135,7 +142,7 @@ _GROUP_OF = {
     "gross_profit": 2, "ebitda": 2, "burn": 2, "cash": 2, "runway": 2, "costs": 2, "net_profit": 2, "gross_margin": 2,
     "months_to_profitability": 2,
     "customers": 3, "users": 3, "user_growth": 3, "growth": 3, "retention": 3, "sales": 3, "ltv": 3, "cac": 3, "ltv_cac": 3,
-    "customer_lifetime": 3, "trials_per_day": 3, "usage": 3, INSTALLED_UNITS: 3,
+    "customer_lifetime": 3, "trials_per_day": 3, "arpa": 3, "arpu": 3, "pipeline": 3, "usage": 3, INSTALLED_UNITS: 3,
     "people": 4, "product": 4,
     "market": 5, ACQUISITION_CHANNELS: 7, USE_OF_FUNDS: 8,
 }
@@ -693,6 +700,9 @@ def _borrow_date(texts: Iterable[str]) -> Optional[Tuple[str, str, str]]:
     return None
 
 
+UNCLEAR = "unclear"      # the counts of periods and figures differ: no figure of the cell takes a period (George, 2026-10-20)
+
+
 def _shared_cell_periods(numbers: List[Dict], dates: List[Dict], refs: List, headers: Dict) -> Dict[int, Optional[Tuple[str, str, str]]]:
     """id(number) -> the period of a figure that shares its table cell with other figures of the same unit and currency (a borderless
     PDF table read into one cell, issue #136). The k-th figure takes the k-th period of its column header, or of the header cells
@@ -717,7 +727,7 @@ def _shared_cell_periods(numbers: List[Dict], dates: List[Dict], refs: List, hea
                 break
         else:
             for n in members:
-                out[id(n)] = None
+                out[id(n)] = UNCLEAR
     return out
 
 
@@ -784,7 +794,7 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
         stacked = (column_periods or {}).get(ref_at(n["pos"]).get("col"))
         if id(n) in shared:
             # Figures that share one table cell: each takes the period of its own position in the header, or none (issue #136)
-            own_date, date = None, shared[id(n)]
+            own_date, date = None, None if shared[id(n)] == UNCLEAR else shared[id(n)]
             stated = date is not None
         elif own_date or stacked is None:
             # The year label under a bar is the figure's own date: taken after its own date, column header and box period, before
@@ -803,6 +813,8 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
                          label=borrowed and borrowed[2], date_from=date and date[1], stated=stated,
                          period_text=own_date["text"] if own_date else date and date[2],
                          type_from="line" if own else "heading", qualifier=qualifier))
+        if shared.get(id(n)) == UNCLEAR:
+            out[-1]["period_unclear"] = True
     if numbers:
         return out
     if dates:
@@ -1729,7 +1741,8 @@ def _row_series(found: List[Dict], headers: Dict) -> List[Dict]:
                         "by_period": [{"value": i["value"], "value_high": i["value_high"], "target_date": i["target_date"],
                                        "period": period(i), "period_text": i["period_text"],
                                        "period_start": i["period_start"], "period_end": i["period_end"],
-                                       "source": i["sources"][0], "_stated": i["_stated"]}
+                                       "source": i["sources"][0], "_stated": i["_stated"],
+                                       **({"period_unclear": True} if i.get("period_unclear") else {})}
                                       for i in group]})
     return out
 

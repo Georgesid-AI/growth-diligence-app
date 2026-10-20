@@ -18,6 +18,7 @@ from app import claim_matching as cm  # noqa: E402
 from app import column_rules as cr  # noqa: E402
 from app import decks, run_audit, usage as usage_mod  # noqa: E402
 from app.llm import gateway  # noqa: E402
+from schemas.metrics import CONTRACT_VERSION  # noqa: E402
 
 BACKEND = Path(__file__).resolve().parents[1]
 SAMPLE = BACKEND.parent / "sample_data"
@@ -176,12 +177,15 @@ def test_a_mapping_confirmed_or_corrected_after_the_last_calculation_makes_the_e
 
 
 def test_engine_stale_follows_the_flag_of_a_recompute_that_could_not_run():
-    audit = {"results": {"x": 1}, "computed_at": "2026-10-11T08:00:00+00:00", "metrics_stale": True}
+    audit = {"results": {"contract_version": CONTRACT_VERSION}, "computed_at": "2026-10-11T08:00:00+00:00", "metrics_stale": True}
     datasets = [{"mapped_at": "2026-10-11T07:00:00+00:00"}, {"mapped_at": None}]
     assert run_audit.engine_stale(audit, datasets) is True
     assert run_audit.engine_stale({**audit, "metrics_stale": False}, datasets) is False
     assert run_audit.engine_stale({**audit, "metrics_stale": False}, datasets + [{"mapped_at": "2026-10-11T09:00:00+00:00"}]) is True
     assert run_audit.engine_stale({"results": None, "metrics_stale": True}, datasets) is False
+    # George, 2026-10-20: results of an older engine contract are stale whatever the mapping dates say
+    older = {**audit, "metrics_stale": False, "results": {"contract_version": CONTRACT_VERSION - 1}}
+    assert run_audit.engine_stale(older, datasets) is True
 
 
 def test_an_unknown_stage_is_a_404_and_an_unknown_audit_too(run_api):
