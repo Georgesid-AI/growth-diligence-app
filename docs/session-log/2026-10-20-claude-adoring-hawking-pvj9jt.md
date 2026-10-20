@@ -1,0 +1,6 @@
+2026-10-20, claude/adoring-hawking-pvj9jt (a real-file test: observed FY2021 revenue 2,976,920 against a deck claim of 501,378; the same claim read twice)
+Deleted: nothing.
+Decided: finding 1 is traced and not changed, because the audit's run id and revenue-file rows were not supplied (rule 13); finding 2 merges two readings of one figure in `detect_candidates` after the exact merge (`_merge_rounded`), on the parser's claim type as the metric, for money amounts only, never a table row's values by period, because a first version also joined a 2.6 ratio with another and the ten-deck count test caught it; the second location is carried in `sources`, which is the claim's evidence.
+Slow or unclear: the second reading of a text line on the same page has the same source dict as the first (file, page, kind), so only a different kind or cell adds a visible second location.
+Root cause and the rule that prevents it next time: the merge key held the exact value, so a figure read at two precisions never matched; the key now rounds before it compares, and the test builds both readings from different cells of one page.
+Process change to propose: a bug ticket quotes the audit's run id and the stored sheet rows with its figures, so the trace in rule 13 can start from them.

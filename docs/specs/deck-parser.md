@@ -181,7 +181,10 @@ date was borrowed from. A table row stores its values by period instead of one v
 value (low and high), target date, the column header text and the cell of each.
 Duplicates are merged and keep all source references, across slides and on one page: the same type, value, unit, currency
 and period is one claim and one row listing every source (2026-10-08). A duplicate is never a Deck inconsistency; the
-mark below applies only to differing values. The same holds across the two reading paths (2026-10-08, George): a value the
+mark below applies only to differing values. Amended 2026-10-20 (George): a figure read at two precisions (501,378 and 501,378.04) is
+the same claim when the type, unit, currency and period are the same, the values are equal after rounding to whole units and a
+page or slide is shared; the more precise value is kept and the other's source location joins the sources. Money amounts only: never a
+rate, a ratio or a count, never across pages or periods, never the values of a table row by period. The same holds across the two reading paths (2026-10-08, George): a value the
 model read from a structure (a KPI panel, a table, a roadmap) that the parser already lists, or that an earlier row of the
 deck lists, with the same type, value (range included), currency and period (and the same kind of unit when it is a rate or a
 multiple), is not a second row: the model's cell is added to the sources of the row that exists, and the row keeps its own
