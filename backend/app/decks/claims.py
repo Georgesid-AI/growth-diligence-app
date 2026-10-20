@@ -70,12 +70,12 @@ _LABEL_MAX = SNIPPET_MAX
 # "customer lifetime value" is ltv, not customers or customer_lifetime; "LTV / CAC", "LTV:CAC" is ltv_cac.
 # A revenue word, "per" or "/", and at most one adjective; the noun must then end the phrase: nothing, a mark, a figure or a period word follows.
 # The noun X after "per" decides (George, 2026-10-20): account, client, customer -> ARPA; user, subscriber -> ARPU; month, quarter, year ->
-# Revenue; any other noun -> Other. A noun that a hyphen, a slash or another noun follows is a breakdown ("per customer-segment", "per
+# Revenue; a non-customer unit (employee, FTE, order, transaction, store, seat, licence) -> Other; any other noun (segment, region, product,
+# country, geography, market, channel, type, cohort, line, use case, vertical...) is a breakdown, Revenue. A noun that a hyphen, a slash or another noun follows is a breakdown ("per customer-segment", "per
 # employee type") and is Revenue.
 _REVENUE_WORDS = r"(?:revenues?|sales|income|spend|ARR|MRR|bookings?)"
 # "Sales / Marketing" and "Income / expenses" are no per-unit phrases: sales, income and spend take "per" only.
 _PER_UNIT = r"\b(?:(?:average|avg) (?:\w+ )?)?(?:(?:revenues?|ARR|MRR|bookings?)\s*(?:per|/)|(?:sales|income|spend)\s*per)\s*(?:(?:paying|active|new|existing|average) )?"
-_PERIOD_NOUNS = r"(?:month|quarter|year)"
 _END_WORDS = r"by|in|per|over|for|at|monthly|annual|annually|quarterly|yearly|yoy|mom|ytd|ttm|fy|year|month|quarter|q[1-4]|h[12]"
 _ENDS = r"(?![-/])(?=\s*(?:$|[^\w\s/]|\d|\b(?:" + _END_WORDS + r")\b))"
 # The same phrase with a hyphen, a slash or another noun after the noun: a breakdown, Revenue (it outranks "customers" or "users" in the line).
@@ -116,7 +116,7 @@ _FAMILIES = [
     ("arpa", r"\bARPAs?\b|(?i:" + _PER_UNIT + r"(?:account|client|customer)s?" + _ENDS + ")"),
     ("arpu", r"\bARPUs?\b|(?i:" + _PER_UNIT + r"(?:user|subscriber)s?" + _ENDS + ")"),
     ("revenue", _BREAKDOWN),
-    ("other", r"(?i:" + _PER_UNIT + r"(?!(?:account|client|customer|user|subscriber|" + _PERIOD_NOUNS + r")s?\b)\w+" + _ENDS + ")"),
+    ("other", r"(?i:" + _PER_UNIT + r"(?:employee|fte|order|transaction|store|seat|licen[cs]e)s?" + _ENDS + ")"),
     # The columns of a pipeline table, never revenue or bookings (George, 2026-10-20); "weighted pipeline" is longer than "pipeline" (Sales).
     ("pipeline", r"(?i:\bsize of (?:the )?opportunit(?:y|ies)\b|\bopportunity size\b|\bweighted (?:in )?(?:the )?(?:forecast|pipeline)\b"
                  r"|\bweighted (?:opportunit(?:y|ies)|value)\b)"),

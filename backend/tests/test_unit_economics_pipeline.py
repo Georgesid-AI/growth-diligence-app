@@ -111,7 +111,7 @@ def test_arpa_and_arpu_are_metrics_that_are_never_computed():
 @pytest.mark.parametrize("title", [
     "Revenue per customer segment", "Revenue per client type", "Revenue per customer cohort", "Revenue per user group",
     "Revenue per account manager", "Revenue by customer segment", "Average revenue per customer segment",
-    "Revenue per customer-segment", "Revenue per customer/segment", "Average revenue per customer-segment", "Revenue per employee type",
+    "Revenue per customer-segment", "Revenue per customer/segment", "Average revenue per customer-segment", "Revenue per segment", "Revenue per employee type",
     "Revenue per employee-type", "Revenue per order/region"])
 def test_a_breakdown_title_with_a_noun_after_the_per_unit_term_stays_revenue(title):
     found = detect(title)
@@ -174,9 +174,10 @@ def test_a_period_after_per_is_revenue(title):
 
 
 @pytest.mark.parametrize("title", [
-    "Average revenue per employee", "Average revenue per order", "Average revenue per region", "Average revenue per segment",
-    "Average monthly revenue per store", "Revenue per employee", "Revenue per segment", "ARR per store", "Bookings per order"])
-def test_any_other_noun_after_per_is_other_never_revenue_or_arpa(title):
+    "Average revenue per employee", "Average revenue per FTE", "Average revenue per order", "Average revenue per transaction",
+    "Average monthly revenue per store", "Revenue per employee", "Revenue per seat", "Revenue per licence", "Revenue per license",
+    "ARR per store", "Bookings per order"])
+def test_a_non_customer_unit_after_per_is_other_never_revenue_or_arpa(title):
     found = detect(title)
     assert values_of(found, "other") == [1100, 1250, 1400, 1650]
     assert not any(c["claim_type"] in ("revenue", "arpa", "arpu") and c["value"] < 250000 for c in found)
@@ -240,3 +241,12 @@ def test_sales_marketing_and_income_expenses_are_no_per_unit_phrases():
     for line in ("Sales/Marketing Investments", "Sales / Marketing $400k", "Income/expenses $400k"):
         assert not any(c["claim_type"] in ("revenue", "arpa", "arpu", "other") for c in
                        claims.line_candidates(line, [(0, len(line), {})])), line
+
+
+@pytest.mark.parametrize("noun", ["segment", "product", "region", "country", "geography", "market", "channel", "type", "cohort", "line",
+                                  "use case", "vertical"])
+@pytest.mark.parametrize("head", ["Revenue per", "Average revenue per", "ARR per"])
+def test_a_breakdown_noun_after_per_is_revenue_not_other(head, noun):
+    found = detect(f"{head} {noun}")
+    assert values_of(found, "revenue") == [1100, 1250, 1400, 1650]
+    assert not any(c["claim_type"] in ("arpa", "arpu", "other") for c in found)
