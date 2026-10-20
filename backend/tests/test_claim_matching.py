@@ -372,6 +372,30 @@ def test_a_metric_with_no_result_is_unverified_when_the_engine_names_a_missing_f
     assert (row["evidence_label"], row["reason"]) == ("Unsupported", "not computed")
 
 
+@pytest.mark.parametrize("claim", [
+    {"snippet": "Revenue FY2023", "value": 501378, "target_date": "2023"},
+    {"snippet": "Revenue FY2023", "value": 501378, "target_date": "2023", "claim_inputs": {"x1": {"segment": "Enterprise"}}},
+    {"claim_type": "revenue_growth", "snippet": "Revenue growth", "unit": "%", "currency": None, "value": 40, "target_date": "2023",
+     "growth_basis": "yoy"},
+], ids=["whole company", "segment", "growth"])
+@pytest.mark.parametrize("series", [{"months": [], "segments": [], "data": []}, None], ids=["empty series", "no series"])
+def test_a_revenue_claim_with_no_revenue_series_reads_no_observed_figure_and_asks_no_question(claim, series):
+    """A Revenue claim with the engine holding no revenue series: no observed figure from any other block (an MRR series, a P&L, a
+    stale result), Unverified with its own reason, no gap and no "Same metric and period?" (George, 2026-10-20)."""
+    results = copy.deepcopy(results_for(RUNS["A"]))
+    results["missing_data"] = [{"metric": "ARR / MRR", "reason": "No usable recurring revenue rows",
+                                "unlocked_by": "Upload revenue lines with customer ID, invoice date, amount, currency", "file": "revenue"}]
+    if series is None:
+        del results["revenue_series"]
+    else:
+        results["revenue_series"] = series
+    assert results["mrr_series"]["data"], "fixture: the other series are still there to be read by mistake"
+    row = run_claim(claim, results=results)
+    assert (row["evidence_label"], row["reason"]) == ("Unverified", "Not computed – revenue series not available")
+    assert all(row[k] is None for k in ("observed_value", "observed_at", "observed_source", "observed_citation", "gap", "gap_kind",
+                                        "gloss", "definition_check", "definition_question", "evidence_analysis", "evidence_source_key"))
+
+
 def test_cac_payback_is_tested_at_the_default_lag_and_the_headline_quarter():
     results = copy.deepcopy(results_for(RUNS["A"]))
     results["cac_payback"] = {"default_l": 1, "headline_quarter": "2023-Q3", "partial_quarter_excluded": None,

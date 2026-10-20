@@ -43,6 +43,7 @@ PERIOD_NOT_READ = "Period not read – set it in the claim row"
 # committed ARR or MRR, CARR) is typed but not computed: never matched to engine revenue, Unsupported with this reason.
 CONTRACT_VALUE = "Contract value"
 CONTRACT_REASON = "Contract value – not computed by the app"
+NO_REVENUE_SERIES = "Not computed – revenue series not available"     # no revenue_series: no observed figure, no question
 FX_NEEDED = "FX rate needed"
 USE_OF_FUNDS = "use_of_funds"
 USE_OF_FUNDS_NOTE = "use of funds: an allocation share of the raise, no engine metric to test it against"
@@ -984,6 +985,8 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
     forecast = end is not None and as_of_i is not None and end > as_of_i
     if observed is None:
         if observed_at == "missing":
+            if (spec.get("base") or metric) == "Revenue":     # George, 2026-10-20: no revenue series, no figure read from anywhere else
+                return finish("Unverified", NO_REVENUE_SERIES)
             unlock = _missing(results, metric)
             return finish(*(("Unverified", f"Missing: {unlock}") if unlock else ("Unsupported", "not computed")))
         if forecast:
