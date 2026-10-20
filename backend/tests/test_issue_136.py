@@ -291,9 +291,11 @@ def test_6_run_audit_waits_for_the_type_and_the_chosen_monthly_report_feeds_the_
     assert body["dtype"] == "revenue" and body["recognition"]["file_type"] is None
     assert body["recognition"]["type_candidates"] == ["customer_revenue", "monthly_revenue_report"]
     assert api.post(f"/api/audits/{AUDIT}/compute").status_code == 409, "label rows are never summed as customers on a guess"
+    assert body["mapping_dropped"] is False
     chosen = decide(api, action="change", part="file_type", file_type="monthly_revenue_report")
     assert chosen.status_code == 200, chosen.text
     assert chosen.json()["recognition_only"] is True and chosen.json()["recognition"]["revenue_row"]["label"] == "Recognised revenue"
+    assert chosen.json()["mapping_dropped"] is True, "the screen says that switching back to Customer revenue needs a re-upload"
     currency = decide(api, action="change", part="currency", currency="EUR")
     assert currency.status_code == 200, currency.text
     assert api.post(f"/api/audits/{AUDIT}/compute").status_code == 200

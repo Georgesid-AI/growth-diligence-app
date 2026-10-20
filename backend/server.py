@@ -748,6 +748,7 @@ def _dataset_view(ds: dict, version: Optional[int] = None, status: str = "ok", f
         "unit_note": ds.get("unit_note"), "looks": ds.get("looks"), "miss": _miss(dtype, states, mapping, ds.get("looks")),
         "forecast_claims": forecast, "read_as_claims": None, "pnl_grain": "monthly" if dtype == "pnl" else None,
         "sheet_map": None, "recognition": recognition, "recognition_only": bool(ds.get("recognition_only")),
+        "mapping_dropped": bool(ds.get("mapping_dropped")),      # the column mapping was dropped for the report type (decision of 20 Oct)
     }
     if dtype == "revenue" and "currency" in view["missing_required"] and not ds.get("recognition_only"):
         # No currency column. Several currencies in the file block compute and the status names them; otherwise the analyst answers the
@@ -1443,7 +1444,7 @@ async def decide_recognition(audit_id: str, dtype: str, body: RecognitionDecisio
         # Decision 4 of 2026-10-19 (issue #136): a mapped file the analyst types as a report with no customer rows drops its column
         # mapping and is read by its recognition only, so its label rows are never summed as customers.
         await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype}, {"$set": {
-            "recognition_only": True, "mapping": {}, "columns_state": [], "mapping_source": {}, "mapped_at": None}})
+            "recognition_only": True, "mapping_dropped": True, "mapping": {}, "columns_state": [], "mapping_source": {}, "mapped_at": None}})
         ds = {**ds, "recognition_only": True}
     if body.part == "currency" and dtype == "revenue" and not ds.get("recognition_only") and not (ds.get("mapping") or {}).get("currency"):
         await _confirm_currency_column(audit_id, ds, decisions["currency"], background)
