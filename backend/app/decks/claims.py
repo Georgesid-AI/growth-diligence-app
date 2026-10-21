@@ -216,6 +216,14 @@ _GROSS_MARGIN = re.compile(r"(?i)\bgross margins?\b")
 _PROFITABLE = re.compile(r"(?i)\bprofitable\b")
 # Lines that are a claim with no figure, given a date: a roadmap bullet, a break-even milestone.
 _MILESTONES = ("product", "ebitda")
+# The cue of a break-even line among the ebitda ones ("Profitable by 2024"); an EBITDA heading has none (PR 147 review M2).
+_BREAK_EVEN_CUE = re.compile(r"(?i)\b(?:profitab(?:ility|le)|break[- ]?even)\b")
+
+
+def is_milestone(c: Dict) -> bool:
+    """True for a candidate with no figure that is a milestone line and not a heading: a product line, a line of unknown type, or a
+    line (or the heading it borrowed) with a break-even cue. Told by the cue and not by the claim type, which "2023 EBITDA" shares."""
+    return c["claim_type"] in ("product", UNKNOWN) or bool(_BREAK_EVEN_CUE.search(f"{c.get('snippet') or ''} {c.get('label_from') or ''}"))
 # Words after a number that are not the thing counted: "20 of them", "5 per month".
 _NOT_NOUNS = frozenset("""a an and are as at be by each for from has have in into is it its more of on or our
 over per than that the this to under up was we were with""".split())
@@ -1399,7 +1407,7 @@ def detect_candidates(blocks: List[Dict], file: str, fiscal_year_end: int = 12) 
                 kept["_stated"] = kept["_stated"] or c["_stated"]
                 for a, b in zip(kept.get("by_period") or (), c.get("by_period") or ()):
                     a["_stated"] = a["_stated"] or b["_stated"]
-    found = _merge_unknown(_merge_rounded(list(merged.values())))
+    found = _drop_label_headings(_merge_unknown(_merge_rounded(list(merged.values()))))
     _apply_label_units(found)
     _flag_inconsistencies(found)
     _flag_funds_inconsistencies(found)
@@ -1513,6 +1521,34 @@ def _merge_unknown(found: List[Dict]) -> List[Dict]:
             continue
         into["sources"] += [s for s in c["sources"] if s not in into["sources"]]
         into["_stated"] = into["_stated"] or c["_stated"]
+    return out
+
+
+def _page_of(source: Dict):
+    return source.get("slide") or source.get("page")
+
+
+def _drop_label_headings(found: List[Dict]) -> List[Dict]:
+    """A candidate with no figure is dropped when a figure on the same page already uses its line as its label ("2020 REVENUE" over
+    "151K", whose "Label from" it is): the figure is the claim, the heading only names it (issue #146). A direction ("Positive
+    EBITDA") and a milestone line (a product line, a line of unknown type, a break-even cue: `is_milestone`) are kept, and so is every other
+    candidate with no figure. A figure uses a heading when its "Label from" is the heading's whole line. A heading read on several
+    pages loses the sources of the pages whose figure uses it and is dropped when none is left."""
+    used = {}
+    for c in found:
+        if c.get("label_from") and any(v["value"] is not None for v in claim_values(c)):
+            for s in c["sources"]:
+                used.setdefault(_page_of(s), set()).add(" ".join(c["label_from"].split()).lower())
+    out = []
+    for c in found:
+        line = " ".join((c.get("snippet") or "").split()).lower()
+        if c.get("value") is not None or c.get("value_high") is not None or c.get("by_period") or c.get("claim_direction") \
+                or is_milestone(c) or not line:
+            out.append(c)
+            continue
+        left = [s for s in c["sources"] if line not in used.get(_page_of(s), ())]
+        if left:
+            out.append({**c, "sources": left})
     return out
 
 
@@ -1898,16 +1934,17 @@ def confidence(candidate: Dict, peers: List[Dict]) -> Dict:
     date, a unit (or currency), a heading or line that names its type, and its value is corroborated elsewhere in the
     deck. No failed check is High, one is Medium, two or more Low. A check that cannot apply to a claim with no
     value (unit, corroboration) is skipped. `peers` are the candidates of the same deck. A claim the analyst added is
-    not scored: its confidence reads "Analyst-entered"."""
+    not scored: its confidence reads "Analyst-entered"; one the analyst edited reads "Analyst-edited" (issue #146)."""
     if candidate.get("origin") == "analyst":
         return {"level": None, "failed": [], "text": "Analyst-entered"}
+    if candidate.get("status") == "edited" or "parsed" in candidate:
+        return {"level": None, "failed": [], "text": "Analyst-edited"}
     values = claim_values(candidate)
     has_value = any(v["value"] is not None for v in values)
-    named = candidate.get("claim_type") not in (UNKNOWN, "other") and \
-        bool(candidate.get("type_from", "line") or "parsed" in candidate)
+    named = candidate.get("claim_type") not in (UNKNOWN, "other") and bool(candidate.get("type_from", "line"))
     checks = [("no date", all(v["target_date"] for v in values))]
-    if candidate.get("claim_direction") and not has_value:
-        checks.append(("no figure", False))          # a direction is never better than Medium
+    if not has_value and (candidate.get("claim_direction") or not is_milestone(candidate)):
+        checks.append(("no figure", False))          # a direction or a heading no figure uses is never better than Medium (issue #146)
     if has_value:
         # A label that states the currency in brackets ("Turnover (£/year)") counts, also on a candidate stored before the
         # label was read into its currency field: only what is still missing after that is listed.

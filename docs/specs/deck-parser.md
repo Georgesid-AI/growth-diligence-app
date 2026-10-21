@@ -568,3 +568,18 @@ Amended 2026-10-20 (George, review of the unit-economics change; tests `backend/
 
 Amended 2026-10-20 (George): a figure under a pipeline column header ("Size of opportunity", "Weighted in forecast") is Pipeline whatever its
 row label says ("ARR expansion Acme"); the header wins over the row's own keyword for that type only. Test: `test_unit_economics_pipeline.py`.
+
+Amended 2026-10-21 (George, issue #146): (1) the deck upload box is a drop zone: a file dropped on it takes the path of the picker, with the same
+types (.pptx, .docx, .pdf) and the same refusal message. (2) A candidate with no figure is dropped when a figure on the same page already uses its
+line as its "Label from" ("2020 REVENUE" over "151K"): the figure is the claim, the heading only names it. A heading read on several pages loses the
+pages whose figure uses it. A direction ("Positive EBITDA"), a product or milestone line and every other candidate with no figure are kept. A heading that no figure uses stays a claim and is scored
+Medium with the reason "no figure", like a direction (George, 2026-10-21); a product or milestone line is scored as before. On the
+10 test decks two headings go (02-moz p20 and p21). (3) Confidence of a claim the analyst edited reads "Analyst-edited", like "Analyst-entered" for an
+added claim; the claim is not scored again. A claim the parser read is scored as before. Tests: `test_issue_146.py`, `DeckPanel.test.jsx`.
+
+
+Amended 2026-10-21 (George, PR 147 review): (1) several files dropped at once are accepted and uploaded one after another in drop order, with a status line per
+file (uploading, done, refused type, failed); a refused type or a failed upload does not stop the others (like the xlsx upload). (2) A figure uses a heading when its
+"Label from" is the heading's whole line, not a longer line that holds it. (3) A candidate with no figure is a milestone line, and not a heading, when it is a product
+line, a line of unknown type or has a break-even cue ("profitable", "break-even", in its line or the heading it borrowed); the claim type "ebitda" alone does not decide
+(a "2023 EBITDA" heading no figure uses is scored Medium, "no figure"; "Profitable by 2024" above a figure is kept).

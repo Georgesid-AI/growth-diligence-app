@@ -38,8 +38,7 @@ const typeValue = (d) => (d.claim_type === "unknown" ? "other" : d.claim_type !=
 /** Board deck or growth plan: the scope message, the upload, and the candidate approval list. */
 export default function DeckPanel({ auditId, reloadKey = 0 }) {
   const [data, setData] = useState({ decks: [], candidates: [] });
-  const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState(null);
+  const [lines, setLines] = useState([]);          // one status line per file of the last drops: waiting / uploading / done / refused / failed
   const [tab, setTab] = useState(null);            // deck id or ALL_DECKS; null until the first load
   const [confirming, setConfirming] = useState(null);
   const [adding, setAdding] = useState(false);       // the Add claim row is open
@@ -78,21 +77,42 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
     return () => clearTimeout(timer);
   }, [data, load]);
 
-  const onFile = async (e) => {
-    const file = e.target.files?.[0];
+  // Files go one after another, in drop order, one status line each; a refused type or a failed upload does not stop the others.
+  const queue = useRef(Promise.resolve());
+  const seq = useRef(0);
+  const setLine = (id, patch) => { if (alive.current) setLines((all) => all.map((l) => (l.id === id ? { ...l, ...patch } : l))); };
+  const takeFiles = (list) => {
+    const files = Array.from(list || []);
+    if (!files.length) return;
+    const added = files.map((file) => ({ id: (seq.current += 1), file, name: file.name, state: isDeckFile(file.name) ? "waiting" : "refused",
+      text: isDeckFile(file.name) ? "waiting" : `refused – ${DECK_TYPE_REFUSED}` }));
+    setLines((all) => [...all.filter((l) => l.state === "waiting" || l.state === "uploading"), ...added]);
+    for (const line of added.filter((l) => l.state === "waiting")) queue.current = queue.current.then(() => sendFile(line));
+    return queue.current;
+  };
+
+  const onFile = (e) => {
+    const picked = Array.from(e.target.files || []);
     e.target.value = "";
-    if (!file) return;
-    if (!isDeckFile(file.name)) { setError(DECK_TYPE_REFUSED); return; }
-    setUploading(true);
-    setError(null);
+    return takeFiles(picked);
+  };
+
+  // The box is also a drop zone: dropped files take the same path as picked ones, with the same type check and refusal.
+  const onDrop = (e) => {
+    e.preventDefault();
+    return takeFiles(e.dataTransfer?.files);
+  };
+
+  const sendFile = async (line) => {
+    setLine(line.id, { state: "uploading", text: "uploading…" });
     try {
-      const res = await uploadDeck(auditId, file);
-      toast.success(`${res.file}: ${res.pages} ${res.page_unit}s read · ${res.candidates} candidate claims`);
+      const res = await uploadDeck(auditId, line.file);
+      const summary = `${res.pages} ${res.page_unit}s read · ${res.candidates} candidate claims`;
+      toast.success(`${res.file}: ${summary}`);
+      setLine(line.id, { state: "done", text: `done · ${summary}` });
       await load(res.deck_id);
     } catch (err) {
-      setError(err.response?.data?.detail || "Upload failed");
-    } finally {
-      setUploading(false);
+      setLine(line.id, { state: "failed", text: `failed – ${err.response?.data?.detail || "Upload failed"}` });
     }
   };
 
@@ -217,7 +237,8 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
         </div>
       </div>
 
-      <label className="mt-3 block cursor-pointer rounded-md border border-dashed border-[#D1D5DB] bg-sky-50/50 p-4 hover:bg-sky-50 transition-colors" data-testid="deck-upload-box">
+      <label className="mt-3 block cursor-pointer rounded-md border border-dashed border-[#D1D5DB] bg-sky-50/50 p-4 hover:bg-sky-50 transition-colors" data-testid="deck-upload-box"
+        onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
         <input type="file" accept={DECK_ACCEPT} className="hidden" onChange={onFile} data-testid="deck-upload-input" />
         <div className="text-xs text-slate-600 max-w-2xl space-y-1" data-testid="deck-scope-message">
           <p>{DECK_SCOPE_INTRO}</p>
@@ -228,11 +249,21 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
           <p>{DECK_SCOPE_OUTRO}</p>
         </div>
         <span className="mt-3 inline-flex items-center gap-2 px-3.5 py-2 rounded-md bg-white border border-[#D1D5DB] text-sm text-slate-800">
-          {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} Upload deck
+          {lines.some((l) => l.state === "waiting" || l.state === "uploading") ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} Upload deck
         </span>
       </label>
 
-      {error && <p className="mt-3 text-sm text-rose-700" role="alert" data-testid="deck-upload-error">{error}</p>}
+      {lines.length > 0 && (
+        <ul className="mt-3 space-y-1 text-sm" data-testid="deck-upload-status">
+          {lines.map((l) => (
+            <li key={l.id} data-testid="deck-upload-line" data-state={l.state}
+              className={l.state === "refused" || l.state === "failed" ? "text-rose-700" : l.state === "done" ? "text-emerald-700" : "text-slate-600"}
+              role={l.state === "refused" || l.state === "failed" ? "alert" : undefined}>
+              {l.name}: {l.text}
+            </li>
+          ))}
+        </ul>
+      )}
 
       {data.decks.length > 0 && (
         <div className="mt-5 pt-5 border-t border-[#E5E7EB]" data-testid="deck-candidates">

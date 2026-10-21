@@ -81,7 +81,7 @@ def test_recorded_replies_replay_through_the_gateway_and_the_verifier(fixture):
     pytest.importorskip("pdfplumber")
     pytest.importorskip("pptx")
     structure = _structure(fixture)
-    cells, _ = redact.redact_structure(structure["cells"], "Zero2Hero", {})
+    cells, _ = redact.redact_structure(structure["cells"], "Zero2Hero", {}, deck=True)
     listed = structure_items.list_items({**structure, "cells": cells})
     text = structure_items.text({**structure, "cells": cells}, listed)
     assert fixture["match"] in text, "--fake and RecordedAdapter find a recorded reply by this text: it must be today's"
@@ -109,7 +109,7 @@ def test_the_recorded_replies_give_the_new_claim_types_and_they_are_verified(whe
     pytest.importorskip("pptx")
     fixture, = [f for f in _fixtures() if (f["file"], f["page"]) == where and f["type"] == "kpi_panel"]
     structure = _structure(fixture)
-    cells, _ = redact.redact_structure(structure["cells"], "Zero2Hero", {})
+    cells, _ = redact.redact_structure(structure["cells"], "Zero2Hero", {}, deck=True)
     listed = structure_items.list_items({**structure, "cells": cells})
     result, _ = _read(_db(), structure_items.text({**structure, "cells": cells}, listed), "kpi_panel", [fixture["reply"]])
     assert result.status == "read", result.reason
@@ -126,7 +126,7 @@ def test_tea_p11_milestones_take_the_quarter_or_half_of_their_date_box_over_the_
     pytest.importorskip("pdfplumber")
     fixture, = [f for f in _fixtures() if (f["file"], f["page"]) == ("10-tea.pdf", 11)]
     structure = _structure(fixture)
-    cells, _ = redact.redact_structure(structure["cells"], "Zero2Hero", {})
+    cells, _ = redact.redact_structure(structure["cells"], "Zero2Hero", {}, deck=True)
     listed = structure_items.list_items({**structure, "cells": cells})
     result, _ = _read(_db(), structure_items.text({**structure, "cells": cells}, listed), "roadmap", [fixture["reply"]])
     assert result.status == "read", result.reason
@@ -156,7 +156,7 @@ def _moz_text(page):
     from app.decks import parser
     deck = parser.parse_deck((DECKS / "02-moz.pdf").read_bytes(), "02-moz.pdf")
     structure, = [s for s in deck["structures"] if s.get("page") == page and s["type"] == "kpi_panel"]
-    cells, _ = redact.redact_structure(structure["cells"], "Moz", {})
+    cells, _ = redact.redact_structure(structure["cells"], "Moz", {}, deck=True)
     return structure_items.text({**structure, "cells": cells}, structure_items.list_items({**structure, "cells": cells}))
 
 
@@ -488,7 +488,7 @@ def test_a_figure_spanning_a_line_break_or_double_space_is_cut_as_the_cell_line_
 
 def test_the_item_list_is_built_from_the_redacted_cells():
     cells = [{"row": 1, "col": 1, "text": "Call +44 20 7946 0958"}, {"row": 1, "col": 2, "text": "£1M"}]
-    redacted, _ = redact.redact_structure(cells, "Zero2Hero", {})
+    redacted, _ = redact.redact_structure(cells, "Zero2Hero", {}, deck=True)
     listed = structure_items.list_items({"type": "table", "header_rows": 0, "cells": redacted})
     assert [(i["cell"], i["raw"]) for i in listed["items"]] == [("r1c2", "1M")], "no figure of the phone number"
 
