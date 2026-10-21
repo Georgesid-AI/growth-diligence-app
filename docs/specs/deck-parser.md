@@ -199,6 +199,9 @@ Dropped, never listed:
 - Chart axis ticks: 3 or more numbers, evenly spaced in value, in one line, in one column or
   row of lines that hold only a number, or in one table column (row numbers 1, 2, 3). A table
   row is a series of values and the header row holds labels: neither is ever ticks.
+  Added 2026-10-21 (issue #143): also a run of 4 or more round, equally spaced numbers, each alone in its line, anywhere on one page
+  (0, 2,000, 4,000 ... 10,000; the step is 1, 2, 2.5 or 5 times a power of ten and the run starts at a multiple of it), whatever
+  their positions. The number of a list item ("1.", "#3:", "2)") is no figure of such a run. A line with a word or a table cell is never one.
 - Every figure on a slide or page titled Problem, Why now, Trends, Landscape, Background,
   Token or Allocation (pptx titles and the topmost text of a pdf page; docx has no titles).
 - Every figure on a slide or page that cites outside research: a "Source:" or "Via <link>"
@@ -557,6 +560,10 @@ Amended 2026-10-20 (George, review of the unit-economics change; tests `backend/
   customer or user where that noun ENDS the phrase (nothing, a mark, a figure or a period word such as "by year" follows). "Revenue per
   customer segment", "per client type", "per customer cohort", "per user group" stay Revenue; "Seats per account" is no unit economics.
 - A column header "Revenue per client" over rows that name a client ("Acme") types each figure Revenue; over rows that are periods it stays ARPA.
+- Amended 2026-10-21 (issue #143): the bars of one chart row share the chart's caption. A bar with no heading within reach of its own
+  (further than 0.25 of the page from a caption such as "Average revenue per account (EUR)", at the far end of the row) takes the
+  headings near its row mates before the page title, so a title such as "2022 FORECAST: CLIENT COMPOSITION" no longer types the far bars
+  Customers or Revenue while the near ones are ARPA.
 - A model label of arpa, arpu or pipeline stands only when the cell or one of its headers holds the keyword; otherwise it is listed as Other.
 
 Amended 2026-10-20 (George): a figure under a pipeline column header ("Size of opportunity", "Weighted in forecast") is Pipeline whatever its

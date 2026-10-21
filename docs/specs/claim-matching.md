@@ -13,6 +13,9 @@ computed: Unsupported, "Unit economics – not computed by the app", no value at
 after the tested rows, as use of funds is). A claim whose figure shared a table cell with a different number of header periods has no
 period and reads "Period unclear – confirm" in place of "Period not read – set it in the claim row". Pipeline claims have no metric:
 Unsupported, "no metric".
+Amended 2026-10-21 (issue #143; tests `backend/tests/test_issue_143.py`): a per-account bar chart is ARPA or ARPU (above) whichever bar sits
+far from its caption, so none of its bars is Revenue and none is a deck inconsistency against revenue (section 11); axis ticks are dropped
+before claim extraction (deck-parser.md §2). The metric keeps its names ARPA and ARPU; "Revenue per account" is not added (open decision).
 Amended 2026-10-15 (docs/specs/dates-and-periods.md): claim-period coverage (Covered / Partly covered → Inconclusive / Not covered →
 Unverified "claim period not in supplied data: …") replaces table 2b's "before {metric}'s first month" and "months missing" reasons
 and Q2; a claim with no period reads the evidence end, never an as-of month the data does not reach; table 2a gains Revenue, ARR, MRR
