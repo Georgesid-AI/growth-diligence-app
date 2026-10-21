@@ -215,8 +215,12 @@ _UNITS = {"%", "x", "days", "months", "years"}
 
 
 def revenue_mapped(dataset: Optional[Dict]) -> bool:
-    """True once the revenue file is uploaded and the analyst confirmed its columns, customer included."""
-    return bool(dataset and dataset.get("mapped_at") and (dataset.get("mapping") or {}).get("customer_id"))
+    """True once the revenue file is uploaded and confirmed: its columns with the customer among them, or, for a file read by
+    recognition only (a monthly revenue report, a revenue summary, financial statements, an ARR or MRR snapshot: no customer rows,
+    so no customer name to redact), its recognition with no choice left to the analyst (`mapped_at` is set only then)."""
+    if not dataset or not dataset.get("mapped_at"):
+        return False
+    return bool(dataset.get("recognition_only") or (dataset.get("mapping") or {}).get("customer_id"))
 
 
 async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None) -> str:
@@ -238,7 +242,7 @@ async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None
     if audit.get("structure_reading_consent") is not True:
         return await _deck_status(db, audit_id, deck_id, PYTHON_ONLY)
     if not revenue_mapped(await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"},
-                                                     {"_id": 0, "mapping": 1, "mapped_at": 1})):
+                                                     {"_id": 0, "mapping": 1, "mapped_at": 1, "recognition_only": 1})):
         return await _deck_status(db, audit_id, deck_id, WAITING, WAITING_TEXT)
     mapping = await llm_redaction.get_map(db, audit_id)
     year_end = int(audit.get("fiscal_year_end") or 12)

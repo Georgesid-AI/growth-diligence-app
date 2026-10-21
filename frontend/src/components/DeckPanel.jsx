@@ -78,9 +78,19 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
     return () => clearTimeout(timer);
   }, [data, load]);
 
-  const onFile = async (e) => {
+  const onFile = (e) => {
     const file = e.target.files?.[0];
     e.target.value = "";
+    return sendFile(file);
+  };
+
+  // The box is also a drop zone: a dropped file takes the same path as a picked one, with the same type check and refusal.
+  const onDrop = (e) => {
+    e.preventDefault();
+    return sendFile(e.dataTransfer?.files?.[0]);
+  };
+
+  const sendFile = async (file) => {
     if (!file) return;
     if (!isDeckFile(file.name)) { setError(DECK_TYPE_REFUSED); return; }
     setUploading(true);
@@ -217,7 +227,8 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
         </div>
       </div>
 
-      <label className="mt-3 block cursor-pointer rounded-md border border-dashed border-[#D1D5DB] bg-sky-50/50 p-4 hover:bg-sky-50 transition-colors" data-testid="deck-upload-box">
+      <label className="mt-3 block cursor-pointer rounded-md border border-dashed border-[#D1D5DB] bg-sky-50/50 p-4 hover:bg-sky-50 transition-colors" data-testid="deck-upload-box"
+        onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
         <input type="file" accept={DECK_ACCEPT} className="hidden" onChange={onFile} data-testid="deck-upload-input" />
         <div className="text-xs text-slate-600 max-w-2xl space-y-1" data-testid="deck-scope-message">
           <p>{DECK_SCOPE_INTRO}</p>

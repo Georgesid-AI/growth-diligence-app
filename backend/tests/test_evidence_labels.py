@@ -40,7 +40,7 @@ def test_plan_5_a_high_confidence_claim_contradicted_by_the_revenue_file_shows_h
 def test_the_extraction_confidence_is_the_deck_lists_level_and_changes_no_label(register_api):
     client, db = register_api
     rows = {r["claim_id"]: r for r in _get(client)["register"]}
-    assert {r["extraction_confidence"] for r in rows.values()} <= {"High", "Medium", "Low", "Analyst-entered"}
+    assert {r["extraction_confidence"] for r in rows.values()} <= {"High", "Medium", "Low", "Analyst-entered", "Analyst-edited"}
     assert rows["c05"]["extraction_confidence"] == "Medium", "one place only: not corroborated"
     before = {cid: (r["evidence_label"], r["rank"]) for cid, r in rows.items()}
     c05 = next(c for c in db[decks.CANDIDATES_COLLECTION].docs if c["id"] == "c05")

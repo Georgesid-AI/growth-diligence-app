@@ -235,6 +235,21 @@ test("the edit form of a Use of funds claim shows Use of funds, and correcting t
   expect(api.updateCandidate.mock.calls.at(-1)[2].claim_type).toBe("use_of_funds");
 });
 
+test("after the analyst edits a claim its confidence reads Analyst-edited, not a score (issue #146)", async () => {
+  const parsed = claim("c", "d1", 22, { group: 8, claim_type: "use_of_funds", value: 40, unit: "%", currency: null,
+    confidence: { level: "Low", failed: ["no unit", "not corroborated"], text: "Low – no unit, not corroborated" } });
+  await reload([parsed]);
+  expect(q("candidate-row-c").querySelector("[data-testid='candidate-confidence']").textContent).toBe("Low – no unit, not corroborated");
+  api.updateCandidate.mockResolvedValue({ id: "c", status: "edited" });
+  api.getDecks.mockResolvedValue({ decks: DECKS, candidates: [{ ...parsed, status: "edited", currency: "EUR",
+    confidence: { level: null, failed: [], text: "Analyst-edited" } }] });
+  await act(async () => { q("candidate-row-c").querySelector("[data-testid='candidate-edit']").click(); });
+  await act(async () => { q("edit-save").click(); });
+  const shown = q("candidate-row-c").querySelector("[data-testid='candidate-confidence']");
+  expect(shown.textContent).toBe("Analyst-edited");
+  expect(shown.querySelector("[data-testid='candidate-confidence-text']").className).toBe("text-slate-500");
+});
+
 describe("a turnover claim asks Revenue or Volume in its own row (05-zero2hero.pdf, claim-matching.md section 11 point 8)", () => {
   // As GET /decks sends p17's three bars, all to review: the revenue file starts in 2023, p19's pending table gives
   // Revenue 130,550 (FY2022) and 150,000 (FY2023).
@@ -817,6 +832,31 @@ describe("upload box", () => {
 
   test("a file of another type is refused with the accepted types named, and nothing is uploaded", async () => {
     await pick("slides.key");
+    expect(api.uploadDeck).not.toHaveBeenCalled();
+    expect(q("deck-upload-error").textContent).toBe("Only .pptx, .docx and .pdf files can be uploaded here.");
+  });
+
+  const drop = async (...names) => {
+    const box = q("deck-upload-box");
+    const files = names.map((n) => new File(["x"], n));
+    const over = new Event("dragover", { bubbles: true, cancelable: true });
+    await act(async () => { box.dispatchEvent(over); });
+    const ev = new Event("drop", { bubbles: true, cancelable: true });
+    ev.dataTransfer = { files };
+    await act(async () => { box.dispatchEvent(ev); });
+    return { over, ev };
+  };
+
+  test("the box is a drop zone: a dropped file of an accepted type goes to the existing upload, and the browser does not open it", async () => {
+    api.uploadDeck.mockResolvedValue({ file: "plan.pptx", pages: 3, page_unit: "slide", candidates: 2, deck_id: "d1" });
+    const { over, ev } = await drop("plan.pptx");
+    expect(over.defaultPrevented && ev.defaultPrevented).toBe(true);
+    expect(api.uploadDeck).toHaveBeenCalledWith("a1", expect.objectContaining({ name: "plan.pptx" }));
+    expect(q("deck-upload-error")).toBeNull();
+  });
+
+  test("a dropped file of another type is refused with the same message, and nothing is uploaded", async () => {
+    await drop("slides.key");
     expect(api.uploadDeck).not.toHaveBeenCalled();
     expect(q("deck-upload-error").textContent).toBe("Only .pptx, .docx and .pdf files can be uploaded here.");
   });

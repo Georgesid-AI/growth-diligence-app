@@ -1399,7 +1399,7 @@ def detect_candidates(blocks: List[Dict], file: str, fiscal_year_end: int = 12) 
                 kept["_stated"] = kept["_stated"] or c["_stated"]
                 for a, b in zip(kept.get("by_period") or (), c.get("by_period") or ()):
                     a["_stated"] = a["_stated"] or b["_stated"]
-    found = _merge_unknown(_merge_rounded(list(merged.values())))
+    found = _drop_label_headings(_merge_unknown(_merge_rounded(list(merged.values()))))
     _apply_label_units(found)
     _flag_inconsistencies(found)
     _flag_funds_inconsistencies(found)
@@ -1513,6 +1513,33 @@ def _merge_unknown(found: List[Dict]) -> List[Dict]:
             continue
         into["sources"] += [s for s in c["sources"] if s not in into["sources"]]
         into["_stated"] = into["_stated"] or c["_stated"]
+    return out
+
+
+def _page_of(source: Dict):
+    return source.get("slide") or source.get("page")
+
+
+def _drop_label_headings(found: List[Dict]) -> List[Dict]:
+    """A candidate with no figure is dropped when a figure on the same page already uses its line as its label ("2020 REVENUE" over
+    "151K", whose "Label from" it is): the figure is the claim, the heading only names it (issue #146). A direction ("Positive
+    EBITDA") and a product or milestone line are kept, and so is every other candidate with no figure. A heading read on several
+    pages loses the sources of the pages whose figure uses it and is dropped when none is left."""
+    used = {}
+    for c in found:
+        if c.get("label_from") and any(v["value"] is not None for v in claim_values(c)):
+            for s in c["sources"]:
+                used.setdefault(_page_of(s), set()).add(" ".join(c["label_from"].split()).lower())
+    out = []
+    for c in found:
+        line = " ".join((c.get("snippet") or "").split()).lower()
+        if c.get("value") is not None or c.get("value_high") is not None or c.get("by_period") or c.get("claim_direction") \
+                or c["claim_type"] in ("product", UNKNOWN) or not line:
+            out.append(c)
+            continue
+        left = [s for s in c["sources"] if not any(line in label for label in used.get(_page_of(s), ()))]
+        if left:
+            out.append({**c, "sources": left})
     return out
 
 
@@ -1898,9 +1925,11 @@ def confidence(candidate: Dict, peers: List[Dict]) -> Dict:
     date, a unit (or currency), a heading or line that names its type, and its value is corroborated elsewhere in the
     deck. No failed check is High, one is Medium, two or more Low. A check that cannot apply to a claim with no
     value (unit, corroboration) is skipped. `peers` are the candidates of the same deck. A claim the analyst added is
-    not scored: its confidence reads "Analyst-entered"."""
+    not scored: its confidence reads "Analyst-entered"; one the analyst edited reads "Analyst-edited" (issue #146)."""
     if candidate.get("origin") == "analyst":
         return {"level": None, "failed": [], "text": "Analyst-entered"}
+    if candidate.get("status") == "edited" or "parsed" in candidate:
+        return {"level": None, "failed": [], "text": "Analyst-edited"}
     values = claim_values(candidate)
     has_value = any(v["value"] is not None for v in values)
     named = candidate.get("claim_type") not in (UNKNOWN, "other") and \

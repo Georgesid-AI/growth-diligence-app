@@ -1120,3 +1120,8 @@ Recognition of a revenue file (three essentials), its classification into six ty
 the model's proposal and the screen lines S31a–S31k are specified in docs/specs/revenue-file-recognition.md. It extends §3 (a file without customer ID
 is no longer rejected for that), §4.2 and §19 (one call per new file answers the file type and the recognition), §16 (S16d counts an open recognition
 click) and §26 (a P&L stays the P&L and carries its own recognition line; decision 3 of that spec). S2 above carries the one sentence it adds; S4 reads "Required: a revenue file – revenue by customer, invoices or a monthly revenue report (24–36 months)." since the implementation (decision 4); S31f sits above the S6 type picker, which stays.
+
+Amended 2026-10-21 (George, issue #146): the revenue file for AI reading of decks (llm-structure-reading.md) is any confirmed revenue file that gives the engine a revenue
+series: a file with a confirmed column mapping that holds the customer, or a file read by recognition only (monthly revenue report, revenue summary, financial
+statements, ARR or MRR snapshot) once no choice waits for the analyst. A report has no customer rows, so no customer name goes out unmapped. The deck upload box also
+accepts a dropped file (deck-parser.md).

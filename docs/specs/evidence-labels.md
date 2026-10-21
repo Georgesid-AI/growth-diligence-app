@@ -114,3 +114,6 @@ the tests of §7.
 
 ## Done when
 §7 passes with the full suite; the run A register shows both columns and the memo summary line of §4.
+
+Amended 2026-10-21 (George, issue #146): the values of Extraction confidence are High · Medium · Low · Analyst-entered · Analyst-edited. "Analyst-edited" is a
+claim the analyst edited; it is not scored again (deck-parser.md §6).

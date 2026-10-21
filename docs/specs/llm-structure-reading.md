@@ -230,3 +230,6 @@ so agreement measures the model. Target: ≥95% agreement. `--pause` sets the se
   PUT /audits/{id} accepts it), a month field on the creation screen (`frontend/src/pages/AuditHub.jsx`) and in the
   existing MappingWizard settings (`frontend/src/pages/MappingWizard.jsx`), and `backend/app/decks/claims.py` resolves
   every period to a start and an end date with it, keeping the stated text for display.
+
+Amended 2026-10-21 (George, issue #146): "Structure reading waits for the revenue file" is met by any confirmed revenue file that gives the engine a revenue series, a
+monthly revenue report read by recognition only included (its `mapped_at` is set once no choice waits); before this, only a file whose mapping held the customer counted.

@@ -391,3 +391,6 @@ rejected claim, 400 for a claim that is not a turnover claim.
 
 Amended 2026-10-20 (George, review of the unit-economics change): pipeline rows are untested like ARPA and ARPU (`is_untested`): never in the
 top 5, never gated.
+
+Amended 2026-10-21 (George, issue #146): `extraction_confidence` reads "Analyst-edited" for a claim the analyst edited (status "edited"), in the register and
+the CSV, as "Analyst-entered" does for an added claim (which keeps it after an edit). Display only; the memo does not print it. Parsed claims are scored as before.

@@ -1,0 +1,6 @@
+Date and branch: 2026-10-21, claude/relaxed-gauss-mmfn7s (issue #146).
+Deleted: the customer-ID demand as the only way a revenue file could release a waiting deck; the separate scoring of an edited claim.
+Decided: a file read by recognition only counts as the revenue file once its `mapped_at` is set (no choice waits), because a report has no customer rows to redact; a figure-less candidate is dropped only when a figure of its page has its line as "Label from" (directions, product and milestone lines stay); an edited claim reads "Analyst-edited" and is not rescored, an added claim keeps "Analyst-entered"; the drop zone shares the picker's code path.
+Slow or unclear: ruff 0.16.8 is pinned and the session had 0.16.9, so lint ran from a temporary install of the pinned version; the frontend test for item 4 passes without a code change, since the server already sends the text.
+Root cause and rule: the deck gate was written for column-mapped files and tested only with one; the recognition-only path (issue #136) added a type with no customer column and nobody re-read the gate. Rule: a change that adds a revenue file type lists every gate that reads `mapping`, in its spec.
+Process change to propose: the session start hook installs the ruff version named in ruff.toml.

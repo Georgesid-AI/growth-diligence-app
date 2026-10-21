@@ -156,3 +156,6 @@ join `REGISTER_NAMES` in `test_gateway_data_boundary.py`; the two new endpoints 
 
 ## Done when
 §7 passes with the full suite; the three plan tests pass as plain tests.
+
+Amended 2026-10-21 (George, issue #146): after an edit the claim's extraction confidence reads "Analyst-edited" in the deck list, the register and the CSV, in place of
+a score computed from the parser's checks on the corrected values.
