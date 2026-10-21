@@ -792,3 +792,39 @@ describe("Approve all and the category sections (docs/specs/chat-upload.md secti
     }
   });
 });
+
+describe("upload box", () => {
+  const pick = async (name) => {
+    const input = q("deck-upload-input");
+    const file = new File(["x"], name);
+    Object.defineProperty(input, "files", { value: [file], configurable: true });
+    await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); });
+  };
+
+  test("the box holds the agreed text word for word and the picker, inside the deck section", () => {
+    const box = q("deck-upload-box");
+    expect(q("deck-panel").contains(box)).toBe(true);
+    expect(box.contains(q("deck-upload-input"))).toBe(true);
+    const lines = [...q("deck-scope-message").querySelectorAll("p, li")].map((n) => (n.tagName === "LI" ? "- " : "") + n.textContent);
+    expect(lines.join("\n")).toBe(
+      "Upload PowerPoint, Word and text-based PDF files.\n" +
+      "The app cannot read:\n" +
+      "- Scanned PDFs, images or charts saved as pictures. There is no text in them to read, only pixels.\n" +
+      "- Keynote files or Google Slides links. Please export them as PowerPoint or PDF first.\n" +
+      "If a number you need sits in a picture, use Add claim and cite the page, or upload the source spreadsheet.");
+    expect(q("deck-upload-input").getAttribute("accept")).toBe(".pptx,.pdf,.docx");
+  });
+
+  test("a file of another type is refused with the accepted types named, and nothing is uploaded", async () => {
+    await pick("slides.key");
+    expect(api.uploadDeck).not.toHaveBeenCalled();
+    expect(q("deck-upload-error").textContent).toBe("Only .pptx, .docx and .pdf files can be uploaded here.");
+  });
+
+  test("an accepted type goes to the existing upload", async () => {
+    api.uploadDeck.mockResolvedValue({ file: "plan.docx", pages: 3, page_unit: "page", candidates: 2, deck_id: "d1" });
+    await pick("plan.docx");
+    expect(api.uploadDeck).toHaveBeenCalledWith("a1", expect.objectContaining({ name: "plan.docx" }));
+    expect(q("deck-upload-error")).toBeNull();
+  });
+});

@@ -10,7 +10,7 @@ import { addClaim, addFromDeck, answerTurnover, approveAll, getDeckPage, getDeck
 import { describeRequestError } from "@/lib/requestError";
 import {
   ACQUISITION_CHANNELS, ADD_CLAIM_PLATFORM_LABEL, ALL_DECKS, APPROVE_ALL_LABEL, CLAIM_GROUPS, CLAIM_TYPES, approveAllToast, toReview, CLAIM_UNITS, COUNT_UNIT_HINT, COUNT_TYPES, COUNT_UNIT, FX_SETTINGS_ANCHOR, FX_SETTINGS_LABEL, conversionHover, inconsistencyText, MIXED_SLIDE_LABEL, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, ADD_CLAIM_LABEL, ADD_CLAIM_NEEDS_SOURCE, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, newClaimPayload, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
-  DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, CONFIDENCE_HOVER, DECK_UPLOAD_HELP, INCONSISTENCY_LABEL, PLACEHOLDER, STATUS_LABELS, VERIFIED_LABEL, claimPeriod, claimSections, claimValue, deckRunLog,
+  DECK_SCOPE_CANNOT_LEAD, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, DECK_TYPE_REFUSED, isDeckFile, CONFIDENCE_HOVER, DECK_UPLOAD_HELP, INCONSISTENCY_LABEL, PLACEHOLDER, STATUS_LABELS, VERIFIED_LABEL, claimPeriod, claimSections, claimValue, deckRunLog,
   confidenceText, readingChoices, rowEdit, sourceRef, statusCounts, typeLabel,
   ADD_FROM_DECK_LABEL, ADDED_FROM_DECK_TAG, DEFAULT_EDIT_REASON, EDIT_REASONS, EDIT_TYPES, FIGURE_TYPE_OPTIONS, GROWTH_BASIS_OPTIONS, GROWTH_TYPES,
   OTHER_GROUP, POPULATION_OPTIONS, VIEW_PAGE_LABEL, claimFields, editLogText, isOther,
@@ -82,6 +82,7 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
+    if (!isDeckFile(file.name)) { setError(DECK_TYPE_REFUSED); return; }
     setUploading(true);
     setError(null);
     try {
@@ -212,23 +213,24 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
           </div>
           <div>
             <h3 className="font-heading font-semibold text-slate-900">Board deck or growth plan</h3>
-            <div className="text-xs text-slate-600 mt-1 max-w-2xl space-y-1" data-testid="deck-scope-message">
-              <p>{DECK_SCOPE_INTRO}</p>
-              <p>We cannot read:</p>
-              <ul className="list-disc pl-5">
-                {DECK_SCOPE_CANNOT.map((line) => <li key={line}>{line}</li>)}
-              </ul>
-              <p>{DECK_SCOPE_OUTRO}</p>
-            </div>
           </div>
         </div>
-        <label className="cursor-pointer">
-          <input type="file" accept={DECK_ACCEPT} className="hidden" onChange={onFile} data-testid="deck-upload-input" />
-          <span className="inline-flex items-center gap-2 px-3.5 py-2 rounded-md bg-sky-50 border border-[#D1D5DB] text-sm text-slate-800 hover:bg-slate-100 transition-colors">
-            {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} Upload deck
-          </span>
-        </label>
       </div>
+
+      <label className="mt-3 block cursor-pointer rounded-md border border-dashed border-[#D1D5DB] bg-sky-50/50 p-4 hover:bg-sky-50 transition-colors" data-testid="deck-upload-box">
+        <input type="file" accept={DECK_ACCEPT} className="hidden" onChange={onFile} data-testid="deck-upload-input" />
+        <div className="text-xs text-slate-600 max-w-2xl space-y-1" data-testid="deck-scope-message">
+          <p>{DECK_SCOPE_INTRO}</p>
+          <p>{DECK_SCOPE_CANNOT_LEAD}</p>
+          <ul className="list-disc pl-5">
+            {DECK_SCOPE_CANNOT.map((line) => <li key={line}>{line}</li>)}
+          </ul>
+          <p>{DECK_SCOPE_OUTRO}</p>
+        </div>
+        <span className="mt-3 inline-flex items-center gap-2 px-3.5 py-2 rounded-md bg-white border border-[#D1D5DB] text-sm text-slate-800">
+          {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} Upload deck
+        </span>
+      </label>
 
       {error && <p className="mt-3 text-sm text-rose-700" role="alert" data-testid="deck-upload-error">{error}</p>}
 

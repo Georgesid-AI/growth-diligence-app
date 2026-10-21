@@ -87,7 +87,7 @@ export function Layout({ audit, children }) {
               )}
           </div>
         </div>
-        {id && <BlockerBanner key={`${id}-${loc.pathname}`} auditId={id} />}
+        {id && <BlockerBanner key={`${id}-${loc.pathname}`} auditId={id} omit={loc.pathname.endsWith("/dashboard") ? ["claim_contradicted"] : []} />}
       </header>
       <AllowanceBanner key={loc.pathname} />
       <main className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-6">{children}</main>

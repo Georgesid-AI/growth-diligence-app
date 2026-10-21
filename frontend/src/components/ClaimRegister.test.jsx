@@ -8,6 +8,7 @@ import * as api from "@/lib/api";
 
 jest.mock("@/lib/api", () => ({
   getClaimRegister: jest.fn(),
+  getBlockers: jest.fn(),
   updateClaimInputs: jest.fn(),
   answerTurnover: jest.fn(),
   answerDefinitionCheck: jest.fn(),
@@ -15,6 +16,7 @@ jest.mock("@/lib/api", () => ({
   claimsCsvUrl: (id) => `http://api/api/audits/${id}/claims.csv`,
 }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
+beforeEach(() => { api.getBlockers.mockResolvedValue([]); });
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -494,4 +496,30 @@ test("a row in Definition check reads so in the Evidence cell and asks its quest
   expect(after.querySelector('[data-testid="definition-yes"]').getAttribute("aria-pressed")).toBe("true");
   expect(after.querySelector('[data-testid="definition-no"]').getAttribute("aria-pressed")).toBe("false");
   expect(after.querySelector('[data-testid="definition-check"]').textContent).toContain("set by you");
+});
+
+test("the contradicted top-5 claims sit under the register heading and above the table, one line each, at full width", async () => {
+  const lines = [
+    "Top-5 claim contradicted: revenue 156,934.4 EUR vs 136,739.01 EUR observed (test deck (PDF), p5).",
+    "Top-5 claim contradicted: revenue 2,000,000 EUR vs 1,500,000 EUR observed (board.pptx, slide 4).",
+  ];
+  api.getBlockers.mockResolvedValueOnce([
+    { kind: "revenue_file_missing", text: "Revenue file missing: upload and map it to compute metrics." },
+    ...lines.map((text) => ({ kind: "claim_contradicted", text })),
+  ]);
+  const { host } = await mount([ROW]);
+  const banner = host.querySelector('[data-testid="contradiction-banner"]');
+  expect([...banner.querySelectorAll("li")].map((li) => li.textContent)).toEqual(lines);
+  expect(banner.className).toContain("w-full");
+  expect(banner.className).toContain("bg-rose-50");
+  expect(host.querySelector('[data-testid="blocker-revenue_file_missing"]')).toBeNull();
+  const heading = host.querySelector("h2");
+  const table = host.querySelector('[data-testid="claim-register-table"]');
+  expect(heading.compareDocumentPosition(banner) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(banner.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+test("no contradicted claim: no banner is rendered in the register", async () => {
+  const { host } = await mount([ROW]);
+  expect(host.querySelector('[data-testid="contradiction-banner"]')).toBeNull();
 });

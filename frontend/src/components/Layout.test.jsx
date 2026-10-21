@@ -8,9 +8,10 @@ import { REVENUE_REQUIRED_NOTE, setCalculatePressed } from "@/lib/chatUpload";
 
 jest.mock("@/lib/api", () => ({ getBlockers: jest.fn(), getAllowance: jest.fn() }));
 const mockNavigate = jest.fn();
+let mockPath = "/audit/a1/mapping";
 jest.mock("react-router-dom", () => ({
   useNavigate: () => mockNavigate,
-  useLocation: () => ({ pathname: "/audit/a1/mapping" }),
+  useLocation: () => ({ pathname: mockPath }),
   Link: ({ to, children, ...rest }) => <a href={to} {...rest}>{children}</a>,
 }), { virtual: true });
 
@@ -31,7 +32,8 @@ async function mount(audit) {
   root = createRoot(host);
   await act(async () => { root.render(<Layout audit={audit}><div data-testid="page" /></Layout>); });
 }
-afterEach(async () => { await act(async () => { root.unmount(); }); host.remove(); jest.clearAllMocks(); window.sessionStorage.clear(); });
+afterEach(async () => {
+  mockPath = "/audit/a1/mapping"; await act(async () => { root.unmount(); }); host.remove(); jest.clearAllMocks(); window.sessionStorage.clear(); });
 
 test("an audit view shows the blockers the server returns, in the header, with the evidence link", async () => {
   setCalculatePressed("a1");
@@ -187,4 +189,22 @@ test("while results are stale the banner is the one line the server sends, Stale
   await mount(AUDIT);
   expect(q("blocker-banner").querySelectorAll("li").length).toBe(1);
   expect(q("blocker-results_stale").textContent).toBe("Stale – re-run audit");
+});
+
+test("on the Audit page the header no longer shows the contradicted claims (the claim register does); the other blockers stay", async () => {
+  mockPath = "/audit/a1/dashboard";
+  setCalculatePressed("a1");
+  api.getBlockers.mockResolvedValue(BLOCKERS);
+  await mount(AUDIT);
+  expect(q("blocker-claim_contradicted")).toBeNull();
+  expect(q("blocker-banner").querySelectorAll("li").length).toBe(2);
+  expect(q("blocker-revenue_file_missing")).not.toBeNull();
+  expect(q("blocker-revenue_reconciliation")).not.toBeNull();
+});
+
+test("on the Audit page with only a contradicted claim, the header renders no banner", async () => {
+  mockPath = "/audit/a1/dashboard";
+  api.getBlockers.mockResolvedValue(BLOCKERS.slice(1, 2));
+  await mount(AUDIT);
+  expect(q("blocker-banner")).toBeNull();
 });
