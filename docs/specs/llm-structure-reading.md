@@ -72,7 +72,9 @@ recomputed from the matched values; a flag Python cannot reproduce counts as unm
 `STRUCTURE_UNMATCHED` decides: `"suggest"` (the default) shows "AI suggestion, not verified", and `"drop"` removes them
 and keeps a count. An item with no value is never Verified. A column mapping only pre-fills the mapping screen, where the
 analyst confirms it. Results show in the existing approval list (deck-parser.md §6), each row labelled Verified or
-"AI suggestion, not verified", with its cell citation. No new screen.
+"AI suggestion, not verified", with its cell citation. No new screen. Amended 2026-10-21 (George, issue #149): the badge
+on the deck list reads "Matched to page" (was Verified) and "AI suggestion, not matched" (was "AI suggestion, not verified");
+the stored label, when each badge shows and the register's evidence labels are unchanged.
 
 **3. Redaction (pure function, own tests).** `redact_cells(cells, company_name) → (cells, counts)`, with no I/O:
 - emails become `[email]`;

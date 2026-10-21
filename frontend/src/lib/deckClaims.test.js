@@ -1,5 +1,5 @@
 import {
-  ALL_DECKS, AI_SUGGESTION_LABEL, CLAIM_TYPES, INCONSISTENCY_LABEL, VERIFIED_LABEL, deckRunLog, REMOVE_DECK_CONFIRM, claimPeriod, conversionHover, claimSections, claimsForDeck, periodLabel, directionText, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, newClaimPayload, sourceRef, statusCounts, typeLabel,
+  ALL_DECKS, AI_SUGGESTION_LABEL, CLAIM_TYPES, INCONSISTENCY_LABEL, VERIFIED_LABEL, badgeText, deckRunLog, REMOVE_DECK_CONFIRM, claimPeriod, conversionHover, claimSections, claimsForDeck, periodLabel, directionText, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, newClaimPayload, sourceRef, statusCounts, typeLabel,
   approveAllToast, toReview, DECK_SCOPE_CANNOT, DECK_SCOPE_CANNOT_LEAD, DECK_SCOPE_INTRO, isDeckFile, DECK_SCOPE_OUTRO, EDIT_TYPES, isOther, readingChoices, confidenceText, otherFiguresTitle,
   claimFields, editLogText,
 } from "./deckClaims";
@@ -188,6 +188,8 @@ describe("model readings in the approval list (docs/specs/llm-structure-reading.
   test("every row is labelled Verified or AI suggestion, not verified", () => {
     expect(VERIFIED_LABEL).toBe("Verified");
     expect(AI_SUGGESTION_LABEL).toBe("AI suggestion, not verified");
+    expect(badgeText(VERIFIED_LABEL)).toBe("Matched to page");
+    expect(badgeText(AI_SUGGESTION_LABEL)).toBe("AI suggestion, not matched");
     expect(typeLabel("use_of_funds")).toBe("Use of funds");
     expect(CLAIM_TYPES).not.toContain("use_of_funds");
   });

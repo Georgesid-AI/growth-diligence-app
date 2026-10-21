@@ -10,7 +10,7 @@ import { addClaim, addFromDeck, answerTurnover, approveAll, getDeckPage, getDeck
 import { describeRequestError } from "@/lib/requestError";
 import {
   ACQUISITION_CHANNELS, ADD_CLAIM_PLATFORM_LABEL, ALL_DECKS, APPROVE_ALL_LABEL, CLAIM_GROUPS, CLAIM_TYPES, approveAllToast, toReview, CLAIM_UNITS, COUNT_UNIT_HINT, COUNT_TYPES, COUNT_UNIT, FX_SETTINGS_ANCHOR, FX_SETTINGS_LABEL, conversionHover, inconsistencyText, MIXED_SLIDE_LABEL, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, ADD_CLAIM_LABEL, ADD_CLAIM_NEEDS_SOURCE, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, newClaimPayload, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
-  DECK_SCOPE_CANNOT_LEAD, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, DECK_TYPE_REFUSED, isDeckFile, CONFIDENCE_HOVER, DECK_UPLOAD_HELP, INCONSISTENCY_LABEL, PLACEHOLDER, STATUS_LABELS, VERIFIED_LABEL, claimPeriod, claimSections, claimValue, deckRunLog,
+  DECK_SCOPE_CANNOT_LEAD, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, DECK_TYPE_REFUSED, isDeckFile, CONFIDENCE_HOVER, DECK_UPLOAD_HELP, INCONSISTENCY_LABEL, PLACEHOLDER, STATUS_LABELS, VERIFIED_LABEL, badgeText, claimPeriod, claimSections, claimValue, deckRunLog,
   confidenceText, readingChoices, rowEdit, sourceRef, statusCounts, typeLabel,
   ADD_FROM_DECK_LABEL, ADDED_FROM_DECK_TAG, DEFAULT_EDIT_REASON, EDIT_REASONS, EDIT_TYPES, FIGURE_TYPE_OPTIONS, GROWTH_BASIS_OPTIONS, GROWTH_TYPES,
   OTHER_GROUP, POPULATION_OPTIONS, VIEW_PAGE_LABEL, claimFields, editLogText, isOther,
@@ -674,7 +674,7 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight, autoEdit = fa
           <div className={`mt-1 text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-nowrap ${c.ai_label === VERIFIED_LABEL
             ? "text-emerald-800 border-emerald-500/50 bg-emerald-50" : "text-amber-800 border-amber-500/50 bg-amber-50"}`}
             data-testid="candidate-ai-label">
-            {c.ai_label}
+            {badgeText(c.ai_label)}
           </div>
         )}
         {c.mixed_slide && (
