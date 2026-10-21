@@ -451,6 +451,9 @@ def rebuild(structure: Dict, cell: Dict, fiscal_year_end: int = 12):
     label = date_period(date["text"]) if date else None
     if label and _range(label, fiscal_year_end):
         return label, _range(label, fiscal_year_end), [_id(date)]
+    bar = (claims.period_cell(cell["bar_year"]) or {}).get("label") if cell.get("bar_year") else None
+    if bar and _range(bar, fiscal_year_end):        # a bar chart's year label, by place (issue #148), set by Python from the page
+        return bar, _range(bar, fiscal_year_end), []
     return None
 
 

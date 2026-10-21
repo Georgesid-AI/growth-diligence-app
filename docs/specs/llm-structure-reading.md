@@ -240,3 +240,6 @@ there is no CRM file), every text cell of a deck structure under a customer-type
 "list" after) is sent as [redacted], as the person-role rule does for names; a figure, a year, a date, a pseudonym and the target company's name stay. With a customer
 list the names are swapped as before. This applies to deck structures only. (2) The gate re-checks, with the check the rest of the app uses, that the recognition of a
 revenue file read by recognition only has no choice waiting; `mapped_at` alone is not trusted (an as-of month moved before the last actual column reopens a click).
+Amended 2026-10-21 (issue #148): in a KPI panel Python also dates an item from its bar's year label by place (`bar_year` on the cell, set by the deck parser from the
+page's year-label row; deck-parser.md, amended 2026-10-21), after the period headers, the item's own cell and the adjacent date line, so a bar the model left
+undated, or dated against its place, takes the year of its position (a difference is a "period corrected" case). Nothing new is sent to the model, and no prompt changes.

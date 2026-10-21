@@ -344,11 +344,26 @@ _QUARTER_RANGES = (re.compile(r"\bQ(?P<a>[1-4])\s*[-–]\s*Q(?P<b>[1-4])(?:\s*['
                    re.compile(r"(?<![\d.,])(?:19|20)\d{2}\s*[-/]?\s*Q(?P<a>[1-4])\s*[-–]\s*Q(?P<b>[1-4])\b"))
 
 
+# A range of years ("2022–2024", "2022 -2024", "2022 to 2024", "FY22–24", "FY2022-2024"; issue #148): it is no single year, so nothing is
+# dated from it, its years are no figures and a heading that holds one gives no year to the figures under it. The end of a range
+# written with two digits is above 12 ("2022-03" is a month, not a range); "to" joins four-digit years only.
+_YEAR_RANGES = (re.compile(r"(?<![\w$€£.,'’/-])(?:FY\s*['’]?)?(?P<a>(?:19|20)\d{2}|\d{2})\s*[-–—]\s*(?:FY\s*['’]?)?(?P<b>(?:19|20)\d{2}|\d{2})(?![\w%]|[.,]\d|-\d)"),
+                re.compile(r"(?<![\w$€£.,'’/-])(?P<a>(?:19|20)\d{2})\s+to\s+(?P<b>(?:19|20)\d{2})(?![\w%]|[.,]\d|-\d)"))
+
+
+def _year_range(m: "re.Match") -> bool:
+    text, a, b = m.group(0), m.group("a"), m.group("b")
+    if len(a) == 2 and not text.lstrip().upper().startswith("FY"):
+        return False                      # "5-10", "20-25": a range of numbers, not of years
+    return len(b) == 4 or int(b) > 12
+
+
 def no_period_dates(text: str) -> List[Tuple[int, int]]:
-    """(start, end) of each date with no period in a text: a date written with slashes (slash_dates) and a quarter
-    range that is no half."""
+    """(start, end) of each date with no period in a text: a date written with slashes (slash_dates), a quarter range that is
+    no half and a range of years."""
     ranges = [m.span() for rx in _QUARTER_RANGES for m in rx.finditer(text or "")
               if (m.group("a"), m.group("b")) not in (("1", "2"), ("3", "4"))]
+    ranges += [m.span() for rx in _YEAR_RANGES for m in rx.finditer(text or "") if _year_range(m)]
     return slash_dates(text) + ranges
 
 
@@ -1024,11 +1039,13 @@ BAR_ROW = 0.02      # the year labels of one chart axis share a line: their tops
 BAR_REACH = 0.6     # a bar's value sits at most this far above its label (page fraction): the bar itself fills the gap
 
 
-def _bar_labels(units: List[Dict], names: bool = False) -> Dict[int, str]:
+def _bar_labels(units: List[Dict], names: bool = False, skip: set = ()) -> Dict[int, str]:
     """id(unit) -> the year label under the figure's bar (with `names`, the name label: a chart with one bar per named entity). A bar chart read from the page's text has its values above the
     bars and one year or FY label under each ("FY2023", "2024"); the labels are two or more lines on one row, each
     nothing but a year. A figure takes the nearest such label below it that overlaps it from side to side; with no
-    such row, or no label under the figure, it has none (docs/specs/deck-parser.md section 2)."""
+    such row, or no label under the figure, it has none (docs/specs/deck-parser.md section 2). When the figures above one row of year
+    labels are as many as the labels, each takes the label of its place, left to right, whether or not it overlaps one (issue #148); `skip`
+    holds the lines that are no bars (axis ticks)."""
     out = {}
     pages = {}
     for u in units:
@@ -1049,7 +1066,61 @@ def _bar_labels(units: List[Dict], names: bool = False) -> Dict[int, str]:
                 centre = (x0 + x1) / 2
                 best = min(under, key=lambda label: (abs((label["bbox"][0] + label["bbox"][2]) / 2 - centre), label["bbox"][1]))
                 out[id(u)] = best["text"]
+        if not names:
+            out.update(_bar_places(members, labels, rows, skip))
     return out
+
+
+def _value_line(text: str) -> bool:
+    """A line that is a figure and nothing else ("€1.48MM", "$210B", "40% (+3pp)"): the value written over a bar, never a sentence that
+    holds a number ("layer-1 to layer-2")."""
+    numbers = find_numbers(text, find_dates(text))
+    for n in reversed(numbers):
+        text = text[:n["start"]] + " " + text[n["end"]:]
+    return bool(numbers) and not _WORD.search(text)
+
+
+def _bar_places(members: List[Dict], labels: List[Dict], rows: List[List[Dict]], skip: set) -> Dict[int, str]:
+    """id(unit) -> the year label of the figure's place (issue #148): the figures above one row of year labels (those whose nearest row
+    below them it is, and that stand between its first and last label, a label's spacing beyond) are as many as the row's labels, and
+    the k-th figure from the left takes the k-th label. Only a line that is a figure and nothing else counts (_value_line): a roadmap's
+    sentences ("layer-1 to layer-2") over its dates are no bars. Any other count: none takes a label by place."""
+    def centre(box):
+        return (box[0] + box[2]) / 2
+    axes = {}
+    for row in rows:
+        if len(row) >= 2:
+            axes[tuple(sorted(id(label) for label in row))] = sorted(row, key=lambda label: centre(label["bbox"]))
+    placed = {key: [] for key in axes}
+    for u in members:
+        if u in labels or id(u) in skip or not _value_line(u["text"]):
+            continue
+        y1 = u["bbox"][3]
+        below = [(row[0]["bbox"][1] - y1, key) for key, row in axes.items()
+                 if row[0]["bbox"][1] >= y1 - 0.005 and row[0]["bbox"][1] - y1 <= BAR_REACH]
+        if not below:
+            continue
+        key = min(below)[1]
+        row = axes[key]
+        spacing = (centre(row[-1]["bbox"]) - centre(row[0]["bbox"])) / (len(row) - 1)
+        if centre(row[0]["bbox"]) - spacing <= centre(u["bbox"]) <= centre(row[-1]["bbox"]) + spacing:
+            placed[key].append(u)
+    out = {}
+    for key, bars in placed.items():
+        row = axes[key]
+        if len(bars) == len(row) and len({round(centre(b["bbox"]), 4) for b in bars}) == len(bars):
+            for bar, label in zip(sorted(bars, key=lambda b: centre(b["bbox"])), row):
+                out[id(bar)] = label["text"]
+    return out
+
+
+def bar_years(lines: List[Dict], ticks: set = ()) -> Dict[int, str]:
+    """id(line) -> the year label of a text line's bar, for the lines of one deck page (a KPI panel's cells, issue #148): the label
+    under it or of its place (_bar_labels). `ticks` holds the id() of the lines that are axis ticks (tick_lines)."""
+    units = [{"text": b["text"], "page": (b.get("slide"), b.get("page")), "bbox": b.get("bbox"), "title": bool(b.get("title")),
+              "src": b} for b in lines if b["kind"] != "table"]
+    found = _bar_labels(units, skip={id(u) for u in units if id(u["src"]) in ticks})
+    return {id(u["src"]): found[id(u)] for u in units if id(u) in found}
 
 
 def _share_bar_row(units: List[Dict], contexts: Dict[int, List[str]], bars: Dict[int, str]) -> None:
@@ -1359,9 +1430,9 @@ def detect_candidates(blocks: List[Dict], file: str, fiscal_year_end: int = 12) 
     period resolves to a date range under the audit's fiscal year-end (1-12, default December)."""
     units = _units(blocks, file)
     contexts = _contexts(units)
-    bars = _bar_labels(units)
-    _share_bar_row(units, contexts, bars)
     skipped = _axis_ticks(units) | _not_plan(units)
+    bars = _bar_labels(units, skip=skipped)
+    _share_bar_row(units, contexts, bars)
     funds, mixed = _funds_units(units)
     channels = _channel_units(units)
     tick_cells = _tick_cells(blocks)
