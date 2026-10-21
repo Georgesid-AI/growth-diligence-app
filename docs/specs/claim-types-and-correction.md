@@ -74,6 +74,10 @@ projected, projection, projections, expected, guidance, outlook, aim, aims, aimi
 network): 4 of 225 candidates carry a cue: front slide 16 "Aiming for $xx ARR by end of 2018", moz page 18 "our current
 (2011-13) targets", buffer slide 7 "our projected revenue is $3.6M" (two candidates).
 
+Amended 2026-10-21 (issue #143): a bar of a per-account chart far from its caption keeps the chart's type (`arpa`, `arpu`), never the page
+title's; a run of 4 or more round, equally spaced figures on one page is dropped before claim extraction and never reaches the claim
+list (deck-parser.md §2).
+
 ## 3. Editor
 - The deck list's inline editor edits every field of §1 for the claim's type: type, value (and the high end of a range),
   unit, currency, period, population, figure type (Actual · Target · Unknown) and growth basis (MoM · YoY · Annualised ·

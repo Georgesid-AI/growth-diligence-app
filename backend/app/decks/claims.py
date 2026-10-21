@@ -55,7 +55,7 @@ import calendar
 import copy
 import re
 from datetime import date
-from math import floor, hypot
+from math import floor, hypot, log10
 from typing import Dict, Iterable, List, Optional, Tuple
 
 SNIPPET_MAX = 300
@@ -1044,6 +1044,25 @@ def _bar_labels(units: List[Dict], names: bool = False) -> Dict[int, str]:
     return out
 
 
+def _share_bar_row(units: List[Dict], contexts: Dict[int, List[str]], bars: Dict[int, str]) -> None:
+    """The bars of one chart row share the chart's caption (issue #143): a bar further than REACH from the caption, at the far end of the
+    row, takes the nearby texts of its row mates instead of falling back to the page title ("2022 FORECAST: CLIENT COMPOSITION" over a
+    chart "Average revenue per account"). Only a bar with no nearby heading of its own; the title stays last."""
+    rows = {}
+    for u in units:
+        if id(u) in bars and u["bbox"]:
+            rows.setdefault(u["page"], []).append(u)
+    for members in rows.values():
+        for u in members:
+            if any(getattr(t, "distance", None) is not None and (_keywords(t) or _is_heading(t)) for t in contexts[id(u)]):
+                continue
+            mates = sorted((m for m in members if m is not u and abs(m["bbox"][1] - u["bbox"][1]) < BAR_ROW),
+                           key=lambda m: abs(m["bbox"][0] - u["bbox"][0]))
+            near = [t for m in mates for t in contexts[id(m)] if getattr(t, "distance", None) is not None and (_keywords(t) or _is_heading(t))]
+            if near:
+                contexts[id(u)] = near + contexts[id(u)]
+
+
 def _reach(line_bbox, box_bbox) -> Optional[float]:
     """Distance from a line to a box on the same row or above it; None when the box is below."""
     x0, y0, x1, y1 = line_bbox
@@ -1182,6 +1201,37 @@ def _evenly_spaced(values: List[float]) -> bool:
     return all(abs(step - steps[0]) <= 1e-6 * max(1.0, abs(steps[0])) for step in steps)
 
 
+RUN_MIN = 4
+_LIST_MARK = re.compile(r"^\s*#?\d+\s*[.:)]\s*$")      # "1.", "#3:", "2)": the number of a list item, not a figure on an axis
+_ROUND_STEPS = (1.0, 2.0, 2.5, 5.0)         # a round step: 1, 2, 2.5 or 5 times a power of ten (2,000, 25, 0.5)
+
+
+def _round_step(step: float) -> bool:
+    if step <= 0:
+        return False
+    mantissa = step / 10 ** floor(log10(step))
+    return any(abs(mantissa - m) < 1e-9 for m in _ROUND_STEPS)
+
+
+def _round_runs(values: List[float]) -> set:
+    """The values that belong to a run of RUN_MIN or more round figures with one equal, round step ("0, 2,000, 4,000 ... 10,000"): the
+    run starts at a multiple of its step. Anything else is not a run."""
+    distinct = sorted(set(values))
+    out = set()
+    for i, first in enumerate(distinct):
+        for second in distinct[i + 1:]:
+            step = second - first
+            if not _round_step(step) or abs(first / step - round(first / step)) > 1e-9:
+                continue
+            run, nxt = [first], first + step
+            while any(abs(nxt - v) <= 1e-9 * max(1.0, abs(nxt)) for v in distinct):
+                run.append(nxt)
+                nxt += step
+            if len(run) >= RUN_MIN:
+                out.update(v for v in distinct if any(abs(v - r) <= 1e-9 * max(1.0, abs(v)) for r in run))
+    return out
+
+
 def _axis_ticks(units: List[Dict]) -> set:
     """id() of the lines that are chart axis ticks: 3 or more numbers, evenly spaced in value, in
     one line, or one bare number per line stacked in a column or lined up in a row."""
@@ -1195,6 +1245,15 @@ def _axis_ticks(units: List[Dict]) -> set:
             ticks.add(id(u))
         elif len(values) == 1 and u["bbox"]:
             pages.setdefault(u["page"], []).append((u, values[0]))
+    loose = {}
+    for u in units:
+        if not u.get("table_row") and not _LIST_MARK.match(u["text"]):
+            values = _bare_values(u["text"])
+            if len(values) == 1:
+                loose.setdefault(u["page"], []).append((u, values[0]))
+    for found in loose.values():       # issue #143: a run of 4 or more round, equally spaced figures on one page, wherever they sit
+        run = _round_runs([v for _, v in found])
+        ticks.update(id(u) for u, v in found if v in run)
     for found in pages.values():
         for axis in (0, 1):           # 0: a column (overlapping x), 1: a row (overlapping y)
             lo, hi = (0, 2) if axis == 0 else (1, 3)
@@ -1292,12 +1351,13 @@ def detect_candidates(blocks: List[Dict], file: str, fiscal_year_end: int = 12) 
     period resolves to a date range under the audit's fiscal year-end (1-12, default December)."""
     units = _units(blocks, file)
     contexts = _contexts(units)
+    bars = _bar_labels(units)
+    _share_bar_row(units, contexts, bars)
     skipped = _axis_ticks(units) | _not_plan(units)
     funds, mixed = _funds_units(units)
     channels = _channel_units(units)
     tick_cells = _tick_cells(blocks)
     periods = _box_periods(units)
-    bars = _bar_labels(units)
     bar_names = _bar_labels(units, names=True)
     merged = {}
     for u in units:

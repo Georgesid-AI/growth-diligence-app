@@ -706,13 +706,14 @@ def test_the_nearest_heading_names_the_type_or_the_figure_has_none():
     assert _found(_slide([("Market", 1, 2.6), ("($52 B)", 1, 3.2)])) == []
 
 
-def test_the_ten_test_decks_keep_225_candidates_and_the_nearest_heading_leaves_31_unknown_more():
+def test_the_ten_test_decks_keep_215_candidates_and_the_nearest_heading_leaves_31_unknown_more():
     counts, unknown = 0, 0
     for file in sorted(p.name for p in DECKS.iterdir() if not p.name.startswith(".")):
         found = claims.detect_candidates(parser.parse_deck((DECKS / file).read_bytes(), file)["blocks"], file)
         counts += len(found)
         unknown += sum(c["claim_type"] == "unknown" for c in found)
-    assert (counts, unknown) == (225, 37), "8 before the rule, 31 more after it, 2 of them (zero2hero p22) Use of funds since; no row appears or disappears"
+    assert (counts, unknown) == (215, 36), ("8 before the rule, 31 more after it, 2 of them (zero2hero p22) Use of funds since; 10 fewer than 225 since "
+                                            "issue #143: the axis ticks of 01-front-b p6 (0%-40%) and p14 (0, 15, 30, 60, 5.0) are no claims")
 
 
 def test_the_same_figure_on_one_page_is_one_row_and_never_a_deck_inconsistency():
