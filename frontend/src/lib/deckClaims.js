@@ -12,6 +12,9 @@ export const PLACEHOLDER = "—";
 export const NO_DATE = "no date";        // the Period column of a claim that states no date
 
 export const DECK_ACCEPT = ".pptx,.pdf,.docx";
+export const DECK_TYPE_REFUSED = "Only .pptx, .docx and .pdf files can be uploaded here.";
+/** True when the file name ends in one of the accepted deck extensions. */
+export const isDeckFile = (name) => DECK_ACCEPT.split(",").some((ext) => String(name).toLowerCase().endsWith(ext));
 
 // Hover on the Extraction confidence column, word for word (docs/specs/evidence-labels.md section 1): how well the figure was read,
 // never whether it is true. The same explainer heads the register's column (evidence_labels.json).
@@ -21,7 +24,8 @@ export const CONFIDENCE_HOVER = evidenceLabels.explainers.extraction_confidence;
 export const DECK_UPLOAD_HELP = "Board deck or growth plan: the company's board decks, investor updates, growth model or business plan, as PDF or PowerPoint. Up to 8 documents per audit. The audit reads the claims from them and tests each against the data files.";
 
 // Shown on the upload screen, word for word from the spec.
-export const DECK_SCOPE_INTRO = "We read text from PowerPoint, Word and text-based PDF files.";
+export const DECK_SCOPE_INTRO = "Upload PowerPoint, Word and text-based PDF files.";
+export const DECK_SCOPE_CANNOT_LEAD = "The app cannot read:";
 export const DECK_SCOPE_CANNOT = [
   "Scanned PDFs, images or charts saved as pictures. There is no text in them to read, only pixels.",
   "Keynote files or Google Slides links. Please export them as PowerPoint or PDF first.",

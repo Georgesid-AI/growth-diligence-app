@@ -8,6 +8,7 @@ import * as api from "@/lib/api";
 
 jest.mock("@/lib/api", () => ({
   getClaimRegister: jest.fn(),
+  getBlockers: jest.fn(), getBlockers: jest.fn(),
   updateClaimInputs: jest.fn(),
   answerTurnover: jest.fn(),
   answerDefinitionCheck: jest.fn(),
@@ -15,6 +16,7 @@ jest.mock("@/lib/api", () => ({
   claimsCsvUrl: (id) => `http://api/api/audits/${id}/claims.csv`,
 }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
+beforeEach(() => { api.getBlockers.mockResolvedValue([]); });
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 

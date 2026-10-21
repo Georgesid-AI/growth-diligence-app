@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { Download, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import ContradictionBanner from "@/components/ContradictionBanner";
 import { Provenance } from "@/components/Provenance";
 import DateField from "@/components/DateField";
 import { answerDefinitionCheck, answerTurnover, claimsCsvUrl, downloadFile, getClaimRegister, updateClaimInputs } from "@/lib/api";
@@ -261,6 +262,7 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
         </Button>
         </div>
       </div>
+      <ContradictionBanner auditId={auditId} />
       {error && <div className="text-xs text-rose-700" data-testid="claim-register-error">{error}</div>}
       {!rows && !error && <Loader2 className="h-4 w-4 animate-spin text-slate-500" />}
       {rows && stale && (

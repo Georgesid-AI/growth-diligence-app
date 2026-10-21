@@ -1,6 +1,6 @@
 import {
   ALL_DECKS, AI_SUGGESTION_LABEL, CLAIM_TYPES, INCONSISTENCY_LABEL, VERIFIED_LABEL, deckRunLog, REMOVE_DECK_CONFIRM, claimPeriod, conversionHover, claimSections, claimsForDeck, periodLabel, directionText, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, newClaimPayload, sourceRef, statusCounts, typeLabel,
-  approveAllToast, toReview, DECK_SCOPE_CANNOT, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, EDIT_TYPES, isOther, readingChoices, confidenceText, otherFiguresTitle,
+  approveAllToast, toReview, DECK_SCOPE_CANNOT, DECK_SCOPE_CANNOT_LEAD, DECK_SCOPE_INTRO, isDeckFile, DECK_SCOPE_OUTRO, EDIT_TYPES, isOther, readingChoices, confidenceText, otherFiguresTitle,
   claimFields, editLogText,
 } from "./deckClaims";
 
@@ -41,9 +41,9 @@ test("status counts", () => {
 });
 
 test("scope message is the spec text", () => {
-  expect([DECK_SCOPE_INTRO, "We cannot read:", ...DECK_SCOPE_CANNOT.map((l) => `- ${l}`), DECK_SCOPE_OUTRO].join("\n")).toBe(
-    "We read text from PowerPoint, Word and text-based PDF files.\n" +
-    "We cannot read:\n" +
+  expect([DECK_SCOPE_INTRO, DECK_SCOPE_CANNOT_LEAD, ...DECK_SCOPE_CANNOT.map((l) => `- ${l}`), DECK_SCOPE_OUTRO].join("\n")).toBe(
+    "Upload PowerPoint, Word and text-based PDF files.\n" +
+    "The app cannot read:\n" +
     "- Scanned PDFs, images or charts saved as pictures. There is no text in them to read, only pixels.\n" +
     "- Keynote files or Google Slides links. Please export them as PowerPoint or PDF first.\n" +
     "If a number you need sits in a picture, use Add claim and cite the page, or upload the source spreadsheet.",
@@ -366,4 +366,9 @@ describe("stale results (George, 2026-10-20)", () => {
     const fx = { rate: 1.14, date: null, date_stale: true, currency: "EUR" };
     expect(conversionHover({ currency: "GBP", fx })).toBe("Rate used: 1 GBP = 1.14 EUR on Stale – re-run audit");
   });
+});
+
+test("only .pptx, .docx and .pdf files are deck files, whatever the case", () => {
+  expect(["a.pptx", "B.DOCX", "c.d.pdf"].map(isDeckFile)).toEqual([true, true, true]);
+  expect(["a.key", "b.xlsx", "c.png", "pdf", "d.pdf.exe"].map(isDeckFile)).toEqual([false, false, false, false, false]);
 });
