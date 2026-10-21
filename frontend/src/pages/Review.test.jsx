@@ -431,3 +431,12 @@ describe("mapping summary (chat-upload.md section 18)", () => {
     expect(unsure.map((r) => r.className.includes("bg-slate-900/[0.035]"))).toEqual([false, true]);
   });
 });
+
+test("stale results: the Review reads Stale – re-run audit in place of the sections that need current figures", async () => {
+  state.summary = { ...SUMMARY, results_stale: true };
+  await mount();
+  expect(q("review-stale").textContent).toBe("Stale – re-run audit");
+  expect(q("review-not-computed")).toBeNull();
+  expect(q("review-top5")).toBeNull();
+  expect(api.getVerdict).not.toHaveBeenCalled();
+});

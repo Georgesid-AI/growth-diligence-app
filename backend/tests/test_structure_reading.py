@@ -2681,3 +2681,25 @@ def test_every_structure_refusal_reason_in_the_code_is_declared_in_the_boundary_
         found |= {n.value.value for n in _ast.walk(body) if isinstance(n, _ast.Return)
                   and isinstance(n.value, _ast.Constant) and isinstance(n.value.value, str)}
     assert found == boundary.STRUCTURE_REFUSALS, "a new refusal reason is declared in test_gateway_data_boundary.py"
+
+
+# --- Review of 20 Oct (L6): a model label of arpa, arpu or pipeline needs the wording in Python's own reading of its headers ------
+
+def _worded(header, metric):
+    from app.structures import items as structure_items
+    structure = {"type": "table", "header_rows": 1, "cells": [
+        {"row": 1, "col": 1, "text": "Year"}, {"row": 1, "col": 2, "text": header},
+        {"row": 2, "col": 1, "text": "2022"}, {"row": 2, "col": 2, "text": "$1,650"}]}
+    listed = structure_items.list_items(structure)
+    labels = [_label(i["id"], metric, unit="USD") for i in listed["items"]]
+    return verify.verify(structure, listed, labels)["items"][0]
+
+
+@pytest.mark.parametrize("header, metric, kept", [
+    ("Revenue", "arpa", "other"), ("Revenue by year", "arpu", "other"), ("Revenue", "pipeline", "other"),
+    ("Average revenue per account", "arpa", "arpa"), ("ARPU", "arpu", "arpu"), ("Size of opportunity", "pipeline", "pipeline"),
+    ("Revenue", "revenue", "revenue")])
+def test_a_model_label_of_arpa_arpu_or_pipeline_is_kept_only_when_its_headers_say_so(header, metric, kept):
+    item = _worded(header, metric)
+    assert item["metric"] == kept
+    assert kept != "other" or item["status"] == verify.SUGGESTION

@@ -350,6 +350,9 @@ def sanitize(obj):
 async def audit_public(a: dict) -> dict:
     a.pop("_id", None)
     a.pop("usage", None)          # the counters, notes included, are read only through the usage totals
+    a["results_stale"] = run_audit.results_stale(a)
+    if a["results_stale"]:
+        a["results"] = None       # figures of an older engine contract never reach the browser (George, 2026-10-20)
     if a.get("created_at"):
         a["ic_inputs"] = verdict_mod.with_review(a, a.get("ic_inputs"))
     ds = await db.datasets.find({"audit_id": a["id"]}, {"rows": 0, "recognition_sheets": 0, "_id": 0}).to_list(10)
@@ -1916,9 +1919,11 @@ async def list_deck_candidates(audit_id: str):
     candidates.sort(key=lambda c: (c["group"], _first_page(c), rank.get(c.get("deck_id"), len(rank)), *_reading(c),
                                    c.get("order", 0)))
     # A claim in another currency than the audit's, with the rate it is converted at (None: "FX rate needed").
-    as_of = audit.get("as_of_month") or (audit.get("results") or {}).get("as_of_month")
+    as_of = audit.get("as_of_month") or (current.get("results") or {}).get("as_of_month")
     for c in candidates:
         c["fx"] = claim_matching.fx_view(c, settings, as_of)
+        if c["fx"] and not as_of and current.get("results_stale"):
+            c["fx"]["date_stale"] = True        # the date would come from stale results: the screen reads "Stale – re-run audit"
         c["turnover"] = turnover.get(c["id"])
         c["definition"] = definition.get(c["id"])
         # the figure type, population and growth basis as the register reads them, for the editor (claim-types-and-correction.md 3)
@@ -2371,6 +2376,7 @@ async def review_summary(audit_id: str):
         "claims": {"auto_accepted": len(auto), "auto_accepted_ids": auto, "open": len(pending),
                    "turnover_open": len(open_turnover & {c["id"] for c in pending})},
         "computed": bool(audit.get("results")),
+        "results_stale": run_audit.results_stale(audit),
         "engine_stale": run_audit.engine_stale(audit, datasets),
         "blockers": await _blocker_list(audit_id, audit)})
 
@@ -2469,7 +2475,8 @@ async def claim_register(audit_id: str):
     review = verdict_mod.with_review(audit, audit.get("ic_inputs")).get("first_quarterly_review")
     # The gate fields' starting values and the budget dropdown sit beside the register, never in it: the CSV and the memo read rows.
     return sanitize({"claims": claims, "register": rows, "gate_prefill": verdict_mod.gate_prefill(rows, review),
-                     "budget_decisions": verdict_mod.budget_decisions(rows)})
+                     "budget_decisions": verdict_mod.budget_decisions(rows),
+                     "results_stale": run_audit.results_stale(audit)})      # no rows then: the figures are not shown as current
 
 
 def _csv_cell(value) -> str:
@@ -2487,18 +2494,19 @@ async def _ic_context(audit_id: str, audit: dict, validate: bool = True) -> dict
     Pure reads; nothing is sent to a model (docs/specs/verdict-and-memo.md). With `validate`, the stored results are checked
     against MetricsPayload and the unit check first (section 9): on a failure there are no rows, and `contract` names the
     fields (paths only, never a value)."""
-    results = (await _current_audit(audit_id, audit, strict=False)).get("results")
+    current = await _current_audit(audit_id, audit, strict=False)
+    results, stale = current.get("results"), bool(current.get("results_stale"))
     ic = verdict_mod.with_review(audit, audit.get("ic_inputs"))
     if validate and results:
         try:
             contract.validate_for_export(results)
         except contract.ContractError as exc:
             return {"rows": [], "results": results, "ic": ic, "state": verdict_mod.top5_state([], None), "gaps": [],
-                    "contract": exc.log_text}
+                    "contract": exc.log_text, "stale": stale}
     _, rows = await _claim_rows(audit_id, audit)
     state = verdict_mod.top5_state(rows, ic.get("top5"))
     gaps = verdict_mod.data_gaps(results, rows, state["in_force"], ic.get("gap_target_dates"))
-    return {"rows": rows, "results": results, "ic": ic, "state": state, "gaps": gaps, "contract": None}
+    return {"rows": rows, "results": results, "ic": ic, "state": state, "gaps": gaps, "contract": None, "stale": stale}
 
 
 async def _integrity(audit_id: str, results: Optional[dict], fiscal_year_end: int) -> dict:
@@ -2793,6 +2801,8 @@ async def _blocker_list(audit_id: str, audit: dict) -> list:
     """The banner's hard blockers. The claim blocker reads rows 1-5 of the pre-sort, so the analyst's top 5 never hides one
     (docs/specs/verdict-and-memo.md section 6.1)."""
     audit = await _current_audit(audit_id, audit, strict=False)
+    if audit.get("results_stale"):      # a replacement, not a fourth blocker: one line and no blockers while results are stale
+        return [{"kind": "results_stale", "text": run_audit.STALE_LABEL}]
     out = []
     revenue = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"}, {"_id": 0, "rows": 0})
     if revenue and revenue.get("file_hash") in await _claims_files(audit_id):
@@ -2848,6 +2858,8 @@ async def get_verdict(audit_id: str):
     ver = verdict_mod.verdict(rows, ctx["results"], ic.get("top5"))
     if ctx["contract"]:
         ver = {**ver, "status": "no_verdict", "message": ic_memo.CONTRACT_NO_VERDICT.format(fields=ctx["contract"])}
+    elif ctx["stale"]:
+        ver = {**ver, "message": f"No conclusion: {run_audit.STALE_LABEL}."}       # results exist but are of an older contract
     key = verdict_mod.key_gates(rows)
     # Codes and counts only: no value, gate, thesis, metric name, company or file name reaches the log.
     top5 = claim_matching.label_counts([r for r in rows if r["claim_id"] in set(ver["top5"]["claim_ids"])])
@@ -2969,7 +2981,8 @@ async def export_memo(audit_id: str):
         if ctx["contract"]:
             raise ic_memo.MemoRefused("contract", ic_memo.W19_CONTRACT.format(fields=ctx["contract"]))
         if not results:
-            raise ic_memo.MemoRefused("no_verdict", ic_memo.WORDING_NOT_IN_W["no_verdict"].format(message="compute the audit first."))
+            raise ic_memo.MemoRefused("no_verdict", ic_memo.WORDING_NOT_IN_W["no_verdict"].format(
+                message=f"{run_audit.STALE_LABEL}." if ctx["stale"] else "compute the audit first."))
         try:
             narratives = [n.model_dump() for n in await llm_gateway.narratives_for_run(db, audit_id)]
         except Exception:                                 # the memo never depends on the narrative service
@@ -3097,30 +3110,16 @@ async def _run_compute(audit_id: str) -> dict:
 
 
 async def _current_audit(audit_id: str, audit: dict, strict: bool = True) -> dict:
-    """The audit with results of the current engine contract (schemas/metrics.py). Results stored before it hold
-    whole-number percents, which every reader would show 100 times too large; they are recomputed from the stored files
-    on first read (deterministic Python, no model, no cost). If that is not possible the read fails (409), or with
-    strict=False the audit is returned without results: they are never shown, and a caller that must keep working (the
-    banner, the usage totals) reads "not computed" instead of a figure 100 times too large."""
-    results = audit.get("results")
-    if not results or results.get("contract_version") == contract.CONTRACT_VERSION:
+    """The audit with results of the current engine contract (schemas/metrics.py). Results stored under an older contract are stale
+    (George, 2026-10-20): never recomputed on a read and never shown as current (the percents of version 0 would read 100 times too
+    large). A strict read answers 409 "Stale – re-run audit"; with strict=False the audit is returned without results and with
+    `results_stale` set, so a caller that must keep working (the banner, the usage totals) reads "not computed" instead of a figure.
+    Run audit calculates again from the stored files (deterministic Python, no model, no cost) and clears it."""
+    if not run_audit.results_stale(audit):
         return audit
-    try:
-        results = await _run_compute(audit_id)
-    except HTTPException:
-        if strict:
-            raise HTTPException(409, "Results predate the current engine contract; recompute needed")
-        return {**audit, "results": None}
-    return {**audit, "results": results, "metrics_stale": False}
-
-
-async def _recompute_if_old(audit_id: str) -> None:
-    """Results stored before the engine contract are recomputed before the gateway reads them, so a narrative is never
-    refused for a payload the dashboard is about to replace. A recompute that is not possible is left to the gateway,
-    which refuses the old payload."""
-    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "id": 1, "results": 1})
-    if audit and audit.get("results"):
-        await _current_audit(audit_id, audit, strict=False)
+    if strict:
+        raise HTTPException(409, {"code": run_audit.STALE_CODE, "message": run_audit.STALE_LABEL})
+    return {**audit, "results": None, "results_stale": True}
 
 
 @api.post("/audits/{audit_id}/compute")
@@ -3557,7 +3556,6 @@ async def generate_narrative(run_id: str, step: str):
     Returns 200 with narrative_status="unavailable" on any LLM-side failure -
     the computed metrics still come back, so the dashboard is never blocked.
     """
-    await _recompute_if_old(run_id)
     try:
         result = await llm_gateway.generate_narrative(db, run_id, step)
     except llm_gateway.GatewayError as exc:
@@ -3572,7 +3570,6 @@ async def generate_narrative(run_id: str, step: str):
 @api.get("/runs/{run_id}/narratives/estimate")
 async def narratives_estimate(run_id: str):
     """The steps "Write all narratives" would run and what they would cost at most. Read-only: no provider call."""
-    await _recompute_if_old(run_id)
     try:
         return await llm_gateway.estimate_narratives(db, run_id)
     except llm_gateway.GatewayError as exc:
@@ -3588,7 +3585,6 @@ async def read_narrative(run_id: str, step: str):
     Never calls a provider, so a dashboard load can never spend. Generation is
     the POST below, which is the only path that can.
     """
-    await _recompute_if_old(run_id)
     try:
         result = await llm_gateway.read_cached_narrative(db, run_id, step)
     except llm_gateway.GatewayError as exc:
@@ -3677,7 +3673,8 @@ app.add_middleware(
 # 9: results carry contract_version 3 (the latest valid source period and the period of every metric).
 # 10: results carry contract_version 4 (repeated CRM rows counted once and flagged, won deals by close month).
 # 11: demo audits carry no client name (the field is gone).
-SEED_VERSION = 11
+# 12: results carry contract_version 5 (demo audits seeded under 11 held version 4 and opened as Stale).
+SEED_VERSION = 12
 
 
 @app.on_event("startup")

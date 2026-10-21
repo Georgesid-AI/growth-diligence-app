@@ -15,6 +15,8 @@
     "CAC payback": "months",
     "Transaction volume": "currency",
     "Contract value": "currency",
+    "ARPA": "currency",
+    "ARPU": "currency",
     "Revenue growth": "%",
     "ARR growth": "%",
     "MRR growth": "%",

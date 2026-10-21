@@ -9,6 +9,7 @@ from typing import Dict, Iterable, List, Optional
 from app import claim_matching as cm
 from app import column_rules as cr
 from app.structures import sheet as sheet_mod
+from schemas.metrics import CONTRACT_VERSION
 
 STAGES = ("mapping", "engine", "claims")
 DONE, NEEDS_REVIEW, WAITING, RUNNING, FAILED = "done", "needs_review", "waiting", "running", "failed"
@@ -22,6 +23,15 @@ ENGINE_FAILED = "The calculations could not be completed. Check the mapping on t
 CLAIMS_FAILED = "The claims could not be read from the decks. Retry this stage; the figures above are unaffected."
 DECKS_READING = "The decks are still being read."
 NO_DECKS = "No deck was uploaded: there are no claims to read."
+# George, 2026-10-20: results stored under an older engine contract are marked, not recomputed on a read, until Run audit calculates again.
+STALE_LABEL = "Stale – re-run audit"
+STALE_CODE = "results_stale"
+
+
+def results_stale(audit: dict) -> bool:
+    """True when the stored results were computed under another engine contract version than the code now running."""
+    results = audit.get("results")
+    return bool(results) and results.get("contract_version") != CONTRACT_VERSION
 
 
 def mapping_counts(datasets: Iterable[dict], recognition_open: Optional[Dict[str, int]] = None) -> Dict:
@@ -49,11 +59,12 @@ def mapping_counts(datasets: Iterable[dict], recognition_open: Optional[Dict[str
 
 def engine_stale(audit: dict, datasets: Iterable[dict]) -> bool:
     """True when the stored results are older than the mapping: a column was confirmed or corrected (a file's `mapped_at`) after
-    `computed_at`, or the audit is flagged `metrics_stale` (an automatic recompute could not run). Run audit then counts the engine
+    `computed_at`, the audit is flagged `metrics_stale` (an automatic recompute could not run) or its results are of an older engine
+    contract version (`results_stale`). Run audit then counts the engine
     stage as not done and calculates again. No results: nothing is stale, the stage is simply not done."""
     if not audit.get("results"):
         return False
-    if audit.get("metrics_stale"):
+    if audit.get("metrics_stale") or results_stale(audit):
         return True
     computed = audit.get("computed_at") or ""
     return any(max(ds.get("mapped_at") or "", ds.get("recognition_decided_at") or "") > computed for ds in datasets)

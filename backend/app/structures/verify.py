@@ -55,6 +55,15 @@ TOTAL_TOLERANCE = 0.005         # a total and the sum of its parts differ by mor
 GROWTH_TOLERANCE = 0.5          # ...a stated growth rate and the one the values give by more than 0.5 points
 
 
+WORDED = ("arpa", "arpu", "pipeline")      # a label of these types needs the wording in a header of its cell (George, 2026-10-20)
+
+
+def _worded(structure: Dict, cell: Dict, metric: str) -> bool:
+    """Whether the cell's own text or one of its header cells says the metric, by the deck parser's keyword rule; a model label alone
+    never takes a figure out of the top 5."""
+    return any(k["family"] == metric for c in [cell, *header_cells(structure, cell)] for k in claims._keywords(c["text"]))
+
+
 def unmatched_mode() -> str:
     """The STRUCTURE_UNMATCHED switch: "suggest" (default) or "drop". Anything else is "suggest", so a
     typo shows unverified items labelled rather than silently removing them."""
@@ -603,6 +612,8 @@ def verify(structure: Dict, listed: Dict, labels: List[Dict], pairs: List[Dict] 
             not_a_metric += 1
             continue
         cell = by_id[item["cell"]]
+        if label_["metric"] in WORDED and not _worded(structure, cell, label_["metric"]):
+            label_ = {**label_, "metric": OTHER}        # no wording for it: listed as Other, never Verified
         values = [v for v in item["values"] if label_["metric"] not in LEVELS or v["bracket_reading"] != "negative"]
         period, cells, ok, corrected = _dated(structure, cell, label_.get("period"), pair_of_cell.get(item["cell"]),
                                               fiscal_year_end)

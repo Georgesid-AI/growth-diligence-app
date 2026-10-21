@@ -68,6 +68,18 @@ _LABEL_MAX = SNIPPET_MAX
 # "market" is a whole word: "marketing" and "marketplace" do not count.
 # Where two keywords overlap, the longer one counts: "paying users" is customers, not users;
 # "customer lifetime value" is ltv, not customers or customer_lifetime; "LTV / CAC", "LTV:CAC" is ltv_cac.
+# A revenue word, "per" or "/", and at most one adjective; the noun must then end the phrase: nothing, a mark, a figure or a period word follows.
+# The noun X after "per" decides (George, 2026-10-20): account, client, customer -> ARPA; user, subscriber -> ARPU; month, quarter, year ->
+# Revenue; a non-customer unit (employee, FTE, order, transaction, store, seat, licence) -> Other; any other noun (segment, region, product,
+# country, geography, market, channel, type, cohort, line, use case, vertical...) is a breakdown, Revenue. A noun that a hyphen, a slash or another noun follows is a breakdown ("per customer-segment", "per
+# employee type") and is Revenue.
+_REVENUE_WORDS = r"(?:revenues?|sales|income|spend|ARR|MRR|bookings?)"
+# "Sales / Marketing" and "Income / expenses" are no per-unit phrases: sales, income and spend take "per" only.
+_PER_UNIT = r"\b(?:(?:average|avg) (?:\w+ )?)?(?:(?:revenues?|ARR|MRR|bookings?)\s*(?:per|/)|(?:sales|income|spend)\s*per)\s*(?:(?:paying|active|new|existing|average) )?"
+_END_WORDS = r"by|in|per|over|for|at|monthly|annual|annually|quarterly|yearly|yoy|mom|ytd|ttm|fy|year|month|quarter|q[1-4]|h[12]"
+_ENDS = r"(?![-/])(?=\s*(?:$|[^\w\s/]|\d|\b(?:" + _END_WORDS + r")\b))"
+# The same phrase with a hyphen, a slash or another noun after the noun: a breakdown, Revenue (it outranks "customers" or "users" in the line).
+_BREAKDOWN = r"(?i:" + _PER_UNIT + r"\w+(?:[-/][A-Za-z]|\s+(?!(?:" + _END_WORDS + r")\b)[A-Za-z]))"
 _FAMILIES = [
     ("growth", r"\bCAGR\b|(?i:\bgrowth\b|\bgr(?:ow|ows|owing|own|ew)\b)"),
     ("revenue", r"\b(?:ARR|MRR)\b|(?i:\brevenues?\b|\bbookings?\b|\bturnover\b|\bGMV\b|\bTPV\b|\b(?:trading|payment|transaction) volume\b)"),
@@ -97,6 +109,17 @@ _FAMILIES = [
     ("customer_lifetime", r"(?i:\bcustomer life(?:time)?s?\b)"),
     ("ltv_cac", r"\bLTV\s*(?:/|:|\bto\b)\s*CAC\b"),
     ("trials_per_day", r"(?i:\btrials?\s*(?:per|/)\s*day\b)"),
+    # George, 2026-10-20: a title, header or line is unit economics (ARPA, ARPU) when it says ARPA or ARPU, "average revenue per", or a
+    # revenue word per customer, client, account or user ("Revenue / customer", "ARR per customer") and that noun ENDS the phrase:
+    # "Revenue per customer segment", "per client type", "per user group" are breakdowns and stay Revenue. A count per account
+    # ("Seats per account") has no revenue word and is no unit economics.
+    ("arpa", r"\bARPAs?\b|(?i:" + _PER_UNIT + r"(?:account|client|customer)s?" + _ENDS + ")"),
+    ("arpu", r"\bARPUs?\b|(?i:" + _PER_UNIT + r"(?:user|subscriber)s?" + _ENDS + ")"),
+    ("revenue", _BREAKDOWN),
+    ("other", r"(?i:" + _PER_UNIT + r"(?:employee|fte|order|transaction|store|seat|licen[cs]e)s?" + _ENDS + ")"),
+    # The columns of a pipeline table, never revenue or bookings (George, 2026-10-20); "weighted pipeline" is longer than "pipeline" (Sales).
+    ("pipeline", r"(?i:\bsize of (?:the )?opportunit(?:y|ies)\b|\bopportunity size\b|\bweighted (?:in )?(?:the )?(?:forecast|pipeline)\b"
+                 r"|\bweighted (?:opportunit(?:y|ies)|value)\b)"),
 ]
 # A customers noun that one of these words precedes, in its own cell or phrase, within QUALIFIER_REACH words and with no figure
 # between them, counts people who are not paying customers ("Registered Institutions", "40 trial accounts"): the figure is Users,
@@ -112,7 +135,7 @@ _GROWTH_OF = {"revenue": "revenue_growth", "users": "user_growth"}
 CLAIM_TYPES = ("revenue", "revenue_growth", "growth", "retention", "sales", "customers", "users", "user_growth",
                "gross_margin", "gross_profit", "costs", "ebitda", "net_profit", "people", "product", "market",
                "cash", "burn", "runway", "ltv", "cac", "customer_lifetime", "ltv_cac", "trials_per_day",
-               "months_to_profitability")
+               "months_to_profitability", "arpa", "arpu", "pipeline")
 # A figure no line and no heading names a type for: listed as "unknown" and approved only once the analyst chooses a
 # type (docs/specs/deck-parser.md section 2), like the model's "other" (structure-labelling.md section 4).
 UNKNOWN = "unknown"
@@ -135,7 +158,7 @@ _GROUP_OF = {
     "gross_profit": 2, "ebitda": 2, "burn": 2, "cash": 2, "runway": 2, "costs": 2, "net_profit": 2, "gross_margin": 2,
     "months_to_profitability": 2,
     "customers": 3, "users": 3, "user_growth": 3, "growth": 3, "retention": 3, "sales": 3, "ltv": 3, "cac": 3, "ltv_cac": 3,
-    "customer_lifetime": 3, "trials_per_day": 3, "usage": 3, INSTALLED_UNITS: 3,
+    "customer_lifetime": 3, "trials_per_day": 3, "arpa": 3, "arpu": 3, "pipeline": 3, "usage": 3, INSTALLED_UNITS: 3,
     "people": 4, "product": 4,
     "market": 5, ACQUISITION_CHANNELS: 7, USE_OF_FUNDS: 8,
 }
@@ -693,6 +716,9 @@ def _borrow_date(texts: Iterable[str]) -> Optional[Tuple[str, str, str]]:
     return None
 
 
+UNCLEAR = "unclear"      # the counts of periods and figures differ: no figure of the cell takes a period (George, 2026-10-20)
+
+
 def _shared_cell_periods(numbers: List[Dict], dates: List[Dict], refs: List, headers: Dict) -> Dict[int, Optional[Tuple[str, str, str]]]:
     """id(number) -> the period of a figure that shares its table cell with other figures of the same unit and currency (a borderless
     PDF table read into one cell, issue #136). The k-th figure takes the k-th period of its column header, or of the header cells
@@ -717,20 +743,48 @@ def _shared_cell_periods(numbers: List[Dict], dates: List[Dict], refs: List, hea
                 break
         else:
             for n in members:
-                out[id(n)] = None
+                out[id(n)] = UNCLEAR
     return out
+
+
+_REVENUE_WORD = re.compile(r"(?i)\b" + _REVENUE_WORDS + r"\b")
+_AVERAGE_WORD = re.compile(r"(?i)\b(?:ARPA|ARPU|average|avg|mean|blended|total|overall)\b")
+
+
+def _is_name(label: str) -> bool:
+    """A row label or a bar label that names an entity: not a date, not a figure, no keyword of its own."""
+    return bool(_WORD.search(label)) and not find_dates(label, table=True) and not find_numbers(label, []) and not _keywords(label)
+
+
+def _names_a_unit(line: str, pos: int, header: str) -> bool:
+    """A column header "Revenue per client" (or "Sales per client", "ARR per customer"...) over a row that names its client ("Acme |
+    $500,000") gives that client's revenue: the figure is Revenue, not ARPA (George, 2026-10-20). A row label that is a date, holds a figure or a
+    keyword, or says average does not name one."""
+    label = line.split(" | ")[0]
+    if pos < len(label) + 3 or not _revenue_header(header) or _AVERAGE_WORD.search(header + " " + label):
+        return False
+    return _is_name(label)
+
+
+def _bar_names_a_unit(title: str, name: Optional[str]) -> bool:
+    """The same for a chart: a title "Revenue per client" with one bar per named entity ("Acme", "Beta") is each entity's revenue."""
+    return bool(name) and _revenue_header(title) and not _AVERAGE_WORD.search(title + " " + name) and _is_name(name)
+
+
+def _revenue_header(header: str) -> bool:
+    return bool(_REVENUE_WORD.search(header))
 
 
 def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), headers: Optional[Dict] = None,
                     box_period: Optional[str] = None, column_periods: Optional[Dict] = None,
-                    bar_label: Optional[str] = None, percent_type: Optional[str] = None) -> List[Dict]:
+                    bar_label: Optional[str] = None, percent_type: Optional[str] = None, bar_name: Optional[str] = None) -> List[Dict]:
     """Candidates in one line. `refs` gives each figure's source reference: a list of
     (start, end, ref) spans, so a table row cites the cell a figure sits in. `context` is the
     nearby text to borrow from, most relevant first; `headers` maps a table column to its header;
     `box_period` is the period line at the top of the line's text box ("23 Y/E"). `column_periods`
     maps a table column to the period its header stack states, or NO_PERIOD (see column_periods);
     a table row is read with the table period rules. `bar_label` is the year label under the figure's bar (see
-    _bar_labels). `percent_type` types a percentage that no keyword or heading names (a share of a raise)."""
+    _bar_labels). `bar_name` is the name label under the bar of a chart with one bar per named entity. `percent_type` types a percentage that no keyword or heading names (a share of a raise)."""
     refs, context, headers, column_periods = list(refs), list(context), headers or {}, column_periods
     table = column_periods is not None
     keywords = _keywords(line)
@@ -758,6 +812,8 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
         own = _nearest(keywords, n)
         header = headers.get(ref_at(n["pos"]).get("col"))
         nearby = [header] if header else []
+        if own and header and (_borrow_keyword(nearby, nearest=False) or (None,))[0] == "pipeline":
+            own = None          # under a pipeline column every row is Pipeline, whatever its row label says (George, 2026-10-20)
         borrowed = None if own else _borrow_keyword(nearby, nearest=False) or _borrow_keyword(context)
         qualifier = None
         if own:
@@ -772,6 +828,9 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
             family = percent_type
         else:
             continue
+        if family in ("arpa", "arpu") and borrowed and (header and borrowed[1] is header and _names_a_unit(line, n["pos"], header)
+                                                          or borrowed[1] is not header and _bar_names_a_unit(borrowed[1], bar_name)):
+            family = "revenue"
         if family == "gross_margin" and n["currency"] and _GROSS_MARGIN.search(borrowed[1] if borrowed else line):
             family = "gross_profit"
         if family == "ebitda" and n["unit"] == "months" and \
@@ -784,7 +843,7 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
         stacked = (column_periods or {}).get(ref_at(n["pos"]).get("col"))
         if id(n) in shared:
             # Figures that share one table cell: each takes the period of its own position in the header, or none (issue #136)
-            own_date, date = None, shared[id(n)]
+            own_date, date = None, None if shared[id(n)] == UNCLEAR else shared[id(n)]
             stated = date is not None
         elif own_date or stacked is None:
             # The year label under a bar is the figure's own date: taken after its own date, column header and box period, before
@@ -803,6 +862,8 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
                          label=borrowed and borrowed[2], date_from=date and date[1], stated=stated,
                          period_text=own_date["text"] if own_date else date and date[2],
                          type_from="line" if own else "heading", qualifier=qualifier))
+        if shared.get(id(n)) == UNCLEAR:
+            out[-1]["period_unclear"] = True
     if numbers:
         return out
     if dates:
@@ -955,8 +1016,8 @@ BAR_ROW = 0.02      # the year labels of one chart axis share a line: their tops
 BAR_REACH = 0.6     # a bar's value sits at most this far above its label (page fraction): the bar itself fills the gap
 
 
-def _bar_labels(units: List[Dict]) -> Dict[int, str]:
-    """id(unit) -> the year label under the figure's bar. A bar chart read from the page's text has its values above the
+def _bar_labels(units: List[Dict], names: bool = False) -> Dict[int, str]:
+    """id(unit) -> the year label under the figure's bar (with `names`, the name label: a chart with one bar per named entity). A bar chart read from the page's text has its values above the
     bars and one year or FY label under each ("FY2023", "2024"); the labels are two or more lines on one row, each
     nothing but a year. A figure takes the nearest such label below it that overlaps it from side to side; with no
     such row, or no label under the figure, it has none (docs/specs/deck-parser.md section 2)."""
@@ -966,7 +1027,8 @@ def _bar_labels(units: List[Dict]) -> Dict[int, str]:
         if u["bbox"] and not u.get("table_row") and not u["title"]:
             pages.setdefault(u["page"], []).append(u)
     for members in pages.values():
-        labels = [u for u in members if _period_only(u["text"]) and find_dates(u["text"])[0]["kind"] == "year"]
+        labels = [u for u in members if (_is_name(u["text"]) and len(u["text"].split()) <= 4 if names else
+                                         _period_only(u["text"]) and find_dates(u["text"])[0]["kind"] == "year")]
         rows = [[label for label in labels if abs(label["bbox"][1] - top["bbox"][1]) < BAR_ROW] for top in labels]
         axis = [label for row in rows if len(row) >= 2 for label in row]
         for u in members:
@@ -1236,6 +1298,7 @@ def detect_candidates(blocks: List[Dict], file: str, fiscal_year_end: int = 12) 
     tick_cells = _tick_cells(blocks)
     periods = _box_periods(units)
     bars = _bar_labels(units)
+    bar_names = _bar_labels(units, names=True)
     merged = {}
     for u in units:
         if id(u) in skipped or (u.get("header_row") or u.get("table_row") and _in_stack(u)) and _period_header(u["text"]) \
@@ -1245,7 +1308,7 @@ def detect_candidates(blocks: List[Dict], file: str, fiscal_year_end: int = 12) 
         for c in ([_channel_candidate(u, *channels[id(u)])] if id(u) in channels else
                   line_candidates(u["text"], u["spans"], contexts[id(u)], u["headers"], periods.get(id(u)),
                                   u.get("column_periods") if u.get("table_row") else None, bars.get(id(u)),
-                                  USE_OF_FUNDS if id(u) in funds else None)):
+                                  USE_OF_FUNDS if id(u) in funds else None, bar_names.get(id(u)))):
             s = c["sources"][0]
             if s["kind"] == "table" and (s.get("slide") or s.get("page"), s["table"], s["row"], s["col"]) in tick_cells:
                 continue
@@ -1729,7 +1792,8 @@ def _row_series(found: List[Dict], headers: Dict) -> List[Dict]:
                         "by_period": [{"value": i["value"], "value_high": i["value_high"], "target_date": i["target_date"],
                                        "period": period(i), "period_text": i["period_text"],
                                        "period_start": i["period_start"], "period_end": i["period_end"],
-                                       "source": i["sources"][0], "_stated": i["_stated"]}
+                                       "source": i["sources"][0], "_stated": i["_stated"],
+                                       **({"period_unclear": True} if i.get("period_unclear") else {})}
                                       for i in group]})
     return out
 

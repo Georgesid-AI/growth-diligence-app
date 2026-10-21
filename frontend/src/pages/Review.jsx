@@ -13,7 +13,7 @@ import {
   answerDefinitionCheck, answerTurnover, approveAll, decideColumns, generateNarrative, getAudit, getClaimRegister, getDatasets, getDecks, getNarrativeEstimate,
   getReview, getVerdict, putIcInputs, reportUsage, updateCandidate, updateClaimInputs,
 } from "@/lib/api";
-import { claimPeriod, claimValue, sourceRef, typeLabel, CLAIM_GROUPS, approveAllToast, isOther } from "@/lib/deckClaims";
+import { claimPeriod, claimValue, sourceRef, typeLabel, CLAIM_GROUPS, approveAllToast, isOther, STALE_LABEL } from "@/lib/deckClaims";
 import { JUDGMENT_HEADING } from "@/lib/verdict";
 import { definitionOf, turnoverHeading, turnoverOf, registerRows } from "@/lib/claimRegister";
 import { useGateEdits } from "@/lib/useGateEdits";
@@ -56,7 +56,7 @@ export default function Review() {
     if (failed) { setLoadError(describeRequestError(failed, { timeoutMs: READ_TIMEOUT_MS }).message); return; }
     setLoadError(null);
     setAudit(a); setSummary(s); setViews(v); setDeckData(d);
-    if (s?.computed) {
+    if (s?.computed && !s.results_stale) {
       const [r, vd, est] = await Promise.all([safe(getClaimRegister(id), null), safe(getVerdict(id), null), safe(getNarrativeEstimate(id), null)]);
       if (!alive.current) return;
       setRegister(registerRows(r)); setGateExtras({ prefill: r?.gate_prefill || {}, budgets: r?.budget_decisions || [] }); setVerdict(vd); setEstimate(est);
@@ -114,7 +114,9 @@ export default function Review() {
       <MappingsSection views={views} decide={decide} />
       <ClaimsSection auditId={id} data={deckData} summary={summary} reload={reload} />
       <TurnoverSection auditId={id} data={deckData} reload={reload} />
-      {summary.computed && verdict ? (
+      {summary.results_stale ? (
+        <p className="text-sm text-slate-600 border border-dashed border-[#D1D5DB] rounded-md px-4 py-6" data-testid="review-stale">{STALE_LABEL}</p>
+      ) : summary.computed && verdict ? (
         <>
           <TopFiveSection auditId={id} verdict={verdict} reload={reload} />
           <ThesisSection verdict={verdict} save={saveIc} />

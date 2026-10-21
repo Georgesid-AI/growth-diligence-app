@@ -64,6 +64,22 @@ test("when the narrative cannot be generated the metrics render with their sourc
   host.remove();
 });
 
+test("results of an older engine contract answer 409 Stale – re-run audit: the dashboard says so and shows no figure (George, 2026-10-20)", async () => {
+  api.getAudit.mockResolvedValue(sample.audit);
+  api.getResults.mockRejectedValue({ response: { status: 409, data: { detail: { code: "results_stale", message: "Stale – re-run audit" } } } });
+  api.getVerdict.mockResolvedValue(VERDICT_NONE);
+  api.getClaimRegister.mockResolvedValue({ claims: [], register: [] });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => { root.render(<Dashboard />); });
+  await act(async () => { await Promise.resolve(); });
+  expect(host.querySelector('[data-testid="stale-results"]').textContent).toContain("Stale – re-run audit");
+  expect(host.textContent).not.toContain("Ending ARR");
+  await act(async () => { root.unmount(); });
+  host.remove();
+});
+
 test("the dashboard offers one Write narrative button for the data inventory and one for the data integrity, and the metrics render when both fail", async () => {
   const { host, unmount } = await mountDashboard(sample);
   for (const step of ["data_inventory", "data_integrity"]) {

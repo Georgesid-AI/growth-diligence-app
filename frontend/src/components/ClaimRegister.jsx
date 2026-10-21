@@ -8,7 +8,7 @@ import DateField from "@/components/DateField";
 import { answerDefinitionCheck, answerTurnover, claimsCsvUrl, downloadFile, getClaimRegister, updateClaimInputs } from "@/lib/api";
 import {
   DEFINITION_ANSWERS, DOWNLOAD_LABEL, labelText, GATE_BUDGET_MAX, GATE_DIRECTIONS, GATE_METRIC_MAX, GATE_METRIC_PLACEHOLDER, GATE_NEEDED, KEY_GATE_LABEL, NO_METRIC, OTHER_DECISION, PREFILLED, gateDraft,
-  REGISTER_COLUMNS, REGISTER_COLUMN_WIDTHS, REGISTER_HEADING, SET_GATE_LABEL, VAS_LABEL, TURNOVER_QUESTION, answerReady, reasonsFor, claimCellText, rateHover, takeRateText, evidenceLines, gapText, gateContext, gateEdit, metricOptions, needsMetricName,
+  REGISTER_COLUMNS, REGISTER_COLUMN_WIDTHS, REGISTER_HEADING, STALE_LABEL, SET_GATE_LABEL, VAS_LABEL, TURNOVER_QUESTION, answerReady, reasonsFor, claimCellText, rateHover, takeRateText, evidenceLines, gapText, gateContext, gateEdit, metricOptions, needsMetricName,
   observedText, overlapsText, readingText, registerRows, segmentOptions, valueAtStakeText, COLUMN_EXPLAINERS, EVIDENCE_SUBTITLE, LABEL_STYLE,
   GROWTH_BASES, SET_GROWTH_BASIS, growthBasisLabel,
 } from "@/lib/claimRegister";
@@ -213,9 +213,12 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
   const [prefill, setPrefill] = useState({});
   const [budgets, setBudgets] = useState([]);
   const [error, setError] = useState(null);
+  const [stale, setStale] = useState(false);
   const ccy = results?.reporting_currency;
 
-  const load = useCallback((d) => { setRows(registerRows(d)); setPrefill(d.gate_prefill || {}); setBudgets(d.budget_decisions || []); }, []);
+  const load = useCallback((d) => {
+    setRows(registerRows(d)); setPrefill(d.gate_prefill || {}); setBudgets(d.budget_decisions || []); setStale(Boolean(d.results_stale));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -260,7 +263,10 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
       </div>
       {error && <div className="text-xs text-rose-700" data-testid="claim-register-error">{error}</div>}
       {!rows && !error && <Loader2 className="h-4 w-4 animate-spin text-slate-500" />}
-      {rows && rows.length === 0 && (
+      {rows && stale && (
+        <p className="text-sm text-amber-800" data-testid="claim-register-stale">{STALE_LABEL}</p>
+      )}
+      {rows && rows.length === 0 && !stale && (
         <p className="text-sm text-slate-600" data-testid="claim-register-empty">No approved claims yet. Approve claims in the deck list and they are tested here.</p>
       )}
       {rows && rows.length > 0 && (

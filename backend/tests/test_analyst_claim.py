@@ -156,3 +156,22 @@ def test_an_analyst_adds_an_acquisition_channels_claim_with_a_platform_and_no_me
     for bad in ({"label": None}, {"label": ""}, {"metric": "ARR"}):
         assert client.post(f"/api/audits/{AUDIT}/decks/candidates", json={**body, **bad}).status_code == 422, bad
     assert _add(client, label="Telegram").status_code == 422, "a platform belongs to acquisition channels only"
+
+
+def _usd_claim_fx(client):
+    new = _add(client, currency="USD").json()
+    return next(x for x in client.get(f"/api/audits/{AUDIT}/decks").json()["candidates"] if x["id"] == new["id"])["fx"]
+
+
+def test_the_deck_list_conversion_date_comes_from_current_results_never_from_stale_ones(api):
+    """Review of 20 Oct (M1): with the as-of month defaulted, the date a claim in another currency converts at is the results' own as-of
+    month; stale results (an older contract version) give none, and the row says so."""
+    client, db = api
+    audit = db["audits"].docs[0]
+    assert _usd_claim_fx(client)["date"] and not _usd_claim_fx(client).get("date_stale"), "fixture: current results give the date"
+    audit["results"]["contract_version"] = 1
+    fx = _usd_claim_fx(client)
+    assert fx["date"] is None and fx["date_stale"] is True
+    audit["as_of_month"] = "2024-03-31"
+    fx = _usd_claim_fx(client)
+    assert fx["date"] and not fx.get("date_stale"), "an as-of month the analyst set does not come from the results"

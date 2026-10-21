@@ -6,10 +6,12 @@
 import metricUnits from "./claim_metrics.json";
 import evidenceLabels from "./evidence_labels.json";
 import { PLACEHOLDER, fmtCount, fmtCurrency } from "./format";
-import { NO_DATE, rateMissingText, typeLabel } from "./deckClaims";
+import { NO_DATE, STALE_LABEL, rateMissingText, typeLabel } from "./deckClaims";
 import { dateRangeError, displayDate } from "./datePicker";
 
 export const REGISTER_HEADING = "Claim register";
+/** George, 2026-10-20: figures stored under an older engine contract are never shown as current; Run audit calculates them again. */
+export { STALE_LABEL };
 export const DOWNLOAD_LABEL = "Download baseline (CSV)";
 // The register is seven columns so it fits 1280 px without a horizontal scroll (claim-matching.md section 8). Page, "Read from deck",
 // gloss, VaS (value at stake, in the glossary), overlaps and the evidence path sit on the second, smaller line of each row. How well

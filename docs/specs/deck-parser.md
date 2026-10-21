@@ -535,3 +535,29 @@ otherwise none of them takes a period (no fallback: claim-matching.md table 2b, 
 the value's shown period is empty. A figure with a date of its own is unchanged. A revenue-type figure whose label or line holds a
 contract-value term reads "Contract value" for the deck inconsistency rule, so it is never compared with a revenue figure.
 Tests: `backend/tests/test_issue_136.py`.
+Amended 2026-10-20 (George, finding A and finding D after issue #136; tests `backend/tests/test_pdf_shared_cell.py`,
+`backend/tests/test_unit_economics_pipeline.py`):
+- A figure of such a cell whose header holds a different number of periods than the cell holds amounts has no period and carries
+  `period_unclear`; the register reads it "Period unclear – confirm" (claim-matching.md table 2b). The synthetic PDF of the artefact's
+  shape (a ruled two-column table, label in col 1, four amounts in col 2, four quarters in the header's col 2) paired correctly on main
+  (b094fc2); the real deck is not reproduced.
+- Two claim types are added to CLAIM_TYPES after months_to_profitability, in group 3 with LTV and CAC: `arpa` ("ARPA", revenue per
+  account, client or customer) and `arpu` ("ARPU", revenue per user). Their keywords are ARPA, ARPU and "per account / client /
+  customer / user", alone or after revenue, sales, income or spend; the phrase is longer than "Revenue", so a title such as "Average
+  Revenue Per Account" types its bars `arpa`, never Revenue (longer keyword counts).
+- A third type `pipeline` ("Pipeline", group 3) has the keywords "size of opportunity", "opportunity size", "weighted in forecast",
+  "weighted pipeline" and "weighted opportunity / value". A table column header names a figure's type before the page title, so the
+  columns of a pipeline table under a revenue title are Pipeline, never Revenue or Bookings. The bare word "pipeline" stays a Sales
+  keyword.
+
+Amended 2026-10-20 (George, review of the unit-economics change; tests `backend/tests/test_unit_economics_pipeline.py`,
+`backend/tests/test_structure_reading.py`):
+- A title, header or line types `arpa` or `arpu` only for "ARPA", "ARPU", "average revenue per", or a revenue word (revenue, sales, income,
+  spend, ARR, MRR, bookings) followed by "per" or "/", at most one of paying, active, new, existing or average, and the noun account, client,
+  customer or user where that noun ENDS the phrase (nothing, a mark, a figure or a period word such as "by year" follows). "Revenue per
+  customer segment", "per client type", "per customer cohort", "per user group" stay Revenue; "Seats per account" is no unit economics.
+- A column header "Revenue per client" over rows that name a client ("Acme") types each figure Revenue; over rows that are periods it stays ARPA.
+- A model label of arpa, arpu or pipeline stands only when the cell or one of its headers holds the keyword; otherwise it is listed as Other.
+
+Amended 2026-10-20 (George): a figure under a pipeline column header ("Size of opportunity", "Weighted in forecast") is Pipeline whatever its
+row label says ("ARR expansion Acme"); the header wins over the row's own keyword for that type only. Test: `test_unit_economics_pipeline.py`.

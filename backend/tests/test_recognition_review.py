@@ -527,9 +527,9 @@ def test_l6_the_audit_view_does_not_load_the_stored_sheets(api, monkeypatch):
     assert any(p and p.get("recognition_sheets") == 0 for p in seen)
 
 
-def test_l2_a_version_4_audit_is_recomputed_by_the_real_engine_on_the_first_read(api):
-    """The contract test stubs the engine; this one runs it: results stored before the recognition block carry the version 5 fields
-    after the first read."""
+def test_l2_a_version_4_audit_is_stale_until_run_audit_calculates_it_again_with_the_real_engine(api):
+    """The contract test stubs the engine; this one runs it: results stored before the recognition block are marked stale on a read
+    (George, 2026-10-20) and carry the version 5 fields once the Run audit engine stage has calculated again."""
     import copy
     rules_only(api, "2025-06-30")
     assert upload(api, MONTHLY, monthly_bytes()).status_code == 200
@@ -543,6 +543,10 @@ def test_l2_a_version_4_audit_is_recomputed_by_the_real_engine_on_the_first_read
         old["revenue_series"].pop(key, None)
     (old.get("revenue_reconciliation") or {}).pop("status", None)
     audit["results"] = {**old, "contract_version": 4}
+    res = api.get(f"/api/audits/{AUDIT}/results")
+    assert res.status_code == 409 and res.json()["detail"]["message"] == "Stale – re-run audit"
+    assert api.get(f"/api/audits/{AUDIT}/review").json()["engine_stale"] is True
+    assert run_stage(api, "engine")["status"] == "done"
     res = api.get(f"/api/audits/{AUDIT}/results")
     assert res.status_code == 200
     again = res.json()["results"]
