@@ -100,6 +100,19 @@ def test_3_a_direction_with_no_figure_is_not_dropped():
     assert [c["label_from"] for c in found if c["value"] is not None] == ["Positive EBITDA 2024"], "the figure uses the line as its label"
 
 
+def test_3_a_heading_no_figure_uses_is_medium_no_figure_like_a_direction():
+    found = detect([(50, 560, 22, "Growth plan"), (80, 500, 14, "2020 REVENUE"), (300, 500, 14, "2021 REVENUE"), (300, 470, 14, "€190K")])
+    heading, = [c for c in found if c["value"] is None]
+    conf = claims.confidence(heading, found)
+    assert (conf["level"], conf["failed"]) == ("Medium", ["no figure"]) and heading["claim_type"] == "revenue"
+
+
+def test_3_a_milestone_line_with_no_figure_is_scored_as_before():
+    milestone = {"claim_type": "ebitda", "value": None, "value_high": None, "target_date": "2024-Q2", "type_from": "line",
+                 "sources": [{"slide": 1}]}
+    assert claims.confidence(milestone, [milestone])["level"] == "High"
+
+
 # ---------------------------------------------------------------------------
 # 4. Analyst-edited
 # ---------------------------------------------------------------------------

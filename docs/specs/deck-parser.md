@@ -572,6 +572,7 @@ row label says ("ARR expansion Acme"); the header wins over the row's own keywor
 Amended 2026-10-21 (George, issue #146): (1) the deck upload box is a drop zone: a file dropped on it takes the path of the picker, with the same
 types (.pptx, .docx, .pdf) and the same refusal message. (2) A candidate with no figure is dropped when a figure on the same page already uses its
 line as its "Label from" ("2020 REVENUE" over "151K"): the figure is the claim, the heading only names it. A heading read on several pages loses the
-pages whose figure uses it. A direction ("Positive EBITDA"), a product or milestone line and every other candidate with no figure are kept. On the
+pages whose figure uses it. A direction ("Positive EBITDA"), a product or milestone line and every other candidate with no figure are kept. A heading that no figure uses stays a claim and is scored
+Medium with the reason "no figure", like a direction (George, 2026-10-21); a product or milestone line is scored as before. On the
 10 test decks two headings go (02-moz p20 and p21). (3) Confidence of a claim the analyst edited reads "Analyst-edited", like "Analyst-entered" for an
 added claim; the claim is not scored again. A claim the parser read is scored as before. Tests: `test_issue_146.py`, `DeckPanel.test.jsx`.

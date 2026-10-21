@@ -1935,8 +1935,8 @@ def confidence(candidate: Dict, peers: List[Dict]) -> Dict:
     named = candidate.get("claim_type") not in (UNKNOWN, "other") and \
         bool(candidate.get("type_from", "line") or "parsed" in candidate)
     checks = [("no date", all(v["target_date"] for v in values))]
-    if candidate.get("claim_direction") and not has_value:
-        checks.append(("no figure", False))          # a direction is never better than Medium
+    if not has_value and (candidate.get("claim_direction") or candidate.get("claim_type") not in (*_MILESTONES, UNKNOWN)):
+        checks.append(("no figure", False))          # a direction or a heading no figure uses is never better than Medium (issue #146)
     if has_value:
         # A label that states the currency in brackets ("Turnover (£/year)") counts, also on a candidate stored before the
         # label was read into its currency field: only what is still missing after that is listed.
