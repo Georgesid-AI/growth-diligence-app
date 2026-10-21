@@ -892,3 +892,14 @@ describe("upload box", () => {
     expect(lineTexts().every((t) => t.includes(": done"))).toBe(true);
   });
 });
+
+test("the deck-list AI badge reads Matched to page or AI suggestion, not matched", async () => {
+  api.getDecks.mockResolvedValue({ decks: DECKS, candidates: [
+    claim("m", "d1", 1, { group: 1, origin: "ai", ai_label: "Verified" }),
+    claim("n", "d1", 2, { group: 1, origin: "ai", ai_label: "AI suggestion, not verified" }),
+  ] });
+  await act(async () => { root.render(<DeckPanel auditId="a2" />); });
+  await act(async () => { q("deck-tab-all").click(); });
+  const badges = [...document.body.querySelectorAll("[data-testid='candidate-ai-label']")].map((b) => b.textContent);
+  expect(badges.sort()).toEqual(["AI suggestion, not matched", "Matched to page"]);
+});

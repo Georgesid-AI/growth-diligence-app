@@ -258,6 +258,10 @@ export function inconsistencyText(c) {
 // and so does every mapping field it proposed. Python checked a Verified value against its source cell.
 export const VERIFIED_LABEL = "Verified";
 export const AI_SUGGESTION_LABEL = "AI suggestion, not verified";
+// Deck-list badge texts only (George, 2026-10-21): the stored label stays as above; the badge says what Python did.
+export const BADGE_MATCHED = "Matched to page";
+export const BADGE_NOT_MATCHED = "AI suggestion, not matched";
+export const badgeText = (label) => (label === VERIFIED_LABEL ? BADGE_MATCHED : label === AI_SUGGESTION_LABEL ? BADGE_NOT_MATCHED : label);
 export const STORED_MAPPING_LABEL = "Your confirmed mapping for these headers";
 
 // Structure labelling (docs/specs/structure-labelling.md): Python reads every figure; an ambiguous one ("2.500",
