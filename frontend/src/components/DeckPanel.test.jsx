@@ -833,8 +833,10 @@ describe("upload box", () => {
   test("a file of another type is refused with the accepted types named, and nothing is uploaded", async () => {
     await pick("slides.key");
     expect(api.uploadDeck).not.toHaveBeenCalled();
-    expect(q("deck-upload-error").textContent).toBe("Only .pptx, .docx and .pdf files can be uploaded here.");
+    expect(lineTexts()).toEqual(["slides.key: refused – Only .pptx, .docx and .pdf files can be uploaded here."]);
   });
+
+  const lineTexts = () => [...document.querySelectorAll('[data-testid="deck-upload-line"]')].map((n) => n.textContent);
 
   const drop = async (...names) => {
     const box = q("deck-upload-box");
@@ -852,19 +854,41 @@ describe("upload box", () => {
     const { over, ev } = await drop("plan.pptx");
     expect(over.defaultPrevented && ev.defaultPrevented).toBe(true);
     expect(api.uploadDeck).toHaveBeenCalledWith("a1", expect.objectContaining({ name: "plan.pptx" }));
-    expect(q("deck-upload-error")).toBeNull();
+    expect(lineTexts().every((t) => t.includes(": done"))).toBe(true);
   });
 
   test("a dropped file of another type is refused with the same message, and nothing is uploaded", async () => {
     await drop("slides.key");
     expect(api.uploadDeck).not.toHaveBeenCalled();
-    expect(q("deck-upload-error").textContent).toBe("Only .pptx, .docx and .pdf files can be uploaded here.");
+    expect(lineTexts()).toEqual(["slides.key: refused – Only .pptx, .docx and .pdf files can be uploaded here."]);
+  });
+
+  test("several files dropped at once are uploaded one after another with a status line each, and a refused type stops no other", async () => {
+    let release;
+    api.uploadDeck.mockImplementation((id, file) => (file.name === "a.pptx"
+      ? new Promise((resolve) => { release = () => resolve({ file: "a.pptx", pages: 3, page_unit: "slide", candidates: 2, deck_id: "d1" }); })
+      : Promise.resolve({ file: file.name, pages: 5, page_unit: "page", candidates: 4, deck_id: "d2" })));
+    await drop("a.pptx", "slides.key", "b.pdf");
+    expect(api.uploadDeck).toHaveBeenCalledTimes(1);          // one after another: b.pdf waits for a.pptx
+    expect(lineTexts()).toEqual(["a.pptx: uploading…", "slides.key: refused – Only .pptx, .docx and .pdf files can be uploaded here.",
+      "b.pdf: waiting"]);
+    await act(async () => { release(); });
+    expect(api.uploadDeck.mock.calls.map(([, f]) => f.name)).toEqual(["a.pptx", "b.pdf"]);
+    expect(lineTexts()).toEqual(["a.pptx: done · 3 slides read · 2 candidate claims", "slides.key: refused – Only .pptx, .docx and .pdf files can be uploaded here.",
+      "b.pdf: done · 5 pages read · 4 candidate claims"]);
+  });
+
+  test("a failed upload shows its line and the next file still goes", async () => {
+    api.uploadDeck.mockRejectedValueOnce({ response: { data: { detail: "Could not read the deck" } } })
+      .mockResolvedValueOnce({ file: "b.pdf", pages: 5, page_unit: "page", candidates: 4, deck_id: "d2" });
+    await drop("a.pptx", "b.pdf");
+    expect(lineTexts()).toEqual(["a.pptx: failed – Could not read the deck", "b.pdf: done · 5 pages read · 4 candidate claims"]);
   });
 
   test("an accepted type goes to the existing upload", async () => {
     api.uploadDeck.mockResolvedValue({ file: "plan.docx", pages: 3, page_unit: "page", candidates: 2, deck_id: "d1" });
     await pick("plan.docx");
     expect(api.uploadDeck).toHaveBeenCalledWith("a1", expect.objectContaining({ name: "plan.docx" }));
-    expect(q("deck-upload-error")).toBeNull();
+    expect(lineTexts().every((t) => t.includes(": done"))).toBe(true);
   });
 });

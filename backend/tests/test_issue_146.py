@@ -64,6 +64,60 @@ def test_2_a_column_mapping_with_no_customer_is_still_waiting():
     assert read_deck(unmapped) == (structures.WAITING, 0)
 
 
+# PR 147 review M1: the gate asks the check the rest of the app uses (`_is_mapped`), not `mapped_at` alone.
+def report_api(api, name, as_of="2025-06-30"):
+    """A monthly report uploaded through the API, a deck stored for the audit, consent ticked. Returns (the model calls so far)."""
+    from test_recognition_recheck import RECOGNITION_ONLY, upload
+    from test_revenue_recognition import rules_only
+    rules_only(api, as_of)
+    assert upload(api, "file.csv", RECOGNITION_ONLY[name][0].encode()).json()["recognition_only"] is True
+    api.db["audits"].docs[0]["structure_reading_consent"] = True
+    api.db[TEXT_COLLECTION].docs.append({"audit_id": api_audit(), "deck_id": "d1", "file": "plan.pptx", "page_unit": "slide",
+                                         "structures": [{"type": "table", "slide": 1, "header_rows": 1, "cells": CELLS}]})
+
+
+def api_audit():
+    from test_chat_upload import AUDIT as chat_audit
+    return chat_audit
+
+
+def deck_gate(api):
+    adapter = RecordedAdapter()
+    return asyncio.run(structures.process_deck(api.db, api_audit(), "d1", adapter=adapter, sleep=t._noop_sleep)), adapter.calls
+
+
+def revenue_doc(api):
+    return next(d for d in api.db["datasets"].docs if d["dtype"] == "revenue")
+
+
+def test_2_a_report_whose_clicks_are_done_opens_the_gate_through_the_api(api):
+    report_api(api, "monthly report found")
+    assert revenue_doc(api)["mapped_at"] and deck_gate(api) == (structures.READ, 1)
+
+
+def test_2_an_as_of_month_moved_before_the_last_actual_column_closes_the_gate_again(api):
+    import server
+    report_api(api, "monthly report found")
+    assert revenue_doc(api)["mapped_at"]
+    assert api.put(f"/api/audits/{api_audit()}", json={"as_of_month": "2025-03-31"}).status_code == 200
+    audit = api.db["audits"].docs[0]
+    assert revenue_doc(api)["mapped_at"], "mapped_at is only rewritten by upload and by a recognition decision"
+    assert asyncio.run(server._is_mapped(api_audit(), audit, revenue_doc(api))) is False, "the rest of the app sees a click waiting"
+    assert deck_gate(api) == (structures.WAITING, 0)
+
+
+def test_2_an_empty_decisions_call_on_a_report_waiting_for_its_currency_does_not_open_the_gate(api):
+    report_api(api, "monthly report none")
+    assert api.post(f"/api/audits/{api_audit()}/datasets/revenue/decisions", json=[]).status_code == 200
+    assert deck_gate(api) == (structures.WAITING, 0)
+
+
+def test_2_an_empty_mapping_put_on_a_report_waiting_for_its_currency_does_not_open_the_gate(api):
+    report_api(api, "monthly report none")
+    api.put(f"/api/audits/{api_audit()}/datasets/revenue/mapping", json={"mapping": {}})
+    assert deck_gate(api) == (structures.WAITING, 0)
+
+
 # ---------------------------------------------------------------------------
 # 3. Heading-only candidates
 # ---------------------------------------------------------------------------
@@ -107,10 +161,44 @@ def test_3_a_heading_no_figure_uses_is_medium_no_figure_like_a_direction():
     assert (conf["level"], conf["failed"]) == ("Medium", ["no figure"]) and heading["claim_type"] == "revenue"
 
 
-def test_3_a_milestone_line_with_no_figure_is_scored_as_before():
-    milestone = {"claim_type": "ebitda", "value": None, "value_high": None, "target_date": "2024-Q2", "type_from": "line",
-                 "sources": [{"slide": 1}]}
-    assert claims.confidence(milestone, [milestone])["level"] == "High"
+@pytest.mark.parametrize("claim_type, snippet, level", [("product", "Launch the API", "High"), ("unknown", "Milestone Q2", "Medium"),
+                                                      ("ebitda", "Profitable by Q2", "High"), ("ebitda", "Break-even 2024", "High"),
+                                                      ("ebitda", "2024 EBITDA", "Medium")])
+def test_3_a_line_with_no_figure_is_scored_by_its_cue_and_not_its_type(claim_type, snippet, level):
+    line = {"claim_type": claim_type, "snippet": snippet, "value": None, "value_high": None, "target_date": "2024-Q2", "type_from": "line",
+            "sources": [{"slide": 1}]}
+    assert claims.confidence(line, [line])["level"] == level
+
+
+# PR 147 review M2: a milestone line is told from a heading by the figure or a milestone cue, never by the claim type (both are ebitda).
+def test_3_profitable_by_2024_above_a_figure_stays_a_milestone_line():
+    found = detect([(50, 560, 22, "Growth plan"), (80, 500, 14, "Profitable by 2024"), (80, 470, 14, "€0.4M")])
+    assert "Profitable by 2024" in lines_of(found), "decision 2: a milestone line is kept even when a figure uses its line as its label"
+    line, = [c for c in found if c["snippet"] == "Profitable by 2024"]
+    assert claims.confidence(line, found)["level"] == "High", "and it is scored as a milestone line, as before"
+
+
+def test_3_an_ebitda_heading_no_figure_uses_is_medium_no_figure():
+    found = detect([(50, 560, 22, "Growth plan"), (80, 500, 14, "2023 EBITDA"), (300, 500, 14, "2024 EBITDA"), (300, 470, 14, "€1.2M")])
+    heading, = [c for c in found if c["snippet"] == "2023 EBITDA"]
+    assert heading["claim_type"] == "ebitda" and heading["value"] is None
+    conf = claims.confidence(heading, found)
+    assert (conf["level"], conf["failed"]) == ("Medium", ["no figure"])
+
+
+def test_3_a_break_even_line_with_no_figure_under_it_is_still_a_milestone():
+    found = detect([(50, 560, 22, "Growth plan"), (80, 500, 14, "Break-even in Q3 2025")])
+    line, = [c for c in found if c["value"] is None]
+    assert claims.confidence(line, found)["level"] == "High"
+
+
+# L1: the figure uses the heading's whole line, not a longer line that holds it.
+def test_3_a_longer_label_that_holds_the_heading_does_not_drop_it():
+    found = detect([(50, 560, 22, "Growth plan"), (80, 500, 14, "Revenue 2020"), (300, 500, 14, "Revenue 2020 per customer"),
+                    (300, 470, 14, "€40K")])
+    assert "Revenue 2020" in lines_of(found)
+    heading, = [c for c in found if c["snippet"] == "Revenue 2020"]
+    assert claims.confidence(heading, found)["failed"] == ["no figure"]
 
 
 # ---------------------------------------------------------------------------

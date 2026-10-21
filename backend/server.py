@@ -2797,6 +2797,18 @@ async def _is_mapped(audit_id: str, audit: dict, ds: dict) -> bool:
     return bool(ds.get("mapped_at"))
 
 
+async def _revenue_recognition_settled(database, audit_id: str) -> Optional[bool]:
+    """The deck-reading gate's re-check: `_is_mapped` on the stored revenue file, with the audit as it stands now."""
+    if database is not db:
+        return None
+    ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"}, {"_id": 0, "rows": 0})
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
+    return await _is_mapped(audit_id, audit, ds) if ds and audit else None
+
+
+structures.recognition_settled = _revenue_recognition_settled
+
+
 async def _blocker_list(audit_id: str, audit: dict) -> list:
     """The banner's hard blockers. The claim blocker reads rows 1-5 of the pre-sort, so the analyst's top 5 never hides one
     (docs/specs/verdict-and-memo.md section 6.1)."""

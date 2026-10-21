@@ -216,6 +216,14 @@ _GROSS_MARGIN = re.compile(r"(?i)\bgross margins?\b")
 _PROFITABLE = re.compile(r"(?i)\bprofitable\b")
 # Lines that are a claim with no figure, given a date: a roadmap bullet, a break-even milestone.
 _MILESTONES = ("product", "ebitda")
+# The cue of a break-even line among the ebitda ones ("Profitable by 2024"); an EBITDA heading has none (PR 147 review M2).
+_BREAK_EVEN_CUE = re.compile(r"(?i)\b(?:profitab(?:ility|le)|break[- ]?even)\b")
+
+
+def is_milestone(c: Dict) -> bool:
+    """True for a candidate with no figure that is a milestone line and not a heading: a product line, a line of unknown type, or a
+    line (or the heading it borrowed) with a break-even cue. Told by the cue and not by the claim type, which "2023 EBITDA" shares."""
+    return c["claim_type"] in ("product", UNKNOWN) or bool(_BREAK_EVEN_CUE.search(f"{c.get('snippet') or ''} {c.get('label_from') or ''}"))
 # Words after a number that are not the thing counted: "20 of them", "5 per month".
 _NOT_NOUNS = frozenset("""a an and are as at be by each for from has have in into is it its more of on or our
 over per than that the this to under up was we were with""".split())
@@ -1523,7 +1531,8 @@ def _page_of(source: Dict):
 def _drop_label_headings(found: List[Dict]) -> List[Dict]:
     """A candidate with no figure is dropped when a figure on the same page already uses its line as its label ("2020 REVENUE" over
     "151K", whose "Label from" it is): the figure is the claim, the heading only names it (issue #146). A direction ("Positive
-    EBITDA") and a product or milestone line are kept, and so is every other candidate with no figure. A heading read on several
+    EBITDA") and a milestone line (a product line, a line of unknown type, a break-even cue: `is_milestone`) are kept, and so is every other
+    candidate with no figure. A figure uses a heading when its "Label from" is the heading's whole line. A heading read on several
     pages loses the sources of the pages whose figure uses it and is dropped when none is left."""
     used = {}
     for c in found:
@@ -1534,10 +1543,10 @@ def _drop_label_headings(found: List[Dict]) -> List[Dict]:
     for c in found:
         line = " ".join((c.get("snippet") or "").split()).lower()
         if c.get("value") is not None or c.get("value_high") is not None or c.get("by_period") or c.get("claim_direction") \
-                or c["claim_type"] in ("product", UNKNOWN) or not line:
+                or is_milestone(c) or not line:
             out.append(c)
             continue
-        left = [s for s in c["sources"] if not any(line in label for label in used.get(_page_of(s), ()))]
+        left = [s for s in c["sources"] if line not in used.get(_page_of(s), ())]
         if left:
             out.append({**c, "sources": left})
     return out
@@ -1932,10 +1941,9 @@ def confidence(candidate: Dict, peers: List[Dict]) -> Dict:
         return {"level": None, "failed": [], "text": "Analyst-edited"}
     values = claim_values(candidate)
     has_value = any(v["value"] is not None for v in values)
-    named = candidate.get("claim_type") not in (UNKNOWN, "other") and \
-        bool(candidate.get("type_from", "line") or "parsed" in candidate)
+    named = candidate.get("claim_type") not in (UNKNOWN, "other") and bool(candidate.get("type_from", "line"))
     checks = [("no date", all(v["target_date"] for v in values))]
-    if not has_value and (candidate.get("claim_direction") or candidate.get("claim_type") not in (*_MILESTONES, UNKNOWN)):
+    if not has_value and (candidate.get("claim_direction") or not is_milestone(candidate)):
         checks.append(("no figure", False))          # a direction or a heading no figure uses is never better than Medium (issue #146)
     if has_value:
         # A label that states the currency in brackets ("Turnover (£/year)") counts, also on a candidate stored before the

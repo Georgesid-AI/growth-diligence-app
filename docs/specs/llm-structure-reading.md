@@ -233,3 +233,10 @@ so agreement measures the model. Target: ≥95% agreement. `--pause` sets the se
 
 Amended 2026-10-21 (George, issue #146): "Structure reading waits for the revenue file" is met by any confirmed revenue file that gives the engine a revenue series, a
 monthly revenue report read by recognition only included (its `mapped_at` is set once no choice waits); before this, only a file whose mapping held the customer counted.
+
+
+Amended 2026-10-21 (George, PR 147 review): (1) when the app has no customer list to swap names for (the revenue file is a report or has no customer column, and
+there is no CRM file), every text cell of a deck structure under a customer-type header (Customer, Client, Account, Logo, with up to two words before and "name" or
+"list" after) is sent as [redacted], as the person-role rule does for names; a figure, a year, a date, a pseudonym and the target company's name stay. With a customer
+list the names are swapped as before. This applies to deck structures only. (2) The gate re-checks, with the check the rest of the app uses, that the recognition of a
+revenue file read by recognition only has no choice waiting; `mapped_at` alone is not trusted (an as-of month moved before the last actual column reopens a click).

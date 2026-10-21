@@ -1535,7 +1535,7 @@ def structure_text_problem(text: Any, structure_type: str, context: dict, mappin
             return "bad_item_line"
     if any(len(c["text"]) > STRUCTURE_CELL_MAX for c in cells):
         return "cell_too_long"
-    redacted, _ = structure_redact.redact_structure(cells, company, mapping)
+    redacted, _ = structure_redact.redact_structure(cells, company, mapping, deck=True)
     if redacted != cells:
         return "redaction_changed"
     return None

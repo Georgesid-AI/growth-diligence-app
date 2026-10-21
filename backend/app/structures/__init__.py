@@ -214,10 +214,16 @@ logger = logging.getLogger("growth.structures")
 _UNITS = {"%", "x", "days", "months", "years"}
 
 
+# Set by server.py: `async (db, audit_id) -> Optional[bool]`, True when the recognition of the audit's revenue file has no choice left to
+# the analyst *now* (the check the rest of the app uses, `_is_mapped`: a changed as-of month can reopen a click that `mapped_at` still
+# calls settled). None means no answer (no server, or another database), and `mapped_at` stands.
+recognition_settled = None
+
+
 def revenue_mapped(dataset: Optional[Dict]) -> bool:
     """True once the revenue file is uploaded and confirmed: its columns with the customer among them, or, for a file read by
     recognition only (a monthly revenue report, a revenue summary, financial statements, an ARR or MRR snapshot: no customer rows,
-    so no customer name to redact), its recognition with no choice left to the analyst (`mapped_at` is set only then)."""
+    so no customer rows), its recognition with no choice left to the analyst (`mapped_at` is set only then)."""
     if not dataset or not dataset.get("mapped_at"):
         return False
     return bool(dataset.get("recognition_only") or (dataset.get("mapping") or {}).get("customer_id"))
@@ -241,8 +247,12 @@ async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None
     found = deck.get("structures") or []
     if audit.get("structure_reading_consent") is not True:
         return await _deck_status(db, audit_id, deck_id, PYTHON_ONLY)
-    if not revenue_mapped(await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"},
-                                                     {"_id": 0, "mapping": 1, "mapped_at": 1, "recognition_only": 1})):
+    revenue = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"},
+                                         {"_id": 0, "mapping": 1, "mapped_at": 1, "recognition_only": 1})
+    if not revenue_mapped(revenue):
+        return await _deck_status(db, audit_id, deck_id, WAITING, WAITING_TEXT)
+    if revenue.get("recognition_only") and recognition_settled is not None \
+            and await recognition_settled(db, audit_id) is False:
         return await _deck_status(db, audit_id, deck_id, WAITING, WAITING_TEXT)
     mapping = await llm_redaction.get_map(db, audit_id)
     year_end = int(audit.get("fiscal_year_end") or 12)
@@ -256,7 +266,7 @@ async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None
         if stopped_message:
             statuses.append({"status": STOPPED, "reason": stopped_message})
             continue
-        cells, _ = redact.redact_structure(structure["cells"], audit.get("company_name"), mapping)
+        cells, _ = redact.redact_structure(structure["cells"], audit.get("company_name"), mapping, deck=True)
         redacted = {**structure, "cells": cells}
         listed = structure_items.list_items(redacted)
         result = await gateway.read_structure(db, audit_id, structure_items.text(redacted, listed), structure["type"],

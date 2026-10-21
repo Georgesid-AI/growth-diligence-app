@@ -1123,5 +1123,5 @@ click) and §26 (a P&L stays the P&L and carries its own recognition line; decis
 
 Amended 2026-10-21 (George, issue #146): the revenue file for AI reading of decks (llm-structure-reading.md) is any confirmed revenue file that gives the engine a revenue
 series: a file with a confirmed column mapping that holds the customer, or a file read by recognition only (monthly revenue report, revenue summary, financial
-statements, ARR or MRR snapshot) once no choice waits for the analyst. A report has no customer rows, so no customer name goes out unmapped. The deck upload box also
+statements, ARR or MRR snapshot) once no choice waits for the analyst. A report has no customer rows, so a deck's customer names are blanked under a customer-type header (llm-structure-reading.md, 2026-10-21, PR 147 review). The deck upload box also
 accepts a dropped file (deck-parser.md).

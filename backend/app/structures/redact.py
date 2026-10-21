@@ -456,6 +456,11 @@ _AMOUNT = re.compile(r"^\s*[(+\-−]?\s*(?:US\$|[£$€¥₹])?\s*\d{1,3}(?:[,.]
 _YEAR_OR_DATE = re.compile(r"^\s*(?:(?:19|20)\d{2}|\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}-\d{2}(?:-\d{2})?)\s*$")
 # Person-role headers: a name-shaped cell under one is a person ("Hire: Jane Doe").
 _PERSON_ROLE = re.compile(r"(?i)(?<![^\W\d_])(?:names?|founders?|co-founders?|ceo|owners?|contacts?|hires?)(?![^\W\d_])")
+# Customer-type headers: a text cell under one is a customer name ("Customer: Acme Retail") and, with no customer list to swap
+# it for, goes out as [redacted] (llm-structure-reading.md, 2026-10-21).
+# A header is the word itself with at most two words before it and "name" or "list" after it ("Top customers", "Client name"), not a
+# label that holds it ("Avg. Customer Lifetime Value").
+_CUSTOMER_HEADER = re.compile(r"(?i)^\s*(?:[^\W\d_][\w.'’&-]*\s+){0,2}(?:customers?|clients?|accounts?|logos?)(?:\s+(?:names?|list))?\s*:?\s*$")
 # 1 to 4 capitalised words, no digits: "Jane Doe", "J. Smith", "Иван Петров"; not "Head of Sales".
 _NAME_SHAPE = re.compile(r"^\s*(?:[^\W\d_a-zа-я][^\W\d_]*\.?(?:[-'’][^\W\d_]+)*)(?:\s+[^\W\d_a-zа-я][^\W\d_]*\.?(?:[-'’][^\W\d_]+)*){0,3}\s*$")
 _PSEUDONYM = re.compile(r"Customer_\d+|Segment [A-Z]+")
@@ -544,6 +549,27 @@ def _under_person_role(cell: Dict, cells: List[Dict]) -> bool:
     span = range(cell["col"], cell["col"] + cell.get("col_span", 1))
     return any(c["row"] < cell["row"] and any(k in range(c["col"], c["col"] + c.get("col_span", 1)) for k in span)
                and _PERSON_ROLE.search(c["text"]) for c in cells)
+
+
+def _under_header(cell: Dict, cells: List[Dict], header: "re.Pattern") -> bool:
+    """True when a cell above it in its column range matches `header`."""
+    span = range(cell["col"], cell["col"] + cell.get("col_span", 1))
+    return any(c["row"] < cell["row"] and any(k in range(c["col"], c["col"] + c.get("col_span", 1)) for k in span)
+               and header.search(c["text"]) for c in cells)
+
+
+def blank_customer_cells(cells: List[Dict], company_name: Optional[str]) -> Tuple[List[Dict], int]:
+    """(cells, count): every text cell under a customer-type header (Customer, Client, Account, Logo) becomes [redacted]. A figure,
+    a year or a date, a pseudonym, a placeholder and the target company's own name stay."""
+    out, total = [], 0
+    for cell in cells:
+        text = cell["text"]
+        if (re.search(r"[^\W\d_]", text) and not is_figure(text) and not _is_amount_or_date(text) and not _PSEUDONYM.fullmatch(text.strip())
+                and text.strip() not in PLACEHOLDERS and not _protected(text, company_name)
+                and _under_header(cell, cells, _CUSTOMER_HEADER)):
+            text, total = REDACTED, total + 1
+        out.append({**cell, "text": text})
+    return out, total
 
 
 def redact_cells(cells: List[Dict], company_name: Optional[str]) -> Tuple[List[Dict], Dict[str, int]]:
@@ -645,10 +671,11 @@ def withhold_cells(cells: List[Dict], withheld: Tuple[str, ...]) -> Tuple[List[D
 
 
 def redact_structure(cells: List[Dict], company_name: Optional[str], mapping: Dict[str, str],
-                     withheld: Tuple[str, ...] = ()) -> Tuple[List[Dict], Dict[str, int]]:
+                     withheld: Tuple[str, ...] = (), deck: bool = False) -> Tuple[List[Dict], Dict[str, int]]:
     """Every redaction rule on a structure's cells: the withheld values
     (`withheld`, see file_type_withheld), then emails and phone numbers, then customer names, then
-    personal names. What the gateway runs again before a call."""
+    personal names; for a deck structure (`deck`), with no customer list, the cells under a customer-type header. What the gateway
+    runs again before a call."""
     # The withheld values go first, so no other rule can split one; emails and phones next, so a
     # customer name inside an address goes with it; customer names before personal names, so a
     # customer listed under a "Contact" header keeps its pseudonym.
@@ -656,6 +683,10 @@ def redact_structure(cells: List[Dict], company_name: Optional[str], mapping: Di
     first, counts = _redact(held, company_name, ("email", "phone"))
     counts["withheld"] = withheld_count
     named, counts["customer"] = pseudonymise_cells(first, mapping, company_name)
+    if deck and not customer_names(mapping, company_name):
+        # No customer list to swap names for (a revenue file without a customer column, no CRM file): the cells under a
+        # customer-type header cannot be told from a name, so none goes out.
+        named, counts["customer_blanked"] = blank_customer_cells(named, company_name)
     second, more = _redact(named, company_name, ("person",))
     counts["person"] = more["person"]
     return second, counts

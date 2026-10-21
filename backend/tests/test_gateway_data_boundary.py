@@ -2918,3 +2918,46 @@ def test_recognition_the_words_a_result_can_carry_are_closed_lists_and_hold_no_t
         assert got["file_type"] is None or got["file_type"] in rec.RECOGNITION_TYPES
         assert all(b["analysis"] in ("customer_level", "trend", "monthly_series") for b in got["blocked"])
         assert set(got["supports"]) <= {"customer_level", "trend", "claim_matching"}
+
+
+# --- Cells under a customer-type header with no customer list (PR 147, review H1, George 2026-10-21) -------------------------------
+def _customer_table():
+    return [{"row": 1, "col": 1, "text": "Top customers"}, {"row": 1, "col": 2, "text": "ARR"},
+            {"row": 2, "col": 1, "text": "Acme Retail"}, {"row": 2, "col": 2, "text": "€1.2M"},
+            {"row": 3, "col": 1, "text": "Northwind Logistics"}, {"row": 3, "col": 2, "text": "€0.8M"},
+            {"row": 4, "col": 1, "text": "Account 2024"}, {"row": 4, "col": 2, "text": "12"}]
+
+
+@pytest.mark.parametrize("header", ["Customer", "Top customers", "Client", "Accounts", "Logo", "Key logos"])
+def test_cells_under_a_customer_header_are_blanked_when_the_app_has_no_customer_list(header):
+    cells = [{**c, "text": header} if (c["row"], c["col"]) == (1, 1) else c for c in _customer_table()]
+    out, _ = structure_redact.redact_structure(cells, "Target Co", {}, deck=True)
+    sent = structure_redact.structure_text(out)
+    for needle in ("Acme Retail", "Northwind Logistics"):
+        assert needle not in sent, f"{needle!r} reached the provider"
+    texts = {(c["row"], c["col"]): c["text"] for c in out}
+    assert texts[(2, 1)] == texts[(3, 1)] == structure_redact.REDACTED
+    assert texts[(1, 1)] == header and texts[(2, 2)] == "€1.2M" and texts[(4, 2)] == "12", "headers and figures stay"
+
+
+def test_a_customer_list_swaps_the_names_and_the_header_rule_stays_off():
+    out, _ = structure_redact.redact_structure(_customer_table(), "Target Co", {"Acme Retail": "Customer_01"}, deck=True)
+    texts = {(c["row"], c["col"]): c["text"] for c in out}
+    assert texts[(2, 1)] == "Customer_01" and texts[(3, 1)] == "Northwind Logistics", "the known limit: names not in the list"
+
+
+def test_a_deck_table_reaches_the_provider_with_no_customer_name_when_there_is_no_customer_list():
+    text = structure_redact.structure_text(_customer_table())
+    result, adapter = _send(_structure_db(), text, reply=NO_LABELS)
+    assert result.status == "refused" and adapter.calls == 0, "the gateway re-runs the redaction and refuses unblanked names"
+    blanked, _ = structure_redact.redact_structure(_customer_table(), "Target Co", {}, deck=True)
+    result, adapter = _send(_structure_db(), structure_redact.structure_text(blanked), reply=NO_LABELS)
+    assert result.status == "read" and adapter.calls == 1, result.reason
+    sent = json.loads(adapter.payloads[0])["text"]
+    assert "Acme Retail" not in sent and "Northwind Logistics" not in sent
+
+
+def test_a_sheet_step_keeps_its_header_text_the_customer_header_rule_is_for_decks_only():
+    cells = [{"row": 1, "col": 1, "text": "Accounts through 2028"}, {"row": 2, "col": 1, "text": "Account ID"}]
+    out, counts = structure_redact.redact_structure(cells, "Target Co", {})
+    assert out == cells and "customer_blanked" not in counts

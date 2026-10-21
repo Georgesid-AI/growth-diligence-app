@@ -1425,8 +1425,8 @@ def build_register(candidates: List[dict], results: Optional[dict], settings: di
 
 
 def confidence_level(candidate: dict, peers: List[dict]) -> str:
-    """The extraction confidence the deck list shows (deck-parser.md section 6): High, Medium or Low, or "Analyst-entered" for a
-    claim added with Add claim. `peers` are the candidates of the audit; only those of the candidate's deck are read."""
+    """The extraction confidence the deck list shows (deck-parser.md section 6): High, Medium or Low, "Analyst-entered" for a
+    claim added with Add claim, "Analyst-edited" for a parsed claim the analyst edited. `peers` are the candidates of the audit; only those of the candidate's deck are read."""
     from .decks.claims import confidence
     deck = candidate.get("deck_id") or candidate.get("file")
     same = [p for p in peers if (p.get("deck_id") or p.get("file")) == deck] or [candidate]
