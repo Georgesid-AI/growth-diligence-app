@@ -736,7 +736,7 @@ def _axis_lines(lines: List[Dict], claims) -> set:
     return out
 
 
-def _band_cells(boxes: List[List[Dict]], others=None, date_box=None) -> List[Dict]:
+def _band_cells(boxes: List[List[Dict]], others=None, date_box=None, years=None) -> List[Dict]:
     """Text boxes as a grid: boxes that overlap in height form a band of rows, each box a column of
     its band in left-to-right order, each line a row. Every cell keeps its box; a title line is marked.
     With `others` (a KPI panel or a roadmap: the extents of every text box of its page and its title), a cell whose
@@ -744,7 +744,8 @@ def _band_cells(boxes: List[List[Dict]], others=None, date_box=None) -> List[Dic
     its own line (_next_to, line to line). A tall box can put two visual rows in one band (front-b p15), so
     a cell's row neighbour need not sit next to it on the page. With `date_box` (a roadmap: whether a box is a date
     box), each line of a box that is none also keeps "date_box": the number of the one date box directly next to its
-    box, box to box (_next_to), when exactly one is."""
+    box, box to box (_next_to), when exactly one is. With `years` (a KPI panel: id(line) -> the year label under the line's bar or of its
+    place, claims.bar_years), the cell of such a line keeps it as "bar_year" (issue #148); the verifier dates the figure from it."""
     def extent(lines):
         placed = [line["bbox"] for line in lines if line.get("bbox")]
         return (min(b[1] for b in placed), max(b[3] for b in placed), min(b[0] for b in placed)) if placed else None
@@ -766,7 +767,8 @@ def _band_cells(boxes: List[List[Dict]], others=None, date_box=None) -> List[Dic
             number += 1
             numbered.append((number, box))
             cells += [{"row": row + i + 1, "col": col, "text": line["text"], "box": number,
-                       **({"title": True} if line.get("title") else {})} for i, line in enumerate(box)]
+                       **({"title": True} if line.get("title") else {}),
+                       **({"bar_year": years[id(line)]} if years and id(line) in years else {})} for i, line in enumerate(box)]
             lines += [line.get("bbox") for line in box]
         row += max(len(box) for box in members)
     if others is not None:
@@ -894,5 +896,6 @@ def _box_structures(blocks: List[Dict], excluded: set, claims) -> List[Dict]:
         page_boxes = list(boxes.values()) + ([titles[page]] if page in titles else [])
         others = [e for e in map(_extent, page_boxes) if e]
         dated = (lambda box: dates_only([line["text"] for line in box], claims)) if kind == "roadmap" else None
-        out.append({"type": kind, **_where(first), "header_rows": 0, "cells": _band_cells(kept, others, dated)})
+        years = claims.bar_years(lines + titles.get(page, []), ticks) if kind == "kpi_panel" else None
+        out.append({"type": kind, **_where(first), "header_rows": 0, "cells": _band_cells(kept, others, dated, years)})
     return out

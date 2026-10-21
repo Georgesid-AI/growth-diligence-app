@@ -1063,6 +1063,31 @@ def test_a_kpi_or_roadmap_cells_next_to_is_cell_ids_kept_with_the_structure_and_
     assert lines[lines.index("items:") + 1:] == structure_redact.item_lines(listed)
 
 
+def test_a_kpi_panel_cells_bar_year_is_kept_with_the_structure_and_never_sent():
+    """deck-parser.md section 7 (issue #148): a bar's year label by place is Python's, kept as "bar_year" on the cell and stored with the
+    structure; what reaches the provider is the cell lines and the item lines alone, the year label of the axis not among them."""
+    pytest.importorskip("pdfplumber")
+    from pdf_support import pdf_page
+    from app.decks import parser
+    from app.structures import items as structure_items
+    texts = [(50, 560, 20, "Plan")] + [(x, 380 + 20 * i, 12, bar) for i, (bar, x) in enumerate(zip(("€1.48MM", "€3.39MM", "€5.3MM"), (100, 255, 410)))]
+    texts += [(x, 340, 12, year) for year, x in zip(("2022", "2023", "2024"), (150, 300, 450))]
+    panel, = [s for s in parser.parse_deck(pdf_page(texts, []), "deck.pdf")["structures"] if s["type"] == "kpi_panel"]
+    assert sorted(c["bar_year"] for c in panel["cells"]) == ["2022", "2023", "2024"]
+    cells, _ = structure_redact.redact_structure(panel["cells"], "Target Co", {})
+    redacted = {**panel, "cells": cells}
+    listed = structure_items.list_items(redacted)
+    text = structure_items.text(redacted, listed)
+    reply = json.dumps({"type": "kpi_panel", "pairs": [], "labels": [
+        {"item": i["id"], "metric": "not_a_metric", "period": None, "unit": None, "unit_other": None,
+         "actual_or_forecast": "unknown"} for i in listed["items"]]})
+    result, adapter = _send(_structure_db(), text, "kpi_panel", reply)
+    assert result.status == "read" and adapter.calls == 1, result.reason
+    sent = json.loads(adapter.payloads[0])
+    assert sent == {"type": "kpi_panel", "text": text}
+    assert "bar_year" not in sent["text"] and not any(year in sent["text"] for year in ("2022", "2023", "2024"))
+
+
 def test_no_call_is_made_without_consent():
     for audit in ({"structure_reading_consent": False}, {"structure_reading_consent": None}):
         result, adapter = _send(_structure_db(**audit), GOOD_STRUCTURE)

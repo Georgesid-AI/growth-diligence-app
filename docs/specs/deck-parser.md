@@ -583,3 +583,16 @@ file (uploading, done, refused type, failed); a refused type or a failed upload 
 "Label from" is the heading's whole line, not a longer line that holds it. (3) A candidate with no figure is a milestone line, and not a heading, when it is a product
 line, a line of unknown type or has a break-even cue ("profitable", "break-even", in its line or the heading it borrowed); the claim type "ebitda" alone does not decide
 (a "2023 EBITDA" heading no figure uses is scored Medium, "no figure"; "Profitable by 2024" above a figure is kept).
+## Amended 2026-10-21 (issue #148): year ranges, bars by position
+- A range of years ("2022–2024", "2022 -2024", "2022 to 2024", "FY22–24", "FY2022-2024") is a date with no period, like a quarter range that is no half
+  (`no_period_dates`): nothing is dated from it, its years are no figures ("FY22–24" no longer leaves a figure 24) and a heading that holds one gives no
+  year to the figures under it; a figure under it takes its own year, its column header's, its box's or its bar's, else none ("Period not read",
+  claim-matching.md table 2b). "2022-03" is a month, "FY2024/25" one fiscal year: unchanged. Found on the ten test decks: "(2011-13)" (02-moz p18)
+  gave its figure 13 and the year 2011 to the three percentages under it.
+- A bar takes its year by position as well as by overlap: the figures above one row of two or more year labels (the row nearest below them, between
+  its first and last label, one label's spacing beyond) that are a figure and nothing else ("€1.48MM", "$210B"; never a sentence that holds a number)
+  take the labels left to right when they are as many as the labels, overlapping or not. Any other count: only a label the bar overlaps. Axis ticks
+  are not bars. Found on the ten test decks: the two market bars of 09-genesisai-2024 p4 take 2020 and 2030.
+- A KPI panel's cell keeps its bar's year (`bar_year`, `claims.bar_years`) with the structure; it is never sent to the model (boundary test). The
+  verifier dates the item from it after its period headers, its own cell and its adjacent date line (structure-labelling.md §4): code assigns the
+  years by position, the model's period is corrected to it. Tests: `backend/tests/test_issue_148.py`.

@@ -1,0 +1,6 @@
+2026-10-21 · claude/eager-rubin-m12qt9 (issue #148)
+Deleted: nothing; the deck-list "Verified" badge rule for a null period was not changed (it moves most KPI-panel rows of the test decks), and (d) the middle bar is not built: it does not reproduce.
+Decided: a range of years is a date with no period, in the date rules, so heading, header and number rules all follow; bars pair with year labels by place only when the counts match and each bar is a figure alone, after the ten decks showed a roadmap's sentences ("layer-1 to layer-2") taken as bars; the panel's years come from a `bar_year` kept on the cell by the parser, so the verifier stays pure and no prompt changes.
+Slow or unclear: the live middle bar and the live panel structure are not in the issue, so (d) could only be tried on variants; the full backend suite takes about 3.5 minutes.
+Root cause and rule: the date rules read "2022 -2024" as two years and "FY22–24" as FY2022 plus a figure 24, and a bar took only a year label it overlapped; both are pinned by test_issue_148.py and the ten-deck pin (now 212).
+Process change to propose: a bug issue about a live deck should paste the page's lines with their positions (anonymised), so every point starts from a failing test.

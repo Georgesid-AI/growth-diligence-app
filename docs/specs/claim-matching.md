@@ -394,3 +394,8 @@ top 5, never gated.
 
 Amended 2026-10-21 (George, issue #146): `extraction_confidence` reads "Analyst-edited" for a claim the analyst edited (status "edited"), in the register and
 the CSV, as "Analyst-entered" does for an added claim (which keeps it after an edit). Display only; the memo does not print it. Parsed claims are scored as before.
+
+Amended 2026-10-21 (issue #148): a bar's year by position (deck-parser.md, amended 2026-10-21) and a heading that holds a range of years ("2022 -2024") giving
+no year both reach this table through the claim's period: a figure with no readable period is still Unverified, "Period not read – set it in the claim row"
+(table 2b, unchanged; pinned in `backend/tests/test_issue_148.py`). The deck list's "Verified" badge is the AI reading's (value matched to its cell, period
+agreeing with Python's), not this register's evidence label; its null-period rule is unchanged and open for George's decision (PR for issue #148).

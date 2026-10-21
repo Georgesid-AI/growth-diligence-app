@@ -706,15 +706,17 @@ def test_the_nearest_heading_names_the_type_or_the_figure_has_none():
     assert _found(_slide([("Market", 1, 2.6), ("($52 B)", 1, 3.2)])) == []
 
 
-def test_the_ten_test_decks_keep_213_candidates_and_the_nearest_heading_leaves_31_unknown_more():
+def test_the_ten_test_decks_keep_212_candidates_and_the_nearest_heading_leaves_31_unknown_more():
     counts, unknown = 0, 0
     for file in sorted(p.name for p in DECKS.iterdir() if not p.name.startswith(".")):
         found = claims.detect_candidates(parser.parse_deck((DECKS / file).read_bytes(), file)["blocks"], file)
         counts += len(found)
         unknown += sum(c["claim_type"] == "unknown" for c in found)
-    assert (counts, unknown) == (213, 36), ("8 before the rule, 31 more after it, 2 of them (zero2hero p22) Use of funds since; 10 fewer than 225 since "
+    assert (counts, unknown) == (212, 36), ("8 before the rule, 31 more after it, 2 of them (zero2hero p22) Use of funds since; 10 fewer than 225 since "
                                             "issue #143: the axis ticks of 01-front-b p6 (0%-40%) and p14 (0, 15, 30, 60, 5.0) are no claims; 2 fewer since issue #146: "
-                                            "the headings '2011 Estimated Revenue' (02-moz p20) and 'Estimated Net Profit in 2011' (p21) are the labels of the figures under them")
+                                            "the headings '2011 Estimated Revenue' (02-moz p20) and 'Estimated Net Profit in 2011' (p21) are the labels of the figures under them; "
+                                            "1 fewer since issue #148: '(2011-13)' (02-moz p18) is a range of years, so its 13 is no figure, and the three percentages of that "
+                                            "page lose the year 2011 it gave; the two market bars of 09-genesisai-2024 p4 take 2020 and 2030 by position")
 
 
 def test_the_same_figure_on_one_page_is_one_row_and_never_a_deck_inconsistency():
