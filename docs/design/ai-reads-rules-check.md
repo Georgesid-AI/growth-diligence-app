@@ -27,7 +27,7 @@ The model reads each page as redacted cell lines with ids (the structure-text fo
 2. **Unit present**: the currency, %, x or count noun is in the value cell or one directly next to it.
 3. **Period present**: null, or rebuilt from a date source of that cell: its own text, column header, box period line, bar axis label, or an adjacent heading. A sentence is no source (#154 stays).
 
-All three pass → "Matched to page", in the register without a click. Otherwise "AI suggestion, not matched", listed collapsed, approved by a click. The metric is never checked by Python, as today; Confidence keeps "no heading" when the label cell holds no keyword of the type. Deck inconsistency, cross-page dedupe (`same_claim`), the register and the within-tolerance step are unchanged.
+All three pass → "Matched to page", in the register without a click. Otherwise "AI suggestion, not matched", listed collapsed, approved by a click (decided 2026-10-22, review of PR #159, 2a: the unmatched row shows the model's value, never the cell's first figure). The metric is never checked by Python, as today; Confidence keeps "no heading" when the label cell holds no keyword of the type. Deck inconsistency, cross-page dedupe (`same_claim`), the register and the within-tolerance step are unchanged.
 
 ## 3. Removed, kept, missing
 
@@ -54,7 +54,7 @@ Time: one call at a time per audit, ~6 s each: 2 min per deck per-page, 30 s bat
 
 What leaves the server grows from redacted structure cells to every redacted text line of every page: bios, customer quotes, strategy prose. Today's redaction runs over all of it; a known limit grows: a prospect named only in prose goes as written. Consent text and rule 16 are reworded.
 
-Boundary tests to extend (`test_gateway_data_boundary.py`): the cell-lines-only and rule-16 refusal tests (a page text passes; a line over 200 characters only redacted; a file name, an unredacted name or a figure outside a cell line fail); the "gateway names/reads no deck text" tests (page cells come through one builder, never `blocks` or `snippet`); the no-sent-text-in-logs test (`label_cell` text is never stored); a new test that every reply field is a closed word, a number or a cell id.
+Boundary tests to extend (`test_gateway_data_boundary.py`): the cell-lines-only and rule-16 refusal tests (a page text passes; a line over 200 characters only redacted — reversed 2026-10-22, review of PR #159, decision 1b: such a line is left out by the sender and refused by the gateway, as a structure cell is; a line that is only the page's own number is no figure; a file name, an unredacted name or a figure outside a cell line fail); the "gateway names/reads no deck text" tests (page cells come through one builder, never `blocks` or `snippet`); the no-sent-text-in-logs test (`label_cell` text is never stored); a new test that every reply field is a closed word, a number or a cell id.
 
 ## 6. Risks and controls
 

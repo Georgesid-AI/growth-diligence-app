@@ -8,8 +8,11 @@ the source):
 
 1. Figure present: the value cell holds the value, after today's normalisation (verify.figures through items.list_items, a
    scale from an adjacent cell: "1.5M" is 1,500,000, "€", "EUR", "K", "MM" as the item list reads them). The model's value may
-   also be the number as written ("1.5" for "1.5M"); the row's value is always Python's, read from the cell. A range's high
-   end is checked the same way. A cell with several figures gives the position.
+   also be the number as written ("1.5" for "1.5M"); a matched row's value is Python's, read from the cell. A range's high
+   end is checked the same way. A cell with several figures gives the position. When the check fails, the row shows the model's
+   value and range, with no readings and no position, labelled "AI suggestion, not matched"; never the cell's first figure
+   ("€2 7K" claimed as 27,000 is one row 27,000 to confirm or reject, not "revenue €2"; George, 2026-10-22, decision 2a on the
+   review of PR #159).
 2. Unit present: the currency (its symbol or code: "€" or "EUR"), "%", "x", a time word or a count noun is in the value cell or
    one directly next to it. A null unit passes only when the figure in the cell carries no currency, "%", "x" or time word.
 3. Period present: null, and no date source of the cell holds a period; or rebuilt by Python from the cited period cell, which
@@ -230,8 +233,8 @@ def _unit_agrees(figure: Optional[Dict], unit: Optional[str], unit_other: Option
 def figure_check(listed: Dict, cell: Dict, value, value_high, metric: str, comma: bool, unit=None, unit_other=None):
     """(item, values, ok): the item of the cell whose readings or written number is the model's value; a reading in full units
     is preferred to the written number ("15" is the 15% before the €15K), and among equal values the figure whose own unit
-    agrees with the claim's; for a range the high end must match the item's range too. A cell with no item (a title, a period
-    header, no figure) gives none."""
+    agrees with the claim's; for a range the high end must match the item's range too. No match (a title, a period header, no
+    figure, or a figure the cell does not hold) gives (None, [], False): the row then shows the model's value."""
     own = [i for i in listed["items"] if i["cell"] == _id(cell)]
     hits = []
     for pass_ in ("full", "written"):
@@ -254,7 +257,7 @@ def figure_check(listed: Dict, cell: Dict, value, value_high, metric: str, comma
             return item, values, True
     if hits:
         return hits[0][0], hits[0][1], True
-    return (own[0] if own else None), (_item_values(own[0], metric) if own else []), False
+    return None, [], False
 
 
 def _marks(structure: Dict, cell: Dict) -> List[str]:
@@ -345,8 +348,9 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12) -> Dic
         ok = value_ok and unit_ok and period_ok and metric != OTHER and claim.get("value") is not None
         out = {"metric": metric, "unit": claim.get("unit"), "unit_other": claim.get("unit_other"),
                "actual_or_forecast": claim.get("actual_or_forecast", "unknown"),
-               "value": values[0]["value"] if values else None, "values": [dict(v) for v in values],
-               "value_high": span["high"] if span and item["id"] == span["items"][0] else None,
+               # Python's value and range when the figure check passes; the model's when it fails (decision 2a, review of PR #159).
+               "value": values[0]["value"] if value_ok and values else claim.get("value"), "values": [dict(v) for v in values],
+               "value_high": (span["high"] if span and item["id"] == span["items"][0] else None) if value_ok else claim.get("value_high"),
                "value_cell": _id(cell), "position": item["position"] if item else None,
                "period": period, "period_cells": period_cells,
                "label_cell": _id(label) if label is not None and label_ok else None,

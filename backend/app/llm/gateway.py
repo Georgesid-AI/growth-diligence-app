@@ -1429,6 +1429,17 @@ PAGE_CLAIMS_PROMPT = "page_claims"
 FILE_TYPE_PROMPT = "file_type"
 SHEET_STRUCTURE_PROMPT = "sheet_structure"
 STRUCTURE_STEP = guards.STRUCTURE_STEP
+PIPELINES = ("rules", "ai")                 # the DECK_PIPELINE switch
+
+
+def deck_pipeline() -> str:
+    """The DECK_PIPELINE switch: "rules" (default) or "ai". Anything else is "rules", so a typo changes nothing on screen. The
+    gateway reads it itself and refuses a page_claims call under "rules" (L1 of the review of PR #159, 2026-10-22), so the
+    boundary holds whatever the caller."""
+    value = os.environ.get("DECK_PIPELINE", "").strip().lower()
+    return value if value in PIPELINES else "rules"
+
+
 STRUCTURE_MAX_TOKENS = 4000
 STRUCTURE_INPUT_CAP = 4000          # tokens of structure text plus item list, by the provider's token counter
 STRUCTURE_CELL_MAX = 200            # a longer cell is prose
@@ -1503,12 +1514,19 @@ def structure_text_problem(text: Any, structure_type: str, context: dict, mappin
         return "file_name"
     company = context.get("company_name")
     if structure_type == PAGE_CLAIMS:
-        # The redacted lines of pages that carry a figure as digits, at most 5 pages, every page with such a figure, the page
-        # redaction (structure rules plus the people-name rule over prose) run again. No line length cap: prose lines go redacted.
+        # Only while DECK_PIPELINE is "ai". The redacted lines of pages that carry a figure as digits (the page's own printed
+        # number is none), at most 5 pages, every page with such a figure, no line over 200 characters (as for a structure cell;
+        # George, 2026-10-22, decision 1b on the review of PR #159), the page redaction (structure rules plus the people-name
+        # rule over prose) run again.
+        if deck_pipeline() != "ai":
+            return "pipeline_rules"
         problem = structure_redact.page_text_problem(text)
         if problem:
             return problem
-        for cells in structure_redact.parse_page_text(text).values():
+        pages = structure_redact.parse_page_text(text)
+        if any(len(c["text"]) > STRUCTURE_CELL_MAX for cells in pages.values() for c in cells):
+            return "cell_too_long"
+        for cells in pages.values():
             redacted, _ = structure_redact.redact_page(cells, company, mapping)
             if redacted != cells:
                 return "redaction_changed"

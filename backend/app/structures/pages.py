@@ -6,7 +6,8 @@ the default (PR A of the design note, section 7).
 
 Order for one deck: consent and the revenue-file gate as today -> the page grids (app/decks/pages.py) -> the pages that may go
 (a figure as digits, not a dropped page; decision 1b) in batches of PAGES_PER_CALL -> each batch redacted (redact.redact_page: the
-structure rules plus the people-name rule over prose) and written by the one builder (redact.page_text) -> gateway.read_structure
+structure rules plus the people-name rule over prose), its lines over 200 characters left out (as for a structure cell; George,
+2026-10-22, decision 1b on the review of PR #159) and written by the one builder (redact.page_text) -> gateway.read_structure
 with the type page_claims (consent, boundary and redaction checked again, cache, token caps, lock, spend caps, prompt caching) -> a
 batch too large for the cap is split, a single page too large is skipped -> page_check per page -> one approval row per claim,
 "Matched to page" or "AI suggestion, not matched", deduplicated against the rows already listed as today. What is stored (rule 17):
@@ -14,7 +15,6 @@ the model's claims (closed words, numbers and cell ids), the checked items witho
 text sent.
 """
 import logging
-import os
 import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
@@ -28,26 +28,28 @@ from . import page_check, redact
 
 logger = logging.getLogger("growth.structures")
 
-PIPELINES = ("rules", "ai")
+PIPELINES = gateway.PIPELINES
+deck_pipeline = gateway.deck_pipeline          # the switch is read by the gateway, which refuses a page call under "rules"
 PAGES_PER_CALL = redact.PAGES_PER_CALL
+LINE_MAX = gateway.STRUCTURE_CELL_MAX          # a longer line is left out, as a structure cell is (decision 1b, review of PR #159)
 _UNITS = {"%", "x", "days", "months", "years"}
-
-
-def deck_pipeline() -> str:
-    """The DECK_PIPELINE switch: "rules" (default) or "ai". Anything else is "rules", so a typo changes nothing on screen."""
-    value = os.environ.get("DECK_PIPELINE", "").strip().lower()
-    return value if value in PIPELINES else "rules"
 
 
 def redacted_pages(grids: List[Dict], company_name: Optional[str], mapping: Dict[str, str]) -> List[Dict]:
     """[{"grid", "cells"}] for the pages that may go: a sendable grid (a figure as digits by the parser's reader, not a dropped
-    page) whose redacted cells (redact.redact_page: the structure rules plus the people-name rule over prose) still hold a figure
-    as digits by the gateway's own floor (redact.digit_figure), so a page whose only digits were a phone number never goes."""
+    page) whose redacted cells (redact.redact_page: the structure rules plus the people-name rule over prose), the lines over
+    LINE_MAX characters left out, still hold a figure as digits by the gateway's own floor (redact.page_figure: not a year, a
+    date or the page's own number), so a page whose only digits were a phone number or its page number never goes."""
     out = []
     for grid in page_grids_mod.sendable(grids):
+        page = page_grids_mod.page_number(grid)
         cells, _ = redact.redact_page(grid["cells"], company_name, mapping)
-        if any(redact.digit_figure(c["text"]) for c in cells):
-            out.append({"grid": grid, "cells": cells})
+        kept = [c for c in cells if len(c["text"]) <= LINE_MAX]
+        if len(kept) < len(cells):
+            # The rules run once more on the lines as sent, so the gateway's re-run (which sees no dropped line) finds nothing to change.
+            kept, _ = redact.redact_page(kept, company_name, mapping)
+        if any(redact.page_figure(c["text"], page) for c in kept):
+            out.append({"grid": grid, "cells": kept})
     return out
 
 

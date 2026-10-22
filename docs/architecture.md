@@ -31,6 +31,17 @@ holds closed words, numbers and cell ids only; Python checks each claim at cell 
 its cell, unit adjacent, period from that cell's own sources) and labels it "Matched to page" or "AI suggestion, not matched"
 (decisions 2a and 3a). All other steps keep the boundary as it was. CLAUDE.md rule 16 carries the same wording.
 
+Amended 2026-10-22 (George, review of PR #159, decisions 1b and 2a and findings H1, M1, L1, L2): the gateway refuses a
+`page_claims` call unless `DECK_PIPELINE` is `ai`, whatever the caller (`gateway.deck_pipeline`). A page line over 200
+characters is left out by the sender and refused by the gateway (`cell_too_long`), as a structure cell is. A line that is only
+the page's own printed number ("3", "Slide 3", "3/25", "Page 3 of 20") is no figure, for the page grid and for the gateway's
+floor alike (`decks/claims.page_number_line`), so a prose page with a footer number stays on the server. The role words of the
+people-name rule match in any case ("Rohan Mehta, Co-Founder", "– Founder", "Head of Product"). With no customer list, a
+customer-type header blanks the cells under it in its own text box or table column, and the lines directly under it in its
+column before the first figure line (the part the gateway can re-run on the text as sent, which carries no layout); a figure
+elsewhere on the page survives. When the figure check fails, the row shows the model's value and range, labelled "AI suggestion,
+not matched", never the cell's first figure ("€2 7K" claimed as 27,000 is one row 27,000 to confirm or reject).
+
 ## The amendment of 2026-10-19
 
 George approved (19 Oct 2026, decision 2 on PR #134, docs/specs/revenue-file-recognition.md §5) widening the spreadsheet boundary for one more

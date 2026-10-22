@@ -23,6 +23,7 @@ import math
 import os
 import sys
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
@@ -92,8 +93,8 @@ async def rows_b(db, blocks, file, adapter):
     audit_id = f"compare-{Path(file).stem}"
     await db["audits"].insert_one({"id": audit_id, "company_name": Path(file).stem, "structure_reading_consent": True})
     grids = page_grids.page_grids(blocks)
-    by_page = {page_grids.page_number(g): g for g in grids}
-    reads = await pipeline.read_pages(db, audit_id, "d1", grids, Path(file).stem, {}, adapter=adapter, sleep=_no_sleep)
+    with mock.patch.dict(os.environ, {"DECK_PIPELINE": "ai"}):     # the gateway refuses a page call under the default switch
+        reads = await pipeline.read_pages(db, audit_id, "d1", grids, Path(file).stem, {}, adapter=adapter, sleep=_no_sleep)
     out, statuses = [], []
     for batch, result in reads:
         statuses.append(result.status)

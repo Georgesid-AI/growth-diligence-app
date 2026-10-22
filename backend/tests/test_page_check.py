@@ -57,15 +57,30 @@ def test_a_figure_in_its_cell_with_its_unit_and_no_period_around_is_matched():
 
 
 def test_a_figure_moved_to_another_cell_is_not_matched():
-    """The value is on the page, but not in the cited cell: "AI suggestion, not matched" (decision 2a, not 2b)."""
+    """The value is on the page, but not in the cited cell: "AI suggestion, not matched" (decision 2a, not 2b). The row shows the
+    model's value, never the cell's first figure (George, 2026-10-22, decision 2a on the review of PR #159): one right row to
+    confirm or reject, not "revenue $97"."""
     got = one(TRACTION, claim("r4c1", 150000, unit="USD"))
     assert got["status"] == UNMATCHED and got["checks"]["value"] is False
-    assert got["value"] == 97, "the row shows what the cited cell holds, never the model's number"
+    assert got["value"] == 150000 and got["values"] == [] and got["position"] is None, "the row shows the model's value"
+    assert page_check.label(got["status"]) == "AI suggestion, not matched"
 
 
 def test_a_value_the_cell_does_not_hold_at_all_is_not_matched():
     got = one(TRACTION, claim("r6c1", 1500, unit="EUR"))
-    assert got["status"] == UNMATCHED and got["checks"]["value"] is False and got["value"] == 1500000
+    assert got["status"] == UNMATCHED and got["checks"]["value"] is False and got["value"] == 1500
+
+
+def test_a_split_figure_read_as_one_number_is_not_matched_and_the_row_shows_the_models_value():
+    """The live "€27K" case (design note section 6): the pdf word reader splits the figure into "€2 7K"; the model reads 27,000.
+    Python finds 2 and 7,000 in the cell, so the claim is unmatched, and the row shows 27,000 (never "revenue €2")."""
+    page = grid([line(1, "Revenue", 1, next_to=[]), line(2, "€2 7K", 1, next_to=[])])
+    got = one(page, claim("r2c1", 27000, unit="EUR", label_cell="r1c1"))
+    assert got["status"] == UNMATCHED and got["checks"]["value"] is False
+    assert got["value"] == 27000 and got["value_high"] is None and got["values"] == []
+    assert page_check.label(got["status"]) == "AI suggestion, not matched"
+    high = one(page, claim("r2c1", 27000, unit="EUR", value_high=30000))
+    assert high["status"] == UNMATCHED and (high["value"], high["value_high"]) == (27000, 30000)
 
 
 @pytest.mark.parametrize("text, value", [

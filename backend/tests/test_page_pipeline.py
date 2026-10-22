@@ -29,7 +29,10 @@ from app.structures import pages as pipeline  # noqa: E402
 
 TITLE = (50, 560, 20, "Traction")
 LINES = [(50, 500, 12, "800 Paying Users"), (50, 480, 12, "$150,000 annual revenue run rate"), (50, 460, 12, "97% margins")]
-PROSE = (50, 300, 10, "Our CEO Jane Doe and CTO Max Mustermann met at Northwind Trading in 2019; " * 3 + "the team grew.")
+PROSE = (50, 320, 10, "Our CEO Jane Doe and CTO Max Mustermann met at Northwind Trading in 2019; the team grew.")
+LONG = (50, 300, 10, "Our CEO Jane Doe and CTO Max Mustermann met at Northwind Trading in 2019; " * 3 + "the team grew.")
+assert len(PROSE[3]) <= 200 < len(LONG[3])
+DECKS = BACKEND.parent / "tests" / "fixtures" / "decks" / "decks"
 
 
 def deck(texts, rects=()):
@@ -76,12 +79,34 @@ def test_a_table_joins_the_grid_below_the_text_with_its_table_row_and_column():
 
 @pytest.mark.parametrize("line, figure", [
     ("Revenue grew to three million euros", False), ("Twenty new customers signed", False), ("Founded in 2019", False),
-    ("Launched in January 2011", False), ("Revenue grew to €3M", True), ("20 new customers signed", True), ("97%", True)])
+    ("Launched in January 2011", False), ("Revenue grew to €3M", True), ("20 new customers signed", True), ("97%", True),
+    ("1", False), ("Slide 1", False), ("Page 1 of 25", False), ("1/25", False), ("- 1 -", False), ("2", True), ("Top 1", True)])
 def test_a_page_carries_a_figure_only_when_one_is_written_in_digits(line, figure):
-    """Decision 1b: a page goes to the model only when it carries a figure as digits; number-words and dates do not count."""
+    """Decision 1b: a page goes to the model only when it carries a figure as digits; number-words and dates do not count, nor
+    does a line that is only the page's own number (M1 of the review of PR #159, 2026-10-22). A bare number that is not the
+    page's own stays a figure."""
     g = grid_of([TITLE, (50, 500, 12, line)])
     assert pages.has_digit_figure(g) is figure
     assert bool(pages.sendable([g])) is figure
+    assert bool(pipeline.redacted_pages([g], "Target Co", {})) is figure, "the sender's floor agrees"
+    problem = redact.page_text_problem(redact.page_text([(1, g["cells"])]))
+    assert (problem is None) is figure, "the gateway's floor agrees"
+
+
+def test_a_page_whose_only_digits_are_its_page_number_is_not_sent():
+    """A footer page number on a prose page (06-uber.pdf page 4: 17 lines, the digit line "4") is no figure, so the page stays on
+    the server; page 2 of the same deck carries "14mpg" and goes."""
+    pytest.importorskip("pdfplumber")
+    deck_path = DECKS / "06-uber.pdf"
+    if not deck_path.exists():
+        pytest.skip("public test decks not checked out")
+    grids = pages.page_grids(parse_deck(deck_path.read_bytes(), deck_path.name)["blocks"])
+    by_page = {pages.page_number(g): g for g in grids}
+    assert [c["text"] for c in by_page[4]["cells"] if redact.digit_figure(c["text"])] == ["4"], "fixture: the only digit line"
+    assert pages.has_digit_figure(by_page[4]) is False and pipeline.redacted_pages([by_page[4]], "Uber", {}) == []
+    assert pages.has_digit_figure(by_page[2]) is True and len(pipeline.redacted_pages([by_page[2]], "Uber", {})) == 1
+    synthetic = grid_of([(50, 560, 20, "Our mission"), (50, 500, 12, "We help teams ship faster"), (500, 30, 8, "1")])
+    assert pipeline.redacted_pages([synthetic], "Target Co", {}) == []
 
 
 def test_a_background_or_cited_research_page_is_never_sent():
@@ -90,7 +115,7 @@ def test_a_background_or_cited_research_page_is_never_sent():
 
 
 def test_batches_hold_five_pages_and_the_text_comes_through_the_one_builder_redacted():
-    grids = [{**grid_of([TITLE, *LINES, PROSE]), "page": n} for n in range(1, 8)]
+    grids = [{**grid_of([TITLE, *LINES, PROSE, LONG]), "page": n} for n in range(1, 8)]
     batched = pipeline.batches(grids, "Target Co", {"Northwind Trading": "Customer_01"})
     assert [[p["grid"]["page"] for p in b] for b in batched] == [[1, 2, 3, 4, 5], [6, 7]]
     text = pipeline.batch_text(batched[1])
@@ -99,9 +124,11 @@ def test_batches_hold_five_pages_and_the_text_comes_through_the_one_builder_reda
     for needle in ("Jane Doe", "Max Mustermann", "Northwind Trading"):
         assert needle not in text, f"{needle!r} in the page text"
     assert "[person]" in text and "Customer_01" in text
-    long_lines = [line for line in text.splitlines() if len(line) > 200]
-    assert long_lines, "the prose line over 200 characters goes, redacted"
-    assert set(redact.parse_page_text(text)) == {6, 7}
+    cells = redact.parse_page_text(text)
+    assert set(cells) == {6, 7}
+    assert not [c for page in cells.values() for c in page if len(c["text"]) > 200], "a line over 200 characters is left out (1b)"
+    assert "the team grew. Our" not in text and PROSE[3].replace("Jane Doe", "[person]").replace("Max Mustermann", "[person]") \
+        .replace("Northwind Trading", "Customer_01") in text
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +162,8 @@ def test_with_the_switch_at_ai_the_pages_are_read_and_each_claim_is_a_row_matche
     assert adapter.requests[-1]["cache_system"] is True, "the fixed prompt is marked for the prompt cache"
     rows = sorted(db[CANDIDATES_COLLECTION].docs, key=lambda r: r["order"])
     assert [(r["claim_type"], r["value"], r["ai_label"]) for r in rows] == [
-        ("customers", 800, "Matched to page"), ("revenue", 150000, "Matched to page"), ("gross_margin", 97, "AI suggestion, not matched")]
+        ("customers", 800, "Matched to page"), ("revenue", 150000, "Matched to page"), ("gross_margin", 150000, "AI suggestion, not matched")]
+    assert rows[2]["snippet"] == "97% margins", "the unmatched row shows the model's value against the cell it cited (decision 2a)"
     first = rows[0]
     assert first["sources"] == [{"file": "deck.pdf", "page": 1, "kind": "page", "cell": "r2c1"}]
     assert first["label_from"] == "Traction" and first["snippet"] == "800 Paying Users" and first["origin"] == "ai"
