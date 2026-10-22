@@ -403,3 +403,7 @@ agreeing with Python's), not this register's evidence label; its null-period rul
 Amended 2026-10-22 (issue #151): the register's `period_note` reads the candidate's `period_read_note` ("period read as Dec 2021 from 'in 2021'", deck-parser.md, amended 2026-10-22)
 when the period was read by Python from "in <year>" for an MRR or ARR figure, and "no period stated" when there is none (unchanged). The register shows the note under the period. A deck
 figure labelled MRR, ARR or New MRR is never compared with a Revenue or Turnover figure for a deck inconsistency (section 11 rule extended to every deck label).
+
+Amended 2026-10-22 (follow-up to PR for issue #151): the section 11 rule extends to the Sales family: a deck inconsistency compares a Sales figure only with one of the same Sales metric (ACV, win
+rate, sales cycle, ...; deck-parser.md, amended 2026-10-22), never an ACV with a sales cycle. A percentage or count beside an MRR or ARR word is labelled as before issue #151 (Revenue, Turnover or
+Contract value), never MRR, ARR or New MRR.

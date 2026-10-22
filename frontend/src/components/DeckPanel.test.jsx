@@ -903,3 +903,20 @@ test("the deck-list AI badge reads Matched to page or AI suggestion, not matched
   const badges = [...document.body.querySelectorAll("[data-testid='candidate-ai-label']")].map((b) => b.textContent);
   expect(badges.sort()).toEqual(["AI suggestion, not matched", "Matched to page"]);
 });
+
+test("a period Python read from 'in 2021' shows its note under the period in the deck list, as the register does; a row with no note or no period shows none (PR 152 follow-up)", async () => {
+  const note = "period read as Dec 2021 from 'in 2021'";
+  api.getDecks.mockResolvedValue({ decks: DECKS, candidates: [
+    claim("n1", "d1", 1, { group: 1, target_date: "2021-12", period_read_note: note }),
+    claim("n2", "d1", 2, { group: 1, period_read_note: null }),
+    claim("n3", "d1", 3, { group: 1, target_date: null, period_read_note: note }),
+  ] });
+  await act(async () => { root.unmount(); });
+  root = createRoot(host);
+  await act(async () => { root.render(<DeckPanel auditId="a1" />); });
+  await act(async () => { q("deck-tab-all").click(); });
+  const notes = [...document.body.querySelectorAll("[data-testid='candidate-period-note']")].map((n) => n.textContent);
+  expect(notes).toEqual([note]);
+  const row = rows().find((tr) => text(tr).includes("snippet-n1"));
+  expect(row.querySelector("[data-testid='candidate-period-note']")).not.toBeNull();
+});

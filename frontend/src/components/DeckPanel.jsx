@@ -644,7 +644,10 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight, autoEdit = fa
               </select>
             ) : <span title={conversionHover(c) || undefined} data-testid="candidate-value"><FxText text={claimValue(c)} href={`#${FX_SETTINGS_ANCHOR}`} testId="fx-settings-link" /></span>}
           </td>
-          <td className="py-2 pr-3 font-mono text-slate-700 whitespace-nowrap">{claimPeriod(c)}</td>
+          <td className="py-2 pr-3 font-mono text-slate-700 whitespace-nowrap">
+            {claimPeriod(c)}
+            {c.target_date && c.period_read_note ? <div className="font-sans text-[11px] text-slate-500 whitespace-normal" data-testid="candidate-period-note">{c.period_read_note}</div> : null}
+          </td>
         </>
       )}
       <td className="py-2 pr-3 whitespace-nowrap" data-testid="candidate-confidence">
