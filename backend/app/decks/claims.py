@@ -1649,14 +1649,15 @@ CONTRACT_LABEL = "Contract value"
 def deck_label(c: Dict) -> Optional[str]:
     """The word the deck uses for a revenue-type figure: "Contract value" when its label or line holds a contract-value term,
     "New MRR", "MRR" or "ARR" when its own label holds that term (issue #151: a monthly or annual recurring figure is never Revenue),
-    "Turnover" when it holds a turnover term, else "Revenue". None for every other type. Figures with different labels are never
+    "Turnover" when it holds a turnover term, else "Revenue"; a figure with a unit (a percentage, a count, a multiple) gets none of MRR,
+    ARR or New MRR. None for every other type. Figures with different labels are never
     compared with each other for a deck inconsistency (docs/specs/claim-matching.md section 11)."""
     if c.get("claim_type") != "revenue":
         return None
     text = f"{c.get('label_from') or ''} {c.get('snippet') or ''}"
     if CONTRACT_TERM.search(text):
         return CONTRACT_LABEL
-    recurring = _RECURRING_TERM.search(text)
+    recurring = None if c.get("unit") else _RECURRING_TERM.search(text)       # "50% of MRR" is a share, not a run rate (PR 152)
     if recurring:
         if _NEW_MRR_TERM.search(text):
             return "New MRR"
@@ -1678,6 +1679,23 @@ def recurring_year_end(c: Dict) -> Dict:
     return c
 
 
+_SALES_METRICS = [("ACV", r"\bACVs?\b"), ("win rate", r"(?i:\bwin rates?\b)"), ("sales cycle", r"(?i:\bsales cycles?\b)"),
+                  ("pipeline", r"(?i:\bpipelines?\b)"), ("payback", r"(?i:\bpayback\b)"), ("conversion", r"(?i:\bconver(?:t|ts|ted|ting|sion|sions)\b)"),
+                  ("acquisition", r"(?i:\bacqui(?:re|res|red|ring)\b)"), ("leads", r"(?i:\bleads\b)")]
+_SALES_METRICS = [(name, re.compile(rx)) for name, rx in _SALES_METRICS]
+
+
+def sales_metric(c: Dict) -> Optional[str]:
+    """The Sales metric a figure's own text names (the words of the Sales family: ACV, win rate, sales cycle, ...; the first in the
+    text), None for every other type or when no word is found. Figures of different Sales metrics are never compared for a deck
+    inconsistency (PR 152, George 2026-10-22; docs/specs/claim-matching.md section 11)."""
+    if c.get("claim_type") != "sales":
+        return None
+    text = f"{c.get('label_from') or ''} {c.get('snippet') or ''}"
+    hits = [(m.start(), name) for name, rx in _SALES_METRICS for m in [rx.search(text)] if m]
+    return min(hits)[1] if hits else None
+
+
 def _figure_of(c: Dict, v: Dict) -> Dict:
     """One stated figure with what the explanation of a deck inconsistency compares: value, currency, unit, date, place
     and the deck's own label."""
@@ -1692,16 +1710,16 @@ def _flag_inconsistencies(candidates: List[Dict]) -> None:
     the period in "inconsistent_dates". Only stated periods are compared (the figure's own date,
     its column header's or its box's period), not a date borrowed by position; amounts in different
     currencies, or a rate and an amount, are not compared. Turnover is compared with turnover and revenue with revenue,
-    never one with the other (claim-matching.md section 11)."""
+    never one with the other, and a Sales figure only with one of the same Sales metric (claim-matching.md section 11)."""
     seen = {}
     for i, c in enumerate(candidates):
         for v in claim_values(c):
             if v["value"] is not None and v["target_date"] and v["_stated"]:
                 # a qualified count ("Registered Institutions") is never compared with plain users
-                key = (c["claim_type"], deck_label(c), c.get("qualifier"), v["target_date"], (v["period_start"], v["period_end"]),
+                key = (c["claim_type"], deck_label(c), sales_metric(c), c.get("qualifier"), v["target_date"], (v["period_start"], v["period_end"]),
                        c["currency"], c["unit"] if c["unit"] in ("%", "x") else None)
                 seen.setdefault(key, []).append((i, (v["value"], v["value_high"]), _figure_of(c, v)))
-    for (_, _, _, stated, _, _, _), found in seen.items():
+    for (_, _, _, _, stated, _, _, _), found in seen.items():
         if len({value for _, value, _ in found}) > 1:
             for i, value, mine in found:
                 dates = candidates[i].setdefault("inconsistent_dates", [])

@@ -604,3 +604,10 @@ deck inconsistency, so monthly MRR is not set against annual revenue. (2) An MRR
 date <year>-12 (Dec), and the candidate keeps `period_read_note` = "period read as Dec 2021 from 'in 2021'". A month the deck states, "MRR 2021" without "in", and every other type keep
 their period. The analyst's edit of the date replaces it and clears the note. Rules read and panel read (`candidate_from_item`) share `recurring_year_end`. Ten-deck pin: 212
 candidates before and after, no claim type or date moves; the deck label of 7 rows moves from Revenue to MRR or ARR (PR for issue #151).
+
+Amended 2026-10-22 (follow-up to PR for issue #151, George's decisions on that PR; tests `backend/tests/test_issue_151_followup.py`, `DeckPanel.test.jsx`): (1) the deck list shows a
+candidate's `period_read_note` ("period read as Dec 2021 from 'in 2021'") under its Period, as the register does, only while the claim has a period; the analyst's change of the date
+clears it (unchanged, `_edited_period`). (2) A figure with a unit (a percentage, a count, a multiple: "50% of MRR") gets no MRR, ARR or New MRR deck label and no Dec reading; its label
+is as before issue #151 (Contract value, Turnover or Revenue). Only a money amount is a run rate. (3) The deck inconsistency key of a Sales figure carries its Sales metric (`sales_metric`: the
+first of ACV, win rate, sales cycle, pipeline, payback, conversion, acquisition, leads in its label or line), so figures of different Sales metrics are never compared; two figures of one metric
+and period still are. Ten-deck pin: 212 candidates before and after, no claim type, date or inconsistency moves; the deck label of 3 rows (04-clevergig p6: 15%, 15 months, 50%) moves from MRR to Revenue.
