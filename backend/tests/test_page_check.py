@@ -329,3 +329,54 @@ def test_a_neighbouring_line_with_its_own_figure_is_not_a_date_source():
     assert got["checks"]["period"] is True and got["status"] == MATCHED
     pure = grid([line(1, "STRONG", 1, title=True), line(2, "in 2022", 2, next_to=["r3c1"]), line(3, "2,600+ users", 3, next_to=["r2c1"])])
     assert one(pure, claim("r3c1", 2600, metric="users", unit="count"))["checks"]["period"] is False, "a pure date line still is one"
+
+
+# ---------------------------------------------------------------------------
+# PR B, run 2 (docs/test-runs/pages_2026-10-22-2_analysis.md): changes 5 and 6 of the run 1 analysis. A text box of a date line
+# over lines of as many figures (front-b p12: "Q1 17 Q2 17 Q3 17" over "18% 18% 19%" and "2.5 2.6 4.4").
+# ---------------------------------------------------------------------------
+TRAJECTORY = grid([
+    line(1, "Building a lead generation engine", 1, title=True, next_to=["r5c3"]),
+    line(5, "Spend as", 10, next_to=["r7c3"]),
+    line(6, "% of revenue", 10, next_to=["r7c3"]),
+    line(5, "LTV / CAC", 11, col=2, next_to=["r8c3"]),
+    line(5, "On a sustainable trajectory", 12, col=3, next_to=[]),
+    line(6, "Q1 17 Q2 17 Q3 17", 12, col=3, next_to=[]),
+    line(7, "18% 18% 19%", 12, col=3, next_to=["r5c1", "r6c1"]),
+    line(8, "2.5 2.6 4.4", 12, col=3, next_to=["r5c2"]),
+])
+
+
+def test_the_nth_date_of_a_date_line_is_the_period_of_the_nth_figure_under_it():
+    """Change 5: a date line of N dates over a line of N figures in the same box dates the nth figure with the nth date; among
+    equal figures the position whose date is the model's is taken; a line of figures further down, with only figure lines between,
+    reads the same date line; a null period under such a line is not matched."""
+    got = one(TRAJECTORY, claim("r7c3", 18, metric="sales", unit="%", period="2017-Q1", period_cell="r6c3"))
+    assert got["status"] == MATCHED and got["period"] == "2017-Q1" and got["period_cells"] == ["r6c3"] and got["position"] == 1
+    second = one(TRAJECTORY, claim("r7c3", 18, metric="sales", unit="%", period="2017-Q2", period_cell="r6c3"))
+    assert second["status"] == MATCHED and second["period"] == "2017-Q2" and second["position"] == 2 and not second["checks"]["period_corrected"]
+    third = one(TRAJECTORY, claim("r7c3", 19, metric="sales", unit="%", period="2017-Q3", period_cell="r6c3"))
+    assert third["status"] == MATCHED and third["period"] == "2017-Q3" and third["position"] == 3
+    off = one(TRAJECTORY, claim("r7c3", 19, metric="sales", unit="%", period="2017", period_cell="r6c3"))
+    assert off["status"] == MATCHED and off["period"] == "2017-Q3" and off["checks"]["period_corrected"] and off["model_period"] == "2017"
+    ratio = one(TRAJECTORY, claim("r8c3", 2.6, metric="ltv_cac", unit="x", period="2017-Q2", period_cell="r6c3"))
+    assert ratio["checks"]["period"] is True and ratio["period"] == "2017-Q2" and ratio["period_cells"] == ["r6c3"]
+    assert one(TRAJECTORY, claim("r7c3", 18, metric="sales", unit="%"))["checks"]["period"] is False
+
+
+def test_a_date_line_with_another_count_of_dates_or_a_text_line_between_is_no_position_source():
+    two = grid([line(6, "Q1 17 Q2 17", 12, col=3), line(7, "18% 18% 19%", 12, col=3)])
+    assert one(two, claim("r7c3", 18, metric="sales", unit="%", period="2017-Q1", period_cell="r6c3"))["checks"]["period"] is False
+    between = grid([line(6, "Q1 17 Q2 17 Q3 17", 12, col=3), line(7, "Unpaid leads", 12, col=3), line(8, "2.5 2.6 4.4", 12, col=3)])
+    assert one(between, claim("r8c3", 2.5, metric="ltv_cac", unit="x", period="2017-Q1", period_cell="r6c3"))["checks"]["period"] is False
+    other_box = grid([line(6, "Q1 17 Q2 17 Q3 17", 12, col=3), line(7, "18% 18% 19%", 13, col=3)])
+    assert one(other_box, claim("r7c3", 18, metric="sales", unit="%", period="2017-Q1", period_cell="r6c3"))["checks"]["period"] is False
+
+
+def test_a_ratio_metric_with_a_bare_figure_passes_the_unit_x():
+    """Change 6: LTV / CAC written as "2.5" carries no "x" on the page; the metric is a ratio, so unit x passes when the figure
+    states no unit of its own. Not for another metric, and not when the figure carries a unit."""
+    got = one(TRAJECTORY, claim("r8c3", 2.5, metric="ltv_cac", unit="x", period="2017-Q1", period_cell="r6c3"))
+    assert got["status"] == MATCHED and got["checks"]["unit"] is True
+    assert one(TRAJECTORY, claim("r8c3", 2.5, metric="revenue", unit="x", period="2017-Q1", period_cell="r6c3"))["checks"]["unit"] is False
+    assert one(TRAJECTORY, claim("r7c3", 18, metric="ltv_cac", unit="x", period="2017-Q1", period_cell="r6c3"))["checks"]["unit"] is False

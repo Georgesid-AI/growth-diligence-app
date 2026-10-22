@@ -76,3 +76,10 @@ def run_api(monkeypatch):
     client = TestClient(server.app, raise_server_exceptions=False)
     client.db, client.adapter = db, adapter
     return client
+
+
+@pytest.fixture(autouse=True)
+def _run_logs_under_tmp(monkeypatch, tmp_path_factory):
+    """scripts/consistency_run.py writes a run's log outside the repository (CONSISTENCY_RUN_LOG_DIR, else the home folder); a
+    test that drives the script writes it under pytest's temp root, never into the developer's home or a test's own tmp_path."""
+    monkeypatch.setenv("CONSISTENCY_RUN_LOG_DIR", str(tmp_path_factory.getbasetemp() / "run-logs"))

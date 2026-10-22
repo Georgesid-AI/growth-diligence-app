@@ -1144,7 +1144,7 @@ def test_unit_other_carries_an_iso_code_only_so_no_cell_text_is_stored_or_logged
 # sends none that reads as a code, the exception's class name), never its message.
 LLM_CALLS_KEYS = frozenset({"run_id", "step", "prompt_version", "model", "input_tokens", "output_tokens",
                             "estimated_cost_usd", "cache_hit", "status", "unmatched_numbers", "timestamp",
-                            "content_hash", "deck_id", "http_status", "error_type", "structure_type"})
+                            "content_hash", "deck_id", "http_status", "error_type", "structure_type", "schema_errors"})
 
 
 def test_a_provider_error_reaches_llm_calls_and_the_log_as_a_status_and_a_type_code_only(caplog):
@@ -1265,7 +1265,7 @@ def test_a_failed_reply_logs_a_closed_check_and_no_text(caplog):
             result, adapter = _send(_structure_db(), GOOD_ITEMS, reply=sent)
             assert (result.status, adapter.calls) == ("not_read", 2)
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
-    assert [line.rsplit(" check=", 1)[1] for line in lines] == ["schema", "metric_list", "item_count", "schema"]
+    assert [line.split(" check=")[1].split(" ")[0] for line in lines] == ["schema", "metric_list", "item_count", "schema"]
     logs = caplog.text + "".join(r.getMessage() for r in caplog.records)
     for needle in ("Northbridge", "£1,200,000", "Target Co", "Revenue", "period must be", "Input should", "labelled"):
         assert needle not in logs, f"{needle!r} was logged"
@@ -3247,7 +3247,7 @@ def test_a_page_reply_citing_a_cell_not_sent_or_carrying_text_is_rejected_with_a
             result, adapter = _send_page(_structure_db(), GOOD_PAGE, sent)
             assert (result.status, adapter.calls) == ("not_read", 2), check
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
-    assert [line.rsplit(" check=", 1)[1] for line in lines] == ["other", "schema", "metric_list", "schema"]
+    assert [line.split(" check=")[1].split(" ")[0] for line in lines] == ["other", "schema", "metric_list", "schema"]
     # The schema fields that failed, as closed names from the schema (PR B: the run of 2026-10-22 lost 10 replies to check=schema
     # with no way to tell which field); a cell not sent or a reply that is not JSON names none.
     assert [line.split(" fields=")[1].split(" ")[0] for line in lines] == ["-", "label_cell", "metric", "-"]
@@ -3271,7 +3271,7 @@ def test_a_page_reply_cut_at_the_output_limit_is_logged_as_truncated_with_its_to
     assert (result.status, result.reason, adapter.calls) == ("truncated", gateway.NOT_READ, 1), "no reask: the same batch would be cut again"
     assert (result.input_tokens, result.output_tokens) == (3000, 4000)
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
-    assert len(lines) == 1 and " tokens=3000/4000 " in lines[0] and lines[0].endswith("reason=truncated status=- type=- fields=- check=-")
+    assert len(lines) == 1 and " tokens=3000/4000 " in lines[0] and lines[0].endswith("reason=truncated status=- type=- fields=- check=- errors=-")
     logs = caplog.text + "".join(r.getMessage() for r in caplog.records)
     for needle in ("Paying Users", "Target Co", "p5r3c1", "cut:"):
         assert needle not in logs, f"{needle!r} was logged"
@@ -3346,7 +3346,7 @@ def test_the_pages_run_prints_and_reports_no_line_of_a_deck_and_records_only_the
                           "--out", str(tmp_path / "pages_report.json")])
     assert report["stopped"] and report["decks_complete"] == 1, "the run stopped at --max-spend, so the stop's log lines are checked too"
     assert set(report) == {"mode", "model", "prompt", "prompt_version", "passes", "decks_asked", "decks_complete", "max_spend_usd",
-                           "spent_usd", "stopped", "agreement_pct_all", "target_agreement_pct", "totals", "per_deck"}
+                           "spent_usd", "stopped", "agreement_pct_all", "target_agreement_pct", "totals", "per_deck", "run_name"}
     assert set(report["totals"]) == {"calls", "batches", "read", "claims", "matched", "unmatched", "dropped", "input_tokens",
                                      "output_tokens", "truncated", "cache_hits", "recorded"}
     for deck in report["per_deck"].values():
@@ -3369,10 +3369,71 @@ def test_the_pages_run_prints_and_reports_no_line_of_a_deck_and_records_only_the
     assert not sorted(w for w in words | lines if w in written), "a line of a deck was written or printed"
     recorded = sorted(tmp_path.glob("pages_*/pass-*/*.json"))
     assert recorded, "the stopped run recorded the pass it paid for"
-    for path in recorded:
+    failed = [p for p in recorded if p.name.endswith(".failed.json")]
+    assert failed, "the batches the stop refused left their record files"
+    for path in failed:
+        # A batch not read (PR B run 2): pages, status, closed check, schema field names, error codes and tokens; never the reply.
+        body = json.loads(path.read_text(encoding="utf-8"))
+        assert set(body) == {"file", "pages", "pass", "prompt_version", "model", "status", "reason", "check", "fields", "schema_errors",
+                             "input_tokens", "output_tokens"} and body["file"] in script.PUBLIC_DECKS
+        assert body["status"] in ("not_read", "truncated", "too_large", "stopped") and body["reason"] in (gateway.NOT_READ, gateway.TOO_LARGE) \
+            or body["status"] == "stopped"
+        assert body["check"] in (None, *gateway.PARSE_CHECKS) and set(body["fields"]) <= set(gateway.PAGE_FIELDS)
+        assert all(set(e) == {"claim", "field", "code"} and e["code"] in gateway.SCHEMA_CODES and e["field"] in (None, *gateway.PAGE_FIELDS)
+                   and (e["claim"] is None or isinstance(e["claim"], int)) for e in body["schema_errors"])
+        assert all(isinstance(n, int) for n in body["pages"]) and body["pages"]
+    for path in [p for p in recorded if p not in failed]:
         body = json.loads(path.read_text(encoding="utf-8"))
         assert set(body) == {"file", "page", "match", "pass", "prompt_version", "model", "claims"} and body["file"] in script.PUBLIC_DECKS
         assert re.fullmatch(rf"p{body['page']}r\d+c\d+( title)?: .*", body["match"]) and "\n" not in body["match"]
         PageClaimsReply.model_validate({"type": "page_claims", "claims": body["claims"]})
         assert all(re.fullmatch(r"p\d+r\d+c\d+", str(c[k])) for c in body["claims"] for k in ("value_cell",)
                    ) and all(set(c) == set(PageClaimsReply.model_fields["claims"].annotation.__args__[0].model_fields) for c in body["claims"])
+
+
+# PR B, run 2 (docs/test-runs/pages_2026-10-22-2_analysis.md): front-b batch 2 failed the schema in every pass and the log said only
+# fields=claims. A rejected page reply now records each validation error as the claim's index, the schema field and a closed code
+# (the rule it broke), on the "structure not read" line, in llm_calls and in the result the page step keeps; never the value,
+# pydantic's message or the reply. The codes are closed words; a field is a schema name or None.
+SCHEMA_CODES = frozenset({"period_form", "cell_id_form", "not_finite", "unit_other_not_iso", "unit_other_without_other",
+                          "value_high_without_value", "literal", "missing", "extra", "type", "json", "other"})
+
+
+def test_a_rejected_page_reply_records_each_validation_error_as_a_claim_index_a_field_and_a_code_never_the_text(caplog):
+    import logging
+    import re
+    assert set(gateway.SCHEMA_CODES) == SCHEMA_CODES
+    first = json.loads(PAGE_REPLY)["claims"][0]
+    bad = [{**first, "unit": "other", "unit_other": "hours per user at Target Co"},     # the rule the page text of front-b p18 breaks
+           {**first, "period": "in 10 months at Target Co"},
+           {**first, "value": None, "value_high": 3.0},
+           {**first, "label_cell": "p5r1c1 Traction"},
+           {**first, "note": "free text at Target Co"}]
+    expected = [{"claim": 0, "field": "unit_other", "code": "unit_other_not_iso"},
+                {"claim": 1, "field": "period", "code": "period_form"},
+                {"claim": 2, "field": "value_high", "code": "value_high_without_value"},
+                {"claim": 3, "field": "label_cell", "code": "cell_id_form"},
+                {"claim": 4, "field": None, "code": "extra"}]
+    db = _structure_db()
+    with caplog.at_level(logging.DEBUG):
+        result, adapter = _send_page(db, GOOD_PAGE, json.dumps({"type": PAGE_CLAIMS, "claims": bad}))
+        not_json, _ = _send_page(db, GOOD_PAGE, "Revenue £1,200,000 at Target Co")
+    assert (result.status, adapter.calls) == ("not_read", 2)
+    assert result.check == "schema" and result.fields == ["claims", "label_cell", "period"] and result.schema_errors == expected
+    assert not_json.check == "schema" and not_json.schema_errors == [{"claim": None, "field": None, "code": "json"}]
+    failed = [c for c in db["llm_calls"].docs if c["status"] == "parse_failed"]
+    assert [c.get("schema_errors") for c in failed] == [expected, [{"claim": None, "field": None, "code": "json"}]]
+    for record in db["llm_calls"].docs:
+        assert set(record) <= LLM_CALLS_KEYS, set(record) - LLM_CALLS_KEYS
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
+    assert [line.split(" errors=")[1].split(" ")[0] for line in lines] == [
+        "claims[0].unit_other:unit_other_not_iso;claims[1].period:period_form;claims[2].value_high:value_high_without_value;"
+        "claims[3].label_cell:cell_id_form;claims[4]:extra", "reply:json"]
+    for line in lines:
+        for piece in line.split(" errors=")[1].split(" ")[0].split(";"):
+            path, code = piece.rsplit(":", 1)
+            assert code in SCHEMA_CODES and re.fullmatch(r"claims\[\d+\](\.[a-z_]+)?|reply", path), piece
+            assert path.split(".")[-1] in gateway.PAGE_FIELDS or "." not in path
+    logs = caplog.text + "".join(r.getMessage() for r in caplog.records) + json.dumps(db["llm_calls"].docs, ensure_ascii=False)
+    for needle in ("hours", "10 months", "Traction", "free text", "Target Co", "Input should", "Value error", "£1,200,000", "note"):
+        assert needle not in logs, f"{needle!r} was logged or stored"

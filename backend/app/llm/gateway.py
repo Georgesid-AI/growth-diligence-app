@@ -186,13 +186,15 @@ class GatewayError(Exception):
     HTTP status and error type (codes only, see _provider_error_type)."""
 
     def __init__(self, reason: str, detail: str = "", status: Optional[int] = None,
-                 error_type: Optional[str] = None, check: Optional[str] = None, fields: Optional[List[str]] = None):
+                 error_type: Optional[str] = None, check: Optional[str] = None, fields: Optional[List[str]] = None,
+                 schema_errors: Optional[List[dict]] = None):
         self.reason = reason
         self.detail = detail
         self.status = status
         self.error_type = error_type
         self.check = check              # parse_failed on a structure reply: one of PARSE_CHECKS
         self.fields = fields or []      # ... and the schema fields that failed (closed names from the schema, never values)
+        self.schema_errors = schema_errors or []    # ... and each error as claim index, field and code (_schema_errors)
         super().__init__(f"{reason}: {detail}" if detail else reason)
 
 
@@ -946,6 +948,7 @@ async def log_call(
     cache_hit: bool, status: str, unmatched_numbers: Optional[List[str]] = None,
     content_hash: Optional[str] = None, deck_id: Optional[str] = None,
     http_status: Optional[int] = None, error_type: Optional[str] = None, structure_type: Optional[str] = None,
+    schema_errors: Optional[List[dict]] = None,
 ) -> None:
     """Append to llm_calls.
 
@@ -955,10 +958,13 @@ async def log_call(
     the payload does NOT hold, so it cannot echo the computed figures back. A
     structure reading call adds the content hash of the text sent (never the
     text) and the deck it came from (CLAUDE.md rule 17). A provider error adds
-    its HTTP status and error type, never its message.
+    its HTTP status and error type, never its message. A page reply the schema refused adds
+    its errors as claim indexes, schema field names and closed codes (_schema_errors),
+    never a value or a message.
     """
     extra = {k: v for k, v in (("content_hash", content_hash), ("deck_id", deck_id), ("http_status", http_status),
-                               ("error_type", error_type), ("structure_type", structure_type)) if v is not None}
+                               ("error_type", error_type), ("structure_type", structure_type),
+                               ("schema_errors", schema_errors or None)) if v is not None}
     await db[CALLS_COLLECTION].insert_one({**extra,
         "run_id": run_id,
         "step": step,
@@ -1663,6 +1669,47 @@ def parse_structure_reply(reply: str, structure_type: str, text: str):
     return parsed
 
 
+# The codes a rejected page reply's errors are read back to (schemas.RULE_CODES for the validators' own rules, then pydantic's
+# error types): closed words, never a message. "errors=" on the "structure not read" line, llm_calls.schema_errors and the page
+# step's page_reads carry them with the claim's index and the schema field, so a run tells which rule a reply broke (the live run
+# of 2026-10-22-2 lost one batch in every pass to fields=claims with nothing more to tell).
+SCHEMA_CODES = ("period_form", "cell_id_form", "not_finite", "unit_other_not_iso", "unit_other_without_other",
+                "value_high_without_value", "literal", "missing", "extra", "type", "json", "other")
+_TYPE_CODES = {"literal_error": "literal", "missing": "missing", "extra_forbidden": "extra", "json_invalid": "json"}
+SCHEMA_ERRORS_MAX = 20
+
+
+def _schema_errors(exc: Exception) -> List[dict]:
+    """[{"claim": index or None, "field": schema name or None, "code": one of SCHEMA_CODES}] for a rejected page reply: the
+    error locations (the claim's index in the list, the field's closed name) and the rule or pydantic type, read back to a code;
+    never the input or the message. A reply that is not JSON gives one error with code "json"."""
+    if not hasattr(exc, "errors"):
+        return [{"claim": None, "field": None, "code": "json"}]
+    out = []
+    for error in exc.errors()[:SCHEMA_ERRORS_MAX]:
+        loc = error.get("loc", ())
+        claim = next((part for part in loc if isinstance(part, int)), None)
+        names = [part for part in loc if isinstance(part, str)]
+        field = names[-1] if names and names[-1] in schemas.PageClaim.model_fields else None
+        kind = error.get("type", "")
+        if kind == "value_error":
+            code, rule_field = schemas.rule_code(error.get("msg"))
+            code, field = code or "other", rule_field or field
+        else:
+            code = _TYPE_CODES.get(kind, "type" if kind.endswith(("_type", "_parsing")) else "other")
+        out.append({"claim": claim, "field": field, "code": code})
+    return out
+
+
+def _schema_errors_text(errors: List[dict]) -> str:
+    """The errors on one log line: "claims[3].unit_other:unit_other_not_iso;reply:json" (paths and codes only)."""
+    pieces = []
+    for e in errors:
+        path = f"claims[{e['claim']}]" if e["claim"] is not None else "reply"
+        pieces.append(f"{path}.{e['field']}:{e['code']}" if e["field"] else f"{path}:{e['code']}")
+    return ";".join(pieces) or "-"
+
+
 def _schema_fields(exc: Exception) -> List[str]:
     """The schema fields a reply failed on ("period", "label_cell"): the last named location of each validation error, read from
     the error locations only (the schema's own field names, closed words), never from the input they quote. [] for a reply that
@@ -1685,7 +1732,7 @@ def parse_page_reply(reply: str, text: str) -> PageClaimsReply:
         parsed = PageClaimsReply.model_validate(json.loads((reply or "").strip()))
     except Exception as exc:
         raise GatewayError("parse_failed", f"reply did not match the schema: {type(exc).__name__}", check=_schema_check(exc),
-                           fields=_schema_fields(exc))
+                           fields=_schema_fields(exc), schema_errors=_schema_errors(exc))
     known = _cited_cells(text, PAGE_CLAIMS)
     for claim in parsed.claims:
         if any(c is not None and c not in known for c in (claim.value_cell, claim.label_cell, claim.period_cell)):
@@ -1935,18 +1982,21 @@ async def read_structure(
             # #64); never the message.
             billed, code, status, kind = getattr(exc, "billed", (0, 0)), exc.reason, exc.status, exc.error_type
             check = exc.check if exc.check in PARSE_CHECKS else "-"
-            fields = ",".join(f for f in exc.fields if f in PAGE_FIELDS) or "-"       # schema field names only, never a value
+            named = [f for f in exc.fields if f in PAGE_FIELDS]                        # schema field names only, never a value
+            errors = [e for e in exc.schema_errors if e["code"] in SCHEMA_CODES and (e["field"] is None or e["field"] in PAGE_FIELDS)]
             cost = estimate_cost_usd(STRUCTURE_MODEL, *billed)
             await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version,
                            model=STRUCTURE_MODEL, input_tokens=billed[0], output_tokens=billed[1],
                            estimated_cost_usd=cost, cache_hit=False, status=code, content_hash=digest,
-                           deck_id=deck_id, http_status=status, error_type=kind, structure_type=structure_type)
+                           deck_id=deck_id, http_status=status, error_type=kind, structure_type=structure_type,
+                           schema_errors=errors)
             logger.warning("structure not read: run_id=%s step=%s hash=%s tokens=%d/%d cost=%.6f reason=%s "
-                           "status=%s type=%s fields=%s check=%s", audit_id, STRUCTURE_STEP, digest, billed[0], billed[1], cost,
-                           code, status or "-", kind or "-", fields, check)
+                           "status=%s type=%s fields=%s check=%s errors=%s", audit_id, STRUCTURE_STEP, digest, billed[0], billed[1],
+                           cost, code, status or "-", kind or "-", ",".join(named) or "-", check, _schema_errors_text(errors))
             # "truncated" (the reply cut at max_tokens) is kept apart, so the page step can split the batch and read it again.
+            failed = {"check": exc.check, "fields": named, "schema_errors": errors} if check != "-" else {}
             return _structure_result("truncated" if code == "truncated" else "not_read", structure_type, NOT_READ,
-                                     input_tokens=billed[0], output_tokens=billed[1], estimated_cost_usd=cost, **base)
+                                     input_tokens=billed[0], output_tokens=billed[1], estimated_cost_usd=cost, **failed, **base)
         cost = estimate_cost_usd(STRUCTURE_MODEL, in_tok, out_tok)
         model_type = parsed.type if parsed.type != structure_type else None      # a sheet's type is fixed by its schema
         output = parsed.model_dump()
