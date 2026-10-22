@@ -1137,8 +1137,8 @@ accepts a dropped file (deck-parser.md).
 
 ## 28. The page reader: the AI reads every page, the rules check each claim (2026-10-22, George)
 Decided by George with the task (docs/design/ai-reads-rules-check.md; PR A #159 and PR B #161 built the step behind a switch). CLAUDE.md
-rule 16 is amended the same day. The architecture of docs/architecture.md still describes the step as behind `DECK_PIPELINE` with the
-default `rules`; the default is now `ai` (an Architecture note of the build PR, rule 1).
+rule 16 and docs/architecture.md ("The amendment of 2026-10-22") are amended the same day: the page read is the default, the rules
+read the fallback behind `DECK_PIPELINE=rules`, kept until the first tester decks are read (George, 2026-10-22, review of the build PR).
 
 **Reading.** At upload the rules read (`claims.detect_candidates`, deck-parser.md §2) lists no candidate any more; it stays for Add
 from deck (claim-types-and-correction.md §5), as the library of the checker's converted rules, and under `DECK_PIPELINE=rules` for
@@ -1168,8 +1168,9 @@ flags the claim; it never deletes or retypes it. The only drop left is a claim o
 
 **Screen.** The claims table has two views above it, "Claims (n)" and "Review (m)": a claim with a flag is listed under Review with its
 flags (joined by " · ") and its badge, never in the main list; the line under Review reads "Flagged by the checks: the figure, its unit,
-its label or its page could not be confirmed on the slide. Each flag names what to check." Approve, Edit, Reject and Approve all work
-there as anywhere else (Approve all approves a section's pending claims, flagged ones included, when they are in the shown view).
+its label or its page could not be confirmed on the slide. Each flag names what to check." Approve, Edit and Reject work there as
+anywhere else. Approve all never approves a flagged claim (George, 2026-10-22): the server skips it, counts it in `skipped` and in
+`skipped_flagged`, and the toast reads "Approved X claims, Y skipped (flagged for review, need Revenue / Volume or failed to save)".
 
 **Cost.** A page call is exempt from the USD 5 daily cap and counted in the tester's monthly allowance, as a mapping call is
 (`gateway.SPEND_CAP_EXEMPT`; usage-and-allowance.md §4). Engine contract 6 (interface-contracts.md): results and claim matches stored
@@ -1188,4 +1189,4 @@ unmatched=… dropped=… flagged=…`.
   `test_turnover_api.py`, `test_issue_146/154.py` test the former path under `DECK_PIPELINE=rules`. Frontend: the two views, the
   flags on a row, the explainer sentence.
 - **Not done here (design note §7, PR C).** The deletion of the rules read, the structure detection and the merge paths waits for its
-  own commit; the rules read is no longer run at upload.
+  own commit, after the first tester decks are read (George, 2026-10-22); the rules read is no longer run at upload.

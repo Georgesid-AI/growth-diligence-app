@@ -3,7 +3,8 @@
 Status: for decision, 2026-10-22. No code, test or spec change.
 Built 2026-10-22 (George's task; PR A #159, PR B #161, then the switch): default `DECK_PIPELINE=ai`, prompt `deck_reading`, fields `basis`
 and `scenario`, `backend/app/structures/checker.py` (flags, never deletes), the review tab, the cap rule, contract 6. Spec: docs/specs/chat-upload.md §28.
-The deletion of §3 "Removed" (PR C) is not done in that PR.
+The deletion of §3 "Removed" (PR C) is not done in that PR: the rules path stays as the fallback behind `DECK_PIPELINE=rules` until the first
+tester decks are read (George, 2026-10-22). Approve all never approves a flagged claim (same review).
 
 **Architecture note (CLAUDE.md rule 1).** The inverted design sends every page of a deck, prose included, to the model. CLAUDE.md rule 16 and docs/architecture.md ("Never raw files, full pages or prose slides") forbid that. Nothing below is built until George changes the rule (decision 1).
 

@@ -160,3 +160,14 @@ def test_a_bad_request_is_refused_and_a_missing_audit_is_a_404(approve_api):
         assert client.post(URL, json=body).status_code == 422, body
     assert client.post("/api/audits/nope/decks/candidates/approve-all", json={"group": REVENUE}).status_code == 404
     assert all(status(db, c) == "pending" for c in ("r1", "r2"))
+
+
+def test_a_claim_the_checks_flagged_is_skipped_and_counted_apart_and_stays_to_review(approve_api):
+    """George, 2026-10-22 (chat-upload.md section 28): a flagged claim is approved one by one in the Review view, never by Approve all.
+    The reply counts it in `skipped` and in `skipped_flagged`, so the toast reads "Approved X, Y skipped"."""
+    client, db = approve_api
+    db[decks.CANDIDATES_COLLECTION].docs.append(claim("fl1", value=210000, flags=["currency assumed"], ai_label="AI suggestion, not matched"))
+    db[decks.CANDIDATES_COLLECTION].docs.append(claim("fl0", value=195000, flags=[]))
+    body = client.post(URL, json={"group": REVENUE}).json()
+    assert (body["approved"], body["skipped"], body["skipped_flagged"], body["skipped_ids"]) == (4, 1, 1, ["fl1"])
+    assert status(db, "fl1") == "pending" and status(db, "fl0") == "approved" and sorted(body["approved_ids"]) == ["e1", "fl0", "r1", "r2"]

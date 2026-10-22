@@ -22,14 +22,18 @@ what is written here is an architecture change: a session that needs one stops a
 ## The amendment of 2026-10-22
 
 George approved (22 Oct 2026, decision 1b on PR #158, docs/design/ai-reads-rules-check.md) widening the deck boundary for one new
-step. For the `page_claims` step only, behind the switch `DECK_PIPELINE` (default `rules`: no page call, no screen change), the
-model may receive the redacted text lines of a deck page that carries a figure written in digits, prose lines included, as
+step. For the `page_claims` step only, the default path since 22 Oct 2026 (`DECK_PIPELINE=ai`; the former rules read of
+docs/specs/deck-parser.md section 2 is the fallback behind `DECK_PIPELINE=rules`, kept until the first tester decks are read; George,
+2026-10-22), the model may receive the redacted text lines of a deck page that carries a figure written in digits, prose lines included, as
 extracted text with cell positions (`p<page>r<row>c<col>: <text>`, the page grid of `app/decks/pages.py`), at most 5 pages per
 call. A page with no such figure never goes; number-words do not count as figures. Prose lines pass the people-name rule as well
 as the customer rule before they go (`app/structures/redact.redact_page`), and the gateway runs the redaction again. The reply
-holds closed words, numbers and cell ids only; Python checks each claim at cell level (`app/structures/page_check.py`: figure in
-its cell, unit adjacent, period from that cell's own sources) and labels it "Matched to page" or "AI suggestion, not matched"
-(decisions 2a and 3a). All other steps keep the boundary as it was. CLAUDE.md rule 16 carries the same wording.
+holds closed words, numbers and cell ids only, with each claim's `basis` and `scenario` (closed words); Python checks each claim
+at cell level (`app/structures/page_check.py`: figure in its cell, unit adjacent, period from that cell's own sources) and labels
+it "Matched to page" or "AI suggestion, not matched" (decisions 2a and 3a), then flags it (`app/structures/checker.py`: the
+value, unit, scenario and period labels on the page, the page in range, the former parser rules as post-checks; a flag never
+deletes or retypes, a flagged claim is listed in the Review view). The prompt is `deck_reading` in the store. All other steps
+keep the boundary as it was. CLAUDE.md rule 16 carries the same wording.
 
 Amended 2026-10-22 (George, review of PR #159, decisions 1b and 2a and findings H1, M1, L1, L2): the gateway refuses a
 `page_claims` call unless `DECK_PIPELINE` is `ai`, whatever the caller (`gateway.deck_pipeline`). A page line over 200

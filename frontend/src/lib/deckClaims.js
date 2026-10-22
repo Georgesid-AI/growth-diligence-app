@@ -421,9 +421,10 @@ export const DEFINITION_ELSEWHERE = " – answer on the review screen";
 
 /** The toast after Approve all: "Approved 5 claims, 2 skipped (need Revenue / Volume or failed to save)", then ", 1 with open definition
  *  check" when an approved claim waits for "Same metric and period?" (`open_definition` of the reply; such a claim is approved, not
- *  skipped); `elsewhere` adds where it is answered. */
-export const approveAllToast = (approved, skipped, openDefinition = 0, elsewhere = false) =>
-  `Approved ${approved} claim${approved === 1 ? "" : "s"}, ${skipped} skipped (need Revenue / Volume or failed to save)`
+ *  skipped); `elsewhere` adds where it is answered. A claim the checks flagged is never approved in bulk (George, 2026-10-22,
+ *  chat-upload.md section 28): with `flagged` skipped the bracket names it first. */
+export const approveAllToast = (approved, skipped, openDefinition = 0, elsewhere = false, flagged = 0) =>
+  `Approved ${approved} claim${approved === 1 ? "" : "s"}, ${skipped} skipped (${flagged > 0 ? "flagged for review, " : ""}need Revenue / Volume or failed to save)`
   + (openDefinition > 0 ? `, ${openDefinition} with open definition check${elsewhere ? DEFINITION_ELSEWHERE : ""}` : "");
 
 /** Counts per status, for the list header; `auto` is how many of the approved ones Run audit approved on its own (issue #155). Other

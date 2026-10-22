@@ -2222,8 +2222,9 @@ class ApproveAll(BaseModel):
 async def approve_all_candidates(audit_id: str, payload: ApproveAll):
     """One call, one category: every claim with status "pending" in the category is approved as a single Approve does it
     ("edited" when it carries the parser's values under "parsed"). Left pending and counted as skipped: a turnover claim whose
-    Revenue / Volume question the analyst has not answered, a claim whose type still has to be chosen (Other, Unknown), and a claim
-    whose save fails. A claim with an open Definition check is approved like any other: it enters the register as an open check,
+    Revenue / Volume question the analyst has not answered, a claim whose type still has to be chosen (Other, Unknown), a claim the
+    checks flagged (`flags`, chat-upload.md section 28; George, 2026-10-22: the analyst approves it one by one in the Review view;
+    `skipped_flagged` counts them) and a claim whose save fails. A claim with an open Definition check is approved like any other: it enters the register as an open check,
     which blocks the verdict (claim-matching.md section 4.1); `open_definition` counts the approved ones. Nothing else changes."""
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
     if not audit:
@@ -2233,12 +2234,16 @@ async def approve_all_candidates(audit_id: str, payload: ApproveAll):
     settings = _register_settings(audit, await _fx(audit_id, audit), await _deck_take_rate(audit_id))
     open_turnover = {cid for cid, views in claim_matching.turnover_views(found, current.get("results"), settings).items()
                      if any(v["turnover_set_by"] != "analyst" for v in views)}
-    approved, skipped = [], []
+    approved, skipped, flagged = [], [], 0
     for c in found:
         if c.get("status") != "pending" or deck_claims.type_group(c.get("claim_type")) != payload.group \
                 or (payload.deck_id and c.get("deck_id") != payload.deck_id):
             continue
         if c.get("claim_type") in deck_claims.OTHER_TYPES:      # never a task: neither approved nor counted (section 4)
+            continue
+        if c.get("flags"):                                     # flagged by the checks: reviewed one by one, never approved in bulk
+            skipped.append(c["id"])
+            flagged += 1
             continue
         if c["id"] in open_turnover:
             skipped.append(c["id"])
@@ -2253,8 +2258,8 @@ async def approve_all_candidates(audit_id: str, payload: ApproveAll):
     # The check as the register now holds it: a claim read as an AI suggestion while pending may ask once it is approved.
     after = [{**c, "status": "edited" if "parsed" in c else "approved"} if c["id"] in approved else c for c in found]
     open_definition = claim_matching.open_definition_ids(claim_matching.definition_views(after, current.get("results"), settings))
-    return {"approved": len(approved), "skipped": len(skipped), "approved_ids": approved, "skipped_ids": skipped,
-            "open_definition": len(open_definition & set(approved))}
+    return {"approved": len(approved), "skipped": len(skipped), "skipped_flagged": flagged, "approved_ids": approved,
+            "skipped_ids": skipped, "open_definition": len(open_definition & set(approved))}
 
 
 # ---------------------------------------------------------------------------

@@ -351,6 +351,10 @@ describe("Approve all (docs/specs/chat-upload.md section 17)", () => {
       "Approved 5 claims, 1 skipped (need Revenue / Volume or failed to save), 2 with open definition check – answer on the review screen");
     expect(approveAllToast(5, 2, 0, true)).toBe(approveAllToast(5, 2));
   });
+  test("a flagged claim skipped by the server is named in the bracket (George, 2026-10-22, chat-upload.md section 28)", () => {
+    expect(approveAllToast(3, 2, 0, true, 1)).toBe("Approved 3 claims, 2 skipped (flagged for review, need Revenue / Volume or failed to save)");
+    expect(approveAllToast(3, 2, 0, true, 0)).toBe(approveAllToast(3, 2));
+  });
   test("only a claim to review counts", () => {
     expect(toReview({ claims: [{ id: 1, status: "pending" }, { id: 2, status: "approved" }, { id: 3, status: "rejected" }, { id: 4, status: "edited" }] }).map((c) => c.id)).toEqual([1]);
   });
