@@ -24,6 +24,7 @@ FIELDS = (
     "as_of_month", "as_of_defaulted", "turnover_state", "turnover_note", "turnover_set_by", "turnover_reason",
     "implied_take_rate", "implied_take_rate_source", "turnover_suggested", "deck_revenue_note", "definition_check",
     "definition_question", "period_coverage", "months_missing", "growth_basis", "population", "figure_type", "required_unknown",
+    "auto_approval",
 )
 # How the baseline CSV reads each field back (verdict-and-memo.md section 5); a field not listed is text.
 FLOAT_FIELDS = frozenset({"implied_take_rate", "claimed_value", "claimed_high", "claimed_converted", "claimed_converted_high", "fx_rate",
@@ -1419,9 +1420,44 @@ def build_register(candidates: List[dict], results: Optional[dict], settings: di
                                  peers if peers is not None else candidates)
     claims = _expand(candidates)
     others = _expand(peers) if peers is not None else claims
-    rows = _rank([_row(c, results, settings, others) for c in claims])
+    rows = _rank([_mark_auto(_row(c, results, settings, others), c) for c in claims])
     _overlaps(rows)
     return rows
+
+
+# Issue #155 (George, 2026-10-22): a claim Run audit approved on its own reads this in the register, the deck list, the CSV and the memo.
+AUTO_APPROVAL = "Auto-approved – matches revenue file (Δ {delta})"
+AUTO_REVOKED = "No longer matches – was auto-approved"      # the note of a claim sent back to "To review" (George, 2026-10-22)
+AUTO_LABEL = "auto"
+ANALYST_LABEL = "analyst"          # the memo's Approval column for every other register row (George, PR 157)
+RATE_TOLERANCE_TEXT = "±1 pp"
+
+
+def _mark_auto(row: dict, c: dict) -> dict:
+    """Sets `auto_approval` on the row of a claim Run audit approved on its own, while it still matches: approved (an edit clears the mark and
+    the claim becomes Analyst-edited), Verified within tolerance, not a beat, no Definition check, in the audit currency. Display only: no
+    label, gap, rank or gate reads it."""
+    if not (c.get("auto_accepted") and c.get("status") == "approved" and "parsed" not in c) or row["evidence_label"] != "Verified" \
+            or is_beat(row) or row["definition_check"] is not None or row["claimed_converted"] is not None:
+        return row
+    delta = f"{abs(row['gap']):.1f} pp" if row["tolerance"] == RATE_TOLERANCE_TEXT else f"{abs(row['gap_normalised'] or 0) * 100:.1f}%"
+    row["auto_approval"] = AUTO_APPROVAL.format(delta=delta)
+    return row
+
+
+def auto_views(candidates: List[dict], results: Optional[dict], settings: dict) -> Dict[str, dict]:
+    """For each candidate Run audit approved on its own (and still matching): `auto_approval` and `auto_citation`, from the register's own
+    rows, keyed by candidate id. A table row of several values shows the value with the widest gap, and counts only when all of them match."""
+    if not results:
+        return {}
+    marked = [c for c in candidates if c.get("auto_accepted") and c.get("status") == "approved"]
+    out: Dict[str, dict] = {}
+    for cid in {c["id"] for c in marked}:
+        mine = [r for r in build_register([c for c in marked if c["id"] == cid], results, settings) if r["claim_id"].split("#")[0] == cid]
+        if mine and all(r["auto_approval"] for r in mine):
+            widest = max(mine, key=lambda r: abs(r["gap_normalised"] or 0) + abs(r["gap"] or 0))
+            out[cid] = {"auto_approval": widest["auto_approval"], "auto_citation": widest["observed_citation"]}
+    return out
 
 
 def confidence_level(candidate: dict, peers: List[dict]) -> str:

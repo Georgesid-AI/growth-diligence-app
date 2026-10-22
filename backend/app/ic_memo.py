@@ -515,7 +515,8 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     # Appendices
     app: List[str] = []
     app += [f"## {APPENDICES[0]}"]
-    reg = [[f"#{r['rank']}", vd.claim_name(r) + f" – {vd.claimed_text(r, results.get('reporting_currency'))}", r["evidence_label"],
+    reg = [[f"#{r['rank']}", vd.claim_name(r) + f" – {vd.claimed_text(r, results.get('reporting_currency'))}",
+            r["evidence_label"], cm.AUTO_LABEL if r.get("auto_approval") else cm.ANALYST_LABEL,      # who approved the claim (PR 157)
             "not yet computed" + (f" · shortfall {r['shortfall'] * 100:.1f}%" if r["shortfall"] is not None else ""),
             ", ".join(f"#{by_id[o]['rank']}" for o in r["overlaps_with"] or () if o in by_id) or "—",
             f"{r['evidence_analysis']} {r['observed_citation']}" if r["evidence_analysis"] and r.get("observed_citation")      # issue #136
@@ -524,7 +525,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
             r["gate_sentence"] or (vd.W4_GATE_NEEDED if r["gate_needed"] else "—"),
             "key" if r["claim_id"] in {g["claim_id"] for g in key["gates"]} else "", "top 5" if r["claim_id"] in {f["claim_id"] for f in ver["five"]} else ""]
            for r in rows]
-    app += [_table(["#", "Claim", "Label", "VaS", "Overlaps with", "Evidence", "Gate", "Key gate", "Top 5"], reg), ""]
+    app += [_table(["#", "Claim", "Label", "Approval", "VaS", "Overlaps with", "Evidence", "Gate", "Key gate", "Top 5"], reg), ""]
 
     review = ic.get("first_quarterly_review")
     app += [f"## {APPENDICES[1]}", f"First quarterly review: {review or '—'}", ""]

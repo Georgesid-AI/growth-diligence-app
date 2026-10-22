@@ -1447,7 +1447,7 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             "implied_take_rate", "implied_take_rate_source", "turnover_suggested", "deck_revenue_note", "period_basis", "inconsistencies",
                             "turnover_views", "file_note", "NO_FILE_PERIOD",
                             "inconsistent_dates", "mixed_slide", "USE_OF_FUNDS_NOTE", "MIXED_SLIDE", "ACQUISITION_NOTE", "ACQUISITION_CHANNELS",
-                            "UNTESTED_TYPES", "channel", "auto_accepted", "BEAT_PREFIX", "is_beat", "flag_text", "flagged_rows",
+                            "UNTESTED_TYPES", "channel", "auto_accepted", "auto_note", "AUTO_REVOKED", "_revoke_stale_auto", "auto_approval", "auto_citation", "AUTO_APPROVAL", "AUTO_LABEL", "ANALYST_LABEL", "auto_views", "never_on_its_own", "BEAT_PREFIX", "is_beat", "flag_text", "flagged_rows",
                             "qualifier", "QUALIFIERS", "QUALIFIED_REASON", "qualified_label", "definition_check", "definition_question",
                             "definition_views", "definition_rows", "definition_basis", "DEFINITION_QUESTION", "DEFINITION_OPEN_REASON",
                             "DEFINITION_OPEN_REASON_RATE", "DEFINITION_MISMATCH", "BIG_GAP_RATE_POINTS",
@@ -2381,7 +2381,7 @@ def test_the_run_audit_log_lines_hold_the_run_the_stage_the_status_and_an_error_
 
 
 def test_the_auto_accepted_flag_is_a_register_name_the_gateway_never_mentions():
-    assert "auto_accepted" in REGISTER_NAMES
+    assert "auto_accepted" in REGISTER_NAMES and "auto_note" in REGISTER_NAMES and "AUTO_REVOKED" in REGISTER_NAMES
     for path in sorted((BACKEND / "app" / "llm").glob("*.py")):
         assert "auto_accepted" not in path.read_text(encoding="utf-8"), path.name
 

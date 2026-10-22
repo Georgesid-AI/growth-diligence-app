@@ -1,0 +1,6 @@
+2026-10-22 · claude/zen-clarke-s067de (issue #155)
+Deleted: nothing; the issue's Revenue/MRR/ARR narrowing was not built (George chose option c), and the "approve all skips" point needed no change.
+Decided: the existing step stays and gets three exclusions (analyst-entered/edited, deck inconsistency, other currency) read from the candidate and the register row, so no second threshold; one register field `auto_approval` (text, null when the claim no longer matches) carries the status text, the CSV cell and the memo's "(auto)"; an edit clears `auto_accepted`; rates read Δ in points.
+Slow or unclear: "Analyst-entered" was read as origin analyst only (an "added from deck" claim stays eligible); the deck-inconsistency flag is the parser's per-deck flag, the cross-deck integrity check does not mark a claim; the ten-deck parser pin is a live-API script and was not run (no parser change).
+Root cause and rule: the issue was written without the 2026-10-14 within-tolerance step in view, so most of it already existed; tests/test_issue_155.py pins the three exclusions, the text, the edit and the CSV/memo label.
+Process change to propose: an issue that changes an approval or acceptance rule starts with a "what the code does today" paragraph from the spec, before its expected list is written.

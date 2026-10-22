@@ -70,16 +70,26 @@ def engine_stale(audit: dict, datasets: Iterable[dict]) -> bool:
     return any(max(ds.get("mapped_at") or "", ds.get("recognition_decided_at") or "") > computed for ds in datasets)
 
 
+def never_on_its_own(candidate: dict) -> bool:
+    """Issue #155 (George, 2026-10-22, claim-matching.md section 4.1): a claim Run audit leaves to the analyst however close it is: one the
+    analyst entered or edited, and one flagged as a deck inconsistency. (A claim in another currency is read from its register row.)"""
+    return bool(candidate.get("origin") in ("analyst", "deck_analyst") or "parsed" in candidate
+                or candidate.get("inconsistent_dates") or candidate.get("inconsistencies"))
+
+
 def within_tolerance_ids(rows: List[dict], candidate_ids: Iterable[str]) -> List[str]:
     """The candidates whose every register row is Verified within the claim's tolerance: ±5% of the claimed value for
     amounts, counts and durations, ±1 percentage point for rates. A beat (Verified, marked beat, however the analyst answered a
-    Definition check) is not within tolerance and stays for the review screen. A table row of several values counts only when all are."""
+    Definition check) is not within tolerance and stays for the review screen; so does an edited or analyst-entered claim and a claim
+    in a currency other than the audit's (issue #155). A table row of several values counts only when all are."""
     wanted = set(candidate_ids)
     labels: Dict[str, List[bool]] = {}
     for r in rows:
         cid = str(r["claim_id"]).split("#")[0]
         if cid in wanted:
-            labels.setdefault(cid, []).append(r["evidence_label"] == "Verified" and not cm.is_beat(r) and r.get("definition_check") is None)
+            labels.setdefault(cid, []).append(
+                r["evidence_label"] == "Verified" and not cm.is_beat(r) and r.get("definition_check") is None
+                and r.get("deck_reading") not in (cm.ANALYST_ENTERED, cm.ADDED_FROM_DECK, "edited") and r.get("claimed_converted") is None)
     return [cid for cid, found in labels.items() if found and all(found)]
 
 

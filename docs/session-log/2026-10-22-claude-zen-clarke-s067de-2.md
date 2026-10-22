@@ -1,0 +1,6 @@
+2026-10-22 · claude/zen-clarke-s067de (review of PR 157, George's decisions in its last comment)
+Deleted: the memo's "{label} (auto)" wording in Appendix A; the Label column is the plain evidence label again.
+Decided: a separate Approval column after Label, "auto" for a claim Run audit approved on its own and "analyst" for every other register row (every register row is approved or edited, so no third value); constant `ANALYST_LABEL` beside `AUTO_LABEL`, added to the boundary test's register names (rule 14); the test parses the markdown table instead of searching a substring.
+Slow or unclear: George's decision 1 (exclude every analyst-created claim, "Add from deck" included) is not in the PR's code; the `auto_accepted` flag survives a rejection and a status change to pending, so a later Approve by hand reads "Auto-approved" again. Both reported as findings with reproductions, not built: the push was authorised for the memo change only.
+Root cause and rule: the memo put the approval into the evidence label's cell, mixing who approved with what the evidence says; one fact per column.
+Process change to propose: a PR that adds a mark on a claim lists every status transition (approve, reject, pending, edit, re-run) in one table with the mark's value after each, before the tests are written.

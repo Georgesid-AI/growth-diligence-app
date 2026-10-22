@@ -1,6 +1,10 @@
 # Spec: Claim matching: approved claims tested against the computed metrics
 Status: Draft; decisions of 2026-10-07 applied (§10). Location: docs/specs/claim-matching.md.
 Follows deck-parser.md §6.
+Amended 2026-10-22 (George, issue #155, option c): Run audit's within-tolerance step (§4.1) no longer approves, however close, a claim the analyst
+entered or edited, a claim flagged as a deck inconsistency, or a claim in a currency other than the audit's (until the FX source and date of
+issue #11 are fixed); it narrows the step of 2026-10-14 and keeps its metric set. A claim it approves reads "Auto-approved – matches revenue
+file (Δ x.x%)" and the register row gains `auto_approval` (§6, §8); the memo's Appendix A shows it in an Approval column (verdict-and-memo.md). No new threshold.
 Amended 2026-10-20 (George): a Revenue or revenue-growth claim while the engine holds no `revenue_series` is Unverified, "Not computed – revenue series not available"; no figure is read from any other block, and no gap or "Same metric and period?" is shown (table 2b).
 Amended 2026-10-20 (George's decisions of 2026-10-19 on issue #136): every observed figure carries its own citation, `observed_citation`
 "(source key, sheet, rows, period)", beside the number in the register, the banner (chat-upload.md S16b), the CSV and the memo (§6); a new
@@ -174,6 +178,21 @@ a share of the claim (`gap_normalised`); for a rate it is the gap in percentage 
   check, and blocks the verdict there. The toast reports it: ", Y with open definition check" (chat-upload.md §17). Run audit's
   within-tolerance step accepts only rows within tolerance (Verified, not a beat, no check): a beat of 5% to 50% and a bigger
   beat answered Yes stop at the review screen.
+- Amended 2026-10-22 (George, issue #155, option c). The within-tolerance step runs in Run audit's claims stage only, on pending claims, with
+  the tolerance and the Verified test above (no second threshold). It also leaves to the analyst: a claim the analyst entered (Add claim), picked
+  from a deck line (Add from deck, origin `deck_analyst`; George, 2026-10-22) or edited (a pending claim that carries `parsed`); a claim flagged as a deck inconsistency (`inconsistent_dates` or `inconsistencies` on the
+  candidate; the cross-deck check of integrity-coverage.md does not flag a claim); and a claim in a currency other than the audit's
+  (`claimed_converted` set on its row). Any metric stays eligible. The step approves ("approved", never "edited") and sets `auto_accepted`;
+  an edit of the claim clears it (the claim becomes Analyst-edited). The register row of a claim still approved, Verified, not a beat, with no
+  check and in the audit currency carries `auto_approval`: "Auto-approved – matches revenue file (Δ x.x%)", Δ the gap as a share of the
+  claim, one decimal ("Δ 0.5 pp" for a rate); otherwise null. Approve all touches pending claims only, so it skips an auto-approved one.
+- Amended 2026-10-22 (George, review of PR 157). (1) Any status the analyst sets (Reject, back to To review, Approve) clears `auto_accepted`, so a
+  later manual approval reads analyst. (2) An auto-approved claim (approved, `auto_accepted`) that no longer passes the within-tolerance test
+  after a re-run, a new file, an FX change or an as-of month change goes back to "To review" (pending, `auto_accepted` cleared) with `auto_note`
+  "No longer matches – was auto-approved", shown in the status cell. Tested with the register's own code at the end of every calculation and at
+  the start of the claims stage; with no results nothing is tested. A claim the analyst approved is never changed. A claim that later matches
+  again is approved on its own again and loses the note; any status the analyst sets clears it. (3) The review page's "claims within tolerance" and
+  the deck list's "(z auto)" both count approved claims with `auto_accepted`.
 - The baseline CSV (verdict-and-memo.md §5) downloads while a check is open, the row with an empty `evidence_label` and
   `definition_check` ask.
 - The register offers no "Set gate" button on a row with an open check; it has one again once the check is answered.
@@ -211,6 +230,7 @@ under `register`, beside today's `claims`; `register` is empty when the audit ha
 | `gap`, `gap_normalised`, `gap_kind` | float or null | miss, beat, to go |
 | `gloss` | str or null | table 3 |
 | `evidence_label`, `reason`, `tolerance` | str | table 4 (null while a Definition check is open, §4.1); "±5%", "±1 pp" |
+| `auto_approval` | str or null | §4.1 (2026-10-22): "Auto-approved – matches revenue file (Δ 1.1%)" for a claim Run audit approved on its own while it still matches; else null. The last field |
 | `definition_check`, `definition_question` | str or null | §4.1: null (no gap beyond the limit), ask, yes, no; the question, set whenever `definition_check` is |
 | `rank` | int | §3 |
 | `value_at_stake_arr` | float or null | null until issue #6 |

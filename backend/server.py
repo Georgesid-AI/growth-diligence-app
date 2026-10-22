@@ -1911,6 +1911,8 @@ async def list_deck_candidates(audit_id: str):
     turnover = claim_matching.turnover_views(candidates, current.get("results"), settings)
     # A gap beyond 50% of the claim asks "Same metric and period?" on the review screen, approved or not (claim-matching.md 4.1).
     definition = claim_matching.definition_views(candidates, current.get("results"), settings)
+    # A claim Run audit approved on its own reads "Auto-approved – matches revenue file (Δ x.x%)" with the figure's citation (issue #155).
+    auto = claim_matching.auto_views(candidates, current.get("results"), settings)
     # By the group of the claim type (revenue, P&L, customers and sales, market size, Unknown, Other), then ascending by
     # slide or page across all decks (a tie goes to the more recent deck), then reading order on the page: top to bottom
     # in bands of 2% of the height, then left to right, then the order the parser found them in.
@@ -1926,6 +1928,7 @@ async def list_deck_candidates(audit_id: str):
             c["fx"]["date_stale"] = True        # the date would come from stale results: the screen reads "Stale – re-run audit"
         c["turnover"] = turnover.get(c["id"])
         c["definition"] = definition.get(c["id"])
+        c.update(auto.get(c["id"]) or {"auto_approval": None, "auto_citation": None})
         # the figure type, population and growth basis as the register reads them, for the editor (claim-types-and-correction.md 3)
         c["claim_fields"] = claim_matching.candidate_fields(c, current.get("results"))
     peers = {}
@@ -2161,7 +2164,7 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
         # the type too.
         raise _rejected("claim_type", "choose a claim type for this item before approving it")
     if edits:
-        changes = {**edits, "status": "edited"}
+        changes = {**edits, "status": "edited", "auto_accepted": False, "auto_note": None}      # an edit makes it Analyst-edited: no longer approved on its own (issue #155)
         for field in _CLAIM_FIELDS:
             if field in edits:
                 changes[f"{field}_set_by"] = "analyst"
@@ -2198,7 +2201,7 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
             raise _rejected("status", "cannot be empty")
         # Approving an edited claim keeps it "edited": it is approved with the analyst's corrections.
         status = "edited" if payload.status == "approved" and "parsed" in current else payload.status
-        changes = {"status": status}
+        changes = {"status": status, "auto_accepted": False, "auto_note": None}     # a status the analyst sets is the analyst's decision (PR 157)
     await db[decks.CANDIDATES_COLLECTION].update_one(where, {"$set": changes})
     return sanitize(await db[decks.CANDIDATES_COLLECTION].find_one(where, {"_id": 0}))
 
@@ -2238,7 +2241,7 @@ async def approve_all_candidates(audit_id: str, payload: ApproveAll):
             continue
         try:
             await db[decks.CANDIDATES_COLLECTION].update_one(
-                {"audit_id": audit_id, "id": c["id"]}, {"$set": {"status": "edited" if "parsed" in c else "approved"}})
+                {"audit_id": audit_id, "id": c["id"]}, {"$set": {"status": "edited" if "parsed" in c else "approved", "auto_accepted": False, "auto_note": None}})
             approved.append(c["id"])
         except Exception:                      # a failed save leaves the claim to review and is counted; the rest go on
             skipped.append(c["id"])
@@ -2260,6 +2263,30 @@ async def _open_turnover_ids(audit_id: str, audit: dict, found: list) -> set:
             if any(v["turnover_set_by"] != "analyst" for v in views)}
 
 
+async def _revoke_stale_auto(audit_id: str, audit: dict) -> int:
+    """George, 2026-10-22 (claim-matching.md section 4.1): a claim Run audit approved on its own that no longer passes the within-tolerance
+    test (a re-run, a new file, an FX or as-of month change) goes back to "To review" with the note "No longer matches – was auto-approved".
+    Read with the register's own code, as the approving step does. A claim the analyst approved is never touched. Without results
+    (none yet, or stale until Run audit calculates again) nothing is tested, so nothing is sent back."""
+    audit = await _current_audit(audit_id, audit, strict=False)
+    if not audit.get("results"):
+        return 0
+    found = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
+    marked = [c["id"] for c in found if c.get("auto_accepted") and c.get("status") == "approved"]
+    if not marked:
+        return 0
+    rows = claim_matching.build_register(
+        sorted([c for c in found if c.get("status") in REGISTER_STATUSES], key=lambda c: (c.get("file") or "", c.get("order", 0))),
+        audit["results"], _register_settings(audit, await _fx(audit_id, audit), await _deck_take_rate(audit_id)), peers=found)
+    still = set(run_audit.within_tolerance_ids(rows, marked))
+    gone = [cid for cid in marked if cid not in still]
+    for cid in gone:
+        await db[decks.CANDIDATES_COLLECTION].update_one(
+            {"audit_id": audit_id, "id": cid},
+            {"$set": {"status": "pending", "auto_accepted": False, "auto_note": claim_matching.AUTO_REVOKED}})
+    return len(gone)
+
+
 async def _accept_within_tolerance(audit_id: str, audit: dict) -> dict:
     """Approve, as approve-all does, every pending claim the register would label Verified within tolerance (not a beat, which the
     analyst reviews, and not a Definition check, section 4.1). A claim whose
@@ -2267,6 +2294,7 @@ async def _accept_within_tolerance(audit_id: str, audit: dict) -> dict:
     screen. Each accepted claim is marked `auto_accepted`, so the review screen can list it and the analyst can still edit or
     reject it. No threshold or tolerance is read or changed here."""
     audit = await _current_audit(audit_id, audit, strict=False)
+    await _revoke_stale_auto(audit_id, audit)
     found = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
     pending = [c for c in found if c.get("status") == "pending" and c.get("claim_type") not in deck_claims.OTHER_TYPES]
     skipped_turnover = await _open_turnover_ids(audit_id, audit, found)
@@ -2277,7 +2305,7 @@ async def _accept_within_tolerance(audit_id: str, audit: dict) -> dict:
     rows = claim_matching.build_register(
         sorted(kept + trial, key=lambda c: (c.get("file") or "", c.get("order", 0))), audit.get("results"),
         _register_settings(audit, await _fx(audit_id, audit), await _deck_take_rate(audit_id)), peers=found)
-    ids = set(run_audit.within_tolerance_ids(rows, [c["id"] for c in decided]))
+    ids = set(run_audit.within_tolerance_ids(rows, [c["id"] for c in decided if not run_audit.never_on_its_own(c)]))
     accepted = []
     for c in decided:
         if c["id"] not in ids:
@@ -2285,7 +2313,7 @@ async def _accept_within_tolerance(audit_id: str, audit: dict) -> dict:
         try:
             await db[decks.CANDIDATES_COLLECTION].update_one(
                 {"audit_id": audit_id, "id": c["id"]},
-                {"$set": {"status": "edited" if "parsed" in c else "approved", "auto_accepted": True}})
+                {"$set": {"status": "approved", "auto_accepted": True, "auto_note": None}})
             accepted.append(c["id"])
         except Exception:
             continue
@@ -2369,7 +2397,7 @@ async def review_summary(audit_id: str):
         raise HTTPException(404, "Audit not found")
     datasets = await _counted(audit_id, await db.datasets.find({"audit_id": audit_id}, {"_id": 0, "rows": 0}).to_list(10))
     found = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
-    auto = [c["id"] for c in found if c.get("auto_accepted") and c.get("status") in REGISTER_STATUSES]
+    auto = [c["id"] for c in found if c.get("auto_accepted") and c.get("status") == "approved"]
     # Other figures are never a task (claim-types-and-correction.md section 4)
     pending = [c for c in found if c.get("status") == "pending" and c.get("claim_type") not in deck_claims.OTHER_TYPES]
     open_turnover = await _open_turnover_ids(audit_id, audit, found) if pending else set()
@@ -3120,6 +3148,7 @@ async def _run_compute(audit_id: str) -> dict:
         {"$set": {"results": results, "status": "computed", "computed_at": datetime.now(timezone.utc).isoformat(),
                   "metrics_stale": False}},
     )
+    await _revoke_stale_auto(audit_id, await db.audits.find_one({"id": audit_id}))
     return results
 
 
