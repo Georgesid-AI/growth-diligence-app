@@ -3297,3 +3297,58 @@ def test_the_compare_script_prints_counts_values_cells_and_statuses_and_no_line_
     assert not sorted(w for w in words if w in printed), "a line of a deck was printed"
     with pytest.raises(SystemExit, match="public test decks only"):
         script.main(["--diagnostic", "--deck", "client-deck.pdf"])
+
+
+def test_the_pages_run_prints_and_reports_no_line_of_a_deck_and_records_only_the_models_claims(monkeypatch, tmp_path, capsys, caplog):
+    """Rule 17 for scripts/consistency_run.py --pages (docs/design/ai-reads-rules-check.md section 7, PR B): its progress lines, its report
+    (kept in docs/test-runs), its JSON and the gateway's log lines for a stopped run carry deck file names, counts, tokens, cost and
+    cell ids, never a line of a deck. The recorded replies (kept under the fixtures) hold the model's claims as the schema allows
+    them (closed words, numbers, cell ids and a period) and, to find the page again, its first line as sent: public decks only."""
+    pytest.importorskip("pdfplumber")
+    pytest.importorskip("pptx")
+    import importlib.util
+    import logging
+    import tempfile
+    from app.decks import pages as page_grids
+    from app.decks import parser
+    from app.llm.schemas import PageClaimsReply
+    spec = importlib.util.spec_from_file_location("consistency_run", BACKEND.parent / "scripts" / "consistency_run.py")
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    caplog.set_level(logging.WARNING)
+    names = ["03-buffer.pptx", "05-zero2hero.pdf"]
+    report = script.main(["--pages", "--fake", "--max-spend", "0.1", "--deck", names[0], "--deck", names[1],
+                          "--out", str(tmp_path / "pages_report.json")])
+    assert report["stopped"] and report["decks_complete"] == 1, "the run stopped at --max-spend, so the stop's log lines are checked too"
+    assert set(report) == {"mode", "model", "prompt", "prompt_version", "passes", "decks_asked", "decks_complete", "max_spend_usd",
+                           "spent_usd", "stopped", "agreement_pct_all", "target_agreement_pct", "totals", "per_deck"}
+    assert set(report["totals"]) == {"calls", "batches", "read", "claims", "matched", "unmatched", "dropped", "input_tokens",
+                                     "output_tokens"}
+    for deck in report["per_deck"].values():
+        assert set(deck) <= {"pages", "sent", "passes", "agreement_pct", "complete", "agreed", "claims_union"}
+        assert all(set(row) == {"claims", "matched", "unmatched", "dropped", "input_tokens", "output_tokens", "batches", "read",
+                                "calls", "cost_usd"} for row in deck["passes"])
+    written = capsys.readouterr().out + "".join(p.read_text(encoding="utf-8") for p in tmp_path.glob("pages_*.md")) + \
+        (tmp_path / "pages_report.json").read_text(encoding="utf-8") + "\n".join(r.getMessage() for r in caplog.records)
+    assert "reason=spend_stop" in written
+    words, lines = set(), set()
+    for name in names:
+        deck = parser.parse_deck((script.DECKS / name).read_bytes(), name)
+        for block in deck["blocks"]:
+            text = block["text"]
+            if len(text) >= 8 and any(c.isalpha() for c in text) and not any(text in n for n in names):
+                words.add(text)
+        for grid in page_grids.page_grids(deck["blocks"]):
+            lines |= {c["text"] for c in grid["cells"] if len(c["text"]) >= 12}
+    assert len(words) > 50 and "Traction" in words, "the check sees the decks' lines"
+    assert not sorted(w for w in words | lines if w in written), "a line of a deck was written or printed"
+    recorded = sorted(tmp_path.glob("pages_*/pass-*/*.json"))
+    assert recorded, "the stopped run recorded the pass it paid for"
+    for path in recorded:
+        body = json.loads(path.read_text(encoding="utf-8"))
+        assert set(body) == {"file", "page", "match", "pass", "prompt_version", "model", "claims"} and body["file"] in script.PUBLIC_DECKS
+        assert re.fullmatch(rf"p{body['page']}r\d+c\d+( title)?: .*", body["match"]) and "\n" not in body["match"]
+        PageClaimsReply.model_validate({"type": "page_claims", "claims": body["claims"]})
+        assert all(re.fullmatch(r"p\d+r\d+c\d+", str(c[k])) for c in body["claims"] for k in ("value_cell",)
+                   ) and all(set(c) == set(PageClaimsReply.model_fields["claims"].annotation.__args__[0].model_fields) for c in body["claims"])

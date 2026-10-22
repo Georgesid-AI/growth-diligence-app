@@ -60,6 +60,23 @@ before its spec commit (docs/specs/README.md): the structure text with its item 
 header cells and the period Python rebuilds, a roadmap's date direction and each line's adjacent and position
 date, then the approval rows the recorded replies give (count, milestones, rows with a Label from). No network,
 no MongoDB, no report. It prints cell text, so like --diagnostic it runs on the 10 public test decks only.
+
+--pages [--passes 3] [--max-spend 4] [--zip run.zip] [--deck ...] runs the page_claims step instead (docs/design/ai-reads-rules-check.md
+sections 6 and 7, PR B): the model reads the redacted text lines of every page that carries a figure in digits, 5 pages per call with
+the fixed prompt cached by the provider, and page_check checks each claim. DECK_PIPELINE=ai and LLM_DAILY_SPEND_CAP_USD=<max-spend>
+are set for this script's own calls only (the process environment is restored after). The page_claims prompt is copied from the app's
+prompt store (the database named by DB_NAME) into the scratch database, as above; the report names its version only. Each pass reads
+every deck in its own throwaway audit, so a later pass never hits the gateway's cache and agreement measures the model. The 10 public test
+decks only (checked by file name and SHA-256), always: the recorded replies hold the line that identifies each page.
+Hard stop: before each provider call the run adds the most that call can cost (its counted input at list price plus max_tokens of
+output) to what it has spent, and refuses the call if the sum passes --max-spend; the cost is an upper bound, a prompt-cache read being
+billed below list. A stopped run ends cleanly, says so in its report, and gives agreement over the decks that every pass read in full.
+Writes, per pass, one file per page that has claims to backend/tests/fixtures/page_replies/recorded/<run>/pass-<n>/<deck>_p<page>.json
+(the model's claims as returned: closed words, numbers and cell ids, with the page's first line as sent to find it again; the format
+of the hand-written files beside them) and the run output to docs/test-runs/pages_<date>.md (-2, -3, ... for a later run that day):
+counts, tokens, cost and agreement on (value cell, metric, period), no deck text. --zip bundles both under their repository paths.
+--fake --pages replays the hand-written replies of backend/tests/fixtures/page_replies/ with no network and no MongoDB; everything it
+writes goes to the system temp folder.
 """
 import argparse
 import asyncio
@@ -69,13 +86,18 @@ import json
 import os
 import sys
 import tempfile
+import time
+import zipfile
 from collections import defaultdict
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
 DECKS = ROOT / "tests" / "fixtures" / "decks" / "decks"
 REPORTS = ROOT / "docs" / "test-runs"
+PAGE_REPLIES = BACKEND / "tests" / "fixtures" / "page_replies"
+RECORDED = PAGE_REPLIES / "recorded"       # the model's own replies, one folder per run; the hand-written files stay beside it
 SCRATCH = "consistency_run"          # a scratch database is named this or starts with it and "_"
 # The 10 public test decks (tests/fixtures/decks/README.md): file name -> SHA-256 of the file. --diagnostic writes
 # cell text and runs on these only.
@@ -202,6 +224,67 @@ class FakeAdapter:
         text = json.dumps(reply)
         billed = self.count_tokens(model=model, system=system, user_payload=user_payload, json_schema=json_schema)
         return text, billed, len(text) // self.CHARS_PER_TOKEN
+
+
+class PageReplayAdapter:
+    """--fake --pages and scripts/compare_pipelines.py: no network. Replays the recorded page replies (backend/tests/fixtures/
+    page_replies/, one fixture per page): a batch's reply holds the claims of every fixture whose match line is in the text sent.
+    A page with no fixture gives no claim. Token counts take CHARS_PER_TOKEN characters per token, as FakeAdapter's do."""
+
+    CHARS_PER_TOKEN = 2
+
+    def __init__(self, fixtures=None):
+        if fixtures is None:
+            fixtures = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(PAGE_REPLIES.glob("*.json"))]
+        self.fixtures = [f for f in fixtures if "match" in f]
+        self.calls = 0
+
+    def count_tokens(self, *, model, system, user_payload, json_schema):
+        sent = len(system or "") + len(user_payload) + (len(json.dumps(json_schema)) if json_schema else 0)
+        return sent // self.CHARS_PER_TOKEN
+
+    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False):
+        self.calls += 1
+        sent = json.loads(user_payload)
+        claims = [c for f in self.fixtures if f["match"] in sent["text"] for c in f["claims"]]
+        text = json.dumps({"type": sent["type"], "claims": claims})
+        return text, self.count_tokens(model=model, system=system, user_payload=user_payload, json_schema=json_schema), \
+            len(text) // self.CHARS_PER_TOKEN
+
+
+class SpendGuard:
+    """The hard stop of --pages. Wraps the adapter the gateway calls: before each provider call it adds the most the call can
+    cost (the input the gateway just counted for it, plus max_tokens of output, at list price: a prompt-cache read is billed
+    below it, so this is an upper bound) to what the run has spent, and refuses the call when the sum passes max_spend. The
+    refusal is a GatewayError, so the gateway answers "not read" for that batch and every later one without a provider call.
+    `pause` seconds go between calls (the call runs in a worker thread, so the wait blocks nothing else)."""
+
+    def __init__(self, inner, max_spend, pause=0.0, sleep=time.sleep):
+        self.inner, self.max_spend, self.pause, self._sleep = inner, float(max_spend), pause, sleep
+        self.spent, self.calls, self.stopped = 0.0, 0, False
+        self._counted = None
+
+    def count_tokens(self, *, model, system, user_payload, json_schema):
+        counted = self.inner.count_tokens(model=model, system=system, user_payload=user_payload, json_schema=json_schema)
+        if system:
+            self._counted = counted             # the whole call's count, which the gateway takes last, just before the call
+        return counted
+
+    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False):
+        from app.llm import gateway
+        counted = self._counted if self._counted is not None else (len(system or "") + len(user_payload)) // 2 + 1
+        self._counted = None
+        if self.stopped or self.spent + gateway.estimate_cost_usd(model, counted, max_tokens) > self.max_spend:
+            self.stopped = True
+            raise gateway.GatewayError("spend_stop", "the next call could pass --max-spend")
+        if self.calls and self.pause:
+            self._sleep(self.pause)
+        self.calls += 1
+        reply, tokens_in, tokens_out = self.inner.complete(
+            model=model, system=system, user_payload=user_payload, max_tokens=max_tokens, temperature=temperature,
+            json_schema=json_schema, cache_system=cache_system)
+        self.spent += gateway.estimate_cost_usd(model, tokens_in, tokens_out)
+        return reply, tokens_in, tokens_out
 
 
 FIELDS = ("metric", "period", "unit", "actual_or_forecast")
@@ -667,7 +750,7 @@ def write_report(report, folder, passes, fake=False):
         f"# Consistency run {day}", "",
         f"{'Fake run: recorded replies, no live API.' if fake else 'Live API.'} Decks: {len(decks)}. "
         f"Passes: {passes}. Model: {gateway.STRUCTURE_MODEL}. "
-        f"Prompt: {gateway.STRUCTURE_PROMPT} {report["prompt_version"]}. "
+        f"Prompt: {gateway.STRUCTURE_PROMPT} {report['prompt_version']}. "
         "Method: docs/specs/structure-labelling.md sections 6 and 7.", "",
         summary(report), "",
         "## Agreement per structure type", "",
@@ -842,6 +925,184 @@ async def probe(decks, pages=None, out=print):
                     f"date_from={row['date_from']!r}")
 
 
+# ---------------------------------------------------------------------------
+# --pages: the page_claims step on the public decks (docs/design/ai-reads-rules-check.md section 7, PR B)
+# ---------------------------------------------------------------------------
+PAGES_TARGET_AGREEMENT = 95.0
+
+
+def pages_run_name(folder):
+    """pages_<date>, then pages_<date>-2, -3, ... when that day's report is already in `folder`: a paid run is never overwritten."""
+    day = datetime.date.today().isoformat()
+    name, n = f"pages_{day}", 1
+    while (folder / f"{name}.md").exists():
+        n += 1
+        name = f"pages_{day}-{n}"
+    return name
+
+
+def _triples(claims):
+    """What agreement compares: a pass's claims as (value cell, metric, period). Closed words, numbers and cell ids."""
+    return {(c["value_cell"], c["metric"], c.get("period")) for c in claims}
+
+
+def _write_recorded(folder, file, n, reads, lines, prompt_version):
+    """One file per page with claims in folder/pass-<n>/, in the format of the hand-written files beside them: the model's
+    claims for that page as returned, and the page's first line as sent, so compare_pipelines.py finds the page again."""
+    from app.llm import gateway
+    from app.structures import page_check
+    out = folder / f"pass-{n}"
+    for _, result in reads:
+        if result.status != "read":
+            continue
+        for page in sorted({page_check.split_cell_id(c["value_cell"])[0] for c in result.claims}):
+            claims = [c for c in result.claims if page_check.split_cell_id(c["value_cell"])[0] == page]
+            if not claims or page not in lines:
+                continue
+            out.mkdir(parents=True, exist_ok=True)
+            (out / f"{Path(file).stem.split('-', 1)[-1]}_p{page}.json").write_text(json.dumps({
+                "file": file, "page": page, "match": lines[page], "pass": n, "prompt_version": prompt_version,
+                "model": gateway.STRUCTURE_MODEL, "claims": claims}, indent=1) + "\n", encoding="utf-8")
+
+
+async def run_pages(decks, passes, db, adapter=None, *, max_spend=4.0, pause=0.0, record_folder=None, prompt_source=None,
+                    sleep=None, out=print):
+    """The page_claims step on `decks`, `passes` times each, in the scratch/memory `db`. Each pass reads a deck in its own audit
+    (consent ticked), so no pass hits the gateway's cache. `adapter` is the provider (default: the live one), wrapped in a
+    SpendGuard; DECK_PIPELINE=ai and the daily spend cap = max_spend are set for these calls only. With `record_folder` each
+    pass's replies are written there as soon as the pass ends, so a crash or a stop keeps what was paid for. Returns the report
+    dict: counts, tokens, cost and agreement, never a line of a deck."""
+    from app.decks import pages as page_grids
+    from app.decks import parser
+    from app.llm import gateway, prompt_store
+    from app.structures import page_check, redact
+    from app.structures import pages as pipeline
+
+    sleep = sleep or asyncio.sleep
+    if prompt_source is not None:
+        await copy_prompt(prompt_source, db, gateway.PAGE_CLAIMS_PROMPT)
+    try:
+        prompt = await prompt_store.load(db, gateway.PAGE_CLAIMS_PROMPT)
+    except prompt_store.PromptMissing:
+        sys.exit(prompt_store.NO_PROMPT)
+    guard = SpendGuard(adapter or gateway.AnthropicAdapter(), max_spend, pause)
+    per_deck = {}
+    with mock.patch.dict(os.environ, {"DECK_PIPELINE": "ai", "LLM_DAILY_SPEND_CAP_USD": str(max_spend)}):
+        for d, file in enumerate(decks, 1):
+            if guard.stopped:
+                break
+            stem = Path(file).stem
+            grids = page_grids.page_grids(parser.parse_deck((DECKS / file).read_bytes(), file)["blocks"])
+            sent = pipeline.redacted_pages(grids, stem, {})
+            lines = {page_grids.page_number(p["grid"]): redact.page_text([(page_grids.page_number(p["grid"]), p["cells"])]).split("\n")[0]
+                     for p in sent}
+            deck = per_deck[file] = {"pages": len(grids), "sent": len(sent), "passes": [], "agreement_pct": None, "complete": False}
+            seen = []
+            for n in range(1, passes + 1):
+                if guard.stopped:
+                    break
+                audit_id = f"pages-{stem}-pass{n}"
+                await db["audits"].insert_one({"id": audit_id, "company_name": stem, "structure_reading_consent": True})
+                calls_before = guard.calls
+                reads = await pipeline.read_pages(db, audit_id, file, grids, stem, {}, adapter=guard, sleep=sleep)
+                row = dict.fromkeys(("claims", "matched", "unmatched", "dropped", "input_tokens", "output_tokens"), 0)
+                row.update(batches=len(reads), read=0, calls=guard.calls - calls_before, cost_usd=0.0)
+                claims = []
+                for batch, result in reads:
+                    row["input_tokens"] += result.input_tokens
+                    row["output_tokens"] += result.output_tokens
+                    row["cost_usd"] = round(row["cost_usd"] + result.estimated_cost_usd, 6)
+                    if result.status != "read":
+                        continue
+                    row["read"] += 1
+                    claims += result.claims
+                    grouped = page_check.by_page(result.claims)
+                    for grid in batch:
+                        checked = page_check.check(grid, grouped.get(page_grids.page_number(grid), []))
+                        row["matched"] += checked["matched"]
+                        row["unmatched"] += checked["unmatched"]
+                        row["dropped"] += checked["dropped"]
+                row["claims"] = len(claims)
+                deck["passes"].append(row)
+                seen.append(_triples(claims))
+                if record_folder is not None:
+                    _write_recorded(record_folder, file, n, reads, lines, prompt.version)
+                out(f"[{d}/{len(decks)}] {file} pass {n}/{passes}: {row['read']} of {row['batches']} batches read, "
+                    f"{row['claims']} claims ({row['matched']} matched), {row['input_tokens'] + row['output_tokens']:,} tokens, "
+                    f"${row['cost_usd']:.4f}", flush=True)
+            deck["complete"] = len(seen) == passes and all(r["read"] == r["batches"] for r in deck["passes"])
+            if deck["complete"]:
+                union, same = set().union(*seen), set.intersection(*seen)
+                deck["agreement_pct"] = round(100.0 * len(same) / len(union), 1) if union else 100.0
+                deck["agreed"], deck["claims_union"] = len(same), len(union)
+    complete = [v for v in per_deck.values() if v["complete"]]
+    agreed, union = sum(v["agreed"] for v in complete), sum(v["claims_union"] for v in complete)
+    totals = {k: sum(r[k] for v in per_deck.values() for r in v["passes"])
+              for k in ("calls", "batches", "read", "claims", "matched", "unmatched", "dropped", "input_tokens", "output_tokens")}
+    return {
+        "mode": "pages", "model": gateway.STRUCTURE_MODEL, "prompt": gateway.PAGE_CLAIMS_PROMPT, "prompt_version": prompt.version,
+        "passes": passes, "decks_asked": len(decks), "decks_complete": len(complete),
+        "max_spend_usd": float(max_spend), "spent_usd": round(guard.spent, 6), "stopped": guard.stopped,
+        "agreement_pct_all": round(100.0 * agreed / union, 1) if union else None,
+        "target_agreement_pct": PAGES_TARGET_AGREEMENT, "totals": totals, "per_deck": per_deck,
+    }
+
+
+def _agreement_text(value):
+    return "n/a" if value is None else f"{value}%"
+
+
+def pages_summary(report):
+    stop = f"STOPPED at --max-spend ${report['max_spend_usd']:.2f}; " if report["stopped"] else ""
+    t = report["totals"]
+    return (f"Pages run: {stop}{report['decks_complete']} of {report['decks_asked']} decks read in full in every pass; agreement "
+            f"{_agreement_text(report['agreement_pct_all'])} (target {report['target_agreement_pct']}%); "
+            f"{t['read']} of {t['batches']} batches read in {t['calls']} calls; {t['claims']} claims, {t['matched']} matched, "
+            f"{t['unmatched']} unmatched, {t['dropped']} dropped; spent at most ${report['spent_usd']:.4f} of ${report['max_spend_usd']:.2f}.")
+
+
+def write_pages_report(report, folder, name, fake=False):
+    """folder/<name>.md (name from pages_run_name): counts, tokens, cost and agreement; no deck text."""
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{name}.md"
+    t = report["totals"]
+    lines = [
+        f"# Pages run {name.removeprefix('pages_')}", "",
+        f"{'Fake run: recorded replies, no live API.' if fake else 'Live API.'} Decks: {report['decks_asked']}. Passes: {report['passes']}. "
+        f"Model: {report['model']}. Prompt: {report['prompt']} {report['prompt_version']}. 5 pages per call, prompt cached. "
+        "Method: docs/design/ai-reads-rules-check.md sections 6 and 7.", "",
+        pages_summary(report), "",
+        "## Agreement per deck", "",
+        "Claims (value cell, metric, period) found in every pass / claims found in any pass, over the decks every pass read in full. "
+        f"Target: at least {report['target_agreement_pct']}% over all decks.", "",
+        "| Deck | Pages | Sent | Agreement | Claims per pass | Matched per pass | Unmatched per pass |", "|---|---:|---:|---:|---|---|---|",
+        *(f"| {f} | {v['pages']} | {v['sent']} | {_agreement_text(v['agreement_pct']) if v['complete'] else 'not complete'} | "
+          f"{' / '.join(str(r['claims']) for r in v['passes']) or '-'} | {' / '.join(str(r['matched']) for r in v['passes']) or '-'} | "
+          f"{' / '.join(str(r['unmatched']) for r in v['passes']) or '-'} |" for f, v in report["per_deck"].items()),
+        f"| all | | | {_agreement_text(report['agreement_pct_all'])} | | | |", "",
+        "## Tokens and cost", "",
+        "The cost is an upper bound: tokens read from the provider's prompt cache are counted at list price.", "",
+        "| Deck | Pass | Batches read | Calls | Input tokens | Output tokens | Cost |", "|---|---:|---:|---:|---:|---:|---:|",
+        *(f"| {f} | {n} | {r['read']} of {r['batches']} | {r['calls']} | {r['input_tokens']:,} | {r['output_tokens']:,} | ${r['cost_usd']:.4f} |"
+          for f, v in report["per_deck"].items() for n, r in enumerate(v["passes"], 1)),
+        f"| all | | {t['read']} of {t['batches']} | {t['calls']} | {t['input_tokens']:,} | {t['output_tokens']:,} | ${report['spent_usd']:.4f} |", "",
+    ]
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
+def bundle(zip_path, report_path, record_folder):
+    """--zip: the run's report and recorded replies in one zip, under their repository paths so it unpacks at the repository root
+    (a fake run's files: under the temp folder they were written to)."""
+    files = [report_path, *(sorted(record_folder.rglob("*.json")) if record_folder.exists() else [])]
+    base = ROOT if report_path.is_relative_to(ROOT) else report_path.parent
+    zip_path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
+        for f in files:
+            z.write(f, f.relative_to(base).as_posix() if f.is_relative_to(base) else f.name)
+    return len(files)
+
+
 def not_public(decks):
     """The first deck that is not one of the 10 public test decks, by file name and SHA-256, or None."""
     for name in decks:
@@ -852,12 +1113,13 @@ def not_public(decks):
     return None
 
 
-async def copy_prompt(store, scratch):
-    """The scratch database starts empty, so the live run copies the latest structure_reading prompt from the app's
-    prompt store (DB_NAME) into it. The text is read, never printed or written to the report: only its version is."""
+async def copy_prompt(store, scratch, name=None):
+    """The scratch database starts empty, so the live run copies the latest structure_reading prompt (--pages: page_claims)
+    from the app's prompt store (DB_NAME) into it. The text is read, never printed or written to the report: only its
+    version is."""
     from app.llm import gateway, prompt_store
     try:
-        prompt = await prompt_store.load(store, gateway.STRUCTURE_PROMPT)
+        prompt = await prompt_store.load(store, name or gateway.STRUCTURE_PROMPT)
     except prompt_store.PromptMissing:
         sys.exit(prompt_store.NO_PROMPT)
     await scratch[prompt_store.COLLECTION].insert_one(
@@ -877,12 +1139,17 @@ async def live(args, decks, rows=None):
                 print(f"Dropped scratch database {name} left by an earlier run", flush=True)
         try:
             store_name = os.environ.get("DB_NAME") or sys.exit("DB_NAME is not set: the live run copies the structure_reading prompt from the app's prompt store.")
+            if args.pages:
+                name = pages_run_name(REPORTS)
+                report = await run_pages(decks, args.passes, client[args.db], max_spend=args.max_spend, pause=args.pause,
+                                         record_folder=RECORDED / name, prompt_source=client[store_name])
+                return report, write_pages_report(report, REPORTS, name), RECORDED / name
             report = await run(decks, args.passes, client[args.db], pause=args.pause, diagnostic=rows,
                                prompt_source=client[store_name])
             path = write_report(report, REPORTS, args.passes)            # before the drop: a failed drop keeps it
             if rows is not None:
                 write_diagnostic(rows, path, args.passes)
-            return report, path
+            return report, path, None
         finally:
             if not args.keep_db:
                 await client.drop_database(args.db)
@@ -907,17 +1174,35 @@ def main(argv=None):
                     help="print each structure as sent, its items' periods and its approval rows under the recorded "
                          "replies; no run, no report (the 10 public test decks only)")
     ap.add_argument("--page", type=int, action="append", help="with --probe: only this slide or page (repeatable)")
+    ap.add_argument("--pages", action="store_true",
+                    help="run the page_claims step on the public decks (--passes, --max-spend, --zip); docs/design/ai-reads-rules-check.md")
+    ap.add_argument("--max-spend", type=float, default=4.0, help="with --pages: stop before a call that could pass this many USD (default 4)")
+    ap.add_argument("--zip", help="with --pages: also bundle the report and the recorded replies in this zip file")
     args = ap.parse_args(argv)
     decks = args.deck or sorted(p.name for p in DECKS.iterdir() if not p.name.startswith("."))
-    outside = not_public(decks) if args.diagnostic or args.probe else None
+    if args.pages and (args.probe or args.diagnostic or args.page):
+        sys.exit("--pages cannot be combined with --probe, --diagnostic or --page.")
+    if (args.zip or args.max_spend != 4.0) and not args.pages:
+        sys.exit("--zip and --max-spend belong to --pages.")
+    if args.pages and not args.max_spend > 0:
+        sys.exit("--max-spend must be more than 0.")
+    outside = not_public(decks) if args.diagnostic or args.probe or args.pages else None
     if outside is not None:
-        sys.exit(f"{'--probe' if args.probe else '--diagnostic'} runs on the 10 public test decks only: {outside} is "
+        sys.exit(f"{'--probe' if args.probe else '--pages' if args.pages else '--diagnostic'} runs on the 10 public test decks only: {outside} is "
                  "not one of them (checked by file name and SHA-256).")
     if args.probe:
         asyncio.run(probe(decks, args.page))
         return None
     rows = [] if args.diagnostic else None
-    if args.fake:
+    recorded = None
+    if args.fake and args.pages:
+        folder = Path(tempfile.gettempdir())
+        name = pages_run_name(folder)
+        recorded = folder / name
+        report = asyncio.run(run_pages(decks, args.passes, MemoryDB(), PageReplayAdapter(), max_spend=args.max_spend,
+                                       record_folder=recorded))
+        path = write_pages_report(report, folder, name, fake=True)
+    elif args.fake:
         report = asyncio.run(run(decks, args.passes, MemoryDB(), FakeAdapter(), diagnostic=rows))
         path = write_report(report, Path(tempfile.gettempdir()), args.passes, fake=True)
         if rows is not None:
@@ -929,13 +1214,16 @@ def main(argv=None):
             sys.exit("This run calls the live API and costs money. Re-run with --yes to confirm.")
         if not _scratch(args.db):
             sys.exit(f"--db must be {SCRATCH} or start with {SCRATCH}_: the run drops it at the end.")
-        report, path = asyncio.run(live(args, decks, rows))
+        report, path, recorded = asyncio.run(live(args, decks, rows))
+    if args.pages and args.zip:
+        files = bundle(Path(args.zip).resolve(), path, recorded)
+        print(f"Zip: {args.zip} ({files} files)")
     if args.out:
         Path(args.out).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(f"Report: {path}")
     if rows is not None:
         print(f"Diagnostic: {diagnostic_path(path)}")                  # its path only: its cell text stays in the file
-    print(summary(report))
+    print(pages_summary(report) if args.pages else summary(report))
     print(path.read_text(encoding="utf-8"), end="", flush=True)     # also on screen; the file is committed
     return report
 
