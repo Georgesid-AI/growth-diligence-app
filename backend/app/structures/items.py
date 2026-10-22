@@ -38,15 +38,15 @@ def _first(choices: List, default) -> List:
     return sorted(choices, key=lambda c: c != default)
 
 
-def list_items(structure: Dict) -> Dict:
+def list_items(structure: Dict, titles: bool = False) -> Dict:
     """{"items": [...], "dates": [...], "lines": [...]} for a structure's (redacted) cells; dates and lines are
-    empty unless it is a roadmap."""
+    empty unless it is a roadmap. A title cell holds no item unless titles is True (page_check reads the figures of title lines)."""
     cells = sorted(structure["cells"], key=lambda c: (c["row"], c["col"]))
     comma = verify.decimal_comma(cells)
     out = []
     for cell in cells:
         text = redact.cell_text(cell)                 # as its cell line writes it, so raw text stays inside it
-        if verify.period_header(text) or cell.get("title"):
+        if verify.period_header(text) or (cell.get("title") and not titles):
             continue                                  # "Q3", "Mar", "M3", "Year 1": a period header, never a value;
                                                       # a title used as a label (deck-parser.md section 7) neither
         figures = verify.figures(text, comma)

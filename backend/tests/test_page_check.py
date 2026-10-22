@@ -290,3 +290,42 @@ def test_a_value_matches_the_figure_whose_own_unit_agrees_before_a_written_numbe
     assert mrr["status"] == MATCHED and mrr["position"] == 1
     assert one(g, claim("r1c1", 15000, unit="USD"))["checks"]["unit"] is False
     assert one(g, claim("r1c1", 15000, unit="%"))["checks"]["unit"] is False
+
+
+# ---------------------------------------------------------------------------
+# Follow-up to PR #161 (docs/test-runs/pages_2026-10-22_analysis.md section 6, changes 1, 2, 3 and 7)
+# ---------------------------------------------------------------------------
+def test_a_figure_in_a_title_line_is_found_by_the_value_check():
+    """Change 1 (front-b p6 r1c1, moz p31 r1c1, moz p35 r1c2, moz p3 r3c1): list_items skips title cells, so no item was found."""
+    page = grid([line(1, "2300 companies use Front today", 1, title=True), line(2, "Support teams", 2)])
+    got = one(page, claim("r1c1", 2300, metric="customers", unit="count", label_cell="r1c1"))
+    assert got["checks"]["value"] is True and got["status"] == MATCHED and got["value"] == 2300 and got["position"] == 1
+
+
+def test_a_plus_between_the_number_and_its_scale_is_read_with_the_scale():
+    """Change 2 (moz p3 r5c2 "1.2+MM", moz p9 r6c2 "$31+ Billion"): the "+" hid the scale, the figure read 1.2 and 31."""
+    page = grid([line(1, "Users", 1), line(2, "1.2+MM", 2), line(3, "Market", 3), line(4, "$31+ Billion", 4)])
+    users = one(page, claim("r2c1", 1200000, metric="users", unit="count", label_cell="r1c1"))
+    market = one(page, claim("r4c1", 31000000000, metric="market", unit="USD", label_cell="r3c1"))
+    assert users["checks"]["value"] is True and users["value"] == 1200000
+    assert market["checks"]["value"] is True and market["value"] == 31000000000
+
+
+def test_the_trillion_scale_is_read():
+    """Change 3 (genesisai-2024 p4 r3c1 "$2.8T"): verify.figures read 2.8; claims._SCALE already knew T."""
+    page = grid([line(1, "Market", 1), line(2, "$2.8T", 2), line(3, "Opportunity of 1.5 trillion dollars", 3)])
+    got = one(page, claim("r2c1", 2.8e12, metric="market", unit="USD", label_cell="r1c1"))
+    assert got["checks"]["value"] is True and got["value"] == 2.8e12
+    assert one(page, claim("r3c1", 1.5e12, metric="market", unit="USD"))["checks"]["value"] is True
+
+
+def test_a_neighbouring_line_with_its_own_figure_is_not_a_date_source():
+    """Change 7 (genesisai-2024 p5 r4c1 "2,600+ users"): r3c1 "$8,000 revenue in 2022" is a figure's line, not the date of the
+    users line next to it, so a null period stands."""
+    page = grid([line(1, "STRONG", 1, title=True),
+                 line(2, "$8,000 revenue in 2022", 2, next_to=["r3c1"]),
+                 line(3, "2,600+ users", 3, next_to=["r2c1"])])
+    got = one(page, claim("r3c1", 2600, metric="users", unit="count", label_cell="r3c1"))
+    assert got["checks"]["period"] is True and got["status"] == MATCHED
+    pure = grid([line(1, "STRONG", 1, title=True), line(2, "in 2022", 2, next_to=["r3c1"]), line(3, "2,600+ users", 3, next_to=["r2c1"])])
+    assert one(pure, claim("r3c1", 2600, metric="users", unit="count"))["checks"]["period"] is False, "a pure date line still is one"

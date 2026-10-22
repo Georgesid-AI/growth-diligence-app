@@ -80,7 +80,7 @@ _LETTER = re.compile(r"[^\W\d_]")
 _RANGE_DASH = re.compile(r"\s*[-−–]\s*")     # a range dash right after the low end ("6-7"), which NUMBER takes as no sign
 _SCALE_WORD = {"k": 1e3, "thousand": 1e3, "thousands": 1e3, "tsd": 1e3, "хил": 1e3,
                "m": 1e6, "mn": 1e6, "mm": 1e6, "million": 1e6, "millions": 1e6, "mio": 1e6, "млн": 1e6,
-               "b": 1e9, "bn": 1e9, "billion": 1e9, "billions": 1e9, "mrd": 1e9, "млрд": 1e9}
+               "b": 1e9, "bn": 1e9, "billion": 1e9, "billions": 1e9, "mrd": 1e9, "t": 1e12, "trillion": 1e12, "trillions": 1e12, "млрд": 1e9}
 # A scale given in a cell of its own or in a header: "£m", "(£000)", "'000", "in millions", "€ Mio".
 _SCALE_MARK = re.compile(
     r"(?i)(?:(?<![^\W\d_])(?P<word>thousands?|millions?|billions?|tsd|mio|mrd|млн|млрд|хил)(?![^\W\d_])"
