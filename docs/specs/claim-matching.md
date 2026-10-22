@@ -4,7 +4,7 @@ Follows deck-parser.md §6.
 Amended 2026-10-22 (George, issue #155, option c): Run audit's within-tolerance step (§4.1) no longer approves, however close, a claim the analyst
 entered or edited, a claim flagged as a deck inconsistency, or a claim in a currency other than the audit's (until the FX source and date of
 issue #11 are fixed); it narrows the step of 2026-10-14 and keeps its metric set. A claim it approves reads "Auto-approved – matches revenue
-file (Δ x.x%)" and the register row gains `auto_approval` (§6, §8). No new threshold.
+file (Δ x.x%)" and the register row gains `auto_approval` (§6, §8); the memo's Appendix A shows it in an Approval column (verdict-and-memo.md). No new threshold.
 Amended 2026-10-20 (George): a Revenue or revenue-growth claim while the engine holds no `revenue_series` is Unverified, "Not computed – revenue series not available"; no figure is read from any other block, and no gap or "Same metric and period?" is shown (table 2b).
 Amended 2026-10-20 (George's decisions of 2026-10-19 on issue #136): every observed figure carries its own citation, `observed_citation`
 "(source key, sheet, rows, period)", beside the number in the register, the banner (chat-upload.md S16b), the CSV and the memo (§6); a new

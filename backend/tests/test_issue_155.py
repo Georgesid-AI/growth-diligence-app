@@ -146,8 +146,15 @@ def test_the_baseline_csv_and_the_memo_register_show_auto(run_api):
     cell = table[1][table[0].index("auto_approval")]
     assert cell == TEXT, cell
 
+    # George (PR 157): the Label column stays the plain evidence label; a separate Approval column reads auto or analyst.
     rows = copy.deepcopy(inputs()["rows"])
     rows[0]["auto_approval"] = TEXT
     memo = im.build_memo(**{**inputs(), "rows": rows})
     appendix = memo.split("## Appendix A")[1].split("## Appendix B")[0]
-    assert f"{rows[0]['evidence_label']} (auto)" in appendix and appendix.count("(auto)") == 1
+    table = [[c.strip() for c in line.strip("|").split("|")] for line in appendix.splitlines() if line.startswith("| ")]
+    header, body = table[0], table[1:]
+    assert header[:4] == ["#", "Claim", "Label", "Approval"]
+    approval = {r[0]: (r[2], r[3]) for r in body}
+    assert approval[f"#{rows[0]['rank']}"] == (rows[0]["evidence_label"], cm.AUTO_LABEL)
+    assert {v[1] for k, v in approval.items() if k != f"#{rows[0]['rank']}"} == {cm.ANALYST_LABEL}
+    assert "(auto)" not in appendix

@@ -1428,6 +1428,7 @@ def build_register(candidates: List[dict], results: Optional[dict], settings: di
 # Issue #155 (George, 2026-10-22): a claim Run audit approved on its own reads this in the register, the deck list, the CSV and the memo.
 AUTO_APPROVAL = "Auto-approved – matches revenue file (Δ {delta})"
 AUTO_LABEL = "auto"
+ANALYST_LABEL = "analyst"          # the memo's Approval column for every other register row (George, PR 157)
 RATE_TOLERANCE_TEXT = "±1 pp"
 
 

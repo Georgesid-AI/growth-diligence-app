@@ -1,7 +1,8 @@
 # Spec: Gates, verdict and IC memo (method A9, A10, A11)
 Status: Final (2026-10-08). Every decision is in §12 and every wording item in §11 is approved.
 Amended 2026-10-22 (George, issue #155, claim-matching.md §4.1): the register's field `auto_approval` is in the baseline CSV (§5, as the last register
-field) and the memo's Appendix A shows "{label} (auto)" in the Label column of a claim Run audit approved on its own.
+field) and the memo's Appendix A gains an Approval column after Label, "auto" for a claim Run audit approved on its own and "analyst" for
+every other row; the Label column stays the plain evidence label (George, PR 157).
 Amended 2026-10-15 (docs/specs/dates-and-periods.md §2, §3): the memo's date line is the requested analysis date; "Evidence to
 {Month YYYY}" follows it; the summary states the latest valid source period; the thesis carries "Analyst's text, as of {date}."; a
 figure that is not a register figure carries its last month in brackets.

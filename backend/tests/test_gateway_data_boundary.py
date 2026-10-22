@@ -1447,7 +1447,7 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             "implied_take_rate", "implied_take_rate_source", "turnover_suggested", "deck_revenue_note", "period_basis", "inconsistencies",
                             "turnover_views", "file_note", "NO_FILE_PERIOD",
                             "inconsistent_dates", "mixed_slide", "USE_OF_FUNDS_NOTE", "MIXED_SLIDE", "ACQUISITION_NOTE", "ACQUISITION_CHANNELS",
-                            "UNTESTED_TYPES", "channel", "auto_accepted", "auto_approval", "auto_citation", "AUTO_APPROVAL", "AUTO_LABEL", "auto_views", "never_on_its_own", "BEAT_PREFIX", "is_beat", "flag_text", "flagged_rows",
+                            "UNTESTED_TYPES", "channel", "auto_accepted", "auto_approval", "auto_citation", "AUTO_APPROVAL", "AUTO_LABEL", "ANALYST_LABEL", "auto_views", "never_on_its_own", "BEAT_PREFIX", "is_beat", "flag_text", "flagged_rows",
                             "qualifier", "QUALIFIERS", "QUALIFIED_REASON", "qualified_label", "definition_check", "definition_question",
                             "definition_views", "definition_rows", "definition_basis", "DEFINITION_QUESTION", "DEFINITION_OPEN_REASON",
                             "DEFINITION_OPEN_REASON_RATE", "DEFINITION_MISMATCH", "BIG_GAP_RATE_POINTS",
