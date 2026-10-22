@@ -245,3 +245,7 @@ revenue file read by recognition only has no choice waiting; `mapped_at` alone i
 Amended 2026-10-21 (issue #148): in a KPI panel Python also dates an item from its bar's year label by place (`bar_year` on the cell, set by the deck parser from the
 page's year-label row; deck-parser.md, amended 2026-10-21), after the period headers, the item's own cell and the adjacent date line, so a bar the model left
 undated, or dated against its place, takes the year of its position (a difference is a "period corrected" case). Nothing new is sent to the model, and no prompt changes.
+
+Amended 2026-10-22 (issue #151): after the model's answer Python types and dates a panel figure by the same rules as the rules read: the model's metric Revenue stays the claim type, and
+the deck label is MRR or ARR when the cell's own text holds that term (Contract value when it is contracted or committed), and "MRR / ARR in <year>" becomes <year>-12 with
+`period_read_note` ("period read as Dec 2021 from 'in 2021'"; deck-parser.md, amended 2026-10-22). Code after the answer; no prompt change, nothing new is sent to the model.

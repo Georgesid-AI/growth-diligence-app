@@ -888,7 +888,7 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         currency=currency, period=period,
         period_start=str(c["period_start"]) if c.get("period_start") else None,
         period_end=str(c["period_end"]) if c.get("period_end") else None,
-        period_note=None if c.get("target_date") else NO_PERIOD, segment=segment, segment_set_by=segment_by,
+        period_note=c.get("period_read_note") if c.get("target_date") else NO_PERIOD, segment=segment, segment_set_by=segment_by,
         metric=metric, metric_set_by=metric_by, direction=spec["direction"] if spec else None,
         tolerance=tolerance_text(metric) if spec else None, as_of_month=as_of,
         as_of_defaulted=not settings.get("as_of_month"), overlaps_with=[], months_missing=[], gate_date=inputs.get("gate_date"),

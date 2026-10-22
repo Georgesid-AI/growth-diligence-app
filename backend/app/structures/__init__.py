@@ -465,7 +465,9 @@ def candidate_from_item(item: Dict, structure: Dict, deck: Dict, model_type: Opt
         "actual_or_forecast": item.get("actual_or_forecast"),
         "proposed_flags": list(item.get("proposed_flags") or []) if item["status"] == verify.VERIFIED else [],
     }
-    found = claims.period_range(item.get("period"), fiscal_year_end) if item.get("period") else None
+    claims.recurring_year_end(candidate)             # "MRR in 2021" is Dec 2021 (issue #151)
+    found = claims.period_range(candidate["target_date"], fiscal_year_end) if candidate.get("period_read_note") else \
+        claims.period_range(item.get("period"), fiscal_year_end) if item.get("period") else None
     candidate["period_start"], candidate["period_end"] = found or (None, None)
     if candidate["claim_type"] == "customers":
         # A qualified customers noun in the row's header or the figure's own cell is Users, as the parser reads it

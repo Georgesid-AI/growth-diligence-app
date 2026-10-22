@@ -307,6 +307,7 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
                         <FxText text={claimCellText(row, ccy)} href={`/audit/${auditId}/mapping#fx-settings`} testId="register-claim-fx-link" />
                       </span>
                       <div className="font-mono text-[11px] text-slate-500" data-testid="register-period">{row.period || NO_DATE}</div>
+                      {row.period && row.period_note ? <div className="text-[11px] text-slate-500" data-testid="register-period-note">{row.period_note}</div> : null}
                     </td>
                     <td className="pt-2 px-3">
                       <select value={row.segment} onChange={(e) => save(row, { segment: e.target.value }).catch(() => {})} className={`${selectClass} w-full`} data-testid="register-segment">
