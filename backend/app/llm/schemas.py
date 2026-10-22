@@ -692,7 +692,7 @@ def page_claims_output_schema() -> dict:
     }
 
 
-StructureStatus = Literal["read", "not_read", "too_large", "stopped", "no_consent", "refused"]
+StructureStatus = Literal["read", "not_read", "too_large", "truncated", "stopped", "no_consent", "refused"]
 
 
 class StructureRead(BaseModel):

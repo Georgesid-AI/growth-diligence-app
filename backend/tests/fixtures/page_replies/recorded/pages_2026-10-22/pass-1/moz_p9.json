@@ -1,0 +1,34 @@
+{
+ "file": "02-moz.pdf",
+ "page": 9,
+ "match": "p9r1c1 title: Organic Marketing is Under-Invested",
+ "pass": 1,
+ "prompt_version": "v1",
+ "model": "claude-sonnet-5-5",
+ "claims": [
+  {
+   "metric": "other",
+   "value": 5000000000.0,
+   "value_high": null,
+   "unit": "USD",
+   "unit_other": null,
+   "period": "2011",
+   "actual_or_forecast": "unknown",
+   "value_cell": "p9r5c1",
+   "label_cell": "p9r2c1",
+   "period_cell": "p9r6c1"
+  },
+  {
+   "metric": "other",
+   "value": 31000000000.0,
+   "value_high": null,
+   "unit": "USD",
+   "unit_other": null,
+   "period": "2011",
+   "actual_or_forecast": "unknown",
+   "value_cell": "p9r6c2",
+   "label_cell": "p9r2c2",
+   "period_cell": "p9r7c2"
+  }
+ ]
+}

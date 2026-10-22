@@ -891,7 +891,7 @@ def test_a_reply_that_fails_validation_logs_the_check_it_failed(bad, check, capl
         result, _ = _read(_db(), adapter=t.FakeAdapter(replies=[reply]))
     assert result.status == "not_read"
     line, = [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
-    assert line.endswith(f"reason=parse_failed status=- type=- check={check}"), line
+    assert line.endswith(f"reason=parse_failed status=- type=- fields=- check={check}"), line
 
 
 def test_the_check_follows_the_last_reply_and_a_mapping_has_its_own_metric_list(caplog):
@@ -2418,7 +2418,7 @@ def test_the_consistency_run_logs_one_not_read_line_per_structure_and_pass(caplo
         report = asyncio.run(script.run(["05-zero2hero.pdf"], 3, script.MemoryDB(), adapter))
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
     assert (adapter.calls, len(lines), report["not_read"]) == (15, 15, 15), "5 structures, 3 passes, once each"
-    assert all(line.endswith("reason=provider_error status=400 type=invalid_request_error check=-") for line in lines)
+    assert all(line.endswith("reason=provider_error status=400 type=invalid_request_error fields=- check=-") for line in lines)
     assert report["cache_hit_rate_pct"] == {"pass_2": 0.0, "pass_3": 0.0}
 
 

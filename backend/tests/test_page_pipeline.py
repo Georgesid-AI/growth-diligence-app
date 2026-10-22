@@ -259,3 +259,90 @@ def test_a_page_whose_only_digits_are_a_phone_number_is_not_sent_after_redaction
     assert pages.has_digit_figure(g) is True
     assert pipeline.redacted_pages([g], "Target Co", {}) == []
     assert pipeline.batches([g, grid_of([TITLE, *LINES])], "Target Co", {})[0][0]["grid"]["cells"][0]["text"] == "Traction"
+
+
+# ---------------------------------------------------------------------------
+# PR B: a reply cut at the output limit, and the cache bypass of the consistency passes
+# ---------------------------------------------------------------------------
+class Truncating(t.FakeAdapter):
+    """The provider cuts a reply at max_tokens for a batch of more than `limit` pages: the adapter raises the gateway's
+    "truncated" error with the tokens the cut reply billed, as AnthropicAdapter does on stop_reason max_tokens."""
+
+    def __init__(self, replies, limit=2):
+        super().__init__(replies=replies)
+        self.limit = limit
+        self.truncated = 0
+
+    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False):
+        if json.loads(user_payload)["text"].count("Traction") > self.limit:
+            self.calls += 1
+            self.truncated += 1
+            error = gateway.GatewayError("truncated", "the reply was cut at max_tokens")
+            error.tokens = (self.input_tokens, max_tokens)
+            raise error
+        return super().complete(model=model, system=system, user_payload=user_payload, max_tokens=max_tokens,
+                                temperature=temperature, json_schema=json_schema, cache_system=cache_system)
+
+
+def test_a_batch_whose_reply_is_cut_at_the_output_limit_is_split_and_read_again(monkeypatch):
+    """PR B, the live run of 2026-10-22: a 5-page batch answered with more than PAGE_MAX_TOKENS is cut and fails the schema; the
+    same batch asked again is cut again. The step splits it and reads the halves; the cut attempts are billed, not reasked."""
+    monkeypatch.setenv("DECK_PIPELINE", "ai")
+    parsed = deck([TITLE, *LINES])
+    blocks = [dict(b, page=n) for n in range(1, 6) for b in parsed["blocks"]]
+    db = _page_db({"blocks": blocks, "structures": []})
+    adapter = Truncating(replies=[json.dumps({"type": "page_claims", "claims": []})])
+    status = asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
+    assert status == "read"
+    reads = db[TEXT_COLLECTION].docs[0]["page_reads"]
+    assert [(r["pages"], r["status"]) for r in reads] == [([1, 2], "read"), ([3], "read"), ([4, 5], "read")], "halves of 2 and 3, the 3 split again"
+    assert adapter.truncated == 2 and adapter.calls == 5, "the 5-page batch and its 3-page half were cut once each, no reask"
+    calls = [c for c in db["llm_calls"].docs if c["status"] == "truncated"]
+    assert [(c["input_tokens"], c["output_tokens"]) for c in calls] == [(1200, gateway.PAGE_MAX_TOKENS)] * 2, "the cut replies are billed"
+    assert all(c["estimated_cost_usd"] == gateway.estimate_cost_usd(gateway.STRUCTURE_MODEL, 1200, gateway.PAGE_MAX_TOKENS) for c in calls)
+
+
+def test_a_single_page_whose_reply_is_cut_keeps_the_status_truncated(monkeypatch):
+    monkeypatch.setenv("DECK_PIPELINE", "ai")
+    parsed = deck([TITLE, *LINES])
+    blocks = [dict(b, page=n) for n in range(1, 3) for b in parsed["blocks"]]
+    db = _page_db({"blocks": blocks, "structures": []})
+    adapter = Truncating(replies=[], limit=0)
+    status = asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
+    assert status == "not_read"
+    reads = db[TEXT_COLLECTION].docs[0]["page_reads"]
+    assert [(r["pages"], r["status"]) for r in reads] == [([1], "truncated"), ([2], "truncated")]
+    assert adapter.calls == 3, "the pair, then each page once; a single page is not split or reasked"
+
+
+def test_the_adapter_raises_truncated_with_the_billed_tokens_when_the_provider_stops_at_max_tokens():
+    """AnthropicAdapter: a reply with stop_reason max_tokens is not JSON the schema can check; it is reported as "truncated" with
+    the tokens it billed, so the gateway bills it, logs the closed reason and lets the page step split the batch."""
+    from types import SimpleNamespace
+    adapter = gateway.AnthropicAdapter(api_key="not-a-key")
+    usage = SimpleNamespace(input_tokens=3000, output_tokens=4000, cache_creation_input_tokens=2000, cache_read_input_tokens=0)
+    response = SimpleNamespace(stop_reason="max_tokens", content=[SimpleNamespace(type="text", text='{"type": "page_claims", "cl')],
+                               usage=usage)
+    adapter._client = SimpleNamespace(messages=SimpleNamespace(create=lambda **kwargs: response))
+    with pytest.raises(gateway.GatewayError) as cut:
+        adapter.complete(model=gateway.STRUCTURE_MODEL, system="S", user_payload="{}", max_tokens=4000, temperature=None,
+                         json_schema={}, cache_system=True)
+    assert cut.value.reason == "truncated" and cut.value.tokens == (5000, 4000)
+    assert "page_claims" not in str(cut.value), "the cut reply is not quoted"
+
+
+def test_the_consistency_passes_bypass_the_cache_and_measure_the_model(monkeypatch):
+    """A second read of the same pages in the same audit is a cache hit (0 tokens, the same reply); with use_cache=False the model
+    is asked again, so a consistency pass measures the model, not the cache."""
+    monkeypatch.setenv("DECK_PIPELINE", "ai")
+    parsed = deck([TITLE, *LINES])
+    db = _page_db(parsed)
+    grids = pages.page_grids(parsed["blocks"])
+    adapter = t.FakeAdapter(replies=[json.dumps(REPLY)])
+    first = asyncio.run(pipeline.read_pages(db, AUDIT, "d1", grids, "Zero2Hero", {}, adapter=adapter, sleep=t._noop_sleep))
+    again = asyncio.run(pipeline.read_pages(db, AUDIT, "d1", grids, "Zero2Hero", {}, adapter=adapter, sleep=t._noop_sleep))
+    assert adapter.calls == 1 and again[0][1].cache_hit is True and again[0][1].input_tokens == 0
+    bypassed = asyncio.run(pipeline.read_pages(db, AUDIT, "d1", grids, "Zero2Hero", {}, adapter=adapter, sleep=t._noop_sleep,
+                                               use_cache=False))
+    assert adapter.calls == 2 and bypassed[0][1].cache_hit is False and bypassed[0][1].input_tokens > 0
+    assert bypassed[0][1].claims == first[0][1].claims

@@ -66,7 +66,10 @@ sections 6 and 7, PR B): the model reads the redacted text lines of every page t
 the fixed prompt cached by the provider, and page_check checks each claim. DECK_PIPELINE=ai and LLM_DAILY_SPEND_CAP_USD=<max-spend>
 are set for this script's own calls only (the process environment is restored after). The page_claims prompt is copied from the app's
 prompt store (the database named by DB_NAME) into the scratch database, as above; the report names its version only. Each pass reads
-every deck in its own throwaway audit, so a later pass never hits the gateway's cache and agreement measures the model. The 10 public test
+every deck in its own throwaway audit and, from pass 2 on, bypasses the gateway's cache, so agreement measures the model; the report
+counts each pass's cache hits (expected 0), truncated batches (a reply cut at the output limit, billed, split and read again) and
+recorded claims (equal to its claims), and is rewritten after every pass beside the recorded replies. The run name skips a name whose
+recorded folder exists. The 10 public test
 decks only (checked by file name and SHA-256), always: the recorded replies hold the line that identifies each page.
 Hard stop: before each provider call the run adds the most that call can cost (its counted input at list price plus max_tokens of
 output) to what it has spent, and refuses the call if the sum passes --max-spend; the cost is an upper bound, a prompt-cache read being
@@ -280,9 +283,15 @@ class SpendGuard:
         if self.calls and self.pause:
             self._sleep(self.pause)
         self.calls += 1
-        reply, tokens_in, tokens_out = self.inner.complete(
-            model=model, system=system, user_payload=user_payload, max_tokens=max_tokens, temperature=temperature,
-            json_schema=json_schema, cache_system=cache_system)
+        try:
+            reply, tokens_in, tokens_out = self.inner.complete(
+                model=model, system=system, user_payload=user_payload, max_tokens=max_tokens, temperature=temperature,
+                json_schema=json_schema, cache_system=cache_system)
+        except gateway.GatewayError as exc:
+            cut = getattr(exc, "tokens", None)                  # a reply cut at max_tokens ("truncated") is billed too
+            if cut:
+                self.spent += gateway.estimate_cost_usd(model, *cut)
+            raise
         self.spent += gateway.estimate_cost_usd(model, tokens_in, tokens_out)
         return reply, tokens_in, tokens_out
 
@@ -931,11 +940,14 @@ async def probe(decks, pages=None, out=print):
 PAGES_TARGET_AGREEMENT = 95.0
 
 
-def pages_run_name(folder):
-    """pages_<date>, then pages_<date>-2, -3, ... when that day's report is already in `folder`: a paid run is never overwritten."""
+def pages_run_name(folder, recorded_root=None):
+    """pages_<date>, then pages_<date>-2, -3, ... when that day's report is already in `folder` or its recorded replies are already
+    under `recorded_root` (default RECORDED): a paid run is never overwritten, and a run that stopped before its report left files
+    the next run must not write into (the run of 2026-10-22 committed a table and files from two runs)."""
+    recorded_root = RECORDED if recorded_root is None else recorded_root
     day = datetime.date.today().isoformat()
     name, n = f"pages_{day}", 1
-    while (folder / f"{name}.md").exists():
+    while (folder / f"{name}.md").exists() or (recorded_root / name).exists():
         n += 1
         name = f"pages_{day}-{n}"
     return name
@@ -951,7 +963,7 @@ def _write_recorded(folder, file, n, reads, lines, prompt_version):
     claims for that page as returned, and the page's first line as sent, so compare_pipelines.py finds the page again."""
     from app.llm import gateway
     from app.structures import page_check
-    out = folder / f"pass-{n}"
+    out, written = folder / f"pass-{n}", 0
     for _, result in reads:
         if result.status != "read":
             continue
@@ -963,15 +975,39 @@ def _write_recorded(folder, file, n, reads, lines, prompt_version):
             (out / f"{Path(file).stem.split('-', 1)[-1]}_p{page}.json").write_text(json.dumps({
                 "file": file, "page": page, "match": lines[page], "pass": n, "prompt_version": prompt_version,
                 "model": gateway.STRUCTURE_MODEL, "claims": claims}, indent=1) + "\n", encoding="utf-8")
+            written += len(claims)
+    return written
+
+
+PASS_COUNTS = ("claims", "matched", "unmatched", "dropped", "input_tokens", "output_tokens", "truncated", "cache_hits", "recorded")
+
+
+def _pages_report(decks, passes, prompt, guard, per_deck, max_spend):
+    """The report dict from the run's state so far: counts, tokens, cost and agreement, never a line of a deck."""
+    from app.llm import gateway
+    complete = [v for v in per_deck.values() if v["complete"]]
+    agreed, union = sum(v["agreed"] for v in complete), sum(v["claims_union"] for v in complete)
+    totals = {k: sum(r[k] for v in per_deck.values() for r in v["passes"]) for k in ("calls", "batches", "read") + PASS_COUNTS}
+    return {
+        "mode": "pages", "model": gateway.STRUCTURE_MODEL, "prompt": gateway.PAGE_CLAIMS_PROMPT, "prompt_version": prompt.version,
+        "passes": passes, "decks_asked": len(decks), "decks_complete": len(complete),
+        "max_spend_usd": float(max_spend), "spent_usd": round(guard.spent, 6), "stopped": guard.stopped,
+        "agreement_pct_all": round(100.0 * agreed / union, 1) if union else None,
+        "target_agreement_pct": PAGES_TARGET_AGREEMENT, "totals": totals, "per_deck": per_deck,
+    }
 
 
 async def run_pages(decks, passes, db, adapter=None, *, max_spend=4.0, pause=0.0, record_folder=None, prompt_source=None,
-                    sleep=None, out=print):
+                    sleep=None, out=print, report_path=None):
     """The page_claims step on `decks`, `passes` times each, in the scratch/memory `db`. Each pass reads a deck in its own audit
-    (consent ticked), so no pass hits the gateway's cache. `adapter` is the provider (default: the live one), wrapped in a
-    SpendGuard; DECK_PIPELINE=ai and the daily spend cap = max_spend are set for these calls only. With `record_folder` each
-    pass's replies are written there as soon as the pass ends, so a crash or a stop keeps what was paid for. Returns the report
-    dict: counts, tokens, cost and agreement, never a line of a deck."""
+    (consent ticked) and from pass 2 on bypasses the gateway's cache (read_pages use_cache=False), so a consistency pass asks the
+    model and measures it, not the cache; the report counts the cache hits of each pass. `adapter` is the provider (default: the
+    live one), wrapped in a SpendGuard; DECK_PIPELINE=ai and the daily spend cap = max_spend are set for these calls only. With
+    `record_folder` each pass's replies are written there as soon as the pass ends, and with `report_path` the report is rewritten
+    there after every pass, so a crash or a stop keeps what was paid for and the report and the files always come from the one run.
+    Each pass's row counts its claims, matched, unmatched, dropped, truncated batches (a reply cut at the output limit; the batch
+    is split and read again), cache hits and the claims recorded. Returns the report dict: counts, tokens, cost and agreement,
+    never a line of a deck."""
     from app.decks import pages as page_grids
     from app.decks import parser
     from app.llm import gateway, prompt_store
@@ -1004,14 +1040,20 @@ async def run_pages(decks, passes, db, adapter=None, *, max_spend=4.0, pause=0.0
                 audit_id = f"pages-{stem}-pass{n}"
                 await db["audits"].insert_one({"id": audit_id, "company_name": stem, "structure_reading_consent": True})
                 calls_before = guard.calls
-                reads = await pipeline.read_pages(db, audit_id, file, grids, stem, {}, adapter=guard, sleep=sleep)
-                row = dict.fromkeys(("claims", "matched", "unmatched", "dropped", "input_tokens", "output_tokens"), 0)
+                reads = await pipeline.read_pages(db, audit_id, file, grids, stem, {}, adapter=guard, sleep=sleep, use_cache=n == 1)
+                row = dict.fromkeys(PASS_COUNTS, 0)
                 row.update(batches=len(reads), read=0, calls=guard.calls - calls_before, cost_usd=0.0)
                 claims = []
+                # Tokens, cost, cut replies and cache hits come from the gateway's call log for this pass's audit: it bills every
+                # attempt, the replies cut at the output limit included, whose batches were then split and read again (so they
+                # are not among the batches below).
+                for call in await db["llm_calls"].find({"run_id": audit_id}).to_list(100000):
+                    row["input_tokens"] += int(call.get("input_tokens") or 0)
+                    row["output_tokens"] += int(call.get("output_tokens") or 0)
+                    row["cost_usd"] = round(row["cost_usd"] + float(call.get("estimated_cost_usd") or 0.0), 6)
+                    row["truncated"] += int(call.get("status") == "truncated")
+                    row["cache_hits"] += int(bool(call.get("cache_hit")))
                 for batch, result in reads:
-                    row["input_tokens"] += result.input_tokens
-                    row["output_tokens"] += result.output_tokens
-                    row["cost_usd"] = round(row["cost_usd"] + result.estimated_cost_usd, 6)
                     if result.status != "read":
                         continue
                     row["read"] += 1
@@ -1026,26 +1068,19 @@ async def run_pages(decks, passes, db, adapter=None, *, max_spend=4.0, pause=0.0
                 deck["passes"].append(row)
                 seen.append(_triples(claims))
                 if record_folder is not None:
-                    _write_recorded(record_folder, file, n, reads, lines, prompt.version)
-                out(f"[{d}/{len(decks)}] {file} pass {n}/{passes}: {row['read']} of {row['batches']} batches read, "
-                    f"{row['claims']} claims ({row['matched']} matched), {row['input_tokens'] + row['output_tokens']:,} tokens, "
-                    f"${row['cost_usd']:.4f}", flush=True)
+                    row["recorded"] = _write_recorded(record_folder, file, n, reads, lines, prompt.version)
+                if report_path is not None:
+                    write_pages_report(_pages_report(decks, passes, prompt, guard, per_deck, max_spend), report_path.parent,
+                                       report_path.stem, fake=adapter is not None)
+                out(f"[{d}/{len(decks)}] {file} pass {n}/{passes}: {row['read']} of {row['batches']} batches read "
+                    f"({row['truncated']} truncated, {row['cache_hits']} cache hits), {row['claims']} claims ({row['matched']} matched, "
+                    f"{row['recorded']} recorded), {row['input_tokens'] + row['output_tokens']:,} tokens, ${row['cost_usd']:.4f}", flush=True)
             deck["complete"] = len(seen) == passes and all(r["read"] == r["batches"] for r in deck["passes"])
             if deck["complete"]:
                 union, same = set().union(*seen), set.intersection(*seen)
                 deck["agreement_pct"] = round(100.0 * len(same) / len(union), 1) if union else 100.0
                 deck["agreed"], deck["claims_union"] = len(same), len(union)
-    complete = [v for v in per_deck.values() if v["complete"]]
-    agreed, union = sum(v["agreed"] for v in complete), sum(v["claims_union"] for v in complete)
-    totals = {k: sum(r[k] for v in per_deck.values() for r in v["passes"])
-              for k in ("calls", "batches", "read", "claims", "matched", "unmatched", "dropped", "input_tokens", "output_tokens")}
-    return {
-        "mode": "pages", "model": gateway.STRUCTURE_MODEL, "prompt": gateway.PAGE_CLAIMS_PROMPT, "prompt_version": prompt.version,
-        "passes": passes, "decks_asked": len(decks), "decks_complete": len(complete),
-        "max_spend_usd": float(max_spend), "spent_usd": round(guard.spent, 6), "stopped": guard.stopped,
-        "agreement_pct_all": round(100.0 * agreed / union, 1) if union else None,
-        "target_agreement_pct": PAGES_TARGET_AGREEMENT, "totals": totals, "per_deck": per_deck,
-    }
+    return _pages_report(decks, passes, prompt, guard, per_deck, max_spend)
 
 
 def _agreement_text(value):
@@ -1057,8 +1092,9 @@ def pages_summary(report):
     t = report["totals"]
     return (f"Pages run: {stop}{report['decks_complete']} of {report['decks_asked']} decks read in full in every pass; agreement "
             f"{_agreement_text(report['agreement_pct_all'])} (target {report['target_agreement_pct']}%); "
-            f"{t['read']} of {t['batches']} batches read in {t['calls']} calls; {t['claims']} claims, {t['matched']} matched, "
-            f"{t['unmatched']} unmatched, {t['dropped']} dropped; spent at most ${report['spent_usd']:.4f} of ${report['max_spend_usd']:.2f}.")
+            f"{t['read']} of {t['batches']} batches read in {t['calls']} calls ({t['truncated']} truncated, {t['cache_hits']} cache hits); "
+            f"{t['claims']} claims, {t['matched']} matched, {t['unmatched']} unmatched, {t['dropped']} dropped, {t['recorded']} recorded; "
+            f"spent at most ${report['spent_usd']:.4f} of ${report['max_spend_usd']:.2f}.")
 
 
 def write_pages_report(report, folder, name, fake=False):
@@ -1074,18 +1110,25 @@ def write_pages_report(report, folder, name, fake=False):
         pages_summary(report), "",
         "## Agreement per deck", "",
         "Claims (value cell, metric, period) found in every pass / claims found in any pass, over the decks every pass read in full. "
-        f"Target: at least {report['target_agreement_pct']}% over all decks.", "",
-        "| Deck | Pages | Sent | Agreement | Claims per pass | Matched per pass | Unmatched per pass |", "|---|---:|---:|---:|---|---|---|",
+        f"Target: at least {report['target_agreement_pct']}% over all decks. Recorded: the claims written to the recorded replies of "
+        "that pass (equal to the claims, or the files and this table are not from one run).", "",
+        "| Deck | Pages | Sent | Agreement | Claims per pass | Matched per pass | Unmatched per pass | Recorded per pass |",
+        "|---|---:|---:|---:|---|---|---|---|",
         *(f"| {f} | {v['pages']} | {v['sent']} | {_agreement_text(v['agreement_pct']) if v['complete'] else 'not complete'} | "
           f"{' / '.join(str(r['claims']) for r in v['passes']) or '-'} | {' / '.join(str(r['matched']) for r in v['passes']) or '-'} | "
-          f"{' / '.join(str(r['unmatched']) for r in v['passes']) or '-'} |" for f, v in report["per_deck"].items()),
-        f"| all | | | {_agreement_text(report['agreement_pct_all'])} | | | |", "",
+          f"{' / '.join(str(r['unmatched']) for r in v['passes']) or '-'} | {' / '.join(str(r['recorded']) for r in v['passes']) or '-'} |"
+          for f, v in report["per_deck"].items()),
+        f"| all | | | {_agreement_text(report['agreement_pct_all'])} | | | | |", "",
         "## Tokens and cost", "",
-        "The cost is an upper bound: tokens read from the provider's prompt cache are counted at list price.", "",
-        "| Deck | Pass | Batches read | Calls | Input tokens | Output tokens | Cost |", "|---|---:|---:|---:|---:|---:|---:|",
-        *(f"| {f} | {n} | {r['read']} of {r['batches']} | {r['calls']} | {r['input_tokens']:,} | {r['output_tokens']:,} | ${r['cost_usd']:.4f} |"
-          for f, v in report["per_deck"].items() for n, r in enumerate(v["passes"], 1)),
-        f"| all | | {t['read']} of {t['batches']} | {t['calls']} | {t['input_tokens']:,} | {t['output_tokens']:,} | ${report['spent_usd']:.4f} |", "",
+        "The cost is an upper bound: tokens read from the provider's prompt cache are counted at list price. Truncated: batches whose "
+        "reply the provider cut at the output limit (billed, then split and read again). Cache hits: batches served from the "
+        "gateway's cache (0 tokens, the same reply; a pass with hits measured the cache, not the model).", "",
+        "| Deck | Pass | Batches read | Truncated | Cache hits | Calls | Input tokens | Output tokens | Cost |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        *(f"| {f} | {n} | {r['read']} of {r['batches']} | {r['truncated']} | {r['cache_hits']} | {r['calls']} | {r['input_tokens']:,} | "
+          f"{r['output_tokens']:,} | ${r['cost_usd']:.4f} |" for f, v in report["per_deck"].items() for n, r in enumerate(v["passes"], 1)),
+        f"| all | | {t['read']} of {t['batches']} | {t['truncated']} | {t['cache_hits']} | {t['calls']} | {t['input_tokens']:,} | "
+        f"{t['output_tokens']:,} | ${report['spent_usd']:.4f} |", "",
     ]
     path.write_text("\n".join(lines), encoding="utf-8")
     return path
@@ -1142,7 +1185,8 @@ async def live(args, decks, rows=None):
             if args.pages:
                 name = pages_run_name(REPORTS)
                 report = await run_pages(decks, args.passes, client[args.db], max_spend=args.max_spend, pause=args.pause,
-                                         record_folder=RECORDED / name, prompt_source=client[store_name])
+                                         record_folder=RECORDED / name, prompt_source=client[store_name],
+                                         report_path=REPORTS / f"{name}.md")
                 return report, write_pages_report(report, REPORTS, name), RECORDED / name
             report = await run(decks, args.passes, client[args.db], pause=args.pause, diagnostic=rows,
                                prompt_source=client[store_name])
@@ -1197,10 +1241,10 @@ def main(argv=None):
     recorded = None
     if args.fake and args.pages:
         folder = Path(tempfile.gettempdir())
-        name = pages_run_name(folder)
+        name = pages_run_name(folder, folder)
         recorded = folder / name
         report = asyncio.run(run_pages(decks, args.passes, MemoryDB(), PageReplayAdapter(), max_spend=args.max_spend,
-                                       record_folder=recorded))
+                                       record_folder=recorded, report_path=folder / f"{name}.md"))
         path = write_pages_report(report, folder, name, fake=True)
     elif args.fake:
         report = asyncio.run(run(decks, args.passes, MemoryDB(), FakeAdapter(), diagnostic=rows))

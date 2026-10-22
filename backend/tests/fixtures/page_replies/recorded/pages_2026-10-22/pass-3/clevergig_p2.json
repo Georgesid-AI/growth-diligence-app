@@ -1,0 +1,70 @@
+{
+ "file": "04-clevergig.docx",
+ "page": 2,
+ "match": "p2r1c1: clevergig is building the no. 1 WFM solution that enables temporary work agencies to grow their business",
+ "pass": 3,
+ "prompt_version": "v1",
+ "model": "claude-sonnet-5-5",
+ "claims": [
+  {
+   "metric": "customers",
+   "value": 50.0,
+   "value_high": null,
+   "unit": "count",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "actual",
+   "value_cell": "p2r4c1",
+   "label_cell": "p2r4c1",
+   "period_cell": null
+  },
+  {
+   "metric": "users",
+   "value": 4000.0,
+   "value_high": null,
+   "unit": "count",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "actual",
+   "value_cell": "p2r4c1",
+   "label_cell": "p2r4c1",
+   "period_cell": null
+  },
+  {
+   "metric": "revenue",
+   "value": 15000.0,
+   "value_high": null,
+   "unit": "EUR",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "actual",
+   "value_cell": "p2r7c1",
+   "label_cell": "p2r7c1",
+   "period_cell": null
+  },
+  {
+   "metric": "growth",
+   "value": 15.0,
+   "value_high": null,
+   "unit": "%",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "actual",
+   "value_cell": "p2r7c1",
+   "label_cell": "p2r7c1",
+   "period_cell": null
+  },
+  {
+   "metric": "other",
+   "value": 1000000.0,
+   "value_high": null,
+   "unit": "EUR",
+   "unit_other": null,
+   "period": "2019-H2",
+   "actual_or_forecast": "forecast",
+   "value_cell": "p2r9c1",
+   "label_cell": "p2r9c1",
+   "period_cell": null
+  }
+ ]
+}

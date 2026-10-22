@@ -1,0 +1,58 @@
+{
+ "file": "02-moz.pdf",
+ "page": 3,
+ "match": "p3r1c1 title: 2011 will be our first 8",
+ "pass": 2,
+ "prompt_version": "v1",
+ "model": "claude-sonnet-5-5",
+ "claims": [
+  {
+   "metric": "gross_margin",
+   "value": 83.0,
+   "value_high": null,
+   "unit": "%",
+   "unit_other": null,
+   "period": "2011",
+   "actual_or_forecast": "unknown",
+   "value_cell": "p3r3c1",
+   "label_cell": "p3r3c1",
+   "period_cell": null
+  },
+  {
+   "metric": "other",
+   "value": 1100000.0,
+   "value_high": null,
+   "unit": "USD",
+   "unit_other": null,
+   "period": "2007",
+   "actual_or_forecast": "actual",
+   "value_cell": "p3r5c1",
+   "label_cell": "p3r4c1",
+   "period_cell": null
+  },
+  {
+   "metric": "users",
+   "value": 1200000.0,
+   "value_high": null,
+   "unit": "count",
+   "unit_other": null,
+   "period": "2011-04",
+   "actual_or_forecast": "actual",
+   "value_cell": "p3r5c2",
+   "label_cell": "p3r1c2",
+   "period_cell": "p3r4c2"
+  },
+  {
+   "metric": "customers",
+   "value": 10000.0,
+   "value_high": null,
+   "unit": "count",
+   "unit_other": null,
+   "period": "2011-04",
+   "actual_or_forecast": "actual",
+   "value_cell": "p3r7c2",
+   "label_cell": "p3r7c2",
+   "period_cell": "p3r4c2"
+  }
+ ]
+}

@@ -1,0 +1,22 @@
+{
+ "file": "09-genesisai-2024.pdf",
+ "page": 12,
+ "match": "p12r1c1 title: HIGH QUALITY AI",
+ "pass": 1,
+ "prompt_version": "v1",
+ "model": "claude-sonnet-5-5",
+ "claims": [
+  {
+   "metric": "other",
+   "value": 70.0,
+   "value_high": null,
+   "unit": "%",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p12r3c1",
+   "label_cell": "p12r2c1",
+   "period_cell": null
+  }
+ ]
+}

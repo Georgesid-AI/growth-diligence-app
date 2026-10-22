@@ -1,0 +1,46 @@
+{
+ "file": "02-moz.pdf",
+ "page": 23,
+ "match": "p23r1c1 title: Raising:",
+ "pass": 2,
+ "prompt_version": "v1",
+ "model": "claude-sonnet-5-5",
+ "claims": [
+  {
+   "metric": "other",
+   "value": 20000000.0,
+   "value_high": 25000000.0,
+   "unit": "USD",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p23r1c2",
+   "label_cell": "p23r1c1",
+   "period_cell": null
+  },
+  {
+   "metric": "other",
+   "value": 6000000.0,
+   "value_high": 7000000.0,
+   "unit": "USD",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p23r2c2",
+   "label_cell": "p23r2c1",
+   "period_cell": null
+  },
+  {
+   "metric": "other",
+   "value": 13000000.0,
+   "value_high": 19000000.0,
+   "unit": "USD",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p23r3c2",
+   "label_cell": "p23r3c1",
+   "period_cell": null
+  }
+ ]
+}

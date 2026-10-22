@@ -1,0 +1,46 @@
+{
+ "file": "04-clevergig.docx",
+ "page": 7,
+ "match": "p7r1c1: We use a 3-tier subscription model. MRR grows with higher usage of the product, on average by 50% in the 2nd year of usage",
+ "pass": 1,
+ "prompt_version": "v1",
+ "model": "claude-sonnet-5-5",
+ "claims": [
+  {
+   "metric": "other",
+   "value": 185.0,
+   "value_high": null,
+   "unit": "EUR",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p7r6c1",
+   "label_cell": "p7r3c1",
+   "period_cell": null
+  },
+  {
+   "metric": "other",
+   "value": 305.0,
+   "value_high": null,
+   "unit": "EUR",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p7r11c1",
+   "label_cell": "p7r8c1",
+   "period_cell": null
+  },
+  {
+   "metric": "other",
+   "value": 485.0,
+   "value_high": null,
+   "unit": "EUR",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p7r16c1",
+   "label_cell": "p7r13c1",
+   "period_cell": null
+  }
+ ]
+}

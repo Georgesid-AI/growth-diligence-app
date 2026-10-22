@@ -1,0 +1,82 @@
+{
+ "file": "05-zero2hero.pdf",
+ "page": 22,
+ "match": "p22r1c1 title: Investor Proposition",
+ "pass": 3,
+ "prompt_version": "v1",
+ "model": "claude-sonnet-5-5",
+ "claims": [
+  {
+   "metric": "other",
+   "value": 250000.0,
+   "value_high": null,
+   "unit": "GBP",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p22r2c1",
+   "label_cell": "p22r2c2",
+   "period_cell": null
+  },
+  {
+   "metric": "other",
+   "value": 40.0,
+   "value_high": null,
+   "unit": "%",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p22r3c3",
+   "label_cell": "p22r3c3",
+   "period_cell": null
+  },
+  {
+   "metric": "other",
+   "value": 20.0,
+   "value_high": null,
+   "unit": "%",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p22r4c3",
+   "label_cell": "p22r4c3",
+   "period_cell": null
+  },
+  {
+   "metric": "other",
+   "value": 25.0,
+   "value_high": null,
+   "unit": "%",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p22r5c3",
+   "label_cell": "p22r5c3",
+   "period_cell": null
+  },
+  {
+   "metric": "other",
+   "value": 10.0,
+   "value_high": null,
+   "unit": "%",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p22r6c3",
+   "label_cell": "p22r6c3",
+   "period_cell": null
+  },
+  {
+   "metric": "other",
+   "value": 5.0,
+   "value_high": null,
+   "unit": "%",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p22r7c3",
+   "label_cell": "p22r7c3",
+   "period_cell": null
+  }
+ ]
+}

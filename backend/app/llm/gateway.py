@@ -186,12 +186,13 @@ class GatewayError(Exception):
     HTTP status and error type (codes only, see _provider_error_type)."""
 
     def __init__(self, reason: str, detail: str = "", status: Optional[int] = None,
-                 error_type: Optional[str] = None, check: Optional[str] = None):
+                 error_type: Optional[str] = None, check: Optional[str] = None, fields: Optional[List[str]] = None):
         self.reason = reason
         self.detail = detail
         self.status = status
         self.error_type = error_type
         self.check = check              # parse_failed on a structure reply: one of PARSE_CHECKS
+        self.fields = fields or []      # ... and the schema fields that failed (closed names from the schema, never values)
         super().__init__(f"{reason}: {detail}" if detail else reason)
 
 
@@ -592,11 +593,14 @@ class AnthropicAdapter:
         if cache_system:
             billed_in += int(getattr(usage, "cache_creation_input_tokens", 0) or 0) + \
                 int(getattr(usage, "cache_read_input_tokens", 0) or 0)
-        return (
-            text,
-            billed_in,
-            int(getattr(usage, "output_tokens", 0) or 0),
-        )
+        billed_out = int(getattr(usage, "output_tokens", 0) or 0)
+        if getattr(response, "stop_reason", None) == "max_tokens":
+            # A reply cut at max_tokens is not JSON the schema can check, and the same request would be cut again: it is
+            # reported as "truncated" with the tokens it billed, never reasked (the page step splits the batch instead).
+            cut = GatewayError("truncated", "the reply was cut at max_tokens")
+            cut.tokens = (billed_in, billed_out)
+            raise cut
+        return text, billed_in, billed_out
 
 
     def count_tokens(self, *, model: str, system: Optional[str], user_payload: str,
@@ -1447,7 +1451,10 @@ SHEET_INPUT_CAP = 12_000            # a sheet skeleton: tokens of its text, by t
 SHEET_MAX_TOKENS = 12_000           # ... and of its reply (a role, parent and meaning for up to 400 lines)
 RECOGNITION_INPUT_CAP = 12_000      # a file recognition text: tokens, by the provider's token counter (revenue-file-recognition.md 5.5)
 PAGE_INPUT_CAP = 12_000             # a page batch: tokens of its text (up to 5 pages), by the provider's token counter
-PAGE_MAX_TOKENS = 4000              # a page batch's reply: about 350 tokens per page (docs/design/ai-reads-rules-check.md section 4)
+# A page batch's reply. The design note (section 4) estimated 350 tokens per page; the live run of 2026-10-22 measured 90-150 tokens
+# per claim and a 5-page batch of two 5-year tables cut at 4,000 in every pass (docs/test-runs/pages_2026-10-22_compare.md). A cut
+# reply is "truncated" and the batch is split (structures.pages.read_pages).
+PAGE_MAX_TOKENS = 8000
 RECOGNITION_MAX_TOKENS = 1_000      # ... and of its reply
 STRUCTURES_COLLECTION = cache.STRUCTURES_COLLECTION
 NOT_READ = "Not read by AI"
@@ -1604,6 +1611,8 @@ def _cited_cells(text: str, structure_type: str) -> set:
 # The check a structure reply failed, named last on its "structure not read" line (llm-structure-reading.md section 9,
 # issue #64): a closed word, never the reply, the check's message or cell text.
 PARSE_CHECKS = ("schema", "metric_list", "item_count", "other")
+# The field names a "structure not read" line may name after fields= (a page reply's schema): closed words, never a value.
+PAGE_FIELDS = frozenset(schemas.PageClaim.model_fields) | {"type", "claims"}
 
 
 def _schema_check(exc: Exception) -> str:
@@ -1654,15 +1663,29 @@ def parse_structure_reply(reply: str, structure_type: str, text: str):
     return parsed
 
 
+def _schema_fields(exc: Exception) -> List[str]:
+    """The schema fields a reply failed on ("period", "label_cell"): the last named location of each validation error, read from
+    the error locations only (the schema's own field names, closed words), never from the input they quote. [] for a reply that
+    is not JSON or fails outside a named field."""
+    found = set()
+    for error in (exc.errors() if hasattr(exc, "errors") else []):
+        names = [part for part in error.get("loc", ()) if isinstance(part, str)]
+        if names:
+            found.add(names[-1])
+    return sorted(found)
+
+
 def parse_page_reply(reply: str, text: str) -> PageClaimsReply:
     """Validate a page batch's reply (docs/design/ai-reads-rules-check.md section 2), or raise GatewayError("parse_failed"): the
     schema (extra fields forbidden, every field a closed word, a number or a cell id), then every cited cell (value, label,
     period) one the batch sent. Nothing else is checked here: the figure, the unit and the period are checked against the page
-    by app/structures/page_check.py."""
+    by app/structures/page_check.py. The error names the fields that failed (closed schema names), so the "structure not read"
+    line says which field the model gets wrong (the live run of 2026-10-22 lost 10 replies to the schema with no way to tell)."""
     try:
         parsed = PageClaimsReply.model_validate(json.loads((reply or "").strip()))
     except Exception as exc:
-        raise GatewayError("parse_failed", f"reply did not match the schema: {type(exc).__name__}", check=_schema_check(exc))
+        raise GatewayError("parse_failed", f"reply did not match the schema: {type(exc).__name__}", check=_schema_check(exc),
+                           fields=_schema_fields(exc))
     known = _cited_cells(text, PAGE_CLAIMS)
     for claim in parsed.claims:
         if any(c is not None and c not in known for c in (claim.value_cell, claim.label_cell, claim.period_cell)):
@@ -1767,7 +1790,8 @@ async def _structure_call(adapter, prompt, user_payload, structure_type, text, s
             await sleep(_backoff_seconds(exc, network_attempts))
             continue
         except GatewayError as exc:
-            exc.billed = (billed_in, billed_out)
+            cut = getattr(exc, "tokens", (0, 0))                 # a truncated reply billed its tokens too
+            exc.billed = (billed_in + cut[0], billed_out + cut[1])
             raise
         billed_in, billed_out = billed_in + in_tok, billed_out + out_tok
         try:
@@ -1911,16 +1935,18 @@ async def read_structure(
             # #64); never the message.
             billed, code, status, kind = getattr(exc, "billed", (0, 0)), exc.reason, exc.status, exc.error_type
             check = exc.check if exc.check in PARSE_CHECKS else "-"
+            fields = ",".join(f for f in exc.fields if f in PAGE_FIELDS) or "-"       # schema field names only, never a value
             cost = estimate_cost_usd(STRUCTURE_MODEL, *billed)
             await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version,
                            model=STRUCTURE_MODEL, input_tokens=billed[0], output_tokens=billed[1],
                            estimated_cost_usd=cost, cache_hit=False, status=code, content_hash=digest,
                            deck_id=deck_id, http_status=status, error_type=kind, structure_type=structure_type)
             logger.warning("structure not read: run_id=%s step=%s hash=%s tokens=%d/%d cost=%.6f reason=%s "
-                           "status=%s type=%s check=%s", audit_id, STRUCTURE_STEP, digest, billed[0], billed[1], cost,
-                           code, status or "-", kind or "-", check)
-            return _structure_result("not_read", structure_type, NOT_READ, input_tokens=billed[0],
-                                     output_tokens=billed[1], estimated_cost_usd=cost, **base)
+                           "status=%s type=%s fields=%s check=%s", audit_id, STRUCTURE_STEP, digest, billed[0], billed[1], cost,
+                           code, status or "-", kind or "-", fields, check)
+            # "truncated" (the reply cut at max_tokens) is kept apart, so the page step can split the batch and read it again.
+            return _structure_result("truncated" if code == "truncated" else "not_read", structure_type, NOT_READ,
+                                     input_tokens=billed[0], output_tokens=billed[1], estimated_cost_usd=cost, **base)
         cost = estimate_cost_usd(STRUCTURE_MODEL, in_tok, out_tok)
         model_type = parsed.type if parsed.type != structure_type else None      # a sheet's type is fixed by its schema
         output = parsed.model_dump()

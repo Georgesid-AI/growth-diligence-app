@@ -1,0 +1,34 @@
+{
+ "file": "06-uber.pdf",
+ "page": 3,
+ "match": "p3r1c1 title: The Medallion System",
+ "pass": 2,
+ "prompt_version": "v1",
+ "model": "claude-sonnet-5-5",
+ "claims": [
+  {
+   "metric": "market",
+   "value": 500000.0,
+   "value_high": null,
+   "unit": "USD",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p3r4c1",
+   "label_cell": "p3r3c2",
+   "period_cell": null
+  },
+  {
+   "metric": "market",
+   "value": 31000.0,
+   "value_high": null,
+   "unit": "USD",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p3r4c1",
+   "label_cell": "p3r3c2",
+   "period_cell": null
+  }
+ ]
+}
