@@ -332,14 +332,17 @@ export const confidenceText = (c) => c?.confidence?.text || PLACEHOLDER;
 // The deck panel's run log (docs/specs/llm-structure-reading.md sections 3, 4 and 9).
 export const DECK_AI_STATUS = {
   reading: "reading", waiting: "waiting for revenue file", read: "read", not_read: "not read", stopped: "not read",
-  python_only: "not read (AI-assisted reading is off for this audit)",
 };
+// Consent unticked (George, 2026-10-22, chat-upload.md section 28): since the page read replaced the rules read, such a deck lists no
+// claim at all, so the one line says so and where to go. It stands alone, without the "AI reading:" prefix.
+export const CONSENT_OFF_LINE = "Deck not read. AI-assisted reading is off for this audit, so no claims were extracted. Tick consent on the Upload page to read it, or use Add claim.";
 
 /** ["AI reading: read", "Sent to the model: slides 4, 7, 12"] for one deck (no cost: usage-and-allowance.md section 9); the stop
  *  message when the audit reached its token limit; how many of the model's periods Python replaced
  *  with the one its header cells give. */
 export function deckRunLog(deck) {
   if (!deck?.ai_status) return [];
+  if (deck.ai_status === "python_only") return [CONSENT_OFF_LINE];
   const lines = [`AI reading: ${DECK_AI_STATUS[deck.ai_status] || deck.ai_status}`];
   if (deck.ai_status === "stopped" && deck.ai_message) lines.push(deck.ai_message);
   if (deck.sent_pages?.length) lines.push(`Sent to the model: ${deck.page_unit || "slide"}s ${deck.sent_pages.join(", ")}`);

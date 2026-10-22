@@ -1,7 +1,7 @@
 import {
   ALL_DECKS, AI_SUGGESTION_LABEL, CLAIM_TYPES, INCONSISTENCY_LABEL, VERIFIED_LABEL, badgeText, deckRunLog, REMOVE_DECK_CONFIRM, claimPeriod, conversionHover, claimSections, claimsForDeck, periodLabel, directionText, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, newClaimPayload, sourceRef, statusCounts, typeLabel,
   approveAllToast, toReview, DECK_SCOPE_CANNOT, DECK_SCOPE_CANNOT_LEAD, DECK_SCOPE_INTRO, isDeckFile, DECK_SCOPE_OUTRO, EDIT_TYPES, isOther, readingChoices, confidenceText, otherFiguresTitle,
-  claimFields, editLogText,
+  claimFields, editLogText, CONSENT_OFF_LINE,
   CLAIMS_VIEW, REVIEW_VIEW, VIEW_LABELS, REVIEW_INTRO, claimsForView, isFlagged, flagsText,
 } from "./deckClaims";
 
@@ -210,8 +210,10 @@ describe("model readings in the approval list (docs/specs/llm-structure-reading.
     expect(deckRunLog({ ai_status: "read", periods_corrected: 0 })).toEqual(["AI reading: read"]);
   });
 
-  test("a deck not read because AI reading is off says so, and no line asks for a re-upload (it is read when reading is ticked)", () => {
-    expect(deckRunLog({ ai_status: "python_only" })).toEqual(["AI reading: not read (AI-assisted reading is off for this audit)"]);
+  test("a deck not read because AI reading is off says so in one line (George, 2026-10-22), and no line asks for a re-upload (it is read when reading is ticked)", () => {
+    expect(deckRunLog({ ai_status: "python_only" })).toEqual([CONSENT_OFF_LINE]);
+    expect(CONSENT_OFF_LINE).toBe("Deck not read. AI-assisted reading is off for this audit, so no claims were extracted. Tick consent on the Upload page to read it, or use Add claim.");
+    expect(deckRunLog({ ai_status: "python_only", sent_pages: [3] })).toEqual([CONSENT_OFF_LINE]);
     expect(deckRunLog({ ai_status: "python_only", uploaded_before_consent: true }).join(" ")).not.toContain("re-upload");
     expect(deckRunLog({})).toEqual([]);
   });

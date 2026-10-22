@@ -1172,6 +1172,11 @@ its label or its page could not be confirmed on the slide. Each flag names what 
 anywhere else. Approve all never approves a flagged claim (George, 2026-10-22): the server skips it, counts it in `skipped` and in
 `skipped_flagged`, and the toast reads "Approved X claims, Y skipped (flagged for review, need Revenue / Volume or failed to save)".
 
+**Consent unticked (screen line S26, George, 2026-10-22).** A deck uploaded while consent is off lists no claim (the rules read no longer runs
+at upload); its run log is one line, word for word, in place of "AI reading: not read (...)" (`CONSENT_OFF_LINE`): "Deck not read.
+AI-assisted reading is off for this audit, so no claims were extracted. Tick consent on the Upload page to read it, or use Add claim."
+Ticking consent reads the deck as §23 says.
+
 **Cost.** A page call is exempt from the USD 5 daily cap and counted in the tester's monthly allowance, as a mapping call is
 (`gateway.SPEND_CAP_EXEMPT`; usage-and-allowance.md §4). Engine contract 6 (interface-contracts.md): results and claim matches stored
 under 5 read "Stale – re-run audit"; `SEED_VERSION` 13 reseeds the demo audits.
