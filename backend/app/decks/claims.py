@@ -888,7 +888,7 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
         if shared.get(id(n)) == UNCLEAR:
             out[-1]["period_unclear"] = True
     if numbers:
-        return out
+        return [recurring_year_end(c) for c in out]
     if dates:
         # Only dates: a launch month or a roadmap quarter. A bare year counts only next to a
         # claim keyword in its own line ("ARR by end of 2018").
@@ -1636,24 +1636,46 @@ def _in_stack(unit: Dict) -> bool:
 
 
 _TURNOVER_TERM = re.compile(r"(?i)\b(?:turnover|GMV|TPV|gross merchandise (?:value|volume)|(?:total )?(?:trading|payment|transaction) volume)\b")
-_RECURRING_TERM = re.compile(r"\b(?:ARR|MRR)\b")
+_RECURRING_TERM = re.compile(r"\b(?:ARR|MRR)\b|(?i:\b(?:annual|monthly) recurring revenue\b)")
+_NEW_MRR_TERM = re.compile(r"(?i)\bnew mrr\b")
 # A contract value (George, 2026-10-19, issue #136): a figure the deck labels as contracted or committed is a contract value, never
 # revenue. The words of docs/specs/revenue-file-recognition.md section 2.1, whole words, any case.
 CONTRACT_TERM = re.compile(r"(?i)\b(?:(?:annual|total)?\s*contract(?:ed)?\s+values?|contracted\s+revenues?|contracted\s+(?:arr|mrr)"
-                           r"|committed\s+(?:arr|mrr)|tcv|acv|carr)\b")
+                           r"|committed\s+(?:arr|mrr)|tcv|acv|carr)\b"
+                           r"|(?i:\b(?:arr|mrr)\s*[(\[]\s*(?:contracted|committed)\s*[)\]])")
 CONTRACT_LABEL = "Contract value"
 
 
 def deck_label(c: Dict) -> Optional[str]:
     """The word the deck uses for a revenue-type figure: "Contract value" when its label or line holds a contract-value term,
-    "Turnover" when it holds a turnover term (and no ARR or MRR), else "Revenue". None for every other type. A contract value or a
-    turnover figure is never compared with a revenue figure for a deck inconsistency (docs/specs/claim-matching.md section 11)."""
+    "New MRR", "MRR" or "ARR" when its own label holds that term (issue #151: a monthly or annual recurring figure is never Revenue),
+    "Turnover" when it holds a turnover term, else "Revenue". None for every other type. Figures with different labels are never
+    compared with each other for a deck inconsistency (docs/specs/claim-matching.md section 11)."""
     if c.get("claim_type") != "revenue":
         return None
     text = f"{c.get('label_from') or ''} {c.get('snippet') or ''}"
     if CONTRACT_TERM.search(text):
         return CONTRACT_LABEL
-    return "Turnover" if _TURNOVER_TERM.search(text) and not _RECURRING_TERM.search(text) else "Revenue"
+    recurring = _RECURRING_TERM.search(text)
+    if recurring:
+        if _NEW_MRR_TERM.search(text):
+            return "New MRR"
+        return "ARR" if re.search(r"(?i)\b(?:ARR|annual)", recurring.group(0)) else "MRR"
+    return "Turnover" if _TURNOVER_TERM.search(text) else "Revenue"
+
+
+_IN_YEAR = re.compile(r"(?i)\bin\s+((?:19|20)\d{2})\b")
+
+
+def recurring_year_end(c: Dict) -> Dict:
+    """An MRR or ARR figure stated "in 2021" is the run rate at the end of that year: its period is Dec 2021, and the candidate keeps
+    "period_read_note" saying so (issue #151; the analyst can change the date, which drops the note). Only a bare year in the
+    figure's own line, only MRR and ARR; a month the deck states, a contract value and every other type keep their period."""
+    year = (_IN_YEAR.search(c.get("snippet") or "") or [None, None])[1]
+    if year and c.get("claim_type") == "revenue" and deck_label(c) in ("MRR", "ARR") and c.get("target_date") == year:
+        c["target_date"] = f"{year}-12"
+        c["period_read_note"] = f"period read as Dec {year} from 'in {year}'"
+    return c
 
 
 def _figure_of(c: Dict, v: Dict) -> Dict:

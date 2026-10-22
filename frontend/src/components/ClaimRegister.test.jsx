@@ -77,6 +77,14 @@ test("the section has its title, the download button and one row per claim with 
   expect(row.querySelector('[data-testid="register-gate-sentence"]')).toBeNull();
 });
 
+test("a period the parser read from 'in 2021' shows its note under the period; a row with no note or no period shows none (issue #151)", async () => {
+  const note = "period read as Dec 2021 from 'in 2021'";
+  const { host } = await mount([{ ...ROW, period: "2021", period_note: note }, { ...ROW, claim_id: "c2", period: "Feb 2024", period_note: null },
+    { ...ROW, claim_id: "c3", period: null, period_note: "no period stated" }]);
+  const notes = [...host.querySelectorAll('[data-testid="register-period-note"]')];
+  expect(notes.map((n) => n.textContent)).toEqual([note]);
+});
+
 test("the table has the seven columns, each claim's second line spans the row, and the layout cannot scroll sideways at 1280 px", async () => {
   const { host } = await mount([ROW, { ...ROW, claim_id: "c02", rank: 2, evidence_label: "Unverified", gate_needed: true }]);
   expect(REGISTER_COLUMNS).toEqual(["#", "Claim", "Segment", "Observed", "Gap", "Extraction confidence", "Evidence status"]);

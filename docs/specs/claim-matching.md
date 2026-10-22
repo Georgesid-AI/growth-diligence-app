@@ -399,3 +399,7 @@ Amended 2026-10-21 (issue #148): a bar's year by position (deck-parser.md, amend
 no year both reach this table through the claim's period: a figure with no readable period is still Unverified, "Period not read – set it in the claim row"
 (table 2b, unchanged; pinned in `backend/tests/test_issue_148.py`). The deck list's "Verified" badge is the AI reading's (value matched to its cell, period
 agreeing with Python's), not this register's evidence label; its null-period rule is unchanged and open for George's decision (PR for issue #148).
+
+Amended 2026-10-22 (issue #151): the register's `period_note` reads the candidate's `period_read_note` ("period read as Dec 2021 from 'in 2021'", deck-parser.md, amended 2026-10-22)
+when the period was read by Python from "in <year>" for an MRR or ARR figure, and "no period stated" when there is none (unchanged). The register shows the note under the period. A deck
+figure labelled MRR, ARR or New MRR is never compared with a Revenue or Turnover figure for a deck inconsistency (section 11 rule extended to every deck label).

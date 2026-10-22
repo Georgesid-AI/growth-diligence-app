@@ -1942,13 +1942,15 @@ def _edited_period(value: dict, before: dict, fiscal_year_end: int) -> dict:
     The deck's stated text goes once the date changes."""
     if value.get("target_date") != before.get("target_date"):
         value["period_text"] = None
+        value["period_read_note"] = None            # the analyst's date replaces the one Python read (issue #151)
     else:
         value["period_text"] = before.get("period_text")
+        value["period_read_note"] = before.get("period_read_note")
     return deck_claims.resolve_period(value, fiscal_year_end)
 
 
 def _period_fields(value: dict) -> dict:
-    return {k: value.get(k) for k in ("period_text", "period_start", "period_end")}
+    return {k: value.get(k) for k in ("period_text", "period_read_note", "period_start", "period_end")}
 
 
 def _reading(candidate: dict) -> tuple:

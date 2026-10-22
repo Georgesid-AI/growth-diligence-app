@@ -596,3 +596,11 @@ line, a line of unknown type or has a break-even cue ("profitable", "break-even"
 - A KPI panel's cell keeps its bar's year (`bar_year`, `claims.bar_years`) with the structure; it is never sent to the model (boundary test). The
   verifier dates the item from it after its period headers, its own cell and its adjacent date line (structure-labelling.md §4): code assigns the
   years by position, the model's period is corrected to it. Tests: `backend/tests/test_issue_148.py`.
+
+Amended 2026-10-22 (issue #151; tests `backend/tests/test_issue_151.py`): (1) the deck label of a revenue-type figure (`deck_label`) is "MRR", "ARR" or "New MRR" when its own
+label or line holds that term (also "monthly / annual recurring revenue"), before "Turnover" and "Revenue"; a contracted or committed MRR or ARR, including the bracket form
+"MRR (contracted)", stays "Contract value". The claim type stays Revenue (its family covers ARR, MRR and bookings). Figures with different labels are never compared for a
+deck inconsistency, so monthly MRR is not set against annual revenue. (2) An MRR or ARR figure whose own line says "in <year>" is the run rate at the end of that year: target
+date <year>-12 (Dec), and the candidate keeps `period_read_note` = "period read as Dec 2021 from 'in 2021'". A month the deck states, "MRR 2021" without "in", and every other type keep
+their period. The analyst's edit of the date replaces it and clears the note. Rules read and panel read (`candidate_from_item`) share `recurring_year_end`. Ten-deck pin: 212
+candidates before and after, no claim type or date moves; the deck label of 7 rows moves from Revenue to MRR or ARR (PR for issue #151).

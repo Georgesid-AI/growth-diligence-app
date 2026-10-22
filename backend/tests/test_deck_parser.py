@@ -2071,7 +2071,7 @@ def test_turnover_is_compared_with_turnover_and_revenue_with_revenue_only():
     claims._flag_inconsistencies(found)
     pair = found[0]["inconsistencies"][0]
     assert (pair["this"]["label"], pair["other"]["label"]) == ("Turnover", "Turnover")
-    assert claims.deck_label(_revenue_figure("ARR 100", 100, 3, "Turnover")) == "Revenue", "ARR is never turnover"
+    assert claims.deck_label(_revenue_figure("ARR 100", 100, 3, "Turnover")) == "ARR", "ARR is never turnover, nor revenue (issue #151)"
 
 
 # ---------------------------------------------------------------------------
