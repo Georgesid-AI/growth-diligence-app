@@ -117,7 +117,7 @@ def _is_date_source(text: str) -> bool:
 
 def date_sources(structure: Dict, cell: Dict) -> List[Dict]:
     """The adjacent cells a period may come from."""
-    return [c for c in adjacent(structure, cell) if _is_date_source(c["text"])]
+    return [c for c in adjacent(structure, cell) if _is_date_source(c["text"]) and not verify.figures(c["text"])]
 
 
 def _from_source(structure: Dict, source: Dict, fiscal_year_end: int):
@@ -324,7 +324,7 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12) -> Dic
     """
     by_id = {_id(c): c for c in grid["cells"]}
     grid_views = views(grid)
-    listed = {id(s): items.list_items(s) for s in [grid_views["boxes"], *grid_views["tables"].values()]}
+    listed = {id(s): items.list_items(s, titles=True) for s in [grid_views["boxes"], *grid_views["tables"].values()]}
     checked, dropped, corrected_count = [], 0, 0
     for claim in page_claims:
         cell = by_id.get(claim["value_cell"])
