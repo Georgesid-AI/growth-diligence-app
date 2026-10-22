@@ -1,0 +1,6 @@
+Date and branch: 2026-10-22, claude/lucid-goldberg-1i67rk (George's four decisions on the build PR: cost line dropped, architecture note applied, rules path kept, Approve all skips flagged claims).
+Deleted: the PR's measured-cost section (read from the owner page after the first TestCo run); the "flagged ones included" sentence of chat-upload.md §28.
+Decided: Approve all skips a flagged claim on the server (counted in `skipped` and a new `skipped_flagged`), so the Review view's button cannot approve in bulk and the toast's bracket names "flagged for review" first; docs/architecture.md edited as George asked, the page read as the default and the rules read as the fallback behind DECK_PIPELINE=rules until the first tester decks are read.
+Slow or unclear: nothing; the response key is additive, so no screen or boundary list changed.
+Root cause and rule: Approve all was declared out of scope in the task, so the first PR let it approve flagged claims and raised it as a decision; rule: a new row state (a flag) is checked against every status writer before the PR goes up (the rule of the 2026-10-22 zen-clarke log, applied again).
+Process change to propose: keep a one-line list of status writers (single Approve, Approve all, Run audit's auto-approve, edit) in chat-upload.md so a new row state is matched against it in the same PR.
