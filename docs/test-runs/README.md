@@ -22,3 +22,10 @@ page read (B) with matched, unmatched and dropped claims and recall and precisio
 passes with the disagreeing claims by kind; every unmatched or dropped claim grouped by the check that failed, with page and cell
 ids. Counts, cell ids, values, types and statuses; no deck text. The hand-written reading of a run (what failed and why, what to
 change in the prompt or in page_check, what the next run should cost) goes beside it as `pages_<date>_analysis.md`.
+
+A batch a pages run did not read (a reply the schema refused twice, a cap, a stop) leaves `<deck>_p<first>-p<last>.failed.json`
+beside the recorded replies of its pass: its pages, status, the check the reply failed, the schema fields named and each
+validation error as claim index, field and closed code (`gateway.SCHEMA_CODES`); never the reply. `compare_pipelines.py --recorded`
+lists them under "Batches not read" and replays nothing from them. The lines a run prints and the gateway's "structure read" and
+"structure not read" lines go to a run log outside the repository (`CONSISTENCY_RUN_LOG_DIR`, else `~/.growth-diligence/run-logs/`,
+`<run name>.log`); it is never committed.

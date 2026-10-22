@@ -1,0 +1,22 @@
+{
+ "file": "06-uber.pdf",
+ "page": 17,
+ "match": "p17r1c1 title: Overall Market",
+ "pass": 1,
+ "prompt_version": "v2",
+ "model": "claude-sonnet-5-5",
+ "claims": [
+  {
+   "metric": "market",
+   "value": 4200000000.0,
+   "value_high": null,
+   "unit": "USD",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p17r2c2",
+   "label_cell": "p17r1c1",
+   "period_cell": null
+  }
+ ]
+}

@@ -1,0 +1,46 @@
+{
+ "file": "05-zero2hero.pdf",
+ "page": 11,
+ "match": "p11r1c1 title: Market",
+ "pass": 3,
+ "prompt_version": "v2",
+ "model": "claude-sonnet-5-5",
+ "claims": [
+  {
+   "metric": "market",
+   "value": 52000000000.0,
+   "value_high": null,
+   "unit": "USD",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p11r5c4",
+   "label_cell": "p11r4c4",
+   "period_cell": null
+  },
+  {
+   "metric": "market",
+   "value": 570000000000.0,
+   "value_high": null,
+   "unit": "USD",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p11r14c3",
+   "label_cell": "p11r13c3",
+   "period_cell": null
+  },
+  {
+   "metric": "market",
+   "value": 374000000000.0,
+   "value_high": null,
+   "unit": "USD",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p11r15c4",
+   "label_cell": "p11r14c4",
+   "period_cell": null
+  }
+ ]
+}

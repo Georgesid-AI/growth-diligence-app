@@ -212,9 +212,31 @@ _CELL_ID = re.compile(r"^r[1-9]\d*c[1-9]\d*$")
 _PERIOD = re.compile(r"^(?:\d{4}(?:-(?:Q[1-4]|H[12]|0[1-9]|1[0-2]))?|FY\d{4}(?:/\d{2})?)$")
 
 
+# The rules the validators state, as fixed messages: the gateway reads a rejected page reply's errors back to these closed
+# codes (gateway.SCHEMA_CODES), so a log or a record names the rule a claim broke and never the value that broke it.
+PERIOD_RULE = "period must be YYYY, YYYY-Qn, YYYY-Hn, YYYY-MM, FY2025 or FY2025/26"
+CELL_RULE = "must be one page cell id like p5r4c3"
+FINITE_RULE = "a value must be a finite number"
+UNIT_OTHER_RULE = "unit other needs the ISO code of a currency that is not listed"
+UNIT_OTHER_ONLY_RULE = "unit_other is set only when unit is other"
+VALUE_HIGH_RULE = "value_high needs a value"
+RULE_CODES = {PERIOD_RULE: ("period_form", "period"), CELL_RULE: ("cell_id_form", None), FINITE_RULE: ("not_finite", None),
+              UNIT_OTHER_RULE: ("unit_other_not_iso", "unit_other"), UNIT_OTHER_ONLY_RULE: ("unit_other_without_other", "unit_other"),
+              VALUE_HIGH_RULE: ("value_high_without_value", "value_high")}
+
+
+def rule_code(message):
+    """(code, field) of the rule a pydantic "Value error, ..." message states, or (None, None) for any other message."""
+    text = (message or "").split(", ", 1)[-1]
+    for rule, found in RULE_CODES.items():
+        if text == rule or (rule == CELL_RULE and text.endswith(" " + rule)):
+            return found
+    return None, None
+
+
 def _period_format(v):
     if v is not None and not _PERIOD.match(v):
-        raise ValueError("period must be YYYY, YYYY-Qn, YYYY-Hn, YYYY-MM, FY2025 or FY2025/26")
+        raise ValueError(PERIOD_RULE)
     return v
 
 
@@ -223,9 +245,9 @@ def _other_currency(unit, unit_other):
     free text."""
     if unit == OTHER_UNIT:
         if unit_other not in ISO_CURRENCIES or unit_other in SCHEMA_CURRENCIES:
-            raise ValueError("unit other needs the ISO code of a currency that is not listed")
+            raise ValueError(UNIT_OTHER_RULE)
     elif unit_other is not None:
-        raise ValueError("unit_other is set only when unit is other")
+        raise ValueError(UNIT_OTHER_ONLY_RULE)
 
 
 class StructureItem(BaseModel):
@@ -597,7 +619,7 @@ _PAGE_CELL_ID = re.compile(r"^p[1-9]\d*r[1-9]\d*c[1-9]\d*$")
 
 def _page_cell(v, field):
     if v is not None and not _PAGE_CELL_ID.match(v):
-        raise ValueError(f"{field} must be one page cell id like p5r4c3")
+        raise ValueError(f"{field} {CELL_RULE}")
     return v
 
 
@@ -641,14 +663,14 @@ class PageClaim(BaseModel):
     @classmethod
     def _finite(cls, v):
         if v is not None and (math.isnan(v) or math.isinf(v)):
-            raise ValueError("a value must be a finite number")
+            raise ValueError(FINITE_RULE)
         return v
 
     @model_validator(mode="after")
     def _consistent(self):
         _other_currency(self.unit, self.unit_other)
         if self.value is None and self.value_high is not None:
-            raise ValueError("value_high needs a value")
+            raise ValueError(VALUE_HIGH_RULE)
         return self
 
 
@@ -718,6 +740,11 @@ class StructureRead(BaseModel):
     estimated_cost_usd: float = 0.0
     prompt_version: Optional[str] = None
     model: Optional[str] = None
+    # A reply the schema refused (status not_read): the check it failed, the schema fields named and each validation error as
+    # {"claim": index or None, "field": a schema name or None, "code": one of gateway.SCHEMA_CODES}; never the reply.
+    check: Optional[str] = None
+    fields: List[str] = Field(default_factory=list)
+    schema_errors: List[dict] = Field(default_factory=list)
 
 
 class DeckUsage(BaseModel):

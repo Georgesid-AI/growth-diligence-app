@@ -1,0 +1,142 @@
+{
+ "file": "05-zero2hero.pdf",
+ "page": 17,
+ "match": "p17r1c1 title: Traction",
+ "pass": 1,
+ "prompt_version": "v2",
+ "model": "claude-sonnet-5-5",
+ "claims": [
+  {
+   "metric": "revenue",
+   "value": 49284.0,
+   "value_high": null,
+   "unit": "GBP",
+   "unit_other": null,
+   "period": "2020",
+   "actual_or_forecast": "actual",
+   "value_cell": "p17r17c2",
+   "label_cell": "p17r2c1",
+   "period_cell": "p17r19c2"
+  },
+  {
+   "metric": "revenue",
+   "value": 181193.0,
+   "value_high": null,
+   "unit": "GBP",
+   "unit_other": null,
+   "period": "2020",
+   "actual_or_forecast": "actual",
+   "value_cell": "p17r16c2",
+   "label_cell": "p17r2c1",
+   "period_cell": "p17r19c2"
+  },
+  {
+   "metric": "revenue",
+   "value": 278085.0,
+   "value_high": null,
+   "unit": "GBP",
+   "unit_other": null,
+   "period": "2021",
+   "actual_or_forecast": "actual",
+   "value_cell": "p17r15c2",
+   "label_cell": "p17r2c1",
+   "period_cell": "p17r19c3"
+  },
+  {
+   "metric": "revenue",
+   "value": 415107.0,
+   "value_high": null,
+   "unit": "GBP",
+   "unit_other": null,
+   "period": "2022",
+   "actual_or_forecast": "actual",
+   "value_cell": "p17r10c2",
+   "label_cell": "p17r2c1",
+   "period_cell": "p17r19c4"
+  },
+  {
+   "metric": "revenue",
+   "value": 550508.0,
+   "value_high": null,
+   "unit": "GBP",
+   "unit_other": null,
+   "period": "2023",
+   "actual_or_forecast": "actual",
+   "value_cell": "p17r9c2",
+   "label_cell": "p17r2c1",
+   "period_cell": "p17r19c5"
+  },
+  {
+   "metric": "users",
+   "value": 30000.0,
+   "value_high": null,
+   "unit": "count",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "actual",
+   "value_cell": "p17r4c1",
+   "label_cell": "p17r4c1",
+   "period_cell": null
+  },
+  {
+   "metric": "users",
+   "value": 150.0,
+   "value_high": null,
+   "unit": "count",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "actual",
+   "value_cell": "p17r5c1",
+   "label_cell": "p17r5c1",
+   "period_cell": null
+  },
+  {
+   "metric": "users",
+   "value": 6500.0,
+   "value_high": null,
+   "unit": "count",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "actual",
+   "value_cell": "p17r6c2",
+   "label_cell": "p17r6c2",
+   "period_cell": null
+  },
+  {
+   "metric": "users",
+   "value": 85000.0,
+   "value_high": null,
+   "unit": "count",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "actual",
+   "value_cell": "p17r7c2",
+   "label_cell": "p17r7c2",
+   "period_cell": null
+  },
+  {
+   "metric": "users",
+   "value": 3000.0,
+   "value_high": null,
+   "unit": "count",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "actual",
+   "value_cell": "p17r10c3",
+   "label_cell": "p17r10c3",
+   "period_cell": null
+  },
+  {
+   "metric": "users",
+   "value": 10000.0,
+   "value_high": null,
+   "unit": "count",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "actual",
+   "value_cell": "p17r11c3",
+   "label_cell": "p17r11c3",
+   "period_cell": null
+  }
+ ]
+}

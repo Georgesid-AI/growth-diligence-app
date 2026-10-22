@@ -55,12 +55,25 @@ def fixtures():
 
 
 def recorded_fixtures(run):
-    """{pass number: the recorded replies of that pass} of a live run, or exit when the run is not recorded."""
+    """{pass number: the recorded replies of that pass} of a live run, or exit when the run is not recorded. The record files of
+    the batches not read (*.failed.json) are not replies: see failed_batches."""
     folder = consistency_run.RECORDED / run
     passes = sorted(int(p.name.split("-")[1]) for p in folder.glob("pass-*") if p.is_dir()) if folder.is_dir() else []
     if not passes:
         sys.exit(f"no recorded run {run!r} under {consistency_run.RECORDED}")
-    return {n: [json.loads(p.read_text(encoding="utf-8")) for p in sorted((folder / f"pass-{n}").glob("*.json"))] for n in passes}
+    return {n: [json.loads(p.read_text(encoding="utf-8")) for p in sorted((folder / f"pass-{n}").glob("*.json"))
+                if not p.name.endswith(".failed.json")] for n in passes}
+
+
+def failed_batches(run):
+    """[{pass, file, pages, status, check, fields, schema_errors}] of the batches a run did not read, from the record files its
+    passes left (PR B run 2); codes and page numbers only."""
+    folder = consistency_run.RECORDED / run
+    out = []
+    for path in sorted(folder.glob("pass-*/*.failed.json")):
+        d = json.loads(path.read_text(encoding="utf-8"))
+        out.append({k: d.get(k) for k in ("pass", "file", "pages", "status", "check", "fields", "schema_errors")})
+    return sorted(out, key=lambda r: (r["file"], r["pass"], r["pages"]))
 
 
 def answers():
@@ -373,6 +386,10 @@ async def run_recorded(decks, run, passes_wanted=None, out=print):
         out(f"{'all':22} {agreed:>6} {union:>5} {_agree(report['agreement_pct_all']):>6}")
     report["causes"] = dict(collections_counter(r["cause"] for rows in rows_of.values() for r in rows).most_common())
     report["unmatched_rows"] = unmatched_rows(rows_of)
+    report["failed_batches"] = [r for r in failed_batches(run) if r["file"] in decks and r["pass"] in passes]
+    for r in report["failed_batches"]:
+        out(f"not read: {r['file']} pass {r['pass']} pages {r['pages']} status={r['status']} check={r['check']} fields={r['fields']} "
+            f"errors={_errors_text(r['schema_errors'])}")
     out("")
     out("claims by cause over all passes: " + ", ".join(f"{k} {v}" for k, v in report["causes"].items()))
     out("unmatched and dropped rows (cause: deck page cell metric value x passes):")
@@ -384,6 +401,12 @@ async def run_recorded(decks, run, passes_wanted=None, out=print):
 
 def _agree(value):
     return "-" if value is None else f"{value}%"
+
+
+def _errors_text(errors):
+    """A failed batch's validation errors as "claims[3].unit_other:unit_other_not_iso" pieces (indexes, schema names, codes)."""
+    return ";".join((f"claims[{e['claim']}]" if e.get("claim") is not None else "reply") + (f".{e['field']}" if e.get("field") else "")
+                    + f":{e['code']}" for e in errors or ()) or "-"
 
 
 def markdown(report):
@@ -428,6 +451,13 @@ def markdown(report):
               "| Cause | Deck | Page | Cell | Metric | Value | Passes |", "|---|---|---:|---|---|---:|---:|",
               *(f"| {r['cause']} | {r['deck']} | {r['page']} | {r['cell']} | {r['metric']} | {r['value']} | {r['passes']} |"
                 for r in report["unmatched_rows"]), ""]
+    if report.get("failed_batches"):
+        lines += ["## Batches not read", "",
+                  "From the record files the run left beside its recorded replies: the pages of the batch, its status, the check the "
+                  "reply failed, the schema fields named and each validation error as claim index, field and code.", "",
+                  "| Deck | Pass | Pages | Status | Check | Fields | Errors |", "|---|---:|---|---|---|---|---|",
+                  *(f"| {r['file']} | {r['pass']} | {', '.join(map(str, r['pages'] or []))} | {r['status']} | {r['check'] or '-'} | "
+                    f"{', '.join(r['fields'] or []) or '-'} | {_errors_text(r['schema_errors'])} |" for r in report["failed_batches"]), ""]
     return "\n".join(lines)
 
 

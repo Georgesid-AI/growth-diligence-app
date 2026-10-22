@@ -1,0 +1,46 @@
+{
+ "file": "06-uber.pdf",
+ "page": 20,
+ "match": "p20r1c1 title: Potential Outcomes",
+ "pass": 1,
+ "prompt_version": "v2",
+ "model": "claude-sonnet-5-5",
+ "claims": [
+  {
+   "metric": "revenue",
+   "value": 1000000000.0,
+   "value_high": null,
+   "unit": "USD",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "forecast",
+   "value_cell": "p20r2c5",
+   "label_cell": "p20r2c4",
+   "period_cell": null
+  },
+  {
+   "metric": "net_profit",
+   "value": 20000000.0,
+   "value_high": 30000000.0,
+   "unit": null,
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "forecast",
+   "value_cell": "p20r3c6",
+   "label_cell": "p20r2c4",
+   "period_cell": null
+  },
+  {
+   "metric": "customers",
+   "value": 100.0,
+   "value_high": null,
+   "unit": "count",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "forecast",
+   "value_cell": "p20r2c7",
+   "label_cell": "p20r2c7",
+   "period_cell": null
+  }
+ ]
+}

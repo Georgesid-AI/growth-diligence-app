@@ -172,6 +172,8 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
     for batch, result in await read_pages(db, audit_id, deck_id, grids, audit.get("company_name"), mapping, adapter, sleep):
         numbers = [page_grids_mod.page_number(g) for g in batch]
         entry = {"pages": numbers, "status": result.status, "reason": result.reason, "key": result.key, "cache_hit": result.cache_hit}
+        if result.check:            # a reply the schema refused: the check, the fields and each error as index, field and code (rule 17)
+            entry.update(check=result.check, fields=list(result.fields), schema_errors=[dict(e) for e in result.schema_errors])
         if result.status == "stopped":
             stopped_message = result.reason
         if result.status == "read":

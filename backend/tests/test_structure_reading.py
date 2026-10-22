@@ -891,7 +891,7 @@ def test_a_reply_that_fails_validation_logs_the_check_it_failed(bad, check, capl
         result, _ = _read(_db(), adapter=t.FakeAdapter(replies=[reply]))
     assert result.status == "not_read"
     line, = [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
-    assert line.endswith(f"reason=parse_failed status=- type=- fields=- check={check}"), line
+    assert line.endswith(f"reason=parse_failed status=- type=- fields=- check={check} errors=-"), line
 
 
 def test_the_check_follows_the_last_reply_and_a_mapping_has_its_own_metric_list(caplog):
@@ -914,8 +914,7 @@ def test_the_check_follows_the_last_reply_and_a_mapping_has_its_own_metric_list(
         _read(_db(), MAPPING_TEXT, "column_mapping", replies=[elsewhere])
         _read(_db(), adapter=Refusing())
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
-    assert [line.rsplit(" ", 1)[1] for line in lines] == ["check=item_count", "check=metric_list", "check=other",
-                                                         "check=-"]
+    assert [line.split(" check=")[1].split(" ")[0] for line in lines] == ["item_count", "metric_list", "other", "-"]
 
 
 def _pair(line, date, category="launch"):
@@ -1944,7 +1943,7 @@ def test_the_consistency_script_reports_agreement_match_rate_cost_and_cache_hits
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path / "temp"))
     (tmp_path / "temp").mkdir()
     report = script.main(["--fake", "--deck", "05-zero2hero.pdf"])
-    assert [p.name.split("_")[0] for p in (tmp_path / "temp").iterdir()] == ["consistency"]
+    assert [p.name.split("_")[0] for p in (tmp_path / "temp").iterdir() if p.name != "run-logs"] == ["consistency"]
     assert not script.REPORTS.exists(), "a fake run's report never lands in docs/test-runs"
     assert report["agreement_pct"] == {"hiring_table": 100.0, "kpi_panel": 100.0, "table": 100.0}
     assert (report["agreement_pct_all"], report["agreement_pct_all_old"]) == (100.0, 100.0)
@@ -2209,6 +2208,8 @@ def _motor_without_a_server(monkeypatch, names, drop_fails=False):
     def answer(sync_method, delegate, *args, **kwargs):
         if sync_method.__name__ == "list_database_names":
             return list(names)
+        if sync_method.__name__ == "find_one":
+            return None                                   # the start-up looks for a run lock in each scratch database: none
         if sync_method.__name__ == "drop_database":
             if drop_fails:
                 raise AutoReconnect("connection lost")
@@ -2238,6 +2239,7 @@ def test_the_live_run_drops_its_scratch_database_in_the_event_loop_it_ran_in(mon
     monkeypatch.setattr(script, "run", live_run)
     monkeypatch.setattr(script, "REPORTS", tmp_path / "docs" / "test-runs")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "not-used")
+    monkeypatch.setenv("CONSISTENCY_RUN_LOG_DIR", str(tmp_path / "run-logs"))       # a live run's log goes outside the repository
     report = script.main(["--yes", "--deck", "05-zero2hero.pdf"])
     assert report["per_deck"]["05-zero2hero.pdf"]["structures"] == 5
     assert dropped == ["consistency_run", "consistency_run_old", "consistency_run"], \
@@ -2418,7 +2420,7 @@ def test_the_consistency_run_logs_one_not_read_line_per_structure_and_pass(caplo
         report = asyncio.run(script.run(["05-zero2hero.pdf"], 3, script.MemoryDB(), adapter))
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
     assert (adapter.calls, len(lines), report["not_read"]) == (15, 15, 15), "5 structures, 3 passes, once each"
-    assert all(line.endswith("reason=provider_error status=400 type=invalid_request_error fields=- check=-") for line in lines)
+    assert all(line.endswith("reason=provider_error status=400 type=invalid_request_error fields=- check=- errors=-") for line in lines)
     assert report["cache_hit_rate_pct"] == {"pass_2": 0.0, "pass_3": 0.0}
 
 
@@ -2610,7 +2612,7 @@ def test_the_diagnostic_runs_only_on_the_10_public_test_decks(monkeypatch, tmp_p
         script.main(["--yes", "--diagnostic", "--deck", "client-deck.pdf"])
     assert not any(temp.iterdir()), "refused before anything is written"
     script.main(["--fake", "--deck", "client-deck.pdf"])
-    assert [p.name.endswith("_diagnostic.md") for p in temp.iterdir()] == [False], "without --diagnostic, as before"
+    assert [p.name.endswith("_diagnostic.md") for p in temp.iterdir() if p.name != "run-logs"] == [False], "without --diagnostic, as before"
     capsys.readouterr()
 
     monkeypatch.setattr(script, "DECKS", DECKS)

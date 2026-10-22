@@ -14,7 +14,8 @@ the source):
    ("€2 7K" claimed as 27,000 is one row 27,000 to confirm or reject, not "revenue €2"; George, 2026-10-22, decision 2a on the
    review of PR #159).
 2. Unit present: the currency (its symbol or code: "€" or "EUR"), "%", "x", a time word or a count noun is in the value cell or
-   one directly next to it. A null unit passes only when the figure in the cell carries no currency, "%", "x" or time word.
+   one directly next to it. A null unit passes only when the figure in the cell carries no currency, "%", "x" or time word. A
+   ratio metric (RATIO_METRICS) claimed as unit x passes when its figure carries no unit of its own (change 6, PR B run 2).
 3. Period present: null, and no date source of the cell holds a period; or rebuilt by Python from the cited period cell, which
    must be a date source of the value cell: its own text, a column header of its table (a month, quarter or half with the year
    cell above it), the top line or an adjacent line of its own text box, a line of another box directly next to it, or the year
@@ -49,6 +50,7 @@ _WORD = re.compile(r"[^\W\d_]{3,}")
 _TIMES = re.compile(r"\d\s?[xX](?![^\W\d_])")
 _PERCENT = re.compile(r"%|(?i:\bpercent\b|\bper cent\b)")
 _LEVELS = verify.LEVELS
+RATIO_METRICS = frozenset({"ltv_cac"})      # a figure of these is a multiple by definition: "2.5" is 2.5x with no "x" written
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +140,37 @@ def _from_source(structure: Dict, source: Dict, fiscal_year_end: int):
     return (label, span, cells) if span else None
 
 
+def _dates(text: str) -> List[str]:
+    """The period labels of every date written in a line ("Q1 17 Q2 17 Q3 17": 2017-Q1, 2017-Q2, 2017-Q3)."""
+    return [d["date"] for d in claims.find_dates(text or "") if d.get("date")]
+
+
+def date_header(structure: Dict, cell: Dict, comma: bool) -> Optional[Dict]:
+    """The date line that dates the figures of a text line by position: the nearest line above the value cell in its own text
+    box and column that is a date line (no figure of its own) of as many dates as the cell holds figures (at least two), with only
+    lines of as many figures between them. None in a table or when any of that fails."""
+    n = len(verify.figures(cell["text"], comma))
+    if n < 2 or cell.get("table") is not None or cell.get("box") is None:
+        return None
+    above = sorted((c for c in structure["cells"] if c.get("box") == cell["box"] and c["col"] == cell["col"] and c["row"] < cell["row"]),
+                   key=lambda c: -c["row"])
+    for c in above:
+        if _is_date_source(c["text"]) and not verify.figures(c["text"], comma):
+            return c if len(_dates(c["text"])) == n else None
+        if len(verify.figures(c["text"], comma)) != n:
+            return None
+    return None
+
+
+def position_period(header: Dict, position: Optional[int], fiscal_year_end: int):
+    """(label, (start, end), [cell id]) of the nth date of a date header for the figure at position n, or None."""
+    dates = _dates(header["text"])
+    if not position or position > len(dates):
+        return None
+    span = claims.period_range(dates[position - 1], fiscal_year_end)
+    return (dates[position - 1], span, [_id(header)]) if span else None
+
+
 def _bar_cell(structure: Dict, cell: Dict, cited: Dict) -> bool:
     """Whether the cited cell is the year label of the value's bar by place (issue #148)."""
     return bool(cell.get("bar_year")) and cited["text"].strip() == str(cell["bar_year"]).strip()
@@ -149,13 +182,16 @@ def holds_period(structure: Dict, cell: Dict, fiscal_year_end: int) -> bool:
         return True
     if cell.get("bar_year") and claims.period_range((claims.period_cell(cell["bar_year"]) or {}).get("label"), fiscal_year_end):
         return True
+    if date_header(structure, cell, verify.decimal_comma(structure["cells"])) is not None:
+        return True
     return any(_from_source(structure, s, fiscal_year_end) for s in date_sources(structure, cell))
 
 
-def period_check(structure: Dict, cell: Dict, model: Optional[str], cited: Optional[Dict], fiscal_year_end: int):
+def period_check(structure: Dict, cell: Dict, model: Optional[str], cited: Optional[Dict], fiscal_year_end: int,
+                 position: Optional[int] = None):
     """(period label, period cells, ok, corrected): the period Python rebuilds from the cited cell when it is a date source of
-    the value cell (its own text, an adjacent date label or header, its bar's year label); a null period with nothing cited
-    stands only when no source holds a period."""
+    the value cell (its own text, an adjacent date label or header, its bar's year label, or the date header of its figures by
+    position); a null period with nothing cited stands only when no source holds a period."""
     wanted = claims.period_range(model, fiscal_year_end) if model else None
     if cited is None and model is None:
         return None, [], not holds_period(structure, cell, fiscal_year_end), False
@@ -165,10 +201,13 @@ def period_check(structure: Dict, cell: Dict, model: Optional[str], cited: Optio
         if span and span == wanted:             # the bar's year by place: Python's, with no cell of its own (issue #148)
             return bar, [], True, False
         return model, [], False, False
+    header = date_header(structure, cell, verify.decimal_comma(structure["cells"]))
     if _id(cited) == _id(cell):
         label = verify.own_period(cell)
         span = claims.period_range(label, fiscal_year_end) if label else None
         found = (label, span, [_id(cell)]) if span else None
+    elif header is not None and _id(cited) == _id(header):
+        found = position_period(header, position, fiscal_year_end)
     elif any(_id(cited) == _id(s) for s in date_sources(structure, cell)) or _bar_cell(structure, cell, cited):
         found = _from_source(structure, cited, fiscal_year_end)
     else:
@@ -230,11 +269,12 @@ def _unit_agrees(figure: Optional[Dict], unit: Optional[str], unit_other: Option
     return own == (unit_other if unit == OTHER else unit)
 
 
-def figure_check(listed: Dict, cell: Dict, value, value_high, metric: str, comma: bool, unit=None, unit_other=None):
+def figure_check(listed: Dict, cell: Dict, value, value_high, metric: str, comma: bool, unit=None, unit_other=None, prefer=()):
     """(item, values, ok): the item of the cell whose readings or written number is the model's value; a reading in full units
-    is preferred to the written number ("15" is the 15% before the €15K), and among equal values the figure whose own unit
-    agrees with the claim's; for a range the high end must match the item's range too. No match (a title, a period header, no
-    figure, or a figure the cell does not hold) gives (None, [], False): the row then shows the model's value."""
+    is preferred to the written number ("15" is the 15% before the €15K), and among equal values the figure at a position in
+    `prefer` (the positions whose date is the model's period, under a date header) and then the figure whose own unit agrees
+    with the claim's; for a range the high end must match the item's range too. No match (a title, a period header, no figure,
+    or a figure the cell does not hold) gives (None, [], False): the row then shows the model's value."""
     own = [i for i in listed["items"] if i["cell"] == _id(cell)]
     hits = []
     for pass_ in ("full", "written"):
@@ -252,6 +292,7 @@ def figure_check(listed: Dict, cell: Dict, value, value_high, metric: str, comma
                                         or _close(_written(high["raw"], comma), value_high)):
                     continue
             hits.append((item, values))
+    hits.sort(key=lambda hit: hit[0]["position"] not in prefer)
     for item, values in hits:
         if _unit_agrees(own_figure(cell, item["position"], comma), unit, unit_other) is not False:
             return item, values, True
@@ -265,16 +306,19 @@ def _marks(structure: Dict, cell: Dict) -> List[str]:
 
 
 def unit_check(structure: Dict, cell: Dict, item: Optional[Dict], unit: Optional[str], unit_other: Optional[str],
-               comma: bool = False) -> bool:
+               comma: bool = False, metric: Optional[str] = None) -> bool:
     """Whether the unit is where the model says it is (rule 2 above): when the figure's own text states one (a currency symbol or
     code, "%", "x", a time word, a counted noun) the claim's unit must be that one; otherwise its mark must stand in the value cell
-    or one directly next to it. A null unit passes only when the figure carries no currency, "%", "x" or time word."""
+    or one directly next to it. A null unit passes only when the figure carries no currency, "%", "x" or time word. A ratio
+    metric's bare figure is "x" by definition."""
     figure = own_figure(cell, item["position"], comma) if item is not None else None
     stated = _unit_agrees(figure, unit, unit_other)
     if unit is None:
         return figure is None or (figure.get("currency") is None and (figure.get("unit") is None or bool(figure.get("count"))))
     if stated is not None:
         return stated
+    if unit == "x" and metric in RATIO_METRICS and figure is not None:
+        return True
     texts = _marks(structure, cell)
     joined = " ".join(texts)
     if unit == "%":
@@ -334,13 +378,18 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12) -> Dic
         structure = view_of(grid_views, cell)
         comma = verify.decimal_comma(structure["cells"])
         metric = claim["metric"]
+        cited = by_id.get(claim["period_cell"]) if claim.get("period_cell") else None
+        header = date_header(structure, cell, comma) if cited is not None else None
+        wanted = claims.period_range(claim["period"], fiscal_year_end) if claim.get("period") else None
+        prefer = {i + 1 for i, d in enumerate(_dates(header["text"])) if claims.period_range(d, fiscal_year_end) == wanted} \
+            if header is not None and _id(cited) == _id(header) and wanted else ()
         item, values, value_ok = (None, [], False) if claim.get("value") is None else \
             figure_check(listed[id(structure)], cell, claim["value"], claim.get("value_high"), metric, comma, claim.get("unit"),
-                         claim.get("unit_other"))
-        unit_ok = unit_check(structure, cell, item, claim.get("unit"), claim.get("unit_other"), comma) \
+                         claim.get("unit_other"), prefer)
+        unit_ok = unit_check(structure, cell, item, claim.get("unit"), claim.get("unit_other"), comma, metric) \
             if claim.get("value") is not None else claim.get("unit") is None
-        cited = by_id.get(claim["period_cell"]) if claim.get("period_cell") else None
-        period, period_cells, period_ok, corrected = period_check(structure, cell, claim.get("period"), cited, fiscal_year_end)
+        period, period_cells, period_ok, corrected = period_check(structure, cell, claim.get("period"), cited, fiscal_year_end,
+                                                                  item["position"] if item else None)
         corrected_count += int(corrected)
         label = by_id.get(claim["label_cell"]) if claim.get("label_cell") else None
         label_ok = label is None or any(_id(label) == _id(c) for c in label_cells(structure, cell))

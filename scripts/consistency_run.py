@@ -80,13 +80,24 @@ of the hand-written files beside them) and the run output to docs/test-runs/page
 counts, tokens, cost and agreement on (value cell, metric, period), no deck text. --zip bundles both under their repository paths.
 --fake --pages replays the hand-written replies of backend/tests/fixtures/page_replies/ with no network and no MongoDB; everything it
 writes goes to the system temp folder.
+A batch that was not read (a reply the schema refused twice, a cap, a stop) leaves <deck>_p<first>-p<last>.failed.json beside the
+recorded replies of its pass: its pages, status, the check it failed, the schema fields named and each validation error as claim
+index, field and closed code (gateway.SCHEMA_CODES); never the reply. compare_pipelines.py lists them and replays nothing from them.
+Lock: a run takes a lock document in its scratch database (run_lock) and heartbeats it after every deck and pass; a second run on
+the same database stops before any call while the heartbeat is younger than LOCK_STALE_SECONDS, and the start-up drop of old scratch
+databases leaves one with a live lock alone and stops. Run log: every line a run prints and the gateway's "structure read" and
+"structure not read" lines go to <CONSISTENCY_RUN_LOG_DIR or ~/.growth-diligence/run-logs>/<run name>.log, never inside the
+repository (--fake: the system temp folder). No deck text goes through either.
 """
 import argparse
 import asyncio
+import contextlib
 import datetime
 import hashlib
 import json
+import logging
 import os
+import socket
 import sys
 import tempfile
 import time
@@ -176,6 +187,13 @@ class MemoryDB:
 
         async def count_documents(self, flt):
             return sum(1 for d in self.docs if self._match(d, flt))
+
+        async def delete_one(self, flt):
+            for i, d in enumerate(self.docs):
+                if self._match(d, flt):
+                    del self.docs[i]
+                    return type("R", (), {"deleted_count": 1})()
+            return type("R", (), {"deleted_count": 0})()
 
         def aggregate(self, pipeline):
             docs = [d for d in self.docs if self._match(d, pipeline[0].get("$match", {}))]
@@ -517,11 +535,19 @@ def _roadmap_lines(readings, structures, listings):
     return lines, positioned, same, same_date, rebuilt
 
 
-async def run(decks, passes, db, adapter=None, pause=0.0, sleep=None, diagnostic=None, prompt_source=None):
+async def run(decks, passes, db, adapter=None, pause=0.0, sleep=None, diagnostic=None, prompt_source=None, now=time.time, out=print):
     """`pause` seconds between structure calls, so a burst does not hit the provider's rate limit. A `diagnostic`
     list gets the rows of diagnostic_rows; the report itself is the same either way. `prompt_source` (the live run) is
     the app's database: its latest structure_reading prompt is copied into `db` first; --fake and the tests hold the
-    test-only stub already."""
+    test-only stub already. The run holds the lock on `db` (take_lock) from before the first call to the end."""
+    await take_lock(db, now())
+    try:
+        return await _run(decks, passes, db, adapter, pause, sleep, diagnostic, prompt_source, now, out)
+    finally:
+        await release_lock(db)
+
+
+async def _run(decks, passes, db, adapter, pause, sleep, diagnostic, prompt_source, now, out):
     from app.decks import parser
     from app.llm import gateway
     from app.structures import items as structure_items
@@ -615,8 +641,9 @@ async def run(decks, passes, db, adapter=None, pause=0.0, sleep=None, diagnostic
                     reasons.setdefault(structure["type"], dict.fromkeys(REASONS, 0))[reason] += 1
                     unverified.setdefault((file, i, item["item"], reason, detail), set()).add(n)
             spent = usage["input_tokens"] + usage["output_tokens"] - tokens_before
-            print(f"[{d}/{len(decks)}] {file} pass {n}/{passes}: {read} of {len(sent)} structures read, "
-                  f"{spent:,} tokens, ${usage['cost_usd'] - cost_before:.4f}", flush=True)
+            await heartbeat(db, now())
+            out(f"[{d}/{len(decks)}] {file} pass {n}/{passes}: {read} of {len(sent)} structures read, "
+                f"{spent:,} tokens, ${usage['cost_usd'] - cost_before:.4f}", flush=True)
     if diagnostic is not None:
         diagnostic.extend(diagnostic_rows(readings, unverified, types, pages, texts, structures, listings))
     agreement, agreement_all = _agreement(readings, types, "norm")
@@ -663,6 +690,96 @@ async def run(decks, passes, db, adapter=None, pause=0.0, sleep=None, diagnostic
 
 def _scratch(name):
     return name == SCRATCH or name.startswith(SCRATCH + "_")
+
+
+# ---------------------------------------------------------------------------
+# One run per scratch database, and a run log outside the repository (PR B, run 2)
+# ---------------------------------------------------------------------------
+LOCK_COLLECTION, LOCK_ID = "run_lock", "lock"
+LOCK_STALE_SECONDS = 1800        # a run heartbeats after every deck and pass; one batch call ends within a few minutes
+
+
+async def lock_held(db, now):
+    """The lock document of a run in flight on `db` (its heartbeat younger than LOCK_STALE_SECONDS), or None."""
+    doc = await db[LOCK_COLLECTION].find_one({"_id": LOCK_ID})
+    if doc and now - float(doc.get("heartbeat_at") or 0) < LOCK_STALE_SECONDS:
+        return doc
+    return None
+
+
+async def take_lock(db, now=None):
+    """Take the run lock on `db`, or stop: two runs on one scratch database would drop or write each other's figures. A lock
+    whose heartbeat is stale is a crashed run's and is taken over."""
+    now = time.time() if now is None else now
+    held = await lock_held(db, now)
+    if held:
+        sys.exit(f"another run holds the lock on this scratch database (host {held.get('host')}, pid {held.get('pid')}, heartbeat "
+                 f"{int(now - float(held.get('heartbeat_at') or 0))}s ago): wait for it, or drop the database if that run crashed.")
+    doc = {"_id": LOCK_ID, "host": socket.gethostname(), "pid": os.getpid(), "started_at": now, "heartbeat_at": now}
+    await db[LOCK_COLLECTION].update_one({"_id": LOCK_ID}, {"$set": doc}, upsert=True)
+
+
+async def heartbeat(db, now):
+    await db[LOCK_COLLECTION].update_one({"_id": LOCK_ID}, {"$set": {"heartbeat_at": now}})
+
+
+async def release_lock(db):
+    await db[LOCK_COLLECTION].delete_one({"_id": LOCK_ID})
+
+
+async def drop_scratch(client, db_name, now=time.time):
+    """Drop every scratch database an earlier run left (crashed or kept), except one a run in flight holds the lock on; with any
+    held, stop (the one this run wants included: it would be dropped or written under the other run)."""
+    held = []
+    for name in await client.list_database_names():
+        if not _scratch(name):
+            continue
+        if await lock_held(client[name], now()):
+            held.append(name)
+            continue
+        await client.drop_database(name)
+        print(f"Dropped scratch database {name} left by an earlier run", flush=True)
+    if held:
+        sys.exit(f"a run is in flight on {', '.join(held)} (lock heartbeat younger than {LOCK_STALE_SECONDS}s): wait for it, or drop the "
+                 f"database yourself if that run crashed. This run ({db_name}) was not started.")
+
+
+def run_log_path(name, fake=False):
+    """<folder>/<name>.log: CONSISTENCY_RUN_LOG_DIR, else ~/.growth-diligence/run-logs (--fake: the system temp folder); never
+    inside the repository, so a run log is never committed."""
+    root = os.environ.get("CONSISTENCY_RUN_LOG_DIR")
+    folder = Path(root).expanduser() if root else Path(tempfile.gettempdir()) / "run-logs" if fake else \
+        Path.home() / ".growth-diligence" / "run-logs"
+    if folder.resolve().is_relative_to(ROOT.resolve()):
+        sys.exit(f"CONSISTENCY_RUN_LOG_DIR must point outside the repository ({folder}): the run log is never committed.")
+    return folder / f"{name}.log"
+
+
+@contextlib.contextmanager
+def run_log(path):
+    """Yields an `out` that prints a line and appends it to `path`; the gateway's lines ("structure read", "structure not read":
+    hashes, tokens, codes, never text) go to the same file while the run lasts."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(path, encoding="utf-8")
+    handler.setLevel(logging.INFO)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    growth = logging.getLogger("growth")
+    previous = growth.level
+    growth.addHandler(handler)
+    if growth.getEffectiveLevel() > logging.INFO:
+        growth.setLevel(logging.INFO)
+    print(f"Run log: {path} (outside the repository)", file=sys.stderr, flush=True)      # stderr: stdout is the report
+
+    def out(line, **kwargs):
+        print(line, **kwargs)
+        handler.stream.write(line + "\n")
+        handler.flush()
+    try:
+        yield out
+    finally:
+        growth.removeHandler(handler)
+        growth.setLevel(previous)
+        handler.close()
 
 
 def _pct(value):
@@ -960,19 +1077,31 @@ def _triples(claims):
 
 def _write_recorded(folder, file, n, reads, lines, prompt_version):
     """One file per page with claims in folder/pass-<n>/, in the format of the hand-written files beside them: the model's
-    claims for that page as returned, and the page's first line as sent, so compare_pipelines.py finds the page again."""
+    claims for that page as returned, and the page's first line as sent, so compare_pipelines.py finds the page again. A batch
+    not read leaves <deck>_p<first>-p<last>.failed.json there instead: its pages, status, reason, the check it failed, the schema
+    fields and each validation error as claim index, field and code (never the reply), and the tokens it billed."""
+    from app.decks import pages as page_grids
     from app.llm import gateway
     from app.structures import page_check
     out, written = folder / f"pass-{n}", 0
-    for _, result in reads:
+    stem = Path(file).stem.split("-", 1)[-1]
+    for grids, result in reads:
         if result.status != "read":
+            numbers = [page_grids.page_number(g) for g in grids]
+            span = f"p{numbers[0]}" + (f"-p{numbers[-1]}" if len(numbers) > 1 else "")
+            out.mkdir(parents=True, exist_ok=True)
+            (out / f"{stem}_{span}.failed.json").write_text(json.dumps({
+                "file": file, "pages": numbers, "pass": n, "prompt_version": prompt_version, "model": gateway.STRUCTURE_MODEL,
+                "status": result.status, "reason": result.reason, "check": result.check, "fields": list(result.fields),
+                "schema_errors": [dict(e) for e in result.schema_errors], "input_tokens": result.input_tokens,
+                "output_tokens": result.output_tokens}, indent=1) + "\n", encoding="utf-8")
             continue
         for page in sorted({page_check.split_cell_id(c["value_cell"])[0] for c in result.claims}):
             claims = [c for c in result.claims if page_check.split_cell_id(c["value_cell"])[0] == page]
             if not claims or page not in lines:
                 continue
             out.mkdir(parents=True, exist_ok=True)
-            (out / f"{Path(file).stem.split('-', 1)[-1]}_p{page}.json").write_text(json.dumps({
+            (out / f"{stem}_p{page}.json").write_text(json.dumps({
                 "file": file, "page": page, "match": lines[page], "pass": n, "prompt_version": prompt_version,
                 "model": gateway.STRUCTURE_MODEL, "claims": claims}, indent=1) + "\n", encoding="utf-8")
             written += len(claims)
@@ -998,7 +1127,7 @@ def _pages_report(decks, passes, prompt, guard, per_deck, max_spend):
 
 
 async def run_pages(decks, passes, db, adapter=None, *, max_spend=4.0, pause=0.0, record_folder=None, prompt_source=None,
-                    sleep=None, out=print, report_path=None):
+                    sleep=None, out=print, report_path=None, now=time.time, keep_lock=False):
     """The page_claims step on `decks`, `passes` times each, in the scratch/memory `db`. Each pass reads a deck in its own audit
     (consent ticked) and from pass 2 on bypasses the gateway's cache (read_pages use_cache=False), so a consistency pass asks the
     model and measures it, not the cache; the report counts the cache hits of each pass. `adapter` is the provider (default: the
@@ -1006,8 +1135,18 @@ async def run_pages(decks, passes, db, adapter=None, *, max_spend=4.0, pause=0.0
     `record_folder` each pass's replies are written there as soon as the pass ends, and with `report_path` the report is rewritten
     there after every pass, so a crash or a stop keeps what was paid for and the report and the files always come from the one run.
     Each pass's row counts its claims, matched, unmatched, dropped, truncated batches (a reply cut at the output limit; the batch
-    is split and read again), cache hits and the claims recorded. Returns the report dict: counts, tokens, cost and agreement,
-    never a line of a deck."""
+    is split and read again), cache hits and the claims recorded. The run holds the lock on `db` (take_lock) from before the
+    first call to the end, heartbeating it after every deck and pass (`keep_lock`: the tests read it after). Returns the report
+    dict: counts, tokens, cost and agreement, never a line of a deck."""
+    await take_lock(db, now())
+    try:
+        return await _run_pages(decks, passes, db, adapter, max_spend, pause, record_folder, prompt_source, sleep, out, report_path, now)
+    finally:
+        if not keep_lock:
+            await release_lock(db)
+
+
+async def _run_pages(decks, passes, db, adapter, max_spend, pause, record_folder, prompt_source, sleep, out, report_path, now):
     from app.decks import pages as page_grids
     from app.decks import parser
     from app.llm import gateway, prompt_store
@@ -1069,6 +1208,7 @@ async def run_pages(decks, passes, db, adapter=None, *, max_spend=4.0, pause=0.0
                 seen.append(_triples(claims))
                 if record_folder is not None:
                     row["recorded"] = _write_recorded(record_folder, file, n, reads, lines, prompt.version)
+                await heartbeat(db, now())
                 if report_path is not None:
                     write_pages_report(_pages_report(decks, passes, prompt, guard, per_deck, max_spend), report_path.parent,
                                        report_path.stem, fake=adapter is not None)
@@ -1176,20 +1316,20 @@ async def live(args, decks, rows=None):
     from motor.motor_asyncio import AsyncIOMotorClient
     client = AsyncIOMotorClient(os.environ.get("MONGO_URL", "mongodb://localhost:27017"))
     try:
-        for name in await client.list_database_names():
-            if _scratch(name):
-                await client.drop_database(name)
-                print(f"Dropped scratch database {name} left by an earlier run", flush=True)
+        await drop_scratch(client, args.db)
         try:
             store_name = os.environ.get("DB_NAME") or sys.exit("DB_NAME is not set: the live run copies the structure_reading prompt from the app's prompt store.")
             if args.pages:
                 name = pages_run_name(REPORTS)
-                report = await run_pages(decks, args.passes, client[args.db], max_spend=args.max_spend, pause=args.pause,
-                                         record_folder=RECORDED / name, prompt_source=client[store_name],
-                                         report_path=REPORTS / f"{name}.md")
+                with run_log(run_log_path(name)) as out:
+                    report = await run_pages(decks, args.passes, client[args.db], max_spend=args.max_spend, pause=args.pause,
+                                             record_folder=RECORDED / name, prompt_source=client[store_name],
+                                             report_path=REPORTS / f"{name}.md", out=out)
+                report["run_name"] = name
                 return report, write_pages_report(report, REPORTS, name), RECORDED / name
-            report = await run(decks, args.passes, client[args.db], pause=args.pause, diagnostic=rows,
-                               prompt_source=client[store_name])
+            with run_log(run_log_path(f"consistency_{datetime.datetime.now():%Y-%m-%d-%H%M%S}")) as out:
+                report = await run(decks, args.passes, client[args.db], pause=args.pause, diagnostic=rows,
+                                   prompt_source=client[store_name], out=out)
             path = write_report(report, REPORTS, args.passes)            # before the drop: a failed drop keeps it
             if rows is not None:
                 write_diagnostic(rows, path, args.passes)
@@ -1243,11 +1383,14 @@ def main(argv=None):
         folder = Path(tempfile.gettempdir())
         name = pages_run_name(folder, folder)
         recorded = folder / name
-        report = asyncio.run(run_pages(decks, args.passes, MemoryDB(), PageReplayAdapter(), max_spend=args.max_spend,
-                                       record_folder=recorded, report_path=folder / f"{name}.md"))
+        with run_log(run_log_path(name, fake=True)) as out:
+            report = asyncio.run(run_pages(decks, args.passes, MemoryDB(), PageReplayAdapter(), max_spend=args.max_spend,
+                                           record_folder=recorded, report_path=folder / f"{name}.md", out=out))
+        report["run_name"] = name
         path = write_pages_report(report, folder, name, fake=True)
     elif args.fake:
-        report = asyncio.run(run(decks, args.passes, MemoryDB(), FakeAdapter(), diagnostic=rows))
+        with run_log(run_log_path(f"consistency_{datetime.datetime.now():%Y-%m-%d-%H%M%S}", fake=True)) as out:
+            report = asyncio.run(run(decks, args.passes, MemoryDB(), FakeAdapter(), diagnostic=rows, out=out))
         path = write_report(report, Path(tempfile.gettempdir()), args.passes, fake=True)
         if rows is not None:
             write_diagnostic(rows, path, args.passes)

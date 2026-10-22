@@ -272,3 +272,112 @@ def test_the_report_is_written_after_every_pass_so_a_crash_keeps_the_figures_pai
     text = path.read_text(encoding="utf-8")
     assert "| 03-buffer.pptx | 1 |" in text and "| 03-buffer.pptx | 2 |" in text, "the passes paid for are in the report"
     assert "| 03-buffer.pptx | 3 |" not in text and "Fake run" in text
+
+
+# ---------------------------------------------------------------------------
+# PR B, run 2 (docs/test-runs/pages_2026-10-22-2_analysis.md): a failed batch leaves a record file saying why; a lock keeps two runs
+# off one scratch database; the run log is written outside the repository.
+# ---------------------------------------------------------------------------
+def _refusing(script, deck="03-buffer.pptx"):
+    """A replay adapter that answers every batch of `deck` with one claim the schema refuses: unit other with a unit word
+    (the rule the page text of front-b p18, "2.5 hours", most likely broke on the live run)."""
+    from app.decks import pages as page_grids
+    from app.decks import parser
+    from app.structures import pages as pipeline
+    grids = page_grids.page_grids(parser.parse_deck((script.DECKS / deck).read_bytes(), deck)["blocks"])
+    pages = {page_grids.page_number(p["grid"]) for p in pipeline.redacted_pages(grids, Path(deck).stem, {})}
+
+    class Refusing(script.PageReplayAdapter):
+        def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False):
+            text, tokens_in, tokens_out = super().complete(model=model, system=system, user_payload=user_payload, max_tokens=max_tokens,
+                                                           temperature=temperature, json_schema=json_schema, cache_system=cache_system)
+            sent = json.loads(user_payload)["text"]
+            cell = re.search(r"p(\d+)r\d+c\d+", sent)
+            if int(cell.group(1)) in pages and not any(f["match"] in sent for f in self.fixtures if f["file"] != deck):
+                cell = cell.group(0)
+                bad = {"metric": "other", "value": 2.5, "value_high": None, "unit": "other", "unit_other": "hours", "period": None,
+                       "actual_or_forecast": "actual", "value_cell": cell, "label_cell": None, "period_cell": None}
+                text = json.dumps({"type": "page_claims", "claims": [bad]})
+            return text, tokens_in, tokens_out
+    return Refusing()
+
+
+def test_a_batch_the_schema_refuses_leaves_a_record_file_saying_why(script, tmp_path):
+    folder = tmp_path / "rec"
+    report, adapter = _run(script, adapter=_refusing(script), passes=1, record_folder=folder)
+    buffer = report["per_deck"][DECKS[0]]["passes"][0]
+    failed = sorted(folder.glob("pass-1/*.failed.json"))
+    assert buffer["read"] == 0 and buffer["batches"] == 2 and buffer["recorded"] == 0 and len(failed) == 2
+    full = next(p for p in failed if "-p" in p.name)                   # the five-page batch; the other holds the sixth page
+    record = json.loads(full.read_text(encoding="utf-8"))
+    assert set(record) == {"file", "pages", "pass", "prompt_version", "model", "status", "reason", "check", "fields", "schema_errors",
+                           "input_tokens", "output_tokens"}
+    assert record["file"] == DECKS[0] and record["pass"] == 1 and record["status"] == "not_read" and record["check"] == "schema"
+    assert record["fields"] == ["claims"] and record["schema_errors"] == [{"claim": 0, "field": "unit_other", "code": "unit_other_not_iso"}]
+    assert len(record["pages"]) == 5 and full.name == f"buffer_p{record['pages'][0]}-p{record['pages'][-1]}.failed.json"
+    assert "hours" not in json.dumps(record) and record["input_tokens"] > 0
+    assert sorted(folder.glob("pass-1/zero2hero_p*.json")), "the other deck is recorded as before"
+    assert not [p for p in folder.glob("pass-1/buffer_p*.json") if not p.name.endswith(".failed.json")]
+    assert report["per_deck"][DECKS[1]]["complete"] and not report["per_deck"][DECKS[0]]["complete"]
+
+
+def test_two_runs_cannot_start_on_the_same_scratch_database(script):
+    """A second run that drops or writes the scratch database of a run in flight loses the first run's figures. The run takes a
+    lock in the database, heartbeats it, and releases it at the end; a lock whose heartbeat is older than LOCK_STALE_SECONDS is a
+    crashed run's and is taken over."""
+    db = script.MemoryDB()
+    asyncio.run(script.take_lock(db, now=1000.0))
+    assert script.LOCK_STALE_SECONDS >= 600
+    with pytest.raises(SystemExit) as stop:
+        asyncio.run(script.run_pages(DECKS[:1], 1, db, script.PageReplayAdapter(), now=lambda: 1000.0 + script.LOCK_STALE_SECONDS - 1))
+    assert "another run" in str(stop.value) and "lock" in str(stop.value).lower()
+    with pytest.raises(SystemExit):
+        asyncio.run(script.run(DECKS[:1], 1, db, script.FakeAdapter(), now=lambda: 1000.0 + script.LOCK_STALE_SECONDS - 1))
+    report = asyncio.run(script.run_pages(DECKS[:1], 1, db, script.PageReplayAdapter(), now=lambda: 1000.0 + script.LOCK_STALE_SECONDS + 1))
+    assert report["decks_complete"] == 1, "a stale lock is a crashed run's: taken over"
+    assert asyncio.run(db[script.LOCK_COLLECTION].find_one({"_id": script.LOCK_ID})) is None, "released at the end"
+    ticks = iter(range(5000, 6000))
+    report = asyncio.run(script.run_pages(DECKS, 2, db, script.PageReplayAdapter(), now=lambda: float(next(ticks)), keep_lock=True))
+    lock = asyncio.run(db[script.LOCK_COLLECTION].find_one({"_id": script.LOCK_ID}))
+    assert lock["heartbeat_at"] > lock["started_at"] >= 5000 and set(lock) >= {"host", "pid", "started_at", "heartbeat_at"}
+
+
+def test_the_live_start_up_drops_only_the_scratch_databases_no_run_holds(script):
+    class Client(dict):
+        async def list_database_names(self):
+            return list(self)
+
+        async def drop_database(self, name):
+            self.pop(name)
+    client = Client({"consistency_run": script.MemoryDB(), "consistency_run_old": script.MemoryDB(), "growth_app": script.MemoryDB()})
+    asyncio.run(script.take_lock(client["consistency_run"], now=1000.0))
+    asyncio.run(script.take_lock(client["consistency_run_old"], now=1000.0 - script.LOCK_STALE_SECONDS - 1))
+    with pytest.raises(SystemExit) as stop:
+        asyncio.run(script.drop_scratch(client, "consistency_run", now=lambda: 1010.0))
+    assert "consistency_run" in str(stop.value) and set(client) == {"consistency_run", "growth_app"}, "the live one stays, the stale one went"
+    asyncio.run(script.release_lock(client["consistency_run"]))
+    asyncio.run(script.drop_scratch(client, "consistency_run", now=lambda: 1010.0))
+    assert set(client) == {"growth_app"}
+
+
+def test_the_run_log_is_written_outside_the_repository(script, tmp_path, monkeypatch):
+    """The lines a run prints and the gateway's "structure read" and "structure not read" lines go to a log file outside the
+    repository (the previous run's failed-reply checks were inferred from token counts: the lines were on screen only)."""
+    monkeypatch.setenv("CONSISTENCY_RUN_LOG_DIR", str(tmp_path / "logs"))
+    report = script.main(["--pages", "--fake", "--deck", DECKS[0]])
+    logs = list((tmp_path / "logs").glob("*.log"))
+    assert len(logs) == 1 and logs[0].stem == report["run_name"]
+    text = logs[0].read_text(encoding="utf-8")
+    assert "pass 1/3" in text and "pass 3/3" in text and "structure read: run_id=pages-03-buffer-pass1" in text
+    assert "Paying Users" not in text and "p5r2c1" not in text, "no line of a deck"
+    path = tmp_path / "logs" / "refused.log"
+    with script.run_log(path) as out:
+        _run(script, adapter=_refusing(script), passes=1, decks=DECKS[:1], out=out)
+    text = path.read_text(encoding="utf-8")
+    assert "structure not read:" in text and "check=schema" in text and "errors=claims[0].unit_other:unit_other_not_iso" in text
+    assert "0 of 2 batches read" in text and "hours" not in text
+    monkeypatch.setenv("CONSISTENCY_RUN_LOG_DIR", str(script.ROOT / "docs" / "test-runs"))
+    with pytest.raises(SystemExit):
+        script.run_log_path("pages_x")
+    monkeypatch.delenv("CONSISTENCY_RUN_LOG_DIR")
+    assert not script.run_log_path("pages_x").resolve().is_relative_to(script.ROOT.resolve())

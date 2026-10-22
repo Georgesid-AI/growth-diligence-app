@@ -1,0 +1,58 @@
+{
+ "file": "01-front-b.pptx",
+ "page": 13,
+ "match": "p13r1c1 title: Cohorts keep growing across all metrics",
+ "pass": 3,
+ "prompt_version": "v2",
+ "model": "claude-sonnet-5-5",
+ "claims": [
+  {
+   "metric": "retention",
+   "value": 120.0,
+   "value_high": null,
+   "unit": "%",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "actual",
+   "value_cell": "p13r3c1",
+   "label_cell": "p13r3c1",
+   "period_cell": null
+  },
+  {
+   "metric": "retention",
+   "value": 150.0,
+   "value_high": null,
+   "unit": "%",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "actual",
+   "value_cell": "p13r4c1",
+   "label_cell": "p13r4c1",
+   "period_cell": null
+  },
+  {
+   "metric": "product",
+   "value": 3.9,
+   "value_high": null,
+   "unit": "x",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "actual",
+   "value_cell": "p13r7c1",
+   "label_cell": "p13r7c1",
+   "period_cell": null
+  },
+  {
+   "metric": "product",
+   "value": 4.9,
+   "value_high": null,
+   "unit": "x",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "actual",
+   "value_cell": "p13r8c1",
+   "label_cell": "p13r8c1",
+   "period_cell": null
+  }
+ ]
+}

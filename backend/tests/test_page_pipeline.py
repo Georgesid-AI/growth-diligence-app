@@ -346,3 +346,24 @@ def test_the_consistency_passes_bypass_the_cache_and_measure_the_model(monkeypat
                                                use_cache=False))
     assert adapter.calls == 2 and bypassed[0][1].cache_hit is False and bypassed[0][1].input_tokens > 0
     assert bypassed[0][1].claims == first[0][1].claims
+
+
+def test_a_batch_the_schema_refuses_leaves_its_check_fields_and_errors_in_page_reads(monkeypatch):
+    """PR B run 2: front-b batch 2 failed the schema in every pass and the record said only fields=claims. The deck's page_reads entry
+    now keeps the check, the fields and each validation error (claim index, field, closed code); never the reply. A read batch's
+    entry carries none of the three."""
+    monkeypatch.setenv("DECK_PIPELINE", "ai")
+    parsed = deck([TITLE, *LINES])
+    db = _page_db(parsed)
+    bad = {**claim("p1r2c1", 2.5, metric="other", unit="other"), "unit_other": "hours"}
+    adapter = t.FakeAdapter(replies=[json.dumps({"type": "page_claims", "claims": [bad]})])
+    status = asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
+    assert status == "not_read" and adapter.calls == 2, "one reask, then the batch is not read"
+    entry, = db[TEXT_COLLECTION].docs[0]["page_reads"]
+    assert entry["status"] == "not_read" and entry["check"] == "schema" and entry["fields"] == ["claims"]
+    assert entry["schema_errors"] == [{"claim": 0, "field": "unit_other", "code": "unit_other_not_iso"}]
+    assert "hours" not in json.dumps(db[TEXT_COLLECTION].docs[0]["page_reads"]) and db[gateway.STRUCTURES_COLLECTION].docs == []
+    db = _page_db(parsed)
+    asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=t.FakeAdapter(replies=[json.dumps(REPLY)]), sleep=t._noop_sleep))
+    entry, = db[TEXT_COLLECTION].docs[0]["page_reads"]
+    assert entry["status"] == "read" and not {"check", "fields", "schema_errors"} & set(entry)
