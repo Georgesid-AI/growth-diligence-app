@@ -1,0 +1,46 @@
+{
+ "file": "02-moz.pdf",
+ "page": 18,
+ "match": "p18r1c1 title: Immediate Customer Targets:",
+ "pass": 1,
+ "prompt_version": "v2",
+ "model": "claude-sonnet-5-5",
+ "claims": [
+  {
+   "metric": "users",
+   "value": 55.0,
+   "value_high": null,
+   "unit": "%",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p18r4c1",
+   "label_cell": "p18r3c1",
+   "period_cell": null
+  },
+  {
+   "metric": "users",
+   "value": 35.0,
+   "value_high": null,
+   "unit": "%",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p18r4c2",
+   "label_cell": "p18r3c2",
+   "period_cell": null
+  },
+  {
+   "metric": "users",
+   "value": 10.0,
+   "value_high": null,
+   "unit": "%",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p18r4c3",
+   "label_cell": "p18r3c3",
+   "period_cell": null
+  }
+ ]
+}

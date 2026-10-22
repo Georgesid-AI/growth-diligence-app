@@ -1,0 +1,106 @@
+{
+ "file": "02-moz.pdf",
+ "page": 21,
+ "match": "p21r1c1 title: % of Free Trials Converting to Paid",
+ "pass": 1,
+ "prompt_version": "v2",
+ "model": "claude-sonnet-5-5",
+ "claims": [
+  {
+   "metric": "sales",
+   "value": 57.0,
+   "value_high": null,
+   "unit": "%",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p21r1c2",
+   "label_cell": "p21r1c1",
+   "period_cell": null
+  },
+  {
+   "metric": "retention",
+   "value": 25.0,
+   "value_high": null,
+   "unit": "%",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p21r2c2",
+   "label_cell": "p21r2c1",
+   "period_cell": null
+  },
+  {
+   "metric": "users",
+   "value": 1250000.0,
+   "value_high": null,
+   "unit": "count",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p21r3c2",
+   "label_cell": "p21r3c1",
+   "period_cell": null
+  },
+  {
+   "metric": "users",
+   "value": 300000.0,
+   "value_high": null,
+   "unit": "count",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p21r4c2",
+   "label_cell": "p21r4c1",
+   "period_cell": null
+  },
+  {
+   "metric": "gross_margin",
+   "value": 82.0,
+   "value_high": null,
+   "unit": "%",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p21r5c2",
+   "label_cell": "p21r5c1",
+   "period_cell": null
+  },
+  {
+   "metric": "net_profit",
+   "value": 1000000.0,
+   "value_high": null,
+   "unit": "USD",
+   "unit_other": null,
+   "period": "2011",
+   "actual_or_forecast": "forecast",
+   "value_cell": "p21r6c2",
+   "label_cell": "p21r6c1",
+   "period_cell": "p21r6c1"
+  },
+  {
+   "metric": "costs",
+   "value": 650000.0,
+   "value_high": null,
+   "unit": "USD",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p21r7c2",
+   "label_cell": "p21r7c1",
+   "period_cell": null
+  },
+  {
+   "metric": "costs",
+   "value": 180000.0,
+   "value_high": null,
+   "unit": "USD",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p21r8c2",
+   "label_cell": "p21r8c1",
+   "period_cell": null
+  }
+ ]
+}

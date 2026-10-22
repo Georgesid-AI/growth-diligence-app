@@ -1,0 +1,94 @@
+{
+ "file": "03-buffer.pptx",
+ "page": 6,
+ "match": "p6r1c1 title: Milestones",
+ "pass": 3,
+ "prompt_version": "v2",
+ "model": "claude-sonnet-5-5",
+ "claims": [
+  {
+   "metric": "users",
+   "value": 55000.0,
+   "value_high": null,
+   "unit": "count",
+   "unit_other": null,
+   "period": "2011-10",
+   "actual_or_forecast": "actual",
+   "value_cell": "p6r4c1",
+   "label_cell": "p6r1c1",
+   "period_cell": "p6r5c1"
+  },
+  {
+   "metric": "revenue",
+   "value": 150000.0,
+   "value_high": null,
+   "unit": "USD",
+   "unit_other": null,
+   "period": "2011-10",
+   "actual_or_forecast": "actual",
+   "value_cell": "p6r4c1",
+   "label_cell": "p6r1c1",
+   "period_cell": "p6r5c1"
+  },
+  {
+   "metric": "product",
+   "value": 50.0,
+   "value_high": null,
+   "unit": "count",
+   "unit_other": null,
+   "period": "2011-12",
+   "actual_or_forecast": "forecast",
+   "value_cell": "p6r8c1",
+   "label_cell": "p6r8c1",
+   "period_cell": "p6r9c1"
+  },
+  {
+   "metric": "users",
+   "value": 100000.0,
+   "value_high": null,
+   "unit": "count",
+   "unit_other": null,
+   "period": "2012-01",
+   "actual_or_forecast": "forecast",
+   "value_cell": "p6r10c1",
+   "label_cell": "p6r1c1",
+   "period_cell": "p6r11c1"
+  },
+  {
+   "metric": "revenue",
+   "value": 288000.0,
+   "value_high": null,
+   "unit": "USD",
+   "unit_other": null,
+   "period": "2012-01",
+   "actual_or_forecast": "forecast",
+   "value_cell": "p6r10c1",
+   "label_cell": "p6r1c1",
+   "period_cell": "p6r11c1"
+  },
+  {
+   "metric": "users",
+   "value": 1000000.0,
+   "value_high": null,
+   "unit": "count",
+   "unit_other": null,
+   "period": "2013-01",
+   "actual_or_forecast": "forecast",
+   "value_cell": "p6r12c1",
+   "label_cell": "p6r1c1",
+   "period_cell": "p6r13c1"
+  },
+  {
+   "metric": "revenue",
+   "value": 3600000.0,
+   "value_high": null,
+   "unit": "USD",
+   "unit_other": null,
+   "period": "2013-01",
+   "actual_or_forecast": "forecast",
+   "value_cell": "p6r12c1",
+   "label_cell": "p6r1c1",
+   "period_cell": "p6r13c1"
+  }
+ ]
+}

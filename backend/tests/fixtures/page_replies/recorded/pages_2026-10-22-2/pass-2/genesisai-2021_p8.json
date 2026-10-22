@@ -1,0 +1,22 @@
+{
+ "file": "08-genesisai-2021.pdf",
+ "page": 8,
+ "match": "p8r1c1 title: High Quality",
+ "pass": 2,
+ "prompt_version": "v2",
+ "model": "claude-sonnet-5-5",
+ "claims": [
+  {
+   "metric": "other",
+   "value": 300.0,
+   "value_high": null,
+   "unit": "%",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p8r3c1",
+   "label_cell": "p8r3c1",
+   "period_cell": null
+  }
+ ]
+}

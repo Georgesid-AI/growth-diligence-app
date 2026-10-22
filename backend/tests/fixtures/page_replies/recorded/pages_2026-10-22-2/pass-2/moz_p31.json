@@ -1,0 +1,22 @@
+{
+ "file": "02-moz.pdf",
+ "page": 31,
+ "match": "p31r1c1 title: 2 Year Team Roadmap from 40-100 Mozzers",
+ "pass": 2,
+ "prompt_version": "v2",
+ "model": "claude-sonnet-5-5",
+ "claims": [
+  {
+   "metric": "people",
+   "value": 40.0,
+   "value_high": 100.0,
+   "unit": "count",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "forecast",
+   "value_cell": "p31r1c1",
+   "label_cell": "p31r1c1",
+   "period_cell": null
+  }
+ ]
+}

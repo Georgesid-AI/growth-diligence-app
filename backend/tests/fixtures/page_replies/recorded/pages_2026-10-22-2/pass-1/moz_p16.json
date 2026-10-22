@@ -1,0 +1,22 @@
+{
+ "file": "02-moz.pdf",
+ "page": 16,
+ "match": "p16r1c1: Mozhas captured an",
+ "pass": 1,
+ "prompt_version": "v2",
+ "model": "claude-sonnet-5-5",
+ "claims": [
+  {
+   "metric": "market",
+   "value": 5.0,
+   "value_high": 10.0,
+   "unit": "%",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p16r2c1",
+   "label_cell": "p16r1c1",
+   "period_cell": null
+  }
+ ]
+}
