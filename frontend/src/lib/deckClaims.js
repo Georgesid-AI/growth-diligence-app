@@ -409,9 +409,20 @@ export const approveAllToast = (approved, skipped, openDefinition = 0, elsewhere
   `Approved ${approved} claim${approved === 1 ? "" : "s"}, ${skipped} skipped (need Revenue / Volume or failed to save)`
   + (openDefinition > 0 ? `, ${openDefinition} with open definition check${elsewhere ? DEFINITION_ELSEWHERE : ""}` : "");
 
-/** Counts per status, for the list header. Other figures are not claims to review and are not counted. */
+/** Counts per status, for the list header; `auto` is how many of the approved ones Run audit approved on its own (issue #155). Other
+ *  figures are not claims to review and are not counted. */
 export function statusCounts(candidates) {
-  const out = { pending: 0, approved: 0, rejected: 0, edited: 0 };
-  (candidates || []).filter((c) => !isOther(c)).forEach((c) => { out[c.status] = (out[c.status] || 0) + 1; });
+  const out = { pending: 0, approved: 0, rejected: 0, edited: 0, auto: 0 };
+  (candidates || []).filter((c) => !isOther(c)).forEach((c) => {
+    out[c.status] = (out[c.status] || 0) + 1;
+    if (c.status === "approved" && c.auto_approval) out.auto += 1;
+  });
   return out;
 }
+
+/** "1 to review · 3 approved (2 auto) · 1 edited · 0 rejected" (issue #155); the bracket is left out when none was approved on its own. */
+export const countLine = (counts) =>
+  `${counts.pending} to review · ${counts.approved}${counts.auto > 0 ? ` approved (${counts.auto} auto)` : " approved"} · ${counts.edited} edited · ${counts.rejected} rejected`;
+
+/** The status cell of a claim: "Auto-approved – matches revenue file (Δ x.x%)" for a claim Run audit approved on its own, else the status. */
+export const statusText = (c) => (c.status === "approved" && c.auto_approval) || STATUS_LABELS[c.status] || c.status;

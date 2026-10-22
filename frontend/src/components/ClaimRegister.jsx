@@ -296,6 +296,7 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
                 [`${VAS_LABEL} ${valueAtStakeText(row)}`, "register-value-at-stake"],
                 [`Overlaps with ${overlapsText(row, rows)}`, "register-overlaps"],
                 [row.reason, "register-evidence-reason"],
+                ...(row.auto_approval ? [[row.auto_approval, "register-auto-approval"]] : []),
                 ...(growthBasisLabel(row.growth_basis) ? [[`Growth basis ${growthBasisLabel(row.growth_basis)}`, "register-growth-basis-set"]] : []),
               ];
               return (
@@ -340,6 +341,8 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
                       <span className={`text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-nowrap ${LABEL_STYLE[row.evidence_label] || ""}`} data-testid="register-evidence">
                         {labelText(row)}
                       </span>
+                      {/* approved by Run audit on its own, the same as an approval (issue #155) */}
+                      {row.auto_approval && <span className="ml-1 text-[10px] font-mono text-slate-500" data-testid="register-auto">auto</span>}
                     </td>
                   </tr>
                   <tr>

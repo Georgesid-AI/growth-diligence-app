@@ -37,7 +37,7 @@ describe("claim value", () => {
 
 test("status counts", () => {
   expect(statusCounts([{ status: "pending" }, { status: "approved" }, { status: "pending" }]))
-    .toEqual({ pending: 2, approved: 1, rejected: 0, edited: 0 });
+    .toEqual({ pending: 2, approved: 1, rejected: 0, edited: 0, auto: 0 });
 });
 
 test("scope message is the spec text", () => {

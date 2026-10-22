@@ -510,6 +510,10 @@ line shape, so no new matching code is written; nothing is deleted.
   (boundary test, rule 14). Amended 2026-10-14 (claim-matching.md §4.1): a claim with an open Definition check is approved like any other, and
   counted apart in the reply as `open_definition` (not in `skipped`): the toast adds ", Y with open definition check" when Y is
   above 0, and on the upload page, which cannot answer it, " – answer on the review screen" after it.
+  Amended 2026-10-22 (George, issue #155): Approve all leaves an auto-approved claim alone (it is already approved). The deck list's count line
+  reads "x to review · y approved (z auto) · e edited · r rejected" (the bracket only when z is above 0; y includes z), and the status cell of a
+  claim Run audit approved on its own reads "Auto-approved – matches revenue file (Δ x.x%)", the observed figure's citation on hover
+  (claim-matching.md §4.1).
 - **Acquisition channels** (stored `acquisition_channels`): the figure per platform on a user-acquisition slide, such as a funnel listing social
   platforms, each with a number in brackets. Parser trigger: the slide or page needs a cue, as whole words in any case: acquisition,
   acquisition channel(s), channels, funnel, traffic source(s), user acquisition. It counts in the slide's title, in a heading or a chart title (a

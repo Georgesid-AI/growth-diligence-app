@@ -1911,6 +1911,8 @@ async def list_deck_candidates(audit_id: str):
     turnover = claim_matching.turnover_views(candidates, current.get("results"), settings)
     # A gap beyond 50% of the claim asks "Same metric and period?" on the review screen, approved or not (claim-matching.md 4.1).
     definition = claim_matching.definition_views(candidates, current.get("results"), settings)
+    # A claim Run audit approved on its own reads "Auto-approved – matches revenue file (Δ x.x%)" with the figure's citation (issue #155).
+    auto = claim_matching.auto_views(candidates, current.get("results"), settings)
     # By the group of the claim type (revenue, P&L, customers and sales, market size, Unknown, Other), then ascending by
     # slide or page across all decks (a tie goes to the more recent deck), then reading order on the page: top to bottom
     # in bands of 2% of the height, then left to right, then the order the parser found them in.
@@ -1926,6 +1928,7 @@ async def list_deck_candidates(audit_id: str):
             c["fx"]["date_stale"] = True        # the date would come from stale results: the screen reads "Stale – re-run audit"
         c["turnover"] = turnover.get(c["id"])
         c["definition"] = definition.get(c["id"])
+        c.update(auto.get(c["id"]) or {"auto_approval": None, "auto_citation": None})
         # the figure type, population and growth basis as the register reads them, for the editor (claim-types-and-correction.md 3)
         c["claim_fields"] = claim_matching.candidate_fields(c, current.get("results"))
     peers = {}
@@ -2161,7 +2164,7 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
         # the type too.
         raise _rejected("claim_type", "choose a claim type for this item before approving it")
     if edits:
-        changes = {**edits, "status": "edited"}
+        changes = {**edits, "status": "edited", "auto_accepted": False}      # an edit makes it Analyst-edited: no longer approved on its own (issue #155)
         for field in _CLAIM_FIELDS:
             if field in edits:
                 changes[f"{field}_set_by"] = "analyst"
@@ -2277,7 +2280,7 @@ async def _accept_within_tolerance(audit_id: str, audit: dict) -> dict:
     rows = claim_matching.build_register(
         sorted(kept + trial, key=lambda c: (c.get("file") or "", c.get("order", 0))), audit.get("results"),
         _register_settings(audit, await _fx(audit_id, audit), await _deck_take_rate(audit_id)), peers=found)
-    ids = set(run_audit.within_tolerance_ids(rows, [c["id"] for c in decided]))
+    ids = set(run_audit.within_tolerance_ids(rows, [c["id"] for c in decided if not run_audit.never_on_its_own(c)]))
     accepted = []
     for c in decided:
         if c["id"] not in ids:
@@ -2285,7 +2288,7 @@ async def _accept_within_tolerance(audit_id: str, audit: dict) -> dict:
         try:
             await db[decks.CANDIDATES_COLLECTION].update_one(
                 {"audit_id": audit_id, "id": c["id"]},
-                {"$set": {"status": "edited" if "parsed" in c else "approved", "auto_accepted": True}})
+                {"$set": {"status": "approved", "auto_accepted": True}})
             accepted.append(c["id"])
         except Exception:
             continue

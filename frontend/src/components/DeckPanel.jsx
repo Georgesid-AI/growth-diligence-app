@@ -10,8 +10,8 @@ import { addClaim, addFromDeck, answerTurnover, approveAll, getDeckPage, getDeck
 import { describeRequestError } from "@/lib/requestError";
 import {
   ACQUISITION_CHANNELS, ADD_CLAIM_PLATFORM_LABEL, ALL_DECKS, APPROVE_ALL_LABEL, CLAIM_GROUPS, CLAIM_TYPES, approveAllToast, toReview, CLAIM_UNITS, COUNT_UNIT_HINT, COUNT_TYPES, COUNT_UNIT, FX_SETTINGS_ANCHOR, FX_SETTINGS_LABEL, conversionHover, inconsistencyText, MIXED_SLIDE_LABEL, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, ADD_CLAIM_LABEL, ADD_CLAIM_NEEDS_SOURCE, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, newClaimPayload, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
-  DECK_SCOPE_CANNOT_LEAD, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, DECK_TYPE_REFUSED, isDeckFile, CONFIDENCE_HOVER, DECK_UPLOAD_HELP, INCONSISTENCY_LABEL, PLACEHOLDER, STATUS_LABELS, VERIFIED_LABEL, badgeText, claimPeriod, claimSections, claimValue, deckRunLog,
-  confidenceText, readingChoices, rowEdit, sourceRef, statusCounts, typeLabel,
+  DECK_SCOPE_CANNOT_LEAD, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, DECK_TYPE_REFUSED, isDeckFile, CONFIDENCE_HOVER, DECK_UPLOAD_HELP, INCONSISTENCY_LABEL, PLACEHOLDER, VERIFIED_LABEL, badgeText, claimPeriod, claimSections, claimValue, deckRunLog,
+  confidenceText, countLine, readingChoices, rowEdit, sourceRef, statusCounts, statusText, typeLabel,
   ADD_FROM_DECK_LABEL, ADDED_FROM_DECK_TAG, DEFAULT_EDIT_REASON, EDIT_REASONS, EDIT_TYPES, FIGURE_TYPE_OPTIONS, GROWTH_BASIS_OPTIONS, GROWTH_TYPES,
   OTHER_GROUP, POPULATION_OPTIONS, VIEW_PAGE_LABEL, claimFields, editLogText, isOther,
 } from "@/lib/deckClaims";
@@ -311,7 +311,7 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
             </div>
           )}
           <div className="text-[11px] text-slate-500 font-mono mb-2">
-            {counts.pending} to review · {counts.approved} approved · {counts.edited} edited · {counts.rejected} rejected
+            {countLine(counts)}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
@@ -663,9 +663,9 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight, autoEdit = fa
         {c.sources.map((s, i) => <div key={i}>{sourceRef(s)}</div>)}
       </td>
       <td className="py-2 pr-3">
-        <span className={`text-[10px] font-mono whitespace-nowrap cursor-default ${STATUS_STYLE[c.status] || ""}`} title={editLogText(c) || undefined}
+        <span className={`text-[10px] font-mono whitespace-nowrap cursor-default ${STATUS_STYLE[c.status] || ""}`} title={[editLogText(c), c.auto_approval && c.auto_citation].filter(Boolean).join("\n") || undefined}
           data-testid="candidate-status">
-          {STATUS_LABELS[c.status] || c.status}
+          {statusText(c)}
         </span>
         {turnover.open && (
           <div className="mt-1 text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-nowrap text-amber-800 border-amber-500/50 bg-amber-50"
