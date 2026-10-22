@@ -3248,8 +3248,32 @@ def test_a_page_reply_citing_a_cell_not_sent_or_carrying_text_is_rejected_with_a
             assert (result.status, adapter.calls) == ("not_read", 2), check
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
     assert [line.rsplit(" check=", 1)[1] for line in lines] == ["other", "schema", "metric_list", "schema"]
+    # The schema fields that failed, as closed names from the schema (PR B: the run of 2026-10-22 lost 10 replies to check=schema
+    # with no way to tell which field); a cell not sent or a reply that is not JSON names none.
+    assert [line.split(" fields=")[1].split(" ")[0] for line in lines] == ["-", "label_cell", "metric", "-"]
+    assert set(gateway.PAGE_FIELDS) == {"type", "claims", "metric", "value", "value_high", "unit", "unit_other", "period",
+                                        "actual_or_forecast", "value_cell", "label_cell", "period_cell"}
     logs = caplog.text + "".join(r.getMessage() for r in caplog.records)
     for needle in ("Traction", "Paying Users", "Target Co", "p9r9c9", "Input should"):
+        assert needle not in logs, f"{needle!r} was logged"
+
+
+def test_a_page_reply_cut_at_the_output_limit_is_logged_as_truncated_with_its_tokens_and_no_text(caplog):
+    """PR B (live run of 2026-10-22): a reply cut at max_tokens is reported by the adapter as "truncated" with the tokens it billed. The
+    gateway logs the closed reason, bills the call in llm_calls and answers "truncated" (the page step splits the batch); the cut
+    reply, which may hold a claim half-written, is never logged or stored."""
+    cut = gateway.GatewayError("truncated", 'cut: {"metric": "revenue", "value_cell": "p5r3c1", "label": "Paying Users at Target Co')
+    cut.tokens = (3000, 4000)
+    adapter = t.FakeAdapter(raise_with=cut)
+    with caplog.at_level(logging.DEBUG), mock.patch.dict(os.environ, {"DECK_PIPELINE": "ai"}):
+        result = asyncio.run(gateway.read_structure(_structure_db(), STRUCTURE_AUDIT["id"], GOOD_PAGE, PAGE_CLAIMS, adapter=adapter,
+                                                    sleep=t._noop_sleep))
+    assert (result.status, result.reason, adapter.calls) == ("truncated", gateway.NOT_READ, 1), "no reask: the same batch would be cut again"
+    assert (result.input_tokens, result.output_tokens) == (3000, 4000)
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
+    assert len(lines) == 1 and " tokens=3000/4000 " in lines[0] and lines[0].endswith("reason=truncated status=- type=- fields=- check=-")
+    logs = caplog.text + "".join(r.getMessage() for r in caplog.records)
+    for needle in ("Paying Users", "Target Co", "p5r3c1", "cut:"):
         assert needle not in logs, f"{needle!r} was logged"
 
 
@@ -3318,17 +3342,17 @@ def test_the_pages_run_prints_and_reports_no_line_of_a_deck_and_records_only_the
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     caplog.set_level(logging.WARNING)
     names = ["03-buffer.pptx", "05-zero2hero.pdf"]
-    report = script.main(["--pages", "--fake", "--max-spend", "0.1", "--deck", names[0], "--deck", names[1],
+    report = script.main(["--pages", "--fake", "--max-spend", "0.15", "--deck", names[0], "--deck", names[1],
                           "--out", str(tmp_path / "pages_report.json")])
     assert report["stopped"] and report["decks_complete"] == 1, "the run stopped at --max-spend, so the stop's log lines are checked too"
     assert set(report) == {"mode", "model", "prompt", "prompt_version", "passes", "decks_asked", "decks_complete", "max_spend_usd",
                            "spent_usd", "stopped", "agreement_pct_all", "target_agreement_pct", "totals", "per_deck"}
     assert set(report["totals"]) == {"calls", "batches", "read", "claims", "matched", "unmatched", "dropped", "input_tokens",
-                                     "output_tokens"}
+                                     "output_tokens", "truncated", "cache_hits", "recorded"}
     for deck in report["per_deck"].values():
         assert set(deck) <= {"pages", "sent", "passes", "agreement_pct", "complete", "agreed", "claims_union"}
         assert all(set(row) == {"claims", "matched", "unmatched", "dropped", "input_tokens", "output_tokens", "batches", "read",
-                                "calls", "cost_usd"} for row in deck["passes"])
+                                "calls", "cost_usd", "truncated", "cache_hits", "recorded"} for row in deck["passes"])
     written = capsys.readouterr().out + "".join(p.read_text(encoding="utf-8") for p in tmp_path.glob("pages_*.md")) + \
         (tmp_path / "pages_report.json").read_text(encoding="utf-8") + "\n".join(r.getMessage() for r in caplog.records)
     assert "reason=spend_stop" in written

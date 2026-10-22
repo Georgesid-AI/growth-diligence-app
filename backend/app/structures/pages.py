@@ -9,7 +9,8 @@ Order for one deck: consent and the revenue-file gate as today -> the page grids
 structure rules plus the people-name rule over prose), its lines over 200 characters left out (as for a structure cell; George,
 2026-10-22, decision 1b on the review of PR #159) and written by the one builder (redact.page_text) -> gateway.read_structure
 with the type page_claims (consent, boundary and redaction checked again, cache, token caps, lock, spend caps, prompt caching) -> a
-batch too large for the cap is split, a single page too large is skipped -> page_check per page -> one approval row per claim,
+batch too large for the cap, or whose reply was cut at the output limit, is split, a single page too large or cut is skipped
+-> page_check per page -> one approval row per claim,
 "Matched to page" or "AI suggestion, not matched", deduplicated against the rows already listed as today. What is stored (rule 17):
 the model's claims (closed words, numbers and cell ids), the checked items without any text, the batch's metadata; never the
 text sent.
@@ -66,10 +67,12 @@ def batch_text(batch: List[Dict]) -> str:
 
 
 async def read_pages(db, audit_id: str, deck_id: str, grids: List[Dict], company_name: Optional[str], mapping: Dict[str, str],
-                     adapter=None, sleep=None) -> List[Tuple[List[Dict], object]]:
+                     adapter=None, sleep=None, use_cache: bool = True) -> List[Tuple[List[Dict], object]]:
     """[(grids of the batch, StructureRead)] for every batch of a deck's sendable pages. A batch the token cap refuses as too
-    large is split in two and read again; a single page too large is kept with its status. After the audit's token cap stops
-    reading, the remaining batches are marked stopped without a call."""
+    large, or whose reply the provider cut at the output limit ("truncated"; the same batch would be cut again), is split in two
+    and read again; a single page too large or cut is kept with its status. After the audit's token cap stops reading, the
+    remaining batches are marked stopped without a call. `use_cache=False` (a consistency pass) asks the model again for pages
+    this audit already read, so the pass measures the model and not the cache."""
     queue = batches(grids, company_name, mapping)
     out, stopped = [], None
     while queue:
@@ -80,8 +83,9 @@ async def read_pages(db, audit_id: str, deck_id: str, grids: List[Dict], company
             continue
         text = batch_text(batch)
         result = await gateway.read_structure(db, audit_id, text, PAGE_CLAIMS, deck_id=deck_id,
-                                              pages=[page_grids_mod.page_number(g) for g in grids_of], adapter=adapter, sleep=sleep)
-        if result.status == "too_large" and len(batch) > 1:
+                                              pages=[page_grids_mod.page_number(g) for g in grids_of], adapter=adapter, sleep=sleep,
+                                              use_cache=use_cache)
+        if result.status in ("too_large", "truncated") and len(batch) > 1:
             half = len(batch) // 2
             queue[:0] = [batch[:half], batch[half:]]
             continue

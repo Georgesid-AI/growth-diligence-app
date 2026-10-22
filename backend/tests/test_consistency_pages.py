@@ -10,6 +10,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from unittest import mock
 
 BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
@@ -114,12 +115,12 @@ def test_agreement_is_claims_found_in_every_pass_over_claims_found_in_any_pass(s
 def test_the_run_stops_before_a_call_that_could_pass_max_spend(script, caplog):
     import logging
     caplog.set_level(logging.WARNING)
-    report, adapter = _run(script, max_spend=0.1)
-    assert report["stopped"] is True and report["spent_usd"] <= 0.1, "the upper bound never passes --max-spend"
+    report, adapter = _run(script, max_spend=0.15)           # a call's bound is its counted input plus PAGE_MAX_TOKENS of output
+    assert report["stopped"] is True and report["spent_usd"] <= 0.15, "the upper bound never passes --max-spend"
     assert 0 < adapter.calls < 12, "some calls were made, the rest refused without a provider call"
     assert report["decks_complete"] == 1 and report["per_deck"][DECKS[1]]["complete"] is False, "the stopped deck is left out"
     assert report["per_deck"][DECKS[1]]["agreement_pct"] is None and report["agreement_pct_all"] == 100.0, "of the complete deck only"
-    assert "STOPPED at --max-spend $0.10" in script.pages_summary(report)
+    assert "STOPPED at --max-spend $0.15" in script.pages_summary(report)
     assert any("reason=spend_stop" in r.getMessage() for r in caplog.records), "a closed word in the gateway's log line"
     again, nothing = _run(script, max_spend=0.0001)
     assert again["stopped"] and nothing.calls == 0 and again["totals"]["calls"] == 0, "a budget below one call makes none"
@@ -197,3 +198,77 @@ def test_a_live_pages_run_needs_the_key_and_the_confirmation(script, monkeypatch
     monkeypatch.setenv("ANTHROPIC_API_KEY", "not-a-key")
     with pytest.raises(SystemExit, match="Re-run with --yes"):
         script.main(["--pages", "--deck", DECKS[0]])
+
+
+# ---------------------------------------------------------------------------
+# PR B analysis (live run of 2026-10-22): the passes bypass the cache, a cut reply is counted, the report and the recorded files agree
+# ---------------------------------------------------------------------------
+def test_every_pass_asks_the_model_and_the_report_counts_cache_hits(script):
+    """Passes 2 and 3 read the same pages: in one audit they would be cache hits (0 tokens, the same reply) and measure nothing. The
+    run bypasses the cache from pass 2 on and reports the hits, so a pass that measured the cache shows as such."""
+    from app.structures import pages as pipeline
+    seen = []
+    original = pipeline.read_pages
+
+    async def watching(*args, **kwargs):
+        seen.append(kwargs.get("use_cache"))
+        return await original(*args, **kwargs)
+    with mock.patch.object(pipeline, "read_pages", watching):
+        report, adapter = _run(script, passes=3, decks=DECKS[:1])
+    assert seen == [True, False, False], "pass 1 may use the cache; the consistency passes never"
+    deck = report["per_deck"][DECKS[0]]
+    assert [r["cache_hits"] for r in deck["passes"]] == [0, 0, 0] and report["totals"]["cache_hits"] == 0
+    assert adapter.calls == sum(r["batches"] for r in deck["passes"]), "every batch of every pass went to the model"
+
+
+def test_a_cut_reply_is_counted_as_truncated_and_billed_by_the_guard(script):
+    from app.llm import gateway
+
+    class Cutting(script.PageReplayAdapter):
+        """The provider cuts the reply of a batch of more than two pages (the first batch of each deck has five)."""
+
+        def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False):
+            if json.loads(user_payload)["text"].count("\n") > 60:
+                self.calls += 1
+                error = gateway.GatewayError("truncated", "cut")
+                error.tokens = (1000, max_tokens)
+                raise error
+            return super().complete(model=model, system=system, user_payload=user_payload, max_tokens=max_tokens,
+                                    temperature=temperature, json_schema=json_schema, cache_system=cache_system)
+    report, adapter = _run(script, Cutting(), passes=1, decks=DECKS[1:])
+    row, = report["per_deck"][DECKS[1]]["passes"]
+    assert row["truncated"] >= 2, "the 5-page batch was cut, then its larger half"
+    assert row["batches"] > 2 and row["read"] >= 2 and row["claims"] > 0, "the halves were read"
+    assert row["output_tokens"] >= row["truncated"] * gateway.PAGE_MAX_TOKENS, "the cut replies are billed"
+    assert report["totals"]["truncated"] == row["truncated"]
+    assert report["spent_usd"] >= gateway.estimate_cost_usd(gateway.STRUCTURE_MODEL, 1000, gateway.PAGE_MAX_TOKENS), "the guard counts the cut call"
+    assert "truncated" in script.write_pages_report(report, script.REPORTS, "pages_test", fake=True).read_text(encoding="utf-8")
+
+
+def test_the_report_claims_equal_the_recorded_claims_and_a_run_name_never_reuses_a_recorded_folder(script, tmp_path):
+    """The run of 2026-10-22 committed a table and recorded files that disagree (371 claims in the files, 356 in the table): the
+    recorded folder had been reused. The run name now skips a name whose recorded folder exists, the report is written after every
+    pass beside the files, and each pass's row carries the number of claims recorded."""
+    name = script.pages_run_name(script.REPORTS)
+    (script.RECORDED / name).mkdir(parents=True)
+    assert script.pages_run_name(script.REPORTS) == f"{name}-2", "a recorded folder left by a stopped run is never written into again"
+    folder = script.RECORDED / f"{name}-2"
+    report, _ = _run(script, passes=2, decks=DECKS[:1], record_folder=folder, report_path=script.REPORTS / f"{name}-2.md")
+    for n, row in enumerate(report["per_deck"][DECKS[0]]["passes"], 1):
+        recorded = sum(len(json.loads(f.read_text(encoding="utf-8"))["claims"]) for f in (folder / f"pass-{n}").glob("*.json"))
+        assert row["recorded"] == recorded == row["claims"] > 0
+    assert (script.REPORTS / f"{name}-2.md").is_file(), "written beside the recorded replies"
+
+
+def test_the_report_is_written_after_every_pass_so_a_crash_keeps_the_figures_paid_for(script, tmp_path):
+    """The gateway never raises for a model-side problem, so the crash is the process's own (here: the progress line of pass 2)."""
+    path = script.REPORTS / "pages_test.md"
+
+    def crashing(line, **_):
+        if "pass 2/3" in line:
+            raise RuntimeError("the process died")
+    with pytest.raises(RuntimeError):
+        _run(script, passes=3, decks=DECKS[:1], report_path=path, out=crashing)
+    text = path.read_text(encoding="utf-8")
+    assert "| 03-buffer.pptx | 1 |" in text and "| 03-buffer.pptx | 2 |" in text, "the passes paid for are in the report"
+    assert "| 03-buffer.pptx | 3 |" not in text and "Fake run" in text
