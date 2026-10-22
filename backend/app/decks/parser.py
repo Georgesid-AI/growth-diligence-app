@@ -768,6 +768,7 @@ def _band_cells(boxes: List[List[Dict]], others=None, date_box=None, years=None)
             numbered.append((number, box))
             cells += [{"row": row + i + 1, "col": col, "text": line["text"], "box": number,
                        **({"title": True} if line.get("title") else {}),
+                       **({"tick": True} if line.get("tick") else {}),
                        **({"bar_year": years[id(line)]} if years and id(line) in years else {})} for i, line in enumerate(box)]
             lines += [line.get("bbox") for line in box]
         row += max(len(box) for box in members)

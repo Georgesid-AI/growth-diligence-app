@@ -189,7 +189,7 @@ class FakeAdapter:
         sent = len(system or "") + len(user_payload) + (len(json.dumps(json_schema)) if json_schema else 0)
         return sent // self.CHARS_PER_TOKEN
 
-    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema):
+    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False):
         from app.structures import redact
         sent = json.loads(user_payload)
         reply = next((f["reply"] for f in self.fixtures if f["type"] == sent["type"] and f["match"] in sent["text"]),

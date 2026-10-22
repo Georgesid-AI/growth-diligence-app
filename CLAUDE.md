@@ -19,6 +19,10 @@
     metric names (revenue, ARR, MRR, customers, churn, bookings, forecast, budget, cost, margin, cash and common variants), after redaction; every
     other sheet's labels go as "Row 1", "Row 2"; on every sheet the 3 sample values of a column come from different rows chosen from the file hash, never the
     same row in two neighbouring columns; never a figure beyond the per-column sample; at most 400 rows with text.
+    For the page_claims step only (approved by George, 2026-10-22, PR #158 decision 1b; behind DECK_PIPELINE, default rules), the
+    model may receive the redacted text lines of a deck page that carries a figure written in digits, prose lines included, as
+    extracted text with cell positions, at most 5 pages per call; a page with no such figure never goes, and number-words do not
+    count as figures. Prose lines pass the people-name rule as well as the customer rule before they go.
     All other steps keep the boundary above.
     The deck parser has no direct link to the gateway.
 17. Logs and MongoDB store model JSON output (values with cell references), prompt

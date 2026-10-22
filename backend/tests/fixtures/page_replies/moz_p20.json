@@ -1,0 +1,104 @@
+{
+ "file": "02-moz.pdf",
+ "page": 20,
+ "match": "p20r1c1 title: 2011 Estimated Revenue",
+ "note": "Hand-written in the model's page_claims format (docs/design/ai-reads-rules-check.md section 2) against the page text of the public test deck; no live call was made. PR B records the model's own replies.",
+ "claims": [
+  {
+   "metric": "revenue",
+   "value": 12000000,
+   "value_high": 13000000,
+   "unit": "USD",
+   "unit_other": null,
+   "period": "2011",
+   "actual_or_forecast": "forecast",
+   "value_cell": "p20r1c2",
+   "label_cell": "p20r1c1",
+   "period_cell": "p20r1c1"
+  },
+  {
+   "metric": "revenue",
+   "value": 10800000,
+   "value_high": null,
+   "unit": "USD",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "actual",
+   "value_cell": "p20r2c2",
+   "label_cell": "p20r2c1",
+   "period_cell": null
+  },
+  {
+   "metric": "customers",
+   "value": 13500,
+   "value_high": null,
+   "unit": "count",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "actual",
+   "value_cell": "p20r3c2",
+   "label_cell": "p20r3c1",
+   "period_cell": null
+  },
+  {
+   "metric": "trials_per_day",
+   "value": 100,
+   "value_high": null,
+   "unit": "count",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "actual",
+   "value_cell": "p20r4c2",
+   "label_cell": "p20r4c1",
+   "period_cell": null
+  },
+  {
+   "metric": "ltv",
+   "value": 900,
+   "value_high": null,
+   "unit": "USD",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "actual",
+   "value_cell": "p20r5c2",
+   "label_cell": "p20r5c1",
+   "period_cell": null
+  },
+  {
+   "metric": "customer_lifetime",
+   "value": 9,
+   "value_high": null,
+   "unit": "months",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "actual",
+   "value_cell": "p20r6c2",
+   "label_cell": "p20r6c1",
+   "period_cell": null
+  },
+  {
+   "metric": "cac",
+   "value": 100,
+   "value_high": null,
+   "unit": "USD",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "actual",
+   "value_cell": "p20r7c2",
+   "label_cell": "p20r7c1",
+   "period_cell": null
+  },
+  {
+   "metric": "arpu",
+   "value": 93,
+   "value_high": null,
+   "unit": "USD",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "actual",
+   "value_cell": "p20r8c2",
+   "label_cell": "p20r8c1",
+   "period_cell": null
+  }
+ ]
+}

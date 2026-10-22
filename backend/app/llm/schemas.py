@@ -515,6 +515,8 @@ def output_schema(structure_type: str) -> dict:
         return sheet_output_schema()
     if structure_type == FILE_RECOGNITION:
         return file_recognition_output_schema()
+    if structure_type == PAGE_CLAIMS:
+        return page_claims_output_schema()
     return structure_output_schema() if structure_type == "column_mapping" else labelling_output_schema()
 
 
@@ -583,13 +585,120 @@ def structure_output_schema() -> dict:
     }
 
 
+# Page claims (docs/design/ai-reads-rules-check.md; CLAUDE.md rule 16 as amended 2026-10-22): the model reads the redacted text
+# lines of deck pages that carry a figure as digits and returns claims. No free text: every field is a closed word, a number or
+# the id of a cell it was sent (p<page>r<row>c<col>); the label is a cell id and Python reads its text, so rule 17 holds. The
+# metric is CLAIM_METRICS or "other"; Python checks the figure, the unit and the period at cell level (app/structures/page_check.py)
+# and never the metric. The gateway checks every cited id against the text it sent (gateway.parse_page_reply).
+PAGE_CLAIMS = "page_claims"
+PAGE_METRICS = CLAIM_METRICS + ("other",)
+_PAGE_CELL_ID = re.compile(r"^p[1-9]\d*r[1-9]\d*c[1-9]\d*$")
+
+
+def _page_cell(v, field):
+    if v is not None and not _PAGE_CELL_ID.match(v):
+        raise ValueError(f"{field} must be one page cell id like p5r4c3")
+    return v
+
+
+class PageClaim(BaseModel):
+    """One claim read from a page. Exactly these fields."""
+
+    model_config = {"extra": "forbid"}
+
+    metric: Literal[PAGE_METRICS]
+    value: Optional[float]
+    value_high: Optional[float]
+    unit: Optional[Literal[STRUCTURE_UNITS]]
+    unit_other: Optional[str]
+    period: Optional[str]
+    actual_or_forecast: Literal["actual", "forecast", "unknown"]
+    value_cell: str
+    label_cell: Optional[str]
+    period_cell: Optional[str]
+
+    @field_validator("period")
+    @classmethod
+    def _period(cls, v):
+        return _period_format(v)
+
+    @field_validator("value_cell")
+    @classmethod
+    def _value_cell(cls, v):
+        return _page_cell(v, "value_cell")
+
+    @field_validator("label_cell")
+    @classmethod
+    def _label_cell(cls, v):
+        return _page_cell(v, "label_cell")
+
+    @field_validator("period_cell")
+    @classmethod
+    def _period_cell(cls, v):
+        return _page_cell(v, "period_cell")
+
+    @field_validator("value", "value_high")
+    @classmethod
+    def _finite(cls, v):
+        if v is not None and (math.isnan(v) or math.isinf(v)):
+            raise ValueError("a value must be a finite number")
+        return v
+
+    @model_validator(mode="after")
+    def _consistent(self):
+        _other_currency(self.unit, self.unit_other)
+        if self.value is None and self.value_high is not None:
+            raise ValueError("value_high needs a value")
+        return self
+
+
+class PageClaimsReply(BaseModel):
+    """What the model must return for a batch of pages. No extra keys are accepted."""
+
+    model_config = {"extra": "forbid"}
+
+    type: Literal[PAGE_CLAIMS]
+    claims: List[PageClaim]
+
+
+def page_claims_output_schema() -> dict:
+    """The JSON schema a page batch's call sends as `output_config.format.schema`. Written by hand like the others: the id and
+    period formats and unit_other are checked by PageClaim after the reply arrives, the ids against the text by the gateway."""
+    nullable = _nullable
+    claim = {
+        "type": "object",
+        "properties": {
+            "metric": {"type": "string", "enum": list(PAGE_METRICS)},
+            "value": nullable({"type": "number"}),
+            "value_high": nullable({"type": "number"}),
+            "unit": nullable({"type": "string", "enum": list(STRUCTURE_UNITS)}),
+            "unit_other": nullable({"type": "string"}),
+            "period": nullable({"type": "string"}),
+            "actual_or_forecast": {"type": "string", "enum": ["actual", "forecast", "unknown"]},
+            "value_cell": {"type": "string"},
+            "label_cell": nullable({"type": "string"}),
+            "period_cell": nullable({"type": "string"}),
+        },
+        "required": ["metric", "value", "value_high", "unit", "unit_other", "period", "actual_or_forecast", "value_cell",
+                     "label_cell", "period_cell"],
+        "additionalProperties": False,
+    }
+    return {
+        "type": "object",
+        "properties": {"type": {"type": "string", "enum": [PAGE_CLAIMS]},
+                       "claims": {"type": "array", "items": claim}},
+        "required": ["type", "claims"],
+        "additionalProperties": False,
+    }
+
+
 StructureStatus = Literal["read", "not_read", "too_large", "stopped", "no_consent", "refused"]
 
 
 class StructureRead(BaseModel):
     """What read_structure returns: the validated model output, never the text that was sent. A deck
     structure's `labels` (one per listed item id) and `pairs` (a roadmap's lines and dates); a column
-    mapping's `items` (fields with the header cells they cite)."""
+    mapping's `items` (fields with the header cells they cite); a page batch's `claims`."""
 
     status: StructureStatus
     reason: Optional[str] = None
@@ -601,6 +710,7 @@ class StructureRead(BaseModel):
     items: List[dict] = Field(default_factory=list)
     labels: List[dict] = Field(default_factory=list)
     pairs: List[dict] = Field(default_factory=list)
+    claims: List[dict] = Field(default_factory=list)     # a page batch's claims (PageClaimsReply), cells cited by page id
     key: Optional[str] = None
     cache_hit: bool = False
     input_tokens: int = 0

@@ -1,0 +1,68 @@
+{
+ "file": "05-zero2hero.pdf",
+ "page": 17,
+ "match": "p17r2c1: Turnover(£/year)",
+ "note": "Hand-written in the model's page_claims format (docs/design/ai-reads-rules-check.md section 2) against the page text of the public test deck; no live call was made. PR B records the model's own replies.",
+ "claims": [
+  {
+   "metric": "revenue",
+   "value": 49284,
+   "value_high": null,
+   "unit": "GBP",
+   "unit_other": null,
+   "period": "2019",
+   "actual_or_forecast": "actual",
+   "value_cell": "p17r17c2",
+   "label_cell": "p17r2c1",
+   "period_cell": "p17r19c1"
+  },
+  {
+   "metric": "revenue",
+   "value": 181193,
+   "value_high": null,
+   "unit": "GBP",
+   "unit_other": null,
+   "period": "2020",
+   "actual_or_forecast": "actual",
+   "value_cell": "p17r16c2",
+   "label_cell": "p17r2c1",
+   "period_cell": "p17r19c2"
+  },
+  {
+   "metric": "revenue",
+   "value": 278085,
+   "value_high": null,
+   "unit": "GBP",
+   "unit_other": null,
+   "period": "2021",
+   "actual_or_forecast": "actual",
+   "value_cell": "p17r15c2",
+   "label_cell": "p17r2c1",
+   "period_cell": "p17r19c3"
+  },
+  {
+   "metric": "revenue",
+   "value": 415107,
+   "value_high": null,
+   "unit": "GBP",
+   "unit_other": null,
+   "period": "2022",
+   "actual_or_forecast": "actual",
+   "value_cell": "p17r10c2",
+   "label_cell": "p17r2c1",
+   "period_cell": "p17r19c4"
+  },
+  {
+   "metric": "revenue",
+   "value": 550508,
+   "value_high": null,
+   "unit": "GBP",
+   "unit_other": null,
+   "period": "2023",
+   "actual_or_forecast": "actual",
+   "value_cell": "p17r9c2",
+   "label_cell": "p17r2c1",
+   "period_cell": "p17r19c5"
+  }
+ ]
+}

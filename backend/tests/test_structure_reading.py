@@ -2675,7 +2675,8 @@ def test_every_structure_refusal_reason_in_the_code_is_declared_in_the_boundary_
     import test_gateway_data_boundary as boundary
     found = set()
     for path, function in ((BACKEND / "app" / "llm" / "gateway.py", "structure_text_problem"),
-                           (BACKEND / "app" / "structures" / "redact.py", "column_text_problem")):
+                           (BACKEND / "app" / "structures" / "redact.py", "column_text_problem"),
+                           (BACKEND / "app" / "structures" / "redact.py", "page_text_problem")):
         tree = _ast.parse(path.read_text(encoding="utf-8"))
         body = next(n for n in _ast.walk(tree) if isinstance(n, _ast.FunctionDef) and n.name == function)
         found |= {n.value.value for n in _ast.walk(body) if isinstance(n, _ast.Return)
