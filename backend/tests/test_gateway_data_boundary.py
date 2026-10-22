@@ -765,7 +765,8 @@ MAPPING_REPLY = json.dumps({"type": "column_mapping", "items": [
 # Every reason a structure text is refused: codes, never text from the structure.
 STRUCTURE_REFUSALS = frozenset({"not_text", "empty", "raw_bytes", "file_name",
                                 "not_cells", "cell_too_long", "redaction_changed", "too_many_header_rows",
-                                "too_many_samples", "text_value", "bad_item_line", "bad_hint"})
+                                "too_many_samples", "text_value", "bad_item_line", "bad_hint",
+                                "no_figure", "too_many_pages", "pipeline_rules"})   # the page_claims step (2026-10-22)
 # A deck structure's item list (docs/specs/structure-labelling.md section 3): one line per figure Python listed, its
 # raw text a figure cut from its cell; a roadmap adds its date cells and text lines. Nothing else passes.
 GOOD_ITEMS = GOOD_STRUCTURE + ('\nitems:\ni1 r2c2 "1,200,000" 1200000 h r2c1 r1c2\n'
@@ -2986,3 +2987,313 @@ def test_a_sheet_step_keeps_its_header_text_the_customer_header_rule_is_for_deck
     cells = [{"row": 1, "col": 1, "text": "Accounts through 2028"}, {"row": 2, "col": 1, "text": "Account ID"}]
     out, counts = structure_redact.redact_structure(cells, "Target Co", {})
     assert out == cells and "customer_blanked" not in counts
+
+
+# ---------------------------------------------------------------------------
+# The page_claims step (docs/design/ai-reads-rules-check.md; CLAUDE.md rule 16 as amended 2026-10-22, George, PR #158, decision
+# 1b): the redacted text lines of deck pages that carry a figure as digits may reach the provider, prose lines included, as
+# `p<page>r<row>c<col>: <text>` lines through one builder (structures.pages.batch_text), at most 5 pages per call, and only while
+# DECK_PIPELINE is "ai" (the gateway refuses the step under any other value; review of PR #159, 2026-10-22). A page with no
+# figure as digits never goes (a number-word is no figure; a line that is only the page's own number is none); a line over 200
+# characters is left out by the sender and refused by the gateway (George, 2026-10-22, decision 1b on the review of PR #159); a
+# file name, an unredacted name (the people-name rule runs over prose too, its role words in any case) or a figure outside a cell
+# line is refused. The reply holds closed words, numbers and cell ids only; nothing sent, the label cell's text included, is
+# stored or logged.
+# ---------------------------------------------------------------------------
+from unittest import mock  # noqa: E402
+
+from app.decks import pages as page_grids  # noqa: E402
+from app.llm.schemas import PAGE_CLAIMS, PageClaim, page_claims_output_schema  # noqa: E402
+from app.structures import page_check, pages as page_pipeline  # noqa: E402
+
+PROSE_LINE = ("Our platform served 2,300 companies in 2025 while the founding team kept its focus on product quality and on the "
+              "customers who had asked for a European data centre; the roadmap for next year adds two more regions and a partner programme.")
+SHORT_PROSE = ("Our platform served 2,300 companies in 2025 while the team kept its focus on product quality and on the customers "
+               "who had asked for a European data centre.")
+GOOD_PAGE = ("p5r1c1 title: Traction\np5r2c1: 800 Paying Users\np5r3c1: $150,000 annual revenue run rate\np5r4c1: 97% margins\n"
+             "p5r5c1: " + SHORT_PROSE)
+PAGE_REPLY = json.dumps({"type": PAGE_CLAIMS, "claims": [
+    {"metric": "customers", "value": 800, "value_high": None, "unit": "count", "unit_other": None, "period": None,
+     "actual_or_forecast": "actual", "value_cell": "p5r2c1", "label_cell": "p5r1c1", "period_cell": None},
+    {"metric": "revenue", "value": 150000, "value_high": None, "unit": "USD", "unit_other": None, "period": None,
+     "actual_or_forecast": "actual", "value_cell": "p5r3c1", "label_cell": "p5r3c1", "period_cell": None}]})
+NO_CLAIMS = json.dumps({"type": PAGE_CLAIMS, "claims": []})
+
+
+def _page(n, *lines):
+    return "\n".join(f"p{n}r{i}c1: {text}" for i, text in enumerate(lines, 1))
+
+
+def _send_page(db, text, reply=NO_CLAIMS, pipeline="ai"):
+    """read_structure on a page text with the switch DECK_PIPELINE at `pipeline` (None: unset, the default "rules")."""
+    env = {"DECK_PIPELINE": pipeline} if pipeline is not None else {}
+    with mock.patch.dict(os.environ, env, clear=False):
+        if pipeline is None:
+            os.environ.pop("DECK_PIPELINE", None)
+        return _send(db, text, PAGE_CLAIMS, reply)
+
+
+def test_a_page_text_of_redacted_lines_with_a_figure_as_digits_reaches_the_provider_as_sent():
+    assert len(SHORT_PROSE) <= 200 < len(PROSE_LINE)
+    result, adapter = _send_page(_structure_db(), GOOD_PAGE, PAGE_REPLY)
+    assert result.status == "read" and adapter.calls == 1, result.reason
+    sent = json.loads(adapter.payloads[0])
+    assert sent == {"type": PAGE_CLAIMS, "text": GOOD_PAGE}
+    assert all(re.match(r"^p\d+r\d+c\d+( title)?: ", line) for line in sent["text"].splitlines())
+    assert adapter.requests[-1]["cache_system"] is True, "the fixed prompt is marked for the provider's prompt cache"
+    assert [c["value_cell"] for c in result.claims] == ["p5r2c1", "p5r3c1"]
+
+
+def test_the_page_step_is_refused_unless_the_switch_is_ai():
+    """L1 of the review of PR #159: whatever the caller, the gateway reads a page only while DECK_PIPELINE is "ai"."""
+    for pipeline in (None, "rules", "pages"):
+        result, adapter = _send_page(_structure_db(), GOOD_PAGE, PAGE_REPLY, pipeline=pipeline)
+        assert (result.status, result.reason, adapter.calls) == ("refused", "refused: pipeline_rules", 0), pipeline
+    result, adapter = _send_page(_structure_db(), GOOD_PAGE, PAGE_REPLY, pipeline="ai")
+    assert result.status == "read" and adapter.calls == 1
+    result, adapter = _send(_structure_db(), GOOD_ITEMS)
+    assert result.status == "read", "a structure read does not depend on the switch"
+
+
+def test_a_page_line_over_200_characters_is_left_out_by_the_sender_and_refused_by_the_gateway():
+    """Decision 1b on the review of PR #159 (George, 2026-10-22): as for a structure cell, a line over 200 characters never goes."""
+    long_line = ("Our CEO Michael Smith and our CTO Desmond Okafor founded the company with Northwind Trading as the first "
+                 "customer; Jane Doe (jane.doe@northwind.com, +44 20 7946 0958) leads sales across three regions and the team of 12 "
+                 "keeps growing with every product line launched since the spring")
+    assert len(long_line) > 200, "and still over 200 once the names, the email and the phone number are placeholders"
+    cells = [{"row": 1, "col": 1, "text": "Team", "box": 1}, {"row": 2, "col": 1, "text": long_line, "box": 1},
+             {"row": 3, "col": 1, "text": "12 engineers", "box": 2}]
+    grid = {"type": "page", "page": 3, "header_rows": 0, "cells": cells, "tables": [], "figure": True}
+    sent, = page_pipeline.redacted_pages([grid], "Target Co", {"Northwind Trading": "Customer_01"})
+    assert [c["text"] for c in sent["cells"]] == ["Team", "12 engineers"], "the sender leaves the long line out"
+    text = page_pipeline.batch_text([sent])
+    result, adapter = _send_page(_structure_db({"Northwind Trading": "Customer_01"}), text)
+    assert result.status == "read" and adapter.calls == 1, result.reason
+    redacted, _ = structure_redact.redact_page(cells, "Target Co", {"Northwind Trading": "Customer_01"})
+    with_long = structure_redact.page_text([(3, redacted)])
+    assert "Michael Smith" not in with_long and len(redacted[1]["text"]) > 200
+    result, adapter = _send_page(_structure_db({"Northwind Trading": "Customer_01"}), with_long)
+    assert (result.status, result.reason, adapter.calls) == ("refused", "refused: cell_too_long", 0)
+    grid_only_long = {**grid, "cells": cells[:2]}
+    assert page_pipeline.redacted_pages([grid_only_long], "Target Co", {}) == [], "a page whose only figure sat in the long line has none"
+
+
+def test_without_a_customer_list_the_customer_header_blanks_its_own_box_or_table_column_only():
+    """L2 of the review of PR #159: the cells under a customer-type header in its text box or its table column become [redacted],
+    and the lines directly under it in its column up to the first figure line (the part the gateway can re-run on the text as
+    sent, which carries no box); a figure elsewhere on the page survives, so the page still goes, and the gateway accepts it."""
+    cells = [{"row": 1, "col": 1, "text": "Traction", "box": 1, "title": True},
+             {"row": 2, "col": 1, "text": "Customers", "box": 2}, {"row": 3, "col": 1, "text": "Acme Widgets (12 seats)", "box": 2},
+             {"row": 4, "col": 1, "text": "Globex Corp", "box": 2},
+             {"row": 5, "col": 1, "text": "800 Paying Users", "box": 3}, {"row": 6, "col": 1, "text": "Strong growth", "box": 3},
+             {"row": 7, "col": 1, "text": "Clients", "table": 1, "trow": 1, "tcol": 1}, {"row": 7, "col": 2, "text": "ARR", "table": 1, "trow": 1, "tcol": 2},
+             {"row": 8, "col": 1, "text": "Northwind Trading", "table": 1, "trow": 2, "tcol": 1},
+             {"row": 8, "col": 2, "text": "€1.5M", "table": 1, "trow": 2, "tcol": 2},
+             {"row": 9, "col": 1, "text": "Initech Ltd", "table": 2, "trow": 1, "tcol": 1},
+             {"row": 9, "col": 2, "text": "Growing fast", "box": 4}]
+    redacted, counts = structure_redact.redact_page(cells, "Target Co", {})
+    assert [c["text"] for c in redacted] == ["Traction", "Customers", "[redacted]", "[redacted]", "800 Paying Users", "Strong growth",
+                                             "Clients", "ARR", "[redacted]", "€1.5M", "[redacted]", "Growing fast"]
+    assert counts["customer_blanked"] == 4, "Initech Ltd stands directly under the Clients column with no figure line between"
+    grid = {"type": "page", "page": 5, "header_rows": 0, "cells": cells, "tables": [{"table": 1, "header_rows": 1}, {"table": 2, "header_rows": 0}],
+            "figure": True}
+    sent, = page_pipeline.redacted_pages([grid], "Target Co", {})
+    text = page_pipeline.batch_text([sent])
+    assert "800 Paying Users" in text and "Strong growth" in text and "Growing fast" in text
+    result, adapter = _send_page(_structure_db(), text)
+    assert result.status == "read" and adapter.calls == 1, result.reason
+    # A deck structure keeps today's rule: the whole column under the header.
+    panel = [{"row": 1, "col": 1, "text": "Customers"}, {"row": 2, "col": 1, "text": "Acme Widgets"}, {"row": 3, "col": 1, "text": "12 logos"},
+             {"row": 4, "col": 1, "text": "Globex Corp"}]
+    out, _ = structure_redact.redact_structure(panel, "Target Co", {}, deck=True)
+    assert [c["text"] for c in out] == ["Customers", "[redacted]", "[redacted]", "[redacted]"], "a figure in a sentence is no figure cell"
+
+
+@pytest.mark.parametrize("name, text, reason", [
+    ("a page with no figure as digits", _page(2, "Our mission", "We help teams ship faster"), "no_figure"),
+    ("a page whose only figure is a number-word", _page(2, "Revenue grew to three million euros", "Twenty customers"), "no_figure"),
+    ("a page whose only digits are a year", _page(2, "Founded in 2019", "Launched in January 2021"), "no_figure"),
+    ("a page whose only digits are its page number", _page(3, "Our mission", "We help teams ship faster", "3"), "no_figure"),
+    ("a page number as Slide n", _page(3, "Our mission", "Slide 3"), "no_figure"),
+    ("a page number as n/m", _page(3, "Our mission", "3/25"), "no_figure"),
+    ("a page number as Page n of m", _page(3, "Our mission", "Page 3 of 25"), "no_figure"),
+    ("a page number between dashes", _page(3, "Our mission", "- 3 -"), "no_figure"),
+    ("a page line over 200 characters", GOOD_PAGE + "\np5r6c1: " + PROSE_LINE, "cell_too_long"),
+    ("one page without a figure among pages with one", GOOD_PAGE + "\n" + _page(6, "Our mission"), "no_figure"),
+    ("six pages", "\n".join(_page(n, "Revenue €1.5M") for n in range(1, 7)), "too_many_pages"),
+    ("a figure outside a cell line", GOOD_PAGE + "\n1,200", "not_cells"),
+    ("a prose line with no cell id", GOOD_PAGE + "\nRevenue grew from £1.2m to £1.5m between FY2025 and FY2026.", "not_cells"),
+    ("structure lines with no page", "r1c1: Revenue\nr1c2: £1,200,000", "not_cells"),
+    ("pages out of order", _page(6, "Revenue €1.5M") + "\n" + _page(5, "Costs €1M"), "not_cells"),
+    ("a file name", GOOD_PAGE + "\np5r6c1: See Acme_Board_Q3.pptx", "file_name"),
+    ("an unredacted name", GOOD_PAGE + "\np5r6c1: Michael Smith", "redaction_changed"),
+    ("an unredacted name beside a role word in prose", GOOD_PAGE + "\np5r6c1: Our CEO Petar Petrov built the sales team", "redaction_changed"),
+    ("a name before a capitalised role word", GOOD_PAGE + "\np5r6c1: Rohan Mehta, Co-Founder", "redaction_changed"),
+    ("a name before a dash and Founder", GOOD_PAGE + "\np5r6c1: Rohan Mehta – Founder", "redaction_changed"),
+    ("a name before Director of Sales", GOOD_PAGE + "\np5r6c1: Rohan Mehta, Director of Sales", "redaction_changed"),
+    ("a name before Advisor", GOOD_PAGE + "\np5r6c1: Rohan Mehta, Advisor", "redaction_changed"),
+    ("a name before a bracketed Partner", GOOD_PAGE + "\np5r6c1: Rohan Mehta (Partner)", "redaction_changed"),
+    ("a name before Head of Product", GOOD_PAGE + "\np5r6c1: Rohan Mehta, Head of Product", "redaction_changed"),
+    ("a name before President", GOOD_PAGE + "\np5r6c1: Rohan Mehta, President", "redaction_changed"),
+    ("a name after a role word in capitals", GOOD_PAGE + "\np5r6c1: CO-FOUNDER Rohan Mehta", "redaction_changed"),
+    ("an unredacted customer name in prose", GOOD_PAGE + "\np5r6c1: Northwind Trading renewed for three more years", "redaction_changed"),
+    ("an unredacted email", GOOD_PAGE + "\np5r6c1: jane.doe@northwind.com", "redaction_changed"),
+    ("raw bytes", "p5r1c1: x\x00\x01", "raw_bytes"),
+])
+def test_the_page_step_refuses_what_the_amended_rule_16_does_not_allow(name, text, reason):
+    assert reason in STRUCTURE_REFUSALS
+    result, adapter = _send_page(_structure_db({"Northwind Trading": "Customer_01"}), text)
+    assert adapter.calls == 0 and getattr(adapter, "counted", 0) == 0, f"{name} reached the provider"
+    assert (result.status, result.reason) == ("refused", f"refused: {reason}"), name
+
+
+def test_the_page_step_reads_no_deck_text_and_the_page_cells_come_through_the_one_builder(monkeypatch):
+    """read_structure is handed the page text; it reads consent and names from the audit, the pseudonym map, its own cache and the
+    call log, never the parsed-text or candidate collections. The text itself is built by structures.pages.batch_text from the
+    page grids and the page redaction, nowhere else: no gateway module names the parsed-text fields (the static test above)."""
+    monkeypatch.setenv("DECK_PIPELINE", "ai")
+    db, reads = _recording_db()
+    db["audits"].docs[0].update({"company_name": "Target Co", "structure_reading_consent": True})
+    adapter = t.FakeAdapter(replies=[PAGE_REPLY])
+    asyncio.run(gateway.read_structure(db, RUN_ID, GOOD_PAGE, PAGE_CLAIMS, adapter=adapter, sleep=t._noop_sleep))
+    assert adapter.calls == 1
+    touched = {name for name, _, _ in reads}
+    assert not touched & {decks.TEXT_COLLECTION, decks.CANDIDATES_COLLECTION}, touched
+    assert DECK_SENTINEL not in adapter.payloads[0] and DECK_FILE not in adapter.payloads[0]
+    source = inspect.getsource(page_pipeline.redacted_pages) + inspect.getsource(page_pipeline.batch_text)
+    assert "redact_page" in source and "page_text" in source
+    assert "page_text" not in inspect.getsource(gateway.read_structure), "the gateway builds no page text"
+
+
+def test_no_sent_page_text_and_no_label_text_in_a_log_llm_calls_or_llm_structures(caplog, monkeypatch):
+    """Rule 17 on the page step: after a deck is read page by page, the stored reading holds the model's claims (closed words,
+    numbers, cell ids), the checked items (ids, values, statuses, checks) and metadata; no line of the page, no label text, no
+    period text is stored or logged."""
+    pytest.importorskip("pdfplumber")
+    from pdf_support import pdf_page
+    from app.decks.parser import parse_deck
+    monkeypatch.setenv("DECK_PIPELINE", "ai")
+    texts = [(50, 560, 20, "Traction"), (50, 500, 12, "800 Paying Users"), (50, 480, 12, "$150,000 annual revenue run rate"),
+             (50, 460, 12, "FY2025"), (50, 320, 10, SHORT_PROSE), (50, 300, 10, PROSE_LINE)]
+    parsed = parse_deck(pdf_page(texts, []), "deck.pdf")
+    db = _structure_db()
+    db["datasets"].docs.append({"audit_id": STRUCTURE_AUDIT["id"], "dtype": "revenue", "mapped_at": "2026-10-05",
+                                "mapping": {"customer_id": "Customer"}})
+    db[decks.TEXT_COLLECTION].docs.append({"audit_id": STRUCTURE_AUDIT["id"], "deck_id": "d1", "file": "deck.pdf",
+                                           "page_unit": "page", "blocks": parsed["blocks"], "structures": []})
+    reply = json.dumps({"type": PAGE_CLAIMS, "claims": [
+        {"metric": "revenue", "value": 150000, "value_high": None, "unit": "USD", "unit_other": None, "period": "FY2025",
+         "actual_or_forecast": "actual", "value_cell": "p1r3c1", "label_cell": "p1r1c1", "period_cell": "p1r4c1"}]})
+    adapter = t.FakeAdapter(replies=[reply])
+    with caplog.at_level(logging.DEBUG):
+        status = asyncio.run(structures.process_deck(db, STRUCTURE_AUDIT["id"], "d1", adapter=adapter, sleep=t._noop_sleep))
+    assert status == "read" and adapter.calls == 1
+    sent = json.loads(adapter.payloads[0])["text"]
+    assert "800 Paying Users" in sent and SHORT_PROSE in sent, "fixture: the page went, prose included"
+    assert PROSE_LINE not in sent, "the line over 200 characters is left out (decision 1b, review of PR #159)"
+    stored = json.dumps(db[gateway.STRUCTURES_COLLECTION].docs + db["llm_calls"].docs, ensure_ascii=False, default=str)
+    logs = caplog.text + "".join(r.getMessage() for r in caplog.records)
+    # The model's period "FY2025" is a closed form, kept in its reply as today's labels keep theirs; the header's text is not.
+    for needle in ("Traction", "Paying Users", "150,000", "annual revenue", "2,300 companies", PROSE_LINE[:40], sent):
+        assert needle not in stored, f"{needle!r} was stored"
+        assert needle not in logs, f"{needle!r} was logged"
+    record, = db[gateway.STRUCTURES_COLLECTION].docs
+    assert record["items"]["claims"][0]["label_cell"] == "r1c1" and record["items"]["claims"][0]["period_cells"] == ["r4c1"]
+    assert record["statuses"] == ["matched"]
+    assert "pages checked: run_id=audit-boundary deck_id=d1 pages=1 matched=1 unmatched=0 dropped=0" in caplog.text
+    row, = db[decks.CANDIDATES_COLLECTION].docs
+    assert row["label_from"] == "Traction" and row["ai_label"] == "Matched to page", "the row, for the analyst, reads the page"
+
+
+def test_every_page_reply_field_is_a_closed_word_a_number_or_a_cell_id():
+    """The new rule of the design note (section 5): a reply can carry no deck text into a log. Every property of the schema is an
+    enum, a number or a string the reply model checks as a cell id or an ISO currency code."""
+    schema = page_claims_output_schema()
+    claim = schema["properties"]["claims"]["items"]
+    assert schema["properties"]["type"] == {"type": "string", "enum": [PAGE_CLAIMS]}
+    free = set()
+    for name, prop in claim["properties"].items():
+        options = prop.get("anyOf", [prop])
+        kinds = {o.get("type") for o in options if "enum" not in o}
+        if "string" in kinds:
+            free.add(name)
+        assert kinds <= {"number", "null", "string"}, (name, prop)
+    assert free == {"value_cell", "label_cell", "period_cell", "unit_other", "period"}, "cell ids, an ISO code and a closed period form"
+    base = {"metric": "revenue", "value": 1.0, "value_high": None, "unit": "EUR", "unit_other": None, "period": None,
+            "actual_or_forecast": "actual", "value_cell": "p5r2c1", "label_cell": None, "period_cell": None}
+    assert PageClaim.model_validate(base).value_cell == "p5r2c1"
+    for field in ("value_cell", "label_cell", "period_cell"):
+        with pytest.raises(Exception):
+            PageClaim.model_validate({**base, field: "Revenue £1,200,000 at Target Co"})
+        with pytest.raises(Exception):
+            PageClaim.model_validate({**base, field: "r2c1"})               # a cell id without its page
+    with pytest.raises(Exception):
+        PageClaim.model_validate({**base, "unit": "other", "unit_other": "Revenue at Target Co"})
+    with pytest.raises(Exception):
+        PageClaim.model_validate({**base, "period": "in 2025 at Target Co"})
+    with pytest.raises(Exception):
+        PageClaim.model_validate({**base, "metric": "Revenue at Target Co"})
+    with pytest.raises(Exception):
+        PageClaim.model_validate({**base, "note": "free text"})
+
+
+def test_a_page_reply_citing_a_cell_not_sent_or_carrying_text_is_rejected_with_a_closed_check(caplog):
+    first = json.loads(PAGE_REPLY)["claims"][0]
+    with caplog.at_level(logging.DEBUG):
+        for sent, check in ((json.dumps({"type": PAGE_CLAIMS, "claims": [{**first, "value_cell": "p9r9c9"}]}), "other"),
+                            (json.dumps({"type": PAGE_CLAIMS, "claims": [{**first, "label_cell": "p5r1c1 Traction"}]}), "schema"),
+                            (json.dumps({"type": PAGE_CLAIMS, "claims": [{**first, "metric": "Revenue at Target Co"}]}), "metric_list"),
+                            ("Revenue £1,200,000 at Target Co", "schema")):
+            result, adapter = _send_page(_structure_db(), GOOD_PAGE, sent)
+            assert (result.status, adapter.calls) == ("not_read", 2), check
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
+    assert [line.rsplit(" check=", 1)[1] for line in lines] == ["other", "schema", "metric_list", "schema"]
+    logs = caplog.text + "".join(r.getMessage() for r in caplog.records)
+    for needle in ("Traction", "Paying Users", "Target Co", "p9r9c9", "Input should"):
+        assert needle not in logs, f"{needle!r} was logged"
+
+
+def test_the_page_grid_layout_fields_are_kept_with_the_grid_and_never_sent():
+    """next_to, bar_year, tick, box and table are Python's layout, stored with the grid for page_check and never in the text."""
+    pytest.importorskip("pdfplumber")
+    from pdf_support import pdf_page
+    from app.decks.parser import parse_deck
+    texts = [(50, 560, 20, "Revenue forecast")] + [(x, 380 + 20 * i, 12, bar) for i, (bar, x) in
+                                                   enumerate(zip(("€1.48MM", "€3.39MM", "€5.3MM"), (100, 255, 410)))]
+    texts += [(x, 340, 12, year) for year, x in zip(("2022", "2023", "2024"), (150, 300, 450))]
+    grid, = page_grids.page_grids(parse_deck(pdf_page(texts, []), "deck.pdf")["blocks"])
+    assert sorted(c["bar_year"] for c in grid["cells"] if "bar_year" in c) == ["2022", "2023", "2024"]
+    text = page_pipeline.batch_text(page_pipeline.batches([grid], "Target Co", {})[0])
+    for word in ("next_to", "bar_year", "tick", "box", "table"):
+        assert word not in text
+    assert set(structure_redact.parse_page_text(text)) == {1}
+    cells = structure_redact.parse_page_text(text)[1]
+    assert [c["text"] for c in cells] == [c["text"] for c in sorted(grid["cells"], key=lambda c: (c["row"], c["col"]))]
+    assert set(page_check.check(grid, [], 12)) == {"items", "matched", "unmatched", "dropped", "periods_corrected"}
+
+
+def test_the_compare_script_prints_counts_values_cells_and_statuses_and_no_line_of_a_deck(capsys):
+    """Rule 17 for scripts/compare_pipelines.py: its table and its rows-only lists carry deck file names, counts, rates, values, cell
+    ids, types and statuses, never the text of a line. --diagnostic prints the text and runs on the 10 public test decks only."""
+    pytest.importorskip("pdfplumber")
+    pytest.importorskip("pptx")
+    import importlib.util
+    from app.decks import parser
+    spec = importlib.util.spec_from_file_location("compare_pipelines", BACKEND.parent / "scripts" / "compare_pipelines.py")
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+    names = ["03-buffer.pptx", "05-zero2hero.pdf"]
+    report = script.main(["--deck", names[0], "--deck", names[1]])
+    assert set(report["decks"]) == set(names) and report["totals"]["rows_b"] > 0 and report["totals"]["b_matched"] > 0
+    assert report["decks"][names[1]]["b"]["recall"] >= 0.85, "the recorded replies of zero2hero p17 and p19 are found"
+    printed = capsys.readouterr().out
+    words = set()
+    for name in names:
+        for block in parser.parse_deck((script.DECKS / name).read_bytes(), name)["blocks"]:
+            text = block["text"]
+            if len(text) >= 4 and any(c.isalpha() for c in text) and not any(text in n for n in names):
+                words.add(text)
+    assert len(words) > 50 and "Traction" in words, "the check sees the decks' lines"
+    assert not sorted(w for w in words if w in printed), "a line of a deck was printed"
+    with pytest.raises(SystemExit, match="public test decks only"):
+        script.main(["--diagnostic", "--deck", "client-deck.pdf"])

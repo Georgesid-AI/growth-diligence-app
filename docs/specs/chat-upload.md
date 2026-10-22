@@ -755,8 +755,12 @@ with `structure_reading_consent` true, logged in `consent_log` as before (the cr
 `structure_reading_consent`; the dialog sends none.
 
 **Upload page.** The consent tick moves into the set-up section at the top (both the Map and the Run audit pages use it).
-Label, word for word: "Use AI to read deck tables and charts and to suggest column matches. Untick if the client requires
-code-based extraction only; this may find fewer figures. Narratives use AI on computed results either way." Under the set-up
+Label, word for word (amended 2026-10-22, George, PR #158 decision 1b, with the page_claims step of docs/design/ai-reads-rules-check.md;
+until 2026-10-22 it read "Use AI to read deck tables and charts and to suggest column matches. Untick if the client requires
+code-based extraction only; this may find fewer figures. Narratives use AI on computed results either way."): "Use AI to read deck
+tables, charts and the text of pages that carry a figure, and to suggest column matches. Names, contact details and customer names
+are masked before anything is sent. Untick if the client requires code-based extraction only; this may find fewer figures.
+Narratives use AI on computed results either way." Under the set-up
 fields, one line: "Every extracted number is checked by code against its source cell. Numbers that don't match are marked
 unverified for review." The old explainer (`CONSENT_EXPLAINER` and its "What is sent" toggle) is removed with the dialog block that
 used it. The consent change is saved like the other set-up fields (PUT /audits/{id}) and logged in `consent_log` as today.

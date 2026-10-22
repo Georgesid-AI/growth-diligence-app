@@ -238,6 +238,10 @@ async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None
     and every item becomes a row of the approval list labelled Verified or "AI suggestion, not
     verified". A deck already read is not sent again (a re-read is served from the cache).
     """
+    from . import pages as page_pipeline
+    if page_pipeline.deck_pipeline() == "ai":
+        # DECK_PIPELINE=ai (docs/design/ai-reads-rules-check.md, PR A): the model reads the pages, Python checks each claim.
+        return await page_pipeline.process_deck_pages(db, audit_id, deck_id, adapter=adapter, sleep=sleep)
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "id": 1, "company_name": 1, "fiscal_year_end": 1,
                                                        "structure_reading_consent": 1})
     deck = await db[TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id},

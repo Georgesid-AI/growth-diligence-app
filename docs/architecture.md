@@ -11,13 +11,36 @@ what is written here is an architecture change: a session that needs one stops a
 | Frontend | `frontend/` (React, CRA) | Pages AuditHub, MappingWizard, Dashboard, Diagnostics. The approval list and the deck panel (`DeckPanel.jsx`) show each claim with its source and its label (Verified, "AI suggestion, not verified"). Provenance hover cards show file, sheet, rows and rule for every metric. |
 | API | `backend/server.py` (FastAPI) | Audit CRUD, uploads, column mapping (`FIELD_DEFS`), the claim register, exports. Reads `MONGO_URL` and `DB_NAME` at start. Every route but the health check and the field list needs a token (docs/specs/access-links.md section 3): audit routes check the request's token link against the audit's owner (`backend/app/access.py`); a tester's usage totals cover their own audits; the owner token sees all usage totals and the owner routes, never an audit. |
 | Calc engine | `backend/growth_engine.py` | Pure, deterministic. Never guesses a missing input; every number carries a source reference (file, sheet, rows). |
-| Deck parser | `backend/app/decks/` | Python only, no model: parsed text with slide or page references, candidate claims (`claims.py`), and the structures of docs/specs/deck-parser.md §7. Has no import of, or call to, the gateway. |
-| Structure path | `backend/app/structures/` | Redaction of structure cells (`redact.py`), the item list Python makes from them (`items.py`), the verifier that rebuilds periods and sets Verified (`verify.py`), and the orchestration that queues decks until the revenue file is mapped and turns checked items into approval rows (`__init__.py`). |
+| Deck parser | `backend/app/decks/` | Python only, no model: parsed text with slide or page references, candidate claims (`claims.py`), the structures of docs/specs/deck-parser.md §7 and the page grid (`pages.py`: every line of a page as a cell with an id, the amendment of 2026-10-22). Has no import of, or call to, the gateway. |
+| Structure path | `backend/app/structures/` | Redaction of structure cells and page lines (`redact.py`), the item list Python makes from them (`items.py`), the verifier that rebuilds periods and sets Verified (`verify.py`), the cell-level check of page claims (`page_check.py`) and the page pipeline behind `DECK_PIPELINE` (`pages.py`), and the orchestration that queues decks until the revenue file is mapped and turns checked items into approval rows (`__init__.py`). |
 | LLM gateway | `backend/app/llm/` | The only component allowed to call a model provider (`gateway.py`). Prompts are versioned documents in the MongoDB collection `prompts`, uploaded on the owner page and read by the gateway only (`prompt_store.py`); a missing prompt means no model call; cache keys carry text, type, prompt tag, model and schema hash (`cache.py`); guards hold the per-audit lock, the daily spend cap and the retry policy (`guards.py`); the per-audit pseudonym map (`redaction.py`); strict output schemas (`schemas.py`). |
 | Supporting modules | `backend/app/` | `formatting.py`, `disclosure.py` (the AI-provenance block), `narrative_export.py`, `logsafety.py` (no secret reaches a log line). |
 | Interface contracts | `backend/schemas/` | `metrics.py`: `MetricsPayload`, the one description of the calc engine's output (units, citations), validated by the engine, the gateway and the export (docs/specs/interface-contracts.md). |
 | Storage | MongoDB | `audits`, `datasets`, `deck_text` (parsed text and structures), `deck_candidates`, `llm_narratives`, `llm_structures`, `llm_calls`, `llm_locks`, `pseudonym_map`, `column_mappings`, `prompts` (the model prompts; no `audit_id`), `access_tokens` (tester-phase token hashes, id, label, expiry, and per-link AI usage counters and allowance (counts and costs only, no names or figures); never a token; removed at the move to accounts; no `audit_id`). Delete audit removes an audit's documents in every collection that holds any; `prompts` and `access_tokens` hold no audit data and stay. |
 | Manual tooling | `scripts/consistency_run.py` | Live consistency runs (paid), `--fake` replays, `--diagnostic` and `--probe` on the 10 public test decks. Reports are committed to docs/test-runs/. |
+
+## The amendment of 2026-10-22
+
+George approved (22 Oct 2026, decision 1b on PR #158, docs/design/ai-reads-rules-check.md) widening the deck boundary for one new
+step. For the `page_claims` step only, behind the switch `DECK_PIPELINE` (default `rules`: no page call, no screen change), the
+model may receive the redacted text lines of a deck page that carries a figure written in digits, prose lines included, as
+extracted text with cell positions (`p<page>r<row>c<col>: <text>`, the page grid of `app/decks/pages.py`), at most 5 pages per
+call. A page with no such figure never goes; number-words do not count as figures. Prose lines pass the people-name rule as well
+as the customer rule before they go (`app/structures/redact.redact_page`), and the gateway runs the redaction again. The reply
+holds closed words, numbers and cell ids only; Python checks each claim at cell level (`app/structures/page_check.py`: figure in
+its cell, unit adjacent, period from that cell's own sources) and labels it "Matched to page" or "AI suggestion, not matched"
+(decisions 2a and 3a). All other steps keep the boundary as it was. CLAUDE.md rule 16 carries the same wording.
+
+Amended 2026-10-22 (George, review of PR #159, decisions 1b and 2a and findings H1, M1, L1, L2): the gateway refuses a
+`page_claims` call unless `DECK_PIPELINE` is `ai`, whatever the caller (`gateway.deck_pipeline`). A page line over 200
+characters is left out by the sender and refused by the gateway (`cell_too_long`), as a structure cell is. A line that is only
+the page's own printed number ("3", "Slide 3", "3/25", "Page 3 of 20") is no figure, for the page grid and for the gateway's
+floor alike (`decks/claims.page_number_line`), so a prose page with a footer number stays on the server. The role words of the
+people-name rule match in any case ("Rohan Mehta, Co-Founder", "– Founder", "Head of Product"). With no customer list, a
+customer-type header blanks the cells under it in its own text box or table column, and the lines directly under it in its
+column before the first figure line (the part the gateway can re-run on the text as sent, which carries no layout); a figure
+elsewhere on the page survives. When the figure check fails, the row shows the model's value and range, labelled "AI suggestion,
+not matched", never the cell's first figure ("€2 7K" claimed as 27,000 is one row 27,000 to confirm or reject).
 
 ## The amendment of 2026-10-19
 
@@ -66,7 +89,9 @@ Two paths reach the gateway and each has its own fields (docs/specs/deck-parser.
   §1 and §3. For the `sheet_structure` step only (the amendment of 2026-10-18 above): every text cell of a sheet (title rows,
   headers, row labels, indents, num/blank markers), after redaction and the withhold rule; never any figure; at most 400
   labelled rows per sheet. For the `file_recognition` step only (the amendment of 2026-10-19 above): the row labels of a
-  metric-labelled sheet, "Row n" for every other sheet, never a figure beyond the per-column sample.
+  metric-labelled sheet, "Row n" for every other sheet, never a figure beyond the per-column sample. For the `page_claims` step
+  only (the amendment of 2026-10-22 above, behind `DECK_PIPELINE`): the redacted text lines of a deck page that carries a figure as
+  digits, prose included, at most 5 pages per call; never a page without such a figure.
 
 What is stored (rule 17): model JSON output with cell references, the item list without raw text, prompt version,
 model version, content hash, token counts and cost. Never deck text sent to the model. The boundary is enforced in

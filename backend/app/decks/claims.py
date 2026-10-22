@@ -1296,6 +1296,19 @@ def figures(text: str) -> List[Dict]:
     return find_numbers(text, find_dates(text))
 
 
+# A printed page number: a line that is only a number of up to three digits, with "Page", "Slide", "p." or "pg." before it, "/ m",
+# "of m" or "| m" after it, dashes, bars or dots around it ("3", "Slide 3", "3/25", "Page 3 of 20", "- 3 -"). It is no figure
+# when it is the page's own number (George, 2026-10-22, M1 of the review of PR #159): the page grid (pages.page_grid) and the
+# gateway's floor (structures/redact.page_text_problem) both call this, so the two readers agree.
+_PAGE_NUMBER_LINE = re.compile(r"(?i)^[\s\-–—|.]*(?:page|slide|pg\.?|p\.)?\s*(?P<n>\d{1,3})\s*(?:(?:/|of|\|)\s*\d{1,3})?[\s\-–—|.]*$")
+
+
+def page_number_line(text: str, page: int) -> bool:
+    """True when the line is only the page's own number."""
+    m = _PAGE_NUMBER_LINE.match(text or "")
+    return bool(m) and int(m.group("n")) == int(page or 0)
+
+
 def has_product_keyword(text: str) -> bool:
     """True when a text holds a product keyword: launch, release, roadmap, ship, milestone."""
     return any(k["family"] == "product" for k in _keywords(text or ""))

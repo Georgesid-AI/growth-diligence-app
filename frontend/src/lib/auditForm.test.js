@@ -64,7 +64,7 @@ test("Target ARR never keeps a leading zero; a stored 0 or an empty value shows 
 
 // docs/specs/chat-upload.md section 23, word for word.
 test("the consent label, the verification line and the dialog text are the spec's words", () => {
-  expect(CONSENT_LABEL).toBe("Use AI to read deck tables and charts and to suggest column matches. Untick if the client requires code-based extraction only; this may find fewer figures. Narratives use AI on computed results either way.");
+  expect(CONSENT_LABEL).toBe("Use AI to read deck tables, charts and the text of pages that carry a figure, and to suggest column matches. Names, contact details and customer names are masked before anything is sent. Untick if the client requires code-based extraction only; this may find fewer figures. Narratives use AI on computed results either way.");
   expect(VERIFIED_LINE).toBe("Every extracted number is checked by code against its source cell. Numbers that don't match are marked unverified for review.");
   expect(NEW_AUDIT_TITLE).toBe("Create a new audit");
   expect(NEW_AUDIT_PARAGRAPHS).toEqual([

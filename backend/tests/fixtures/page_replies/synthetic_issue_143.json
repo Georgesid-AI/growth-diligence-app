@@ -1,0 +1,54 @@
+{
+ "synthetic": "issue_143",
+ "note": "Hand-written in the model's page_claims format (docs/design/ai-reads-rules-check.md section 2) against the page text of the public test deck; no live call was made. PR B records the model's own replies.",
+ "claims": [
+  {
+   "metric": "arpa",
+   "value": 5210.4,
+   "value_high": null,
+   "unit": "EUR",
+   "unit_other": null,
+   "period": "2019",
+   "actual_or_forecast": "actual",
+   "value_cell": "p1r7c1",
+   "label_cell": "p1r2c1",
+   "period_cell": "p1r9c2"
+  },
+  {
+   "metric": "arpa",
+   "value": 6102.75,
+   "value_high": null,
+   "unit": "EUR",
+   "unit_other": null,
+   "period": "2020",
+   "actual_or_forecast": "actual",
+   "value_cell": "p1r7c2",
+   "label_cell": "p1r2c1",
+   "period_cell": "p1r9c3"
+  },
+  {
+   "metric": "arpa",
+   "value": 7517.55,
+   "value_high": null,
+   "unit": "EUR",
+   "unit_other": null,
+   "period": "2021",
+   "actual_or_forecast": "actual",
+   "value_cell": "p1r7c3",
+   "label_cell": "p1r2c1",
+   "period_cell": "p1r9c4"
+  },
+  {
+   "metric": "arpa",
+   "value": 8330.1,
+   "value_high": null,
+   "unit": "EUR",
+   "unit_other": null,
+   "period": "2022",
+   "actual_or_forecast": "actual",
+   "value_cell": "p1r7c4",
+   "label_cell": "p1r2c1",
+   "period_cell": "p1r9c5"
+  }
+ ]
+}

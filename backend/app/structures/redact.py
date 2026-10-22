@@ -18,6 +18,7 @@ import re
 from collections import Counter
 from typing import Dict, List, Optional, Tuple
 
+from ..decks.claims import page_number_line
 from ..llm.schemas import MAPPING_FIELDS
 
 _LINE = re.compile(r"^r(?P<row>\d+)c(?P<col>\d+)(?P<title> title)?: (?P<text>.*?)"
@@ -551,22 +552,48 @@ def _under_person_role(cell: Dict, cells: List[Dict]) -> bool:
                and _PERSON_ROLE.search(c["text"]) for c in cells)
 
 
-def _under_header(cell: Dict, cells: List[Dict], header: "re.Pattern") -> bool:
-    """True when a cell above it in its column range matches `header`."""
-    span = range(cell["col"], cell["col"] + cell.get("col_span", 1))
-    return any(c["row"] < cell["row"] and any(k in range(c["col"], c["col"] + c.get("col_span", 1)) for k in span)
-               and header.search(c["text"]) for c in cells)
+def _overlaps(a: Dict, b: Dict) -> bool:
+    """Whether two cells share a column of the grid."""
+    span = range(b["col"], b["col"] + b.get("col_span", 1))
+    return any(k in range(a["col"], a["col"] + a.get("col_span", 1)) for k in span)
 
 
-def blank_customer_cells(cells: List[Dict], company_name: Optional[str]) -> Tuple[List[Dict], int]:
-    """(cells, count): every text cell under a customer-type header (Customer, Client, Account, Logo) becomes [redacted]. A figure,
-    a year or a date, a pseudonym, a placeholder and the target company's own name stay."""
+def _same_block(a: Dict, b: Dict) -> bool:
+    """On a page grid, whether two cells share a text box or a table (the grid's "box" and "table"). The page text the gateway
+    parses carries neither, so there no two cells are one block."""
+    return (any(k in a for k in ("box", "table")) and any(k in b for k in ("box", "table"))
+            and a.get("table") == b.get("table") and a.get("box") == b.get("box"))
+
+
+def _under_header(cell: Dict, cells: List[Dict], header: "re.Pattern", scope: str = "structure") -> bool:
+    """True when a cell above it in its column range matches `header`. Scope "structure" (a deck structure: one panel or one
+    table): the whole column. Scope "page" (George, 2026-10-22, L2 of the review of PR #159): the header covers the cells under it
+    in its own text box or table column, and the lines directly under it in its column before the first line that holds a figure
+    as digits (that line and the rest of the page are not covered). The second part needs no layout, so the gateway's re-run of
+    the redaction on the text as sent applies it, and the sender's output passes it unchanged."""
+    above = [c for c in cells if c["row"] < cell["row"] and _overlaps(c, cell)]
+    for c in above:
+        if not header.search(c["text"]):
+            continue
+        if scope == "structure" or _same_block(c, cell):
+            return True
+        if not digit_figure(cell["text"]) and not any(c["row"] < other["row"] < cell["row"] and digit_figure(other["text"])
+                                                      for other in above):
+            return True
+    return False
+
+
+def blank_customer_cells(cells: List[Dict], company_name: Optional[str], scope: str = "structure") -> Tuple[List[Dict], int]:
+    """(cells, count): every text cell under a customer-type header (Customer, Client, Account, Logo) becomes [redacted]: in a deck
+    structure the whole column under the header (`scope` "structure"); on a page (`scope` "page") the header's own box or table
+    column and the lines directly under it up to the first figure line (_under_header), so a figure elsewhere on the page
+    survives. A figure, a year or a date, a pseudonym, a placeholder and the target company's own name stay."""
     out, total = [], 0
     for cell in cells:
         text = cell["text"]
         if (re.search(r"[^\W\d_]", text) and not is_figure(text) and not _is_amount_or_date(text) and not _PSEUDONYM.fullmatch(text.strip())
                 and text.strip() not in PLACEHOLDERS and not _protected(text, company_name)
-                and _under_header(cell, cells, _CUSTOMER_HEADER)):
+                and _under_header(cell, cells, _CUSTOMER_HEADER, scope)):
             text, total = REDACTED, total + 1
         out.append({**cell, "text": text})
     return out, total
@@ -671,10 +698,11 @@ def withhold_cells(cells: List[Dict], withheld: Tuple[str, ...]) -> Tuple[List[D
 
 
 def redact_structure(cells: List[Dict], company_name: Optional[str], mapping: Dict[str, str],
-                     withheld: Tuple[str, ...] = (), deck: bool = False) -> Tuple[List[Dict], Dict[str, int]]:
+                     withheld: Tuple[str, ...] = (), deck: bool = False, scope: str = "structure") -> Tuple[List[Dict], Dict[str, int]]:
     """Every redaction rule on a structure's cells: the withheld values
     (`withheld`, see file_type_withheld), then emails and phone numbers, then customer names, then
-    personal names; for a deck structure (`deck`), with no customer list, the cells under a customer-type header. What the gateway
+    personal names; for a deck structure (`deck`), with no customer list, the cells under a customer-type header (`scope`: the
+    whole column of a structure, the header's box, table column and the lines directly under it on a page). What the gateway
     runs again before a call."""
     # The withheld values go first, so no other rule can split one; emails and phones next, so a
     # customer name inside an address goes with it; customer names before personal names, so a
@@ -686,7 +714,7 @@ def redact_structure(cells: List[Dict], company_name: Optional[str], mapping: Di
     if deck and not customer_names(mapping, company_name):
         # No customer list to swap names for (a revenue file without a customer column, no CRM file): the cells under a
         # customer-type header cannot be told from a name, so none goes out.
-        named, counts["customer_blanked"] = blank_customer_cells(named, company_name)
+        named, counts["customer_blanked"] = blank_customer_cells(named, company_name, scope)
     second, more = _redact(named, company_name, ("person",))
     counts["person"] = more["person"]
     return second, counts
@@ -829,3 +857,148 @@ def sheet_text_problem(text: str) -> Optional[str]:
     if withheld_columns(parsed["cells"]):
         return "withhold_missed"
     return None
+
+
+# ---------------------------------------------------------------------------
+# The page text (docs/design/ai-reads-rules-check.md; CLAUDE.md rule 16 as amended 2026-10-22, George, PR #158): the redacted
+# text lines of deck pages that carry a figure as digits, one `p<page>r<row>c<col>: <text>` line per cell of the page grid
+# (app/decks/pages.py), a title line marked as a structure's is, up to PAGES_PER_CALL pages per call. Every line of such a page
+# goes, prose included, after redaction: the people-name rule runs over prose lines as well as cells (redact_page), and so does the
+# customer rule. A page without a figure as digits never goes; number-words do not count as figures. The lines are written and
+# checked here, so the gateway checks them with no link to the deck package.
+#     p5r1c1 title: Traction
+#     p5r2c1: 800 Paying Users
+# ---------------------------------------------------------------------------
+PAGES_PER_CALL = 5
+PAGE_CLAIMS = "page_claims"
+_PAGE_LINE = re.compile(r"^p(?P<page>[1-9]\d*)r(?P<row>\d+)c(?P<col>\d+)(?P<title> title)?: (?P<text>.*?)"
+                        r"(?: \(r(?P=row)c(?P=col):r(?P<row2>\d+)c(?P<col2>\d+)\))?$")
+# A role word beside a name-shaped phrase in a prose line ("CEO Jane Doe", "Jane Doe, co-founder", "Rohan Mehta, Co-Founder",
+# "Dr. J. Smith"): the name becomes [person]. The people-name rule over prose lines (George, 2026-10-22). The role words match in
+# any case ("Co-Founder", "– Founder", "Head of Product", "PRESIDENT"; H1 of the review of PR #159, 2026-10-22); the name parts
+# stay case-sensitive. A capitalised business word, a determiner or a single capital letter is no name part; an initial ("J.") is.
+_ROLE_WORDS = (r"(?i:CEO|CTO|CFO|COO|CMO|CRO|CPO|CIO|VP|SVP|EVP|founders?|co-?founders?|chairman|chairwoman|chair|directors?|"
+               r"advisors?|advisers?|investors?|partners?|presidents?|managers?|engineers?|developers?|designers?|"
+               r"head of|Dr\.?|Prof\.?|Mr\.?|Mrs\.?|Ms\.?|Mx\.?)")
+_NOT_NAME_WORDS = frozenset("""
+sales marketing revenue growth product products operations finance engineering customer customers success officer chief
+executive technology business development head team board advisory strategy design data research science people talent
+partnerships partnership account accounts enterprise international europe asia america americas global group company
+series seed round angel our the these those with and for from two three new key top senior lead former current existing
+experienced seasoned strategic founding managing general
+""".split())
+_NAME_PART = r"(?:[A-Z]\.|[^\W\d_a-zа-я][^\W\d_]+\.?(?:[-'’][^\W\d_]+)*)"
+_NAME_PHRASE = _NAME_PART + r"(?:\s+" + _NAME_PART + r"){1,2}"
+_ROLE_NAME = re.compile(r"(?<![^\W\d_])(?P<role>" + _ROLE_WORDS + r")\s*[:,\-–]?\s+(?P<name>" + _NAME_PHRASE + r")"
+                        r"|(?P<name2>" + _NAME_PHRASE + r")\s*[,\-–(]?\s*(?P<role2>" + _ROLE_WORDS + r")(?![^\W\d_])")
+
+
+def _name_words(phrase: str) -> Optional[str]:
+    """The name inside a capitalised phrase beside a role word: the phrase without the business words, determiners and single
+    letters at either end; None when fewer than two words remain."""
+    words = phrase.split()
+    while words and words[0].lower().rstrip(".") in _NOT_NAME_WORDS:
+        words.pop(0)
+    while words and words[-1].lower().rstrip(".") in _NOT_NAME_WORDS:
+        words.pop()
+    return " ".join(words) if len(words) >= 2 else None
+
+
+def page_cell_id(page: int, cell: Dict) -> str:
+    return f"p{page}{cell_id(cell)}"
+
+
+def page_text(pages: List[Tuple[int, List[Dict]]]) -> str:
+    """The text the model reads for [(page number, redacted cells)]: the page's cells as structure_text writes them, each id
+    prefixed with its page, pages in ascending order."""
+    lines = []
+    for page, cells in sorted(pages, key=lambda p: p[0]):
+        lines += [f"p{page}{line}" for line in structure_text(cells).split("\n") if line]
+    return "\n".join(lines)
+
+
+def parse_page_text(text: str) -> Optional[Dict[int, List[Dict]]]:
+    """{page: cells} of a page text, or None when a line is not a page cell line or the pages are out of order."""
+    pages: Dict[int, List[Dict]] = {}
+    last = 0
+    for line in (text or "").split("\n"):
+        m = _PAGE_LINE.match(line)
+        if not m:
+            return None
+        page = int(m.group("page"))
+        if page < last:
+            return None
+        last = page
+        cell = {"row": int(m.group("row")), "col": int(m.group("col")), "text": m.group("text")}
+        if m.group("title"):
+            cell["title"] = True
+        if m.group("row2"):
+            rows, cols = int(m.group("row2")) - cell["row"] + 1, int(m.group("col2")) - cell["col"] + 1
+            if rows > 1:
+                cell["row_span"] = rows
+            if cols > 1:
+                cell["col_span"] = cols
+        pages.setdefault(page, []).append(cell)
+    return pages or None
+
+
+# A figure written in digits, as the gateway checks it: a number that is not a bare year, an ISO date or the page's own printed
+# number (claims.page_number_line, shared with the page grid so both readers agree; M1 of the review of PR #159, 2026-10-22). The
+# sender applies the parser's own reader (app/decks/pages.py) and then this floor on the redacted lines (structures/pages.redacted_pages).
+_BARE_YEAR = re.compile(r"^(?:19|20)\d{2}$")
+_ISO_DATE = re.compile(r"(?<![\d.,])(?:19|20)\d{2}-\d{2}(?:-\d{2})?(?![\d])")
+
+
+def digit_figure(text: str) -> bool:
+    """True when the text holds a figure written in digits that is not a year or a date."""
+    blanked = _ISO_DATE.sub(lambda m: " " * len(m.group(0)), blank_currency(text or ""))
+    return any(m.group("num") and not _BARE_YEAR.match(m.group("num")) for m in NUMBER[False].finditer(blanked))
+
+
+def page_figure(text: str, page: int) -> bool:
+    """True when a line of `page` holds a figure written in digits that is not the page's own printed number."""
+    return digit_figure(text) and not page_number_line(text, page)
+
+
+def page_text_problem(text: str) -> Optional[str]:
+    """Why a page text may not reach the model, or None: a line that is not a page cell line (not_cells), more than
+    PAGES_PER_CALL pages (too_many_pages), or a page with no figure written in digits (no_figure; a line that is only the page's
+    own number is none)."""
+    pages = parse_page_text(text)
+    if pages is None:
+        return "not_cells"
+    if len(pages) > PAGES_PER_CALL:
+        return "too_many_pages"
+    if any(not any(page_figure(c["text"], page) for c in cells) for page, cells in pages.items()):
+        return "no_figure"
+    return None
+
+
+def redact_role_names(cells: List[Dict], company_name: Optional[str]) -> Tuple[List[Dict], int]:
+    """(cells, count): in every line, a name-shaped phrase (two or three capitalised words) directly beside a role word becomes
+    [person]. The target company's own name, pseudonyms and placeholders are never rewritten, so a second pass changes nothing."""
+    out, total = [], 0
+    for cell in cells:
+        found = []
+
+        def repl(m):
+            phrase = m.group("name") or m.group("name2")
+            name = _name_words(phrase)
+            if not name:
+                return m.group(0)
+            found.append(name)
+            return m.group(0).replace(name, PERSON, 1)
+        text, _ = _replace(cell["text"], _ROLE_NAME, repl, company_name)
+        total += len(found)
+        out.append({**cell, "text": text})
+    return out, total
+
+
+def redact_page(cells: List[Dict], company_name: Optional[str], mapping: Dict[str, str]) -> Tuple[List[Dict], Dict[str, int]]:
+    """Every redaction rule on a page's cells: the structure rules (redact_structure with deck=True and the page scope: emails,
+    phones, customer names, the cells under a customer-type header in its box, table column or directly under it, personal
+    names), over every line, then the role-word name rule over the prose. What the gateway runs again before a call, on the
+    lines as sent (the sender leaves lines over 200 characters out first)."""
+    redacted, counts = redact_structure(cells, company_name, mapping, deck=True, scope="page")
+    redacted, counts["role_name"] = redact_role_names(redacted, company_name)
+    return redacted, counts

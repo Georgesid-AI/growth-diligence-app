@@ -15,7 +15,11 @@ after redaction, only with the audit's consent, only as extracted text with cell
 raw files, full pages or prose slides. For the sheet_structure step only (George, 2026-10-18;
 chat-upload.md section 26): every text cell of one sheet (title rows, headers, row labels, indents,
 num/blank markers), after redaction and the withhold rule, never a figure, at most 400 rows with
-text; checked again here (structures/redact.sheet_text_problem). A deck structure's text carries, below its cells, the item
+text; checked again here (structures/redact.sheet_text_problem). For the page_claims step only (George, 2026-10-22,
+PR #158, decision 1b; behind DECK_PIPELINE): the redacted text lines of deck pages that carry a figure as digits, prose
+lines included, as `p<page>r<row>c<col>: <text>` lines, at most 5 pages per call; a page with no figure as digits is
+refused (structures/redact.page_text_problem), and the people-name rule runs over prose lines as well as cells
+(structures/redact.redact_page, run again here). A deck structure's text carries, below its cells, the item
 list Python made (docs/specs/structure-labelling.md): one line per figure with its cell, its raw
 text cut from the redacted cell, its values and header cells, and a roadmap's date cells and text
 lines; an item line out of format, or whose raw text is not a figure inside its cell, is refused
@@ -60,8 +64,9 @@ from schemas.metrics import safe_problems
 from .. import allowance, disclosure, formatting
 from ..structures import redact as structure_redact
 from . import cache, guards, prompt_store, redaction, schemas, step_payloads
-from .schemas import (FILE_RECOGNITION, FILE_TYPE, MAPPING_FIELDS, SHEET_STRUCTURE, STRUCTURE_TYPES, DeckUsage, FileRecognitionReply,
-                      FileTypeReply, LabellingReply, Narrative, NarrativeResponse, SheetStructureReply, StructureRead, StructureReply, UsageResponse, narrative_output_schema)
+from .schemas import (FILE_RECOGNITION, FILE_TYPE, MAPPING_FIELDS, PAGE_CLAIMS, SHEET_STRUCTURE, STRUCTURE_TYPES, DeckUsage, FileRecognitionReply,
+                      FileTypeReply, LabellingReply, Narrative, NarrativeResponse, PageClaimsReply, SheetStructureReply, StructureRead, StructureReply,
+                      UsageResponse, narrative_output_schema)
 
 logger = logging.getLogger("growth.llm")
 
@@ -547,8 +552,14 @@ class AnthropicAdapter:
         max_tokens: int,
         temperature: Optional[float],
         json_schema: dict,
+        cache_system: bool = False,
     ) -> Tuple[str, int, int]:
         """One provider call. Returns (text, input_tokens, output_tokens).
+
+        With `cache_system` the system prompt is marked for the provider's prompt cache (the page_claims step: the same
+        prompt for every batch of an audit). The input tokens returned then count the cache writes and reads with the
+        uncached tokens, so the token cap and the cost estimate count every token sent; the estimate is an upper bound,
+        since a cache read is billed below list price.
 
         Raises `RetryableProviderError` for network/5xx so the caller can back
         off, and `GatewayError` for anything a retry would not fix.
@@ -557,7 +568,7 @@ class AnthropicAdapter:
         kwargs = {
             "model": model,
             "max_tokens": max_tokens,
-            "system": system,
+            "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}] if cache_system else system,
             "messages": [{"role": "user", "content": user_payload}],
             # Structured output is what makes strict parsing viable: the first
             # content block is guaranteed to be schema-valid JSON.
@@ -577,9 +588,13 @@ class AnthropicAdapter:
 
         text = next((b.text for b in response.content if getattr(b, "type", None) == "text"), "")
         usage = getattr(response, "usage", None)
+        billed_in = int(getattr(usage, "input_tokens", 0) or 0)
+        if cache_system:
+            billed_in += int(getattr(usage, "cache_creation_input_tokens", 0) or 0) + \
+                int(getattr(usage, "cache_read_input_tokens", 0) or 0)
         return (
             text,
-            int(getattr(usage, "input_tokens", 0) or 0),
+            billed_in,
             int(getattr(usage, "output_tokens", 0) or 0),
         )
 
@@ -1410,15 +1425,29 @@ async def disclosure_for_run(db, run_id: str) -> Optional[dict]:
 # moves every structure cache key. Temperature stays at the model default and is never sent.
 STRUCTURE_MODEL = "claude-sonnet-5-5"
 STRUCTURE_PROMPT = "structure_reading"
+PAGE_CLAIMS_PROMPT = "page_claims"
 FILE_TYPE_PROMPT = "file_type"
 SHEET_STRUCTURE_PROMPT = "sheet_structure"
 STRUCTURE_STEP = guards.STRUCTURE_STEP
+PIPELINES = ("rules", "ai")                 # the DECK_PIPELINE switch
+
+
+def deck_pipeline() -> str:
+    """The DECK_PIPELINE switch: "rules" (default) or "ai". Anything else is "rules", so a typo changes nothing on screen. The
+    gateway reads it itself and refuses a page_claims call under "rules" (L1 of the review of PR #159, 2026-10-22), so the
+    boundary holds whatever the caller."""
+    value = os.environ.get("DECK_PIPELINE", "").strip().lower()
+    return value if value in PIPELINES else "rules"
+
+
 STRUCTURE_MAX_TOKENS = 4000
 STRUCTURE_INPUT_CAP = 4000          # tokens of structure text plus item list, by the provider's token counter
 STRUCTURE_CELL_MAX = 200            # a longer cell is prose
 SHEET_INPUT_CAP = 12_000            # a sheet skeleton: tokens of its text, by the provider's token counter (chat-upload.md 26.4)
 SHEET_MAX_TOKENS = 12_000           # ... and of its reply (a role, parent and meaning for up to 400 lines)
 RECOGNITION_INPUT_CAP = 12_000      # a file recognition text: tokens, by the provider's token counter (revenue-file-recognition.md 5.5)
+PAGE_INPUT_CAP = 12_000             # a page batch: tokens of its text (up to 5 pages), by the provider's token counter
+PAGE_MAX_TOKENS = 4000              # a page batch's reply: about 350 tokens per page (docs/design/ai-reads-rules-check.md section 4)
 RECOGNITION_MAX_TOKENS = 1_000      # ... and of its reply
 STRUCTURES_COLLECTION = cache.STRUCTURES_COLLECTION
 NOT_READ = "Not read by AI"
@@ -1484,6 +1513,24 @@ def structure_text_problem(text: Any, structure_type: str, context: dict, mappin
     if _FILE_NAME.search(text):
         return "file_name"
     company = context.get("company_name")
+    if structure_type == PAGE_CLAIMS:
+        # Only while DECK_PIPELINE is "ai". The redacted lines of pages that carry a figure as digits (the page's own printed
+        # number is none), at most 5 pages, every page with such a figure, no line over 200 characters (as for a structure cell;
+        # George, 2026-10-22, decision 1b on the review of PR #159), the page redaction (structure rules plus the people-name
+        # rule over prose) run again.
+        if deck_pipeline() != "ai":
+            return "pipeline_rules"
+        problem = structure_redact.page_text_problem(text)
+        if problem:
+            return problem
+        pages = structure_redact.parse_page_text(text)
+        if any(len(c["text"]) > STRUCTURE_CELL_MAX for cells in pages.values() for c in cells):
+            return "cell_too_long"
+        for cells in pages.values():
+            redacted, _ = structure_redact.redact_page(cells, company, mapping)
+            if redacted != cells:
+                return "redaction_changed"
+        return None
     if structure_type == SHEET_STRUCTURE:
         # Every text cell of one sheet, never a figure, at most 400 rows with text, the withhold rule and the redaction run again.
         problem = structure_redact.sheet_text_problem(text)
@@ -1542,7 +1589,11 @@ def structure_text_problem(text: Any, structure_type: str, context: dict, mappin
 
 
 def _cited_cells(text: str, structure_type: str) -> set:
-    """The cell ids a reply may cite: every cell of a deck structure, the header cells of a sheet."""
+    """The cell ids a reply may cite: every cell of a deck structure, the header cells of a sheet, every cell of a page batch by
+    its page id."""
+    if structure_type == PAGE_CLAIMS:
+        return {structure_redact.page_cell_id(page, c) for page, cells in (structure_redact.parse_page_text(text) or {}).items()
+                for c in cells}
     if structure_type == "column_mapping":
         cells = (structure_redact.parse_column_text(text) or {}).get("headers") or []
     else:
@@ -1569,6 +1620,8 @@ def parse_structure_reply(reply: str, structure_type: str, text: str):
     a deck structure (parse_labelling_reply), the column-mapping reply for a column mapping, the file-type word for a file."""
     if structure_type == SHEET_STRUCTURE:
         return parse_sheet_reply(reply, text)
+    if structure_type == PAGE_CLAIMS:
+        return parse_page_reply(reply, text)
     if structure_type == FILE_RECOGNITION:
         try:
             return FileRecognitionReply.model_validate(json.loads((reply or "").strip()))
@@ -1598,6 +1651,22 @@ def parse_structure_reply(reply: str, structure_type: str, text: str):
     for item in parsed.items:
         if item.value_cell not in known or any(c not in known for c in item.period_cells):
             raise GatewayError("parse_failed", "reply cites a cell that is not in the structure", check="other")
+    return parsed
+
+
+def parse_page_reply(reply: str, text: str) -> PageClaimsReply:
+    """Validate a page batch's reply (docs/design/ai-reads-rules-check.md section 2), or raise GatewayError("parse_failed"): the
+    schema (extra fields forbidden, every field a closed word, a number or a cell id), then every cited cell (value, label,
+    period) one the batch sent. Nothing else is checked here: the figure, the unit and the period are checked against the page
+    by app/structures/page_check.py."""
+    try:
+        parsed = PageClaimsReply.model_validate(json.loads((reply or "").strip()))
+    except Exception as exc:
+        raise GatewayError("parse_failed", f"reply did not match the schema: {type(exc).__name__}", check=_schema_check(exc))
+    known = _cited_cells(text, PAGE_CLAIMS)
+    for claim in parsed.claims:
+        if any(c is not None and c not in known for c in (claim.value_cell, claim.label_cell, claim.period_cell)):
+            raise GatewayError("parse_failed", "reply cites a cell that is not in the pages sent", check="other")
     return parsed
 
 
@@ -1676,12 +1745,15 @@ async def _structure_call(adapter, prompt, user_payload, structure_type, text, s
     schema = schemas.output_schema(structure_type)
     parse_attempts = network_attempts = 0
     billed_in = billed_out = 0
+    # A page batch marks the fixed prompt for the provider's prompt cache (design note section 4): the same system text is sent
+    # for every batch of an audit, so the later batches read it from the cache. Other steps are unchanged.
+    cached = {"cache_system": True} if structure_type == PAGE_CLAIMS else {}
     while True:
         try:
             try:
                 reply, in_tok, out_tok = await _to_thread(
                     adapter.complete, model=STRUCTURE_MODEL, system=prompt.text, user_payload=user_payload,
-                    max_tokens=max_tokens, temperature=None, json_schema=schema)
+                    max_tokens=max_tokens, temperature=None, json_schema=schema, **cached)
             except (RetryableProviderError, GatewayError):
                 raise
             except Exception as raw:
@@ -1719,6 +1791,8 @@ def _reading(output: dict) -> dict:
         return {"file_type": output["file_type"]}
     if "header_row" in output:
         return {"sheet": output}
+    if "claims" in output:
+        return {"claims": output["claims"]}
     if "labels" in output:
         return {"labels": output["labels"], "pairs": output.get("pairs") or []}
     return {"items": output.get("items") or []}
@@ -1726,7 +1800,7 @@ def _reading(output: dict) -> dict:
 
 async def read_structure(
     db, audit_id: str, text: str, structure_type: str, *, deck_id: Optional[str] = None,
-    page: Optional[int] = None, adapter=None, sleep=None, use_cache: bool = True,
+    page: Optional[int] = None, pages: Optional[List[int]] = None, adapter=None, sleep=None, use_cache: bool = True,
 ) -> StructureRead:
     """Read one structure or one sheet's headers with the model (CLAUDE.md rules 16-18).
 
@@ -1750,7 +1824,7 @@ async def read_structure(
     """
     import asyncio
     sleep = sleep or asyncio.sleep
-    if structure_type not in STRUCTURE_TYPES and structure_type not in (FILE_TYPE, SHEET_STRUCTURE, FILE_RECOGNITION):
+    if structure_type not in STRUCTURE_TYPES and structure_type not in (FILE_TYPE, SHEET_STRUCTURE, FILE_RECOGNITION, PAGE_CLAIMS):
         return _structure_result("not_read", structure_type, f"unknown structure type {structure_type!r}")
     context = await load_structure_context(db, audit_id)
     if context.get("structure_reading_consent") is not True:
@@ -1761,8 +1835,8 @@ async def read_structure(
         logger.warning("structure refused: run_id=%s step=%s reason=%s", audit_id, STRUCTURE_STEP, problem)
         return _structure_result("refused", structure_type, f"refused: {problem}")
     try:
-        prompt = await prompt_store.load(db, {FILE_TYPE: FILE_TYPE_PROMPT, FILE_RECOGNITION: FILE_TYPE_PROMPT, SHEET_STRUCTURE: SHEET_STRUCTURE_PROMPT}.get(
-            structure_type, STRUCTURE_PROMPT))
+        prompt = await prompt_store.load(db, {FILE_TYPE: FILE_TYPE_PROMPT, FILE_RECOGNITION: FILE_TYPE_PROMPT, SHEET_STRUCTURE: SHEET_STRUCTURE_PROMPT,
+                                              PAGE_CLAIMS: PAGE_CLAIMS_PROMPT}.get(structure_type, STRUCTURE_PROMPT))
     except prompt_store.PromptMissing:
         return _structure_result("not_read", structure_type, NOT_READ)
     if STRUCTURE_MODEL not in MODEL_PRICING_USD:
@@ -1786,6 +1860,8 @@ async def read_structure(
     input_cap, max_tokens = (SHEET_INPUT_CAP, SHEET_MAX_TOKENS) if sheet else (STRUCTURE_INPUT_CAP, STRUCTURE_MAX_TOKENS)
     if structure_type == FILE_RECOGNITION:
         input_cap, max_tokens = RECOGNITION_INPUT_CAP, RECOGNITION_MAX_TOKENS
+    if structure_type == PAGE_CLAIMS:
+        input_cap, max_tokens = PAGE_INPUT_CAP, PAGE_MAX_TOKENS
     try:
         # The 4,000-token cap is on the structure text plus its item list; the 400,000 cap counts the whole call.
         text_tokens = await _count_tokens(adapter, sleep, model=STRUCTURE_MODEL, system=None, user_payload=text,
@@ -1853,7 +1929,7 @@ async def read_structure(
             stored = {**output, "revenue_row": {"row": output["revenue_row"]["row"]}}        # the label echo is never kept (5.5)
         await _store_structure(db, audit_id=audit_id, key=key, digest=digest, structure_type=structure_type,
                                model_type=model_type, output=stored, prompt_version=prompt.version,
-                               input_tokens=in_tok, output_tokens=out_tok, cost=cost, deck_id=deck_id, page=page)
+                               input_tokens=in_tok, output_tokens=out_tok, cost=cost, deck_id=deck_id, page=page, pages=pages)
         await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version, model=STRUCTURE_MODEL,
                        input_tokens=in_tok, output_tokens=out_tok, estimated_cost_usd=cost, cache_hit=False,
                        status="ok", content_hash=digest, deck_id=deck_id, structure_type=structure_type)
@@ -1871,13 +1947,15 @@ async def read_structure(
 
 
 async def _store_structure(db, *, audit_id, key, digest, structure_type, model_type, output, prompt_version,
-                           input_tokens, output_tokens, cost, deck_id, page) -> None:
-    """Store the model's JSON output with its metadata (spec section 9). The text sent is never stored."""
+                           input_tokens, output_tokens, cost, deck_id, page, pages=None) -> None:
+    """Store the model's JSON output with its metadata (spec section 9). The text sent is never stored. A page batch keeps the
+    numbers of the pages it read."""
     await cache.put_structure(db, audit_id, key, {
         "content_hash": digest, "type": structure_type, "model_type": model_type, "output": output,
         "prompt_version": prompt_version, "model": STRUCTURE_MODEL,
         "input_tokens": int(input_tokens), "output_tokens": int(output_tokens),
-        "estimated_cost_usd": round(float(cost), 6), "deck_id": deck_id, "page": page})
+        "estimated_cost_usd": round(float(cost), 6), "deck_id": deck_id, "page": page,
+        **({"pages": [int(p) for p in pages]} if pages else {})})
 
 
 async def stored_structure(db, audit_id: str, key: str) -> Optional[dict]:

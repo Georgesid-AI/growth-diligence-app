@@ -1,0 +1,68 @@
+{
+ "file": "01-front-b.pptx",
+ "page": 13,
+ "match": "p13r3c1: 120% net retention rate at 6 months",
+ "note": "Hand-written in the model's page_claims format (docs/design/ai-reads-rules-check.md section 2) against the page text of the public test deck; no live call was made. PR B records the model's own replies.",
+ "claims": [
+  {
+   "metric": "sales",
+   "value": 15,
+   "value_high": null,
+   "unit": "months",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "actual",
+   "value_cell": "p13r2c1",
+   "label_cell": "p13r2c1",
+   "period_cell": null
+  },
+  {
+   "metric": "retention",
+   "value": 120,
+   "value_high": null,
+   "unit": "%",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "actual",
+   "value_cell": "p13r3c1",
+   "label_cell": "p13r3c1",
+   "period_cell": null
+  },
+  {
+   "metric": "retention",
+   "value": 150,
+   "value_high": null,
+   "unit": "%",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "actual",
+   "value_cell": "p13r4c1",
+   "label_cell": "p13r4c1",
+   "period_cell": null
+  },
+  {
+   "metric": "other",
+   "value": 3.9,
+   "value_high": null,
+   "unit": "x",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "actual",
+   "value_cell": "p13r7c1",
+   "label_cell": "p13r7c1",
+   "period_cell": null
+  },
+  {
+   "metric": "other",
+   "value": 4.9,
+   "value_high": null,
+   "unit": "x",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "actual",
+   "value_cell": "p13r8c1",
+   "label_cell": "p13r8c1",
+   "period_cell": null
+  }
+ ]
+}
