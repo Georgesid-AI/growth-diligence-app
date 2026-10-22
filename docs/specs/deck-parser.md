@@ -611,3 +611,13 @@ clears it (unchanged, `_edited_period`). (2) A figure with a unit (a percentage,
 is as before issue #151 (Contract value, Turnover or Revenue). Only a money amount is a run rate. (3) The deck inconsistency key of a Sales figure carries its Sales metric (`sales_metric`: the
 first of ACV, win rate, sales cycle, pipeline, payback, conversion, acquisition, leads in its label or line), so figures of different Sales metrics are never compared; two figures of one metric
 and period still are. Ten-deck pin: 212 candidates before and after, no claim type, date or inconsistency moves; the deck label of 3 rows (04-clevergig p6: 15%, 15 months, 50%) moves from MRR to Revenue.
+
+Amended 2026-10-22 (issue #154; tests `backend/tests/test_issue_154.py`): (1) A sentence is never a date source. A date borrowed from the texts around a figure comes only from a text that is no
+sentence (`_is_sentence`): a line longer than a heading (59 characters), with a subject pronoun (I, we, you, they, he, she, it) or an auxiliary verb (is, are, will, can, has, do ...), or ending on a stop; in a longer
+box, the lines that are none of these and no wrapped part of a sentence (after a line ending on a wrap word or a comma). A year still comes from the figure's own text, its column header, its box's period, its bar's
+axis label, or a heading. (2) One figure, one row: when the panel read lists a figure and a row of the parser (pending, not touched by the analyst) on the same page holds the same value, currency and kind of
+unit, with the same type or one of them unknown, they are one row: the panel row, with its period, citing both sources, in the place of the parser's row (`structures.rules_copy`). A copy the analyst
+already approved or edited stays. (3) A bar takes its axis year also when the page holds more or fewer figures than year labels (a chart that writes the value on some bars only): the label nearest to it
+if that is less than half a label spacing away and no other figure is nearer to the same label; equal counts keep the left-to-right rule of issue #148, which replaces its "any other count: only a label the bar overlaps". Why the live bar took no year in #149: that rule
+needed as many figures as labels, and the page had one figure over three labels. Ten-deck pin: 212 candidates before and after; four rows lose a period they took from a sentence (02-moz p2 sales 500,000
+"By 2007, it was all paid off ..."; p3 customers 10,000 and a 1.2M figure "April of 2011, we ..."; p3 gross margin 83 "2011 will be our first ..."); no other row moves.

@@ -716,7 +716,8 @@ def test_the_ten_test_decks_keep_212_candidates_and_the_nearest_heading_leaves_3
                                             "issue #143: the axis ticks of 01-front-b p6 (0%-40%) and p14 (0, 15, 30, 60, 5.0) are no claims; 2 fewer since issue #146: "
                                             "the headings '2011 Estimated Revenue' (02-moz p20) and 'Estimated Net Profit in 2011' (p21) are the labels of the figures under them; "
                                             "1 fewer since issue #148: '(2011-13)' (02-moz p18) is a range of years, so its 13 is no figure, and the three percentages of that "
-                                            "page lose the year 2011 it gave; the two market bars of 09-genesisai-2024 p4 take 2020 and 2030 by position")
+                                            "page lose the year 2011 it gave; the two market bars of 09-genesisai-2024 p4 take 2020 and 2030 by position; "
+                                            "no row appears or goes since issue #154: four rows of 02-moz p2-p3 lose the year they took from a sentence")
 
 
 def test_the_same_figure_on_one_page_is_one_row_and_never_a_deck_inconsistency():
