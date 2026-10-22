@@ -1,8 +1,11 @@
 """The page pipeline: the model reads every sendable page of a deck, Python checks each claim (docs/design/ai-reads-rules-check.md).
 
-Behind the switch DECK_PIPELINE (deck_pipeline): "rules", the default, keeps today's path (app/structures/__init__.process_deck:
-the rules read and the structure read) and makes no page call; "ai" runs this module instead for a deck. No screen changes under
-the default (PR A of the design note, section 7).
+The live path since 2026-10-22 (George; the switch DECK_PIPELINE, read by the gateway, defaults to "ai"): the rules read
+(claims.detect_candidates) no longer lists candidates at upload; it stays as the library of Add from deck and of the checker's
+converted rules, and as the former path under DECK_PIPELINE=rules for scripts/compare_pipelines.py. The model reads each page
+with the `deck_reading` prompt of the store and answers claims in the register's fields plus `basis` (actual, projection,
+scenario) and `scenario` (best, realistic, worst, none); the gateway caches a batch per audit by the hash of its page text (a
+function of the file), so a deck uploaded again costs nothing.
 
 Order for one deck: consent and the revenue-file gate as today -> the page grids (app/decks/pages.py) -> the pages that may go
 (a figure as digits, not a dropped page; decision 1b) in batches of PAGES_PER_CALL -> each batch redacted (redact.redact_page: the
@@ -10,10 +13,10 @@ structure rules plus the people-name rule over prose), its lines over 200 charac
 2026-10-22, decision 1b on the review of PR #159) and written by the one builder (redact.page_text) -> gateway.read_structure
 with the type page_claims (consent, boundary and redaction checked again, cache, token caps, lock, spend caps, prompt caching) -> a
 batch too large for the cap, or whose reply was cut at the output limit, is split, a single page too large or cut is skipped
--> page_check per page -> one approval row per claim,
-"Matched to page" or "AI suggestion, not matched", deduplicated against the rows already listed as today. What is stored (rule 17):
-the model's claims (closed words, numbers and cell ids), the checked items without any text, the batch's metadata; never the
-text sent.
+-> checker.check per page (page_check at cell level, then the flags) -> one approval row per claim,
+"Matched to page" or "AI suggestion, not matched", with its `flags` (a flagged row is listed in the review tab, never deleted or
+retyped), deduplicated against the rows already listed as today. What is stored (rule 17): the model's claims (closed words,
+numbers and cell ids), the checked items without any text, the batch's metadata; never the text sent.
 """
 import logging
 import uuid
@@ -25,7 +28,7 @@ from ..decks import pages as page_grids_mod
 from ..llm import gateway
 from ..llm import redaction as llm_redaction
 from ..llm.schemas import PAGE_CLAIMS
-from . import page_check, redact
+from . import checker, page_check, redact
 
 logger = logging.getLogger("growth.structures")
 
@@ -112,6 +115,8 @@ def row_from_claim(item: Dict, grid: Dict, deck: Dict, fiscal_year_end: int) -> 
     place = {**cell, "row": cell.get("trow", cell["row"]), "col": cell.get("tcol", cell["col"])} if cell.get("table") is not None else cell
     candidate = {
         "claim_type": item["metric"], "value": item.get("value"), "value_high": item.get("value_high"),
+        # The register's figure type from the model's basis: an actual is actual, a projection or a scenario figure is a target.
+        "figure_type": figure_type(item.get("basis")), "figure_type_set_by": "ai" if item.get("basis") else None,
         "unit": unit if unit in _UNITS else None, "currency": unit if unit and len(unit) == 3 and unit.isupper() else None,
         "target_date": target, "period_text": stated if target else None,
         "snippet": (cell.get("text") or "")[:claims.SNIPPET_MAX], "label_from": label if label and label != cell.get("text") else None,
@@ -121,8 +126,8 @@ def row_from_claim(item: Dict, grid: Dict, deck: Dict, fiscal_year_end: int) -> 
         "type_from": "heading" if label and label != cell.get("text") else "line" if claims._keywords(cell.get("text") or "") else None,
         "reading": _reading(deck.get("blocks") or (), shim, place),
         "ai_status": item["status"], "ai_label": page_check.label(item["status"]), "ai_checks": item.get("checks"),
-        "period_cells": list(item.get("period_cells") or []), "actual_or_forecast": item.get("actual_or_forecast"),
-        "proposed_flags": [],
+        "period_cells": list(item.get("period_cells") or []), "basis": item.get("basis"), "scenario": item.get("scenario") or checker.NO_SCENARIO,
+        "flags": list(item.get("flags") or []), "proposed_flags": [],
     }
     claims.recurring_year_end(candidate)             # "MRR in 2021" is Dec 2021 (issue #151)
     found = claims.period_range(candidate["target_date"], fiscal_year_end) if candidate.get("period_read_note") else \
@@ -133,6 +138,34 @@ def row_from_claim(item: Dict, grid: Dict, deck: Dict, fiscal_year_end: int) -> 
         if qualifier:
             candidate.update(claim_type="users", qualifier=qualifier)
     return candidate
+
+
+def figure_type(basis: Optional[str]) -> str:
+    """The register's figure type (claims.FIGURE_TYPES) for a page claim's basis."""
+    return "actual" if basis == "actual" else "target" if basis in ("projection", "scenario") else "unknown"
+
+
+def row_out_of_range(claim: Dict, page: int, deck: Dict) -> Dict:
+    """The approval-list row of a claim on a page the document does not have (checker.PAGE_OUT_OF_RANGE): the model's values, no
+    cell, no snippet, never matched; listed in the review tab."""
+    unit = claim.get("unit_other") if claim.get("unit") == "other" else claim.get("unit")
+    key = "slide" if deck.get("page_unit") == "slide" else "page"
+    return {
+        "claim_type": claim["metric"], "value": claim.get("value"), "value_high": claim.get("value_high"),
+        "figure_type": figure_type(claim.get("basis")), "figure_type_set_by": "ai" if claim.get("basis") else None,
+        "unit": unit if unit in _UNITS else None, "currency": unit if unit and len(unit) == 3 and unit.isupper() else None,
+        "target_date": _target_date_of(claim.get("period")), "period_text": claim.get("period"), "snippet": "", "label_from": None,
+        "date_from": None, "sources": [{"file": deck["file"], key: page, "kind": "page", "cell": None}], "inconsistent_dates": [],
+        "origin": "ai", "cell": None, "position": None, "readings": [], "type_from": None, "reading": None,
+        "ai_status": page_check.UNMATCHED, "ai_label": page_check.UNMATCHED_LABEL, "ai_checks": None, "period_cells": [],
+        "basis": claim.get("basis"), "scenario": claim.get("scenario") or checker.NO_SCENARIO, "flags": [checker.PAGE_OUT_OF_RANGE],
+        "proposed_flags": [], "period_start": None, "period_end": None,
+    }
+
+
+def _target_date_of(period: Optional[str]) -> Optional[str]:
+    from . import _target_date
+    return _target_date(period)
 
 
 def stored_items(checked: List[Dict]) -> Dict:
@@ -149,7 +182,7 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "id": 1, "company_name": 1, "fiscal_year_end": 1,
                                                        "structure_reading_consent": 1})
     deck = await db[TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id},
-                                              {"_id": 0, "file": 1, "page_unit": 1, "blocks": 1})
+                                              {"_id": 0, "file": 1, "page_unit": 1, "pages": 1, "blocks": 1})
     if not audit or not deck:
         return NOT_READ
     if audit.get("structure_reading_consent") is not True:
@@ -165,6 +198,7 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
     year_end = int(audit.get("fiscal_year_end") or 12)
     grids = page_grids_mod.page_grids(deck.get("blocks") or [])
     by_page = {page_grids_mod.page_number(g): g for g in grids}
+    page_count = deck.get("pages") or (max(by_page) if by_page else None)
     reviewed = await db[CANDIDATES_COLLECTION].find({"audit_id": audit_id, "file": deck["file"]}, {"_id": 0}).to_list(100000)
     known = _python_cells(reviewed)
     order = len(reviewed)
@@ -178,41 +212,48 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
             if not result.cache_hit:
                 sent.append({"pages": numbers, "type": PAGE_CLAIMS, "at": datetime.now(timezone.utc).isoformat()})
             claims_of = page_check.by_page(result.claims)
-            checked_all, counts = [], {"matched": 0, "unmatched": 0, "dropped": 0, "periods_corrected": 0}
+            checked_all, counts = [], {"matched": 0, "unmatched": 0, "dropped": 0, "periods_corrected": 0, "flagged": 0}
+            # A claim on a page the document does not have (the gateway checks every cited cell against the text sent, so this is a
+            # guard, not an expected path): one row with the model's values, flagged, never matched (checker rule 4).
+            rows = [(row_out_of_range(c, page, deck), page) for page, listed in claims_of.items() if page not in numbers
+                    and checker.out_of_range(page, page_count) for c in listed]
             for page in numbers:
                 grid = by_page[page]
-                checked = page_check.check(grid, claims_of.get(page, []), year_end)
+                checked = checker.check(grid, claims_of.get(page, []), year_end, checker.page_blocks(deck.get("blocks") or [], grid),
+                                        deck["file"])
                 for k in counts:
                     counts[k] += checked[k]
                 checked_all += [{**c, "page": page} for c in checked["items"]]
-                for item in checked["items"]:
-                    candidate = row_from_claim(item, grid, deck, year_end)
-                    if value_match(candidate["value"], candidate["value_high"], known.get(_cell_key(candidate), ())):
-                        continue                    # this cell already lists the value, or a range holding it
-                    twin = next((c for c in reviewed if claims.same_claim(c, candidate)), None)
-                    if twin is not None:
-                        if candidate["sources"][0] not in twin["sources"]:
-                            twin["sources"] = list(twin["sources"]) + candidate["sources"]
-                            await db[CANDIDATES_COLLECTION].update_one({"audit_id": audit_id, "id": twin["id"]},
-                                                                       {"$set": {"sources": twin["sources"]}})
-                        continue
-                    duplicate = rules_copy(reviewed, candidate)
-                    if duplicate is not None:
-                        candidate = {**candidate, "sources": candidate["sources"] + [s for s in duplicate["sources"] if s not in candidate["sources"]]}
-                        await db[CANDIDATES_COLLECTION].delete_one({"audit_id": audit_id, "id": duplicate["id"]})
-                        reviewed.remove(duplicate)
-                        row_order = duplicate.get("order", order + 1)
-                    else:
-                        row_order = order = order + 1
-                    row = {**candidate, "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"],
-                           "id": str(uuid.uuid4()), "order": row_order, "status": "pending", "structure_key": result.key}
-                    await db[CANDIDATES_COLLECTION].insert_one(row)
-                    reviewed.append(row)
+                rows += [(row_from_claim(item, grid, deck, year_end), page) for item in checked["items"]]
+            counts["flagged"] += sum(1 for row, _ in rows if row["flags"] and row["cell"] is None)
+            for candidate, page in rows:
+                if candidate["cell"] is not None and \
+                        value_match(candidate["value"], candidate["value_high"], known.get(_cell_key(candidate), ())):
+                    continue                    # this cell already lists the value, or a range holding it
+                twin = next((c for c in reviewed if claims.same_claim(c, candidate)), None)
+                if twin is not None:
+                    if candidate["sources"][0] not in twin["sources"]:
+                        twin["sources"] = list(twin["sources"]) + candidate["sources"]
+                        await db[CANDIDATES_COLLECTION].update_one({"audit_id": audit_id, "id": twin["id"]},
+                                                                   {"$set": {"sources": twin["sources"]}})
+                    continue
+                duplicate = rules_copy(reviewed, candidate)
+                if duplicate is not None:
+                    candidate = {**candidate, "sources": candidate["sources"] + [s for s in duplicate["sources"] if s not in candidate["sources"]]}
+                    await db[CANDIDATES_COLLECTION].delete_one({"audit_id": audit_id, "id": duplicate["id"]})
+                    reviewed.remove(duplicate)
+                    row_order = duplicate.get("order", order + 1)
+                else:
+                    row_order = order = order + 1
+                row = {**candidate, "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"],
+                       "id": str(uuid.uuid4()), "order": row_order, "status": "pending", "structure_key": result.key}
+                await db[CANDIDATES_COLLECTION].insert_one(row)
+                reviewed.append(row)
             await gateway.record_verification(db, audit_id, result.key, [c["status"] for c in checked_all], counts["dropped"],
                                               counts["periods_corrected"], stored_items(checked_all))
             entry.update(counts)
-            logger.info("pages checked: run_id=%s deck_id=%s pages=%d matched=%d unmatched=%d dropped=%d", audit_id, deck_id,
-                        len(numbers), counts["matched"], counts["unmatched"], counts["dropped"])
+            logger.info("pages checked: run_id=%s deck_id=%s pages=%d matched=%d unmatched=%d dropped=%d flagged=%d", audit_id,
+                        deck_id, len(numbers), counts["matched"], counts["unmatched"], counts["dropped"], counts["flagged"])
         reads.append(entry)
     overall = STOPPED if stopped_message else READ if any(r["status"] == "read" for r in reads) else NOT_READ
     previous = await db[TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id}, {"_id": 0, "sent": 1})

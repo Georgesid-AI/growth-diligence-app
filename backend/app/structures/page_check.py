@@ -25,8 +25,10 @@ All three pass, and the metric is not "other": "matched" ("Matched to page"), in
 "unmatched" ("AI suggestion, not matched"), listed collapsed, approved by a click (decision 3a). The metric is never checked
 (it stays the analyst's); the label cell is kept only when it is adjacent to the value cell (the value cell itself, a line of
 its own box, a header cell, a line directly next to it or the page title), else the row has no "Label from" and its confidence
-reads "no heading". A claim on an axis tick or on a line about funds raised, tokens, the industry and the like (claims._NOT_PLAN_LINE) is
-dropped and counted, as the rules read drops them. A claim with no value is a milestone: never matched, dated from its source.
+reads "no heading". With `drop` (the default), a claim on an axis tick or on a line about funds raised, tokens, the industry and
+the like (claims._NOT_PLAN_LINE) is dropped and counted, as the rules read drops them; the checker (checker.py, the live path since
+2026-10-22) calls with drop=False and flags such a claim instead, since a failed check never deletes a claim. A claim with no value
+is a milestone: never matched, dated from its source.
 
 Adjacency, headers, scales, figures and periods are the verifier's own rules (verify.py, items.py) run on two views of the
 grid: the page's text lines as one KPI-panel-like structure (box, next_to) and each table as a table structure (header rows).
@@ -312,11 +314,12 @@ def _dropped(cell: Dict) -> Optional[str]:
     return None
 
 
-def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12) -> Dict:
+def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, drop: bool = True) -> Dict:
     """{"items": [checked], "matched": n, "unmatched": n, "dropped": n, "periods_corrected": n} for one page grid and the
-    model's claims on it (cell ids without the page prefix: "r3c2").
+    model's claims on it (cell ids without the page prefix: "r3c2"). A claim on a cell the page does not have is always dropped;
+    an axis tick or a no-plan line only with `drop`.
 
-    Each checked item keeps the claim's metric, unit, unit_other and actual_or_forecast with Python's value and values (the
+    Each checked item keeps the claim's metric, unit, unit_other, basis and scenario with Python's value and values (the
     default reading first), value_high (Python's range), value_cell and position, the period Python rebuilt and its period
     cells, the label cell when adjacent, "status" (matched or unmatched) and "checks" ({"value", "unit", "period", "label",
     "period_corrected"}: booleans; "dot_reading" and "bracket_reading": the default reading's closed word, or None). A
@@ -328,7 +331,7 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12) -> Dic
     checked, dropped, corrected_count = [], 0, 0
     for claim in page_claims:
         cell = by_id.get(claim["value_cell"])
-        if cell is None or _dropped(cell):
+        if cell is None or (drop and _dropped(cell)):
             dropped += 1
             continue
         structure = view_of(grid_views, cell)
@@ -347,7 +350,7 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12) -> Dic
         span = item.get("range") if item else None
         ok = value_ok and unit_ok and period_ok and metric != OTHER and claim.get("value") is not None
         out = {"metric": metric, "unit": claim.get("unit"), "unit_other": claim.get("unit_other"),
-               "actual_or_forecast": claim.get("actual_or_forecast", "unknown"),
+               "basis": claim.get("basis"), "scenario": claim.get("scenario", "none"),
                # Python's value and range when the figure check passes; the model's when it fails (decision 2a, review of PR #159).
                "value": values[0]["value"] if value_ok and values else claim.get("value"), "values": [dict(v) for v in values],
                "value_high": (span["high"] if span and item["id"] == span["items"][0] else None) if value_ok else claim.get("value_high"),

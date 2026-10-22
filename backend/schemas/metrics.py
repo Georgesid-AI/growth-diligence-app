@@ -24,7 +24,9 @@ from typing import Annotated, Any, Dict, Iterator, List, Literal, Optional, Tupl
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, ValidationInfo
 
-CONTRACT_VERSION = 5          # 5: revenue-file recognition (revenue_series basis and file type, reconciliation status, the recognition block)
+CONTRACT_VERSION = 6          # 6: the page reader (docs/design/ai-reads-rules-check.md): claims carry basis, scenario and flags; results and
+                              #    claim matches stored under 5 read "Stale – re-run audit". 5: revenue-file recognition (revenue_series
+                              #    basis and file type, reconciliation status, the recognition block)
 
 # Display kinds: the same names app/formatting.py and frontend/src/lib/format.js use.
 CURRENCY, COUNT, COUNT_UP, DAYS, MONTHS, PCT, RATIO, PLAIN = (
@@ -634,7 +636,7 @@ class MetricPeriod(Block):
 
 class MetricsPayload(Block):
     """The full engine output. A block the engine could not compute is null; the reason is in `missing_data`."""
-    contract_version: Literal[5]
+    contract_version: Literal[6]
     reporting_currency: str                         # the one currency code; no value repeats it
     as_of_month: Optional[str]
     arr: Optional[Arr]

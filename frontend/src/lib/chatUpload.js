@@ -6,7 +6,8 @@ import { seeGlossary } from "./glossary";
 
 export const S2_EXPLAINER_CONSENT =
   "The model reads every column header and a masked sample to propose the mapping. When the rules cannot tell what a file holds, the AI also sees its sheet names and the title rows above each table. "
-  + "In a revenue file the AI also sees the row labels when they are metric names such as revenue, ARR or customers; where the rows may be customers it sees Row 1, Row 2 instead, never a name.";
+  + "In a revenue file the AI also sees the row labels when they are metric names such as revenue, ARR or customers; where the rows may be customers it sees Row 1, Row 2 instead, never a name. "
+  + "The AI reads every page of uploaded decks to find plan figures.";       // George, 2026-10-22 (docs/design/ai-reads-rules-check.md)
 export const S3_EXPLAINER_NO_CONSENT =
   "Mapping is done by rules only: AI-assisted reading is off for this audit. You map the columns the rules cannot decide.";
 export const S4_DROP_ZONE_LEAD =

@@ -1857,7 +1857,11 @@ async def upload_deck(audit_id: str, background: BackgroundTasks, file: UploadFi
         deck = await run_in_threadpool(deck_parser.parse_deck, content, file.filename or "")
     except deck_parser.DeckError as exc:
         raise HTTPException(400, exc.message)
-    candidates = deck_claims.detect_candidates(deck["blocks"], deck["file"], _fiscal_year_end(audit))
+    # The rules read lists candidates only under DECK_PIPELINE=rules (the former path, kept for scripts/compare_pipelines.py).
+    # Under the default "ai" (docs/design/ai-reads-rules-check.md, 2026-10-22) the model reads every page after the response and
+    # Python checks each claim (structures.pages); Add from deck still reads one line with the rules.
+    candidates = deck_claims.detect_candidates(deck["blocks"], deck["file"], _fiscal_year_end(audit)) \
+        if structures.deck_pipeline() == "rules" else []
     deck_id = str(uuid.uuid4())
     # A file uploaded again replaces its earlier parse and its unreviewed candidates. Approved,
     # edited and rejected candidates stay on record; the same claim found again is not re-added.
@@ -3717,7 +3721,7 @@ app.add_middleware(
 # 10: results carry contract_version 4 (repeated CRM rows counted once and flagged, won deals by close month).
 # 11: demo audits carry no client name (the field is gone).
 # 12: results carry contract_version 5 (demo audits seeded under 11 held version 4 and opened as Stale).
-SEED_VERSION = 12
+SEED_VERSION = 13          # 13: engine contract 6 (the page reader): demo audits held under contract 5 are reseeded
 
 
 @app.on_event("startup")

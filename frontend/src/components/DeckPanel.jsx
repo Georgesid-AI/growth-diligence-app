@@ -14,6 +14,7 @@ import {
   confidenceText, countLine, readingChoices, rowEdit, sourceRef, statusCounts, statusText, typeLabel,
   ADD_FROM_DECK_LABEL, ADDED_FROM_DECK_TAG, DEFAULT_EDIT_REASON, EDIT_REASONS, EDIT_TYPES, FIGURE_TYPE_OPTIONS, GROWTH_BASIS_OPTIONS, GROWTH_TYPES,
   OTHER_GROUP, POPULATION_OPTIONS, VIEW_PAGE_LABEL, claimFields, editLogText, isOther,
+  CLAIMS_VIEW, REVIEW_VIEW, VIEW_LABELS, REVIEW_INTRO, claimsForView, flagsText,
 } from "@/lib/deckClaims";
 
 // The status is a label, not a control: plain coloured text, no border or chip, so it never reads as a button (George,
@@ -44,6 +45,7 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
   const [adding, setAdding] = useState(false);       // the Add claim row is open
   const [expanded, setExpanded] = useState({});     // group -> opened or closed by the analyst; Other starts closed
   const [editing, setEditing] = useState(null);     // a claim just added from the deck with no type: opened in the editor
+  const [view, setView] = useState(CLAIMS_VIEW);    // Claims (no flag) or Review (the claims the checks flagged)
 
   // After a load, keep the chosen tab if its deck still exists; otherwise show the most recent deck.
   // A background poll (silent) that meets an error, a 404 included, stops for good and shows nothing; so does a
@@ -219,8 +221,10 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
     }
   };
 
-  const shown = claimsForDeck(data.candidates, tab);
+  const underTab = claimsForDeck(data.candidates, tab);
+  const shown = claimsForView(underTab, view);
   const counts = statusCounts(shown);
+  const viewCount = (v) => claimsForView(underTab, v).length;
   const selectedDeck = data.decks.find((d) => d.deck_id === tab);
 
   return (
@@ -310,6 +314,16 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
               {deckRunLog(selectedDeck).map((line) => <div key={line}>{line}</div>)}
             </div>
           )}
+          <div className="flex flex-wrap gap-1 mb-2" role="tablist" data-testid="claims-views">
+            {[CLAIMS_VIEW, REVIEW_VIEW].map((v) => (
+              <button key={v} type="button" role="tab" aria-selected={view === v} onClick={() => setView(v)}
+                className={`px-2.5 py-1 text-xs rounded-md border ${view === v ? "border-sky-600 bg-sky-50 text-slate-900 font-semibold" : "border-[#E5E7EB] text-slate-500 hover:text-slate-800"}`}
+                data-testid={`claims-view-${v}`}>
+                {VIEW_LABELS[v]} <span className="font-mono font-normal text-slate-400">({viewCount(v)})</span>
+              </button>
+            ))}
+          </div>
+          {view === REVIEW_VIEW && <p className="text-xs text-slate-600 mb-2 max-w-3xl" data-testid="review-intro">{REVIEW_INTRO}</p>}
           <div className="text-[11px] text-slate-500 font-mono mb-2">
             {countLine(counts)}
           </div>
@@ -678,6 +692,12 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight, autoEdit = fa
             ? "text-emerald-800 border-emerald-500/50 bg-emerald-50" : "text-amber-800 border-amber-500/50 bg-amber-50"}`}
             data-testid="candidate-ai-label">
             {badgeText(c.ai_label)}
+          </div>
+        )}
+        {flagsText(c) && (
+          <div className="mt-1 text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-normal max-w-[14rem] text-amber-800 border-amber-500/50 bg-amber-50"
+            data-testid="candidate-flags">
+            {flagsText(c)}
           </div>
         )}
         {c.mixed_slide && (

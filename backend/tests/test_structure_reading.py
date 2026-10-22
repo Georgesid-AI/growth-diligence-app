@@ -1192,6 +1192,14 @@ def test_purge_run_removes_the_stored_structure_readings():
 # ---------------------------------------------------------------------------
 import app.structures as structures  # noqa: E402
 
+
+@pytest.fixture(autouse=True)
+def _rules_path(monkeypatch):
+    """This module tests the former path (the rules read and the structure read; docs/specs/deck-parser.md, llm-structure-reading.md),
+    kept under DECK_PIPELINE=rules for scripts/compare_pipelines.py. The default since 2026-10-22 is "ai" (docs/design/
+    ai-reads-rules-check.md; tests/test_page_pipeline.py, test_checker.py)."""
+    monkeypatch.setenv("DECK_PIPELINE", "rules")
+
 SECRET = "Jane Doe Holdings"           # a text cell value: never on the column-mapping path
 MAPPING_TEXT = "r1c1: Customer\nr1c2: Amount\nc2 sample: 1200"
 

@@ -2,6 +2,7 @@ import {
   ALL_DECKS, AI_SUGGESTION_LABEL, CLAIM_TYPES, INCONSISTENCY_LABEL, VERIFIED_LABEL, badgeText, deckRunLog, REMOVE_DECK_CONFIRM, claimPeriod, conversionHover, claimSections, claimsForDeck, periodLabel, directionText, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, newClaimPayload, sourceRef, statusCounts, typeLabel,
   approveAllToast, toReview, DECK_SCOPE_CANNOT, DECK_SCOPE_CANNOT_LEAD, DECK_SCOPE_INTRO, isDeckFile, DECK_SCOPE_OUTRO, EDIT_TYPES, isOther, readingChoices, confidenceText, otherFiguresTitle,
   claimFields, editLogText,
+  CLAIMS_VIEW, REVIEW_VIEW, VIEW_LABELS, REVIEW_INTRO, claimsForView, isFlagged, flagsText,
 } from "./deckClaims";
 
 describe("source reference", () => {
@@ -373,4 +374,23 @@ describe("stale results (George, 2026-10-20)", () => {
 test("only .pptx, .docx and .pdf files are deck files, whatever the case", () => {
   expect(["a.pptx", "B.DOCX", "c.d.pdf"].map(isDeckFile)).toEqual([true, true, true]);
   expect(["a.key", "b.xlsx", "c.png", "pdf", "d.pdf.exe"].map(isDeckFile)).toEqual([false, false, false, false, false]);
+});
+
+describe("the Claims and Review views (George, 2026-10-22, docs/design/ai-reads-rules-check.md)", () => {
+  const plain = { id: "p", flags: [] };
+  const none = { id: "n" };
+  const flagged = { id: "f", flags: ["currency assumed", "scenario label not on page"] };
+  test("a claim with a flag is listed under Review and nowhere else; a claim without one under Claims", () => {
+    expect(claimsForView([plain, flagged, none], CLAIMS_VIEW).map((c) => c.id)).toEqual(["p", "n"]);
+    expect(claimsForView([plain, flagged, none], REVIEW_VIEW).map((c) => c.id)).toEqual(["f"]);
+    expect(isFlagged(flagged)).toBe(true);
+    expect(isFlagged(plain)).toBe(false);
+    expect(isFlagged(none)).toBe(false);
+  });
+  test("the flags read as the checker wrote them, joined; the labels are Claims and Review", () => {
+    expect(flagsText(flagged)).toBe("currency assumed · scenario label not on page");
+    expect(flagsText(plain)).toBe("");
+    expect(VIEW_LABELS).toEqual({ claims: "Claims", review: "Review" });
+    expect(REVIEW_INTRO).toBe("Flagged by the checks: the figure, its unit, its label or its page could not be confirmed on the slide. Each flag names what to check.");
+  });
 });

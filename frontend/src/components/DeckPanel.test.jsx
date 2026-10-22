@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import DeckPanel from "./DeckPanel";
 import * as api from "@/lib/api";
+import { REVIEW_INTRO } from "@/lib/deckClaims";
 
 jest.mock("@/lib/api", () => ({ getDecks: jest.fn(), removeDeck: jest.fn(), updateCandidate: jest.fn(), uploadDeck: jest.fn(), addClaim: jest.fn(),
   answerTurnover: jest.fn(), approveAll: jest.fn() }));
@@ -919,4 +920,33 @@ test("a period Python read from 'in 2021' shows its note under the period in the
   expect(notes).toEqual([note]);
   const row = rows().find((tr) => text(tr).includes("snippet-n1"));
   expect(row.querySelector("[data-testid='candidate-period-note']")).not.toBeNull();
+});
+
+describe("the Review view (George, 2026-10-22, docs/design/ai-reads-rules-check.md)", () => {
+  const flagged = claim("f", "d2", 4, { group: 1, flags: ["currency assumed", "scenario label not on page"], ai_label: "AI suggestion, not matched", basis: "scenario", scenario: "best" });
+  test("a flagged claim is not in the main list; Review lists it with its flags; the counts follow the view", async () => {
+    await reload([...CLAIMS, flagged]);
+    expect(q("claims-view-claims").textContent).toBe("Claims (4)");
+    expect(q("claims-view-review").textContent).toBe("Review (1)");
+    await open(9);
+    expect(rows().map((tr) => /snippet-(\w)/.exec(text(tr))[1])).toEqual(["c", "d", "b", "a"]);
+    expect(q("candidate-flags")).toBeNull();
+    expect(q("review-intro")).toBeNull();
+    await act(async () => { q("claims-view-review").click(); });
+    expect(q("claims-view-review").getAttribute("aria-selected")).toBe("true");
+    expect(rows().map((tr) => /snippet-(\w)/.exec(text(tr))[1])).toEqual(["f"]);
+    expect(q("candidate-flags").textContent).toBe("currency assumed · scenario label not on page");
+    expect(q("candidate-ai-label").textContent).toBe("AI suggestion, not matched");
+    expect(q("review-intro").textContent).toBe(REVIEW_INTRO);
+    expect(q("approve-all-top-1")).not.toBeNull();                      // reviewed like any claim: approve, edit or reject
+    await act(async () => { q("claims-view-claims").click(); });
+    expect(rows().map((tr) => /snippet-(\w)/.exec(text(tr))[1])).toEqual(["c", "d", "b", "a"]);     // Other stays opened
+  });
+  test("a deck tab keeps the view: the Review count is that deck's", async () => {
+    await reload([...CLAIMS, flagged]);
+    await act(async () => { q("deck-tab-d1").click(); });
+    expect(q("claims-view-review").textContent).toBe("Review (0)");
+    await act(async () => { q("deck-tab-d2").click(); });
+    expect(q("claims-view-review").textContent).toBe("Review (1)");
+  });
 });

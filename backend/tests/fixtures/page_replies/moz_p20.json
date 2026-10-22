@@ -11,7 +11,8 @@
    "unit": "USD",
    "unit_other": null,
    "period": "2011",
-   "actual_or_forecast": "forecast",
+   "basis": "projection",
+   "scenario": "none",
    "value_cell": "p20r1c2",
    "label_cell": "p20r1c1",
    "period_cell": "p20r1c1"
@@ -23,7 +24,8 @@
    "unit": "USD",
    "unit_other": null,
    "period": null,
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p20r2c2",
    "label_cell": "p20r2c1",
    "period_cell": null
@@ -35,7 +37,8 @@
    "unit": "count",
    "unit_other": null,
    "period": null,
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p20r3c2",
    "label_cell": "p20r3c1",
    "period_cell": null
@@ -47,7 +50,8 @@
    "unit": "count",
    "unit_other": null,
    "period": null,
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p20r4c2",
    "label_cell": "p20r4c1",
    "period_cell": null
@@ -59,7 +63,8 @@
    "unit": "USD",
    "unit_other": null,
    "period": null,
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p20r5c2",
    "label_cell": "p20r5c1",
    "period_cell": null
@@ -71,7 +76,8 @@
    "unit": "months",
    "unit_other": null,
    "period": null,
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p20r6c2",
    "label_cell": "p20r6c1",
    "period_cell": null
@@ -83,7 +89,8 @@
    "unit": "USD",
    "unit_other": null,
    "period": null,
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p20r7c2",
    "label_cell": "p20r7c1",
    "period_cell": null
@@ -95,7 +102,8 @@
    "unit": "USD",
    "unit_other": null,
    "period": null,
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p20r8c2",
    "label_cell": "p20r8c1",
    "period_cell": null

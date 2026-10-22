@@ -592,6 +592,11 @@ def structure_output_schema() -> dict:
 # and never the metric. The gateway checks every cited id against the text it sent (gateway.parse_page_reply).
 PAGE_CLAIMS = "page_claims"
 PAGE_METRICS = CLAIM_METRICS + ("other",)
+# What a page figure is (docs/design/ai-reads-rules-check.md, built 2026-10-22): an actual, a projection (a plan or forecast figure),
+# or a scenario figure (one case of several); and which case. The register reads basis as its figure type (actual -> actual,
+# projection and scenario -> target); the checker flags a scenario whose label is not on the page (structures/checker.py).
+PAGE_BASES = ("actual", "projection", "scenario")
+PAGE_SCENARIOS = ("best", "realistic", "worst", "none")
 _PAGE_CELL_ID = re.compile(r"^p[1-9]\d*r[1-9]\d*c[1-9]\d*$")
 
 
@@ -612,7 +617,8 @@ class PageClaim(BaseModel):
     unit: Optional[Literal[STRUCTURE_UNITS]]
     unit_other: Optional[str]
     period: Optional[str]
-    actual_or_forecast: Literal["actual", "forecast", "unknown"]
+    basis: Literal[PAGE_BASES]
+    scenario: Literal[PAGE_SCENARIOS]
     value_cell: str
     label_cell: Optional[str]
     period_cell: Optional[str]
@@ -674,12 +680,13 @@ def page_claims_output_schema() -> dict:
             "unit": nullable({"type": "string", "enum": list(STRUCTURE_UNITS)}),
             "unit_other": nullable({"type": "string"}),
             "period": nullable({"type": "string"}),
-            "actual_or_forecast": {"type": "string", "enum": ["actual", "forecast", "unknown"]},
+            "basis": {"type": "string", "enum": list(PAGE_BASES)},
+            "scenario": {"type": "string", "enum": list(PAGE_SCENARIOS)},
             "value_cell": {"type": "string"},
             "label_cell": nullable({"type": "string"}),
             "period_cell": nullable({"type": "string"}),
         },
-        "required": ["metric", "value", "value_high", "unit", "unit_other", "period", "actual_or_forecast", "value_cell",
+        "required": ["metric", "value", "value_high", "unit", "unit_other", "period", "basis", "scenario", "value_cell",
                      "label_cell", "period_cell"],
         "additionalProperties": False,
     }

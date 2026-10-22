@@ -547,10 +547,13 @@ def test_when_the_model_fails_the_sent_columns_need_a_decision_and_every_metric_
 
 
 def test_a_deck_read_that_fails_leaves_pythons_candidates_in_place():
+    """The former path (DECK_PIPELINE=rules): under the default "ai" since 2026-10-22 the rules read lists nothing at upload, so a
+    failed page read leaves no row and the deck panel reads "not read" (design note, decision 6a; tests/test_checker.py)."""
     import test_structure_reading as sr
     pytest.importorskip("pptx")
     mp = pytest.MonkeyPatch()
     try:
+        mp.setenv("DECK_PIPELINE", "rules")
         client, db, adapter = sr._deck_api(mp)
         sr._map_revenue(client)
         adapter._raise_with = RuntimeError("provider down")

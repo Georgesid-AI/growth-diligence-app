@@ -1286,7 +1286,8 @@ def test_a_corrected_period_stores_a_count_and_never_the_cell_text_the_raw_text_
         {"item": "i1", "metric": "revenue", "period": "2025-04", "unit": "USD", "unit_other": None,
          "actual_or_forecast": "forecast"}]})
     adapter = t.FakeAdapter(replies=[reply])
-    asyncio.run(structures.process_deck(db, STRUCTURE_AUDIT["id"], "d1", adapter=adapter, sleep=t._noop_sleep))
+    with mock.patch.dict(os.environ, {"DECK_PIPELINE": "rules"}):          # the structure read: the former path
+        asyncio.run(structures.process_deck(db, STRUCTURE_AUDIT["id"], "d1", adapter=adapter, sleep=t._noop_sleep))
     assert '"$5M"' not in adapter.payloads[0] and '\\"5M\\"' in adapter.payloads[0], "the raw text went out once"
     stored, = db[gateway.STRUCTURES_COLLECTION].docs
     assert stored["output"]["labels"][0]["period"] == "2025-04" and stored["periods_corrected"] == 1
@@ -3014,9 +3015,9 @@ GOOD_PAGE = ("p5r1c1 title: Traction\np5r2c1: 800 Paying Users\np5r3c1: $150,000
              "p5r5c1: " + SHORT_PROSE)
 PAGE_REPLY = json.dumps({"type": PAGE_CLAIMS, "claims": [
     {"metric": "customers", "value": 800, "value_high": None, "unit": "count", "unit_other": None, "period": None,
-     "actual_or_forecast": "actual", "value_cell": "p5r2c1", "label_cell": "p5r1c1", "period_cell": None},
+     "basis": "actual", "scenario": "none", "value_cell": "p5r2c1", "label_cell": "p5r1c1", "period_cell": None},
     {"metric": "revenue", "value": 150000, "value_high": None, "unit": "USD", "unit_other": None, "period": None,
-     "actual_or_forecast": "actual", "value_cell": "p5r3c1", "label_cell": "p5r3c1", "period_cell": None}]})
+     "basis": "actual", "scenario": "none", "value_cell": "p5r3c1", "label_cell": "p5r3c1", "period_cell": None}]})
 NO_CLAIMS = json.dumps({"type": PAGE_CLAIMS, "claims": []})
 
 
@@ -3025,7 +3026,7 @@ def _page(n, *lines):
 
 
 def _send_page(db, text, reply=NO_CLAIMS, pipeline="ai"):
-    """read_structure on a page text with the switch DECK_PIPELINE at `pipeline` (None: unset, the default "rules")."""
+    """read_structure on a page text with the switch DECK_PIPELINE at `pipeline` (None: unset, the default "ai")."""
     env = {"DECK_PIPELINE": pipeline} if pipeline is not None else {}
     with mock.patch.dict(os.environ, env, clear=False):
         if pipeline is None:
@@ -3045,12 +3046,13 @@ def test_a_page_text_of_redacted_lines_with_a_figure_as_digits_reaches_the_provi
 
 
 def test_the_page_step_is_refused_unless_the_switch_is_ai():
-    """L1 of the review of PR #159: whatever the caller, the gateway reads a page only while DECK_PIPELINE is "ai"."""
-    for pipeline in (None, "rules", "pages"):
+    """L1 of the review of PR #159: whatever the caller, the gateway reads a page only while DECK_PIPELINE is "ai". Since
+    2026-10-22 "ai" is the default: unset, or a typo, reads; "rules" (the former path) refuses."""
+    result, adapter = _send_page(_structure_db(), GOOD_PAGE, PAGE_REPLY, pipeline="rules")
+    assert (result.status, result.reason, adapter.calls) == ("refused", "refused: pipeline_rules", 0)
+    for pipeline in (None, "ai", "pages"):
         result, adapter = _send_page(_structure_db(), GOOD_PAGE, PAGE_REPLY, pipeline=pipeline)
-        assert (result.status, result.reason, adapter.calls) == ("refused", "refused: pipeline_rules", 0), pipeline
-    result, adapter = _send_page(_structure_db(), GOOD_PAGE, PAGE_REPLY, pipeline="ai")
-    assert result.status == "read" and adapter.calls == 1
+        assert (result.status, adapter.calls) == ("read", 1), pipeline
     result, adapter = _send(_structure_db(), GOOD_ITEMS)
     assert result.status == "read", "a structure read does not depend on the switch"
 
@@ -3183,7 +3185,7 @@ def test_no_sent_page_text_and_no_label_text_in_a_log_llm_calls_or_llm_structure
                                            "page_unit": "page", "blocks": parsed["blocks"], "structures": []})
     reply = json.dumps({"type": PAGE_CLAIMS, "claims": [
         {"metric": "revenue", "value": 150000, "value_high": None, "unit": "USD", "unit_other": None, "period": "FY2025",
-         "actual_or_forecast": "actual", "value_cell": "p1r3c1", "label_cell": "p1r1c1", "period_cell": "p1r4c1"}]})
+         "basis": "actual", "scenario": "none", "value_cell": "p1r3c1", "label_cell": "p1r1c1", "period_cell": "p1r4c1"}]})
     adapter = t.FakeAdapter(replies=[reply])
     with caplog.at_level(logging.DEBUG):
         status = asyncio.run(structures.process_deck(db, STRUCTURE_AUDIT["id"], "d1", adapter=adapter, sleep=t._noop_sleep))
@@ -3220,7 +3222,7 @@ def test_every_page_reply_field_is_a_closed_word_a_number_or_a_cell_id():
         assert kinds <= {"number", "null", "string"}, (name, prop)
     assert free == {"value_cell", "label_cell", "period_cell", "unit_other", "period"}, "cell ids, an ISO code and a closed period form"
     base = {"metric": "revenue", "value": 1.0, "value_high": None, "unit": "EUR", "unit_other": None, "period": None,
-            "actual_or_forecast": "actual", "value_cell": "p5r2c1", "label_cell": None, "period_cell": None}
+            "basis": "actual", "scenario": "none", "value_cell": "p5r2c1", "label_cell": None, "period_cell": None}
     assert PageClaim.model_validate(base).value_cell == "p5r2c1"
     for field in ("value_cell", "label_cell", "period_cell"):
         with pytest.raises(Exception):
@@ -3252,7 +3254,7 @@ def test_a_page_reply_citing_a_cell_not_sent_or_carrying_text_is_rejected_with_a
     # with no way to tell which field); a cell not sent or a reply that is not JSON names none.
     assert [line.split(" fields=")[1].split(" ")[0] for line in lines] == ["-", "label_cell", "metric", "-"]
     assert set(gateway.PAGE_FIELDS) == {"type", "claims", "metric", "value", "value_high", "unit", "unit_other", "period",
-                                        "actual_or_forecast", "value_cell", "label_cell", "period_cell"}
+                                        "basis", "scenario", "value_cell", "label_cell", "period_cell"}
     logs = caplog.text + "".join(r.getMessage() for r in caplog.records)
     for needle in ("Traction", "Paying Users", "Target Co", "p9r9c9", "Input should"):
         assert needle not in logs, f"{needle!r} was logged"
@@ -3376,3 +3378,25 @@ def test_the_pages_run_prints_and_reports_no_line_of_a_deck_and_records_only_the
         PageClaimsReply.model_validate({"type": "page_claims", "claims": body["claims"]})
         assert all(re.fullmatch(r"p\d+r\d+c\d+", str(c[k])) for c in body["claims"] for k in ("value_cell",)
                    ) and all(set(c) == set(PageClaimsReply.model_fields["claims"].annotation.__args__[0].model_fields) for c in body["claims"])
+
+
+def test_the_checker_flags_basis_and_scenario_are_closed_words_and_never_gateway_readable():
+    """The flags of app/structures/checker.py (built 2026-10-22) are closed strings shown in the review tab; a claim's basis and
+    scenario are closed words of the schema. None of the three fields is readable by the gateway, and no flag names deck text."""
+    from app.llm import schemas
+    from app.structures import checker
+    assert checker.FLAGS == ("value not on page", "currency assumed", "unit assumed", "scenario label not on page",
+                             "period not on page", "page out of range", "use-of-funds share", "acquisition channel",
+                             "turnover, not revenue", "year under bar differs", "pipeline column", "axis tick", "not a plan line")
+    assert set(schemas.PAGE_BASES) == {"actual", "projection", "scenario"} and set(schemas.PAGE_SCENARIOS) == {"best", "realistic", "worst", "none"}
+    assert not {"flags", "basis", "scenario", "figure_type"} & decks.GATEWAY_READABLE_FIELDS
+    grid = {"type": "page", "page": 1, "header_rows": 0, "tables": [], "cells": [
+        {"row": 1, "col": 1, "text": "Traction at Target Co", "box": 1, "title": True},
+        {"row": 2, "col": 1, "text": "Northbridge revenue $150,000", "box": 2}]}
+    claim = {"metric": "revenue", "value": 999, "value_high": None, "unit": "EUR", "unit_other": None, "period": "2027",
+             "basis": "scenario", "scenario": "best", "value_cell": "r2c1", "label_cell": "r1c1", "period_cell": None}
+    item, = checker.check(grid, [claim], 12)["items"]
+    assert set(item["flags"]) <= set(checker.FLAGS) and item["basis"] in schemas.PAGE_BASES and item["scenario"] in schemas.PAGE_SCENARIOS
+    text = json.dumps(item)
+    for needle in ("Target Co", "Northbridge", "Traction", "150,000"):
+        assert needle not in text, f"{needle!r} in a checked item"

@@ -47,7 +47,7 @@ def grid_of(texts, rects=()):
 
 def claim(value_cell, value, metric="revenue", unit="USD", period=None, period_cell=None, label_cell=None):
     return {"metric": metric, "value": value, "value_high": None, "unit": unit, "unit_other": None, "period": period,
-            "actual_or_forecast": "actual", "value_cell": value_cell, "label_cell": label_cell, "period_cell": period_cell}
+            "basis": "actual", "scenario": "none", "value_cell": value_cell, "label_cell": label_cell, "period_cell": period_cell}
 
 
 # ---------------------------------------------------------------------------
@@ -176,12 +176,12 @@ def test_with_the_switch_at_ai_the_pages_are_read_and_each_claim_is_a_row_matche
     assert stored["statuses"] == ["matched", "matched", "unmatched"]
 
 
-def test_under_the_default_switch_no_page_is_read_and_the_structure_path_runs_as_before(monkeypatch):
+def test_the_default_switch_is_ai_and_rules_selects_the_former_structure_path(monkeypatch):
     monkeypatch.delenv("DECK_PIPELINE", raising=False)
-    assert pipeline.deck_pipeline() == "rules"
+    assert pipeline.deck_pipeline() == structures.deck_pipeline() == "ai", "the default since 2026-10-22"
     monkeypatch.setenv("DECK_PIPELINE", "pages")
-    assert pipeline.deck_pipeline() == "rules", "a typo changes nothing on screen"
-    monkeypatch.delenv("DECK_PIPELINE", raising=False)
+    assert pipeline.deck_pipeline() == "ai", "a typo changes nothing on screen"
+    monkeypatch.setenv("DECK_PIPELINE", "rules")
     parsed = deck([TITLE, *LINES, PROSE])
     db = _page_db(parsed)
     adapter = t.FakeAdapter(replies=[json.dumps({"type": "kpi_panel", "labels": [], "pairs": []})])

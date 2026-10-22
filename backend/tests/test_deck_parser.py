@@ -1484,6 +1484,14 @@ def test_a_table_row_with_months_under_a_year_header_can_be_edited(api):
 # ---------------------------------------------------------------------------
 from app.structures import redact as structure_redact  # noqa: E402
 
+
+@pytest.fixture(autouse=True)
+def _rules_path(monkeypatch):
+    """This module tests the former path (the rules read and the structure read; docs/specs/deck-parser.md, llm-structure-reading.md),
+    kept under DECK_PIPELINE=rules for scripts/compare_pipelines.py. The default since 2026-10-22 is "ai" (docs/design/
+    ai-reads-rules-check.md; tests/test_page_pipeline.py, test_checker.py)."""
+    monkeypatch.setenv("DECK_PIPELINE", "rules")
+
 # front-b p16's panel held only dates written with slashes, so it is none (issue #53): 21 KPI panels.
 DECK_STRUCTURES = {
     "01-front-b.pptx": [(11, "kpi_panel"), (12, "kpi_panel"), (14, "kpi_panel"), (15, "kpi_panel"), (18, "kpi_panel")],

@@ -27,6 +27,14 @@ from app import structures  # noqa: E402
 from app.decks import TEXT_COLLECTION, claims  # noqa: E402
 from app.decks.parser import parse_deck  # noqa: E402
 
+
+@pytest.fixture(autouse=True)
+def _rules_path(monkeypatch):
+    """This module tests the former path (the rules read and the structure read; docs/specs/deck-parser.md, llm-structure-reading.md),
+    kept under DECK_PIPELINE=rules for scripts/compare_pipelines.py. The default since 2026-10-22 is "ai" (docs/design/
+    ai-reads-rules-check.md; tests/test_page_pipeline.py, test_checker.py)."""
+    monkeypatch.setenv("DECK_PIPELINE", "rules")
+
 # ---------------------------------------------------------------------------
 # 2. The revenue file for AI reading
 # ---------------------------------------------------------------------------

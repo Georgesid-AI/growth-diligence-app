@@ -371,6 +371,23 @@ export function claimsForDeck(candidates, deckId) {
   return deckId === ALL_DECKS ? candidates || [] : (candidates || []).filter((c) => c.deck_id === deckId);
 }
 
+// The two views of the claims table (George, 2026-10-22, docs/design/ai-reads-rules-check.md): a claim the checks flagged
+// (`flags`: closed words from the server's checker, e.g. "currency assumed") is listed under Review, never in the main list; a
+// flag never deletes or retypes a claim. The analyst approves, edits or rejects it there as anywhere else.
+export const CLAIMS_VIEW = "claims";
+export const REVIEW_VIEW = "review";
+export const VIEW_LABELS = { [CLAIMS_VIEW]: "Claims", [REVIEW_VIEW]: "Review" };
+export const REVIEW_INTRO = "Flagged by the checks: the figure, its unit, its label or its page could not be confirmed on the slide. Each flag names what to check.";
+export const isFlagged = (c) => Boolean(c?.flags?.length);
+
+/** The claims of one view: the flagged ones under Review, the rest under Claims; the server's order is kept. */
+export function claimsForView(claims, view) {
+  return (claims || []).filter((c) => isFlagged(c) === (view === REVIEW_VIEW));
+}
+
+/** "currency assumed · scenario label not on page": the flags of a claim, as the checker wrote them. */
+export const flagsText = (c) => (c?.flags || []).join(" · ");
+
 // The order of the claims table (docs/specs/deck-parser.md section 6): the group of the claim's type, set by the server, then
 // slide or page. Other starts collapsed under its count (claim-types-and-correction.md section 4).
 // Acquisition channels and Use of funds are sections of their own, directly above Other (chat-upload.md section 17).

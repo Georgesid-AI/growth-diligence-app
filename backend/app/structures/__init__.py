@@ -214,6 +214,13 @@ logger = logging.getLogger("growth.structures")
 _UNITS = {"%", "x", "days", "months", "years"}
 
 
+
+
+def deck_pipeline() -> str:
+    """The DECK_PIPELINE switch, owned by the gateway: "ai" (default) reads the pages (structures.pages), "rules" keeps the former
+    path below (read at call time: the gateway imports this package)."""
+    return gateway.deck_pipeline()
+
 # Set by server.py: `async (db, audit_id) -> Optional[bool]`, True when the recognition of the audit's revenue file has no choice left to
 # the analyst *now* (the check the rest of the app uses, `_is_mapped`: a changed as-of month can reopen a click that `mapped_at` still
 # calls settled). None means no answer (no server, or another database), and `mapped_at` stands.
@@ -239,8 +246,8 @@ async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None
     verified". A deck already read is not sent again (a re-read is served from the cache).
     """
     from . import pages as page_pipeline
-    if page_pipeline.deck_pipeline() == "ai":
-        # DECK_PIPELINE=ai (docs/design/ai-reads-rules-check.md, PR A): the model reads the pages, Python checks each claim.
+    if deck_pipeline() == "ai":
+        # The default since 2026-10-22 (docs/design/ai-reads-rules-check.md): the model reads the pages, Python checks each claim.
         return await page_pipeline.process_deck_pages(db, audit_id, deck_id, adapter=adapter, sleep=sleep)
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "id": 1, "company_name": 1, "fiscal_year_end": 1,
                                                        "structure_reading_consent": 1})

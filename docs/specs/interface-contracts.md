@@ -5,6 +5,9 @@ Amended 2026-10-15 (docs/specs/dates-and-periods.md §7): `contract_version` 3 a
 text, no figure, server-only); results stored under version 2 are recomputed on first read.
 Amended 2026-10-17 (docs/specs/crm-dedup-clustering.md §3): `contract_version` 4 adds `anomalies.deals_duplicate_id` and
 `won_deal_closes` (won deals per close month, counts only, server-only); results stored under version 3 are recomputed on first read.
+Amended 2026-10-22 (docs/specs/chat-upload.md §28): `contract_version` 6 marks the page reader (deck claims carry `basis`, `scenario`
+and `flags`); results and claim matches stored under version 5 read "Stale – re-run audit" until Run audit calculates again
+(no recompute on a read, as amended 2026-10-20). `SEED_VERSION` 13 reseeds demo audits held under contract 5.
 
 ## Goal
 One written definition of what the calc engine hands over, checked at the two places where a wrong unit turns into a

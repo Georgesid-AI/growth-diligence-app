@@ -229,10 +229,26 @@ class FakeAdapter:
         return text, billed, len(text) // self.CHARS_PER_TOKEN
 
 
+def claims_as_read(claims):
+    """A recorded reply in the fields of the current schema. The replies of pages_2026-10-22 (prompt page_claims v1) carry
+    `actual_or_forecast`; since 2026-10-22 the schema asks for `basis` (actual, projection, scenario) and `scenario` instead, so a
+    replay reads the old field as basis (forecast and unknown are a projection) and no scenario. The recorded files stay as the
+    model wrote them."""
+    out = []
+    for c in claims:
+        c = dict(c)
+        old = c.pop("actual_or_forecast", None)
+        c.setdefault("basis", "actual" if old == "actual" else "projection")
+        c.setdefault("scenario", "none")
+        out.append(c)
+    return out
+
+
 class PageReplayAdapter:
     """--fake --pages and scripts/compare_pipelines.py: no network. Replays the recorded page replies (backend/tests/fixtures/
     page_replies/, one fixture per page): a batch's reply holds the claims of every fixture whose match line is in the text sent.
-    A page with no fixture gives no claim. Token counts take CHARS_PER_TOKEN characters per token, as FakeAdapter's do."""
+    A page with no fixture gives no claim (claims_as_read puts an older reply in the current fields). Token counts take
+    CHARS_PER_TOKEN characters per token, as FakeAdapter's do."""
 
     CHARS_PER_TOKEN = 2
 
@@ -249,7 +265,7 @@ class PageReplayAdapter:
     def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False):
         self.calls += 1
         sent = json.loads(user_payload)
-        claims = [c for f in self.fixtures if f["match"] in sent["text"] for c in f["claims"]]
+        claims = claims_as_read([c for f in self.fixtures if f["match"] in sent["text"] for c in f["claims"]])
         text = json.dumps({"type": sent["type"], "claims": claims})
         return text, self.count_tokens(model=model, system=system, user_payload=user_payload, json_schema=json_schema), \
             len(text) // self.CHARS_PER_TOKEN
@@ -1157,7 +1173,7 @@ def not_public(decks):
 
 
 async def copy_prompt(store, scratch, name=None):
-    """The scratch database starts empty, so the live run copies the latest structure_reading prompt (--pages: page_claims)
+    """The scratch database starts empty, so the live run copies the latest structure_reading prompt (--pages: deck_reading)
     from the app's prompt store (DB_NAME) into it. The text is read, never printed or written to the report: only its
     version is."""
     from app.llm import gateway, prompt_store
