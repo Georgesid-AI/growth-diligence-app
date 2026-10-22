@@ -1,0 +1,6 @@
+2026-10-22 · claude/compassionate-brahmagupta-7oxewo (issue #154)
+Deleted: nothing; the #149 rule "any other count: no bar takes a label by place" is replaced by the nearest-label rule.
+Decided: a sentence is a line over 59 characters, with a subject pronoun or auxiliary verb, or ending on a stop (a closed word list, no verb dictionary; "our"/"your" left out because "Our two areas of focus for 2018" is a heading); the merge runs where the panel row is added (`structures.rules_copy`), so the panel row survives and the pending parser copy goes; a copy the analyst touched stays; unequal counts use the nearest label within half a spacing, alone on it.
+Slow or unclear: the live page was not supplied, so point 3's cause is shown on a synthetic page of the same shape (one valued bar over three year labels); a verb-only sentence of under 60 characters with no pronoun or auxiliary is still read as a heading.
+Root cause and rule: #149 tested only the case the artefact was assumed to be (as many figures as labels) and borrowed dates from any nearby text; tests now pin one figure over three labels and the sentence forms, and a date borrowed from the page goes through `_borrow_date(..., nearby=True)`.
+Process change to propose: when a fix tests a layout from an issue text, also test the count variants of that layout (fewer, more, one) before closing the point.

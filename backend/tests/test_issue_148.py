@@ -114,9 +114,11 @@ def test_b_the_year_is_the_labels_not_the_headings():
     assert [c["period_text"] for c in got] == list(YEARS)
 
 
-def test_b_when_the_counts_differ_no_bar_takes_a_year_by_position():
+def test_b_when_the_counts_differ_a_bar_takes_the_label_nearest_to_it_not_the_one_of_its_rank():
+    """Changed by issue #154: with any other count the old rule gave no year; now the nearest label within half a spacing, so no bar takes
+    the year of its rank (the 3rd of 4 labels is 2025's neighbour, not 2024's)."""
     got = found("Revenue forecast 2022 -2024", years=YEARS + ("2025",), label_at=LABELS + (600,))
-    assert dated(got) == dict.fromkeys(VALUES), dated(got)
+    assert dated(got) == dict(zip(VALUES, YEARS)), dated(got)
 
 
 # ---------------------------------------------------------------------------
@@ -159,9 +161,10 @@ def test_c_the_approval_rows_carry_the_year_and_every_bar_is_a_row():
     assert {r["ai_label"] for r in rows} == {"Verified"}
 
 
-def test_c_when_the_counts_differ_the_panel_dates_no_bar_by_position():
+def test_c_when_the_counts_differ_the_panel_dates_a_bar_by_its_nearest_label():
+    """Changed by issue #154, with the rules read: the nearest label within half a spacing, not the label of the bar's rank."""
     checked = by_value(read(panel(years=YEARS + ("2025",), label_at=LABELS + (600,)), [None] * 3))
-    assert {v: checked[v]["period"] for v in VALUES} == dict.fromkeys(VALUES)
+    assert {v: checked[v]["period"] for v in VALUES} == dict(zip(VALUES, YEARS))
 
 
 # ---------------------------------------------------------------------------

@@ -295,9 +295,18 @@ async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None
                         await db[CANDIDATES_COLLECTION].update_one({"audit_id": audit_id, "id": twin["id"]},
                                                                    {"$set": {"sources": twin["sources"]}})
                     continue
-                order += 1
+                duplicate = rules_copy(reviewed, candidate)
+                if duplicate is not None:
+                    # The same figure read by the parser with another period (issue #154): one figure, one row. The row of the
+                    # panel read keeps its period, takes the copy's place and cites its sources too.
+                    candidate = {**candidate, "sources": candidate["sources"] + [s for s in duplicate["sources"] if s not in candidate["sources"]]}
+                    await db[CANDIDATES_COLLECTION].delete_one({"audit_id": audit_id, "id": duplicate["id"]})
+                    reviewed.remove(duplicate)
+                    row_order = duplicate.get("order", order + 1)
+                else:
+                    row_order = order = order + 1
                 row = {**candidate, "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"],
-                       "id": str(uuid.uuid4()), "order": order, "status": "pending", "structure_key": result.key}
+                       "id": str(uuid.uuid4()), "order": row_order, "status": "pending", "structure_key": result.key}
                 await db[CANDIDATES_COLLECTION].insert_one(row)
                 reviewed.append(row)
         statuses.append(entry)
@@ -427,6 +436,23 @@ def approval_items(checked: List[Dict], mode: str = "suggest") -> List[Dict]:
             out.append({**ends[0], "value": span["low"], "value_high": span["high"], "values": [],
                         "status": verify.VERIFIED if ok else verify.SUGGESTION})
     return out
+
+
+def rules_copy(reviewed: List[Dict], candidate: Dict) -> Optional[Dict]:
+    """The row of the parser that reads again the figure of a panel-read `candidate` (issue #154): on the same page, the same value, currency
+    and kind of unit, the same type or one of them unknown, and not yet touched by the analyst. Its period may differ (a year taken from
+    elsewhere on the page); the panel read, which places the figure in its cell, decides it. None when there is no such row, or two."""
+    page = _page_of(candidate["sources"][0])
+    same = [c for c in reviewed if c.get("origin") != "ai" and c.get("status") == "pending" and c.get("sources")
+            and _page_of(c["sources"][0]) == page and (c["value"], c["value_high"]) == (candidate["value"], candidate["value_high"])
+            and (c.get("currency") or None) == (candidate.get("currency") or None)
+            and ((c.get("unit") in ("%", "x")) or (candidate.get("unit") in ("%", "x"))) <= (c.get("unit") == candidate.get("unit"))
+            and (c["claim_type"] == candidate["claim_type"] or claims.UNKNOWN in (c["claim_type"], candidate["claim_type"]))]
+    return same[0] if len(same) == 1 else None
+
+
+def _page_of(source: Dict):
+    return (source.get("slide"), source.get("page"))
 
 
 def candidate_from_item(item: Dict, structure: Dict, deck: Dict, model_type: Optional[str], fiscal_year_end: int) -> Dict:

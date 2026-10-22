@@ -56,7 +56,6 @@ SENTENCES = (
 @pytest.mark.parametrize("sentence", SENTENCES)
 def test_a_a_sentence_near_a_figure_gives_it_no_year(sentence):
     got = found([(50, 560, 20, TITLE), (50, 520, 12, sentence), BAR])
-    assert [c["value"] for c in got] == [5300000]
     assert dated(got) == {5300000: (None, None)}, dated(got)
 
 
@@ -119,12 +118,14 @@ def test_b_a_rules_read_figure_with_the_value_of_a_panel_read_row_on_its_page_is
     assert len(got) == 3
 
 
-def test_b_an_unrelated_figure_or_another_page_is_not_merged():
+def test_b_a_figure_with_another_value_or_on_another_page_is_not_merged():
     deck, rows = rules_rows()
-    rows[0]["value"], rows[1]["value"] = 5300001, 5300000
-    rows[1]["sources"] = [{**rows[1]["sources"][0], "page": 9}]
+    rows[2]["sources"] = [{**rows[2]["sources"][0], "page": 9}]           # the 5.3MM figure of the parser sits on page 9
     five = [c for c in read_panel(rows, deck) if c["value"] == 5300000]
-    assert len(five) >= 2 and {c["target_date"] for c in five} >= {"2024"}
+    assert sorted(c["target_date"] for c in five) == ["2022", "2024"]
+    deck, rows = rules_rows()
+    rows[2]["value"] = 5300001
+    assert len(read_panel(rows, deck)) == 4
 
 
 def test_b_a_row_the_analyst_already_decided_is_left_alone():
@@ -151,9 +152,16 @@ def test_c_two_figures_over_three_labels_take_the_labels_of_their_places():
     assert dated(got) == {1480000: ("2022", "2022"), 5300000: ("2024", "2024")}, dated(got)
 
 
-def test_c_a_figure_between_two_labels_takes_none():
-    assert dated(found([(50, 560, 20, TITLE), (305, 380, 12, "€5.3MM")] + [(150, 340, 12, "2022"), (450, 340, 12, "2024")])) \
-        == {5300000: (None, None)}
+def test_c_a_figure_exactly_between_two_labels_takes_none():
+    """"5.3M" and the labels are four characters wide, so they share a width and x=300 is the middle of 100 and 500."""
+    axis = [(100, 340, 12, "2022"), (500, 340, 12, "2024")]
+    assert dated(found([(50, 560, 20, "Revenue forecast"), (300, 380, 12, "5.3M")] + axis)) == {5300000: (None, None)}
+    assert dated(found([(50, 560, 20, "Revenue forecast"), (320, 380, 12, "5.3M")] + axis)) == {5300000: ("2024", "2024")}
+
+
+def test_c_a_figure_more_than_half_a_spacing_from_its_nearest_label_takes_none():
+    """Left of the first label by a spacing's two thirds: inside the axis' reach, too far from 2022 to be its bar."""
+    assert dated(found([(50, 560, 20, TITLE), (30, 380, 12, "€5.3MM")] + AXIS)) == {5300000: (None, None)}
 
 
 def test_c_a_figure_far_outside_the_axis_takes_none():
@@ -163,3 +171,16 @@ def test_c_a_figure_far_outside_the_axis_takes_none():
 def test_c_two_figures_nearest_the_same_label_take_none():
     got = found([(50, 560, 20, TITLE), (405, 380, 12, "€5.3MM"), (392, 400, 12, "€4.9MM")] + AXIS)
     assert set(dated(got).values()) == {(None, None)}, dated(got)
+
+
+# ---------------------------------------------------------------------------
+# The ten test decks: the four rows that took a year from a sentence now have none
+# ---------------------------------------------------------------------------
+def test_the_four_figures_of_02_moz_that_took_a_year_from_a_sentence_have_none():
+    from test_deck_parser import DECKS
+    from app.decks import parser
+    got = claims.detect_candidates(parser.parse_deck((DECKS / "02-moz.pdf").read_bytes(), "02-moz.pdf")["blocks"], "02-moz.pdf")
+    def page(c):
+        return c["sources"][0].get("slide") or c["sources"][0].get("page")
+    by = {(page(c), c["claim_type"], c["value"]): c["target_date"] for c in got}
+    assert [by[k] for k in ((2, "sales", 500000), (3, "customers", 10000), (3, "unknown", 1200000), (3, "gross_margin", 83))] == [None] * 4

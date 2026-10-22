@@ -58,6 +58,8 @@ from datetime import date
 from math import floor, hypot, log10
 from typing import Dict, Iterable, List, Optional, Tuple
 
+from app.decks.parser import _WRAP_WORDS
+
 SNIPPET_MAX = 300
 # How far a figure looks for a label or a date by position, as a share of the slide or page.
 REACH = 0.25
@@ -728,12 +730,45 @@ def _borrow_keyword(texts: Iterable[str], nearest: bool = True) -> Optional[Tupl
     return None
 
 
-def _borrow_date(texts: Iterable[str]) -> Optional[Tuple[str, str, str]]:
-    """(date, text, the date as stated): the first month or quarter in the texts, else the first year."""
+# A line that says something instead of naming something (issue #154): a subject pronoun or an auxiliary verb, or a closing stop.
+_SENTENCE_WORDS = frozenset("""i we you they he she it is are was were be been am will would can could shall should may might must has have
+had do does did""".split())
+_SENTENCE_END = re.compile(r"[.;,!?][\"'”’)\]]*$")
+
+
+def _is_sentence(line: str) -> bool:
+    """A sentence is no date source (issue #154): a line longer than a heading (HEADING_MAX), with a subject pronoun or an auxiliary
+    verb ("IN 2022 WE FOCUS ON GROWTH OF ARPA"), or ending on a stop. A year comes only from the figure's own text, its label, a heading or
+    an axis label."""
+    line = line.strip()
+    return len(line) > HEADING_MAX or bool(_SENTENCE_END.search(line)) \
+        or any(w in _SENTENCE_WORDS for w in re.findall(r"[^\W\d_]+", line.lower()))
+
+
+def _date_lines(text: str) -> List[str]:
+    """The parts of a nearby text that may give a date: the text itself when it fits a heading (a wrapped heading is one), else its
+    lines that are no sentence and no wrapped part of one (a line after one that ends on "of" or a comma, or ending on "in")."""
+    lines = getattr(text, "lines", None)
+    if not lines or len(lines) < 2 or len(text) <= HEADING_MAX:
+        return [] if _is_sentence(str(text)) else [str(text)]
+    out, wrapped = [], False
+    for line in lines:
+        words = re.findall(r"[^\W_]+|,", line.lower())
+        if not (wrapped or _is_sentence(line) or words and words[-1] in _WRAP_WORDS | {","}):
+            out.append(line)
+        wrapped = bool(words) and (words[-1] in _WRAP_WORDS or words[-1] == ",")
+    return out
+
+
+def _borrow_date(texts: Iterable[str], nearby: bool = False) -> Optional[Tuple[str, str, str]]:
+    """(date, text, the date as stated): the first month or quarter in the texts, else the first year. A sentence gives none
+    (issue #154); `nearby` marks texts found around the figure, which are checked for it. A column header, a box period and a bar label are
+    the figure's own and are not."""
     texts = list(texts)
+    parts = [(part, text) for text in texts for part in (_date_lines(text) if nearby else [text])]
     for wanted in (("quarter", "half", "month"), ("year",)):
-        for text in texts:
-            found = [d for d in find_dates(text) if d["kind"] in wanted]
+        for part, text in parts:
+            found = [d for d in find_dates(part) if d["kind"] in wanted]
             if found:
                 return found[0]["date"], text, found[0]["text"]
     return None
@@ -874,7 +909,7 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
             date = None if own_date else _borrow_date(nearby) or _borrow_date([box_period] if box_period else []) \
                 or _borrow_date([bar_label] if bar_label else [])
             stated = bool(own_date or date)
-            date = date or (None if own_date else _borrow_date(context))
+            date = date or (None if own_date else _borrow_date(context, nearby=True))
         else:
             # The header stack states the column's period, or says it has none (a month or quarter
             # with no year above it, a relative column): never borrowed from anywhere else.
@@ -919,7 +954,7 @@ def line_candidates(line: str, refs: Iterable, context: Iterable[str] = (), head
         family = UNKNOWN if far and far[0] in _MILESTONES else None
     if family not in _MILESTONES and family != UNKNOWN:
         return []
-    date = _borrow_date(context)
+    date = _borrow_date(context, nearby=True)
     if not date:
         return []
     # "Positive EBITDA": a direction and no figure, shown as such and never tested against a number.
@@ -1083,8 +1118,9 @@ def _value_line(text: str) -> bool:
 def _bar_places(members: List[Dict], labels: List[Dict], rows: List[List[Dict]], skip: set) -> Dict[int, str]:
     """id(unit) -> the year label of the figure's place (issue #148): the figures above one row of year labels (those whose nearest row
     below them it is, and that stand between its first and last label, a label's spacing beyond) are as many as the row's labels, and
-    the k-th figure from the left takes the k-th label. Only a line that is a figure and nothing else counts (_value_line): a roadmap's
-    sentences ("layer-1 to layer-2") over its dates are no bars. Any other count: none takes a label by place."""
+    the k-th figure from the left takes the k-th label; with any other count a figure takes the label nearest to it, within half a spacing and alone
+    on it. Only a line that is a figure and nothing else counts (_value_line): a roadmap's
+    sentences ("layer-1 to layer-2") over its dates are no bars."""
     def centre(box):
         return (box[0] + box[2]) / 2
     axes = {}
@@ -1108,9 +1144,22 @@ def _bar_places(members: List[Dict], labels: List[Dict], rows: List[List[Dict]],
     out = {}
     for key, bars in placed.items():
         row = axes[key]
-        if len(bars) == len(row) and len({round(centre(b["bbox"]), 4) for b in bars}) == len(bars):
-            for bar, label in zip(sorted(bars, key=lambda b: centre(b["bbox"])), row):
-                out[id(bar)] = label["text"]
+        if len(bars) == len(row):
+            if len({round(centre(b["bbox"]), 4) for b in bars}) == len(bars):
+                for bar, label in zip(sorted(bars, key=lambda b: centre(b["bbox"])), row):
+                    out[id(bar)] = label["text"]
+            continue
+        # Fewer or more figures than labels (a chart that writes the value on some bars only, issue #154): a figure takes the label nearest
+        # to it when that is less than half a label's spacing away and no other figure is nearer to the same label.
+        spacing = (centre(row[-1]["bbox"]) - centre(row[0]["bbox"])) / (len(row) - 1)
+        nearest = {}
+        for bar in bars:
+            first = min(row, key=lambda label: abs(centre(label["bbox"]) - centre(bar["bbox"])))
+            if abs(centre(first["bbox"]) - centre(bar["bbox"])) < spacing / 2:
+                nearest.setdefault(id(first), []).append(bar)
+        for label in row:
+            if len(nearest.get(id(label), ())) == 1:
+                out[id(nearest[id(label)][0])] = label["text"]
     return out
 
 
