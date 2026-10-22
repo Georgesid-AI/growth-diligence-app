@@ -39,25 +39,7 @@ COMPANY = "company claim"
 CHARS_PER_TOKEN = 2
 
 
-class RecordedAdapter:
-    """Replays the recorded page replies: a batch's reply holds the claims of every fixture whose match line is in the text sent
-    (one fixture per page). Token counts take CHARS_PER_TOKEN characters per token, as the consistency script's fake does."""
-
-    def __init__(self, fixtures):
-        self.fixtures = [f for f in fixtures if "match" in f]
-        self.calls = 0
-
-    def count_tokens(self, *, model, system, user_payload, json_schema):
-        sent = len(system or "") + len(user_payload) + (len(json.dumps(json_schema)) if json_schema else 0)
-        return sent // CHARS_PER_TOKEN
-
-    def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False):
-        self.calls += 1
-        sent = json.loads(user_payload)
-        claims = [c for f in self.fixtures if f["match"] in sent["text"] for c in f["claims"]]
-        text = json.dumps({"type": sent["type"], "claims": claims})
-        return text, self.count_tokens(model=model, system=system, user_payload=user_payload, json_schema=json_schema), \
-            len(text) // CHARS_PER_TOKEN
+RecordedAdapter = consistency_run.PageReplayAdapter       # one replay adapter for both scripts
 
 
 def fixtures():
