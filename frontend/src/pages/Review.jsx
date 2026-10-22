@@ -264,7 +264,7 @@ function ClaimsSection({ auditId, data, summary, reload }) {
   const asks = (c) => definitionOf(c).open;
   // An Other figure is never a task (claim-types-and-correction.md section 4): it is not listed here.
   const open = data.candidates.filter((c) => !isOther(c) && ((c.status === "pending" && !turnoverOf(c).open) || (c.status !== "rejected" && asks(c))));
-  const auto = data.candidates.filter((c) => c.auto_accepted && ["approved", "edited"].includes(c.status));
+  const auto = data.candidates.filter((c) => c.auto_accepted && c.status === "approved");
   const groups = [...new Set(open.map((c) => c.group))].sort((a, b) => a - b);
   const act = async (key, fn) => {
     setBusy(key);

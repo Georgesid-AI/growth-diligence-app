@@ -179,13 +179,20 @@ a share of the claim (`gap_normalised`); for a rate it is the gap in percentage 
   within-tolerance step accepts only rows within tolerance (Verified, not a beat, no check): a beat of 5% to 50% and a bigger
   beat answered Yes stop at the review screen.
 - Amended 2026-10-22 (George, issue #155, option c). The within-tolerance step runs in Run audit's claims stage only, on pending claims, with
-  the tolerance and the Verified test above (no second threshold). It also leaves to the analyst: a claim the analyst entered (Add claim) or
-  edited (a pending claim that carries `parsed`); a claim flagged as a deck inconsistency (`inconsistent_dates` or `inconsistencies` on the
+  the tolerance and the Verified test above (no second threshold). It also leaves to the analyst: a claim the analyst entered (Add claim), picked
+  from a deck line (Add from deck, origin `deck_analyst`; George, 2026-10-22) or edited (a pending claim that carries `parsed`); a claim flagged as a deck inconsistency (`inconsistent_dates` or `inconsistencies` on the
   candidate; the cross-deck check of integrity-coverage.md does not flag a claim); and a claim in a currency other than the audit's
   (`claimed_converted` set on its row). Any metric stays eligible. The step approves ("approved", never "edited") and sets `auto_accepted`;
   an edit of the claim clears it (the claim becomes Analyst-edited). The register row of a claim still approved, Verified, not a beat, with no
   check and in the audit currency carries `auto_approval`: "Auto-approved – matches revenue file (Δ x.x%)", Δ the gap as a share of the
   claim, one decimal ("Δ 0.5 pp" for a rate); otherwise null. Approve all touches pending claims only, so it skips an auto-approved one.
+- Amended 2026-10-22 (George, review of PR 157). (1) Any status the analyst sets (Reject, back to To review, Approve) clears `auto_accepted`, so a
+  later manual approval reads analyst. (2) An auto-approved claim (approved, `auto_accepted`) that no longer passes the within-tolerance test
+  after a re-run, a new file, an FX change or an as-of month change goes back to "To review" (pending, `auto_accepted` cleared) with `auto_note`
+  "No longer matches – was auto-approved", shown in the status cell. Tested with the register's own code at the end of every calculation and at
+  the start of the claims stage; with no results nothing is tested. A claim the analyst approved is never changed. A claim that later matches
+  again is approved on its own again and loses the note; any status the analyst sets clears it. (3) The review page's "claims within tolerance" and
+  the deck list's "(z auto)" both count approved claims with `auto_accepted`.
 - The baseline CSV (verdict-and-memo.md §5) downloads while a check is open, the row with an empty `evidence_label` and
   `definition_check` ask.
 - The register offers no "Set gate" button on a row with an open check; it has one again once the check is answered.

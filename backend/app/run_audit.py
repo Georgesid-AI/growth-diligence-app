@@ -73,7 +73,7 @@ def engine_stale(audit: dict, datasets: Iterable[dict]) -> bool:
 def never_on_its_own(candidate: dict) -> bool:
     """Issue #155 (George, 2026-10-22, claim-matching.md section 4.1): a claim Run audit leaves to the analyst however close it is: one the
     analyst entered or edited, and one flagged as a deck inconsistency. (A claim in another currency is read from its register row.)"""
-    return bool(candidate.get("origin") == "analyst" or "parsed" in candidate
+    return bool(candidate.get("origin") in ("analyst", "deck_analyst") or "parsed" in candidate
                 or candidate.get("inconsistent_dates") or candidate.get("inconsistencies"))
 
 
@@ -89,7 +89,7 @@ def within_tolerance_ids(rows: List[dict], candidate_ids: Iterable[str]) -> List
         if cid in wanted:
             labels.setdefault(cid, []).append(
                 r["evidence_label"] == "Verified" and not cm.is_beat(r) and r.get("definition_check") is None
-                and r.get("deck_reading") not in (cm.ANALYST_ENTERED, "edited") and r.get("claimed_converted") is None)
+                and r.get("deck_reading") not in (cm.ANALYST_ENTERED, cm.ADDED_FROM_DECK, "edited") and r.get("claimed_converted") is None)
     return [cid for cid, found in labels.items() if found and all(found)]
 
 

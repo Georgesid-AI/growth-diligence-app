@@ -81,3 +81,16 @@ test("the register shows an auto-approved row with the label 'auto' and the stat
   await act(async () => { root.unmount(); });
   host.remove();
 });
+
+/* Review of PR 157 (George, 2026-10-22): the deck list's "(z auto)" reads auto_accepted, the field the review page counts; a claim sent
+ * back to "To review" because it no longer matches carries the note. */
+test("the auto count reads auto_accepted on approved claims, and a claim sent back to review shows its note", () => {
+  const list = [
+    claim("a", { status: "approved", auto_accepted: true, auto_approval: null }),          // the text is gone (another currency): still auto
+    claim("b", { status: "approved", auto_accepted: false, auto_approval: TEXT }),         // no mark, no count
+    claim("c", { status: "pending", auto_note: "No longer matches – was auto-approved" }),
+  ];
+  expect(statusCounts(list).auto).toBe(1);
+  expect(statusText(list[2])).toBe("No longer matches – was auto-approved");
+  expect(statusText(claim("d"))).toBe("To review");
+});

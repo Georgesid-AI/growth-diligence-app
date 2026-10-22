@@ -415,7 +415,7 @@ export function statusCounts(candidates) {
   const out = { pending: 0, approved: 0, rejected: 0, edited: 0, auto: 0 };
   (candidates || []).filter((c) => !isOther(c)).forEach((c) => {
     out[c.status] = (out[c.status] || 0) + 1;
-    if (c.status === "approved" && c.auto_approval) out.auto += 1;
+    if (c.status === "approved" && c.auto_accepted) out.auto += 1;      // the field the review page counts
   });
   return out;
 }
@@ -424,5 +424,6 @@ export function statusCounts(candidates) {
 export const countLine = (counts) =>
   `${counts.pending} to review · ${counts.approved}${counts.auto > 0 ? ` approved (${counts.auto} auto)` : " approved"} · ${counts.edited} edited · ${counts.rejected} rejected`;
 
-/** The status cell of a claim: "Auto-approved – matches revenue file (Δ x.x%)" for a claim Run audit approved on its own, else the status. */
-export const statusText = (c) => (c.status === "approved" && c.auto_approval) || STATUS_LABELS[c.status] || c.status;
+/** The status cell of a claim: "Auto-approved – matches revenue file (Δ x.x%)" for a claim Run audit approved on its own, else the status; a claim sent back to review because it no longer matches carries its note ("No longer matches – was auto-approved"). */
+export const statusText = (c) =>
+  (c.status === "approved" && c.auto_approval) || (c.status === "pending" && c.auto_note) || STATUS_LABELS[c.status] || c.status;

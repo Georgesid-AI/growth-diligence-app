@@ -9,6 +9,13 @@ b a claim approved on its own reads "Auto-approved – matches revenue file (Δ 
 c an edit takes the mark away; a claim that stops matching loses it
 d the deck list carries the status text and the citation
 e the baseline CSV and the memo's register show it as "auto"
+
+Review of PR 157 (George, 2026-10-22), one failing test per point:
+
+f a claim the analyst added from a deck line ("Add from deck", origin deck_analyst) is never approved on its own, on any path
+g a status the analyst sets (reject, back to pending, approve) clears the mark: a later manual approval reads analyst
+h an auto-approved claim that stops matching (re-run, as-of month, FX) goes back to "To review" with a note; a manual approval is never changed
+i the review page's within-tolerance count and the deck list's "(z auto)" count read the same field
 """
 import copy
 
@@ -158,3 +165,79 @@ def test_the_baseline_csv_and_the_memo_register_show_auto(run_api):
     assert approval[f"#{rows[0]['rank']}"] == (rows[0]["evidence_label"], cm.AUTO_LABEL)
     assert {v[1] for k, v in approval.items() if k != f"#{rows[0]['rank']}"} == {cm.ANALYST_LABEL}
     assert "(auto)" not in appendix
+
+
+# --- f. Add from deck (George, 2026-10-22) ------------------------------------------------------------------------------------------
+def test_a_claim_added_from_a_deck_line_is_not_approved_on_its_own_on_any_path(run_api):
+    plain = {"claim_id": "a", "evidence_label": "Verified", "reason": "within ±5% of the claim", "definition_check": None,
+             "deck_reading": cm.ADDED_FROM_DECK, "claimed_converted": None}
+    assert run_audit.within_tolerance_ids([plain], ["a"]) == [], "the row test"
+    assert run_audit.never_on_its_own({"origin": "deck_analyst"}), "the candidate test"
+    prepared(run_api, claim("plain"), claim("picked", origin="deck_analyst"))
+    stage(run_api, "claims")
+    got = stored(run_api)
+    assert got["plain"]["status"] == "approved" and got["picked"]["status"] == "pending" and not got["picked"].get("auto_accepted")
+
+
+# --- g. a status the analyst sets clears the mark -------------------------------------------------------------------------------------
+@pytest.mark.parametrize("path", [("rejected", "approved"), ("rejected", "pending", "approved"), ("pending", "approved")])
+def test_rejecting_or_unapproving_an_auto_approved_claim_clears_the_mark_so_a_later_approval_reads_analyst(run_api, path):
+    prepared(run_api, claim("plain"))
+    stage(run_api, "claims")
+    for status in path:
+        r = run_api.put(f"/api/audits/{AUDIT}/decks/candidates/plain", json={"status": status})
+        assert r.status_code == 200, r.text
+    assert stored(run_api)["plain"]["status"] == "approved" and not stored(run_api)["plain"].get("auto_accepted")
+    listed = {c["id"]: c for c in run_api.get(f"/api/audits/{AUDIT}/decks").json()["candidates"]}
+    assert not listed["plain"]["auto_approval"]
+    assert review(run_api)["claims"]["auto_accepted"] == 0
+
+
+# --- h. a claim that stops matching goes back to review ----------------------------------------------------------------------------------
+NOTE = "No longer matches – was auto-approved"
+
+
+def test_an_auto_approved_claim_that_stops_matching_after_an_as_of_change_goes_back_to_review_with_a_note(run_api):
+    prepared(run_api, claim("auto"), claim("manual"))
+    stage(run_api, "claims")
+    for status in ("rejected", "approved"):             # the analyst's own approval of the second claim
+        assert run_api.put(f"/api/audits/{AUDIT}/decks/candidates/manual", json={"status": status}).status_code == 200
+    assert stored(run_api)["auto"]["auto_accepted"] is True
+    r = run_api.put(f"/api/audits/{AUDIT}", json={"as_of_month": "2023-12"})       # Feb 2024 is now after the as-of month: a forecast
+    assert r.status_code == 200, r.text
+    got = stored(run_api)
+    assert got["auto"]["status"] == "pending" and not got["auto"].get("auto_accepted") and got["auto"]["auto_note"] == NOTE
+    assert got["manual"]["status"] == "approved", "a manually approved claim is never changed"
+    listed = {c["id"]: c for c in run_api.get(f"/api/audits/{AUDIT}/decks").json()["candidates"]}
+    assert listed["auto"]["auto_note"] == NOTE and not listed["manual"].get("auto_note")
+    assert review(run_api)["claims"]["auto_accepted"] == 0
+
+
+def test_the_claims_stage_sends_back_an_auto_approved_claim_that_no_longer_matches_and_a_later_match_approves_it_again(run_api):
+    prepared(run_api, claim("auto"))
+    stage(run_api, "claims")
+    stored(run_api)["auto"]["value"] = 300000            # the file now says otherwise (a new revenue file, a corrected claim base)
+    stage(run_api, "claims")
+    got = stored(run_api)["auto"]
+    assert got["status"] == "pending" and got["auto_note"] == NOTE
+    got["value"] = 200000
+    stage(run_api, "claims")
+    again = stored(run_api)["auto"]
+    assert again["status"] == "approved" and again["auto_accepted"] is True and not again.get("auto_note")
+
+
+def test_an_auto_approved_claim_that_still_matches_stays_approved_after_a_re_run(run_api):
+    prepared(run_api, claim("auto"))
+    stage(run_api, "claims")
+    stage(run_api, "engine")
+    stage(run_api, "claims")
+    assert stored(run_api)["auto"]["status"] == "approved" and stored(run_api)["auto"]["auto_accepted"] is True
+
+
+# --- i. one field for both counts --------------------------------------------------------------------------------------------------------
+def test_the_review_count_and_the_deck_list_count_read_the_same_field(run_api):
+    prepared(run_api, claim("auto"), claim("old", status="edited", auto_accepted=True, parsed={"value": 200000}))
+    stage(run_api, "claims")
+    listed = run_api.get(f"/api/audits/{AUDIT}/decks").json()["candidates"]
+    on_list = sorted(c["id"] for c in listed if c["status"] == "approved" and c.get("auto_accepted"))
+    assert review(run_api)["claims"]["auto_accepted_ids"] == on_list == ["auto"]
