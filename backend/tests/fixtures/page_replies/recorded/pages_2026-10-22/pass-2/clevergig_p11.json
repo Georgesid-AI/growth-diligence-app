@@ -1,0 +1,46 @@
+{
+ "file": "04-clevergig.docx",
+ "page": 11,
+ "match": "p11r1c1: Netherlands and expand to the UK as of 2020",
+ "pass": 2,
+ "prompt_version": "v1",
+ "model": "claude-sonnet-5-5",
+ "claims": [
+  {
+   "metric": "revenue",
+   "value": 5000000.0,
+   "value_high": null,
+   "unit": "EUR",
+   "unit_other": null,
+   "period": "2024",
+   "actual_or_forecast": "forecast",
+   "value_cell": "p11r3c1",
+   "label_cell": "p11r3c1",
+   "period_cell": null
+  },
+  {
+   "metric": "customers",
+   "value": 1500.0,
+   "value_high": null,
+   "unit": "count",
+   "unit_other": null,
+   "period": "2024",
+   "actual_or_forecast": "forecast",
+   "value_cell": "p11r3c1",
+   "label_cell": "p11r3c1",
+   "period_cell": null
+  },
+  {
+   "metric": "people",
+   "value": 20.0,
+   "value_high": null,
+   "unit": "count",
+   "unit_other": null,
+   "period": "2020",
+   "actual_or_forecast": "forecast",
+   "value_cell": "p11r5c1",
+   "label_cell": "p11r5c1",
+   "period_cell": null
+  }
+ ]
+}

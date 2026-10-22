@@ -1,0 +1,22 @@
+{
+ "file": "01-front-b.pptx",
+ "page": 18,
+ "match": "p18r1c1 title: As a product, we are in a unique position",
+ "pass": 3,
+ "prompt_version": "v1",
+ "model": "claude-sonnet-5-5",
+ "claims": [
+  {
+   "metric": "retention",
+   "value": 64.0,
+   "value_high": null,
+   "unit": "%",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p18r5c1",
+   "label_cell": "p18r6c1",
+   "period_cell": null
+  }
+ ]
+}

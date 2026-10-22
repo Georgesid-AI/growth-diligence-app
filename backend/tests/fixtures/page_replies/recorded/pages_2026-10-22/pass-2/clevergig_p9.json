@@ -1,0 +1,34 @@
+{
+ "file": "04-clevergig.docx",
+ "page": 9,
+ "match": "p9r1c1: Europe alone provides tons of opportunities. Over 50K agencies represent a TAM of \u20ac200M in ARR",
+ "pass": 2,
+ "prompt_version": "v1",
+ "model": "claude-sonnet-5-5",
+ "claims": [
+  {
+   "metric": "market",
+   "value": 200000000.0,
+   "value_high": null,
+   "unit": "EUR",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p9r1c1",
+   "label_cell": "p9r1c1",
+   "period_cell": null
+  },
+  {
+   "metric": "other",
+   "value": 50000.0,
+   "value_high": null,
+   "unit": "count",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p9r1c1",
+   "label_cell": "p9r1c1",
+   "period_cell": null
+  }
+ ]
+}

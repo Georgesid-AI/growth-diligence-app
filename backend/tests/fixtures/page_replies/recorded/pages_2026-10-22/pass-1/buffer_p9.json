@@ -1,0 +1,22 @@
+{
+ "file": "03-buffer.pptx",
+ "page": 9,
+ "match": "p9r1c1 title: The effect of Buffering",
+ "pass": 1,
+ "prompt_version": "v1",
+ "model": "claude-sonnet-5-5",
+ "claims": [
+  {
+   "metric": "other",
+   "value": 200.0,
+   "value_high": null,
+   "unit": "%",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p9r2c1",
+   "label_cell": "p9r2c1",
+   "period_cell": null
+  }
+ ]
+}

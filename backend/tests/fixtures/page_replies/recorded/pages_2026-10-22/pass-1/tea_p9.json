@@ -1,0 +1,22 @@
+{
+ "file": "10-tea.pdf",
+ "page": 9,
+ "match": "p9r1c1: TEA Project's",
+ "pass": 1,
+ "prompt_version": "v1",
+ "model": "claude-sonnet-5-5",
+ "claims": [
+  {
+   "metric": "other",
+   "value": 100000000.0,
+   "value_high": null,
+   "unit": "count",
+   "unit_other": null,
+   "period": null,
+   "actual_or_forecast": "unknown",
+   "value_cell": "p9r3c3",
+   "label_cell": "p9r3c3",
+   "period_cell": null
+  }
+ ]
+}
