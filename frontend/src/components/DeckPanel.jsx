@@ -10,7 +10,7 @@ import { addClaim, addFromDeck, answerTurnover, approveAll, getDeckPage, getDeck
 import { describeRequestError } from "@/lib/requestError";
 import {
   ACQUISITION_CHANNELS, ADD_CLAIM_PLATFORM_LABEL, ALL_DECKS, APPROVE_ALL_LABEL, CLAIM_GROUPS, CLAIM_TYPES, approveAllToast, toReview, CLAIM_UNITS, COUNT_UNIT_HINT, COUNT_TYPES, COUNT_UNIT, FX_SETTINGS_ANCHOR, FX_SETTINGS_LABEL, conversionHover, inconsistencyText, MIXED_SLIDE_LABEL, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, ADD_CLAIM_LABEL, ADD_CLAIM_NEEDS_SOURCE, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, newClaimPayload, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
-  DECK_SCOPE_CANNOT_LEAD, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, DECK_TYPE_REFUSED, isDeckFile, CONFIDENCE_HOVER, DECK_UPLOAD_HELP, INCONSISTENCY_LABEL, PLACEHOLDER, VERIFIED_LABEL, badgeText, claimPeriod, claimSections, claimValue, deckRunLog,
+  DECK_SCOPE_CANNOT_LEAD, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, DECK_TYPE_REFUSED, isDeckFile, CONFIDENCE_HOVER, DECK_UPLOAD_HELP, INCONSISTENCY_LABEL, PLACEHOLDER, VERIFIED_LABEL, badgeText, claimPeriod, claimSections, claimValue, deckReadLine, deckRunLog,
   confidenceText, countLine, readingChoices, rowEdit, sourceRef, statusCounts, statusText, typeLabel,
   ADD_FROM_DECK_LABEL, ADDED_FROM_DECK_TAG, DEFAULT_EDIT_REASON, EDIT_REASONS, EDIT_TYPES, FIGURE_TYPE_OPTIONS, GROWTH_BASIS_OPTIONS, GROWTH_TYPES,
   OTHER_GROUP, POPULATION_OPTIONS, VIEW_PAGE_LABEL, claimFields, editLogText, isOther,
@@ -109,7 +109,8 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
     setLine(line.id, { state: "uploading", text: "uploading…" });
     try {
       const res = await uploadDeck(auditId, line.file);
-      const summary = `${res.pages} ${res.page_unit}s read · ${res.candidates} candidate claims`;
+      // The page read has its own line (chat-upload.md section 28); the former rules read still lists candidates at upload.
+      const summary = res.ai_status ? deckReadLine(res) : `${res.pages} ${res.page_unit}s parsed · ${res.candidates} candidate claims`;
       toast.success(`${res.file}: ${summary}`);
       setLine(line.id, { state: "done", text: `done · ${summary}` });
       await load(res.deck_id);

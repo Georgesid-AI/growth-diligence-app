@@ -340,6 +340,28 @@ export const DECK_AI_STATUS = {
 export const PROMPT_MISSING_LINE = "AI reading not run – deck_reading prompt missing in prompt store";
 export const CONSENT_OFF_LINE = "Deck not read. AI-assisted reading is off for this audit, so no claims were extracted. Tick consent on the Upload page to read it, or use Add claim.";
 
+/** The AI read's status in the deck line (George, 2026-10-23, chat-upload.md section 28): "waiting for revenue file", "queued", "page n of N"
+ *  while the pages go, "done, n read, r rejected" after. It counts pages the model was sent and answered (read) or refused (rejected),
+ *  never the pages of the file; a deck with consent off says so. */
+export function aiReadStatus(deck) {
+  switch (deck?.ai_status) {
+    case "waiting": return DECK_AI_STATUS.waiting;
+    case "reading": {
+      const p = deck.read_progress;
+      return p && p.total ? `page ${Math.min(p.done + 1, p.total)} of ${p.total}` : "queued";
+    }
+    case "python_only": return "not run (AI-assisted reading is off)";
+    case "read": case "not_read": case "stopped": case "prompt_missing":
+      return `done, ${deck.pages_read || 0} read, ${deck.pages_rejected || 0} rejected`;
+    default: return deck?.ai_status || "";
+  }
+}
+
+/** "N pages parsed · M with figures · AI read: <status>". The page count is the file's, parsed, never "read". */
+export function deckReadLine(deck) {
+  return `${deck.pages} ${deck.page_unit || "page"}s parsed · ${deck.figure_pages} with figures · AI read: ${aiReadStatus(deck)}`;
+}
+
 /** ["AI reading: read", "Sent to the model: slides 4, 7, 12"] for one deck (no cost: usage-and-allowance.md section 9); the stop
  *  message when the audit reached its token limit; how many of the model's periods Python replaced
  *  with the one its header cells give. */
@@ -348,7 +370,7 @@ export function deckRunLog(deck) {
   // The server sends the S26 line with a deck the page read left unread; under DECK_PIPELINE=rules the rules read still lists claims, so the old line stands (L5).
   if (deck.ai_status === "python_only" && deck.ai_message) return [deck.ai_message];
   if (deck.ai_status === "prompt_missing") return [deck.ai_message || PROMPT_MISSING_LINE];
-  const lines = [`AI reading: ${DECK_AI_STATUS[deck.ai_status] || deck.ai_status}`];
+  const lines = [deck.figure_pages != null && deck.pages ? deckReadLine(deck) : `AI reading: ${DECK_AI_STATUS[deck.ai_status] || deck.ai_status}`];
   if (deck.ai_status === "stopped" && deck.ai_message) lines.push(deck.ai_message);
   if (deck.sent_pages?.length) lines.push(`Sent to the model: ${deck.page_unit || "slide"}s ${deck.sent_pages.join(", ")}`);
   if (deck.periods_corrected) lines.push(`Periods corrected from the header cells: ${deck.periods_corrected}`);

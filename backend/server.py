@@ -35,6 +35,7 @@ from app import ic_memo
 from app import integrity as integrity_mod
 from app import verdict as verdict_mod
 from app import decks
+from app.decks import pages as deck_pages
 from app import structures
 from app.structures import sheet as sheet_mod
 from app import column_rules as cr
@@ -1309,6 +1310,8 @@ async def _commit_mapping(audit_id: str, dtype: str, background: Optional[Backgr
             return None
         version = await _write_sheet_version(audit_id, dtype, ds)
         await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype}, {"$set": {"mapped_at": usage_mod.now()}})
+        if dtype in ("revenue", "pnl") and background is not None:
+            background.add_task(structures.process_waiting_decks_safely, db, audit_id)
         return version
     states = ds.get("columns_state")
     if states is None or cr.pending_count(states):
@@ -1317,7 +1320,7 @@ async def _commit_mapping(audit_id: str, dtype: str, background: Optional[Backgr
     await db.datasets.update_one({"audit_id": audit_id, "dtype": dtype},
                                  {"$set": {"mapped_at": usage_mod.now(), "mapping": cr.mapping_of(dtype, states)}})
     await _add_customers(audit_id, {**ds, "mapping": cr.mapping_of(dtype, states)})
-    if dtype == "revenue" and background is not None:
+    if dtype in ("revenue", "pnl") and background is not None:
         background.add_task(structures.process_waiting_decks_safely, db, audit_id)
     return version
 
@@ -1452,6 +1455,7 @@ async def decide_recognition(audit_id: str, dtype: str, body: RecognitionDecisio
     if body.part == "currency" and dtype == "revenue" and not ds.get("recognition_only") and not (ds.get("mapping") or {}).get("currency"):
         await _confirm_currency_column(audit_id, ds, decisions["currency"], background)
     await _settle_recognition(audit_id, dtype, background)
+    background.add_task(structures.process_waiting_decks_safely, db, audit_id)     # a confirmed P&L is the revenue file too (the gate re-checks)
     await _mark_stale_and_maybe_recompute(audit_id)
     logger.info("recognition: run_id=%s dtype=%s action=%s part=%s", audit_id, dtype, body.action, body.part)
     stored = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype}, {"_id": 0, "rows": 0})
@@ -1758,7 +1762,7 @@ async def save_mapping(audit_id: str, dtype: str, payload: MappingPayload, backg
                         for f, c in payload.mapping.items() if c]})
         await _add_customers(audit_id, {**ds, "mapping": payload.mapping})
         await _mark_stale_and_maybe_recompute(audit_id)
-        if dtype == "revenue":
+        if dtype in ("revenue", "pnl"):
             background.add_task(structures.process_waiting_decks_safely, db, audit_id)
         return {"ok": True}
     decisions = _decisions_from_mapping(ds["columns_state"], payload.mapping)
@@ -1847,6 +1851,17 @@ def _claim_key(c: dict) -> tuple:
                  else found.get(k) for k in _EDITABLE) + (c.get("channel"),)
 
 
+async def _upload_ai_status(audit_id: str) -> Optional[str]:
+    """The AI read's status a deck starts with, for the upload line: waiting (no revenue file yet), reading (queued) or python_only (consent
+    off); None under the former rules read, which has no page read to report. The read itself runs after the response."""
+    if structures.deck_pipeline() != "ai":
+        return None
+    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "structure_reading_consent": 1})
+    if (audit or {}).get("structure_reading_consent") is not True:
+        return structures.PYTHON_ONLY
+    return "reading" if await structures.revenue_ready(db, audit_id) else structures.WAITING
+
+
 @api.post("/audits/{audit_id}/decks/upload")
 async def upload_deck(audit_id: str, background: BackgroundTasks, file: UploadFile = File(...)):
     audit = await db.audits.find_one({"id": audit_id}, {"id": 1, "fiscal_year_end": 1})
@@ -1863,6 +1878,8 @@ async def upload_deck(audit_id: str, background: BackgroundTasks, file: UploadFi
     candidates = deck_claims.detect_candidates(deck["blocks"], deck["file"], _fiscal_year_end(audit)) \
         if structures.deck_pipeline() == "rules" else []
     deck_id = str(uuid.uuid4())
+    # The pages with a figure written in digits: the ones the AI read may send (the panel says "M with figures", never "pages read").
+    figure_pages = len(deck_pages.sendable(deck_pages.page_grids(deck["blocks"]))) if structures.deck_pipeline() == "ai" else None
     # A file uploaded again replaces its earlier parse and its unreviewed candidates. Approved,
     # edited and rejected candidates stay on record; the same claim found again is not re-added.
     where = {"audit_id": audit_id, "file": deck["file"]}
@@ -1877,7 +1894,8 @@ async def upload_deck(audit_id: str, background: BackgroundTasks, file: UploadFi
     await db[decks.TEXT_COLLECTION].insert_one({
         "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"], "format": deck["format"],
         "page_unit": deck["page_unit"], "pages": deck["pages"], "blocks": deck["blocks"],
-        "structures": deck["structures"], "ai_status": "reading", "uploaded_at": datetime.now(timezone.utc).isoformat()})
+        "structures": deck["structures"], "ai_status": "reading", "uploaded_at": datetime.now(timezone.utc).isoformat(),
+        "figure_pages": figure_pages})
     for order, c in enumerate(candidates):
         await db[decks.CANDIDATES_COLLECTION].insert_one(
             {**c, "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"], "id": str(uuid.uuid4()),
@@ -1887,7 +1905,8 @@ async def upload_deck(audit_id: str, background: BackgroundTasks, file: UploadFi
     await allowance_mod.record_for_audit(db, audit_id, files=1)
     background.add_task(structures.process_deck_safely, db, audit_id, deck_id)
     return {"deck_id": deck_id, "file": deck["file"], "format": deck["format"], "page_unit": deck["page_unit"],
-            "pages": deck["pages"], "candidates": len(candidates), "kept_reviewed": len(reviewed),
+            "pages": deck["pages"], "figure_pages": figure_pages, "candidates": len(candidates),
+            "ai_status": await _upload_ai_status(audit_id), "kept_reviewed": len(reviewed),
             "structures": len(deck["structures"])}
 
 
@@ -1899,12 +1918,17 @@ async def list_deck_candidates(audit_id: str):
     if not audit:
         raise HTTPException(404, "Audit not found")
     deck_fields = {"_id": 0, "deck_id": 1, "file": 1, "format": 1, "page_unit": 1, "pages": 1, "uploaded_at": 1,
-                   "ai_status": 1, "ai_message": 1, "sent": 1, "periods_corrected": 1}
+                   "ai_status": 1, "ai_message": 1, "sent": 1, "periods_corrected": 1, "figure_pages": 1, "read_progress": 1,
+                   "page_reads": 1}
     found = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, deck_fields).to_list(100)
     found.sort(key=lambda d: d.get("uploaded_at") or "", reverse=True)
     for d in found:
         # The deck panel's run log: status and the pages sent to the model (no text, no cost: usage-and-allowance.md section 9).
-        d["sent_pages"] = sorted({s["page"] for s in d.pop("sent", None) or [] if s.get("page") is not None})
+        d["sent_pages"] = sorted({p for s in d.pop("sent", None) or [] for p in ([s["page"]] if s.get("page") is not None else s.get("pages") or [])})
+        # The panel's "AI read" counts (George, 2026-10-23): pages read and pages whose reply was rejected or not read; counts only.
+        reads = d.pop("page_reads", None) or []
+        d["pages_read"] = sum(len(r.get("pages") or []) for r in reads if r.get("status") == "read")
+        d["pages_rejected"] = sum(len(r.get("pages") or []) for r in reads if r.get("status") not in ("read", "stopped"))
     rank = {d["deck_id"]: i for i, d in enumerate(found)}
     candidates = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0}).to_list(10000)
     fx = await _fx(audit_id, audit)
@@ -2392,7 +2416,8 @@ async def run_stage(audit_id: str, stage: str, background: BackgroundTasks):
             else:
                 # A deck the page reader could not read for want of the deck_reading prompt is read again, with no new upload, once the
                 # store holds it (George, 2026-10-23, review of PR 164, M6).
-                for deck_id in await structures.queue_prompt_missing(db, audit_id):
+                # A deck still waiting for the revenue file is read again then too, once the audit has it (George, 2026-10-23, decision 2c).
+                for deck_id in await structures.queue_prompt_missing(db, audit_id) + await structures.queue_waiting(db, audit_id):
                     background.add_task(structures.process_deck_safely, db, audit_id, deck_id)
                 deck_docs = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, {"_id": 0, "ai_status": 1}).to_list(100)
                 if not deck_docs:
@@ -2851,16 +2876,23 @@ async def _is_mapped(audit_id: str, audit: dict, ds: dict) -> bool:
     return bool(ds.get("mapped_at"))
 
 
-async def _revenue_recognition_settled(database, audit_id: str) -> Optional[bool]:
-    """The deck-reading gate's re-check: `_is_mapped` on the stored revenue file, with the audit as it stands now."""
+async def _revenue_satisfied(database, audit_id: str) -> Optional[bool]:
+    """The deck-reading gate's check, the blocker banner's own (`_blocker_list`): the audit has its revenue file when a revenue file (not
+    one read as claims, with a monthly series) is mapped by `_is_mapped` (a column mapping, a statement's line map or a recognition with
+    no choice left), or, with none, a P&L confirmed with two or more periods. None: another database, or no audit."""
     if database is not db:
         return None
-    ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"}, {"_id": 0, "rows": 0})
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
-    return await _is_mapped(audit_id, audit, ds) if ds and audit else None
+    if not audit:
+        return None
+    ds = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"}, {"_id": 0, "rows": 0})
+    if ds and ds.get("file_hash") not in await _claims_files(audit_id) and await _is_revenue_file(audit_id, audit, ds):
+        return await _is_mapped(audit_id, audit, ds)
+    pnl = await db.datasets.find_one({"audit_id": audit_id, "dtype": "pnl"}, {"_id": 0, "rows": 0})
+    return bool(pnl and rec.pnl_confirmed(await _recognition_of(audit_id, audit, pnl)))
 
 
-structures.recognition_settled = _revenue_recognition_settled
+structures.revenue_satisfied = _revenue_satisfied
 
 
 async def _blocker_list(audit_id: str, audit: dict) -> list:

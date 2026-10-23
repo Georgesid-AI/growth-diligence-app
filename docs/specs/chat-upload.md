@@ -1180,6 +1180,20 @@ at upload); its run log is one line, word for word, in place of "AI reading: not
 AI-assisted reading is off for this audit, so no claims were extracted. Tick consent on the Upload page to read it, or use Add claim."
 Ticking consent reads the deck as §23 says.
 
+**When the page read starts, and the deck line (screen line S26e, George, 2026-10-23, follow-up of PR 164).** The revenue-file gate stays: no
+page goes before the audit has its revenue file, so no customer name goes out unmapped. The gate counts the revenue file as the blocker
+banner does (`structures.revenue_ready`, set by `server._revenue_satisfied`): a revenue file saved by `_is_mapped` (a column mapping, a
+statement's line map, or a recognition with no choice left), or, with none, a P&L confirmed with two or more periods. (Before, the gate
+asked a `revenue` file with a customer column or a recognition-only file, so a P&L the banner accepted as the revenue file, and a
+statement's line map, left the deck "waiting for revenue file" with no call.) The read starts (a) at the deck upload when the gate is
+open, (b) when the revenue mapping completes, a recognition settles or a P&L is confirmed, for every deck still waiting, (c) on Run
+audit (claims stage), for every deck still waiting or missing its prompt. The deck line, on the upload row and in the deck's run log, reads
+"{N} pages parsed · {M} with figures · AI read: {status}" ({N} the file's pages, parsed, never "read"; {M} the pages with a figure written
+in digits, before redaction), with the status "waiting for revenue file", "queued", "page n of N" (n the page being read, N the pages that
+go), or "done, {n} read, {r} rejected" (n the pages whose batch the model answered, r the pages of a batch whose reply was refused or not
+read; a batch stopped by the token cap is in neither, its message follows). Consent off: "not run (AI-assisted reading is off)" on the
+upload row, S26 in the run log. Under `DECK_PIPELINE=rules` the upload row reads "{N} pages parsed · {C} candidate claims".
+
 **Cost.** A page call is exempt from the USD 5 daily cap and counted in the tester's monthly allowance, as a mapping call is
 (`gateway.SPEND_CAP_EXEMPT`; usage-and-allowance.md §4). Engine contract 6 (interface-contracts.md): results and claim matches stored
 under 5 read "Stale – re-run audit"; `SEED_VERSION` 13 reseeds the demo audits.

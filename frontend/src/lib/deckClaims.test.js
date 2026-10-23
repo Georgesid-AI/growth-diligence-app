@@ -1,5 +1,5 @@
 import {
-  ALL_DECKS, AI_SUGGESTION_LABEL, CLAIM_TYPES, INCONSISTENCY_LABEL, VERIFIED_LABEL, badgeText, deckRunLog, REMOVE_DECK_CONFIRM, claimPeriod, conversionHover, claimSections, claimsForDeck, periodLabel, directionText, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, newClaimPayload, sourceRef, statusCounts, typeLabel,
+  ALL_DECKS, AI_SUGGESTION_LABEL, CLAIM_TYPES, INCONSISTENCY_LABEL, VERIFIED_LABEL, badgeText, deckRunLog, deckReadLine, aiReadStatus, REMOVE_DECK_CONFIRM, claimPeriod, conversionHover, claimSections, claimsForDeck, periodLabel, directionText, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, newClaimPayload, sourceRef, statusCounts, typeLabel,
   approveAllToast, toReview, DECK_SCOPE_CANNOT, DECK_SCOPE_CANNOT_LEAD, DECK_SCOPE_INTRO, isDeckFile, DECK_SCOPE_OUTRO, EDIT_TYPES, isOther, readingChoices, confidenceText, otherFiguresTitle,
   claimFields, editLogText, CONSENT_OFF_LINE,
   CLAIMS_VIEW, REVIEW_VIEW, VIEW_LABELS, REVIEW_INTRO, claimsForView, isFlagged, flagsText,
@@ -203,6 +203,30 @@ describe("model readings in the approval list (docs/specs/llm-structure-reading.
     expect(deckRunLog({ ai_status: "stopped", ai_message: "AI reading stopped: this audit reached its 400,000-token limit. The remaining structures were read by Python only." }))
       .toEqual(["AI reading: not read", "AI reading stopped: this audit reached its 400,000-token limit. The remaining structures were read by Python only."]);
     expect(deckRunLog({})).toEqual([]);
+  });
+
+  test("the deck line reads 'N pages parsed · M with figures · AI read: <status>' with each status (George, 2026-10-23)", () => {
+    const deck = { pages: 24, page_unit: "page", figure_pages: 9 };
+    const line = (extra) => deckReadLine({ ...deck, ...extra });
+    expect(line({ ai_status: "waiting" })).toBe("24 pages parsed · 9 with figures · AI read: waiting for revenue file");
+    expect(line({ ai_status: "reading" })).toBe("24 pages parsed · 9 with figures · AI read: queued");
+    expect(line({ ai_status: "reading", read_progress: { done: 0, total: 9 } })).toBe("24 pages parsed · 9 with figures · AI read: page 1 of 9");
+    expect(line({ ai_status: "reading", read_progress: { done: 5, total: 9 } })).toBe("24 pages parsed · 9 with figures · AI read: page 6 of 9");
+    expect(line({ ai_status: "reading", read_progress: { done: 9, total: 9 } })).toBe("24 pages parsed · 9 with figures · AI read: page 9 of 9");
+    expect(line({ ai_status: "read", pages_read: 7, pages_rejected: 2 })).toBe("24 pages parsed · 9 with figures · AI read: done, 7 read, 2 rejected");
+    expect(line({ ai_status: "not_read", pages_read: 0, pages_rejected: 9 })).toBe("24 pages parsed · 9 with figures · AI read: done, 0 read, 9 rejected");
+    expect(line({ ai_status: "read" })).toBe("24 pages parsed · 9 with figures · AI read: done, 0 read, 0 rejected");
+    expect(line({ ai_status: "python_only" })).toContain("AI read: not run");
+    expect(aiReadStatus({ ai_status: "reading", read_progress: { done: 0, total: 0 } })).toBe("queued");
+    expect(deckReadLine({ pages: 3, page_unit: "slide", figure_pages: 0, ai_status: "read", pages_read: 0, pages_rejected: 0 })).toMatch(/^3 slides parsed · 0 with figures/);
+    for (const status of ["waiting", "reading", "read", "not_read"]) expect(line({ ai_status: status })).not.toMatch(/pages read/);
+  });
+
+  test("the run log's first line is the deck line when the page read stored the pages with figures, else the former line", () => {
+    expect(deckRunLog({ ai_status: "read", pages: 5, page_unit: "page", figure_pages: 3, pages_read: 3, pages_rejected: 0, sent_pages: [2, 3, 4] }))
+      .toEqual(["5 pages parsed · 3 with figures · AI read: done, 3 read, 0 rejected", "Sent to the model: pages 2, 3, 4"]);
+    expect(deckRunLog({ ai_status: "waiting", pages: 5, page_unit: "page", figure_pages: 3 })).toEqual(["5 pages parsed · 3 with figures · AI read: waiting for revenue file"]);
+    expect(deckRunLog({ ai_status: "waiting", pages: 5 })).toEqual(["AI reading: waiting for revenue file"]);
   });
 
   test("the run log counts the periods Python corrected from the header cells", () => {

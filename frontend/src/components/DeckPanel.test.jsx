@@ -875,15 +875,24 @@ describe("upload box", () => {
       "b.pdf: waiting"]);
     await act(async () => { release(); });
     expect(api.uploadDeck.mock.calls.map(([, f]) => f.name)).toEqual(["a.pptx", "b.pdf"]);
-    expect(lineTexts()).toEqual(["a.pptx: done · 3 slides read · 2 candidate claims", "slides.key: refused – Only .pptx, .docx and .pdf files can be uploaded here.",
-      "b.pdf: done · 5 pages read · 4 candidate claims"]);
+    expect(lineTexts()).toEqual(["a.pptx: done · 3 slides parsed · 2 candidate claims", "slides.key: refused – Only .pptx, .docx and .pdf files can be uploaded here.",
+      "b.pdf: done · 5 pages parsed · 4 candidate claims"]);
+  });
+
+  test("a deck read by the page read says pages parsed, pages with figures and the AI read status, never pages read", async () => {
+    api.uploadDeck.mockResolvedValueOnce({ file: "a.pdf", pages: 24, page_unit: "page", figure_pages: 9, candidates: 0, ai_status: "waiting", deck_id: "d1" })
+      .mockResolvedValueOnce({ file: "b.pdf", pages: 3, page_unit: "page", figure_pages: 2, candidates: 0, ai_status: "reading", deck_id: "d2" });
+    await drop("a.pdf", "b.pdf");
+    expect(lineTexts()).toEqual(["a.pdf: done · 24 pages parsed · 9 with figures · AI read: waiting for revenue file",
+      "b.pdf: done · 3 pages parsed · 2 with figures · AI read: queued"]);
+    expect(lineTexts().join(" ")).not.toMatch(/pages read/);
   });
 
   test("a failed upload shows its line and the next file still goes", async () => {
     api.uploadDeck.mockRejectedValueOnce({ response: { data: { detail: "Could not read the deck" } } })
       .mockResolvedValueOnce({ file: "b.pdf", pages: 5, page_unit: "page", candidates: 4, deck_id: "d2" });
     await drop("a.pptx", "b.pdf");
-    expect(lineTexts()).toEqual(["a.pptx: failed – Could not read the deck", "b.pdf: done · 5 pages read · 4 candidate claims"]);
+    expect(lineTexts()).toEqual(["a.pptx: failed – Could not read the deck", "b.pdf: done · 5 pages parsed · 4 candidate claims"]);
   });
 
   test("an accepted type goes to the existing upload", async () => {
