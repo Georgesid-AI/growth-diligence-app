@@ -1461,6 +1461,10 @@ PAGE_INPUT_CAP = 12_000             # a page batch: tokens of its text (up to 5 
 PAGE_MAX_TOKENS = 8000
 RECOGNITION_MAX_TOKENS = 1_000      # ... and of its reply
 STRUCTURES_COLLECTION = cache.STRUCTURES_COLLECTION
+# The tokens (input plus max_tokens) of the page reads in flight per audit, in this process; the token cap counts them (read_structure).
+_inflight_tokens: Dict[str, int] = {}
+PAGE_LOCK_ROUNDS = 60               # the lock waits of a page read: reads queue for it one after another
+INFLIGHT_POLL_SECONDS = 0.05
 NOT_READ = "Not read by AI"
 # George, 2026-10-23 (review of PR 164, M6): the page reader found no deck_reading prompt in the store; shown on the deck, and Run audit reads it again.
 PROMPT_MISSING_TEXT = "AI reading not run – deck_reading prompt missing in prompt store"
@@ -1772,8 +1776,12 @@ def parse_labelling_reply(reply: str, structure_type: str, text: str) -> Labelli
     return parsed
 
 
-async def _count_tokens(adapter, sleep, **kwargs) -> int:
-    """The provider's token count, with the gateway's network retry policy."""
+def _rate_limited(exc: RetryableProviderError) -> bool:
+    return exc.status == 429 or exc.error_type == "rate_limit_error"
+
+
+async def _count_tokens(adapter, sleep, on_rate_limit=None, **kwargs) -> int:
+    """The provider's token count, with the gateway's network retry policy. `on_rate_limit` is told of every 429."""
     attempts = 0
     while True:
         try:
@@ -1784,13 +1792,16 @@ async def _count_tokens(adapter, sleep, **kwargs) -> int:
             except Exception as raw:
                 raise _classify_provider_error(raw)
         except RetryableProviderError as exc:
+            if on_rate_limit and _rate_limited(exc):
+                on_rate_limit()
             attempts += 1
             if attempts > MAX_PROVIDER_RETRIES:
                 raise _unreachable(exc)
             await sleep(_backoff_seconds(exc, attempts))
 
 
-async def _structure_call(adapter, prompt, user_payload, structure_type, text, sleep, max_tokens=STRUCTURE_MAX_TOKENS):
+async def _structure_call(adapter, prompt, user_payload, structure_type, text, sleep, max_tokens=STRUCTURE_MAX_TOKENS,
+                          on_rate_limit=None):
     """(reply, input tokens, output tokens) summed over every billed attempt. Network or 5xx: up to
     MAX_PROVIDER_RETRIES with backoff. A reply that fails validation: one reask, then GatewayError."""
     schema = schemas.output_schema(structure_type)
@@ -1810,6 +1821,8 @@ async def _structure_call(adapter, prompt, user_payload, structure_type, text, s
             except Exception as raw:
                 raise _classify_provider_error(raw)
         except RetryableProviderError as exc:
+            if on_rate_limit and _rate_limited(exc):
+                on_rate_limit()
             network_attempts += 1
             if network_attempts > MAX_PROVIDER_RETRIES:
                 exc_out = _unreachable(exc)
@@ -1853,6 +1866,7 @@ def _reading(output: dict) -> dict:
 async def read_structure(
     db, audit_id: str, text: str, structure_type: str, *, deck_id: Optional[str] = None,
     page: Optional[int] = None, pages: Optional[List[int]] = None, adapter=None, sleep=None, use_cache: bool = True,
+    on_rate_limit=None,
 ) -> StructureRead:
     """Read one structure or one sheet's headers with the model (CLAUDE.md rules 16-18).
 
@@ -1870,6 +1884,11 @@ async def read_structure(
     A column mapping is exempt from the daily spend cap (chat-upload.md section 4.2, 2026-10-17), and so is a page read
     (George, 2026-10-22, docs/design/ai-reads-rules-check.md): both are logged in llm_calls like any call, so their cost counts
     in the usage, in the tester's monthly allowance and in the day's spend the cap checks for every other call.
+
+    A page read (PAGE_CLAIMS) runs beside the audit's other page reads (George, 2026-10-23, deck page reads: speed): the lock
+    is held for the checks and the reservation of its tokens, not for the provider call. Every cap is checked as before, the
+    tokens of the reads in flight counted at their worst case; a read the cap would refuse only because of them waits for them,
+    so the cap stops the same call a one-by-one read would stop. `on_rate_limit` is called at every 429 the provider answers.
 
     Never raises for a model-side problem: the structure is then "Not read by AI" and Python's result
     stands. The output is not Verified here: the caller joins each label to Python's item and
@@ -1918,11 +1937,11 @@ async def read_structure(
         input_cap, max_tokens = PAGE_INPUT_CAP, PAGE_MAX_TOKENS
     try:
         # The 4,000-token cap is on the structure text plus its item list; the 400,000 cap counts the whole call.
-        text_tokens = await _count_tokens(adapter, sleep, model=STRUCTURE_MODEL, system=None, user_payload=text,
+        text_tokens = await _count_tokens(adapter, sleep, on_rate_limit, model=STRUCTURE_MODEL, system=None, user_payload=text,
                                           json_schema=None)
         if text_tokens > input_cap:
             return _structure_result("too_large", structure_type, TOO_LARGE, input_tokens=0, **base)
-        counted = await _count_tokens(adapter, sleep, model=STRUCTURE_MODEL, system=prompt.text,
+        counted = await _count_tokens(adapter, sleep, on_rate_limit, model=STRUCTURE_MODEL, system=prompt.text,
                                       user_payload=user_payload, json_schema=schemas.output_schema(structure_type))
     except GatewayError as exc:
         # Codes only: the reason, the HTTP status and the provider's error type; never the exception's message.
@@ -1934,20 +1953,38 @@ async def read_structure(
                        STRUCTURE_STEP, digest, code, status or "-", kind or "-")
         return _structure_result("not_read", structure_type, NOT_READ, **base)
 
+    parallel = structure_type == PAGE_CLAIMS
     token = await guards.acquire(db, audit_id, STRUCTURE_STEP)
-    if token is None:
-        # One structure call per audit at a time: wait for the one in flight, then take the lock.
+    # One structure call per audit at a time: wait for the one in flight, then take the lock. The page reads of a deck queue for it
+    # one after another, each holding it for its checks only, so they wait as many rounds as there are reads beside it.
+    rounds = 0
+    while token is None and rounds < (PAGE_LOCK_ROUNDS if parallel else 1):
+        rounds += 1
         await guards.wait_for_inflight(db, audit_id, STRUCTURE_STEP)
         token = await guards.acquire(db, audit_id, STRUCTURE_STEP)
-        if token is None:
-            return _structure_result("not_read", structure_type, NOT_READ, **base)
+    if token is None:
+        return _structure_result("not_read", structure_type, NOT_READ, **base)
     billed = (0, 0)
+    reserved = 0
     try:
         try:
             await guards.check_allowance(db, audit_id)
             if structure_type not in SPEND_CAP_EXEMPT:
                 await guards.check_spend_cap(db)
-            await guards.check_structure_token_cap(db, audit_id, counted, max_tokens)
+            while True:
+                beside = _inflight_tokens.get(audit_id, 0) if parallel else 0
+                try:
+                    await guards.check_structure_token_cap(db, audit_id, counted + beside, max_tokens)
+                    break
+                except guards.GuardRefusal:
+                    if not beside:
+                        raise                       # refused with no read beside it: the cap stops this call, as it would one by one
+                    await asyncio.sleep(INFLIGHT_POLL_SECONDS)       # the reads beside it count at their worst case: wait for them
+            if parallel:
+                reserved = counted + max_tokens
+                _inflight_tokens[audit_id] = _inflight_tokens.get(audit_id, 0) + reserved
+                await guards.release(db, audit_id, STRUCTURE_STEP, token)       # the provider call runs outside the lock
+                token = None
         except guards.GuardRefusal as refusal:
             await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version,
                            model=STRUCTURE_MODEL, input_tokens=0, output_tokens=0, estimated_cost_usd=0.0,
@@ -1959,7 +1996,8 @@ async def read_structure(
             return _structure_result("stopped" if stopped else "not_read", structure_type,
                                      refusal.detail if stopped else NOT_READ, **base)
         try:
-            parsed, in_tok, out_tok = await _structure_call(adapter, prompt, user_payload, structure_type, text, sleep, max_tokens)
+            parsed, in_tok, out_tok = await _structure_call(adapter, prompt, user_payload, structure_type, text, sleep, max_tokens,
+                                                            on_rate_limit)
         except GatewayError as exc:
             # Codes only: the reason, the HTTP status, the provider's error type and the check a reply failed (issue
             # #64); never the message.
@@ -1999,7 +2037,10 @@ async def read_structure(
                      type(exc).__name__)
         return _structure_result("not_read", structure_type, NOT_READ, **base)
     finally:
-        await guards.release(db, audit_id, STRUCTURE_STEP, token)
+        if reserved:
+            _inflight_tokens[audit_id] = max(0, _inflight_tokens.get(audit_id, 0) - reserved)
+        if token is not None:
+            await guards.release(db, audit_id, STRUCTURE_STEP, token)
 
 
 async def _store_structure(db, *, audit_id, key, digest, structure_type, model_type, output, prompt_version,

@@ -222,7 +222,8 @@ def test_a_page_read_twice_is_served_from_the_cache_and_lists_no_row_twice(monke
     asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
     asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
     assert adapter.calls == 1 and len(db[CANDIDATES_COLLECTION].docs) == 3
-    assert db[TEXT_COLLECTION].docs[0]["page_reads"][0]["cache_hit"] is True
+    # The second run asks for no page it already read (deck page reads, 2026-10-23): its entry stays, and the gateway's cache is not even asked.
+    assert [(r["pages"], r["status"]) for r in db[TEXT_COLLECTION].docs[0]["page_reads"]] == [([1], "read")]
 
 
 def test_without_consent_or_before_the_revenue_file_no_page_goes(monkeypatch):
@@ -253,10 +254,11 @@ def test_an_axis_tick_is_marked_on_its_own_cell_and_a_bar_value_in_the_same_colu
 
 
 def test_a_page_whose_only_digits_are_a_phone_number_is_not_sent_after_redaction():
-    """The parser's reader sees digits in "+44 20 7946 0958"; redaction turns them into [phone], so the page carries no figure
-    and never goes (the gateway would refuse it as no_figure, and would refuse the whole batch with it)."""
+    """The page grid does not count the digits of "+44 20 7946 0958" (claims.page_figures, George, 2026-10-23), and redaction turns them
+    into [phone] besides, so the page carries no figure and never goes (the gateway would refuse it as no_figure, and would refuse the
+    whole batch with it)."""
     g = grid_of([(50, 560, 20, "Contact"), (50, 500, 12, "Call us on +44 20 7946 0958 or write to the team")])
-    assert pages.has_digit_figure(g) is True
+    assert pages.has_digit_figure(g) is False
     assert pipeline.redacted_pages([g], "Target Co", {}) == []
     assert pipeline.batches([g, grid_of([TITLE, *LINES])], "Target Co", {})[0][0]["grid"]["cells"][0]["text"] == "Traction"
 
@@ -286,16 +288,16 @@ class Truncating(t.FakeAdapter):
 
 def test_a_batch_whose_reply_is_cut_at_the_output_limit_is_split_and_read_again(monkeypatch):
     """PR B, the live run of 2026-10-22: a 5-page batch answered with more than PAGE_MAX_TOKENS is cut and fails the schema; the
-    same batch asked again is cut again. The step splits it and reads the halves; the cut attempts are billed, not reasked."""
+    same batch asked again is cut again. The step splits it and reads the halves; the cut attempts are billed, not reasked. The
+    audit's deck read asks for one page per call since 2026-10-23; the scripts still read five to a call, which this reads."""
     monkeypatch.setenv("DECK_PIPELINE", "ai")
     parsed = deck([TITLE, *LINES])
     blocks = [dict(b, page=n) for n in range(1, 6) for b in parsed["blocks"]]
     db = _page_db({"blocks": blocks, "structures": []})
     adapter = Truncating(replies=[json.dumps({"type": "page_claims", "claims": []})])
-    status = asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
-    assert status == "read"
-    reads = db[TEXT_COLLECTION].docs[0]["page_reads"]
-    assert [(r["pages"], r["status"]) for r in reads] == [([1, 2], "read"), ([3], "read"), ([4, 5], "read")], "halves of 2 and 3, the 3 split again"
+    read = asyncio.run(pipeline.read_pages(db, AUDIT, "d1", pages.page_grids(blocks), "Zero2Hero", {}, adapter=adapter, sleep=t._noop_sleep))
+    assert [([pages.page_number(g) for g in grids], r.status) for grids, r in read] == \
+        [([1, 2], "read"), ([3], "read"), ([4, 5], "read")], "halves of 2 and 3, the 3 split again"
     assert adapter.truncated == 2 and adapter.calls == 5, "the 5-page batch and its 3-page half were cut once each, no reask"
     calls = [c for c in db["llm_calls"].docs if c["status"] == "truncated"]
     assert [(c["input_tokens"], c["output_tokens"]) for c in calls] == [(1200, gateway.PAGE_MAX_TOKENS)] * 2, "the cut replies are billed"
@@ -312,7 +314,8 @@ def test_a_single_page_whose_reply_is_cut_keeps_the_status_truncated(monkeypatch
     assert status == "not_read"
     reads = db[TEXT_COLLECTION].docs[0]["page_reads"]
     assert [(r["pages"], r["status"]) for r in reads] == [([1], "truncated"), ([2], "truncated")]
-    assert adapter.calls == 3, "the pair, then each page once; a single page is not split or reasked"
+    assert adapter.calls == 2, "each page once (one page to a call); a single page is not split or reasked"
+    assert db[TEXT_COLLECTION].docs[0]["unread_pages"] == [1, 2] and db[TEXT_COLLECTION].docs[0]["retry_pages"] == [], "a cut page would be cut again: not retried"
 
 
 def test_the_adapter_raises_truncated_with_the_billed_tokens_when_the_provider_stops_at_max_tokens():
@@ -346,3 +349,32 @@ def test_the_consistency_passes_bypass_the_cache_and_measure_the_model(monkeypat
                                                use_cache=False))
     assert adapter.calls == 2 and bypassed[0][1].cache_hit is False and bypassed[0][1].input_tokens > 0
     assert bypassed[0][1].claims == first[0][1].claims
+
+
+# ---------------------------------------------------------------------------
+# "with figures": a digit outside the page's furniture (George, 2026-10-23)
+# ---------------------------------------------------------------------------
+BODY = [(50, 560, 20, "Our mission"), (50, 500, 12, "We help teams ship faster")]
+
+
+def test_a_page_whose_only_digit_is_in_the_footer_has_no_figure_and_is_not_sent():
+    footer = (50, 12, 8, "Confidential draft 7")
+    assert pages.claims.figures(footer[3]), "the footer line holds a digit the figure reader finds"
+    only_footer = grid_of([*BODY, footer])
+    assert only_footer["figure"] is False and pages.sendable([only_footer]) == []
+    assert grid_of([*BODY, (50, 500 + 80, 12, "We serve 40 customers"), footer])["figure"] is True, "a digit in the body still counts"
+    assert grid_of([*BODY, (50, 300, 12, "Confidential draft 7")])["figure"] is True, "the same line in the middle of the page is no footer"
+
+
+def test_a_digit_in_a_header_line_a_phone_number_a_url_or_an_email_is_no_figure():
+    for line in ((50, 592, 8, "Board pack 7"),                              # header band
+                 (50, 400, 10, "Call us on +44 20 7946 0958"),
+                 (50, 400, 10, "www.zero2hero24.com/about"),
+                 (50, 400, 10, "https://zero2hero.com/p/2048"),
+                 (50, 400, 10, "jane2048@zero2hero.com")):
+        grid = grid_of([*BODY, line])
+        assert grid["figure"] is False, line[3]
+    assert grid_of([*BODY, (50, 400, 10, "Call us on +44 20 7946 0958 about our 40 customers")])["figure"] is True
+    # a pdf marks its topmost line a title: a running header is one, a real title (below the band) is not furniture
+    assert grid_of([(50, 592, 8, "Q3 revenue 150,000 USD"), *BODY[1:]])["figure"] is False, "a header line holds no figure of the page"
+    assert grid_of([(50, 540, 20, "Revenue up 40%"), *BODY[1:]])["figure"] is True, "a title with a figure still counts"

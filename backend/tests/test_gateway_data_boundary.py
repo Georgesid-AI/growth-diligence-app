@@ -3455,3 +3455,23 @@ def test_the_claim_rejected_line_holds_a_page_number_and_schema_field_names_neve
     assert set(re.findall(r"[a-z_]+", line.split("(", 1)[1])) <= gateway.PAGE_FIELDS | {"claim"}
     for needle in ("Jane", "Northbridge", "123456789", "2022"):
         assert needle not in caplog.text, f"{needle!r} in the log"
+
+
+def test_deck_page_reads_log_and_store_page_numbers_and_counts_only(monkeypatch, caplog):
+    """Deck page reads (2026-10-23): the "page n not read" line, the deck's progress, totals, skipped and unread pages are page numbers,
+    counts and closed words (a status, "timeout"); none is readable by the gateway and none holds a line of the deck."""
+    import logging
+    from test_page_reads_speed import Gauge, _page_db, _run_deck, many_pages
+    from test_structure_reading import AUDIT
+    monkeypatch.setenv("DECK_PIPELINE", "ai")
+    caplog.set_level(logging.INFO)
+    parsed = many_pages(4, plain={2})
+    db = _page_db(parsed)
+    _run_deck(db, Gauge(hold=0.01, failing={3}))
+    doc, = db[decks.TEXT_COLLECTION].docs
+    assert {"read_progress", "reading_since", "skipped_pages", "unread_pages", "retry_pages"}.isdisjoint(decks.GATEWAY_READABLE_FIELDS)
+    assert doc["skipped_pages"] == [2] and doc["unread_pages"] == [3]
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("page ")]
+    assert lines == [f"page 3 not read: run_id={AUDIT} deck_id=d1 status=not_read reason=-"]
+    for needle in ("Traction", "Paying Users", "150,000", "Zero2Hero"):
+        assert needle not in json.dumps({k: doc[k] for k in ("skipped_pages", "unread_pages", "retry_pages")}) + " ".join(lines)
