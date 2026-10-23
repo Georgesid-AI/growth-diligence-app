@@ -194,10 +194,16 @@ BASIS_CONFLICT = "basis conflicts with period"        # a projection for a perio
 # Flags the analyst only reads: the claim stays in the main list with the note on its row; every other flag lists it under Review
 # (George, 2026-10-23). A new flag is added to checker.REVIEW_FLAGS or here, and the screen's list (informational_flags.json) follows.
 INFORMATIONAL_FLAGS = ("cell corrected", "currency assumed", "unit assumed", "period from page heading", "period from another cell")
+# The one informational flag with a part of the page in it: "year label below: 2022" (a four-digit year label; George, 2026-10-23).
+INFORMATIONAL_YEAR_LABEL = re.compile(r"year label below: \d{4}")
+
+
+def is_informational(flag) -> bool:
+    return flag in INFORMATIONAL_FLAGS or bool(INFORMATIONAL_YEAR_LABEL.fullmatch(flag or ""))
 
 
 def review_flags(flags) -> list:
-    return [f for f in flags or [] if f not in INFORMATIONAL_FLAGS]
+    return [f for f in flags or [] if not is_informational(f)]
 COLLAPSED_GROUPS = (8, 9, 10)          # use of funds, other, pricing (George, 2026-10-23)
 # docs/specs/claim-types-and-correction.md section 4: a figure the parser cannot type and an item the model labelled other are Other:
 # never matched, never a task, listed collapsed under their count. The analyst may type a claim Other, and retype it out.

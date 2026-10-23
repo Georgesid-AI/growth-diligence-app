@@ -136,7 +136,7 @@ def figures(text: str, comma: bool = False) -> List[Dict]:
     for m in redact.NUMBER[comma].finditer(blanked):
         if not m.group("num"):
             continue
-        raw = m.group("num")
+        raw = redact.digits_only(m.group("num"))
         dots = [(float(raw.replace(",", "")), "decimal"), (float(raw.replace(".", "")), "thousands")] \
             if not comma and _DOT_THOUSANDS.fullmatch(raw) else \
             [(float(raw.replace(".", "").replace(",", ".") if comma else raw.replace(",", "")), None)]

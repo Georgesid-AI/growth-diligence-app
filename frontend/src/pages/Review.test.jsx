@@ -139,6 +139,13 @@ test("a claim outside tolerance is a row: Approve and Reject save it, Approve al
   expect(api.approveAll).toHaveBeenCalledWith("a1", 1);
 });
 
+test("George, 2026-10-23: a claim with informational flags only (the year label hint included) is no flagged claim: no skip in Approve all, its note on the row", async () => {
+  state.candidates = [cand("p1"), cand("p2", { flags: ["currency assumed", "year label below: 2022"] }), cand("p3", { flags: ["year label below: 2024", "sign not on page"] })];
+  await mount();
+  expect(q("review-approve-all-1").textContent).toBe("Approve all (2)");            // p1 and p2; p3 carries a review flag
+  expect(qa("review-claim-flags").map((n) => n.textContent)).toEqual(["currency assumed · year label below: 2022", "year label below: 2024 · sign not on page"]);
+});
+
 test("M4 (review of PR 164): a flagged claim shows its flags, is not in Approve all's count, and the toast says it was skipped for review", async () => {
   state.candidates = [cand("p1"), cand("p2", { flags: ["axis tick", "currency assumed"] }), cand("s1", { group: 6, scenario: "best", basis: "scenario" })];
   api.approveAll.mockResolvedValue({ approved: 1, skipped: 1, skipped_flagged: 1, open_definition: 0 });

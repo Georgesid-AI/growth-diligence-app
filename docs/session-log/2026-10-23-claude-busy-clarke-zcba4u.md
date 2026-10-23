@@ -1,0 +1,6 @@
+2026-10-23, claude/busy-clarke-zcba4u
+Deleted: the exact-string-only informational test (now a list plus one pattern); the "a milestone is never matched" assertion for product dates with a cited period cell.
+Decided: the year label joins the informational list as the one pattern, so the screen's JSON became {flags, patterns} and a backend test keeps both equal; the thousands-space lives in the shared NUMBER regex (one reading for page checks and item lines) with "2024 500" pinned as no figure; the date claim is matched only with a cited period cell and an uncorrected period; item 7 not changed, because the single poll request already returns status and claims together.
+Slow or unclear: item 1 (the Review page lists every pending claim by design, so only the shared list and the year label were wrong); item 7 does not reproduce; ruff 0.16.9 is installed, CI pins 0.16.8, so ruff ran with the pin removed from a temp copy of the config; the first full pytest ran past the foreground limit and was stopped, then re-run.
+Root cause and rule: the informational list held exact strings while one flag carries a year, so it could never include it; a flag with a variable part needs a pattern entry in the shared list and a test that both screens read it.
+Process change to propose: pin the same ruff version in the session image as in CI.

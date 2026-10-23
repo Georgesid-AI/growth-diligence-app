@@ -85,12 +85,14 @@ SUFFIX = (r"(?:\+?\s?(?P<suffix>k|K|(?i:mn|mm|bn)|m|M|B|T|(?i:thousand|million|b
 # A figure, keyed by whether the structure writes a decimal comma (1.234,5). A digit inside a word is no figure, as
 # in the parser's reader (claims.figures): no letter directly before it ("zero2hero", "Web3"), no ordinal ending
 # ("1st") (structure-labelling.md section 1).
+# A space (or a no-break space) between groups of three digits is a thousands separator too: "30 000", "7 753 000" (George, 2026-10-23).
+SPACE_GROUPS = "[ \u00a0\u202f]"
 NUMBER = {
     False: re.compile(r"(?P<open>\()?\s*(?:(?<![\w.])(?P<sign>[-−–]))?\s*(?<![\d.,])(?<![^\W\d_])"
-                      r"(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?![\d]|[.,]\d|st|nd|rd|th)"
+                      r"(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d{1,3}(?:" + SPACE_GROUPS + r"\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?![\d]|[.,]\d|st|nd|rd|th)"
                       + SUFFIX + r"\s*(?P<pct>%)?\s*(?P<close>\))?"),
     True: re.compile(r"(?P<open>\()?\s*(?:(?<![\w.])(?P<sign>[-−–]))?\s*(?<![\d.,])(?<![^\W\d_])"
-                     r"(?P<num>\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d+(?:,\d+)?)(?![\d]|[.,]\d|st|nd|rd|th)"
+                     r"(?P<num>\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d{1,3}(?:" + SPACE_GROUPS + r"\d{3})+(?:,\d+)?|\d+(?:,\d+)?)(?![\d]|[.,]\d|st|nd|rd|th)"
                      + SUFFIX + r"\s*(?P<pct>%)?\s*(?P<close>\))?"),
 }
 _VALUE = r"-?\d+(?:\.\d+)?"
@@ -98,6 +100,11 @@ _CELL = r"r[1-9]\d*c[1-9]\d*"
 _ITEM_LINE = re.compile(rf'^(?P<id>i[1-9]\d*) (?P<cell>{_CELL})(?:#(?P<position>[1-9]\d*))? "(?P<raw>[^"]{{1,60}})" '
                         rf'(?P<values>{_VALUE}(?: or {_VALUE}){{0,3}})(?: h(?P<headers>(?: {_CELL})+))?$')
 _LISTED_LINE = re.compile(rf"^(?P<id>[dt][1-9]\d*) (?P<cell>{_CELL})$")
+
+
+def digits_only(raw: str) -> str:
+    """A matched number without its space separators ("7 753 000" -> "7753000")."""
+    return re.sub(SPACE_GROUPS, "", raw)
 
 
 def blank_currency(text: str) -> str:

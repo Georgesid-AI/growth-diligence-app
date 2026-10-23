@@ -24,7 +24,7 @@ from test_checker import AUDIT, LINES, TITLE, _page_db, claim, deck, one  # noqa
 from test_structure_reading import t  # noqa: E402
 
 from app import structures  # noqa: E402
-from app.decks import CANDIDATES_COLLECTION  # noqa: E402
+from app.decks import CANDIDATES_COLLECTION, claims  # noqa: E402
 from app.llm import gateway  # noqa: E402
 from app.llm.schemas import PAGE_CLAIMS  # noqa: E402
 from app.structures import checker, page_check  # noqa: E402
@@ -186,10 +186,12 @@ def test_a_cell_corrected_claim_counts_as_matched_in_the_row_the_panel_shows(mon
 def test_every_flag_declares_whether_it_is_informational_or_for_review():
     assert checker.INFORMATIONAL_FLAGS == (CORRECTED, "currency assumed", "unit assumed", "period from page heading", "period from another cell")
     assert set(checker.REVIEW_FLAGS) | set(checker.INFORMATIONAL_FLAGS) == set(checker.FLAGS)
+    assert checker.is_informational(checker.year_label_flag("2022")) and not checker.is_informational("year label below: Q3 2022")
     assert not set(checker.REVIEW_FLAGS) & set(checker.INFORMATIONAL_FLAGS)
     assert SIGN in checker.REVIEW_FLAGS and checker.VALUE_NOT_ON_PAGE in checker.REVIEW_FLAGS
     shared = json.loads((BACKEND.parent / "frontend" / "src" / "lib" / "informational_flags.json").read_text())
-    assert shared == list(checker.INFORMATIONAL_FLAGS), "the screen reads the same list"
+    assert shared["flags"] == list(checker.INFORMATIONAL_FLAGS), "the screen reads the same list"
+    assert shared["patterns"] == [f"^{claims.INFORMATIONAL_YEAR_LABEL.pattern}$"], "and the same pattern for the year label"
 
 
 def test_a_cell_corrected_claim_is_not_flagged_for_review_but_another_flag_still_is():

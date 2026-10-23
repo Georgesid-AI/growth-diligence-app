@@ -3416,6 +3416,9 @@ def test_the_checker_flags_basis_and_scenario_are_closed_words_and_never_gateway
     assert checker.INFORMATIONAL_FLAGS == ("cell corrected", "currency assumed", "unit assumed", "period from page heading", "period from another cell"), \
         "the flags that leave a claim in the main list (George, 2026-10-23: the unit and the period only flag)"
     assert set(checker.REVIEW_FLAGS) == set(checker.FLAGS) - set(checker.INFORMATIONAL_FLAGS)
+    assert checker.RAISE_CUES == ("use of funds", "use of proceeds", "funding ask", "investment opportunity", "equity investment", "round size", "our ask")
+    assert checker.NOT_PLAN_EXEMPT_METRICS == ("market", "pricing", "use_of_funds"), "closed lists of words: no flag carries deck text"
+    assert checker.is_informational("year label below: 2022") and not checker.is_informational("year label below: Q3 2022")
     assert checker.BRACKET_NEGATIVE_METRICS == ("ebitda", "net_profit", "gross_profit", "costs", "cash", "burn")
     assert set(schemas.PAGE_BASES) == {"actual", "projection", "scenario"} and set(schemas.PAGE_SCENARIOS) == {"best", "realistic", "worst", "none"}
     assert not {"flags", "basis", "scenario", "figure_type"} & decks.GATEWAY_READABLE_FIELDS
