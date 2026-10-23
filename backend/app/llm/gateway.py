@@ -16,10 +16,12 @@ raw files, full pages or prose slides. For the sheet_structure step only (George
 chat-upload.md section 26): every text cell of one sheet (title rows, headers, row labels, indents,
 num/blank markers), after redaction and the withhold rule, never a figure, at most 400 rows with
 text; checked again here (structures/redact.sheet_text_problem). For the page_claims step only (George, 2026-10-22,
-PR #158, decision 1b; behind DECK_PIPELINE): the redacted text lines of deck pages that carry a figure as digits, prose
-lines included, as `p<page>r<row>c<col>: <text>` lines, at most 5 pages per call; a page with no figure as digits is
+PR #158, decision 1b; the default path since 2026-10-22, DECK_PIPELINE=ai, docs/design/ai-reads-rules-check.md): the redacted
+text lines of deck pages that carry a figure as digits, prose lines included, as `p<page>r<row>c<col>: <text>` lines, at most 5
+pages per call, read with the `deck_reading` prompt of the store; a page with no figure as digits is
 refused (structures/redact.page_text_problem), and the people-name rule runs over prose lines as well as cells
-(structures/redact.redact_page, run again here). A deck structure's text carries, below its cells, the item
+(structures/redact.redact_page, run again here). A page call is exempt from the daily spend cap and counted in the tester's
+monthly allowance, as a column mapping is (docs/specs/usage-and-allowance.md section 4). A deck structure's text carries, below its cells, the item
 list Python made (docs/specs/structure-labelling.md): one line per figure with its cell, its raw
 text cut from the redacted cell, its values and header cells, and a roadmap's date cells and text
 lines; an item line out of format, or whose raw text is not a figure inside its cell, is refused
@@ -1429,19 +1431,21 @@ async def disclosure_for_run(db, run_id: str) -> Optional[dict]:
 # moves every structure cache key. Temperature stays at the model default and is never sent.
 STRUCTURE_MODEL = "claude-sonnet-5-5"
 STRUCTURE_PROMPT = "structure_reading"
-PAGE_CLAIMS_PROMPT = "page_claims"
+PAGE_CLAIMS_PROMPT = "deck_reading"       # the page reader's prompt in the store (docs/specs/prompt-store.md); the repo holds a stub
 FILE_TYPE_PROMPT = "file_type"
 SHEET_STRUCTURE_PROMPT = "sheet_structure"
 STRUCTURE_STEP = guards.STRUCTURE_STEP
 PIPELINES = ("rules", "ai")                 # the DECK_PIPELINE switch
+DEFAULT_PIPELINE = "ai"                     # since 2026-10-22 (docs/design/ai-reads-rules-check.md, built): the model reads every page
 
 
 def deck_pipeline() -> str:
-    """The DECK_PIPELINE switch: "rules" (default) or "ai". Anything else is "rules", so a typo changes nothing on screen. The
-    gateway reads it itself and refuses a page_claims call under "rules" (L1 of the review of PR #159, 2026-10-22), so the
-    boundary holds whatever the caller."""
+    """The DECK_PIPELINE switch: "ai" (the default: the model reads the pages, Python checks each claim) or "rules" (the
+    former rules read, kept for scripts/compare_pipelines.py). Anything else is the default, so a typo changes nothing on
+    screen. The gateway reads it itself and refuses a page_claims call under "rules" (L1 of the review of PR #159,
+    2026-10-22), so the boundary holds whatever the caller."""
     value = os.environ.get("DECK_PIPELINE", "").strip().lower()
-    return value if value in PIPELINES else "rules"
+    return value if value in PIPELINES else DEFAULT_PIPELINE
 
 
 STRUCTURE_MAX_TOKENS = 4000
@@ -1458,10 +1462,15 @@ PAGE_MAX_TOKENS = 8000
 RECOGNITION_MAX_TOKENS = 1_000      # ... and of its reply
 STRUCTURES_COLLECTION = cache.STRUCTURES_COLLECTION
 NOT_READ = "Not read by AI"
+# George, 2026-10-23 (review of PR 164, M6): the page reader found no deck_reading prompt in the store; shown on the deck, and Run audit reads it again.
+PROMPT_MISSING_TEXT = "AI reading not run – deck_reading prompt missing in prompt store"
 TOO_LARGE = "Too large for AI reading"
 # The reason a cap refusal's "structure not read" line gives, per guard code (llm_calls keeps the code).
 CAP_REASONS = {"daily_spend_cap_exceeded": "spend_cap", "structure_token_cap_reached": "token_cap",
                "monthly_allowance_reached": "allowance"}
+# The calls outside the daily spend cap: a column mapping (chat-upload.md 4.2) and a page read (ai-reads-rules-check.md). Both still
+# count in the tester's monthly allowance and in the day's spend every other call is checked against.
+SPEND_CAP_EXEMPT = frozenset({"column_mapping", PAGE_CLAIMS})
 # A file name in the text means it was built from the wrong thing: refused.
 _FILE_NAME = re.compile(r"(?i)\b[\w\-. ]{1,80}\.(?:pptx?|pdf|docx?|xlsx?|xlsm|xls|csv)\b")
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
@@ -1521,7 +1530,7 @@ def structure_text_problem(text: Any, structure_type: str, context: dict, mappin
         return "file_name"
     company = context.get("company_name")
     if structure_type == PAGE_CLAIMS:
-        # Only while DECK_PIPELINE is "ai". The redacted lines of pages that carry a figure as digits (the page's own printed
+        # Only while DECK_PIPELINE is "ai" (the default). The redacted lines of pages that carry a figure as digits (the page's own printed
         # number is none), at most 5 pages, every page with such a figure, no line over 200 characters (as for a structure cell;
         # George, 2026-10-22, decision 1b on the review of PR #159), the page redaction (structure rules plus the people-name
         # rule over prose) run again.
@@ -1839,8 +1848,9 @@ async def read_structure(
         (not for a column mapping) -> token cap (400,000 per audit, with the whole call's input) -> provider
         -> schema, type and item id check (one reask) -> store -> log
 
-    A column mapping is exempt from the daily spend cap (chat-upload.md section 4.2, 2026-10-17): it is logged in
-    llm_calls like any call, so its cost counts in the usage and in the day's spend the cap checks for every other call.
+    A column mapping is exempt from the daily spend cap (chat-upload.md section 4.2, 2026-10-17), and so is a page read
+    (George, 2026-10-22, docs/design/ai-reads-rules-check.md): both are logged in llm_calls like any call, so their cost counts
+    in the usage, in the tester's monthly allowance and in the day's spend the cap checks for every other call.
 
     Never raises for a model-side problem: the structure is then "Not read by AI" and Python's result
     stands. The output is not Verified here: the caller joins each label to Python's item and
@@ -1862,7 +1872,7 @@ async def read_structure(
         prompt = await prompt_store.load(db, {FILE_TYPE: FILE_TYPE_PROMPT, FILE_RECOGNITION: FILE_TYPE_PROMPT, SHEET_STRUCTURE: SHEET_STRUCTURE_PROMPT,
                                               PAGE_CLAIMS: PAGE_CLAIMS_PROMPT}.get(structure_type, STRUCTURE_PROMPT))
     except prompt_store.PromptMissing:
-        return _structure_result("not_read", structure_type, NOT_READ)
+        return _structure_result("not_read", structure_type, PROMPT_MISSING_TEXT if structure_type == PAGE_CLAIMS else NOT_READ)
     if STRUCTURE_MODEL not in MODEL_PRICING_USD:
         return _structure_result("not_read", structure_type, NOT_READ)
     key = structure_key(text, structure_type, prompt_store.cache_tag(prompt), STRUCTURE_MODEL)
@@ -1915,7 +1925,7 @@ async def read_structure(
     try:
         try:
             await guards.check_allowance(db, audit_id)
-            if structure_type != "column_mapping":
+            if structure_type not in SPEND_CAP_EXEMPT:
                 await guards.check_spend_cap(db)
             await guards.check_structure_token_cap(db, audit_id, counted, max_tokens)
         except guards.GuardRefusal as refusal:

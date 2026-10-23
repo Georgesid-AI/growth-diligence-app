@@ -111,6 +111,35 @@ def test_below_100_percent_the_daily_cap_still_refuses_on_top(monkeypatch):
     assert "daily_spend_cap_exceeded" in db["llm_calls"].docs[-1]["status"]
 
 
+PAGE_TEXT = "p5r1c1 title: Traction\np5r2c1: 800 Paying Users\np5r3c1: $150,000 annual revenue run rate"
+PAGE_REPLY = '{"type": "page_claims", "claims": []}'
+
+
+def test_a_page_read_is_outside_the_daily_cap_and_inside_the_monthly_allowance(monkeypatch):
+    """George, 2026-10-22 (docs/design/ai-reads-rules-check.md; usage-and-allowance.md section 4): a page read is exempt from the
+    USD 5 daily cap as a column mapping is, counted on the tester's ledger, and refused at 100% of the monthly allowance."""
+    monkeypatch.setenv("LLM_DAILY_SPEND_CAP_USD", "0.01")
+    monkeypatch.delenv("DECK_PIPELINE", raising=False)
+    db = own(t.make_db(), **spent(1))
+    db["audits"].docs[0]["structure_reading_consent"] = True
+    db["llm_calls"].docs.append({"run_id": "elsewhere", "cache_hit": False, "estimated_cost_usd": 1.0,
+                                 "timestamp": datetime.now(timezone.utc).isoformat()})
+    assert gateway.SPEND_CAP_EXEMPT == {"column_mapping", gateway.PAGE_CLAIMS}
+    adapter = t.FakeAdapter(replies=[PAGE_REPLY])
+    read = asyncio.run(gateway.read_structure(db, t.RUN_ID, PAGE_TEXT, gateway.PAGE_CLAIMS, adapter=adapter, sleep=t._noop_sleep))
+    assert read.status == "read" and adapter.calls == 1, read.reason
+    assert db["llm_calls"].docs[-1]["status"] == "ok" and db["llm_calls"].docs[-1]["structure_type"] == gateway.PAGE_CLAIMS
+    before = ledger(db)[allowance.month_key()]
+    assert before["calls"] == 1 and before["cost_usd"] > 1, "counted on the tester's month"
+    structure = asyncio.run(gateway.read_structure(db, t.RUN_ID, "r1c1: A\nr2c1: 1", "table", adapter=adapter, sleep=t._noop_sleep))
+    assert structure.status == "not_read" and adapter.calls == 1 and db["llm_calls"].docs[-1]["status"] == "daily_spend_cap_exceeded"
+    blocked = own(t.make_db(), **spent(10))
+    blocked["audits"].docs[0]["structure_reading_consent"] = True
+    adapter = t.FakeAdapter(replies=[PAGE_REPLY])
+    read = asyncio.run(gateway.read_structure(blocked, t.RUN_ID, PAGE_TEXT, gateway.PAGE_CLAIMS, adapter=adapter, sleep=t._noop_sleep))
+    assert read.status == "not_read" and adapter.calls == 0 and blocked["llm_calls"].docs[-1]["status"] == "monthly_allowance_reached"
+
+
 def test_at_100_percent_an_upload_still_works_the_rules_map_alone_and_open_columns_wait_for_a_click(api):
     own(api.db, **spent(10))
     api.state["adapter"] = t.FakeAdapter(replies=[mapping_reply(("revenue_type", 6))])

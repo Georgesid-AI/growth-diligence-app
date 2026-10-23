@@ -11,7 +11,8 @@
    "unit": "%",
    "unit_other": null,
    "period": null,
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p7r2c1",
    "label_cell": "p7r2c1",
    "period_cell": null
@@ -23,7 +24,8 @@
    "unit": "%",
    "unit_other": null,
    "period": null,
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p7r3c1",
    "label_cell": "p7r3c1",
    "period_cell": null
@@ -35,7 +37,8 @@
    "unit": "USD",
    "unit_other": null,
    "period": null,
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p7r3c1",
    "label_cell": "p7r3c1",
    "period_cell": null
@@ -47,7 +50,8 @@
    "unit": "USD",
    "unit_other": null,
    "period": null,
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p7r3c1",
    "label_cell": "p7r3c1",
    "period_cell": null
@@ -59,7 +63,8 @@
    "unit": "count",
    "unit_other": null,
    "period": null,
-   "actual_or_forecast": "forecast",
+   "basis": "projection",
+   "scenario": "none",
    "value_cell": "p7r4c1",
    "label_cell": "p7r4c1",
    "period_cell": null
@@ -71,7 +76,8 @@
    "unit": "USD",
    "unit_other": null,
    "period": null,
-   "actual_or_forecast": "forecast",
+   "basis": "projection",
+   "scenario": "none",
    "value_cell": "p7r4c1",
    "label_cell": "p7r4c1",
    "period_cell": null

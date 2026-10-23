@@ -51,7 +51,7 @@ def _run(script, adapter=None, passes=3, decks=DECKS, **kwargs):
 def test_a_fake_pages_run_reads_each_deck_in_every_pass_and_agrees(script, tmp_path, capsys):
     zip_path = tmp_path / "out" / "run.zip"
     report = script.main(["--pages", "--fake", "--deck", DECKS[0], "--deck", DECKS[1], "--zip", str(zip_path)])
-    assert report["mode"] == "pages" and report["passes"] == 3 and report["prompt"] == "page_claims" and not report["stopped"]
+    assert report["mode"] == "pages" and report["passes"] == 3 and report["prompt"] == "deck_reading" and not report["stopped"]
     assert report["decks_complete"] == 2 and report["agreement_pct_all"] == 100.0
     for deck in report["per_deck"].values():
         assert len(deck["passes"]) == 3 and deck["complete"] and deck["agreement_pct"] == 100.0
@@ -149,7 +149,7 @@ def test_the_prompt_comes_from_the_store_and_a_missing_prompt_stops_the_run(scri
     scratch["prompts"].docs.clear()
     report = asyncio.run(script.run_pages(DECKS[:1], 1, scratch, script.PageReplayAdapter(), prompt_source=store))
     assert report["prompt_version"] == "v1" and report["decks_complete"] == 1
-    assert [d["name"] for d in scratch["prompts"].docs] == ["page_claims"], "copied from the store, the page prompt only"
+    assert [d["name"] for d in scratch["prompts"].docs] == ["deck_reading"], "copied from the store, the page prompt only"
     empty = script.MemoryDB()
     empty["prompts"].docs.clear()
     with pytest.raises(SystemExit, match="No prompt loaded"):

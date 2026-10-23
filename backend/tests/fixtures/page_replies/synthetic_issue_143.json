@@ -9,7 +9,8 @@
    "unit": "EUR",
    "unit_other": null,
    "period": "2019",
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p1r7c1",
    "label_cell": "p1r2c1",
    "period_cell": "p1r9c2"
@@ -21,7 +22,8 @@
    "unit": "EUR",
    "unit_other": null,
    "period": "2020",
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p1r7c2",
    "label_cell": "p1r2c1",
    "period_cell": "p1r9c3"
@@ -33,7 +35,8 @@
    "unit": "EUR",
    "unit_other": null,
    "period": "2021",
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p1r7c3",
    "label_cell": "p1r2c1",
    "period_cell": "p1r9c4"
@@ -45,7 +48,8 @@
    "unit": "EUR",
    "unit_other": null,
    "period": "2022",
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p1r7c4",
    "label_cell": "p1r2c1",
    "period_cell": "p1r9c5"

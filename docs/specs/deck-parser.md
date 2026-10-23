@@ -1,6 +1,9 @@
 # Spec: Deck parser and candidate claim detection
 Status: Approved
 Location: docs/specs/deck-parser.md
+Amended 2026-10-22 (George, docs/specs/chat-upload.md §28): under the default `DECK_PIPELINE=ai` the candidate detection of section 2 no
+longer lists claims at upload; the model reads every page and Python checks each claim (`backend/app/structures/checker.py`). Section 2
+stays as the rules of Add from deck, as the post-checks of the checker, and as the former path under `DECK_PIPELINE=rules`.
 
 ## Goal
 Read a board deck or growth plan and list candidate claims for the analyst to approve.

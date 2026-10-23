@@ -11,7 +11,8 @@
    "unit": "GBP",
    "unit_other": null,
    "period": "2019",
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p17r17c2",
    "label_cell": "p17r2c1",
    "period_cell": "p17r19c1"
@@ -23,7 +24,8 @@
    "unit": "GBP",
    "unit_other": null,
    "period": "2020",
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p17r16c2",
    "label_cell": "p17r2c1",
    "period_cell": "p17r19c2"
@@ -35,7 +37,8 @@
    "unit": "GBP",
    "unit_other": null,
    "period": "2021",
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p17r15c2",
    "label_cell": "p17r2c1",
    "period_cell": "p17r19c3"
@@ -47,7 +50,8 @@
    "unit": "GBP",
    "unit_other": null,
    "period": "2022",
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p17r10c2",
    "label_cell": "p17r2c1",
    "period_cell": "p17r19c4"
@@ -59,7 +63,8 @@
    "unit": "GBP",
    "unit_other": null,
    "period": "2023",
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p17r9c2",
    "label_cell": "p17r2c1",
    "period_cell": "p17r19c5"

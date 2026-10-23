@@ -334,12 +334,20 @@ export const DECK_AI_STATUS = {
   reading: "reading", waiting: "waiting for revenue file", read: "read", not_read: "not read", stopped: "not read",
   python_only: "not read (AI-assisted reading is off for this audit)",
 };
+// Consent unticked (George, 2026-10-22, chat-upload.md section 28): since the page read replaced the rules read, such a deck lists no
+// claim at all, so the one line says so and where to go. It stands alone, without the "AI reading:" prefix.
+// A deck whose deck_reading prompt is not in the store (George, 2026-10-23, review of PR 164, M6): the one line, standing alone; the next Run audit reads the deck.
+export const PROMPT_MISSING_LINE = "AI reading not run – deck_reading prompt missing in prompt store";
+export const CONSENT_OFF_LINE = "Deck not read. AI-assisted reading is off for this audit, so no claims were extracted. Tick consent on the Upload page to read it, or use Add claim.";
 
 /** ["AI reading: read", "Sent to the model: slides 4, 7, 12"] for one deck (no cost: usage-and-allowance.md section 9); the stop
  *  message when the audit reached its token limit; how many of the model's periods Python replaced
  *  with the one its header cells give. */
 export function deckRunLog(deck) {
   if (!deck?.ai_status) return [];
+  // The server sends the S26 line with a deck the page read left unread; under DECK_PIPELINE=rules the rules read still lists claims, so the old line stands (L5).
+  if (deck.ai_status === "python_only" && deck.ai_message) return [deck.ai_message];
+  if (deck.ai_status === "prompt_missing") return [deck.ai_message || PROMPT_MISSING_LINE];
   const lines = [`AI reading: ${DECK_AI_STATUS[deck.ai_status] || deck.ai_status}`];
   if (deck.ai_status === "stopped" && deck.ai_message) lines.push(deck.ai_message);
   if (deck.sent_pages?.length) lines.push(`Sent to the model: ${deck.page_unit || "slide"}s ${deck.sent_pages.join(", ")}`);
@@ -371,15 +379,43 @@ export function claimsForDeck(candidates, deckId) {
   return deckId === ALL_DECKS ? candidates || [] : (candidates || []).filter((c) => c.deck_id === deckId);
 }
 
+// The two views of the claims table (George, 2026-10-22, docs/design/ai-reads-rules-check.md): a claim the checks flagged
+// (`flags`: closed words from the server's checker, e.g. "currency assumed") is listed under Review, never in the main list; a
+// flag never deletes or retypes a claim. The analyst approves, edits or rejects it there as anywhere else.
+export const CLAIMS_VIEW = "claims";
+export const REVIEW_VIEW = "review";
+export const VIEW_LABELS = { [CLAIMS_VIEW]: "Claims", [REVIEW_VIEW]: "Review" };
+export const REVIEW_INTRO = "Flagged by the checks: the figure, its unit, its label or its page could not be confirmed on the slide. Each flag names what to check.";
+export const isFlagged = (c) => Boolean(c?.flags?.length);
+
+/** The claims of one view: the flagged ones under Review, the rest under Claims; the server's order is kept. */
+export function claimsForView(claims, view) {
+  return (claims || []).filter((c) => isFlagged(c) === (view === REVIEW_VIEW));
+}
+
+/** "currency assumed · scenario label not on page": the flags of a claim, as the checker wrote them. */
+export const flagsText = (c) => (c?.flags || []).join(" · ");
+
 // The order of the claims table (docs/specs/deck-parser.md section 6): the group of the claim's type, set by the server, then
 // slide or page. Other starts collapsed under its count (claim-types-and-correction.md section 4).
 // Acquisition channels and Use of funds are sections of their own, directly above Other (chat-upload.md section 17).
 export const OTHER_GROUP = 9;
+// A best-case or worst-case figure is no plan target: it is listed in its own section above Other, whatever its type, and approved one by
+// one (George, 2026-10-23, review of PR 164, H2). The server puts such a claim in this group.
+export const SCENARIO_GROUP = 6;
 export const CLAIM_GROUPS = [
   [1, "Revenue, ARR, MRR and bookings"], [2, "P&L items"], [3, "Customers, users, usage, retention and sales"],
   [4, "Hiring and roadmap"], [5, "Market size"], [7, "Acquisition channels"], [8, "Use of funds"],
-  [OTHER_GROUP, "Other"],
+  [SCENARIO_GROUP, "Scenarios"], [OTHER_GROUP, "Other"],
 ];
+
+/** Whether a claim is a best or worst case (the page reader's `scenario`). */
+export const isCase = (c) => c?.scenario === "best" || c?.scenario === "worst";
+const CASE_WORDS = { best: "Best case", realistic: "Realistic case", worst: "Worst case" };
+/** "Best case", "Realistic case", "Worst case"; empty for a claim that names no case. */
+export const scenarioText = (c) => CASE_WORDS[c?.scenario] || "";
+/** Whether Approve all may ever act on a section: not on Other, and not on Scenarios (flagged claims are already left out by the server). */
+export const bulkApprovable = (group) => group !== OTHER_GROUP && group !== SCENARIO_GROUP;
 export const COLLAPSED_BY_DEFAULT = [OTHER_GROUP];
 
 /** "1 other figure", "3 other figures": the header of the Other section, which has no review count. */
@@ -404,9 +440,10 @@ export const DEFINITION_ELSEWHERE = " – answer on the review screen";
 
 /** The toast after Approve all: "Approved 5 claims, 2 skipped (need Revenue / Volume or failed to save)", then ", 1 with open definition
  *  check" when an approved claim waits for "Same metric and period?" (`open_definition` of the reply; such a claim is approved, not
- *  skipped); `elsewhere` adds where it is answered. */
-export const approveAllToast = (approved, skipped, openDefinition = 0, elsewhere = false) =>
-  `Approved ${approved} claim${approved === 1 ? "" : "s"}, ${skipped} skipped (need Revenue / Volume or failed to save)`
+ *  skipped); `elsewhere` adds where it is answered. A claim the checks flagged is never approved in bulk (George, 2026-10-22,
+ *  chat-upload.md section 28): with `flagged` skipped the bracket names it first. */
+export const approveAllToast = (approved, skipped, openDefinition = 0, elsewhere = false, flagged = 0) =>
+  `Approved ${approved} claim${approved === 1 ? "" : "s"}, ${skipped} skipped (${flagged > 0 ? "flagged for review, " : ""}need Revenue / Volume or failed to save)`
   + (openDefinition > 0 ? `, ${openDefinition} with open definition check${elsewhere ? DEFINITION_ELSEWHERE : ""}` : "");
 
 /** Counts per status, for the list header; `auto` is how many of the approved ones Run audit approved on its own (issue #155). Other

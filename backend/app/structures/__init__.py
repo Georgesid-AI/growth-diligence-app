@@ -201,7 +201,7 @@ import uuid  # noqa: E402
 
 from ..decks import TEXT_COLLECTION, CANDIDATES_COLLECTION  # noqa: E402
 from ..decks import claims  # noqa: E402
-from ..llm import gateway  # noqa: E402
+from ..llm import gateway, prompt_store  # noqa: E402
 from ..llm import redaction as llm_redaction  # noqa: E402
 from . import items as structure_items  # noqa: E402
 from . import verify  # noqa: E402
@@ -209,10 +209,23 @@ from . import verify  # noqa: E402
 # A deck's AI reading status, as the deck panel shows it.
 WAITING = "waiting"                 # "waiting for revenue file"
 READ, NOT_READ, STOPPED, PYTHON_ONLY = "read", "not_read", "stopped", "python_only"
+# Screen line S26 (George, 2026-10-22, chat-upload.md section 28): a deck uploaded with consent off lists no claim under the page read. Stored on the
+# deck as its message by the page pipeline only, so the deck panel never says "no claims were extracted" under DECK_PIPELINE=rules (review of PR 164, L5).
+CONSENT_OFF_LINE = ("Deck not read. AI-assisted reading is off for this audit, so no claims were extracted. "
+                    "Tick consent on the Upload page to read it, or use Add claim.")
+PROMPT_MISSING = "prompt_missing"       # the page reader found no deck_reading prompt in the store (review of PR 164, M6)
 WAITING_TEXT = "waiting for revenue file"
 logger = logging.getLogger("growth.structures")
 _UNITS = {"%", "x", "days", "months", "years"}
+ANALYST_ORIGINS = ("analyst", "deck_analyst")       # Add claim, Add from deck (claim-types-and-correction.md section 5)
 
+
+
+
+def deck_pipeline() -> str:
+    """The DECK_PIPELINE switch, owned by the gateway: "ai" (default) reads the pages (structures.pages), "rules" keeps the former
+    path below (read at call time: the gateway imports this package)."""
+    return gateway.deck_pipeline()
 
 # Set by server.py: `async (db, audit_id) -> Optional[bool]`, True when the recognition of the audit's revenue file has no choice left to
 # the analyst *now* (the check the rest of the app uses, `_is_mapped`: a changed as-of month can reopen a click that `mapped_at` still
@@ -239,8 +252,8 @@ async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None
     verified". A deck already read is not sent again (a re-read is served from the cache).
     """
     from . import pages as page_pipeline
-    if page_pipeline.deck_pipeline() == "ai":
-        # DECK_PIPELINE=ai (docs/design/ai-reads-rules-check.md, PR A): the model reads the pages, Python checks each claim.
+    if deck_pipeline() == "ai":
+        # The default since 2026-10-22 (docs/design/ai-reads-rules-check.md): the model reads the pages, Python checks each claim.
         return await page_pipeline.process_deck_pages(db, audit_id, deck_id, adapter=adapter, sleep=sleep)
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "id": 1, "company_name": 1, "fiscal_year_end": 1,
                                                        "structure_reading_consent": 1})
@@ -361,6 +374,22 @@ async def queue_decks(db, audit_id: str) -> List[str]:
     return queued
 
 
+async def queue_prompt_missing(db, audit_id: str) -> List[str]:
+    """Run audit reads again, with no new upload, every deck the page reader could not read for want of the deck_reading prompt, once the
+    store holds it (George, 2026-10-23, M6): marks them "reading" and returns their ids, for the caller to read. A deck already being
+    read is not queued twice; while the prompt is missing nothing is queued."""
+    found = await db[TEXT_COLLECTION].find({"audit_id": audit_id, "ai_status": PROMPT_MISSING}, {"_id": 0, "deck_id": 1}).to_list(1000)
+    if not found:
+        return []
+    try:
+        await prompt_store.load(db, gateway.PAGE_CLAIMS_PROMPT)
+    except prompt_store.PromptMissing:
+        return []
+    for d in found:
+        await _deck_status(db, audit_id, d["deck_id"], "reading")
+    return [d["deck_id"] for d in found]
+
+
 async def process_waiting_decks(db, audit_id: str, adapter=None, sleep=None) -> List[str]:
     """Read every deck that waited for the revenue file, once it is mapped. Returns their deck ids."""
     waiting = await db[TEXT_COLLECTION].find({"audit_id": audit_id, "ai_status": WAITING},
@@ -442,17 +471,30 @@ def approval_items(checked: List[Dict], mode: str = "suggest") -> List[Dict]:
     return out
 
 
+def _same_figure(c: Dict, candidate: Dict) -> bool:
+    """Whether row `c` states the figure of `candidate` on the same page: the same value, currency and kind of unit, the same type or one
+    of them unknown. The period is not compared."""
+    return bool(c.get("sources") and _page_of(c["sources"][0]) == _page_of(candidate["sources"][0])
+                and (c["value"], c["value_high"]) == (candidate["value"], candidate["value_high"])
+                and (c.get("currency") or None) == (candidate.get("currency") or None)
+                and ((c.get("unit") in ("%", "x")) or (candidate.get("unit") in ("%", "x"))) <= (c.get("unit") == candidate.get("unit"))
+                and (c["claim_type"] == candidate["claim_type"] or claims.UNKNOWN in (c["claim_type"], candidate["claim_type"])))
+
+
 def rules_copy(reviewed: List[Dict], candidate: Dict) -> Optional[Dict]:
     """The row of the parser that reads again the figure of a panel-read `candidate` (issue #154): on the same page, the same value, currency
     and kind of unit, the same type or one of them unknown, and not yet touched by the analyst. Its period may differ (a year taken from
-    elsewhere on the page); the panel read, which places the figure in its cell, decides it. None when there is no such row, or two."""
-    page = _page_of(candidate["sources"][0])
-    same = [c for c in reviewed if c.get("origin") != "ai" and c.get("status") == "pending" and c.get("sources")
-            and _page_of(c["sources"][0]) == page and (c["value"], c["value_high"]) == (candidate["value"], candidate["value_high"])
-            and (c.get("currency") or None) == (candidate.get("currency") or None)
-            and ((c.get("unit") in ("%", "x")) or (candidate.get("unit") in ("%", "x"))) <= (c.get("unit") == candidate.get("unit"))
-            and (c["claim_type"] == candidate["claim_type"] or claims.UNKNOWN in (c["claim_type"], candidate["claim_type"]))]
+    elsewhere on the page); the panel read, which places the figure in its cell, decides it. None when there is no such row, or two.
+    Only a parser row (no origin) is a copy: a claim the analyst added, by hand or from the deck, is never replaced (review of PR 164, M5)."""
+    same = [c for c in reviewed if c.get("origin") is None and c.get("status") == "pending" and _same_figure(c, candidate)]
     return same[0] if len(same) == 1 else None
+
+
+def analyst_copy(reviewed: List[Dict], candidate: Dict) -> Optional[Dict]:
+    """The claim the analyst added (Add claim, Add from deck) that states the figure of a model-read `candidate` on the same page, whatever
+    its period and status but rejected. The candidate is listed beside it with the flag "matches analyst claim", never in its place
+    (George, 2026-10-23, review of PR 164, M5)."""
+    return next((c for c in reviewed if c.get("origin") in ANALYST_ORIGINS and c.get("status") != "rejected" and _same_figure(c, candidate)), None)
 
 
 def _page_of(source: Dict):

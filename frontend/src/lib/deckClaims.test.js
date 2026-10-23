@@ -1,7 +1,9 @@
 import {
   ALL_DECKS, AI_SUGGESTION_LABEL, CLAIM_TYPES, INCONSISTENCY_LABEL, VERIFIED_LABEL, badgeText, deckRunLog, REMOVE_DECK_CONFIRM, claimPeriod, conversionHover, claimSections, claimsForDeck, periodLabel, directionText, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, newClaimPayload, sourceRef, statusCounts, typeLabel,
   approveAllToast, toReview, DECK_SCOPE_CANNOT, DECK_SCOPE_CANNOT_LEAD, DECK_SCOPE_INTRO, isDeckFile, DECK_SCOPE_OUTRO, EDIT_TYPES, isOther, readingChoices, confidenceText, otherFiguresTitle,
-  claimFields, editLogText,
+  claimFields, editLogText, CONSENT_OFF_LINE,
+  CLAIMS_VIEW, REVIEW_VIEW, VIEW_LABELS, REVIEW_INTRO, claimsForView, isFlagged, flagsText,
+  CLAIM_GROUPS, SCENARIO_GROUP, PROMPT_MISSING_LINE, scenarioText, isCase,
 } from "./deckClaims";
 
 describe("source reference", () => {
@@ -209,9 +211,13 @@ describe("model readings in the approval list (docs/specs/llm-structure-reading.
     expect(deckRunLog({ ai_status: "read", periods_corrected: 0 })).toEqual(["AI reading: read"]);
   });
 
-  test("a deck not read because AI reading is off says so, and no line asks for a re-upload (it is read when reading is ticked)", () => {
-    expect(deckRunLog({ ai_status: "python_only" })).toEqual(["AI reading: not read (AI-assisted reading is off for this audit)"]);
-    expect(deckRunLog({ ai_status: "python_only", uploaded_before_consent: true }).join(" ")).not.toContain("re-upload");
+  test("a deck not read because AI reading is off says so in one line (George, 2026-10-22), and no line asks for a re-upload (it is read when reading is ticked)", () => {
+    expect(deckRunLog({ ai_status: "python_only", ai_message: CONSENT_OFF_LINE })).toEqual([CONSENT_OFF_LINE]);
+    // the former path (DECK_PIPELINE=rules) still lists claims at upload: the server sends no message, and the old line stands
+    expect(deckRunLog({ ai_status: "python_only", ai_message: null })).toEqual(["AI reading: not read (AI-assisted reading is off for this audit)"]);
+    expect(CONSENT_OFF_LINE).toBe("Deck not read. AI-assisted reading is off for this audit, so no claims were extracted. Tick consent on the Upload page to read it, or use Add claim.");
+    expect(deckRunLog({ ai_status: "python_only", ai_message: CONSENT_OFF_LINE, sent_pages: [3] })).toEqual([CONSENT_OFF_LINE]);
+    expect(deckRunLog({ ai_status: "python_only", ai_message: CONSENT_OFF_LINE, uploaded_before_consent: true }).join(" ")).not.toContain("re-upload");
     expect(deckRunLog({})).toEqual([]);
   });
 });
@@ -350,6 +356,10 @@ describe("Approve all (docs/specs/chat-upload.md section 17)", () => {
       "Approved 5 claims, 1 skipped (need Revenue / Volume or failed to save), 2 with open definition check – answer on the review screen");
     expect(approveAllToast(5, 2, 0, true)).toBe(approveAllToast(5, 2));
   });
+  test("a flagged claim skipped by the server is named in the bracket (George, 2026-10-22, chat-upload.md section 28)", () => {
+    expect(approveAllToast(3, 2, 0, true, 1)).toBe("Approved 3 claims, 2 skipped (flagged for review, need Revenue / Volume or failed to save)");
+    expect(approveAllToast(3, 2, 0, true, 0)).toBe(approveAllToast(3, 2));
+  });
   test("only a claim to review counts", () => {
     expect(toReview({ claims: [{ id: 1, status: "pending" }, { id: 2, status: "approved" }, { id: 3, status: "rejected" }, { id: 4, status: "edited" }] }).map((c) => c.id)).toEqual([1]);
   });
@@ -373,4 +383,47 @@ describe("stale results (George, 2026-10-20)", () => {
 test("only .pptx, .docx and .pdf files are deck files, whatever the case", () => {
   expect(["a.pptx", "B.DOCX", "c.d.pdf"].map(isDeckFile)).toEqual([true, true, true]);
   expect(["a.key", "b.xlsx", "c.png", "pdf", "d.pdf.exe"].map(isDeckFile)).toEqual([false, false, false, false, false]);
+});
+
+describe("the Claims and Review views (George, 2026-10-22, docs/design/ai-reads-rules-check.md)", () => {
+  const plain = { id: "p", flags: [] };
+  const none = { id: "n" };
+  const flagged = { id: "f", flags: ["currency assumed", "scenario label not on page"] };
+  test("a claim with a flag is listed under Review and nowhere else; a claim without one under Claims", () => {
+    expect(claimsForView([plain, flagged, none], CLAIMS_VIEW).map((c) => c.id)).toEqual(["p", "n"]);
+    expect(claimsForView([plain, flagged, none], REVIEW_VIEW).map((c) => c.id)).toEqual(["f"]);
+    expect(isFlagged(flagged)).toBe(true);
+    expect(isFlagged(plain)).toBe(false);
+    expect(isFlagged(none)).toBe(false);
+  });
+  test("the flags read as the checker wrote them, joined; the labels are Claims and Review", () => {
+    expect(flagsText(flagged)).toBe("currency assumed · scenario label not on page");
+    expect(flagsText(plain)).toBe("");
+    expect(VIEW_LABELS).toEqual({ claims: "Claims", review: "Review" });
+    expect(REVIEW_INTRO).toBe("Flagged by the checks: the figure, its unit, its label or its page could not be confirmed on the slide. Each flag names what to check.");
+  });
+});
+
+describe("review of PR #164 (George, 2026-10-23)", () => {
+  test("Scenarios is a section above Other and below Use of funds; only a best or worst case belongs there", () => {
+    expect(SCENARIO_GROUP).toBe(6);
+    expect(CLAIM_GROUPS.map(([g]) => g)).toEqual([1, 2, 3, 4, 5, 7, 8, 6, 9]);
+    expect(CLAIM_GROUPS.find(([g]) => g === 6)[1]).toBe("Scenarios");
+    expect(isCase({ scenario: "best" })).toBe(true);
+    expect(isCase({ scenario: "worst" })).toBe(true);
+    expect(isCase({ scenario: "realistic" })).toBe(false);
+    expect(isCase({ scenario: "none" })).toBe(false);
+    expect(isCase({})).toBe(false);
+  });
+  test("the case a claim names is shown as a word, none for a claim with no scenario", () => {
+    expect(scenarioText({ scenario: "best" })).toBe("Best case");
+    expect(scenarioText({ scenario: "realistic" })).toBe("Realistic case");
+    expect(scenarioText({ scenario: "worst" })).toBe("Worst case");
+    expect(scenarioText({ scenario: "none" })).toBe("");
+    expect(scenarioText({})).toBe("");
+  });
+  test("a deck whose prompt is missing reads one line, word for word", () => {
+    expect(PROMPT_MISSING_LINE).toBe("AI reading not run – deck_reading prompt missing in prompt store");
+    expect(deckRunLog({ ai_status: "prompt_missing", ai_message: PROMPT_MISSING_LINE })).toEqual([PROMPT_MISSING_LINE]);
+  });
 });

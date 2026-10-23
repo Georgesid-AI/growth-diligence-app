@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import DeckPanel from "./DeckPanel";
 import * as api from "@/lib/api";
+import { PROMPT_MISSING_LINE, REVIEW_INTRO } from "@/lib/deckClaims";
 
 jest.mock("@/lib/api", () => ({ getDecks: jest.fn(), removeDeck: jest.fn(), updateCandidate: jest.fn(), uploadDeck: jest.fn(), addClaim: jest.fn(),
   answerTurnover: jest.fn(), approveAll: jest.fn() }));
@@ -919,4 +920,74 @@ test("a period Python read from 'in 2021' shows its note under the period in the
   expect(notes).toEqual([note]);
   const row = rows().find((tr) => text(tr).includes("snippet-n1"));
   expect(row.querySelector("[data-testid='candidate-period-note']")).not.toBeNull();
+});
+
+describe("the Review view (George, 2026-10-22, docs/design/ai-reads-rules-check.md)", () => {
+  const flagged = claim("f", "d2", 4, { group: 1, flags: ["currency assumed", "scenario label not on page"], ai_label: "AI suggestion, not matched", basis: "scenario", scenario: "best" });
+  test("a flagged claim is not in the main list; Review lists it with its flags; the counts follow the view", async () => {
+    await reload([...CLAIMS, flagged]);
+    expect(q("claims-view-claims").textContent).toBe("Claims (4)");
+    expect(q("claims-view-review").textContent).toBe("Review (1)");
+    await open(9);
+    expect(rows().map((tr) => /snippet-(\w)/.exec(text(tr))[1])).toEqual(["c", "d", "b", "a"]);
+    expect(q("candidate-flags")).toBeNull();
+    expect(q("review-intro")).toBeNull();
+    await act(async () => { q("claims-view-review").click(); });
+    expect(q("claims-view-review").getAttribute("aria-selected")).toBe("true");
+    expect(rows().map((tr) => /snippet-(\w)/.exec(text(tr))[1])).toEqual(["f"]);
+    expect(q("candidate-flags").textContent).toBe("currency assumed · scenario label not on page");
+    expect(q("candidate-ai-label").textContent).toBe("AI suggestion, not matched");
+    expect(q("review-intro").textContent).toBe(REVIEW_INTRO);
+    expect(q("candidate-approve")).not.toBeNull();                      // reviewed one by one like any claim: approve, edit or reject
+    expect(document.body.querySelector("[data-testid^='approve-all-']")).toBeNull();     // review of PR 164, M3: Approve all never acts on claims not shown
+    await act(async () => { q("claims-view-claims").click(); });
+    expect(rows().map((tr) => /snippet-(\w)/.exec(text(tr))[1])).toEqual(["c", "d", "b", "a"]);     // Other stays opened
+  });
+  test("a deck tab keeps the view: the Review count is that deck's", async () => {
+    await reload([...CLAIMS, flagged]);
+    await act(async () => { q("deck-tab-d1").click(); });
+    expect(q("claims-view-review").textContent).toBe("Review (0)");
+    await act(async () => { q("deck-tab-d2").click(); });
+    expect(q("claims-view-review").textContent).toBe("Review (1)");
+  });
+});
+
+describe("review of PR #164 (George, 2026-10-23)", () => {
+  const best = claim("s", "d1", 6, { group: 6, flags: [], basis: "scenario", scenario: "best", snippet: "snippet-s" });
+  const real = claim("r", "d1", 6, { group: 1, flags: [], basis: "scenario", scenario: "realistic", snippet: "snippet-r" });
+
+  test("M3: Approve all is not offered in the Review view, where it could only skip or approve claims that are not shown", async () => {
+    const flagged = claim("f", "d1", 4, { group: 1, flags: ["axis tick"] });
+    await reload([...CLAIMS, flagged]);
+    expect(q("approve-all-top-1")).not.toBeNull();                       // the Claims view keeps it
+    await act(async () => { q("claims-view-review").click(); });
+    expect(rows()).toHaveLength(1);
+    expect(document.body.querySelector("[data-testid^='approve-all-']")).toBeNull();
+    expect(api.approveAll).not.toHaveBeenCalled();
+  });
+
+  test("H2: best and worst cases are a Scenarios section above Other, with no Approve all; a realistic case stays a plan claim and names its case", async () => {
+    await reload([...CLAIMS, best, real]);
+    const order = [...document.body.querySelectorAll("[data-testid^='claim-group-toggle-']")].map((b) => b.textContent);
+    expect(order).toEqual(["Revenue, ARR, MRR and bookings (3)", "Market size (1)", "Scenarios (1)", "1 other figure"]);
+    expect(q("approve-all-top-6")).toBeNull();
+    expect(q("approve-all-bottom-6")).toBeNull();
+    expect(q("approve-all-top-1")).not.toBeNull();
+    const row = rows().find((tr) => text(tr).includes("snippet-s"));
+    expect(row.querySelector("[data-testid='candidate-scenario']").textContent).toBe("Best case");
+    const plan = rows().find((tr) => text(tr).includes("snippet-r"));
+    expect(plan.querySelector("[data-testid='candidate-scenario']").textContent).toBe("Realistic case");
+    expect(rows().find((tr) => text(tr).includes("snippet-c")).querySelector("[data-testid='candidate-scenario']")).toBeNull();
+  });
+
+  test("M6: a deck whose prompt is missing says so in its run log", async () => {
+    api.getDecks.mockResolvedValue({ decks: [{ ...DECKS[0], ai_status: "prompt_missing", ai_message: PROMPT_MISSING_LINE }], candidates: [] });
+    await act(async () => { root.unmount(); });
+    host.remove();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => { root.render(<DeckPanel auditId="a1" />); });
+    expect(q("deck-run-log").textContent).toBe(PROMPT_MISSING_LINE);
+  });
 });

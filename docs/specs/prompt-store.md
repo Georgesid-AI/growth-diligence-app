@@ -13,7 +13,8 @@ links, built with this spec).
 
 ## 1. The store
 Collection `prompts`, one document per upload: `name`, `version`, `text`, `uploaded_at`, `sha256` (of the UTF-8 text).
-- `name` is one of the five the gateway reads: `growth_engine`, `data_inventory`, `data_integrity`, `structure_reading`, `file_type` (added 2026-10-16: chat-upload.md §19)
+- `name` is one of the names the gateway reads: `growth_engine`, `data_inventory`, `data_integrity`, `structure_reading`, `file_type` (added 2026-10-16: chat-upload.md §19),
+  `sheet_structure` (chat-upload.md §26), `deck_reading` (the page reader, 2026-10-22: chat-upload.md §28; it replaces the name `page_claims` of PR #159, never uploaded live under the new name yet)
   (`prompt_store.NAMES`; a test fails if the gateway reads a name this list lacks). Any other name is refused (422).
 - `version` is `v1`, `v2`, ... per name, the next number at upload. Unique on (name, version) (index), so two uploads at the
   same moment cannot share a number. The latest version is the highest number.
@@ -110,3 +111,6 @@ the owner routes), `backend/conftest.py`, `backend/.env.example`, `frontend/src/
 ## Done when
 CI is green (backend suite, frontend suite with `--no-cache`), the four prompts are uploaded on the deployed owner page, and one narrative per step is written
 from the store.
+
+Amended 2026-10-23 (George, review of PR 164, M6): with no `deck_reading` prompt in the store the page reader does not run; the deck reads "AI reading not run – deck_reading
+prompt missing in prompt store" (status `prompt_missing`, `gateway.PROMPT_MISSING_TEXT`), and the next Run audit reads it once the prompt exists, with no new upload.

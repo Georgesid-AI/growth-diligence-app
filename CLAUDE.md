@@ -19,7 +19,8 @@
     metric names (revenue, ARR, MRR, customers, churn, bookings, forecast, budget, cost, margin, cash and common variants), after redaction; every
     other sheet's labels go as "Row 1", "Row 2"; on every sheet the 3 sample values of a column come from different rows chosen from the file hash, never the
     same row in two neighbouring columns; never a figure beyond the per-column sample; at most 400 rows with text.
-    For the page_claims step only (approved by George, 2026-10-22, PR #158 decision 1b; behind DECK_PIPELINE, default rules), the
+    For the page_claims step only (approved by George, 2026-10-22, PR #158 decision 1b; the default path since 2026-10-22,
+    DECK_PIPELINE=ai, docs/design/ai-reads-rules-check.md), the
     model may receive the redacted text lines of a deck page that carries a figure written in digits, prose lines included, as
     extracted text with cell positions, at most 5 pages per call; a page with no such figure never goes, and number-words do not
     count as figures. Prose lines pass the people-name rule as well as the customer rule before they go.
@@ -28,6 +29,17 @@
     number ("3", "Slide 3", "3/25") is no figure; the role words of the people-name rule match in any case; with no customer
     list, a customer-type header blanks the cells under it in its own box or table column and the lines directly under it in
     its column before the first figure line, not the rest of the page.
+    Amended 2026-10-22 (George, the build of docs/design/ai-reads-rules-check.md): the page read replaces the rules read as the
+    source of deck claims (the rules read stays for Add from deck and under DECK_PIPELINE=rules). It uses the `deck_reading`
+    prompt of the store (the repository holds a test stub only) and answers claims in the register's fields plus `basis`
+    (actual, projection, scenario) and `scenario` (best, realistic, worst, none); replies are cached per audit by the hash of the
+    page text. Python checks each claim (backend/app/structures/checker.py): the value on the page, the unit or currency in or
+    next to its cell (else "currency assumed"), the scenario or period label on the page when the model set one, the page within
+    the document, and the former parser rules (use-of-funds cues, acquisition-channel cues, turnover, the year label under a
+    bar, the pipeline column) as post-checks. A failed check flags the claim and never deletes or retypes it; a flagged claim is
+    listed in the review tab, not in the main claims list. A page call is outside the USD 5 daily cap and inside the tester's
+    monthly allowance, as a mapping call is. The consent explainer on the Upload page says: "The AI reads every page of uploaded
+    decks to find plan figures." The logging rule (17) is unchanged: no deck text in logs; model JSON output may be stored.
     All other steps keep the boundary above.
     The deck parser has no direct link to the gateway.
 17. Logs and MongoDB store model JSON output (values with cell references), prompt

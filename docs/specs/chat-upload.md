@@ -762,7 +762,8 @@ tables, charts and the text of pages that carry a figure, and to suggest column 
 are masked before anything is sent. Untick if the client requires code-based extraction only; this may find fewer figures.
 Narratives use AI on computed results either way." Under the set-up
 fields, one line: "Every extracted number is checked by code against its source cell. Numbers that don't match are marked
-unverified for review." The old explainer (`CONSENT_EXPLAINER` and its "What is sent" toggle) is removed with the dialog block that
+unverified for review." Amended 2026-10-22 (George, docs/design/ai-reads-rules-check.md, §28): the consent explainer (S2, `S2_EXPLAINER_CONSENT`)
+gains one last sentence, word for word: "The AI reads every page of uploaded decks to find plan figures." The old explainer (`CONSENT_EXPLAINER` and its "What is sent" toggle) is removed with the dialog block that
 used it. The consent change is saved like the other set-up fields (PUT /audits/{id}) and logged in `consent_log` as today.
 
 **Client name removed.** The field is gone from the dialog, `AuditCreate`/`AuditUpdate` (a body that still sends it is ignored),
@@ -1133,3 +1134,91 @@ Amended 2026-10-21 (George, issue #146): the revenue file for AI reading of deck
 series: a file with a confirmed column mapping that holds the customer, or a file read by recognition only (monthly revenue report, revenue summary, financial
 statements, ARR or MRR snapshot) once no choice waits for the analyst. A report has no customer rows, so a deck's customer names are blanked under a customer-type header (llm-structure-reading.md, 2026-10-21, PR 147 review). The deck upload box also
 accepts a dropped file (deck-parser.md).
+
+## 28. The page reader: the AI reads every page, the rules check each claim (2026-10-22, George)
+Decided by George with the task (docs/design/ai-reads-rules-check.md; PR A #159 and PR B #161 built the step behind a switch). CLAUDE.md
+rule 16 and docs/architecture.md ("The amendment of 2026-10-22") are amended the same day: the page read is the default, the rules
+read the fallback behind `DECK_PIPELINE=rules`, kept until the first tester decks are read (George, 2026-10-22, review of the build PR).
+
+**Reading.** At upload the rules read (`claims.detect_candidates`, deck-parser.md §2) lists no candidate any more; it stays for Add
+from deck (claim-types-and-correction.md §5), as the library of the checker's converted rules, and under `DECK_PIPELINE=rules` for
+`scripts/compare_pipelines.py`. After the response `structures.pages.process_deck_pages` sends every page that carries a figure as
+digits (rule 16, decision 1b) in batches of five through the gateway with the `deck_reading` prompt of the store (prompt-store.md; the
+repository holds `backend/tests/fixtures/prompts/deck_reading.md`, a test stub). The reply is cached per audit under the hash of the
+page text, the prompt version, the model and the schema (`gateway.structure_key`), so the same file uploaded again costs nothing.
+
+**The reply.** The register's fields (metric from the closed list, value, value_high, unit, unit_other, period, value_cell,
+label_cell, period_cell) plus two closed words: `basis` — `actual`, `projection` (a plan or forecast figure) or `scenario` (one case of
+several) — and `scenario` — `best`, `realistic`, `worst` or `none`. The register keeps `basis` and `scenario` on the row as notes (amended 2026-10-23, M2: `basis` sets no figure type and
+changes no evidence label; Python reads the figure type from the period, as for every claim). `actual_or_forecast` of the
+page reply is gone (the structure read keeps its own).
+
+**The checks (`backend/app/structures/checker.py`).** `page_check` still decides, cell by cell, "Matched to page" or "AI suggestion,
+not matched" (rule 18, decisions 2a and 3a). The checker then adds `flags`, closed strings, never deck text:
+1. `value not on page` — the value, in full units, is a figure of no cell of the page (a claim with no value and no period too: a
+   qualitative line is flagged and listed under Review, never matched; review of PR 164, L1);
+2. `currency assumed` — the unit is a currency and neither its symbol nor its code stands in the value cell or next to it;
+   `unit assumed` for %, x and a time word;
+3. `scenario label not on page` when the model set a scenario and its words (best-case, upside, base case, downside, ...) stand neither in the value
+   cell, nor in its text box, nor in a cell directly next to it: the case label must be on the same line or block as the figure (George, 2026-10-23,
+   M1);
+   `period not on page` when the model set a period that no cell of the page states;
+4. `page out of range` — the claim's page is not within the document (the row then has no cell). A guard: the gateway refuses a reply that
+   cites a cell it did not send, so on the live path it does not fire (review of PR 164, L4).
+The former parser rules are post-checks: `use-of-funds share`, `acquisition channel`, `turnover, not revenue`, `year under bar
+differs`, `pipeline column`; and what `page_check` used to drop is flagged instead: `axis tick`, `not a plan line`. A failed check
+flags the claim; it never deletes or retypes it. The only drop left is a claim on a cell the page does not have.
+
+**Screen.** The claims table has two views above it, "Claims (n)" and "Review (m)": a claim with a flag is listed under Review with its
+flags (joined by " · ") and its badge, never in the main list; the line under Review reads "Flagged by the checks: the figure, its unit,
+its label or its page could not be confirmed on the slide. Each flag names what to check." Approve, Edit and Reject work there as
+anywhere else. Approve all never approves a flagged claim (George, 2026-10-22): the server skips it, counts it in `skipped` and in
+`skipped_flagged`, and the toast reads "Approved X claims, Y skipped (flagged for review, need Revenue / Volume or failed to save)".
+
+**Consent unticked (screen line S26, George, 2026-10-22).** A deck uploaded while consent is off lists no claim (the rules read no longer runs
+at upload); its run log is one line, word for word, in place of "AI reading: not read (...)" (`CONSENT_OFF_LINE`): "Deck not read.
+AI-assisted reading is off for this audit, so no claims were extracted. Tick consent on the Upload page to read it, or use Add claim."
+Ticking consent reads the deck as §23 says.
+
+**Cost.** A page call is exempt from the USD 5 daily cap and counted in the tester's monthly allowance, as a mapping call is
+(`gateway.SPEND_CAP_EXEMPT`; usage-and-allowance.md §4). Engine contract 6 (interface-contracts.md): results and claim matches stored
+under 5 read "Stale – re-run audit"; `SEED_VERSION` 13 reseeds the demo audits.
+
+**Logging (rule 17, unchanged).** No deck text in logs; the model's JSON output (closed words, numbers, cell ids) and the checked items
+(ids, values, statuses, checks, flags) are stored. The log line reads `pages checked: run_id=… deck_id=… pages=… matched=…
+unmatched=… dropped=… flagged=…`.
+
+- **Tests.** `test_checker.py`: 06-uber.pdf page 20 with the model's recorded reply (`page_replies/uber_p20.json`) gives exactly four
+  company claims (1B revenue, 5% market share, 20–30M profit, 100 clients), all `basis` scenario, no flag but `currency assumed` on
+  the profit claim; a qualitative line is flagged and listed under Review, never matched; each check and each converted rule fails first on a deliberate violation;
+  the rows carry basis, scenario, figure type and flags; an upload lists no rule candidate under the default.
+  `test_usage_allowance.py`: a page read outside the daily cap, inside the allowance. `test_gateway_data_boundary.py`: the flags,
+  bases and scenarios are closed words and never gateway-readable. `test_deck_parser.py`, `test_structure_reading.py`,
+  `test_turnover_api.py`, `test_issue_146/154.py` test the former path under `DECK_PIPELINE=rules`. Frontend: the two views, the
+  flags on a row, the explainer sentence.
+- **Not done here (design note §7, PR C).** The deletion of the rules read, the structure detection and the merge paths waits for its
+  own commit, after the first tester decks are read (George, 2026-10-22); the rules read is no longer run at upload.
+
+**Amended 2026-10-23 (George's decisions on the review of PR 164).**
+- **Scenarios (H2).** Only `scenario` realistic and none are plan targets. A `best` or `worst` claim is stored and listed in a section of its own,
+  **Scenarios** (group 6, above Other), whatever its type; it is never matched (Unverified, "best case: a scenario, not the plan target; not tested
+  against data"), never ranked among the tested claims, never in the top 5, has no value at stake and no gate, is left out of the deck inconsistency
+  pairs, and is skipped by Approve all and by Run audit's auto-approve; the analyst approves it one by one. A realistic case names its case beside
+  its type ("Realistic case"). `basis` and `scenario` are fields of the register row, columns of the baseline CSV and of the memo's Appendix A
+  ("Basis", "Case"), and `basis`, `scenario` and `flags` ride every claim of the deck list (contract 6, interface-contracts.md).
+- **Run audit (H1).** Its auto-approve leaves a flagged claim to the analyst, as Approve all does.
+- **Basis conflict (M2).** A `basis` of projection for a period on or before the as-of month stays matched like any claim and gets the flag
+  `basis conflicts with period` (derived when the list is read: the as-of month is known after the engine ran). The model's `basis` never changes an
+  evidence label. Two closed flags more: `matches analyst claim` and `basis and scenario disagree` (basis actual with a case, or basis scenario with none).
+- **Approve all (M3, M4).** It acts only on the rows shown: it is not offered in the Review view or under Scenarios. The Review page applies the same
+  skip rule, the same toast ("flagged for review") and shows each claim's flags.
+- **Analyst claims (M5).** The page read never deletes a claim the analyst added (Add claim, Add from deck): the model's read of the same figure is
+  listed beside it with the flag `matches analyst claim`. Only a parser row is replaced by the panel read's copy. A flag of a read folded into a row still to
+  review is added to that row (L3).
+- **Missing prompt (M6).** With no `deck_reading` prompt in the store the deck reads "AI reading not run – deck_reading prompt missing in prompt store"
+  (status `prompt_missing`); the next Run audit reads it once the prompt exists, with no new upload. The Run audit claims stage carries the same line
+  while the prompt is still missing.
+- **S26 under the rules fallback (L5).** The consent-off line is stored with the deck by the page pipeline only; under `DECK_PIPELINE=rules` the deck panel
+  keeps its former line.
+- **Deferred (not built here):** L6 (contract 6 without an engine field: kept, George), L9 (Use of funds and Acquisition channels sections empty under the
+  page read: a decision on the closed list), L10 (page-read rows re-checked on a fiscal year-end change).

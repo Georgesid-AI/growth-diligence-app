@@ -49,7 +49,8 @@ months in UTC. Counts and USD only. No company name, file name, audit name, audi
   cap, refusal code `monthly_allowance_reached`. The call is not made and costs nothing; a refusal row is logged with 0 tokens.
   Calls already in flight finish, so one call per concurrent request can overshoot the allowance; the daily cap is the net above it.
 - The app-wide daily cap of USD 5 is unchanged and still applies on top, including the existing exemption of the column-mapping call
-  (chat-upload.md §4.2). The allowance has no exemption.
+  (chat-upload.md §4.2) and, since 2026-10-22, of the page-read call (chat-upload.md §28; `gateway.SPEND_CAP_EXEMPT`). The allowance
+  has no exemption: both calls count on the tester's ledger and are refused at 100%.
 - `GET /api/allowance` (tester token; owner 404; no token 401): `{percent, state}` for the caller's month (the USD fields were removed
   from the tester response, §9). With access control off: `{state: "off"}`.
 

@@ -23,9 +23,9 @@ def grid(cells, tables=None, page=5):
 
 
 def claim(value_cell, value, metric="revenue", unit="EUR", period=None, period_cell=None, label_cell=None, value_high=None,
-          unit_other=None, actual_or_forecast="actual"):
+          unit_other=None, basis="actual", scenario="none"):
     return {"metric": metric, "value": value, "value_high": value_high, "unit": unit, "unit_other": unit_other, "period": period,
-            "actual_or_forecast": actual_or_forecast, "value_cell": value_cell, "label_cell": label_cell, "period_cell": period_cell}
+            "basis": basis, "scenario": scenario, "value_cell": value_cell, "label_cell": label_cell, "period_cell": period_cell}
 
 
 def one(grid_, claim_, fiscal_year_end=12):

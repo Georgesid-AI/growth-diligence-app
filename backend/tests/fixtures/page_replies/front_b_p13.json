@@ -11,7 +11,8 @@
    "unit": "months",
    "unit_other": null,
    "period": null,
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p13r2c1",
    "label_cell": "p13r2c1",
    "period_cell": null
@@ -23,7 +24,8 @@
    "unit": "%",
    "unit_other": null,
    "period": null,
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p13r3c1",
    "label_cell": "p13r3c1",
    "period_cell": null
@@ -35,7 +37,8 @@
    "unit": "%",
    "unit_other": null,
    "period": null,
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p13r4c1",
    "label_cell": "p13r4c1",
    "period_cell": null
@@ -47,7 +50,8 @@
    "unit": "x",
    "unit_other": null,
    "period": null,
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p13r7c1",
    "label_cell": "p13r7c1",
    "period_cell": null
@@ -59,7 +63,8 @@
    "unit": "x",
    "unit_other": null,
    "period": null,
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p13r8c1",
    "label_cell": "p13r8c1",
    "period_cell": null

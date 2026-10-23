@@ -18,6 +18,13 @@ from app import claim_matching as cm  # noqa: E402
 from app import decks  # noqa: E402
 from app.decks import claims as deck_claims  # noqa: E402
 
+
+@pytest.fixture(autouse=True)
+def _rules_path(monkeypatch):
+    """The zero2hero tests upload a deck and read the rules read's turnover rows: the former path, kept under DECK_PIPELINE=rules.
+    Under the default "ai" (2026-10-22) a turnover line the model reads carries the checker's flag instead (tests/test_checker.py)."""
+    monkeypatch.setenv("DECK_PIPELINE", "rules")
+
 AUDIT = "audit-turn"
 RUN = fixture()["runs"]["A"]
 SENTINEL = "Zephyr Holdings GMV EUR 900,000"

@@ -461,7 +461,7 @@ class SyntheticAdapter(RecordedAdapter):
 
     def complete(self, *, model, system, user_payload, max_tokens, temperature, json_schema, cache_system=False):
         self.calls += 1
-        text = json.dumps({"type": json.loads(user_payload)["type"], "claims": self.fixture["claims"]})
+        text = json.dumps({"type": json.loads(user_payload)["type"], "claims": consistency_run.claims_as_read(self.fixture["claims"])})
         return text, self.count_tokens(model=model, system=system, user_payload=user_payload, json_schema=json_schema), \
             len(text) // CHARS_PER_TOKEN
 

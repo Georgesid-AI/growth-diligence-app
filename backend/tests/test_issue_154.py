@@ -23,6 +23,14 @@ from app.decks import CANDIDATES_COLLECTION, TEXT_COLLECTION, claims  # noqa: E4
 from app.decks.parser import parse_deck  # noqa: E402
 from app.structures import items  # noqa: E402
 
+
+@pytest.fixture(autouse=True)
+def _rules_path(monkeypatch):
+    """This module tests the former path (the rules read and the structure read; docs/specs/deck-parser.md, llm-structure-reading.md),
+    kept under DECK_PIPELINE=rules for scripts/compare_pipelines.py. The default since 2026-10-22 is "ai" (docs/design/
+    ai-reads-rules-check.md; tests/test_page_pipeline.py, test_checker.py)."""
+    monkeypatch.setenv("DECK_PIPELINE", "rules")
+
 SENTENCE = "IN 2022 WE FOCUS ON GROWTH OF ARPA AND KEY ACCOUNTS"
 TITLE = "Revenue forecast 2022 -2024"
 AXIS = [(150, 340, 12, "2022"), (300, 340, 12, "2023"), (450, 340, 12, "2024")]

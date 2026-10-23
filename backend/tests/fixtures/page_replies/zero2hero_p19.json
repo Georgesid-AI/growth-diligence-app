@@ -11,7 +11,8 @@
    "unit": "GBP",
    "unit_other": null,
    "period": "2023",
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p19r3c1",
    "label_cell": "p19r3c1",
    "period_cell": "p19r2c1"
@@ -23,7 +24,8 @@
    "unit": "count",
    "unit_other": null,
    "period": "2023",
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p19r4c1",
    "label_cell": "p19r4c1",
    "period_cell": "p19r2c1"
@@ -35,7 +37,8 @@
    "unit": null,
    "unit_other": null,
    "period": "2024-Q2",
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p19r5c1",
    "label_cell": "p19r5c1",
    "period_cell": "p19r6c1"
@@ -47,7 +50,8 @@
    "unit": "count",
    "unit_other": null,
    "period": "2022",
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p19r8c2",
    "label_cell": "p19r8c1",
    "period_cell": "p19r7c2"
@@ -59,7 +63,8 @@
    "unit": "count",
    "unit_other": null,
    "period": "2023",
-   "actual_or_forecast": "forecast",
+   "basis": "projection",
+   "scenario": "none",
    "value_cell": "p19r8c3",
    "label_cell": "p19r8c1",
    "period_cell": "p19r7c3"
@@ -71,7 +76,8 @@
    "unit": "count",
    "unit_other": null,
    "period": "2024",
-   "actual_or_forecast": "forecast",
+   "basis": "projection",
+   "scenario": "none",
    "value_cell": "p19r8c4",
    "label_cell": "p19r8c1",
    "period_cell": "p19r7c4"
@@ -83,7 +89,8 @@
    "unit": "count",
    "unit_other": null,
    "period": "2025",
-   "actual_or_forecast": "forecast",
+   "basis": "projection",
+   "scenario": "none",
    "value_cell": "p19r8c5",
    "label_cell": "p19r8c1",
    "period_cell": "p19r7c5"
@@ -95,7 +102,8 @@
    "unit": "count",
    "unit_other": null,
    "period": "2026",
-   "actual_or_forecast": "forecast",
+   "basis": "projection",
+   "scenario": "none",
    "value_cell": "p19r8c6",
    "label_cell": "p19r8c1",
    "period_cell": "p19r7c6"
@@ -107,7 +115,8 @@
    "unit": "count",
    "unit_other": null,
    "period": "2023",
-   "actual_or_forecast": "forecast",
+   "basis": "projection",
+   "scenario": "none",
    "value_cell": "p19r9c3",
    "label_cell": "p19r9c1",
    "period_cell": "p19r7c3"
@@ -119,7 +128,8 @@
    "unit": "count",
    "unit_other": null,
    "period": "2024",
-   "actual_or_forecast": "forecast",
+   "basis": "projection",
+   "scenario": "none",
    "value_cell": "p19r9c4",
    "label_cell": "p19r9c1",
    "period_cell": "p19r7c4"
@@ -131,7 +141,8 @@
    "unit": "count",
    "unit_other": null,
    "period": "2025",
-   "actual_or_forecast": "forecast",
+   "basis": "projection",
+   "scenario": "none",
    "value_cell": "p19r9c5",
    "label_cell": "p19r9c1",
    "period_cell": "p19r7c5"
@@ -143,7 +154,8 @@
    "unit": "count",
    "unit_other": null,
    "period": "2026",
-   "actual_or_forecast": "forecast",
+   "basis": "projection",
+   "scenario": "none",
    "value_cell": "p19r9c6",
    "label_cell": "p19r9c1",
    "period_cell": "p19r7c6"
@@ -155,7 +167,8 @@
    "unit": "GBP",
    "unit_other": null,
    "period": "2022",
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p19r10c2",
    "label_cell": "p19r10c1",
    "period_cell": "p19r7c2"
@@ -167,7 +180,8 @@
    "unit": "GBP",
    "unit_other": null,
    "period": "2023",
-   "actual_or_forecast": "forecast",
+   "basis": "projection",
+   "scenario": "none",
    "value_cell": "p19r10c3",
    "label_cell": "p19r10c1",
    "period_cell": "p19r7c3"
@@ -179,7 +193,8 @@
    "unit": "GBP",
    "unit_other": null,
    "period": "2024",
-   "actual_or_forecast": "forecast",
+   "basis": "projection",
+   "scenario": "none",
    "value_cell": "p19r10c4",
    "label_cell": "p19r10c1",
    "period_cell": "p19r7c4"
@@ -191,7 +206,8 @@
    "unit": "GBP",
    "unit_other": null,
    "period": "2025",
-   "actual_or_forecast": "forecast",
+   "basis": "projection",
+   "scenario": "none",
    "value_cell": "p19r10c5",
    "label_cell": "p19r10c1",
    "period_cell": "p19r7c5"
@@ -203,7 +219,8 @@
    "unit": "GBP",
    "unit_other": null,
    "period": "2026",
-   "actual_or_forecast": "forecast",
+   "basis": "projection",
+   "scenario": "none",
    "value_cell": "p19r10c6",
    "label_cell": "p19r10c1",
    "period_cell": "p19r7c6"
@@ -215,7 +232,8 @@
    "unit": "GBP",
    "unit_other": null,
    "period": "2022",
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p19r11c2",
    "label_cell": "p19r11c1",
    "period_cell": "p19r7c2"
@@ -227,7 +245,8 @@
    "unit": "GBP",
    "unit_other": null,
    "period": "2023",
-   "actual_or_forecast": "forecast",
+   "basis": "projection",
+   "scenario": "none",
    "value_cell": "p19r11c3",
    "label_cell": "p19r11c1",
    "period_cell": "p19r7c3"
@@ -239,7 +258,8 @@
    "unit": "GBP",
    "unit_other": null,
    "period": "2024",
-   "actual_or_forecast": "forecast",
+   "basis": "projection",
+   "scenario": "none",
    "value_cell": "p19r11c4",
    "label_cell": "p19r11c1",
    "period_cell": "p19r7c4"
@@ -251,7 +271,8 @@
    "unit": "GBP",
    "unit_other": null,
    "period": "2025",
-   "actual_or_forecast": "forecast",
+   "basis": "projection",
+   "scenario": "none",
    "value_cell": "p19r11c5",
    "label_cell": "p19r11c1",
    "period_cell": "p19r7c5"
@@ -263,7 +284,8 @@
    "unit": "GBP",
    "unit_other": null,
    "period": "2026",
-   "actual_or_forecast": "forecast",
+   "basis": "projection",
+   "scenario": "none",
    "value_cell": "p19r11c6",
    "label_cell": "p19r11c1",
    "period_cell": "p19r7c6"
@@ -275,7 +297,8 @@
    "unit": "GBP",
    "unit_other": null,
    "period": "2022",
-   "actual_or_forecast": "actual",
+   "basis": "actual",
+   "scenario": "none",
    "value_cell": "p19r12c2",
    "label_cell": "p19r12c1",
    "period_cell": "p19r7c2"
@@ -287,7 +310,8 @@
    "unit": "GBP",
    "unit_other": null,
    "period": "2023",
-   "actual_or_forecast": "forecast",
+   "basis": "projection",
+   "scenario": "none",
    "value_cell": "p19r12c3",
    "label_cell": "p19r12c1",
    "period_cell": "p19r7c3"
@@ -299,7 +323,8 @@
    "unit": "GBP",
    "unit_other": null,
    "period": "2024",
-   "actual_or_forecast": "forecast",
+   "basis": "projection",
+   "scenario": "none",
    "value_cell": "p19r12c4",
    "label_cell": "p19r12c1",
    "period_cell": "p19r7c4"
@@ -311,7 +336,8 @@
    "unit": "GBP",
    "unit_other": null,
    "period": "2025",
-   "actual_or_forecast": "forecast",
+   "basis": "projection",
+   "scenario": "none",
    "value_cell": "p19r12c5",
    "label_cell": "p19r12c1",
    "period_cell": "p19r7c5"
@@ -323,7 +349,8 @@
    "unit": "GBP",
    "unit_other": null,
    "period": "2026",
-   "actual_or_forecast": "forecast",
+   "basis": "projection",
+   "scenario": "none",
    "value_cell": "p19r12c6",
    "label_cell": "p19r12c1",
    "period_cell": "p19r7c6"

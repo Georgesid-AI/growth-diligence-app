@@ -14,6 +14,7 @@ import {
   confidenceText, countLine, readingChoices, rowEdit, sourceRef, statusCounts, statusText, typeLabel,
   ADD_FROM_DECK_LABEL, ADDED_FROM_DECK_TAG, DEFAULT_EDIT_REASON, EDIT_REASONS, EDIT_TYPES, FIGURE_TYPE_OPTIONS, GROWTH_BASIS_OPTIONS, GROWTH_TYPES,
   OTHER_GROUP, POPULATION_OPTIONS, VIEW_PAGE_LABEL, claimFields, editLogText, isOther,
+  CLAIMS_VIEW, REVIEW_VIEW, VIEW_LABELS, REVIEW_INTRO, claimsForView, flagsText, bulkApprovable, scenarioText,
 } from "@/lib/deckClaims";
 
 // The status is a label, not a control: plain coloured text, no border or chip, so it never reads as a button (George,
@@ -44,6 +45,7 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
   const [adding, setAdding] = useState(false);       // the Add claim row is open
   const [expanded, setExpanded] = useState({});     // group -> opened or closed by the analyst; Other starts closed
   const [editing, setEditing] = useState(null);     // a claim just added from the deck with no type: opened in the editor
+  const [view, setView] = useState(CLAIMS_VIEW);    // Claims (no flag) or Review (the claims the checks flagged)
 
   // After a load, keep the chosen tab if its deck still exists; otherwise show the most recent deck.
   // A background poll (silent) that meets an error, a 404 included, stops for good and shows nothing; so does a
@@ -169,7 +171,7 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
     setApproving(section.group);
     try {
       const done = await approveAll(auditId, section.group, tab && tab !== ALL_DECKS ? tab : undefined);
-      if (alive.current) toast.success(approveAllToast(done.approved, done.skipped, done.open_definition, true));
+      if (alive.current) toast.success(approveAllToast(done.approved, done.skipped, done.open_definition, true, done.skipped_flagged));
       await load();
     } catch (err) {
       if (alive.current) toast.error(describeRequestError(err).message);
@@ -219,8 +221,10 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
     }
   };
 
-  const shown = claimsForDeck(data.candidates, tab);
+  const underTab = claimsForDeck(data.candidates, tab);
+  const shown = claimsForView(underTab, view);
   const counts = statusCounts(shown);
+  const viewCount = (v) => claimsForView(underTab, v).length;
   const selectedDeck = data.decks.find((d) => d.deck_id === tab);
 
   return (
@@ -310,6 +314,16 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
               {deckRunLog(selectedDeck).map((line) => <div key={line}>{line}</div>)}
             </div>
           )}
+          <div className="flex flex-wrap gap-1 mb-2" role="tablist" data-testid="claims-views">
+            {[CLAIMS_VIEW, REVIEW_VIEW].map((v) => (
+              <button key={v} type="button" role="tab" aria-selected={view === v} onClick={() => setView(v)}
+                className={`px-2.5 py-1 text-xs rounded-md border ${view === v ? "border-sky-600 bg-sky-50 text-slate-900 font-semibold" : "border-[#E5E7EB] text-slate-500 hover:text-slate-800"}`}
+                data-testid={`claims-view-${v}`}>
+                {VIEW_LABELS[v]} <span className="font-mono font-normal text-slate-400">({viewCount(v)})</span>
+              </button>
+            ))}
+          </div>
+          {view === REVIEW_VIEW && <p className="text-xs text-slate-600 mb-2 max-w-3xl" data-testid="review-intro">{REVIEW_INTRO}</p>}
           <div className="text-[11px] text-slate-500 font-mono mb-2">
             {countLine(counts)}
           </div>
@@ -325,6 +339,9 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
                   const open = expanded[section.group] ?? !section.collapsed;
                   const waiting = toReview(section).length;
                   const other = section.group === OTHER_GROUP;       // never a task: no review count and no Approve all
+                  // Approve all is offered only where it can act on the rows shown: not in Review (every claim there is flagged, and the
+                  // unflagged ones are listed under Claims) and not under Scenarios (approved one by one); review of PR 164, M3, H2.
+                  const bulk = view === CLAIMS_VIEW && bulkApprovable(section.group);
                   const approveAllButton = (where) => (
                     <Button type="button" size="sm" variant="outline" onClick={() => approveSection(section)} disabled={waiting === 0 || approving !== null}
                       title={`Approve the ${waiting} claim${waiting === 1 ? "" : "s"} to review in ${section.title}`} className="h-7"
@@ -348,13 +365,13 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
                               {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                               {section.title}{!other && <span className="font-mono font-normal text-slate-500"> ({section.claims.length})</span>}
                             </button>
-                            {open && !other && approveAllButton("top")}
+                            {open && bulk && approveAllButton("top")}
                           </div>
                         </td>
                       </tr>
                       {open && section.claims.map((c) => <CandidateRow key={c.id} candidate={c} onSave={save} onAnswer={answer} highlight={flash === c.id}
                         autoEdit={editing === c.id} />)}
-                      {open && !other && (
+                      {open && bulk && (
                         <tr data-testid={`claim-group-end-${section.group}`}>
                           <td colSpan={COLUMNS.length} className="pt-2 pb-1 px-2 text-right">{approveAllButton("bottom")}</td>
                         </tr>
@@ -633,6 +650,7 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight, autoEdit = fa
             {turnover.views.length ? turnover.views.map((v) => (
               <TurnoverCell key={v.claim_id} row={v} onAnswer={onAnswer} heading={turnoverHeading(v, isRow)} />
             )) : typeLabel(c.claim_type)}
+            {scenarioText(c) && <div className="text-[10px] font-mono text-slate-500" data-testid="candidate-scenario">{scenarioText(c)}</div>}
             {c.channel && <div className="text-[10px] text-slate-500 mt-0.5" data-testid="candidate-channel">{c.channel}</div>}
           </td>
           <td className={`py-2 pr-3 font-mono text-slate-900 ${isRow || claimValue(c).includes(FX_SETTINGS_LABEL) ? "" : "whitespace-nowrap"}`}>
@@ -678,6 +696,12 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight, autoEdit = fa
             ? "text-emerald-800 border-emerald-500/50 bg-emerald-50" : "text-amber-800 border-amber-500/50 bg-amber-50"}`}
             data-testid="candidate-ai-label">
             {badgeText(c.ai_label)}
+          </div>
+        )}
+        {flagsText(c) && (
+          <div className="mt-1 text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-normal max-w-[14rem] text-amber-800 border-amber-500/50 bg-amber-50"
+            data-testid="candidate-flags">
+            {flagsText(c)}
           </div>
         )}
         {c.mixed_slide && (
