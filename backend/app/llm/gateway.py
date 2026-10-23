@@ -1462,6 +1462,8 @@ PAGE_MAX_TOKENS = 8000
 RECOGNITION_MAX_TOKENS = 1_000      # ... and of its reply
 STRUCTURES_COLLECTION = cache.STRUCTURES_COLLECTION
 NOT_READ = "Not read by AI"
+# George, 2026-10-23 (review of PR 164, M6): the page reader found no deck_reading prompt in the store; shown on the deck, and Run audit reads it again.
+PROMPT_MISSING_TEXT = "AI reading not run – deck_reading prompt missing in prompt store"
 TOO_LARGE = "Too large for AI reading"
 # The reason a cap refusal's "structure not read" line gives, per guard code (llm_calls keeps the code).
 CAP_REASONS = {"daily_spend_cap_exceeded": "spend_cap", "structure_token_cap_reached": "token_cap",
@@ -1870,7 +1872,7 @@ async def read_structure(
         prompt = await prompt_store.load(db, {FILE_TYPE: FILE_TYPE_PROMPT, FILE_RECOGNITION: FILE_TYPE_PROMPT, SHEET_STRUCTURE: SHEET_STRUCTURE_PROMPT,
                                               PAGE_CLAIMS: PAGE_CLAIMS_PROMPT}.get(structure_type, STRUCTURE_PROMPT))
     except prompt_store.PromptMissing:
-        return _structure_result("not_read", structure_type, NOT_READ)
+        return _structure_result("not_read", structure_type, PROMPT_MISSING_TEXT if structure_type == PAGE_CLAIMS else NOT_READ)
     if STRUCTURE_MODEL not in MODEL_PRICING_USD:
         return _structure_result("not_read", structure_type, NOT_READ)
     key = structure_key(text, structure_type, prompt_store.cache_tag(prompt), STRUCTURE_MODEL)

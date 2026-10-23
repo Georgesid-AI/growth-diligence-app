@@ -3202,7 +3202,7 @@ def test_no_sent_page_text_and_no_label_text_in_a_log_llm_calls_or_llm_structure
     record, = db[gateway.STRUCTURES_COLLECTION].docs
     assert record["items"]["claims"][0]["label_cell"] == "r1c1" and record["items"]["claims"][0]["period_cells"] == ["r4c1"]
     assert record["statuses"] == ["matched"]
-    assert "pages checked: run_id=audit-boundary deck_id=d1 pages=1 matched=1 unmatched=0 dropped=0" in caplog.text
+    assert "pages checked: run_id=audit-boundary deck_id=d1 pages=1 matched=1 unmatched=0 dropped=0 flagged=0" in caplog.text
     row, = db[decks.CANDIDATES_COLLECTION].docs
     assert row["label_from"] == "Traction" and row["ai_label"] == "Matched to page", "the row, for the analyst, reads the page"
 
@@ -3387,9 +3387,14 @@ def test_the_checker_flags_basis_and_scenario_are_closed_words_and_never_gateway
     from app.structures import checker
     assert checker.FLAGS == ("value not on page", "currency assumed", "unit assumed", "scenario label not on page",
                              "period not on page", "page out of range", "use-of-funds share", "acquisition channel",
-                             "turnover, not revenue", "year under bar differs", "pipeline column", "axis tick", "not a plan line")
+                             "turnover, not revenue", "year under bar differs", "pipeline column", "axis tick", "not a plan line",
+                             "matches analyst claim", "basis and scenario disagree", "basis conflicts with period")
     assert set(schemas.PAGE_BASES) == {"actual", "projection", "scenario"} and set(schemas.PAGE_SCENARIOS) == {"best", "realistic", "worst", "none"}
     assert not {"flags", "basis", "scenario", "figure_type"} & decks.GATEWAY_READABLE_FIELDS
+    from schemas import metrics
+    assert not set(metrics.DECK_CLAIM_FIELDS) & decks.GATEWAY_READABLE_FIELDS, "contract 6's deck claim fields are server-only"
+    from app.llm import gateway as _gateway
+    assert _gateway.PROMPT_MISSING_TEXT == "AI reading not run – deck_reading prompt missing in prompt store", "a closed sentence, no deck text"
     grid = {"type": "page", "page": 1, "header_rows": 0, "tables": [], "cells": [
         {"row": 1, "col": 1, "text": "Traction at Target Co", "box": 1, "title": True},
         {"row": 2, "col": 1, "text": "Northbridge revenue $150,000", "box": 2}]}

@@ -13,7 +13,7 @@ import {
   answerDefinitionCheck, answerTurnover, approveAll, decideColumns, generateNarrative, getAudit, getClaimRegister, getDatasets, getDecks, getNarrativeEstimate,
   getReview, getVerdict, putIcInputs, reportUsage, updateCandidate, updateClaimInputs,
 } from "@/lib/api";
-import { claimPeriod, claimValue, sourceRef, typeLabel, CLAIM_GROUPS, approveAllToast, isOther, STALE_LABEL } from "@/lib/deckClaims";
+import { claimPeriod, claimValue, sourceRef, typeLabel, CLAIM_GROUPS, approveAllToast, isOther, isCase, flagsText, bulkApprovable, scenarioText, STALE_LABEL } from "@/lib/deckClaims";
 import { JUDGMENT_HEADING } from "@/lib/verdict";
 import { definitionOf, turnoverHeading, turnoverOf, registerRows } from "@/lib/claimRegister";
 import { useGateEdits } from "@/lib/useGateEdits";
@@ -266,6 +266,8 @@ function ClaimsSection({ auditId, data, summary, reload }) {
   const open = data.candidates.filter((c) => !isOther(c) && ((c.status === "pending" && !turnoverOf(c).open) || (c.status !== "rejected" && asks(c))));
   const auto = data.candidates.filter((c) => c.auto_accepted && c.status === "approved");
   const groups = [...new Set(open.map((c) => c.group))].sort((a, b) => a - b);
+  // Approve all acts on what the deck panel's does (George, 2026-10-23, review of PR 164, M4): never a flagged claim, never a best or worst case.
+  const bulk = (c) => c.status === "pending" && !c.flags?.length && !isCase(c);
   const act = async (key, fn) => {
     setBusy(key);
     try { await fn(); await reload(); } catch (e) { toast.error(describeRequestError(e).message); } finally { setBusy(null); }
@@ -279,18 +281,26 @@ function ClaimsSection({ auditId, data, summary, reload }) {
         <div key={g} className="mt-2" data-testid={`review-claim-group-${g}`}>
           <div className="flex items-center justify-between">
             <div className="text-xs font-medium text-slate-900">{GROUP_TITLE[g] || "Other"}</div>
-            <Button size="sm" variant="outline" className="h-7" disabled={busy !== null} data-testid={`review-approve-all-${g}`}
-              onClick={() => act(`g${g}`, async () => { const done = await approveAll(auditId, g); toast.success(approveAllToast(done.approved, done.skipped, done.open_definition)); })}>
-              Approve all ({open.filter((c) => c.group === g && c.status === "pending").length})
-            </Button>
+            {bulkApprovable(g) && (
+              <Button size="sm" variant="outline" className="h-7" disabled={busy !== null} data-testid={`review-approve-all-${g}`}
+                onClick={() => act(`g${g}`, async () => { const done = await approveAll(auditId, g); toast.success(approveAllToast(done.approved, done.skipped, done.open_definition, false, done.skipped_flagged)); })}>
+                Approve all ({open.filter((c) => c.group === g && bulk(c)).length})
+              </Button>
+            )}
           </div>
           <table className="w-full text-xs mt-1"><tbody>
             {open.filter((c) => c.group === g).map((c) => (
               <tr key={c.id} className="border-b border-[#F1F5F9] align-top" data-testid="review-claim-row">
-                <td className="py-1.5 pr-3 text-slate-900">{typeLabel(c.claim_type)}</td>
+                <td className="py-1.5 pr-3 text-slate-900">
+                  {typeLabel(c.claim_type)}
+                  {scenarioText(c) && <div className="text-[10px] font-mono text-slate-500">{scenarioText(c)}</div>}
+                </td>
                 <td className="py-1.5 pr-3 font-mono">{claimValue(c)}</td>
                 <td className="py-1.5 pr-3 font-mono text-slate-600">{claimPeriod(c)}</td>
-                <td className="py-1.5 pr-3 font-mono text-slate-500">{sourceRef(c.sources?.[0])}</td>
+                <td className="py-1.5 pr-3 font-mono text-slate-500">
+                  {sourceRef(c.sources?.[0])}
+                  {flagsText(c) && <div className="mt-1 text-[10px] border rounded px-1.5 py-0.5 whitespace-normal max-w-[14rem] text-amber-800 border-amber-500/50 bg-amber-50" data-testid="review-claim-flags">{flagsText(c)}</div>}
+                </td>
                 <td className="py-1.5 whitespace-nowrap">
                   {asks(c) ? (
                     definitionOf(c).views.filter((v) => v.definition_check === "ask").map((v) => (

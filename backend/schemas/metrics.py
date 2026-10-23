@@ -24,9 +24,14 @@ from typing import Annotated, Any, Dict, Iterator, List, Literal, Optional, Tupl
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, ValidationInfo
 
-CONTRACT_VERSION = 6          # 6: the page reader (docs/design/ai-reads-rules-check.md): claims carry basis, scenario and flags; results and
+CONTRACT_VERSION = 6          # 6: the page reader (docs/design/ai-reads-rules-check.md): claims carry basis, scenario and flags (DECK_CLAIM_FIELDS); results and
                               #    claim matches stored under 5 read "Stale – re-run audit". 5: revenue-file recognition (revenue_series
                               #    basis and file type, reconciliation status, the recognition block)
+
+# Contract 6 (docs/specs/interface-contracts.md): what a deck claim carries besides the register's fields. `basis` (actual, projection, scenario) and
+# `scenario` (best, realistic, worst, none) are the page reader's closed words; `flags` are the checker's closed strings. The register row
+# (claim_matching.FIELDS), the baseline CSV and the memo's Appendix A carry `basis` and `scenario`; the deck list carries all three.
+DECK_CLAIM_FIELDS = ("basis", "scenario", "flags")
 
 # Display kinds: the same names app/formatting.py and frontend/src/lib/format.js use.
 CURRENCY, COUNT, COUNT_UP, DAYS, MONTHS, PCT, RATIO, PLAIN = (

@@ -111,3 +111,6 @@ the owner routes), `backend/conftest.py`, `backend/.env.example`, `frontend/src/
 ## Done when
 CI is green (backend suite, frontend suite with `--no-cache`), the four prompts are uploaded on the deployed owner page, and one narrative per step is written
 from the store.
+
+Amended 2026-10-23 (George, review of PR 164, M6): with no `deck_reading` prompt in the store the page reader does not run; the deck reads "AI reading not run – deck_reading
+prompt missing in prompt store" (status `prompt_missing`, `gateway.PROMPT_MISSING_TEXT`), and the next Run audit reads it once the prompt exists, with no new upload.

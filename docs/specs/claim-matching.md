@@ -5,6 +5,7 @@ Amended 2026-10-22 (George, issue #155, option c): Run audit's within-tolerance 
 entered or edited, a claim flagged as a deck inconsistency, or a claim in a currency other than the audit's (until the FX source and date of
 issue #11 are fixed); it narrows the step of 2026-10-14 and keeps its metric set. A claim it approves reads "Auto-approved – matches revenue
 file (Δ x.x%)" and the register row gains `auto_approval` (§6, §8); the memo's Appendix A shows it in an Approval column (verdict-and-memo.md). No new threshold.
+Amended 2026-10-23 (George, review of PR 164): Run audit's step also leaves a flagged claim (`flags`, as Approve all) and a best-case or worst-case figure to the analyst; the register row gains `basis` and `scenario` (§6).
 Amended 2026-10-20 (George): a Revenue or revenue-growth claim while the engine holds no `revenue_series` is Unverified, "Not computed – revenue series not available"; no figure is read from any other block, and no gap or "Same metric and period?" is shown (table 2b).
 Amended 2026-10-20 (George's decisions of 2026-10-19 on issue #136): every observed figure carries its own citation, `observed_citation`
 "(source key, sheet, rows, period)", beside the number in the register, the banner (chat-upload.md S16b), the CSV and the memo (§6); a new
@@ -230,7 +231,8 @@ under `register`, beside today's `claims`; `register` is empty when the audit ha
 | `gap`, `gap_normalised`, `gap_kind` | float or null | miss, beat, to go |
 | `gloss` | str or null | table 3 |
 | `evidence_label`, `reason`, `tolerance` | str | table 4 (null while a Definition check is open, §4.1); "±5%", "±1 pp" |
-| `auto_approval` | str or null | §4.1 (2026-10-22): "Auto-approved – matches revenue file (Δ 1.1%)" for a claim Run audit approved on its own while it still matches; else null. The last field |
+| `auto_approval` | str or null | §4.1 (2026-10-22): "Auto-approved – matches revenue file (Δ 1.1%)" for a claim Run audit approved on its own while it still matches; else null |
+| `basis`, `scenario` | str or null, str | Contract 6, 2026-10-23 (chat-upload.md §28): the page reader's `basis` (actual, projection, scenario; null for a claim the parser read or the analyst entered) and `scenario` (best, realistic, worst, none). A `best` or `worst` claim is Unverified, "best case: a scenario, not the plan target; not tested against data", never ranked among tested claims, gated or in the top 5, with no value at stake. The last two fields |
 | `definition_check`, `definition_question` | str or null | §4.1: null (no gap beyond the limit), ask, yes, no; the question, set whenever `definition_check` is |
 | `rank` | int | §3 |
 | `value_at_stake_arr` | float or null | null until issue #6 |

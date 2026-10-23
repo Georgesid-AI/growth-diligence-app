@@ -1149,19 +1149,22 @@ page text, the prompt version, the model and the schema (`gateway.structure_key`
 
 **The reply.** The register's fields (metric from the closed list, value, value_high, unit, unit_other, period, value_cell,
 label_cell, period_cell) plus two closed words: `basis` — `actual`, `projection` (a plan or forecast figure) or `scenario` (one case of
-several) — and `scenario` — `best`, `realistic`, `worst` or `none`. The register reads `basis` as the figure type (actual → actual,
-projection and scenario → target, `figure_type_set_by: ai`) and keeps `basis` and `scenario` on the row. `actual_or_forecast` of the
+several) — and `scenario` — `best`, `realistic`, `worst` or `none`. The register keeps `basis` and `scenario` on the row as notes (amended 2026-10-23, M2: `basis` sets no figure type and
+changes no evidence label; Python reads the figure type from the period, as for every claim). `actual_or_forecast` of the
 page reply is gone (the structure read keeps its own).
 
 **The checks (`backend/app/structures/checker.py`).** `page_check` still decides, cell by cell, "Matched to page" or "AI suggestion,
 not matched" (rule 18, decisions 2a and 3a). The checker then adds `flags`, closed strings, never deck text:
 1. `value not on page` — the value, in full units, is a figure of no cell of the page (a claim with no value and no period too: a
-   qualitative line never becomes a claim);
+   qualitative line is flagged and listed under Review, never matched; review of PR 164, L1);
 2. `currency assumed` — the unit is a currency and neither its symbol nor its code stands in the value cell or next to it;
    `unit assumed` for %, x and a time word;
-3. `scenario label not on page` when the model set a scenario the page does not name (best-case, upside, base case, downside, ...);
+3. `scenario label not on page` when the model set a scenario and its words (best-case, upside, base case, downside, ...) stand neither in the value
+   cell, nor in its text box, nor in a cell directly next to it: the case label must be on the same line or block as the figure (George, 2026-10-23,
+   M1);
    `period not on page` when the model set a period that no cell of the page states;
-4. `page out of range` — the claim's page is not within the document (the row then has no cell).
+4. `page out of range` — the claim's page is not within the document (the row then has no cell). A guard: the gateway refuses a reply that
+   cites a cell it did not send, so on the live path it does not fire (review of PR 164, L4).
 The former parser rules are post-checks: `use-of-funds share`, `acquisition channel`, `turnover, not revenue`, `year under bar
 differs`, `pipeline column`; and what `page_check` used to drop is flagged instead: `axis tick`, `not a plan line`. A failed check
 flags the claim; it never deletes or retypes it. The only drop left is a claim on a cell the page does not have.
@@ -1187,7 +1190,7 @@ unmatched=… dropped=… flagged=…`.
 
 - **Tests.** `test_checker.py`: 06-uber.pdf page 20 with the model's recorded reply (`page_replies/uber_p20.json`) gives exactly four
   company claims (1B revenue, 5% market share, 20–30M profit, 100 clients), all `basis` scenario, no flag but `currency assumed` on
-  the profit claim; qualitative lines never become claims; each check and each converted rule fails first on a deliberate violation;
+  the profit claim; a qualitative line is flagged and listed under Review, never matched; each check and each converted rule fails first on a deliberate violation;
   the rows carry basis, scenario, figure type and flags; an upload lists no rule candidate under the default.
   `test_usage_allowance.py`: a page read outside the daily cap, inside the allowance. `test_gateway_data_boundary.py`: the flags,
   bases and scenarios are closed words and never gateway-readable. `test_deck_parser.py`, `test_structure_reading.py`,
@@ -1195,3 +1198,27 @@ unmatched=… dropped=… flagged=…`.
   flags on a row, the explainer sentence.
 - **Not done here (design note §7, PR C).** The deletion of the rules read, the structure detection and the merge paths waits for its
   own commit, after the first tester decks are read (George, 2026-10-22); the rules read is no longer run at upload.
+
+**Amended 2026-10-23 (George's decisions on the review of PR 164).**
+- **Scenarios (H2).** Only `scenario` realistic and none are plan targets. A `best` or `worst` claim is stored and listed in a section of its own,
+  **Scenarios** (group 6, above Other), whatever its type; it is never matched (Unverified, "best case: a scenario, not the plan target; not tested
+  against data"), never ranked among the tested claims, never in the top 5, has no value at stake and no gate, is left out of the deck inconsistency
+  pairs, and is skipped by Approve all and by Run audit's auto-approve; the analyst approves it one by one. A realistic case names its case beside
+  its type ("Realistic case"). `basis` and `scenario` are fields of the register row, columns of the baseline CSV and of the memo's Appendix A
+  ("Basis", "Case"), and `basis`, `scenario` and `flags` ride every claim of the deck list (contract 6, interface-contracts.md).
+- **Run audit (H1).** Its auto-approve leaves a flagged claim to the analyst, as Approve all does.
+- **Basis conflict (M2).** A `basis` of projection for a period on or before the as-of month stays matched like any claim and gets the flag
+  `basis conflicts with period` (derived when the list is read: the as-of month is known after the engine ran). The model's `basis` never changes an
+  evidence label. Two closed flags more: `matches analyst claim` and `basis and scenario disagree` (basis actual with a case, or basis scenario with none).
+- **Approve all (M3, M4).** It acts only on the rows shown: it is not offered in the Review view or under Scenarios. The Review page applies the same
+  skip rule, the same toast ("flagged for review") and shows each claim's flags.
+- **Analyst claims (M5).** The page read never deletes a claim the analyst added (Add claim, Add from deck): the model's read of the same figure is
+  listed beside it with the flag `matches analyst claim`. Only a parser row is replaced by the panel read's copy. A flag of a read folded into a row still to
+  review is added to that row (L3).
+- **Missing prompt (M6).** With no `deck_reading` prompt in the store the deck reads "AI reading not run – deck_reading prompt missing in prompt store"
+  (status `prompt_missing`); the next Run audit reads it once the prompt exists, with no new upload. The Run audit claims stage carries the same line
+  while the prompt is still missing.
+- **S26 under the rules fallback (L5).** The consent-off line is stored with the deck by the page pipeline only; under `DECK_PIPELINE=rules` the deck panel
+  keeps its former line.
+- **Deferred (not built here):** L6 (contract 6 without an engine field: kept, George), L9 (Use of funds and Acquisition channels sections empty under the
+  page read: a decision on the closed list), L10 (page-read rows re-checked on a fiscal year-end change).

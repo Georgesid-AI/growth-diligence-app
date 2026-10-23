@@ -7,10 +7,12 @@ a flag is listed in the review tab of the deck panel, not in the main claims lis
 
 Four checks per claim:
 1. VALUE_NOT_ON_PAGE: the value (as written or in full units, page_check.figure_check) is in no cell of the page; a claim with no
-   value and no period has nothing on the page behind it and is flagged the same way (a qualitative line never becomes a claim).
+   value and no period has nothing on the page behind it and is flagged the same way (a qualitative line is listed under Review, never matched).
 2. CURRENCY_ASSUMED: the unit is a currency and neither its symbol nor its code stands in the value cell or one directly next to
    it (page_check.unit_check); UNIT_ASSUMED for "%", "x" and a time word whose mark is not there.
-3. SCENARIO_NOT_ON_PAGE: the model set a scenario (best, realistic, worst) and no cell of the page carries its words;
+3. SCENARIO_NOT_ON_PAGE: the model set a scenario (best, realistic, worst) and its words stand neither in the value cell, nor in its text
+   box, nor in a cell next to it (its header, the line above or below it, the label of another box directly beside it): the case label
+   must be on the same line or block as the figure (George, 2026-10-23, review of PR 164, M1);
    PERIOD_NOT_ON_PAGE: the model set a period that page_check could not rebuild from the cell's sources and no cell of the page
    states it either.
 4. PAGE_OUT_OF_RANGE (out_of_range): the claim's page is not within the document.
@@ -25,6 +27,11 @@ Post-checks converted from the rules read (claims.py section 2; they used to ret
 9. PIPELINE_COLUMN: a table cell under a column whose header names the pipeline, claimed as another metric (George, 2026-10-20).
 10. AXIS_TICK and NOT_PLAN_LINE: what page_check used to drop before any check (an axis tick; a line about funds raised, tokens,
     careers or the industry) is flagged instead.
+
+Added 2026-10-23 (review of PR 164): MATCHES_ANALYST (structures/pages.py: the model read the figure of a claim the analyst added; both are listed),
+BASIS_SCENARIO_DISAGREE (basis actual with a case, or basis scenario with none) and BASIS_CONFLICT (a projection for a period on or
+before the as-of month; derived when the list is read, because the as-of month is known only after the engine ran: `claim_flags`).
+The model's `basis` never changes an evidence label (George, 2026-10-23, M2).
 
 Every flag is a closed string of FLAGS (backend/tests/test_gateway_data_boundary.py); no flag carries deck text.
 """
@@ -47,9 +54,14 @@ BAR_YEAR = "year under bar differs"
 PIPELINE_COLUMN = "pipeline column"
 AXIS_TICK = "axis tick"
 NOT_PLAN_LINE = "not a plan line"
+MATCHES_ANALYST = "matches analyst claim"
+BASIS_SCENARIO_DISAGREE = "basis and scenario disagree"
+BASIS_CONFLICT = claims.BASIS_CONFLICT
 FLAGS = (VALUE_NOT_ON_PAGE, CURRENCY_ASSUMED, UNIT_ASSUMED, SCENARIO_NOT_ON_PAGE, PERIOD_NOT_ON_PAGE, PAGE_OUT_OF_RANGE,
-         USE_OF_FUNDS, ACQUISITION_CHANNEL, TURNOVER, BAR_YEAR, PIPELINE_COLUMN, AXIS_TICK, NOT_PLAN_LINE)
+         USE_OF_FUNDS, ACQUISITION_CHANNEL, TURNOVER, BAR_YEAR, PIPELINE_COLUMN, AXIS_TICK, NOT_PLAN_LINE, MATCHES_ANALYST,
+         BASIS_SCENARIO_DISAGREE, BASIS_CONFLICT)
 NO_SCENARIO = "none"
+CASES = claims.CASES                  # the scenarios that are no plan target (George, 2026-10-23): listed under Scenarios, never matched
 # The words a page uses for each case, whole words, any case ("Best-Case Scenario", "Base case", "Downside").
 SCENARIO_WORDS = {
     "best": r"best[\s-]*case|upside|optimistic|bull(?:ish)?[\s-]*case|high[\s-]*case",
@@ -71,10 +83,6 @@ def out_of_range(page: int, page_count: Optional[int]) -> Optional[str]:
 def _cell_text(grid: Dict, cell_id: Optional[str]) -> str:
     by_id = {page_check._id(c): c for c in grid["cells"]}
     return by_id[cell_id]["text"] if cell_id in by_id else ""
-
-
-def _page_text(grid: Dict) -> str:
-    return "\n".join(c["text"] for c in grid["cells"])
 
 
 def value_on_page(listed: Dict, claim: Dict) -> bool:
@@ -115,12 +123,22 @@ def period_on_page(grid: Dict, period: str, fiscal_year_end: int) -> bool:
     return False
 
 
-def scenario_on_page(grid: Dict, scenario: Optional[str]) -> bool:
-    """Whether the page carries the words of the scenario the model set; a claim with no scenario needs none."""
+def scenario_near(structure: Dict, cell: Dict, scenario: Optional[str]) -> bool:
+    """Whether the words of the scenario the model set stand on the figure's own line or block: its cell, the other lines of its text
+    box, or a cell directly next to it (page_check.adjacent: its headers, the line above and below, the label of another box beside
+    it). A page that names every case somewhere does not back a claim whose own case label is another (M1). A claim with no scenario
+    needs none."""
     if not scenario or scenario == NO_SCENARIO:
         return True
     rx = _SCENARIO.get(scenario)
-    return bool(rx and rx.search(_page_text(grid)))
+    near = [cell, *page_check._same_box(structure, cell), *page_check.adjacent(structure, cell)]
+    return bool(rx and any(rx.search(c["text"]) for c in near))
+
+
+def basis_disagrees(basis: Optional[str], scenario: Optional[str]) -> bool:
+    """The model's two words contradict each other: basis "actual" with a case named, or basis "scenario" with none (L8)."""
+    case = bool(scenario) and scenario != NO_SCENARIO
+    return (basis == "actual" and case) or (basis == "scenario" and not case)
 
 
 # ---------------------------------------------------------------------------
@@ -201,8 +219,10 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, blocks
                 flags.append(CURRENCY_ASSUMED)
             elif unit in ("%", "x", *_TIME_UNITS):
                 flags.append(UNIT_ASSUMED)
-        if not scenario_on_page(grid, claim.get("scenario")):
+        if not scenario_near(page_check.view_of(grid_views, cell), cell, claim.get("scenario")):
             flags.append(SCENARIO_NOT_ON_PAGE)
+        if basis_disagrees(claim.get("basis"), claim.get("scenario")):
+            flags.append(BASIS_SCENARIO_DISAGREE)
         if claim.get("period") and not item["checks"]["period"] and not period_on_page(grid, claim["period"], fiscal_year_end):
             flags.append(PERIOD_NOT_ON_PAGE)
         flags += [f for f in rule_flags(grid, grid_views, cell, claim, lines, fiscal_year_end) if f not in flags]

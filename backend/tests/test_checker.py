@@ -4,8 +4,8 @@ model read from a page. A failed check flags the claim and never deletes or rety
 The four checks (value on the page, unit or currency, scenario and period label, page within the document) and the rules of the
 former parser read converted to post-checks (use-of-funds cues, acquisition-channel cues, turnover, the year label under a bar,
 the pipeline column). Fixture: 06-uber.pdf page 20 with the model's recorded reply (tests/fixtures/page_replies/uber_p20.json):
-exactly four company claims, all basis scenario, no flag but "currency assumed" on the profit claim; a qualitative line never
-becomes a claim.
+exactly four company claims, all basis scenario, no flag but "currency assumed" on the profit claim; a qualitative line is flagged
+and listed under Review, never matched.
 """
 import asyncio
 import json
@@ -93,9 +93,9 @@ def test_uber_page_20_gives_exactly_four_scenario_claims_with_one_currency_flag(
     assert [i["value_cell"] for i in out["items"]] == ["r2c5", "r2c6", "r3c6", "r2c7"]
 
 
-def test_uber_page_20_qualitative_lines_never_become_claims():
-    """A claim the model might read into "Time-saver for San-Francisco based executives" (no figure) is flagged, never matched and
-    never listed as a claim: with a value the page does not hold, or with no value and no period."""
+def test_uber_page_20_qualitative_lines_are_flagged_and_never_matched():
+    """A claim the model might read into "Time-saver for San-Francisco based executives" (no figure) is flagged "value not on page" and
+    listed under Review, never matched and never in the main list: with a value the page does not hold, or with no value and no period."""
     parsed, grid, reply = uber_page_20()
     qualitative = next(c for c in grid["cells"] if c["text"].startswith("Time-saver"))
     cell = f"p20{page_check._id(qualitative)}"
@@ -160,7 +160,7 @@ def test_a_page_outside_the_document_is_flagged_and_its_row_carries_the_models_v
     row = pipeline.row_out_of_range(claim("p26r1c1", 5_000_000, period="2026", basis="projection"), 26, {"file": "deck.pdf", "page_unit": "page"})
     assert row["flags"] == [checker.PAGE_OUT_OF_RANGE] and row["ai_status"] == "unmatched" and row["cell"] is None
     assert row["sources"] == [{"file": "deck.pdf", "page": 26, "kind": "page", "cell": None}]
-    assert (row["value"], row["currency"], row["target_date"], row["figure_type"], row["basis"]) == (5_000_000, "USD", "2026", "target", "projection")
+    assert (row["value"], row["currency"], row["target_date"], row["figure_type"], row["basis"]) == (5_000_000, "USD", "2026", None, "projection")
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +234,7 @@ def test_an_axis_tick_and_a_funds_raised_line_are_flagged_not_dropped():
 
 
 def test_every_flag_is_a_closed_string_and_a_cell_the_page_does_not_have_is_still_dropped():
-    assert len(set(checker.FLAGS)) == len(checker.FLAGS) == 13 and all(f == f.strip() and f.lower() == f for f in checker.FLAGS)
+    assert len(set(checker.FLAGS)) == len(checker.FLAGS) == 16 and all(f == f.strip() and f.lower() == f for f in checker.FLAGS)
     assert set(PAGE_BASES) == {"actual", "projection", "scenario"} and set(PAGE_SCENARIOS) == {"best", "realistic", "worst", "none"}
     parsed = deck([TITLE, *LINES])
     out = checker.check(grid_of(parsed), page_check.by_page([claim("p1r9c9", 1)])[1], 12)
@@ -268,12 +268,12 @@ def test_under_the_default_switch_each_row_carries_its_basis_scenario_figure_typ
     assert status == "read" and adapter.calls == 1
     rows = sorted(db[CANDIDATES_COLLECTION].docs, key=lambda r: r["order"])
     assert [(r["claim_type"], r["basis"], r["scenario"], r["figure_type"], r["flags"]) for r in rows] == [
-        ("customers", "actual", "none", "actual", []),
-        ("revenue", "projection", "none", "target", []),
-        ("net_profit", "scenario", "best", "target", [checker.CURRENCY_ASSUMED, checker.SCENARIO_NOT_ON_PAGE]),
+        ("customers", "actual", "none", None, []),
+        ("revenue", "projection", "none", None, []),
+        ("net_profit", "scenario", "best", None, [checker.CURRENCY_ASSUMED, checker.SCENARIO_NOT_ON_PAGE]),
     ]
     assert rows[2]["ai_label"] == "AI suggestion, not matched" and rows[2]["value_high"] == 30_000_000
-    assert all(r["figure_type_set_by"] == "ai" for r in rows)
+    assert all(r["figure_type_set_by"] is None for r in rows), "the model's basis sets no figure type (George, 2026-10-23, M2)"
     deck_doc, = db[TEXT_COLLECTION].docs
     assert {k: deck_doc["page_reads"][0][k] for k in ("matched", "unmatched", "flagged")} == {"matched": 2, "unmatched": 1, "flagged": 1}
     assert "pages checked: run_id=audit-s deck_id=d1 pages=1 matched=2 unmatched=1 dropped=0 flagged=1" in caplog.text

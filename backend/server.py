@@ -1921,12 +1921,15 @@ async def list_deck_candidates(audit_id: str):
     # slide or page across all decks (a tie goes to the more recent deck), then reading order on the page: top to bottom
     # in bands of 2% of the height, then left to right, then the order the parser found them in.
     for c in candidates:
-        c["group"] = deck_claims.type_group(c.get("claim_type"))
+        c["group"] = deck_claims.claim_group(c)         # a best or worst case sorts under Scenarios whatever its type (George, 2026-10-23)
     candidates.sort(key=lambda c: (c["group"], _first_page(c), rank.get(c.get("deck_id"), len(rank)), *_reading(c),
                                    c.get("order", 0)))
     # A claim in another currency than the audit's, with the rate it is converted at (None: "FX rate needed").
     as_of = audit.get("as_of_month") or (current.get("results") or {}).get("as_of_month")
     for c in candidates:
+        # Contract 6 (schemas.metrics.DECK_CLAIM_FIELDS): every claim names its basis, scenario and flags, the flags with the one that
+        # depends on the as-of month ("basis conflicts with period").
+        c["basis"], c["scenario"], c["flags"] = c.get("basis"), c.get("scenario") or "none", claim_matching.flags_of(c, as_of)
         c["fx"] = claim_matching.fx_view(c, settings, as_of)
         if c["fx"] and not as_of and current.get("results_stale"):
             c["fx"]["date_stale"] = True        # the date would come from stale results: the screen reads "Stale – re-run audit"
@@ -2234,14 +2237,18 @@ async def approve_all_candidates(audit_id: str, payload: ApproveAll):
     settings = _register_settings(audit, await _fx(audit_id, audit), await _deck_take_rate(audit_id))
     open_turnover = {cid for cid, views in claim_matching.turnover_views(found, current.get("results"), settings).items()
                      if any(v["turnover_set_by"] != "analyst" for v in views)}
+    as_of = audit.get("as_of_month") or (current.get("results") or {}).get("as_of_month")
     approved, skipped, flagged = [], [], 0
     for c in found:
-        if c.get("status") != "pending" or deck_claims.type_group(c.get("claim_type")) != payload.group \
+        if c.get("status") != "pending" or deck_claims.claim_group(c) != payload.group \
                 or (payload.deck_id and c.get("deck_id") != payload.deck_id):
             continue
         if c.get("claim_type") in deck_claims.OTHER_TYPES:      # never a task: neither approved nor counted (section 4)
             continue
-        if c.get("flags"):                                     # flagged by the checks: reviewed one by one, never approved in bulk
+        if deck_claims.is_case(c):                             # a best or worst case is approved one by one (George, 2026-10-23)
+            skipped.append(c["id"])
+            continue
+        if claim_matching.flags_of(c, as_of):                  # flagged by the checks: reviewed one by one, never approved in bulk
             skipped.append(c["id"])
             flagged += 1
             continue
@@ -2314,7 +2321,10 @@ async def _accept_within_tolerance(audit_id: str, audit: dict) -> dict:
     rows = claim_matching.build_register(
         sorted(kept + trial, key=lambda c: (c.get("file") or "", c.get("order", 0))), audit.get("results"),
         _register_settings(audit, await _fx(audit_id, audit), await _deck_take_rate(audit_id)), peers=found)
-    ids = set(run_audit.within_tolerance_ids(rows, [c["id"] for c in decided if not run_audit.never_on_its_own(c)]))
+    as_of = audit.get("as_of_month") or (audit.get("results") or {}).get("as_of_month")
+    # A flagged claim and a best or worst case are the analyst's, as in Approve all (George, 2026-10-23, review of PR 164, H1).
+    ids = set(run_audit.within_tolerance_ids(rows, [c["id"] for c in decided
+                                                    if not run_audit.never_on_its_own({**c, "flags": claim_matching.flags_of(c, as_of)})]))
     accepted = []
     for c in decided:
         if c["id"] not in ids:
@@ -2346,7 +2356,7 @@ async def _mapping_counts(audit_id: str, audit: dict, datasets: list) -> tuple:
 
 
 @api.post("/audits/{audit_id}/run/{stage}")
-async def run_stage(audit_id: str, stage: str):
+async def run_stage(audit_id: str, stage: str, background: BackgroundTasks):
     """One stage of Run audit, in order: mapping (checks the files are mapped), engine (the calculations), claims (the deck claims
     within tolerance are accepted). It answers 200 with a status: done, needs_review (the analyst must decide something on the
     review screen), waiting (an earlier stage is not done), running (the decks are still being read; ask again) or failed (a
@@ -2380,6 +2390,10 @@ async def run_stage(audit_id: str, stage: str):
             if not audit.get("results"):
                 result = run_audit.stage_result(stage, run_audit.WAITING, run_audit.WAIT_ENGINE)
             else:
+                # A deck the page reader could not read for want of the deck_reading prompt is read again, with no new upload, once the
+                # store holds it (George, 2026-10-23, review of PR 164, M6).
+                for deck_id in await structures.queue_prompt_missing(db, audit_id):
+                    background.add_task(structures.process_deck_safely, db, audit_id, deck_id)
                 deck_docs = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, {"_id": 0, "ai_status": 1}).to_list(100)
                 if not deck_docs:
                     result = run_audit.stage_result(stage, run_audit.DONE, run_audit.NO_DECKS, accepted=0, open=0, turnover_open=0)
@@ -2389,7 +2403,8 @@ async def run_stage(audit_id: str, stage: str):
                         stage, run_audit.NEEDS_REVIEW if waiting else run_audit.RUNNING,
                         structures.WAITING_TEXT if waiting else run_audit.DECKS_READING)
                 else:
-                    result = run_audit.stage_result(stage, run_audit.DONE, None, **(await _accept_within_tolerance(audit_id, audit)))
+                    missing = llm_gateway.PROMPT_MISSING_TEXT if any(d.get("ai_status") == structures.PROMPT_MISSING for d in deck_docs) else None
+                    result = run_audit.stage_result(stage, run_audit.DONE, missing, **(await _accept_within_tolerance(audit_id, audit)))
     except Exception as exc:          # plain English to the analyst; the log has the stage and the error type, never the message
         logger.error("run audit stage failed: run_id=%s stage=%s error=%s", audit_id, stage, type(exc).__name__)
         result = run_audit.stage_result(stage, run_audit.FAILED, run_audit.ENGINE_FAILED if stage == "engine" else run_audit.CLAIMS_FAILED)

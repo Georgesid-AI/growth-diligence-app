@@ -14,7 +14,7 @@ import {
   confidenceText, countLine, readingChoices, rowEdit, sourceRef, statusCounts, statusText, typeLabel,
   ADD_FROM_DECK_LABEL, ADDED_FROM_DECK_TAG, DEFAULT_EDIT_REASON, EDIT_REASONS, EDIT_TYPES, FIGURE_TYPE_OPTIONS, GROWTH_BASIS_OPTIONS, GROWTH_TYPES,
   OTHER_GROUP, POPULATION_OPTIONS, VIEW_PAGE_LABEL, claimFields, editLogText, isOther,
-  CLAIMS_VIEW, REVIEW_VIEW, VIEW_LABELS, REVIEW_INTRO, claimsForView, flagsText,
+  CLAIMS_VIEW, REVIEW_VIEW, VIEW_LABELS, REVIEW_INTRO, claimsForView, flagsText, bulkApprovable, scenarioText,
 } from "@/lib/deckClaims";
 
 // The status is a label, not a control: plain coloured text, no border or chip, so it never reads as a button (George,
@@ -339,6 +339,9 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
                   const open = expanded[section.group] ?? !section.collapsed;
                   const waiting = toReview(section).length;
                   const other = section.group === OTHER_GROUP;       // never a task: no review count and no Approve all
+                  // Approve all is offered only where it can act on the rows shown: not in Review (every claim there is flagged, and the
+                  // unflagged ones are listed under Claims) and not under Scenarios (approved one by one); review of PR 164, M3, H2.
+                  const bulk = view === CLAIMS_VIEW && bulkApprovable(section.group);
                   const approveAllButton = (where) => (
                     <Button type="button" size="sm" variant="outline" onClick={() => approveSection(section)} disabled={waiting === 0 || approving !== null}
                       title={`Approve the ${waiting} claim${waiting === 1 ? "" : "s"} to review in ${section.title}`} className="h-7"
@@ -362,13 +365,13 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
                               {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                               {section.title}{!other && <span className="font-mono font-normal text-slate-500"> ({section.claims.length})</span>}
                             </button>
-                            {open && !other && approveAllButton("top")}
+                            {open && bulk && approveAllButton("top")}
                           </div>
                         </td>
                       </tr>
                       {open && section.claims.map((c) => <CandidateRow key={c.id} candidate={c} onSave={save} onAnswer={answer} highlight={flash === c.id}
                         autoEdit={editing === c.id} />)}
-                      {open && !other && (
+                      {open && bulk && (
                         <tr data-testid={`claim-group-end-${section.group}`}>
                           <td colSpan={COLUMNS.length} className="pt-2 pb-1 px-2 text-right">{approveAllButton("bottom")}</td>
                         </tr>
@@ -647,6 +650,7 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight, autoEdit = fa
             {turnover.views.length ? turnover.views.map((v) => (
               <TurnoverCell key={v.claim_id} row={v} onAnswer={onAnswer} heading={turnoverHeading(v, isRow)} />
             )) : typeLabel(c.claim_type)}
+            {scenarioText(c) && <div className="text-[10px] font-mono text-slate-500" data-testid="candidate-scenario">{scenarioText(c)}</div>}
             {c.channel && <div className="text-[10px] text-slate-500 mt-0.5" data-testid="candidate-channel">{c.channel}</div>}
           </td>
           <td className={`py-2 pr-3 font-mono text-slate-900 ${isRow || claimValue(c).includes(FX_SETTINGS_LABEL) ? "" : "whitespace-nowrap"}`}>

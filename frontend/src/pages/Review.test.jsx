@@ -2,6 +2,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 
 import Review from "./Review";
+import { toast } from "sonner";
 import * as api from "@/lib/api";
 
 jest.mock("@/lib/api", () => ({
@@ -136,6 +137,19 @@ test("a claim outside tolerance is a row: Approve and Reject save it, Approve al
   expect(api.updateCandidate).toHaveBeenCalledWith("a1", "p2", { status: "rejected" });
   await act(async () => { q("review-approve-all-1").click(); });
   expect(api.approveAll).toHaveBeenCalledWith("a1", 1);
+});
+
+test("M4 (review of PR 164): a flagged claim shows its flags, is not in Approve all's count, and the toast says it was skipped for review", async () => {
+  state.candidates = [cand("p1"), cand("p2", { flags: ["axis tick", "currency assumed"] }), cand("s1", { group: 6, scenario: "best", basis: "scenario" })];
+  api.approveAll.mockResolvedValue({ approved: 1, skipped: 1, skipped_flagged: 1, open_definition: 0 });
+  await mount();
+  expect(qa("review-claim-row")).toHaveLength(3);
+  const flags = qa("review-claim-flags").map((n) => n.textContent);
+  expect(flags).toEqual(["axis tick · currency assumed"]);
+  expect(q("review-approve-all-1").textContent).toBe("Approve all (1)");            // p1 only: not the flagged claim
+  expect(q("review-approve-all-6")).toBeNull();                                      // a best or worst case is approved one by one
+  await act(async () => { q("review-approve-all-1").click(); });
+  expect(toast.success).toHaveBeenCalledWith("Approved 1 claim, 1 skipped (flagged for review, need Revenue / Volume or failed to save)");
 });
 
 test("an Other figure is never a task: it is not in the open claims (claim-types-and-correction.md section 4)", async () => {

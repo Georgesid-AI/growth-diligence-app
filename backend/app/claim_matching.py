@@ -13,6 +13,8 @@ import re
 from datetime import date
 from typing import Dict, List, Optional, Tuple
 
+from .decks.claims import BASIS_CONFLICT, CASES as SCENARIO_CASES
+
 # The register's fields, in the order of the spec's section 6 (and the CSV header of section 7).
 FIELDS = (
     "claim_id", "deck_file", "page_ref", "claim_type", "status", "deck_reading", "extraction_confidence", "claimed_value", "claimed_high",
@@ -24,7 +26,7 @@ FIELDS = (
     "as_of_month", "as_of_defaulted", "turnover_state", "turnover_note", "turnover_set_by", "turnover_reason",
     "implied_take_rate", "implied_take_rate_source", "turnover_suggested", "deck_revenue_note", "definition_check",
     "definition_question", "period_coverage", "months_missing", "growth_basis", "population", "figure_type", "required_unknown",
-    "auto_approval",
+    "auto_approval", "basis", "scenario",
 )
 # How the baseline CSV reads each field back (verdict-and-memo.md section 5); a field not listed is text.
 FLOAT_FIELDS = frozenset({"implied_take_rate", "claimed_value", "claimed_high", "claimed_converted", "claimed_converted_high", "fx_rate",
@@ -63,6 +65,9 @@ FORECAST_FILE = "forecast_file"
 FORECAST_READING = "forecast-file"
 FORECAST_NOTE = "Read from the forecast file, not yet tested against data"      # George, 2026-10-16
 DIRECTION_ONLY = "direction only: the claim states no figure to test"
+# George, 2026-10-23 (review of PR 164, H2): a best-case or worst-case figure of a deck page is stored and listed under Scenarios, never matched,
+# ranked, gated or put in the top 5, with no value at stake and no overlaps (null), whatever its type. Only realistic / none are plan targets.
+SCENARIO_NOTE = "{case} case: a scenario, not the plan target; not tested against data"
 BEAT_PREFIX = "beat: observed beats the claim by "       # the reason of a Verified beat outside tolerance, its gloss follows
 # Section 4.1 (George, 2026-10-14): a tested gap beyond this share of the claim, either way, asks the analyst "Same metric and
 # period?" before the row gets a label. Adjustable; exactly at it the normal rule applies.
@@ -823,6 +828,22 @@ def _figure_type(c: dict, text: str, end: Optional[int], as_of_i: Optional[int])
     return None
 
 
+def basis_conflict(c: dict, as_of: Optional[str]) -> bool:
+    """The model read a projection (`basis`) for a period that Python reads as an actual: on or before the as-of month, no analyst figure
+    type, no target cue in the claim's words. The evidence label stays Python's; only a flag is raised (George, 2026-10-23, M2)."""
+    if c.get("basis") != "projection" or not as_of:
+        return False
+    text = f"{c.get('snippet') or ''} {c.get('label_from') or ''}"
+    return _figure_type(c, text, _month_of(c.get("period_end")), _mi(as_of)) == "actual"
+
+
+def flags_of(c: dict, as_of: Optional[str]) -> List[str]:
+    """The flags of a deck claim as the screens and the bulk approvals read them: those the checker stored, plus the ones that depend on the
+    as-of month, known only after the engine ran ("basis conflicts with period")."""
+    flags = list(c.get("flags") or [])
+    return flags + [BASIS_CONFLICT] if BASIS_CONFLICT not in flags and basis_conflict(c, as_of) else flags
+
+
 def candidate_fields(c: dict, results: Optional[dict]) -> dict:
     """The figure type, population and growth basis of a deck candidate as the register reads them, for the editor and for the
     previous value of an edit (claim-types-and-correction.md section 3). Nothing is stored."""
@@ -882,6 +903,7 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
     low, high = c.get("value"), c.get("value_high")
     out = dict.fromkeys(FIELDS)
     out.update(
+        basis=c.get("basis"), scenario=c.get("scenario") or "none",
         claim_id=c["claim_id"], deck_file=c.get("file"), page_ref=_page_ref(c.get("sources")),
         claim_type=c.get("claim_type"), status=c.get("status"), deck_reading=_deck_reading(c), claimed_value=low,
         claimed_high=high, claim_direction=c.get("claim_direction") if low is None else None, unit=c.get("unit"),
@@ -938,6 +960,11 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
     if c.get("origin") == FORECAST_FILE:       # chat-upload.md section 20: never matched, ranked or gated; no value at stake, no overlaps
         out.update(metric=None, metric_set_by=None, direction=None, tolerance=None)
         finish("Unverified", FORECAST_NOTE)
+        out.update(gate_needed=False, value_at_stake_arr=None, overlaps_with=None)
+        return out
+    if c.get("scenario") in SCENARIO_CASES:     # George, 2026-10-23: a best or worst case is listed, never matched, ranked or gated
+        out.update(metric=None, metric_set_by=None, direction=None, tolerance=None)
+        finish("Unverified", SCENARIO_NOTE.format(case=c["scenario"]))
         out.update(gate_needed=False, value_at_stake_arr=None, overlaps_with=None)
         return out
     if out["claim_direction"]:                  # "Positive EBITDA": never Verified or Contradicted
@@ -1383,10 +1410,11 @@ def _overlaps(rows: List[dict]) -> None:
 
 def is_untested(row: dict) -> bool:
     """A row that is never matched, ranked among the tested ones, gated or put in the top 5: use of funds, acquisition channels, a
-    claim read from a forecast table (chat-upload.md section 20), unit economics (ARPA, ARPU) and a pipeline column (George,
-    2026-10-20)."""
+    claim read from a forecast table (chat-upload.md section 20), unit economics (ARPA, ARPU), a pipeline column (George,
+    2026-10-20) and a best-case or worst-case figure (George, 2026-10-23)."""
     return row.get("claim_type") in UNTESTED_TYPES or row.get("deck_reading") == FORECAST_READING \
-        or row.get("claim_type") in UNIT_ECONOMICS or row.get("claim_type") == "pipeline" or row.get("metric") in UNIT_ECONOMICS.values()
+        or row.get("claim_type") in UNIT_ECONOMICS or row.get("claim_type") == "pipeline" or row.get("metric") in UNIT_ECONOMICS.values() \
+        or row.get("scenario") in SCENARIO_CASES
 
 
 def _rank(rows: List[dict]) -> List[dict]:

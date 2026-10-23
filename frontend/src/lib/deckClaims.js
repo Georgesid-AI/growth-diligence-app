@@ -332,9 +332,12 @@ export const confidenceText = (c) => c?.confidence?.text || PLACEHOLDER;
 // The deck panel's run log (docs/specs/llm-structure-reading.md sections 3, 4 and 9).
 export const DECK_AI_STATUS = {
   reading: "reading", waiting: "waiting for revenue file", read: "read", not_read: "not read", stopped: "not read",
+  python_only: "not read (AI-assisted reading is off for this audit)",
 };
 // Consent unticked (George, 2026-10-22, chat-upload.md section 28): since the page read replaced the rules read, such a deck lists no
 // claim at all, so the one line says so and where to go. It stands alone, without the "AI reading:" prefix.
+// A deck whose deck_reading prompt is not in the store (George, 2026-10-23, review of PR 164, M6): the one line, standing alone; the next Run audit reads the deck.
+export const PROMPT_MISSING_LINE = "AI reading not run – deck_reading prompt missing in prompt store";
 export const CONSENT_OFF_LINE = "Deck not read. AI-assisted reading is off for this audit, so no claims were extracted. Tick consent on the Upload page to read it, or use Add claim.";
 
 /** ["AI reading: read", "Sent to the model: slides 4, 7, 12"] for one deck (no cost: usage-and-allowance.md section 9); the stop
@@ -342,7 +345,9 @@ export const CONSENT_OFF_LINE = "Deck not read. AI-assisted reading is off for t
  *  with the one its header cells give. */
 export function deckRunLog(deck) {
   if (!deck?.ai_status) return [];
-  if (deck.ai_status === "python_only") return [CONSENT_OFF_LINE];
+  // The server sends the S26 line with a deck the page read left unread; under DECK_PIPELINE=rules the rules read still lists claims, so the old line stands (L5).
+  if (deck.ai_status === "python_only" && deck.ai_message) return [deck.ai_message];
+  if (deck.ai_status === "prompt_missing") return [deck.ai_message || PROMPT_MISSING_LINE];
   const lines = [`AI reading: ${DECK_AI_STATUS[deck.ai_status] || deck.ai_status}`];
   if (deck.ai_status === "stopped" && deck.ai_message) lines.push(deck.ai_message);
   if (deck.sent_pages?.length) lines.push(`Sent to the model: ${deck.page_unit || "slide"}s ${deck.sent_pages.join(", ")}`);
@@ -395,11 +400,22 @@ export const flagsText = (c) => (c?.flags || []).join(" · ");
 // slide or page. Other starts collapsed under its count (claim-types-and-correction.md section 4).
 // Acquisition channels and Use of funds are sections of their own, directly above Other (chat-upload.md section 17).
 export const OTHER_GROUP = 9;
+// A best-case or worst-case figure is no plan target: it is listed in its own section above Other, whatever its type, and approved one by
+// one (George, 2026-10-23, review of PR 164, H2). The server puts such a claim in this group.
+export const SCENARIO_GROUP = 6;
 export const CLAIM_GROUPS = [
   [1, "Revenue, ARR, MRR and bookings"], [2, "P&L items"], [3, "Customers, users, usage, retention and sales"],
   [4, "Hiring and roadmap"], [5, "Market size"], [7, "Acquisition channels"], [8, "Use of funds"],
-  [OTHER_GROUP, "Other"],
+  [SCENARIO_GROUP, "Scenarios"], [OTHER_GROUP, "Other"],
 ];
+
+/** Whether a claim is a best or worst case (the page reader's `scenario`). */
+export const isCase = (c) => c?.scenario === "best" || c?.scenario === "worst";
+const CASE_WORDS = { best: "Best case", realistic: "Realistic case", worst: "Worst case" };
+/** "Best case", "Realistic case", "Worst case"; empty for a claim that names no case. */
+export const scenarioText = (c) => CASE_WORDS[c?.scenario] || "";
+/** Whether Approve all may ever act on a section: not on Other, and not on Scenarios (flagged claims are already left out by the server). */
+export const bulkApprovable = (group) => group !== OTHER_GROUP && group !== SCENARIO_GROUP;
 export const COLLAPSED_BY_DEFAULT = [OTHER_GROUP];
 
 /** "1 other figure", "3 other figures": the header of the Other section, which has no review count. */

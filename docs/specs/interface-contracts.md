@@ -6,7 +6,8 @@ text, no figure, server-only); results stored under version 2 are recomputed on 
 Amended 2026-10-17 (docs/specs/crm-dedup-clustering.md §3): `contract_version` 4 adds `anomalies.deals_duplicate_id` and
 `won_deal_closes` (won deals per close month, counts only, server-only); results stored under version 3 are recomputed on first read.
 Amended 2026-10-22 (docs/specs/chat-upload.md §28): `contract_version` 6 marks the page reader (deck claims carry `basis`, `scenario`
-and `flags`); results and claim matches stored under version 5 read "Stale – re-run audit" until Run audit calculates again
+and `flags`; amended 2026-10-23: `schemas.metrics.DECK_CLAIM_FIELDS` names the three, the register row (`claim_matching.FIELDS`), the baseline CSV and
+the memo's Appendix A carry `basis` and `scenario`, the deck list all three; contract test in `test_interface_contracts.py`, `test_pr164_review.py`); results and claim matches stored under version 5 read "Stale – re-run audit" until Run audit calculates again
 (no recompute on a read, as amended 2026-10-20). `SEED_VERSION` 13 reseeds demo audits held under contract 5.
 
 ## Goal

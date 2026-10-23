@@ -538,6 +538,16 @@ def test_the_integrity_smoothness_is_the_integrity_modules_own_with_no_second_ca
 
 
 # ---------------------------------------------------------------------------
+# Contract 6: what a deck claim carries (chat-upload.md section 28; review of PR 164, H2)
+# ---------------------------------------------------------------------------
+def test_contract_6_names_the_deck_claim_fields_and_the_register_row_and_the_csv_carry_them():
+    assert metrics.CONTRACT_VERSION == 6 and metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags")
+    assert {"basis", "scenario"} <= set(cm.FIELDS), "the register row, the baseline CSV and the memo's Appendix A"
+    assert "flags" not in cm.FIELDS, "flags ride the deck list, not the register"
+    assert not set(metrics.DECK_CLAIM_FIELDS) & gateway.OUTBOUND_FIELDS, "server-only: none of the three reaches the gateway"
+
+
+# ---------------------------------------------------------------------------
 # 6. Results stored under an older contract are marked stale, never recomputed on a read, never shown as current (George, 2026-10-20)
 # ---------------------------------------------------------------------------
 OLD_RESULTS = {"reporting_currency": "EUR", "nrr": {"overall_pct": 106.41, "n": 100}}

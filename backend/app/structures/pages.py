@@ -115,8 +115,8 @@ def row_from_claim(item: Dict, grid: Dict, deck: Dict, fiscal_year_end: int) -> 
     place = {**cell, "row": cell.get("trow", cell["row"]), "col": cell.get("tcol", cell["col"])} if cell.get("table") is not None else cell
     candidate = {
         "claim_type": item["metric"], "value": item.get("value"), "value_high": item.get("value_high"),
-        # The register's figure type from the model's basis: an actual is actual, a projection or a scenario figure is a target.
-        "figure_type": figure_type(item.get("basis")), "figure_type_set_by": "ai" if item.get("basis") else None,
+        # The model's basis is kept as a note and sets no figure type: Python reads it from the period (George, 2026-10-23, M2).
+        "figure_type": None, "figure_type_set_by": None,
         "unit": unit if unit in _UNITS else None, "currency": unit if unit and len(unit) == 3 and unit.isupper() else None,
         "target_date": target, "period_text": stated if target else None,
         "snippet": (cell.get("text") or "")[:claims.SNIPPET_MAX], "label_from": label if label and label != cell.get("text") else None,
@@ -140,11 +140,6 @@ def row_from_claim(item: Dict, grid: Dict, deck: Dict, fiscal_year_end: int) -> 
     return candidate
 
 
-def figure_type(basis: Optional[str]) -> str:
-    """The register's figure type (claims.FIGURE_TYPES) for a page claim's basis."""
-    return "actual" if basis == "actual" else "target" if basis in ("projection", "scenario") else "unknown"
-
-
 def row_out_of_range(claim: Dict, page: int, deck: Dict) -> Dict:
     """The approval-list row of a claim on a page the document does not have (checker.PAGE_OUT_OF_RANGE): the model's values, no
     cell, no snippet, never matched; listed in the review tab."""
@@ -152,7 +147,7 @@ def row_out_of_range(claim: Dict, page: int, deck: Dict) -> Dict:
     key = "slide" if deck.get("page_unit") == "slide" else "page"
     return {
         "claim_type": claim["metric"], "value": claim.get("value"), "value_high": claim.get("value_high"),
-        "figure_type": figure_type(claim.get("basis")), "figure_type_set_by": "ai" if claim.get("basis") else None,
+        "figure_type": None, "figure_type_set_by": None,
         "unit": unit if unit in _UNITS else None, "currency": unit if unit and len(unit) == 3 and unit.isupper() else None,
         "target_date": _target_date_of(claim.get("period")), "period_text": claim.get("period"), "snippet": "", "label_from": None,
         "date_from": None, "sources": [{"file": deck["file"], key: page, "kind": "page", "cell": None}], "inconsistent_dates": [],
@@ -178,7 +173,7 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
     words of process_deck). Unticked consent: no call. Ticked but the revenue file not yet mapped: the deck waits, so no customer
     name goes out unmapped."""
     from . import (CANDIDATES_COLLECTION as _c, NOT_READ, PYTHON_ONLY, READ, STOPPED, WAITING, WAITING_TEXT, _cell_key,  # noqa: F401
-                   _deck_status, _python_cells, recognition_settled, revenue_mapped, rules_copy, value_match)
+                   CONSENT_OFF_LINE, PROMPT_MISSING, _deck_status, _python_cells, analyst_copy, recognition_settled, revenue_mapped, rules_copy, value_match)
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "id": 1, "company_name": 1, "fiscal_year_end": 1,
                                                        "structure_reading_consent": 1})
     deck = await db[TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id},
@@ -186,7 +181,7 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
     if not audit or not deck:
         return NOT_READ
     if audit.get("structure_reading_consent") is not True:
-        return await _deck_status(db, audit_id, deck_id, PYTHON_ONLY)
+        return await _deck_status(db, audit_id, deck_id, PYTHON_ONLY, CONSENT_OFF_LINE)
     revenue = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"},
                                          {"_id": 0, "mapping": 1, "mapped_at": 1, "recognition_only": 1})
     if not revenue_mapped(revenue):
@@ -236,8 +231,16 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
                         twin["sources"] = list(twin["sources"]) + candidate["sources"]
                         await db[CANDIDATES_COLLECTION].update_one({"audit_id": audit_id, "id": twin["id"]},
                                                                    {"$set": {"sources": twin["sources"]}})
+                    # A flagged read folded into a row still to review keeps its flags there (review of PR 164, L3).
+                    carried = [f for f in candidate["flags"] if f not in (twin.get("flags") or [])]
+                    if carried and twin.get("status") == "pending":
+                        twin["flags"] = list(twin.get("flags") or []) + carried
+                        await db[CANDIDATES_COLLECTION].update_one({"audit_id": audit_id, "id": twin["id"]}, {"$set": {"flags": twin["flags"]}})
                     continue
                 duplicate = rules_copy(reviewed, candidate)
+                if duplicate is None and analyst_copy(reviewed, candidate) is not None:
+                    # The analyst already added this figure (M5): the claim is never replaced; the model's read is listed beside it, flagged.
+                    candidate = {**candidate, "flags": candidate["flags"] + [checker.MATCHES_ANALYST]}
                 if duplicate is not None:
                     candidate = {**candidate, "sources": candidate["sources"] + [s for s in duplicate["sources"] if s not in candidate["sources"]]}
                     await db[CANDIDATES_COLLECTION].delete_one({"audit_id": audit_id, "id": duplicate["id"]})
@@ -255,8 +258,9 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
             logger.info("pages checked: run_id=%s deck_id=%s pages=%d matched=%d unmatched=%d dropped=%d flagged=%d", audit_id,
                         deck_id, len(numbers), counts["matched"], counts["unmatched"], counts["dropped"], counts["flagged"])
         reads.append(entry)
-    overall = STOPPED if stopped_message else READ if any(r["status"] == "read" for r in reads) else NOT_READ
+    missing = any(r["reason"] == gateway.PROMPT_MISSING_TEXT for r in reads)
+    overall = STOPPED if stopped_message else READ if any(r["status"] == "read" for r in reads) else PROMPT_MISSING if missing else NOT_READ
     previous = await db[TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id}, {"_id": 0, "sent": 1})
     await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id}, {"$set": {
         "page_reads": reads, "sent": list((previous or {}).get("sent") or []) + sent}})
-    return await _deck_status(db, audit_id, deck_id, overall, stopped_message)
+    return await _deck_status(db, audit_id, deck_id, overall, stopped_message or (gateway.PROMPT_MISSING_TEXT if overall == PROMPT_MISSING else None))

@@ -152,8 +152,9 @@ INSTALLED_UNITS = "installed_units"
 # The order of the claims table (deck-parser.md section 6): the group of a type, then slide or page. Revenue covers ARR,
 # MRR and bookings; P&L items and unit economics are listed with their neighbours; acquisition channels and use of funds
 # have a group each, above Other (chat-upload.md section 17); the types no group names (the model's "other") are Other.
-# Group 6 (Unknown) is gone: a figure no heading names a type for is Other (claim-types-and-correction.md section 4).
-GROUPS = {1: "revenue", 2: "P&L", 3: "customers and sales", 4: "hiring and roadmap", 5: "market size",
+# The old group 6 (Unknown) is gone: a figure no heading names a type for is Other (claim-types-and-correction.md section 4). Group 6 is Scenarios
+# since 2026-10-23 (SCENARIO_GROUP).
+GROUPS = {1: "revenue", 2: "P&L", 3: "customers and sales", 4: "hiring and roadmap", 5: "market size", 6: "scenarios",
           7: "acquisition channels", 8: "use of funds", 9: "other"}
 _GROUP_OF = {
     "revenue": 1, "revenue_growth": 1,
@@ -165,6 +166,11 @@ _GROUP_OF = {
     "market": 5, ACQUISITION_CHANNELS: 7, USE_OF_FUNDS: 8,
 }
 OTHER_GROUP = 9
+# George, 2026-10-23 (review of PR 164, H2): a best-case or worst-case figure of the page read is listed in a section of its own, whatever its type;
+# only realistic / none are plan targets. The screen puts the section above Other (frontend CLAIM_GROUPS).
+SCENARIO_GROUP = 6
+CASES = ("best", "worst")
+BASIS_CONFLICT = "basis conflicts with period"        # a projection for a period on or before the as-of month (claim_matching.flags_of)
 COLLAPSED_GROUPS = (OTHER_GROUP,)
 # docs/specs/claim-types-and-correction.md section 4: a figure the parser cannot type and an item the model labelled other are Other:
 # never matched, never a task, listed collapsed under their count. The analyst may type a claim Other, and retype it out.
@@ -176,6 +182,18 @@ def type_group(claim_type: Optional[str]) -> int:
     if claim_type in OTHER_TYPES:
         return OTHER_GROUP
     return _GROUP_OF.get(claim_type or "", OTHER_GROUP)
+
+
+def is_case(c: Dict) -> bool:
+    """A best-case or worst-case figure (the page reader's `scenario`)."""
+    return c.get("scenario") in CASES
+
+
+def claim_group(c: Dict) -> int:
+    """The group a claim is listed under: Scenarios for a best or worst case, else the group of its type. An Other figure stays Other."""
+    if c.get("claim_type") in OTHER_TYPES:
+        return OTHER_GROUP
+    return SCENARIO_GROUP if is_case(c) else type_group(c.get("claim_type"))
 
 
 # ---------------------------------------------------------------------------
@@ -1775,6 +1793,8 @@ def _flag_inconsistencies(candidates: List[Dict]) -> None:
     never one with the other, and a Sales figure only with one of the same Sales metric (claim-matching.md section 11)."""
     seen = {}
     for i, c in enumerate(candidates):
+        if is_case(c):          # a best or worst case is no plan target, so no figure to compare (George, 2026-10-23)
+            continue
         for v in claim_values(c):
             if v["value"] is not None and v["target_date"] and v["_stated"]:
                 # a qualified count ("Registered Institutions") is never compared with plain users
