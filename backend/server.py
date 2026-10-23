@@ -2272,7 +2272,7 @@ async def approve_all_candidates(audit_id: str, payload: ApproveAll):
         if deck_claims.is_case(c):                             # a best or worst case is approved one by one (George, 2026-10-23)
             skipped.append(c["id"])
             continue
-        if claim_matching.flags_of(c, as_of):                  # flagged by the checks: reviewed one by one, never approved in bulk
+        if claim_matching.review_flags_of(c, as_of):           # flagged by the checks: reviewed one by one, never approved in bulk
             skipped.append(c["id"])
             flagged += 1
             continue

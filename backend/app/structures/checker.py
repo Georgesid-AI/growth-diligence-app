@@ -69,6 +69,12 @@ SIGN_NOT_ON_PAGE = "sign not on page"
 FLAGS = (VALUE_NOT_ON_PAGE, CURRENCY_ASSUMED, UNIT_ASSUMED, SCENARIO_NOT_ON_PAGE, PERIOD_NOT_ON_PAGE, PAGE_OUT_OF_RANGE,
          USE_OF_FUNDS, ACQUISITION_CHANNEL, TURNOVER, BAR_YEAR, PIPELINE_COLUMN, AXIS_TICK, NOT_PLAN_LINE, MATCHES_ANALYST,
          BASIS_SCENARIO_DISAGREE, BASIS_CONFLICT, CELL_CORRECTED, SIGN_NOT_ON_PAGE)
+INFORMATIONAL_FLAGS = claims.INFORMATIONAL_FLAGS        # a note on the row; the claim stays in the main list (George, 2026-10-23)
+REVIEW_FLAGS = tuple(f for f in FLAGS if f not in INFORMATIONAL_FLAGS)      # the claim is listed under Review
+review_flags = claims.review_flags
+# Brackets are a minus sign for these metrics only; for every other metric a bracketed figure is positive (George, 2026-10-23).
+BRACKET_NEGATIVE_METRICS = ("ebitda", "net_profit", "gross_profit", "costs", "cash", "burn")
+_BRACKETED = re.compile(r"\(\s*[^\w()]{0,3}\d[^()]*\)")
 YEAR_LABEL_BELOW = "year label below"        # the flag is "year label below: YYYY"
 YEAR_LABEL_FLAG = re.compile(rf"{YEAR_LABEL_BELOW}: \d{{4}}")
 NO_SCENARIO = "none"
@@ -152,9 +158,11 @@ def scenario_near(structure: Dict, cell: Dict, scenario: Optional[str]) -> bool:
     return bool(rx and any(rx.search(c["text"]) for c in near))
 
 
-def sign_shown(text: str) -> bool:
-    """Whether a value cell shows a minus sign or a loss / decline / decrease word (a bracketed number alone is no sign: it reads either way)."""
-    return any(mark in text for mark in _MINUS) or bool(_LOSS_WORD.search(text))
+def sign_shown(text: str, metric: Optional[str] = None) -> bool:
+    """Whether a value cell shows a minus sign, a loss / decline / decrease word, or a bracketed number for a metric in
+    BRACKET_NEGATIVE_METRICS (any other metric's bracketed figure is positive)."""
+    return (any(mark in text for mark in _MINUS) or bool(_LOSS_WORD.search(text))
+            or (metric in BRACKET_NEGATIVE_METRICS and bool(_BRACKETED.search(text))))
 
 
 def basis_disagrees(basis: Optional[str], scenario: Optional[str]) -> bool:
@@ -244,7 +252,7 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, blocks
                 flags.append(CURRENCY_ASSUMED)
             elif unit in ("%", "x", *_TIME_UNITS):
                 flags.append(UNIT_ASSUMED)
-        if claim.get("value") is not None and claim["value"] < 0 and not sign_shown(cell["text"]):
+        if claim.get("value") is not None and claim["value"] < 0 and not sign_shown(cell["text"], claim.get("metric")):
             flags.append(SIGN_NOT_ON_PAGE)
         if not scenario_near(page_check.view_of(grid_views, cell), cell, claim.get("scenario")):
             flags.append(SCENARIO_NOT_ON_PAGE)
@@ -256,9 +264,9 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, blocks
         item["flags"] = flags
         item["basis"] = claim.get("basis")
         item["scenario"] = claim.get("scenario") or NO_SCENARIO
-    checked["flagged"] = sum(1 for i in checked["items"] if i["flags"])
+    checked["flagged"] = sum(1 for i in checked["items"] if flagged(i))
     return checked
 
 
 def flagged(item: Dict) -> bool:
-    return bool(item.get("flags"))
+    return bool(review_flags(item.get("flags")))

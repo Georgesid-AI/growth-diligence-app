@@ -463,5 +463,7 @@ arr, mrr, churn, nrr map to them and its closed list gains `cac_payback` (a payb
   ("CAC payback", "NRR"). Engine contract 8: results and claim matches stored under 7 read "Stale – re-run audit"; `SEED_VERSION` 15. Tests: `test_recurring_claim_types.py`.
 
 Amended 2026-10-23 (George, checker tolerance and two guards; chat-upload.md §28): a deck claim whose value stands in another cell of its page than the cited one is matched there and carries
-the flag `cell corrected` (counted as matched, listed under Review); a negative claim with no minus sign or loss, decline or decrease word in its cell carries `sign not on page`; a claim with
+the flag `cell corrected` (counted as matched; an informational flag: the claim stays in the main list with the note on its row, and Approve all and Run audit treat it as unflagged); a negative claim with no minus sign or loss, decline or decrease word in its cell carries `sign not on page` (listed under Review); brackets count as a minus sign only for the metrics ebitda, net_profit, gross_profit, costs, cash and burn, and for every other metric a bracketed figure is positive; a claim with
 no value that is not a date claim is dropped before it is stored. The register, the matching and the evidence label read the claim as before: the flags change no label and no contract.
+
+Every flag declares which kind it is (`checker.INFORMATIONAL_FLAGS`, `checker.REVIEW_FLAGS`; the screen reads `frontend/src/lib/informational_flags.json`): informational flags are a note on the row, review flags list the claim under Review and keep it out of the bulk approvals. A new flag is added to one list.

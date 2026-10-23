@@ -95,20 +95,31 @@ def test_a_corrected_claim_is_checked_on_the_cell_found():
 # ---------------------------------------------------------------------------
 # 2. Sign guard
 # ---------------------------------------------------------------------------
-@pytest.mark.parametrize("text, flagged", [
-    ("EBITDA (1,200)", True),                    # brackets read either way; the model chose negative; no minus, no word
-    ("EBITDA -1,200", False),
-    ("EBITDA \u20131,200", False),                # an en dash is a minus sign too
-    ("Net loss (1,200)", False),
-    ("EBITDA decline (1,200)", False),
-    ("Decrease in EBITDA (1,200)", False),
+BRACKET_NEGATIVE = ("ebitda", "net_profit", "gross_profit", "costs", "cash", "burn")
+
+
+@pytest.mark.parametrize("text, metric, flagged", [
+    ("EBITDA (1,200)", "net_profit", False),    # brackets are a minus sign for a profit, cost or cash metric (George, 2026-10-23)
+    ("Revenue (1,200)", "revenue", True),       # for every other metric a bracketed figure is positive: the negative reading is flagged
+    ("Revenue -1,200", "revenue", False),
+    ("Revenue \u20131,200", "revenue", False),   # an en dash is a minus sign too
+    ("Revenue decline (1,200)", "revenue", False),
+    ("Decrease in sales (1,200)", "revenue", False),
+    ("Net loss (1,200)", "net_profit", False),
 ])
-def test_a_negative_value_needs_a_minus_sign_or_a_loss_word_in_its_cell(text, flagged):
+def test_a_negative_value_needs_a_minus_sign_or_a_loss_word_in_its_cell_and_brackets_only_for_some_metrics(text, metric, flagged):
     parsed = deck([TITLE, (50, 500, 12, text)])
-    item = one(parsed, claim("p1r2c1", -1_200, metric="net_profit", unit=None))
+    item = one(parsed, claim("p1r2c1", -1_200, metric=metric, unit=None))
     assert item["status"] == "matched", "the claim is kept"
     assert (SIGN in item["flags"]) is flagged
     assert flagged is False or item["flags"] == [SIGN]
+
+
+@pytest.mark.parametrize("metric", BRACKET_NEGATIVE)
+def test_brackets_read_as_a_minus_for_each_of_the_six_metrics(metric):
+    parsed = deck([TITLE, (50, 500, 12, "Figure ($1.2K)")])
+    assert SIGN not in one(parsed, claim("p1r2c1", -1_200, metric=metric, unit="USD"))["flags"]
+    assert checker.BRACKET_NEGATIVE_METRICS == BRACKET_NEGATIVE
 
 
 def test_a_positive_value_is_never_sign_flagged():
@@ -167,3 +178,32 @@ def test_a_cell_corrected_claim_counts_as_matched_in_the_row_the_panel_shows(mon
     assert stored["items"]["claims"][0]["status"] == "matched" and stored["items"]["claims"][0]["value_cell"] == "r3c1"
     assert stored["items"]["claims"][0]["model_cell"] == "r4c1"
     assert "margins" not in json.dumps(stored) and "Paying Users" not in json.dumps(stored), "cell ids only, no deck text (rules 14, 17)"
+
+
+# ---------------------------------------------------------------------------
+# 5. Informational and review flags (George, 2026-10-23)
+# ---------------------------------------------------------------------------
+def test_every_flag_declares_whether_it_is_informational_or_for_review():
+    assert checker.INFORMATIONAL_FLAGS == (CORRECTED,)
+    assert set(checker.REVIEW_FLAGS) | set(checker.INFORMATIONAL_FLAGS) == set(checker.FLAGS)
+    assert not set(checker.REVIEW_FLAGS) & set(checker.INFORMATIONAL_FLAGS)
+    assert SIGN in checker.REVIEW_FLAGS and checker.VALUE_NOT_ON_PAGE in checker.REVIEW_FLAGS
+    shared = json.loads((BACKEND.parent / "frontend" / "src" / "lib" / "informational_flags.json").read_text())
+    assert shared == list(checker.INFORMATIONAL_FLAGS), "the screen reads the same list"
+
+
+def test_a_cell_corrected_claim_is_not_flagged_for_review_but_another_flag_still_is():
+    parsed = deck([TITLE, *LINES])
+    found = one(parsed, claim("p1r4c1", 150_000))
+    assert found["flags"] == [CORRECTED] and checker.flagged(found) is False
+    both = {"flags": [CORRECTED, SIGN]}
+    assert checker.flagged(both) is True
+    assert checker.review_flags([CORRECTED, SIGN]) == [SIGN] and checker.review_flags([CORRECTED]) == []
+
+
+def test_a_cell_corrected_claim_is_approved_in_bulk_and_by_run_audit():
+    from app import claim_matching
+    from app.run_audit import never_on_its_own
+    assert claim_matching.review_flags_of({"flags": [CORRECTED]}, None) == []
+    assert never_on_its_own({"flags": [CORRECTED]}) is False
+    assert never_on_its_own({"flags": [CORRECTED, SIGN]}) is True
