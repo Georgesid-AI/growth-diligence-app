@@ -52,8 +52,8 @@ TRACTION = grid([
 def test_a_figure_in_its_cell_with_its_unit_and_no_period_around_is_matched():
     got = one(TRACTION, claim("r3c1", 150000, unit="USD", label_cell="r3c1"))
     assert got["status"] == MATCHED and got["value"] == 150000 and got["period"] is None and got["period_cells"] == []
-    assert got["checks"] == {"value": True, "unit": True, "period": True, "label": True, "period_corrected": False,
-                             "dot_reading": None, "bracket_reading": None}
+    assert got["checks"] == {"value": True, "unit": True, "period": True, "label": True, "period_corrected": False, "period_heading": False,
+                             "period_other": False, "dot_reading": None, "bracket_reading": None}
 
 
 def test_a_figure_moved_to_another_cell_is_matched_there():
@@ -105,7 +105,8 @@ def test_a_scale_in_the_row_header_of_a_table_applies_and_the_period_comes_from_
     got = one(g, claim("r2c2", 1200000, unit="GBP", period="FY2025", period_cell="r1c2", label_cell="r2c1"))
     assert got["status"] == MATCHED and got["period"] == "2025" and got["period_cells"] == ["r1c2"] and got["label_cell"] == "r2c1"
     other = one(g, claim("r2c2", 1200000, unit="GBP", period="FY2026", period_cell="r1c3"))
-    assert other["status"] == UNMATCHED and other["checks"]["period"] is False, "another column's header is no source of this cell"
+    assert other["status"] == MATCHED and other["period_cells"] == ["r1c3"] and other["checks"]["period_other"] is True, \
+        "another column's header is a cell of the page outside the figure's block: informational 'period from another cell' (George, 2026-10-23)"
 
 
 def test_a_range_is_one_row_with_both_ends_checked():
@@ -128,11 +129,12 @@ def test_a_level_keeps_its_positive_reading_only_and_a_bracketed_loss_keeps_both
 # ---------------------------------------------------------------------------
 # 2. Unit in the cell or next to it
 # ---------------------------------------------------------------------------
-def test_a_unit_removed_from_the_cell_and_its_neighbours_is_not_matched():
-    """"€1.5M" labelled USD, or labelled nothing: the currency is not where the model says it is."""
+def test_a_unit_removed_from_the_cell_and_its_neighbours_fails_the_unit_check_and_stays_matched():
+    """"€1.5M" labelled USD, or labelled nothing: the currency is not where the model says it is. Since 2026-10-23 (George) the unit
+    only flags (checker.CURRENCY_ASSUMED); the figure is in the cell, so the claim is matched."""
     for unit in ("USD", None):
         got = one(TRACTION, claim("r6c1", 1500000, unit=unit))
-        assert got["status"] == UNMATCHED and got["checks"]["unit"] is False, unit
+        assert got["status"] == MATCHED and got["checks"]["unit"] is False, unit
 
 
 def test_a_currency_stated_as_a_code_or_a_symbol_next_to_the_cell_counts():
@@ -173,15 +175,16 @@ BARS = grid([
 ])
 
 
-def test_a_period_from_a_sentence_is_not_matched():
-    """Issue #154 stays: the sentence next to the bar holds a year, but a sentence is no date source."""
+def test_a_period_from_a_sentence_outside_the_figures_block_is_from_another_cell():
+    """Issue #154 amended (George, 2026-10-23, PR #174 decision 2): the sentence next to the bar holds a year in a cell outside the figure's
+    block, so the claim is matched with the informational 'period from another cell' (a sentence in the figure's own block stays no source)."""
     got = one(BARS, claim("r3c1", 5300000, period="2022", period_cell="r2c1"))
-    assert got["status"] == UNMATCHED and got["checks"]["period"] is False and got["period"] == "2022" and got["period_cells"] == []
+    assert got["status"] == MATCHED and got["checks"]["period_other"] is True and got["period"] == "2022" and got["period_cells"] == ["r2c1"]
 
 
-def test_a_period_from_a_cell_that_is_not_next_to_the_value_is_not_matched():
+def test_a_period_from_a_cell_that_is_not_next_to_the_value_is_from_another_cell():
     got = one(BARS, claim("r3c1", 5300000, period="2023", period_cell="r5c1"))
-    assert got["status"] == UNMATCHED and got["checks"]["period"] is False
+    assert got["status"] == MATCHED and got["checks"]["period_other"] is True and got["period_cells"] == ["r5c1"]
 
 
 def test_the_bars_year_by_place_is_a_source_with_or_without_the_label_cited():
@@ -241,9 +244,9 @@ def test_a_label_not_adjacent_to_the_value_is_dropped_and_the_match_stands():
     assert title["label_cell"] == "r1c1", "the title directly next to the line"
 
 
-def test_an_other_metric_is_never_matched():
+def test_an_other_metric_is_matched_like_any_other():
     got = one(TRACTION, claim("r6c1", 1500000, metric="other", unit="EUR"))
-    assert got["status"] == UNMATCHED and all(got["checks"][k] for k in ("value", "unit", "period"))
+    assert got["status"] == MATCHED and all(got["checks"][k] for k in ("value", "unit", "period"))
 
 
 def test_a_claim_with_no_value_is_a_milestone_dated_from_its_source_and_never_matched():
@@ -262,7 +265,7 @@ def test_an_axis_tick_and_a_funds_raised_line_are_dropped_and_counted():
 
 def test_the_checks_are_booleans_and_closed_words_only():
     got = one(TRACTION, claim("r3c1", 150000, unit="USD", label_cell="r7c1"))
-    assert set(got["checks"]) == {"value", "unit", "period", "label", "period_corrected", "dot_reading", "bracket_reading"}
+    assert set(got["checks"]) == {"value", "unit", "period", "label", "period_corrected", "period_heading", "period_other", "dot_reading", "bracket_reading"}
     for key, value in got["checks"].items():
         assert value in ((True, False) if key not in ("dot_reading", "bracket_reading") else
                          (None, "decimal", "thousands", "negative", "positive")), key

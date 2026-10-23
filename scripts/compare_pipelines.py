@@ -18,7 +18,7 @@ only (file name and SHA-256, as consistency_run.py checks them) and refuses any 
 --recorded <run> (PR B) replays the model's own replies of a live run, backend/tests/fixtures/page_replies/recorded/<run>/pass-<n>/,
 one B row set per pass (--pass N: that pass only), then prints per deck the agreement across the passes on (value cell, metric,
 period): claims found in every pass / in any pass, the disagreeing claims by kind (metric, period, present in some passes only),
-and every unmatched or dropped claim grouped by the check that failed (value, unit, period, the metric "other", no value; dropped:
+and every unmatched or dropped claim grouped by the check that failed (value, unit, period, no value; dropped:
 an axis tick, a line the rules read drops, a cell not on the page), with its deck, page, cell id, metric, value and the number of
 passes it appears in. --md also writes these tables as markdown (docs/test-runs). Counts, values, cell ids, types and statuses; no
 line of a deck.
@@ -89,15 +89,14 @@ CHECKS = ("value", "unit", "period")
 
 
 def cause(claim, item):
-    """Why a checked claim is not matched, as closed words joined by "+": the checks that failed (value, unit, period), "other"
-    for the metric the check never matches, "no value" for a claim without a figure (a milestone); "matched" when it is."""
+    """Why a checked claim is not matched, as closed words joined by "+": the checks that failed (value, unit, period), "no value" for a
+    claim without a figure (a milestone); "matched" when it is. Since 2026-10-23 (George) only the value gates the match, and a metric
+    "other" is matched like any other; a unit or period that failed beside a failed value is still named."""
     if item["status"] == page_check_module().MATCHED:
         return "matched"
     if claim.get("value") is None:
         return "no value"
     parts = [k for k in CHECKS if not item["checks"][k]]
-    if item["metric"] == page_check_module().OTHER:
-        parts.append("other")
     return "+".join(parts)
 
 
@@ -419,7 +418,7 @@ def markdown(report):
         lines.append(f"| all | | | {_agree(report.get('agreement_pct_all'))} | | | | |")
     total = sum(report["causes"].values())
     lines += ["", "## Claims by cause", "",
-              "Over all passes. A cause names the checks that failed (value, unit, period), the metric other (never matched by design), "
+              "Over all passes. A cause names the checks that failed (value, unit, period), "
               "no value (a milestone), or why the claim was dropped.", "",
               "| Cause | Claims | Share |", "|---|---:|---:|",
               *(f"| {k} | {v} | {_pct(round(v / total, 3)) if total else '-'} |" for k, v in report["causes"].items()),

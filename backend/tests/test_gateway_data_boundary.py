@@ -3412,9 +3412,10 @@ def test_the_checker_flags_basis_and_scenario_are_closed_words_and_never_gateway
                              "period not on page", "page out of range", "use-of-funds share", "acquisition channel",
                              "turnover, not revenue", "year under bar differs", "pipeline column", "axis tick", "not a plan line",
                              "matches analyst claim", "basis and scenario disagree", "basis conflicts with period",
-                             "cell corrected", "sign not on page")
-    assert checker.INFORMATIONAL_FLAGS == ("cell corrected",), "the only flag that leaves a claim in the main list"
-    assert set(checker.REVIEW_FLAGS) == set(checker.FLAGS) - {"cell corrected"}
+                             "cell corrected", "sign not on page", "period from page heading", "period from another cell")
+    assert checker.INFORMATIONAL_FLAGS == ("cell corrected", "currency assumed", "unit assumed", "period from page heading", "period from another cell"), \
+        "the flags that leave a claim in the main list (George, 2026-10-23: the unit and the period only flag)"
+    assert set(checker.REVIEW_FLAGS) == set(checker.FLAGS) - set(checker.INFORMATIONAL_FLAGS)
     assert checker.BRACKET_NEGATIVE_METRICS == ("ebitda", "net_profit", "gross_profit", "costs", "cash", "burn")
     assert set(schemas.PAGE_BASES) == {"actual", "projection", "scenario"} and set(schemas.PAGE_SCENARIOS) == {"best", "realistic", "worst", "none"}
     assert not {"flags", "basis", "scenario", "figure_type"} & decks.GATEWAY_READABLE_FIELDS

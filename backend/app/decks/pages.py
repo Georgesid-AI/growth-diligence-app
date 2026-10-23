@@ -6,7 +6,7 @@ to every line of the page, so a claim the model reads from the page can cite the
 (app/structures/page_check.py). It is built with the same code: text boxes as bands of rows (parser._band_cells), each cell with
 its box, its "next_to" (the ids of the cells of other boxes directly next to its line), the title mark, a bar's year label by place
 ("bar_year", issue #148) and an axis-tick mark; then each table of the page as rows below, its cells keeping their table, row and
-column. Layout fields (next_to, bar_year, tick, box, table) are kept with the grid and never sent.
+column. Layout fields (next_to, bar_year, tick, top_band, box, table) are kept with the grid and never sent.
 
     {"type": "page", "slide": 5, "header_rows": 0, "figure": True,
      "cells": [{"row": 1, "col": 1, "text": "Traction", "box": 1, "title": True, "next_to": ["r2c1"]}, ...],
@@ -69,7 +69,7 @@ def page_grid(blocks: List[Dict], ticks: set = frozenset()) -> Optional[Dict]:
     page_boxes = list(boxes.values()) + ([titles] if titles else [])
     others = [e for e in map(parser._extent, page_boxes) if e]
     years = claims.bar_years(texts, ticks)
-    cells = parser._band_cells(page_boxes, others, None, years) if page_boxes else []
+    cells = parser._band_cells(page_boxes, others, None, years, top_band=True) if page_boxes else []
     offset = max((c["row"] for c in cells), default=0)
     listed = []
     for t in sorted(tables):

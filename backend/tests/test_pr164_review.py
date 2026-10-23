@@ -314,9 +314,9 @@ def test_m6_run_audit_names_the_missing_prompt_and_reads_the_deck_again_once_it_
 # ---------------------------------------------------------------------------
 # Lows fixed in the same round (each under an hour)
 # ---------------------------------------------------------------------------
-def test_l2_uber_page_20_lists_three_claims_under_claims_and_one_under_review():
-    """The pipeline view of the recorded p20 reply: best and worst under Scenarios, the realistic market share under its type, and the
-    profit claim, flagged "currency assumed", under Review. (The reply's basis and scenario are the author's, kept as the spec until the
+def test_l2_uber_page_20_lists_all_four_claims_under_claims_and_none_under_review():
+    """The pipeline view of the recorded p20 reply: best and worst under Scenarios, the realistic market share and profit under their types;
+    the profit claim keeps the informational flag "currency assumed" (matched since 2026-10-23, so no longer under Review). (The reply's basis and scenario are the author's, kept as the spec until the
     first live run is recorded again: George, 2026-10-23.)"""
     parsed, grid, reply = tc.uber_page_20()
     out = checker.check(grid, page_check.by_page(reply["claims"])[20], 12, checker.page_blocks(parsed["blocks"], grid), "06-uber.pdf")
@@ -325,7 +325,8 @@ def test_l2_uber_page_20_lists_three_claims_under_claims_and_one_under_review():
     listing = [(r["claim_type"], deck_claims.claim_group(r), bool(r["flags"])) for r in rows]
     assert listing == [("revenue", deck_claims.SCENARIO_GROUP, False), ("market", deck_claims.type_group("market"), False),
                        ("net_profit", deck_claims.type_group("net_profit"), True), ("customers", deck_claims.SCENARIO_GROUP, False)]
-    assert sum(1 for r in rows if not r["flags"]) == 3 and [r["flags"] for r in rows if r["flags"]] == [[checker.CURRENCY_ASSUMED]]
+    # Since 2026-10-23 (George) the profit claim is matched and its "currency assumed" flag is informational: no claim is under Review.
+    assert not any(deck_claims.review_flags(r["flags"]) for r in rows) and [r["flags"] for r in rows if r["flags"]] == [[checker.CURRENCY_ASSUMED]]
 
 
 def test_l3_a_flag_survives_the_merge_into_a_row_still_to_review(monkeypatch):

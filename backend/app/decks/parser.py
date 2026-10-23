@@ -736,7 +736,10 @@ def _axis_lines(lines: List[Dict], claims) -> set:
     return out
 
 
-def _band_cells(boxes: List[List[Dict]], others=None, date_box=None, years=None) -> List[Dict]:
+TOP_BAND = 0.2         # the page heading band: a line whose top is in the top 20% of the page height (George, 2026-10-23)
+
+
+def _band_cells(boxes: List[List[Dict]], others=None, date_box=None, years=None, top_band: bool = False) -> List[Dict]:
     """Text boxes as a grid: boxes that overlap in height form a band of rows, each box a column of
     its band in left-to-right order, each line a row. Every cell keeps its box; a title line is marked.
     With `others` (a KPI panel or a roadmap: the extents of every text box of its page and its title), a cell whose
@@ -768,6 +771,7 @@ def _band_cells(boxes: List[List[Dict]], others=None, date_box=None, years=None)
             numbered.append((number, box))
             cells += [{"row": row + i + 1, "col": col, "text": line["text"], "box": number,
                        **({"title": True} if line.get("title") else {}),
+                       **({"top_band": True} if top_band and line.get("bbox") and line["bbox"][1] < TOP_BAND else {}),
                        **({"tick": True} if line.get("tick") else {}),
                        **({"furniture": True} if line.get("furniture") else {}),
                        **({"bar_year": years[id(line)]} if years and id(line) in years else {})} for i, line in enumerate(box)]
