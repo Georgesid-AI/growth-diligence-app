@@ -5,6 +5,10 @@ Python's value read from the cited cell, the unit in it or next to it, the perio
 runs after it and adds `flags`. A failed check flags the claim; it never deletes or retypes it (George, 2026-10-22). A claim with
 a flag is listed in the review tab of the deck panel, not in the main claims list; the analyst decides there.
 
+Cell tolerance (George, 2026-10-23): a value that is not in the cited cell but is in another cell of the page is "Matched to page", flagged
+CELL_CORRECTED, with value_cell set to the cell found (page_check.find_elsewhere); the value on no cell stays VALUE_NOT_ON_PAGE.
+SIGN_NOT_ON_PAGE: a negative value whose value cell shows no minus sign and no loss, decline or decrease word.
+
 Four checks per claim:
 1. VALUE_NOT_ON_PAGE: the value (as written or in full units, page_check.figure_check) is in no cell of the page; a claim with no
    value and no period has nothing on the page behind it and is flagged the same way (a qualitative line is listed under Review, never matched).
@@ -60,13 +64,17 @@ NOT_PLAN_LINE = "not a plan line"
 MATCHES_ANALYST = "matches analyst claim"
 BASIS_SCENARIO_DISAGREE = "basis and scenario disagree"
 BASIS_CONFLICT = claims.BASIS_CONFLICT
+CELL_CORRECTED = "cell corrected"
+SIGN_NOT_ON_PAGE = "sign not on page"
 FLAGS = (VALUE_NOT_ON_PAGE, CURRENCY_ASSUMED, UNIT_ASSUMED, SCENARIO_NOT_ON_PAGE, PERIOD_NOT_ON_PAGE, PAGE_OUT_OF_RANGE,
          USE_OF_FUNDS, ACQUISITION_CHANNEL, TURNOVER, BAR_YEAR, PIPELINE_COLUMN, AXIS_TICK, NOT_PLAN_LINE, MATCHES_ANALYST,
-         BASIS_SCENARIO_DISAGREE, BASIS_CONFLICT)
+         BASIS_SCENARIO_DISAGREE, BASIS_CONFLICT, CELL_CORRECTED, SIGN_NOT_ON_PAGE)
 YEAR_LABEL_BELOW = "year label below"        # the flag is "year label below: YYYY"
 YEAR_LABEL_FLAG = re.compile(rf"{YEAR_LABEL_BELOW}: \d{{4}}")
 NO_SCENARIO = "none"
 CASES = claims.CASES                  # the scenarios that are no plan target (George, 2026-10-23): listed under Scenarios, never matched
+_MINUS = ("-", "\u2212", "\u2013", "\u2014")                      # hyphen-minus, minus sign, en and em dash
+_LOSS_WORD = re.compile(r"(?i)\b(?:loss(?:es)?|declin\w*|decreas\w*)\b")
 # The words a page uses for each case, whole words, any case ("Best-Case Scenario", "Base case", "Downside").
 SCENARIO_WORDS = {
     "best": r"best[\s-]*case|upside|optimistic|bull(?:ish)?[\s-]*case|high[\s-]*case",
@@ -94,12 +102,12 @@ def _cell_text(grid: Dict, cell_id: Optional[str]) -> str:
     return by_id[cell_id]["text"] if cell_id in by_id else ""
 
 
-def value_on_page(listed: Dict, claim: Dict) -> bool:
+def value_on_page(listed: Dict, claim: Dict, furniture: frozenset = frozenset()) -> bool:
     """Whether the claim's value (and the high end of a range) is a figure of any cell of the page, in full units as Python reads
-    it (items.list_items: "$1B+" is 1,000,000,000, never the written "1", so a digit inside another figure backs no claim)."""
+    it, outside the page's furniture (a header or footer band, the page's own number) (items.list_items: "$1B+" is 1,000,000,000, never the written "1", so a digit inside another figure backs no claim)."""
     if claim.get("value") is None:
         return False
-    items = [i for structure in listed.values() for i in structure["items"]]
+    items = [i for structure in listed.values() for i in structure["items"] if i["cell"] not in furniture]
     by_id = {i["id"]: i for i in items}
 
     def holds(item, value):
@@ -142,6 +150,11 @@ def scenario_near(structure: Dict, cell: Dict, scenario: Optional[str]) -> bool:
     rx = _SCENARIO.get(scenario)
     near = [cell, *page_check._same_box(structure, cell), *page_check.adjacent(structure, cell)]
     return bool(rx and any(rx.search(c["text"]) for c in near))
+
+
+def sign_shown(text: str) -> bool:
+    """Whether a value cell shows a minus sign or a loss / decline / decrease word (a bracketed number alone is no sign: it reads either way)."""
+    return any(mark in text for mark in _MINUS) or bool(_LOSS_WORD.search(text))
 
 
 def basis_disagrees(basis: Optional[str], scenario: Optional[str]) -> bool:
@@ -216,12 +229,13 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, blocks
     listed = {id(s): page_check.items.list_items(s, titles=True) for s in [grid_views["boxes"], *grid_views["tables"].values()]}
     by_id = {page_check._id(c): c for c in grid["cells"]}
     lines = rule_lines(blocks, file)
+    furniture = frozenset(i for i, c in by_id.items() if c.get("furniture"))
     kept = [c for c in page_claims if c["value_cell"] in by_id]
     assert len(kept) == len(checked["items"])
     for claim, item in zip(kept, checked["items"]):
-        cell = by_id[claim["value_cell"]]
-        flags = []
-        if not item["checks"]["value"] and not value_on_page(listed, claim):
+        cell = by_id[item["value_cell"]]            # the cell the value was found in: the cited one, or another (cell tolerance)
+        flags = [CELL_CORRECTED] if item.get("cell_corrected") else []
+        if not item["checks"]["value"] and not value_on_page(listed, claim, furniture):
             if claim.get("value") is not None or not claim.get("period"):
                 flags.append(VALUE_NOT_ON_PAGE)
         unit = claim.get("unit")
@@ -230,6 +244,8 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, blocks
                 flags.append(CURRENCY_ASSUMED)
             elif unit in ("%", "x", *_TIME_UNITS):
                 flags.append(UNIT_ASSUMED)
+        if claim.get("value") is not None and claim["value"] < 0 and not sign_shown(cell["text"]):
+            flags.append(SIGN_NOT_ON_PAGE)
         if not scenario_near(page_check.view_of(grid_views, cell), cell, claim.get("scenario")):
             flags.append(SCENARIO_NOT_ON_PAGE)
         if basis_disagrees(claim.get("basis"), claim.get("scenario")):

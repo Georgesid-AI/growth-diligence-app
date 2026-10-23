@@ -47,6 +47,9 @@ def page_grid(blocks: List[Dict], ticks: set = frozenset()) -> Optional[Dict]:
     """The grid of one page's blocks (all of one slide or page), or None when the page holds no text."""
     # An axis tick is marked on the line itself (claims.tick_lines gives the ids of the page's blocks), so the grid cell keeps it.
     texts = [dict(b, tick=True) if id(b) in ticks else b for b in blocks if b["kind"] != "table" and b["text"].strip()]
+    # Page furniture (a header or footer band line, the page's own number) is marked on the cell: the checker never looks for a value there.
+    page = int((parser._where(blocks[0]).get("slide") or parser._where(blocks[0]).get("page") or 0)) if blocks else 0
+    texts = [dict(b, furniture=True) if claims.page_furniture_line(b) or claims.page_number_line(b["text"], page) else b for b in texts]
     ticks = {id(b) for b in texts if b.get("tick")}
     tables: Dict = {}
     for b in blocks:

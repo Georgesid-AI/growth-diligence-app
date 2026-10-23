@@ -461,3 +461,7 @@ arr, mrr, churn, nrr map to them and its closed list gains `cac_payback` (a payb
   usage, retention and sales" (the group of every unit-economics type, as LTV and CAC); the edit form's type list offers the five. The baseline CSV and the memo's Appendix A carry the stored
   type and the metric as before (no column added); a sentence that names a claim by its type (the memo's claim name with no metric, the banner "Top-5 claim contradicted") uses the label
   ("CAC payback", "NRR"). Engine contract 8: results and claim matches stored under 7 read "Stale – re-run audit"; `SEED_VERSION` 15. Tests: `test_recurring_claim_types.py`.
+
+Amended 2026-10-23 (George, checker tolerance and two guards; chat-upload.md §28): a deck claim whose value stands in another cell of its page than the cited one is matched there and carries
+the flag `cell corrected` (counted as matched, listed under Review); a negative claim with no minus sign or loss, decline or decrease word in its cell carries `sign not on page`; a claim with
+no value that is not a date claim is dropped before it is stored. The register, the matching and the evidence label read the claim as before: the flags change no label and no contract.

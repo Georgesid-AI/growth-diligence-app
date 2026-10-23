@@ -56,14 +56,14 @@ def test_a_figure_in_its_cell_with_its_unit_and_no_period_around_is_matched():
                              "dot_reading": None, "bracket_reading": None}
 
 
-def test_a_figure_moved_to_another_cell_is_not_matched():
-    """The value is on the page, but not in the cited cell: "AI suggestion, not matched" (decision 2a, not 2b). The row shows the
-    model's value, never the cell's first figure (George, 2026-10-22, decision 2a on the review of PR #159): one right row to
-    confirm or reject, not "revenue $97"."""
+def test_a_figure_moved_to_another_cell_is_matched_there():
+    """The value is on the page, not in the cited cell: matched in the cell that holds it, with the cell tolerance of 2026-10-23
+    (George; it replaces decision 2a of 2026-10-22, "not matched"). The flag is the checker's (test_checker_tolerance.py); the row
+    shows Python's reading of the cell found, and keeps the model's cell."""
     got = one(TRACTION, claim("r4c1", 150000, unit="USD"))
-    assert got["status"] == UNMATCHED and got["checks"]["value"] is False
-    assert got["value"] == 150000 and got["values"] == [] and got["position"] is None, "the row shows the model's value"
-    assert page_check.label(got["status"]) == "AI suggestion, not matched"
+    assert got["status"] == MATCHED and got["checks"]["value"] is True and got["cell_corrected"] is True
+    assert got["value"] == 150000 and got["value_cell"] == "r3c1" and got["model_cell"] == "r4c1" and got["position"] == 1
+    assert page_check.label(got["status"]) == "Matched to page"
 
 
 def test_a_value_the_cell_does_not_hold_at_all_is_not_matched():
