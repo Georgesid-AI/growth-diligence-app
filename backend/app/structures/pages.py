@@ -233,6 +233,7 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
     known = _python_cells(reviewed)
     order = len(reviewed)
     reads, sent, stopped_message = [], [], None
+    fresh = set()                       # ids of the rows this run wrote: a later page with the same text never replaces them
     # A run that follows one that left pages to retry asks only for those pages; any other run reads the whole deck (the cache serves
     # the pages already read).
     kept = [r for r in deck.get("page_reads") or [] if r.get("status") == "read"] if deck.get("retry_pages") else []
@@ -271,6 +272,17 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
                 checked_all += [{**c, "page": page} for c in checked["items"]]
                 rows += [(row_from_claim(item, grid, deck, year_end), page) for item in checked["items"]]
             counts["flagged"] += sum(1 for row, _ in rows if checker.review_flags(row["flags"]) and row["cell"] is None)
+            # A page read again (Run audit, a new upload of the file): the rows an earlier run stored for this reply that nobody has touched
+            # (pending, origin "ai") are replaced by the rows checked now, so a row stored before a check existed does not outlive it
+            # (live bug, 2026-10-23: rows kept "unmatched" with no flags). A row the analyst approved, edited or rejected stays.
+            stale = [c for c in reviewed if c.get("origin") == "ai" and c.get("status") == "pending" and c.get("structure_key") == result.key
+                     and c["id"] not in fresh]
+            stale_orders = sorted(c.get("order", 0) for c in stale)
+            for c in stale:
+                await db[CANDIDATES_COLLECTION].delete_one({"audit_id": audit_id, "id": c["id"]})
+                reviewed.remove(c)
+            if stale:
+                known = _python_cells(reviewed)
             for candidate, page in rows:
                 if candidate["cell"] is not None and \
                         value_match(candidate["value"], candidate["value_high"], known.get(_cell_key(candidate), ())):
@@ -296,12 +308,15 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
                     await db[CANDIDATES_COLLECTION].delete_one({"audit_id": audit_id, "id": duplicate["id"]})
                     reviewed.remove(duplicate)
                     row_order = duplicate.get("order", order + 1)
+                elif stale_orders:
+                    row_order = stale_orders.pop(0)         # the replaced row's place in the list
                 else:
                     row_order = order = order + 1
                 row = {**candidate, "audit_id": audit_id, "deck_id": deck_id, "file": deck["file"],
                        "id": str(uuid.uuid4()), "order": row_order, "status": "pending", "structure_key": result.key}
                 await db[CANDIDATES_COLLECTION].insert_one(row)
                 reviewed.append(row)
+                fresh.add(row["id"])
             await gateway.record_verification(db, audit_id, result.key, [c["status"] for c in checked_all], counts["dropped"],
                                               counts["periods_corrected"], stored_items(checked_all))
             entry.update(counts)

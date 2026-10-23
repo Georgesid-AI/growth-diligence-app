@@ -1914,6 +1914,8 @@ async def read_structure(
         prompt = await prompt_store.load(db, {FILE_TYPE: FILE_TYPE_PROMPT, FILE_RECOGNITION: FILE_TYPE_PROMPT, SHEET_STRUCTURE: SHEET_STRUCTURE_PROMPT,
                                               PAGE_CLAIMS: PAGE_CLAIMS_PROMPT}.get(structure_type, STRUCTURE_PROMPT))
     except prompt_store.PromptMissing:
+        if structure_type == PAGE_CLAIMS:
+            logger.warning("%s prompt missing: run_id=%s step=%s", PAGE_CLAIMS_PROMPT, audit_id, STRUCTURE_STEP)
         return _structure_result("not_read", structure_type, PROMPT_MISSING_TEXT if structure_type == PAGE_CLAIMS else NOT_READ)
     if STRUCTURE_MODEL not in MODEL_PRICING_USD:
         return _structure_result("not_read", structure_type, NOT_READ)

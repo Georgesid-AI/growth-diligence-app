@@ -115,3 +115,5 @@ from the store.
 
 Amended 2026-10-23 (George, review of PR 164, M6): with no `deck_reading` prompt in the store the page reader does not run; the deck reads "AI reading not run – deck_reading
 prompt missing in prompt store" (status `prompt_missing`, `gateway.PROMPT_MISSING_TEXT`), and the next Run audit reads it once the prompt exists, with no new upload.
+
+Amended 2026-10-23 (George): the gateway reads the page reader's prompt under the name `deck_reading` only (`gateway.PAGE_CLAIMS_PROMPT`); a prompt stored under the former name `page_claims` is never read, and the owner page uploads `deck_reading`. With none stored the gateway logs `deck_reading prompt missing: run_id=... step=...` (codes only, no deck text).
