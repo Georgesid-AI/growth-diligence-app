@@ -1264,3 +1264,13 @@ unmatched=… dropped=… flagged=…`.
   deck list's Type column and offered by the edit form's type list; groups as above (CAC payback with the other unit economics, in "Customers, users, usage, retention and sales"). The `deck_reading`
   prompt of the store must name `cac_payback` (prompt-store.md; not in the repository, rule 26). Matching: claim-matching.md, amended 2026-10-23. Contract and seed: engine contract 8, results
   and claim matches stored under 7 read "Stale – re-run audit", `SEED_VERSION` 15. Fixture `uber_p20.json` unchanged: four claims, one flag.
+- **Checker tolerance and two guards (George, 2026-10-23).** `structures/page_check.find_elsewhere`, `checker`, `llm/gateway.parse_page_reply`. (1) *Cell tolerance.* A claim whose value
+  is not in its cited value cell but is in another cell of the same page (the figure check as before: K, M, MM, Bn expanded, separators and symbols ignored; a cell holding several
+  figures, "€27K 3% 27% €2.3K", matches any one of them) is "Matched to page" with the flag `cell corrected` (informational: the claim stays in the main list, the note shown on its row, never under Review) and `value_cell` set to the cell found; unit, period and label are then checked
+  on that cell. With several cells holding the value the nearest to the cited cell wins (the same table or the text lines first, then rows, then columns; ties keep grid order). Page
+  furniture never counts, here or in `value not on page`: a line in the header band (top 5%) or footer band (bottom 7%) and the page's own number (grid cell mark `furniture`). Only a value
+  on no cell of the page stays "AI suggestion, not matched" with `value not on page`. The stored item keeps the model's cell as `model_cell` (a cell id, no text). (2) *Sign guard.* A
+  claim with a negative value whose value cell shows no minus sign ("-", "−", "–", "—") and no loss, decline or decrease word gets the flag `sign not on page` and is listed under
+  Review; a bracketed number is a minus sign only for the metrics ebitda, net_profit, gross_profit, costs, cash and burn; for every other metric a bracketed figure is positive and a negative reading is flagged. (3) *Null guard.* A claim with value null that is not a date claim (metric `product` with a period) is
+  dropped at validation and logged "page n: claim rejected (no value)"; it never reaches the panel. (4) *Panel.* A `cell corrected` claim keeps status matched, so its label reads
+  "Matched to page" like any matched claim; it is informational, so it stays in the main list with the note on its row (Approve all and Run audit treat it as unflagged). Two closed flags more (`FLAGS` has 18; `INFORMATIONAL_FLAGS` and `REVIEW_FLAGS` split them). No contract change.

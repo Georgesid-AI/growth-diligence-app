@@ -13,7 +13,7 @@ import {
   answerDefinitionCheck, answerTurnover, approveAll, decideColumns, generateNarrative, getAudit, getClaimRegister, getDatasets, getDecks, getNarrativeEstimate,
   getReview, getVerdict, putIcInputs, reportUsage, updateCandidate, updateClaimInputs,
 } from "@/lib/api";
-import { claimPeriod, claimValue, sourceRef, typeLabel, CLAIM_GROUPS, approveAllToast, isOther, isCase, flagsText, bulkApprovable, scenarioText, STALE_LABEL } from "@/lib/deckClaims";
+import { claimPeriod, claimValue, sourceRef, typeLabel, CLAIM_GROUPS, approveAllToast, isOther, isCase, isFlagged, flagsText, bulkApprovable, scenarioText, STALE_LABEL } from "@/lib/deckClaims";
 import { JUDGMENT_HEADING } from "@/lib/verdict";
 import { definitionOf, turnoverHeading, turnoverOf, registerRows } from "@/lib/claimRegister";
 import { useGateEdits } from "@/lib/useGateEdits";
@@ -267,7 +267,7 @@ function ClaimsSection({ auditId, data, summary, reload }) {
   const auto = data.candidates.filter((c) => c.auto_accepted && c.status === "approved");
   const groups = [...new Set(open.map((c) => c.group))].sort((a, b) => a - b);
   // Approve all acts on what the deck panel's does (George, 2026-10-23, review of PR 164, M4): never a flagged claim, never a best or worst case.
-  const bulk = (c) => c.status === "pending" && !c.flags?.length && !isCase(c);
+  const bulk = (c) => c.status === "pending" && !isFlagged(c) && !isCase(c);
   const act = async (key, fn) => {
     setBusy(key);
     try { await fn(); await reload(); } catch (e) { toast.error(describeRequestError(e).message); } finally { setBusy(null); }

@@ -99,7 +99,7 @@ def test_uber_page_20_qualitative_lines_are_flagged_and_never_matched():
     parsed, grid, reply = uber_page_20()
     qualitative = next(c for c in grid["cells"] if c["text"].startswith("Time-saver"))
     cell = f"p20{page_check._id(qualitative)}"
-    invented = [claim(cell, 1, metric="product", unit="count", basis="scenario", scenario="worst"),
+    invented = [claim(cell, 7_654, metric="product", unit="count", basis="scenario", scenario="worst"),
                 {**claim(cell, None, metric="product", unit=None, basis="scenario", scenario="worst"), "value": None}]
     out = checker.check(grid, page_check.by_page(reply["claims"] + invented)[20], 12, checker.page_blocks(parsed["blocks"], grid), "06-uber.pdf")
     assert len(out["items"]) == 6, "flagged, not deleted"
@@ -117,8 +117,8 @@ def test_a_value_the_page_does_not_hold_is_flagged_and_a_value_in_another_cell_i
     missing = one(parsed, claim("p1r3c1", 999_000))
     assert missing["status"] == "unmatched" and missing["flags"] == [checker.VALUE_NOT_ON_PAGE]
     assert missing["value"] == 999_000, "the row shows the model's value (decision 2a), flagged"
-    elsewhere = one(parsed, claim("p1r4c1", 150_000))             # the value stands in r3c1, not in the cited cell
-    assert elsewhere["status"] == "unmatched" and elsewhere["flags"] == []
+    elsewhere = one(parsed, claim("p1r4c1", 150_000))             # the value stands in r3c1, not in the cited cell: corrected (tolerance)
+    assert elsewhere["status"] == "matched" and elsewhere["flags"] == ["cell corrected"] and elsewhere["value_cell"] == "r3c1"
     matched = one(parsed, claim("p1r3c1", 150_000))
     assert matched["status"] == "matched" and matched["flags"] == []
 
@@ -247,7 +247,7 @@ def test_an_axis_tick_and_a_funds_raised_line_are_flagged_not_dropped():
 
 
 def test_every_flag_is_a_closed_string_and_a_cell_the_page_does_not_have_is_still_dropped():
-    assert len(set(checker.FLAGS)) == len(checker.FLAGS) == 16 and all(f == f.strip() and f.lower() == f for f in checker.FLAGS)
+    assert len(set(checker.FLAGS)) == len(checker.FLAGS) == 18 and all(f == f.strip() and f.lower() == f for f in checker.FLAGS)
     assert set(PAGE_BASES) == {"actual", "projection", "scenario"} and set(PAGE_SCENARIOS) == {"best", "realistic", "worst", "none"}
     parsed = deck([TITLE, *LINES])
     out = checker.check(grid_of(parsed), page_check.by_page([claim("p1r9c9", 1)])[1], 12)

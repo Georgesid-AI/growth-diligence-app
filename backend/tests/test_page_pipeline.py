@@ -146,7 +146,7 @@ def _page_db(parsed, rows=()):
 REPLY = {"type": "page_claims", "claims": [
     claim("p1r2c1", 800, metric="customers", unit="count", label_cell="p1r1c1"),
     claim("p1r3c1", 150000, unit="USD"),
-    claim("p1r4c1", 150000, metric="gross_margin", unit="%"),             # the value is not in that cell
+    claim("p1r4c1", 61, metric="gross_margin", unit="%"),                 # the value is on no cell of the page (one found elsewhere is corrected)
 ]}
 
 
@@ -162,7 +162,7 @@ def test_with_the_switch_at_ai_the_pages_are_read_and_each_claim_is_a_row_matche
     assert adapter.requests[-1]["cache_system"] is True, "the fixed prompt is marked for the prompt cache"
     rows = sorted(db[CANDIDATES_COLLECTION].docs, key=lambda r: r["order"])
     assert [(r["claim_type"], r["value"], r["ai_label"]) for r in rows] == [
-        ("customers", 800, "Matched to page"), ("revenue", 150000, "Matched to page"), ("gross_margin", 150000, "AI suggestion, not matched")]
+        ("customers", 800, "Matched to page"), ("revenue", 150000, "Matched to page"), ("gross_margin", 61, "AI suggestion, not matched")]
     assert rows[2]["snippet"] == "97% margins", "the unmatched row shows the model's value against the cell it cited (decision 2a)"
     first = rows[0]
     assert first["sources"] == [{"file": "deck.pdf", "page": 1, "kind": "page", "cell": "r2c1"}]

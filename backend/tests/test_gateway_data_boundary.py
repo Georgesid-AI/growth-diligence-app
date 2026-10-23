@@ -3411,7 +3411,11 @@ def test_the_checker_flags_basis_and_scenario_are_closed_words_and_never_gateway
     assert checker.FLAGS == ("value not on page", "currency assumed", "unit assumed", "scenario label not on page",
                              "period not on page", "page out of range", "use-of-funds share", "acquisition channel",
                              "turnover, not revenue", "year under bar differs", "pipeline column", "axis tick", "not a plan line",
-                             "matches analyst claim", "basis and scenario disagree", "basis conflicts with period")
+                             "matches analyst claim", "basis and scenario disagree", "basis conflicts with period",
+                             "cell corrected", "sign not on page")
+    assert checker.INFORMATIONAL_FLAGS == ("cell corrected",), "the only flag that leaves a claim in the main list"
+    assert set(checker.REVIEW_FLAGS) == set(checker.FLAGS) - {"cell corrected"}
+    assert checker.BRACKET_NEGATIVE_METRICS == ("ebitda", "net_profit", "gross_profit", "costs", "cash", "burn")
     assert set(schemas.PAGE_BASES) == {"actual", "projection", "scenario"} and set(schemas.PAGE_SCENARIOS) == {"best", "realistic", "worst", "none"}
     assert not {"flags", "basis", "scenario", "figure_type"} & decks.GATEWAY_READABLE_FIELDS
     from schemas import metrics
@@ -3458,7 +3462,7 @@ def test_the_claim_rejected_line_holds_a_page_number_and_schema_field_names_neve
     with caplog.at_level(logging.DEBUG):
         gateway.parse_page_reply(reply, "p4r1c1: x")
     line, = [r.getMessage() for r in caplog.records if "claim rejected" in r.getMessage()]
-    assert re.fullmatch(r"page (\d+|\?): claim rejected \((cell not in batch|claim|[a-z_]+)(, [a-z_]+)*\)", line), line
+    assert re.fullmatch(r"page (\d+|\?): claim rejected \((cell not in batch|no value|claim|[a-z_]+)(, [a-z_]+)*\)", line), line
     assert set(re.findall(r"[a-z_]+", line.split("(", 1)[1])) <= gateway.PAGE_FIELDS | {"claim"}
     for needle in ("Jane", "Northbridge", "123456789", "2022"):
         assert needle not in caplog.text, f"{needle!r} in the log"

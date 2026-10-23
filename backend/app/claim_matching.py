@@ -13,7 +13,7 @@ import re
 from datetime import date
 from typing import Dict, List, Optional, Tuple
 
-from .decks.claims import BASIS_CONFLICT, CASES as SCENARIO_CASES
+from .decks.claims import BASIS_CONFLICT, CASES as SCENARIO_CASES, review_flags
 
 # The register's fields, in the order of the spec's section 6 (and the CSV header of section 7).
 FIELDS = (
@@ -1622,3 +1622,8 @@ def label_counts(rows: List[dict]) -> Dict[str, int]:
 def definition_counts(rows: List[dict]) -> Dict[str, int]:
     """Definition checks by state (section 4.1): open (ask), answered yes, answered no."""
     return {state: sum(1 for r in rows if r.get("definition_check") == state) for state in (DEFINITION_ASK, *DEFINITION_ANSWERS)}
+
+
+def review_flags_of(c: dict, as_of: Optional[str]) -> List[str]:
+    """The flags that list a claim under Review and keep it out of the bulk approvals: flags_of without the informational ones."""
+    return review_flags(flags_of(c, as_of))

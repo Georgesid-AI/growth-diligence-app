@@ -2,7 +2,7 @@ import {
   ALL_DECKS, AI_SUGGESTION_LABEL, CLAIM_TYPES, INCONSISTENCY_LABEL, VERIFIED_LABEL, badgeText, deckRunLog, deckReadLine, aiReadStatus, REMOVE_DECK_CONFIRM, claimPeriod, conversionHover, claimSections, claimsForDeck, periodLabel, directionText, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, newClaimPayload, sourceRef, statusCounts, typeLabel,
   approveAllToast, toReview, DECK_SCOPE_CANNOT, DECK_SCOPE_CANNOT_LEAD, DECK_SCOPE_INTRO, isDeckFile, DECK_SCOPE_OUTRO, EDIT_TYPES, isOther, readingChoices, confidenceText, otherFiguresTitle,
   claimFields, editLogText, CONSENT_OFF_LINE,
-  CLAIMS_VIEW, REVIEW_VIEW, VIEW_LABELS, REVIEW_INTRO, claimsForView, isFlagged, flagsText,
+  CLAIMS_VIEW, REVIEW_VIEW, VIEW_LABELS, REVIEW_INTRO, claimsForView, isFlagged, flagsText, INFORMATIONAL_FLAGS,
   CLAIM_GROUPS, COLLAPSED_BY_DEFAULT, SCENARIO_GROUP, PROMPT_MISSING_LINE, scenarioText, isCase,
 } from "./deckClaims";
 
@@ -448,6 +448,16 @@ describe("the Claims and Review views (George, 2026-10-22, docs/design/ai-reads-
   const plain = { id: "p", flags: [] };
   const none = { id: "n" };
   const flagged = { id: "f", flags: ["currency assumed", "scenario label not on page"] };
+  test("an informational flag (cell corrected) keeps the claim in the main list, its note shown on the row; any other flag sends it to Review", () => {
+    const corrected = { id: "c", flags: ["cell corrected"] };
+    const both = { id: "b", flags: ["cell corrected", "sign not on page"] };
+    expect(INFORMATIONAL_FLAGS).toEqual(["cell corrected"]);
+    expect(isFlagged(corrected)).toBe(false);
+    expect(isFlagged(both)).toBe(true);
+    expect(claimsForView([corrected, both], CLAIMS_VIEW).map((c) => c.id)).toEqual(["c"]);
+    expect(claimsForView([corrected, both], REVIEW_VIEW).map((c) => c.id)).toEqual(["b"]);
+    expect(flagsText(corrected)).toBe("cell corrected");
+  });
   test("a claim with a flag is listed under Review and nowhere else; a claim without one under Claims", () => {
     expect(claimsForView([plain, flagged, none], CLAIMS_VIEW).map((c) => c.id)).toEqual(["p", "n"]);
     expect(claimsForView([plain, flagged, none], REVIEW_VIEW).map((c) => c.id)).toEqual(["f"]);

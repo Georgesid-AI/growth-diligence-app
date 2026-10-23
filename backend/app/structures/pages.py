@@ -270,7 +270,7 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
                     counts[k] += checked[k]
                 checked_all += [{**c, "page": page} for c in checked["items"]]
                 rows += [(row_from_claim(item, grid, deck, year_end), page) for item in checked["items"]]
-            counts["flagged"] += sum(1 for row, _ in rows if row["flags"] and row["cell"] is None)
+            counts["flagged"] += sum(1 for row, _ in rows if checker.review_flags(row["flags"]) and row["cell"] is None)
             for candidate, page in rows:
                 if candidate["cell"] is not None and \
                         value_match(candidate["value"], candidate["value_high"], known.get(_cell_key(candidate), ())):

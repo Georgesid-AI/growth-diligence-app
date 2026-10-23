@@ -305,6 +305,26 @@ def _checks(value_ok: bool, unit_ok: bool, period_ok: bool, label_ok: bool, corr
             "dot_reading": first.get("dot_reading"), "bracket_reading": first.get("bracket_reading")}
 
 
+def _distance(grid_views: Dict, cited: Dict, other: Dict) -> Tuple[int, int, int]:
+    """How far another cell stands from the cited one: another table or the text lines last, then the rows and columns between."""
+    same = view_of(grid_views, cited) is view_of(grid_views, other)
+    return (0 if same else 1, abs(cited["row"] - other["row"]), abs(cited["col"] - other["col"]))
+
+
+def find_elsewhere(grid: Dict, grid_views: Dict, listed: Dict, cited: Dict, claim: Dict):
+    """(cell, item, values) of the nearest other cell of the page that holds the claim's value (and the high end of a range), the
+    cell tolerance (George, 2026-10-23): the figure check of figure_check on each cell, page furniture (header or footer band, the
+    page's own number) never counting. None when no other cell holds it. Ties keep the grid's order."""
+    others = sorted((c for c in grid["cells"] if c is not cited and not c.get("furniture")), key=lambda c: _distance(grid_views, cited, c))
+    for other in others:
+        structure = view_of(grid_views, other)
+        item, values, ok = figure_check(listed[id(structure)], other, claim["value"], claim.get("value_high"), claim["metric"],
+                                        verify.decimal_comma(structure["cells"]), claim.get("unit"), claim.get("unit_other"))
+        if ok:
+            return other, item, values
+    return None
+
+
 def _dropped(cell: Dict) -> Optional[str]:
     """Why a claim on this cell is dropped before any check: an axis tick, or a line the rules read drops as no plan claim."""
     if cell.get("tick"):
@@ -340,6 +360,13 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, drop: 
         item, values, value_ok = (None, [], False) if claim.get("value") is None else \
             figure_check(listed[id(structure)], cell, claim["value"], claim.get("value_high"), metric, comma, claim.get("unit"),
                          claim.get("unit_other"))
+        model_cell = None
+        if claim.get("value") is not None and not value_ok:
+            found = find_elsewhere(grid, grid_views, listed, cell, claim)
+            if found:
+                model_cell, (cell, item, values), value_ok = cell, found, True
+                structure = view_of(grid_views, cell)
+                comma = verify.decimal_comma(structure["cells"])
         unit_ok = unit_check(structure, cell, item, claim.get("unit"), claim.get("unit_other"), comma) \
             if claim.get("value") is not None else claim.get("unit") is None
         cited = by_id.get(claim["period_cell"]) if claim.get("period_cell") else None
@@ -361,6 +388,8 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, drop: 
                "checks": _checks(value_ok, unit_ok, period_ok, label_ok, corrected, values)}
         if corrected:
             out["model_period"] = claim.get("period")
+        if model_cell is not None:
+            out["cell_corrected"], out["model_cell"] = True, _id(model_cell)
         checked.append(out)
     matched = sum(1 for c in checked if c["status"] == MATCHED)
     return {"items": checked, "matched": matched, "unmatched": len(checked) - matched, "dropped": dropped,

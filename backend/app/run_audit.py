@@ -8,7 +8,7 @@ from typing import Dict, Iterable, List, Optional
 
 from app import claim_matching as cm
 from app import column_rules as cr
-from app.decks.claims import CASES
+from app.decks.claims import CASES, review_flags
 from app.structures import sheet as sheet_mod
 from schemas.metrics import CONTRACT_VERSION
 
@@ -74,11 +74,11 @@ def engine_stale(audit: dict, datasets: Iterable[dict]) -> bool:
 def never_on_its_own(candidate: dict) -> bool:
     """Issue #155 (George, 2026-10-22, claim-matching.md section 4.1): a claim Run audit leaves to the analyst however close it is: one the
     analyst entered or edited, and one flagged as a deck inconsistency. (A claim in another currency is read from its register row.)
-    George, 2026-10-23 (review of PR 164, H1): also a claim the checks flagged (`flags`, as Approve all skips it) and a best-case or
+    George, 2026-10-23 (review of PR 164, H1): also a claim the checks flagged for review (`flags` less the informational ones, as Approve all skips it) and a best-case or
     worst-case figure, which the analyst approves one by one. The caller passes `flags` with the ones that depend on the as-of month."""
     return bool(candidate.get("origin") in ("analyst", "deck_analyst") or "parsed" in candidate
                 or candidate.get("inconsistent_dates") or candidate.get("inconsistencies")
-                or candidate.get("flags") or candidate.get("scenario") in CASES)
+                or review_flags(candidate.get("flags")) or candidate.get("scenario") in CASES)
 
 
 def within_tolerance_ids(rows: List[dict], candidate_ids: Iterable[str]) -> List[str]:
