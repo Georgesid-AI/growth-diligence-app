@@ -262,14 +262,14 @@ def test_the_deck_carries_the_progress_while_reading_and_the_totals_when_done(mo
 
 
 def test_the_deck_list_sends_the_panel_its_status_fields():
-    import server
     assert {"read_progress", "skipped_pages", "unread_pages"} <= set(_deck_fields())
 
 
 def _deck_fields():
+    import importlib
     import inspect
     import re
-    source = inspect.getsource(sys.modules["server"].list_deck_candidates)
+    source = inspect.getsource(importlib.import_module("server").list_deck_candidates)
     return re.findall(r'"(\w+)": 1', source)
 
 

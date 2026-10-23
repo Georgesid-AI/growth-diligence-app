@@ -1,6 +1,6 @@
-2026-10-23, claude/upbeat-ptolemy-i0v2ce (rebased on main after #168 and #169)
-Deleted: the one-after-another page loop; the deck tabs' most-recent-first sort; the "done, n read, m skipped, k not read" wording and read_summary (main's "done, n read, r rejected" stands); the batch-of-five unit in the audit's deck read (scripts keep it).
-Decided: one page per call so "page n not read" and the retry have a unit; 8 workers that retire above a limit lowered to 4 by the first 429; the lock is held for the checks only and in-flight reads count in the token cap at worst case; 60 s wraps the whole page read; a run after one that left pages to retry asks only for those pages, any other run reads the whole deck (cache); a deck "reading" for over 10 minutes (reading_since, else uploaded_at) is restarted by Run audit with the message "restarted"; "with figures" ignores digits in a header or footer band, a phone number, a URL and an email, so such a page is also no longer sent.
-Slow or unclear: the PR 166 comment asked for the restart but the first commit did not carry it; the fake database ignored $unset in update_one, so main's "new read starts at queued" was untested; a 429 test counted calls by position and failed once in eight runs, now counts the last eight calls.
-Root cause and rule: sequential reads, a lock held across the provider call, and a figure rule that counted furniture; a count shown to the analyst and the rule that sends pages come from one function (decks/pages.py page_grid), so they cannot disagree.
-Process change to propose: write review-comment additions into the branch's spec or brief the same day, so a rebase starts from one list.
+2026-10-23, claude/upbeat-ptolemy-i0v2ce (PR #166 CI fix).
+Deleted: the unused `import server` in test_page_reads_speed.py.
+Decided: the import was load-bearing (it put `server` into sys.modules for `_deck_fields`), so `_deck_fields` now uses importlib.import_module("server"); plain removal made the test fail when run alone.
+Slow or unclear: nothing; ruff 0.16.8 clean, backend suite 3396 passed, 26 skipped.
+Root cause: an import kept only for its side effect, flagged by F401 and not run through ruff 0.16.8 before the push; prevention: run ruff on backend/ before every push.
+Process change to propose: run the CI ruff version locally in the pre-push checklist.
