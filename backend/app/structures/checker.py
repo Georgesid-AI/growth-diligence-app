@@ -254,6 +254,10 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, blocks
                 flags.append(UNIT_ASSUMED)
         if claim.get("value") is not None and claim["value"] < 0 and not sign_shown(cell["text"], claim.get("metric")):
             flags.append(SIGN_NOT_ON_PAGE)
+            # The page shows no sign, so the row states the figure as the page writes it: positive (the model's minus is flagged, never kept).
+            if item["value"] is not None and item["value"] < 0:
+                item["value"] = abs(item["value"])
+                item["values"] = sorted(item["values"], key=lambda v: v["value"] < 0)
         if not scenario_near(page_check.view_of(grid_views, cell), cell, claim.get("scenario")):
             flags.append(SCENARIO_NOT_ON_PAGE)
         if basis_disagrees(claim.get("basis"), claim.get("scenario")):

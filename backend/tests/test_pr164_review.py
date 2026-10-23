@@ -268,15 +268,17 @@ def test_m5_rules_copy_matches_parser_rows_only():
 MISSING = "AI reading not run – deck_reading prompt missing in prompt store"
 
 
-def test_m6_the_missing_prompt_is_named_on_the_deck_and_the_next_run_audit_reads_it_without_a_new_upload(monkeypatch):
+def test_m6_the_missing_prompt_is_named_on_the_deck_and_the_next_run_audit_reads_it_without_a_new_upload(monkeypatch, caplog):
     monkeypatch.delenv("DECK_PIPELINE", raising=False)
     parsed = tc.deck([tc.TITLE, *tc.LINES])
     db = tc._page_db(parsed)
     stubs = list(db["prompts"].docs)
     db["prompts"].docs.clear()
     adapter = t.FakeAdapter(replies=[json.dumps({"type": PAGE_CLAIMS, "claims": [tc.claim("p1r2c1", 800, metric="customers", unit="count")]})])
-    status = asyncio.run(structures.process_deck(db, PAGE_AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
+    with caplog.at_level("WARNING"):
+        status = asyncio.run(structures.process_deck(db, PAGE_AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
     deck_doc, = db[decks.TEXT_COLLECTION].docs
+    assert f"deck_reading prompt missing: run_id={PAGE_AUDIT}" in caplog.text and "Traction" not in caplog.text, "codes only (rule 17)"
     assert status == structures.PROMPT_MISSING == deck_doc["ai_status"] and deck_doc["ai_message"] == MISSING == gateway.PROMPT_MISSING_TEXT
     assert adapter.calls == 0 and db[decks.CANDIDATES_COLLECTION].docs == []
     # The prompt is uploaded; no new upload: the deck is queued again, once, and only when the store holds the prompt.
@@ -358,3 +360,13 @@ def test_l8_a_basis_and_scenario_that_contradict_each_other_are_flagged():
     assert tc.one(parsed, tc.claim("p1r3c1", 150000, basis="scenario", scenario="none"))["flags"] == [checker.BASIS_SCENARIO_DISAGREE]
     assert tc.one(parsed, tc.claim("p1r3c1", 150000, basis="projection", scenario="none"))["flags"] == []
     assert tc.one(parsed, tc.claim("p1r3c1", 150000, basis="actual", scenario="none"))["flags"] == []
+
+
+def test_m6_a_prompt_stored_under_the_former_name_page_claims_is_not_read(monkeypatch):
+    monkeypatch.delenv("DECK_PIPELINE", raising=False)
+    db = tc._page_db(tc.deck([tc.TITLE, *tc.LINES]))
+    for doc in db["prompts"].docs:
+        doc["name"] = "page_claims"
+    adapter = t.FakeAdapter(replies=[json.dumps({"type": PAGE_CLAIMS, "claims": []})])
+    status = asyncio.run(structures.process_deck(db, PAGE_AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
+    assert status == structures.PROMPT_MISSING and adapter.calls == 0

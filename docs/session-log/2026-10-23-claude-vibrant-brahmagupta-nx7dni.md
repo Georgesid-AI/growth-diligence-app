@@ -1,0 +1,6 @@
+- Date and branch: 2026-10-23, claude/vibrant-brahmagupta-nx7dni.
+- Deleted: nothing; the frontend same-cell test I wrote was removed because it did not fail (rule 11).
+- Decided: a page read again replaces the untouched rows (pending, origin ai, same reply key) with freshly checked ones, keeping their list place; approved, edited and rejected rows stay. A claim flagged "sign not on page" stores the positive figure the page shows. The gateway already read only deck_reading; added the "deck_reading prompt missing" log line and the spec wording.
+- Slow or unclear: item 2 (second row blank) does not reproduce in DeckPanel with two page rows on one cell; stopped per rule 13 and asked for the artefact. Item 1's fresh-run case already passed; only a re-read over stored rows reproduced the live symptom.
+- Root cause and rule: process_deck_pages skipped any figure its cell already listed and any twin without refreshing it, so rows stored before a check existed kept ai_status "unmatched" and flags []. Rule: a new check on AI rows is tested on a second read over rows stored without it (tests/test_live_path_multi_figure.py).
+- Process change to propose: a check that adds fields to stored rows ships with a test that reads the page twice over rows stored by the former version.
