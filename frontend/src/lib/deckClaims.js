@@ -75,14 +75,14 @@ export const TYPE_LABELS = {
   gross_profit: "Gross profit", costs: "Costs", ebitda: "EBITDA", net_profit: "Net profit", usage: "Usage",
   people: "People", product: "Product", market: "Market size", cash: "Cash", burn: "Burn", runway: "Runway", ltv: "LTV",
   cac: "CAC", customer_lifetime: "Customer lifetime", ltv_cac: "LTV/CAC", trials_per_day: "Trials per day",
-  months_to_profitability: "Months to profitability", arpa: "ARPA", arpu: "ARPU", pipeline: "Pipeline", acquisition_channels: "Acquisition channels", use_of_funds: "Use of funds",
+  months_to_profitability: "Months to profitability", arpa: "ARPA", arpu: "ARPU", pipeline: "Pipeline", acquisition_channels: "Acquisition channels", use_of_funds: "Use of funds", pricing: "Pricing",
   installed_units: "Installed units",       // read from a forecast table only (chat-upload.md section 20), in no type list
   other: "Other",
   unknown: "Other",
 };
 // The types an analyst can choose: same order and names as backend app/decks/claims.py CLAIM_TYPES.
 // "Use of funds" is a type the model may read from a structure, not one the parser gives.
-export const CLAIM_TYPES = Object.keys(TYPE_LABELS).filter((t) => !["usage", "use_of_funds", "installed_units", "other", "unknown"].includes(t));
+export const CLAIM_TYPES = Object.keys(TYPE_LABELS).filter((t) => !["usage", "use_of_funds", "pricing", "installed_units", "other", "unknown"].includes(t));
 // The editor also offers Other: a figure typed Other leaves the register and is never a task (claim-types-and-correction.md 4).
 export const OTHER_TYPES = ["other", "unknown"];
 export const EDIT_TYPES = [...CLAIM_TYPES, "other"];
@@ -362,6 +362,13 @@ export function deckReadLine(deck) {
   return `${deck.pages} ${deck.page_unit || "page"}s parsed · ${deck.figure_pages} with figures · AI read: ${aiReadStatus(deck)}`;
 }
 
+/** The upload row's text: the one it got at upload, until the stored deck of a page read is known; then the same line the panel shows
+ *  (George, 2026-10-23: the row said "queued" while the panel said "done"). */
+export function uploadLineText(line, decks) {
+  const stored = line.deckId && (decks || []).find((d) => d.deck_id === line.deckId);
+  return stored?.ai_status && stored.pages && stored.figure_pages != null ? `done · ${deckReadLine(stored)}` : line.text;
+}
+
 /** ["AI reading: read", "Sent to the model: slides 4, 7, 12"] for one deck (no cost: usage-and-allowance.md section 9); the stop
  *  message when the audit reached its token limit; how many of the model's periods Python replaced
  *  with the one its header cells give. */
@@ -427,9 +434,11 @@ export const OTHER_GROUP = 9;
 // A best-case or worst-case figure is no plan target: it is listed in its own section above Other, whatever its type, and approved one by
 // one (George, 2026-10-23, review of PR 164, H2). The server puts such a claim in this group.
 export const SCENARIO_GROUP = 6;
+// Pricing (group 10) and Use of funds start collapsed and are listed after Market size and before Other (George, 2026-10-23).
+export const PRICING_GROUP = 10;
 export const CLAIM_GROUPS = [
   [1, "Revenue, ARR, MRR and bookings"], [2, "P&L items"], [3, "Customers, users, usage, retention and sales"],
-  [4, "Hiring and roadmap"], [5, "Market size"], [7, "Acquisition channels"], [8, "Use of funds"],
+  [4, "Hiring and roadmap"], [5, "Market size"], [PRICING_GROUP, "Pricing"], [7, "Acquisition channels"], [8, "Use of funds"],
   [SCENARIO_GROUP, "Scenarios"], [OTHER_GROUP, "Other"],
 ];
 
@@ -440,7 +449,7 @@ const CASE_WORDS = { best: "Best case", realistic: "Realistic case", worst: "Wor
 export const scenarioText = (c) => CASE_WORDS[c?.scenario] || "";
 /** Whether Approve all may ever act on a section: not on Other, and not on Scenarios (flagged claims are already left out by the server). */
 export const bulkApprovable = (group) => group !== OTHER_GROUP && group !== SCENARIO_GROUP;
-export const COLLAPSED_BY_DEFAULT = [OTHER_GROUP];
+export const COLLAPSED_BY_DEFAULT = [8, OTHER_GROUP, PRICING_GROUP];
 
 /** "1 other figure", "3 other figures": the header of the Other section, which has no review count. */
 export const otherFiguresTitle = (n) => `${n} other figure${n === 1 ? "" : "s"}`;

@@ -80,6 +80,23 @@ test("Other starts collapsed under its count; the other groups are open", async 
   expect(rows().map((tr) => /snippet-(\w)/.exec(text(tr))[1])).toEqual(["b"]);
 });
 
+test("Use of funds and Pricing start collapsed, listed after Market size and before Other; a pricing claim keeps its type in the editor", async () => {
+  await reload([
+    claim("m", "d1", 1, { group: 5, claim_type: "market" }),
+    claim("p", "d1", 2, { group: 10, claim_type: "pricing", value: 49, unit: null, currency: "EUR" }),
+    claim("u", "d1", 3, { group: 8, claim_type: "use_of_funds", value: 40, unit: "%", currency: null }),
+    claim("o", "d1", 4, { group: 9, claim_type: "other" }),
+  ]);
+  const toggles = [...document.querySelectorAll("[data-testid^='claim-group-toggle-']")];
+  expect(toggles.map((n) => [n.getAttribute("data-testid").replace("claim-group-toggle-", ""), n.getAttribute("aria-expanded")])).toEqual([
+    ["5", "true"], ["10", "false"], ["8", "false"], ["9", "false"]]);
+  expect(toggles.map((n) => n.textContent)).toEqual(["Market size (1)", "Pricing (1)", "Use of funds (1)", "1 other figure"]);
+  await open(10);
+  await act(async () => { q("candidate-row-p").querySelector("[data-testid='candidate-edit']").click(); });
+  const select = document.body.querySelector("[data-testid='edit-claim-type']");
+  expect(select.selectedOptions[0].textContent).toBe("Pricing");
+});
+
 test("the Period column reads FY2025 for the year 2025 and no date when the deck gives no period", async () => {
   await act(async () => { q("deck-tab-all").click(); });
   await open(9);
@@ -212,6 +229,7 @@ test("a use-of-funds text figure and its chart figure show text and chart with t
     source: { file: "d.pdf", page: 22, kind: "text" } });
   await reload([claim("c", "d1", 22, { group: 8, claim_type: "use_of_funds", value: 40, unit: "%", inconsistent_dates: [],
     inconsistencies: [{ this: share("text", 40), other: share("chart", 42), note: "chart excludes Operational Expenses & Talent Acquisition, rescaled" }] })]);
+  await open(8);                                   // Use of funds starts collapsed (George, 2026-10-23)
   expect(q("candidate-inconsistency").getAttribute("title")).toBe(
     "The deck gives different figures for this metric: text 40% at d.pdf · page 22 and chart 42% at d.pdf · page 22; chart excludes Operational Expenses & Talent Acquisition, rescaled.");
   expect(document.body.textContent).not.toMatch(/Contradicted/);
@@ -227,6 +245,7 @@ test("a percentage on a mixed slide is Other and says so: mixed slide – check"
 
 test("the edit form of a Use of funds claim shows Use of funds, and correcting the value keeps the type", async () => {
   await reload([claim("c", "d1", 22, { group: 8, claim_type: "use_of_funds", value: 40, unit: "%", inconsistent_dates: [] })]);
+  await open(8);
   api.updateCandidate.mockResolvedValue({ id: "c", status: "edited" });
   await act(async () => { q("candidate-row-c").querySelector("[data-testid='candidate-edit']").click(); });
   const select = q("edit-claim-type");
@@ -240,6 +259,7 @@ test("after the analyst edits a claim its confidence reads Analyst-edited, not a
   const parsed = claim("c", "d1", 22, { group: 8, claim_type: "use_of_funds", value: 40, unit: "%", currency: null,
     confidence: { level: "Low", failed: ["no unit", "not corroborated"], text: "Low – no unit, not corroborated" } });
   await reload([parsed]);
+  await open(8);
   expect(q("candidate-row-c").querySelector("[data-testid='candidate-confidence']").textContent).toBe("Low – no unit, not corroborated");
   api.updateCandidate.mockResolvedValue({ id: "c", status: "edited" });
   api.getDecks.mockResolvedValue({ decks: DECKS, candidates: [{ ...parsed, status: "edited", currency: "EUR",
@@ -719,6 +739,7 @@ describe("Approve all and the category sections (docs/specs/chat-upload.md secti
 
   test("every open section has an Approve all at its top and at its bottom; Other, never a task, has none even when opened", async () => {
     await reload(LIST.concat([pending("o1", 9, { claim_type: "other" })]));
+    await open(8);                                   // Use of funds starts collapsed (George, 2026-10-23)
     for (const group of [1, 7, 8]) {
       expect(q(`approve-all-top-${group}`).textContent).toBe("Approve all");
       expect(q(`approve-all-bottom-${group}`).textContent).toBe("Approve all");
@@ -750,6 +771,7 @@ describe("Approve all and the category sections (docs/specs/chat-upload.md secti
 
   test("the toast says 'claim' for one, and a refused call shows the error and leaves the list", async () => {
     await reload(LIST);
+    await open(8);
     api.approveAll.mockResolvedValueOnce({ approved: 1, skipped: 0 });
     await act(async () => { q("approve-all-top-8").click(); });
     expect(toast.success).toHaveBeenCalledWith("Approved 1 claim, 0 skipped (need Revenue / Volume or failed to save)");
@@ -766,6 +788,7 @@ describe("Approve all and the category sections (docs/specs/chat-upload.md secti
 
   test("Approve all is off when the section has nothing to review", async () => {
     await reload([pending("r3", 1, { status: "approved" }), pending("r4", 1, { status: "edited" }), pending("r5", 8, { claim_type: "use_of_funds" })]);
+    await open(8);
     expect(q("approve-all-top-1").disabled).toBe(true);
     expect(q("approve-all-bottom-1").disabled).toBe(true);
     expect(q("approve-all-top-8").disabled).toBe(false);
@@ -886,6 +909,20 @@ describe("upload box", () => {
     expect(lineTexts()).toEqual(["a.pdf: done · 24 pages parsed · 9 with figures · AI read: waiting for revenue file",
       "b.pdf: done · 3 pages parsed · 2 with figures · AI read: queued"]);
     expect(lineTexts().join(" ")).not.toMatch(/pages read/);
+  });
+
+  test("the upload row reads the same stored status as the panel: queued at upload, done after the poll shows the read finished", async () => {
+    const stored = { deck_id: "d3", file: "c.pdf", pages: 3, page_unit: "page", figure_pages: 2, uploaded_at: "2026-10-03" };
+    api.uploadDeck.mockResolvedValueOnce({ file: "c.pdf", pages: 3, page_unit: "page", figure_pages: 2, candidates: 0, ai_status: "reading", deck_id: "d3" });
+    api.getDecks.mockResolvedValue({ decks: [...DECKS, { ...stored, ai_status: "reading" }], candidates: CLAIMS });
+    jest.useFakeTimers();
+    try {
+      await drop("c.pdf");
+      expect(lineTexts()).toEqual(["c.pdf: done · 3 pages parsed · 2 with figures · AI read: queued"]);
+      api.getDecks.mockResolvedValue({ decks: [...DECKS, { ...stored, ai_status: "read", pages_read: 2, pages_rejected: 0 }], candidates: CLAIMS });
+      await act(async () => { jest.advanceTimersByTime(5000); });
+      expect(lineTexts()).toEqual(["c.pdf: done · 3 pages parsed · 2 with figures · AI read: done, 2 read, 0 rejected"]);
+    } finally { jest.useRealTimers(); }
   });
 
   test("a failed upload shows its line and the next file still goes", async () => {

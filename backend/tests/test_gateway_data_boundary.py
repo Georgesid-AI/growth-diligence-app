@@ -3422,6 +3422,8 @@ def test_the_checker_flags_basis_and_scenario_are_closed_words_and_never_gateway
              "basis": "scenario", "scenario": "best", "value_cell": "r2c1", "label_cell": "r1c1", "period_cell": None}
     item, = checker.check(grid, [claim], 12)["items"]
     assert set(item["flags"]) <= set(checker.FLAGS) and item["basis"] in schemas.PAGE_BASES and item["scenario"] in schemas.PAGE_SCENARIOS
+    assert checker.YEAR_LABEL_FLAG.fullmatch(checker.year_label_flag("2022")) and not checker.YEAR_LABEL_FLAG.fullmatch("year label below: Q3 2022"), \
+        "the one flag with a part of the page: a four-digit year label, never a line"
     text = json.dumps(item)
     for needle in ("Target Co", "Northbridge", "Traction", "150,000"):
         assert needle not in text, f"{needle!r} in a checked item"

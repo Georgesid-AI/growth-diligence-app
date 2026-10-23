@@ -33,6 +33,9 @@ BASIS_SCENARIO_DISAGREE (basis actual with a case, or basis scenario with none) 
 before the as-of month; derived when the list is read, because the as-of month is known only after the engine ran: `claim_flags`).
 The model's `basis` never changes an evidence label (George, 2026-10-23, M2).
 
+Added 2026-10-23 (George): YEAR_LABEL_BELOW, "year label below: YYYY", on a claim with no period whose value cell has a year label under
+it by place (the rule of 8); a hint for Edit, the period is never set. It is FLAGS' one pattern, the year being a four-digit label.
+
 Every flag is a closed string of FLAGS (backend/tests/test_gateway_data_boundary.py); no flag carries deck text.
 """
 import re
@@ -60,6 +63,8 @@ BASIS_CONFLICT = claims.BASIS_CONFLICT
 FLAGS = (VALUE_NOT_ON_PAGE, CURRENCY_ASSUMED, UNIT_ASSUMED, SCENARIO_NOT_ON_PAGE, PERIOD_NOT_ON_PAGE, PAGE_OUT_OF_RANGE,
          USE_OF_FUNDS, ACQUISITION_CHANNEL, TURNOVER, BAR_YEAR, PIPELINE_COLUMN, AXIS_TICK, NOT_PLAN_LINE, MATCHES_ANALYST,
          BASIS_SCENARIO_DISAGREE, BASIS_CONFLICT)
+YEAR_LABEL_BELOW = "year label below"        # the flag is "year label below: YYYY"
+YEAR_LABEL_FLAG = re.compile(rf"{YEAR_LABEL_BELOW}: \d{{4}}")
 NO_SCENARIO = "none"
 CASES = claims.CASES                  # the scenarios that are no plan target (George, 2026-10-23): listed under Scenarios, never matched
 # The words a page uses for each case, whole words, any case ("Best-Case Scenario", "Base case", "Downside").
@@ -71,6 +76,10 @@ SCENARIO_WORDS = {
 _SCENARIO = {name: re.compile(r"(?i)\b(?:" + words + r")\b") for name, words in SCENARIO_WORDS.items()}
 _CURRENCY_UNITS = frozenset(code for code in page_check.CURRENCY_SYMBOLS) | {page_check.OTHER}
 _TIME_UNITS = ("days", "months", "years")
+
+
+def year_label_flag(year) -> str:
+    return f"{YEAR_LABEL_BELOW}: {year}"
 
 
 def out_of_range(page: int, page_count: Optional[int]) -> Optional[str]:
@@ -183,6 +192,8 @@ def rule_flags(grid: Dict, grid_views: Dict, cell: Dict, claim: Dict, lines: Dic
         bar = (claims.period_cell(str(cell["bar_year"])) or {}).get("label")
         if claims.period_range(bar, fiscal_year_end) != claims.period_range(claim["period"], fiscal_year_end):
             out.append(BAR_YEAR)
+    elif cell.get("bar_year") and re.fullmatch(r"\d{4}", str(cell["bar_year"]).strip()):
+        out.append(year_label_flag(str(cell["bar_year"]).strip()))
     if claim["metric"] != "pipeline" and _pipeline_column(page_check.view_of(grid_views, cell), cell):
         out.append(PIPELINE_COLUMN)
     if cell.get("tick"):

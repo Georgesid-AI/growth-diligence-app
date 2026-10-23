@@ -1236,3 +1236,26 @@ unmatched=… dropped=… flagged=…`.
   keeps its former line.
 - **Deferred (not built here):** L6 (contract 6 without an engine field: kept, George), L9 (Use of funds and Acquisition channels sections empty under the
   page read: a decision on the closed list), L10 (page-read rows re-checked on a fiscal year-end change).
+
+**Amended 2026-10-23 (George, deck read quality: checker and panel, metric list).**
+- **Suffixes on a figure (`Matched to page`).** The cell-level figure reader expands K, M, MM, Mn, B and Bn (any case: "Bn", "BN", "mm") before it
+  compares, with thousands separators and a currency symbol ignored, with or without a space after it: "€2.7MM" is 2,700,000, "€151K" 151,000, "$ 22.9Bn"
+  22,900,000,000, "€2.3K" 2,300, "€1.48MM" 1,480,000. (The pattern lives in `structures/redact.py`; a mixed-case "Bn" was the one it did not read.)
+- **One status on the upload row and the panel (§28, "the deck line").** The upload row keeps its text from the upload response only until the stored deck
+  of a page read is known; from then on it reads the same stored status as the deck panel ("…AI read: done, 2 read, 0 rejected"), so the row no longer
+  says "queued" while the panel says "done". Frontend: `uploadLineText`.
+- **A year label below a figure (`year label below: YYYY`).** A claim with no period whose value cell has a year label directly below it by place (the
+  `year under bar differs` rule's `bar_year`, issue #148) gets the flag `year label below: 2022`, listed under Review, so the analyst can set the period with
+  Edit. Flag only: Python never sets the period. A claim that has a period gets `year under bar differs` when the two differ, as before. It is the one
+  flag with a part of the page in it: a four-digit year label (`checker.YEAR_LABEL_FLAG`; `test_gateway_data_boundary.py`).
+- **Seven metric words more (engine contract 7; closes L9).** The page reader's closed list gains `arr`, `mrr`, `churn`, `nrr`, `market_share`, `pricing`
+  and `use_of_funds` (`schemas.PAGE_METRICS`; the JSON output schema, `PageClaim`, `DECK_CLAIM_FIELDS`, the baseline CSV, the memo's Appendix A and the
+  contract test keep their shape). Python stores the register claim type: arr and mrr → Revenue, churn and nrr → Retention, market_share → Market size
+  (`claims.PAGE_CLAIM_TYPE`); `pricing` is a type of its own, a money type with an optional period that is never matched (Unverified, "pricing: a price
+  the deck states, no engine metric to test it against"), offered in the editor only on a claim that already has it; `use_of_funds` is the existing type.
+  The structure reads keep `CLAIM_METRICS`. The `deck_reading` prompt of the store must name the new words (prompt-store.md; not in the repository, rule 26).
+- **Groups (claims list).** arr and mrr join "Revenue, ARR, MRR and bookings"; churn and nrr join "Customers, users, usage, retention and sales";
+  market_share joins "Market size"; Pricing (group 10) and Use of funds (group 8) are sections of their own, **collapsed by default**, listed after Market
+  size and before Other (the order: …, Market size, Pricing, Acquisition channels, Use of funds, Scenarios, Other). Approve all is offered in them once opened.
+- **Fixture.** `page_replies/uber_p20.json`: the 5% claim is metric `market_share`, still four claims and one flag.
+- **Contract and seed.** Engine contract 7: results and claim matches stored under 6 read "Stale – re-run audit"; `SEED_VERSION` 14 reseeds the demo audits.

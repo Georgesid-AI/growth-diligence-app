@@ -630,7 +630,9 @@ def structure_output_schema() -> dict:
 # metric is CLAIM_METRICS or "other"; Python checks the figure, the unit and the period at cell level (app/structures/page_check.py)
 # and never the metric. The gateway checks every cited id against the text it sent (gateway.parse_page_reply).
 PAGE_CLAIMS = "page_claims"
-PAGE_METRICS = CLAIM_METRICS + ("other",)
+# Added 2026-10-23 (George; engine contract 7): the seven words the register tells apart. Python maps each to a register claim type
+# (decks.claims.PAGE_CLAIM_TYPE). The structure reads keep CLAIM_METRICS.
+PAGE_METRICS = CLAIM_METRICS + ("arr", "mrr", "churn", "nrr", "market_share", "pricing", "use_of_funds", "other")
 # What a page figure is (docs/design/ai-reads-rules-check.md, built 2026-10-22): an actual, a projection (a plan or forecast figure),
 # or a scenario figure (one case of several); and which case. The register reads basis as its figure type (actual -> actual,
 # projection and scenario -> target); the checker flags a scenario whose label is not on the page (structures/checker.py).

@@ -58,7 +58,8 @@ USE_OF_FUNDS_NOTE = "use of funds: an allocation share of the raise, no engine m
 ACQUISITION_CHANNELS = "acquisition_channels"
 ACQUISITION_NOTE = "acquisition channels: a count per platform, no engine metric to test it against"
 # Claim types that are never matched, ranked, gated or put in the top 5, with the closed sentence each register row carries.
-UNTESTED_TYPES = {USE_OF_FUNDS: USE_OF_FUNDS_NOTE, ACQUISITION_CHANNELS: ACQUISITION_NOTE}
+PRICING_NOTE = "pricing: a price the deck states, no engine metric to test it against"
+UNTESTED_TYPES = {USE_OF_FUNDS: USE_OF_FUNDS_NOTE, ACQUISITION_CHANNELS: ACQUISITION_NOTE, "pricing": PRICING_NOTE}
 # A claim read from a forecast table (chat-upload.md section 20): Unverified, never matched, ranked, gated or put in the top 5, with no
 # value at stake and no overlaps (null), whatever its type. Its deck reading stays "forecast-file" after an edit.
 FORECAST_FILE = "forecast_file"
@@ -111,9 +112,9 @@ METRIC_POPULATION = {"Customer count": "paying", "Customer growth": "paying", "M
                      "Win rate": "all closed"}
 POPULATION_TYPES = ("customers", "users", "user_growth")
 # The types whose figure is an amount: with no currency and no unit, the currency is the field still unknown.
-MONEY_TYPES = ("revenue", "costs", "burn", "cash", "gross_profit", "ebitda", "net_profit", "ltv", "cac", "arpa", "arpu", "pipeline")
+MONEY_TYPES = ("revenue", "costs", "burn", "cash", "gross_profit", "ebitda", "net_profit", "ltv", "cac", "arpa", "arpu", "pipeline", "pricing")
 # The types whose period may stay unknown (the plan's table: optional or "–").
-PERIOD_OPTIONAL_TYPES = ("market", "use_of_funds", "acquisition_channels", "product")
+PERIOD_OPTIONAL_TYPES = ("market", "use_of_funds", "acquisition_channels", "product", "pricing")
 # Section 5: growth claims. The basis is the analyst's, else the parser's, else read from the claim's own words on read.
 GROWTH_BASES = ("mom", "yoy", "annualised", "cumulative")
 GROWTH_TYPES = ("revenue_growth", "growth", "user_growth")

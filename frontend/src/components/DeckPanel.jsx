@@ -10,7 +10,7 @@ import { addClaim, addFromDeck, answerTurnover, approveAll, getDeckPage, getDeck
 import { describeRequestError } from "@/lib/requestError";
 import {
   ACQUISITION_CHANNELS, ADD_CLAIM_PLATFORM_LABEL, ALL_DECKS, APPROVE_ALL_LABEL, CLAIM_GROUPS, CLAIM_TYPES, approveAllToast, toReview, CLAIM_UNITS, COUNT_UNIT_HINT, COUNT_TYPES, COUNT_UNIT, FX_SETTINGS_ANCHOR, FX_SETTINGS_LABEL, conversionHover, inconsistencyText, MIXED_SLIDE_LABEL, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, ADD_CLAIM_LABEL, ADD_CLAIM_NEEDS_SOURCE, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, newClaimPayload, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
-  DECK_SCOPE_CANNOT_LEAD, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, DECK_TYPE_REFUSED, isDeckFile, CONFIDENCE_HOVER, DECK_UPLOAD_HELP, INCONSISTENCY_LABEL, PLACEHOLDER, VERIFIED_LABEL, badgeText, claimPeriod, claimSections, claimValue, deckReadLine, deckRunLog,
+  DECK_SCOPE_CANNOT_LEAD, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, DECK_TYPE_REFUSED, isDeckFile, CONFIDENCE_HOVER, DECK_UPLOAD_HELP, INCONSISTENCY_LABEL, PLACEHOLDER, VERIFIED_LABEL, badgeText, claimPeriod, claimSections, claimValue, deckReadLine, deckRunLog, uploadLineText,
   confidenceText, countLine, readingChoices, rowEdit, sourceRef, statusCounts, statusText, typeLabel,
   ADD_FROM_DECK_LABEL, ADDED_FROM_DECK_TAG, DEFAULT_EDIT_REASON, EDIT_REASONS, EDIT_TYPES, FIGURE_TYPE_OPTIONS, GROWTH_BASIS_OPTIONS, GROWTH_TYPES,
   OTHER_GROUP, POPULATION_OPTIONS, VIEW_PAGE_LABEL, claimFields, editLogText, isOther,
@@ -112,7 +112,7 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
       // The page read has its own line (chat-upload.md section 28); the former rules read still lists candidates at upload.
       const summary = res.ai_status ? deckReadLine(res) : `${res.pages} ${res.page_unit}s parsed · ${res.candidates} candidate claims`;
       toast.success(`${res.file}: ${summary}`);
-      setLine(line.id, { state: "done", text: `done · ${summary}` });
+      setLine(line.id, { state: "done", text: `done · ${summary}`, deckId: res.ai_status ? res.deck_id : null });
       await load(res.deck_id);
     } catch (err) {
       setLine(line.id, { state: "failed", text: `failed – ${err.response?.data?.detail || "Upload failed"}` });
@@ -264,7 +264,7 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
             <li key={l.id} data-testid="deck-upload-line" data-state={l.state}
               className={l.state === "refused" || l.state === "failed" ? "text-rose-700" : l.state === "done" ? "text-emerald-700" : "text-slate-600"}
               role={l.state === "refused" || l.state === "failed" ? "alert" : undefined}>
-              {l.name}: {l.text}
+              {l.name}: {uploadLineText(l, data.decks)}
             </li>
           ))}
         </ul>
@@ -580,7 +580,7 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight, autoEdit = fa
         <>
           <td className="py-2 pr-3">
             <select value={typeValue(draft)} onChange={setType} className={selectClass} data-testid="edit-claim-type">
-              {["use_of_funds", "installed_units"].includes(draft.claim_type) && <option value={draft.claim_type}>{typeLabel(draft.claim_type)}</option>}
+              {["use_of_funds", "pricing", "installed_units"].includes(draft.claim_type) && <option value={draft.claim_type}>{typeLabel(draft.claim_type)}</option>}
               {turnover.views.length > 0 && draft.claim_type === "revenue" && draft.answer === "ask" && <option value={ASK_OPTION} disabled>Turnover – choose</option>}
               {EDIT_TYPES.flatMap((t) => (t === "revenue" && turnover.views.length ? [t, VOLUME_OPTION] : [t])).map((t) => (
                 <option key={t} value={t}>{t === VOLUME_OPTION ? VOLUME_LABEL : typeLabel(t)}</option>))}
