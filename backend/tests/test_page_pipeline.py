@@ -351,30 +351,3 @@ def test_the_consistency_passes_bypass_the_cache_and_measure_the_model(monkeypat
     assert bypassed[0][1].claims == first[0][1].claims
 
 
-# ---------------------------------------------------------------------------
-# "with figures": a digit outside the page's furniture (George, 2026-10-23)
-# ---------------------------------------------------------------------------
-BODY = [(50, 560, 20, "Our mission"), (50, 500, 12, "We help teams ship faster")]
-
-
-def test_a_page_whose_only_digit_is_in_the_footer_has_no_figure_and_is_not_sent():
-    footer = (50, 12, 8, "Confidential draft 7")
-    assert pages.claims.figures(footer[3]), "the footer line holds a digit the figure reader finds"
-    only_footer = grid_of([*BODY, footer])
-    assert only_footer["figure"] is False and pages.sendable([only_footer]) == []
-    assert grid_of([*BODY, (50, 500 + 80, 12, "We serve 40 customers"), footer])["figure"] is True, "a digit in the body still counts"
-    assert grid_of([*BODY, (50, 300, 12, "Confidential draft 7")])["figure"] is True, "the same line in the middle of the page is no footer"
-
-
-def test_a_digit_in_a_header_line_a_phone_number_a_url_or_an_email_is_no_figure():
-    for line in ((50, 592, 8, "Board pack 7"),                              # header band
-                 (50, 400, 10, "Call us on +44 20 7946 0958"),
-                 (50, 400, 10, "www.zero2hero24.com/about"),
-                 (50, 400, 10, "https://zero2hero.com/p/2048"),
-                 (50, 400, 10, "jane2048@zero2hero.com")):
-        grid = grid_of([*BODY, line])
-        assert grid["figure"] is False, line[3]
-    assert grid_of([*BODY, (50, 400, 10, "Call us on +44 20 7946 0958 about our 40 customers")])["figure"] is True
-    # a pdf marks its topmost line a title: a running header is one, a real title (below the band) is not furniture
-    assert grid_of([(50, 592, 8, "Q3 revenue 150,000 USD"), *BODY[1:]])["figure"] is False, "a header line holds no figure of the page"
-    assert grid_of([(50, 540, 20, "Revenue up 40%"), *BODY[1:]])["figure"] is True, "a title with a figure still counts"

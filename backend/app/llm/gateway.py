@@ -2013,8 +2013,13 @@ async def read_structure(
                            "status=%s type=%s fields=%s check=%s", audit_id, STRUCTURE_STEP, digest, billed[0], billed[1], cost,
                            code, status or "-", kind or "-", fields, check)
             # "truncated" (the reply cut at max_tokens) is kept apart, so the page step can split the batch and read it again.
+            # A page reply that failed validation says so, with the check and the schema fields (closed words), so the deck
+            # panel and the run log tell it from an outage.
+            rejected = None
+            if code == "parse_failed" and structure_type == PAGE_CLAIMS:
+                rejected = check if fields == "-" else f"{check}: {fields}"
             return _structure_result("truncated" if code == "truncated" else "not_read", structure_type, NOT_READ,
-                                     input_tokens=billed[0], output_tokens=billed[1], estimated_cost_usd=cost, **base)
+                                     input_tokens=billed[0], output_tokens=billed[1], estimated_cost_usd=cost, rejected=rejected, **base)
         cost = estimate_cost_usd(STRUCTURE_MODEL, in_tok, out_tok)
         model_type = parsed.type if parsed.type != structure_type else None      # a sheet's type is fixed by its schema
         output = parsed.model_dump()

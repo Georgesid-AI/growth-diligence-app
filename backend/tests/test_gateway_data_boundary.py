@@ -3256,6 +3256,8 @@ def test_a_page_reply_not_json_is_rejected_a_claim_citing_a_cell_not_sent_or_car
     with caplog.at_level(logging.DEBUG):
         result, adapter = _send_page(_structure_db(), GOOD_PAGE, "Revenue £1,200,000 at Target Co")
         assert (result.status, adapter.calls) == ("not_read", 2)
+        # The reason the page step logs: the check word and the failed schema fields, never a value.
+        assert result.rejected == "schema" and "Target Co" not in result.rejected
         # George, 2026-10-23: a schema failure or a cell not sent inside one claim drops that claim only, the reply is read
         for sent in (json.dumps({"type": PAGE_CLAIMS, "claims": [{**first, "value_cell": "p9r9c9"}]}),
                      json.dumps({"type": PAGE_CLAIMS, "claims": [{**first, "label_cell": "p5r1c1 Traction"}]}),
