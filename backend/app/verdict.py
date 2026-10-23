@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from app import claim_matching as cm
+from app.decks import claims as deck_claims
 
 TOP_N = 5
 MAX_KEY_GATES = 5
@@ -97,11 +98,16 @@ def with_review(audit: dict, ic: Optional[dict]) -> dict:
 
 # --- claim wording --------------------------------------------------------------------------------------------------------
 
+def _type_words(claim_type) -> str:
+    """"Ltv cac" for a stored word; the five recurring types by their label ("CAC payback", "NRR")."""
+    return deck_claims.TYPE_NAMES.get(claim_type) or str(claim_type or "claim").replace("_", " ").capitalize()
+
+
 def claim_name(row: dict) -> str:
     """How a register row is called in a sentence: its metric (or claim type), the segment when not the whole company, the period."""
-    name = row.get("metric") or str(row.get("claim_type") or "claim").replace("_", " ").capitalize()
+    name = row.get("metric") or _type_words(row.get("claim_type"))
     if str(row.get("reason") or "").startswith(cm.POPULATION_PREFIX):     # the app's metric counts other people: name the claim's own
-        name = str(row.get("claim_type") or "claim").replace("_", " ").capitalize()
+        name = _type_words(row.get("claim_type"))
     if row.get("segment") not in (None, cm.WHOLE):
         name = f"{name} · {row['segment']}"
     if row.get("period"):

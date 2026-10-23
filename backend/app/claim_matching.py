@@ -44,6 +44,11 @@ NO_PERIOD = "no period stated"
 PERIOD_NOT_READ = "Period not read – set it in the claim row"
 # George, 2026-10-20 (finding A): the figures of one table cell whose header holds a different number of periods have none, and read this.
 PERIOD_UNCLEAR = "Period unclear – confirm"
+# George, 2026-10-23 (engine contract 8, decision on PR 171): the engine holds gross revenue churn as a trailing-12-month rate and as a monthly one.
+# A churn claim worded monthly is tested against the month's rate, any other with a period against the trailing-12-month rate at the period
+# end; a churn claim with neither wording nor period could be either, and is not tested.
+CHURN_RATE_UNCLEAR_REASON = ("churn rate unclear: the trailing-12-month rate (Gross revenue churn) or the monthly rate (Monthly gross revenue churn)"
+                             " – word it monthly or set the period")
 # George, 2026-10-19 (issue #136, decision 2): a contract value (annual or total contract value, contracted revenue, contracted or
 # committed ARR or MRR, CARR) is typed but not computed: never matched to engine revenue, Unsupported with this reason.
 CONTRACT_VALUE = "Contract value"
@@ -112,7 +117,7 @@ METRIC_POPULATION = {"Customer count": "paying", "Customer growth": "paying", "M
                      "Win rate": "all closed"}
 POPULATION_TYPES = ("customers", "users", "user_growth")
 # The types whose figure is an amount: with no currency and no unit, the currency is the field still unknown.
-MONEY_TYPES = ("revenue", "costs", "burn", "cash", "gross_profit", "ebitda", "net_profit", "ltv", "cac", "arpa", "arpu", "pipeline", "pricing")
+MONEY_TYPES = ("revenue", "arr", "mrr", "costs", "burn", "cash", "gross_profit", "ebitda", "net_profit", "ltv", "cac", "arpa", "arpu", "pipeline", "pricing")
 # The types whose period may stay unknown (the plan's table: optional or "–").
 PERIOD_OPTIONAL_TYPES = ("market", "use_of_funds", "acquisition_channels", "product", "pricing")
 # Section 5: growth claims. The basis is the analyst's, else the parser's, else read from the claim's own words on read.
@@ -138,6 +143,7 @@ NO_APP_METRIC = ("no metric", "metric does not fit the claim's unit")      # the
 # Table 2a. kind: how the claim's period reads the metric (table 2b): "sum" over the period's months, the value in the
 # period's end "month", one calendar "quarter", or the "asof" figure. `seg`: the engine splits it by segment.
 # `missing`: words of the engine's Missing Data entry that stand for the metric.
+MONTHLY_CHURN = "Monthly gross revenue churn"      # the monthly rate of gross_churn.monthly_series; "Gross revenue churn" is the trailing-12-month one
 METRICS: Dict[str, dict] = {
     "Revenue": dict(kind="sum", unit="currency", direction="higher", seg=True, missing=("arr / mrr",)),
     "ARR": dict(kind="month", unit="currency", direction="higher", seg=True, missing=("arr / mrr",)),
@@ -146,6 +152,7 @@ METRICS: Dict[str, dict] = {
     "New MRR": dict(kind="quarter", unit="currency", direction="higher", seg=False, missing=("arr / mrr",)),
     "NRR (12-month)": dict(kind="month", unit="%", direction="higher", seg=True, missing=("nrr",)),
     "Gross revenue churn": dict(kind="month", unit="%", direction="lower", seg=False, missing=("gross revenue churn",)),
+    MONTHLY_CHURN: dict(kind="month", unit="%", direction="lower", seg=False, missing=("gross revenue churn",)),
     "ACV": dict(kind="asof", unit="currency", direction="higher", seg=True, missing=("arr / mrr",)),
     "Median sales cycle": dict(kind="asof", unit="days", direction="lower", seg=True, missing=("sales cycle",)),
     "Win rate": dict(kind="asof", unit="%", direction="higher", seg=False, missing=("win rate",)),
@@ -168,6 +175,7 @@ METRICS: Dict[str, dict] = {
 # latest valid source period.
 PERIOD_BLOCK = {"Revenue": "revenue_series", "ARR": "mrr_series", "MRR": "mrr_series", "Customer count": "customers_series",
                 "New MRR": "new_mrr_by_quarter", "NRR (12-month)": "nrr", "Gross revenue churn": "gross_churn",
+                MONTHLY_CHURN: "gross_churn_monthly",
                 "Gross margin": "cac_payback", "CAC payback": "cac_payback"}
 REVENUE_FILE_METRICS = ("Revenue", "ARR", "MRR", "Customer count", "New MRR")
 VOLUME = "Transaction volume"
@@ -197,6 +205,7 @@ _ACV = re.compile(r"\bACVs?\b")
 _SALES_CYCLE = re.compile(r"(?i)\bsales cycles?\b")
 _WIN_RATE = re.compile(r"(?i)\bwin rates?\b")
 _PAYBACK = re.compile(r"(?i)\bpayback\b")
+_MONTHLY = re.compile(r"(?i)\bmonthly\b|\bper month\b|\ba month\b|(?:\bper\s|/\s?)mo\b|\bMoM\b")
 _CUSTOMERS = re.compile(r"(?i)\b(?:customers?|clients?|subscribers?|accounts?)\b")
 
 
@@ -378,12 +387,13 @@ class _Figures:
             else:
                 source = _source(series)
             return values, source, None
-        if m in ("NRR (12-month)", "Gross revenue churn"):
+        if m in ("NRR (12-month)", "Gross revenue churn", MONTHLY_CHURN):
             block = r.get("nrr" if m == "NRR (12-month)" else "gross_churn")
             if not block:
                 return None
             field = "nrr_pct" if m == "NRR (12-month)" else "churn_pct"
-            return {d["month"]: _points(d.get(field)) for d in block.get("series") or ()}, _source(block), block.get("reason")
+            series = block.get("monthly_series" if m == MONTHLY_CHURN else "series") or ()
+            return {d["month"]: _points(d.get(field)) for d in series}, _source(block), block.get("reason")
         return None
 
     def asof(self) -> Optional[Tuple[Optional[float], dict, Optional[str]]]:
@@ -454,6 +464,7 @@ EVIDENCE: Dict[str, Tuple[str, str, Optional[str]]] = {
     "New MRR": ("New MRR by quarter", "new_mrr_by_quarter.{q}.new_mrr", None),
     "NRR (12-month)": ("NRR", "nrr.series.nrr_pct", "nrr.by_segment.{seg}.nrr_pct"),
     "Gross revenue churn": ("Gross revenue churn", "gross_churn.series.churn_pct", None),
+    MONTHLY_CHURN: ("Gross revenue churn", "gross_churn.monthly_series.churn_pct", None),
     "ACV": ("Path to Plan", "acv_path.acv", "acv_path.by_segment.{seg}.acv"),
     "Median sales cycle": ("Sales cycle", "sales_cycle.median_days", "sales_cycle.by_segment.{seg}.median_days"),
     "Win rate": ("Win rate", "win_rate.win_rate_pct", None),
@@ -692,11 +703,28 @@ def data_segments(results: dict) -> List[str]:
     return sorted(_segments(results)[1])
 
 
+# The engine metric each recurring claim type is tested against (George, 2026-10-23; docs/specs/claim-matching.md table 2a).
+RECURRING_METRIC = {"arr": "ARR", "mrr": "MRR", "churn": "Gross revenue churn", "nrr": "NRR (12-month)", "cac_payback": "CAC payback"}
+
+
 def propose_metric(claim_type: str, claim_unit: Optional[str], text: str) -> Optional[str]:
     """The metric a claim names by its type, a keyword in its snippet or borrowed label, and its unit (table 2a)."""
+    found = _keyword_metric(claim_type, claim_unit, text)
+    if found == "Gross revenue churn" and _MONTHLY.search(text):       # engine contract 8: a rate worded monthly is the month's, not the year's
+        found = MONTHLY_CHURN
+    return found
+
+
+def _keyword_metric(claim_type: str, claim_unit: Optional[str], text: str) -> Optional[str]:
     from .decks.claims import CONTRACT_TERM
     metric = None
-    if claim_type == "revenue":
+    if claim_type in RECURRING_METRIC:         # engine contract 8: the type names the engine's figure, not a keyword in the snippet
+        metric = RECURRING_METRIC[claim_type]
+        if claim_type in ("arr", "mrr") and CONTRACT_TERM.search(text):     # a contracted or committed figure is a contract value, whatever the type
+            metric = CONTRACT_VALUE
+        elif claim_type == "mrr" and _NEW_MRR.search(text):
+            metric = "New MRR"
+    elif claim_type == "revenue":
         plain = _RECURRING.sub(" ", text)
         if CONTRACT_TERM.search(text):               # issue #136: a contracted or committed figure is a contract value, not revenue
             metric = CONTRACT_VALUE
@@ -997,6 +1025,8 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         return out
     if [f for f in required if f != "growth basis"]:      # not matched until every required field is known (section 2)
         others = [f for f in required if f != "period"]
+        if "period" in required and metric == "Gross revenue churn":       # a rate with no wording and no period: either, so neither is tested
+            return finish("Unverified", CHURN_RATE_UNCLEAR_REASON + (f"; {REQUIRED_REASON.format(fields=', '.join(others))}" if others else ""))
         if "period" in required:                # decision 3 of 2026-10-19: its own text, never the as-of month
             words = PERIOD_UNCLEAR if c.get("period_unclear") else PERIOD_NOT_READ
             return finish("Unverified", words + (f"; {REQUIRED_REASON.format(fields=', '.join(others))}" if others else ""))
@@ -1170,7 +1200,7 @@ class _Span:
         self.first = _mi(periods["first"]) if periods else None
         self.last = _mi(periods["last"]) if periods else None
         self.missing = {_mi(m) for m in periods["missing"]} if periods else set()
-        partial_read = metric in ("NRR (12-month)", "Gross revenue churn") or spec.get("kind") == "growth"
+        partial_read = metric in ("NRR (12-month)", "Gross revenue churn", MONTHLY_CHURN) or spec.get("kind") == "growth"
         self.partial = _mi(source["month"]) if partial_read and source.get("status") == "Possibly partial" and source.get("month") else None
         self.evidence_to = source.get("evidence_to")
 
@@ -1308,8 +1338,8 @@ def _observe(figures: "_Figures", spec: dict, metric: str, start: Optional[int],
             cov.update(coverage=NOT_COVERED, missing=[_ms(m) for m in range(start, end + 1)])
             detail = f"before {_short(metric)}'s first month, {_quarter_first_month(first)}"
             return f"Unverified|{NOT_COVERED_REASON.format(detail=detail)}", None, None, None
-        if q not in quarters:
-            return "Unsupported|not computed for that period", None, None, None
+        if q not in quarters:           # the engine holds no value for the quarter: Unverified, the reason names its months (2026-10-23)
+            return _not_covered(span, list(range(start, end + 1)), cov), None, None, None
     item = quarters[q]
     if item["value"] is not None and not forecast:
         cov.update(coverage=COVERED, missing=[])

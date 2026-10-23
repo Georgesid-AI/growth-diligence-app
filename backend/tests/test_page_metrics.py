@@ -1,6 +1,6 @@
 """The page reader's closed metric list grows by seven words (George, 2026-10-23; engine contract 7): arr, mrr, churn, nrr, market_share,
-pricing, use_of_funds. Each maps to a register claim type (decks.claims.PAGE_CLAIM_TYPE) and so to a group of the claims list. Synthetic
-pages only."""
+pricing, use_of_funds. Each maps to a register claim type (decks.claims.PAGE_CLAIM_TYPE) and so to a group of the claims list. Contract 8 (the
+same day) makes arr, mrr, churn and nrr types of their own and adds cac_payback (test_recurring_claim_types.py). Synthetic pages only."""
 import sys
 from pathlib import Path
 
@@ -20,7 +20,7 @@ from app.structures import pages as pipeline  # noqa: E402
 from schemas import metrics  # noqa: E402
 
 NEW = ("arr", "mrr", "churn", "nrr", "market_share", "pricing", "use_of_funds")
-TYPE_AND_GROUP = {"arr": ("revenue", 1), "mrr": ("revenue", 1), "churn": ("retention", 3), "nrr": ("retention", 3),
+TYPE_AND_GROUP = {"arr": ("arr", 1), "mrr": ("mrr", 1), "churn": ("churn", 3), "nrr": ("nrr", 3),
                   "market_share": ("market", 5), "pricing": ("pricing", 10), "use_of_funds": ("use_of_funds", 8)}
 
 
@@ -60,7 +60,7 @@ def test_pricing_and_use_of_funds_are_collapsed_groups_listed_after_market_size_
 def test_a_page_row_carries_the_register_claim_type_not_the_models_word():
     page = grid([line(1, "Annual recurring revenue", 1), line(2, "$2.4M", 1), line(3, "Net revenue retention", 2), line(4, "112%", 2)])
     deck = {"file": "deck.pdf", "page_unit": "page", "blocks": []}
-    for cell, metric, value, unit, expected in (("r2c1", "arr", 2_400_000, "USD", "revenue"), ("r4c1", "nrr", 112, "%", "retention")):
+    for cell, metric, value, unit, expected in (("r2c1", "arr", 2_400_000, "USD", "arr"), ("r4c1", "nrr", 112, "%", "nrr")):
         item, = checker.check(page, [claim(cell, value, metric=metric, unit=unit)], 12)["items"]
         assert pipeline.row_from_claim(item, page, deck, 12)["claim_type"] == expected
     far = pipeline.row_out_of_range(claim("p9r1c1", 99, metric="market_share", unit="%"), 9, deck)
@@ -73,9 +73,9 @@ def test_pricing_is_a_money_type_with_an_optional_period_and_no_engine_metric_to
     assert cm.UNTESTED_TYPES["pricing"].startswith("pricing:")
 
 
-def test_the_engine_contract_is_7():
-    assert metrics.CONTRACT_VERSION == 7
-    assert metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags"), "contract 7 changes the metric list, not the claim fields"
+def test_the_engine_contract_is_8():
+    assert metrics.CONTRACT_VERSION == 8
+    assert metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags"), "contracts 7 and 8 change the metric list, not the claim fields"
 
 
 def test_a_pricing_claim_with_no_period_goes_through_the_register_unverified_with_its_closed_reason():

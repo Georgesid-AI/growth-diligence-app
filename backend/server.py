@@ -1820,7 +1820,7 @@ class CandidateUpdate(BaseModel):
     # Use of funds is accepted so that correcting a figure of that type keeps the type (deck-parser.md section 2): the
     # claim stays out of the top 5, the banner and the verdict. The analyst's list of types does not offer it. Acquisition
     # channels is accepted and offered (chat-upload.md section 17).
-    claim_type: Optional[Literal[deck_claims.CLAIM_TYPES + (deck_claims.USE_OF_FUNDS, deck_claims.ACQUISITION_CHANNELS,
+    claim_type: Optional[Literal[deck_claims.ANALYST_TYPES + (deck_claims.USE_OF_FUNDS, deck_claims.ACQUISITION_CHANNELS,
                                                             deck_claims.INSTALLED_UNITS, deck_claims.PRICING, "other")]] = None
     value: Optional[float] = None
     value_high: Optional[float] = None          # the high end of a range
@@ -2015,7 +2015,7 @@ class AnalystClaim(BaseModel):
     """A claim the analyst adds from a slide or page the parser could not read (docs/specs/deck-parser.md section 6): the
     metric, a value or a range, the unit, the currency and the period, and where in which deck it is stated."""
     model_config = {"extra": "forbid"}
-    claim_type: Literal[deck_claims.CLAIM_TYPES + (deck_claims.ACQUISITION_CHANNELS,)]
+    claim_type: Literal[deck_claims.ANALYST_TYPES + (deck_claims.ACQUISITION_CHANNELS,)]
     value: float = Field(allow_inf_nan=False)
     value_high: Optional[float] = Field(default=None, allow_inf_nan=False)
     unit: Optional[str] = Field(default=None, min_length=1, max_length=40)
@@ -2932,7 +2932,7 @@ async def _blocker_list(audit_id: str, audit: dict) -> list:
                     else r["currency"]
                 cited = f"{r['observed_citation']} " if r.get("observed_citation") else ""      # issue #136: the figure's own citation
                 out.append({"kind": "claim_contradicted", "citation": r["observed_source"], "claim_id": r["claim_id"],
-                            "text": f"Top-5 claim contradicted: {r['claim_type']} {claimed} vs "
+                            "text": f"Top-5 claim contradicted: {deck_claims.type_name(r['claim_type'])} {claimed} vs "
                                     f"{_figure(r['observed_value'], r['unit'], observed_currency)} observed "
                                     f"{cited}({r['deck_file']}, {r['page_ref']})."})
     recon = (audit.get("results") or {}).get("revenue_reconciliation")
@@ -3471,6 +3471,16 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
         else:
             table_sheet(xw, "NRR Series", series_df, {"nrr_pct": fmt.PCT})
 
+        # Churn series: the trailing-12-month rate and the monthly one, side by side by month
+        trailing = {d["month"]: d.get("churn_pct") for d in churn.get("series") or ()}
+        monthly = {d["month"]: d.get("churn_pct") for d in churn.get("monthly_series") or ()}
+        churn_cols = ["Month", "Gross revenue churn (trailing 12 months)", "Gross revenue churn (monthly)"]
+        if monthly or trailing:
+            table_sheet(xw, "Churn Series", pd.DataFrame(
+                [[m, trailing.get(m), monthly.get(m)] for m in sorted({*trailing, *monthly})], columns=churn_cols), {c: fmt.PCT for c in churn_cols[1:]})
+        else:
+            pd.DataFrame([{"Month": "(not computable)"}]).to_excel(xw, sheet_name="Churn Series", index=False)
+
         # CAC by quarter
         cac_rows = []
         for q, v in (cac.get("quarters") or {}).items():
@@ -3786,7 +3796,8 @@ app.add_middleware(
 # 10: results carry contract_version 4 (repeated CRM rows counted once and flagged, won deals by close month).
 # 11: demo audits carry no client name (the field is gone).
 # 12: results carry contract_version 5 (demo audits seeded under 11 held version 4 and opened as Stale).
-SEED_VERSION = 14          # 14: engine contract 7 (the page reader's seven new metrics): demo audits held under contract 6 are reseeded
+SEED_VERSION = 15          # 15: engine contract 8 (ARR, MRR, Churn, NRR and CAC payback claim types): demo audits held under contract 7 are reseeded
+                          # 14: engine contract 7 (the page reader's seven new metrics): demo audits held under contract 6 are reseeded
                            # 13: engine contract 6 (the page reader): demo audits held under contract 5 are reseeded
 
 

@@ -1,6 +1,8 @@
 # Spec: Claim matching: approved claims tested against the computed metrics
 Status: Draft; decisions of 2026-10-07 applied (§10). Location: docs/specs/claim-matching.md.
 Follows deck-parser.md §6.
+Amended 2026-10-23 (George, engine contract 8): ARR, MRR, Churn, NRR and CAC payback are claim types of their own (`arr`, `mrr`, `churn`, `nrr`, `cac_payback`); table 2a and
+the end of this spec.
 Amended 2026-10-22 (George, issue #155, option c): Run audit's within-tolerance step (§4.1) no longer approves, however close, a claim the analyst
 entered or edited, a claim flagged as a deck inconsistency, or a claim in a currency other than the audit's (until the FX source and date of
 issue #11 are fixed); it narrows the step of 2026-10-14 and keeps its metric set. A claim it approves reads "Auto-approved – matches revenue
@@ -83,17 +85,18 @@ the whole-company figure and marked "whole company".
 | Metric | Proposed for | Unit | Read from | Periods | Segment | Better |
 |---|---|---|---|---|---|---|
 | Revenue | revenue: "revenue", not "recurring revenue"; a turnover term is §11 | currency | new `revenue_series`: the revenue file by month in the reporting currency, recurring lines spread as for MRR, one-off lines in their invoice month | sum over the period's months | yes | higher |
-| ARR | revenue: "ARR", "annual recurring revenue" | currency | `mrr_series` month total × 12 | period end month; no period: as-of | yes | higher |
-| MRR | revenue: "MRR", "monthly recurring revenue", not "new MRR" | currency | `mrr_series` month total | period end month | yes | higher |
+| ARR | type `arr`; revenue: "ARR", "annual recurring revenue" | currency | `mrr_series` month total × 12 | period end month; no period: as-of | yes | higher |
+| MRR | type `mrr` (a "new MRR" snippet is New MRR); revenue: "MRR", "monthly recurring revenue", not "new MRR" | currency | `mrr_series` month total | period end month | yes | higher |
 | Customer count | customers, a count | count | new `customers_series`: customers with MRR above 0 in the month, the engine's current-customer rule | period end month | yes | higher |
 | New MRR | revenue: "new MRR" | currency | `new_mrr_by_quarter` | quarter | no | higher |
-| NRR (12-month) | retention: "NRR", "net (revenue) retention" | % | `nrr.series`; `nrr.by_segment` | period end month from the 13th data month; by segment as-of | yes | higher |
-| Gross revenue churn | retention: "revenue churn", "gross churn" | % | `gross_churn.series` | period end month from the 13th data month | no | lower |
+| NRR (12-month) | type `nrr`; retention: "NRR", "net (revenue) retention" | % | `nrr.series`; `nrr.by_segment` | period end month from the 13th data month; by segment as-of | yes | higher |
+| Gross revenue churn | type `churn`; retention: "revenue churn", "gross churn" | % | `gross_churn.series` | period end month from the 13th data month | no | lower |
+| Monthly gross revenue churn | a churn claim (the type, or the retention keyword) worded "monthly", "per month", "a month", "/mo" or "MoM" | % | `gross_churn.monthly_series` | period end month from the 2nd data month | no | lower |
 | ACV | sales: "ACV" | currency | `acv_path.acv`, `.by_segment` | as-of | yes | higher |
 | Median sales cycle | sales: "sales cycle" | days | `sales_cycle.median_days`, `.by_segment` | as-of | yes | lower |
 | Win rate | sales: "win rate" | % | `win_rate.win_rate_pct` | as-of | no | higher |
 | Gross margin | gross margin, in % | % | `cac_payback.quarters[q].gross_margin_pct` | quarter | no | higher |
-| CAC payback | sales: "payback" | months | `cac_payback.quarters[q]` at the default L | quarter | no | lower |
+| CAC payback | type `cac_payback`; sales: "payback" | months | `cac_payback.quarters[q]` at the default L | quarter | no | lower |
 | Transaction volume | a turnover term (§11), once the analyst or the rules of §11 say volume | currency | no engine source: always Unsupported | | | |
 | Contract value | revenue: a contract-value term (annual or total contract value, contracted revenue, contracted or committed ARR or MRR, TCV, ACV, CARR), read before any revenue word (2026-10-20, issue #136) | currency | no engine source: always Unsupported, "Contract value – not computed by the app"; the analyst may pick it | | | |
 | none | every other claim type, growth rates and users among them; "bookings" alone; "retention" or "churn" without "net", "revenue" or "gross" | | | | | |
@@ -436,3 +439,25 @@ gross revenue churn), market_share is a Market size claim, use_of_funds is the U
 still unknown), its period may stay unknown, and it is never matched, ranked, gated or put in the top 5: Unverified with the reason "pricing: a price the deck states, no
 engine metric to test it against" (`claim_matching.UNTESTED_TYPES`, like use of funds and acquisition channels). The deck claim carries the flag `year label below: YYYY`
 when it has no period and a year label stands below its figure; the period stays the analyst's to set. Matching of every other type is unchanged.
+
+Amended 2026-10-23 (George, engine contract 8, chat-upload.md §28): **recurring-revenue and churn claim types.** `arr`, `mrr`, `churn`, `nrr` and `cac_payback` are register types
+of their own, no longer folded into Revenue, Retention or Sales (`decks.claims.RECURRING_TYPES`; `PAGE_CLAIM_TYPE` keeps only market_share → market). The page reader's words
+arr, mrr, churn, nrr map to them and its closed list gains `cac_payback` (a payback figure); months to profitability stays its own type. The analyst's type list (`ANALYST_TYPES`) offers them.
+- **The type names the metric** (`claim_matching.RECURRING_METRIC`), whatever the snippet says: arr → ARR, mrr → MRR, churn → Gross revenue churn, nrr → NRR (12-month), cac_payback → CAC payback.
+  A claim of the old types (revenue, retention, sales) keeps the keyword rule of table 2a unchanged, so stored claims and the rules parser read as before. A contract-value term
+  (contracted or committed ARR or MRR) is still Contract value, Unsupported, whatever the type; an `mrr` claim whose snippet says "new MRR" is New MRR.
+- **Matching, as for Revenue:** ARR reads the engine's ending ARR for the claim's period (period end month), MRR the ending MRR, NRR the 12-month NRR at the period end month, CAC payback the
+  engine's CAC payback months for the claim's quarter at the default lag. Tolerance is the revenue rule: ±5% of the claim for amounts and months, ±1 point for rates. A beat beyond
+  tolerance is Verified, marked (beat); a miss is Contradicted; a gap beyond the Definition-check limits asks, as every metric (§4.1).
+- **Churn** (George, 2026-10-23, decision on PR 171). The engine holds two rates: the trailing-12-month one (`gross_churn.series`) and the monthly one (`gross_churn.monthly_series`, interface-contracts.md).
+  A churn claim worded monthly ("monthly", "per month", "a month", "/mo", "MoM", in the snippet or the borrowed label) is **Monthly gross revenue churn**, tested against that month's rate at the period end
+  month. Any other churn claim with a period (a year, a quarter, a month) is **Gross revenue churn**, tested against the trailing-12-month rate at the period end month, so a year reads year end.
+  A churn claim with no wording and no period is Unverified, "churn rate unclear: the trailing-12-month rate (Gross revenue churn) or the monthly rate (Monthly gross revenue churn) – word it monthly or set
+  the period" (`CHURN_RATE_UNCLEAR_REASON`), no gap, no observed value; a monthly claim with no period keeps "Period not read". The analyst may pick either metric for a % claim. Tolerance ±1 pp, lower is better.
+- **A period the engine has no value for** is Unverified and the reason names the missing months: a month metric by §4 of dates-and-periods.md ("months missing: 2023-06", "before NRR's first
+  month, 2024-01"); a quarter metric (CAC payback, Gross margin, New MRR) whose quarter is not in the engine now reads "claim period not in supplied data: months missing: 2023-04 to 2023-06"
+  with `months_missing`, in place of Unsupported "not computed for that period". A quarter the engine holds with no figure ("new MRR is zero") is unchanged.
+- **Screen and exports.** The Type column reads ARR, MRR, Churn, NRR, CAC payback; ARR and MRR sit under "Revenue, ARR, MRR and bookings", Churn, NRR and CAC payback under "Customers, users,
+  usage, retention and sales" (the group of every unit-economics type, as LTV and CAC); the edit form's type list offers the five. The baseline CSV and the memo's Appendix A carry the stored
+  type and the metric as before (no column added); a sentence that names a claim by its type (the memo's claim name with no metric, the banner "Top-5 claim contradicted") uses the label
+  ("CAC payback", "NRR"). Engine contract 8: results and claim matches stored under 7 read "Stale – re-run audit"; `SEED_VERSION` 15. Tests: `test_recurring_claim_types.py`.

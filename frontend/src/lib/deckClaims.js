@@ -70,17 +70,17 @@ export function newClaimPayload(draft) {
 // Labels for every type a stored claim may carry; "usage" only on claims parsed before it was dropped. An item the model labelled
 // other and a figure no heading names a type for are both Other (docs/specs/claim-types-and-correction.md section 4).
 export const TYPE_LABELS = {
-  revenue: "Revenue", revenue_growth: "Revenue growth", growth: "Growth", retention: "Retention", sales: "Sales",
+  revenue: "Revenue", arr: "ARR", mrr: "MRR", revenue_growth: "Revenue growth", growth: "Growth", retention: "Retention", churn: "Churn", nrr: "NRR", sales: "Sales",
   customers: "Customers", users: "Users", user_growth: "User growth", gross_margin: "Gross margin",
   gross_profit: "Gross profit", costs: "Costs", ebitda: "EBITDA", net_profit: "Net profit", usage: "Usage",
   people: "People", product: "Product", market: "Market size", cash: "Cash", burn: "Burn", runway: "Runway", ltv: "LTV",
-  cac: "CAC", customer_lifetime: "Customer lifetime", ltv_cac: "LTV/CAC", trials_per_day: "Trials per day",
+  cac: "CAC", cac_payback: "CAC payback", customer_lifetime: "Customer lifetime", ltv_cac: "LTV/CAC", trials_per_day: "Trials per day",
   months_to_profitability: "Months to profitability", arpa: "ARPA", arpu: "ARPU", pipeline: "Pipeline", acquisition_channels: "Acquisition channels", use_of_funds: "Use of funds", pricing: "Pricing",
   installed_units: "Installed units",       // read from a forecast table only (chat-upload.md section 20), in no type list
   other: "Other",
   unknown: "Other",
 };
-// The types an analyst can choose: same order and names as backend app/decks/claims.py CLAIM_TYPES.
+// The types an analyst can choose: the names of backend app/decks/claims.py ANALYST_TYPES (CLAIM_TYPES and the five recurring types: ARR, MRR, Churn, NRR, CAC payback; engine contract 8).
 // "Use of funds" is a type the model may read from a structure, not one the parser gives.
 export const CLAIM_TYPES = Object.keys(TYPE_LABELS).filter((t) => !["usage", "use_of_funds", "pricing", "installed_units", "other", "unknown"].includes(t));
 // The editor also offers Other: a figure typed Other leaves the register and is never a task (claim-types-and-correction.md 4).

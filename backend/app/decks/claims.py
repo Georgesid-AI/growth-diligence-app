@@ -138,6 +138,19 @@ CLAIM_TYPES = ("revenue", "revenue_growth", "growth", "retention", "sales", "cus
                "gross_margin", "gross_profit", "costs", "ebitda", "net_profit", "people", "product", "market",
                "cash", "burn", "runway", "ltv", "cac", "customer_lifetime", "ltv_cac", "trials_per_day",
                "months_to_profitability", "arpa", "arpu", "pipeline")
+# George, 2026-10-23 (engine contract 8): recurring revenue, churn and payback are register types of their own, no longer folded into Revenue,
+# Retention or Sales. The page reader gives them (PAGE_METRICS); the rules parser never does, so they are not in CLAIM_TYPES (which the
+# structure reads keep, schemas.CLAIM_METRICS). The analyst may choose them (ANALYST_TYPES: the editor and Add claim).
+RECURRING_TYPES = ("arr", "mrr", "churn", "nrr", "cac_payback")
+ANALYST_TYPES = CLAIM_TYPES + RECURRING_TYPES
+TYPE_NAMES = {"arr": "ARR", "mrr": "MRR", "churn": "Churn", "nrr": "NRR", "cac_payback": "CAC payback"}
+
+
+def type_name(claim_type: Optional[str]) -> str:
+    """How a sentence names a claim type: the five recurring types by their label ("CAC payback"), every other type by its stored word."""
+    return TYPE_NAMES.get(claim_type or "", str(claim_type or "claim"))
+
+
 # A figure no line and no heading names a type for: listed as "unknown" and approved only once the analyst chooses a
 # type (docs/specs/deck-parser.md section 2), like the model's "other" (structure-labelling.md section 4).
 UNKNOWN = "unknown"
@@ -160,17 +173,18 @@ INSTALLED_UNITS = "installed_units"
 GROUPS = {1: "revenue", 2: "P&L", 3: "customers and sales", 4: "hiring and roadmap", 5: "market size", 6: "scenarios",
           7: "acquisition channels", 8: "use of funds", 9: "other", 10: "pricing"}
 _GROUP_OF = {
-    "revenue": 1, "revenue_growth": 1,
+    "revenue": 1, "revenue_growth": 1, "arr": 1, "mrr": 1,
     "gross_profit": 2, "ebitda": 2, "burn": 2, "cash": 2, "runway": 2, "costs": 2, "net_profit": 2, "gross_margin": 2,
     "months_to_profitability": 2,
     "customers": 3, "users": 3, "user_growth": 3, "growth": 3, "retention": 3, "sales": 3, "ltv": 3, "cac": 3, "ltv_cac": 3,
+    "churn": 3, "nrr": 3, "cac_payback": 3,
     "customer_lifetime": 3, "trials_per_day": 3, "arpa": 3, "arpu": 3, "pipeline": 3, "usage": 3, INSTALLED_UNITS: 3,
     "people": 4, "product": 4,
     "market": 5, ACQUISITION_CHANNELS: 7, USE_OF_FUNDS: 8, PRICING: 10,
 }
-# The page reader's metric words that are no register claim type, and the type each stands for (George, 2026-10-23): the groups follow
-# the type (ARR and MRR are Revenue, churn and NRR are Retention, market share is Market size). Every other word is its own type.
-PAGE_CLAIM_TYPE = {"arr": "revenue", "mrr": "revenue", "churn": "retention", "nrr": "retention", "market_share": "market"}
+# The page reader's metric words that are no register claim type, and the type each stands for (George, 2026-10-23): market share is Market size.
+# arr, mrr, churn, nrr and cac_payback are types of their own since engine contract 8 (RECURRING_TYPES). Every other word is its own type.
+PAGE_CLAIM_TYPE = {"market_share": "market"}
 OTHER_GROUP = 9
 # George, 2026-10-23 (review of PR 164, H2): a best-case or worst-case figure of the page read is listed in a section of its own, whatever its type;
 # only realistic / none are plan targets. The screen puts the section above Other (frontend CLAIM_GROUPS).
@@ -1783,7 +1797,9 @@ def recurring_year_end(c: Dict) -> Dict:
     "period_read_note" saying so (issue #151; the analyst can change the date, which drops the note). Only a bare year in the
     figure's own line, only MRR and ARR; a month the deck states, a contract value and every other type keep their period."""
     year = (_IN_YEAR.search(c.get("snippet") or "") or [None, None])[1]
-    if year and c.get("claim_type") == "revenue" and deck_label(c) in ("MRR", "ARR") and c.get("target_date") == year:
+    text = f"{c.get('label_from') or ''} {c.get('snippet') or ''}"
+    recurring = c.get("claim_type") in ("arr", "mrr") and not CONTRACT_TERM.search(text) or c.get("claim_type") == "revenue" and deck_label(c) in ("MRR", "ARR")
+    if year and recurring and c.get("target_date") == year:
         c["target_date"] = f"{year}-12"
         c["period_read_note"] = f"period read as Dec {year} from 'in {year}'"
     return c

@@ -203,7 +203,7 @@ def test_the_engine_rounds_counts_and_days_once_and_percents_are_fractions():
     assert isinstance(s["acv_path"]["required_net_new_per_year"], int)
     assert 0 < s["nrr"]["overall_pct"] < 10 and 0 <= s["win_rate"]["win_rate_pct"] <= 1
     assert all(0 <= v <= 10 for r in s["cohort_retention"]["data"] for v in r["values"].values())
-    assert s["contract_version"] == metrics.CONTRACT_VERSION == 7 and s["reporting_currency"] == "EUR"
+    assert s["contract_version"] == metrics.CONTRACT_VERSION == 8 and s["reporting_currency"] == "EUR"
 
 
 @pytest.mark.parametrize("model, value, expected", [
@@ -348,6 +348,8 @@ VIOLATIONS = {
     "a count as text": _set("nrr.nrr_base_customers", "5"),
     "a missing contract version": _drop("contract_version"),
     "a missing field": _drop("nrr.series"),
+    "gross churn without its monthly series": _drop("gross_churn.monthly_series"),
+    "a monthly churn rate as a whole-number percent": _set("gross_churn.monthly_series", [{"month": "2026-05", "churn_pct": 35.0}]),
     "an undeclared field": _set("arr.extra", 1),
     "a percent as text": _set("win_rate.win_rate_pct", "40%"),
     "a number that is not finite": _set("arr.value", float("nan")),
@@ -541,7 +543,7 @@ def test_the_integrity_smoothness_is_the_integrity_modules_own_with_no_second_ca
 # Contract 6: what a deck claim carries (chat-upload.md section 28; review of PR 164, H2)
 # ---------------------------------------------------------------------------
 def test_contract_6_names_the_deck_claim_fields_and_the_register_row_and_the_csv_carry_them():
-    assert metrics.CONTRACT_VERSION == 7 and metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags")
+    assert metrics.CONTRACT_VERSION == 8 and metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags")
     assert {"basis", "scenario"} <= set(cm.FIELDS), "the register row, the baseline CSV and the memo's Appendix A"
     assert "flags" not in cm.FIELDS, "flags ride the deck list, not the register"
     assert not set(metrics.DECK_CLAIM_FIELDS) & gateway.OUTBOUND_FIELDS, "server-only: none of the three reaches the gateway"

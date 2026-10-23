@@ -175,3 +175,15 @@ metric list gains `arr`, `mrr`, `churn`, `nrr`, `market_share`, `pricing` and `u
 §28, amended 2026-10-23), so the claim types and groups of stored deck claims differ from contract 6 and results and claim matches stored under 6 read "Stale – re-run
 audit" until Run audit calculates again. `DECK_CLAIM_FIELDS` (`basis`, `scenario`, `flags`), the register row, the baseline CSV and the memo's Appendix A are unchanged;
 `flags` may now hold `year label below: YYYY`. `test_interface_contracts.py` pins `CONTRACT_VERSION == 7`; `test_page_metrics.py` pins the list and the mapping.
+
+Amended 2026-10-23 (George, ARR, MRR, Churn, NRR and CAC payback as claim types): **contract 8.** `CONTRACT_VERSION` 8 and `SEED_VERSION` 15. One engine output field is added (below); the page reader's closed
+metric list gains `cac_payback`, and `arr`, `mrr`, `churn` and `nrr` reach the register as claim types of their own (claim-matching.md, amended 2026-10-23), so the claim types of stored deck
+claims differ from contract 7 and results and claim matches stored under 7 read "Stale – re-run audit" until Run audit calculates again. `MetricsPayload` gains `gross_churn.monthly_series` (its
+`contract_version` literal is 8); `DECK_CLAIM_FIELDS`, the register row, the baseline CSV and the memo's Appendix A are unchanged. `test_interface_contracts.py` pins `CONTRACT_VERSION == 8` and
+the stale versions 1 to 7; `test_recurring_claim_types.py` pins the types, the metric each is tested against and the reasons.
+
+Amended 2026-10-23 (George, decision on PR 171; contract 8 stays): **`gross_churn.monthly_series`**, a required list of `{month, churn_pct}` (a Fraction, null when the MRR at the month's start is
+zero), one rate per month from the second data month: MRR lost in the month (churn and contraction, expansion not netted, as `overall_pct`) over the MRR of the customers that had revenue at the month's
+start. A Possibly partial last month is skipped as for NRR. `metric_periods` gains `gross_churn_monthly` (first, last, missing months of the series). The series is the register's and the export's: server-only
+(`SERVER_ONLY_FIELDS` of `test_gateway_data_boundary.py`, never sent to a narrative). `test_interface_contracts.py` drops it and breaks it in its violation table; `test_monthly_churn.py` pins the arithmetic.
+The xlsx export gains a "Churn Series" sheet (month, trailing-12-month rate, monthly rate); a source key under `gross_churn.series` or `gross_churn.monthly_series` names that sheet.

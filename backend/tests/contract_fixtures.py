@@ -29,9 +29,9 @@ def nrr_group(pct: Optional[float], base: int = 20, **more) -> dict:
     return {"nrr_pct": pct, "nrr_base_customers": base, **more}
 
 
-def gross_churn(overall: Optional[float] = 0.061, month: str = "2026-06", series=None) -> dict:
+def gross_churn(overall: Optional[float] = 0.061, month: str = "2026-06", series=None, monthly=None) -> dict:
     return {"month": month, "trailing_window_months": 12, "overall_pct": overall, "series": series or [],
-            "source": cite()}
+            "monthly_series": monthly or [], "source": cite()}
 
 
 def win_rate(rate: Optional[float] = 0.287, won: int = 269, lost: int = 667, **more) -> dict:
