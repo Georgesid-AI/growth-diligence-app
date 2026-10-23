@@ -148,10 +148,10 @@ def test_a_scenario_or_period_the_model_set_must_be_on_the_page():
     assert one(cases, claim(f"p1{cell_of(cases, '$20M in yearly revenue')}", 20e6, basis="scenario", scenario="realistic"))["flags"] \
         == [checker.SCENARIO_NOT_ON_PAGE]
     assert one(plain, claim("p1r3c1", 150_000, basis="projection", scenario="none"))["flags"] == [], "no scenario, nothing to find"
-    # A period: from a sentence it is not matched (#154) but it is on the page, so no flag; a period nowhere on the page is flagged.
+    # A period cited from a sentence on the page is informational (George, 2026-10-23: heading band or another cell); a period nowhere on the page is flagged.
     dated = deck([TITLE, (50, 520, 12, "We finished 2024 with a strong pipeline."), (50, 480, 12, "$150,000 annual revenue run rate")])
     sentence = one(dated, claim("p1r3c1", 150_000, period="2024", period_cell="p1r2c1"))
-    assert sentence["status"] == "matched" and sentence["flags"] == []
+    assert sentence["status"] == "matched" and sentence["flags"] == [checker.PERIOD_FROM_HEADING] and not checker.flagged(sentence)
     nowhere = one(dated, claim("p1r3c1", 150_000, period="2027"))
     assert nowhere["status"] == "matched" and nowhere["flags"] == [checker.PERIOD_NOT_ON_PAGE] and checker.flagged(nowhere)
 
@@ -249,7 +249,7 @@ def test_an_axis_tick_and_a_funds_raised_line_are_flagged_not_dropped():
 
 
 def test_every_flag_is_a_closed_string_and_a_cell_the_page_does_not_have_is_still_dropped():
-    assert len(set(checker.FLAGS)) == len(checker.FLAGS) == 19 and all(f == f.strip() and f.lower() == f for f in checker.FLAGS)
+    assert len(set(checker.FLAGS)) == len(checker.FLAGS) == 20 and all(f == f.strip() and f.lower() == f for f in checker.FLAGS)
     assert set(PAGE_BASES) == {"actual", "projection", "scenario"} and set(PAGE_SCENARIOS) == {"best", "realistic", "worst", "none"}
     parsed = deck([TITLE, *LINES])
     out = checker.check(grid_of(parsed), page_check.by_page([claim("p1r9c9", 1)])[1], 12)

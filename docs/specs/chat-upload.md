@@ -1279,17 +1279,18 @@ Amended 2026-10-23 (George, "matched on the value"; claim-matching.md §4.2): **
 another cell of the page) and the claim has a value; the unit and the period no longer gate the match, and a metric `other` is matched like any other. The checks the
 match used to need now only flag, and the flag sets the confidence label:
 1. *Period.* The period label is on the figure's line or block (its own text, an adjacent date label or header, its bar's year label): no flag. The period is cited from
-   a page or section heading cell on the same page (a title cell, far from the figure): the informational flag `period from page heading`. The period is set and no cell of
-   the page states it: the review flag `period not on page`. The period is null: no flag. A period stated on the page elsewhere than the figure's block, without a
-   heading cell cited, is no flag, as before.
+   a heading cell: the title cell or any cell in the top 20% of the page height (the page grid marks it `top_band`, a layout field never sent): the informational flag
+   `period from page heading`. The period is cited from any other cell of the page outside the figure's block that states it: the informational flag `period from
+   another cell`. A sentence in the figure's own block stays no source. The period is set and no cell of the page states it: the review flag `period not on page`.
+   The period is null: no flag. (George, 2026-10-23, comment on PR #174, decisions 1 and 2.)
 2. *Unit.* A currency, `%`, `x` or time word not in the value cell or next to it: the flags `currency assumed` and `unit assumed`, now informational (they leave the
    claim in the main list with the note on its row; Approve all and Run audit treat it as unflagged).
 3. *Label.* The label cell never counts toward the match; a label not adjacent to the figure is still dropped from the row ("Label from" empty).
 4. *Metric.* A metric `other` is checked as any other. "Not testable" stays the reason of an Unverified evidence label, which the corroboration (claim-matching.md §4) reads;
    the page check does not use it.
 5. *Confidence label of a page-read row* (`claims.page_confidence`; the parser's confidence of deck-parser.md §6 stays for the rows of the rules read): **High** = matched,
-   no review flag; **Medium** = matched with an informational flag (`cell corrected`, `currency assumed`, `unit assumed`, `period from page heading`) or with no date;
+   no review flag; **Medium** = matched with an informational flag (`cell corrected`, `currency assumed`, `unit assumed`, `period from page heading`, `period from another cell`) or with no date;
    **Low** = not matched, or any review flag. Display only, as before.
-`FLAGS` has 19 (`period from page heading` is the new one); `INFORMATIONAL_FLAGS` has four. The status of a page-read claim is read from `checks.value` and the claim's
-value only; `checks.unit`, `checks.period` and the new `checks.period_heading` feed the flags. Uber page 20 (the recorded reply): still four claims, now all matched; the
+`FLAGS` has 20 (`period from page heading` and `period from another cell` are the new ones); `INFORMATIONAL_FLAGS` has five. The status of a page-read claim is read from `checks.value` and the claim's
+value only; `checks.unit`, `checks.period` and the new `checks.period_heading` and `checks.period_other` feed the flags. Uber page 20 (the recorded reply): still four claims, now all matched; the
 profit claim keeps `currency assumed` (informational), so no claim of the page is listed under Review. No contract change.

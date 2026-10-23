@@ -193,7 +193,7 @@ CASES = ("best", "worst")
 BASIS_CONFLICT = "basis conflicts with period"        # a projection for a period on or before the as-of month (claim_matching.flags_of)
 # Flags the analyst only reads: the claim stays in the main list with the note on its row; every other flag lists it under Review
 # (George, 2026-10-23). A new flag is added to checker.REVIEW_FLAGS or here, and the screen's list (informational_flags.json) follows.
-INFORMATIONAL_FLAGS = ("cell corrected", "currency assumed", "unit assumed", "period from page heading")
+INFORMATIONAL_FLAGS = ("cell corrected", "currency assumed", "unit assumed", "period from page heading", "period from another cell")
 
 
 def review_flags(flags) -> list:

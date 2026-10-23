@@ -3412,8 +3412,8 @@ def test_the_checker_flags_basis_and_scenario_are_closed_words_and_never_gateway
                              "period not on page", "page out of range", "use-of-funds share", "acquisition channel",
                              "turnover, not revenue", "year under bar differs", "pipeline column", "axis tick", "not a plan line",
                              "matches analyst claim", "basis and scenario disagree", "basis conflicts with period",
-                             "cell corrected", "sign not on page", "period from page heading")
-    assert checker.INFORMATIONAL_FLAGS == ("cell corrected", "currency assumed", "unit assumed", "period from page heading"), \
+                             "cell corrected", "sign not on page", "period from page heading", "period from another cell")
+    assert checker.INFORMATIONAL_FLAGS == ("cell corrected", "currency assumed", "unit assumed", "period from page heading", "period from another cell"), \
         "the flags that leave a claim in the main list (George, 2026-10-23: the unit and the period only flag)"
     assert set(checker.REVIEW_FLAGS) == set(checker.FLAGS) - set(checker.INFORMATIONAL_FLAGS)
     assert checker.BRACKET_NEGATIVE_METRICS == ("ebitda", "net_profit", "gross_profit", "costs", "cash", "burn")

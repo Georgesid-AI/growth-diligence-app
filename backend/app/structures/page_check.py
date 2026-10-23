@@ -161,7 +161,8 @@ def period_check(structure: Dict, cell: Dict, model: Optional[str], cited: Optio
     """(period label, period cells, ok, corrected, heading): the period Python rebuilds from the cited cell when it is a date source
     of the value cell (its own text, an adjacent date label or header, its bar's year label), or the page's heading (a title cell
     of the page, `heading` True: the period stands on no line or block of the figure); a null period with nothing cited stands
-    only when no source holds a period. The period never gates the match (George, 2026-10-23): ok only decides the flags."""
+    only when no source holds a period. The period never gates the match (George, 2026-10-23): ok only decides the flags. `heading` is "heading" (title cell or top 20% of the page), "other" (any other cell
+    outside the figure's block that states the period) or False."""
     wanted = claims.period_range(model, fiscal_year_end) if model else None
     if cited is None and model is None:
         return None, [], not holds_period(structure, cell, fiscal_year_end), False, False
@@ -178,11 +179,14 @@ def period_check(structure: Dict, cell: Dict, model: Optional[str], cited: Optio
         found = (label, span, [_id(cell)]) if span else None
     elif any(_id(cited) == _id(s) for s in date_sources(structure, cell)) or _bar_cell(structure, cell, cited):
         found = _from_source(structure, cited, fiscal_year_end)
-    elif cited.get("title"):
-        found = _from_source(structure, cited, fiscal_year_end)         # the page heading, far from the figure
-        heading = found is not None
+    elif cited.get("title") or cited.get("top_band"):
+        found = _from_source(structure, cited, fiscal_year_end)         # the page heading (title cell or top 20% of the page)
+        heading = "heading" if found is not None else False
+    elif any(_id(cited) == _id(s) for s in _same_box(structure, cell)):
+        found = None                            # a sentence in the figure's own block is no source (#154)
     else:
-        found = None                            # a sentence, or a cell that is no source of this value (#154)
+        found = _from_source(structure, cited, fiscal_year_end)         # any other cell of the page that states the period
+        heading = "other" if found is not None else False
     if found is None:
         return model, [], False, False, False
     label, span, cells = found
@@ -311,7 +315,7 @@ def _checks(value_ok: bool, unit_ok: bool, period_ok: bool, label_ok: bool, corr
             heading: bool = False) -> Dict:
     first = values[0] if values else {}
     return {"value": value_ok, "unit": unit_ok, "period": period_ok, "label": label_ok, "period_corrected": corrected,
-            "period_heading": heading,
+            "period_heading": heading == "heading", "period_other": heading == "other",
             "dot_reading": first.get("dot_reading"), "bracket_reading": first.get("bracket_reading")}
 
 

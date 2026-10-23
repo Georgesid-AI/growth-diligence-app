@@ -1,0 +1,6 @@
+2026-10-23, claude/intelligent-maxwell-pm31yy (George's decision comment on PR #174)
+Deleted: the "title cell only" reading of a page heading and the "elsewhere on the page is no flag" case; nothing else
+Decided: heading = title cell or a cell whose line starts in the top 20% of the page height, marked `top_band` by the page grid (a layout field, never sent, so no boundary change); a period cited from any other cell outside the figure's block that states it is the informational `period from another cell` (FLAGS 19 -> 20, informational 4 -> 5); a sentence in the figure's own block stays no source; the old tests that asserted "period check fails" for a sentence or far cell now assert the new flag
+Slow or unclear: the threshold is a constant (parser.TOP_BAND) on line top only, not on the cell's height; ruff 0.16.8 is not in the venv (run with uvx ruff@0.16.8)
+Root cause and rule: the first cut read "heading" from what the grid already marked, so a decision wording needing a position needed a new layout field; read a decision's nouns against the grid's fields before building and list the missing field in the first message
+Process change to propose: have the spec section name the grid fields it depends on, so a decision that needs a new one is visible when it is written
