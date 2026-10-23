@@ -3251,25 +3251,25 @@ def test_every_page_reply_field_is_a_closed_word_a_number_or_a_cell_id():
         PageClaim.model_validate({**base, "note": "free text"})
 
 
-def test_a_page_reply_citing_a_cell_not_sent_or_not_json_is_rejected_a_claim_carrying_text_is_dropped_alone(caplog):
+def test_a_page_reply_not_json_is_rejected_a_claim_citing_a_cell_not_sent_or_carrying_text_is_dropped_alone(caplog):
     first = json.loads(PAGE_REPLY)["claims"][0]
     with caplog.at_level(logging.DEBUG):
-        for sent, check in ((json.dumps({"type": PAGE_CLAIMS, "claims": [{**first, "value_cell": "p9r9c9"}]}), "other"),
-                            ("Revenue £1,200,000 at Target Co", "schema")):
-            result, adapter = _send_page(_structure_db(), GOOD_PAGE, sent)
-            assert (result.status, adapter.calls) == ("not_read", 2), check
-        # George, 2026-10-23: a schema failure inside one claim drops that claim only, the reply is read
-        for sent in (json.dumps({"type": PAGE_CLAIMS, "claims": [{**first, "label_cell": "p5r1c1 Traction"}]}),
+        result, adapter = _send_page(_structure_db(), GOOD_PAGE, "Revenue £1,200,000 at Target Co")
+        assert (result.status, adapter.calls) == ("not_read", 2)
+        # George, 2026-10-23: a schema failure or a cell not sent inside one claim drops that claim only, the reply is read
+        for sent in (json.dumps({"type": PAGE_CLAIMS, "claims": [{**first, "value_cell": "p9r9c9"}]}),
+                     json.dumps({"type": PAGE_CLAIMS, "claims": [{**first, "label_cell": "p5r1c1 Traction"}]}),
                      json.dumps({"type": PAGE_CLAIMS, "claims": [{**first, "metric": "Revenue at Target Co"}]})):
             result, adapter = _send_page(_structure_db(), GOOD_PAGE, sent)
             assert (result.status, adapter.calls) == ("read", 1)
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
-    assert [line.rsplit(" check=", 1)[1] for line in lines] == ["other", "schema"]
+    assert [line.rsplit(" check=", 1)[1] for line in lines] == ["schema"]
     # The schema fields that failed, as closed names from the schema (PR B: the run of 2026-10-22 lost 10 replies to check=schema
     # with no way to tell which field); a cell not sent or a reply that is not JSON names none.
-    assert [line.split(" fields=")[1].split(" ")[0] for line in lines] == ["-", "-"]
+    assert [line.split(" fields=")[1].split(" ")[0] for line in lines] == ["-"]
     rejected = [r.getMessage() for r in caplog.records if "claim rejected" in r.getMessage()]
-    assert [re.sub(r"page \d+", "page n", line) for line in rejected] == ["page n: claim rejected (label_cell)",
+    assert [re.sub(r"page \d+", "page n", line) for line in rejected] == ["page n: claim rejected (cell not in batch)",
+                                                                            "page n: claim rejected (label_cell)",
                                                                             "page n: claim rejected (metric)"]
     assert set(gateway.PAGE_FIELDS) == {"type", "claims", "metric", "value", "value_high", "unit", "unit_other", "period",
                                         "basis", "scenario", "value_cell", "label_cell", "period_cell"}
@@ -3451,7 +3451,7 @@ def test_the_claim_rejected_line_holds_a_page_number_and_schema_field_names_neve
     with caplog.at_level(logging.DEBUG):
         gateway.parse_page_reply(reply, "p4r1c1: x")
     line, = [r.getMessage() for r in caplog.records if "claim rejected" in r.getMessage()]
-    assert re.fullmatch(r"page (\d+|\?): claim rejected \((claim|[a-z_]+)(, [a-z_]+)*\)", line), line
+    assert re.fullmatch(r"page (\d+|\?): claim rejected \((cell not in batch|claim|[a-z_]+)(, [a-z_]+)*\)", line), line
     assert set(re.findall(r"[a-z_]+", line.split("(", 1)[1])) <= gateway.PAGE_FIELDS | {"claim"}
     for needle in ("Jane", "Northbridge", "123456789", "2022"):
         assert needle not in caplog.text, f"{needle!r} in the log"

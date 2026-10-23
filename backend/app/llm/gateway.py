@@ -1693,10 +1693,10 @@ def _page_of(raw) -> str:
 
 def parse_page_reply(reply: str, text: str) -> PageClaimsReply:
     """Validate a page batch's reply (docs/design/ai-reads-rules-check.md section 2), or raise GatewayError("parse_failed"): the
-    top-level object (type word, a list of claims, no extra keys) rejects the whole reply. A claim that fails the schema (extra
+    top-level object (type word, a list of claims, no extra keys) or a reply that is not JSON rejects the whole reply. A claim that fails the schema (extra
     fields forbidden, every field a closed word, a number or a cell id) is dropped alone and logged as "page n: claim rejected
-    (fields)" with the closed schema field names, never a value (George, 2026-10-23: one bad period lost a whole page). Then every
-    cited cell (value, label, period) must be one the batch sent. Nothing else is checked here: the figure, the unit and the period
+    (fields)" with the closed schema field names, never a value (George, 2026-10-23: one bad period lost a whole page). A claim that
+    cites a cell (value, label, period) the batch did not send is dropped alone too, logged "page n: claim rejected (cell not in batch)". Nothing else is checked here: the figure, the unit and the period
     are checked against the page by app/structures/page_check.py. The error names the fields that failed (closed schema names), so
     the "structure not read" line says which field the model gets wrong."""
     try:
@@ -1712,10 +1712,13 @@ def parse_page_reply(reply: str, text: str) -> PageClaimsReply:
             fields = ", ".join(_schema_fields(exc)) or "claim"          # schema field names only, never the input they quote
             logger.info("page %s: claim rejected (%s)", _page_of(raw), fields)
     known = _cited_cells(text, PAGE_CLAIMS)
+    kept = []
     for claim in claims:
         if any(c is not None and c not in known for c in (claim.value_cell, claim.label_cell, claim.period_cell)):
-            raise GatewayError("parse_failed", "reply cites a cell that is not in the pages sent", check="other")
-    return PageClaimsReply(type=top.type, claims=claims)
+            logger.info("page %s: claim rejected (cell not in batch)", _page_of(claim.model_dump()))
+        else:
+            kept.append(claim)
+    return PageClaimsReply(type=top.type, claims=kept)
 
 
 def parse_sheet_reply(reply: str, text: str) -> SheetStructureReply:

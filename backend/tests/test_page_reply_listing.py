@@ -181,6 +181,14 @@ def test_a_reply_that_is_not_the_object_rejects_the_whole_reply(reply):
     assert e.value.reason == "parse_failed"
 
 
-def test_a_cell_the_pages_did_not_send_still_rejects_the_whole_reply():
-    with pytest.raises(gateway.GatewayError):
-        read([GOOD, full("p9r9c9", 1, "2023")])
+@pytest.mark.parametrize("field", ["value_cell", "label_cell", "period_cell"])
+def test_a_claim_citing_a_cell_the_pages_did_not_send_is_dropped_alone(field, caplog):
+    with caplog.at_level(logging.INFO, logger="growth.llm"):
+        got = read([GOOD, {**full("p1r1c1", 3, "2023"), field: "p9r9c9"}, full("p2r1c1", 8, "2023")])
+    assert [c.value for c in got.claims] == [1, 8]
+    page = "9" if field == "value_cell" else "1"
+    assert lines(caplog) == [f"page {page}: claim rejected (cell not in batch)"]
+
+
+def test_a_reply_whose_claims_all_cite_unsent_cells_is_an_empty_reply():
+    assert read([full("p9r9c9", 1, "2023")]).claims == []
