@@ -193,7 +193,7 @@ CASES = ("best", "worst")
 BASIS_CONFLICT = "basis conflicts with period"        # a projection for a period on or before the as-of month (claim_matching.flags_of)
 # Flags the analyst only reads: the claim stays in the main list with the note on its row; every other flag lists it under Review
 # (George, 2026-10-23). A new flag is added to checker.REVIEW_FLAGS or here, and the screen's list (informational_flags.json) follows.
-INFORMATIONAL_FLAGS = ("cell corrected",)
+INFORMATIONAL_FLAGS = ("cell corrected", "currency assumed", "unit assumed", "period from page heading")
 
 
 def review_flags(flags) -> list:
@@ -2175,6 +2175,22 @@ def _corroborated(candidate: Dict, peers: List[Dict]) -> bool:
                for other in peers)
 
 
+def page_confidence(candidate: Dict) -> Dict:
+    """The confidence of a claim the page read found (George, 2026-10-23; chat-upload.md section 28, claim-matching.md section 4.2):
+    High = matched to the page with no review flag; Medium = matched with an informational flag, or with no date; Low = not matched, or
+    a review flag. Read from the checker's flags and the claim's period, never from a model's own score."""
+    flags = candidate.get("flags") or []
+    review = review_flags(flags)
+    matched = candidate.get("ai_status") == "matched"
+    if not matched or review:
+        failed = (["not matched"] if not matched else []) + review
+        level = "Low"
+    else:
+        failed = [f for f in flags if f in INFORMATIONAL_FLAGS] + ([] if candidate.get("target_date") else ["no date"])
+        level = "Medium" if failed else "High"
+    return {"level": level, "failed": failed, "text": level + (" – " + ", ".join(failed) if failed else "")}
+
+
 def confidence(candidate: Dict, peers: List[Dict]) -> Dict:
     """High, Medium or Low from the checks the parser already runs, never from a model's own score: the claim has a
     date, a unit (or currency), a heading or line that names its type, and its value is corroborated elsewhere in the
@@ -2185,6 +2201,8 @@ def confidence(candidate: Dict, peers: List[Dict]) -> Dict:
         return {"level": None, "failed": [], "text": "Analyst-entered"}
     if candidate.get("status") == "edited" or "parsed" in candidate:
         return {"level": None, "failed": [], "text": "Analyst-edited"}
+    if candidate.get("origin") == "ai" and candidate.get("ai_status") in ("matched", "unmatched"):
+        return page_confidence(candidate)
     values = claim_values(candidate)
     has_value = any(v["value"] is not None for v in values)
     named = candidate.get("claim_type") not in (UNKNOWN, "other") and bool(candidate.get("type_from", "line"))

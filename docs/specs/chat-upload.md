@@ -1203,8 +1203,8 @@ under 5 read "Stale – re-run audit"; `SEED_VERSION` 13 reseeds the demo audits
 unmatched=… dropped=… flagged=…`.
 
 - **Tests.** `test_checker.py`: 06-uber.pdf page 20 with the model's recorded reply (`page_replies/uber_p20.json`) gives exactly four
-  company claims (1B revenue, 5% market share, 20–30M profit, 100 clients), all `basis` scenario, no flag but `currency assumed` on
-  the profit claim; a qualitative line is flagged and listed under Review, never matched; each check and each converted rule fails first on a deliberate violation;
+  company claims (1B revenue, 5% market share, 20–30M profit, 100 clients), all `basis` scenario, all matched since 2026-10-23 (the informational `currency assumed` on
+  the profit claim, so none under Review); a qualitative line is flagged and listed under Review, never matched; each check and each converted rule fails first on a deliberate violation;
   the rows carry basis, scenario, figure type and flags; an upload lists no rule candidate under the default.
   `test_usage_allowance.py`: a page read outside the daily cap, inside the allowance. `test_gateway_data_boundary.py`: the flags,
   bases and scenarios are closed words and never gateway-readable. `test_deck_parser.py`, `test_structure_reading.py`,
@@ -1274,3 +1274,22 @@ unmatched=… dropped=… flagged=…`.
   Review; a bracketed number is a minus sign only for the metrics ebitda, net_profit, gross_profit, costs, cash and burn; for every other metric a bracketed figure is positive and a negative reading is flagged. (3) *Null guard.* A claim with value null that is not a date claim (metric `product` with a period) is
   dropped at validation and logged "page n: claim rejected (no value)"; it never reaches the panel. (4) *Panel.* A `cell corrected` claim keeps status matched, so its label reads
   "Matched to page" like any matched claim; it is informational, so it stays in the main list with the note on its row (Approve all and Run audit treat it as unflagged). Two closed flags more (`FLAGS` has 18; `INFORMATIONAL_FLAGS` and `REVIEW_FLAGS` split them). No contract change.
+
+Amended 2026-10-23 (George, "matched on the value"; claim-matching.md §4.2): **"Matched to page" means the figure is in the cited cell** (or, by the cell tolerance, in
+another cell of the page) and the claim has a value; the unit and the period no longer gate the match, and a metric `other` is matched like any other. The checks the
+match used to need now only flag, and the flag sets the confidence label:
+1. *Period.* The period label is on the figure's line or block (its own text, an adjacent date label or header, its bar's year label): no flag. The period is cited from
+   a page or section heading cell on the same page (a title cell, far from the figure): the informational flag `period from page heading`. The period is set and no cell of
+   the page states it: the review flag `period not on page`. The period is null: no flag. A period stated on the page elsewhere than the figure's block, without a
+   heading cell cited, is no flag, as before.
+2. *Unit.* A currency, `%`, `x` or time word not in the value cell or next to it: the flags `currency assumed` and `unit assumed`, now informational (they leave the
+   claim in the main list with the note on its row; Approve all and Run audit treat it as unflagged).
+3. *Label.* The label cell never counts toward the match; a label not adjacent to the figure is still dropped from the row ("Label from" empty).
+4. *Metric.* A metric `other` is checked as any other. "Not testable" stays the reason of an Unverified evidence label, which the corroboration (claim-matching.md §4) reads;
+   the page check does not use it.
+5. *Confidence label of a page-read row* (`claims.page_confidence`; the parser's confidence of deck-parser.md §6 stays for the rows of the rules read): **High** = matched,
+   no review flag; **Medium** = matched with an informational flag (`cell corrected`, `currency assumed`, `unit assumed`, `period from page heading`) or with no date;
+   **Low** = not matched, or any review flag. Display only, as before.
+`FLAGS` has 19 (`period from page heading` is the new one); `INFORMATIONAL_FLAGS` has four. The status of a page-read claim is read from `checks.value` and the claim's
+value only; `checks.unit`, `checks.period` and the new `checks.period_heading` feed the flags. Uber page 20 (the recorded reply): still four claims, now all matched; the
+profit claim keeps `currency assumed` (informational), so no claim of the page is listed under Review. No contract change.

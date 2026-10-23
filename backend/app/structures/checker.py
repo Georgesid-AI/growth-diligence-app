@@ -9,6 +9,10 @@ Cell tolerance (George, 2026-10-23): a value that is not in the cited cell but i
 CELL_CORRECTED, with value_cell set to the cell found (page_check.find_elsewhere); the value on no cell stays VALUE_NOT_ON_PAGE.
 SIGN_NOT_ON_PAGE: a negative value whose value cell shows no minus sign and no loss, decline or decrease word.
 
+Matched to page means the figure is in the cited cell (George, 2026-10-23): the unit and the period only flag, and CURRENCY_ASSUMED, UNIT_ASSUMED and
+PERIOD_FROM_HEADING (the period cited from a title cell of the page, far from the figure) are informational: the claim stays in the main list. A period
+set that no cell states stays the review flag PERIOD_NOT_ON_PAGE. Confidence reads the flags (claims.page_confidence).
+
 Four checks per claim:
 1. VALUE_NOT_ON_PAGE: the value (as written or in full units, page_check.figure_check) is in no cell of the page; a claim with no
    value and no period has nothing on the page behind it and is flagged the same way (a qualitative line is listed under Review, never matched).
@@ -66,9 +70,10 @@ BASIS_SCENARIO_DISAGREE = "basis and scenario disagree"
 BASIS_CONFLICT = claims.BASIS_CONFLICT
 CELL_CORRECTED = "cell corrected"
 SIGN_NOT_ON_PAGE = "sign not on page"
+PERIOD_FROM_HEADING = "period from page heading"
 FLAGS = (VALUE_NOT_ON_PAGE, CURRENCY_ASSUMED, UNIT_ASSUMED, SCENARIO_NOT_ON_PAGE, PERIOD_NOT_ON_PAGE, PAGE_OUT_OF_RANGE,
          USE_OF_FUNDS, ACQUISITION_CHANNEL, TURNOVER, BAR_YEAR, PIPELINE_COLUMN, AXIS_TICK, NOT_PLAN_LINE, MATCHES_ANALYST,
-         BASIS_SCENARIO_DISAGREE, BASIS_CONFLICT, CELL_CORRECTED, SIGN_NOT_ON_PAGE)
+         BASIS_SCENARIO_DISAGREE, BASIS_CONFLICT, CELL_CORRECTED, SIGN_NOT_ON_PAGE, PERIOD_FROM_HEADING)
 INFORMATIONAL_FLAGS = claims.INFORMATIONAL_FLAGS        # a note on the row; the claim stays in the main list (George, 2026-10-23)
 REVIEW_FLAGS = tuple(f for f in FLAGS if f not in INFORMATIONAL_FLAGS)      # the claim is listed under Review
 review_flags = claims.review_flags
@@ -262,6 +267,8 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, blocks
             flags.append(SCENARIO_NOT_ON_PAGE)
         if basis_disagrees(claim.get("basis"), claim.get("scenario")):
             flags.append(BASIS_SCENARIO_DISAGREE)
+        if item["checks"]["period_heading"]:
+            flags.append(PERIOD_FROM_HEADING)
         if claim.get("period") and not item["checks"]["period"] and not period_on_page(grid, claim["period"], fiscal_year_end):
             flags.append(PERIOD_NOT_ON_PAGE)
         flags += [f for f in rule_flags(grid, grid_views, cell, claim, lines, fiscal_year_end) if f not in flags]

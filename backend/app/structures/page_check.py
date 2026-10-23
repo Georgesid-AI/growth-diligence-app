@@ -21,8 +21,11 @@ the source):
    label of its bar by place (bar_year). A sentence is no source (#154): a cited cell other than the value cell must be a date
    label or a period header. The rebuilt period replaces the model's; a difference is counted as a correction.
 
-All three pass, and the metric is not "other": "matched" ("Matched to page"), in the register without a click. Otherwise
-"unmatched" ("AI suggestion, not matched"), listed collapsed, approved by a click (decision 3a). The metric is never checked
+Matched (amended 2026-10-23, George): the figure is in the cited cell (check 1) and the claim has a value. The unit and the period no longer
+gate the match: a failed unit or period check is a flag the checker adds (checker.py), and the confidence label reads the flags (claims.confidence). A
+period cited from a title cell of the page, far from the figure, is rebuilt too (`period_heading` in the checks); a metric "other" is matched like any other.
+Otherwise (the figure is not
+there, or the claim has no value) "unmatched" ("AI suggestion, not matched"), listed collapsed, approved by a click (decision 3a). The metric is never checked
 (it stays the analyst's); the label cell is kept only when it is adjacent to the value cell (the value cell itself, a line of
 its own box, a header cell, a line directly next to it or the page title), else the row has no "Label from" and its confidence
 reads "no heading". With `drop` (the default), a claim on an axis tick or on a line about funds raised, tokens, the industry and
@@ -155,30 +158,35 @@ def holds_period(structure: Dict, cell: Dict, fiscal_year_end: int) -> bool:
 
 
 def period_check(structure: Dict, cell: Dict, model: Optional[str], cited: Optional[Dict], fiscal_year_end: int):
-    """(period label, period cells, ok, corrected): the period Python rebuilds from the cited cell when it is a date source of
-    the value cell (its own text, an adjacent date label or header, its bar's year label); a null period with nothing cited
-    stands only when no source holds a period."""
+    """(period label, period cells, ok, corrected, heading): the period Python rebuilds from the cited cell when it is a date source
+    of the value cell (its own text, an adjacent date label or header, its bar's year label), or the page's heading (a title cell
+    of the page, `heading` True: the period stands on no line or block of the figure); a null period with nothing cited stands
+    only when no source holds a period. The period never gates the match (George, 2026-10-23): ok only decides the flags."""
     wanted = claims.period_range(model, fiscal_year_end) if model else None
     if cited is None and model is None:
-        return None, [], not holds_period(structure, cell, fiscal_year_end), False
+        return None, [], not holds_period(structure, cell, fiscal_year_end), False, False
     if cited is None:
         bar = (claims.period_cell(cell["bar_year"]) or {}).get("label") if cell.get("bar_year") else None
         span = claims.period_range(bar, fiscal_year_end) if bar else None
         if span and span == wanted:             # the bar's year by place: Python's, with no cell of its own (issue #148)
-            return bar, [], True, False
-        return model, [], False, False
+            return bar, [], True, False, False
+        return model, [], False, False, False
+    heading = False
     if _id(cited) == _id(cell):
         label = verify.own_period(cell)
         span = claims.period_range(label, fiscal_year_end) if label else None
         found = (label, span, [_id(cell)]) if span else None
     elif any(_id(cited) == _id(s) for s in date_sources(structure, cell)) or _bar_cell(structure, cell, cited):
         found = _from_source(structure, cited, fiscal_year_end)
+    elif cited.get("title"):
+        found = _from_source(structure, cited, fiscal_year_end)         # the page heading, far from the figure
+        heading = found is not None
     else:
         found = None                            # a sentence, or a cell that is no source of this value (#154)
     if found is None:
-        return model, [], False, False
+        return model, [], False, False, False
     label, span, cells = found
-    return label, cells, True, wanted != span
+    return label, cells, True, wanted != span, heading
 
 
 # ---------------------------------------------------------------------------
@@ -299,9 +307,11 @@ def unit_check(structure: Dict, cell: Dict, item: Optional[Dict], unit: Optional
 # ---------------------------------------------------------------------------
 # One page
 # ---------------------------------------------------------------------------
-def _checks(value_ok: bool, unit_ok: bool, period_ok: bool, label_ok: bool, corrected: bool, values: List[Dict]) -> Dict:
+def _checks(value_ok: bool, unit_ok: bool, period_ok: bool, label_ok: bool, corrected: bool, values: List[Dict],
+            heading: bool = False) -> Dict:
     first = values[0] if values else {}
     return {"value": value_ok, "unit": unit_ok, "period": period_ok, "label": label_ok, "period_corrected": corrected,
+            "period_heading": heading,
             "dot_reading": first.get("dot_reading"), "bracket_reading": first.get("bracket_reading")}
 
 
@@ -370,12 +380,12 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, drop: 
         unit_ok = unit_check(structure, cell, item, claim.get("unit"), claim.get("unit_other"), comma) \
             if claim.get("value") is not None else claim.get("unit") is None
         cited = by_id.get(claim["period_cell"]) if claim.get("period_cell") else None
-        period, period_cells, period_ok, corrected = period_check(structure, cell, claim.get("period"), cited, fiscal_year_end)
+        period, period_cells, period_ok, corrected, heading = period_check(structure, cell, claim.get("period"), cited, fiscal_year_end)
         corrected_count += int(corrected)
         label = by_id.get(claim["label_cell"]) if claim.get("label_cell") else None
         label_ok = label is None or any(_id(label) == _id(c) for c in label_cells(structure, cell))
         span = item.get("range") if item else None
-        ok = value_ok and unit_ok and period_ok and metric != OTHER and claim.get("value") is not None
+        ok = value_ok and claim.get("value") is not None          # the figure is in the cited cell; unit and period only flag
         out = {"metric": metric, "unit": claim.get("unit"), "unit_other": claim.get("unit_other"),
                "basis": claim.get("basis"), "scenario": claim.get("scenario", "none"),
                # Python's value and range when the figure check passes; the model's when it fails (decision 2a, review of PR #159).
@@ -385,7 +395,7 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, drop: 
                "period": period, "period_cells": period_cells,
                "label_cell": _id(label) if label is not None and label_ok else None,
                "status": MATCHED if ok else UNMATCHED,
-               "checks": _checks(value_ok, unit_ok, period_ok, label_ok, corrected, values)}
+               "checks": _checks(value_ok, unit_ok, period_ok, label_ok, corrected, values, heading)}
         if corrected:
             out["model_period"] = claim.get("period")
         if model_cell is not None:

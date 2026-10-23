@@ -47,12 +47,13 @@ def test_the_recorded_run_is_replayed_pass_by_pass_and_every_claim_is_matched_un
     buffer = report["decks"][DECKS[0]]
     assert buffer["agreement"]["union"] >= buffer["agreement"]["agreed"] > 0 and 0 < buffer["agreement"]["pct"] <= 100
     assert set(buffer["agreement"]["disagree"]) == {"metric", "period", "presence"}
-    assert set(report["causes"]) > {"other", "matched"} and sum(report["causes"].values()) == sum(
+    assert set(report["causes"]) > {"matched"} and "other" not in report["causes"] and sum(report["causes"].values()) == sum(
         row["claims"] for d in report["decks"].values() for row in d["passes"].values())
     assert all(set(r) == {"deck", "page", "cell", "cause", "metric", "value", "passes"} for r in report["unmatched_rows"])
-    assert any(r["cause"] == "other" and r["passes"] == 3 for r in report["unmatched_rows"]), "a figure labelled other in every pass"
+    # Since 2026-10-23 (George) a figure the model labelled other is matched like any other: the cause "other" is gone from the report.
+    assert all(r["cause"] != "other" for r in report["unmatched_rows"])
     out = capsys.readouterr().out
-    assert out.count(DECKS[0]) >= 4 and "agreement" in out and "other" in out, "one line per pass, the agreement line, the causes"
+    assert out.count(DECKS[0]) >= 4 and "agreement" in out, "one line per pass, the agreement line, the causes"
     assert "by cause" in out and re.search(r" p\d+ r\d+c\d+ ", out), "cell ids are printed with their page"
 
 
@@ -63,7 +64,7 @@ def test_one_pass_can_be_chosen_and_the_tables_can_be_written_as_markdown(tmp_pa
     assert report["passes"] == [2] and set(report["decks"][DECKS[0]]["passes"]) == {2}
     assert report["decks"][DECKS[0]]["agreement"] is None, "agreement needs more than one pass"
     text = md.read_text(encoding="utf-8")
-    assert text.startswith("# ") and "| Deck |" in text and "03-buffer.pptx" in text and "| other |" in text
+    assert text.startswith("# ") and "| Deck |" in text and "03-buffer.pptx" in text and "| matched |" in text
     assert "Paying Users" not in text and "Traction" not in text, "no line of a deck"
 
 

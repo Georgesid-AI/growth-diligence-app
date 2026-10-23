@@ -202,6 +202,13 @@ a share of the claim (`gap_normalised`); for a rate it is the gap in percentage 
 - The register offers no "Set gate" button on a row with an open check; it has one again once the check is answered.
 - The IC memo's summary reports how many Definition checks were answered Yes and No (verdict-and-memo.md §7.2).
 
+### 4.2 Page-read claims: matched on the value; confidence from the flags (2026-10-23, George; chat-upload.md §28)
+A deck claim the page read found (`origin` ai) is "Matched to page" when its figure is in the cited cell (or, by the cell tolerance, another cell of the page); the unit,
+the period, the label and the metric (`other` included) never gate it. They set flags (closed strings, informational or review: `checker.INFORMATIONAL_FLAGS`,
+`checker.REVIEW_FLAGS`) and the confidence label the deck list shows: **High** = matched, no review flag; **Medium** = matched with an informational flag or no date;
+**Low** = not matched, or a review flag. The label is display only: no evidence label, gap, rank or gate reads it. The evidence label (§4) is unchanged: a page-read claim
+stays "AI suggestion, not verified" for the register until the analyst edits it. Rows of the rules read and claims the analyst added keep the confidence of deck-parser.md §6.
+
 ## 5. Gate
 No gate is proposed and no threshold has a default. For every row with an observed value the screen shows the claimed
 and the observed figure beside an empty threshold field. The analyst sets the threshold, names the budget decision (max

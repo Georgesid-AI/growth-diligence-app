@@ -166,7 +166,7 @@ def test_a_claim_the_checks_flagged_is_skipped_and_counted_apart_and_stays_to_re
     """George, 2026-10-22 (chat-upload.md section 28): a flagged claim is approved one by one in the Review view, never by Approve all.
     The reply counts it in `skipped` and in `skipped_flagged`, so the toast reads "Approved X, Y skipped"."""
     client, db = approve_api
-    db[decks.CANDIDATES_COLLECTION].docs.append(claim("fl1", value=210000, flags=["currency assumed"], ai_label="AI suggestion, not matched"))
+    db[decks.CANDIDATES_COLLECTION].docs.append(claim("fl1", value=210000, flags=["value not on page"], ai_label="AI suggestion, not matched"))
     db[decks.CANDIDATES_COLLECTION].docs.append(claim("fl0", value=195000, flags=[]))
     body = client.post(URL, json={"group": REVENUE}).json()
     assert (body["approved"], body["skipped"], body["skipped_flagged"], body["skipped_ids"]) == (4, 1, 1, ["fl1"])
