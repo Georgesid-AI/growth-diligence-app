@@ -19,8 +19,8 @@ const q = (id) => document.body.querySelector(`[data-testid="${id}"]`);
 const qa = (id) => [...document.body.querySelectorAll(`[data-testid="${id}"]`)];
 const NAMES = ["growth_engine", "data_inventory", "data_integrity", "structure_reading"];
 const LIST = { names: NAMES, missing: ["data_inventory", "data_integrity", "structure_reading"],
-  prompts: [{ name: "growth_engine", version: "v2", uploaded_at: "2026-10-15T09:30:12+00:00", sha256: "a".repeat(64) },
-            { name: "growth_engine", version: "v1", uploaded_at: "2026-10-14T08:00:00+00:00", sha256: "b".repeat(64) }] };
+  prompts: [{ name: "growth_engine", version: "v2", uploaded_at: "2026-10-15T09:30:12+00:00", sha256: "a".repeat(64), chars: 8123 },
+            { name: "growth_engine", version: "v1", uploaded_at: "2026-10-14T08:00:00+00:00", sha256: "b".repeat(64), chars: 4000 }] };
 // the shape of GET /api/admin/testers (access-links.md section 2): no status field, it is read from the dates
 const TESTERS = [{ id: "t1", label: "Tester One", created_at: "x", expires_at: "2999-11-14T09:30:00+00:00", revoked_at: null },
   { id: "t2", label: "Tester Two", created_at: "x", expires_at: "2999-11-14T09:30:00+00:00", revoked_at: "2026-10-15T10:00:00+00:00" },
@@ -131,6 +131,37 @@ test("a refused upload shows the server's reason and keeps the text for another 
   await act(async () => { q("owner-prompt-upload").click(); });
   expect(q("owner-error").textContent).toContain("the prompt text is empty");
   expect(q("owner-prompt-text").value).toBe("x");
+});
+
+test("a live count under the field reads n / 10,000, with the cost line, and the list shows each version's characters", async () => {
+  await enter();
+  expect(q("owner-prompt-count").textContent.trim()).toBe("0 / 10,000");
+  await act(async () => { setValue(q("owner-prompt-text"), "abcde"); });
+  expect(q("owner-prompt-count").textContent.trim()).toBe("5 / 10,000");
+  expect(document.body.textContent).toContain("Each page read sends this prompt; longer prompts cost more per audit.");
+  expect(qa("owner-prompt-chars").map((c) => c.textContent)).toEqual(["8123", "4000"]);
+});
+
+test("exactly 10,000 characters are sent whole", async () => {
+  await enter();
+  api.ownerUploadPrompt.mockResolvedValue({});
+  const text = "ab".repeat(5000);
+  await act(async () => { setValue(q("owner-prompt-text"), text); });
+  expect(q("owner-prompt-count").textContent.trim()).toBe("10000 / 10,000");
+  await act(async () => { q("owner-prompt-upload").click(); });
+  expect(api.ownerUploadPrompt).toHaveBeenCalledTimes(1);
+  expect(api.ownerUploadPrompt.mock.calls[0][2]).toBe(text);
+});
+
+test("10,001 characters are refused with the message, nothing is sent, and the text is kept whole", async () => {
+  await enter();
+  const text = "x".repeat(10001);
+  await act(async () => { setValue(q("owner-prompt-text"), text); });
+  expect(q("owner-prompt-count").textContent.trim()).toBe("10001 / 10,000");
+  await act(async () => { q("owner-prompt-upload").click(); });
+  expect(api.ownerUploadPrompt).not.toHaveBeenCalled();
+  expect(q("owner-error").textContent).toBe("Prompt is 10001 characters; the limit is 10,000.");
+  expect(q("owner-prompt-text").value).toBe(text);
 });
 
 test("there is no way to delete or read back a prompt on the page", async () => {

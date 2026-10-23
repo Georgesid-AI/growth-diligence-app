@@ -2464,6 +2464,15 @@ def test_the_prompts_document_has_fixed_fields():
     assert set(db["prompts"].docs[0]) == {"name", "version", "text", "uploaded_at", "sha256"}
 
 
+def test_the_prompt_list_adds_a_character_count_and_never_the_text():
+    db = t.FakeDB()
+    db["prompts"].docs.clear()
+    asyncio.run(prompt_store.upload(db, "growth_engine", f"{PROMPT_SENTINEL} test only"))
+    rows = asyncio.run(prompt_store.list_versions(db))
+    assert [set(r) for r in rows] == [{"name", "version", "uploaded_at", "sha256", "chars"}]
+    assert isinstance(rows[0]["chars"], int) and PROMPT_SENTINEL not in json.dumps(rows)
+
+
 def test_the_missing_prompt_reason_is_the_closed_sentence_and_holds_no_name_text_or_path():
     async def go():
         db = t.make_db()

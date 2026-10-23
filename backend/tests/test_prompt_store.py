@@ -69,7 +69,7 @@ def test_the_list_holds_name_version_date_and_hash_never_the_text():
     run(prompt_store.upload(db, "growth_engine", "SECRET METHOD TWO"))
     rows = run(prompt_store.list_versions(db))
     assert [(r["name"], r["version"]) for r in rows] == [("growth_engine", "v2"), ("growth_engine", "v1")]
-    assert all(set(r) == {"name", "version", "uploaded_at", "sha256"} for r in rows)
+    assert all(set(r) == {"name", "version", "uploaded_at", "sha256", "chars"} for r in rows)
     assert "SECRET" not in json.dumps(rows)
 
 
@@ -77,7 +77,6 @@ def test_the_list_holds_name_version_date_and_hash_never_the_text():
     ("not_a_prompt", "text", "unknown prompt name"),
     ("../growth_engine", "text", "unknown prompt name"),
     ("growth_engine", "   \n", "empty"),
-    ("growth_engine", "x" * (prompt_store.MAX_TEXT_CHARS + 1), "over"),
 ])
 def test_an_upload_the_store_refuses_adds_nothing(name, text, why):
     db = t.FakeDB()
@@ -235,3 +234,37 @@ def test_a_narrative_written_under_a_retired_file_prompt_is_not_served_as_the_st
     assert fresh.cache_hit is False and adapter.calls == 1, "a store prompt writes its own narrative"
     assert {d["key"] for d in db["llm_narratives"].docs} >= {old_key} and len(db["llm_narratives"].docs) == 2, "the old record is kept"
     assert prompt_store.tag_for("v1") == "store:v1" != "v1"
+
+
+# --- the 10,000 character limit (spec section 1) -----------------------------------------------------------------------------
+
+def test_the_limit_is_10000_characters():
+    assert prompt_store.MAX_TEXT_CHARS == 10_000
+
+
+def test_a_save_at_exactly_10000_characters_succeeds_and_nothing_is_truncated():
+    db = t.FakeDB()
+    db["prompts"].docs.clear()
+    text = "".join(chr(97 + i % 26) for i in range(10_000))
+    run(prompt_store.upload(db, "growth_engine", text))
+    assert db["prompts"].docs[0]["text"] == text and len(db["prompts"].docs[0]["text"]) == 10_000
+    assert run(prompt_store.load(db, "growth_engine")).text == text
+
+
+def test_a_save_at_10001_characters_is_refused_with_the_count_and_the_limit_and_stores_nothing():
+    db = t.FakeDB()
+    db["prompts"].docs.clear()
+    with pytest.raises(prompt_store.PromptRefused) as refused:
+        run(prompt_store.upload(db, "growth_engine", "x" * 10_001))
+    assert str(refused.value) == "Prompt is 10001 characters; the limit is 10,000."
+    assert db["prompts"].docs == []
+
+
+def test_the_list_counts_the_characters_of_each_version_without_the_text():
+    db = t.FakeDB()
+    db["prompts"].docs.clear()
+    run(prompt_store.upload(db, "growth_engine", "SECRET " + "y" * 93))
+    run(prompt_store.upload(db, "growth_engine", "a\r\nb"))        # stored with \n, counted as stored
+    rows = run(prompt_store.list_versions(db))
+    assert [(r["version"], r["chars"]) for r in rows] == [("v2", 3), ("v1", 100)]
+    assert "SECRET" not in json.dumps(rows)

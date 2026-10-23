@@ -409,10 +409,10 @@ def _link(request: Request, token: str) -> str:
 
 class PromptUpload(BaseModel):
     name: str
-    text: str
+    text: str      # no max_length here: prompt_store.upload refuses over prompt_store.MAX_TEXT_CHARS with the owner-page message
 
 
-# Prompt text goes in and never comes out: the list has name, version, date and hash (docs/specs/prompt-store.md). Owner token only
+# Prompt text goes in and never comes out: the list has name, version, date, hash and character count (docs/specs/prompt-store.md). Owner token only
 # (access_guard, /api/admin/...).
 @api.get("/admin/prompts")
 async def admin_prompts():
