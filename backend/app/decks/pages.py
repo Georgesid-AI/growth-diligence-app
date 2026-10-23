@@ -14,7 +14,8 @@ column. Layout fields (next_to, bar_year, tick, box, table) are kept with the gr
 
 "figure" says whether the page carries a figure written in digits (claims.figures: a number that is not a date; a number
 written in words, "three million", is none; a line that is only the page's own number, "3", "Slide 3", "3/25", is none either:
-claims.page_number_line, George, 2026-10-22, review of PR #159). Decision 1b (George, 2026-10-22, PR #158): only such a page may
+claims.page_number_line, George, 2026-10-22, review of PR #159; nor is a digit in the page's furniture, a header or footer line, a phone
+number, a URL or an email: claims.page_figures, George, 2026-10-23). Decision 1b (George, 2026-10-22, PR #158): only such a page may
 go to the model.
 Pages whose figures section 2 drops as background or cited research (claims.excluded_pages) are marked "excluded" and are not
 sent either.
@@ -77,8 +78,10 @@ def page_grid(blocks: List[Dict], ticks: set = frozenset()) -> Optional[Dict]:
         offset = max(c["row"] for c in cells)
     where = parser._where(first)
     number = int(where.get("slide") or where.get("page") or 0)
+    # A figure counts when it stands outside the page's furniture: the page number, a header or footer line, a phone number, a URL, an email.
+    lines = [b["text"] for b in texts if not claims.page_furniture_line(b)] + [t["text"] for ts in tables.values() for t in ts]
     return {"type": "page", **where, "header_rows": 0, "cells": cells, "tables": listed,
-            "figure": any(claims.figures(c["text"]) and not claims.page_number_line(c["text"], number) for c in cells)}
+            "figure": any(claims.page_figures(text, number) for text in lines)}
 
 
 def has_digit_figure(grid: Dict) -> bool:

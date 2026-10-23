@@ -135,6 +135,8 @@ class FakeCollection:
             if _matches(d, flt):
                 _set_paths(d, update.get("$set", {}))
                 _inc_paths(d, update.get("$inc", {}))
+                for k in update.get("$unset", {}):
+                    d.pop(k, None)
                 return FakeResult(modified_count=1)
         if upsert:
             # Like Mongo: an upsert seeds the new document from the filter's

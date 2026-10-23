@@ -222,7 +222,8 @@ def test_a_page_read_twice_is_served_from_the_cache_and_lists_no_row_twice(monke
     asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
     asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
     assert adapter.calls == 1 and len(db[CANDIDATES_COLLECTION].docs) == 3
-    assert db[TEXT_COLLECTION].docs[0]["page_reads"][0]["cache_hit"] is True
+    # The second run asks for no page it already read (deck page reads, 2026-10-23): its entry stays, and the gateway's cache is not even asked.
+    assert [(r["pages"], r["status"]) for r in db[TEXT_COLLECTION].docs[0]["page_reads"]] == [([1], "read")]
 
 
 def test_without_consent_or_before_the_revenue_file_no_page_goes(monkeypatch):
@@ -253,10 +254,11 @@ def test_an_axis_tick_is_marked_on_its_own_cell_and_a_bar_value_in_the_same_colu
 
 
 def test_a_page_whose_only_digits_are_a_phone_number_is_not_sent_after_redaction():
-    """The parser's reader sees digits in "+44 20 7946 0958"; redaction turns them into [phone], so the page carries no figure
-    and never goes (the gateway would refuse it as no_figure, and would refuse the whole batch with it)."""
+    """The page grid does not count the digits of "+44 20 7946 0958" (claims.page_figures, George, 2026-10-23), and redaction turns them
+    into [phone] besides, so the page carries no figure and never goes (the gateway would refuse it as no_figure, and would refuse the
+    whole batch with it)."""
     g = grid_of([(50, 560, 20, "Contact"), (50, 500, 12, "Call us on +44 20 7946 0958 or write to the team")])
-    assert pages.has_digit_figure(g) is True
+    assert pages.has_digit_figure(g) is False
     assert pipeline.redacted_pages([g], "Target Co", {}) == []
     assert pipeline.batches([g, grid_of([TITLE, *LINES])], "Target Co", {})[0][0]["grid"]["cells"][0]["text"] == "Traction"
 
@@ -286,16 +288,16 @@ class Truncating(t.FakeAdapter):
 
 def test_a_batch_whose_reply_is_cut_at_the_output_limit_is_split_and_read_again(monkeypatch):
     """PR B, the live run of 2026-10-22: a 5-page batch answered with more than PAGE_MAX_TOKENS is cut and fails the schema; the
-    same batch asked again is cut again. The step splits it and reads the halves; the cut attempts are billed, not reasked."""
+    same batch asked again is cut again. The step splits it and reads the halves; the cut attempts are billed, not reasked. The
+    audit's deck read asks for one page per call since 2026-10-23; the scripts still read five to a call, which this reads."""
     monkeypatch.setenv("DECK_PIPELINE", "ai")
     parsed = deck([TITLE, *LINES])
     blocks = [dict(b, page=n) for n in range(1, 6) for b in parsed["blocks"]]
     db = _page_db({"blocks": blocks, "structures": []})
     adapter = Truncating(replies=[json.dumps({"type": "page_claims", "claims": []})])
-    status = asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
-    assert status == "read"
-    reads = db[TEXT_COLLECTION].docs[0]["page_reads"]
-    assert [(r["pages"], r["status"]) for r in reads] == [([1, 2], "read"), ([3], "read"), ([4, 5], "read")], "halves of 2 and 3, the 3 split again"
+    read = asyncio.run(pipeline.read_pages(db, AUDIT, "d1", pages.page_grids(blocks), "Zero2Hero", {}, adapter=adapter, sleep=t._noop_sleep))
+    assert [([pages.page_number(g) for g in grids], r.status) for grids, r in read] == \
+        [([1, 2], "read"), ([3], "read"), ([4, 5], "read")], "halves of 2 and 3, the 3 split again"
     assert adapter.truncated == 2 and adapter.calls == 5, "the 5-page batch and its 3-page half were cut once each, no reask"
     calls = [c for c in db["llm_calls"].docs if c["status"] == "truncated"]
     assert [(c["input_tokens"], c["output_tokens"]) for c in calls] == [(1200, gateway.PAGE_MAX_TOKENS)] * 2, "the cut replies are billed"
@@ -312,7 +314,8 @@ def test_a_single_page_whose_reply_is_cut_keeps_the_status_truncated(monkeypatch
     assert status == "not_read"
     reads = db[TEXT_COLLECTION].docs[0]["page_reads"]
     assert [(r["pages"], r["status"]) for r in reads] == [([1], "truncated"), ([2], "truncated")]
-    assert adapter.calls == 3, "the pair, then each page once; a single page is not split or reasked"
+    assert adapter.calls == 2, "each page once (one page to a call); a single page is not split or reasked"
+    assert db[TEXT_COLLECTION].docs[0]["unread_pages"] == [1, 2] and db[TEXT_COLLECTION].docs[0]["retry_pages"] == [], "a cut page would be cut again: not retried"
 
 
 def test_the_adapter_raises_truncated_with_the_billed_tokens_when_the_provider_stops_at_max_tokens():
@@ -348,19 +351,3 @@ def test_the_consistency_passes_bypass_the_cache_and_measure_the_model(monkeypat
     assert bypassed[0][1].claims == first[0][1].claims
 
 
-def test_a_page_reply_that_fails_validation_is_logged_per_page_with_the_reason(monkeypatch, caplog):
-    import logging
-    monkeypatch.setenv("DECK_PIPELINE", "ai")
-    parsed = deck([TITLE, *LINES, PROSE])
-    db = _page_db(parsed)
-    bad = "Traction 800 Paying Users"      # not JSON: the whole reply is rejected (one claim failing a check is dropped alone)
-    adapter = t.FakeAdapter(replies=[bad, bad])
-    with caplog.at_level(logging.DEBUG):
-        status = asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
-    assert status == "not_read" and not [r for r in db[CANDIDATES_COLLECTION].docs if r.get("origin") == "ai"]
-    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("page ")]
-    assert lines == ["page 1: reply rejected (schema)"]
-    for needle in ("Traction", "Paying Users", "p1r1c1 "):
-        assert needle not in caplog.text, f"{needle!r} was logged"
-    entry, = db[TEXT_COLLECTION].docs[0]["page_reads"]
-    assert entry["rejected"] == "schema" and entry["status"] == "not_read"

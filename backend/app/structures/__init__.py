@@ -369,8 +369,35 @@ async def _deck_status(db, audit_id: str, deck_id: str, status: str, message: Op
     change = {"$set": {"ai_status": status, "ai_message": message}}
     if status == "reading":
         change["$unset"] = {"read_progress": ""}        # a new read starts at "queued", not at the page the last one reached
+        change["$set"]["reading_since"] = datetime.now(timezone.utc).isoformat()
     await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id}, change)
     return status
+
+
+STALE_READING_SECONDS = 600     # a deck "reading" for longer is taken as not read: the process that read it died (George, 2026-10-23)
+RESTARTED = "restarted"         # the deck's ai_message after such a restart; the panel shows "AI read: restarted" until the first page is read
+
+
+async def queue_stale_reading(db, audit_id: str, now: Optional[datetime] = None) -> List[str]:
+    """Run audit reads again, with no new upload, every deck "reading" since more than STALE_READING_SECONDS (a read that never ended:
+    the server restarted, the task died): marks it "reading" again with the message "restarted" and returns the ids, for the caller to
+    read. The start is the deck's `reading_since`, else its upload time; a deck with neither is left alone. Pages read are kept."""
+    now = now or datetime.now(timezone.utc)
+    found = await db[TEXT_COLLECTION].find({"audit_id": audit_id, "ai_status": "reading"},
+                                           {"_id": 0, "deck_id": 1, "reading_since": 1, "uploaded_at": 1}).to_list(1000)
+    stale = []
+    for d in found:
+        try:
+            since = datetime.fromisoformat(d.get("reading_since") or d.get("uploaded_at") or "")
+        except ValueError:
+            continue
+        if since.tzinfo is None:
+            since = since.replace(tzinfo=timezone.utc)
+        if (now - since).total_seconds() > STALE_READING_SECONDS:
+            stale.append(d["deck_id"])
+    for deck_id in stale:
+        await _deck_status(db, audit_id, deck_id, "reading", RESTARTED)
+    return stale
 
 
 async def queue_decks(db, audit_id: str) -> List[str]:
@@ -405,6 +432,17 @@ async def queue_waiting(db, audit_id: str) -> List[str]:
     found = await db[TEXT_COLLECTION].find({"audit_id": audit_id, "ai_status": WAITING}, {"_id": 0, "deck_id": 1}).to_list(1000)
     if not found or not await revenue_ready(db, audit_id):
         return []
+    for d in found:
+        await _deck_status(db, audit_id, d["deck_id"], "reading")
+    return [d["deck_id"] for d in found]
+
+
+async def queue_unread_pages(db, audit_id: str) -> List[str]:
+    """Run audit reads again, with no new upload, the pages of a deck a failure left unread (a timeout, an error; George, 2026-10-23,
+    deck page reads): marks such decks "reading" and returns their ids, for the caller to read. process_deck_pages asks the model
+    only for those pages. A deck being read, waiting for the revenue file or missing the prompt is not queued here."""
+    found = [d for d in await db[TEXT_COLLECTION].find({"audit_id": audit_id, "ai_status": {"$in": [READ, NOT_READ, STOPPED]}},
+                                                       {"_id": 0, "deck_id": 1, "retry_pages": 1}).to_list(1000) if d.get("retry_pages")]
     for d in found:
         await _deck_status(db, audit_id, d["deck_id"], "reading")
     return [d["deck_id"] for d in found]

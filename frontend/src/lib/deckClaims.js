@@ -348,7 +348,7 @@ export function aiReadStatus(deck) {
     case "waiting": return DECK_AI_STATUS.waiting;
     case "reading": {
       const p = deck.read_progress;
-      return p && p.total ? `page ${Math.min(p.done + 1, p.total)} of ${p.total}` : "queued";
+      return p && p.total ? `page ${Math.min(p.done + 1, p.total)} of ${p.total}` : deck.ai_message === "restarted" ? "restarted" : "queued";
     }
     case "python_only": return "not run (AI-assisted reading is off)";
     case "read": case "not_read": case "stopped": case "prompt_missing":
@@ -370,7 +370,9 @@ export function deckRunLog(deck) {
   // The server sends the S26 line with a deck the page read left unread; under DECK_PIPELINE=rules the rules read still lists claims, so the old line stands (L5).
   if (deck.ai_status === "python_only" && deck.ai_message) return [deck.ai_message];
   if (deck.ai_status === "prompt_missing") return [deck.ai_message || PROMPT_MISSING_LINE];
-  const lines = [deck.figure_pages != null && deck.pages ? deckReadLine(deck) : `AI reading: ${DECK_AI_STATUS[deck.ai_status] || deck.ai_status}`];
+  const lines = [deck.figure_pages != null && deck.pages ? deckReadLine(deck) : `AI reading: ${deck.ai_status === "reading" && deck.ai_message === "restarted" ? "restarted" : DECK_AI_STATUS[deck.ai_status] || deck.ai_status}`];
+  if (deck.skipped_pages?.length) lines.push(`Skipped the following pages (${deck.skipped_pages.join(", ")}) – no figures relevant for the audit`);
+  if (deck.ai_status !== "reading") for (const n of deck.unread_pages || []) lines.push(`page ${n} not read`);
   if (deck.ai_status === "stopped" && deck.ai_message) lines.push(deck.ai_message);
   if (deck.sent_pages?.length) lines.push(`Sent to the model: ${deck.page_unit || "slide"}s ${deck.sent_pages.join(", ")}`);
   if (deck.periods_corrected) lines.push(`Periods corrected from the header cells: ${deck.periods_corrected}`);
@@ -387,10 +389,10 @@ export function defaultDeck(decks) {
   return [...decks].sort((a, b) => String(b.uploaded_at || "").localeCompare(String(a.uploaded_at || "")))[0].deck_id;
 }
 
-/** [{id, label, count}]: "All" first, then each deck (most recent first) with its claim count. */
+/** [{id, label, count}]: "All" first, then each deck in the order it was uploaded, left to right (a new deck on the right), with its claim count. */
 export function deckTabs(decks, candidates) {
   const count = (id) => (candidates || []).filter((c) => c.deck_id === id).length;
-  const ordered = [...(decks || [])].sort((a, b) => String(b.uploaded_at || "").localeCompare(String(a.uploaded_at || "")));
+  const ordered = [...(decks || [])].sort((a, b) => String(a.uploaded_at || "").localeCompare(String(b.uploaded_at || "")));
   return [{ id: ALL_DECKS, label: "All", count: (candidates || []).length },
     ...ordered.map((d) => ({ id: d.deck_id, label: d.file, count: count(d.deck_id) }))];
 }

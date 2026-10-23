@@ -48,6 +48,7 @@ def page_calls(client):
 def forget_the_first_read(client):
     """A trigger that never fired: the deck is waiting again and the cached reply of the first read is gone, so a read shows as a call."""
     client.db[decks.TEXT_COLLECTION].docs[0]["ai_status"] = "waiting"
+    client.db[decks.TEXT_COLLECTION].docs[0].pop("page_reads", None)       # never read: no page is kept from an earlier run
     client.db[gateway.STRUCTURES_COLLECTION].docs.clear()
     client.state["adapter"].payloads.clear()
 

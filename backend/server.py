@@ -1919,7 +1919,7 @@ async def list_deck_candidates(audit_id: str):
         raise HTTPException(404, "Audit not found")
     deck_fields = {"_id": 0, "deck_id": 1, "file": 1, "format": 1, "page_unit": 1, "pages": 1, "uploaded_at": 1,
                    "ai_status": 1, "ai_message": 1, "sent": 1, "periods_corrected": 1, "figure_pages": 1, "read_progress": 1,
-                   "page_reads": 1}
+                   "page_reads": 1, "skipped_pages": 1, "unread_pages": 1}
     found = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, deck_fields).to_list(100)
     found.sort(key=lambda d: d.get("uploaded_at") or "", reverse=True)
     for d in found:
@@ -2418,6 +2418,9 @@ async def run_stage(audit_id: str, stage: str, background: BackgroundTasks):
                 # store holds it (George, 2026-10-23, review of PR 164, M6).
                 # A deck still waiting for the revenue file is read again then too, once the audit has it (George, 2026-10-23, decision 2c).
                 for deck_id in await structures.queue_prompt_missing(db, audit_id) + await structures.queue_waiting(db, audit_id):
+                    background.add_task(structures.process_deck_safely, db, audit_id, deck_id)
+                # A deck with pages a timeout or an error left unread is read again for those pages only (deck page reads, 2026-10-23).
+                for deck_id in await structures.queue_unread_pages(db, audit_id) + await structures.queue_stale_reading(db, audit_id):
                     background.add_task(structures.process_deck_safely, db, audit_id, deck_id)
                 deck_docs = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, {"_id": 0, "ai_status": 1}).to_list(100)
                 if not deck_docs:
