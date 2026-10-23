@@ -207,6 +207,10 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
     for batch, result in await read_pages(db, audit_id, deck_id, grids, audit.get("company_name"), mapping, adapter, sleep, progress=progress):
         numbers = [page_grids_mod.page_number(g) for g in batch]
         entry = {"pages": numbers, "status": result.status, "reason": result.reason, "key": result.key, "cache_hit": result.cache_hit}
+        if result.rejected:
+            entry["rejected"] = result.rejected
+            for page in numbers:        # the validator's reason (closed words), never the reply text
+                logger.warning("page %d: reply rejected (%s)", page, result.rejected)
         if result.status == "stopped":
             stopped_message = result.reason
         if result.status == "read":

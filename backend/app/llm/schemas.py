@@ -763,6 +763,7 @@ class StructureRead(BaseModel):
 
     status: StructureStatus
     reason: Optional[str] = None
+    rejected: Optional[str] = None          # a page reply that failed validation: the check and schema fields, closed words, never the reply
     type: str
     model_type: Optional[str] = None
     file_type: Optional[str] = None

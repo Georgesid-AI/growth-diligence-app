@@ -346,3 +346,21 @@ def test_the_consistency_passes_bypass_the_cache_and_measure_the_model(monkeypat
                                                use_cache=False))
     assert adapter.calls == 2 and bypassed[0][1].cache_hit is False and bypassed[0][1].input_tokens > 0
     assert bypassed[0][1].claims == first[0][1].claims
+
+
+def test_a_page_reply_that_fails_validation_is_logged_per_page_with_the_reason(monkeypatch, caplog):
+    import logging
+    monkeypatch.setenv("DECK_PIPELINE", "ai")
+    parsed = deck([TITLE, *LINES, PROSE])
+    db = _page_db(parsed)
+    bad = "Traction 800 Paying Users"      # not JSON: the whole reply is rejected (one claim failing a check is dropped alone)
+    adapter = t.FakeAdapter(replies=[bad, bad])
+    with caplog.at_level(logging.DEBUG):
+        status = asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=adapter, sleep=t._noop_sleep))
+    assert status == "not_read" and not [r for r in db[CANDIDATES_COLLECTION].docs if r.get("origin") == "ai"]
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("page ")]
+    assert lines == ["page 1: reply rejected (schema)"]
+    for needle in ("Traction", "Paying Users", "p1r1c1 "):
+        assert needle not in caplog.text, f"{needle!r} was logged"
+    entry, = db[TEXT_COLLECTION].docs[0]["page_reads"]
+    assert entry["rejected"] == "schema" and entry["status"] == "not_read"
