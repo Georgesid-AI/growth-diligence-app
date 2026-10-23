@@ -414,8 +414,10 @@ def test_no_reason_or_metric_name_reaches_the_model_with_upload_content(engine_r
 
 
 _LOG_LEVELS = frozenset({"debug", "info", "warning", "warn", "error", "critical", "exception", "log"})
-# The only calls that may take the exception object: they return a class name or a code name, never its text.
-SAFE_EXCEPTION_READERS = frozenset({"type", "_engine_step"})
+# The only calls that may take the exception object: they return a class name or a code name, never its text; except the
+# outermost 500 handler's helper (George, 2026-10-23): the traceback's last frame as file:line in function, never the message.
+# tests/test_endpoint_errors.py pins what it returns and that the request never reaches the log.
+SAFE_EXCEPTION_READERS = frozenset({"type", "_engine_step", "_last_frame"})
 # A parameter with one of these names, or typed as an exception, is treated as the exception object.
 _EXCEPTION_PARAM_NAMES = frozenset({"exc", "e", "err", "error", "exception"})
 
@@ -564,8 +566,8 @@ def test_removed_direction_words_no_longer_accept_a_dropped_sign(text):
 
 
 def test_the_outermost_500_handler_and_the_gateway_failure_log_type_run_id_and_step_only(monkeypatch, caplog):
-    """An error whose message quotes a cell reaches both catch-all handlers: the log carries the
-    error type and the request or run, never the message or a traceback."""
+    """An error whose message quotes a cell reaches both catch-all handlers: the log carries the error type and the request or run,
+    never the message or a traceback. The outermost 500 handler adds the last frame (file:line in function, George 2026-10-23)."""
     pytest.importorskip("fastapi")
     import logging
     from fastapi.testclient import TestClient
@@ -583,7 +585,8 @@ def test_the_outermost_500_handler_and_the_gateway_failure_log_type_run_id_and_s
     client = TestClient(server.app, raise_server_exceptions=False)
     with caplog.at_level(logging.DEBUG):
         assert client.post("/api/runs/run-abc/narrative/growth_engine").status_code == 500
-    assert "unexpected error handling POST /api/runs/run-abc/narrative/growth_engine: error=RuntimeError" in caplog.text
+    assert "unexpected error handling POST /api/runs/run-abc/narrative/growth_engine: error=RuntimeError at=" in caplog.text
+    assert "Jane Doe" not in caplog.text
     caplog.clear()
 
     db = _db()
@@ -3248,20 +3251,26 @@ def test_every_page_reply_field_is_a_closed_word_a_number_or_a_cell_id():
         PageClaim.model_validate({**base, "note": "free text"})
 
 
-def test_a_page_reply_citing_a_cell_not_sent_or_carrying_text_is_rejected_with_a_closed_check(caplog):
+def test_a_page_reply_not_json_is_rejected_a_claim_citing_a_cell_not_sent_or_carrying_text_is_dropped_alone(caplog):
     first = json.loads(PAGE_REPLY)["claims"][0]
     with caplog.at_level(logging.DEBUG):
-        for sent, check in ((json.dumps({"type": PAGE_CLAIMS, "claims": [{**first, "value_cell": "p9r9c9"}]}), "other"),
-                            (json.dumps({"type": PAGE_CLAIMS, "claims": [{**first, "label_cell": "p5r1c1 Traction"}]}), "schema"),
-                            (json.dumps({"type": PAGE_CLAIMS, "claims": [{**first, "metric": "Revenue at Target Co"}]}), "metric_list"),
-                            ("Revenue £1,200,000 at Target Co", "schema")):
+        result, adapter = _send_page(_structure_db(), GOOD_PAGE, "Revenue £1,200,000 at Target Co")
+        assert (result.status, adapter.calls) == ("not_read", 2)
+        # George, 2026-10-23: a schema failure or a cell not sent inside one claim drops that claim only, the reply is read
+        for sent in (json.dumps({"type": PAGE_CLAIMS, "claims": [{**first, "value_cell": "p9r9c9"}]}),
+                     json.dumps({"type": PAGE_CLAIMS, "claims": [{**first, "label_cell": "p5r1c1 Traction"}]}),
+                     json.dumps({"type": PAGE_CLAIMS, "claims": [{**first, "metric": "Revenue at Target Co"}]})):
             result, adapter = _send_page(_structure_db(), GOOD_PAGE, sent)
-            assert (result.status, adapter.calls) == ("not_read", 2), check
+            assert (result.status, adapter.calls) == ("read", 1)
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("structure not read:")]
-    assert [line.rsplit(" check=", 1)[1] for line in lines] == ["other", "schema", "metric_list", "schema"]
+    assert [line.rsplit(" check=", 1)[1] for line in lines] == ["schema"]
     # The schema fields that failed, as closed names from the schema (PR B: the run of 2026-10-22 lost 10 replies to check=schema
     # with no way to tell which field); a cell not sent or a reply that is not JSON names none.
-    assert [line.split(" fields=")[1].split(" ")[0] for line in lines] == ["-", "label_cell", "metric", "-"]
+    assert [line.split(" fields=")[1].split(" ")[0] for line in lines] == ["-"]
+    rejected = [r.getMessage() for r in caplog.records if "claim rejected" in r.getMessage()]
+    assert [re.sub(r"page \d+", "page n", line) for line in rejected] == ["page n: claim rejected (cell not in batch)",
+                                                                            "page n: claim rejected (label_cell)",
+                                                                            "page n: claim rejected (metric)"]
     assert set(gateway.PAGE_FIELDS) == {"type", "claims", "metric", "value", "value_high", "unit", "unit_other", "period",
                                         "basis", "scenario", "value_cell", "label_cell", "period_cell"}
     logs = caplog.text + "".join(r.getMessage() for r in caplog.records)
@@ -3414,3 +3423,35 @@ def test_the_checker_flags_basis_and_scenario_are_closed_words_and_never_gateway
     text = json.dumps(item)
     for needle in ("Target Co", "Northbridge", "Traction", "150,000"):
         assert needle not in text, f"{needle!r} in a checked item"
+
+
+def test_the_page_cache_hit_log_line_holds_ids_a_hash_and_a_type_never_page_text(monkeypatch, caplog):
+    """The "structure cache hit" line (George, 2026-10-23) carries the audit, the step, the content hash and the type only."""
+    import logging
+    import test_page_usage_attribution as pu
+    db = pu.two_audits(monkeypatch)
+    adapter = t.FakeAdapter(replies=[json.dumps(pu.REPLY)])
+    pu.read(db, pu.AUDIT, "d1", adapter)
+    with caplog.at_level(logging.DEBUG):
+        pu.read(db, pu.AUDIT, "d1", adapter)
+    line, = [r.getMessage() for r in caplog.records if "structure cache hit" in r.getMessage()]
+    assert re.fullmatch(r"structure cache hit: run_id=\S+ step=structures hash=[0-9a-f]{64} type=page_claims", line), line
+    for needle in ("Paying Users", "annual revenue", "margins", "Traction", "deck.pdf"):
+        assert needle not in caplog.text, f"{needle!r} in the log"
+
+
+def test_the_claim_rejected_line_holds_a_page_number_and_schema_field_names_never_a_value(caplog):
+    """"page n: claim rejected (fields)" (George, 2026-10-23): a digit string and closed schema names. A claim whose period, unit_other
+    and metric quote a name and a figure never reaches the log."""
+    import logging
+    bad = {"metric": "Jane Doe (CEO)", "value": 123456789.0, "value_high": None, "unit": "USD", "unit_other": "Northbridge",
+           "period": "Northbridge 2022 plan", "basis": "projection", "scenario": "realistic", "value_cell": "p4r1c1",
+           "label_cell": None, "period_cell": None}
+    reply = json.dumps({"type": "page_claims", "claims": [bad]})
+    with caplog.at_level(logging.DEBUG):
+        gateway.parse_page_reply(reply, "p4r1c1: x")
+    line, = [r.getMessage() for r in caplog.records if "claim rejected" in r.getMessage()]
+    assert re.fullmatch(r"page (\d+|\?): claim rejected \((cell not in batch|claim|[a-z_]+)(, [a-z_]+)*\)", line), line
+    assert set(re.findall(r"[a-z_]+", line.split("(", 1)[1])) <= gateway.PAGE_FIELDS | {"claim"}
+    for needle in ("Jane", "Northbridge", "123456789", "2022"):
+        assert needle not in caplog.text, f"{needle!r} in the log"

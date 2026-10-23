@@ -203,7 +203,7 @@ _CUSTOMERS = re.compile(r"(?i)\b(?:customers?|clients?|subscribers?|accounts?)\b
 
 def _mi(month: str) -> int:
     """'2024-02' -> months since year 0."""
-    y, m = month.split("-")
+    y, m = month[:7].split("-")
     return int(y) * 12 + int(m) - 1
 
 

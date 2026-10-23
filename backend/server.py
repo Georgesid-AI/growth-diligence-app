@@ -3721,6 +3721,16 @@ async def llm_usage(run_id: str):
 app.include_router(api)
 
 
+def _last_frame(exc: BaseException) -> str:
+    """The traceback's last frame as file:line in function (file name only, no path)."""
+    tb = exc.__traceback__
+    while tb is not None and tb.tb_next is not None:
+        tb = tb.tb_next
+    if tb is None:
+        return "unknown"
+    return f"{os.path.basename(tb.tb_frame.f_code.co_filename)}:{tb.tb_lineno} in {tb.tb_frame.f_code.co_name}"
+
+
 @app.middleware("http")
 async def log_unexpected_errors(request, call_next):
     """Log any exception an endpoint does not handle, and answer with a readable 500.
@@ -3728,14 +3738,14 @@ async def log_unexpected_errors(request, call_next):
     Without this an unhandled exception is answered by the server's outermost error layer,
     which sits outside CORS: the browser then sees a bare network failure with no status and
     no text. Registered before the CORS middleware, so this response carries CORS headers and
-    the page can show the real status. Only the exception's class name is sent to the client
-    and to the log: the message and traceback can quote uploaded cell values.
+    the page can show the real status. Only the exception's class name is sent to the client. The log
+    also gets the traceback's last frame, file and line (George, 2026-10-23); never the message, the request or a full traceback.
     """
     try:
         return await call_next(request)
     except Exception as exc:
-        logger.error("unexpected error handling %s %s: error=%s", request.method, request.url.path,
-                     type(exc).__name__)
+        logger.error("unexpected error handling %s %s: error=%s at=%s", request.method, request.url.path,
+                     type(exc).__name__, _last_frame(exc))
         return JSONResponse(
             status_code=500,
             content={"detail": f"Unexpected server error ({type(exc).__name__}); the details are in the server log"},
