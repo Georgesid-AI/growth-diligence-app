@@ -711,6 +711,16 @@ class PageClaimsReply(BaseModel):
     claims: List[PageClaim]
 
 
+class PageReplyTop(BaseModel):
+    """The page reply's top-level object: the type word and a list. Each claim is validated on its own by gateway.parse_page_reply, so
+    one invalid claim drops that claim and not the reply."""
+
+    model_config = {"extra": "forbid"}
+
+    type: Literal[PAGE_CLAIMS]
+    claims: List[Any]
+
+
 def page_claims_output_schema() -> dict:
     """The JSON schema a page batch's call sends as `output_config.format.schema`. Written by hand like the others: the id and
     period formats and unit_other are checked by PageClaim after the reply arrives, the ids against the text by the gateway."""

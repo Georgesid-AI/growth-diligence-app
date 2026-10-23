@@ -335,8 +335,8 @@ def _normalised_key(label, kept, fiscal_year_end=12):
     return (label["item"], label["metric"], (claims.period_range(period, fiscal_year_end) or period) if period else None)
 
 
-_COMPARED = {"metric": lambda l: l["metric"], "period": lambda l: l.get("period"), "unit": _unit,
-             "actual_or_forecast": lambda l: l.get("actual_or_forecast")}
+_COMPARED = {"metric": lambda c: c["metric"], "period": lambda c: c.get("period"), "unit": _unit,
+             "actual_or_forecast": lambda c: c.get("actual_or_forecast")}
 
 
 def differing_fields(passes):

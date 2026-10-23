@@ -1684,22 +1684,38 @@ def _schema_fields(exc: Exception) -> List[str]:
     return sorted(found)
 
 
+def _page_of(raw) -> str:
+    """The page number of a raw claim's value_cell ("p5r4c3" -> "5"), "?" when it has none: a closed digit string, never text."""
+    cell = raw.get("value_cell") if isinstance(raw, dict) else None
+    match = re.match(r"p([1-9]\d*)r", cell) if isinstance(cell, str) else None
+    return match.group(1) if match else "?"
+
+
 def parse_page_reply(reply: str, text: str) -> PageClaimsReply:
     """Validate a page batch's reply (docs/design/ai-reads-rules-check.md section 2), or raise GatewayError("parse_failed"): the
-    schema (extra fields forbidden, every field a closed word, a number or a cell id), then every cited cell (value, label,
-    period) one the batch sent. Nothing else is checked here: the figure, the unit and the period are checked against the page
-    by app/structures/page_check.py. The error names the fields that failed (closed schema names), so the "structure not read"
-    line says which field the model gets wrong (the live run of 2026-10-22 lost 10 replies to the schema with no way to tell)."""
+    top-level object (type word, a list of claims, no extra keys) rejects the whole reply. A claim that fails the schema (extra
+    fields forbidden, every field a closed word, a number or a cell id) is dropped alone and logged as "page n: claim rejected
+    (fields)" with the closed schema field names, never a value (George, 2026-10-23: one bad period lost a whole page). Then every
+    cited cell (value, label, period) must be one the batch sent. Nothing else is checked here: the figure, the unit and the period
+    are checked against the page by app/structures/page_check.py. The error names the fields that failed (closed schema names), so
+    the "structure not read" line says which field the model gets wrong."""
     try:
-        parsed = PageClaimsReply.model_validate(json.loads((reply or "").strip()))
+        top = schemas.PageReplyTop.model_validate(json.loads((reply or "").strip()))
     except Exception as exc:
         raise GatewayError("parse_failed", f"reply did not match the schema: {type(exc).__name__}", check=_schema_check(exc),
                            fields=_schema_fields(exc))
+    claims = []
+    for raw in top.claims:
+        try:
+            claims.append(schemas.PageClaim.model_validate(raw))
+        except Exception as exc:
+            fields = ", ".join(_schema_fields(exc)) or "claim"          # schema field names only, never the input they quote
+            logger.info("page %s: claim rejected (%s)", _page_of(raw), fields)
     known = _cited_cells(text, PAGE_CLAIMS)
-    for claim in parsed.claims:
+    for claim in claims:
         if any(c is not None and c not in known for c in (claim.value_cell, claim.label_cell, claim.period_cell)):
             raise GatewayError("parse_failed", "reply cites a cell that is not in the pages sent", check="other")
-    return parsed
+    return PageClaimsReply(type=top.type, claims=claims)
 
 
 def parse_sheet_reply(reply: str, text: str) -> SheetStructureReply:

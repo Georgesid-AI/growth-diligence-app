@@ -50,7 +50,7 @@ from app.llm import gateway as llm_gateway
 from app.llm import schemas as schemas_llm
 from app.llm import prompt_store
 from app.llm import redaction as llm_redaction
-from app.logsafety import install_secret_redaction, redact_secrets
+from app.logsafety import install_secret_redaction
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -3721,12 +3721,6 @@ async def llm_usage(run_id: str):
 app.include_router(api)
 
 
-def _error_message(exc: BaseException) -> str:
-    """The exception's message for the server log: secrets masked, one line, at most 200 characters. Never the request's body,
-    query or headers, and no traceback."""
-    return " ".join(redact_secrets(str(exc)).split())[:200]
-
-
 def _last_frame(exc: BaseException) -> str:
     """The traceback's last frame as file:line in function (file name only, no path)."""
     tb = exc.__traceback__
@@ -3745,14 +3739,13 @@ async def log_unexpected_errors(request, call_next):
     which sits outside CORS: the browser then sees a bare network failure with no status and
     no text. Registered before the CORS middleware, so this response carries CORS headers and
     the page can show the real status. Only the exception's class name is sent to the client. The log
-    also gets the message (secrets masked, 200 characters) and the traceback's last frame, file and line (George, 2026-10-23);
-    never the request or a full traceback.
+    also gets the traceback's last frame, file and line (George, 2026-10-23); never the message, the request or a full traceback.
     """
     try:
         return await call_next(request)
     except Exception as exc:
-        logger.error("unexpected error handling %s %s: error=%s message=%s at=%s", request.method, request.url.path,
-                     type(exc).__name__, _error_message(exc), _last_frame(exc))
+        logger.error("unexpected error handling %s %s: error=%s at=%s", request.method, request.url.path,
+                     type(exc).__name__, _last_frame(exc))
         return JSONResponse(
             status_code=500,
             content={"detail": f"Unexpected server error ({type(exc).__name__}); the details are in the server log"},

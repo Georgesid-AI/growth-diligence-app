@@ -1,6 +1,7 @@
 """A stored page-read reply that uses the full schema is listed, never a 500 (George, 2026-10-23: GET /decks raised ValueError after a page read).
 Also the unexpected-error log line names the exception message and the last traceback frame, never the request or deck content."""
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -88,12 +89,13 @@ def test_a_span_is_no_period_the_period_is_null_and_the_claim_is_kept(span):
     assert [(c.value, c.period) for c in got.claims] == [(150000, None), (7, "2023")]
 
 
-def test_a_form_that_is_neither_mapped_nor_a_span_is_still_refused_naming_the_field():
+def test_a_form_that_is_neither_mapped_nor_a_span_drops_that_claim_naming_the_field(caplog):
     for word in ("next year", "H3 2022"):
-        reply = {"type": "page_claims", "claims": [full("p1r1c1", 1, word)]}
-        with pytest.raises(gateway.GatewayError) as e:
-            gateway.parse_page_reply(json.dumps(reply), TEXT)
-        assert e.value.fields == ["period"]
+        reply = {"type": "page_claims", "claims": [full("p1r1c1", 1, word), full("p1r1c1", 2, "2023")]}
+        with caplog.at_level(logging.INFO, logger="growth.llm"):
+            got = gateway.parse_page_reply(json.dumps(reply), TEXT)
+        assert [c.value for c in got.claims] == [2]
+        assert "page 1: claim rejected (period)" in caplog.text
 
 
 def test_the_reply_with_a_page_form_and_a_span_is_read_stored_normalised_and_listed(reading):
@@ -114,11 +116,71 @@ def test_the_reply_with_a_page_form_and_a_span_is_read_stored_normalised_and_lis
     assert sorted((r["claim_type"], r["target_date"]) for r in rows) == [("customers", None), ("revenue", "2022-H2")]
 
 
-def test_fields_claims_is_the_models_own_validator_not_a_period(monkeypatch):
-    """A reply that fails on fields=claims fails on value_high without a value, or unit_other beside the wrong unit; the period
-    forms above never reach it. Pinned so that normalising periods is not mistaken for a fix of it."""
-    for bad in ({"value": None, "value_high": 3.0}, {"unit": "USD", "unit_other": "XYZ"}):
-        reply = {"type": "page_claims", "claims": [{**full("p1r1c1", 1, "H2 2022"), **bad}]}
-        with pytest.raises(gateway.GatewayError) as e:
-            gateway.parse_page_reply(json.dumps(reply), TEXT)
-        assert e.value.fields == ["claims"]
+# ---------------------------------------------------------------------------
+# A schema failure inside one claim drops that claim only (George, 2026-10-23)
+# ---------------------------------------------------------------------------
+TEXT2 = "p1r1c1: Revenue $1\np2r1c1: Customers 8"
+
+
+def lines(caplog):
+    return [r.getMessage() for r in caplog.records if "claim rejected" in r.getMessage()]
+
+
+def read(claims, text=TEXT2, **top):
+    return gateway.parse_page_reply(json.dumps({"type": "page_claims", "claims": claims, **top}), text)
+
+
+GOOD = full("p1r1c1", 1, "2023")
+
+
+@pytest.mark.parametrize("bad, fields", [
+    ({"period": "next year"}, "period"),
+    ({"metric": "vibes"}, "metric"),
+    ({"basis": "hope"}, "basis"),
+    ({"value_cell": "A1"}, "value_cell"),
+    ({"extra_key": 1}, "extra_key"),
+    ({"value": "lots"}, "value"),
+    ({"value": None, "value_high": 3.0}, "claim"),            # the model-level validators name no field
+    ({"unit": "USD", "unit_other": "XYZ"}, "claim"),
+])
+def test_one_invalid_claim_is_dropped_the_rest_of_the_reply_is_kept(bad, fields, caplog):
+    with caplog.at_level(logging.INFO, logger="growth.llm"):
+        got = read([GOOD, {**full("p2r1c1", 8, "2023", metric="customers", unit="count"), **bad}, full("p1r1c1", 5, "2024")])
+    assert [c.value for c in got.claims] == [1, 5]
+    page = "?" if "value_cell" in bad else "2"          # a claim with no valid cell id has no page
+    assert lines(caplog) == [f"page {page}: claim rejected ({fields})"]
+
+
+def test_two_invalid_claims_are_two_log_lines_with_every_failing_field(caplog):
+    with caplog.at_level(logging.INFO, logger="growth.llm"):
+        got = read([full("p1r1c1", 1, "soon", basis="hope"), GOOD, "junk"])
+    assert [c.value for c in got.claims] == [1]
+    assert lines(caplog) == ["page 1: claim rejected (basis, period)", "page ?: claim rejected (claim)"]
+
+
+def test_a_reply_whose_claims_are_all_invalid_is_an_empty_reply_not_a_failure():
+    assert read([full("p1r1c1", 1, "soon")]).claims == []
+
+
+@pytest.mark.parametrize("top, fields", [
+    ({"type": "sheet_structure"}, ["type"]),
+    ({"claims": {"a": 1}}, ["claims"]),
+    ({"extra": 1}, ["extra"]),
+])
+def test_an_invalid_top_level_object_rejects_the_whole_reply(top, fields):
+    reply = {"type": "page_claims", "claims": [GOOD], **top}
+    with pytest.raises(gateway.GatewayError) as e:
+        gateway.parse_page_reply(json.dumps(reply), TEXT2)
+    assert e.value.reason == "parse_failed" and e.value.fields == fields
+
+
+@pytest.mark.parametrize("reply", ["not json", "[]", '{"claims": []}', '{"type": "page_claims"}'])
+def test_a_reply_that_is_not_the_object_rejects_the_whole_reply(reply):
+    with pytest.raises(gateway.GatewayError) as e:
+        gateway.parse_page_reply(reply, TEXT2)
+    assert e.value.reason == "parse_failed"
+
+
+def test_a_cell_the_pages_did_not_send_still_rejects_the_whole_reply():
+    with pytest.raises(gateway.GatewayError):
+        read([GOOD, full("p9r9c9", 1, "2023")])
