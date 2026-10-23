@@ -17,6 +17,7 @@ HEADLINE = "Headline"
 BY_SEGMENT = "By Segment"
 NRR_BY_COHORT = "NRR by Cohort"
 NRR_SERIES = "NRR Series"
+CHURN_SERIES = "Churn Series"
 CAC_BY_QUARTER = "CAC by Quarter"
 PATH_TO_PLAN = "Path to Plan"
 ACV_BANDS = "ACV Bands"
@@ -25,7 +26,7 @@ SEGMENT_MIX = "Segment Mix"
 SEGMENT_MIX_DETAIL = "Segment Mix Detail"
 ANOMALIES = "Anomalies"
 MISSING_DATA = "Missing Data"
-DATA_SHEETS = (HEADLINE, BY_SEGMENT, NRR_BY_COHORT, NRR_SERIES, CAC_BY_QUARTER, PATH_TO_PLAN,
+DATA_SHEETS = (HEADLINE, BY_SEGMENT, NRR_BY_COHORT, NRR_SERIES, CHURN_SERIES, CAC_BY_QUARTER, PATH_TO_PLAN,
                ACV_BANDS, SEGMENT_BASE, SEGMENT_MIX, SEGMENT_MIX_DETAIL, ANOMALIES, MISSING_DATA)
 
 NOT_ON_A_SHEET = "not on a data sheet"
@@ -60,7 +61,7 @@ def data_sheet_for(source_key: str, results: Optional[dict] = None) -> str:
     """The sheet of this workbook that carries the cited value, or NOT_ON_A_SHEET.
 
     Never guesses: a value the export does not write (cohort grids, interquartile ranges,
-    won/lost counts, monthly churn) is reported as not on a data sheet rather than
+    won/lost counts) is reported as not on a data sheet rather than
     pointed at a nearby one.
     """
     p = _segments(source_key)
@@ -88,7 +89,11 @@ def data_sheet_for(source_key: str, results: Optional[dict] = None) -> str:
             return NRR_SERIES
         return NOT_ON_A_SHEET
     if head == "gross_churn":
-        return HEADLINE if p[1] == "overall_pct" else NOT_ON_A_SHEET
+        if p[1] == "overall_pct":
+            return HEADLINE
+        if p[1] in ("series", "monthly_series") and leaf in ("churn_pct", "month"):
+            return CHURN_SERIES
+        return NOT_ON_A_SHEET
     if head == "sales_cycle":
         if p[1] == "median_days":
             return HEADLINE

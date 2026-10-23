@@ -287,6 +287,7 @@ SERVER_ONLY_FIELDS = frozenset({
     "values",                       # founder_involved_excluded.values are raw cells (cohort `data.values` is allowed by parent)
     "value_label",                  # acv_path.overall_band: display string, dashboard only
     "required_vs_observed_12m_reason", "required_vs_observed_24m_reason",   # acv_path: not yet allowlisted
+    "monthly_series",               # gross_churn: the register's monthly rate (engine contract 8); test_the_monthly_churn_series_never_reaches_a_narrative_payload
 })
 
 # (file, function) of log calls that may carry a traceback. Empty: every log call carries error
@@ -1484,7 +1485,7 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             # 2026-10-20: the period that cannot be paired, the unit-economics reason, the stale marker
                             "PERIOD_UNCLEAR", "period_unclear", "UNIT_ECONOMICS_REASON", "UNIT_ECONOMICS", "results_stale",
                             # 2026-10-23 (engine contract 8): the monthly-churn reason and the metric each recurring type is tested against
-                            "MONTHLY_CHURN_REASON", "RECURRING_METRIC",
+                            "CHURN_RATE_UNCLEAR_REASON", "RECURRING_METRIC",
                             *MATCHING_SERVER_ONLY})
 # The functions that log about the register, and the only things their log calls may name.
 REGISTER_LOGGERS = frozenset({"_claim_rows", "claim_register", "claim_register_csv", "update_claim_inputs", "answer_turnover",
@@ -3481,3 +3482,25 @@ def test_deck_page_reads_log_and_store_page_numbers_and_counts_only(monkeypatch,
     assert lines == [f"page 3 not read: run_id={AUDIT} deck_id=d1 status=not_read reason=-"]
     for needle in ("Traction", "Paying Users", "150,000", "Zero2Hero"):
         assert needle not in json.dumps({k: doc[k] for k in ("skipped_pages", "unread_pages", "retry_pages")}) + " ".join(lines)
+
+
+# --- 2026-10-23 (engine contract 8): the monthly gross revenue churn series is the register's, not the narrative's --------------
+
+MONTHLY_CHURN_SENTINEL = 0.4321
+
+
+def test_the_monthly_churn_series_never_reaches_a_narrative_payload():
+    assert "monthly_series" not in gateway.OUTBOUND_FIELDS
+    db = _db()
+    block = db["audits"].docs[0]["results"]["gross_churn"] = cf_gross_churn()
+    assert block["monthly_series"], "fixture: the series is in the stored results"
+    _, sent = _generate(db)
+    churn = sent["metrics"]["gross_churn"]
+    assert "monthly_series" not in churn and churn["series"], "the trailing-12-month series still goes"
+    assert str(MONTHLY_CHURN_SENTINEL) not in json.dumps(sent) and "monthly_series" not in set(_keys(sent))
+
+
+def cf_gross_churn():
+    import contract_fixtures as cf
+    return cf.gross_churn(0.061, series=[{"month": "2026-06", "churn_pct": 0.061}],
+                          monthly=[{"month": "2026-06", "churn_pct": MONTHLY_CHURN_SENTINEL}])

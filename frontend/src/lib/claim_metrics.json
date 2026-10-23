@@ -8,6 +8,7 @@
     "New MRR": "currency",
     "NRR (12-month)": "%",
     "Gross revenue churn": "%",
+    "Monthly gross revenue churn": "%",
     "ACV": "currency",
     "Median sales cycle": "days",
     "Win rate": "%",

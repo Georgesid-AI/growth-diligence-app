@@ -44,9 +44,11 @@ NO_PERIOD = "no period stated"
 PERIOD_NOT_READ = "Period not read – set it in the claim row"
 # George, 2026-10-20 (finding A): the figures of one table cell whose header holds a different number of periods have none, and read this.
 PERIOD_UNCLEAR = "Period unclear – confirm"
-# George, 2026-10-23 (engine contract 8): the engine holds gross revenue churn as a trailing-12-month rate, so a churn claim the deck states
-# as a monthly rate has no figure to be tested against; a rate with no such word is read as the trailing-12-month rate at the period end.
-MONTHLY_CHURN_REASON = "monthly churn: the engine computes the trailing-12-month rate only, not a monthly one"
+# George, 2026-10-23 (engine contract 8, decision on PR 171): the engine holds gross revenue churn as a trailing-12-month rate and as a monthly one.
+# A churn claim worded monthly is tested against the month's rate, any other with a period against the trailing-12-month rate at the period
+# end; a churn claim with neither wording nor period could be either, and is not tested.
+CHURN_RATE_UNCLEAR_REASON = ("churn rate unclear: the trailing-12-month rate (Gross revenue churn) or the monthly rate (Monthly gross revenue churn)"
+                             " – word it monthly or set the period")
 # George, 2026-10-19 (issue #136, decision 2): a contract value (annual or total contract value, contracted revenue, contracted or
 # committed ARR or MRR, CARR) is typed but not computed: never matched to engine revenue, Unsupported with this reason.
 CONTRACT_VALUE = "Contract value"
@@ -141,6 +143,7 @@ NO_APP_METRIC = ("no metric", "metric does not fit the claim's unit")      # the
 # Table 2a. kind: how the claim's period reads the metric (table 2b): "sum" over the period's months, the value in the
 # period's end "month", one calendar "quarter", or the "asof" figure. `seg`: the engine splits it by segment.
 # `missing`: words of the engine's Missing Data entry that stand for the metric.
+MONTHLY_CHURN = "Monthly gross revenue churn"      # the monthly rate of gross_churn.monthly_series; "Gross revenue churn" is the trailing-12-month one
 METRICS: Dict[str, dict] = {
     "Revenue": dict(kind="sum", unit="currency", direction="higher", seg=True, missing=("arr / mrr",)),
     "ARR": dict(kind="month", unit="currency", direction="higher", seg=True, missing=("arr / mrr",)),
@@ -149,6 +152,7 @@ METRICS: Dict[str, dict] = {
     "New MRR": dict(kind="quarter", unit="currency", direction="higher", seg=False, missing=("arr / mrr",)),
     "NRR (12-month)": dict(kind="month", unit="%", direction="higher", seg=True, missing=("nrr",)),
     "Gross revenue churn": dict(kind="month", unit="%", direction="lower", seg=False, missing=("gross revenue churn",)),
+    MONTHLY_CHURN: dict(kind="month", unit="%", direction="lower", seg=False, missing=("gross revenue churn",)),
     "ACV": dict(kind="asof", unit="currency", direction="higher", seg=True, missing=("arr / mrr",)),
     "Median sales cycle": dict(kind="asof", unit="days", direction="lower", seg=True, missing=("sales cycle",)),
     "Win rate": dict(kind="asof", unit="%", direction="higher", seg=False, missing=("win rate",)),
@@ -171,6 +175,7 @@ METRICS: Dict[str, dict] = {
 # latest valid source period.
 PERIOD_BLOCK = {"Revenue": "revenue_series", "ARR": "mrr_series", "MRR": "mrr_series", "Customer count": "customers_series",
                 "New MRR": "new_mrr_by_quarter", "NRR (12-month)": "nrr", "Gross revenue churn": "gross_churn",
+                MONTHLY_CHURN: "gross_churn_monthly",
                 "Gross margin": "cac_payback", "CAC payback": "cac_payback"}
 REVENUE_FILE_METRICS = ("Revenue", "ARR", "MRR", "Customer count", "New MRR")
 VOLUME = "Transaction volume"
@@ -200,7 +205,7 @@ _ACV = re.compile(r"\bACVs?\b")
 _SALES_CYCLE = re.compile(r"(?i)\bsales cycles?\b")
 _WIN_RATE = re.compile(r"(?i)\bwin rates?\b")
 _PAYBACK = re.compile(r"(?i)\bpayback\b")
-_MONTHLY = re.compile(r"(?i)\bmonthly\b|\bper month\b|\ba month\b|\b(?:/|per\s)mo\b|\bMoM\b")
+_MONTHLY = re.compile(r"(?i)\bmonthly\b|\bper month\b|\ba month\b|(?:\bper\s|/\s?)mo\b|\bMoM\b")
 _CUSTOMERS = re.compile(r"(?i)\b(?:customers?|clients?|subscribers?|accounts?)\b")
 
 
@@ -382,12 +387,13 @@ class _Figures:
             else:
                 source = _source(series)
             return values, source, None
-        if m in ("NRR (12-month)", "Gross revenue churn"):
+        if m in ("NRR (12-month)", "Gross revenue churn", MONTHLY_CHURN):
             block = r.get("nrr" if m == "NRR (12-month)" else "gross_churn")
             if not block:
                 return None
             field = "nrr_pct" if m == "NRR (12-month)" else "churn_pct"
-            return {d["month"]: _points(d.get(field)) for d in block.get("series") or ()}, _source(block), block.get("reason")
+            series = block.get("monthly_series" if m == MONTHLY_CHURN else "series") or ()
+            return {d["month"]: _points(d.get(field)) for d in series}, _source(block), block.get("reason")
         return None
 
     def asof(self) -> Optional[Tuple[Optional[float], dict, Optional[str]]]:
@@ -458,6 +464,7 @@ EVIDENCE: Dict[str, Tuple[str, str, Optional[str]]] = {
     "New MRR": ("New MRR by quarter", "new_mrr_by_quarter.{q}.new_mrr", None),
     "NRR (12-month)": ("NRR", "nrr.series.nrr_pct", "nrr.by_segment.{seg}.nrr_pct"),
     "Gross revenue churn": ("Gross revenue churn", "gross_churn.series.churn_pct", None),
+    MONTHLY_CHURN: ("Gross revenue churn", "gross_churn.monthly_series.churn_pct", None),
     "ACV": ("Path to Plan", "acv_path.acv", "acv_path.by_segment.{seg}.acv"),
     "Median sales cycle": ("Sales cycle", "sales_cycle.median_days", "sales_cycle.by_segment.{seg}.median_days"),
     "Win rate": ("Win rate", "win_rate.win_rate_pct", None),
@@ -702,6 +709,13 @@ RECURRING_METRIC = {"arr": "ARR", "mrr": "MRR", "churn": "Gross revenue churn", 
 
 def propose_metric(claim_type: str, claim_unit: Optional[str], text: str) -> Optional[str]:
     """The metric a claim names by its type, a keyword in its snippet or borrowed label, and its unit (table 2a)."""
+    found = _keyword_metric(claim_type, claim_unit, text)
+    if found == "Gross revenue churn" and _MONTHLY.search(text):       # engine contract 8: a rate worded monthly is the month's, not the year's
+        found = MONTHLY_CHURN
+    return found
+
+
+def _keyword_metric(claim_type: str, claim_unit: Optional[str], text: str) -> Optional[str]:
     from .decks.claims import CONTRACT_TERM
     metric = None
     if claim_type in RECURRING_METRIC:         # engine contract 8: the type names the engine's figure, not a keyword in the snippet
@@ -1011,6 +1025,8 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         return out
     if [f for f in required if f != "growth basis"]:      # not matched until every required field is known (section 2)
         others = [f for f in required if f != "period"]
+        if "period" in required and metric == "Gross revenue churn":       # a rate with no wording and no period: either, so neither is tested
+            return finish("Unverified", CHURN_RATE_UNCLEAR_REASON + (f"; {REQUIRED_REASON.format(fields=', '.join(others))}" if others else ""))
         if "period" in required:                # decision 3 of 2026-10-19: its own text, never the as-of month
             words = PERIOD_UNCLEAR if c.get("period_unclear") else PERIOD_NOT_READ
             return finish("Unverified", words + (f"; {REQUIRED_REASON.format(fields=', '.join(others))}" if others else ""))
@@ -1024,8 +1040,6 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
     if c.get("target_date") and (start is None or end is None):
         return finish("Unverified", PERIOD_NOT_READ)       # a date the parser could not read: the analyst sets it
 
-    if metric == "Gross revenue churn" and _MONTHLY.search(text):       # engine contract 8: no monthly figure exists to test it against
-        return finish("Unverified", MONTHLY_CHURN_REASON)
     if fx and fx["rate"] is None:
         return finish("Unverified", f"{FX_NEEDED}: {currency}→{fx['currency']}")       # names the pair (the rate to set)
     span, cov = _Span(results, metric), {}
@@ -1186,7 +1200,7 @@ class _Span:
         self.first = _mi(periods["first"]) if periods else None
         self.last = _mi(periods["last"]) if periods else None
         self.missing = {_mi(m) for m in periods["missing"]} if periods else set()
-        partial_read = metric in ("NRR (12-month)", "Gross revenue churn") or spec.get("kind") == "growth"
+        partial_read = metric in ("NRR (12-month)", "Gross revenue churn", MONTHLY_CHURN) or spec.get("kind") == "growth"
         self.partial = _mi(source["month"]) if partial_read and source.get("status") == "Possibly partial" and source.get("month") else None
         self.evidence_to = source.get("evidence_to")
 

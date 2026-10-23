@@ -24,7 +24,7 @@ from typing import Annotated, Any, Dict, Iterator, List, Literal, Optional, Tupl
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, ValidationInfo
 
-CONTRACT_VERSION = 8          # 8: ARR, MRR, Churn, NRR and CAC payback are claim types of their own, and the page reader's list gains cac_payback (docs/specs/interface-contracts.md);
+CONTRACT_VERSION = 8          # 8: ARR, MRR, Churn, NRR and CAC payback are claim types of their own, and the page reader's list gains cac_payback; gross_churn gains monthly_series (docs/specs/interface-contracts.md);
                               #    stored deck claims typed revenue, retention or sales differ from the new types, so results stored under 7 read "Stale – re-run audit".
                               # 7: the page reader's closed metric list gains arr, mrr, churn, nrr, market_share, pricing and use_of_funds (claim type
                               #    mapping and groups; docs/specs/interface-contracts.md); results stored under 6 read "Stale – re-run audit".
@@ -155,6 +155,7 @@ class GrossChurn(Block):
     trailing_window_months: Plain
     overall_pct: Optional[Fraction]
     series: List[ChurnPoint]
+    monthly_series: List[ChurnPoint]                # MRR lost in the month over MRR at its start, from the second data month (contract 8)
     source: Citation
     status: Optional[str] = None
 

@@ -129,15 +129,6 @@ def test_churn_is_tested_against_gross_revenue_churn_lower_is_better():
     assert (beat["gap_kind"], beat["evidence_label"]) == ("beat", "Verified")
 
 
-def test_a_monthly_churn_rate_is_not_tested_against_the_trailing_twelve_month_figure():
-    for text in ("2% monthly churn", "churn of 2% per month", "monthly revenue churn 2%"):
-        got = row("churn", 2, "2024-02", unit="%", snippet=text)
-        assert got["evidence_label"] == "Unverified" and got["reason"] == cm.MONTHLY_CHURN_REASON, text
-        assert got["gap"] is None and got["observed_value"] is None
-    annual = row("churn", 2, "2024-02", unit="%", snippet="annual churn 2%")
-    assert annual["metric"] == "Gross revenue churn" and annual["observed_value"] is not None and annual["reason"] != cm.MONTHLY_CHURN_REASON
-
-
 def test_cac_payback_is_tested_against_the_engines_months_for_the_quarter():
     results = with_cac(results_for(RUNS["A"]))
     miss = row("cac_payback", 12, "2023-Q3", unit="months", results=results)

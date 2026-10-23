@@ -348,6 +348,8 @@ VIOLATIONS = {
     "a count as text": _set("nrr.nrr_base_customers", "5"),
     "a missing contract version": _drop("contract_version"),
     "a missing field": _drop("nrr.series"),
+    "gross churn without its monthly series": _drop("gross_churn.monthly_series"),
+    "a monthly churn rate as a whole-number percent": _set("gross_churn.monthly_series", [{"month": "2026-05", "churn_pct": 35.0}]),
     "an undeclared field": _set("arr.extra", 1),
     "a percent as text": _set("win_rate.win_rate_pct", "40%"),
     "a number that is not finite": _set("arr.value", float("nan")),

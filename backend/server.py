@@ -3471,6 +3471,16 @@ def build_export_workbook(meta: dict, r: dict, disclosure_text: Optional[str] = 
         else:
             table_sheet(xw, "NRR Series", series_df, {"nrr_pct": fmt.PCT})
 
+        # Churn series: the trailing-12-month rate and the monthly one, side by side by month
+        trailing = {d["month"]: d.get("churn_pct") for d in churn.get("series") or ()}
+        monthly = {d["month"]: d.get("churn_pct") for d in churn.get("monthly_series") or ()}
+        churn_cols = ["Month", "Gross revenue churn (trailing 12 months)", "Gross revenue churn (monthly)"]
+        if monthly or trailing:
+            table_sheet(xw, "Churn Series", pd.DataFrame(
+                [[m, trailing.get(m), monthly.get(m)] for m in sorted({*trailing, *monthly})], columns=churn_cols), {c: fmt.PCT for c in churn_cols[1:]})
+        else:
+            pd.DataFrame([{"Month": "(not computable)"}]).to_excel(xw, sheet_name="Churn Series", index=False)
+
         # CAC by quarter
         cac_rows = []
         for q, v in (cac.get("quarters") or {}).items():

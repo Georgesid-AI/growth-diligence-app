@@ -343,7 +343,7 @@ LABEL_BY_PATH = {
     "arr.value": "Ending ARR", "current_arr": "Ending ARR", "arr.mrr": "MRR", "arr.arr": "ARR",
     # retention
     "nrr.overall_pct": "NRR", "nrr.n": "NRR base customers", "nrr_pct": "NRR",
-    "gross_churn.overall_pct": "Gross churn", "churn_pct": "Gross churn",
+    "gross_churn.overall_pct": "Gross churn", "churn_pct": "Gross churn", "monthly_series.churn_pct": "Gross churn",
     "months_available": "Months of history available",
     # CAC payback
     "months": "CAC payback", "default_l": "S&M spend lag",
@@ -408,7 +408,7 @@ QUALIFIER_BY_PATH = {
     "arr.value": "latest month MRR × 12", "current_arr": "latest month MRR × 12",
     "arr.mrr": "latest month",
     "nrr.overall_pct": "trailing 12 months", "nrr_pct": "trailing 12 months",
-    "gross_churn.overall_pct": "trailing 12 months", "churn_pct": "trailing 12 months",
+    "gross_churn.overall_pct": "trailing 12 months", "churn_pct": "trailing 12 months", "monthly_series.churn_pct": "monthly",
     "months": "latest complete quarter",
     "median_days": "all won deals", "iqr": "all won deals",
     "win_rate_pct": "closed deals",

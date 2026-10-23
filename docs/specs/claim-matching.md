@@ -91,6 +91,7 @@ the whole-company figure and marked "whole company".
 | New MRR | revenue: "new MRR" | currency | `new_mrr_by_quarter` | quarter | no | higher |
 | NRR (12-month) | type `nrr`; retention: "NRR", "net (revenue) retention" | % | `nrr.series`; `nrr.by_segment` | period end month from the 13th data month; by segment as-of | yes | higher |
 | Gross revenue churn | type `churn`; retention: "revenue churn", "gross churn" | % | `gross_churn.series` | period end month from the 13th data month | no | lower |
+| Monthly gross revenue churn | a churn claim (the type, or the retention keyword) worded "monthly", "per month", "a month", "/mo" or "MoM" | % | `gross_churn.monthly_series` | period end month from the 2nd data month | no | lower |
 | ACV | sales: "ACV" | currency | `acv_path.acv`, `.by_segment` | as-of | yes | higher |
 | Median sales cycle | sales: "sales cycle" | days | `sales_cycle.median_days`, `.by_segment` | as-of | yes | lower |
 | Win rate | sales: "win rate" | % | `win_rate.win_rate_pct` | as-of | no | higher |
@@ -448,10 +449,11 @@ arr, mrr, churn, nrr map to them and its closed list gains `cac_payback` (a payb
 - **Matching, as for Revenue:** ARR reads the engine's ending ARR for the claim's period (period end month), MRR the ending MRR, NRR the 12-month NRR at the period end month, CAC payback the
   engine's CAC payback months for the claim's quarter at the default lag. Tolerance is the revenue rule: ±5% of the claim for amounts and months, ±1 point for rates. A beat beyond
   tolerance is Verified, marked (beat); a miss is Contradicted; a gap beyond the Definition-check limits asks, as every metric (§4.1).
-- **Churn.** The engine holds gross revenue churn as one trailing-12-month rate per month (`gross_churn.series`; engine contract 2 onward). A churn claim is tested against that rate at the
-  period end month (annual reading, no cue). A claim that says it is a monthly rate ("monthly", "per month", "/mo", "MoM", in the snippet or the borrowed label) has no figure to be tested
-  against: Unverified, "monthly churn: the engine computes the trailing-12-month rate only, not a monthly one" (`MONTHLY_CHURN_REASON`), no gap, no observed value. Open decision for George:
-  whether the engine should compute a monthly rate (a new engine field, contract bump).
+- **Churn** (George, 2026-10-23, decision on PR 171). The engine holds two rates: the trailing-12-month one (`gross_churn.series`) and the monthly one (`gross_churn.monthly_series`, interface-contracts.md).
+  A churn claim worded monthly ("monthly", "per month", "a month", "/mo", "MoM", in the snippet or the borrowed label) is **Monthly gross revenue churn**, tested against that month's rate at the period end
+  month. Any other churn claim with a period (a year, a quarter, a month) is **Gross revenue churn**, tested against the trailing-12-month rate at the period end month, so a year reads year end.
+  A churn claim with no wording and no period is Unverified, "churn rate unclear: the trailing-12-month rate (Gross revenue churn) or the monthly rate (Monthly gross revenue churn) – word it monthly or set
+  the period" (`CHURN_RATE_UNCLEAR_REASON`), no gap, no observed value; a monthly claim with no period keeps "Period not read". The analyst may pick either metric for a % claim. Tolerance ±1 pp, lower is better.
 - **A period the engine has no value for** is Unverified and the reason names the missing months: a month metric by §4 of dates-and-periods.md ("months missing: 2023-06", "before NRR's first
   month, 2024-01"); a quarter metric (CAC payback, Gross margin, New MRR) whose quarter is not in the engine now reads "claim period not in supplied data: months missing: 2023-04 to 2023-06"
   with `months_missing`, in place of Unsupported "not computed for that period". A quarter the engine holds with no figure ("new MRR is zero") is unchanged.

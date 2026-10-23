@@ -311,16 +311,27 @@ def compute_gross_churn(mrr: pd.DataFrame):
                 loss += -delta
         return loss / start
 
+    def monthly_for(month_idx):
+        """MRR lost in the month (churn and contraction, expansion not netted) over the MRR at its start; None with no MRR then."""
+        m, m0 = cols[month_idx], cols[month_idx - 1]
+        base = [c for c in mrr.index if mrr.at[c, m0] > 0]
+        start = sum(mrr.at[c, m0] for c in base)
+        if start <= 0:
+            return None
+        return sum(max(mrr.at[c, m0] - mrr.at[c, m], 0.0) for c in base) / start
+
     latest = len(cols) - 1
     series = [
         {"month": _period_str(cols[i]), "churn_pct": _round(churn_for(i), 4)}
         for i in range(12, len(cols))
     ]
+    monthly = [(i, monthly_for(i)) for i in range(1, len(cols))]
+    monthly_series = [{"month": _period_str(cols[i]), "churn_pct": _round(v_, 4) if v_ is not None else None} for i, v_ in monthly]
     v = churn_for(latest)
     # A trailing-12-month figure measured at `month`: MRR lost (churn and contraction, expansion
     # not netted) over the 12 months to that month, as a share of MRR 12 months earlier.
     return {"month": _period_str(cols[latest]), "trailing_window_months": 12,
-            "overall_pct": _round(v, 4), "series": series}
+            "overall_pct": _round(v, 4), "series": series, "monthly_series": monthly_series}
 
 
 def compute_new_mrr_by_quarter(mrr: pd.DataFrame, first_month: dict):
@@ -987,6 +998,7 @@ def _span(months, gaps_from=None) -> dict | None:
 REVENUE_BLOCKS = ("arr", "mrr_series", "revenue_series", "customers_series", "acv_path", "segment_paths", "cohort_retention",
                   "new_mrr_by_quarter")
 SERIES_BLOCKS = {"nrr": "series", "gross_churn": "series"}
+MONTHLY_CHURN_PERIOD = "gross_churn_monthly"      # the monthly rate's own period block: it starts at the second data month
 PNL_BLOCKS = ("revenue_reconciliation", "cac_payback")
 DEAL_BLOCKS = ("sales_cycle", "win_rate", "founder_win_rate")
 
@@ -1005,6 +1017,9 @@ def metric_periods(results: dict, rev: pd.DataFrame, pnl: pd.DataFrame, deals: p
         months = [pd.Period(d["month"], "M") for d in ((results.get(key) or {}).get(field) or ()) if d.get("month")]
         if months and (span := _span(months, gaps_from=rev_months)):
             out[key] = span
+    months = [pd.Period(d["month"], "M") for d in ((results.get("gross_churn") or {}).get("monthly_series") or ()) if d.get("month")]
+    if months and (span := _span(months, gaps_from=rev_months)):
+        out[MONTHLY_CHURN_PERIOD] = span
     pnl_months = [m for m in (_month_of(x) for x in (pnl["month"] if pnl is not None and "month" in pnl.columns else ()))
                   if m is not None]
     for key in PNL_BLOCKS:
