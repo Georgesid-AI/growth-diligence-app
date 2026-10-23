@@ -27,7 +27,7 @@ NO_PROMPT = "No prompt loaded — upload prompts on the owner page"
 # fails if this list and the gateway's STEP_CONFIG drift apart.
 NAMES = ("growth_engine", "data_inventory", "data_integrity", "structure_reading", "file_type", "sheet_structure", "deck_reading")
 
-MAX_TEXT_CHARS = 100_000
+MAX_TEXT_CHARS = 10_000          # every page read sends the prompt: a longer one costs more per audit (spec section 1)
 _VERSION_PREFIX = "v"
 
 
@@ -86,9 +86,11 @@ def cache_tag(prompt: Prompt) -> str:
 
 
 async def list_versions(db) -> List[dict]:
-    """Every stored version: name, version, uploaded_at and sha256. Never the text."""
-    docs = await db[COLLECTION].find({}, {"_id": 0, "name": 1, "version": 1, "uploaded_at": 1, "sha256": 1}).to_list(100000)
-    rows = [{"name": d["name"], "version": d["version"], "uploaded_at": d["uploaded_at"], "sha256": d["sha256"]} for d in docs]
+    """Every stored version: name, version, uploaded_at, sha256 and the character count of the text. Never the text: it is read
+    here only to be counted, so the owner can check a paste against what was saved."""
+    docs = await db[COLLECTION].find({}, {"_id": 0, "name": 1, "version": 1, "uploaded_at": 1, "sha256": 1, "text": 1}).to_list(100000)
+    rows = [{"name": d["name"], "version": d["version"], "uploaded_at": d["uploaded_at"], "sha256": d["sha256"],
+             "chars": len(d.get("text") or "")} for d in docs]
     return sorted(rows, key=lambda r: (NAMES.index(r["name"]) if r["name"] in NAMES else len(NAMES), -_number(r["version"])))
 
 
@@ -100,7 +102,7 @@ async def upload(db, name: str, text: str) -> dict:
     if not text.strip():
         raise PromptRefused("the prompt text is empty")
     if len(text) > MAX_TEXT_CHARS:
-        raise PromptRefused(f"the prompt text is over {MAX_TEXT_CHARS} characters")
+        raise PromptRefused(f"Prompt is {len(text)} characters; the limit is {MAX_TEXT_CHARS:,}.")
     from pymongo.errors import DuplicateKeyError
     await db[COLLECTION].create_index([("name", 1), ("version", 1)], unique=True)
     for _ in range(5):                      # a second upload at the same moment takes the number: try the next one

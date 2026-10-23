@@ -69,11 +69,22 @@ def test_the_owner_uploads_a_prompt_and_lists_it_by_name_version_and_date_withou
     assert (first.json()["version"], second.json()["version"]) == ("v1", "v2")
     listed = owner.get("/api/admin/prompts", headers=owner.headers_owner).json()
     assert [(r["name"], r["version"]) for r in listed["prompts"]] == [("growth_engine", "v2"), ("growth_engine", "v1")]
-    assert all(set(r) == {"name", "version", "uploaded_at", "sha256"} for r in listed["prompts"])
+    assert all(set(r) == {"name", "version", "uploaded_at", "sha256", "chars"} for r in listed["prompts"])
     assert "growth_engine" not in listed["missing"] and "data_integrity" in listed["missing"]
     for response in (first, second, owner.get("/api/admin/prompts", headers=owner.headers_owner)):
         assert SECRET not in response.text, "prompt text never comes back"
     assert owner.db["prompts"].docs[1]["text"] == f"{SECRET} two"
+
+
+def test_the_api_takes_10000_characters_whole_and_refuses_10001_with_the_message(owner):
+    text = "z" * 10_000
+    ok = owner.post("/api/admin/prompts", json={"name": "growth_engine", "text": text}, headers=owner.headers_owner)
+    assert ok.status_code == 200 and owner.db["prompts"].docs[0]["text"] == text
+    over = owner.post("/api/admin/prompts", json={"name": "growth_engine", "text": text + "z"}, headers=owner.headers_owner)
+    assert over.status_code == 422 and over.json()["detail"] == "Prompt is 10001 characters; the limit is 10,000."
+    assert len(owner.db["prompts"].docs) == 1
+    listed = owner.get("/api/admin/prompts", headers=owner.headers_owner).json()["prompts"]
+    assert [(r["version"], r["chars"]) for r in listed] == [("v1", 10_000)]
 
 
 @pytest.mark.parametrize("payload", [{"name": "nope", "text": "x"}, {"name": "growth_engine", "text": "  "},

@@ -19,7 +19,8 @@ Collection `prompts`, one document per upload: `name`, `version`, `text`, `uploa
 - `version` is `v1`, `v2`, ... per name, the next number at upload. Unique on (name, version) (index), so two uploads at the
   same moment cannot share a number. The latest version is the highest number.
 - Every upload creates a version, including the same text again. Nothing is updated or deleted: there is no route, button or
-  code path that does either. Text is refused when empty or over 100,000 characters (422); line endings are stored as `\n`.
+  code path that does either. Text is refused when empty or over 10,000 characters (422, `Prompt is {n} characters; the limit is 10,000.`, counted on the text as stored); it is never truncated; line endings are stored as `\n`.
+  Amended 2026-10-23 (George): the limit was 100,000; it is 10,000 because every page read sends the prompt. A version stored earlier over 10,000 stays and loads; only new uploads are held to the limit.
 - The text is never in a response, a log line, `llm_calls`, `llm_narratives`, `llm_structures` or the cache. It leaves the server
   once per call, as the system prompt of the model request.
 
@@ -42,16 +43,16 @@ Collection `prompts`, one document per upload: `name`, `version`, `text`, `uploa
 Owner token only (`OWNER_TOKEN_SHA256`, access-links.md section 2). The page asks for the token once; it is kept in the page's
 memory (component state) and sent as `Authorization: Bearer` on each call. It is not written to storage, not put in the address,
 and is gone on reload. The page shows no audit data and imports no audit call.
-- **Prompts.** A table of every stored version: name, version, upload date, first 12 characters of the hash. A note names the
+- **Prompts.** A table of every stored version: name, version, character count of the text, upload date, first 12 characters of the hash (the count lets the owner check a paste without showing the text). A note names the
   prompts that have none. To upload: choose the name, then either choose a file (read in the browser as text) or paste text, then "Upload as new version".
-  After the upload the text is cleared from the page. Prompt text is never sent to the browser; there is no read, edit or delete.
+  Under the field a live count reads "n / 10,000" and the line "Each page read sends this prompt; longer prompts cost more per audit."; a save over the limit is refused on the page with the 422 message and the text is kept. After the upload the text is cleared from the page. Prompt text is never sent to the browser; there is no read, edit or delete.
 - **Tester links.** Issue (name; the expiry is fixed at 30 days): the link `{app}/t/{token}` is shown once in a box that stays until
   the owner dismisses it. List: name, status (active, expired, revoked), expiry. Revoke. Re-issue (revokes and returns a new link; the
   tester keeps their id and so their audits).
 
 | Route (owner token only) | Does |
 |---|---|
-| `GET /api/admin/prompts` | `{names, prompts: [{name, version, uploaded_at, sha256}], missing}` |
+| `GET /api/admin/prompts` | `{names, prompts: [{name, version, uploaded_at, sha256, chars}], missing}` |
 | `POST /api/admin/prompts` `{name, text}` | stores the next version; returns `{name, version, uploaded_at, sha256}` |
 | `GET /api/admin/testers` | a list `[{id, label, created_at, expires_at, revoked_at}]`; the page derives the status (active, expired, revoked) from the dates |
 | `POST /api/admin/testers` `{label}` | issues, expiry 30 days; returns `{id, label, link}` |

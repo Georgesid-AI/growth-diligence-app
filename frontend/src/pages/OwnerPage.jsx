@@ -13,6 +13,10 @@ import OwnerAuditCosts from "@/components/OwnerAuditCosts";
 // storage, never in the address. The page shows the prompt store and the tester links and no audit data; prompt text goes up
 // from here and is never shown again.
 export const NO_PROMPT_NOTICE = "No prompt loaded for";
+// docs/specs/prompt-store.md section 1: the same limit as prompt_store.MAX_TEXT_CHARS; counted on text with \n line ends, as stored.
+export const PROMPT_LIMIT = 10000;
+export const promptLength = (text) => text.replace(/\r\n/g, "\n").length;
+export const overLimitMessage = (n) => `Prompt is ${n} characters; the limit is ${PROMPT_LIMIT.toLocaleString("en-US")}.`;
 export const LINK_ONCE = "Shown once. Copy it now; it cannot be shown again, only replaced by Re-issue.";
 
 const when = (iso) => (iso ? String(iso).slice(0, 16).replace("T", " ") + " UTC" : "—");
@@ -74,6 +78,7 @@ export default function OwnerPage() {
 
   const upload = async () => {
     setError(null);
+    if (promptLength(text) > PROMPT_LIMIT) { setError(overLimitMessage(promptLength(text))); return; }   // refused, never cut
     setBusy(true);
     try {
       await ownerUploadPrompt(token, name, text);
@@ -160,15 +165,15 @@ export default function OwnerPage() {
           </p>
         )}
         <table className="w-full text-sm mb-4" data-testid="owner-prompts-table">
-          <thead><tr className="text-left text-slate-500"><th className="py-1">Name</th><th>Version</th><th>Uploaded</th><th>SHA-256</th></tr></thead>
+          <thead><tr className="text-left text-slate-500"><th className="py-1">Name</th><th>Version</th><th>Characters</th><th>Uploaded</th><th>SHA-256</th></tr></thead>
           <tbody>
             {prompts.prompts.map((p) => (
               <tr key={`${p.name}-${p.version}`} className="border-t border-[#E5E7EB]" data-testid="owner-prompt-row">
-                <td className="py-1 font-mono">{p.name}</td><td>{p.version}</td><td>{when(p.uploaded_at)}</td>
+                <td className="py-1 font-mono">{p.name}</td><td>{p.version}</td><td data-testid="owner-prompt-chars">{p.chars}</td><td>{when(p.uploaded_at)}</td>
                 <td className="font-mono text-xs">{p.sha256.slice(0, 12)}</td>
               </tr>
             ))}
-            {prompts.prompts.length === 0 && <tr><td colSpan={4} className="py-2 text-slate-500">No prompt uploaded yet.</td></tr>}
+            {prompts.prompts.length === 0 && <tr><td colSpan={5} className="py-2 text-slate-500">No prompt uploaded yet.</td></tr>}
           </tbody>
         </table>
         <div className="space-y-2">
@@ -184,6 +189,10 @@ export default function OwnerPage() {
           </div>
           <Textarea rows={8} value={text} onChange={(e) => { setText(e.target.value); setFileName(null); }} placeholder="Or paste the prompt text"
             data-testid="owner-prompt-text" className="font-mono text-xs" />
+          <p className={`text-xs ${promptLength(text) > PROMPT_LIMIT ? "text-rose-700" : "text-slate-500"}`} data-testid="owner-prompt-count">
+            {promptLength(text)} / {PROMPT_LIMIT.toLocaleString("en-US")}
+          </p>
+          <p className="text-xs text-slate-500">Each page read sends this prompt; longer prompts cost more per audit.</p>
           <p className="text-xs text-slate-500">Every upload creates a new version. Nothing is deleted, and the text is not shown again.</p>
           <Button disabled={busy || !text.trim() || !name} onClick={upload} className="bg-sky-600 hover:bg-sky-500" data-testid="owner-prompt-upload">
             Upload as new version
@@ -225,7 +234,7 @@ export default function OwnerPage() {
                 </td>
               </tr>
             ))}
-            {testers.length === 0 && <tr><td colSpan={4} className="py-2 text-slate-500">No tester yet.</td></tr>}
+            {testers.length === 0 && <tr><td colSpan={5} className="py-2 text-slate-500">No tester yet.</td></tr>}
           </tbody>
         </table>
       </section>
