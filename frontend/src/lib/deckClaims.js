@@ -420,8 +420,11 @@ export const VIEW_LABELS = { [CLAIMS_VIEW]: "Claims", [REVIEW_VIEW]: "Review" };
 export const REVIEW_INTRO = "Flagged by the checks: the figure, its unit, its label or its page could not be confirmed on the slide. Each flag names what to check.";
 // An informational flag (George, 2026-10-23: "cell corrected") is a note on the row; the claim stays in the main list. The list is the
 // server's (checker.INFORMATIONAL_FLAGS); a backend test keeps the two equal.
-export const INFORMATIONAL_FLAGS = informationalFlags;
-export const isFlagged = (c) => (c?.flags || []).some((f) => !INFORMATIONAL_FLAGS.includes(f));
+// "year label below: 2022" (George, 2026-10-23) is informational too: the list carries its pattern, the flag has a year in it.
+export const INFORMATIONAL_FLAGS = informationalFlags.flags;
+const INFORMATIONAL_PATTERNS = informationalFlags.patterns.map((p) => new RegExp(p));
+export const isInformational = (f) => INFORMATIONAL_FLAGS.includes(f) || INFORMATIONAL_PATTERNS.some((rx) => rx.test(f));
+export const isFlagged = (c) => (c?.flags || []).some((f) => !isInformational(f));
 
 /** The claims of one view: the flagged ones under Review, the rest under Claims; the server's order is kept. */
 export function claimsForView(claims, view) {

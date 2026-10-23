@@ -249,10 +249,12 @@ def test_an_other_metric_is_matched_like_any_other():
     assert got["status"] == MATCHED and all(got["checks"][k] for k in ("value", "unit", "period"))
 
 
-def test_a_claim_with_no_value_is_a_milestone_dated_from_its_source_and_never_matched():
+def test_a_claim_with_no_value_is_a_milestone_dated_from_its_source_and_matched_only_when_its_period_is_in_the_cited_cell():
     g = grid([line(1, "Launch the API", 1), line(2, "October 2011", 1)])
     got = one(g, claim("r1c1", None, metric="product", unit=None, period="2011-10", period_cell="r2c1"))
-    assert got["status"] == UNMATCHED and got["value"] is None and got["period"] == "2011-10" and got["checks"]["value"] is False
+    assert got["status"] == MATCHED and one(g, claim("r1c1", None, metric="product", unit=None, period="2011-10"))["status"] == UNMATCHED
+    assert one(g, claim("r1c1", None, metric="revenue", unit=None, period="2011-10", period_cell="r2c1"))["status"] == UNMATCHED
+    assert got["value"] is None and got["period"] == "2011-10" and got["checks"]["value"] is False
     assert one(g, claim("r1c1", None, metric="product", unit="count", period="2011-10", period_cell="r2c1"))["checks"]["unit"] is False
 
 

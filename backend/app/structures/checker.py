@@ -44,6 +44,10 @@ The model's `basis` never changes an evidence label (George, 2026-10-23, M2).
 Added 2026-10-23 (George): YEAR_LABEL_BELOW, "year label below: YYYY", on a claim with no period whose value cell has a year label under
 it by place (the rule of 8); a hint for Edit, the period is never set. It is FLAGS' one pattern, the year being a four-digit label.
 
+Informational (George, 2026-10-23): YEAR_LABEL_BELOW joins the informational flags (claims.is_informational): the claim stays in the main list with the
+note on its row. NOT_PLAN_LINE never fires for the metrics market, pricing and use_of_funds. USE_OF_FUNDS does not fire on a page that holds a raise cue
+(RAISE_CUES) in any cell. All other flags are as before.
+
 Every flag is a closed string of FLAGS (backend/tests/test_gateway_data_boundary.py); no flag carries deck text.
 """
 import re
@@ -78,11 +82,17 @@ FLAGS = (VALUE_NOT_ON_PAGE, CURRENCY_ASSUMED, UNIT_ASSUMED, SCENARIO_NOT_ON_PAGE
 INFORMATIONAL_FLAGS = claims.INFORMATIONAL_FLAGS        # a note on the row; the claim stays in the main list (George, 2026-10-23)
 REVIEW_FLAGS = tuple(f for f in FLAGS if f not in INFORMATIONAL_FLAGS)      # the claim is listed under Review
 review_flags = claims.review_flags
+is_informational = claims.is_informational
 # Brackets are a minus sign for these metrics only; for every other metric a bracketed figure is positive (George, 2026-10-23).
 BRACKET_NEGATIVE_METRICS = ("ebitda", "net_profit", "gross_profit", "costs", "cash", "burn")
 _BRACKETED = re.compile(r"\(\s*[^\w()]{0,3}\d[^()]*\)")
 YEAR_LABEL_BELOW = "year label below"        # the flag is "year label below: YYYY"
 YEAR_LABEL_FLAG = re.compile(rf"{YEAR_LABEL_BELOW}: \d{{4}}")
+# Metrics whose lines are about money raised or the market by nature: "not a plan line" never fires for them (George, 2026-10-23).
+NOT_PLAN_EXEMPT_METRICS = ("market", "pricing", "use_of_funds")
+# A page that holds one of these in any cell is a raise page: its percentages are the use of funds, so "use-of-funds share" stays quiet.
+RAISE_CUES = ("use of funds", "use of proceeds", "funding ask", "investment opportunity", "equity investment", "round size", "our ask")
+_RAISE_CUE = re.compile(r"(?i)\b(?:" + "|".join(re.escape(c).replace(r"\ ", r"\s+") for c in RAISE_CUES) + r")\b")
 NO_SCENARIO = "none"
 CASES = claims.CASES                  # the scenarios that are no plan target (George, 2026-10-23): listed under Scenarios, never matched
 _MINUS = ("-", "\u2212", "\u2013", "\u2014")                      # hyphen-minus, minus sign, en and em dash
@@ -209,7 +219,7 @@ def rule_flags(grid: Dict, grid_views: Dict, cell: Dict, claim: Dict, lines: Dic
     """The flags of rules 5 to 10 for one claim on its cell."""
     out = []
     text = cell["text"]
-    if text in lines["funds"]:
+    if text in lines["funds"] and not any(_RAISE_CUE.search(c["text"]) for c in grid["cells"]):
         out.append(USE_OF_FUNDS)
     if text in lines["channels"]:
         out.append(ACQUISITION_CHANNEL)
@@ -225,7 +235,7 @@ def rule_flags(grid: Dict, grid_views: Dict, cell: Dict, claim: Dict, lines: Dic
         out.append(PIPELINE_COLUMN)
     if cell.get("tick"):
         out.append(AXIS_TICK)
-    if claims._NOT_PLAN_LINE.search(text):
+    if claim["metric"] not in NOT_PLAN_EXEMPT_METRICS and claims._NOT_PLAN_LINE.search(text):
         out.append(NOT_PLAN_LINE)
     return out
 

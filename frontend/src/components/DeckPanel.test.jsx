@@ -177,6 +177,19 @@ describe("the AI reading poll", () => {
     expect(unhandled).not.toHaveBeenCalled();
   });
 
+  test("the claims of a deck whose stored status flips to read are listed by the very poll that sees the flip (George, 2026-10-23)", async () => {
+    const read = { decks: [{ ...DECKS[0], ai_status: "read", pages_read: 2, pages_rejected: 0, figure_pages: 2 }], candidates: [claim("n", "d2", 1, { group: 1 })] };
+    api.getDecks.mockReset();
+    api.getDecks.mockResolvedValueOnce(reading).mockResolvedValue(read);
+    await remount();
+    expect(document.body.querySelectorAll("[data-testid^='candidate-row']")).toHaveLength(0);
+    await act(async () => { jest.advanceTimersByTime(5000); });
+    expect(api.getDecks).toHaveBeenCalledTimes(2);
+    expect(document.body.querySelectorAll("[data-testid^='candidate-row']")).toHaveLength(1);
+    await act(async () => { jest.advanceTimersByTime(60000); });
+    expect(api.getDecks).toHaveBeenCalledTimes(2);            // read: the poll stops
+  });
+
   test("leaving the page mid-poll: no further request and no state set after unmount", async () => {
     api.getDecks.mockReset();
     api.getDecks.mockResolvedValue(reading);

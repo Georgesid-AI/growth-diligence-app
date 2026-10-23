@@ -169,9 +169,11 @@ def test_a_page_outside_the_document_is_flagged_and_its_row_carries_the_models_v
 # The rules of the parser read, as post-checks
 # ---------------------------------------------------------------------------
 def test_a_percentage_on_a_use_of_funds_slide_is_flagged_not_retyped():
-    funds = deck([(50, 560, 20, "Use of Funds"), (50, 500, 12, "Marketing (25%)"), (50, 480, 12, "Product (75%)")])
+    funds = deck([(50, 560, 20, "Capital raise"), (50, 500, 12, "Marketing (25%)"), (50, 480, 12, "Product (75%)")])
     found = one(funds, claim("p1r2c1", 25, metric="growth", unit="%"))
     assert found["flags"] == [checker.USE_OF_FUNDS] and found["metric"] == "growth"
+    raise_page = deck([(50, 560, 20, "Use of Funds"), (50, 500, 12, "Marketing (25%)"), (50, 480, 12, "Product (75%)")])
+    assert one(raise_page, claim("p1r2c1", 25, metric="growth", unit="%"))["flags"] == [], "a raise cue on the page: no flag (2026-10-23)"
     plain = deck([(50, 560, 20, "Revenue by geography"), (50, 500, 12, "Europe (25%)"), (50, 480, 12, "Americas (75%)")])
     assert one(plain, claim("p1r2c1", 25, metric="revenue", unit="%"))["flags"] == []
 

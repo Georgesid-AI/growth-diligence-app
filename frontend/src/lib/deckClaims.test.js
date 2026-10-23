@@ -459,6 +459,17 @@ describe("the Claims and Review views (George, 2026-10-22, docs/design/ai-reads-
     expect(claimsForView([corrected, both], REVIEW_VIEW).map((c) => c.id)).toEqual(["b"]);
     expect(flagsText(corrected)).toBe("cell corrected");
   });
+  test("George, 2026-10-23: the year label hint is informational (the claim stays in the main list, the note on its row), in the Review page and the panel alike", () => {
+    const hinted = { id: "y", flags: ["year label below: 2022"] };
+    const hintedAndCurrency = { id: "yc", flags: ["currency assumed", "year label below: 2024"] };
+    const hintedAndSign = { id: "ys", flags: ["year label below: 2022", "sign not on page"] };
+    const lookalike = { id: "l", flags: ["year label below: Q3 2022"] };
+    expect([hinted, hintedAndCurrency].map(isFlagged)).toEqual([false, false]);
+    expect([hintedAndSign, lookalike].map(isFlagged)).toEqual([true, true]);
+    expect(claimsForView([hinted, hintedAndCurrency, hintedAndSign], CLAIMS_VIEW).map((c) => c.id)).toEqual(["y", "yc"]);
+    expect(claimsForView([hinted, hintedAndCurrency, hintedAndSign], REVIEW_VIEW).map((c) => c.id)).toEqual(["ys"]);
+    expect(flagsText(hinted)).toBe("year label below: 2022");
+  });
   test("a claim with a flag is listed under Review and nowhere else; a claim without one under Claims", () => {
     expect(claimsForView([plain, flagged, none], CLAIMS_VIEW).map((c) => c.id)).toEqual(["p", "n"]);
     expect(claimsForView([plain, flagged, none], REVIEW_VIEW).map((c) => c.id)).toEqual(["f"]);

@@ -1294,3 +1294,13 @@ match used to need now only flag, and the flag sets the confidence label:
 `FLAGS` has 20 (`period from page heading` and `period from another cell` are the new ones); `INFORMATIONAL_FLAGS` has five. The status of a page-read claim is read from `checks.value` and the claim's
 value only; `checks.unit`, `checks.period` and the new `checks.period_heading` and `checks.period_other` feed the flags. Uber page 20 (the recorded reply): still four claims, now all matched; the
 profit claim keeps `currency assumed` (informational), so no claim of the page is listed under Review. No contract change.
+
+### 28.x Review tab noise (2026-10-23, George)
+Draft PR from main, failing tests first on synthetic pages (`backend/tests/test_review_noise.py`, `deckClaims.test.js`, `Review.test.jsx`). No contract change.
+1. *Informational list.* The deck panel's Review view and the Review page both read the one list (`frontend/src/lib/informational_flags.json`, now `{"flags", "patterns"}`; `claims.is_informational` on the server). A claim with informational flags only stays in the main list, its note on the row; Approve all and Run audit treat it as unflagged.
+2. *Year label.* `year label below: YYYY` (four-digit year only) is informational; `FLAGS` still has 20 and `INFORMATIONAL_FLAGS` five exact strings, the year label being the one pattern (`claims.INFORMATIONAL_YEAR_LABEL`).
+3. *Not a plan line* never fires for the metrics market, pricing and use_of_funds (`checker.NOT_PLAN_EXEMPT_METRICS`; the dropping of `page_check.check(drop=True)` follows).
+4. *Value matching.* A space (or no-break space) between groups of three digits is a thousands separator ("30 000", "7 753 000", "€ 2 000 000"; `redact.NUMBER`); a trailing rate suffix ("/year", "/yr", "/mo", "/month", "/video-hour", "per seat") never stood in the figure's way and is pinned by tests. "2024 500" is not 2,024,500 (no digit before the group).
+5. *Use-of-funds share* does not fire when any cell of the page holds a raise cue (`checker.RAISE_CUES`: use of funds, use of proceeds, funding ask, investment opportunity, equity investment, round size, our ask); when it fires it is a review flag as before.
+6. *Date claims.* A claim with metric product, no value and a period is "Matched to page" when its period (not corrected) is stated by the cited period cell; without that cell, or with another period, it stays unmatched. Replaces "a milestone is never matched" (§28.2).
+7. *Deck panel fetch.* The poll's one request returns the decks and their claims together and the server writes the claims before it sets the status to read, so the poll that sees the flip already lists them (pinned by a test). Not changed; see the report.

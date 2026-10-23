@@ -205,7 +205,7 @@ def _written(raw: str, comma: bool) -> Optional[float]:
     m = redact.NUMBER[comma].search(redact.blank_currency(raw))
     if not m or not m.group("num"):
         return None
-    num = m.group("num")
+    num = redact.digits_only(m.group("num"))
     value = float(num.replace(".", "").replace(",", ".")) if comma else float(num.replace(",", ""))
     return -value if m.group("sign") else value
 
@@ -339,11 +339,12 @@ def find_elsewhere(grid: Dict, grid_views: Dict, listed: Dict, cited: Dict, clai
     return None
 
 
-def _dropped(cell: Dict) -> Optional[str]:
-    """Why a claim on this cell is dropped before any check: an axis tick, or a line the rules read drops as no plan claim."""
+def _dropped(cell: Dict, metric: Optional[str] = None) -> Optional[str]:
+    """Why a claim on this cell is dropped before any check: an axis tick, or a line the rules read drops as no plan claim (never for the
+    metrics market, pricing and use_of_funds, George, 2026-10-23)."""
     if cell.get("tick"):
         return "tick"
-    if claims._NOT_PLAN_LINE.search(cell["text"]):
+    if metric not in ("market", "pricing", "use_of_funds") and claims._NOT_PLAN_LINE.search(cell["text"]):
         return "not_plan"
     return None
 
@@ -365,7 +366,7 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, drop: 
     checked, dropped, corrected_count = [], 0, 0
     for claim in page_claims:
         cell = by_id.get(claim["value_cell"])
-        if cell is None or (drop and _dropped(cell)):
+        if cell is None or (drop and _dropped(cell, claim["metric"])):
             dropped += 1
             continue
         structure = view_of(grid_views, cell)
@@ -390,6 +391,9 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, drop: 
         label_ok = label is None or any(_id(label) == _id(c) for c in label_cells(structure, cell))
         span = item.get("range") if item else None
         ok = value_ok and claim.get("value") is not None          # the figure is in the cited cell; unit and period only flag
+        # A date claim (metric product, no value, a period) is matched when its period is stated by the cited period cell (George, 2026-10-23).
+        if claim.get("value") is None and metric == "product" and claim.get("period") and cited is not None and period_ok and not corrected:
+            ok = True
         out = {"metric": metric, "unit": claim.get("unit"), "unit_other": claim.get("unit_other"),
                "basis": claim.get("basis"), "scenario": claim.get("scenario", "none"),
                # Python's value and range when the figure check passes; the model's when it fails (decision 2a, review of PR #159).
