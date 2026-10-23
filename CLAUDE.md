@@ -78,7 +78,11 @@
 27. Never subscribe to PR or CI events and never schedule timed check-ins; George checks the PR's
     Checks tab himself. Report once when the work is pushed, then end the session.
 28. Open the PR as draft, report once, end the session. Never wait for, poll or subscribe to CI.
-
+29. Run test suites in the foreground and wait for them. Never start background monitors,
+    watchers, timers or "notify me when done" tasks: each one wakes the session later and
+    spends usage on nothing. A session ends when its report is posted; nothing may keep it
+    alive after that.
+    
 ## Rule: which decisions to bring to George
 19. Decide engineering questions yourself: rule wording, limits measured from data, test design,
     code structure, commit order, naming, and anything cheap to change later. Stop and ask
