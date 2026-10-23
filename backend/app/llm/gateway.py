@@ -1885,6 +1885,7 @@ async def read_structure(
             await log_call(db, run_id=audit_id, step=STRUCTURE_STEP, prompt_version=prompt.version,
                            model=STRUCTURE_MODEL, input_tokens=0, output_tokens=0, estimated_cost_usd=0.0,
                            cache_hit=True, status="cache_hit", content_hash=digest, deck_id=deck_id, structure_type=structure_type)
+            logger.info("structure cache hit: run_id=%s step=%s hash=%s type=%s", audit_id, STRUCTURE_STEP, digest, structure_type)
             return _structure_result("read", structure_type, model_type=hit.get("model_type"), cache_hit=True,
                                      **_reading(hit["output"]), **base)
 

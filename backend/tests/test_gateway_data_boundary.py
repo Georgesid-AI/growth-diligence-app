@@ -414,8 +414,10 @@ def test_no_reason_or_metric_name_reaches_the_model_with_upload_content(engine_r
 
 
 _LOG_LEVELS = frozenset({"debug", "info", "warning", "warn", "error", "critical", "exception", "log"})
-# The only calls that may take the exception object: they return a class name or a code name, never its text.
-SAFE_EXCEPTION_READERS = frozenset({"type", "_engine_step"})
+# The only calls that may take the exception object: they return a class name or a code name, never its text; except the two
+# helpers of the outermost 500 handler (George, 2026-10-23): the message cut at 200 characters with secrets masked, and the
+# traceback's last frame as file:line. tests/test_endpoint_errors.py pins what they return and that the request never reaches the log.
+SAFE_EXCEPTION_READERS = frozenset({"type", "_engine_step", "_error_message", "_last_frame"})
 # A parameter with one of these names, or typed as an exception, is treated as the exception object.
 _EXCEPTION_PARAM_NAMES = frozenset({"exc", "e", "err", "error", "exception"})
 
@@ -564,8 +566,9 @@ def test_removed_direction_words_no_longer_accept_a_dropped_sign(text):
 
 
 def test_the_outermost_500_handler_and_the_gateway_failure_log_type_run_id_and_step_only(monkeypatch, caplog):
-    """An error whose message quotes a cell reaches both catch-all handlers: the log carries the
-    error type and the request or run, never the message or a traceback."""
+    """An error whose message quotes a cell reaches both catch-all handlers. The gateway failure log carries the type, run and step,
+    never the message or a traceback. The outermost 500 handler also logs the message and the last frame (George, 2026-10-23), never a
+    traceback or the request: the message is cut at 200 characters and secrets are masked (test_endpoint_errors.py)."""
     pytest.importorskip("fastapi")
     import logging
     from fastapi.testclient import TestClient
@@ -592,8 +595,9 @@ def test_the_outermost_500_handler_and_the_gateway_failure_log_type_run_id_and_s
         result = asyncio.run(generate(db, RUN_ID, "growth_engine", adapter=t.FakeAdapter(), sleep=t._noop_sleep))
     assert result.narrative_status != "ok"
     assert f"unexpected gateway failure for run {RUN_ID} step growth_engine: error=RuntimeError" in caplog.text
-    for text in (caplog.text, *[r.getMessage() for r in caplog.records]):
-        assert "Jane Doe" not in text and "Traceback" not in text
+    gateway_lines = [r.getMessage() for r in caplog.records if "unexpected gateway failure" in r.getMessage()]
+    assert gateway_lines and all("Jane Doe" not in line for line in gateway_lines)
+    assert "Traceback" not in caplog.text
     assert all(r.exc_info is None for r in caplog.records), "no traceback in the log"
 
 
@@ -3414,3 +3418,18 @@ def test_the_checker_flags_basis_and_scenario_are_closed_words_and_never_gateway
     text = json.dumps(item)
     for needle in ("Target Co", "Northbridge", "Traction", "150,000"):
         assert needle not in text, f"{needle!r} in a checked item"
+
+
+def test_the_page_cache_hit_log_line_holds_ids_a_hash_and_a_type_never_page_text(monkeypatch, caplog):
+    """The "structure cache hit" line (George, 2026-10-23) carries the audit, the step, the content hash and the type only."""
+    import logging
+    import test_page_usage_attribution as pu
+    db = pu.two_audits(monkeypatch)
+    adapter = t.FakeAdapter(replies=[json.dumps(pu.REPLY)])
+    pu.read(db, pu.AUDIT, "d1", adapter)
+    with caplog.at_level(logging.DEBUG):
+        pu.read(db, pu.AUDIT, "d1", adapter)
+    line, = [r.getMessage() for r in caplog.records if "structure cache hit" in r.getMessage()]
+    assert re.fullmatch(r"structure cache hit: run_id=\S+ step=structures hash=[0-9a-f]{64} type=page_claims", line), line
+    for needle in ("Paying Users", "annual revenue", "margins", "Traction", "deck.pdf"):
+        assert needle not in caplog.text, f"{needle!r} in the log"

@@ -48,18 +48,31 @@ def test_an_unexpected_error_in_generation_is_a_readable_500_with_cors_headers(c
     assert KEY not in r.text and "exploded" not in r.text, "only the exception's class name goes to the client"
 
 
-def test_the_failure_is_logged_by_type_only_without_traceback_or_message(client, monkeypatch, caplog):
+def test_the_failure_is_logged_with_type_message_and_last_frame_but_no_traceback_or_request(client, monkeypatch, caplog):
     monkeypatch.setattr(server.llm_gateway, "generate_narrative", _aboom)
     with caplog.at_level(logging.ERROR, logger="growth"):
-        client.post("/api/runs/run-abc/narrative/growth_engine", headers=ORIGIN)
+        client.post("/api/runs/run-abc/narrative/growth_engine?secret_query=zzz", headers={**ORIGIN, "X-Probe": "hdr-value"},
+                    json={"deck": "Jane Doe is the CEO"})
     records = [r for r in caplog.records if "unexpected error handling" in r.getMessage()]
     assert records, "the unexpected error must be logged"
     text = caplog.text
     assert "POST /api/runs/run-abc/narrative/growth_engine" in text
-    assert "error=RuntimeError" in text
-    assert "Traceback" not in text and "exploded" not in text, "type only: the message can quote uploaded cells"
-    assert all(r.exc_info is None for r in records)
-    assert KEY not in text and "ABCDEFGHIJKLMNOP" not in text
+    assert "error=RuntimeError" in text and "provider exploded" in text, "the exception message is logged"
+    assert "at=test_endpoint_errors.py:" in text and " in _boom" in text, "the traceback's last frame: file, line, function"
+    assert "Traceback" not in text and all(r.exc_info is None for r in records)
+    for content in ("secret_query", "zzz", "hdr-value", "Jane Doe"):
+        assert content not in text, f"{content!r}: request content in the log"
+    assert KEY not in text and "ABCDEFGHIJKLMNOP" not in text, "credentials in the message are masked"
+
+
+def test_a_long_message_is_cut_and_kept_on_one_line(client, monkeypatch, caplog):
+    async def long_boom(*args, **kwargs):
+        raise ValueError("x\n" * 300)
+    monkeypatch.setattr(server.llm_gateway, "generate_narrative", long_boom)
+    with caplog.at_level(logging.ERROR, logger="growth"):
+        client.post("/api/runs/run-abc/narrative/growth_engine", headers=ORIGIN)
+    line, = [r.getMessage() for r in caplog.records if "unexpected error handling" in r.getMessage()]
+    assert "\n" not in line and len(line) < 400
 
 
 def test_every_endpoint_gets_the_same_treatment(client, monkeypatch):

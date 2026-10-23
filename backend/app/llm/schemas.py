@@ -218,6 +218,45 @@ def _period_format(v):
     return v
 
 
+_MONTHS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
+_MONTH = r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
+_SPAN_JOIN = r"\s*(?:-|\u2013|\u2014|to|until)\s*"
+# "Jan-May 2022", "Q1-Q3 2022", "H1-H2 2022", "2022-2024", "FY22-24": two ends, so no one period.
+_SPAN = re.compile(rf"(?i)^\s*(?:{_MONTH}\.?{_SPAN_JOIN}{_MONTH}\.?|[QH][1-4]{_SPAN_JOIN}[QH][1-4]|(?:FY\s*)?\d{{2,4}}{_SPAN_JOIN}\d{{2,4}})\b")
+
+
+def _year(y: str) -> str:
+    return y if len(y) == 4 else f"20{y}"
+
+
+def normalise_period(v):
+    """The allowed period form for a form a page commonly uses, before validation (George, 2026-10-23): "H2 2022" -> 2022-H2,
+    "Q4 2021" -> 2021-Q4, "April 2022" -> 2022-04, "FY21/22" -> FY2021/22. A span ("Jan-May 2022", "2022-2024") is no period:
+    None, and the claim stays. A form not listed here is returned as it came, for the format check to refuse."""
+    if not isinstance(v, str) or _PERIOD.match(v):
+        return v
+    text = v.strip()
+    if _PERIOD.match(text):
+        return text
+    if _SPAN.match(text):
+        return None
+    m = re.fullmatch(r"(?i)(?:fy|fiscal(?:\s+year)?)\s*[' ]?(\d{2}|\d{4})(?:\s*[/-]\s*(\d{2}|\d{4}))?", text)
+    if m:
+        first, second = _year(m.group(1)), m.group(2)
+        return f"FY{first}" if second is None else f"FY{first}/{_year(second)[2:]}" if int(_year(second)) == int(first) + 1 else text
+    m = re.fullmatch(r"(?i)([QH])([1-4])[\s,'-]*(\d{2}|\d{4})", text) or re.fullmatch(r"(?i)(\d{2}|\d{4})[\s,'-]*([QH])([1-4])", text)
+    if m:
+        kind, n, year = (m.group(1), m.group(2), m.group(3)) if m.group(1)[0].isalpha() else (m.group(2), m.group(3), m.group(1))
+        if kind.upper() == "H" and n in "34":
+            return text
+        return f"{_year(year)}-{kind.upper()}{n}"
+    m = re.fullmatch(rf"(?i)({_MONTH})\.?[\s,'-]*(\d{{2}}|\d{{4}})", text) or re.fullmatch(rf"(?i)(\d{{4}})[\s,'-]*({_MONTH})\.?", text)
+    if m:
+        name, year = (m.group(1), m.group(2)) if m.group(1)[0].isalpha() else (m.group(2), m.group(1))
+        return f"{_year(year)}-{_MONTHS.index(name[:3].lower()) + 1:02d}"
+    return text
+
+
 def _other_currency(unit, unit_other):
     """unit_other is an ISO currency code outside the listed 20, beside unit "other", and null otherwise: never
     free text."""
@@ -622,6 +661,11 @@ class PageClaim(BaseModel):
     value_cell: str
     label_cell: Optional[str]
     period_cell: Optional[str]
+
+    @field_validator("period", mode="before")
+    @classmethod
+    def _normal_period(cls, v):
+        return normalise_period(v)
 
     @field_validator("period")
     @classmethod
