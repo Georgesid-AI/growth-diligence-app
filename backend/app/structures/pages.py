@@ -70,14 +70,19 @@ def batch_text(batch: List[Dict]) -> str:
 
 
 async def read_pages(db, audit_id: str, deck_id: str, grids: List[Dict], company_name: Optional[str], mapping: Dict[str, str],
-                     adapter=None, sleep=None, use_cache: bool = True) -> List[Tuple[List[Dict], object]]:
+                     adapter=None, sleep=None, use_cache: bool = True,
+                     progress=None) -> List[Tuple[List[Dict], object]]:
     """[(grids of the batch, StructureRead)] for every batch of a deck's sendable pages. A batch the token cap refuses as too
     large, or whose reply the provider cut at the output limit ("truncated"; the same batch would be cut again), is split in two
     and read again; a single page too large or cut is kept with its status. After the audit's token cap stops reading, the
     remaining batches are marked stopped without a call. `use_cache=False` (a consistency pass) asks the model again for pages
-    this audit already read, so the pass measures the model and not the cache."""
+    this audit already read, so the pass measures the model and not the cache. `progress(done, total)` is awaited before the first batch
+    and after each one, in pages (the deck panel's "page n of N")."""
     queue = batches(grids, company_name, mapping)
+    total, done = sum(len(b) for b in queue), 0
     out, stopped = [], None
+    if progress:
+        await progress(0, total)
     while queue:
         batch = queue.pop(0)
         grids_of = [p["grid"] for p in batch]
@@ -95,6 +100,9 @@ async def read_pages(db, audit_id: str, deck_id: str, grids: List[Dict], company
         if result.status == "stopped":
             stopped = result.reason
         out.append((grids_of, result))
+        done += len(batch)
+        if progress:
+            await progress(done, total)
     return out
 
 
@@ -173,7 +181,7 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
     words of process_deck). Unticked consent: no call. Ticked but the revenue file not yet mapped: the deck waits, so no customer
     name goes out unmapped."""
     from . import (CANDIDATES_COLLECTION as _c, NOT_READ, PYTHON_ONLY, READ, STOPPED, WAITING, WAITING_TEXT, _cell_key,  # noqa: F401
-                   CONSENT_OFF_LINE, PROMPT_MISSING, _deck_status, _python_cells, analyst_copy, recognition_settled, revenue_mapped, rules_copy, value_match)
+                   CONSENT_OFF_LINE, PROMPT_MISSING, _deck_status, _python_cells, analyst_copy, revenue_ready, rules_copy, value_match)
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "id": 1, "company_name": 1, "fiscal_year_end": 1,
                                                        "structure_reading_consent": 1})
     deck = await db[TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id},
@@ -182,12 +190,7 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
         return NOT_READ
     if audit.get("structure_reading_consent") is not True:
         return await _deck_status(db, audit_id, deck_id, PYTHON_ONLY, CONSENT_OFF_LINE)
-    revenue = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"},
-                                         {"_id": 0, "mapping": 1, "mapped_at": 1, "recognition_only": 1})
-    if not revenue_mapped(revenue):
-        return await _deck_status(db, audit_id, deck_id, WAITING, WAITING_TEXT)
-    if revenue.get("recognition_only") and recognition_settled is not None \
-            and await recognition_settled(db, audit_id) is False:
+    if not await revenue_ready(db, audit_id):
         return await _deck_status(db, audit_id, deck_id, WAITING, WAITING_TEXT)
     mapping = await llm_redaction.get_map(db, audit_id)
     year_end = int(audit.get("fiscal_year_end") or 12)
@@ -198,7 +201,10 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
     known = _python_cells(reviewed)
     order = len(reviewed)
     reads, sent, stopped_message = [], [], None
-    for batch, result in await read_pages(db, audit_id, deck_id, grids, audit.get("company_name"), mapping, adapter, sleep):
+    async def progress(done: int, total: int) -> None:
+        await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id}, {"$set": {"read_progress": {"done": done, "total": total}}})
+
+    for batch, result in await read_pages(db, audit_id, deck_id, grids, audit.get("company_name"), mapping, adapter, sleep, progress=progress):
         numbers = [page_grids_mod.page_number(g) for g in batch]
         entry = {"pages": numbers, "status": result.status, "reason": result.reason, "key": result.key, "cache_hit": result.cache_hit}
         if result.status == "stopped":

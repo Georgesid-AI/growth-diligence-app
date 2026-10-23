@@ -227,10 +227,11 @@ def deck_pipeline() -> str:
     path below (read at call time: the gateway imports this package)."""
     return gateway.deck_pipeline()
 
-# Set by server.py: `async (db, audit_id) -> Optional[bool]`, True when the recognition of the audit's revenue file has no choice left to
-# the analyst *now* (the check the rest of the app uses, `_is_mapped`: a changed as-of month can reopen a click that `mapped_at` still
-# calls settled). None means no answer (no server, or another database), and `mapped_at` stands.
-recognition_settled = None
+# Set by server.py: `async (db, audit_id) -> Optional[bool]`, True when the audit has the revenue file the rest of the app counts (the
+# blocker banner's own check): a revenue file saved with `_is_mapped` (a column mapping, a statement's line map, or a recognition with no
+# choice left to the analyst *now*), or, with no revenue file, a P&L confirmed with two or more periods. None means no answer (no server,
+# or another database), and `revenue_mapped` on the stored file stands.
+revenue_satisfied = None
 
 
 def revenue_mapped(dataset: Optional[Dict]) -> bool:
@@ -240,6 +241,17 @@ def revenue_mapped(dataset: Optional[Dict]) -> bool:
     if not dataset or not dataset.get("mapped_at"):
         return False
     return bool(dataset.get("recognition_only") or (dataset.get("mapping") or {}).get("customer_id"))
+
+
+async def revenue_ready(db, audit_id: str) -> bool:
+    """Whether the deck read may start: the audit has its revenue file (see `revenue_satisfied`). Where the server gives no answer,
+    the stored revenue file must be mapped (`revenue_mapped`)."""
+    if revenue_satisfied is not None:
+        answer = await revenue_satisfied(db, audit_id)
+        if answer is not None:
+            return answer
+    return revenue_mapped(await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"},
+                                                     {"_id": 0, "mapping": 1, "mapped_at": 1, "recognition_only": 1}))
 
 
 async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None) -> str:
@@ -264,12 +276,7 @@ async def process_deck(db, audit_id: str, deck_id: str, adapter=None, sleep=None
     found = deck.get("structures") or []
     if audit.get("structure_reading_consent") is not True:
         return await _deck_status(db, audit_id, deck_id, PYTHON_ONLY)
-    revenue = await db.datasets.find_one({"audit_id": audit_id, "dtype": "revenue"},
-                                         {"_id": 0, "mapping": 1, "mapped_at": 1, "recognition_only": 1})
-    if not revenue_mapped(revenue):
-        return await _deck_status(db, audit_id, deck_id, WAITING, WAITING_TEXT)
-    if revenue.get("recognition_only") and recognition_settled is not None \
-            and await recognition_settled(db, audit_id) is False:
+    if not await revenue_ready(db, audit_id):
         return await _deck_status(db, audit_id, deck_id, WAITING, WAITING_TEXT)
     mapping = await llm_redaction.get_map(db, audit_id)
     year_end = int(audit.get("fiscal_year_end") or 12)
@@ -359,8 +366,10 @@ async def process_waiting_decks_safely(db, audit_id: str) -> List[str]:
 
 
 async def _deck_status(db, audit_id: str, deck_id: str, status: str, message: Optional[str] = None) -> str:
-    await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id},
-                                         {"$set": {"ai_status": status, "ai_message": message}})
+    change = {"$set": {"ai_status": status, "ai_message": message}}
+    if status == "reading":
+        change["$unset"] = {"read_progress": ""}        # a new read starts at "queued", not at the page the last one reached
+    await db[TEXT_COLLECTION].update_one({"audit_id": audit_id, "deck_id": deck_id}, change)
     return status
 
 
@@ -384,6 +393,17 @@ async def queue_prompt_missing(db, audit_id: str) -> List[str]:
     try:
         await prompt_store.load(db, gateway.PAGE_CLAIMS_PROMPT)
     except prompt_store.PromptMissing:
+        return []
+    for d in found:
+        await _deck_status(db, audit_id, d["deck_id"], "reading")
+    return [d["deck_id"] for d in found]
+
+
+async def queue_waiting(db, audit_id: str) -> List[str]:
+    """Run audit reads again every deck still waiting for the revenue file once the audit has it (George, 2026-10-23, PR 164 follow-up,
+    decision 2c): marks them "reading" and returns their ids, for the caller to read. While the revenue file is missing nothing is queued."""
+    found = await db[TEXT_COLLECTION].find({"audit_id": audit_id, "ai_status": WAITING}, {"_id": 0, "deck_id": 1}).to_list(1000)
+    if not found or not await revenue_ready(db, audit_id):
         return []
     for d in found:
         await _deck_status(db, audit_id, d["deck_id"], "reading")
