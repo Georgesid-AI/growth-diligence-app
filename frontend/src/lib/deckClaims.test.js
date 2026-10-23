@@ -110,12 +110,16 @@ describe("deck selector", () => {
     expect(defaultDeck([])).toBe(ALL_DECKS);
   });
 
-  test("one tab per deck plus All, each with its claim count, most recent deck first", () => {
+  test("one tab per deck plus All, each with its claim count, in upload order: the new deck on the right", () => {
     expect(deckTabs(decks, candidates)).toEqual([
       { id: ALL_DECKS, label: "All", count: 3 },
-      { id: "b", label: "newer.pptx", count: 1 },
       { id: "a", label: "older.pdf", count: 2 },
+      { id: "b", label: "newer.pptx", count: 1 },
     ]);
+    // The server sends the most recent deck first; a deck uploaded later is never moved ahead of an earlier one, whatever order they arrive in.
+    const third = { deck_id: "c", file: "third.pdf", uploaded_at: "2026-10-04T12:00:00.000001+00:00" };
+    expect(deckTabs([third, decks[1], decks[0]], []).map((t) => t.id)).toEqual([ALL_DECKS, "a", "b", "c"]);
+    expect(deckTabs([decks[0], third, decks[1]], []).map((t) => t.id)).toEqual([ALL_DECKS, "a", "b", "c"]);
   });
 
   test("a tab shows its deck's claims in server order; All shows every claim", () => {
@@ -227,6 +231,25 @@ describe("model readings in the approval list (docs/specs/llm-structure-reading.
       .toEqual(["5 pages parsed · 3 with figures · AI read: done, 3 read, 0 rejected", "Sent to the model: pages 2, 3, 4"]);
     expect(deckRunLog({ ai_status: "waiting", pages: 5, page_unit: "page", figure_pages: 3 })).toEqual(["5 pages parsed · 3 with figures · AI read: waiting for revenue file"]);
     expect(deckRunLog({ ai_status: "waiting", pages: 5 })).toEqual(["AI reading: waiting for revenue file"]);
+  });
+
+  test("a deck restarted after 10 minutes reads 'restarted' until its first page is read", () => {
+    const deck = { ai_status: "reading", ai_message: "restarted", pages: 24, page_unit: "page", figure_pages: 9 };
+    expect(deckRunLog(deck)).toEqual(["24 pages parsed · 9 with figures · AI read: restarted"]);
+    expect(deckRunLog({ ...deck, read_progress: { done: 0, total: 9 } })).toEqual(["24 pages parsed · 9 with figures · AI read: page 1 of 9"]);
+    expect(deckRunLog({ ...deck, ai_message: null })).toEqual(["24 pages parsed · 9 with figures · AI read: queued"]);
+    expect(deckRunLog({ ai_status: "reading", ai_message: "restarted" })).toEqual(["AI reading: restarted"]);
+  });
+
+  test("the run log names the skipped pages and each page not read, after the deck line (the status wording is the deck line's)", () => {
+    expect(deckRunLog({ ai_status: "read", pages: 24, page_unit: "page", figure_pages: 11, pages_read: 9, pages_rejected: 2, skipped_pages: [3, 7, 20], unread_pages: [5, 9] }))
+      .toEqual(["24 pages parsed · 11 with figures · AI read: done, 9 read, 2 rejected",
+        "Skipped the following pages (3, 7, 20) – no figures relevant for the audit", "page 5 not read", "page 9 not read"]);
+    expect(deckRunLog({ ai_status: "read", pages: 5, page_unit: "page", figure_pages: 5, pages_read: 5, pages_rejected: 0, skipped_pages: [], unread_pages: [] }))
+      .toEqual(["5 pages parsed · 5 with figures · AI read: done, 5 read, 0 rejected"]);
+    // the last run's unread pages are not shown while a new one reads
+    expect(deckRunLog({ ai_status: "reading", pages: 5, page_unit: "page", figure_pages: 5, read_progress: { done: 1, total: 4 }, unread_pages: [4] }))
+      .toEqual(["5 pages parsed · 5 with figures · AI read: page 2 of 4"]);
   });
 
   test("the run log counts the periods Python corrected from the header cells", () => {

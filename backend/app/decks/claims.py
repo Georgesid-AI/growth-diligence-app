@@ -1327,6 +1327,30 @@ def page_number_line(text: str, page: int) -> bool:
     return bool(m) and int(m.group("n")) == int(page or 0)
 
 
+# Page furniture (George, 2026-10-23, deck page reads): a digit in an email, a URL or a phone number is no figure of the page, and neither is
+# one on a running header or footer line, within the top 5% or the bottom 7% of the page (the page's own number and a header date are
+# covered above and by find_dates). A pdf marks its topmost line a title, so a running header is one too; the bands are thin enough for
+# a real title to stay outside them. The same patterns as the redaction's (structures/redact.py), which the parser does not import.
+_CONTACT = re.compile(r"[\w.+'-]+@[\w-]+(?:\.[\w-]+)+"                                                    # an email
+                      r"|(?i:\b(?:https?://|www\.)\S+|\b[\w-]+(?:\.[\w-]+)*\.(?:com|org|net|io|co|ai|de|uk|fr|eu|nl)\b(?:/\S*)?)"   # a URL
+                      r"|(?<![\w+])(?:\+|(?<![\d.,])0)(?:[\s().\-/]{0,2}\d){9,15}(?![\d])")               # a phone number
+HEADER_BAND, FOOTER_BAND = 0.05, 0.07
+
+
+def page_furniture_line(block: Dict) -> bool:
+    """True when a text line sits in the header or footer band of its page."""
+    bbox = block.get("bbox")
+    return bool(bbox) and (bbox[3] <= HEADER_BAND or bbox[1] >= 1 - FOOTER_BAND)
+
+
+def page_figures(text: str, page: int) -> List[Dict]:
+    """The figures of a line of `page` that count for the page: none in an email, a URL or a phone number, none when the line is only the
+    page's own number."""
+    if page_number_line(text, page):
+        return []
+    return figures(_CONTACT.sub(" ", text or ""))
+
+
 def has_product_keyword(text: str) -> bool:
     """True when a text holds a product keyword: launch, release, roadmap, ship, milestone."""
     return any(k["family"] == "product" for k in _keywords(text or ""))
