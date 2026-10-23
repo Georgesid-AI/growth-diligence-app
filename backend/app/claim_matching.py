@@ -44,6 +44,9 @@ NO_PERIOD = "no period stated"
 PERIOD_NOT_READ = "Period not read – set it in the claim row"
 # George, 2026-10-20 (finding A): the figures of one table cell whose header holds a different number of periods have none, and read this.
 PERIOD_UNCLEAR = "Period unclear – confirm"
+# George, 2026-10-23 (engine contract 8): the engine holds gross revenue churn as a trailing-12-month rate, so a churn claim the deck states
+# as a monthly rate has no figure to be tested against; a rate with no such word is read as the trailing-12-month rate at the period end.
+MONTHLY_CHURN_REASON = "monthly churn: the engine computes the trailing-12-month rate only, not a monthly one"
 # George, 2026-10-19 (issue #136, decision 2): a contract value (annual or total contract value, contracted revenue, contracted or
 # committed ARR or MRR, CARR) is typed but not computed: never matched to engine revenue, Unsupported with this reason.
 CONTRACT_VALUE = "Contract value"
@@ -112,7 +115,7 @@ METRIC_POPULATION = {"Customer count": "paying", "Customer growth": "paying", "M
                      "Win rate": "all closed"}
 POPULATION_TYPES = ("customers", "users", "user_growth")
 # The types whose figure is an amount: with no currency and no unit, the currency is the field still unknown.
-MONEY_TYPES = ("revenue", "costs", "burn", "cash", "gross_profit", "ebitda", "net_profit", "ltv", "cac", "arpa", "arpu", "pipeline", "pricing")
+MONEY_TYPES = ("revenue", "arr", "mrr", "costs", "burn", "cash", "gross_profit", "ebitda", "net_profit", "ltv", "cac", "arpa", "arpu", "pipeline", "pricing")
 # The types whose period may stay unknown (the plan's table: optional or "–").
 PERIOD_OPTIONAL_TYPES = ("market", "use_of_funds", "acquisition_channels", "product", "pricing")
 # Section 5: growth claims. The basis is the analyst's, else the parser's, else read from the claim's own words on read.
@@ -197,6 +200,7 @@ _ACV = re.compile(r"\bACVs?\b")
 _SALES_CYCLE = re.compile(r"(?i)\bsales cycles?\b")
 _WIN_RATE = re.compile(r"(?i)\bwin rates?\b")
 _PAYBACK = re.compile(r"(?i)\bpayback\b")
+_MONTHLY = re.compile(r"(?i)\bmonthly\b|\bper month\b|\ba month\b|\b(?:/|per\s)mo\b|\bMoM\b")
 _CUSTOMERS = re.compile(r"(?i)\b(?:customers?|clients?|subscribers?|accounts?)\b")
 
 
@@ -692,11 +696,21 @@ def data_segments(results: dict) -> List[str]:
     return sorted(_segments(results)[1])
 
 
+# The engine metric each recurring claim type is tested against (George, 2026-10-23; docs/specs/claim-matching.md table 2a).
+RECURRING_METRIC = {"arr": "ARR", "mrr": "MRR", "churn": "Gross revenue churn", "nrr": "NRR (12-month)", "cac_payback": "CAC payback"}
+
+
 def propose_metric(claim_type: str, claim_unit: Optional[str], text: str) -> Optional[str]:
     """The metric a claim names by its type, a keyword in its snippet or borrowed label, and its unit (table 2a)."""
     from .decks.claims import CONTRACT_TERM
     metric = None
-    if claim_type == "revenue":
+    if claim_type in RECURRING_METRIC:         # engine contract 8: the type names the engine's figure, not a keyword in the snippet
+        metric = RECURRING_METRIC[claim_type]
+        if claim_type in ("arr", "mrr") and CONTRACT_TERM.search(text):     # a contracted or committed figure is a contract value, whatever the type
+            metric = CONTRACT_VALUE
+        elif claim_type == "mrr" and _NEW_MRR.search(text):
+            metric = "New MRR"
+    elif claim_type == "revenue":
         plain = _RECURRING.sub(" ", text)
         if CONTRACT_TERM.search(text):               # issue #136: a contracted or committed figure is a contract value, not revenue
             metric = CONTRACT_VALUE
@@ -1010,6 +1024,8 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
     if c.get("target_date") and (start is None or end is None):
         return finish("Unverified", PERIOD_NOT_READ)       # a date the parser could not read: the analyst sets it
 
+    if metric == "Gross revenue churn" and _MONTHLY.search(text):       # engine contract 8: no monthly figure exists to test it against
+        return finish("Unverified", MONTHLY_CHURN_REASON)
     if fx and fx["rate"] is None:
         return finish("Unverified", f"{FX_NEEDED}: {currency}→{fx['currency']}")       # names the pair (the rate to set)
     span, cov = _Span(results, metric), {}
@@ -1308,8 +1324,8 @@ def _observe(figures: "_Figures", spec: dict, metric: str, start: Optional[int],
             cov.update(coverage=NOT_COVERED, missing=[_ms(m) for m in range(start, end + 1)])
             detail = f"before {_short(metric)}'s first month, {_quarter_first_month(first)}"
             return f"Unverified|{NOT_COVERED_REASON.format(detail=detail)}", None, None, None
-        if q not in quarters:
-            return "Unsupported|not computed for that period", None, None, None
+        if q not in quarters:           # the engine holds no value for the quarter: Unverified, the reason names its months (2026-10-23)
+            return _not_covered(span, list(range(start, end + 1)), cov), None, None, None
     item = quarters[q]
     if item["value"] is not None and not forecast:
         cov.update(coverage=COVERED, missing=[])

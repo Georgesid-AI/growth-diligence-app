@@ -132,10 +132,20 @@ describe("deck selector", () => {
   });
 });
 
+test("ARR, MRR, Churn, NRR and CAC payback are types of their own, in the Type column and in the edit dropdown (engine contract 8)", () => {
+  expect(["arr", "mrr", "churn", "nrr", "cac_payback"].map(typeLabel)).toEqual(["ARR", "MRR", "Churn", "NRR", "CAC payback"]);
+  expect(EDIT_TYPES).toEqual(expect.arrayContaining(["arr", "mrr", "churn", "nrr", "cac_payback"]));
+  expect(typeLabel("revenue")).toBe("Revenue");
+  expect(typeLabel("retention")).toBe("Retention");
+  const group = (g) => CLAIM_GROUPS.find(([n]) => n === g)[1];
+  expect(group(1)).toBe("Revenue, ARR, MRR and bookings");
+  expect(group(3)).toBe("Customers, users, usage, retention and sales");
+});
+
 test("the analyst chooses among plan claim types only; old usage claims keep their label", () => {
-  expect(CLAIM_TYPES).toEqual(["revenue", "revenue_growth", "growth", "retention", "sales", "customers", "users",
+  expect(CLAIM_TYPES).toEqual(["revenue", "arr", "mrr", "revenue_growth", "growth", "retention", "churn", "nrr", "sales", "customers", "users",
     "user_growth", "gross_margin", "gross_profit", "costs", "ebitda", "net_profit", "people", "product", "market",
-    "cash", "burn", "runway", "ltv", "cac", "customer_lifetime", "ltv_cac", "trials_per_day", "months_to_profitability",
+    "cash", "burn", "runway", "ltv", "cac", "cac_payback", "customer_lifetime", "ltv_cac", "trials_per_day", "months_to_profitability",
     "arpa", "arpu", "pipeline", "acquisition_channels"]);
   expect(typeLabel("acquisition_channels")).toBe("Acquisition channels");
   // Issue #45 (deck-parser.md section 2): the new claim types and their labels.

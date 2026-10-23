@@ -15,13 +15,13 @@ final). Location: docs/specs/claim-types-and-correction.md. Amends deck-parser.m
 ## 1. Claim types and the app's stored types
 | Plan type | Stored types | Metric | Value | Unit | Currency | Period | Population | Figure type | Growth basis |
 |---|---|---|---|---|---|---|---|---|---|
-| Revenue / ARR / MRR / Transaction volume | revenue | R | R | R | R | R | – | R | – |
+| Revenue / ARR / MRR / Transaction volume | revenue, arr, mrr | R | R | R | R | R | – | R | – |
 | Growth rate | revenue_growth, growth, user_growth | R | R | R (%) | – | R | – (user_growth: R) | R | R |
 | Customers / users | customers, users | R | R | R (count) | – | R | R (paying / registered / active) | R | – |
-| NRR / churn / retention | retention | R | R | R (%) | – | R (window) | R (cohort) | R | – |
+| NRR / churn / retention | retention, churn, nrr | R | R | R (%) | – | R (window) | R (cohort) | R | – |
 | Sales cycle / win rate / pipeline | sales | R | R | R | – | R | R (deals won / all closed / open) | R | – |
 | Costs / burn / runway / cash | costs, burn, runway, cash, gross_profit, ebitda, net_profit, gross_margin, months_to_profitability | R | R | R | R for an amount | R | – | R | – |
-| Unit economics | ltv, cac, ltv_cac, customer_lifetime, trials_per_day | R | R | R | R for a money value (ltv, cac) | R | – | R | – |
+| Unit economics | ltv, cac, cac_payback, ltv_cac, customer_lifetime, trials_per_day | R | R | R | R for a money value (ltv, cac) | R | – | R | – |
 | Headcount / hiring | people | R | R | count | – | R | optional (team) | R | – |
 | Launch date | product | item name | date | – | – | – | – | R | – |
 | Market size | market | R | R | R | R | optional | – | – | – |
@@ -159,3 +159,6 @@ join `REGISTER_NAMES` in `test_gateway_data_boundary.py`; the two new endpoints 
 
 Amended 2026-10-21 (George, issue #146): after an edit the claim's extraction confidence reads "Analyst-edited" in the deck list, the register and the CSV, in place of
 a score computed from the parser's checks on the corrected values.
+
+Amended 2026-10-23 (George, engine contract 8): `arr`, `mrr` (money types: the currency is required), `churn`, `nrr` (rates) and `cac_payback` (months) are stored types of their own with the
+fields of their plan row above; ARR and MRR are tested (claim-matching.md, amended 2026-10-23), so the unit-economics sentence "None has an app metric" holds for the others only.

@@ -175,3 +175,9 @@ metric list gains `arr`, `mrr`, `churn`, `nrr`, `market_share`, `pricing` and `u
 §28, amended 2026-10-23), so the claim types and groups of stored deck claims differ from contract 6 and results and claim matches stored under 6 read "Stale – re-run
 audit" until Run audit calculates again. `DECK_CLAIM_FIELDS` (`basis`, `scenario`, `flags`), the register row, the baseline CSV and the memo's Appendix A are unchanged;
 `flags` may now hold `year label below: YYYY`. `test_interface_contracts.py` pins `CONTRACT_VERSION == 7`; `test_page_metrics.py` pins the list and the mapping.
+
+Amended 2026-10-23 (George, ARR, MRR, Churn, NRR and CAC payback as claim types): **contract 8.** `CONTRACT_VERSION` 8 and `SEED_VERSION` 15. No engine output field changes: the page reader's closed
+metric list gains `cac_payback`, and `arr`, `mrr`, `churn` and `nrr` reach the register as claim types of their own (claim-matching.md, amended 2026-10-23), so the claim types of stored deck
+claims differ from contract 7 and results and claim matches stored under 7 read "Stale – re-run audit" until Run audit calculates again. `MetricsPayload` keeps its fields (its
+`contract_version` literal is 8); `DECK_CLAIM_FIELDS`, the register row, the baseline CSV and the memo's Appendix A are unchanged. `test_interface_contracts.py` pins `CONTRACT_VERSION == 8` and
+the stale versions 1 to 7; `test_recurring_claim_types.py` pins the types, the metric each is tested against and the reasons.

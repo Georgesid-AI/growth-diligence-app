@@ -1250,12 +1250,17 @@ unmatched=… dropped=… flagged=…`.
   flag with a part of the page in it: a four-digit year label (`checker.YEAR_LABEL_FLAG`; `test_gateway_data_boundary.py`).
 - **Seven metric words more (engine contract 7; closes L9).** The page reader's closed list gains `arr`, `mrr`, `churn`, `nrr`, `market_share`, `pricing`
   and `use_of_funds` (`schemas.PAGE_METRICS`; the JSON output schema, `PageClaim`, `DECK_CLAIM_FIELDS`, the baseline CSV, the memo's Appendix A and the
-  contract test keep their shape). Python stores the register claim type: arr and mrr → Revenue, churn and nrr → Retention, market_share → Market size
-  (`claims.PAGE_CLAIM_TYPE`); `pricing` is a type of its own, a money type with an optional period that is never matched (Unverified, "pricing: a price
+  contract test keep their shape). Python stores the register claim type: market_share → Market size (`claims.PAGE_CLAIM_TYPE`); arr, mrr, churn and nrr were stored as Revenue and Retention under
+  contract 7 and are types of their own since contract 8 (below); `pricing` is a type of its own, a money type with an optional period that is never matched (Unverified, "pricing: a price
   the deck states, no engine metric to test it against"), offered in the editor only on a claim that already has it; `use_of_funds` is the existing type.
   The structure reads keep `CLAIM_METRICS`. The `deck_reading` prompt of the store must name the new words (prompt-store.md; not in the repository, rule 26).
-- **Groups (claims list).** arr and mrr join "Revenue, ARR, MRR and bookings"; churn and nrr join "Customers, users, usage, retention and sales";
+- **Groups (claims list).** arr and mrr (types of their own since contract 8) join "Revenue, ARR, MRR and bookings"; churn, nrr and cac_payback join "Customers, users, usage, retention and sales";
   market_share joins "Market size"; Pricing (group 10) and Use of funds (group 8) are sections of their own, **collapsed by default**, listed after Market
   size and before Other (the order: …, Market size, Pricing, Acquisition channels, Use of funds, Scenarios, Other). Approve all is offered in them once opened.
 - **Fixture.** `page_replies/uber_p20.json`: the 5% claim is metric `market_share`, still four claims and one flag.
 - **Contract and seed.** Engine contract 7: results and claim matches stored under 6 read "Stale – re-run audit"; `SEED_VERSION` 14 reseeds the demo audits.
+- **Five recurring types (engine contract 8, George, 2026-10-23).** The page reader's closed list gains `cac_payback` (`schemas.PAGE_METRICS`; the structure reads keep `CLAIM_METRICS`); a
+  payback figure is read with it. arr, mrr, churn, nrr and cac_payback are stored as register types of their own (`claims.RECURRING_TYPES`), shown ARR, MRR, Churn, NRR and CAC payback in the
+  deck list's Type column and offered by the edit form's type list; groups as above (CAC payback with the other unit economics, in "Customers, users, usage, retention and sales"). The `deck_reading`
+  prompt of the store must name `cac_payback` (prompt-store.md; not in the repository, rule 26). Matching: claim-matching.md, amended 2026-10-23. Contract and seed: engine contract 8, results
+  and claim matches stored under 7 read "Stale – re-run audit", `SEED_VERSION` 15. Fixture `uber_p20.json` unchanged: four claims, one flag.

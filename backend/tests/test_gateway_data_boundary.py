@@ -1483,6 +1483,8 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             "CONTRACT_TERM", "CONTRACT_LABEL", "_type_choice_open", "metric_labels",
                             # 2026-10-20: the period that cannot be paired, the unit-economics reason, the stale marker
                             "PERIOD_UNCLEAR", "period_unclear", "UNIT_ECONOMICS_REASON", "UNIT_ECONOMICS", "results_stale",
+                            # 2026-10-23 (engine contract 8): the monthly-churn reason and the metric each recurring type is tested against
+                            "MONTHLY_CHURN_REASON", "RECURRING_METRIC",
                             *MATCHING_SERVER_ONLY})
 # The functions that log about the register, and the only things their log calls may name.
 REGISTER_LOGGERS = frozenset({"_claim_rows", "claim_register", "claim_register_csv", "update_claim_inputs", "answer_turnover",
