@@ -84,7 +84,7 @@ def test_uber_page_20_gives_exactly_four_scenario_claims_with_one_currency_flag(
     rows = [(i["metric"], i["value"], i["value_high"], i["unit"], i["basis"], i["scenario"], i["status"], i["flags"]) for i in out["items"]]
     assert rows == [
         ("revenue", 1_000_000_000, None, "USD", "scenario", "best", "matched", []),
-        ("market", 5, None, "%", "scenario", "realistic", "matched", []),
+        ("market_share", 5, None, "%", "scenario", "realistic", "matched", []),
         ("net_profit", 20_000_000, 30_000_000, "USD", "scenario", "realistic", "unmatched", [checker.CURRENCY_ASSUMED]),
         ("customers", 100, None, "count", "scenario", "worst", "matched", []),
     ]
@@ -206,6 +206,19 @@ def test_a_period_other_than_the_year_under_the_bar_is_flagged():
     assert wrong["flags"] == [checker.BAR_YEAR] and wrong["status"] == "unmatched"
     right = one(parsed, claim(f"p1{first}", 1_480_000, unit="EUR", period="2022"))
     assert right["flags"] == [] and right["status"] == "matched" and right["period"] == "2022"
+
+
+def test_a_claim_with_no_period_over_a_year_label_is_flagged_with_the_year_and_the_period_stays_empty():
+    """George, 2026-10-23: flag only ("year label below: 2022"), so the analyst can set the period with Edit; Python never sets it."""
+    parsed = bars()
+    first, third = cell_of(parsed, "€1.48MM"), cell_of(parsed, "€5.3MM")
+    got = one(parsed, claim(f"p1{first}", 1_480_000, unit="EUR"))
+    assert got["flags"] == ["year label below: 2022"] and got["period"] is None and got["status"] == "unmatched"
+    assert one(parsed, claim(f"p1{third}", 5_300_000, unit="EUR"))["flags"] == ["year label below: 2024"]
+    assert checker.year_label_flag("2022") == "year label below: 2022"
+    assert one(parsed, claim(f"p1{first}", 1_480_000, unit="EUR", period="2022"))["flags"] == [], "a claim with a period needs no hint"
+    plain = deck([TITLE, (50, 500, 12, "$150,000 annual revenue run rate")])
+    assert one(plain, claim("p1r2c1", 150_000))["flags"] == [], "no year label below, no flag"
 
 
 def test_a_figure_under_a_pipeline_column_claimed_as_another_metric_is_flagged():

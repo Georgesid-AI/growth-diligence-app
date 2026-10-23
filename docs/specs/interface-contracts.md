@@ -169,3 +169,9 @@ of "compute the audit first" when results exist but are stale. `SEED_VERSION` 12
 
 Amended 2026-10-20 (George): while the results are stale the banner shows exactly one line, "Stale – re-run audit" (`kind` `results_stale`),
 and no blocker. It is a replacement of the blockers, not a fourth blocker, so CLAUDE.md rule 21 holds. Test: `test_interface_contracts.py` section 6.
+
+Amended 2026-10-23 (George, deck read quality): **contract 7.** `CONTRACT_VERSION` 7 and `SEED_VERSION` 14. No engine output field changes: the page reader's closed
+metric list gains `arr`, `mrr`, `churn`, `nrr`, `market_share`, `pricing` and `use_of_funds`, which Python maps to register claim types and groups (chat-upload.md
+§28, amended 2026-10-23), so the claim types and groups of stored deck claims differ from contract 6 and results and claim matches stored under 6 read "Stale – re-run
+audit" until Run audit calculates again. `DECK_CLAIM_FIELDS` (`basis`, `scenario`, `flags`), the register row, the baseline CSV and the memo's Appendix A are unchanged;
+`flags` may now hold `year label below: YYYY`. `test_interface_contracts.py` pins `CONTRACT_VERSION == 7`; `test_page_metrics.py` pins the list and the mapping.

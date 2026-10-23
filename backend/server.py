@@ -1821,7 +1821,7 @@ class CandidateUpdate(BaseModel):
     # claim stays out of the top 5, the banner and the verdict. The analyst's list of types does not offer it. Acquisition
     # channels is accepted and offered (chat-upload.md section 17).
     claim_type: Optional[Literal[deck_claims.CLAIM_TYPES + (deck_claims.USE_OF_FUNDS, deck_claims.ACQUISITION_CHANNELS,
-                                                            deck_claims.INSTALLED_UNITS, "other")]] = None
+                                                            deck_claims.INSTALLED_UNITS, deck_claims.PRICING, "other")]] = None
     value: Optional[float] = None
     value_high: Optional[float] = None          # the high end of a range
     unit: Optional[str] = Field(default=None, min_length=1, max_length=40)   # "%", "months", "paying users"
@@ -3786,7 +3786,8 @@ app.add_middleware(
 # 10: results carry contract_version 4 (repeated CRM rows counted once and flagged, won deals by close month).
 # 11: demo audits carry no client name (the field is gone).
 # 12: results carry contract_version 5 (demo audits seeded under 11 held version 4 and opened as Stale).
-SEED_VERSION = 13          # 13: engine contract 6 (the page reader): demo audits held under contract 5 are reseeded
+SEED_VERSION = 14          # 14: engine contract 7 (the page reader's seven new metrics): demo audits held under contract 6 are reseeded
+                           # 13: engine contract 6 (the page reader): demo audits held under contract 5 are reseeded
 
 
 @app.on_event("startup")

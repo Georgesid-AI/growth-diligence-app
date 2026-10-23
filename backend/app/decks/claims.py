@@ -141,6 +141,9 @@ CLAIM_TYPES = ("revenue", "revenue_growth", "growth", "retention", "sales", "cus
 # A figure no line and no heading names a type for: listed as "unknown" and approved only once the analyst chooses a
 # type (docs/specs/deck-parser.md section 2), like the model's "other" (structure-labelling.md section 4).
 UNKNOWN = "unknown"
+# A price list or a price point (George, 2026-10-23, the page reader's `pricing`): an amount, no engine metric, never matched; a type of its own, not offered
+# in the analyst's list, like use of funds.
+PRICING = "pricing"
 # An allocation share on a raise slide (deck-parser.md section 2, "Use of funds"): unit %, no engine metric, never Sales or Revenue.
 USE_OF_FUNDS = "use_of_funds"
 # A per-platform figure on a user-acquisition slide (chat-upload.md section 17): count, no currency, no engine metric.
@@ -155,7 +158,7 @@ INSTALLED_UNITS = "installed_units"
 # The old group 6 (Unknown) is gone: a figure no heading names a type for is Other (claim-types-and-correction.md section 4). Group 6 is Scenarios
 # since 2026-10-23 (SCENARIO_GROUP).
 GROUPS = {1: "revenue", 2: "P&L", 3: "customers and sales", 4: "hiring and roadmap", 5: "market size", 6: "scenarios",
-          7: "acquisition channels", 8: "use of funds", 9: "other"}
+          7: "acquisition channels", 8: "use of funds", 9: "other", 10: "pricing"}
 _GROUP_OF = {
     "revenue": 1, "revenue_growth": 1,
     "gross_profit": 2, "ebitda": 2, "burn": 2, "cash": 2, "runway": 2, "costs": 2, "net_profit": 2, "gross_margin": 2,
@@ -163,15 +166,18 @@ _GROUP_OF = {
     "customers": 3, "users": 3, "user_growth": 3, "growth": 3, "retention": 3, "sales": 3, "ltv": 3, "cac": 3, "ltv_cac": 3,
     "customer_lifetime": 3, "trials_per_day": 3, "arpa": 3, "arpu": 3, "pipeline": 3, "usage": 3, INSTALLED_UNITS: 3,
     "people": 4, "product": 4,
-    "market": 5, ACQUISITION_CHANNELS: 7, USE_OF_FUNDS: 8,
+    "market": 5, ACQUISITION_CHANNELS: 7, USE_OF_FUNDS: 8, PRICING: 10,
 }
+# The page reader's metric words that are no register claim type, and the type each stands for (George, 2026-10-23): the groups follow
+# the type (ARR and MRR are Revenue, churn and NRR are Retention, market share is Market size). Every other word is its own type.
+PAGE_CLAIM_TYPE = {"arr": "revenue", "mrr": "revenue", "churn": "retention", "nrr": "retention", "market_share": "market"}
 OTHER_GROUP = 9
 # George, 2026-10-23 (review of PR 164, H2): a best-case or worst-case figure of the page read is listed in a section of its own, whatever its type;
 # only realistic / none are plan targets. The screen puts the section above Other (frontend CLAIM_GROUPS).
 SCENARIO_GROUP = 6
 CASES = ("best", "worst")
 BASIS_CONFLICT = "basis conflicts with period"        # a projection for a period on or before the as-of month (claim_matching.flags_of)
-COLLAPSED_GROUPS = (OTHER_GROUP,)
+COLLAPSED_GROUPS = (8, 9, 10)          # use of funds, other, pricing (George, 2026-10-23)
 # docs/specs/claim-types-and-correction.md section 4: a figure the parser cannot type and an item the model labelled other are Other:
 # never matched, never a task, listed collapsed under their count. The analyst may type a claim Other, and retype it out.
 OTHER_TYPES = ("other", UNKNOWN)

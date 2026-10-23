@@ -429,3 +429,10 @@ figure labelled MRR, ARR or New MRR is never compared with a Revenue or Turnover
 Amended 2026-10-22 (follow-up to PR for issue #151): the section 11 rule extends to the Sales family: a deck inconsistency compares a Sales figure only with one of the same Sales metric (ACV, win
 rate, sales cycle, ...; deck-parser.md, amended 2026-10-22), never an ACV with a sales cycle. A percentage or count beside an MRR or ARR word is labelled as before issue #151 (Revenue, Turnover or
 Contract value), never MRR, ARR or New MRR.
+
+Amended 2026-10-23 (George, deck read quality; engine contract 7, chat-upload.md §28): the page reader's seven new metric words reach the register as claim types.
+arr and mrr are Revenue claims (the keyword in the snippet still decides ARR, MRR or Revenue, table 2a), churn and nrr are Retention claims (the keyword decides NRR or
+gross revenue churn), market_share is a Market size claim, use_of_funds is the Use of funds type. `pricing` is a new type: a money type (a missing currency is the field
+still unknown), its period may stay unknown, and it is never matched, ranked, gated or put in the top 5: Unverified with the reason "pricing: a price the deck states, no
+engine metric to test it against" (`claim_matching.UNTESTED_TYPES`, like use of funds and acquisition channels). The deck claim carries the flag `year label below: YYYY`
+when it has no period and a year label stands below its figure; the period stays the analyst's to set. Matching of every other type is unchanged.

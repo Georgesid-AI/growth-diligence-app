@@ -3,7 +3,7 @@ import {
   approveAllToast, toReview, DECK_SCOPE_CANNOT, DECK_SCOPE_CANNOT_LEAD, DECK_SCOPE_INTRO, isDeckFile, DECK_SCOPE_OUTRO, EDIT_TYPES, isOther, readingChoices, confidenceText, otherFiguresTitle,
   claimFields, editLogText, CONSENT_OFF_LINE,
   CLAIMS_VIEW, REVIEW_VIEW, VIEW_LABELS, REVIEW_INTRO, claimsForView, isFlagged, flagsText,
-  CLAIM_GROUPS, SCENARIO_GROUP, PROMPT_MISSING_LINE, scenarioText, isCase,
+  CLAIM_GROUPS, COLLAPSED_BY_DEFAULT, SCENARIO_GROUP, PROMPT_MISSING_LINE, scenarioText, isCase,
 } from "./deckClaims";
 
 describe("source reference", () => {
@@ -358,7 +358,9 @@ describe("2026-10-08: the Period column, groups, a direction with no figure and 
       [1, "Revenue, ARR, MRR and bookings", ["a"], false], [5, "Market size", ["c"], false], [9, "1 other figure", ["b"], true]]);
     expect(claimSections([{ id: "z" }])[0]).toMatchObject({ group: 9, title: "1 other figure", collapsed: true });
     expect(claimSections([7, 9, 8].map((group) => ({ id: `g${group}`, group }))).map((s) => [s.group, s.title, s.collapsed])).toEqual([
-      [7, "Acquisition channels", false], [8, "Use of funds", false], [9, "1 other figure", true]]);
+      [7, "Acquisition channels", false], [8, "Use of funds", true], [9, "1 other figure", true]]);
+    expect(claimSections([10, 5].map((group) => ({ id: `g${group}`, group }))).map((s) => [s.group, s.title, s.collapsed])).toEqual([
+      [5, "Market size", false], [10, "Pricing", true]]);   // George, 2026-10-23: Pricing and Use of funds start collapsed, after Market size and before Other
     expect(claimSections([{ id: "p", group: 4 }])[0]).toMatchObject({ title: "Hiring and roadmap", collapsed: false });
     expect(claimSections([{ id: "p", group: 3 }])[0].title).toBe("Customers, users, usage, retention and sales");
     expect(claimSections([]).length).toBe(0);
@@ -451,10 +453,20 @@ describe("the Claims and Review views (George, 2026-10-22, docs/design/ai-reads-
   });
 });
 
+describe("the page reader's seven new metrics (George, 2026-10-23)", () => {
+  test("Pricing is a type with a label and a group of its own, offered by the editor only on a claim that already has it", () => {
+    expect(typeLabel("pricing")).toBe("Pricing");
+    expect(CLAIM_TYPES).not.toContain("pricing");
+    expect(CLAIM_GROUPS.find(([g]) => g === 10)[1]).toBe("Pricing");
+    expect(CLAIM_GROUPS.map(([g]) => g).slice(4, 6)).toEqual([5, 10]);
+    expect(COLLAPSED_BY_DEFAULT).toEqual([8, 9, 10]);
+  });
+});
+
 describe("review of PR #164 (George, 2026-10-23)", () => {
   test("Scenarios is a section above Other and below Use of funds; only a best or worst case belongs there", () => {
     expect(SCENARIO_GROUP).toBe(6);
-    expect(CLAIM_GROUPS.map(([g]) => g)).toEqual([1, 2, 3, 4, 5, 7, 8, 6, 9]);
+    expect(CLAIM_GROUPS.map(([g]) => g)).toEqual([1, 2, 3, 4, 5, 10, 7, 8, 6, 9]);
     expect(CLAIM_GROUPS.find(([g]) => g === 6)[1]).toBe("Scenarios");
     expect(isCase({ scenario: "best" })).toBe(true);
     expect(isCase({ scenario: "worst" })).toBe(true);

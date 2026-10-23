@@ -18,7 +18,7 @@
    "period_cell": null
   },
   {
-   "metric": "market",
+   "metric": "market_share",
    "value": 5.0,
    "value_high": null,
    "unit": "%",

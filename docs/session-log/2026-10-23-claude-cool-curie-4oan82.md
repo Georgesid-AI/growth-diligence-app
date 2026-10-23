@@ -1,0 +1,6 @@
+2026-10-23, claude/cool-curie-4oan82
+Deleted: the "market" metric of the uber p20 fixture reply (now market_share) and the test line that expected the Use of funds section open; nothing else.
+Decided: "Bn" failed only because the figure pattern read the suffix "bn" in lower case, so the fix is one case-insensitive group in redact.NUMBER, not a new expander (the other four suffix cases already matched); the upload row derives its text from the stored deck instead of a second status copy; the year flag is "year label below: YYYY" with a regex beside the closed FLAGS; the seven new metrics map to existing register types through PAGE_CLAIM_TYPE and only pricing is a new type (group 10, outside CLAIM_TYPES like use of funds), so the structure reads and the contract fields stay as they were.
+Slow or unclear: the brief says all five suffix cases fail; four matched at cell level on synthetic boxes, so the tests cover the five plus six variants and the real-deck cause of the other four is not reproduced here.
+Root cause and rule: a scale suffix was matched in one spelling only; test every suffix in upper, lower and mixed case, with and without a space after the symbol (test_page_check.py).
+Process change to propose: when a brief lists failing cases, run them first and report which do not fail before writing the fix.

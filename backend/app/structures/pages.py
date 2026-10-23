@@ -154,7 +154,7 @@ def row_from_claim(item: Dict, grid: Dict, deck: Dict, fiscal_year_end: int) -> 
     shim = {**_where(grid), "table": cell.get("table")}
     place = {**cell, "row": cell.get("trow", cell["row"]), "col": cell.get("tcol", cell["col"])} if cell.get("table") is not None else cell
     candidate = {
-        "claim_type": item["metric"], "value": item.get("value"), "value_high": item.get("value_high"),
+        "claim_type": claims.PAGE_CLAIM_TYPE.get(item["metric"], item["metric"]), "value": item.get("value"), "value_high": item.get("value_high"),
         # The model's basis is kept as a note and sets no figure type: Python reads it from the period (George, 2026-10-23, M2).
         "figure_type": None, "figure_type_set_by": None,
         "unit": unit if unit in _UNITS else None, "currency": unit if unit and len(unit) == 3 and unit.isupper() else None,
@@ -186,7 +186,7 @@ def row_out_of_range(claim: Dict, page: int, deck: Dict) -> Dict:
     unit = claim.get("unit_other") if claim.get("unit") == "other" else claim.get("unit")
     key = "slide" if deck.get("page_unit") == "slide" else "page"
     return {
-        "claim_type": claim["metric"], "value": claim.get("value"), "value_high": claim.get("value_high"),
+        "claim_type": claims.PAGE_CLAIM_TYPE.get(claim["metric"], claim["metric"]), "value": claim.get("value"), "value_high": claim.get("value_high"),
         "figure_type": None, "figure_type_set_by": None,
         "unit": unit if unit in _UNITS else None, "currency": unit if unit and len(unit) == 3 and unit.isupper() else None,
         "target_date": _target_date_of(claim.get("period")), "period_text": claim.get("period"), "snippet": "", "label_from": None,

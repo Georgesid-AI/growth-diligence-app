@@ -329,3 +329,18 @@ def test_a_neighbouring_line_with_its_own_figure_is_not_a_date_source():
     assert got["checks"]["period"] is True and got["status"] == MATCHED
     pure = grid([line(1, "STRONG", 1, title=True), line(2, "in 2022", 2, next_to=["r3c1"]), line(3, "2,600+ users", 3, next_to=["r2c1"])])
     assert one(pure, claim("r3c1", 2600, metric="users", unit="count"))["checks"]["period"] is False, "a pure date line still is one"
+
+
+# ---------------------------------------------------------------------------
+# Standalone text-box figures with a scale suffix (George, 2026-10-23: K, M, MM, Bn and B expand, any case; separators and
+# currency symbols, with or without a space after them, are ignored)
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("text, value, unit", [
+    ("€2.7MM", 2700000, "EUR"), ("€151K", 151000, "EUR"), ("$ 22.9Bn", 22900000000, "USD"), ("€2.3K", 2300, "EUR"),
+    ("€1.48MM", 1480000, "EUR"), ("$22.9BN", 22900000000, "USD"), ("$22.9B", 22900000000, "USD"), ("€ 2.7mm", 2700000, "EUR"),
+    ("€2.7Mn", 2700000, "EUR"), ("€2,700K", 2700000, "EUR"), ("$ 1,250 M", 1250000000, "USD"),
+])
+def test_a_standalone_text_box_figure_with_a_scale_suffix_is_matched_in_full_units(text, value, unit):
+    got = one(grid([line(1, text, 1)]), claim("r1c1", value, unit=unit))
+    assert got["status"] == MATCHED and got["checks"]["value"] is True and got["checks"]["unit"] is True
+

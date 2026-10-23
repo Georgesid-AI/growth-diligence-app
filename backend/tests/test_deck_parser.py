@@ -773,15 +773,15 @@ def test_an_edit_that_types_a_figure_ends_the_direction_and_the_list_is_grouped_
 
 
 def test_every_claim_type_has_its_group():
-    groups = {t: claims.type_group(t) for t in (*claims.CLAIM_TYPES, "usage", "use_of_funds", "acquisition_channels", "other", "unknown")}
-    assert {g: sorted(t for t, x in groups.items() if x == g) for g in range(1, 10)} == {
+    groups = {t: claims.type_group(t) for t in (*claims.CLAIM_TYPES, "usage", "use_of_funds", "acquisition_channels", "pricing", "other", "unknown")}
+    assert {g: sorted(t for t, x in groups.items() if x == g) for g in range(1, 11)} == {
         1: ["revenue", "revenue_growth"],
         2: ["burn", "cash", "costs", "ebitda", "gross_margin", "gross_profit", "months_to_profitability", "net_profit", "runway"],
         3: ["arpa", "arpu", "cac", "customer_lifetime", "customers", "growth", "ltv", "ltv_cac", "pipeline", "retention", "sales",
             "trials_per_day", "usage", "user_growth", "users"],
-        4: ["people", "product"], 5: ["market"], 6: [], 7: ["acquisition_channels"], 8: ["use_of_funds"], 9: ["other", "unknown"]}
-    assert claims.COLLAPSED_GROUPS == (9,), "Other is one collapsed section (claim-types-and-correction.md section 4)"
-    assert list(claims.GROUPS.values())[-3:] == ["acquisition channels", "use of funds", "other"], "Acquisition channels, then Use of funds, then Other"
+        4: ["people", "product"], 5: ["market"], 6: [], 7: ["acquisition_channels"], 8: ["use_of_funds"], 9: ["other", "unknown"], 10: ["pricing"]}
+    assert claims.COLLAPSED_GROUPS == (8, 9, 10), "Use of funds, Other and Pricing start collapsed (claim-types-and-correction.md section 4; George, 2026-10-23)"
+    assert list(claims.GROUPS.values())[-4:] == ["acquisition channels", "use of funds", "other", "pricing"]
 
 
 def test_the_parser_and_the_model_reading_the_same_value_are_one_claim_only_when_type_value_currency_and_period_agree():
