@@ -1,6 +1,6 @@
-2026-10-24 · claude/admiring-turing-q9i676 (design note docs/design/simplified-flow.md, George's direction of 24 Oct 2026, no code)
-Deleted: nothing in code; the note lists what each of the eight removals deletes (approval buttons and counts, gate form, top-5 picker, Review page, register machinery columns, rating selects, judgment fields, per-column mapping tables).
-Decided: screen by screen with one table each for the card rule, the engine inputs behind each computed element, the spec changes, the upgrade of stored audits and the tests; the gate template and the rating thresholds reuse rules the app already has (the prefill rule, the Dashboard colours) so nothing is invented; eight decisions left to George, each with a recommendation.
-Slow or unclear: "editable in the memo only" (gates) and "Insufficient evidence only when no top-5 claim is tested and no gate exists" (which cannot hold with a gate proposed on every untested row); both are open decisions, not assumptions built in.
-Root cause and rule: the 15 Oct conclusion spec banned the A10 words the 24 Oct direction restores, and docs/architecture.md still says the analyst approves every claim; a design note that reverses an earlier decision names it in its first lines (Architecture note, decision list) before describing the screens.
-Process change to propose: when a direction reverses a decision of the same month, the task text names the spec it overrides, so the note does not have to discover the conflict.
+Date and branch: 2026-10-24, claude/admiring-turing-q9i676.
+Deleted: "Provisional" and "Insufficient evidence" states, the scope sentence and "n of 5 tested", the A10 wording conflict (decision 2, marked decided), the thesis and top-5-confirmation refusals.
+Decided: conclusion screen = verdict line, one grey line, one Change link; 15 Oct wording on screen and in memo; four label definitions standard everywhere; gates for every non-Verified claim, edited in Verdict only; setup and questions trimmed; ic_memo.py judgment fields recorded as a build task (no code changed).
+Slow or unclear: section 8 (was 7) decisions 3, 4, 6, 8 are now answered by the edits but left untouched as instructed; section 7 was renumbered to 8 to make room for Acceptance criteria.
+Root cause and rule: the design note carried states (provisional, insufficient) that blocked the verdict; rule: the verdict is always computed, uncertainty shows as a count.
+Process change to propose: when a note is edited from a review, list the open decisions the edit answers so they can be closed in one pass.
