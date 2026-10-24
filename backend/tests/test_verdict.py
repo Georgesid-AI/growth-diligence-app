@@ -115,8 +115,8 @@ def test_the_three_reasons_are_the_claims_that_made_the_rule_fire_each_citing_it
     rows = gated(register(RUNS["A"]))
     v = vd.verdict(rows, results_for(RUNS["A"]), {"claim_ids": vd.proposal(rows)})
     assert v["outcome"] == "Selected claims not supported" and len(v["reasons"]) == 3
-    assert v["reasons"][0] == ("#1 Revenue, Q4 2023: Contradicted, €49,047 against €60,000 (€10,953 lower (miss)). "
-                               "Evidence: Revenue by month (revenue_series.data.total, CSV, rows 2–71 (70 rows), Oct–Dec 2023).")
+    assert v["reasons"][0] == ("#2 ARR, FY2023: Contradicted, €198,143 against €240,000 (€41,857 lower (miss)). "
+                               "Evidence: Monthly MRR by Segment (mrr_series.data.total, CSV, rows 2–71 (70 rows), Dec 2023).")
     unsupported = [row(1, "Unsupported", gate=True), *[row(i, "Verified") for i in range(2, 6)]]
     again = vd.verdict(unsupported, {"reporting_currency": "EUR"}, {"claim_ids": [r["claim_id"] for r in unsupported]})
     assert again["reasons"][0] == "#1 ARR, Feb 2024: Unsupported, reason 1. No figure in the supplied files."
@@ -149,7 +149,7 @@ def test_an_open_definition_check_blocks_the_verdict_wherever_it_ranks_until_it_
     c37 = row_of(rows, "c37")
     assert (c37["evidence_label"], c37["definition_check"], c37["rank"], c37["gate_needed"]) == (None, "ask", 1, False)
     assert c37["definition_question"] == "Observed €0, claimed €5,000. Same metric and period?"
-    ids = {"claim_ids": vd.proposal(rows)}
+    ids = {"claim_ids": ["c37", *[i for i in vd.proposal(rows) if i != "c37"][:4]]}      # a small claim: the proposal does not reach it
     v = vd.verdict(gated(rows), results_for(RUNS["D"]), ids)
     assert (v["status"], v["outcome"], v["blocked"]) == ("blocked", None, ["c37"])
     assert v["message"] == "Conclusion blocked: answer the definition check on #1."
@@ -185,22 +185,25 @@ def test_run_b_is_one_unverified_claim_blocked_until_its_gate_is_saved():
 
 # --- section 6.1: the top 5 --------------------------------------------------------------------------------------------------
 
-def test_no_verdict_before_the_top_5_is_confirmed_and_the_proposal_is_rows_1_to_5():
+def test_no_verdict_before_the_top_5_is_confirmed_and_the_proposal_is_the_rule_of_2026_10_24():
     rows = register(RUNS["A"])
     v = vd.verdict(rows, results_for(RUNS["A"]), None)
     assert (v["status"], v["outcome"], v["message"]) == ("unconfirmed", None, "No conclusion until the top 5 is confirmed.")
-    assert v["top5"]["proposed"] == [r["claim_id"] for r in rows[:5]] and not v["top5"]["confirmed"]
+    assert v["top5"]["proposed"] == vd.proposal(rows) and not v["top5"]["confirmed"]
+    assert v["top5"]["proposed"] == ["c09", "c29", "c05", "c24", "c23"], "plan claims by claim value: no Target ARR is set on the fixture"
 
 
 def test_a_replaced_row_counts_and_the_replaced_one_does_not():
     rows = gated(register(RUNS["A"]))
     ids = vd.proposal(rows)
-    verified = next(r for r in rows if r["evidence_label"] == "Verified")
-    replaced = [verified["claim_id"], *ids[1:]]
+    contradicted = [i for i in ids if row_of(rows, i)["evidence_label"] == "Contradicted"]
+    assert len(contradicted) == 2, "fixture: two of the proposed five are Contradicted"
+    verified = next(r for r in rows if r["evidence_label"] == "Verified" and r["claim_id"] not in ids)
+    replaced = [verified["claim_id"] if i == contradicted[0] else i for i in ids]
     v = vd.verdict(rows, results_for(RUNS["A"]), {"claim_ids": replaced})
     assert [f["claim_id"] for f in v["five"]] == sorted(replaced, key=lambda i: row_of(rows, i)["rank"])
-    assert ids[0] not in [f["claim_id"] for f in v["five"]] and verified["claim_id"] in [f["claim_id"] for f in v["five"]]
-    assert v["rule"] == "4 selected claims are Contradicted.", "the replaced Contradicted row no longer counts"
+    assert contradicted[0] not in [f["claim_id"] for f in v["five"]] and verified["claim_id"] in [f["claim_id"] for f in v["five"]]
+    assert v["rule"] == "1 selected claim is Contradicted.", "the replaced Contradicted row no longer counts"
 
 
 @pytest.mark.parametrize("size", [0, 4, 6])
@@ -226,13 +229,13 @@ def test_a_confirmed_claim_leaving_the_register_voids_the_set_and_a_new_rank_ord
     v = vd.verdict(left, results_for(RUNS["A"]), stored)
     assert (v["status"], v["message"]) == ("void", "A claim of the confirmed top 5 left the register – confirm the top 5 again.")
     shuffled = sorted(({**r, "rank": len(rows) + 1 - r["rank"]} for r in rows), key=lambda r: r["rank"])
-    assert [r["claim_id"] for r in shuffled[:5]] != stored["claim_ids"], "fixture: the five are no longer rows 1 to 5"
+    assert [r["claim_id"] for r in shuffled[:5]] != [r["claim_id"] for r in rows[:5]], "fixture: the rows are in another order"
     assert vd.top5_state(shuffled, stored)["confirmed"], "a new rank order alone does not void the set"
 
 
 def test_the_banner_keeps_rows_1_to_5_of_the_pre_sort_after_the_analyst_replaces_a_row():
     rows = register(RUNS["A"])
-    assert vd.banner_ids(rows) == [r["claim_id"] for r in rows[:5]]
+    assert vd.banner_ids(rows) == vd.proposal(rows)
 
 
 # --- section 6.3: blocked --------------------------------------------------------------------------------------------------------
@@ -366,12 +369,12 @@ def _inputs(client, body):
     return client.put(f"/api/audits/{AUDIT}/ic-inputs", json=body)
 
 
-def test_the_verdict_endpoint_proposes_rows_1_to_5_and_gives_no_outcome_until_confirmed(register_api):
+def test_the_verdict_endpoint_proposes_the_five_and_gives_no_outcome_until_confirmed(register_api):
     client, _ = register_api
     body = _verdict(client)
     register = _get(client)["register"]
     assert body["verdict"]["status"] == "unconfirmed" and body["verdict"]["outcome"] is None
-    assert body["verdict"]["top5"]["proposed"] == [r["claim_id"] for r in register[:5]]
+    assert body["verdict"]["top5"]["proposed"] == vd.proposal(register)
     assert len(body["candidates"]) == len(register)
 
 
@@ -384,7 +387,7 @@ def test_confirming_a_set_stores_it_as_an_analyst_decision_and_a_wrong_size_is_r
     r = _inputs(client, {"top5": ids})
     assert r.status_code == 200
     stored = db["audits"].docs[0]["ic_inputs"]["top5"]
-    assert stored["claim_ids"] == ids and stored["set_at"]
+    assert set(stored["claim_ids"]) == set(ids) and stored["set_at"]
     assert r.json()["verdict"]["status"] == "blocked", "the proposed five are Contradicted and have no gate yet"
 
 

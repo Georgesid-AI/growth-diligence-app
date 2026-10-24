@@ -447,8 +447,8 @@
      },
      "analyst": {},
      "expect": {
-      "label": "Unverified",
-      "reason": "deck reading",
+      "label": "Verified",
+      "reason": "within",
       "metric": "NRR (12-month)",
       "observed": 112.68,
       "gap": -0.68,

@@ -352,7 +352,7 @@ def test_the_review_inputs_persist_and_come_back_on_the_next_read(run_api):
     assert run_api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"top5": ids}).status_code == 200
     assert run_api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"thesis": THESIS, "ratings": RATINGS}).status_code == 200
     body = run_api.get(f"/api/audits/{AUDIT}/verdict").json()
-    assert body["verdict"]["top5"]["confirmed"] and body["verdict"]["top5"]["claim_ids"] == ids
+    assert body["verdict"]["top5"]["confirmed"] and set(body["verdict"]["top5"]["claim_ids"]) == set(ids)
     assert body["ic_inputs"]["thesis"] == THESIS and body["ic_inputs"]["ratings"] == RATINGS
     assert run_api.db["audits"].docs[0]["ic_inputs"]["ratings"] == RATINGS, "stored on the audit, not in the browser"
 

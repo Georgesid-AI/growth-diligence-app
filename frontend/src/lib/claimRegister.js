@@ -150,9 +150,10 @@ export const segmentOptions = (results) => [WHOLE_COMPANY, ...dataSegments(resul
 export const needsMetricName = (row) => row.metric == null || NO_APP_METRIC.includes(row.reason)
   || String(row.reason || "").startsWith("population differs: ");
 
-/** W1: "not yet computed · shortfall 18.3%"; a row with no shortfall reads "not yet computed". */
-export function valueAtStakeText(row) {
-  const base = "not yet computed";
+/** W1: the value at stake as an amount, else the server's reason ("not yet computed: Target ARR empty", "no ARR link: ..."), else
+ *  "not yet computed"; a row that missed adds " · shortfall 18.3%". */
+export function valueAtStakeText(row, ccy) {
+  const base = row.value_at_stake_arr != null ? fmtCurrency(row.value_at_stake_arr, ccy) : row.vas_reason || "not yet computed";
   return row.shortfall == null ? base : `${base} · shortfall ${(row.shortfall * 100).toFixed(1)}%`;
 }
 

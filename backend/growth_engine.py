@@ -1842,7 +1842,9 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
         }
     else:
         results["arr"] = None
-        missing_data.append({"metric": "ARR / MRR", "reason": "No usable recurring revenue rows",
+        total_report = (config.get("recognition") or {}).get("file_type") == "monthly_revenue_report"
+        missing_data.append({"metric": "ARR / MRR", "reason": ("revenue file is a monthly total report with no recurring split"
+                                                               if total_report else "No usable recurring revenue rows"),
                              "unlocked_by": "Upload revenue lines with customer ID, invoice date, amount, currency",
                              "file": rev_src.get("file")})
 
@@ -1879,7 +1881,9 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
 
     if pnl.empty:
         results["cac_payback"] = None
-        missing_data.append({"metric": "CAC payback", "reason": "P&L not provided",
+        missing_data.append({"metric": "CAC payback",
+                             "reason": ("P&L is yearly; CAC payback needs monthly S&M, revenue and cost of revenue"
+                                        if yearly else "P&L not provided"),
                              "unlocked_by": "Upload P&L with month, S&M expense, revenue, cost of revenue", "file": pnl_src.get("file")})
     else:
         cac = guarded("CAC payback", pnl_src.get("file"), None, compute_cac_payback, new_mrr_q, pnl,

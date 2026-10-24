@@ -103,13 +103,13 @@ def test_a_claim_with_an_open_definition_check_is_approved_and_counted_and_the_c
 
 
 def test_the_open_definition_count_is_taken_on_the_status_the_claim_has_once_approved(approve_api):
-    """A claim read as an AI suggestion while pending shows no check (claim-matching.md section 4.1, D3); approved, its check opens.
-    The count is of the checks as the register holds them after the approval."""
+    """A claim read by the AI is tested like any other (George, 2026-10-24), so its check shows while it is pending too; the count is of
+    the checks as the register holds them after the approval."""
     client, db = approve_api
     db[decks.CANDIDATES_COLLECTION].docs.append(
         claim("s1", value=1000, snippet="Revenue EUR 1,000", origin="ai", parsed={"claim_type": "revenue", "value": 1000}))
     before = next(c for c in client.get(f"/api/audits/{AUDIT}/decks").json()["candidates"] if c["id"] == "s1")
-    assert before["definition"] is None, "fixture: pending, read by the AI: a suggestion, no check yet"
+    assert [d["definition_check"] for d in before["definition"]] == ["ask"], "pending, read by the AI: tested, so its check shows"
     body = client.post(URL, json={"group": REVENUE}).json()
     assert "s1" in body["approved_ids"] and status(db, "s1") == "edited" and body["open_definition"] == 1
     after = next(r for r in client.get(f"/api/audits/{AUDIT}/claims").json()["register"] if r["claim_id"] == "s1")

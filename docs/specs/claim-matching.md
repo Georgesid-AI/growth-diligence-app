@@ -1,6 +1,18 @@
 # Spec: Claim matching: approved claims tested against the computed metrics
 Status: Draft; decisions of 2026-10-07 applied (§10). Location: docs/specs/claim-matching.md.
 Follows deck-parser.md §6.
+Amended 2026-10-24 (George, draft PR from main): (1) an approved claim the AI read is analyst-confirmed: within tolerance it is Verified (a beat as today), outside it Contradicted; the
+"AI suggestion, not verified until the analyst edits the claim" rule and its reason text are removed (§4, table 2b); an edit is never required to verify; the claim keeps `deck_reading`
+"AI suggestion, not verified" as its provenance. (2) Value at stake is computed for every approved, tested claim once the audit's Target ARR and Target date are both set (§6, §8): the claimed
+figure in ARR terms in the reporting currency, annualised from its period (ARR as stated, MRR x 12, revenue or sales x 12 / months of the period) and capped at Target ARR; a rate (churn, NRR,
+growth, %) is its share of the current ARR; a customer count is the count x ACV. Any other claim, and an untested one, has none and `vas_reason` says why ("no ARR link: ..."); while a field is
+empty `vas_reason` is "not yet computed: Target ARR empty" (or "Target date empty", "Target ARR and Target date empty"). The register gains `vas_reason` (after `value_at_stake_arr`; the CSV
+column follows). (4) A claim of a type that names an engine metric (ARR, MRR, churn, NRR, CAC payback, customers, users, user growth, gross margin, revenue growth) that no metric fits and that
+has no period is Unverified, "period missing; set it with Edit", not Unsupported, "no metric". (5) The growth basis defaults from the claim text: "from YYYY", "annual", "YoY", "Y2Y" is YoY;
+"MoM", "per month", "monthly" is MoM; a basis the parser or model left as "unknown" does not hide the words; the analyst's choice stays. (3) The top-5 proposal (`verdict.proposal`, also the banner's five) leaves out market, pricing, use of funds, other, people and product claims and every untested row; it ranks the testable plan
+claims (revenue, ARR, MRR, churn, NRR, revenue growth, sales, customers) by value at stake, largest first, then by claim value; a claim with no value at stake follows those with one; any other
+claim comes after the plan claims, in register order. The register's rank order is unchanged and the analyst's confirmed set is still stored and shown by rank (verdict-and-memo.md §6.1, which
+this replaces for the proposal, is not edited here).
 Amended 2026-10-23 (George, engine contract 8): ARR, MRR, Churn, NRR and CAC payback are claim types of their own (`arr`, `mrr`, `churn`, `nrr`, `cac_payback`); table 2a and
 the end of this spec.
 Amended 2026-10-22 (George, issue #155, option c): Run audit's within-tolerance step (§4.1) no longer approves, however close, a claim the analyst
@@ -142,7 +154,7 @@ Untested rows stay listed with a reason and observed "—" (a forecast shows its
 |---|---|
 | Verified | Tested and within tolerance: ±5% of the claimed value for amounts, counts and durations; ±1 percentage point for rates. The boundary is Verified. Or a beat outside tolerance up to the check limit of §4.1 (observed better than the claim: above it, or below it where lower is better), or a bigger beat whose Definition check is answered Yes: reason "beat: observed beats the claim by {gloss}", marked (beat). |
 | Contradicted | Tested and outside tolerance: a miss up to the check limit of §4.1, or a bigger miss whose Definition check is answered Yes. |
-| Unverified | Not testable yet; the reason names what would test it: a Missing file (the engine's `unlocked_by`), a forecast period, a period before the metric's first month, no saved FX rate for the claim's currency ("FX rate needed"), a direction with no figure, a revenue claim with no period ("no period stated"), months of the period missing from the data (named), or a deck reading "AI suggestion, not verified" (until the analyst edits the claim, even unchanged): a claim that would otherwise be Verified, Contradicted or a Definition check; any other reason stands. A Definition check answered No: reason "definition mismatch". A Use of funds claim (deck-parser.md, amended 2026-10-10) and an Acquisition channels claim (chat-upload.md section 17, 2026-10-11) are always Unverified, with no metric, gap, value at stake or gate. |
+| Unverified | Not testable yet; the reason names what would test it: a Missing file (the engine's `unlocked_by`), a forecast period, a period before the metric's first month, no saved FX rate for the claim's currency ("FX rate needed"), a direction with no figure, a revenue claim with no period ("no period stated"), months of the period missing from the data (named), a claim of a type that names an engine metric with no period and no fitting metric ("period missing; set it with Edit"); any other reason stands. A deck reading "AI suggestion, not verified" no longer changes the label (2026-10-24). A Definition check answered No: reason "definition mismatch". A Use of funds claim (deck-parser.md, amended 2026-10-10) and an Acquisition channels claim (chat-upload.md section 17, 2026-10-11) are always Unverified, with no metric, gap, value at stake or gate. |
 | Unsupported | The app gives no figure: no metric proposed or picked, the metric not computed for that period or by segment, the segment not in the data, or the engine's "not computable" reason. A Users claim with a `qualifier` (deck-parser.md §2) and no metric picked reads "deck label '{qualifier} {noun}' is not paying customers; the analyst can edit the type to Customers to test it" (2026-10-13, George). |
 
 ### 4.1 Definition check (2026-10-14, George; replaces D2)
@@ -245,7 +257,8 @@ under `register`, beside today's `claims`; `register` is empty when the audit ha
 | `basis`, `scenario` | str or null, str | Contract 6, 2026-10-23 (chat-upload.md §28): the page reader's `basis` (actual, projection, scenario; null for a claim the parser read or the analyst entered) and `scenario` (best, realistic, worst, none). A `best` or `worst` claim is Unverified, "best case: a scenario, not the plan target; not tested against data", never ranked among tested claims, gated or in the top 5, with no value at stake. The last two fields |
 | `definition_check`, `definition_question` | str or null | §4.1: null (no gap beyond the limit), ask, yes, no; the question, set whenever `definition_check` is |
 | `rank` | int | §3 |
-| `value_at_stake_arr` | float or null | null until issue #6 |
+| `value_at_stake_arr` | float or null | the ARR the claim stands for (2026-10-24, top of this spec); null while Target ARR or Target date is empty, and for a claim with no ARR link |
+| `vas_reason` | str or null | why `value_at_stake_arr` is null: "not yet computed: Target ARR empty" (and the other empty-field forms), "no ARR link: ..."; null when it is computed |
 | `gate_sentence` | str or null | §5; null until the gate is saved |
 | `gate_threshold`, `gate_budget_decision`, `gate_date`, `gate_saved` | float, str, date, bool | |
 | `as_of_month`, `as_of_defaulted` | str, bool | |
@@ -266,7 +279,7 @@ names; numbers unformatted, dates ISO, `observed_source` as "file · sheet · ro
 | Width | fits 1280 px with no horizontal scroll: fixed-layout table, no minimum width, no scroll container |
 | Editable | segment; metric (a metric in the claim's unit, or none); the gate's threshold, budget decision and date (the threshold field starts empty) |
 | Read-only | everything else |
-| Not shown | value at stake, until #6 fills it |
+| Value at stake | the amount in the reporting currency, else `vas_reason`; "not yet computed" only when a row carries no reason (2026-10-24) |
 
 ## 9. Data boundary and test fixture
 The matching module imports nothing from `app.llm`; its fields and the two new series enter no gateway payload;

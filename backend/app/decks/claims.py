@@ -1637,7 +1637,7 @@ _PERIOD_AFTER_OVER = (r"(?:the\s+(?:last|past|next)\s+)?(?:\d+\s+|one\s+|two\s+|
                       r"(?:(?:19|20)\d{2}|FY\s?\d{2}|years?|months?|quarters?)\b")
 GROWTH_CUES = {
     "mom": re.compile(r"\bMoM\b|\bm/m\b|(?i:\bmonth[- ](?:on|over)[- ]month\b|\bmonthly\b(?!\s+recurring\s+revenue)|\bper\s+month\b)"),
-    "yoy": re.compile(r"\bYoY\b|\by/y\b|(?i:\byear[- ](?:on|over)[- ]year\b|\bannual\b(?!\s+recurring\s+revenue)|\bper\s+year\b)"),
+    "yoy": re.compile(r"\bYoY\b|\by/y\b|\bY2Y\b|(?i:\bfrom\s+(?:19|20)\d{2}\b|\byear[- ](?:on|over)[- ]year\b|\bannual\b(?!\s+recurring\s+revenue)|\bper\s+year\b)"),
     "annualised": re.compile(r"\bCAGR\b|(?i:\bannuali[sz]ed\b)"),
     "cumulative": re.compile(r"(?i:\bsince\b|\bover\s+" + _PERIOD_AFTER_OVER + r")"),
 }

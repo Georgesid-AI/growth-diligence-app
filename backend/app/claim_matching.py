@@ -20,7 +20,7 @@ FIELDS = (
     "claim_id", "deck_file", "page_ref", "claim_type", "status", "deck_reading", "extraction_confidence", "claimed_value", "claimed_high",
     "claim_direction", "unit", "currency", "claimed_converted", "claimed_converted_high", "fx_rate", "fx_date", "period", "period_start", "period_end", "period_note", "segment", "segment_set_by", "metric",
     "metric_set_by", "direction", "observed_value", "observed_at", "observed_source", "observed_citation", "gap", "gap_normalised",
-    "gap_kind", "gloss", "evidence_label", "reason", "tolerance", "rank", "value_at_stake_arr", "shortfall",
+    "gap_kind", "gloss", "evidence_label", "reason", "tolerance", "rank", "value_at_stake_arr", "vas_reason", "shortfall",
     "overlaps_with", "evidence_analysis", "evidence_source_key", "gate_sentence", "gate_threshold",
     "gate_budget_decision", "gate_date", "gate_saved", "gate_metric_name", "gate_direction", "key_gate", "gate_needed",
     "as_of_month", "as_of_defaulted", "turnover_state", "turnover_note", "turnover_set_by", "turnover_reason",
@@ -120,6 +120,7 @@ POPULATION_TYPES = ("customers", "users", "user_growth")
 MONEY_TYPES = ("revenue", "arr", "mrr", "costs", "burn", "cash", "gross_profit", "ebitda", "net_profit", "ltv", "cac", "arpa", "arpu", "pipeline", "pricing")
 # The types whose period may stay unknown (the plan's table: optional or "–").
 PERIOD_OPTIONAL_TYPES = ("market", "use_of_funds", "acquisition_channels", "product", "pricing")
+PERIOD_MISSING = "period missing; set it with Edit"
 # Section 5: growth claims. The basis is the analyst's, else the parser's, else read from the claim's own words on read.
 GROWTH_BASES = ("mom", "yoy", "annualised", "cumulative")
 GROWTH_TYPES = ("revenue_growth", "growth", "user_growth")
@@ -705,6 +706,8 @@ def data_segments(results: dict) -> List[str]:
 
 # The engine metric each recurring claim type is tested against (George, 2026-10-23; docs/specs/claim-matching.md table 2a).
 RECURRING_METRIC = {"arr": "ARR", "mrr": "MRR", "churn": "Gross revenue churn", "nrr": "NRR (12-month)", "cac_payback": "CAC payback"}
+# George, 2026-10-24: a claim of a type that names an engine metric, with no period, is Unverified for the period, not Unsupported for the metric.
+METRIC_TYPES = (*RECURRING_METRIC, "customers", "users", "user_growth", "gross_margin", "revenue_growth")
 
 
 def propose_metric(claim_type: str, claim_unit: Optional[str], text: str) -> Optional[str]:
@@ -884,7 +887,7 @@ def candidate_fields(c: dict, results: Optional[dict]) -> dict:
     if c.get("claim_type") in GROWTH_TYPES:
         from .decks.claims import growth_basis
         shown = ((c.get("claim_inputs") or {}).get(c.get("id")) or {}).get("growth_basis")     # the register row's one-click choice
-        out["growth_basis"] = shown or c.get("growth_basis") or growth_basis(text)
+        out["growth_basis"] = shown or (c.get("growth_basis") if c.get("growth_basis") in GROWTH_BASES else None) or growth_basis(text)
     return out
 
 
@@ -948,7 +951,8 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         gate_metric_name=inputs.get("gate_metric_name"), gate_direction=inputs.get("gate_direction"))
     if c.get("claim_type") in GROWTH_TYPES:            # dates-and-periods.md section 5: the analyst's, the parser's, or the words'
         from .decks.claims import growth_basis
-        out["growth_basis"] = inputs.get("growth_basis") or c.get("growth_basis") or growth_basis(text)
+        stated = c.get("growth_basis") if c.get("growth_basis") in GROWTH_BASES else None
+        out["growth_basis"] = inputs.get("growth_basis") or stated or growth_basis(text)
     out.update(population=population, figure_type=figure_type)
     # the required fields still Unknown, in the order of the plan's table (claim-types-and-correction.md section 1)
     required = []
@@ -1007,6 +1011,8 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
     if not spec:
         if qualified:                                   # a figure that is not a count: nothing to read
             return finish("Unsupported", QUALIFIED_NO_FIGURE.format(label=qualified_label(text, c["qualifier"])))
+        if c.get("claim_type") in METRIC_TYPES and not c.get("target_date") and c.get("claim_type") not in PERIOD_OPTIONAL_TYPES:
+            return finish("Unverified", PERIOD_MISSING)     # George, 2026-10-24: the metric follows the period, so the period is the gap
         return finish("Unsupported", "no metric")
     if metric == VOLUME:                        # never matched to engine revenue; the take rate is derived, never Verified
         if turn and turn["file_revenue"] is not None and low and not c.get("value_high"):
@@ -1115,8 +1121,6 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
     if forecast:
         return finish("Unverified", f"forecast: the period ends after the as-of month ({as_of})")
     verified = within_tolerance(metric, gap, claimed)
-    if out["deck_reading"] == SUGGESTION:       # tested, but not Verified until the analyst edits the claim (decision D3)
-        return finish("Unverified", "deck reading: AI suggestion, not verified until the analyst edits the claim")
     if verified:
         return finish("Verified", f"within {out['tolerance']} of the claim")
     if is_big_gap(spec["unit"], out["gap"], out["gap_normalised"]):    # section 4.1: the analyst says whether claim and figure measure the same thing
@@ -1448,6 +1452,64 @@ def is_untested(row: dict) -> bool:
         or row.get("scenario") in SCENARIO_CASES
 
 
+# George, 2026-10-24 (claim-matching.md section 6): value at stake is the ARR a claim stands for, in the reporting currency, once Target ARR
+# and Target date are set. Revenue-like amounts are annualised from their period (ARR as stated, MRR times 12, a quarter times 4) and capped at
+# Target ARR; a rate is its share of the current ARR; a customer count is the count times the ACV. Any other claim has no ARR link.
+VAS_RATE_TYPES = ("churn", "nrr", "revenue_growth", "growth")
+VAS_COUNT_TYPES = ("customers",)
+VAS_AMOUNT_TYPES = ("arr", "mrr", "revenue", "sales")
+VAS_EMPTY = "not yet computed: {fields} empty"
+VAS_NO_LINK = "no ARR link: {why}"
+
+
+def _value_at_stake(row: dict, results: dict, settings: dict) -> dict:
+    """Sets `value_at_stake_arr` and `vas_reason` on a register row: the figure, or the reason it is none (the empty set-up field, the
+    missing input, or no ARR link). Reads nothing a model wrote."""
+    row.update(value_at_stake_arr=None, vas_reason=None)
+    if is_untested(row) or row.get("claim_type") in UNTESTED_TYPES:
+        row["vas_reason"] = VAS_NO_LINK.format(why="untested claim")
+        return row
+    empty = [name for name, value in (("Target ARR", settings.get("target_arr")), ("Target date", settings.get("target_date"))) if not value]
+    if empty:
+        row["vas_reason"] = VAS_EMPTY.format(fields=" and ".join(empty))
+        return row
+    kind, low = row.get("claim_type"), row.get("claimed_value")
+    if low is None:
+        row["vas_reason"] = VAS_NO_LINK.format(why="no claimed figure")
+        return row
+    arr = (results.get("arr") or {}).get("value")
+    if kind in VAS_RATE_TYPES and row.get("unit") == "%":
+        if arr is None:
+            row["vas_reason"] = VAS_NO_LINK.format(why="ARR not computed")
+        else:
+            row["value_at_stake_arr"] = abs(low) / 100 * arr
+    elif kind in VAS_COUNT_TYPES:
+        acv = (results.get("acv_path") or {}).get("acv")
+        if acv is None:
+            row["vas_reason"] = VAS_NO_LINK.format(why="ACV not computed")
+        else:
+            row["value_at_stake_arr"] = abs(low) * acv
+    elif kind in VAS_AMOUNT_TYPES and (row.get("currency") or row.get("unit") in (None, "")):
+        reporting = results.get("reporting_currency")
+        amount = row["claimed_converted"] if row.get("claimed_converted") is not None else low
+        if row.get("currency") and reporting and row["currency"] != reporting and row.get("claimed_converted") is None:
+            row["vas_reason"] = VAS_NO_LINK.format(why=FX_NEEDED)
+            return row
+        months = 12
+        if row.get("metric") == "MRR" or kind == "mrr":
+            months = 1
+        elif row.get("metric") != "ARR" and kind != "arr":
+            start, end = _month_of(row.get("period_start")), _month_of(row.get("period_end"))
+            if start is None or end is None:
+                row["vas_reason"] = VAS_NO_LINK.format(why="period missing")
+                return row
+            months = max(end - start + 1, 1)
+        row["value_at_stake_arr"] = min(abs(amount) * 12 / months, float(settings["target_arr"]))
+    else:
+        row["vas_reason"] = VAS_NO_LINK.format(why=f"{kind} has no ARR conversion")
+    return row
+
+
 def _rank(rows: List[dict]) -> List[dict]:
     """Rows with a gap other than "to go" by normalised gap, largest first (a beat counts as 0); then the rest in register order,
     then the use-of-funds, acquisition-channel and forecast-table rows."""
@@ -1479,7 +1541,7 @@ def build_register(candidates: List[dict], results: Optional[dict], settings: di
                                  peers if peers is not None else candidates)
     claims = _expand(candidates)
     others = _expand(peers) if peers is not None else claims
-    rows = _rank([_mark_auto(_row(c, results, settings, others), c) for c in claims])
+    rows = _rank([_value_at_stake(_mark_auto(_row(c, results, settings, others), c), results, settings) for c in claims])
     _overlaps(rows)
     return rows
 

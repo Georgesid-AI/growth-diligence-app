@@ -1304,3 +1304,19 @@ Draft PR from main, failing tests first on synthetic pages (`backend/tests/test_
 5. *Use-of-funds share* does not fire when any cell of the page holds a raise cue (`checker.RAISE_CUES`: use of funds, use of proceeds, funding ask, investment opportunity, equity investment, round size, our ask); when it fires it is a review flag as before.
 6. *Date claims.* A claim with metric product, no value and a period is "Matched to page" when its period (not corrected) is stated by the cited period cell; without that cell, or with another period, it stays unmatched. Replaces "a milestone is never matched" (§28.2).
 7. *Deck panel fetch.* The poll's one request returns the decks and their claims together and the server writes the claims before it sets the status to read, so the poll that sees the flip already lists them (pinned by a test). Not changed; see the report.
+
+## 29. Approved AI-read claims, value at stake, the top 5 and the data-gap texts (2026-10-24, George)
+1. *An approved claim is the analyst's.* A claim the page reader (§28) or the AI otherwise read, once approved, is tested exactly as a claim the parser read: within tolerance Verified (a beat as
+   today), outside Contradicted. The reason "deck reading: AI suggestion, not verified until the analyst edits the claim" is removed; Edit is never required to verify. The deck list still
+   labels the claim's reading "AI suggestion, not verified" and a pending one shows its Definition check as a pending parser claim does (claim-matching.md §4.1).
+2. *Value at stake.* The Target ARR help line (S, set-up fields) holds: every claim's value at stake is measured against it. Each approved, tested claim has a value at stake in the register once
+   Target ARR and Target date are both set (formula and cases: claim-matching.md, amendment of 2026-10-24). The VaS line of a row reads the amount, with the reporting currency; while a field is
+   empty it reads "not yet computed: Target ARR empty" ("Target date empty", "Target ARR and Target date empty"); a claim with no ARR link reads "no ARR link: ..." (e.g. "untested claim").
+3. *The top-5 proposal* leaves out market, pricing, use of funds, other, people and product claims; it ranks testable plan claims (revenue, ARR, MRR, churn, NRR, revenue growth, sales, customers)
+   by value at stake, then by claim value (claim-matching.md, amendment of 2026-10-24). The banner (S16b) and "Confirm the top 5" read the same proposal.
+4. *Reason texts.* A claim whose type names an engine metric but has no period and no fitting metric reads "Unverified · period missing; set it with Edit", never "Unsupported · no metric".
+   The CAC payback data gap reads "P&L is yearly; CAC payback needs monthly S&M, revenue and cost of revenue" when a yearly P&L (§26.8) is mapped and no monthly one ("P&L not provided" otherwise).
+   The ARR / MRR data gap reads "revenue file is a monthly total report with no recurring split" when the recognised file type is `monthly_revenue_report` (§27) and no recurring revenue rows
+   exist ("No usable recurring revenue rows" otherwise).
+5. *Growth basis default.* A growth claim's basis, when neither the analyst nor the parser set it, is read from the claim's own words: "from YYYY", "annual", "YoY", "Y2Y" are YoY; "MoM",
+   "per month", "monthly" are MoM; otherwise it stays unknown and the row asks. A parser or model value of "unknown" does not hide the words. The analyst's choice always wins.

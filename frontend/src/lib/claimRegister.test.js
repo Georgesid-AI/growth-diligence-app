@@ -157,6 +157,13 @@ describe("the columns and the gate of verdict-and-memo.md sections 2 and 3", () 
     expect(valueAtStakeText({ ...ARR_ROW, shortfall: 0.183 })).toBe("not yet computed · shortfall 18.3%");
   });
 
+  test("W1: a computed value at stake reads as an amount; an empty target field is named; a row with no ARR link says so", () => {
+    expect(valueAtStakeText({ ...ARR_ROW, value_at_stake_arr: 600000 }, "EUR")).toBe("600,000 EUR");
+    expect(valueAtStakeText({ ...ARR_ROW, value_at_stake_arr: 600000, shortfall: 0.183 }, "EUR")).toBe("600,000 EUR · shortfall 18.3%");
+    expect(valueAtStakeText({ ...ARR_ROW, vas_reason: "not yet computed: Target ARR empty" })).toBe("not yet computed: Target ARR empty");
+    expect(valueAtStakeText({ ...ARR_ROW, vas_reason: "no ARR link: untested claim" })).toBe("no ARR link: untested claim");
+  });
+
   test("W2: overlaps show the ranks of the rows, a dash when none", () => {
     const rows = [{ claim_id: "a", rank: 7 }, { claim_id: "b", rank: 3 }, { claim_id: "c", rank: 9 }];
     expect(overlapsText({ overlaps_with: ["a", "b"] }, rows)).toBe("#3, #7");
