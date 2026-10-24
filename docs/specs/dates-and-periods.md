@@ -34,7 +34,7 @@ source period: June 2019 (Complete)". The two never share a cell or a sentence.
   `{"month", "status", "complete_by", "evidence_to"}`.
   - `month`: the last month of the revenue file, as uploaded (before the as-of cut), that has a row with a valid invoice
     date and a non-zero amount. Null with no revenue file (the block is then null, its reason in `missing_data` as today).
-  - `status`: "Complete" when the audit's as-of month (stored, or defaulted as today: last P&L month, else last MRR month) is
+  - `status`: "Complete" when the audit's as-of month (stored, or defaulted: the revenue file's last month, else the last P&L month, else the last MRR month; chat-upload.md §30) is
     later than `month`, or the analyst ticked "Last month is complete" (audit field `last_month_complete`, a recompute
     trigger, a checkbox under the as-of month on the set-up fields); else "Possibly partial". `complete_by`: "as_of",
     "analyst" or null.
@@ -176,7 +176,7 @@ expected failures.
 - Cumulative growth reads the window's first and last month (v(e) ÷ v(s) − 1); the formula is printed with each figure.
 
 ## 11. Consequences to know
-- TestCo (as-of 2024-02 from the last P&L month, revenue to 2024-02): the latest valid source period is "February 2024
+- TestCo (as-of 2024-02 defaulted from the last revenue month, revenue to 2024-02): the latest valid source period is "February 2024
   (Possibly partial)" until the box is ticked, so NRR reads January 2024 and the NRR claims for February 2024 are Not
   covered. The claim-matching fixture ticks the box so its rows keep their meaning; the measured default is pinned in
   `test_dates_and_periods.py`.
@@ -196,3 +196,6 @@ expected failures.
 
 ## Done when
 §9 passes with the full suite, and the §8 artefact shows June 2019 everywhere a figure is labelled.
+
+Amended 2026-10-24 (George, chat-upload.md §30): the default as-of month is the revenue file's last actual month (a valid invoice date and a non-zero amount), so with no as-of month set `evidence_to` equals
+`month` and the status is Possibly partial unless the analyst ticked "Last month is complete". The warning line under the set-up field names an as-of month later than `month`.

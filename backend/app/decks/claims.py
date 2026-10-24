@@ -364,9 +364,13 @@ def _table_dates() -> list:
 
 _TABLE_DATES = _table_dates()
 
+# A space (or a no-break space) between groups of three digits is a thousands separator, in any number of groups: "30 000", "770 000 000"
+# (George, 2026-10-24; the checker's reader has it since 2026-10-23, structures/redact.SPACE_GROUPS). A group is exactly three digits, so
+# "2024 500" is the year 2024 and the figure 500, never 2,024,500.
+_SPACE_GROUPS = "[ \u00a0\u202f]"
 _NUMBER = re.compile(
     r"(?<![\w.,])(?P<cur>US\$|\$|€|£|(?:USD|EUR|GBP)(?=\s?\d))?\s?~?"
-    r"(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\+?"
+    r"(?P<num>\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d{1,3}(?:" + _SPACE_GROUPS + r"\d{3}(?!\d))+(?:\.\d+)?|\d+(?:\.\d+)?)\+?"
     r"(?:(?P<mult>MM|mn|bn|[KkMmBbT])(?![A-Za-z])|\s?(?P<word>(?i:thousand|million|billion|trillion))\b)?\+?"
     r"(?:\s?(?P<pct>%)|(?P<x>[xX])(?![A-Za-z]))?(?P<ord>st|nd|rd|th)?")
 _SPACED_MULT = re.compile(r"\s(?P<mult>MM|bn|[KMBT])(?![A-Za-z])")       # "$52 B": only after a currency
@@ -409,6 +413,11 @@ def _year_range(m: "re.Match") -> bool:
     if len(a) == 2 and not text.lstrip().upper().startswith("FY"):
         return False                      # "5-10", "20-25": a range of numbers, not of years
     return len(b) == 4 or int(b) > 12
+
+
+def has_year_range(text: str) -> bool:
+    """True when a text holds a range of years ("2022 - 2024", "2019–2021", "FY22–24"): a cell that gives no period (no_period_dates)."""
+    return any(_year_range(m) for rx in _YEAR_RANGES for m in rx.finditer(text or ""))
 
 
 def no_period_dates(text: str) -> List[Tuple[int, int]]:
@@ -590,7 +599,7 @@ def find_numbers(line: str, dates: List[Dict]) -> List[Dict]:
                 unit = time.group("unit").lower().rstrip("s") + "s"
         if unit is None and not cur:
             unit, count = _counted(line, end)
-        out.append({"start": m.start(), "pos": num_start, "end": end, "num": float(g["num"].replace(",", "")),
+        out.append({"start": m.start(), "pos": num_start, "end": end, "num": float(re.sub(_SPACE_GROUPS, "", g["num"]).replace(",", "")),
                     "mult": mult, "currency": _CURRENCY.get(cur.strip()) if cur else None, "unit": unit,
                     "count": count})
     for n in out:

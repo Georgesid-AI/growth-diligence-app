@@ -291,7 +291,7 @@ in each label class at least for revenue, ARR and customer count. Public decks h
 
 | Setting or engine figure, measured on this branch (no network) | Value |
 |---|---|
-| Run A | EUR, December year-end, as-of 2024-02 defaulted from the last P&L month, P&L present; gate date 2024-03-31 |
+| Run A | EUR, December year-end, as-of 2024-02 defaulted from the last revenue month, P&L present; gate date 2024-03-31 |
 | Runs B, C | run A without crm.csv; run A with a March year-end |
 | Revenue FY2023; 2023-Q4; 2024-01 to 2024-02; first month | 187,701.05; 49,046.84; 33,520.81; 2023-01 |
 | ARR 2024-02; 2023-12; first month | 202,125.48; 198,142.68; 2023-01 |

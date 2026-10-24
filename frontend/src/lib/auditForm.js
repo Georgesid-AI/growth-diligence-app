@@ -7,6 +7,7 @@
  */
 import { dateRangeError } from "./datePicker";
 import { seeGlossary } from "./glossary";
+import { monthName } from "./periods";
 
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
@@ -90,13 +91,26 @@ export const SETUP_HELP = {
   reporting_currency: "All figures are converted to this currency. Use the company's home currency; the verdict and memo use it.",
   target_arr: seeGlossary("The plan figure the audit tests. Every claim's VaS is measured against it."),
   target_date: seeGlossary("When the plan says Target ARR is reached. Sets the forecast horizon."),
-  as_of_month: "Last month of actual data. Metrics are computed up to this month. Defaults to the last P&L month.",
+  as_of_month: "Last month of actual data. Metrics are computed up to this month. "
+    + "Defaults to the last month of the revenue file once it is mapped; a month you set is kept.",
   fiscal_year_end: "Maps FY labels in the deck to months. A wrong setting shifts every FY claim.",
   first_quarterly_review: "Gate dates are never later than this. Defaults to the audit's creation date plus 90 days.",
   // docs/specs/dates-and-periods.md section 2
   analysis_date: "The date of this analysis. It dates the memo and your own text; it never changes the period of a figure.",
   last_month_complete: "Tick when the revenue file's last month holds all its invoices. Unticked, that month is shown but not used for NRR and growth.",
 };
+export const AS_OF_PLACEHOLDER = "last month of the revenue file";
+
+/** The revenue file's last month (YYYY-MM) as the screen knows it: the computed source period, else the mapped file's months; null before. */
+export const revenueLastMonth = (audit) => audit?.results?.source_period?.month || audit?.datasets?.revenue?.months?.last || null;
+
+/** The line under the as-of field when its month is later than the revenue file's last month (chat-upload.md section 30), else null. */
+export function asOfWarning(asOf, revenueLast) {
+  if (!asOf || !revenueLast || asOf.slice(0, 7) <= revenueLast) return null;
+  return `The as-of month, ${monthName(asOf)}, is later than the last month of the revenue file, ${monthName(revenueLast)}. `
+    + `The figures stop at ${monthName(revenueLast)}; the months after it hold no revenue.`;
+}
+
 export const SETUP_LABELS = {
   reporting_currency: "Reporting currency", target_arr: "Target ARR", target_date: "Target date", as_of_month: "As-of month",
   fiscal_year_end: "Fiscal year-end", first_quarterly_review: "First quarterly review",

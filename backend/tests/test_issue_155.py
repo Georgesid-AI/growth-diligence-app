@@ -205,6 +205,8 @@ def test_an_auto_approved_claim_that_stops_matching_after_an_as_of_change_goes_b
     assert stored(run_api)["auto"]["auto_accepted"] is True
     r = run_api.put(f"/api/audits/{AUDIT}", json={"as_of_month": "2023-12"})       # Feb 2024 is now after the as-of month: a forecast
     assert r.status_code == 200, r.text
+    assert stored(run_api)["auto"]["status"] == "approved", "the change marks the results stale; nothing re-checks until Run audit (2026-10-24)"
+    stage(run_api, "engine")
     got = stored(run_api)
     assert got["auto"]["status"] == "pending" and not got["auto"].get("auto_accepted") and got["auto"]["auto_note"] == NOTE
     assert got["manual"]["status"] == "approved", "a manually approved claim is never changed"

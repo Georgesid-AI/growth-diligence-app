@@ -172,6 +172,7 @@ export function evidenceLines(row) {
   return { first, second: `${row.evidence_analysis} · ${row.evidence_source_key}${at}` };
 }
 
+const multiple = (v) => (Math.round(Number(v) * 10 + 1e-9) / 10).toFixed(1);     // half up, absorbing binary noise: 2.25 -> "2.3"
 const trimmed = (v, dp) => String(Number(Number(v).toFixed(dp)));
 
 /** "positive (no figure)": a direction the deck states with no figure (docs/specs/claim-matching.md section 2). */
@@ -209,6 +210,7 @@ export function claimFigure(row, ccy) {
   }
   if (row.currency) return hi == null ? fmtCurrency(lo, row.currency) : `${fmtCurrency(lo)}–${fmtCurrency(hi, row.currency)}`;
   if (row.unit === "%") return hi == null ? `${trimmed(lo, 4)}%` : `${trimmed(lo, 4)}–${trimmed(hi, 4)}%`;
+  if (row.unit === "x") return hi == null ? `${multiple(lo)}x` : `${multiple(lo)}–${multiple(hi)}x`;       // a multiple: one decimal (George, 2026-10-24)
   const num = (v) => (DURATIONS.includes(claimUnit(row)) ? trimmed(v, 4) : fmtCount(v));
   return `${hi == null ? num(lo) : `${num(lo)}–${num(hi)}`}${row.unit ? ` ${row.unit}` : ""}`;
 }

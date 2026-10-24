@@ -288,7 +288,7 @@ def test_set_growth_basis_is_one_click_and_the_claim_is_then_matched(register_ap
 
 def test_the_requested_analysis_date_changes_the_memo_date_and_nothing_else(register_api):
     client, db = register_api
-    assert "analysis_date" not in server.RECOMPUTE_TRIGGER_FIELDS and "last_month_complete" in server.RECOMPUTE_TRIGGER_FIELDS
+    assert "analysis_date" not in server.STALE_ON_CHANGE_FIELDS and "last_month_complete" in server.STALE_ON_CHANGE_FIELDS
     _ready(client)
     before = copy.deepcopy(db["audits"].docs[0]["results"])
     register = _get(client)["register"]

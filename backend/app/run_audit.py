@@ -30,9 +30,11 @@ STALE_CODE = "results_stale"
 
 
 def results_stale(audit: dict) -> bool:
-    """True when the stored results were computed under another engine contract version than the code now running."""
+    """True when the stored results were computed under another engine contract version than the code now running, or a set-up input
+    they were computed with changed since (`setup_stale`: Target ARR, Target date, As-of month, fiscal year-end, FX; George, 2026-10-24).
+    Run audit calculates again and clears both."""
     results = audit.get("results")
-    return bool(results) and results.get("contract_version") != CONTRACT_VERSION
+    return bool(results) and (results.get("contract_version") != CONTRACT_VERSION or bool(audit.get("setup_stale")))
 
 
 def mapping_counts(datasets: Iterable[dict], recognition_open: Optional[Dict[str, int]] = None) -> Dict:

@@ -1,5 +1,5 @@
 import { isIsoDate, asOfInputValue, targetDateError, plainNumber, groupThousands, storedNumberInput, CONSENT_LABEL, VERIFIED_LINE, NEW_AUDIT_TITLE, NEW_AUDIT_PARAGRAPHS,
-  requiredFieldError } from "./auditForm";
+  requiredFieldError, SETUP_HELP, AS_OF_PLACEHOLDER, asOfWarning, revenueLastMonth } from "./auditForm";
 
 // The reported case: target 31/12/2027, as-of 30/06/2026, as the date inputs deliver them.
 test("target 2027-12-31 after as-of 2026-06-30 passes", () => {
@@ -79,4 +79,36 @@ test("the company name is the only required field; a client name is not asked fo
   expect(requiredFieldError({ company_name: "Acme" })).toBeNull();
   expect(requiredFieldError({ company_name: " " })).toBe("Company name is required");
   expect(requiredFieldError({ company_name: "Acme", client_name: " " })).toBeNull();
+});
+
+// docs/specs/chat-upload.md section 30 (George, 2026-10-24): the as-of month defaults to the revenue file's last month.
+describe("the as-of month default and its warning line", () => {
+  test("the help and the empty field say where the default comes from", () => {
+    expect(SETUP_HELP.as_of_month).toBe("Last month of actual data. Metrics are computed up to this month. "
+      + "Defaults to the last month of the revenue file once it is mapped; a month you set is kept.");
+    expect(AS_OF_PLACEHOLDER).toBe("last month of the revenue file");
+    expect(SETUP_HELP.as_of_month).not.toMatch(/P&L/);
+  });
+
+  test("the revenue file's last month comes from the results, else from the mapped file, else none", () => {
+    const mapped = { datasets: { revenue: { months: { first: "2017-07", last: "2019-06" } } } };
+    expect(revenueLastMonth(mapped)).toBe("2019-06");
+    expect(revenueLastMonth({ ...mapped, results: { source_period: { month: "2019-05" } } })).toBe("2019-05");
+    expect(revenueLastMonth({ datasets: { revenue: { months: null } } })).toBeNull();
+    expect(revenueLastMonth({ datasets: {} })).toBeNull();
+    expect(revenueLastMonth(null)).toBeNull();
+  });
+
+  test("a warning line only when the as-of month is later than the revenue file's last month", () => {
+    expect(asOfWarning("2026-06-30", "2019-06")).toBe("The as-of month, June 2026, is later than the last month of the revenue file, "
+      + "June 2019. The figures stop at June 2019; the months after it hold no revenue.");
+    expect(asOfWarning("2019-07-31", "2019-06")).toMatch(/July 2019/);
+    expect(asOfWarning("2019-06-30", "2019-06")).toBeNull();
+    expect(asOfWarning("2019-06-01", "2019-06")).toBeNull();
+    expect(asOfWarning("2019-03-31", "2019-06")).toBeNull();
+    expect(asOfWarning("2019-06", "2019-05")).toMatch(/June 2019/);
+    expect(asOfWarning("", "2019-06")).toBeNull();
+    expect(asOfWarning(null, "2019-06")).toBeNull();
+    expect(asOfWarning("2026-06-30", null)).toBeNull();
+  });
 });
