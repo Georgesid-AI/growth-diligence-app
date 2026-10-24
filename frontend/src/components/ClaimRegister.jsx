@@ -293,7 +293,7 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
                 [row.page_ref || "—", "register-page"],
                 [readingText(row.deck_reading), "register-reading"],
                 [row.gloss || "—", "register-gloss"],
-                [`${VAS_LABEL} ${valueAtStakeText(row)}`, "register-value-at-stake"],
+                [`${VAS_LABEL} ${valueAtStakeText(row, ccy)}`, "register-value-at-stake"],
                 [`Overlaps with ${overlapsText(row, rows)}`, "register-overlaps"],
                 [row.reason, "register-evidence-reason"],
                 ...(row.auto_approval ? [[row.auto_approval, "register-auto-approval"]] : []),

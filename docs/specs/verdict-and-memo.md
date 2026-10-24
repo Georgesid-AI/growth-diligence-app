@@ -8,6 +8,8 @@ Amended 2026-10-15 (docs/specs/dates-and-periods.md §2, §3): the memo's date l
 figure that is not a register figure carries its last month in brackets.
 Amended 2026-10-15 (docs/specs/evidence-labels.md §4): the memo summary counts Inconclusive under Unverified with its count in
 brackets; an Inconclusive row needs a gate like an Unverified one.
+Amended 2026-10-24 (George, PR 176): §6.1 reads as the new proposal rule; the memo's VaS column (Appendix A) prints the register's
+`value_at_stake_arr`, de-duplicated as Appendix D states (W16), and the row's stored `vas_reason` where it has no amount.
 Location: docs/specs/verdict-and-memo.md. Follows claim-matching.md (the register) and interface-contracts.md
 (MetricsPayload). The method's lists (evidence categories, appendices, thesis labels, rating scale) are as given on
 2026-10-08; the method text itself stays out of the repo.
@@ -43,7 +45,7 @@ No architecture change:
 | Column | Fields | Rule |
 |---|---|---|
 | Claim | as today (rank, claim, period, segment, page, deck reading, observed, gap, gloss) | claim-matching §3, §8. The rank is the pre-sort by shortfall (§6.1) |
-| Value at stake | `value_at_stake_arr` (null until #6); `shortfall` = `gap_normalised` when `gap_kind` is miss, else null | W1. Never estimated |
+| Value at stake | `value_at_stake_arr` (claim-matching §6; null with `vas_reason`); `shortfall` = `gap_normalised` when `gap_kind` is miss, else null | W1. Never estimated |
 | Overlaps with | `overlaps_with`: claim ids, shown as ranks | §2.2; W2 |
 | Evidence label | `evidence_label`, `reason` | as today (claim-matching §4) |
 | Evidence | `evidence_analysis`, `evidence_source_key`, `observed_at`, `observed_source` | §2.3; W3 |
@@ -129,9 +131,12 @@ again gives the same bytes.
 
 ## 6. Verdict (A10)
 ### 6.1 Top 5 (decision of 2026-10-08)
-- The app pre-sorts by shortfall, which is the register's rank (claim-matching §3). It proposes rows 1–5 as the top 5,
-  or every row when there are fewer than 5. Use of funds rows (deck-parser.md, amended 2026-10-10) rank last and are left out:
-  they are not among the rows the top 5 counts, the banner reads or the verdict tests.
+- The app pre-sorts by shortfall, which is the register's rank (claim-matching §3). The proposal (amended 2026-10-24, George,
+  PR 176) leaves out claims about the market, pricing, the use of funds, people, the product and "other". It takes the plan claims
+  (revenue, ARR, MRR, churn, NRR, revenue growth, sales, customers) first, ranked by value at stake and then by claim value,
+  largest first; a plan claim with no value at stake follows those with one. Every other claim not left out comes after the plan
+  claims, in register order. It proposes min(5, eligible rows) and the analyst fills any remaining place from the register.
+  Use of funds rows (deck-parser.md, amended 2026-10-10) are not among the rows the top 5 counts, the banner reads or the verdict tests.
 - The analyst confirms the proposal, or replaces any of its rows with another register row, and confirms. The set
   always holds min(5, register rows) claims. It is stored as an analyst decision in `audits.ic_inputs.top5`: the claim
   ids, in pre-sort order, and when they were set.
@@ -227,7 +232,9 @@ ingests four types, so x is at most 4 today. Where a category is only partly met
 
 Appendices:
 - A. Claim register and gates. Every row, with value at stake (column "VaS"), overlaps, evidence, its gate and the
-  key-gate mark, and the top-5 mark.
+  key-gate mark, and the top-5 mark. The VaS cell is the register's amount in the reporting currency; where an overlap group
+  holds several amounts, the largest carries the group and a smaller one reads "(counted in #n)"; a row with no amount shows its
+  stored `vas_reason`; the shortfall follows as before.
 - B. Data gaps and data request list. Every gap with its target date and the first quarterly review. Then the
   requests: each gap's `unlocked_by`, the management questions, and each Missing Data item that is not a gap, with
   its `unlocked_by`.

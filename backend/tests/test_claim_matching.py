@@ -172,7 +172,7 @@ def test_a_beat_beyond_tolerance_is_verified_and_never_ranks_as_a_miss():
     ({"claim_type": "sales", "snippet": "Win rate 40%", "unit": "customers", "currency": None}, None),    # a win rate in customers
 ])
 def test_the_metric_is_proposed_from_claim_type_keyword_and_unit(claim, metric):
-    row = run_claim({"value": 40, **claim})
+    row = run_claim({"value": 40, "target_date": "2024-02", **claim})
     assert (row["metric"], row["metric_set_by"]) == (metric, "python")
     if metric is None:
         assert (row["evidence_label"], row["observed_value"]) == ("Unsupported", None) and "no metric" in row["reason"]
@@ -567,15 +567,15 @@ def test_a_gap_of_zero_is_as_claimed_in_every_unit(unit, kind, direction):
     assert cm.gloss(unit, kind, 0.0, "EUR", direction, "Dec 2026") == "as claimed"
 
 
-def test_a_deck_reading_that_is_an_ai_suggestion_stays_unverified_until_the_analyst_edits_the_claim():
+def test_a_deck_reading_that_is_an_ai_suggestion_is_tested_like_any_approved_claim():
+    """George, 2026-10-24: approving an AI-read claim is the analyst's confirmation; an edit is never required to verify it."""
     base = {"claim_type": "retention", "snippet": "NRR", "unit": "%", "currency": None, "value": 112, "target_date": "2024-02",
             "origin": "ai", "ai_status": "unverified", "ai_label": "AI suggestion, not verified"}
     row = run_claim(base)
-    assert (row["evidence_label"], row["deck_reading"], row["observed_value"]) == ("Unverified", "AI suggestion, not verified", 112.68)
+    assert (row["evidence_label"], row["deck_reading"], row["observed_value"]) == ("Verified", "AI suggestion, not verified", 112.68)
+    assert run_claim({**base, "value": 120})["evidence_label"] == "Contradicted"
     edited = run_claim({**base, "status": "edited", "ai_status": None, "ai_label": None, "parsed": {"value": 112}})
     assert (edited["evidence_label"], edited["deck_reading"], edited["status"]) == ("Verified", "edited", "edited")
-    unchanged = run_claim({**base, "status": "edited", "ai_status": None, "ai_label": None, "parsed": {"value": 112}})
-    assert unchanged["evidence_label"] == "Verified", "an edit clears the label even when the value is unchanged"
     verified = run_claim({**base, "ai_status": "verified", "ai_label": "Verified"})
     assert (verified["evidence_label"], verified["deck_reading"]) == ("Verified", "Verified")
     parser = run_claim({k: v for k, v in base.items() if k not in ("origin", "ai_status", "ai_label")})
@@ -636,7 +636,7 @@ def test_a_register_row_has_exactly_the_fields_of_section_6_and_the_verdict_spec
                  "currency claimed_converted claimed_converted_high fx_rate fx_date period "
                  "period_start period_end period_note segment segment_set_by metric metric_set_by direction observed_value "
                  "observed_at observed_source observed_citation gap gap_normalised gap_kind gloss evidence_label reason tolerance rank "
-                 "value_at_stake_arr shortfall overlaps_with evidence_analysis evidence_source_key gate_sentence gate_threshold "
+                 "value_at_stake_arr vas_reason shortfall overlaps_with evidence_analysis evidence_source_key gate_sentence gate_threshold "
                  "gate_budget_decision gate_date gate_saved gate_metric_name gate_direction key_gate gate_needed as_of_month "
                  "as_of_defaulted turnover_state turnover_note turnover_set_by turnover_reason implied_take_rate "
                  "implied_take_rate_source turnover_suggested deck_revenue_note definition_check definition_question "

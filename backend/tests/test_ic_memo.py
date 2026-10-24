@@ -94,7 +94,7 @@ def test_the_memo_is_built_from_the_run_a_fixture_in_the_order_of_w15_with_the_f
     assert text.startswith("# Investment committee memo: TestCo\nDate: 2026-10-08\n")
     summary = head_of(text).split("## Summary\n")[1]
     assert summary.startswith("Claim-review conclusion — assessment of the five selected claims\n"
-                              "Conclusion: Selected claims not supported – 5 selected claims are Contradicted.")
+                              "Conclusion: Selected claims not supported – 2 selected claims are Contradicted.")
     assert "This assesses the five claims the analyst selected. It is not an investment recommendation." in summary
     assert "Verdict" not in text
     assert text.count("Top 5 set by the analyst pending ARR (see glossary) bridge.") == 1
@@ -114,7 +114,7 @@ def test_the_run_a_memo_fits_1500_words_and_every_number_in_sections_1_to_6_has_
         numbers = [t for t in im._tokens(line) if t not in fixed]
         if numbers:
             assert re.search(r"\[\^\d+\]", line), f"a number without a footnote: {line!r}"
-    assert "[^1]: claim register, #1, #2, #3, #4, #5" in text
+    assert "[^1]: claim register, #2, #5, #6, #18, #30" in text
     assert re.search(r"\[\^\d+\]: Monthly MRR by Segment · arr.value · revenue.csv · CSV · rows 2–71", memo())
 
 
@@ -272,7 +272,7 @@ def test_the_two_assessed_rows_carry_the_analysts_rating_and_the_w17_headline():
     reliability = next(line for line in text.split("\n") if line.startswith("| Data reliability |"))
     assert "| Adequate |" in reliability
     assert "Revenue file and P&L differ by 69.61% over 2023-03–2024-02" in reliability
-    assert "0 anomaly flags" in reliability and "8 of 33 claims Verified" in reliability
+    assert "0 anomaly flags" in reliability and "9 of 33 claims Verified" in reliability
     assert next(line for line in text.split("\n") if line.startswith("| Growth engine |")).split("|")[2].strip() == "Weak"
 
 
@@ -602,3 +602,36 @@ def test_the_time_in_the_ai_disclosure_is_not_a_number_the_memo_must_find_in_the
     n["generated_at"] = when
     text = memo(narratives=[n])
     assert when[11:16] in text, "fixture: the time is in the memo"
+
+
+# --- value at stake in Appendix A (George, 2026-10-24, PR 176 item 2) -----------------------------------------------------------
+
+def _vas_cells(text):
+    header = next(line for line in text.split("\n") if line.startswith("| #") and "| VaS |" in line)
+    col = [c.strip() for c in header.strip("|").split("|")].index("VaS")
+    return {line.split("|")[1].strip(): line.strip("|").split("|")[col].strip() for line in text.split("\n") if re.match(r"\| #\d+ ", line)}
+
+
+def _memo_with_vas(amounts, **kw):
+    ins = inputs(**kw)
+    for r in ins["rows"]:
+        r["value_at_stake_arr"] = amounts.get(r["rank"])
+    return ins, im.build_memo(**ins)
+
+
+def test_the_vas_column_prints_the_registers_amount_once_per_overlap_group_and_the_stored_reason_where_there_is_none():
+    ins, text = _memo_with_vas({1: 1_200_000.0, 5: 300_000.0, 6: 450_000.0})
+    cells = _vas_cells(text)
+    by_rank = {r["rank"]: r for r in ins["rows"]}
+    assert cells["#1"].startswith("€1,200,000") or cells["#1"].startswith("EUR 1,200,000")
+    assert "450,000" in cells["#6"] and "counted in" not in cells["#6"], "the largest of its group carries the amount"
+    assert "300,000" in cells["#5"] and "counted in #6" in cells["#5"], "a smaller overlapping claim is counted once, in the largest"
+    assert by_rank[3]["vas_reason"] in cells["#3"], "no amount: the stored reason, as the register holds it"
+    assert "not yet computed" not in cells["#1"]
+
+
+def test_a_vas_amount_the_register_does_not_hold_refuses_the_memo():
+    ins, _ = _memo_with_vas({1: 1_200_000.0})
+    allowed = im.allowed_numbers(ins["audit"], ins["results"], ins["rows"], ins["gaps"], ins["ic"], ins["files"], ins["decks"], thesis=False)
+    assert im.unmatched("| #1 | EUR 1,200,000 |", allowed) == []
+    assert im.unmatched("| #1 | EUR 1,200,001 |", allowed) == ["1,200,001"]

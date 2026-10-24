@@ -234,7 +234,7 @@ def test_a_forecast_claim_is_unverified_with_no_value_at_stake_overlaps_metric_o
         assert r["deck_reading"] == cm.FORECAST_READING
     first = next(r for r in forecast if r["claim_id"] == "f0#3")
     assert (first["claimed_value"], first["period"], first["page_ref"]) == (1980000, "2025F", "CSV!E5")
-    assert vd.proposal(rows) == ["t1", "t2"], "out of the top 5"
+    assert vd.proposal(rows) == ["t1"], "out of the top 5; t2 is a market figure, which the proposal leaves out"
     assert set(vd.gate_prefill(rows, "2026-12-31")) == {"t2"}, "no gate is prefilled on a forecast-table claim"
 
 

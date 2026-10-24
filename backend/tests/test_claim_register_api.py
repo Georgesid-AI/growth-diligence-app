@@ -222,7 +222,7 @@ def test_the_csv_is_the_register_in_rank_order_then_the_data_gaps_with_the_heade
         assert line[1:1 + len(cm.FIELDS)] == [verdict_mod._cell(row[f]) for f in cm.FIELDS], row["claim_id"]
     assert [int(line[1 + cm.FIELDS.index("rank")]) for line in claims] == list(range(1, len(register) + 1))
     top = {line[1] for line in claims if line[1 + len(cm.FIELDS)] == "true"}
-    assert top == {r["claim_id"] for r in register[:5]}, "before the analyst confirms, the proposal is the top 5"
+    assert top == set(verdict_mod.proposal(register)), "before the analyst confirms, the proposal is the top 5"
     assert all(line[1 + len(cm.FIELDS) + 1] and line[-5] for line in gaps), "a gap row names its item and why"
 
 

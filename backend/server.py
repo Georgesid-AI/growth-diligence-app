@@ -2513,7 +2513,8 @@ async def save_fx(audit_id: str, payload: FxPayload):
 def _register_settings(audit: dict, fx: dict, deck_take_rate: bool = False) -> dict:
     return {"fiscal_year_end": _fiscal_year_end(audit), "as_of_month": audit.get("as_of_month"),
             "reporting_currency": audit.get("reporting_currency") or "EUR", "fx": fx,
-            "turnover_choices": audit.get("turnover_choices") or {}, "deck_take_rate": deck_take_rate}
+            "turnover_choices": audit.get("turnover_choices") or {}, "deck_take_rate": deck_take_rate,
+            "target_arr": audit.get("target_arr") or None, "target_date": audit.get("target_date") or None}
 
 
 async def _deck_take_rate(audit_id: str) -> bool:

@@ -236,9 +236,21 @@ def sortable(rows: List[dict]) -> List[dict]:
     return [r for r in rows if not cm.is_untested(r)]
 
 
+# George, 2026-10-24: the proposal leaves out claims about the market, prices, the use of funds, people and the product; it takes the testable plan
+# claims first, by value at stake and then by claim value, and the other claims after them in register order.
+PROPOSAL_EXCLUDED = ("market", "pricing", "use_of_funds", "other", "people", "product")
+PLAN_TYPES = ("revenue", "arr", "mrr", "churn", "nrr", "revenue_growth", "sales", "customers")
+
+
 def proposal(rows: List[dict]) -> List[str]:
-    """Rows 1 to 5 of the pre-sort, or every row when there are fewer than 5 (decision of 2026-10-08). Use of funds and acquisition channels are left out."""
-    return [r["claim_id"] for r in sortable(rows)[:TOP_N]]
+    """The top 5 proposed: min(5, rows) claims. Plan claims (PLAN_TYPES) by value at stake, then by claim value, largest first; a claim
+    with no value at stake follows those with one. Every other claim not in PROPOSAL_EXCLUDED comes after the plan claims."""
+    eligible = [r for r in sortable(rows) if r.get("claim_type") not in PROPOSAL_EXCLUDED]
+    plan = [r for r in eligible if r.get("claim_type") in PLAN_TYPES]
+    amount = lambda r: abs(r["claimed_converted"] if r.get("claimed_converted") is not None else r.get("claimed_value") or 0)  # noqa: E731
+    plan.sort(key=lambda r: (r.get("value_at_stake_arr") is None, -(r.get("value_at_stake_arr") or 0), -amount(r)))
+    rest = [r for r in eligible if r.get("claim_type") not in PLAN_TYPES]
+    return [r["claim_id"] for r in (plan + rest)[:TOP_N]]
 
 
 def banner_ids(rows: List[dict]) -> List[str]:
