@@ -532,8 +532,6 @@ async def update_audit(audit_id: str, payload: AuditUpdate, background: Backgrou
         changed = {k for k, v in updates.items() if k in STALE_ON_CHANGE_FIELDS and _setup_value(k, v) != _setup_value(k, _stored_setup(a, k))}
         # A changed input marks the stored results stale (George, 2026-10-24); Run audit calculates again. Nothing recomputes on its own.
         await db.audits.update_one({"id": audit_id}, {"$set": {**updates, **({"setup_stale": True} if changed and a.get("results") else {})}})
-        if RECOMPUTE_TRIGGER_FIELDS & updates.keys():
-            await _mark_stale_and_maybe_recompute(audit_id)
         if "fiscal_year_end" in updates and updates["fiscal_year_end"] != _fiscal_year_end(a):
             await _remap_periods(audit_id, updates["fiscal_year_end"])
     if ticked_later:
@@ -550,7 +548,9 @@ def _stored_setup(audit: dict, field: str):
 
 def _setup_value(field: str, value):
     """A set-up value as compared for a change: the target as a number, the dates as text, an empty date as none."""
-    return float(value or 0) if field == "target_arr" else value or None
+    if field == "target_arr":
+        return float(value or 0)
+    return bool(value) if field == "last_month_complete" else value or None
 
 
 def _fiscal_year_end(audit: Optional[dict]) -> int:
@@ -3134,13 +3134,9 @@ async def export_memo(audit_id: str):
 # ---------------------------------------------------------------------------
 # Compute
 # ---------------------------------------------------------------------------
-# Setup inputs that change what a computed audit's metrics should be. A change
-# to any of these on an already-computed audit means the stored results are
-# stale until recomputed (see _mark_stale_and_maybe_recompute).
-RECOMPUTE_TRIGGER_FIELDS = {"reporting_currency", "last_month_complete"}
-# Inputs whose change marks the stored results "Stale – re-run audit" instead (George, 2026-10-24): nothing recomputes until Run audit.
-# The FX rates do the same through save_fx.
-STALE_ON_CHANGE_FIELDS = {"target_arr", "target_date", "as_of_month", "fiscal_year_end"}
+# Setup inputs that change what a computed audit's metrics should be. A change to any of these on a computed audit marks the stored
+# results "Stale – re-run audit" (George, 2026-10-24, PR 177); nothing recomputes until Run audit. The FX rates do the same through save_fx.
+STALE_ON_CHANGE_FIELDS = {"reporting_currency", "target_arr", "target_date", "as_of_month", "fiscal_year_end", "last_month_complete"}
 
 
 async def _run_compute(audit_id: str) -> dict:

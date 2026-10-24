@@ -1337,10 +1337,10 @@ Challenge (rule 4): every point is a defect or a wording George named; nothing i
    month, June 2026, is later than the last month of the revenue file, June 2019. The figures stop at June 2019; the months after it hold no revenue." when the as-of month is later than that
    month (the computed `source_period.month`, else the mapped file's months, sent as `datasets.revenue.months`). The "As-of month" Missing Data item (a default pushed into prepaid service
    months) cannot occur any more and is deleted.
-6. *Stale after a set-up change.* A changed Target ARR, Target date, As-of month (an explicit clear included), fiscal year-end or FX rate on a computed audit sets `setup_stale` on the audit.
+6. *Stale after a set-up change.* A changed Reporting currency, Target ARR, Target date, As-of month (an explicit clear included), fiscal year-end, "Last month is complete" or FX rate on a computed audit sets `setup_stale` on the audit.
    Stored results then read "Stale – re-run audit" exactly as results of an older contract do (`run_audit.results_stale`; interface-contracts.md §7): nothing recomputes on its own, Run audit
-   (or Calculate) calculates again and clears the mark. A save of the same value, another field, or an audit with no results marks nothing. Reporting currency and "Last month is complete" are not in the
-   list and recompute as before.
+   (or Calculate) calculates again and clears the mark. A save of the same value, another field, or an audit with no results marks nothing. No set-up setting recomputes on its own
+   (George, 2026-10-24, comment on PR 177: reporting currency and "Last month is complete" included).
 Decided (rule 19): the mark is a field of the audit, not a second contract version; the FX comparison is the merged rate set before and after; the stored claim approvals are re-checked at Run audit,
 as for any recompute (issue #155 point h now takes effect there).
 Tests: `test_space_thousands_and_period_flags.py`, `test_as_of_default_and_stale_setup.py`, `claimRegister.test.js`, `auditForm.test.js`, `AuditSetup.test.jsx`; flags added to
