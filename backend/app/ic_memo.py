@@ -352,6 +352,25 @@ def overlap_groups(rows: List[dict]) -> List[List[int]]:
     return groups
 
 
+def vas_cells(rows: List[dict], currency: Optional[str]) -> Dict[int, str]:
+    """The VaS cell of each row, by rank (George, 2026-10-24, PR 176): the register's amount; the row's stored reason where it has none.
+    Overlapping claims are counted once, at the largest value in their group (W16): a smaller one names the row that carries it."""
+    carrier = {}
+    for group in overlap_groups(rows):
+        valued = [(r["value_at_stake_arr"], -r["rank"], r["rank"]) for r in rows if r["rank"] in group and r["value_at_stake_arr"] is not None]
+        for rank in group:
+            if valued:
+                carrier[rank] = max(valued)[2]
+    cells = {}
+    for r in rows:
+        amount, shortfall = r["value_at_stake_arr"], r["shortfall"]
+        text = cm._money(amount, currency) if amount is not None else (r.get("vas_reason") or "not yet computed")
+        if amount is not None and carrier.get(r["rank"], r["rank"]) != r["rank"]:
+            text += f" (counted in #{carrier[r['rank']]})"
+        cells[r["rank"]] = text + (f" · shortfall {shortfall * 100:.1f}%" if shortfall is not None else "")
+    return cells
+
+
 def anomaly_count(results: dict) -> Optional[int]:
     """The anomaly flags the screen lists, added up (gapLists.js anomalyFlags); None when the engine could not compute them."""
     a = results.get("anomalies")
@@ -515,10 +534,11 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     # Appendices
     app: List[str] = []
     app += [f"## {APPENDICES[0]}"]
+    vas = vas_cells(rows, results.get("reporting_currency"))
     reg = [[f"#{r['rank']}", vd.claim_name(r) + f" – {vd.claimed_text(r, results.get('reporting_currency'))}",
             r["evidence_label"], cm.AUTO_LABEL if r.get("auto_approval") else cm.ANALYST_LABEL,      # who approved the claim (PR 157)
             r.get("basis") or "—", f"{r['scenario']} case" if r.get("scenario") not in (None, "none") else "—",      # the page reader's basis and case (contract 6)
-            "not yet computed" + (f" · shortfall {r['shortfall'] * 100:.1f}%" if r["shortfall"] is not None else ""),
+            vas[r["rank"]],
             ", ".join(f"#{by_id[o]['rank']}" for o in r["overlaps_with"] or () if o in by_id) or "—",
             f"{r['evidence_analysis']} {r['observed_citation']}" if r["evidence_analysis"] and r.get("observed_citation")      # issue #136
             else f"{r['evidence_analysis']} · {r['evidence_source_key']} ({r['observed_at']})" if r["evidence_analysis"] and r["observed_at"]

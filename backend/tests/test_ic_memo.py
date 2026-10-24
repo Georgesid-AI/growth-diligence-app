@@ -602,3 +602,36 @@ def test_the_time_in_the_ai_disclosure_is_not_a_number_the_memo_must_find_in_the
     n["generated_at"] = when
     text = memo(narratives=[n])
     assert when[11:16] in text, "fixture: the time is in the memo"
+
+
+# --- value at stake in Appendix A (George, 2026-10-24, PR 176 item 2) -----------------------------------------------------------
+
+def _vas_cells(text):
+    header = next(line for line in text.split("\n") if line.startswith("| #") and "| VaS |" in line)
+    col = [c.strip() for c in header.strip("|").split("|")].index("VaS")
+    return {line.split("|")[1].strip(): line.strip("|").split("|")[col].strip() for line in text.split("\n") if re.match(r"\| #\d+ ", line)}
+
+
+def _memo_with_vas(amounts, **kw):
+    ins = inputs(**kw)
+    for r in ins["rows"]:
+        r["value_at_stake_arr"] = amounts.get(r["rank"])
+    return ins, im.build_memo(**ins)
+
+
+def test_the_vas_column_prints_the_registers_amount_once_per_overlap_group_and_the_stored_reason_where_there_is_none():
+    ins, text = _memo_with_vas({1: 1_200_000.0, 5: 300_000.0, 6: 450_000.0})
+    cells = _vas_cells(text)
+    by_rank = {r["rank"]: r for r in ins["rows"]}
+    assert cells["#1"].startswith("€1,200,000") or cells["#1"].startswith("EUR 1,200,000")
+    assert "450,000" in cells["#6"] and "counted in" not in cells["#6"], "the largest of its group carries the amount"
+    assert "300,000" in cells["#5"] and "counted in #6" in cells["#5"], "a smaller overlapping claim is counted once, in the largest"
+    assert by_rank[3]["vas_reason"] in cells["#3"], "no amount: the stored reason, as the register holds it"
+    assert "not yet computed" not in cells["#1"]
+
+
+def test_a_vas_amount_the_register_does_not_hold_refuses_the_memo():
+    ins, _ = _memo_with_vas({1: 1_200_000.0})
+    allowed = im.allowed_numbers(ins["audit"], ins["results"], ins["rows"], ins["gaps"], ins["ic"], ins["files"], ins["decks"], thesis=False)
+    assert im.unmatched("| #1 | EUR 1,200,000 |", allowed) == []
+    assert im.unmatched("| #1 | EUR 1,200,001 |", allowed) == ["1,200,001"]
