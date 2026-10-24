@@ -1033,13 +1033,18 @@ def metric_periods(results: dict, rev: pd.DataFrame, pnl: pd.DataFrame, deals: p
     return out
 
 
-def _resolve_as_of(as_of_str, pnl: pd.DataFrame, mrr: pd.DataFrame):
-    """As-of month = explicit override, else last P&L month, else last MRR month."""
+def _resolve_as_of(as_of_str, pnl: pd.DataFrame, mrr: pd.DataFrame, rev: pd.DataFrame = None):
+    """As-of month = explicit override, else the last actual month of the revenue file (a month with a valid invoice date and a
+    non-zero amount, revenue_months), else last P&L month, else last MRR month. A P&L may run on into plan months; the revenue file
+    ends where the actuals end (George, 2026-10-24)."""
     if as_of_str:
         try:
             return pd.Period(str(as_of_str), "M")
         except Exception:
             pass
+    actual = revenue_months(rev)
+    if actual:
+        return actual[-1]
     if pnl is not None and not pnl.empty and "month" in pnl.columns:
         months = [_month_of(x) for x in pnl["month"]]
         months = [m for m in months if m is not None]
@@ -1724,8 +1729,7 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
 
     # As-of month: truncate all "current"/time-series views to <= as_of. MRR after the
     # as-of month is deferred revenue and must not appear in current figures.
-    as_of = _resolve_as_of(config.get("as_of_month"), pnl, mrr)
-    last_revenue_month = mrr.columns[-1] if not mrr.empty else None
+    as_of = _resolve_as_of(config.get("as_of_month"), pnl, mrr, rev)
     if not mrr.empty and as_of is not None:
         keep = [c for c in mrr.columns if c <= as_of]
         mrr = mrr.loc[:, keep] if keep else mrr.iloc[:, :0]
@@ -1772,24 +1776,6 @@ def compute_all_raw(rev: pd.DataFrame, deals: pd.DataFrame, pnl: pd.DataFrame, c
     # evidence ends, and every figure carries its own period (docs/specs/dates-and-periods.md section 2). The months after it
     # are not filled, not guessed.
     source = source_period(rev, as_of, bool(config.get("last_month_complete")))
-
-    # No as-of month set and no P&L months: the as-of month defaults to the last MRR month,
-    # which prepaid service periods can push past the last invoice. Those months hold only
-    # deferred revenue, so "current" figures there are not the run-rate.
-    invoice_months = ([m for m in map(_month_of, rev["invoice_date"]) if m is not None]
-                      if "invoice_date" in rev.columns else [])
-    last_invoice_month = max(invoice_months) if invoice_months else None
-    if (not config.get("as_of_month") and as_of is not None and as_of == last_revenue_month
-            and last_invoice_month is not None and as_of > last_invoice_month):
-        missing_data.append({
-            "metric": "As-of month",
-            "reason": f"No as-of month was set and no P&L months were provided, so it defaulted to the last month of "
-                      f"service periods ({_period_str(as_of)}), {(as_of - last_invoice_month).n} month(s) after the "
-                      f"last invoice ({_period_str(last_invoice_month)}). Those months hold only deferred revenue from "
-                      f"prepaid contracts; current figures there are not the run-rate",
-            "unlocked_by": f"Set the as-of month on the audit (e.g. {_period_str(last_invoice_month)}), or upload the P&L",
-            "file": rev_src.get("file"),
-        })
 
     date_order_notes = []
     for name, fields in date_formats.items():

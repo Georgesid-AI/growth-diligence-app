@@ -42,7 +42,7 @@ version of each, as decided on 2026-10-08 (Q1 A, Q2 A):
   Help lines, word for word: Reporting currency "All figures are converted to this currency. Use the company's home
   currency; the verdict and memo use it." · Target ARR "The plan figure the audit tests. Every claim's value at stake is
   measured against it." · Target date "When the plan says Target ARR is reached. Sets the forecast horizon." · As-of month
-  "Last month of actual data. Metrics are computed up to this month. Defaults to the last P&L month." · Fiscal year-end
+  "Last month of actual data. Metrics are computed up to this month. Defaults to the last month of the revenue file once it is mapped; a month you set is kept." (amended 2026-10-24, §30) · Fiscal year-end
   "Maps FY labels in the deck to months. A wrong setting shifts every FY claim." The creation dialog asks for the project or company
   name only (amended 2026-10-18, §23); the consent tick is in this set-up section; the five fields start at EUR, 0, no date, no as-of month and
   December.
@@ -484,7 +484,7 @@ Revenue: the column maps as before. Volume: the column is Not used and the engin
   only be entered once a revenue file was loaded.
 - Saving the FX rates marks a computed audit's metrics stale and recomputes it, as the existing rule does for any input the engine
   reads (PUT /fx). This is the one computation that does not wait for Run audit; "nothing is read until Map" covers files
-  attached in the chat. The deck panel reads the claims again after a save, so converted figures replace "FX rate needed". PUT /fx
+  attached in the chat. *Amended 2026-10-24 (§30 point 6): a changed rate no longer recomputes; it marks the stored results "Stale – re-run audit".* The deck panel reads the claims again after a save, so converted figures replace "FX rate needed". PUT /fx
   saves the whole set the screen shows: rates an older version saved with the revenue file move to the audit and the file's copy
   is cleared, so a removed rate stays removed.
 
@@ -1320,3 +1320,28 @@ Draft PR from main, failing tests first on synthetic pages (`backend/tests/test_
    exist ("No usable recurring revenue rows" otherwise).
 5. *Growth basis default.* A growth claim's basis, when neither the analyst nor the parser set it, is read from the claim's own words: "from YYYY", "annual", "YoY", "Y2Y" are YoY; "MoM",
    "per month", "monthly" are MoM; otherwise it stays unknown and the row asks. A parser or model value of "unknown" does not hide the words. The analyst's choice always wins.
+
+## 30. Parser numbers, two period flags, multiples, the as-of default and stale set-up changes (2026-10-24, George)
+Challenge (rule 4): every point is a defect or a wording George named; nothing is new. Deleted first: the engine's "As-of month" Missing Data item (see 5).
+1. *Space thousands in the parser.* A space, a no-break space or a narrow no-break space between groups of exactly three digits is a thousands separator in the deck parser
+   (`claims._NUMBER`), in any number of groups: "770 000 000" is 770,000,000 (the checker's reader had it since 2026-10-23, §28.x point 4; the parser read it as 770, 0, 0). A group is
+   three digits not followed by a digit, so "2024 500 customers" is the year 2024 and the figure 500, "1 2345" is 1 and 2345.
+2. *Multiples.* The register shows a figure in unit `x` with one decimal, half up, and the x right after it: 5.4x, 3.3x, 5.0x; a range 3.3–5.5x. Claim cell and gate context.
+3. *Period is a range.* A claim whose period is cited from a cell that holds a range of years ("2022 - 2024", "2019–2021", "2022 to 2024", `claims.has_year_range`) and was not rebuilt from that
+   cell gets the review flag "period is a range" (`checker.PERIOD_IS_RANGE`); "period not on page" does not also fire. The period is never set from the range.
+4. *Growth dated to start year.* A growth claim (`revenue_growth`, `growth`, `user_growth`) whose period equals the year after "from" or "compared to" in its own value cell ("40% from 2021" dated
+   2021) gets the review flag "growth dated to start year" (`checker.GROWTH_START_YEAR`). Both flags are review flags (the claim is listed under Review), not informational.
+5. *As-of default.* With no as-of month set, the engine's as-of month is the last month of the revenue file with a valid invoice date and a non-zero amount (`revenue_months`, the month of
+   dates-and-periods.md §2), else the last P&L month, else the last MRR month; it used to be the P&L's, which can run on into plan months. Recognition's boundary reads the mapped revenue file's
+   `months.last` before the P&L's. A month the analyst set is kept as it is. The set-up field's empty text reads "last month of the revenue file"; under the field a warning line reads "The as-of
+   month, June 2026, is later than the last month of the revenue file, June 2019. The figures stop at June 2019; the months after it hold no revenue." when the as-of month is later than that
+   month (the computed `source_period.month`, else the mapped file's months, sent as `datasets.revenue.months`). The "As-of month" Missing Data item (a default pushed into prepaid service
+   months) cannot occur any more and is deleted.
+6. *Stale after a set-up change.* A changed Target ARR, Target date, As-of month (an explicit clear included), fiscal year-end or FX rate on a computed audit sets `setup_stale` on the audit.
+   Stored results then read "Stale – re-run audit" exactly as results of an older contract do (`run_audit.results_stale`; interface-contracts.md §7): nothing recomputes on its own, Run audit
+   (or Calculate) calculates again and clears the mark. A save of the same value, another field, or an audit with no results marks nothing. Reporting currency and "Last month is complete" are not in the
+   list and recompute as before.
+Decided (rule 19): the mark is a field of the audit, not a second contract version; the FX comparison is the merged rate set before and after; the stored claim approvals are re-checked at Run audit,
+as for any recompute (issue #155 point h now takes effect there).
+Tests: `test_space_thousands_and_period_flags.py`, `test_as_of_default_and_stale_setup.py`, `claimRegister.test.js`, `auditForm.test.js`, `AuditSetup.test.jsx`; flags added to
+`test_gateway_data_boundary.py` (rule 14).

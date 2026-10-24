@@ -6,7 +6,7 @@ import DateField from "@/components/DateField";
 import { getAudit, putIcInputs, updateAudit } from "@/lib/api";
 import { describeRequestError } from "@/lib/requestError";
 import {
-  CONSENT_LABEL, VERIFIED_LINE, DEFAULT_FISCAL_YEAR_END, MONTHS, REPORTING_CURRENCIES, SETUP_HELP, SETUP_LABELS, asOfInputValue, groupThousands, plainNumber, storedNumberInput,
+  CONSENT_LABEL, VERIFIED_LINE, DEFAULT_FISCAL_YEAR_END, MONTHS, REPORTING_CURRENCIES, SETUP_HELP, SETUP_LABELS, AS_OF_PLACEHOLDER, asOfInputValue, asOfWarning, revenueLastMonth, groupThousands, plainNumber, storedNumberInput,
   targetDateError,
 } from "@/lib/auditForm";
 
@@ -46,7 +46,7 @@ export default function AuditSetup({ audit, setAudit, asOf, setAsOf }) {
       if (nextTarget) await save(field, { target_date: nextTarget });
     } else {
       setAsOf(nextAsOf);
-      await save(field, { as_of_month: nextAsOf || null });      // cleared: back to the default, the last P&L month
+      await save(field, { as_of_month: nextAsOf || null });      // cleared: back to the default, the last month of the revenue file
     }
   };
   // Required: the date is always there (default: creation date + 90 days); clearing it returns it to the default.
@@ -90,8 +90,11 @@ export default function AuditSetup({ audit, setAudit, asOf, setAsOf }) {
         </div>
         <div>
           <label className={label}>{SETUP_LABELS.as_of_month}</label>
-          <DateField testId="asof-month-input" value={asOfInputValue(asOf)} onChange={(v) => dates("as_of_month", targetDate, v)} placeholder="last P&L month" className="!mt-1" />
+          <DateField testId="asof-month-input" value={asOfInputValue(asOf)} onChange={(v) => dates("as_of_month", targetDate, v)} placeholder={AS_OF_PLACEHOLDER} className="!mt-1" />
           <p className={help} data-testid="setup-help-as_of_month">{SETUP_HELP.as_of_month}</p>
+          {asOfWarning(asOf, revenueLastMonth(audit)) && (
+            <p className="mt-1 text-[11px] leading-snug text-amber-700" data-testid="setup-warning-as_of_month">{asOfWarning(asOf, revenueLastMonth(audit))}</p>
+          )}
           <label className="mt-2 flex items-center gap-2 text-xs text-slate-700">
             <input type="checkbox" data-testid="setup-last-month-complete" checked={!!audit.last_month_complete}
               onChange={(e) => save("last_month_complete", { last_month_complete: e.target.checked })} />

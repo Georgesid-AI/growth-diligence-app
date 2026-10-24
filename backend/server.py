@@ -359,7 +359,7 @@ async def audit_public(a: dict) -> dict:
     ds = await db.datasets.find({"audit_id": a["id"]}, {"rows": 0, "recognition_sheets": 0, "_id": 0}).to_list(10)
     a["datasets"] = {
         d["dtype"]: {k: d.get(k) for k in ("file", "sheet", "columns", "mapping", "fx", "billing_terms", "preview", "row_count",
-                                           "mapping_source", "ai_reading")}
+                                           "mapping_source", "ai_reading", "months")}
         for d in ds
     }
     return sanitize(a)
@@ -529,7 +529,9 @@ async def update_audit(audit_id: str, payload: AuditUpdate, background: Backgrou
         await db.audits.update_one({"id": audit_id},
                                    {"$set": {"consent_log": list(a.get("consent_log") or []) + [_consent_entry(consent)]}})
     if updates:
-        await db.audits.update_one({"id": audit_id}, {"$set": updates})
+        changed = {k for k, v in updates.items() if k in STALE_ON_CHANGE_FIELDS and _setup_value(k, v) != _setup_value(k, _stored_setup(a, k))}
+        # A changed input marks the stored results stale (George, 2026-10-24); Run audit calculates again. Nothing recomputes on its own.
+        await db.audits.update_one({"id": audit_id}, {"$set": {**updates, **({"setup_stale": True} if changed and a.get("results") else {})}})
         if RECOMPUTE_TRIGGER_FIELDS & updates.keys():
             await _mark_stale_and_maybe_recompute(audit_id)
         if "fiscal_year_end" in updates and updates["fiscal_year_end"] != _fiscal_year_end(a):
@@ -540,6 +542,15 @@ async def update_audit(audit_id: str, payload: AuditUpdate, background: Backgrou
         for deck_id in await structures.queue_decks(db, audit_id):
             background.add_task(structures.process_deck_safely, db, audit_id, deck_id)
     return await audit_public(await db.audits.find_one({"id": audit_id}))
+
+
+def _stored_setup(audit: dict, field: str):
+    return _fiscal_year_end(audit) if field == "fiscal_year_end" else audit.get(field)
+
+
+def _setup_value(field: str, value):
+    """A set-up value as compared for a change: the target as a number, the dates as text, an empty date as none."""
+    return float(value or 0) if field == "target_arr" else value or None
 
 
 def _fiscal_year_end(audit: Optional[dict]) -> int:
@@ -817,11 +828,15 @@ async def _counted(audit_id: str, datasets: list) -> list:
 
 async def _effective_as_of(audit_id: str, audit: Optional[dict]) -> Optional[str]:
     """The as-of month recognition reads the boundary against (revenue-file-recognition.md section 6.2): the audit's, else its default,
-    the last month of the P&L (chat-upload.md section 2); None when there is neither."""
+    the last month of the mapped revenue file, else the last month of the P&L (chat-upload.md sections 2 and 29); None when there is
+    none of them."""
     if (audit or {}).get("as_of_month"):
         return audit["as_of_month"]
-    pnl = await db.datasets.find_one({"audit_id": audit_id, "dtype": "pnl"}, {"_id": 0, "months": 1})
-    return ((pnl or {}).get("months") or {}).get("last")
+    for dtype in ("revenue", "pnl"):
+        found = await db.datasets.find_one({"audit_id": audit_id, "dtype": dtype}, {"_id": 0, "months": 1})
+        if ((found or {}).get("months") or {}).get("last"):
+            return found["months"]["last"]
+    return None
 
 
 _RECOGNITION_CACHE: "OrderedDict[str, dict]" = OrderedDict()
@@ -2504,9 +2519,11 @@ async def save_fx(audit_id: str, payload: FxPayload):
     a = await db.audits.find_one({"id": audit_id})
     if not a:
         raise HTTPException(404, "Audit not found")
+    before = await _fx(audit_id, a)
     await db.audits.update_one({"id": audit_id}, {"$set": {"fx": payload.fx}})
     await db.datasets.update_many({"audit_id": audit_id, "dtype": "revenue"}, {"$set": {"fx": {}}})
-    await _mark_stale_and_maybe_recompute(audit_id)
+    if merged_fx({**a, "fx": payload.fx}, None) != before and a.get("results"):
+        await db.audits.update_one({"id": audit_id}, {"$set": {"setup_stale": True}})      # the stored results read the old rates (George, 2026-10-24)
     return {"fx": payload.fx}
 
 
@@ -3120,7 +3137,10 @@ async def export_memo(audit_id: str):
 # Setup inputs that change what a computed audit's metrics should be. A change
 # to any of these on an already-computed audit means the stored results are
 # stale until recomputed (see _mark_stale_and_maybe_recompute).
-RECOMPUTE_TRIGGER_FIELDS = {"reporting_currency", "target_arr", "target_date", "as_of_month", "last_month_complete"}
+RECOMPUTE_TRIGGER_FIELDS = {"reporting_currency", "last_month_complete"}
+# Inputs whose change marks the stored results "Stale – re-run audit" instead (George, 2026-10-24): nothing recomputes until Run audit.
+# The FX rates do the same through save_fx.
+STALE_ON_CHANGE_FIELDS = {"target_arr", "target_date", "as_of_month", "fiscal_year_end"}
 
 
 async def _run_compute(audit_id: str) -> dict:
@@ -3206,7 +3226,7 @@ async def _run_compute(audit_id: str) -> dict:
     await db.audits.update_one(
         {"id": audit_id},
         {"$set": {"results": results, "status": "computed", "computed_at": datetime.now(timezone.utc).isoformat(),
-                  "metrics_stale": False}},
+                  "metrics_stale": False, "setup_stale": False}},
     )
     await _revoke_stale_auto(audit_id, await db.audits.find_one({"id": audit_id}))
     return results

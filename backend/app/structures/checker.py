@@ -48,6 +48,9 @@ Informational (George, 2026-10-23): YEAR_LABEL_BELOW joins the informational fla
 note on its row. NOT_PLAN_LINE never fires for the metrics market, pricing and use_of_funds. USE_OF_FUNDS does not fire on a page that holds a raise cue
 (RAISE_CUES) in any cell. All other flags are as before.
 
+Added 2026-10-24 (George, chat-upload.md section 30): PERIOD_IS_RANGE, a period cited from a cell that holds a range of years (no period; "period not on page" stays quiet), and
+GROWTH_START_YEAR, a growth claim whose period is the year after "from" or "compared to" in its own value cell. Both are review flags.
+
 Every flag is a closed string of FLAGS (backend/tests/test_gateway_data_boundary.py); no flag carries deck text.
 """
 import re
@@ -76,9 +79,12 @@ CELL_CORRECTED = "cell corrected"
 SIGN_NOT_ON_PAGE = "sign not on page"
 PERIOD_FROM_HEADING = "period from page heading"
 PERIOD_FROM_OTHER_CELL = "period from another cell"
+PERIOD_IS_RANGE = "period is a range"
+GROWTH_START_YEAR = "growth dated to start year"
 FLAGS = (VALUE_NOT_ON_PAGE, CURRENCY_ASSUMED, UNIT_ASSUMED, SCENARIO_NOT_ON_PAGE, PERIOD_NOT_ON_PAGE, PAGE_OUT_OF_RANGE,
          USE_OF_FUNDS, ACQUISITION_CHANNEL, TURNOVER, BAR_YEAR, PIPELINE_COLUMN, AXIS_TICK, NOT_PLAN_LINE, MATCHES_ANALYST,
-         BASIS_SCENARIO_DISAGREE, BASIS_CONFLICT, CELL_CORRECTED, SIGN_NOT_ON_PAGE, PERIOD_FROM_HEADING, PERIOD_FROM_OTHER_CELL)
+         BASIS_SCENARIO_DISAGREE, BASIS_CONFLICT, CELL_CORRECTED, SIGN_NOT_ON_PAGE, PERIOD_FROM_HEADING, PERIOD_FROM_OTHER_CELL,
+         PERIOD_IS_RANGE, GROWTH_START_YEAR)
 INFORMATIONAL_FLAGS = claims.INFORMATIONAL_FLAGS        # a note on the row; the claim stays in the main list (George, 2026-10-23)
 REVIEW_FLAGS = tuple(f for f in FLAGS if f not in INFORMATIONAL_FLAGS)      # the claim is listed under Review
 review_flags = claims.review_flags
@@ -93,6 +99,8 @@ NOT_PLAN_EXEMPT_METRICS = ("market", "pricing", "use_of_funds")
 # A page that holds one of these in any cell is a raise page: its percentages are the use of funds, so "use-of-funds share" stays quiet.
 RAISE_CUES = ("use of funds", "use of proceeds", "funding ask", "investment opportunity", "equity investment", "round size", "our ask")
 _RAISE_CUE = re.compile(r"(?i)\b(?:" + "|".join(re.escape(c).replace(r"\ ", r"\s+") for c in RAISE_CUES) + r")\b")
+# The year a growth line starts from: "from 2021", "compared to FY2021" (George, 2026-10-24).
+_START_YEAR = re.compile(r"(?i)\b(?:from|compared\s+to)\s+(?:FY\s*['’]?\s*)?(?P<year>(?:19|20)\d{2})\b")
 NO_SCENARIO = "none"
 CASES = claims.CASES                  # the scenarios that are no plan target (George, 2026-10-23): listed under Scenarios, never matched
 _MINUS = ("-", "\u2212", "\u2013", "\u2014")                      # hyphen-minus, minus sign, en and em dash
@@ -172,6 +180,12 @@ def scenario_near(structure: Dict, cell: Dict, scenario: Optional[str]) -> bool:
     rx = _SCENARIO.get(scenario)
     near = [cell, *page_check._same_box(structure, cell), *page_check.adjacent(structure, cell)]
     return bool(rx and any(rx.search(c["text"]) for c in near))
+
+
+def starts_at_period(text: str, period: Optional[str], fiscal_year_end: int) -> bool:
+    """Whether the year after "from" or "compared to" in a cell is the claim's period: the growth is dated to the year it starts from."""
+    wanted = claims.period_range(period, fiscal_year_end) if period else None
+    return bool(wanted) and any(claims.period_range(m.group("year"), fiscal_year_end) == wanted for m in _START_YEAR.finditer(text or ""))
 
 
 def sign_shown(text: str, metric: Optional[str] = None) -> bool:
@@ -282,8 +296,12 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, blocks
             flags.append(PERIOD_FROM_HEADING)
         if item["checks"]["period_other"]:
             flags.append(PERIOD_FROM_OTHER_CELL)
-        if claim.get("period") and not item["checks"]["period"] and not period_on_page(grid, claim["period"], fiscal_year_end):
+        if claim.get("period") and not item["checks"]["period"] and claims.has_year_range(_cell_text(grid, claim.get("period_cell"))):
+            flags.append(PERIOD_IS_RANGE)           # a range of years is no period; this flag says it, "period not on page" stays quiet
+        elif claim.get("period") and not item["checks"]["period"] and not period_on_page(grid, claim["period"], fiscal_year_end):
             flags.append(PERIOD_NOT_ON_PAGE)
+        if claim.get("metric") in claims.GROWTH_TYPES and starts_at_period(cell["text"], claim.get("period"), fiscal_year_end):
+            flags.append(GROWTH_START_YEAR)
         flags += [f for f in rule_flags(grid, grid_views, cell, claim, lines, fiscal_year_end) if f not in flags]
         item["flags"] = flags
         item["basis"] = claim.get("basis")

@@ -72,6 +72,18 @@ describe("what a row shows", () => {
     expect(gapText({ ...ARR_ROW, metric: "CAC payback", gap: 2, gap_normalised: 0.1667, gap_kind: "miss" }, "EUR")).toBe("2.0 months · 16.7%");
   });
 
+  test("a multiple reads with one decimal and an x, in the claim cell and the gate context (George, 2026-10-24)", () => {
+    const multiple = { ...ARR_ROW, claim_type: "customers", unit: "x", currency: null, claimed_value: 5.4 };
+    expect(claimFigure(multiple)).toBe("5.4x");
+    expect(claimFigure({ ...multiple, claimed_value: 3.333 })).toBe("3.3x");
+    expect(claimFigure({ ...multiple, claimed_value: 5 })).toBe("5.0x");
+    expect(claimFigure({ ...multiple, claimed_value: 2.25 })).toBe("2.3x");
+    expect(claimFigure({ ...multiple, claimed_value: 3.3, claimed_high: 5.46 })).toBe("3.3–5.5x");
+    expect(claimText(multiple)).toBe("Customers · 5.4x");
+    expect(gateContext(multiple, "EUR")).toContain("Claimed 5.4x");
+    expect(claimFigure({ ...ARR_ROW, unit: "years", currency: null, claimed_value: 1 })).toBe("1 years");
+  });
+
   test("the claimed figure alone, and the gate cell: claimed and observed beside an empty field, no proposed threshold", () => {
     expect(claimFigure(ARR_ROW)).toBe("200,000 EUR");
     expect(claimFigure({ ...ARR_ROW, unit: "years", currency: null, claimed_value: 1 })).toBe("1 years");

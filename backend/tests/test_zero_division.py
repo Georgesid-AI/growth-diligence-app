@@ -268,18 +268,21 @@ def _reported_settings(as_of):
                           {"revenue": {"file": "revenue.xlsx", "sheet": "Invoices"}})
 
 
-def test_unset_as_of_past_the_last_invoice_computes_and_is_flagged():
-    """Reproduced on main: as-of defaults to 2027-05, Enterprise NRR 0%, 0.58 years to target ->
-    '0.0 cannot be raised to a negative power'."""
+def test_unset_as_of_defaults_to_the_last_invoice_month_not_the_last_service_month():
+    """Reproduced on main before 2026-10-24: as-of defaulted to the last MRR month, 2027-05, Enterprise NRR 0%, 0.58 years to target ->
+    '0.0 cannot be raised to a negative power'. The default is now the revenue file's last actual month, so the deferred months are
+    never the run-rate (George, 2026-10-24); the "As-of month" Missing Data item that named them is gone."""
     results = _reported_settings(None)
+    assert results["as_of_month"] == "2026-06"
+    assert results["source_period"]["month"] == "2026-06"
+    assert not _missing(results, "As-of month")
+
+
+def test_an_as_of_month_set_into_the_deferred_months_still_computes_without_a_division_error():
+    results = _reported_settings("2027-05-31")
     assert results["as_of_month"] == "2027-05"
     row = results["segment_paths"]["stage_one"]["segments"]["Enterprise"]
     assert row["nrr_pct"] == 0 and row["projected_arr"] is None
-    item = _missing(results, "As-of month")
-    assert item, "a defaulted as-of month past the last invoice must be named in Missing Data"
-    assert "defaulted to the last month of service periods (2027-05), 11 month(s) after the last invoice (2026-06)" \
-        in item[0]["reason"]
-    assert "2026-06" in item[0]["unlocked_by"]
 
 
 def test_a_set_as_of_month_is_not_flagged():
