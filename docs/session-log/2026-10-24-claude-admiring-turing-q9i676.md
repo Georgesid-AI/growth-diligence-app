@@ -4,3 +4,4 @@ Decided: conclusion screen = verdict line, one grey line, one Change link; 15 Oc
 Slow or unclear: section 8 (was 7) decisions 3, 4, 6, 8 are now answered by the edits but left untouched as instructed; section 7 was renumbered to 8 to make room for Acceptance criteria.
 Root cause and rule: the design note carried states (provisional, insufficient) that blocked the verdict; rule: the verdict is always computed, uncertainty shows as a count.
 Process change to propose: when a note is edited from a review, list the open decisions the edit answers so they can be closed in one pass.
+Also: open decisions 3, 4, 5, 6, 7, 8 of the design note marked decided with pointers to their sections (decision 1 left open for the build PR); wording only.

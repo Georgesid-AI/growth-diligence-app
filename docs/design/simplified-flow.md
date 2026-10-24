@@ -204,13 +204,19 @@ No contract bump and no reseed: nothing stored changes meaning. The server appli
 3. **"Insufficient evidence".** As written (no top-5 claim tested and no gate exists) it can hold only when the register is empty,
    because a gate is proposed for every untested row. Options: (a) as written, replacing W10's "no claims" case (recommended);
    (b) also when all five are untested, in place of Re-plan or Underwrite with gates.
+   **Decided:** see the conclusion screen, §1 The Audit page (Verdict) and §3 (Verdict row).
 4. **Open Definition check.** Today it blocks the verdict. Options: (a) the verdict renders as "provisional – n questions open",
    the row counted as Unverified, final on the answer (recommended); (b) stays blocked, the card says so.
+   **Decided:** see the conclusion screen, §1 The Audit page (Verdict) and §3 (Verdict row).
 5. **Rating rules.** The thresholds of §3 are the Dashboard's own colours, so nothing is invented. Confirm them, or name others.
+   **Decided:** see ratings, §1 The Audit page (Ratings) and §3 (the two Rating rows).
 6. **Deal thesis.** It stays a memo section and is the one typed input left. Options: (a) default the three sentences from
    computed text (Plan: Target ARR by Target date; Evidence: the verdict rule; Condition: the first key gate), editable
    (recommended); (b) keep it analyst-written and required.
+   **Decided:** see the memo, §1 The memo.
 7. **Deck panel claims table.** Options: (a) fold it into the register, the deck line and the add controls stay (recommended);
    (b) keep it read-only behind "show all claims".
+   **Decided:** (a), the deck claims table folds into the register; the deck line and the add controls stay.
 8. **Gates "editable in the memo only".** Read as: edited in the Verdict section that carries "Download IC memo", nowhere else.
    Confirm.
+   **Decided:** see gates, §1 The Audit page (Key gates) and §3 (Gate and Key gates rows).
