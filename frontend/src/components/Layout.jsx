@@ -11,11 +11,10 @@ export function Layout({ audit, children }) {
   const loc = useLocation();
   const id = audit?.id;
 
-  // The four pages of an open audit, in the order of the work (docs/specs/chat-upload.md section 24).
+  // The three pages of an open audit; Review left the menu, its open questions are a card on the Audit page (docs/design/simplified-flow.md), in the order of the work (docs/specs/chat-upload.md section 24).
   const tabs = id
     ? [
         { key: "mapping", label: "Upload & Mapping", to: `/audit/${id}/mapping`, testid: "nav-tab-mapping-wizard" },
-        { key: "review", label: "Review", to: `/audit/${id}/review`, testid: "nav-tab-review" },
         { key: "dashboard", label: "Audit", to: `/audit/${id}/dashboard`, testid: "nav-tab-audit" },
         { key: "diagnostics", label: "Diagnostics", to: `/audit/${id}/diagnostics`, testid: "nav-tab-missing-data" },
       ]

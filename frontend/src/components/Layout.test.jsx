@@ -117,12 +117,13 @@ test.each([0, null, undefined])("the header reads 'target not set' when Target A
   expect(q("header-target-line").textContent).toMatch(/^EUR · target .*1,?000,?000.* ARR$/);
 });
 
-test("an open audit has four tabs in this order, no Details menu and no Run audit tab", async () => {
+test("an open audit has three tabs in this order, no Review tab, no Details menu and no Run audit tab", async () => {
   api.getBlockers.mockResolvedValue([]);
   await mount(AUDIT);
-  expect(["nav-tab-mapping-wizard", "nav-tab-review", "nav-tab-audit", "nav-tab-missing-data"].map((id) => q(id).textContent))
-    .toEqual(["Upload & Mapping", "Review", "Audit", "Diagnostics"]);
-  expect([...q("nav-tab-review").parentElement.children].map((b) => b.textContent)).toEqual(["Upload & Mapping", "Review", "Audit", "Diagnostics"]);
+  expect(["nav-tab-mapping-wizard", "nav-tab-audit", "nav-tab-missing-data"].map((id) => q(id).textContent))
+    .toEqual(["Upload & Mapping", "Audit", "Diagnostics"]);
+  expect([...q("nav-tab-audit").parentElement.children].map((b) => b.textContent)).toEqual(["Upload & Mapping", "Audit", "Diagnostics"]);
+  expect(q("nav-tab-review")).toBeNull();
   expect(q("nav-details")).toBeNull();
   expect(q("details-menu")).toBeNull();
   expect(q("nav-tab-run-audit")).toBeNull();
@@ -131,7 +132,6 @@ test("an open audit has four tabs in this order, no Details menu and no Run audi
 
 test.each([
   ["nav-tab-mapping-wizard", "/audit/a1/mapping"],
-  ["nav-tab-review", "/audit/a1/review"],
   ["nav-tab-audit", "/audit/a1/dashboard"],
   ["nav-tab-missing-data", "/audit/a1/diagnostics"],
 ])("the %s tab navigates to %s", async (testid, path) => {

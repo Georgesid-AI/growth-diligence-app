@@ -92,7 +92,7 @@ test("the old /audit/:id/run link redirects to Upload & Mapping", () => {
   expect(html).toContain('data-to="/audit/a1/mapping"');
 });
 
-test("one press sends the attached spreadsheets, runs the three stages in order and opens the review screen", async () => {
+test("one press sends the attached spreadsheets, runs the three stages in order and opens the Audit page", async () => {
   const order = [];
   api.uploadChatFile.mockImplementation(async (id, f) => { order.push(`upload:${f.name}`); return { status: "ok" }; });
   api.runStage.mockImplementation(async (id, key) => { order.push(`stage:${key}`); return { stage: key, status: "done" }; });
@@ -101,16 +101,16 @@ test("one press sends the attached spreadsheets, runs the three stages in order 
   expect(q("chat-messages").textContent).toContain("revenue.csv");
   await press("run-audit");
   expect(order).toEqual(["upload:revenue.csv", "stage:mapping", "stage:engine", "stage:claims"]);
-  expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/review");
+  expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/dashboard");
 });
 
-test("a stage that needs the analyst sends them to the review screen", async () => {
+test("a stage that needs the analyst sends them to the Audit page", async () => {
   api.runStage.mockResolvedValue({ stage: "mapping", status: "needs_review", open: 1 });
   await mount();
   await attach("revenue.csv");
   await press("run-audit");
   expect(api.runStage).toHaveBeenCalledTimes(1);
-  expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/review");
+  expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/dashboard");
 });
 
 test("a failed stage says what to do and Retry stage carries on from it without sending the files again", async () => {
@@ -131,7 +131,7 @@ test("a failed stage says what to do and Retry stage carries on from it without 
   await press("retry-engine");
   expect(api.uploadChatFile).not.toHaveBeenCalled();
   expect(q("stage-engine").getAttribute("data-status")).toBe("done");
-  expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/review");
+  expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/dashboard");
 });
 
 test("a file the run sent is no longer attached: the box reads the stored files again", async () => {
@@ -151,7 +151,7 @@ test("under React.StrictMode the stage updates still land (alive ref is re-armed
   await attach("revenue.csv");
   await press("run-audit");
   expect(q("stage-mapping").getAttribute("data-status")).toBe("needs_review");
-  expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/review");
+  expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/dashboard");
 });
 
 const DECK = { deck_id: "d1", file: "board.pptx", pages: 12, page_unit: "slide", uploaded_at: "2026-10-02T08:00:00+00:00" };
@@ -203,7 +203,7 @@ test("while a run is in progress Map waits, and Run audit waits while a file is 
   expect(q("chat-map").disabled).toBe(true);
   await act(async () => { release(); });
   await act(async () => { await Promise.resolve(); });
-  expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/review");
+  expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/dashboard");
 });
 
 // --- Run audit continues from the first stage that is not done (chat-upload.md section 24) ----------------------------------------------
@@ -232,7 +232,7 @@ test("a mapping confirmed or corrected after the last calculation makes the engi
   api.getReview.mockResolvedValue({ computed: true, engine_stale: true });          // the analyst confirmed a column since
   await press("run-audit");
   expect(ranStages()).toEqual(["engine", "claims"]);
-  expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/review");
+  expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/dashboard");
 });
 
 test("the engine of a stale audit shows as not done on load, not Done", async () => {

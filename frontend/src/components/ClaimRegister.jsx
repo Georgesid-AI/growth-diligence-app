@@ -3,15 +3,15 @@ import { toast } from "sonner";
 import { Download, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import ContradictionBanner from "@/components/ContradictionBanner";
+import { EvidenceLabel } from "@/components/EvidenceLabel";
 import { Provenance } from "@/components/Provenance";
 import DateField from "@/components/DateField";
 import { answerDefinitionCheck, answerTurnover, claimsCsvUrl, downloadFile, getClaimRegister, updateClaimInputs } from "@/lib/api";
 import {
-  DEFINITION_ANSWERS, DOWNLOAD_LABEL, labelText, GATE_BUDGET_MAX, GATE_DIRECTIONS, GATE_METRIC_MAX, GATE_METRIC_PLACEHOLDER, GATE_NEEDED, KEY_GATE_LABEL, NO_METRIC, OTHER_DECISION, PREFILLED, gateDraft,
-  REGISTER_COLUMNS, REGISTER_COLUMN_WIDTHS, REGISTER_HEADING, STALE_LABEL, SET_GATE_LABEL, VAS_LABEL, TURNOVER_QUESTION, answerReady, reasonsFor, claimCellText, rateHover, takeRateText, evidenceLines, gapText, gateContext, gateEdit, metricOptions, needsMetricName,
-  observedText, overlapsText, readingText, registerRows, segmentOptions, valueAtStakeText, COLUMN_EXPLAINERS, EVIDENCE_SUBTITLE, LABEL_STYLE,
-  GROWTH_BASES, SET_GROWTH_BASIS, growthBasisLabel,
+  DEFINITION_ANSWERS, DOWNLOAD_LABEL, GATE_BUDGET_MAX, GATE_DIRECTIONS, GATE_METRIC_MAX, GATE_METRIC_PLACEHOLDER, GATE_NEEDED, KEY_GATE_LABEL, NO_METRIC, OTHER_DECISION, PREFILLED, gateDraft,
+  REGISTER_COLUMNS, REGISTER_COLUMN_WIDTHS, REGISTER_HEADING, STALE_LABEL, SET_GATE_LABEL, TURNOVER_QUESTION, answerReady, reasonsFor, claimCellText, rateHover, takeRateText, evidenceLines, gapText, gateContext, gateEdit, metricOptions, needsMetricName,
+  observedText, detailItems, registerRows, segmentOptions, COLUMN_EXPLAINERS, EVIDENCE_SUBTITLE,
+  GROWTH_BASES, SET_GROWTH_BASIS,
 } from "@/lib/claimRegister";
 import { missingText } from "@/lib/periods";
 import { CALCULATE_CLASS } from "@/lib/chatUpload";
@@ -262,7 +262,6 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
         </Button>
         </div>
       </div>
-      <ContradictionBanner auditId={auditId} />
       {error && <div className="text-xs text-rose-700" data-testid="claim-register-error">{error}</div>}
       {!rows && !error && <Loader2 className="h-4 w-4 animate-spin text-slate-500" />}
       {rows && stale && (
@@ -289,16 +288,7 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
             {rows.map((row) => {
               const observed = observedText(row, ccy);
               const path = evidenceLines(row).second;
-              const detail = [
-                [row.page_ref || "—", "register-page"],
-                [readingText(row.deck_reading), "register-reading"],
-                [row.gloss || "—", "register-gloss"],
-                [`${VAS_LABEL} ${valueAtStakeText(row, ccy)}`, "register-value-at-stake"],
-                [`Overlaps with ${overlapsText(row, rows)}`, "register-overlaps"],
-                [row.reason, "register-evidence-reason"],
-                ...(row.auto_approval ? [[row.auto_approval, "register-auto-approval"]] : []),
-                ...(growthBasisLabel(row.growth_basis) ? [[`Growth basis ${growthBasisLabel(row.growth_basis)}`, "register-growth-basis-set"]] : []),
-              ];
+              const detail = detailItems(row, rows, ccy);
               return (
                 <tbody key={row.claim_id} className="border-b border-[#F1F5F9] align-top break-words" data-testid="claim-register-row">
                   <tr>
@@ -338,9 +328,7 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
                     <td className="pt-2 px-3 font-mono text-slate-800" data-testid="register-gap">{gapText(row, ccy)}</td>
                     <td className="pt-2 px-3 font-mono text-slate-700"><span data-testid="register-confidence">{row.extraction_confidence || "—"}</span></td>
                     <td className="pt-2 px-3">
-                      <span className={`text-[10px] font-mono border rounded px-1.5 py-0.5 whitespace-nowrap ${LABEL_STYLE[row.evidence_label] || ""}`} data-testid="register-evidence">
-                        {labelText(row)}
-                      </span>
+                      <EvidenceLabel row={row} testId="register-evidence" />
                       {/* approved by Run audit on its own, the same as an approval (issue #155) */}
                       {row.auto_approval && <span className="ml-1 text-[10px] font-mono text-slate-500" data-testid="register-auto">auto</span>}
                     </td>

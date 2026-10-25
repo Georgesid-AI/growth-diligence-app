@@ -210,18 +210,21 @@ test("a pick replaces a row with another register row and Confirm sends the five
   await unmount();
 });
 
-test("a confirmed top 5 shows W24, the outcome with its rule, the five claims, three reasons, key gates, deal terms and top gaps (W8, W11-W14)", async () => {
+test("a confirmed top 5 shows the outcome with its rule and the five claims in the page's blocks, W24 behind Change, and the reasons, key gates, deal terms and top gaps under Supporting detail (W8, W11-W14)", async () => {
   const { host, unmount } = await mountDashboard(sample, OK);
   const section = host.querySelector('[data-testid="verdict"]');
+  expect(section.querySelector('[data-testid="verdict-top5"]')).toBeNull();       // a confirmed top 5 sits behind the one Change link
+  await act(async () => { section.querySelector('[data-testid="top5-change"]').click(); });
   expect(section.querySelector('[data-testid="verdict-top5-note"]').textContent).toBe("Top 5 set by the analyst pending ARR (see glossary) bridge.");
   expect(section.querySelector('[data-testid="verdict-outcome"]').textContent).toContain("Selected claims not supported");
   expect(section.querySelector('[data-testid="verdict-rule"]').textContent).toBe("2 selected claims are Contradicted.");
-  expect(section.querySelectorAll('[data-testid="verdict-five-row"]').length).toBe(2);
-  expect(section.querySelector('[data-testid="verdict-reasons"]').textContent).toContain("#1 ARR (see glossary), FY2023: Contradicted, €198,143 against €240,000");
-  expect(section.querySelector('[data-testid="verdict-key-gates"]').textContent).toContain("Before the plan, ARR (see glossary) must be at least €100 by 2024-06-30.");
-  expect(section.querySelector('[data-testid="verdict-deal-terms"]').textContent).toBe("Deal terms: not available – the execution capacity review has not been run.");
-  expect(section.querySelector('[data-testid="verdict-top-gaps"]').textContent).toContain("NRR (12-month)");
-  expect(section.querySelector('[data-testid="verdict-other-gates"]').textContent).toBe("3 other claims still need a gate.");
+  expect(host.querySelectorAll('[data-testid="verdict-five-row"]').length).toBe(2);
+  const detail = host.querySelector('[data-testid="supporting-detail"] [data-testid="verdict-detail"]');
+  expect(detail.querySelector('[data-testid="verdict-reasons"]').textContent).toContain("#1 ARR (see glossary), FY2023: Contradicted, €198,143 against €240,000");
+  expect(detail.querySelector('[data-testid="verdict-key-gates"]').textContent).toContain("Before the plan, ARR (see glossary) must be at least €100 by 2024-06-30.");
+  expect(detail.querySelector('[data-testid="verdict-deal-terms"]').textContent).toBe("Deal terms: not available – the execution capacity review has not been run.");
+  expect(detail.querySelector('[data-testid="verdict-top-gaps"]').textContent).toContain("NRR (12-month)");
+  expect(detail.querySelector('[data-testid="verdict-other-gates"]').textContent).toBe("3 other claims still need a gate.");
   await unmount();
 });
 
@@ -266,11 +269,12 @@ test("a void top 5 shows W23's re-confirm line", async () => {
   await unmount();
 });
 
-test("the inputs: the review date, the two ratings, the thesis (300 characters each) and the memo button (W21)", async () => {
+test("the inputs: the review date, the two ratings, the thesis (300 characters each); the report button sits outside them (W21)", async () => {
   api.putIcInputs.mockResolvedValue({});
   const { host, unmount } = await mountDashboard(sample, OK);
   const inputs = host.querySelector('[data-testid="verdict-inputs"]');
-  expect(inputs.querySelector('[data-testid="verdict-memo"]').textContent).toBe("Download IC memo (Markdown)");
+  expect(host.querySelector('[data-testid="report-download"] [data-testid="verdict-memo"]').textContent).toBe("Download report");
+  expect(inputs.querySelector('[data-testid="verdict-memo"]')).toBeNull();
   expect([...inputs.querySelector('[data-testid="inputs-rating-data_reliability"]').options].map((o) => o.textContent)).toEqual(["", "Strong", "Adequate", "Weak"]);
   expect(inputs.textContent).toContain("Data reliability");
   expect(inputs.textContent).toContain("Growth engine");

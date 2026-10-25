@@ -506,25 +506,11 @@ test("a row in Definition check reads so in the Evidence cell and asks its quest
   expect(after.querySelector('[data-testid="definition-check"]').textContent).toContain("set by you");
 });
 
-test("the contradicted top-5 claims sit under the register heading and above the table, one line each, at full width", async () => {
-  const lines = [
-    "Top-5 claim contradicted: revenue 156,934.4 EUR vs 136,739.01 EUR observed (test deck (PDF), p5).",
-    "Top-5 claim contradicted: revenue 2,000,000 EUR vs 1,500,000 EUR observed (board.pptx, slide 4).",
-  ];
-  api.getBlockers.mockResolvedValueOnce([
-    { kind: "revenue_file_missing", text: "Revenue file missing: upload and map it to compute metrics." },
-    ...lines.map((text) => ({ kind: "claim_contradicted", text })),
-  ]);
+test("the register no longer carries the contradiction lines: they sit under the conclusion (docs/design/simplified-flow.md, The Audit page, item 3)", async () => {
+  api.getBlockers.mockResolvedValueOnce([{ kind: "claim_contradicted", text: "Top-5 claim contradicted: revenue 2,000,000 EUR vs 1,500,000 EUR observed (board.pptx, slide 4)." }]);
   const { host } = await mount([ROW]);
-  const banner = host.querySelector('[data-testid="contradiction-banner"]');
-  expect([...banner.querySelectorAll("li")].map((li) => li.textContent)).toEqual(lines);
-  expect(banner.className).toContain("w-full");
-  expect(banner.className).toContain("bg-rose-50");
-  expect(host.querySelector('[data-testid="blocker-revenue_file_missing"]')).toBeNull();
-  const heading = host.querySelector("h2");
-  const table = host.querySelector('[data-testid="claim-register-table"]');
-  expect(heading.compareDocumentPosition(banner) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(banner.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(host.querySelector('[data-testid="contradiction-banner"]')).toBeNull();
+  expect(host.querySelector('[data-testid="blocker-claim_contradicted"]')).toBeNull();
 });
 
 test("no contradicted claim: no banner is rendered in the register", async () => {

@@ -33,6 +33,12 @@ export const LABEL_STYLE = {
   Unverified: "text-amber-800 border-amber-500/50 bg-amber-50",
   Unsupported: "text-slate-700 border-slate-400/60 bg-slate-50",
 };
+// The definition of each of the five labels, from the one shared list (docs/design/simplified-flow.md, Evidence labels): on hover
+// wherever a label appears, and printed in full once under the five findings. LABEL_ORDER is the order they are printed in.
+export const LABEL_DEFINITIONS = evidenceLabels.definitions;
+export const LABEL_ORDER = Object.keys(evidenceLabels.definitions);
+/** "Verified: the raw data confirms the claim." for a label; undefined for anything that is not one of the five (Definition check). */
+export const labelDefinition = (label) => (LABEL_DEFINITIONS[label] ? `${label}: ${LABEL_DEFINITIONS[label]}` : undefined);
 export const SET_GATE_LABEL = "Set gate";
 export const VAS_LABEL = "VaS";
 // Only these are editable (section 3 adds the gate's metric name and direction on a row with no app metric, and the key mark).
@@ -170,6 +176,21 @@ export function evidenceLines(row) {
   if (!row.evidence_analysis) return { first, second: null };
   const at = row.observed_at ? ` (${row.observed_at})` : "";
   return { first, second: `${row.evidence_analysis} · ${row.evidence_source_key}${at}` };
+}
+
+/** The second, smaller line of a claim: page, how the deck was read, gloss, value at stake, overlaps, reason, how it was approved, the
+ *  growth basis. [text, testId] pairs; `prefix` keeps the test ids of a second copy (the five selected claims) apart from the register's. */
+export function detailItems(row, rows, ccy, prefix = "register-") {
+  return [
+    [row.page_ref || "—", "page"],
+    [readingText(row.deck_reading), "reading"],
+    [row.gloss || "—", "gloss"],
+    [`${VAS_LABEL} ${valueAtStakeText(row, ccy)}`, "value-at-stake"],
+    [`Overlaps with ${overlapsText(row, rows)}`, "overlaps"],
+    [row.reason, "evidence-reason"],
+    ...(row.auto_approval ? [[row.auto_approval, "auto-approval"]] : []),
+    ...(growthBasisLabel(row.growth_basis) ? [[`Growth basis ${growthBasisLabel(row.growth_basis)}`, "growth-basis-set"]] : []),
+  ].map(([text, id]) => [text, `${prefix}${id}`]);
 }
 
 const multiple = (v) => (Math.round(Number(v) * 10 + 1e-9) / 10).toFixed(1);     // half up, absorbing binary noise: 2.25 -> "2.3"
