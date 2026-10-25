@@ -163,7 +163,7 @@ def test_a_claim_of_the_old_types_still_reads_its_keyword_and_a_contract_value_i
     old = run_claim({"claim_type": "revenue", "value": 205000, "currency": "EUR", "target_date": "2024-02", "snippet": "ARR €205,000"})
     assert old["metric"] == "ARR" and old["evidence_label"] == "Verified"
     contract = row("arr", 205000, "2024-02", currency="EUR", snippet="Contracted ARR €205,000")
-    assert contract["metric"] == "Contract value" and contract["evidence_label"] == "Unsupported"
+    assert contract["metric"] == "Contract value" and contract["evidence_label"] == "Unverified"
     assert row("arr", 205000, "2024-02", currency="EUR", snippet="New MRR €205,000")["metric"] == "ARR", "the type decides, not the snippet"
 
 
@@ -176,6 +176,6 @@ def test_arr_and_mrr_overlap_and_the_names_read_in_a_sentence():
 
 # --- 3. the contract (the Uber page 20 fixture, 4 claims and 1 flag, stays pinned by test_checker.py) ----------------------------------------------------------------------------------------
 
-def test_the_engine_contract_is_8():
-    assert metrics.CONTRACT_VERSION == 8 and metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags")
+def test_the_engine_contract_is_9():
+    assert metrics.CONTRACT_VERSION == 9 and metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags")
 

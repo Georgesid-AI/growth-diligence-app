@@ -2,7 +2,7 @@
 
 - `api`: the chat upload and column mapping (docs/specs/chat-upload.md), with the fake adapter.
 - `register_api`: the claim register (docs/specs/claim-matching.md), with run A's claims.
-- `approve_api`: approve-all (docs/specs/chat-upload.md section 17), with a claim of each kind.
+- `entry_api`: the claims Python enters on its own (docs/design/simplified-flow.md section 2), with a claim of each kind.
 - `run_api`: the run audit stages, with a provider that echoes its payload.
 
 Pytest hands them to any test here that asks for them, so no file imports them: an imported fixture is a redefinition to
@@ -47,11 +47,11 @@ def register_api(monkeypatch):
 
 
 @pytest.fixture()
-def approve_api(monkeypatch):
+def entry_api(monkeypatch):
     from fastapi.testclient import TestClient
 
     import server
-    from test_approve_all import starting_db
+    from entry_support import starting_db
 
     db = starting_db()
     monkeypatch.setattr(server, "db", db)

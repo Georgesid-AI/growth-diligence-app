@@ -1,6 +1,6 @@
 import {
   DOWNLOAD_LABEL, EDITABLE_FIELDS, GATE_BUDGET_MAX, NOT_IN_DATA, NO_METRIC, READ_ONLY_FIELDS, REGISTER_COLUMNS, REGISTER_HEADING, WHOLE_COMPANY,
-  claimCellText, claimFigure, claimText, claimUnit, rateHover, csvUrl, evidenceLines, gateContext, needsMetricName, overlapsText, valueAtStakeText, dataSegments, gapText, gateEdit, metricOptions, observedText, readingText, registerRows, segmentOptions,
+  claimCellText, claimFigure, claimText, claimUnit, rateHover, csvUrl, evidenceLines, gateContext, needsMetricName, overlapsText, valueAtStakeText, dataSegments, gapText, gateDraft, gateEdit, metricOptions, observedText, readingText, registerRows, segmentOptions,
 } from "./claimRegister";
 
 const ARR_ROW = {
@@ -25,7 +25,7 @@ describe("the Claim register section of the Dashboard (spec section 8)", () => {
 
   test("the segment, the metric and the gate are editable; everything else is read-only", () => {
     expect(EDITABLE_FIELDS).toEqual(["segment", "metric", "gate_threshold", "gate_budget_decision", "gate_date", "gate_metric_name",
-      "gate_direction", "key_gate"]);
+      "gate_direction"]);
     expect(READ_ONLY_FIELDS).toEqual(expect.arrayContaining(["rank", "claim", "period", "page", "deck_reading", "observed", "gap", "gloss",
       "value_at_stake", "overlaps_with", "evidence"]));
     expect(READ_ONLY_FIELDS.some((f) => EDITABLE_FIELDS.includes(f))).toBe(false);
@@ -123,14 +123,24 @@ describe("what the analyst may set", () => {
     expect(dataSegments(null)).toEqual([]);
   });
 
-  test("a gate edit sends only the fields that changed, blank as null, the threshold as a number", () => {
-    const row = { ...ARR_ROW, gate_threshold: 195000, gate_budget_decision: "the hiring plan", gate_date: "2024-03-31" };
+  test("a gate the analyst set sends only the fields that changed, blank as null, the threshold as a number", () => {
+    const row = { ...ARR_ROW, gate_saved: true, gate_threshold: 195000, gate_budget_decision: "the hiring plan", gate_date: "2024-03-31" };
     expect(gateEdit(row, { threshold: "195000", budget: "the hiring plan", date: "2024-03-31" })).toEqual({});
     expect(gateEdit(row, { threshold: "180000.5", budget: "the hiring plan", date: "2024-03-31" })).toEqual({ gate_threshold: 180000.5 });
     expect(gateEdit(row, { threshold: "", budget: "  ", date: "" })).toEqual({ gate_threshold: null, gate_budget_decision: null, gate_date: null });
     expect(gateEdit(ARR_ROW, { threshold: "1", budget: "Series B", date: "2024-06-30" }))
       .toEqual({ gate_threshold: 1, gate_budget_decision: "Series B", gate_date: "2024-06-30" });
-    expect(gateEdit(ARR_ROW, { threshold: "", budget: "", date: "" })).toEqual({});      // the date starts empty: nothing is proposed
+    expect(gateEdit(ARR_ROW, { threshold: "", budget: "", date: "" })).toEqual({});      // nothing is typed and nothing is proposed: nothing is sent
+  });
+
+  test("a gate that is only the app's proposal is stored whole as soon as one field differs, since the server counts an edit once threshold and date are filled", () => {
+    const proposed = { ...ARR_ROW, gate_saved: false, gate_status: "proposed", gate_threshold: 240000, gate_date: "2023-12-31" };
+    expect(gateEdit(proposed, { threshold: "240000", budget: "", date: "2023-12-31" })).toEqual({});
+    expect(gateEdit(proposed, { threshold: "195000", budget: "", date: "2023-12-31" })).toEqual({ gate_threshold: 195000, gate_date: "2023-12-31" });
+    expect(gateEdit(proposed, { threshold: "240000", budget: "Series B", date: "2023-12-31" }))
+      .toEqual({ gate_threshold: 240000, gate_date: "2023-12-31", gate_budget_decision: "Series B" });
+    expect(gateDraft(proposed, undefined)).toMatchObject({ threshold: 240000, date: "2023-12-31", budget: "" });
+    expect(gateDraft(proposed, { threshold: "5" })).toMatchObject({ threshold: "5", date: "2023-12-31" });
   });
 
   test("a gate date outside 2000 to 2100 or not real is not sent", () => {
@@ -194,7 +204,7 @@ describe("the columns and the gate of verdict-and-memo.md sections 2 and 3", () 
     expect(needsMetricName({ ...none, reason: "metric does not fit the claim's unit" })).toBe(true);
     expect(needsMetricName(ARR_ROW)).toBe(false);
     expect(gateEdit(none, { threshold: "5", budget: "the plan", date: "2024-06-30", metricName: "Pipeline cover", direction: "at most" }))
-      .toEqual({ gate_threshold: 5, gate_budget_decision: "the plan", gate_date: "2024-06-30", gate_direction: "at most" });
+      .toEqual({ gate_threshold: 5, gate_budget_decision: "the plan", gate_date: "2024-06-30", gate_metric_name: "Pipeline cover", gate_direction: "at most" });
     expect(() => gateEdit(none, { threshold: "", budget: "", date: "", metricName: "x".repeat(101), direction: "" })).toThrow("at most 100");
     expect(gateEdit(ARR_ROW, { threshold: "", budget: "", date: "", metricName: "ignored", direction: "at most" })).toEqual({});
   });

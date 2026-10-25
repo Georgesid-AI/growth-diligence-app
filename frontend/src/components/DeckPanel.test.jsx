@@ -6,7 +6,7 @@ import * as api from "@/lib/api";
 import { PROMPT_MISSING_LINE, REVIEW_INTRO } from "@/lib/deckClaims";
 
 jest.mock("@/lib/api", () => ({ getDecks: jest.fn(), removeDeck: jest.fn(), updateCandidate: jest.fn(), uploadDeck: jest.fn(), addClaim: jest.fn(),
-  answerTurnover: jest.fn(), approveAll: jest.fn() }));
+  answerTurnover: jest.fn() }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn(), message: jest.fn() } }));
 const { toast } = require("sonner");
 
@@ -126,13 +126,13 @@ test("a figure in another currency shows both figures, and a direction with no f
   expect(rows()[2].querySelector("[data-testid='candidate-confidence']").textContent).toBe("Medium – no figure");
 });
 
-test("a figure with no type reads Other, has no Approve, and saves only once a claim type is chosen; Market size is a choice", async () => {
+test("a figure with no type reads Other, has no Keep, and saves only once a claim type is chosen; Market size is a choice", async () => {
   await act(async () => { q("deck-tab-d1").click(); });
   await open(9);
   const first = rows()[1];
   expect(first.querySelector("[data-testid='candidate-type']").textContent).toBe("Other");
-  expect(first.querySelector("[data-testid='candidate-approve']")).toBeNull();
-  expect(rows()[0].querySelector("[data-testid='candidate-approve']").disabled).toBe(false);
+  expect(first.querySelector("[data-testid='candidate-keep']")).toBeNull();
+  expect(rows()[0].querySelector("[data-testid='candidate-keep']").disabled).toBe(false);          // a claim that waits for an answer can be kept
   await act(async () => { first.querySelector("[data-testid='candidate-edit']").click(); });
   const select = document.body.querySelector("[data-testid='edit-claim-type']");
   expect(select.selectedOptions[0].textContent).toBe("Other");
@@ -309,7 +309,7 @@ describe("a turnover claim asks Revenue or Volume in its own row (05-zero2hero.p
       expect(cell(id, "register-turnover-revenue").textContent).toBe("Revenue");
       expect(cell(id, "register-turnover-volume").textContent).toBe("Volume");
       expect(cell(id, "candidate-turnover-label").textContent).toBe("Unverified");
-      expect(q(`candidate-row-${id}`).textContent).toContain("To review");
+      expect(q(`candidate-row-${id}`).textContent).toContain("Needs your attention");
     }
   });
 
@@ -451,9 +451,9 @@ describe("a turnover claim asks Revenue or Volume in its own row (05-zero2hero.p
   });
 });
 
-test("To review is a status label, not a control: plain text with no border, chip or button around it (George, 2026-10-09)", async () => {
+test("Needs your attention is a status label, not a control: plain text with no border, chip or button around it (George, 2026-10-09)", async () => {
   await reload([claim("c", "d1", 2, { group: 1 }), claim("e", "d1", 3, { group: 1, status: "approved" })]);
-  for (const [id, label] of [["c", "To review"], ["e", "Approved"]]) {
+  for (const [id, label] of [["c", "Needs your attention"], ["e", "In the register"]]) {
     const status = q(`candidate-row-${id}`).querySelector("[data-testid='candidate-status']");
     expect(status.textContent).toBe(label);
     expect(status.tagName).toBe("SPAN");
@@ -656,11 +656,11 @@ describe("Add claim", () => {
   };
   const openRow = async () => act(async () => { q("add-claim").click(); });
 
-  test("the claims text is the agreed wording, with the Approve, Edit and Reject lines below it", () => {
+  test("the claims text is the agreed wording, with the Keep, Edit and Reject lines below it", () => {
     const lines = [...q("claims-instructions").querySelectorAll("h4, p")].map((n) => n.textContent);
     expect(lines[0]).toBe("Claims found in the uploaded documents");
-    expect(lines[1]).toBe("These figures were extracted automatically and inform the growth plan. While errors are possible, you only need to check claims that look incorrect or implausible against their source slides before making your selection.");
-    expect(lines.slice(2).map((l) => l.split(":")[0])).toEqual(["✓ Approve", "✎ Edit", "✕ Reject"]);
+    expect(lines[1]).toBe("These figures were read from the uploaded documents and tested against the data automatically. Errors are possible: check only the claims that look incorrect or implausible against their source slides, or that wait for your answer.");
+    expect(lines.slice(2).map((l) => l.split(":")[0])).toEqual(["✓ Keep", "✎ Edit", "✕ Reject"]);
     expect(q("deck-scope-message").textContent).toContain("If a number you need sits in a picture, use Add claim and cite the page, or upload the source spreadsheet.");
   });
 
@@ -741,7 +741,7 @@ describe("Add claim", () => {
 });
 
 
-describe("Approve all and the category sections (docs/specs/chat-upload.md section 17)", () => {
+describe("the category sections (docs/specs/chat-upload.md section 17; the claim approval is gone, docs/design/simplified-flow.md)", () => {
   const pending = (id, group, over = {}) => claim(id, "d1", 1, { group, ...over });
   const LIST = [
     pending("r1", 1), pending("r2", 1), pending("r3", 1, { status: "approved" }),
@@ -750,63 +750,27 @@ describe("Approve all and the category sections (docs/specs/chat-upload.md secti
     claim("n1", "d2", 2, { group: 1 }),
   ];
 
-  test("every open section has an Approve all at its top and at its bottom; Other, never a task, has none even when opened", async () => {
+  test("no section has an Approve all, at its top or at its bottom, and the API has no call for it", async () => {
     await reload(LIST.concat([pending("o1", 9, { claim_type: "other" })]));
-    await open(8);                                   // Use of funds starts collapsed (George, 2026-10-23)
-    for (const group of [1, 7, 8]) {
-      expect(q(`approve-all-top-${group}`).textContent).toBe("Approve all");
-      expect(q(`approve-all-bottom-${group}`).textContent).toBe("Approve all");
-    }
-    expect(q("approve-all-top-9")).toBeNull();
+    await open(8);
     await open(9);
-    expect(q("approve-all-top-9")).toBeNull();
-    expect(q("approve-all-bottom-9")).toBeNull();
-    // the top button sits in the section's header row, the bottom one after its last claim
-    expect(q("claim-group-1").contains(q("approve-all-top-1"))).toBe(true);
-    expect(q("claim-group-end-1").previousElementSibling.getAttribute("data-testid")).toMatch(/^candidate-row-/);
+    expect(document.body.querySelector("[data-testid^='approve-all-']")).toBeNull();
+    expect(document.body.querySelector("[data-testid^='claim-group-end-']")).toBeNull();
   });
 
-  test("a click makes one call for the category, with the deck tab, shows the toast with both counts and reloads the list", async () => {
-    await reload(LIST);
-    api.approveAll.mockResolvedValue({ approved: 3, skipped: 1, approved_ids: [], skipped_ids: [] });
-    await act(async () => { q("deck-tab-d1").click(); });
-    api.getDecks.mockClear();
-    await act(async () => { q("approve-all-bottom-1").click(); });
-    expect(api.approveAll).toHaveBeenCalledTimes(1);
-    expect(api.approveAll).toHaveBeenCalledWith("a1", 1, "d1");
-    expect(api.updateCandidate).not.toHaveBeenCalled();                          // never one call per claim
-    expect(toast.success).toHaveBeenCalledWith("Approved 3 claims, 1 skipped (need Revenue / Volume or failed to save)");
-    expect(api.getDecks).toHaveBeenCalled();
-    await act(async () => { q("deck-tab-all").click(); });
-    await act(async () => { q("approve-all-top-7").click(); });
-    expect(api.approveAll).toHaveBeenLastCalledWith("a1", 7, undefined);
-  });
-
-  test("the toast says 'claim' for one, and a refused call shows the error and leaves the list", async () => {
-    await reload(LIST);
-    await open(8);
-    api.approveAll.mockResolvedValueOnce({ approved: 1, skipped: 0 });
-    await act(async () => { q("approve-all-top-8").click(); });
-    expect(toast.success).toHaveBeenCalledWith("Approved 1 claim, 0 skipped (need Revenue / Volume or failed to save)");
-    // a claim waiting for its Definition check is answered on the review screen, not here (claim-matching.md section 4.1)
-    api.approveAll.mockResolvedValueOnce({ approved: 2, skipped: 1, open_definition: 1 });
-    await act(async () => { q("approve-all-top-8").click(); });
-    expect(toast.success).toHaveBeenLastCalledWith(
-      "Approved 2 claims, 1 skipped (need Revenue / Volume or failed to save), 1 with open definition check – answer on the review screen");
-    api.approveAll.mockRejectedValueOnce({ response: { status: 500, data: { detail: "boom" } } });
-    await act(async () => { q("approve-all-top-8").click(); });
-    expect(toast.error).toHaveBeenCalled();
-    expect(q("approve-all-top-8").disabled).toBe(false);
-  });
-
-  test("Approve all is off when the section has nothing to review", async () => {
-    await reload([pending("r3", 1, { status: "approved" }), pending("r4", 1, { status: "edited" }), pending("r5", 8, { claim_type: "use_of_funds" })]);
-    await open(8);
-    expect(q("approve-all-top-1").disabled).toBe(true);
-    expect(q("approve-all-bottom-1").disabled).toBe(true);
-    expect(q("approve-all-top-8").disabled).toBe(false);
-    await act(async () => { q("approve-all-top-1").click(); });
-    expect(api.approveAll).not.toHaveBeenCalled();
+  test("a claim that waits for an answer has Keep, Edit and Reject; a claim in the register has Edit and Reject only", async () => {
+    await reload([pending("w", 1), pending("e", 1, { status: "approved" })]);
+    const wait = rows().find((tr) => text(tr).includes("snippet-w")), done = rows().find((tr) => text(tr).includes("snippet-e"));
+    expect(wait.querySelector("[data-testid='candidate-keep']")).not.toBeNull();
+    expect(done.querySelector("[data-testid='candidate-keep']")).toBeNull();
+    for (const row of [wait, done]) {
+      expect(row.querySelector("[data-testid='candidate-edit']")).not.toBeNull();
+      expect(row.querySelector("[data-testid='candidate-reject']")).not.toBeNull();
+      expect(row.querySelector("[data-testid='candidate-approve']")).toBeNull();
+    }
+    api.updateCandidate.mockResolvedValue({ id: "w", status: "approved" });
+    await act(async () => { wait.querySelector("[data-testid='candidate-keep']").click(); });
+    expect(api.updateCandidate).toHaveBeenCalledWith("a1", "w", { status: "approved" });
   });
 
   test("Acquisition channels and Use of funds are sections of their own, in that order, directly above Other", async () => {
@@ -997,8 +961,8 @@ describe("the Review view (George, 2026-10-22, docs/design/ai-reads-rules-check.
     expect(q("candidate-flags").textContent).toBe("currency assumed · scenario label not on page");
     expect(q("candidate-ai-label").textContent).toBe("AI suggestion, not matched");
     expect(q("review-intro").textContent).toBe(REVIEW_INTRO);
-    expect(q("candidate-approve")).not.toBeNull();                      // reviewed one by one like any claim: approve, edit or reject
-    expect(document.body.querySelector("[data-testid^='approve-all-']")).toBeNull();     // review of PR 164, M3: Approve all never acts on claims not shown
+    expect(q("candidate-keep")).not.toBeNull();                          // a flagged claim waits for an answer: keep, edit or reject
+    expect(document.body.querySelector("[data-testid^='approve-all-']")).toBeNull();     // there is no Approve all
     await act(async () => { q("claims-view-claims").click(); });
     expect(rows().map((tr) => /snippet-(\w)/.exec(text(tr))[1])).toEqual(["c", "d", "b", "a"]);     // Other stays opened
   });
@@ -1015,23 +979,10 @@ describe("review of PR #164 (George, 2026-10-23)", () => {
   const best = claim("s", "d1", 6, { group: 6, flags: [], basis: "scenario", scenario: "best", snippet: "snippet-s" });
   const real = claim("r", "d1", 6, { group: 1, flags: [], basis: "scenario", scenario: "realistic", snippet: "snippet-r" });
 
-  test("M3: Approve all is not offered in the Review view, where it could only skip or approve claims that are not shown", async () => {
-    const flagged = claim("f", "d1", 4, { group: 1, flags: ["axis tick"] });
-    await reload([...CLAIMS, flagged]);
-    expect(q("approve-all-top-1")).not.toBeNull();                       // the Claims view keeps it
-    await act(async () => { q("claims-view-review").click(); });
-    expect(rows()).toHaveLength(1);
-    expect(document.body.querySelector("[data-testid^='approve-all-']")).toBeNull();
-    expect(api.approveAll).not.toHaveBeenCalled();
-  });
-
-  test("H2: best and worst cases are a Scenarios section above Other, with no Approve all; a realistic case stays a plan claim and names its case", async () => {
+  test("H2: best and worst cases are a Scenarios section above Other; a realistic case stays a plan claim and names its case", async () => {
     await reload([...CLAIMS, best, real]);
     const order = [...document.body.querySelectorAll("[data-testid^='claim-group-toggle-']")].map((b) => b.textContent);
     expect(order).toEqual(["Revenue, ARR, MRR and bookings (3)", "Market size (1)", "Scenarios (1)", "1 other figure"]);
-    expect(q("approve-all-top-6")).toBeNull();
-    expect(q("approve-all-bottom-6")).toBeNull();
-    expect(q("approve-all-top-1")).not.toBeNull();
     const row = rows().find((tr) => text(tr).includes("snippet-s"));
     expect(row.querySelector("[data-testid='candidate-scenario']").textContent).toBe("Best case");
     const plan = rows().find((tr) => text(tr).includes("snippet-r"));

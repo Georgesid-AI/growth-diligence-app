@@ -5,7 +5,6 @@ import AuditHub from "@/pages/AuditHub";
 import MappingWizard from "@/pages/MappingWizard";
 import Dashboard from "@/pages/Dashboard";
 import Diagnostics from "@/pages/Diagnostics";
-import Review from "@/pages/Review";
 import AccessLink, { FullLinkNeeded } from "@/pages/AccessLink";
 import OwnerPage from "@/pages/OwnerPage";
 
@@ -13,6 +12,12 @@ import OwnerPage from "@/pages/OwnerPage";
 export function RunToMapping() {
   const { id } = useParams();
   return <Navigate to={`/audit/${id}/mapping`} replace />;
+}
+
+// The Review page is gone (docs/design/simplified-flow.md): its open questions are cards on the Audit page, an old link lands there.
+export function ReviewToAudit() {
+  const { id } = useParams();
+  return <Navigate to={`/audit/${id}/dashboard`} replace />;
 }
 
 function App() {
@@ -25,7 +30,7 @@ function App() {
           <Route path="/owner" element={<OwnerPage />} />
           <Route path="/" element={<AuditHub />} />
           <Route path="/audit/:id/run" element={<RunToMapping />} />
-          <Route path="/audit/:id/review" element={<Review />} />
+          <Route path="/audit/:id/review" element={<ReviewToAudit />} />
           <Route path="/audit/:id/mapping" element={<MappingWizard />} />
           <Route path="/audit/:id/dashboard" element={<Dashboard />} />
           <Route path="/audit/:id/diagnostics" element={<Diagnostics />} />

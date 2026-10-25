@@ -1,7 +1,7 @@
 """Finding D of 20 Oct, from the artefact: a bar chart on a deck page titled "Average Revenue Per Account", one bar per year
 (2019-2022) with its value as the bar label, gave Revenue claims matched against engine revenue; the same page held a pipeline table
 with the columns "Size of opportunity" and "Weighted in forecast". Decisions of 20 Oct (George): a chart or table title with "per
-account", "per user", "per client", "per customer", "ARPA" or "ARPU" types its figures as unit economics (ARPA, ARPU), Unsupported, never
+account", "per user", "per client", "per customer", "ARPA" or "ARPU" types its figures as unit economics (ARPA, ARPU), Unverified (the app cannot test them), never
 matched, no value at stake, out of the top 5; the amounts of the pipeline columns are Pipeline, never Revenue or Bookings.
 Synthetic page only (CLAUDE.md rules 13 and 15)."""
 import pytest
@@ -81,14 +81,14 @@ def register_of(title):
     return found, cm.build_register(found, results_for(run), settings(run))
 
 
-def test_arpa_and_pipeline_claims_are_unsupported_unmatched_unranked_and_have_no_value_at_stake():
+def test_arpa_and_pipeline_claims_are_unverified_unmatched_unranked_and_have_no_value_at_stake():
     found, rows = register_of("Average Revenue Per Account")
     kinds = {c["id"]: c["claim_type"] for c in found}
     arpa = [r for r in rows if kinds[r["claim_id"].split("#")[0]] == "arpa"]
     pipeline = [r for r in rows if kinds[r["claim_id"].split("#")[0]] == "pipeline"]
     assert len(arpa) == 4 and len(pipeline) == 4
     for r in arpa + pipeline:
-        assert (r["evidence_label"], r["observed_value"], r["value_at_stake_arr"]) == ("Unsupported", None, None)
+        assert (r["evidence_label"], r["observed_value"], r["value_at_stake_arr"]) == ("Unverified", None, None)
     assert {r["metric"] for r in arpa} == {"ARPA"} and {r["reason"] for r in arpa} == {cm.UNIT_ECONOMICS_REASON}
     assert not any(r["gate_needed"] for r in arpa)
     top5 = vd.proposal(rows)

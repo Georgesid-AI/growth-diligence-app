@@ -1,6 +1,11 @@
 # Spec: Interface contracts on two handoffs
 Status: Draft; the agreed scope is the task of 2026-10-08. Location: docs/specs/interface-contracts.md.
 No architecture change: the engine stays pure, the gateway stays the only caller of a model, the export stays in the API.
+Amended 2026-10-25 (George, docs/design/simplified-flow.md): `contract_version` 9 marks the simplified flow. No engine block changes. What changes is how the stored
+claims read: they enter the register without an approval, a stated figure the app cannot test reads Unverified, gates are written from the claim and the ratings
+are computed, so results and claim matches stored under version 8 read "Stale – re-run audit" until Run audit calculates again. `ic_inputs.note` (the optional analyst note,
+at most 1,000 characters, one line in the memo, never sent to a model) is an analyst input stored on the audit, not a results key; `ic_inputs.ratings` and
+`ic_inputs.judgment` stay stored and are no longer read. `test_interface_contracts.py` pins `CONTRACT_VERSION == 9` and the stale versions 1 to 4 and 8.
 Amended 2026-10-15 (docs/specs/dates-and-periods.md §7): `contract_version` 3 adds `source_period` and `metric_periods` (months as
 text, no figure, server-only); results stored under version 2 are recomputed on first read.
 Amended 2026-10-17 (docs/specs/crm-dedup-clustering.md §3): `contract_version` 4 adds `anomalies.deals_duplicate_id` and

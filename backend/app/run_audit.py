@@ -1,15 +1,14 @@
-"""The Run audit flow: what each stage reports and which claims need no click (the review screen, the three stages).
+"""The Run audit flow: what each stage reports and which claims enter the register on their own (the three stages).
 
 Pure functions. The server (`server.py`, "Run audit") reads Mongo and calls them. Nothing here reads a file's rows, calls a
 model or changes a threshold: a mapping is auto-accepted by `column_rules.MAPPING_THRESHOLD` before this module sees it, and
-a claim is within tolerance by `claim_matching.within_tolerance` (the register's own label, Verified) before it is counted.
+a claim enters the register on its own unless a check asks about it (`needs_a_word`).
 """
 from typing import Dict, Iterable, List, Optional
 
-from app import claim_matching as cm
 from app import column_rules as cr
-from app.decks.claims import CASES, review_flags
-from app.structures import sheet as sheet_mod
+from app.decks.claims import review_flags
+from app.structures import page_check, sheet as sheet_mod, verify
 from schemas.metrics import CONTRACT_VERSION
 
 STAGES = ("mapping", "engine", "claims")
@@ -18,9 +17,9 @@ DONE, NEEDS_REVIEW, WAITING, RUNNING, FAILED = "done", "needs_review", "waiting"
 # Plain-English messages (no exception text: it can quote an upload).
 NO_FILES = "No file has been uploaded yet. Add the revenue file and run the audit again."
 NO_REVENUE = "The revenue file is missing. Add it and run the audit again."
-WAIT_MAPPING = "Waiting for the column mapping to be confirmed on the review screen."
+WAIT_MAPPING = "Waiting for the column mapping: answer the questions on the Audit page."
 WAIT_ENGINE = "Waiting for the calculations."
-ENGINE_FAILED = "The calculations could not be completed. Check the mapping on the review screen, then retry this stage."
+ENGINE_FAILED = "The calculations could not be completed. Check the mapping, then retry this stage."
 CLAIMS_FAILED = "The claims could not be read from the decks. Retry this stage; the figures above are unaffected."
 DECKS_READING = "The decks are still being read."
 NO_DECKS = "No deck was uploaded: there are no claims to read."
@@ -73,30 +72,17 @@ def engine_stale(audit: dict, datasets: Iterable[dict]) -> bool:
     return any(max(ds.get("mapped_at") or "", ds.get("recognition_decided_at") or "") > computed for ds in datasets)
 
 
-def never_on_its_own(candidate: dict) -> bool:
-    """Issue #155 (George, 2026-10-22, claim-matching.md section 4.1): a claim Run audit leaves to the analyst however close it is: one the
-    analyst entered or edited, and one flagged as a deck inconsistency. (A claim in another currency is read from its register row.)
-    George, 2026-10-23 (review of PR 164, H1): also a claim the checks flagged for review (`flags` less the informational ones, as Approve all skips it) and a best-case or
-    worst-case figure, which the analyst approves one by one. The caller passes `flags` with the ones that depend on the as-of month."""
-    return bool(candidate.get("origin") in ("analyst", "deck_analyst") or "parsed" in candidate
-                or candidate.get("inconsistent_dates") or candidate.get("inconsistencies")
-                or review_flags(candidate.get("flags")) or candidate.get("scenario") in CASES)
+# George, 2026-10-25 (simplified-flow.md section 2): the claim approval is gone. Python enters every claim it matched to its page when no check
+# asks about it; the analyst is asked only where a check failed or a question is open.
+MATCHED_STATUSES = (verify.VERIFIED, page_check.MATCHED)
 
 
-def within_tolerance_ids(rows: List[dict], candidate_ids: Iterable[str]) -> List[str]:
-    """The candidates whose every register row is Verified within the claim's tolerance: ±5% of the claimed value for
-    amounts, counts and durations, ±1 percentage point for rates. A beat (Verified, marked beat, however the analyst answered a
-    Definition check) is not within tolerance and stays for the review screen; so does an edited or analyst-entered claim and a claim
-    in a currency other than the audit's (issue #155). A table row of several values counts only when all are."""
-    wanted = set(candidate_ids)
-    labels: Dict[str, List[bool]] = {}
-    for r in rows:
-        cid = str(r["claim_id"]).split("#")[0]
-        if cid in wanted:
-            labels.setdefault(cid, []).append(
-                r["evidence_label"] == "Verified" and not cm.is_beat(r) and r.get("definition_check") is None
-                and r.get("deck_reading") not in (cm.ANALYST_ENTERED, cm.ADDED_FROM_DECK, "edited") and r.get("claimed_converted") is None)
-    return [cid for cid, found in labels.items() if found and all(found)]
+def needs_a_word(candidate: dict) -> bool:
+    """True when a claim waits for the analyst instead of entering the register on its own: the model's reading is not matched to its page
+    ("AI suggestion, not matched"), or the checks flagged it for review (`flags` less the informational ones; the caller passes `flags`
+    with the ones that depend on the as-of month). A best or worst case, a deck inconsistency and an open Definition check do not wait:
+    they enter and are listed as the register lists them; a turnover question is asked by the caller (it needs the stored results)."""
+    return bool((candidate.get("origin") == "ai" and candidate.get("ai_status") not in MATCHED_STATUSES) or review_flags(candidate.get("flags")))
 
 
 def stage_result(stage: str, status: str, message: Optional[str] = None, **counts) -> Dict:

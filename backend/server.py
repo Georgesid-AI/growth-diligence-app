@@ -19,7 +19,7 @@ from datetime import date as date_type, datetime, time as time_type, timedelta, 
 from typing import Dict, List, Literal, Optional
 
 import pandas as pd
-from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from starlette.concurrency import run_in_threadpool
 
 import growth_engine as ge
@@ -1946,13 +1946,16 @@ async def list_deck_candidates(audit_id: str):
         d["pages_rejected"] = sum(len(r.get("pages") or []) for r in reads if r.get("status") not in ("read", "stopped"))
     rank = {d["deck_id"]: i for i, d in enumerate(found)}
     candidates = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0}).to_list(10000)
+    # The claims Python enters on its own read as approved ("auto"), the ones a check asks about as pending (simplified-flow.md section 2).
+    kept = {c["id"]: c for c in await _with_entries(audit_id, audit, [c for c in candidates if c.get("status") != "rejected"])}
+    candidates = [kept.get(c["id"], c) for c in candidates]
     fx = await _fx(audit_id, audit)
     settings = _register_settings(audit, fx, await _deck_take_rate(audit_id))
     # A turnover claim asks "Revenue or Volume?" in its own row, before it is approved (claim-matching.md section 11
     # point 8), from the register's own code: read before the list adds its display fields to the candidates.
     current = await _current_audit(audit_id, audit, strict=False)
     turnover = claim_matching.turnover_views(candidates, current.get("results"), settings)
-    # A gap beyond 50% of the claim asks "Same metric and period?" on the review screen, approved or not (claim-matching.md 4.1).
+    # A gap beyond 50% of the claim asks "Same metric and period?" as a card on the Audit page, in the register or not (claim-matching.md 4.1).
     definition = claim_matching.definition_views(candidates, current.get("results"), settings)
     # A claim Run audit approved on its own reads "Auto-approved – matches revenue file (Δ x.x%)" with the figure's citation (issue #155).
     auto = claim_matching.auto_views(candidates, current.get("results"), settings)
@@ -1982,7 +1985,33 @@ async def list_deck_candidates(audit_id: str):
         peers.setdefault(c.get("deck_id"), []).append(c)
     for c in candidates:
         c["confidence"] = deck_claims.confidence(c, peers[c.get("deck_id")])
-    return sanitize({"decks": found, "candidates": candidates})
+    return sanitize({"decks": found, "candidates": candidates, "attention": await _attention_order(audit_id, audit, current, candidates, settings)})
+
+
+async def _attention_order(audit_id: str, audit: dict, current: dict, candidates: list, settings: dict) -> list:
+    """The claims that wait for a word, in the order of the selection rule with the five's questions first (simplified-flow.md section 2): a
+    claim a check asks about (pending), a Revenue / Volume question open or a Definition check open. Each is read as if it were in the register,
+    so its value at stake and shortfall rank it. `in_top5`: one of its rows is among the five in force. Nothing is stored."""
+    results = current.get("results")
+    live = [c for c in candidates if c.get("status") != "rejected" and c.get("claim_type") not in deck_claims.OTHER_TYPES]
+    if not results or not live:
+        return []
+    asking = {c["id"] for c in live if c.get("status") == "pending" or (c.get("turnover") and any(v.get("turnover_state") == "ask" for v in c["turnover"]))
+              or (c.get("definition") and any(v.get("definition_check") == claim_matching.DEFINITION_ASK for v in c["definition"]))}
+    if not asking:
+        return []
+    trial = [{**c, "status": "approved"} for c in live]
+    rows = claim_matching.build_register(sorted(trial, key=lambda c: (c.get("file") or "", c.get("order", 0))), results, settings, peers=trial)
+    five = set(verdict_mod.top5_state(rows, (audit.get("ic_inputs") or {}).get("top5"))["in_force"])
+    keys: dict = {}
+    for r in rows:
+        cid = str(r["claim_id"]).split("#")[0]
+        if cid in asking:
+            keys[cid] = min(keys.get(cid, verdict_mod.selection_key(r)), verdict_mod.selection_key(r))
+    in_five = {str(r["claim_id"]).split("#")[0] for r in rows if r["claim_id"] in five} & asking
+    last = (True, True, True, 0, 0, 0, 0)            # a claim with no row of its own (not testable) ranks after the others
+    ordered = sorted(asking, key=lambda cid: (cid not in in_five, keys.get(cid, last)))
+    return [{"id": cid, "in_top5": cid in in_five} for cid in ordered]
 
 
 def _edited_period(value: dict, before: dict, fiscal_year_end: int) -> dict:
@@ -2252,64 +2281,8 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
     return sanitize(await db[decks.CANDIDATES_COLLECTION].find_one(where, {"_id": 0}))
 
 
-class ApproveAll(BaseModel):
-    """Approve every claim to review of one category of the list (chat-upload.md section 17): `group` is the category's number
-    (deck_claims.GROUPS), `deck_id` the deck tab the analyst is on (none: all decks)."""
-    model_config = {"extra": "forbid"}
-    group: int = Field(ge=1, le=max(deck_claims.GROUPS))
-    deck_id: Optional[str] = None
-
-
-@api.post("/audits/{audit_id}/decks/candidates/approve-all")
-async def approve_all_candidates(audit_id: str, payload: ApproveAll):
-    """One call, one category: every claim with status "pending" in the category is approved as a single Approve does it
-    ("edited" when it carries the parser's values under "parsed"). Left pending and counted as skipped: a turnover claim whose
-    Revenue / Volume question the analyst has not answered, a claim whose type still has to be chosen (Other, Unknown), a claim the
-    checks flagged (`flags`, chat-upload.md section 28; George, 2026-10-22: the analyst approves it one by one in the Review view;
-    `skipped_flagged` counts them) and a claim whose save fails. A claim with an open Definition check is approved like any other: it enters the register as an open check,
-    which blocks the verdict (claim-matching.md section 4.1); `open_definition` counts the approved ones. Nothing else changes."""
-    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
-    if not audit:
-        raise HTTPException(404, "Audit not found")
-    found = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id}, {"_id": 0}).to_list(10000)
-    current = await _current_audit(audit_id, audit, strict=False)
-    settings = _register_settings(audit, await _fx(audit_id, audit), await _deck_take_rate(audit_id))
-    open_turnover = {cid for cid, views in claim_matching.turnover_views(found, current.get("results"), settings).items()
-                     if any(v["turnover_set_by"] != "analyst" for v in views)}
-    as_of = audit.get("as_of_month") or (current.get("results") or {}).get("as_of_month")
-    approved, skipped, flagged = [], [], 0
-    for c in found:
-        if c.get("status") != "pending" or deck_claims.claim_group(c) != payload.group \
-                or (payload.deck_id and c.get("deck_id") != payload.deck_id):
-            continue
-        if c.get("claim_type") in deck_claims.OTHER_TYPES:      # never a task: neither approved nor counted (section 4)
-            continue
-        if deck_claims.is_case(c):                             # a best or worst case is approved one by one (George, 2026-10-23)
-            skipped.append(c["id"])
-            continue
-        if claim_matching.review_flags_of(c, as_of):           # flagged by the checks: reviewed one by one, never approved in bulk
-            skipped.append(c["id"])
-            flagged += 1
-            continue
-        if c["id"] in open_turnover:
-            skipped.append(c["id"])
-            continue
-        try:
-            await db[decks.CANDIDATES_COLLECTION].update_one(
-                {"audit_id": audit_id, "id": c["id"]}, {"$set": {"status": "edited" if "parsed" in c else "approved", "auto_accepted": False, "auto_note": None}})
-            approved.append(c["id"])
-        except Exception:                      # a failed save leaves the claim to review and is counted; the rest go on
-            skipped.append(c["id"])
-    logger.info("approve all: run_id=%s group=%d approved=%d skipped=%d", audit_id, payload.group, len(approved), len(skipped))
-    # The check as the register now holds it: a claim read as an AI suggestion while pending may ask once it is approved.
-    after = [{**c, "status": "edited" if "parsed" in c else "approved"} if c["id"] in approved else c for c in found]
-    open_definition = claim_matching.open_definition_ids(claim_matching.definition_views(after, current.get("results"), settings))
-    return {"approved": len(approved), "skipped": len(skipped), "skipped_flagged": flagged, "approved_ids": approved,
-            "skipped_ids": skipped, "open_definition": len(open_definition & set(approved))}
-
-
 # ---------------------------------------------------------------------------
-# Run audit: three stages the analyst starts with one button, and the counts the review screen shows
+# Run audit: three stages the analyst starts with one button, and the counts the Audit page opens with
 # ---------------------------------------------------------------------------
 async def _open_turnover_ids(audit_id: str, audit: dict, found: list) -> set:
     current = await _current_audit(audit_id, audit, strict=False)
@@ -2318,65 +2291,67 @@ async def _open_turnover_ids(audit_id: str, audit: dict, found: list) -> set:
             if any(v["turnover_set_by"] != "analyst" for v in views)}
 
 
-async def _revoke_stale_auto(audit_id: str, audit: dict) -> int:
-    """George, 2026-10-22 (claim-matching.md section 4.1): a claim Run audit approved on its own that no longer passes the within-tolerance
-    test (a re-run, a new file, an FX or as-of month change) goes back to "To review" with the note "No longer matches – was auto-approved".
-    Read with the register's own code, as the approving step does. A claim the analyst approved is never touched. Without results
-    (none yet, or stale until Run audit calculates again) nothing is tested, so nothing is sent back."""
+async def _entry_plan(audit_id: str, audit: dict, found: list) -> dict:
+    """What `_enter_matched_claims` would do, without writing (simplified-flow.md section 2): the pending claims that enter, the ones Python
+    entered earlier that a check now asks about (re-opened), the Revenue / Volume questions open and the claims left waiting. Reads the
+    stored results; nothing is changed. Without results nothing is tested, so nothing enters."""
     audit = await _current_audit(audit_id, audit, strict=False)
+    plan = {"enter": [], "reopen": [], "open_turnover": set(), "waiting": 0}
     if not audit.get("results"):
-        return 0
-    found = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
-    marked = [c["id"] for c in found if c.get("auto_accepted") and c.get("status") == "approved"]
-    if not marked:
-        return 0
-    rows = claim_matching.build_register(
-        sorted([c for c in found if c.get("status") in REGISTER_STATUSES], key=lambda c: (c.get("file") or "", c.get("order", 0))),
-        audit["results"], _register_settings(audit, await _fx(audit_id, audit), await _deck_take_rate(audit_id)), peers=found)
-    still = set(run_audit.within_tolerance_ids(rows, marked))
-    gone = [cid for cid in marked if cid not in still]
-    for cid in gone:
-        await db[decks.CANDIDATES_COLLECTION].update_one(
-            {"audit_id": audit_id, "id": cid},
-            {"$set": {"status": "pending", "auto_accepted": False, "auto_note": claim_matching.AUTO_REVOKED}})
-    return len(gone)
-
-
-async def _accept_within_tolerance(audit_id: str, audit: dict) -> dict:
-    """Approve, as approve-all does, every pending claim the register would label Verified within tolerance (not a beat, which the
-    analyst reviews, and not a Definition check, section 4.1). A claim whose
-    Revenue / Volume question is open, whose type is still to be chosen, or that is not Verified stays pending for the review
-    screen. Each accepted claim is marked `auto_accepted`, so the review screen can list it and the analyst can still edit or
-    reject it. No threshold or tolerance is read or changed here."""
-    audit = await _current_audit(audit_id, audit, strict=False)
-    await _revoke_stale_auto(audit_id, audit)
-    found = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
+        plan["waiting"] = sum(1 for c in found if c.get("status") == "pending" and c.get("claim_type") not in deck_claims.OTHER_TYPES)
+        return plan
     pending = [c for c in found if c.get("status") == "pending" and c.get("claim_type") not in deck_claims.OTHER_TYPES]
-    skipped_turnover = await _open_turnover_ids(audit_id, audit, found)
-    decided = [c for c in pending if c["id"] not in skipped_turnover]
-    # The register as it would stand with these claims approved; the register's own code labels them.
-    trial = [{**c, "status": "edited" if "parsed" in c else "approved"} for c in decided]
-    kept = [c for c in found if c.get("status") in REGISTER_STATUSES]
-    rows = claim_matching.build_register(
-        sorted(kept + trial, key=lambda c: (c.get("file") or "", c.get("order", 0))), audit.get("results"),
-        _register_settings(audit, await _fx(audit_id, audit), await _deck_take_rate(audit_id)), peers=found)
-    as_of = audit.get("as_of_month") or (audit.get("results") or {}).get("as_of_month")
-    # A flagged claim and a best or worst case are the analyst's, as in Approve all (George, 2026-10-23, review of PR 164, H1).
-    ids = set(run_audit.within_tolerance_ids(rows, [c["id"] for c in decided
-                                                    if not run_audit.never_on_its_own({**c, "flags": claim_matching.flags_of(c, as_of)})]))
+    entered = [c for c in found if claim_matching.entered_by_python(c)]
+    if not pending and not entered:
+        return plan
+    as_of = audit.get("as_of_month") or audit["results"].get("as_of_month")
+    plan["open_turnover"] = await _open_turnover_ids(audit_id, audit, found)
+    waits = lambda c: run_audit.needs_a_word({**c, "flags": claim_matching.flags_of(c, as_of)}) or c["id"] in plan["open_turnover"]      # noqa: E731
+    plan["reopen"] = [c["id"] for c in entered if waits(c)]
+    plan["enter"] = [c["id"] for c in pending if not waits(c)]
+    plan["waiting"] = len(pending) - len(plan["enter"]) + len(plan["reopen"])
+    return plan
+
+
+def _apply_plan(found: list, plan: dict) -> list:
+    """The candidates as they stand once the plan is applied: copies, the stored ones untouched."""
+    enter, reopen = set(plan["enter"]), set(plan["reopen"])
+    return [{**c, "status": "approved", "auto_accepted": True, "auto_note": None} if c["id"] in enter
+            else {**c, "status": "pending", "auto_accepted": False, "auto_note": claim_matching.AUTO_REVOKED} if c["id"] in reopen else c
+            for c in found]
+
+
+async def _enter_matched_claims(audit_id: str, audit: dict, found: Optional[list] = None) -> dict:
+    """George, 2026-10-25 (simplified-flow.md section 2): the claim approval is gone. Every pending claim the page read matched, that no check
+    flags for review and whose Revenue / Volume question is not open, enters the register on its own (status "approved", `auto_accepted`
+    true: the register reads "auto"). A claim Python entered that a check now asks about (a re-run, a new file, an FX or as-of month change)
+    is re-opened: pending again with the note AUTO_REVOKED, and a card on the Audit page. Everything else is the analyst's: a claim the analyst
+    answered, edited or added is never touched, an Other figure is never a task. Writes the plan of `_entry_plan` (Run audit's claims stage
+    and every calculation); the screens read the same plan without writing (`_with_entries`). No threshold or tolerance is read or changed."""
+    if found is None:
+        found = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
+    plan = await _entry_plan(audit_id, audit, found)
     accepted = []
-    for c in decided:
-        if c["id"] not in ids:
-            continue
+    for cid in plan["reopen"]:
+        await db[decks.CANDIDATES_COLLECTION].update_one(
+            {"audit_id": audit_id, "id": cid}, {"$set": {"status": "pending", "auto_accepted": False, "auto_note": claim_matching.AUTO_REVOKED}})
+    for cid in plan["enter"]:
         try:
             await db[decks.CANDIDATES_COLLECTION].update_one(
-                {"audit_id": audit_id, "id": c["id"]},
-                {"$set": {"status": "approved", "auto_accepted": True, "auto_note": None}})
-            accepted.append(c["id"])
-        except Exception:
-            continue
-    return {"accepted": len(accepted), "accepted_ids": accepted, "open": len(pending) - len(accepted),
-            "turnover_open": len(skipped_turnover & {c["id"] for c in pending})}
+                {"audit_id": audit_id, "id": cid}, {"$set": {"status": "approved", "auto_accepted": True, "auto_note": None}})
+            accepted.append(cid)
+        except Exception:               # a failed save leaves the claim waiting; the rest go on
+            plan["enter"].remove(cid)
+    total = [c["id"] for c in _apply_plan(found, plan) if claim_matching.entered_by_python(c)]
+    return {"entered": len(total), "entered_ids": total, "reopened": len(plan["reopen"]),
+            "open": plan["waiting"],
+            "turnover_open": len(plan["open_turnover"] & {c["id"] for c in found if c.get("status") == "pending" or c["id"] in plan["reopen"]})}
+
+
+async def _with_entries(audit_id: str, audit: dict, found: list) -> list:
+    """The candidates as the register and the deck list read them: the claims Python would enter are approved ("auto"), the ones a check now
+    asks about are pending. A read; the stored documents change when Run audit calculates (`_enter_matched_claims`)."""
+    return _apply_plan(found, await _entry_plan(audit_id, audit, found))
 
 
 async def _mapping_counts(audit_id: str, audit: dict, datasets: list) -> tuple:
@@ -2396,9 +2371,9 @@ async def _mapping_counts(audit_id: str, audit: dict, datasets: list) -> tuple:
 
 @api.post("/audits/{audit_id}/run/{stage}")
 async def run_stage(audit_id: str, stage: str, background: BackgroundTasks):
-    """One stage of Run audit, in order: mapping (checks the files are mapped), engine (the calculations), claims (the deck claims
-    within tolerance are accepted). It answers 200 with a status: done, needs_review (the analyst must decide something on the
-    review screen), waiting (an earlier stage is not done), running (the decks are still being read; ask again) or failed (a
+    """One stage of Run audit, in order: mapping (checks the files are mapped), engine (the calculations), claims (every matched claim no
+    check asks about enters the register). It answers 200 with a status: done, needs_review (the analyst must answer a question on the
+    Audit page), waiting (an earlier stage is not done), running (the decks are still being read; ask again) or failed (a
     plain-English message, no exception text). Existing endpoints do the work; nothing here is new logic for the engine."""
     if stage not in run_audit.STAGES:
         raise HTTPException(404, "Unknown stage")
@@ -2439,7 +2414,7 @@ async def run_stage(audit_id: str, stage: str, background: BackgroundTasks):
                     background.add_task(structures.process_deck_safely, db, audit_id, deck_id)
                 deck_docs = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, {"_id": 0, "ai_status": 1}).to_list(100)
                 if not deck_docs:
-                    result = run_audit.stage_result(stage, run_audit.DONE, run_audit.NO_DECKS, accepted=0, open=0, turnover_open=0)
+                    result = run_audit.stage_result(stage, run_audit.DONE, run_audit.NO_DECKS, entered=0, open=0, turnover_open=0)
                 elif any(d.get("ai_status") in ("reading", structures.WAITING) for d in deck_docs):
                     waiting = any(d.get("ai_status") == structures.WAITING for d in deck_docs)
                     result = run_audit.stage_result(
@@ -2447,7 +2422,7 @@ async def run_stage(audit_id: str, stage: str, background: BackgroundTasks):
                         structures.WAITING_TEXT if waiting else run_audit.DECKS_READING)
                 else:
                     missing = llm_gateway.PROMPT_MISSING_TEXT if any(d.get("ai_status") == structures.PROMPT_MISSING for d in deck_docs) else None
-                    result = run_audit.stage_result(stage, run_audit.DONE, missing, **(await _accept_within_tolerance(audit_id, audit)))
+                    result = run_audit.stage_result(stage, run_audit.DONE, missing, **(await _enter_matched_claims(audit_id, audit)))
     except Exception as exc:          # plain English to the analyst; the log has the stage and the error type, never the message
         logger.error("run audit stage failed: run_id=%s stage=%s error=%s", audit_id, stage, type(exc).__name__)
         result = run_audit.stage_result(stage, run_audit.FAILED, run_audit.ENGINE_FAILED if stage == "engine" else run_audit.CLAIMS_FAILED)
@@ -2457,13 +2432,14 @@ async def run_stage(audit_id: str, stage: str, background: BackgroundTasks):
 
 @api.get("/audits/{audit_id}/review")
 async def review_summary(audit_id: str):
-    """What the review screen opens with: the columns accepted without a click and the ones waiting, the claims accepted within
-    tolerance (their ids, to show them) and the ones waiting, the Revenue / Volume questions open and the hard blockers."""
+    """What the Audit page opens with: the columns accepted without a click and the ones waiting, the claims Python entered on its own
+    (their ids) and the ones waiting for an answer, the Revenue / Volume questions open and the hard blockers."""
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
     if not audit:
         raise HTTPException(404, "Audit not found")
     datasets = await _counted(audit_id, await db.datasets.find({"audit_id": audit_id}, {"_id": 0, "rows": 0}).to_list(10))
     found = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
+    found = await _with_entries(audit_id, audit, found)
     auto = [c["id"] for c in found if c.get("auto_accepted") and c.get("status") == "approved"]
     # Other figures are never a task (claim-types-and-correction.md section 4)
     pending = [c for c in found if c.get("status") == "pending" and c.get("claim_type") not in deck_claims.OTHER_TYPES]
@@ -2531,7 +2507,8 @@ def _register_settings(audit: dict, fx: dict, deck_take_rate: bool = False) -> d
     return {"fiscal_year_end": _fiscal_year_end(audit), "as_of_month": audit.get("as_of_month"),
             "reporting_currency": audit.get("reporting_currency") or "EUR", "fx": fx,
             "turnover_choices": audit.get("turnover_choices") or {}, "deck_take_rate": deck_take_rate,
-            "target_arr": audit.get("target_arr") or None, "target_date": audit.get("target_date") or None}
+            "target_arr": audit.get("target_arr") or None, "target_date": audit.get("target_date") or None,
+            "first_quarterly_review": verdict_mod.with_review(audit, audit.get("ic_inputs")).get("first_quarterly_review")}
 
 
 async def _deck_take_rate(audit_id: str) -> bool:
@@ -2549,6 +2526,7 @@ async def _claim_rows(audit_id: str, audit: dict) -> tuple:
     # section 11 point 7) reads the pending ones too.
     found = await db[decks.CANDIDATES_COLLECTION].find(
         {"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
+    found = await _with_entries(audit_id, audit, found)         # the claims Python matched enter on their own (simplified-flow.md section 2)
     claims = [c for c in found if c.get("status") in REGISTER_STATUSES]
     claims.sort(key=lambda c: (c.get("file") or "", c.get("order", 0)))
     # The extraction confidence the deck list shows, read over every candidate of the deck as the list reads it (evidence-labels.md)
@@ -2565,16 +2543,15 @@ async def _claim_rows(audit_id: str, audit: dict) -> tuple:
 
 @api.get("/audits/{audit_id}/claims")
 async def claim_register(audit_id: str):
-    """The claim register: approved and edited claims, with what the parser found next to each edit, and `register`:
-    one row per claim tested against the computed metrics, in rank order (docs/specs/claim-matching.md). Rejected and
-    unreviewed candidates are not in it (they stay on record in the deck list)."""
+    """The claim register: the claims Python entered and the ones the analyst answered or edited, with what the parser found next to each
+    edit, and `register`: one row per claim tested against the computed metrics, in rank order (docs/specs/claim-matching.md). Rejected
+    candidates and the ones waiting for an answer are not in it (they stay on record in the deck list)."""
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
     if not audit:
         raise HTTPException(404, "Audit not found")
     claims, rows = await _claim_rows(audit_id, audit)
-    review = verdict_mod.with_review(audit, audit.get("ic_inputs")).get("first_quarterly_review")
-    # The gate fields' starting values and the budget dropdown sit beside the register, never in it: the CSV and the memo read rows.
-    return sanitize({"claims": claims, "register": rows, "gate_prefill": verdict_mod.gate_prefill(rows, review),
+    # The budget dropdown sits beside the register, never in it: the CSV and the memo read rows.
+    return sanitize({"claims": claims, "register": _marked(audit, rows),
                      "budget_decisions": verdict_mod.budget_decisions(rows),
                      "results_stale": run_audit.results_stale(audit)})      # no rows then: the figures are not shown as current
 
@@ -2587,6 +2564,19 @@ def _csv_cell(value) -> str:
     if isinstance(value, dict):
         return f"{value.get('file')} · {value.get('sheet')} · {value.get('rows')}"
     return str(value)
+
+
+def _marked(audit: dict, rows: list) -> list:
+    """The register rows with `key_gate` set on the gates of the five in force (the analyst's changed set, else the app's selection)."""
+    return verdict_mod.mark_key_gates(rows, verdict_mod.top5_state(rows, (audit.get("ic_inputs") or {}).get("top5"))["in_force"])
+
+
+async def _open_claim_questions(audit_id: str, audit: dict, rows: list) -> int:
+    """The claim questions the Audit page lists: the claims waiting for an answer (a failed check, a Revenue / Volume question) and the
+    register rows whose Definition check is open (simplified-flow.md section 2). A count only."""
+    found = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
+    waiting = (await _entry_plan(audit_id, audit, found))["waiting"]
+    return waiting + sum(1 for r in rows if r.get("definition_check") == claim_matching.DEFINITION_ASK)
 
 
 async def _ic_context(audit_id: str, audit: dict, validate: bool = True) -> dict:
@@ -2602,11 +2592,13 @@ async def _ic_context(audit_id: str, audit: dict, validate: bool = True) -> dict
             contract.validate_for_export(results)
         except contract.ContractError as exc:
             return {"rows": [], "results": results, "ic": ic, "state": verdict_mod.top5_state([], None), "gaps": [],
-                    "contract": exc.log_text, "stale": stale}
+                    "contract": exc.log_text, "stale": stale, "open_questions": 0}
     _, rows = await _claim_rows(audit_id, audit)
     state = verdict_mod.top5_state(rows, ic.get("top5"))
+    rows = verdict_mod.mark_key_gates(rows, state["in_force"])
     gaps = verdict_mod.data_gaps(results, rows, state["in_force"], ic.get("gap_target_dates"))
-    return {"rows": rows, "results": results, "ic": ic, "state": state, "gaps": gaps, "contract": None, "stale": stale}
+    return {"rows": rows, "results": results, "ic": ic, "state": state, "gaps": gaps, "contract": None, "stale": stale,
+            "open_questions": await _open_claim_questions(audit_id, audit, rows)}
 
 
 async def _integrity(audit_id: str, results: Optional[dict], fiscal_year_end: int) -> dict:
@@ -2656,7 +2648,6 @@ class ClaimInputs(BaseModel):
     gate_date: Optional[str] = None
     gate_metric_name: Optional[str] = Field(default=None, max_length=claim_matching.GATE_METRIC_MAX)
     gate_direction: Optional[Literal["at least", "at most"]] = None
-    key_gate: Optional[bool] = None
     # dates-and-periods.md section 5: the one-click "Set growth basis" of a growth claim
     growth_basis: Optional[Literal["mom", "yoy", "annualised", "cumulative"]] = None
 
@@ -2674,8 +2665,8 @@ class ClaimInputs(BaseModel):
 
 @api.put("/audits/{audit_id}/claims/{claim_id}")
 async def update_claim_inputs(audit_id: str, claim_id: str, payload: ClaimInputs):
-    """Store the analyst's segment, metric or gate for one claim of the register, on the candidate's row, and give the
-    register back. The claim's text, value and period are edited in the approval list, not here."""
+    """Store the analyst's segment, metric or gate edit for one claim of the register, on the candidate's row, and give the
+    register back. A gate the analyst edits reads "set by the analyst"; the claim's text, value and period are edited in the claim editor."""
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
     if not audit:
         raise HTTPException(404, "Audit not found")
@@ -2692,8 +2683,6 @@ async def update_claim_inputs(audit_id: str, claim_id: str, payload: ClaimInputs
     for text_field in ("gate_budget_decision", "gate_metric_name"):
         if isinstance(values.get(text_field), str):
             values[text_field] = values[text_field].strip() or None
-    if values.get("key_gate") is False:
-        values["key_gate"] = None                    # an unmarked gate is the default: the mark is cleared, not stored as false
     metric, segment = values.get("metric"), values.get("segment")
     if metric is not None and metric != claim_matching.NO_METRIC and \
             not claim_matching.fits_metric(metric, row["unit"], row["currency"]):
@@ -2713,75 +2702,10 @@ async def update_claim_inputs(audit_id: str, claim_id: str, payload: ClaimInputs
         inputs[claim_id] = kept
     else:
         inputs.pop(claim_id, None)
-    if values.get("key_gate"):
-        # A key gate is a saved gate, and at most 5 are marked (verdict-and-memo.md section 3): tested on the row as it
-        # would read after this change, before anything is written.
-        trial = [{**c, "claim_inputs": inputs} if c["id"] == candidate["id"] else c for c in claims]
-        current = await _current_audit(audit_id, audit, strict=False)
-        after = claim_matching.build_register(trial, current.get("results"), _register_settings(audit, await _fx(audit_id, audit), await _deck_take_rate(audit_id)))
-        after_row = next(r for r in after if r["claim_id"] == claim_id)
-        if not after_row["gate_saved"]:
-            raise _rejected("key_gate", "a key gate needs a saved gate")
-        if sum(1 for r in after if r["key_gate"]) > verdict_mod.MAX_KEY_GATES:
-            raise HTTPException(400, verdict_mod.W5_SIXTH)
     await db[decks.CANDIDATES_COLLECTION].update_one({"audit_id": audit_id, "id": candidate["id"]},
                                                     {"$set": {"claim_inputs": inputs}})
     _, rows = await _claim_rows(audit_id, audit)
-    return sanitize({"register": rows})
-
-
-class GateBatch(BaseModel):
-    """Save all gates: the gates the analyst has filled, each with the fields of one claim, in one call."""
-    model_config = {"extra": "forbid"}
-    gates: List[dict] = Field(min_length=1, max_length=500)
-
-
-@api.put("/audits/{audit_id}/claim-gates")
-async def save_all_gates(audit_id: str, payload: GateBatch):
-    """Save every gate sent, together or not at all. Each entry is a claim_id and the gate fields of PUT /claims/{claim_id}; the
-    result is the register as it reads after the save. A gate that would not be complete, or a sixth key gate, refuses the lot."""
-    audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
-    if not audit:
-        raise HTTPException(404, "Audit not found")
-    if not audit.get("results"):
-        raise HTTPException(409, "Audit not computed yet")
-    claims, rows = await _claim_rows(audit_id, audit)
-    by_id = {r["claim_id"]: r for r in rows}
-    by_candidate = {c["id"]: {**(c.get("claim_inputs") or {})} for c in claims}
-    for entry in payload.gates:
-        claim_id = entry.get("claim_id")
-        if claim_id not in by_id:
-            raise HTTPException(404, "Claim not in the register")
-        try:
-            values = ClaimInputs(**{k: v for k, v in entry.items() if k in ("gate_threshold", "gate_budget_decision", "gate_date",
-                                                                            "gate_metric_name", "gate_direction", "key_gate")}).model_dump(exclude_unset=True)
-        except ValidationError as exc:
-            raise HTTPException(400, f"{claim_id}: {exc.errors()[0]['msg']}")
-        for text_field in ("gate_budget_decision", "gate_metric_name"):
-            if isinstance(values.get(text_field), str):
-                values[text_field] = values[text_field].strip() or None
-        if values.get("key_gate") is False:
-            values["key_gate"] = None
-        inputs = by_candidate[claim_id.split("#")[0]]
-        kept = {**inputs.get(claim_id, {}), **{k: v for k, v in values.items() if v is not None}}
-        for k, v in values.items():
-            if v is None:
-                kept.pop(k, None)
-        inputs[claim_id] = kept
-    trial = [{**c, "claim_inputs": by_candidate[c["id"]]} for c in claims]
-    current = await _current_audit(audit_id, audit, strict=False)
-    after = claim_matching.build_register(trial, current.get("results"), _register_settings(audit, await _fx(audit_id, audit), await _deck_take_rate(audit_id)))
-    for r in after:
-        sent_key = any(e.get("claim_id") == r["claim_id"] and e.get("key_gate") for e in payload.gates)
-        if sent_key and not r["gate_saved"]:
-            raise _rejected("key_gate", "a key gate needs a saved gate")
-    if sum(1 for r in after if r["key_gate"]) > verdict_mod.MAX_KEY_GATES:
-        raise HTTPException(400, verdict_mod.W5_SIXTH)
-    for c in claims:
-        await db[decks.CANDIDATES_COLLECTION].update_one({"audit_id": audit_id, "id": c["id"]},
-                                                        {"$set": {"claim_inputs": by_candidate[c["id"]]}})
-    _, rows = await _claim_rows(audit_id, audit)
-    return sanitize({"register": rows})
+    return sanitize({"register": _marked(audit, rows)})
 
 
 class TurnoverAnswer(BaseModel):
@@ -2825,7 +2749,7 @@ async def answer_turnover(audit_id: str, claim_id: str, payload: TurnoverAnswer)
     logger.info("turnover answer: run_id=%s as=%s reason=%s", audit_id, payload.answer, payload.reason)
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
     _, rows = await _claim_rows(audit_id, audit)
-    return sanitize({"register": rows})
+    return sanitize({"register": _marked(audit, rows)})
 
 
 class DefinitionAnswer(BaseModel):
@@ -2861,14 +2785,13 @@ async def answer_definition_check(audit_id: str, claim_id: str, payload: Definit
                                                     {"$set": {"claim_inputs": inputs}})
     logger.info("definition check: run_id=%s answer=%s", audit_id, payload.answer)
     _, rows = await _claim_rows(audit_id, audit)
-    return sanitize({"register": rows})
+    return sanitize({"register": _marked(audit, rows)})
 
 
 # ---------------------------------------------------------------------------
 # Blockers: three kinds, and nothing else, at the top of every audit view (CLAUDE.md rule 21)
 # ---------------------------------------------------------------------------
 BLOCKER_KINDS = ("revenue_file_missing", "claim_contradicted", "revenue_reconciliation")
-TOP_CLAIMS = 5
 
 
 def _figure(value, unit, currency) -> str:
@@ -2938,8 +2861,9 @@ async def _blocker_list(audit_id: str, audit: dict) -> list:
         out.append({"kind": "revenue_file_missing", "text": "Revenue file uploaded – confirm the mapping to compute metrics."})
     if audit.get("results"):
         _, rows = await _claim_rows(audit_id, audit)
+        selected = set(verdict_mod.banner_ids(rows, (audit.get("ic_inputs") or {}).get("top5")))
         for r in rows:
-            if r["rank"] is not None and r["rank"] <= TOP_CLAIMS and r["evidence_label"] == "Contradicted":
+            if r["claim_id"] in selected and r["evidence_label"] == "Contradicted":
                 claimed = _figure(r["claimed_value"], r["unit"], r["currency"])
                 if r.get("claimed_high") is not None:
                     claimed = f"{claimed}–{_figure(r['claimed_high'], r['unit'], r['currency'])}"
@@ -2974,41 +2898,46 @@ async def get_verdict(audit_id: str):
         raise HTTPException(404, "Audit not found")
     ctx = await _ic_context(audit_id, audit)
     rows, ic = ctx["rows"], ctx["ic"]
-    ver = verdict_mod.verdict(rows, ctx["results"], ic.get("top5"))
+    ver = verdict_mod.verdict(rows, ctx["results"], ic.get("top5"), ctx["open_questions"])
     if ctx["contract"]:
         ver = {**ver, "status": "no_verdict", "message": ic_memo.CONTRACT_NO_VERDICT.format(fields=ctx["contract"])}
     elif ctx["stale"]:
         ver = {**ver, "message": f"No conclusion: {run_audit.STALE_LABEL}."}       # results exist but are of an older contract
-    key = verdict_mod.key_gates(rows)
+    five = ver["top5"]["in_force"]
+    key = verdict_mod.key_gates(rows, five)
+    integrity = await _integrity(audit_id, ctx["results"], _fiscal_year_end(audit))
+    rated = verdict_mod.ratings(ctx["results"], integrity, fmt.fmt_pct, fmt.fmt_months) if ctx["results"] and not ctx["contract"] else None
+    draft = verdict_mod.default_thesis(audit, ver, key, lambda v: fmt.fmt_currency(v, (ctx["results"] or {}).get("reporting_currency")))
     # Codes and counts only: no value, gate, thesis, metric name, company or file name reaches the log.
-    top5 = claim_matching.label_counts([r for r in rows if r["claim_id"] in set(ver["top5"]["claim_ids"])])
-    confirmed = ver["top5"]["confirmed"]
-    blocked = ver["status"] == "blocked"
-    logger.info("verdict: run_id=%s outcome=%s blocked=%s top5=%s confirmed=%s", audit_id, ver["outcome_code"], blocked, top5, confirmed)
+    top5 = claim_matching.label_counts([r for r in rows if r["claim_id"] in set(five)])
+    logger.info("verdict: run_id=%s outcome=%s top5=%s changed=%s open=%d", audit_id, ver["outcome_code"], top5, ver["top5"]["changed"],
+                ctx["open_questions"])
     return sanitize({
         "verdict": ver, "data_gaps": ctx["gaps"], "top_gaps": verdict_mod.top_gaps(ctx["gaps"]),
         "key_gates": {"note": key["note"], "ok": key["ok"], "all_key": key["all_key"], "saved": key["saved"],
-                      "sentences": [{"claim_id": g["claim_id"], "rank": g["rank"], "sentence": g["gate_sentence"]} for g in key["gates"]]},
-        "gates_still_needed": verdict_mod.gates_still_needed(rows, ver["top5"]["in_force"]),
-        "deal_terms": verdict_mod.W13_DEAL_TERMS, "top5_statement": verdict_mod.W24_STATEMENT,
+                      "sentences": [{"claim_id": g["claim_id"], "rank": g["rank"], "sentence": g["gate_sentence"],
+                                     "status": g.get("gate_status"), "text": verdict_mod.gate_text(g)} for g in key["gates"]]},
+        "deal_terms": verdict_mod.W13_DEAL_TERMS, "selection_sentence": verdict_mod.SELECTION_SENTENCE,
+        "selection_changed": verdict_mod.SELECTION_CHANGED,
         "candidates": [{"claim_id": r["claim_id"], "rank": r["rank"], "claim": verdict_mod.claim_name(r),
                         "evidence_label": r["evidence_label"], "reason": r["reason"]} for r in verdict_mod.sortable(rows)],
-        "ic_inputs": {k: ic.get(k) for k in ("first_quarterly_review", "ratings", "thesis", "judgment")},
-        "ratings": list(verdict_mod.RATINGS), "ratings_for": {k: ic_memo.RATING_LABELS[k] for k in verdict_mod.RATED_ROWS},
-        "thesis_labels": ic_memo.THESIS_LABELS, "thesis_max": verdict_mod.THESIS_MAX,
-        "judgment_labels": verdict_mod.JUDGMENT_LABELS, "judgment_max": verdict_mod.JUDGMENT_MAX,
+        "ic_inputs": {"first_quarterly_review": ic.get("first_quarterly_review"), "thesis": ic.get("thesis"), "note": ic.get("note")},
+        "ratings": rated, "benchmark_label": verdict_mod.BENCHMARK,
+        "unresolved_questions": verdict_mod.unresolved_questions(ctx["gaps"], ctx["open_questions"], integrity, ctx["results"]),
+        "thesis_draft": draft, "thesis_labels": ic_memo.THESIS_LABELS, "thesis_max": verdict_mod.THESIS_MAX,
+        "note_max": verdict_mod.NOTE_MAX,
     })
 
 
 class IcInputs(BaseModel):
-    """The analyst's inputs to the verdict and the memo. A key sent as null clears it; a key not sent stays."""
+    """The analyst's inputs to the verdict and the memo. A key sent as null clears it; a key not sent stays. The ratings and the judgment fields
+    are gone (computed, simplified-flow.md); `note` is the one optional free text of the memo."""
     model_config = {"extra": "forbid"}
     top5: Optional[List[str]] = None
     first_quarterly_review: Optional[str] = None
     gap_target_dates: Optional[dict] = None
-    ratings: Optional[dict] = None
     thesis: Optional[dict] = None
-    judgment: Optional[dict] = None         # claim-review-conclusion.md section 3: Reasons, Unresolved questions
+    note: Optional[str] = Field(default=None, max_length=verdict_mod.NOTE_MAX)
 
     @field_validator("first_quarterly_review")
     @classmethod
@@ -3025,28 +2954,12 @@ class IcInputs(BaseModel):
                 raise ValueError("a date as YYYY-MM-DD")
         return v
 
-    @field_validator("ratings")
-    @classmethod
-    def _known_ratings(cls, v):
-        for row, rating in (v or {}).items():
-            if row not in verdict_mod.RATED_ROWS or (rating is not None and rating not in verdict_mod.RATINGS):
-                raise ValueError("a rating is Strong, Adequate or Weak, on the two assessed rows")
-        return v
-
     @field_validator("thesis")
     @classmethod
     def _known_thesis(cls, v):
         for part, text in (v or {}).items():
             if part not in verdict_mod.THESIS_PARTS or (text is not None and (not isinstance(text, str) or len(text) > verdict_mod.THESIS_MAX)):
                 raise ValueError(f"the thesis is Plan, Evidence and Condition, each at most {verdict_mod.THESIS_MAX} characters")
-        return v
-
-    @field_validator("judgment")
-    @classmethod
-    def _known_judgment(cls, v):
-        for part, text in (v or {}).items():
-            if part not in verdict_mod.JUDGMENT_PARTS or (text is not None and (not isinstance(text, str) or len(text) > verdict_mod.JUDGMENT_MAX)):
-                raise ValueError(f"the analyst judgment is Reasons and Unresolved questions, each at most {verdict_mod.JUDGMENT_MAX} characters")
         return v
 
 
@@ -3087,8 +3000,9 @@ def _memo_filename(company: str) -> str:
 
 @api.get("/audits/{audit_id}/memo.md")
 async def export_memo(audit_id: str):
-    """The IC memo as Markdown, built now from the stored data and never stored (verdict-and-memo.md section 7). Refused, with
-    the reason named and nothing written, when it cannot be built."""
+    """The IC memo as Markdown, built now from the stored data and never stored (verdict-and-memo.md section 7). It needs no rating,
+    judgment, gate edit or confirmation (simplified-flow.md); refused, with the reason named and nothing written, only for the number
+    check, the word limit, the contract or an audit with no conclusion."""
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
     if not audit:
         raise HTTPException(404, "Audit not found")
@@ -3109,13 +3023,14 @@ async def export_memo(audit_id: str):
         datasets = await db.datasets.find({"audit_id": audit_id}, {"dtype": 1, "file": 1, "sheet": 1, "_id": 0}).to_list(10)
         deck_docs = await db[decks.TEXT_COLLECTION].find({"audit_id": audit_id}, {"file": 1, "_id": 0}).to_list(100)
         meta = {**audit, "results": results}
+        ver = verdict_mod.verdict(rows, results, ctx["ic"].get("top5"), ctx["open_questions"])
         try:
             tables = ic_memo.workbook_tables(build_export_workbook(meta, results))
         except (contract.ContractError, fmt.UnitError):
             tables = []                                   # the memo itself refuses on the contract before it reads a figure
         text = ic_memo.build_memo(
-            audit=audit, results=results, rows=rows, ver=verdict_mod.verdict(rows, results, ctx["ic"].get("top5")),
-            key=verdict_mod.key_gates(rows), gaps=ctx["gaps"], ic=ctx["ic"],
+            audit=audit, results=results, rows=rows, ver=ver, key=verdict_mod.key_gates(rows, ver["top5"]["in_force"]),
+            gaps=ctx["gaps"], ic={**ctx["ic"], "open_questions": ctx["open_questions"]},
             blockers=await _blocker_list(audit_id, audit), narratives=narratives,
             files=[{"dtype": d["dtype"], "file": d.get("file"), "sheet": d.get("sheet")} for d in datasets],
             decks=[{"file": d.get("file")} for d in deck_docs], tables=tables, today=analysis_date(audit),
@@ -3224,7 +3139,7 @@ async def _run_compute(audit_id: str) -> dict:
         {"$set": {"results": results, "status": "computed", "computed_at": datetime.now(timezone.utc).isoformat(),
                   "metrics_stale": False, "setup_stale": False}},
     )
-    await _revoke_stale_auto(audit_id, await db.audits.find_one({"id": audit_id}))
+    await _enter_matched_claims(audit_id, await db.audits.find_one({"id": audit_id}))
     return results
 
 
@@ -3813,7 +3728,8 @@ app.add_middleware(
 # 10: results carry contract_version 4 (repeated CRM rows counted once and flagged, won deals by close month).
 # 11: demo audits carry no client name (the field is gone).
 # 12: results carry contract_version 5 (demo audits seeded under 11 held version 4 and opened as Stale).
-SEED_VERSION = 15          # 15: engine contract 8 (ARR, MRR, Churn, NRR and CAC payback claim types): demo audits held under contract 7 are reseeded
+SEED_VERSION = 16          # 16: engine contract 9 (the simplified flow): demo audits held under contract 8 are reseeded
+                          # 15: engine contract 8 (ARR, MRR, Churn, NRR and CAC payback claim types): demo audits held under contract 7 are reseeded
                           # 14: engine contract 7 (the page reader's seven new metrics): demo audits held under contract 6 are reseeded
                            # 13: engine contract 6 (the page reader): demo audits held under contract 5 are reseeded
 

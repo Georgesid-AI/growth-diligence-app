@@ -6,19 +6,19 @@ import { Input } from "@/components/ui/input";
 import FxText from "@/components/FxText";
 import { TurnoverCell, TurnoverReason } from "@/components/ClaimRegister";
 import { NO_FILE_PERIOD, UNVERIFIED, answerReady, metricOptions, turnoverHeading, turnoverOf } from "@/lib/claimRegister";
-import { addClaim, addFromDeck, answerTurnover, approveAll, getDeckPage, getDecks, removeDeck, updateCandidate, uploadDeck } from "@/lib/api";
+import { addClaim, addFromDeck, answerTurnover, getDeckPage, getDecks, removeDeck, updateCandidate, uploadDeck } from "@/lib/api";
 import { describeRequestError } from "@/lib/requestError";
 import {
-  ACQUISITION_CHANNELS, ADD_CLAIM_PLATFORM_LABEL, ALL_DECKS, APPROVE_ALL_LABEL, CLAIM_GROUPS, CLAIM_TYPES, approveAllToast, toReview, CLAIM_UNITS, COUNT_UNIT_HINT, COUNT_TYPES, COUNT_UNIT, FX_SETTINGS_ANCHOR, FX_SETTINGS_LABEL, conversionHover, inconsistencyText, MIXED_SLIDE_LABEL, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, ADD_CLAIM_LABEL, ADD_CLAIM_NEEDS_SOURCE, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, newClaimPayload, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
+  ACQUISITION_CHANNELS, ADD_CLAIM_PLATFORM_LABEL, ALL_DECKS, CLAIM_GROUPS, CLAIM_TYPES, CLAIM_UNITS, COUNT_UNIT_HINT, COUNT_TYPES, COUNT_UNIT, FX_SETTINGS_ANCHOR, FX_SETTINGS_LABEL, conversionHover, inconsistencyText, MIXED_SLIDE_LABEL, REMOVE_DECK_CONFIRM, claimsForDeck, deckTabs, defaultDeck, ADD_CLAIM_LABEL, ADD_CLAIM_NEEDS_SOURCE, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, newClaimPayload, COLUMNS, DECK_ACCEPT, DECK_SCOPE_CANNOT,
   DECK_SCOPE_CANNOT_LEAD, DECK_SCOPE_INTRO, DECK_SCOPE_OUTRO, DECK_TYPE_REFUSED, isDeckFile, CONFIDENCE_HOVER, DECK_UPLOAD_HELP, INCONSISTENCY_LABEL, PLACEHOLDER, VERIFIED_LABEL, badgeText, claimPeriod, claimSections, claimValue, deckReadLine, deckRunLog, uploadLineText,
   confidenceText, countLine, readingChoices, rowEdit, sourceRef, statusCounts, statusText, typeLabel,
   ADD_FROM_DECK_LABEL, ADDED_FROM_DECK_TAG, DEFAULT_EDIT_REASON, EDIT_REASONS, EDIT_TYPES, FIGURE_TYPE_OPTIONS, GROWTH_BASIS_OPTIONS, GROWTH_TYPES,
   OTHER_GROUP, POPULATION_OPTIONS, VIEW_PAGE_LABEL, claimFields, editLogText, isOther,
-  CLAIMS_VIEW, REVIEW_VIEW, VIEW_LABELS, REVIEW_INTRO, claimsForView, flagsText, bulkApprovable, scenarioText,
+  CLAIMS_VIEW, REVIEW_VIEW, VIEW_LABELS, REVIEW_INTRO, claimsForView, flagsText, scenarioText,
 } from "@/lib/deckClaims";
 
 // The status is a label, not a control: plain coloured text, no border or chip, so it never reads as a button (George,
-// 2026-10-09). Approve, Reject and Edit are the buttons of the Action column.
+// 2026-10-09). Keep (on a claim that waits for an answer), Reject and Edit are the buttons of the Action column.
 const STATUS_STYLE = {
   pending: "text-slate-600",
   approved: "text-emerald-700",
@@ -161,23 +161,6 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
     } catch (err) {
       toast.error(describeRequestError(err).message);
       throw err;
-    }
-  };
-
-  // Approve all: one call for the section's claims to review (the deck tab's, under a deck tab). The server skips the ones that need a
-  // Revenue / Volume answer, a Definition check answer or a type and the ones whose save fails, and says how many; they stay "To review".
-  const [approving, setApproving] = useState(null);
-  const approveSection = async (section) => {
-    if (approving !== null) return;
-    setApproving(section.group);
-    try {
-      const done = await approveAll(auditId, section.group, tab && tab !== ALL_DECKS ? tab : undefined);
-      if (alive.current) toast.success(approveAllToast(done.approved, done.skipped, done.open_definition, true, done.skipped_flagged));
-      await load();
-    } catch (err) {
-      if (alive.current) toast.error(describeRequestError(err).message);
-    } finally {
-      if (alive.current) setApproving(null);
     }
   };
 
@@ -338,18 +321,7 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
               <tbody>
                 {claimSections(shown).map((section, index) => {
                   const open = expanded[section.group] ?? !section.collapsed;
-                  const waiting = toReview(section).length;
-                  const other = section.group === OTHER_GROUP;       // never a task: no review count and no Approve all
-                  // Approve all is offered only where it can act on the rows shown: not in Review (every claim there is flagged, and the
-                  // unflagged ones are listed under Claims) and not under Scenarios (approved one by one); review of PR 164, M3, H2.
-                  const bulk = view === CLAIMS_VIEW && bulkApprovable(section.group);
-                  const approveAllButton = (where) => (
-                    <Button type="button" size="sm" variant="outline" onClick={() => approveSection(section)} disabled={waiting === 0 || approving !== null}
-                      title={`Approve the ${waiting} claim${waiting === 1 ? "" : "s"} to review in ${section.title}`} className="h-7"
-                      data-testid={`approve-all-${where}-${section.group}`}>
-                      <Check className="h-3.5 w-3.5 mr-1 text-emerald-700" />{APPROVE_ALL_LABEL}
-                    </Button>
-                  );
+                  const other = section.group === OTHER_GROUP;       // never a task: no count
                   return (
                     <Fragment key={section.group}>
                       {index > 0 && (
@@ -366,17 +338,11 @@ export default function DeckPanel({ auditId, reloadKey = 0 }) {
                               {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                               {section.title}{!other && <span className="font-mono font-normal text-slate-500"> ({section.claims.length})</span>}
                             </button>
-                            {open && bulk && approveAllButton("top")}
                           </div>
                         </td>
                       </tr>
                       {open && section.claims.map((c) => <CandidateRow key={c.id} candidate={c} onSave={save} onAnswer={answer} highlight={flash === c.id}
                         autoEdit={editing === c.id} />)}
-                      {open && bulk && (
-                        <tr data-testid={`claim-group-end-${section.group}`}>
-                          <td colSpan={COLUMNS.length} className="pt-2 pb-1 px-2 text-right">{approveAllButton("bottom")}</td>
-                        </tr>
-                      )}
                     </Fragment>
                   );
                 })}
@@ -657,7 +623,7 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight, autoEdit = fa
           <td className={`py-2 pr-3 font-mono text-slate-900 ${isRow || claimValue(c).includes(FX_SETTINGS_LABEL) ? "" : "whitespace-nowrap"}`}>
             {choices.length ? (
               <select value={0} onChange={(e) => Number(e.target.value) && startEdit(choices[Number(e.target.value)].value)}
-                className={selectClass} title="This figure reads two ways. Approve the first reading, or choose the other to edit the claim."
+                className={selectClass} title="This figure reads two ways. Keep the first reading, or choose the other to edit the claim."
                 data-testid="candidate-readings">
                 {choices.map((r, i) => <option key={i} value={i}>{r.label}</option>)}
               </select>
@@ -729,13 +695,13 @@ function CandidateRow({ candidate: c, onSave, onAnswer, highlight, autoEdit = fa
           <div className="flex gap-1">
             <Button size="sm" onClick={saveEdit} disabled={stillOther(draft) || answerBlocked(draft)}
               title={answerBlocked(draft) ? "Choose a reason for the answer first." : stillOther(draft) ? "Choose a claim type first." : undefined}
-              className="h-7 bg-sky-600 hover:bg-sky-500" data-testid="edit-save">{isOther(draft) ? "Save" : "Save and approve"}</Button>
+              className="h-7 bg-sky-600 hover:bg-sky-500" data-testid="edit-save">Save</Button>
             <Button size="sm" variant="outline" onClick={() => setDraft(null)} className="h-7">Cancel</Button>
           </div>
         ) : (
           <div className="flex gap-1">
-            {!isOther(c) && (
-              <Button size="sm" variant="outline" title="Approve" onClick={() => onSave(c, { status: "approved" })} className="h-7 px-2" data-testid="candidate-approve">
+            {!isOther(c) && c.status === "pending" && (
+              <Button size="sm" variant="outline" title="Keep" onClick={() => onSave(c, { status: "approved" })} className="h-7 px-2" data-testid="candidate-keep">
                 <Check className="h-3.5 w-3.5 text-emerald-700" />
               </Button>
             )}

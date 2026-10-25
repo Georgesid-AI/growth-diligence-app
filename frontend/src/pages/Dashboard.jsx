@@ -272,7 +272,7 @@ export default function Dashboard() {
       <Conclusion auditId={id} verdict={verdict} onChanged={refreshVerdict} />
       <FiveClaims auditId={id} verdict={verdict} ccy={ccy} tick={verdictTick + registerKey} />
       <NeedsAttention auditId={id} onChanged={answered} />
-      <ReportDownload auditId={id} />
+      <ReportDownload auditId={id} note={verdict?.ic_inputs?.note} />
 
       {/* Everything else, collapsed. A native details element keeps its content in the page, so nothing below is unmounted. */}
       <details className="mb-6 rounded-md border border-[#E5E7EB]" data-testid="supporting-detail">
@@ -343,12 +343,12 @@ export default function Dashboard() {
           caption="Shows how repeatable sales are" />
       </div>
 
-      {/* Claim register: approved deck claims tested against the computed metrics (docs/specs/claim-matching.md section 8) */}
+      {/* Claim register: the deck claims in the register, tested against the computed metrics (docs/specs/claim-matching.md section 8) */}
       <ClaimRegister key={registerKey} auditId={id} results={r} onChanged={refreshVerdict} />
 
       {/* Data gaps and the verdict (docs/specs/verdict-and-memo.md sections 4 and 6.4) */}
       <DataGaps auditId={id} verdict={verdict} onChanged={refreshVerdict} />
-      <VerdictDetail auditId={id} verdict={verdict} onChanged={refreshVerdict} />
+      <VerdictDetail auditId={id} verdict={verdict} onChanged={() => { refreshVerdict(); setRegisterKey((k) => k + 1); }} ccy={ccy} tick={verdictTick + registerKey} />
 
       {/* Narrative — status tells the reader which figures were verified */}
       <Narrative state={generating ? { loading: true } : narrative} />

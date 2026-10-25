@@ -1,6 +1,6 @@
 # Design note: the simplified flow
 
-Status: draft for decision, 2026-10-24; Audit page order, label definitions, assumptions strip and top-5 ranking added 2026-10-25. No code, test or spec change. Source: George's direction of 24 Oct 2026: from now on the
+Status: draft for decision, 2026-10-24; Audit page order, label definitions, assumptions strip and top-5 ranking added 2026-10-25. Built in part 2 (behaviour, 2026-10-25): the top five selected by the app, claims entered without approval, gates from the claim, computed ratings, no export blockers, the analyst note, the label rules, contract 9. Part 3 (the Upload & Mapping set-up, the question cards' Fix control, the claims table folded into the register) is not built. Source: George's direction of 24 Oct 2026: from now on the
 app only removes and simplifies its interface; no computation is lost. The eight removals are decided; this note says what each
 one looks like on the screen and what it touches. Every engine field (`backend/schemas/metrics.py`) and every memo section
 (verdict-and-memo.md §7.2, Appendices A–D) stays.
@@ -82,7 +82,7 @@ Order, top to bottom. Nothing is added that the engine does not already compute;
   (threshold, date, metric, direction; the edited gate reads "set by the analyst"). Every non-Verified claim has one gate; the
   gates of rows outside the five are in the register's details. Gates are edited in this section only. The budget-decision field
   is available there and never required before the analysis is shown; "Deal terms" W13; the top three data gaps; **Ratings**,
-  computed automatically, two lines "Data reliability: Strong (Reliable; 5 of 5 checks)" and "Growth engine: Adequate (NRR 104%,
+  computed automatically, two lines "Data reliability: Strong (Reliable; 4 of 5 checks)" and "Growth engine: Adequate (NRR 104%,
   gross churn 11%, CAC payback 14 months)" or "not rated – data missing"; any rating that uses an industry threshold carries the
   label **"benchmark, not company data"**, and the definitions and method sit under **details**; **Reasons** and **Unresolved
   questions** as computed lists.
@@ -128,7 +128,7 @@ as Unsupported; Inconclusive counts as untested.
 ### The memo
 Sections and appendices unchanged. The lines that change: Summary prints "Verdict: {conclusion wording} – {rule}" with the
 same four outcomes as the conclusion screen; the glossary carries the five label definitions above; the Scorecard's two rated rows print the computed rating, then the
-rule line with its figures ("Strong: every check Green, 5 of 5 completed"), "not rated – data missing" with the missing input
+rule line with its figures ("Strong: every completed check Green, 4 of 5 completed"), "not rated – data missing" with the missing input
 named; Key gates prints the gates with "(proposed)" or "set by the analyst"; the 3-sentence deal thesis is generated automatically as an
 editable draft and no writing is required before export; Analyst judgment prints the computed Reasons
 and Unresolved questions, then "Analyst note: {text}" when one exists. Appendix A's Approval column reads "auto" for a row
@@ -156,7 +156,7 @@ that cannot (an informational flag, a confirm-only reason) is never asked.
 
 | Element | Reads | Rule |
 |---|---|---|
-| Top 5 ("the five selected claims") | register rows: `claim_type` in `verdict.PLAN_TYPES`, `value_at_stake_arr`, `claimed_converted`, `claimed_value`, `evidence_label` | ranking = value at stake (VaS) first, then normalised shortfall, with Contradicted always above Unverified (decision 11); memo wording "Selected by the app by value at stake; the analyst may change the selection"; the set is in force without confirmation; the banner reads the same five |
+| Top 5 ("the five selected claims") | register rows: `claim_type` in `verdict.PLAN_TYPES`, `value_at_stake_arr`, `claimed_converted`, `claimed_value`, `evidence_label` | ranking = value at stake (VaS) first, then normalised shortfall (decision 11, reversed); memo wording "Selected by the app by value at stake; the analyst may change the selection"; the set is in force without confirmation; the banner reads the five in force (the app's selection or the analyst's changed set) |
 | Verdict | the five rows' `evidence_label` | always computed, never blocked; wording of the 15 Oct conclusion spec (claim-review-conclusion.md §2): Selected claims not supported (any Contradicted) · Insufficient evidence (no Contradicted, 3 or more of the five untested) · Selected claims supported (all five Verified) · Selected claims partly supported (else); codes `not_supported`, `insufficient`, `supported`, `partly_supported`. Untested = Unverified, Inconclusive or Unsupported. An open question is an "n question open" count on the explanation line, not a state. Empty register: no outcome, one message |
 | Gate (template) | per non-Verified claim: `metric` (else `claim_name`), `direction` (higher → at least, lower → at most; none → at least, at most for churn, cost, burn, CAC, payback, sales-cycle types), `claimed_converted` or `claimed_value` in the claim's unit, `period_end`, `ic_inputs.first_quarterly_review` | status proposed; date = period end, else the review date, never later than it; sentence W6 without "Before {decision}"; `gate_needed` is always false; an analyst edit stores the gate as today (`claim_inputs`) and wins |
 | Gates | one per non-Verified claim (all rows) | the template above |
@@ -164,7 +164,8 @@ that cannot (an informational flag, a confirm-only reason) is never asked.
 | Reasons | `verdict.reason_text` of the lead rows (W11), then `other_contradictions` | the three reasons, then "Other contradictions: ..." |
 | Unresolved questions | `verdict.top_gaps` (from `missing_data`), open cards (count and claims), `integrity` Blocked checks, `questions_for_management` | one list, in that order, five lines then "and n more in Appendix B" |
 | Rating, data reliability | `integrity.conclusion` | Reliable → Strong · Needs clarification → Adequate · Material concerns → Weak · Insufficient assessment coverage → not rated – data missing |
-| Rating, growth engine (carries "benchmark, not company data") | `nrr.overall_pct`, `gross_churn.overall_pct`, `cac_payback` headline months (`metric_periods` for each figure's month) | the Dashboard's own thresholds: green = NRR ≥ 100%, churn ≤ 8%, payback ≤ 12 months; red = churn > 15% or payback > 18; Strong = every present input green · Weak = any red · Adequate = else; NRR or churn absent → not rated – data missing (decision 5) |
+| Rating, growth engine (carries "benchmark, not company data") | `nrr.overall_pct`, `gross_churn.overall_pct`, `cac_payback` headline months (`metric_periods` for each figure's month) | the Dashboard's own thresholds: green = NRR ≥ 100%, churn ≤ 8%, payback ≤ 12 months; red = churn > 15% or payback > 18; Strong = NRR, churn and CAC payback all present and green · Weak = churn or payback red · Adequate = else (CAC payback absent is never Strong); NRR or churn absent → not rated – data missing (decision 5) |
+| Data gaps (memo) | `missing_data` gaps, then the never-tested register rows (`claim_matching.is_untested`: use of funds, acquisition channels, pricing, unit economics, pipeline, best and worst cases, forecast-file figures) | every never-tested row is a row of the memo's Data gaps table (Appendix B) as "#{rank} {claim}" with "Cannot be measured: {the row's reason}", and one line in section 6 counts them; they carry no gate, no request and no target date; the screen's Data gaps table is unchanged |
 | Growth basis | the claim text (chat-upload.md §29 point 5) | built; a basis still unknown is a card |
 
 ## 4. Specs and CLAUDE.md rules that change
@@ -184,15 +185,16 @@ that cannot (an informational flag, a confirm-only reason) is never asked.
 | revenue-file-recognition.md | §7 S31 lines; one Correct button | one summary line; confirm-only parts accepted silently |
 | dates-and-periods.md | §5 one-click task | the card |
 | claim-types-and-correction.md | §3 editor | unchanged; reached through "Fix" and "wrong? fix" |
-| prompt-store.md, llm-structure-reading.md, interface-contracts.md | – | unchanged; no contract version change |
+| prompt-store.md, llm-structure-reading.md | – | unchanged |
+| interface-contracts.md | §1 version | built 2026-10-25: contract version 9 (the task of part 2 asked for the bump), so §5 below applies: results stored under 8 read "Stale – re-run audit" |
 
 ## 5. Stored audits on upgrade
 
-No contract bump and no reseed: nothing stored changes meaning. The server applies these on first read of each audit.
+Built with a contract bump (version 9, 2026-10-25) and a demo reseed: results stored under 8 read "Stale – re-run audit" until Run audit calculates again. The server shows the rest on every read of an audit without writing (a pending claim that qualifies reads as approved, "auto"); Run audit stores the entry, never a read.
 
 | Stored | Becomes |
 |---|---|
-| `deck_candidates` status pending, matched, no review flag, no open question | approved, `auto_accepted` true (the register reads it); once, at the first read after deploy |
+| `deck_candidates` status pending, matched, no review flag, no open question | approved, `auto_accepted` true: the register reads it at once; Run audit stores it, a read never does |
 | pending with a review flag or an open question; approved, edited, rejected | unchanged; the first group is the cards |
 | `claim_inputs` gates saved by the analyst, `definition_check`, turnover and growth-basis answers, metric and segment picks | kept; a saved gate wins over the template |
 | `ic_inputs.top5` confirmed | kept as "changed by the analyst" when it differs from the proposal; equal → the proposal line |
@@ -252,8 +254,8 @@ No contract bump and no reseed: nothing stored changes meaning. The server appli
    item 2).
 10. **Label definitions.** Decided: the definition on hover on every label, and all five in full once under the five findings (§1,
     Evidence labels).
-11. **Top-5 selection.** Decided (approved): ranking by VaS, then normalised shortfall, Contradicted above Unverified, so a
-    Contradicted row outranks a larger-VaS Unverified row for a place in the five (§3, Top 5 row).
+11. **Top-5 selection.** Decided: ranking by VaS, then normalised shortfall (§3, Top 5 row). Reversed 2026-10-25 (review of PR #180): the
+    Contradicted-above-Unverified key is removed; every Contradicted claim is shown in the contradiction lines, so the ranking needs no label.
 
 ## 9. Build PR: documents rewritten with the code
 

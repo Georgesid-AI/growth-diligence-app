@@ -12,7 +12,7 @@ pytest.importorskip("motor")
 
 from app import access, tester_view  # noqa: E402
 from test_access_links import audit_routes, fill  # noqa: E402
-from test_run_audit import AUDIT, THESIS, RATINGS, JUDGMENT, ready_for_review, write_all  # noqa: E402
+from test_run_audit import AUDIT, THESIS, ready_for_review, write_all  # noqa: E402
 
 OWNER = "owner-token-for-the-test-suite-only"
 TESTER_TOKEN = "tester-token-for-the-test-suite-only"
@@ -83,9 +83,10 @@ def test_the_generate_narrative_the_estimate_the_usage_and_the_allowance_routes_
 def test_the_memo_and_the_xlsx_export_carry_no_usage_table(as_tester):
     h = as_tester.headers
     ids = as_tester.get(f"/api/audits/{AUDIT}/verdict", headers=h).json()["verdict"]["top5"]["proposed"]
-    for body in ({"top5": ids}, {"thesis": THESIS, "ratings": RATINGS}, {"judgment": JUDGMENT}):
+    for body in ({"top5": ids}, {"thesis": THESIS, "note": "A note."}):
         as_tester.put(f"/api/audits/{AUDIT}/ic-inputs", json=body, headers=h)
     memo = as_tester.get(f"/api/audits/{AUDIT}/memo.md", headers=h)
+    assert memo.status_code == 200, "the memo needs no rating and no judgment"
     if memo.status_code == 200:
         assert not re.search(r"(?i)AI usage|Cost \(USD\)|Input tokens|Output tokens", memo.text)
     export = as_tester.get(f"/api/audits/{AUDIT}/export", headers=h)

@@ -1,4 +1,5 @@
-// docs/design/simplified-flow.md, The Audit page, item 5: the questions Review listed, as cards: at most three, "n more" for the rest.
+// docs/design/simplified-flow.md, The Audit page, item 5: the questions that wait for the analyst, as cards: at most three, "n more" for the rest;
+// the claim questions in the server's ranking, the questions of the five selected claims first.
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 
@@ -14,9 +15,9 @@ jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }))
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 const claim = (id, extra = {}) => ({ id, claim_type: "revenue", status: "pending", value: 100, unit: "EUR", currency: "EUR", sources: [{ file: "deck.pptx", page: 3 }], group: 1, ...extra });
-const mount = async (candidates, views = [], props = {}) => {
+const mount = async (candidates, views = [], props = {}, attention = []) => {
   api.getDatasets.mockResolvedValue(views);
-  api.getDecks.mockResolvedValue({ decks: [], candidates });
+  api.getDecks.mockResolvedValue({ decks: [], candidates, attention });
   const onChanged = jest.fn();
   const host = document.createElement("div");
   document.body.appendChild(host);
@@ -53,12 +54,12 @@ test("five questions: three cards, an '2 more' link that opens the rest and clos
   } finally { await done(); }
 });
 
-test("Approve and Reject answer in place, the cards are read again and the page is told; nothing is deleted", async () => {
+test("Keep and Not a company claim answer in place, the cards are read again and the page is told; nothing is deleted", async () => {
   api.updateCandidate.mockResolvedValue({});
   const { host, onChanged, done } = await mount([claim("k1")]);
   try {
     api.getDecks.mockResolvedValue({ decks: [], candidates: [claim("k1", { status: "approved" })] });
-    await act(async () => { q(host, "attention-approve").click(); });
+    await act(async () => { q(host, "attention-keep").click(); });
     expect(api.updateCandidate).toHaveBeenCalledWith("a1", "k1", { status: "approved" });
     expect(onChanged).toHaveBeenCalledTimes(1);
     expect(q(host, "needs-attention")).toBeNull();
@@ -86,5 +87,42 @@ test("a column that waits is a card; mapping questions come before claims", asyn
     expect(cards.length).toBe(2);
     expect(cards[0].querySelector('[data-testid="attention-mapping"]')).not.toBeNull();
     expect(cards[1].querySelector('[data-testid="attention-claim"]')).not.toBeNull();
+  } finally { await done(); }
+});
+
+const ids = (host) => [...host.querySelectorAll('[data-testid="attention-claim"]')].map((n) => /k\d/.exec(n.textContent)?.[0]);
+
+test("the claim questions follow the server's ranking and the questions of the five come first, before the columns", async () => {
+  const view = { dtype: "revenue", file: "revenue.csv", pending: 1, missing_required: [], fields: { required: ["amount"], optional: [] },
+    columns: [{ column: "Amt", field: "amount", state: "matched", pending: true, confidence: 70, decision: null }] };
+  const cs = [1, 2, 3, 4].map((n) => claim(`k${n}`, { snippet: `k${n}` }));
+  const attention = [{ id: "k3", in_top5: true }, { id: "k1", in_top5: true }, { id: "k4", in_top5: false }, { id: "k2", in_top5: false }];
+  const { host, done } = await mount(cs, [view], {}, attention);
+  try {
+    await act(async () => { q(host, "attention-more").click(); });
+    const order = [...host.querySelectorAll('[data-testid="attention-card"]')].map((card) => (card.querySelector('[data-testid="attention-mapping"]') ? "column" : "claim"));
+    expect(order).toEqual(["claim", "claim", "column", "claim", "claim"]);
+    expect(q(host, "attention-count").textContent).toBe("5 questions need a word from you");
+  } finally { await done(); }
+});
+
+test("without a ranking the claims keep the server's list order and the columns stay first", async () => {
+  const view = { dtype: "revenue", file: "revenue.csv", pending: 1, missing_required: [], fields: { required: ["amount"], optional: [] },
+    columns: [{ column: "Amt", field: "amount", state: "matched", pending: true, confidence: 70, decision: null }] };
+  const { host, done } = await mount([claim("k2", { value: 222 }), claim("k1", { value: 111 })], [view]);
+  try {
+    const cards = [...host.querySelectorAll('[data-testid="attention-card"]')];
+    expect(cards.map((card) => (card.querySelector('[data-testid="attention-mapping"]') ? "column" : "claim"))).toEqual(["column", "claim", "claim"]);
+    expect(cards[1].textContent).toContain("222");
+    expect(cards[2].textContent).toContain("111");
+  } finally { await done(); }
+});
+
+test("a card for a claim says Keep and Not a company claim; the old Approve and Reject words are gone", async () => {
+  const { host, done } = await mount([claim("k1")]);
+  try {
+    expect(q(host, "attention-keep").textContent).toBe("Keep");
+    expect(q(host, "attention-reject").textContent).toBe("Not a company claim");
+    expect(host.textContent).not.toMatch(/Approve/);
   } finally { await done(); }
 });

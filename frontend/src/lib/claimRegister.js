@@ -39,19 +39,16 @@ export const LABEL_DEFINITIONS = evidenceLabels.definitions;
 export const LABEL_ORDER = Object.keys(evidenceLabels.definitions);
 /** "Verified: the raw data confirms the claim." for a label; undefined for anything that is not one of the five (Definition check). */
 export const labelDefinition = (label) => (LABEL_DEFINITIONS[label] ? `${label}: ${LABEL_DEFINITIONS[label]}` : undefined);
-export const SET_GATE_LABEL = "Set gate";
 export const VAS_LABEL = "VaS";
-// Only these are editable (section 3 adds the gate's metric name and direction on a row with no app metric, and the key mark).
+// Only these are editable (section 3 adds the gate's metric name and direction on a row with no app metric).
 export const EDITABLE_FIELDS = ["segment", "metric", "gate_threshold", "gate_budget_decision", "gate_date", "gate_metric_name",
-  "gate_direction", "key_gate"];
+  "gate_direction"];
 export const READ_ONLY_FIELDS = ["rank", "claim", "period", "page", "deck_reading", "extraction_confidence", "observed", "gap", "gloss", "value_at_stake",
   "overlaps_with", "evidence"];
 
-// Screen wording W4, W5, W22 (verdict-and-memo.md section 11).
-export const GATE_NEEDED = "Gate needed";
-export const PREFILLED = "prefilled – confirm";
+// Screen wording (verdict-and-memo.md section 11). A gate is written from the claim and reads "(proposed)" until the analyst edits it.
+export const GATE_TAGS = { proposed: "(proposed)", "set by the analyst": "(set by the analyst)" };
 export const OTHER_DECISION = "Other";
-export const KEY_GATE_LABEL = "Key gate";
 export const GATE_METRIC_PLACEHOLDER = "Metric (max 100 characters)";
 export const GATE_METRIC_MAX = 100;
 export const GATE_DIRECTIONS = [["at least", "At least"], ["at most", "At most"]];
@@ -284,28 +281,28 @@ export const readingText = (reading) => READINGS[reading] || reading;
 export const segmentEdit = (segment) => ({ segment });
 export const metricEdit = (metric) => ({ metric });
 
-/** The gate fields that changed, as the PUT sends them: blank is null (clears the field), the threshold a number. */
+/** The gate the analyst edits, as the PUT sends it: blank is null (clears the field), the threshold a number. A gate that is only the app's
+ *  proposal (`gate_saved` false) is stored whole as soon as one field differs (threshold and date, and for a row with no metric of the app
+ *  the metric name and direction too), since the server counts an edit only once those are filled; a saved gate sends the fields that changed. */
 export function gateEdit(row, draft) {
-  const out = {};
   const threshold = String(draft.threshold ?? "").trim();
   const next = threshold === "" ? null : Number(threshold);
   if (next !== null && !Number.isFinite(next)) throw new Error("The threshold must be a number");
-  if (next !== (row.gate_threshold ?? null)) out.gate_threshold = next;
   const budget = String(draft.budget ?? "").trim();
   if (budget.length > GATE_BUDGET_MAX) throw new Error(`The budget decision is at most ${GATE_BUDGET_MAX} characters`);
-  if ((budget || null) !== (row.gate_budget_decision ?? null)) out.gate_budget_decision = budget || null;
   const date = String(draft.date ?? "").trim();
   const dateError = dateRangeError("The gate date", date);
   if (dateError) throw new Error(dateError);
-  if ((date || null) !== (row.gate_date ?? null)) out.gate_date = date || null;
+  const all = { gate_threshold: next, gate_budget_decision: budget || null, gate_date: date || null };
   if (needsMetricName(row)) {
     const name = String(draft.metricName ?? "").trim();
     if (name.length > GATE_METRIC_MAX) throw new Error(`The metric is at most ${GATE_METRIC_MAX} characters`);
-    if ((name || null) !== (row.gate_metric_name ?? null)) out.gate_metric_name = name || null;
-    const direction = draft.direction || null;
-    if (direction !== (row.gate_direction ?? null)) out.gate_direction = direction;
+    all.gate_metric_name = name || null;
+    all.gate_direction = draft.direction || null;
   }
-  return out;
+  const changed = Object.fromEntries(Object.entries(all).filter(([k, v]) => v !== (row[k] ?? null)));
+  if (row.gate_saved || !Object.keys(changed).length) return changed;
+  return Object.fromEntries(Object.entries(all).filter(([k, v]) => v !== null || k in changed));
 }
 
 /** What the analyst sees beside the empty gate fields: the claimed and the observed figure. No threshold is proposed. */
@@ -316,44 +313,12 @@ export function gateContext(row, ccy) {
   return `${claimed} · Observed ${observed.value} (${observed.at})`;
 }
 
-/** The gate fields as the analyst sees them: what is stored, then the server's prefill for a gate not yet saved, then what the analyst
- *  has changed on screen. `prefilled` names the fields still showing a prefilled value; it empties as each field is edited. */
-export function gateDraft(row, prefill, edits) {
-  const fill = row.gate_saved ? {} : (prefill || {});
+/** The gate fields as the analyst sees them: the row's own (the app's proposal until the analyst edits it), then what has been changed on screen. */
+export function gateDraft(row, edits) {
   const e = edits || {};
-  const pick = (own, stored, filled) => (own !== undefined ? own : stored ?? filled ?? "");
-  const draft = {
-    threshold: pick(e.threshold, row.gate_threshold, fill.gate_threshold),
-    date: pick(e.date, row.gate_date, fill.gate_date),
-    metricName: pick(e.metricName, row.gate_metric_name, fill.gate_metric_name),
-    direction: pick(e.direction, row.gate_direction, null),
-    budget: e.budget !== undefined ? e.budget : (row.gate_budget_decision ?? ""),
-    key: e.key !== undefined ? e.key : (row.gate_saved ? !!row.key_gate : !!fill.key_gate),
+  const pick = (own, shown) => (own !== undefined ? own : shown ?? "");
+  return {
+    threshold: pick(e.threshold, row.gate_threshold), date: pick(e.date, row.gate_date), metricName: pick(e.metricName, row.gate_metric_name),
+    direction: pick(e.direction, row.gate_direction), budget: e.budget !== undefined ? e.budget : (row.gate_budget_decision ?? ""),
   };
-  const prefilled = [];
-  if (!row.gate_saved) {
-    if (e.threshold === undefined && fill.gate_threshold != null) prefilled.push("threshold");
-    if (e.date === undefined && fill.gate_date) prefilled.push("date");
-    if (e.metricName === undefined && fill.gate_metric_name) prefilled.push("metricName");
-    if (e.key === undefined && fill.key_gate) prefilled.push("key");
-  }
-  return { draft, prefilled };
-}
-
-const gateFilled = (row, draft) => String(draft.threshold ?? "").trim() !== "" && !!String(draft.budget ?? "").trim() && !!draft.date
-  && (!needsMetricName(row) || (!!String(draft.metricName ?? "").trim() && !!draft.direction));
-
-/** What "Save all gates" sends: each gate that is filled and not yet as stored (prefilled values count as filled), with its key mark.
- *  A gate still missing a field is left, and counted. */
-export function saveAllGates(rows, prefill, edits) {
-  const gates = []; let incomplete = 0;
-  for (const row of rows) {
-    const { draft } = gateDraft(row, prefill?.[row.claim_id], edits?.[row.claim_id]);
-    const edit = gateEdit(row, draft);
-    if (draft.key && !row.key_gate) edit.key_gate = true;
-    if (!Object.keys(edit).length) continue;
-    if (gateFilled(row, draft)) gates.push({ claim_id: row.claim_id, ...edit });
-    else if (row.gate_needed) incomplete += 1;
-  }
-  return { gates, incomplete };
 }

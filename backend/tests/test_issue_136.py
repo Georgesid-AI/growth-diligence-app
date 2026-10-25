@@ -168,7 +168,7 @@ def test_3_the_verdict_reason_and_the_memo_register_cite_the_figure_with_its_per
 def test_4_a_contract_value_is_typed_contract_value_and_never_matched_to_engine_revenue(snippet, label):
     row = run_claim({"claim_type": "revenue", "snippet": snippet, "label_from": label, "value": 156000, "target_date": "2023-Q4"})
     assert (row["metric"], row["metric_set_by"]) == ("Contract value", "python")
-    assert (row["evidence_label"], row["reason"], row["observed_value"]) == ("Unsupported", CONTRACT_REASON, None)
+    assert (row["evidence_label"], row["reason"], row["observed_value"]) == ("Unverified", CONTRACT_REASON, None)
     assert row["gap"] is None and row["evidence_analysis"] is None and row["observed_citation"] is None
 
 

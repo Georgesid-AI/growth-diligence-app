@@ -99,7 +99,9 @@
     recommendation. One message, all open decisions together, not one at a time.
 20. Degrade, don't die: if the LLM gateway fails or times out anywhere, every computed metric still renders
     with its citation and a 'narrative unavailable' note.
-21. All hard blockers render at the top of every audit view, except on the Audit page, where the contradiction lines sit directly above the claim register table.
+21. Hard blockers render at the top of every audit view, except the contradiction lines. On the Audit page the contradiction lines sit
+    directly under the conclusion (the outcome, its explanation line and the scope sentence), as docs/design/simplified-flow.md describes;
+    the claim register keeps row labels only. A top-5 claim that is Contradicted is shown in the conclusion block, whatever its rank in the five.
 22. Delete audit requires typing the company name and removes every document of the audit in every
     collection, saved mappings and stored files included.
 23. Any change to engine output fields changes backend/schemas/metrics.py and the contract test

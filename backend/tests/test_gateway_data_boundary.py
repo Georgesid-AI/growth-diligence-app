@@ -1453,7 +1453,7 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             "implied_take_rate", "implied_take_rate_source", "turnover_suggested", "deck_revenue_note", "period_basis", "inconsistencies",
                             "turnover_views", "file_note", "NO_FILE_PERIOD",
                             "inconsistent_dates", "mixed_slide", "USE_OF_FUNDS_NOTE", "MIXED_SLIDE", "ACQUISITION_NOTE", "ACQUISITION_CHANNELS",
-                            "UNTESTED_TYPES", "channel", "auto_accepted", "auto_note", "AUTO_REVOKED", "_revoke_stale_auto", "auto_approval", "auto_citation", "AUTO_APPROVAL", "AUTO_LABEL", "ANALYST_LABEL", "auto_views", "never_on_its_own", "BEAT_PREFIX", "is_beat", "flag_text", "flagged_rows",
+                            "UNTESTED_TYPES", "channel", "auto_accepted", "auto_note", "AUTO_REVOKED", "auto_approval", "auto_citation", "AUTO_LABEL", "ANALYST_LABEL", "auto_views", "entered_by_python", "needs_a_word", "MATCHED_STATUSES", "_enter_matched_claims", "_entry_plan", "_with_entries", "BEAT_PREFIX", "is_beat", "flag_text", "flagged_rows",
                             "qualifier", "QUALIFIERS", "QUALIFIED_REASON", "qualified_label", "definition_check", "definition_question",
                             "definition_views", "definition_rows", "definition_basis", "DEFINITION_QUESTION", "DEFINITION_OPEN_REASON",
                             "DEFINITION_OPEN_REASON_RATE", "DEFINITION_MISMATCH", "BIG_GAP_RATE_POINTS",
@@ -1478,7 +1478,11 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             "CLUSTERING_AMBER_PCT", "CLUSTERING_RED_PCT", "CLUSTERING_FINDING",
                             # docs/specs/claim-review-conclusion.md: the analyst judgment and the contradictions outside the five
                             "judgment", "reasons", "unresolved_questions", "other_contradictions", "other_contradictions_text",
-                            "JUDGMENT_PARTS", "JUDGMENT_LABELS", "SCOPE_SENTENCE", "NO_OTHER_CONTRADICTIONS",
+                            "SCOPE_SENTENCE", "NO_OTHER_CONTRADICTIONS",
+                            # docs/design/simplified-flow.md: the gate written from the claim, its status, the note and the computed ratings
+                            "gate_status", "GATE_PROPOSED", "GATE_SET", "AT_MOST_TYPES", "NO_CLAIMED_VALUE", "claim_name", "ic_inputs.note",
+                            "selection_key", "rate_reliability", "rate_growth", "default_thesis", "unresolved_questions", "mark_key_gates", "gate_text",
+                            "SELECTION_SENTENCE", "SELECTION_CHANGED", "NOT_RATED", "BENCHMARK", "OPEN_QUESTION", "OPEN_QUESTIONS", "first_quarterly_review",
                             # issue #136: the citation beside an observed figure, the period that was not read, the contract value
                             "observed_citation", "period_words", "citation", "PERIOD_NOT_READ", "CONTRACT_VALUE", "CONTRACT_REASON",
                             "CONTRACT_TERM", "CONTRACT_LABEL", "_type_choice_open", "metric_labels",
@@ -1489,12 +1493,10 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             *MATCHING_SERVER_ONLY})
 # The functions that log about the register, and the only things their log calls may name.
 REGISTER_LOGGERS = frozenset({"_claim_rows", "claim_register", "claim_register_csv", "update_claim_inputs", "answer_turnover",
-                              "approve_all_candidates", "answer_definition_check"})
+                              "answer_definition_check"})
 REGISTER_LOG_ARGS = frozenset({"audit_id", "counts", "len(rows)"})      # exactly these expressions, as format arguments
 # The turnover answer logs two closed words (Literal fields of the request), never a claim or a figure.
 TURNOVER_LOG_ARGS = frozenset({"audit_id", "payload.answer", "payload.reason"})
-# Approve all logs the run, the category's number and two counts (chat-upload.md section 17), never a claim or an id.
-APPROVE_ALL_LOG_ARGS = frozenset({"audit_id", "payload.group", "len(approved)", "len(skipped)"})
 # The Definition check answer (claim-matching.md section 4.1) logs the run and yes or no (a Literal of the request), nothing else.
 DEFINITION_LOG_ARGS = frozenset({"audit_id", "payload.answer"})
 
@@ -1612,8 +1614,7 @@ def test_the_register_log_lines_name_counts_per_label_and_the_run_only():
                 found.append((fn.name, ast.unparse(node)))
                 assert not node.keywords and isinstance(node.args[0], ast.Constant) and "{" not in node.args[0].value, ast.unparse(node)
                 for arg in node.args[1:]:
-                    allowed = {"answer_turnover": TURNOVER_LOG_ARGS, "approve_all_candidates": APPROVE_ALL_LOG_ARGS,
-                               "answer_definition_check": DEFINITION_LOG_ARGS}.get(fn.name, REGISTER_LOG_ARGS)
+                    allowed = {"answer_turnover": TURNOVER_LOG_ARGS, "answer_definition_check": DEFINITION_LOG_ARGS}.get(fn.name, REGISTER_LOG_ARGS)
                     assert ast.unparse(arg) in allowed, f"{fn.name}: {ast.unparse(node)} logs {ast.unparse(arg)}"
     assert found, "the register logs its label counts"
     module = ast.parse((BACKEND / "app" / "claim_matching.py").read_text(encoding="utf-8"))
@@ -1699,10 +1700,10 @@ def test_the_qualified_users_reason_holds_two_closed_words_and_the_qualifier_nev
     out = claim_matching.build_register([row], RESULTS, {"fiscal_year_end": 12, "reporting_currency": "EUR", "fx": {"EUR": 1.0}})[0]
     nouns = r"customers?|clients?|paying users?|accounts?|compan(?:y|ies)|agenc(?:y|ies)|subscribers?|institutions?"
     words = "|".join(re.escape(q) for q in deck_claims.QUALIFIERS)
-    # no paying-customer figure in these results: Unsupported, with the reason that names the population (evidence-labels.md)
+    # no paying-customer figure in these results: Unverified (a stated figure the app cannot test), with the reason that names the population
     closed = re.escape(claim_matching.QUALIFIED_NO_FIGURE).replace(re.escape("{label}"), f"(?:{words}) (?:{nouns})")
     assert re.fullmatch(closed, out["reason"]), out["reason"]
-    assert out["evidence_label"] == "Unsupported" and sentinel not in json.dumps(out, default=str)
+    assert out["evidence_label"] == "Unverified" and sentinel not in json.dumps(out, default=str)
     db, reads = _recording_db()
     db[decks.CANDIDATES_COLLECTION].docs.append({**row, "audit_id": RUN_ID})
     adapter = t.FakeAdapter(replies=[json.dumps(NARRATIVE)])
@@ -2056,12 +2057,12 @@ def test_a_payload_that_breaks_the_contract_reaches_no_provider_and_no_log_line_
 import test_claim_register_api as register_api_tests  # noqa: E402
 
 IC_SENTINELS = ("the Falcon hiring plan", "Zephyr pipeline cover", "Quartz thesis plan", "Basalt thesis evidence", "Opal thesis condition",
-                "Garnet judgment reasons", "Jasper unresolved question")      # the last two: claim-review-conclusion.md section 3
+                "Garnet analyst note", "Jasper stored judgment")      # the last two: the optional note (simplified-flow.md) and a stored judgment no longer read
 VERDICT_LOGGERS = frozenset({"get_verdict", "export_memo"})
 VERDICT_LOG_FORMATS = {
-    "get_verdict": "verdict: run_id=%s outcome=%s blocked=%s top5=%s confirmed=%s",
+    "get_verdict": "verdict: run_id=%s outcome=%s top5=%s changed=%s open=%d",
     "export_memo": "memo export: run_id=%s status=%s reason=%s words=%d unmatched=%d"}
-VERDICT_LOG_ARGS = frozenset({"audit_id", "ver['outcome_code']", "blocked", "top5", "confirmed", "'refused' if refusal else 'ok'",
+VERDICT_LOG_ARGS = frozenset({"audit_id", "ver['outcome_code']", "top5", "ver['top5']['changed']", "ctx['open_questions']", "'refused' if refusal else 'ok'",
                               "refusal.code if refusal else 'none'", "words", "len(refusal.unmatched) if refusal else 0"})   # ast.unparse
 
 
@@ -2140,10 +2141,8 @@ def _with_the_analysts_inputs(client, db):
         body = {"gate_threshold": 10.0 + n, "gate_budget_decision": IC_SENTINELS[0], "gate_date": "2024-06-30",
                 "gate_metric_name": IC_SENTINELS[1], "gate_direction": "at least"}
         assert register_api_tests._put(client, cid, body).status_code == 200
-        assert register_api_tests._put(client, cid, {"key_gate": True}).status_code == 200
-    r = client.put(f"{base}/ic-inputs", json={"ratings": {"data_reliability": "Strong", "growth_engine": "Weak"},
-                                              "thesis": {"plan": IC_SENTINELS[2], "evidence": IC_SENTINELS[3], "condition": IC_SENTINELS[4]},
-                                              "judgment": {"reasons": IC_SENTINELS[5], "unresolved_questions": IC_SENTINELS[6]}})
+    r = client.put(f"{base}/ic-inputs", json={"thesis": {"plan": IC_SENTINELS[2], "evidence": IC_SENTINELS[3], "condition": IC_SENTINELS[4]},
+                                              "note": IC_SENTINELS[5]})
     assert r.status_code == 200, r.text
 
 
@@ -2155,7 +2154,7 @@ def test_the_analysts_inputs_reach_no_log_line_no_gateway_collection_and_no_prov
         for url in ("/verdict", "/memo.md", "/claims.csv", "/claims", "/blockers"):
             client.get(base + url)
     memo = client.get(f"{base}/memo.md")
-    assert memo.status_code == 200 and IC_SENTINELS[3] in memo.text and IC_SENTINELS[6] in memo.text, \
+    assert memo.status_code == 200 and IC_SENTINELS[3] in memo.text and IC_SENTINELS[5] in memo.text, \
         "fixture: the memo is built from the inputs and returned, not logged"
     for needle in IC_SENTINELS:
         assert needle not in caplog.text, f"{needle!r} reached a log line"
@@ -2172,7 +2171,7 @@ def test_the_gateway_reads_no_ic_inputs_and_the_provider_payload_holds_none(regi
     db, reads = _recording_db()
     db["audits"].docs[0]["ic_inputs"] = {"thesis": {"plan": IC_SENTINELS[2]}, "ratings": {"growth_engine": "Weak"},
                                          "top5": {"claim_ids": ["c1"], "set_at": "x"}, "first_quarterly_review": "2031-04-05",
-                                         "judgment": {"reasons": IC_SENTINELS[5], "unresolved_questions": IC_SENTINELS[6]}}
+                                         "note": IC_SENTINELS[5], "judgment": {"reasons": IC_SENTINELS[6], "unresolved_questions": IC_SENTINELS[6]}}
     db[decks.CANDIDATES_COLLECTION].docs[0]["claim_inputs"] = {"c1": {"gate_metric_name": IC_SENTINELS[1], "key_gate": True,
                                                                       "gate_direction": "at most"}}
     adapter = t.FakeAdapter(replies=[json.dumps(NARRATIVE)])
@@ -2180,7 +2179,7 @@ def test_the_gateway_reads_no_ic_inputs_and_the_provider_payload_holds_none(regi
     asyncio.run(gateway.narratives_for_run(db, RUN_ID))
     asyncio.run(gateway.usage_for_run(db, RUN_ID))
     returned = json.dumps([doc for name, _, doc in reads if name in ("audits", decks.CANDIDATES_COLLECTION)], default=str)
-    for needle in (*IC_SENTINELS[1:3], *IC_SENTINELS[5:], "ic_inputs", "2031-04-05", "gate_metric_name", "key_gate", "judgment"):
+    for needle in (*IC_SENTINELS[1:3], *IC_SENTINELS[5:], "ic_inputs", "2031-04-05", "gate_metric_name", "key_gate", "judgment", "note"):
         assert needle not in returned, f"{needle!r} was read by the gateway"
         assert needle not in adapter.payloads[0], f"{needle!r} reached the provider"
 

@@ -117,12 +117,11 @@ def test_plan_3_regression_revenue_to_june_2019_on_an_october_2026_machine_is_la
                                      snippet=f"ARR of EUR {round(arr):,} in June 2019")], results, sets)
     assert all("2026" not in (r["observed_at"] or "") for r in rows)
     top = vd.proposal(rows)
-    ic = {"ratings": {"data_reliability": "Adequate", "growth_engine": "Adequate"}, "first_quarterly_review": "2027-01-13",
-          "thesis": {"plan": "Grow with the current customer mix.", "evidence": "ARR is as claimed.", "condition": "None."},
-          "judgment": {"reasons": "The selected claim agrees with the revenue file.", "unresolved_questions": "None."}}
+    ic = {"first_quarterly_review": "2027-01-13",
+          "thesis": {"plan": "Grow with the current customer mix.", "evidence": "ARR is as claimed.", "condition": "None."}}
     tables = im.workbook_tables(server.build_export_workbook({**audit, "results": results}, results))
     text = im.build_memo(audit=audit, results=results, rows=rows, ver=vd.verdict(rows, results, {"claim_ids": top}),
-                         key=vd.key_gates(rows), gaps=vd.data_gaps(results, rows, top), ic=ic, blockers=[], narratives=[],
+                         key=vd.key_gates(rows, top), gaps=vd.data_gaps(results, rows, top), ic=ic, blockers=[], narratives=[],
                          files=[{"dtype": "revenue", "file": "revenue.csv", "sheet": "CSV"}],
                          decks=[{"file": "synthco_deck.pdf"}], tables=tables, today=MACHINE_DATE)
     lines = text.split("\n")

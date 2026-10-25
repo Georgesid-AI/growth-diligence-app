@@ -23,8 +23,8 @@ RUN = RUNS["A"]
 
 
 def starting_db():
-    """The `register_api` fixture's database (tests/conftest.py): run A's audit, revenue file and claims, and one rejected and
-    one pending claim."""
+    """The `register_api` fixture's database (tests/conftest.py): run A's audit, revenue file and claims, and one rejected claim and
+    one claim waiting for an answer (a review flag: the checks ask about it, so Python does not enter it)."""
     db = t.FakeDB()
     db["audits"].docs.append({"id": AUDIT, "reporting_currency": "EUR", "fiscal_year_end": 12, "as_of_month": None,
                               "results": copy.deepcopy(engine_results())})
@@ -34,7 +34,8 @@ def starting_db():
     db[decks.CANDIDATES_COLLECTION].docs.append(
         {"audit_id": AUDIT, "id": "rejected", "status": "rejected", "claim_type": "revenue", "value": 1, "file": "testco_board.pptx"})
     db[decks.CANDIDATES_COLLECTION].docs.append(
-        {"audit_id": AUDIT, "id": "pending", "status": "pending", "claim_type": "revenue", "value": 1, "file": "testco_board.pptx"})
+        {"audit_id": AUDIT, "id": "pending", "status": "pending", "claim_type": "revenue", "value": 1, "file": "testco_board.pptx",
+         "flags": ["axis tick"]})
     return db
 
 
@@ -118,22 +119,26 @@ def test_a_segment_must_be_in_the_data_or_one_of_the_two_markers(register_api):
     assert _put(client, "c01", {"segment": "Public sector"}).status_code == 400
 
 
-def test_the_gate_is_the_analysts_threshold_budget_decision_and_date(register_api):
+def test_the_gate_is_written_from_the_claim_and_the_analysts_threshold_and_date_replace_it(register_api):
     client, _ = register_api
-    row = next(x for x in _get(client)["register"] if x["claim_id"] == "c01")
-    assert (row["gate_sentence"], row["gate_threshold"], row["gate_saved"]) == (None, None, False), "no proposed gate"
+    row = next(x for x in _get(client)["register"] if x["claim_id"] == "c05")           # ARR €240,000 for FY2023: Contradicted
+    assert (row["gate_status"], row["gate_threshold"], row["gate_saved"], row["gate_date"]) == ("proposed", 240000, False, "2023-12-31")
+    assert row["gate_sentence"].startswith("ARR must be at least €240,000 by 2023-12-31. Observed €198,143")
+    verified = next(x for x in _get(client)["register"] if x["claim_id"] == "c01")
+    assert (verified["gate_sentence"], verified["gate_status"]) == (None, None), "a Verified claim has no gate"
     body = {"gate_threshold": 195000, "gate_budget_decision": "the Series B hiring plan", "gate_date": "2024-06-30"}
-    r = _put(client, "c01", body)
+    r = _put(client, "c05", body)
     assert r.status_code == 200, r.text
-    row = next(x for x in r.json()["register"] if x["claim_id"] == "c01")
-    assert (row["gate_saved"], row["gate_threshold"], row["gate_date"]) == (True, 195000, "2024-06-30")
+    row = next(x for x in r.json()["register"] if x["claim_id"] == "c05")
+    assert (row["gate_saved"], row["gate_threshold"], row["gate_date"], row["gate_status"]) == (True, 195000, "2024-06-30", "set by the analyst")
     assert row["gate_sentence"].startswith("Before the Series B hiring plan, ARR must be at least €195,000 by 2024-06-30.")
-    half = _put(client, "c01", {"gate_budget_decision": None})
-    row = next(x for x in half.json()["register"] if x["claim_id"] == "c01")
-    assert (row["gate_saved"], row["gate_sentence"]) == (False, None)
-    cleared = _put(client, "c01", {"gate_threshold": None, "gate_date": None})
-    row = next(x for x in cleared.json()["register"] if x["claim_id"] == "c01")
-    assert (row["gate_threshold"], row["gate_date"], row["gate_saved"]) == (None, None, False), "the app proposes no date"
+    no_decision = _put(client, "c05", {"gate_budget_decision": None})
+    row = next(x for x in no_decision.json()["register"] if x["claim_id"] == "c05")
+    assert row["gate_saved"] is True and row["gate_sentence"].startswith("ARR must be at least €195,000 by 2024-06-30."), "the decision is optional"
+    cleared = _put(client, "c05", {"gate_threshold": None, "gate_date": None})
+    row = next(x for x in cleared.json()["register"] if x["claim_id"] == "c05")
+    assert (row["gate_threshold"], row["gate_date"], row["gate_saved"], row["gate_status"]) == (240000, "2023-12-31", False, "proposed"), \
+        "clearing the edit gives the proposal back"
 
 
 def test_a_gate_is_not_saved_without_its_date(register_api):

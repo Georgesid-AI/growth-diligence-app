@@ -10,7 +10,7 @@ import { RETRY_LABEL, RUN_LABEL, STAGES, STAGE_STATUS_TEXT, firstStageNotDone, i
 
 /**
  * Run audit, on the Upload & Mapping page (docs/specs/chat-upload.md section 24): one button, then the files attached in the
- * page's box are mapped, the metrics calculated and the deck claims read, in that order; the review screen opens when the run is
+ * page's box are mapped, the metrics calculated and the deck claims read, in that order; the Audit page opens when the run is
  * done or waits for the analyst. It is the only way to calculate: it carries on from the first stage that is not done, and the
  * engine counts as not done when a mapping was confirmed or corrected after the last calculation. Each stage shows its progress; one that fails says what to do and has a Retry stage button.
  * On load each stage shows what the audit already holds (stagesFromState).

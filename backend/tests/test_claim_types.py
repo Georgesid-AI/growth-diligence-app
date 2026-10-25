@@ -75,9 +75,9 @@ def test_plan_4_2_fifteen_months_typed_other_creates_no_task_and_is_not_in_the_r
          period_text=None, snippet="15 months")
     review = client.get(f"/api/audits/{AUDIT}/review").json()
     assert review["claims"]["open"] == 1, "only the fixture's own pending revenue claim is a task"
-    group = deck_claims.type_group(claim_type)
-    done = client.post(f"/api/audits/{AUDIT}/decks/candidates/approve-all", json={"group": group}).json()
-    assert (done["approved"], done["skipped"]) == (0, 0), "Approve all neither approves nor counts an Other figure"
+    assert client.get(f"/api/audits/{AUDIT}/verdict").json()["verdict"]["top5"]["in_force"], "fixture: the register is read"
+    assert next(c for c in client.get(f"/api/audits/{AUDIT}/decks").json()["candidates"] if c["id"] == "o1")["status"] == "pending", \
+        "Python never enters an Other figure on its own"
     assert client.put(f"/api/audits/{AUDIT}/decks/candidates/o1", json={"status": "approved"}).status_code == 400
     assert _row(client, "o1") is None, "never in the register"
     listed = next(c for c in client.get(f"/api/audits/{AUDIT}/decks").json()["candidates"] if c["id"] == "o1")

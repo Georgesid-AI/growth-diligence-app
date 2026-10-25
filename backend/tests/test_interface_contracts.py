@@ -203,7 +203,7 @@ def test_the_engine_rounds_counts_and_days_once_and_percents_are_fractions():
     assert isinstance(s["acv_path"]["required_net_new_per_year"], int)
     assert 0 < s["nrr"]["overall_pct"] < 10 and 0 <= s["win_rate"]["win_rate_pct"] <= 1
     assert all(0 <= v <= 10 for r in s["cohort_retention"]["data"] for v in r["values"].values())
-    assert s["contract_version"] == metrics.CONTRACT_VERSION == 8 and s["reporting_currency"] == "EUR"
+    assert s["contract_version"] == metrics.CONTRACT_VERSION == 9 and s["reporting_currency"] == "EUR"
 
 
 @pytest.mark.parametrize("model, value, expected", [
@@ -543,7 +543,7 @@ def test_the_integrity_smoothness_is_the_integrity_modules_own_with_no_second_ca
 # Contract 6: what a deck claim carries (chat-upload.md section 28; review of PR 164, H2)
 # ---------------------------------------------------------------------------
 def test_contract_6_names_the_deck_claim_fields_and_the_register_row_and_the_csv_carry_them():
-    assert metrics.CONTRACT_VERSION == 8 and metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags")
+    assert metrics.CONTRACT_VERSION == 9 and metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags")
     assert {"basis", "scenario"} <= set(cm.FIELDS), "the register row, the baseline CSV and the memo's Appendix A"
     assert "flags" not in cm.FIELDS, "flags ride the deck list, not the register"
     assert not set(metrics.DECK_CLAIM_FIELDS) & gateway.OUTBOUND_FIELDS, "server-only: none of the three reaches the gateway"
@@ -578,7 +578,7 @@ def api(monkeypatch):
 STALE = "Stale – re-run audit"
 
 
-@pytest.mark.parametrize("stored_version", [None, 1, 2, 3, 4])
+@pytest.mark.parametrize("stored_version", [None, 1, 2, 3, 4, 8])      # 8: the contract before the simplified flow (George, 2026-10-25)
 def test_results_of_an_older_contract_are_stale_not_recomputed_and_not_shown(api, stored_version):
     """Version 0 (no version) holds whole-number percents, 1 to 4 lack the fields added since: whichever it is, a read never calculates
     and never answers with the figures, and `/results` says "Stale – re-run audit" until Run audit calculates again."""
@@ -788,13 +788,13 @@ def test_a_memo_is_built_from_every_engine_run_the_contract_covers_with_no_false
             if cid.split("#")[0] == c["id"]:
                 c.setdefault("claim_inputs", {}).setdefault(cid, {}).update({
                     "gate_threshold": 5.0, "gate_budget_decision": "the plan", "gate_date": "2030-01-01", "gate_metric_name": "Pipeline",
-                    "gate_direction": "at least", "key_gate": True})
-    rows = cm.build_register(cands, stored, sets)
+                    "gate_direction": "at least"})
+    rows = vd.mark_key_gates(cm.build_register(cands, stored, sets), top)
     state = vd.top5_state(rows, {"claim_ids": top})
     text = ic_memo.build_memo(
         audit={"company_name": "TestCo", "target_arr": 1e6, "target_date": "2026-12-31", "as_of_month": stored["as_of_month"]},
-        results=stored, rows=rows, ver=vd.verdict(rows, stored, {"claim_ids": top}), key=vd.key_gates(rows),
-        gaps=vd.data_gaps(stored, rows, state["in_force"]), ic={"ratings": icm.RATINGS, "thesis": {"plan": "p", "evidence": "e", "condition": "c"}, "judgment": icm.JUDGMENT},
+        results=stored, rows=rows, ver=vd.verdict(rows, stored, {"claim_ids": top}), key=vd.key_gates(rows, top),
+        gaps=vd.data_gaps(stored, rows, state["in_force"]), ic={"thesis": {}, "note": "Checked against the engine run."},      # the thesis is the computed draft
         blockers=[], narratives=[], files=icm.FILES, decks=icm.DECKS, tables=tables, today="2026-10-08")
     assert ic_memo.word_count_of(text) <= 1500 and "## Appendix D" in text
 

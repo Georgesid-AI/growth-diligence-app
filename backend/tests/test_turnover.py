@@ -97,7 +97,7 @@ def test_deck_take_rate_mention_pre_selects_volume_and_the_row_still_asks():
 def test_the_analyst_answer_wins_over_the_file_and_over_the_deck():
     r = row("Turnover €190,000", inputs={"turnover_as": "volume", "turnover_reason": "deck_says_processed_volume"})
     assert (r["metric"], r["turnover_set_by"], r["turnover_reason"], r["evidence_label"]) == \
-        ("Transaction volume", "analyst", "deck_says_processed_volume", "Unsupported")
+        ("Transaction volume", "analyst", "deck_says_processed_volume", "Unverified")
     # a miss up to 50% of the claim is Contradicted (claim-matching.md section 4.1); FY2023 revenue is 187,701
     r = row("GMV €300,000", value=300000, inputs={"turnover_as": "revenue", "turnover_reason": "deck_says_gross_revenue"})
     assert (r["metric"], r["evidence_label"], r["turnover_set_by"]) == ("Revenue", "Contradicted", "analyst")
@@ -116,7 +116,7 @@ def test_an_audit_answer_is_reused_for_the_same_term_and_period_only():
 
 def test_volume_is_never_matched_to_engine_revenue_even_when_the_figures_agree():
     r = row("Turnover", value=187701, inputs={"turnover_as": "volume", "turnover_reason": "other"})
-    assert r["observed_value"] is None and r["evidence_label"] == "Unsupported" and r["gap"] is None
+    assert r["observed_value"] is None and r["evidence_label"] == "Unverified" and r["gap"] is None
 
 
 def test_implied_take_rate_is_revenue_over_volume_cited_to_both_sources_and_never_verified():
