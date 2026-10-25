@@ -73,8 +73,8 @@ def test_pricing_is_a_money_type_with_an_optional_period_and_no_engine_metric_to
     assert cm.UNTESTED_TYPES["pricing"].startswith("pricing:")
 
 
-def test_the_engine_contract_is_8():
-    assert metrics.CONTRACT_VERSION == 8
+def test_the_engine_contract_is_9():
+    assert metrics.CONTRACT_VERSION == 9
     assert metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags"), "contracts 7 and 8 change the metric list, not the claim fields"
 
 

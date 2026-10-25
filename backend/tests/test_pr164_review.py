@@ -1,9 +1,9 @@
 """Review of PR #164 and George's decisions of 2026-10-23: one failing test per High and Medium finding, written before the fix.
 
-H1 Run audit's auto-approve skips a flagged claim, as Approve all does
+H1 Python enters no flagged claim on its own: it waits for the analyst
 H2 basis and scenario go through the register, the CSV, the memo's Appendix A and contract 6; only scenario realistic / none are plan
    targets; best / worst are stored and listed under Scenarios, never matched, never top 5, no value at stake, left out of the deck
-   inconsistency pairs, skipped by Approve all
+   inconsistency pairs; they enter the register on their own (simplified-flow.md section 2)
 M1 the scenario label must stand on the same line or block as the figure
 M2 basis never changes an evidence label: a projection with a past period stays matched and is flagged "basis conflicts with period"
 M3/M4 are frontend tests (DeckPanel.test.jsx, Review.test.jsx)
@@ -27,7 +27,7 @@ import test_checker as tc  # noqa: E402
 import test_llm_gateway as t  # noqa: E402
 from claim_matching_support import engine_results, fixture  # noqa: E402
 from test_ic_memo import inputs  # noqa: E402
-from test_issue_155 import AUDIT, claim, prepared, register, stage, stored  # noqa: E402
+from test_claims_enter_on_their_own import AUDIT, claim, prepared, register, stage, stored  # noqa: E402
 from test_structure_reading import AUDIT as PAGE_AUDIT  # noqa: E402
 
 from app import claim_matching as cm  # noqa: E402
@@ -49,25 +49,22 @@ RUN_A = fixture()["runs"]["A"]
 # H1 Run audit never approves a flagged claim
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("flag", ["axis tick", "not a plan line", "scenario label not on page", "use-of-funds share", "matches analyst claim"])
-def test_h1_run_audit_leaves_a_flagged_claim_to_the_analyst_as_approve_all_does(run_api, flag):
+def test_h1_python_leaves_a_flagged_claim_to_the_analyst(run_api, flag):
     prepared(run_api, claim("plain"), claim("flagged", flags=[flag]))
     res = stage(run_api, "claims")
     got = stored(run_api)
     assert (got["plain"]["status"], got["plain"].get("auto_accepted")) == ("approved", True)
     assert (got["flagged"]["status"], got["flagged"].get("auto_accepted")) == ("pending", None)
-    assert res["accepted"] == 1 and res["open"] == 1
+    assert res["entered"] == 1 and res["open"] == 1
 
 
-def test_h1_the_rule_reads_the_flags_and_a_best_or_worst_case(run_api):
-    assert run_audit.never_on_its_own({"flags": ["axis tick"]}) is True
-    assert run_audit.never_on_its_own({"flags": []}) is False
-    assert run_audit.never_on_its_own({"scenario": "worst"}) and run_audit.never_on_its_own({"scenario": "best"})
-    assert not run_audit.never_on_its_own({"scenario": "realistic"}) and not run_audit.never_on_its_own({"scenario": "none"})
+def test_h1_a_best_or_worst_case_enters_like_any_claim_and_is_listed_unverified(run_api):
+    assert not run_audit.needs_a_word({"scenario": "worst"}) and not run_audit.needs_a_word({"scenario": "best"})
     prepared(run_api, claim("plain"), claim("best", **CASE), claim("worst", basis="scenario", scenario="worst"),
              claim("realistic", basis="scenario", scenario="realistic"))
     stage(run_api, "claims")
     got = stored(run_api)
-    assert [got[c]["status"] for c in ("plain", "best", "worst", "realistic")] == ["approved", "pending", "pending", "approved"]
+    assert [got[c]["status"] for c in ("plain", "best", "worst", "realistic")] == ["approved"] * 4
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +128,7 @@ def test_h2_the_memo_appendix_a_names_the_case_of_a_scenario_row():
 
 
 def test_h2_the_deck_list_groups_a_best_or_worst_case_under_scenarios_and_the_contract_names_the_fields(run_api):
-    assert metrics.CONTRACT_VERSION == 8
+    assert metrics.CONTRACT_VERSION == 9
     assert metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags")
     prepared(run_api, claim("best", **CASE), claim("plain", basis="projection", scenario="realistic"))
     listed = {c["id"]: c for c in run_api.get(f"/api/audits/{AUDIT}/decks").json()["candidates"]}
@@ -140,19 +137,16 @@ def test_h2_the_deck_list_groups_a_best_or_worst_case_under_scenarios_and_the_co
         assert set(metrics.DECK_CLAIM_FIELDS) <= set(c), "every listed claim names its basis, scenario and flags"
 
 
-def test_h2_approve_all_skips_a_best_or_worst_case(approve_api):
-    client, db = approve_api
-    url = "/api/audits/audit-all/decks/candidates/approve-all"
-    import test_approve_all as ta
+def test_h2_a_best_or_worst_case_is_entered_on_its_own_and_listed_under_scenarios(entry_api):
+    client, db = entry_api
+    import entry_support as es
     docs = db[decks.CANDIDATES_COLLECTION].docs
-    docs.append(ta.claim("s1", basis="scenario", scenario="best"))
-    docs.append(ta.claim("s2", basis="scenario", scenario="worst"))
-    docs.append(ta.claim("s3", basis="scenario", scenario="realistic"))
-    body = client.post(url, json={"group": deck_claims.SCENARIO_GROUP}).json()
-    assert body["approved"] == 0 and sorted(body["skipped_ids"]) == ["s1", "s2"], body
-    assert ta.status(db, "s1") == ta.status(db, "s2") == "pending"
-    body = client.post(url, json={"group": ta.REVENUE}).json()
-    assert "s3" in body["approved_ids"] and "s1" not in body["approved_ids"]
+    docs.append(es.claim("s1", basis="scenario", scenario="best"))
+    docs.append(es.claim("s2", basis="scenario", scenario="worst"))
+    docs.append(es.claim("s3", basis="scenario", scenario="realistic"))
+    rows = {r["claim_id"]: r for r in client.get(f"/api/audits/{es.AUDIT}/claims").json()["register"]}
+    assert {"s1", "s2", "s3"} <= set(rows) and rows["s1"]["evidence_label"] == rows["s2"]["evidence_label"] == "Unverified"
+    assert rows["s3"]["evidence_label"] != "Unverified" or rows["s3"]["reason"] != cm.SCENARIO_NOTE.format(case="realistic")
 
 
 def test_h2_the_flag_words_stay_closed():
@@ -224,7 +218,7 @@ def test_m2_a_projection_with_a_past_period_is_flagged_in_the_deck_list_and_left
     assert listed["plain"]["flags"] == [] and checker.BASIS_CONFLICT not in listed["fut"]["flags"], "a plan for a future period is no conflict"
     got = stored(run_api)
     assert got["proj"]["status"] == "pending", "a flagged claim is not approved on its own"
-    assert res["accepted"] >= 1 and got["plain"]["status"] == "approved"
+    assert res["entered"] >= 1 and got["plain"]["status"] == "approved"
 
 
 # ---------------------------------------------------------------------------

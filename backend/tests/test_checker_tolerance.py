@@ -203,9 +203,9 @@ def test_a_cell_corrected_claim_is_not_flagged_for_review_but_another_flag_still
     assert checker.review_flags([CORRECTED, SIGN]) == [SIGN] and checker.review_flags([CORRECTED]) == []
 
 
-def test_a_cell_corrected_claim_is_approved_in_bulk_and_by_run_audit():
+def test_a_cell_corrected_claim_enters_on_its_own_and_another_flag_waits_for_an_answer():
     from app import claim_matching
-    from app.run_audit import never_on_its_own
+    from app.run_audit import needs_a_word
     assert claim_matching.review_flags_of({"flags": [CORRECTED]}, None) == []
-    assert never_on_its_own({"flags": [CORRECTED]}) is False
-    assert never_on_its_own({"flags": [CORRECTED, SIGN]}) is True
+    assert needs_a_word({"flags": [CORRECTED]}) is False
+    assert needs_a_word({"flags": [CORRECTED, SIGN]}) is True

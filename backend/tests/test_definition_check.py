@@ -71,7 +71,8 @@ def test_claimed_1_observed_26_asks_then_yes_is_a_verified_beat_worth_flagging_a
                                  "Same metric and period confirmed by the analyst.")
     no = customers(1, 26, "no")
     assert state(no) == ("Unverified", "no", "beat") and no["reason"] == "definition mismatch"
-    assert no["gate_needed"] is True and vd.flagged_rows([no]) == [], "a No needs a gate as any Unverified claim, and is not flagged"
+    assert no["gate_needed"] is False and no["gate_status"] == "proposed" and vd.flagged_rows([no]) == [], \
+        "a No has a gate written from the claim as any Unverified claim, and is not flagged"
     assert yes["definition_question"] == no["definition_question"] == asked["definition_question"], "the answered row keeps its question"
 
 
@@ -203,7 +204,7 @@ def test_the_deck_list_views_hold_the_question_for_a_pending_claim_and_nothing_b
 
 # --- the endpoint and the answer's life: PUT /claims/{id}/definition-check, cleared by a re-type or a re-match -------------------
 
-from test_approve_all import AUDIT, claim  # noqa: E402
+from entry_support import AUDIT, claim  # noqa: E402
 from app import decks  # noqa: E402
 
 ANSWER = f"/api/audits/{AUDIT}/claims/{{}}/definition-check"
@@ -217,8 +218,8 @@ def _inputs(db, cid):
     return next(c for c in db[decks.CANDIDATES_COLLECTION].docs if c["id"] == cid).get("claim_inputs") or {}
 
 
-def test_the_answer_is_stored_on_the_claims_inputs_can_be_changed_and_is_refused_where_no_check_is_asked(approve_api):
-    client, db = approve_api
+def test_the_answer_is_stored_on_the_claims_inputs_can_be_changed_and_is_refused_where_no_check_is_asked(entry_api):
+    client, db = entry_api
     db[decks.CANDIDATES_COLLECTION].docs.append(claim("b1", status="approved", value=1000, snippet="Revenue EUR 1,000"))
     assert _row(client, "b1")["definition_check"] == "ask"
     r = client.put(ANSWER.format("b1"), json={"answer": "no"})
@@ -237,8 +238,8 @@ def test_the_answer_is_stored_on_the_claims_inputs_can_be_changed_and_is_refused
     assert client.put(ANSWER.format("b1"), json={"answer": "yes"}).status_code == 409, "no figure before a Calculate"
 
 
-def test_a_re_match_or_a_re_type_clears_the_answer_so_the_question_is_asked_again(approve_api):
-    client, db = approve_api
+def test_a_re_match_or_a_re_type_clears_the_answer_so_the_question_is_asked_again(entry_api):
+    client, db = entry_api
     db[decks.CANDIDATES_COLLECTION].docs.append(claim("b1", status="approved", value=1000, snippet="Revenue EUR 1,000"))
     assert client.put(ANSWER.format("b1"), json={"answer": "no"}).status_code == 200
     rematched = client.put(f"/api/audits/{AUDIT}/claims/b1", json={"segment": "Whole company"})
@@ -254,8 +255,8 @@ def test_a_re_match_or_a_re_type_clears_the_answer_so_the_question_is_asked_agai
     assert _inputs(db, "b1") == {"b1": {"segment": "Whole company", **gate}}, "every other input stays"
 
 
-def test_a_metric_change_clears_the_answer_so_the_question_is_asked_again(approve_api):
-    client, db = approve_api
+def test_a_metric_change_clears_the_answer_so_the_question_is_asked_again(entry_api):
+    client, db = entry_api
     db[decks.CANDIDATES_COLLECTION].docs.append(claim("b1", status="approved", value=1000, snippet="Revenue EUR 1,000"))
     assert client.put(ANSWER.format("b1"), json={"answer": "no"}).status_code == 200
     assert "definition_check" in _inputs(db, "b1")["b1"], "fixture: the answer is stored"
@@ -264,8 +265,8 @@ def test_a_metric_change_clears_the_answer_so_the_question_is_asked_again(approv
     assert _inputs(db, "b1")["b1"] == {"metric": "ARR"}, "the answer and its figures are gone, the metric stays"
 
 
-def test_a_revenue_or_volume_answer_clears_the_answer_so_the_question_is_asked_again(approve_api):
-    client, db = approve_api
+def test_a_revenue_or_volume_answer_clears_the_answer_so_the_question_is_asked_again(entry_api):
+    client, db = entry_api
     db[decks.CANDIDATES_COLLECTION].docs.append(claim("g1", status="approved", snippet="GMV EUR 900,000", value=900000))
     db[decks.CANDIDATES_COLLECTION].docs[-1]["claim_inputs"] = {"g1": {"definition_check": "yes", "definition_basis": {"observed": 1.0}}}
     answered = client.put(f"/api/audits/{AUDIT}/claims/g1/turnover", json={"as": "revenue", "reason": "file_confirms"})
@@ -274,12 +275,12 @@ def test_a_revenue_or_volume_answer_clears_the_answer_so_the_question_is_asked_a
     assert next(r for r in answered.json()["register"] if r["claim_id"] == "g1")["definition_check"] == "ask"
 
 
-def test_the_baseline_csv_exports_a_row_with_an_open_check_with_its_label_blank(approve_api):
+def test_the_baseline_csv_exports_a_row_with_an_open_check_with_its_label_blank(entry_api):
     """claim-matching.md section 4.1: the CSV is not held back while a check is open; the row is kept honest by an empty
     `evidence_label` and `definition_check` ask."""
     import csv
     import io
-    client, db = approve_api
+    client, db = entry_api
     db[decks.CANDIDATES_COLLECTION].docs.append(claim("b1", status="approved", value=1000, snippet="Revenue EUR 1,000"))
     r = client.get(f"/api/audits/{AUDIT}/claims.csv")
     assert r.status_code == 200, r.text

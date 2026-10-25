@@ -1,4 +1,4 @@
-"""Gates, data gaps, the analyst's top 5 and the verdict (docs/specs/verdict-and-memo.md sections 3, 4, 6 and 10).
+"""The top 5 the app selects, the always-computed verdict, the key gates and the data gaps (docs/design/simplified-flow.md, verdict-and-memo.md).
 
 Pure rows for the rule; the register endpoints (in-memory Mongo stub, no network) for the analyst's inputs. Each test was shown
 failing on a deliberate violation (CLAUDE.md rule 11): the violations are listed in the session log.
@@ -35,8 +35,8 @@ def gated(rows):
     return [{**r, "gate_saved": True, "gate_needed": False} for r in rows]
 
 
-def verdict_of(labels, gates=(), stored="all"):
-    rows = [row(i + 1, label, gate=(i + 1) in gates) for i, label in enumerate(labels)]
+def verdict_of(labels, gates=(), stored="all", **extra):
+    rows = [row(i + 1, label, gate=(i + 1) in gates, **extra) for i, label in enumerate(labels)]
     ids = [r["claim_id"] for r in rows[:5]]
     return vd.verdict(rows, {"reporting_currency": "EUR"}, {"claim_ids": ids} if stored == "all" else stored), rows
 
@@ -106,30 +106,30 @@ def test_with_fewer_than_five_rows_the_top_5_is_every_row_and_the_rule_says_so()
 
 
 def test_no_rows_and_no_results_give_no_verdict():
-    assert vd.verdict([], {"reporting_currency": "EUR"}, None)["message"] == "No conclusion: the register has no claims."
+    assert vd.verdict([], {"reporting_currency": "EUR"}, None)["message"] == "No testable claims found. Upload a deck or plan with revenue targets."
     assert vd.verdict([row(1, "Verified")], None, None)["message"] == "No conclusion: compute the audit first."
     assert vd.verdict([], {"reporting_currency": "EUR"}, None)["status"] == "no_verdict"
 
 
 def test_the_three_reasons_are_the_claims_that_made_the_rule_fire_each_citing_its_evidence():
-    rows = gated(register(RUNS["A"]))
-    v = vd.verdict(rows, results_for(RUNS["A"]), {"claim_ids": vd.proposal(rows)})
+    rows = register(RUNS["A"])
+    v = vd.verdict(rows, results_for(RUNS["A"]), None)
     assert v["outcome"] == "Selected claims not supported" and len(v["reasons"]) == 3
-    assert v["reasons"][0] == ("#2 ARR, FY2023: Contradicted, €198,143 against €240,000 (€41,857 lower (miss)). "
-                               "Evidence: Monthly MRR by Segment (mrr_series.data.total, CSV, rows 2–71 (70 rows), Dec 2023).")
+    assert v["reasons"][0] == ("#1 Revenue, Q4 2023: Contradicted, €49,047 against €60,000 (€10,953 lower (miss)). "
+                               "Evidence: Revenue by month (revenue_series.data.total, CSV, rows 2–71 (70 rows), Oct–Dec 2023).")
     unsupported = [row(1, "Unsupported", gate=True), *[row(i, "Verified") for i in range(2, 6)]]
     again = vd.verdict(unsupported, {"reporting_currency": "EUR"}, {"claim_ids": [r["claim_id"] for r in unsupported]})
     assert again["reasons"][0] == "#1 ARR, Feb 2024: Unsupported, reason 1. No figure in the supplied files."
 
 
-@pytest.mark.parametrize("run, expected", [("A", ("ok", "Selected claims not supported")), ("C", ("ok", "Selected claims not supported")),
-                                           ("D", ("ok", "Selected claims not supported"))])
-def test_the_fixture_runs_measure_as_the_spec_says_with_the_proposed_top_5_confirmed(run, expected):
-    rows = _run_d("yes") if run == "D" else register(RUNS[run])       # D: c37's Definition check answered, so only the gates block
-    ids = {"claim_ids": vd.proposal(rows)}
-    assert vd.verdict(rows, results_for(RUNS[run]), ids)["status"] == "blocked", "no gate saved yet"
-    v = vd.verdict(gated(rows), results_for(RUNS[run]), ids)
+@pytest.mark.parametrize("run, expected", [("A", ("ok", "Selected claims not supported")), ("B", ("ok", "Selected claims partly supported")),
+                                           ("C", ("ok", "Selected claims not supported")), ("D", ("ok", "Selected claims not supported"))])
+def test_the_fixture_runs_give_their_outcome_at_once_with_no_confirmation_and_no_gate(run, expected):
+    """simplified-flow.md: the verdict is always computed from the five the app selects; nothing is confirmed, nothing blocks."""
+    rows = register(RUNS[run])
+    v = vd.verdict(rows, results_for(RUNS[run]), None)
     assert (v["status"], v["outcome"]) == expected
+    assert [f["claim_id"] for f in v["five"]] == vd.proposal(rows) and v["top5"]["changed"] is False
 
 
 def _run_d(answer=None):
@@ -142,68 +142,74 @@ def _run_d(answer=None):
     return cm.build_register(cands, results_for(run), settings(run))
 
 
-def test_an_open_definition_check_blocks_the_verdict_wherever_it_ranks_until_it_is_answered():
-    """claim-matching.md section 4.1: a gap beyond 50% has no label until the analyst answers; it blocks the verdict even with
-    every gate saved, it is in no count by label, and the answer gives the label the normal rule gives."""
+def test_an_open_definition_check_counts_as_untested_and_is_a_count_on_the_rule_line_never_a_block():
+    """claim-matching.md section 4.1 as amended: a gap beyond 50% has no label until the analyst answers; the row counts as untested and
+    the explanation line adds "1 question open."; the outcome is never blocked (simplified-flow.md decision 4)."""
     rows = _run_d()
     c37 = row_of(rows, "c37")
     assert (c37["evidence_label"], c37["definition_check"], c37["rank"], c37["gate_needed"]) == (None, "ask", 1, False)
     assert c37["definition_question"] == "Observed €0, claimed €5,000. Same metric and period?"
-    ids = {"claim_ids": ["c37", *[i for i in vd.proposal(rows) if i != "c37"][:4]]}      # a small claim: the proposal does not reach it
-    v = vd.verdict(gated(rows), results_for(RUNS["D"]), ids)
-    assert (v["status"], v["outcome"], v["blocked"]) == ("blocked", None, ["c37"])
-    assert v["message"] == "Conclusion blocked: answer the definition check on #1."
+    ids = {"claim_ids": ["c37", *[i for i in vd.proposal(rows) if i != "c37"][:4]]}
+    v = vd.verdict(rows, results_for(RUNS["D"]), ids, open_questions=1)
+    assert v["status"] == "ok" and v["outcome"] == "Selected claims not supported"
+    assert v["rule"] == "1 selected claim is Contradicted. 1 question open."
     assert next(f for f in v["five"] if f["claim_id"] == "c37")["definition_check"] == "ask"
     assert sum(cm.label_counts(rows).values()) == len(rows) - 1, "the open check is in no count by label"
-    # outside the top 5 it blocks too: the analyst's five leave c37 out
-    others = {"claim_ids": [r["claim_id"] for r in vd.sortable(rows) if r["claim_id"] != "c37"][:5]}
-    assert vd.verdict(gated(rows), results_for(RUNS["D"]), others)["blocked"] == ["c37"]
-    # a gate on a top-5 row still needed is named after the definition check
-    both = vd.verdict(rows, results_for(RUNS["D"]), ids)["message"]
-    assert both.startswith("Conclusion blocked: answer the definition check on #1. Conclusion blocked: set a gate on #2"), both
+    only = [row(1, None, definition_check="ask"), *[row(i, "Verified") for i in range(2, 6)]]
+    held = vd.verdict(only, {"reporting_currency": "EUR"}, None, open_questions=2)
+    assert (held["outcome"], held["rule"]) == ("Selected claims partly supported",
+                                               "No selected claim is Contradicted; 4 of 5 are Verified, 1 untested. 2 questions open.")
+    assert "Definition check open" in held["reasons"][0], "a row with no label reads as its status, never as None"
+    quiet = vd.verdict(only, {"reporting_currency": "EUR"}, None)
+    assert "question" not in quiet["rule"], "the count is added only when a question is open"
     yes = _run_d("yes")
     assert (row_of(yes, "c37")["evidence_label"], row_of(yes, "c37")["definition_check"]) == ("Contradicted", "yes")
-    assert (vd.verdict(gated(yes), results_for(RUNS["D"]), ids)["outcome"]) == "Selected claims not supported"
     no = _run_d("no")
     assert (row_of(no, "c37")["evidence_label"], row_of(no, "c37")["reason"], row_of(no, "c37")["gate_needed"]) == \
-        ("Unverified", "definition mismatch", True)
-    assert vd.verdict(no, results_for(RUNS["D"]), ids)["status"] == "blocked", "a No needs a gate as any Unverified claim"
-    assert vd.verdict(gated(no), results_for(RUNS["D"]), ids)["status"] == "ok"
+        ("Unverified", "definition mismatch", False)
+    assert row_of(no, "c37")["gate_status"] == "proposed", "a No needs a gate as any Unverified claim, written from the claim"
 
 
-def test_run_b_is_one_unverified_claim_blocked_until_its_gate_is_saved():
-    rows = register(RUNS["B"])
-    assert [(r["evidence_label"]) for r in rows if r["rank"] == 1] == ["Unverified"]
-    single = [r for r in rows if r["rank"] == 1]
-    state = {"claim_ids": vd.proposal(rows)}
-    blocked = vd.verdict(rows, results_for(RUNS["B"]), state)
-    assert blocked["status"] == "blocked" and blocked["outcome"] is None
-    gated = [{**r, "gate_saved": True, "gate_needed": False} if r["rank"] == 1 else r for r in rows]
-    assert vd.verdict(gated, results_for(RUNS["B"]), state)["outcome"] == "Selected claims partly supported"
-    assert single
+# --- the top 5 the app selects -----------------------------------------------------------------------------------------------
 
-
-# --- section 6.1: the top 5 --------------------------------------------------------------------------------------------------
-
-def test_no_verdict_before_the_top_5_is_confirmed_and_the_proposal_is_the_rule_of_2026_10_24():
+def test_the_five_are_in_force_without_a_confirmation_and_follow_the_selection_rule():
     rows = register(RUNS["A"])
     v = vd.verdict(rows, results_for(RUNS["A"]), None)
-    assert (v["status"], v["outcome"], v["message"]) == ("unconfirmed", None, "No conclusion until the top 5 is confirmed.")
-    assert v["top5"]["proposed"] == vd.proposal(rows) and not v["top5"]["confirmed"]
-    assert v["top5"]["proposed"] == ["c09", "c29", "c05", "c24", "c23"], "plan claims by claim value: no Target ARR is set on the fixture"
+    assert v["status"] == "ok" and v["top5"]["proposed"] == vd.proposal(rows) == v["top5"]["in_force"]
+    assert v["top5"]["changed"] is False and "confirmed" not in v["top5"]
+    assert v["top5"]["proposed"] == ["c28", "c05", "c32", "c24", "c07"], "plan claims first, by normalised shortfall: no Target ARR on the fixture"
 
 
-def test_a_replaced_row_counts_and_the_replaced_one_does_not():
-    rows = gated(register(RUNS["A"]))
-    ids = vd.proposal(rows)
-    contradicted = [i for i in ids if row_of(rows, i)["evidence_label"] == "Contradicted"]
-    assert len(contradicted) == 2, "fixture: two of the proposed five are Contradicted"
-    verified = next(r for r in rows if r["evidence_label"] == "Verified" and r["claim_id"] not in ids)
-    replaced = [verified["claim_id"] if i == contradicted[0] else i for i in ids]
-    v = vd.verdict(rows, results_for(RUNS["A"]), {"claim_ids": replaced})
-    assert [f["claim_id"] for f in v["five"]] == sorted(replaced, key=lambda i: row_of(rows, i)["rank"])
-    assert contradicted[0] not in [f["claim_id"] for f in v["five"]] and verified["claim_id"] in [f["claim_id"] for f in v["five"]]
-    assert v["rule"] == "1 selected claim is Contradicted.", "the replaced Contradicted row no longer counts"
+def _sel(rank, label, vas=None, shortfall=None, claim_type="revenue", value=100.0):
+    return row(rank, label, value_at_stake_arr=vas, shortfall=shortfall, claim_type=claim_type, claimed_value=value)
+
+
+def test_the_selection_ranks_by_value_at_stake_then_shortfall_with_contradicted_above_unverified():
+    """simplified-flow.md decision 11: VaS first, then the normalised shortfall; a Contradicted row outranks a larger-VaS Unverified row."""
+    rows = [_sel(1, "Unverified", vas=900), _sel(2, "Verified", vas=800), _sel(3, "Contradicted", vas=100, shortfall=0.2),
+            _sel(4, "Unverified", vas=700), _sel(5, "Unverified", vas=600), _sel(6, "Contradicted", vas=50, shortfall=0.1),
+            _sel(7, "Unverified", vas=500)]
+    assert vd.proposal(rows) == ["r3", "r6", "r1", "r2", "r4"], "Contradicted first, each group by VaS"
+    ties = [_sel(1, "Unverified", vas=100, shortfall=None), _sel(2, "Contradicted", vas=100, shortfall=0.1),
+            _sel(3, "Contradicted", vas=100, shortfall=0.3), _sel(4, "Unverified", vas=None), _sel(5, "Unverified", vas=100),
+            _sel(6, "Unverified", vas=100)]
+    assert vd.proposal(ties) == ["r3", "r2", "r1", "r5", "r6"], "same VaS: the larger shortfall first; a row with no VaS after those with one"
+    assert vd.proposal([_sel(1, "Unverified", vas=5), _sel(2, "Unverified", vas=None, claim_type="cac_payback"),
+                        _sel(3, "Unverified", vas=9, claim_type="cac_payback")]) == ["r1", "r3", "r2"], "a plan claim before any other"
+
+
+def test_a_stored_set_the_analyst_changed_stays_in_force_and_one_equal_to_the_selection_is_the_selection():
+    rows = register(RUNS["A"])
+    selection = vd.proposal(rows)
+    verified = next(r for r in rows if r["evidence_label"] == "Verified" and r["claim_id"] not in selection)
+    swapped = [verified["claim_id"], *selection[1:]]
+    state = vd.top5_state(rows, {"claim_ids": swapped, "set_at": "2026-10-25"})
+    assert (state["changed"], state["set_at"]) == (True, "2026-10-25")
+    assert set(state["in_force"]) == set(swapped) and state["proposed"] == selection
+    same = vd.top5_state(rows, {"claim_ids": list(reversed(selection))})
+    assert (same["changed"], same["in_force"]) == (False, selection)
+    v = vd.verdict(rows, results_for(RUNS["A"]), {"claim_ids": swapped})
+    assert v["rule"] == "4 selected claims are Contradicted." and swapped[0] in [f["claim_id"] for f in v["five"]]
 
 
 @pytest.mark.parametrize("size", [0, 4, 6])
@@ -219,36 +225,33 @@ def test_a_set_of_the_wrong_size_or_with_a_claim_twice_or_unknown_is_refused(siz
     vd.check_top5(rows[:3], [r["claim_id"] for r in rows[:3]])
 
 
-def test_a_confirmed_claim_leaving_the_register_voids_the_set_and_a_new_rank_order_does_not():
+def test_a_changed_claim_leaving_the_register_drops_the_change_and_the_selection_is_in_force_again():
     rows = register(RUNS["A"])
-    stored = {"claim_ids": vd.proposal(rows)}
-    assert vd.top5_state(rows, stored)["confirmed"]
-    left = [r for r in rows if r["claim_id"] != stored["claim_ids"][2]]
+    verified = next(r for r in rows if r["evidence_label"] == "Verified")
+    stored = {"claim_ids": [verified["claim_id"], *vd.proposal(rows)[1:]]}
+    assert vd.top5_state(rows, stored)["changed"]
+    left = [r for r in rows if r["claim_id"] != verified["claim_id"]]
     state = vd.top5_state(left, stored)
-    assert (state["confirmed"], state["void"]) == (False, True)
+    assert (state["changed"], state["in_force"]) == (False, vd.proposal(left))
     v = vd.verdict(left, results_for(RUNS["A"]), stored)
-    assert (v["status"], v["message"]) == ("void", "A claim of the confirmed top 5 left the register – confirm the top 5 again.")
+    assert v["status"] == "ok" and v["top5"]["changed"] is False, "no void state exists"
     shuffled = sorted(({**r, "rank": len(rows) + 1 - r["rank"]} for r in rows), key=lambda r: r["rank"])
-    assert [r["claim_id"] for r in shuffled[:5]] != [r["claim_id"] for r in rows[:5]], "fixture: the rows are in another order"
-    assert vd.top5_state(shuffled, stored)["confirmed"], "a new rank order alone does not void the set"
+    assert vd.top5_state(shuffled, stored)["changed"], "a new rank order alone does not drop the change"
 
 
-def test_the_banner_keeps_rows_1_to_5_of_the_pre_sort_after_the_analyst_replaces_a_row():
+def test_the_banner_reads_the_five_the_app_selects():
     rows = register(RUNS["A"])
     assert vd.banner_ids(rows) == vd.proposal(rows)
 
 
-# --- section 6.3: blocked --------------------------------------------------------------------------------------------------------
+# --- the verdict is never blocked -----------------------------------------------------------------------------------------------
 
-def test_a_non_verified_top_5_claim_without_a_gate_blocks_and_saving_its_gate_unblocks():
-    v, rows = verdict_of(["Verified", "Unverified", "Verified", "Verified", "Verified"])
-    assert v["status"] == "blocked" and v["outcome"] is None and v["blocked"] == ["r2"]
-    assert v["message"] == "Conclusion blocked: set a gate on #2 (top-5 claims that are not Verified)."
-    again, _ = verdict_of(["Verified", "Unverified", "Verified", "Verified", "Verified"], gates={2})
-    assert again["status"] == "ok" and again["outcome"] == "Selected claims partly supported"
+def test_a_non_verified_top_5_claim_without_an_analyst_gate_does_not_block():
+    v, _ = verdict_of(["Verified", "Unverified", "Verified", "Verified", "Verified"])
+    assert v["status"] == "ok" and v["outcome"] == "Selected claims partly supported" and "blocked" not in v
 
 
-def test_a_verified_top_5_claim_without_a_gate_does_not_block():
+def test_a_verified_top_5_claim_does_not_block():
     v, _ = verdict_of(["Verified"] * 5)
     assert v["status"] == "ok"
 
@@ -266,22 +269,26 @@ def run_row(claim, inputs=None, **extra):
 GATE = {"gate_threshold": 150000.0, "gate_budget_decision": "the Series B hiring plan", "gate_date": "2024-06-30"}
 
 
-def test_the_gate_date_starts_empty_and_the_gate_is_not_saved_without_it():
-    assert run_row({})["gate_date"] is None
-    r = run_row({}, {k: v for k, v in GATE.items() if k != "gate_date"})
-    assert (r["gate_saved"], r["gate_sentence"]) == (False, None)
-    assert run_row({}, GATE)["gate_saved"] is True
+def test_the_gate_is_written_from_the_claim_and_the_analysts_edit_needs_threshold_and_date():
+    proposed = run_row({"value": 240000})
+    assert (proposed["gate_date"], proposed["gate_threshold"], proposed["gate_status"], proposed["gate_saved"]) == \
+        ("2024-02-29", 240000, "proposed", False)
+    r = run_row({"value": 240000}, {k: v for k, v in GATE.items() if k != "gate_date"})
+    assert (r["gate_saved"], r["gate_status"], r["gate_date"]) == (False, "proposed", "2024-02-29"), "half an edit is the proposal"
+    edited = run_row({"value": 240000}, GATE)
+    assert (edited["gate_saved"], edited["gate_status"], edited["gate_date"]) == (True, "set by the analyst", "2024-06-30")
+    assert vd.gate_text(proposed).endswith("(proposed)") and vd.gate_text(edited).endswith("(set by the analyst)")
 
 
-def test_every_row_that_is_not_verified_needs_a_gate_until_it_is_saved():
+def test_every_row_that_is_not_verified_has_a_gate_and_none_is_ever_needed_or_blocking():
     contradicted = run_row({"value": 240000})
-    assert (contradicted["evidence_label"], contradicted["gate_needed"]) == ("Contradicted", True)
+    assert (contradicted["evidence_label"], contradicted["gate_needed"], contradicted["gate_status"]) == ("Contradicted", False, "proposed")
     assert run_row({"value": 240000}, GATE)["gate_needed"] is False
     verified = run_row({})
-    assert (verified["evidence_label"], verified["gate_needed"]) == ("Verified", False)
-    assert run_row({}, GATE)["gate_saved"] is True, "a Verified row may carry a gate"
-    unsupported = run_row({"claim_type": "market", "snippet": "TAM"})
-    assert (unsupported["evidence_label"], unsupported["gate_needed"]) == ("Unsupported", True)
+    assert (verified["evidence_label"], verified["gate_needed"], verified["gate_sentence"]) == ("Verified", False, None)
+    unverified = run_row({"claim_type": "market", "snippet": "TAM"})
+    assert (unverified["evidence_label"], unverified["gate_needed"], unverified["gate_status"]) == ("Unverified", False, "proposed")
+    assert unverified["gate_metric_name"], "a row with no app metric is named by its claim"
 
 
 def test_a_row_with_no_observed_figure_gets_the_sentence_of_w6():
@@ -292,14 +299,14 @@ def test_a_row_with_no_observed_figure_gets_the_sentence_of_w6():
                                   "Not yet observed: no metric; claimed €2,000,000,000 (Feb 2024).")
 
 
-def test_a_no_metric_row_needs_the_metric_name_and_the_direction():
+def test_a_no_metric_row_edit_needs_the_metric_name_and_the_direction():
     market = {"claim_type": "market", "snippet": "TAM"}
     assert run_row(market, GATE)["gate_saved"] is False, "no name, no direction"
     assert run_row(market, {**GATE, "gate_metric_name": "Pipeline coverage"})["gate_saved"] is False, "no direction"
     assert run_row(market, {**GATE, "gate_direction": "at most"})["gate_saved"] is False, "no name"
     full = run_row(market, {**GATE, "gate_metric_name": "Pipeline coverage", "gate_direction": "at most"})
     assert full["gate_saved"] is True and "must be at most" in full["gate_sentence"]
-    assert run_row({}, {**GATE})["gate_saved"] is True, "an app metric needs neither"
+    assert run_row({"value": 240000}, {**GATE})["gate_saved"] is True, "an app metric needs neither"
 
 
 def test_an_untested_row_with_an_app_metric_gets_w6_with_the_apps_metric_and_direction():
@@ -309,52 +316,28 @@ def test_an_untested_row_with_an_app_metric_gets_w6_with_the_apps_metric_and_dir
                                   "Not yet observed: FX rate needed: USD→EUR; claimed $210,000 (Feb 2024).")
 
 
-def test_with_fewer_than_three_saved_gates_every_saved_gate_is_key_and_the_note_says_so():
-    rows = [row(i, "Verified", gate=i <= 2) for i in range(1, 5)]
-    key = vd.key_gates(rows)
-    assert (key["all_key"], key["ok"], len(key["gates"]), key["note"]) == (True, True, 2, "2 gates set; all are key gates.")
-    none = vd.key_gates([row(1, "Verified")])
-    assert (none["ok"], none["note"]) == (True, "No key gates marked.")
+def _gated(rank, label, text=None):
+    return row(rank, label, gate_sentence=text if text is not None else f"gate {rank}" if label != "Verified" else None,
+               gate_status="proposed" if label != "Verified" else None)
 
 
-def test_with_three_or_more_saved_gates_the_memo_needs_three_to_five_marked():
-    rows = [row(i, "Verified", gate=True, key_gate=i <= 2) for i in range(1, 6)]
-    key = vd.key_gates(rows)
-    assert (key["all_key"], key["ok"]) == (False, False) and len(key["gates"]) == 2
-    rows = [row(i, "Verified", gate=True, key_gate=i <= 3) for i in range(1, 6)]
-    assert vd.key_gates(rows)["ok"] is True
-    assert vd.key_gates([row(i, "Verified", gate=True) for i in range(1, 6)])["note"] == "No key gates marked."
+def test_key_gates_are_the_gates_of_the_non_verified_top_5_rows_and_never_padded():
+    rows = [_gated(1, "Contradicted"), _gated(2, "Verified"), _gated(3, "Unverified"), _gated(4, "Verified"), _gated(5, "Verified"),
+            _gated(6, "Unverified"), _gated(7, "Unverified")]
+    key = vd.key_gates(rows, [f"r{i}" for i in range(1, 6)])
+    assert [g["rank"] for g in key["gates"]] == [1, 3], "a Verified row has none; a gate outside the five is not promoted"
+    assert (key["saved"], key["ok"], key["note"]) == (2, True, "2 gates set; all are key gates.")
+    assert vd.key_gates([_gated(i, "Verified") for i in range(1, 6)], [f"r{i}" for i in range(1, 6)])["note"] == \
+        "No key gates: every selected claim is Verified."
+    five = vd.key_gates([_gated(i, "Unverified") for i in range(1, 8)], [f"r{i}" for i in range(1, 6)])
+    assert (len(five["gates"]), five["note"], five["all_key"]) == (5, None, False), "five gates at most, the five's own"
+    assert [r["key_gate"] for r in vd.mark_key_gates(rows, [f"r{i}" for i in range(1, 6)])] == [True, False, True, False, False, False, False]
 
 
-def _gate_all(client, ids):
-    for claim_id in ids:
-        assert _put(client, claim_id, {**{k: v for k, v in GATE.items()}}).status_code == 200
-
-
-def test_a_sixth_key_gate_is_refused_and_so_is_a_key_gate_on_an_unsaved_gate(register_api):
-    client, db = register_api
-    rows = _get(client)["register"]
-    ids = [r["claim_id"] for r in rows[:6]]
-    _gate_all(client, ids)
-    for claim_id in ids[:5]:
-        assert _put(client, claim_id, {"key_gate": True}).status_code == 200
-    sixth = _put(client, ids[5], {"key_gate": True})
-    assert sixth.status_code == 400 and sixth.json()["detail"] == "At most 5 key gates."
-    stored = next(c for c in db[decks.CANDIDATES_COLLECTION].docs if c["id"] == ids[5].split("#")[0])
-    assert not (stored.get("claim_inputs") or {}).get(ids[5], {}).get("key_gate"), "nothing was written"
-    unsaved = _put(client, rows[8]["claim_id"], {"key_gate": True})
-    assert unsaved.status_code == 400
-    assert _put(client, ids[0], {"key_gate": False}).status_code == 200
-    assert _put(client, ids[5], {"key_gate": True}).status_code == 200, "a mark freed is a mark available"
-
-
-def test_a_key_mark_counts_only_while_its_gate_is_saved(register_api):
-    client, _ = register_api
-    rows = _get(client)["register"]
-    _gate_all(client, [rows[0]["claim_id"]])
-    _put(client, rows[0]["claim_id"], {"key_gate": True})
-    cleared = _put(client, rows[0]["claim_id"], {"gate_threshold": None}).json()["register"]
-    assert next(r for r in cleared if r["claim_id"] == rows[0]["claim_id"])["key_gate"] is False
+def test_a_gate_the_analyst_edited_keeps_its_place_and_reads_set_by_the_analyst():
+    edited = row(1, "Unverified", gate_sentence="Before the plan, ARR must be at least 5.", gate_status="set by the analyst")
+    key = vd.key_gates([edited], ["r1"])
+    assert vd.gate_text(key["gates"][0]) == "Before the plan, ARR must be at least 5. (set by the analyst)"
 
 
 # --- the analyst's top 5 through the API -----------------------------------------------------------------------------------------
@@ -369,39 +352,50 @@ def _inputs(client, body):
     return client.put(f"/api/audits/{AUDIT}/ic-inputs", json=body)
 
 
-def test_the_verdict_endpoint_proposes_the_five_and_gives_no_outcome_until_confirmed(register_api):
+def test_the_verdict_endpoint_gives_the_outcome_at_once_from_the_five_the_app_selects(register_api):
     client, _ = register_api
     body = _verdict(client)
     register = _get(client)["register"]
-    assert body["verdict"]["status"] == "unconfirmed" and body["verdict"]["outcome"] is None
-    assert body["verdict"]["top5"]["proposed"] == vd.proposal(register)
+    assert body["verdict"]["status"] == "ok" and body["verdict"]["outcome"] is not None
+    assert body["verdict"]["top5"]["proposed"] == vd.proposal(register) == body["verdict"]["top5"]["in_force"]
+    assert body["verdict"]["top5"]["changed"] is False
     assert len(body["candidates"]) == len(register)
+    assert body["selection_sentence"] == "Selected by the app by value at stake; the analyst may change the selection"
+    assert body["ratings"]["data_reliability"]["line"] and "judgment" not in body["ic_inputs"]
+    assert {g["claim_id"] for g in body["key_gates"]["sentences"]} <= set(body["verdict"]["top5"]["in_force"])
 
 
-def test_confirming_a_set_stores_it_as_an_analyst_decision_and_a_wrong_size_is_refused(register_api):
+def test_changing_the_set_stores_it_as_the_analysts_and_a_wrong_size_is_refused(register_api):
     client, db = register_api
     ids = _verdict(client)["verdict"]["top5"]["proposed"]
     assert _inputs(client, {"top5": ids[:4]}).status_code == 400
     assert _inputs(client, {"top5": [ids[0]] * 5}).status_code == 400
     assert db["audits"].docs[0].get("ic_inputs") is None
-    r = _inputs(client, {"top5": ids})
-    assert r.status_code == 200
-    stored = db["audits"].docs[0]["ic_inputs"]["top5"]
-    assert set(stored["claim_ids"]) == set(ids) and stored["set_at"]
-    assert r.json()["verdict"]["status"] == "blocked", "the proposed five are Contradicted and have no gate yet"
+    same = _inputs(client, {"top5": ids})
+    assert same.status_code == 200 and same.json()["verdict"]["top5"]["changed"] is False, "a set equal to the selection is the selection"
+    register = _get(client)["register"]
+    other = next(r["claim_id"] for r in register if r["claim_id"] not in ids and r["claim_type"] not in vd.PROPOSAL_EXCLUDED)
+    changed = _inputs(client, {"top5": [other, *ids[1:]]})
+    assert changed.status_code == 200
+    top5 = changed.json()["verdict"]["top5"]
+    assert top5["changed"] is True and set(top5["in_force"]) == {other, *ids[1:]} and top5["set_at"]
+    assert changed.json()["verdict"]["status"] == "ok", "never blocked"
+    reset = _inputs(client, {"top5": None})
+    assert reset.json()["verdict"]["top5"]["changed"] is False
 
 
-def test_a_confirmed_claim_that_is_rejected_leaves_the_register_and_voids_the_set(register_api):
+def test_a_changed_claim_that_is_rejected_leaves_the_register_and_the_selection_is_in_force_again(register_api):
     client, db = register_api
     ids = _verdict(client)["verdict"]["top5"]["proposed"]
-    _inputs(client, {"top5": ids})
-    gone = next(c for c in db[decks.CANDIDATES_COLLECTION].docs if c["id"] == ids[0].split("#")[0])
+    other = next(r["claim_id"] for r in _get(client)["register"] if r["claim_id"] not in ids and r["claim_type"] not in vd.PROPOSAL_EXCLUDED)
+    _inputs(client, {"top5": [other, *ids[1:]]})
+    gone = next(c for c in db[decks.CANDIDATES_COLLECTION].docs if c["id"] == other.split("#")[0])
     gone["status"] = "rejected"
     v = _verdict(client)["verdict"]
-    assert v["status"] == "void" and v["message"].startswith("A claim of the confirmed top 5 left the register")
+    assert v["status"] == "ok" and v["top5"]["changed"] is False and v["top5"]["in_force"] == v["top5"]["proposed"]
 
 
-def test_the_banner_still_uses_rows_1_to_5_of_the_pre_sort_after_a_replacement(register_api):
+def test_the_banner_reads_the_five_the_app_selects_after_the_analyst_changes_the_set(register_api):
     client, _ = register_api
     before = client.get(f"/api/audits/{AUDIT}/blockers").json()["blockers"]
     register = _get(client)["register"]
@@ -409,7 +403,7 @@ def test_the_banner_still_uses_rows_1_to_5_of_the_pre_sort_after_a_replacement(r
     _inputs(client, {"top5": [verified, *[r["claim_id"] for r in register[1:5]]]})
     after = client.get(f"/api/audits/{AUDIT}/blockers").json()["blockers"]
     assert after == before and {b["claim_id"] for b in after if b["kind"] == "claim_contradicted"} == \
-        {r["claim_id"] for r in register[:5] if r["evidence_label"] == "Contradicted"}
+        {r["claim_id"] for r in register if r["claim_id"] in vd.proposal(register) and r["evidence_label"] == "Contradicted"}
 
 
 def test_the_verdict_reads_no_figure_of_results_that_fail_the_contract(register_api):
@@ -514,7 +508,7 @@ def test_a_gap_date_needs_the_review_first_and_may_not_be_after_it_and_the_revie
     assert _inputs(client, {"gap_target_dates": {"No such gap": "2024-01-01"}}).status_code == 400
 
 
-@pytest.mark.parametrize("body", [{"ratings": {"data_reliability": "Excellent"}}, {"ratings": {"defensibility": "Strong"}},
+@pytest.mark.parametrize("body", [{"ratings": {"data_reliability": "Strong"}}, {"judgment": {"reasons": "x"}}, {"note": "n" * 1001},
                                   {"thesis": {"plan": "x" * 301}}, {"thesis": {"vision": "x"}}, {"first_quarterly_review": "soon"},
                                   {}, {"unknown": 1}])
 def test_inputs_that_are_not_valid_are_refused_and_write_nothing(register_api, body):
@@ -523,15 +517,28 @@ def test_inputs_that_are_not_valid_are_refused_and_write_nothing(register_api, b
     assert db["audits"].docs[0].get("ic_inputs") is None
 
 
-def test_ratings_and_thesis_are_stored_on_the_audit_and_a_thesis_of_300_characters_is_kept(register_api):
+def test_the_thesis_and_the_analyst_note_are_stored_on_the_audit_and_the_note_clears_with_null(register_api):
     client, db = register_api
-    r = _inputs(client, {"ratings": {"data_reliability": "Strong", "growth_engine": "Weak"},
-                         "thesis": {"plan": "p" * 300, "evidence": "e", "condition": "c"}})
+    r = _inputs(client, {"note": "  Management call booked for 3 Nov.  ", "thesis": {"plan": "p" * 300, "evidence": "e", "condition": "c"}})
     assert r.status_code == 200
     ic = db["audits"].docs[0]["ic_inputs"]
-    assert ic["ratings"] == {"data_reliability": "Strong", "growth_engine": "Weak"} and len(ic["thesis"]["plan"]) == 300
-    assert _inputs(client, {"ratings": {"growth_engine": None}}).status_code == 200
-    assert db["audits"].docs[0]["ic_inputs"]["ratings"] == {"data_reliability": "Strong"}
+    assert ic["note"] == "Management call booked for 3 Nov." and len(ic["thesis"]["plan"]) == 300
+    assert r.json()["ic_inputs"]["note"] == ic["note"] and r.json()["note_max"] == 1000
+    assert _inputs(client, {"note": "n" * 1000}).status_code == 200
+    assert _inputs(client, {"note": None}).status_code == 200
+    assert "note" not in db["audits"].docs[0]["ic_inputs"]
+    assert db["audits"].docs[0]["ic_inputs"]["thesis"]["plan"] == "p" * 300, "a key not sent stays"
+
+
+def test_the_ratings_and_judgment_a_stored_audit_holds_stay_stored_and_are_not_read(register_api):
+    client, db = register_api
+    db["audits"].docs[0]["ic_inputs"] = {"ratings": {"data_reliability": "Weak", "growth_engine": "Weak"},
+                                         "judgment": {"reasons": "old reasons", "unresolved_questions": "old questions"}}
+    body = _verdict(client)
+    assert body["ratings"]["data_reliability"]["rating"] != "Weak" or body["ratings"]["data_reliability"]["rule"].startswith("Weak:")
+    assert "old reasons" not in str(body), "the computed rating and lists show"
+    assert _inputs(client, {"note": "kept"}).status_code == 200
+    assert db["audits"].docs[0]["ic_inputs"]["judgment"]["reasons"] == "old reasons", "stored fields are untouched"
 
 
 # --- rule 22: delete audit removes the new inputs with their documents ----------------------------------------------------------------
@@ -539,18 +546,17 @@ def test_ratings_and_thesis_are_stored_on_the_audit_and_a_thesis_of_300_characte
 def test_delete_audit_removes_the_ic_inputs_and_every_claim_input_with_their_documents(register_api):
     client, db = register_api
     ids = _verdict(client)["verdict"]["top5"]["proposed"]
-    _inputs(client, {"top5": ids, "ratings": {"data_reliability": "Strong"}, "thesis": {"plan": "Quartz thesis"}})
+    _inputs(client, {"top5": ids, "note": "Plumb note", "thesis": {"plan": "Quartz thesis"}})
     assert _put(client, ids[0], {**GATE, "gate_metric_name": "Zephyr cover", "gate_direction": "at most"}).status_code == 200
-    assert _put(client, ids[0], {"key_gate": True}).status_code == 200
     blob = str([db["audits"].docs, db[decks.CANDIDATES_COLLECTION].docs])
-    assert "Quartz thesis" in blob and "Zephyr cover" in blob, "fixture: the inputs are stored"
+    assert "Quartz thesis" in blob and "Zephyr cover" in blob and "Plumb note" in blob, "fixture: the inputs are stored"
     r = client.request("DELETE", f"/api/audits/{AUDIT}", json={"confirm": "TestCo"})
     assert r.status_code == 400, "the company name is required"
     db["audits"].docs[0]["company_name"] = "TestCo"
     r = client.request("DELETE", f"/api/audits/{AUDIT}", json={"confirm": "TestCo"})
     assert r.status_code == 200, r.text
     left = {name: str(col.docs) for name, col in db._cols.items() if col.docs}
-    assert not any("Quartz thesis" in b or "Zephyr cover" in b for b in left.values()), left.keys()
+    assert not any("Quartz thesis" in b or "Zephyr cover" in b or "Plumb note" in b for b in left.values()), left.keys()
     assert not [d for d in db[decks.CANDIDATES_COLLECTION].docs if d.get("audit_id") == AUDIT] and not db["audits"].docs
 
 
@@ -639,3 +645,87 @@ def test_the_top_5_replace_list_holds_no_acquisition_channels_row(register_api):
     assert _inputs(client, {"top5": [*body["verdict"]["top5"]["proposed"][:4], ranked[0]]}).status_code == 400
     kept = client.put(f"/api/audits/{AUDIT}/decks/candidates/chan1", json={"claim_type": "acquisition_channels", "value": 31000})
     assert (kept.status_code, kept.json()["claim_type"], kept.json()["status"]) == (200, "acquisition_channels", "edited")
+
+
+# --- the ratings, computed (simplified-flow.md section 3) ------------------------------------------------------------------------------
+
+def _growth(nrr=1.04, churn=0.05, months=10.0, quarters=True):
+    results = {"nrr": {"overall_pct": nrr} if nrr is not None else None, "gross_churn": {"overall_pct": churn} if churn is not None else None}
+    if quarters:
+        results["cac_payback"] = {"default_l": 1, "headline_quarter": "2026-Q1" if months is not None else None,
+                                  "quarters": {"2026-Q1": {"partial": False, "L1": {"months": months}}}}
+    return results
+
+
+def _rate(results):
+    from app import formatting as fmt
+    return vd.rate_growth(results, fmt.fmt_pct, fmt.fmt_months)
+
+
+def test_strong_needs_all_three_inputs_present_and_green():
+    assert _rate(_growth())["rating"] == "Strong"
+    no_payback = _rate(_growth(months=None))
+    assert no_payback["rating"] == "Adequate" and "CAC payback not computed" in no_payback["line"], "two green inputs are not enough for Strong"
+    assert _rate(_growth(quarters=False))["rating"] == "Adequate"
+    assert _rate(_growth(nrr=0.98))["rating"] == "Adequate", "NRR below 100% is not green"
+    assert _rate(_growth(churn=0.10))["rating"] == "Adequate", "churn above 8% is not green"
+    assert _rate(_growth(months=14.0))["rating"] == "Adequate"
+
+
+@pytest.mark.parametrize("kw", [dict(churn=0.16), dict(months=19.0), dict(churn=0.16, months=19.0)])
+def test_a_red_input_makes_the_growth_engine_weak(kw):
+    assert _rate(_growth(**kw))["rating"] == "Weak"
+
+
+def test_the_boundaries_are_the_dashboards_own_and_the_rating_carries_the_benchmark_label():
+    assert _rate(_growth(nrr=1.0, churn=0.08, months=12.0))["rating"] == "Strong", "NRR 100%, churn 8% and 12 months are green"
+    assert _rate(_growth(churn=0.15))["rating"] == "Adequate" and _rate(_growth(months=18.0))["rating"] == "Adequate", "red is above 15% and 18"
+    r = _rate(_growth())
+    assert r["benchmark"] is True and r["line"].startswith("Strong (NRR 104%, gross churn 5%, CAC payback 10")
+    assert vd.BENCHMARK == "benchmark, not company data"
+
+
+@pytest.mark.parametrize("kw, missing", [(dict(nrr=None), ["NRR"]), (dict(churn=None), ["gross revenue churn"]),
+                                         (dict(nrr=None, churn=None), ["NRR", "gross revenue churn"])])
+def test_nrr_or_churn_absent_is_not_rated_and_names_the_missing_input(kw, missing):
+    r = _rate(_growth(**kw))
+    assert (r["rating"], r["line"], r["missing"]) == (None, "not rated – data missing", missing)
+
+
+def test_data_reliability_follows_the_integrity_conclusion():
+    def rated(code, conclusion, x=5, y=5):
+        return vd.rate_reliability({"code": code, "conclusion": conclusion, "completed": x, "applicable": y})
+    assert rated("reliable", "Reliable")["line"] == "Strong (Reliable; 5 of 5 checks)"
+    assert rated("reliable", "Reliable")["rule"] == "Strong: every completed check Green, 5 of 5 completed"
+    assert rated("needs_clarification", "Needs clarification")["rating"] == "Adequate"
+    assert rated("material_concerns", "Material concerns")["rating"] == "Weak"
+    insufficient = rated("insufficient", "Insufficient assessment coverage (2 of 5)", 2, 5)
+    assert (insufficient["rating"], insufficient["line"]) == (None, "not rated – data missing")
+    assert vd.rate_reliability(None)["rating"] is None
+
+
+def test_the_cac_headline_is_the_dashboards_pick():
+    quarters = {"2025-Q4": {"partial": False, "L1": {"months": 9.0}}, "2026-Q1": {"partial": True, "L1": {"months": 30.0}}}
+    assert vd.cac_headline_months({"cac_payback": {"default_l": 1, "quarters": quarters}}) == 9.0, "a partial quarter never headlines"
+    assert vd.cac_headline_months({"cac_payback": {"default_l": 1, "headline_quarter": "2026-Q1", "quarters": quarters}}) == 30.0
+    assert vd.cac_headline_months({"cac_payback": {"default_l": 1, "headline_quarter": None, "quarters": quarters}}) is None
+    assert vd.cac_headline_months({}) is None
+
+
+def test_the_unresolved_questions_are_one_list_in_a_fixed_order_and_the_thesis_is_drafted_from_computed_text():
+    gaps = [{"item": f"gap{i}", "why": f"why{i}"} for i in range(5)]
+    integrity = {"blocked": ["Deck consistency"]}
+    results = {"questions_for_management": [{"question": "Why did churn fall?"}]}
+    out = vd.unresolved_questions(gaps, 2, integrity, results)
+    assert out == ["gap0: why0", "gap1: why1", "gap2: why2", "2 claim questions open on the Audit page.", "Deck consistency: not assessed",
+                   "Why did churn fall?"]
+    assert vd.unresolved_questions([], 1, None, None) == ["1 claim question open on the Audit page."]
+    ver = {"outcome": "Selected claims partly supported", "rule": "No selected claim is Contradicted; 4 of 5 are Verified, 1 untested."}
+    gate = {"gate_sentence": "ARR must be at least 5.", "gate_status": "proposed"}
+    thesis = vd.default_thesis({"target_arr": 5_000_000, "target_date": "2027-12-31"}, ver, {"gates": [gate]}, lambda v: f"EUR {v:,.0f}")
+    assert thesis == {"plan": "The plan targets ARR of EUR 5,000,000 by 2027-12-31.",
+                      "evidence": "Selected claims partly supported: No selected claim is Contradicted; 4 of 5 are Verified, 1 untested.",
+                      "condition": "ARR must be at least 5. (proposed)"}
+    assert vd.default_thesis({}, {"outcome": None}, {"gates": []}, str) == {
+        "plan": "Target ARR and Target date are not set.", "evidence": "No conclusion yet.",
+        "condition": "No condition: every selected claim is Verified."}

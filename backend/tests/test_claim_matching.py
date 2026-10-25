@@ -17,7 +17,8 @@ FIX = fixture()
 RUNS = FIX["runs"]
 METRICS_2A = ("Revenue", "ARR", "MRR", "Customer count", "New MRR", "NRR (12-month)", "Gross revenue churn", "ACV",
               "Median sales cycle", "Win rate", "Gross margin", "CAC payback")
-LABELS = ("Verified", "Contradicted", "Inconclusive", "Unverified", "Unsupported")
+# Simplified flow (George, 2026-10-25): a stated figure the app cannot test reads Unverified; Unsupported is the one implied figure with no stated value.
+LABELS = ("Verified", "Contradicted", "Inconclusive", "Unverified")
 
 
 def settings(run, **extra):
@@ -175,7 +176,7 @@ def test_the_metric_is_proposed_from_claim_type_keyword_and_unit(claim, metric):
     row = run_claim({"value": 40, "target_date": "2024-02", **claim})
     assert (row["metric"], row["metric_set_by"]) == (metric, "python")
     if metric is None:
-        assert (row["evidence_label"], row["observed_value"]) == ("Unsupported", None) and "no metric" in row["reason"]
+        assert (row["evidence_label"], row["observed_value"]) == ("Unverified", None) and "no metric" in row["reason"]
 
 
 def test_the_analyst_may_set_the_metric_or_none_and_python_does_not_overrule_it():
@@ -183,13 +184,13 @@ def test_the_analyst_may_set_the_metric_or_none_and_python_does_not_overrule_it(
     row = run_claim({**base, "claim_inputs": {"x1": {"metric": "ARR"}}})
     assert (row["metric"], row["metric_set_by"], row["evidence_label"]) == ("ARR", "analyst", "Verified")
     row = run_claim({**base, "snippet": "ARR €1M", "claim_inputs": {"x1": {"metric": "none"}}})
-    assert (row["metric"], row["metric_set_by"], row["evidence_label"]) == (None, "analyst", "Unsupported")
+    assert (row["metric"], row["metric_set_by"], row["evidence_label"]) == (None, "analyst", "Unverified")
 
 
 def test_a_metric_the_analyst_picks_in_another_unit_than_the_claim_is_unsupported():
     row = run_claim({"claim_type": "sales", "snippet": "Win rate", "unit": "%", "currency": None, "value": 40, "target_date": "2024-02",
                      "claim_inputs": {"x1": {"metric": "ARR"}}})
-    assert (row["evidence_label"], row["metric_set_by"]) == ("Unsupported", "analyst") and "unit" in row["reason"]
+    assert (row["evidence_label"], row["metric_set_by"]) == ("Unverified", "analyst") and "unit" in row["reason"]
 
 
 @pytest.mark.parametrize("snippet, segment, by", [
@@ -218,7 +219,7 @@ def test_the_analyst_may_set_a_segment_the_engine_has():
 def test_an_unknown_segment_is_not_in_the_data():
     row = run_claim({"claim_type": "revenue", "snippet": "ARR €1M", "target_date": "2024-02",
                      "claim_inputs": {"x1": {"segment": "Public sector"}}})
-    assert row["evidence_label"] == "Unsupported" and "segment not in the data" in row["reason"]
+    assert row["evidence_label"] == "Unverified" and "segment not in the data" in row["reason"]
 
 
 @pytest.mark.parametrize("snippet, claim_type, unit, currency", [
@@ -226,7 +227,7 @@ def test_an_unknown_segment_is_not_in_the_data():
     ("Enterprise new MRR €1K", "revenue", None, "EUR"), ("Enterprise CAC payback 12 months", "sales", "months", None)])
 def test_a_segment_on_a_metric_the_engine_does_not_split_is_unsupported(snippet, claim_type, unit, currency):
     row = run_claim({"claim_type": claim_type, "snippet": snippet, "unit": unit, "currency": currency, "target_date": "2023-Q4"})
-    assert (row["evidence_label"], row["segment"]) == ("Unsupported", "Enterprise") and "not computed by segment" in row["reason"]
+    assert (row["evidence_label"], row["segment"]) == ("Unverified", "Enterprise") and "not computed by segment" in row["reason"]
 
 
 @pytest.mark.parametrize("unit, value, claimed_days", [("days", 60, 60), ("weeks", 8, 56), ("week", 1, 7), ("months", 2, 60.88)])
@@ -261,7 +262,7 @@ def test_a_claim_in_years_for_a_months_metric_is_tested_at_twelve_months_a_year(
                                                        (None, "ACV 40", "sales")])
 def test_hours_and_claims_with_no_unit_stay_unmatched(unit, snippet, claim_type):
     row = run_claim({"claim_type": claim_type, "snippet": snippet, "unit": unit, "currency": None, "value": 60})
-    assert (row["metric"], row["evidence_label"]) == (None, "Unsupported") and "no metric" in row["reason"]
+    assert (row["metric"], row["evidence_label"]) == (None, "Unverified") and "no metric" in row["reason"]
 
 
 def test_an_amount_with_no_currency_waits_for_its_currency():
@@ -302,7 +303,7 @@ def test_a_quarter_metric_needs_one_calendar_quarter_of_the_engine():
     for target in ("2023-H2", "2023", "2023-11"):
         row = run_claim({"claim_type": "gross_margin", "snippet": "Gross margin", "unit": "%", "currency": None,
                          "target_date": target})
-        assert (row["evidence_label"], row["observed_value"]) == ("Unsupported", None) and "calendar quarter" in row["reason"], target
+        assert (row["evidence_label"], row["observed_value"]) == ("Unverified", None) and "calendar quarter" in row["reason"], target
 
 
 def test_with_a_march_year_end_every_fiscal_quarter_is_a_calendar_quarter():
@@ -316,7 +317,7 @@ def test_with_a_march_year_end_every_fiscal_quarter_is_a_calendar_quarter():
 
 def test_an_as_of_metric_is_tested_only_for_a_period_ending_in_the_as_of_month():
     ended = run_claim({"claim_type": "sales", "snippet": "Win rate", "unit": "%", "currency": None, "value": 40, "target_date": "2023-Q4"})
-    assert (ended["evidence_label"], ended["observed_value"]) == ("Unsupported", None) and "period" in ended["reason"]
+    assert (ended["evidence_label"], ended["observed_value"]) == ("Unverified", None) and "period" in ended["reason"]
     now = run_claim({"claim_type": "sales", "snippet": "Win rate", "unit": "%", "currency": None, "value": 40, "target_date": "2024-02"})
     assert (now["evidence_label"], now["observed_value"], now["period_note"]) == ("Verified", 40.0, None)
 
@@ -355,7 +356,7 @@ def test_a_forecast_of_a_quarter_figure_shows_the_latest_complete_quarter():
 def test_an_engine_not_computable_reason_is_the_unsupported_reason():
     row = run_claim({"claim_type": "sales", "snippet": "CAC payback", "unit": "months", "currency": None, "value": 12,
                      "target_date": "2023-Q1"})
-    assert row["evidence_label"] == "Unsupported" and "no P&L for 2022-Q4" in row["reason"]
+    assert row["evidence_label"] == "Unverified" and "no P&L for 2022-Q4" in row["reason"]
 
 
 def test_a_metric_with_no_result_is_unverified_when_the_engine_names_a_missing_file_else_unsupported():
@@ -369,7 +370,7 @@ def test_a_metric_with_no_result_is_unverified_when_the_engine_names_a_missing_f
     results["missing_data"] = []
     row = run_claim({"claim_type": "gross_margin", "snippet": "Gross margin", "unit": "%", "currency": None, "value": 78,
                      "target_date": "2023-Q4"}, results=results)
-    assert (row["evidence_label"], row["reason"]) == ("Unsupported", "not computed")
+    assert (row["evidence_label"], row["reason"]) == ("Unverified", "not computed")
 
 
 @pytest.mark.parametrize("claim", [
@@ -450,17 +451,19 @@ def test_registered_institutions_are_users_read_against_paying_customers_and_inc
     assert [got[f"r0#{n}"][0] for n in (3, 4)] == ["Unverified", "Unverified"], "Y/E 24 and Y/E 25 end after the as-of month"
 
 
-def test_a_qualified_users_gate_is_saved_only_with_the_analysts_metric_and_direction():
-    """Like every row with no app metric (verdict-and-memo.md section 3); the screen shows those fields for it (2026-10-13)."""
+def test_a_qualified_users_gate_is_written_from_the_claim_and_the_analysts_edit_wins():
+    """Like every row with no app metric (verdict-and-memo.md section 3); the gate is proposed from the claim, the analyst's edit needs the
+    metric name and the direction (simplified-flow.md section 3)."""
     claim = {"claim_type": "users", "unit": None, "currency": None, "value": 40, "target_date": "2024-02",
              "snippet": "Registered Institutions 40", "qualifier": "registered"}
     gate = {"gate_threshold": 40.0, "gate_budget_decision": "the plan", "gate_date": "2024-06-30"}
     bare = run_claim({**claim, "claim_inputs": {"x1": gate}})
-    assert (bare["reason"], bare["gate_saved"], bare["gate_needed"], cm.needs_metric_name(bare)) == (QUALIFIED, False, True, True)
+    assert (bare["reason"], bare["gate_saved"], bare["gate_needed"], cm.needs_metric_name(bare)) == (QUALIFIED, False, False, True)
     assert bare["evidence_label"] == "Inconclusive" and bare["observed_value"] == 5
+    assert bare["gate_status"] == "proposed" and "by 2024-02-29." in bare["gate_sentence"], "the proposal, not the half-filled edit"
     named = run_claim({**claim, "claim_inputs": {"x1": {**gate, "gate_metric_name": "Registered institutions",
                                                         "gate_direction": "at least"}}})
-    assert named["gate_saved"] and named["gate_sentence"].startswith(
+    assert named["gate_saved"] and named["gate_status"] == "set by the analyst" and named["gate_sentence"].startswith(
         "Before the plan, Registered institutions must be at least 40 by 2024-06-30. Not yet observed: population differs")
 
 
@@ -585,35 +588,61 @@ def test_a_deck_reading_that_is_an_ai_suggestion_is_tested_like_any_approved_cla
 def test_an_ai_suggestion_with_no_figure_keeps_its_unsupported_reason():
     row = run_claim({"claim_type": "market", "snippet": "TAM", "value": 5, "origin": "ai", "ai_status": "unverified",
                      "ai_label": "AI suggestion, not verified"})
-    assert (row["evidence_label"], row["deck_reading"]) == ("Unsupported", "AI suggestion, not verified")
+    assert (row["evidence_label"], row["deck_reading"]) == ("Unverified", "AI suggestion, not verified")
 
 
 # --- section 5: gate -----------------------------------------------------------------------------------------------------
 
-def test_the_app_proposes_no_gate_date(as_of=None):
-    """verdict-and-memo.md section 3: the date starts empty, so the default of claim-matching section 5 is gone."""
-    assert not hasattr(cm, "gate_date")
-    assert all(r["gate_date"] is None for r in register(RUNS["A"]))
+def test_the_gate_date_is_the_end_of_the_period_never_later_than_the_first_review_else_the_review_date():
+    """simplified-flow.md section 3: date = period end, else the review date, never later than it."""
+    base = {"claim_type": "revenue", "snippet": "ARR", "value": 300000, "target_date": "2024-04", "period_text": "Apr 2024"}
+    assert run_claim(base)["gate_date"] == "2024-04-30"
+    assert run_claim(base, first_quarterly_review="2024-03-31")["gate_date"] == "2024-03-31", "capped at the review"
+    assert run_claim(base, first_quarterly_review="2025-03-31")["gate_date"] == "2024-04-30"
+    undated = run_claim({**base, "target_date": None, "period_text": None}, first_quarterly_review="2024-09-30")
+    assert undated["gate_date"] in (None, "2024-09-30")
 
 
-def test_no_gate_is_proposed_a_row_has_no_sentence_and_no_default_threshold_until_the_analyst_fills_it():
+def test_every_row_that_is_not_verified_has_a_proposed_gate_and_a_verified_row_has_none():
     rows = register(RUNS["A"])
-    assert all(r["gate_sentence"] is None and r["gate_threshold"] is None and r["gate_saved"] is False for r in rows)
-    row = row_of(rows, "c01")
-    assert (row["gate_threshold"], row["gate_budget_decision"], row["gate_date"], row["gate_saved"]) == (None, None, None, False)
-    assert row["claimed_value"] == 200000 and row["observed_value"] == 202125.48, "claimed and observed sit beside the empty field"
+    labelled = [r for r in rows if r["evidence_label"] in cm.NOT_VERIFIED and not cm.is_untested(r) and r["gate_sentence"] is not None]
+    assert labelled, "the fixture holds rows that need a gate"
+    assert all(r["gate_status"] == "proposed" and r["gate_saved"] is False and r["gate_needed"] is False and r["key_gate"] is False
+               for r in labelled)
+    assert all(r["gate_sentence"] is None and r["gate_status"] is None for r in rows if r["evidence_label"] == "Verified")
+    assert all(r["gate_needed"] is False for r in rows), "no row waits for a gate any more"
 
 
-def test_the_analysts_gate_is_saved_only_when_threshold_and_budget_decision_are_filled():
+def test_the_gate_threshold_is_the_claimed_figure_in_the_claims_unit_and_the_direction_follows_the_metric():
+    revenue = run_claim({"claim_type": "revenue", "snippet": "ARR", "value": 250000, "target_date": "2024-02", "period_text": "Feb 2024"})
+    assert (revenue["evidence_label"], revenue["gate_threshold"], revenue["gate_status"]) == ("Contradicted", 250000, "proposed")
+    assert revenue["gate_sentence"] == ("ARR must be at least €250,000 by 2024-02-29. Observed €202,125 (2024-02); claimed €250,000 (Feb 2024).")
+    cycle = run_claim({"claim_type": "sales", "snippet": "Sales cycle", "unit": "days", "currency": None, "value": 50, "target_date": "2024-02"})
+    assert cycle["gate_sentence"].startswith("Median sales cycle must be at most 50.0 days by 2024-02-29."), "lower is better: at most"
+    nometric = run_claim({"claim_type": "churn", "snippet": "Staff turnover", "unit": "%", "currency": None, "value": 5, "target_date": "2024-02",
+                          "claim_inputs": {"x1": {"metric": cm.NO_METRIC}}})
+    assert nometric["gate_direction"] == "at most" and nometric["gate_metric_name"] and nometric["gate_status"] == "proposed"
+
+
+def test_a_claim_with_no_figure_or_no_date_gets_no_gate():
+    direction = run_claim({"claim_type": "ebitda", "snippet": "Positive EBITDA", "value": None, "currency": None, "claim_direction": "positive"})
+    assert direction["gate_sentence"] is None and direction["gate_status"] is None
+    undated = run_claim({"claim_type": "revenue", "snippet": "ARR", "value": 500000, "target_date": None, "period_text": None})
+    assert undated["gate_sentence"] is None, "no period end and no review date: nothing to date it with"
+
+
+def test_the_analysts_gate_is_saved_when_threshold_and_date_are_filled_and_the_budget_decision_is_optional():
     inputs = {"gate_threshold": 195000.0, "gate_budget_decision": "the Series B hiring plan", "gate_date": "2024-06-30"}
-    base = {"claim_type": "revenue", "snippet": "ARR", "value": 200000, "target_date": "2024-02", "period_text": "Feb 2024"}
+    base = {"claim_type": "revenue", "snippet": "ARR", "value": 250000, "target_date": "2024-02", "period_text": "Feb 2024"}
     full = run_claim({**base, "claim_inputs": {"x1": inputs}})
-    assert (full["gate_saved"], full["gate_threshold"], full["gate_date"]) == (True, 195000.0, "2024-06-30")
+    assert (full["gate_saved"], full["gate_threshold"], full["gate_date"], full["gate_status"]) == (True, 195000.0, "2024-06-30", "set by the analyst")
     assert full["gate_sentence"] == ("Before the Series B hiring plan, ARR must be at least €195,000 by 2024-06-30. "
-                                     "Observed €202,125 (2024-02); claimed €200,000 (Feb 2024).")
-    for missing in ("gate_threshold", "gate_budget_decision", "gate_date"):
+                                     "Observed €202,125 (2024-02); claimed €250,000 (Feb 2024).")
+    no_decision = run_claim({**base, "claim_inputs": {"x1": {k: v for k, v in inputs.items() if k != "gate_budget_decision"}}})
+    assert no_decision["gate_saved"] and no_decision["gate_sentence"].startswith("ARR must be at least €195,000 by 2024-06-30.")
+    for missing in ("gate_threshold", "gate_date"):
         half = run_claim({**base, "claim_inputs": {"x1": {k: v for k, v in inputs.items() if k != missing}}})
-        assert half["gate_saved"] is False and half["gate_sentence"] is None, missing
+        assert half["gate_saved"] is False and half["gate_status"] == "proposed", missing
     assert run_claim(base)["gate_saved"] is False
 
 
@@ -637,7 +666,7 @@ def test_a_register_row_has_exactly_the_fields_of_section_6_and_the_verdict_spec
                  "period_start period_end period_note segment segment_set_by metric metric_set_by direction observed_value "
                  "observed_at observed_source observed_citation gap gap_normalised gap_kind gloss evidence_label reason tolerance rank "
                  "value_at_stake_arr vas_reason shortfall overlaps_with evidence_analysis evidence_source_key gate_sentence gate_threshold "
-                 "gate_budget_decision gate_date gate_saved gate_metric_name gate_direction key_gate gate_needed as_of_month "
+                 "gate_budget_decision gate_date gate_saved gate_metric_name gate_direction key_gate gate_needed gate_status as_of_month "
                  "as_of_defaulted turnover_state turnover_note turnover_set_by turnover_reason implied_take_rate "
                  "implied_take_rate_source turnover_suggested deck_revenue_note definition_check definition_question "
                  "period_coverage months_missing growth_basis population figure_type required_unknown auto_approval basis scenario").split()

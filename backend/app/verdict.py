@@ -1,8 +1,9 @@
-"""Gates, data gaps, the analyst's top 5 and the verdict (docs/specs/verdict-and-memo.md, method A9, A10).
+"""The top 5, the verdict, the key gates, the ratings and the data gaps (docs/design/simplified-flow.md, method A9, A10).
 
 A pure module: it reads register rows (app.claim_matching), `audits.results` and the analyst's inputs, and returns
-dicts. It imports nothing from `app.llm`, calls no model and writes nothing. The verdict is a function of the top 5 the
-analyst confirms; Python never rates and never proposes a gate (CLAUDE.md rules 14, 17, 18).
+dicts. It imports nothing from `app.llm`, calls no model and writes nothing. The top 5 is selected by the app (value at stake, then
+normalised shortfall, Contradicted above Unverified) and is in force without a confirmation; the verdict is always computed; the ratings
+are computed from the integrity checks and the metrics (CLAUDE.md rules 14, 17, 18).
 """
 from __future__ import annotations
 
@@ -22,29 +23,24 @@ RATINGS = ("Strong", "Adequate", "Weak")
 RATED_ROWS = ("data_reliability", "growth_engine")
 THESIS_PARTS = ("plan", "evidence", "condition")
 THESIS_MAX = 300
+NOTE_MAX = 1000
 UNVERIFIED_LABELS = ("Unverified", "Inconclusive", "Unsupported")    # Inconclusive counts with Unverified (evidence-labels.md section 4)
 
-# Screen wording W1-W25 (verdict-and-memo.md section 11), as approved.
-W4_GATE_NEEDED = "Gate needed"
-W5_SIXTH = "At most 5 key gates."
-W9_BLOCKED = "Conclusion blocked: set a gate on {ranks} (top-5 claims that are not Verified)."
-# claim-matching.md section 4.1 (George, 2026-10-14): an open Definition check blocks the conclusion wherever it ranks.
-W9B_DEFINITION = "Conclusion blocked: answer the definition check on {ranks}."
-DEFINITION_CONFIRMED = "Same metric and period confirmed by the analyst."
-W10_NO_CLAIMS = "No conclusion: the register has no claims."
-W10_NOT_COMPUTED = "No conclusion: compute the audit first."
-W12_NO_KEY_GATES = "No key gates marked."
+# Screen wording (verdict-and-memo.md section 11), as approved and as the simplified flow leaves it.
+W12_NO_KEY_GATES = "No key gates: every selected claim is Verified."
 W13_DEAL_TERMS = "Deal terms: not available – the execution capacity review has not been run."
-W14_OTHER_GATES = "{n} other claims still need a gate."
-W23_PROPOSED = "Proposed by shortfall – confirm or replace."
-W23_NONE = "No conclusion until the top 5 is confirmed."
-W23_VOID = "A claim of the confirmed top 5 left the register – confirm the top 5 again."
-W23_MEMO = "confirm the top 5."
-W24_STATEMENT = "Top 5 set by the analyst pending ARR bridge."
 W25_FEW_GATES = "{n} gates set; all are key gates."
 W7_AFTER_REVIEW = "The target date must be on or before the first quarterly review ({date})."
 W7_REVIEW_FIRST = "Set the first quarterly review first."
 W7_REVIEW_BEFORE_GAP = "The first quarterly review cannot be before a gap's target date ({date})."
+W10_NO_CLAIMS = "No testable claims found. Upload a deck or plan with revenue targets."
+W10_NOT_COMPUTED = "No conclusion: compute the audit first."
+SELECTION_SENTENCE = "Selected by the app by value at stake; the analyst may change the selection"
+SELECTION_CHANGED = "Top 5 changed by the analyst — reset"
+NOT_RATED = "not rated – data missing"
+BENCHMARK = "benchmark, not company data"
+DEFINITION_CONFIRMED = "Same metric and period confirmed by the analyst."
+GATE_TAGS = {cm.GATE_PROPOSED: "(proposed)", cm.GATE_SET: "(set by the analyst)"}
 
 # docs/specs/claim-review-conclusion.md: the outcome describes the five selected claims, never a recommendation.
 HEADING = "Claim-review conclusion — assessment of the five selected claims"
@@ -57,10 +53,8 @@ RULE_INSUFFICIENT = "No selected claim is Contradicted; {u} of {n} are untested 
 RULE_SUPPORTED = "All {n} selected claims are Verified."
 RULE_PARTLY = "No selected claim is Contradicted; {v} of {n} are Verified, {u} untested."
 NO_OTHER_CONTRADICTIONS = "None found among tested claims."
-# The analyst's own judgment beside the conclusion: two free-text fields, required before memo export, never pre-filled.
-JUDGMENT_PARTS = ("reasons", "unresolved_questions")
-JUDGMENT_LABELS = {"reasons": "Reasons", "unresolved_questions": "Unresolved questions"}
-JUDGMENT_MAX = 1000
+OPEN_QUESTION = "{n} question open."
+OPEN_QUESTIONS = "{n} questions open."
 
 _ISO = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -103,16 +97,7 @@ def _type_words(claim_type) -> str:
     return deck_claims.TYPE_NAMES.get(claim_type) or str(claim_type or "claim").replace("_", " ").capitalize()
 
 
-def claim_name(row: dict) -> str:
-    """How a register row is called in a sentence: its metric (or claim type), the segment when not the whole company, the period."""
-    name = row.get("metric") or _type_words(row.get("claim_type"))
-    if str(row.get("reason") or "").startswith(cm.POPULATION_PREFIX):     # the app's metric counts other people: name the claim's own
-        name = _type_words(row.get("claim_type"))
-    if row.get("segment") not in (None, cm.WHOLE):
-        name = f"{name} · {row['segment']}"
-    if row.get("period"):
-        name = f"{name}, {row['period']}"
-    return name
+claim_name = cm.claim_name
 
 
 def claimed_text(row: dict, reporting_currency: Optional[str] = None) -> str:
@@ -134,7 +119,7 @@ def ranks_text(rows: List[dict]) -> str:
 
 def reason_text(row: dict, reporting_currency: Optional[str]) -> str:
     """One reason of the verdict, citing its evidence (W11)."""
-    head = f"#{row['rank']} {claim_name(row)}: {row['evidence_label']}"
+    head = f"#{row['rank']} {claim_name(row)}: {row['evidence_label'] or 'Definition check open'}"
     if row.get("observed_value") is None:
         text = f"{head}, {row['reason']}."
         return f"{text} No figure in the supplied files." if row["evidence_label"] == "Unsupported" else text
@@ -164,68 +149,41 @@ def flag_text(row: dict) -> str:
 
 # --- gates ----------------------------------------------------------------------------------------------------------------
 
-def key_gates(rows: List[dict]) -> dict:
-    """The key gates of the register (decision Q2). With 3 or more saved gates the analyst's marks decide; with fewer, every saved
-    gate counts as key. `ok` is whether the memo may be built: 3 to 5 marked, or fewer than 3 saved."""
-    saved = [r for r in rows if r["gate_saved"]]
-    marked = [r for r in saved if r["key_gate"]]
-    all_key = len(saved) < MIN_KEY_GATES
-    effective = saved if all_key else marked
-    if all_key:
-        note = W25_FEW_GATES.format(n=len(saved)) if saved else W12_NO_KEY_GATES
+def key_gates(rows: List[dict], five_ids: Iterable[str]) -> dict:
+    """The key gates (simplified-flow.md section 3): the gates of the non-Verified rows of the five in force, never padded; a Verified row has
+    none and a gate outside the five is not promoted. Fewer than 3 prints W25; none, W12. `all_key` is true below 3."""
+    five = set(five_ids)
+    gates = [r for r in rows if r["claim_id"] in five and r.get("gate_sentence")]
+    gates.sort(key=lambda r: r["rank"])
+    if not gates:
+        note = W12_NO_KEY_GATES
     else:
-        note = None if marked else W12_NO_KEY_GATES
-    return {"saved": len(saved), "marked": [r["claim_id"] for r in marked], "gates": effective, "all_key": all_key,
-            "note": note, "ok": all_key or MIN_KEY_GATES <= len(marked) <= MAX_KEY_GATES}
+        note = W25_FEW_GATES.format(n=len(gates)) if len(gates) < MIN_KEY_GATES else None
+    return {"saved": len(gates), "marked": [r["claim_id"] for r in gates], "gates": gates, "all_key": len(gates) < MIN_KEY_GATES,
+            "note": note, "ok": True}
 
 
-GATE_LABELS = cm.NOT_VERIFIED
-PREFILL_KEY_GATES = 3
-OTHER_DECISION = "Other"
+def mark_key_gates(rows: List[dict], five_ids: Iterable[str]) -> List[dict]:
+    """The rows with `key_gate` set on the gates of the five in force (the register, the CSV and the memo read it)."""
+    keys = set(key_gates(rows, five_ids)["marked"])
+    return [{**r, "key_gate": r["claim_id"] in keys} for r in rows]
 
 
-def gate_prefill(rows: List[dict], first_review: Optional[str]) -> Dict[str, dict]:
-    """What the gate fields start with on a row labelled Unverified, Unsupported or Contradicted whose gate is not saved: the
-    claim's stated value in its own unit, the end of its stated period capped at the first quarterly review (the review date when
-    the claim has no period), the metric name on a row with no app metric, and the key mark on the three rows with the highest
-    value at stake. Stored rows only, no model; the budget decision stays blank. Shown on the review screen, never written to a
-    row: the register, the CSV and the memo read the saved gate alone."""
-    out: Dict[str, dict] = {}
-    for row in rows:
-        if row.get("evidence_label") not in GATE_LABELS or row.get("gate_saved") or cm.is_untested(row):
-            continue
-        fill: dict = {}
-        shown = row.get("claimed_converted") if row.get("claimed_converted") is not None else row.get("claimed_value")
-        if shown is not None:
-            fill["gate_threshold"] = shown
-        period_end = row.get("period_end") if valid_date(row.get("period_end")) else None
-        date = min(period_end, first_review) if period_end and valid_date(first_review) else (period_end or first_review)
-        if valid_date(date):
-            fill["gate_date"] = date
-        if cm.needs_metric_name(row):
-            fill["gate_metric_name"] = claim_name(row)[:cm.GATE_METRIC_MAX]
-        out[row["claim_id"]] = fill
-    room = max(0, min(PREFILL_KEY_GATES, MAX_KEY_GATES - sum(1 for r in rows if r.get("key_gate"))))
-    ranked = sorted((r for r in rows if r["claim_id"] in out),
-                    key=lambda r: -(r.get("value_at_stake_arr") or 0))
-    for row in ranked[:room]:
-        out[row["claim_id"]]["key_gate"] = True
-    return out
+def gate_text(row: dict) -> str:
+    """A gate sentence with its status: "(proposed)" until the analyst edits it, then "(set by the analyst)"."""
+    tag = GATE_TAGS.get(row.get("gate_status"))
+    return f"{row['gate_sentence']} {tag}" if tag and row.get("gate_sentence") else row.get("gate_sentence") or ""
 
 
 def budget_decisions(rows: List[dict]) -> List[str]:
-    """The budget decisions already saved in this audit, once each, in order of first use: the dropdown's list ("Other" follows)."""
+    """The budget decisions already saved in this audit, once each, in order of first use: the dropdown's list ("Other" follows). The
+    field is optional and never required (simplified-flow.md)."""
     seen: List[str] = []
     for row in rows:
         text = row.get("gate_budget_decision")
         if text and text not in seen:
             seen.append(text)
     return seen
-
-
-def marked_count_after(rows: List[dict], claim_id: str) -> int:
-    """Key gates marked, counting this claim as marked."""
-    return len({r["claim_id"] for r in rows if r["key_gate"]} | {claim_id})
 
 
 # --- the top 5 ------------------------------------------------------------------------------------------------------------
@@ -236,41 +194,47 @@ def sortable(rows: List[dict]) -> List[dict]:
     return [r for r in rows if not cm.is_untested(r)]
 
 
-# George, 2026-10-24: the proposal leaves out claims about the market, prices, the use of funds, people and the product; it takes the testable plan
-# claims first, by value at stake and then by claim value, and the other claims after them in register order.
+# George, 2026-10-24: the selection leaves out claims about the market, prices, the use of funds, people and the product; it takes the testable
+# plan claims first. George, 2026-10-25 (simplified-flow.md section 3): the app selects the five by value at stake, then normalised shortfall,
+# with a Contradicted claim always above an Unverified one; the set is in force without a confirmation.
 PROPOSAL_EXCLUDED = ("market", "pricing", "use_of_funds", "other", "people", "product")
 PLAN_TYPES = ("revenue", "arr", "mrr", "churn", "nrr", "revenue_growth", "sales", "customers")
 
 
+def selection_key(r: dict) -> tuple:
+    """Contradicted first; then a plan claim before any other; then value at stake (a claim with none after those with one), the normalised
+    shortfall, the claimed amount; the register rank breaks a tie."""
+    amount = abs(r["claimed_converted"] if r.get("claimed_converted") is not None else r.get("claimed_value") or 0)
+    vas = r.get("value_at_stake_arr")
+    return (r.get("evidence_label") != "Contradicted", r.get("claim_type") not in PLAN_TYPES, vas is None, -(vas or 0),
+            -(r.get("shortfall") or 0), -amount, r.get("rank") or 0)
+
+
 def proposal(rows: List[dict]) -> List[str]:
-    """The top 5 proposed: min(5, rows) claims. Plan claims (PLAN_TYPES) by value at stake, then by claim value, largest first; a claim
-    with no value at stake follows those with one. Every other claim not in PROPOSAL_EXCLUDED comes after the plan claims."""
+    """The five the app selects: min(5, rows) claims of the register, in the order of `selection_key`."""
     eligible = [r for r in sortable(rows) if r.get("claim_type") not in PROPOSAL_EXCLUDED]
-    plan = [r for r in eligible if r.get("claim_type") in PLAN_TYPES]
-    amount = lambda r: abs(r["claimed_converted"] if r.get("claimed_converted") is not None else r.get("claimed_value") or 0)  # noqa: E731
-    plan.sort(key=lambda r: (r.get("value_at_stake_arr") is None, -(r.get("value_at_stake_arr") or 0), -amount(r)))
-    rest = [r for r in eligible if r.get("claim_type") not in PLAN_TYPES]
-    return [r["claim_id"] for r in (plan + rest)[:TOP_N]]
+    return [r["claim_id"] for r in sorted(eligible, key=selection_key)[:TOP_N]]
 
 
 def banner_ids(rows: List[dict]) -> List[str]:
-    """The banner (CLAUDE.md rule 21) keeps rows 1 to 5 of the pre-sort whatever the analyst confirmed."""
+    """The banner (CLAUDE.md rule 21) reads the five the app selects, whatever the analyst changed."""
     return proposal(rows)
 
 
 def top5_state(rows: List[dict], stored: Optional[dict]) -> dict:
-    """The top 5 in force. Confirmed when the analyst has stored a set that holds min(5, rows) claims, all in the register. Void
-    when a stored claim has left the register (or the size no longer fits); a new rank order alone does not void it."""
+    """The top 5 in force: the analyst's changed set when it is stored, differs from the app's selection and still holds min(5, rows) claims
+    of the register; otherwise the app's selection (a stored set that no longer fits is dropped, a stored set equal to the selection is the
+    selection). `changed` says the analyst's set is in force. No confirmation exists."""
     proposed = proposal(rows)
     rows = sortable(rows)
     present = {r["claim_id"] for r in rows}
     ids = list((stored or {}).get("claim_ids") or [])
-    void = bool(ids) and (not set(ids) <= present or len(ids) != min(TOP_N, len(rows)))
-    confirmed = bool(ids) and not void
+    fits = bool(ids) and set(ids) <= present and len(ids) == min(TOP_N, len(rows))
+    changed = fits and set(ids) != set(proposed)
     rank = {r["claim_id"]: r["rank"] for r in rows}
-    ids = sorted(ids, key=lambda i: rank.get(i, 10 ** 9)) if confirmed else []
-    return {"proposed": proposed, "confirmed": confirmed, "void": void, "claim_ids": ids,
-            "set_at": (stored or {}).get("set_at") if confirmed else None, "in_force": ids if confirmed else proposed}
+    ids = sorted(ids, key=lambda i: rank.get(i, 10 ** 9)) if changed else []
+    return {"proposed": proposed, "changed": changed, "claim_ids": ids, "set_at": (stored or {}).get("set_at") if changed else None,
+            "in_force": ids if changed else proposed}
 
 
 def check_top5(rows: List[dict], ids: List[str]) -> None:
@@ -304,42 +268,30 @@ def other_contradictions(rows: List[dict], five_ids: Iterable[str]) -> List[dict
             for r in rows if r["evidence_label"] == "Contradicted" and r["claim_id"] not in five]
 
 
-def verdict(rows: List[dict], results: Optional[dict], stored_top5: Optional[dict]) -> dict:
-    """The claim-review conclusion of the confirmed top 5 (claim-review-conclusion.md). `status`: no_verdict (W10), unconfirmed or
-    void (W23), blocked (W9), ok. The heading, the scope sentence and the other contradictions (against the five in force, the
-    proposed ones before confirmation) are always there; the outcome only once the conclusion is reached."""
+def verdict(rows: List[dict], results: Optional[dict], stored_top5: Optional[dict], open_questions: int = 0) -> dict:
+    """The claim-review conclusion of the five in force (claim-review-conclusion.md, simplified-flow.md): always computed, never blocked.
+    `status`: no_verdict (nothing computed, or no testable claim) or ok. An open question is a count on the explanation line
+    (`open_questions`: the claim questions the Audit page lists), not a state; a row with an open Definition check counts as untested."""
     state = top5_state(rows, stored_top5)
     rows = sortable(rows)
     reporting = (results or {}).get("reporting_currency")
     others = other_contradictions(rows, state["in_force"]) if results else []
-    base = {"top5": state, "outcome": None, "outcome_code": None, "rule": None, "message": None, "blocked": [], "five": [],
+    base = {"top5": state, "outcome": None, "outcome_code": None, "rule": None, "message": None, "five": [],
             "reasons": [], "fewer": None, "heading": HEADING, "scope_sentence": SCOPE_SENTENCE, "other_contradictions": others,
-            "other_contradictions_text": None if others else NO_OTHER_CONTRADICTIONS}
+            "other_contradictions_text": None if others else NO_OTHER_CONTRADICTIONS, "open_questions": open_questions}
     if not results:
         return {**base, "status": "no_verdict", "message": W10_NOT_COMPUTED}
     if not rows:
         return {**base, "status": "no_verdict", "message": W10_NO_CLAIMS}
-    if not state["confirmed"]:
-        return {**base, "status": "void" if state["void"] else "unconfirmed",
-                "message": W23_VOID if state["void"] else W23_NONE}
     by_id = {r["claim_id"]: r for r in rows}
-    five = [by_id[i] for i in state["claim_ids"]]
+    five = [by_id[i] for i in state["in_force"]]
     summary = [{"claim_id": r["claim_id"], "rank": r["rank"], "claim": claim_name(r), "evidence_label": r["evidence_label"],
                 "reason": r["reason"], "definition_check": r.get("definition_check")} for r in five]
-    # An open Definition check has no label yet: it blocks wherever it ranks (claim-matching.md section 4.1), before any gate.
-    checks = [r for r in rows if r.get("definition_check") == cm.DEFINITION_ASK]
-    blocked = [r for r in five if r["evidence_label"] != "Verified" and not r["gate_saved"]
-               and r.get("definition_check") != cm.DEFINITION_ASK]
-    if checks or blocked:
-        message = " ".join(([W9B_DEFINITION.format(ranks=ranks_text(checks))] if checks else [])
-                           + ([W9_BLOCKED.format(ranks=ranks_text(blocked))] if blocked else []))
-        return {**base, "status": "blocked", "five": summary, "blocked": [r["claim_id"] for r in checks + blocked],
-                "message": message}
-
-    # Section 2, in this order: Contradicted, Insufficient evidence, Supported, Partly supported. A beat is Verified.
+    # In this order: Contradicted, Insufficient evidence, Supported, Partly supported. A beat is Verified; a row with an open
+    # Definition check has no label yet and counts as untested.
     n = len(five)
     contradicted = [r for r in five if r["evidence_label"] == "Contradicted"]
-    untested = [r for r in five if r["evidence_label"] in UNVERIFIED_LABELS]
+    untested = [r for r in five if r["evidence_label"] in UNVERIFIED_LABELS or r["evidence_label"] is None]
     verified = [r for r in five if r["evidence_label"] == "Verified"]
     if contradicted:
         code, lead = "not_supported", contradicted
@@ -350,6 +302,8 @@ def verdict(rows: List[dict], results: Optional[dict], stored_top5: Optional[dic
         code, lead, rule = "supported", verified, RULE_SUPPORTED.format(n=n)
     else:
         code, lead, rule = "partly_supported", untested, RULE_PARTLY.format(v=len(verified), n=n, u=len(untested))
+    if open_questions:
+        rule = f"{rule} {(OPEN_QUESTION if open_questions == 1 else OPEN_QUESTIONS).format(n=open_questions)}"
     fewer = None
     if len(rows) < TOP_N:
         fewer = f"Top {len(rows)} (the register has {len(rows)} claims)."
@@ -357,11 +311,6 @@ def verdict(rows: List[dict], results: Optional[dict], stored_top5: Optional[dic
     ordered = lead + [r for r in five if r not in lead]
     return {**base, "status": "ok", "outcome": OUTCOMES[code], "outcome_code": code, "rule": rule, "fewer": fewer,
             "five": summary, "reasons": [reason_text(r, reporting) for r in ordered[:3]]}
-
-
-def gates_still_needed(rows: List[dict], top5_ids: List[str]) -> int:
-    """Rows outside the top 5 that need a gate (W14)."""
-    return sum(1 for r in rows if r["gate_needed"] and r["claim_id"] not in set(top5_ids))
 
 
 # --- data gaps (section 4) -------------------------------------------------------------------------------------------------
@@ -458,15 +407,15 @@ def apply_ic_inputs(current: Optional[dict], changes: dict, rows: List[dict], ga
             check_top5(rows, ids)
             rank = {r["claim_id"]: r["rank"] for r in rows}
             ic["top5"] = {"claim_ids": sorted(ids, key=rank.get), "set_at": now}
-    if "ratings" in changes:
-        merged = {**ic.get("ratings", {}), **(changes["ratings"] or {})}
-        ic["ratings"] = {k: v for k, v in merged.items() if v is not None}
     if "thesis" in changes:
         merged = {**ic.get("thesis", {}), **(changes["thesis"] or {})}
         ic["thesis"] = {k: v.strip() for k, v in merged.items() if isinstance(v, str) and v.strip()}
-    if "judgment" in changes:
-        merged = {**ic.get("judgment", {}), **(changes["judgment"] or {})}
-        ic["judgment"] = {k: v.strip() for k, v in merged.items() if isinstance(v, str) and v.strip()}
+    if "note" in changes:
+        text = (changes["note"] or "").strip()
+        if text:
+            ic["note"] = text
+        else:
+            ic.pop("note", None)
     if "first_quarterly_review" in changes:
         if changes["first_quarterly_review"] is None:
             ic.pop("first_quarterly_review", None)
@@ -489,6 +438,94 @@ def apply_ic_inputs(current: Optional[dict], changes: dict, rows: List[dict], ga
         if late:
             raise ValueError(W7_REVIEW_BEFORE_GAP.format(date=max(late)))
     return ic
+
+
+# --- the ratings (simplified-flow.md section 3) ---------------------------------------------------------------------------------
+
+# The Dashboard's own colours: green = NRR at least 100%, gross churn at most 8%, payback at most 12 months; red = churn above 15% or payback
+# above 18 months. NRR has no red. These are industry thresholds, not company data.
+NRR_GREEN, CHURN_GREEN, CHURN_RED, PAYBACK_GREEN, PAYBACK_RED = 1.0, 0.08, 0.15, 12, 18
+RELIABILITY_RULES = {"reliable": ("Strong", "every completed check Green, {x} of {y} completed"),
+                     "needs_clarification": ("Adequate", "no check Red, not every completed check Green, {x} of {y} completed"),
+                     "material_concerns": ("Weak", "at least one check Red, {x} of {y} completed")}
+
+
+def cac_headline_months(results: dict) -> Optional[float]:
+    """The headline CAC payback in months, as the Dashboard picks it: the stored headline quarter, else the latest complete quarter with a
+    computable payback (default lag)."""
+    cp = (results or {}).get("cac_payback")
+    if not cp:
+        return None
+    lag = f"L{cp.get('default_l', 1)}"
+    quarters = cp.get("quarters") or {}
+    computable = lambda q: (quarters[q].get(lag) or {}).get("months") is not None            # noqa: E731
+    if "headline_quarter" in cp:
+        picked = cp["headline_quarter"]
+    else:
+        picked = next((q for q in sorted(quarters, reverse=True) if quarters[q].get("partial") is not True and computable(q)), None)
+    return quarters[picked][lag]["months"] if picked and picked in quarters and computable(picked) else None
+
+
+def rate_reliability(integrity: Optional[dict]) -> dict:
+    """Data reliability from the integrity conclusion: Reliable is Strong, Needs clarification Adequate, Material concerns Weak, Insufficient
+    assessment coverage not rated."""
+    integrity = integrity or {}
+    code = integrity.get("code")
+    if code in RELIABILITY_RULES:
+        rating, rule = RELIABILITY_RULES[code]
+        return {"rating": rating, "line": f"{rating} ({integrity['conclusion']}; {integrity['completed']} of {integrity['applicable']} checks)",
+                "rule": f"{rating}: " + rule.format(x=integrity["completed"], y=integrity["applicable"]), "benchmark": False, "missing": []}
+    return {"rating": None, "line": NOT_RATED, "benchmark": False, "missing": ["integrity checks"],
+            "rule": f"{NOT_RATED}: {integrity.get('completed', 0)} of {integrity.get('applicable', 0)} integrity checks completed"}
+
+
+def rate_growth(results: Optional[dict], fmt_pct, fmt_months) -> dict:
+    """Growth engine from NRR, gross revenue churn and CAC payback. NRR or churn absent: not rated. Weak when churn or payback is red;
+    Strong only when all three inputs are present and green; Adequate otherwise. The label "benchmark, not company data" goes with it."""
+    results = results or {}
+    nrr, churn = (results.get("nrr") or {}).get("overall_pct"), (results.get("gross_churn") or {}).get("overall_pct")
+    months = cac_headline_months(results)
+    missing = [name for name, v in (("NRR", nrr), ("gross revenue churn", churn)) if v is None]
+    if missing:
+        return {"rating": None, "line": NOT_RATED, "benchmark": True, "missing": missing,
+                "rule": f"{NOT_RATED}: {', '.join(missing)} not computed"}
+    figures = f"NRR {fmt_pct(nrr)}, gross churn {fmt_pct(churn)}, CAC payback " + (fmt_months(months) if months is not None else "not computed")
+    red = churn > CHURN_RED or (months is not None and months > PAYBACK_RED)
+    green = nrr >= NRR_GREEN and churn <= CHURN_GREEN and months is not None and months <= PAYBACK_GREEN
+    rating = "Weak" if red else "Strong" if green else "Adequate"
+    return {"rating": rating, "line": f"{rating} ({figures})", "rule": f"{rating}: {figures}", "benchmark": True, "missing": []}
+
+
+def ratings(results: Optional[dict], integrity: Optional[dict], fmt_pct, fmt_months) -> dict:
+    return {"data_reliability": rate_reliability(integrity), "growth_engine": rate_growth(results, fmt_pct, fmt_months)}
+
+
+# --- the computed Reasons and Unresolved questions, and the thesis draft -------------------------------------------------------
+
+UNRESOLVED_SHOWN = 5
+OPEN_CARDS = "{n} claim {noun} open on the Audit page."
+
+
+def unresolved_questions(gaps: List[dict], open_cards: int, integrity: Optional[dict], results: Optional[dict]) -> List[str]:
+    """One list, in this order: the top data gaps, the open claim questions, the integrity checks that were Blocked, the questions for
+    management (simplified-flow.md section 3). Texts only; the memo prints five and counts the rest."""
+    out = [f"{g['item']}: {g['why']}" for g in top_gaps(gaps)]
+    if open_cards:
+        out.append(OPEN_CARDS.format(n=open_cards, noun="question" if open_cards == 1 else "questions"))
+    out += [f"{b}: not assessed" for b in (integrity or {}).get("blocked") or ()]
+    out += management_questions(results)
+    return out
+
+
+def default_thesis(audit: dict, ver: dict, key: dict, currency_text) -> Dict[str, str]:
+    """The three-sentence deal thesis drafted from computed text (simplified-flow.md decision 6): Plan = Target ARR by Target date,
+    Evidence = the verdict rule, Condition = the first key gate. The analyst may edit each part."""
+    target, day = audit.get("target_arr"), audit.get("target_date")
+    plan = f"The plan targets ARR of {currency_text(target)} by {day}." if target and day else "Target ARR and Target date are not set."
+    evidence = f"{ver['outcome']}: {ver['rule']}" if ver.get("outcome") else "No conclusion yet."
+    gate = key["gates"][0] if key.get("gates") else None
+    condition = gate_text(gate) if gate else "No condition: every selected claim is Verified."
+    return {"plan": plan, "evidence": evidence, "condition": condition}
 
 
 # --- the baseline CSV (section 5) ----------------------------------------------------------------------------------------------

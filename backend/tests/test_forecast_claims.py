@@ -226,7 +226,7 @@ def test_a_forecast_claim_is_unverified_with_no_value_at_stake_overlaps_metric_o
     rows = _register(fc.candidates(found, {5, 15}, stored(ANNUAL)))
     forecast = [r for r in rows if r["claim_id"] not in ("t1", "t2")]
     assert len(forecast) == 12 and [r["claim_id"] for r in rows[:2]] == ["t1", "t2"], "forecast-table claims rank after every other row"
-    assert rows[1]["evidence_label"] == "Unsupported", "fixture: a row with no gap, which ranks before the untested rows"
+    assert rows[1]["evidence_label"] == "Unverified", "fixture: a row with no gap, which ranks before the untested rows"
     for r in forecast:
         assert (r["evidence_label"], r["reason"]) == ("Unverified", "Read from the forecast file, not yet tested against data")
         assert r["value_at_stake_arr"] is None and r["overlaps_with"] is None, "value at stake and overlaps are null"
@@ -235,7 +235,7 @@ def test_a_forecast_claim_is_unverified_with_no_value_at_stake_overlaps_metric_o
     first = next(r for r in forecast if r["claim_id"] == "f0#3")
     assert (first["claimed_value"], first["period"], first["page_ref"]) == (1980000, "2025F", "CSV!E5")
     assert vd.proposal(rows) == ["t1"], "out of the top 5; t2 is a market figure, which the proposal leaves out"
-    assert set(vd.gate_prefill(rows, "2026-12-31")) == {"t2"}, "no gate is prefilled on a forecast-table claim"
+    assert not [r for r in forecast if r["gate_sentence"] or r["gate_status"]], "no gate is written on a forecast-table claim"
 
 
 def test_an_edited_forecast_claim_stays_a_forecast_table_claim():
@@ -258,7 +258,7 @@ def test_the_ic_memo_and_the_baseline_csv_carry_forecast_claims_whose_overlaps_a
         r["rank"] = rank
     rows = kw["rows"] + added
     top = kw["ver"]["top5"]["claim_ids"]
-    kw.update(rows=rows, ver=vd.verdict(rows, kw["results"], {"claim_ids": top}), key=vd.key_gates(rows))
+    kw.update(rows=rows, ver=vd.verdict(rows, kw["results"], {"claim_ids": top}), key=vd.key_gates(rows, top))
     text = im.build_memo(**kw)
     assert text.count(cm.FORECAST_NOTE) == len(added) == 6, "each forecast-table row is listed in the register appendix"
     csv_rows, _, _ = vd.parse_baseline(vd.baseline_csv(rows, [], top, None))

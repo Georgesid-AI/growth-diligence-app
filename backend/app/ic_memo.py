@@ -2,8 +2,9 @@
 
 A pure module: it is handed the register, the verdict, the stored results, the audit, the stored narratives,
 and returns Markdown, or refuses and says why. It imports nothing from `app.llm`, calls no model, stores nothing and
-generates no narrative. Python never rates: the two assessed rows carry the analyst's rating, the other four say "Not
-assessed". Every number is checked against the stored data before the text is returned (section 7.4).
+generates no narrative. The two assessed rows carry the rating the app computes (verdict.ratings), the other four say "Not
+assessed". The memo exports without ratings, judgment or gate edits (docs/design/simplified-flow.md). Every number is checked
+against the stored data before the text is returned (section 7.4).
 """
 from __future__ import annotations
 
@@ -46,23 +47,19 @@ S17 = ("Narrative could not be generated. The computed metrics below are unaffec
 W19_PREFIX = "Memo not exported: "
 W19_WORDS = W19_PREFIX + "{n} words; the limit is 1,500."
 W19_NUMBERS = W19_PREFIX + "{n} numbers are not in the stored results: {list}."
-W19_BLOCKED = W19_PREFIX + "the conclusion is blocked."
-W19_KEY_GATES = W19_PREFIX + "mark 3 to 5 key gates."
-W19_RATE = W19_PREFIX + "rate {rows}."
 W19_CONTRACT = W19_PREFIX + "the stored results fail the contract: {fields}."
 CONTRACT_NO_VERDICT = "No conclusion: the stored results fail the contract: {fields}."
-W19_TOP5 = W19_PREFIX + vd.W23_MEMO
-# Not in W1-W25 (reported under "Decisions for you"): the refusals for a missing thesis and for no verdict at all.
+# Not in W1-W25: the refusal for no verdict at all (nothing computed, or no testable claim).
 WORDING_NOT_IN_W = {
-    "thesis": W19_PREFIX + "write the deal thesis: {parts}.",
-    "judgment": W19_PREFIX + "write the analyst judgment: {parts}.",       # claim-review-conclusion.md section 3
     "no_verdict": W19_PREFIX + "{message}",
 }
 
 RATING_LABELS = {"data_reliability": "Data reliability", "growth_engine": "Growth engine"}
 # The "as of" label of the analyst's own text: the requested analysis date (dates-and-periods.md section 2).
 ANALYST_TEXT = "Analyst's text, as of {date}."
-ANALYST_JUDGMENT = "Analyst judgment (analyst's text, as of {date})"
+THESIS_DRAFT = "Draft from computed text, editable; as of {date}."
+ANALYST_JUDGMENT = "Analyst judgment"
+ANALYST_NOTE = "Analyst note"
 THESIS_LABELS = {"plan": "Plan", "evidence": "Evidence", "condition": "Condition"}
 
 CATEGORIES = (
@@ -396,20 +393,8 @@ def _growth_narrative(narratives: List[dict]) -> Optional[dict]:
     return _step_narrative(narratives, "growth_engine")
 
 
-def _needs(ic: dict, rows: List[dict], key: dict) -> None:
-    missing = [RATING_LABELS[k] for k in vd.RATED_ROWS if (ic.get("ratings") or {}).get(k) not in vd.RATINGS]
-    if missing:
-        raise MemoRefused("inputs", W19_RATE.format(rows=", ".join(missing)))
-    absent = [THESIS_LABELS[k] for k in vd.THESIS_PARTS if not (ic.get("thesis") or {}).get(k)]
-    if absent:
-        raise MemoRefused("inputs", WORDING_NOT_IN_W["thesis"].format(parts=", ".join(absent)))
-    unwritten = [vd.JUDGMENT_LABELS[k] for k in vd.JUDGMENT_PARTS if not (ic.get("judgment") or {}).get(k)]
-    if unwritten:
-        raise MemoRefused("inputs", WORDING_NOT_IN_W["judgment"].format(parts=", ".join(unwritten)))
-
-
 def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, files, decks, tables, today, integrity,
-           thesis: Dict[str, str]) -> Tuple[str, str]:
+           thesis: Dict[str, str], rated: dict, unresolved: List[str], drafted: Iterable[str] = ()) -> Tuple[str, str]:
     """(sections 1-6 with the title, the whole text) for one view of the thesis."""
     notes = Notes()
     ccy = results.get("reporting_currency")
@@ -425,17 +410,25 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
                       f"Evidence to {fmt.evidence_to_text(results)}", ""]
 
     # 1. Summary
-    # claim-review-conclusion.md section 4: the heading, the conclusion, the scope sentence, the other contradictions and the analyst's
-    # judgment, verbatim; W24 stays.
-    judgment = ic.get("judgment") or {}
+    # claim-review-conclusion.md section 4: the heading, the conclusion, the scope sentence, the other contradictions and the computed
+    # reasons and unresolved questions; the analyst's note after them, verbatim, when there is one (simplified-flow.md).
     others = ver.get("other_contradictions") or []
-    out += [f"## {HEADINGS[0]}", vd.HEADING, f"Conclusion: {ver['outcome']} – {ver['rule']}{notes.register(top_ranks)}", vd.SCOPE_SENTENCE,
-            vd.W24_STATEMENT, ""]
+    out += [f"## {HEADINGS[0]}", vd.HEADING, f"Verdict: {ver['outcome']} – {ver['rule']}{notes.register(top_ranks)}", vd.SCOPE_SENTENCE,
+            f"{vd.SELECTION_CHANGED if ver['top5']['changed'] else vd.SELECTION_SENTENCE}.", ""]
     out += ["Other contradictions:"]
     out += [f"- {o['metric']}: {o['gap']}{notes.register([o['rank']])}" for o in others] or [vd.NO_OTHER_CONTRADICTIONS]
-    out += ["", ANALYST_JUDGMENT.format(date=today)]
-    verbatim = [f"{vd.JUDGMENT_LABELS[k]}: {judgment.get(k, '')}{notes.analyst()}" for k in vd.JUDGMENT_PARTS]
-    out += verbatim + [""]
+    out += ["", ANALYST_JUDGMENT, "Reasons:"]
+    out += [f"- {r}{notes.register(top_ranks)}" for r in ver["reasons"]]
+    out += ["Unresolved questions:"]
+    shown = unresolved[:vd.UNRESOLVED_SHOWN]
+    out += [f"- {q}{notes.add('open questions and data gaps, Appendix B')}" for q in shown] or ["- None."]
+    if len(unresolved) > vd.UNRESOLVED_SHOWN:
+        out += [f"and {len(unresolved) - vd.UNRESOLVED_SHOWN} more in Appendix B"]
+    verbatim = []
+    if ic.get("note"):
+        verbatim = [f"{ANALYST_NOTE}: {ic['note']}{notes.analyst()}"]
+        out += verbatim
+    out += [""]
     out += [f"Files reviewed: {len(files)} data {'file' if len(files) == 1 else 'files'} and {len(decks)} {'deck' if len(decks) == 1 else 'decks'}.{notes.add('files by evidence category, Appendix D')}",
             f"Evidence categories covered: {covered} of 7.{notes.add('files by evidence category, Appendix D')}",
             "Claims: " + summary_counts(counts) + f" of {len(rows)} in the register.{notes.register()}"]
@@ -445,8 +438,11 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     out += [f"Latest valid source period: {fmt.source_period_text(results.get('source_period'))}.", W16_VALUE_AT_RISK, ""]
 
     # 2. Deal thesis
-    out += [f"## {HEADINGS[1]}", ANALYST_TEXT.format(date=today)]
-    out += [f"{THESIS_LABELS[k]}: {thesis.get(k, '')}{notes.analyst()}" for k in vd.THESIS_PARTS]
+    drafted = set(drafted)
+    out += [f"## {HEADINGS[1]}", *([THESIS_DRAFT.format(date=today)] if drafted else []),
+            *([ANALYST_TEXT.format(date=today)] if len(drafted) < len(vd.THESIS_PARTS) else [])]
+    out += [f"{THESIS_LABELS[k]}: {thesis.get(k, '')}{notes.add('draft from computed text') if k in drafted else notes.analyst()}"
+            for k in vd.THESIS_PARTS]
     out += [""]
 
     # 3. Scorecard
@@ -483,9 +479,10 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
                   f"NRR {fmt.fmt_pct(nrr.get('overall_pct'))}{at('nrr')}{notes.source('NRR', 'nrr.overall_pct', nrr.get('source'))}, "
                   f"gross revenue churn {fmt.fmt_pct(churn.get('overall_pct'))}{at('gross_churn')}"
                   f"{notes.source('Gross revenue churn', 'gross_churn.overall_pct', churn.get('source'))}. {S17}")
-    ratings = ic.get("ratings") or {}
-    score = [["Data reliability", ratings["data_reliability"], reliability, reliability_evidence],
-             ["Growth engine", ratings["growth_engine"], growth, "arr, nrr, gross_churn, cac_payback, acv_path"]]
+    rel, grow = rated["data_reliability"], rated["growth_engine"]
+    rule = lambda r: f" {r['rule']}{' (' + vd.BENCHMARK + ')' if r['benchmark'] else ''}."            # noqa: E731
+    score = [["Data reliability", rel["rating"] or vd.NOT_RATED, reliability + rule(rel), reliability_evidence],
+             ["Growth engine", grow["rating"] or vd.NOT_RATED, growth + rule(grow), "arr, nrr, gross_churn, cac_payback, acv_path"]]
     score += [[name, text, "", ""] for name, text in W17_NOT_ASSESSED]
     out += [f"## {HEADINGS[2]}", _table(["Area", "Rating", "Headline", "Key evidence"], score), ""]
 
@@ -493,7 +490,8 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     out += [f"## {HEADINGS[3]}"]
     if key["note"]:
         out += [key["note"]]
-    out += [f"- {g['gate_sentence']}{notes.add('claim register, #%d; set by the analyst' % g['rank'])}" for g in key["gates"]]
+    out += [f"- {vd.gate_text(g)}{notes.add('claim register, #%d; %s' % (g['rank'], 'set by the analyst' if g.get('gate_status') == cm.GATE_SET else 'gate written from the claim'))}"
+            for g in key["gates"]]
     out += [vd.W13_DEAL_TERMS, ""]
 
     # 5. Worth flagging
@@ -536,14 +534,14 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     app += [f"## {APPENDICES[0]}"]
     vas = vas_cells(rows, results.get("reporting_currency"))
     reg = [[f"#{r['rank']}", vd.claim_name(r) + f" – {vd.claimed_text(r, results.get('reporting_currency'))}",
-            r["evidence_label"], cm.AUTO_LABEL if r.get("auto_approval") else cm.ANALYST_LABEL,      # who approved the claim (PR 157)
+            r["evidence_label"], cm.AUTO_LABEL if r.get("auto_approval") else cm.ANALYST_LABEL,      # who entered the claim: Python ("auto") or the analyst
             r.get("basis") or "—", f"{r['scenario']} case" if r.get("scenario") not in (None, "none") else "—",      # the page reader's basis and case (contract 6)
             vas[r["rank"]],
             ", ".join(f"#{by_id[o]['rank']}" for o in r["overlaps_with"] or () if o in by_id) or "—",
             f"{r['evidence_analysis']} {r['observed_citation']}" if r["evidence_analysis"] and r.get("observed_citation")      # issue #136
             else f"{r['evidence_analysis']} · {r['evidence_source_key']} ({r['observed_at']})" if r["evidence_analysis"] and r["observed_at"]
             else (f"{r['evidence_analysis']} · {r['evidence_source_key']}" if r["evidence_analysis"] else r["reason"]),
-            r["gate_sentence"] or (vd.W4_GATE_NEEDED if r["gate_needed"] else "—"),
+            vd.gate_text(r) or "—",
             "key" if r["claim_id"] in {g["claim_id"] for g in key["gates"]} else "", "top 5" if r["claim_id"] in {f["claim_id"] for f in ver["five"]} else ""]
            for r in rows]
     app += [_table(["#", "Claim", "Label", "Approval", "Basis", "Case", "VaS", "Overlaps with", "Evidence", "Gate", "Key gate", "Top 5"], reg), ""]
@@ -616,7 +614,7 @@ def _glossed(lines: List[str], keep: Iterable[str] = ()) -> List[str]:
 
 
 def allowed_numbers(audit: dict, results: dict, rows: List[dict], gaps: List[dict], ic: dict, files: List[dict],
-                    decks: List[dict], thesis: bool, tables: Optional[List[dict]] = None) -> Allowed:
+                    decks: List[dict], thesis: bool, tables: Optional[List[dict]] = None, unresolved: Optional[List[str]] = None) -> Allowed:
     """The numbers a memo may state. `thesis=True` is the set for a thesis sentence: (a)-(c) and (e), without the analyst's deal terms."""
     allowed = Allowed().results(contract.MetricsPayload.model_validate(results), results)
     allowed.tree({k: audit.get(k) for k in ("company_name", "target_arr", "target_date", "as_of_month")})
@@ -632,7 +630,9 @@ def allowed_numbers(audit: dict, results: dict, rows: List[dict], gaps: List[dic
         # the difference of two other cells of its row that it does hold; a ratio or any other derived figure is refused.
         allowed.derived_cells([row for t in tables or () for row in t["rows"]])
         allowed.tree(ic.get("gap_target_dates") or {}).tree(ic.get("first_quarterly_review"))
-        allowed.tree(ic.get("judgment") or {})          # the analyst's own text: its numbers are the analyst's (section 7.4 d)
+        allowed.tree(ic.get("note") or "")              # the analyst's own text: its numbers are the analyst's (section 7.4 d)
+        allowed.tree(unresolved or [])
+        allowed.number(int(ic.get("open_questions") or 0))
     return allowed
 
 
@@ -661,30 +661,30 @@ def build_memo(*, audit: dict, results: dict, rows: List[dict], ver: dict, key: 
         raise MemoRefused("contract", W19_CONTRACT.format(fields=exc.log_text)) from exc
     if ver["status"] in ("no_verdict",):
         raise MemoRefused("no_verdict", WORDING_NOT_IN_W["no_verdict"].format(message=ver["message"].removeprefix("No conclusion: ")))
-    if ver["status"] in ("unconfirmed", "void"):
-        raise MemoRefused("top5", W19_TOP5)
-    if ver["status"] == "blocked":
-        raise MemoRefused("blocked", W19_BLOCKED)
-    if not key["ok"]:
-        raise MemoRefused("key_gates", W19_KEY_GATES)
-    _needs(ic, rows, key)
-
     if integrity is None:
         integrity = integrity_mod.assess(results, deck_count=len(decks), candidates=[],
                                          fiscal_year_end=int((audit or {}).get("fiscal_year_end") or 12))
+    rated = vd.ratings(results, integrity, fmt.fmt_pct, fmt.fmt_months)
+    # The deal thesis is a draft from computed text unless the analyst wrote a part (simplified-flow.md decision 6).
+    draft = vd.default_thesis(audit, ver, key, lambda v: fmt.fmt_currency(v, results.get("reporting_currency")))
+    written = {k: v for k, v in (ic.get("thesis") or {}).items() if k in vd.THESIS_PARTS and v}
+    thesis = {k: written.get(k) or draft[k] for k in vd.THESIS_PARTS}
+    drafted = [k for k in vd.THESIS_PARTS if k not in written]
+    unresolved = vd.unresolved_questions(gaps, int(ic.get("open_questions") or 0), integrity, results)
     common = dict(audit=audit, results=results, rows=rows, ver=ver, key=key, gaps=gaps, ic=ic, blockers=blockers,
-                  narratives=narratives, files=files, decks=decks, tables=tables, today=today, integrity=integrity)
-    # A number in a thesis sentence must be in the results, the register or the cost log: checked sentence by sentence.
+                  narratives=narratives, files=files, decks=decks, tables=tables, today=today, integrity=integrity,
+                  rated=rated, unresolved=unresolved, drafted=drafted)
+    # A number in a sentence the analyst wrote must be in the results, the register or the cost log: checked sentence by sentence.
     strict = allowed_numbers(audit, results, rows, gaps, ic, files, decks, thesis=True)
-    bad = [t for part in vd.THESIS_PARTS for t in unmatched(ic["thesis"][part], strict)]
-    # Everything else, appendices included, against the full set; the date line is the one line the check skips.
-    _, blank = _build(**common, thesis={k: "" for k in vd.THESIS_PARTS})
+    bad = [t for part in written for t in unmatched(written[part], strict)]
+    # Everything else, appendices and the drafted thesis included, against the full set; the date line is the one line the check skips.
+    _, blank = _build(**common, thesis={k: (v if k in drafted else "") for k, v in thesis.items()})
     checked = "\n".join(line for line in blank.split("\n") if not line.startswith("Date: "))
-    bad += [t for t in unmatched(checked, allowed_numbers(audit, results, rows, gaps, ic, files, decks, thesis=False, tables=tables))
-            if t not in bad]
+    bad += [t for t in unmatched(checked, allowed_numbers(audit, results, rows, gaps, ic, files, decks, thesis=False, tables=tables,
+                                                          unresolved=unresolved)) if t not in bad]
     if bad:
         raise MemoRefused("numbers", W19_NUMBERS.format(n=len(bad), list=", ".join(bad)), unmatched=bad)
-    head, text = _build(**common, thesis=dict(ic["thesis"]))
+    head, text = _build(**common, thesis=thesis)
     words = count_words(head)
     if words > WORD_LIMIT:
         raise MemoRefused("words", W19_WORDS.format(n=f"{words:,}"), words=words)

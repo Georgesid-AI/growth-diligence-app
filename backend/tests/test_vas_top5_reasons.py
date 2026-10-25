@@ -116,9 +116,9 @@ def test_a_claim_whose_type_has_an_engine_metric_but_no_period_reads_period_miss
     assert (row["evidence_label"], row["reason"]) == ("Unverified", "period missing; set it with Edit")
 
 
-def test_a_claim_with_a_period_and_no_metric_stays_unsupported_no_metric():
+def test_a_claim_with_a_period_and_no_metric_stays_unverified_no_metric():
     row = run_claim({"claim_type": "sales", "snippet": "Sales cycle 60", "unit": None, "currency": None, "value": 60, "target_date": "2024-02"})
-    assert (row["evidence_label"], row["reason"]) == ("Unsupported", "no metric")
+    assert (row["evidence_label"], row["reason"]) == ("Unverified", "no metric")
 
 
 def _engine(rev, pnl, config, yearly=None):

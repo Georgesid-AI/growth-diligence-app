@@ -24,7 +24,10 @@ from typing import Annotated, Any, Dict, Iterator, List, Literal, Optional, Tupl
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, ValidationInfo
 
-CONTRACT_VERSION = 8          # 8: ARR, MRR, Churn, NRR and CAC payback are claim types of their own, and the page reader's list gains cac_payback; gross_churn gains monthly_series (docs/specs/interface-contracts.md);
+CONTRACT_VERSION = 9          # 9: the simplified flow (docs/design/simplified-flow.md): claims enter the register without an approval, a stated figure the app cannot test
+                              #    reads Unverified, gates are written from the claim, the ratings are computed and the memo carries the optional analyst note
+                              #    (`ic_inputs.note`); no engine block changes, and results and claim matches stored under 8 read "Stale – re-run audit".
+                              # 8: ARR, MRR, Churn, NRR and CAC payback are claim types of their own, and the page reader's list gains cac_payback; gross_churn gains monthly_series (docs/specs/interface-contracts.md);
                               #    stored deck claims typed revenue, retention or sales differ from the new types, so results stored under 7 read "Stale – re-run audit".
                               # 7: the page reader's closed metric list gains arr, mrr, churn, nrr, market_share, pricing and use_of_funds (claim type
                               #    mapping and groups; docs/specs/interface-contracts.md); results stored under 6 read "Stale – re-run audit".
@@ -646,7 +649,7 @@ class MetricPeriod(Block):
 
 class MetricsPayload(Block):
     """The full engine output. A block the engine could not compute is null; the reason is in `missing_data`."""
-    contract_version: Literal[8]
+    contract_version: Literal[9]
     reporting_currency: str                         # the one currency code; no value repeats it
     as_of_month: Optional[str]
     arr: Optional[Arr]

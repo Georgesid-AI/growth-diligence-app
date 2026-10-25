@@ -56,7 +56,7 @@ def test_a_qualified_users_claim_is_inconclusive_with_paying_customers_shown_and
     assert (row["metric"], row["observed_value"], row["observed_at"]) == ("Customer count", 5, "2024-02")
     assert row["observed_source"], "the computed figure carries its source"
     assert (row["gap"], row["gap_normalised"], row["gap_kind"], row["gloss"]) == (None, None, None, None)
-    assert row["gate_needed"] is True, "an Inconclusive row needs a gate, as an Unverified one does"
+    assert row["gate_needed"] is False and row["gate_status"] == "proposed", "an Inconclusive row has a gate written from the claim, as an Unverified one does"
 
 
 def test_an_inconclusive_row_ranks_after_every_tested_row_and_is_never_a_hard_blocker():

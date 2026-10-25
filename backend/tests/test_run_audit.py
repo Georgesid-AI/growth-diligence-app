@@ -27,9 +27,7 @@ AUDIT_DOC = {"id": AUDIT, "company_name": "TestCo", "structure_reading_consent":
              "fiscal_year_end": 12, "reporting_currency": "EUR", "target_arr": 1000000, "target_date": "2026-12-31",
              "as_of_month": None, "results": None, "status": "draft", "usage": usage_mod.empty(),
              "created_at": "2026-10-11T08:00:00+00:00", "ic_inputs": {"first_quarterly_review": "2027-01-09"}}      # as create_audit stores it
-RATINGS = {"data_reliability": "Adequate", "growth_engine": "Weak"}
 THESIS = {"plan": "Grow through the mid-market.", "evidence": "Retention holds in the base.", "condition": "Gates met on time."}
-JUDGMENT = {"reasons": "The five claims hold against the files.", "unresolved_questions": "None beyond the data requests."}
 RUN = RUNS["A"]
 
 
@@ -94,7 +92,7 @@ def add_deck(client, only_verified=False):
     keep = None
     if only_verified:
         rows = cm.build_register(candidates_for(RUN), results_for(RUN), settings(RUN))
-        keep = set(run_audit.within_tolerance_ids(rows, [c["id"] for c in candidates_for(RUN)]))
+        keep = {r["claim_id"].split("#")[0] for r in rows if r["evidence_label"] == "Verified" and not cm.is_beat(r)}      # the claims the register labels Verified within tolerance
     for n, c in enumerate(candidates_for(RUN)):
         if keep is not None and c["id"] not in keep:
             continue
@@ -247,7 +245,7 @@ def test_an_audit_with_no_deck_has_no_claims_to_read(run_api):
     confirm_open_columns(run_api)
     stage(run_api, "engine")
     res = stage(run_api, "claims")
-    assert (res["status"], res["accepted"], res["open"], res["message"]) == ("done", 0, 0, run_audit.NO_DECKS)
+    assert (res["status"], res["entered"], res["open"], res["message"]) == ("done", 0, 0, run_audit.NO_DECKS)
 
 
 # --- accepted without a click -------------------------------------------------------------------------------------------------
@@ -268,39 +266,26 @@ def test_columns_the_rules_accepted_are_counted_and_the_ones_that_wait_are_liste
     assert stage(run_api, "mapping")["status"] == "done"
 
 
-def test_claims_within_tolerance_are_accepted_and_the_others_stay_for_the_review_screen(run_api):
+def test_every_matched_claim_enters_whatever_its_label_and_the_ones_a_check_asks_about_wait(run_api):
+    """simplified-flow.md section 2: the tolerance decides a claim's label, no longer whether it enters the register."""
     upload_files(run_api)
     confirm_open_columns(run_api)
     add_deck(run_api)
     stage(run_api, "engine")
     res = stage(run_api, "claims")
     rows = cm.build_register(candidates_for(RUN), results_for(RUN), settings(RUN))
-    verified = {r["claim_id"].split("#")[0] for r in rows if r["evidence_label"] == "Verified"}
     beats = {r["claim_id"].split("#")[0] for r in rows if cm.is_beat(r)}
-    accepted = {c["id"] for c in candidates(run_api) if c.get("auto_accepted")}
-    assert beats, "fixture: a Verified beat"
-    assert res["accepted"] == len(accepted) and 0 < len(accepted) <= len(verified - beats)
-    assert accepted <= verified - beats, "only what the register labels Verified within tolerance: a beat waits for the analyst"
-    assert not accepted & beats and all(c["status"] == "pending" for c in candidates(run_api) if c["id"] in beats)
+    entered = {c["id"] for c in candidates(run_api) if c.get("auto_accepted")}
+    assert beats and beats <= entered, "fixture: a Verified beat enters like the others"
+    assert {r["claim_id"].split("#")[0] for r in rows if r["evidence_label"] == "Contradicted"} <= entered, "a miss enters too"
+    assert res["entered"] == len(entered) and res["entered"] > len({r["claim_id"] for r in rows if r["evidence_label"] == "Verified"})
     left = [c for c in candidates(run_api) if c["status"] == "pending"]
-    assert res["open"] == len(left) and left, "claims outside tolerance wait for the analyst"
+    assert res["open"] == len(left), "the claims a check asks about, or a Revenue / Volume question, wait for the analyst"
     assert all(c["status"] in ("approved", "edited") for c in candidates(run_api) if c.get("auto_accepted"))
     summary = review(run_api)["claims"]
-    assert summary["auto_accepted"] == len(accepted) and set(summary["auto_accepted_ids"]) == accepted and summary["open"] == len(left)
+    assert summary["auto_accepted"] == len(entered) and set(summary["auto_accepted_ids"]) == entered and summary["open"] == len(left)
     again = stage(run_api, "claims")
-    assert again["accepted"] == 0, "running the stage again accepts nothing twice"
-
-
-def test_only_a_row_within_tolerance_is_accepted_not_a_beat_nor_a_definition_check_however_it_was_answered():
-    """claim-matching.md section 4.1 (George, 2026-10-14): a beat of 5% to 50% and a bigger beat answered Yes are Verified (beat), not
-    within tolerance; the analyst reviews them. A table row counts only when every value is within tolerance."""
-    plain = {"claim_id": "a", "evidence_label": "Verified", "reason": "within ±5% of the claim", "definition_check": None}
-    beat = {"claim_id": "b", "evidence_label": "Verified", "reason": cm.BEAT_PREFIX + "€5 higher (beat)", "definition_check": None}
-    big_yes = {**beat, "claim_id": "c", "definition_check": "yes"}
-    open_ = {"claim_id": "d", "evidence_label": None, "reason": "definition check", "definition_check": "ask"}
-    table = [{**plain, "claim_id": "e#1"}, {**beat, "claim_id": "e#2"}]
-    assert run_audit.within_tolerance_ids([plain, beat, big_yes, open_, *table], list("abcde")) == ["a"]
-    assert run_audit.within_tolerance_ids([{**plain, "claim_id": "e#1"}, {**plain, "claim_id": "e#2"}], ["e"]) == ["e"]
+    assert again["entered"] == res["entered"] and again["reopened"] == 0, "running the stage again enters nothing twice"
 
 
 def test_an_accepted_claim_can_still_be_rejected_or_edited_by_the_analyst(run_api):
@@ -346,27 +331,24 @@ def ready_for_review(client, only_verified=False):
     assert [r["status"] for r in run_audit_button(client)] == ["done", "done", "done"]
 
 
-def test_the_review_inputs_persist_and_come_back_on_the_next_read(run_api):
+def test_the_analysts_inputs_persist_and_come_back_on_the_next_read(run_api):
     ready_for_review(run_api)
-    ids = run_api.get(f"/api/audits/{AUDIT}/verdict").json()["verdict"]["top5"]["proposed"]
-    assert run_api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"top5": ids}).status_code == 200
-    assert run_api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"thesis": THESIS, "ratings": RATINGS}).status_code == 200
+    selection = run_api.get(f"/api/audits/{AUDIT}/verdict").json()["verdict"]["top5"]
+    assert selection["changed"] is False and selection["in_force"] == selection["proposed"], "in force with no confirmation"
+    assert run_api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"thesis": THESIS, "note": "Call booked."}).status_code == 200
     body = run_api.get(f"/api/audits/{AUDIT}/verdict").json()
-    assert body["verdict"]["top5"]["confirmed"] and set(body["verdict"]["top5"]["claim_ids"]) == set(ids)
-    assert body["ic_inputs"]["thesis"] == THESIS and body["ic_inputs"]["ratings"] == RATINGS
-    assert run_api.db["audits"].docs[0]["ic_inputs"]["ratings"] == RATINGS, "stored on the audit, not in the browser"
+    assert body["ic_inputs"]["thesis"] == THESIS and body["ic_inputs"]["note"] == "Call booked."
+    assert run_api.db["audits"].docs[0]["ic_inputs"]["note"] == "Call booked.", "stored on the audit, not in the browser"
 
 
 def test_a_gate_set_on_the_review_screen_is_the_registers_gate(run_api):
     ready_for_review(run_api)
-    open_claim = next(c for c in candidates(run_api) if c["status"] == "pending")
-    assert run_api.put(f"/api/audits/{AUDIT}/decks/candidates/{open_claim['id']}", json={"status": "approved"}).status_code == 200
     row = next(r for r in run_api.get(f"/api/audits/{AUDIT}/claims").json()["register"] if r["evidence_label"] != "Verified")
     body = {"gate_threshold": 100.0, "gate_budget_decision": "the Series B hiring plan", "gate_date": "2024-06-30"}
     cid = row["claim_id"].replace("#", "%23")
     assert run_api.put(f"/api/audits/{AUDIT}/claims/{cid}", json=body).status_code == 200
     saved = next(r for r in run_api.get(f"/api/audits/{AUDIT}/claims").json()["register"] if r["claim_id"] == row["claim_id"])
-    assert saved["gate_saved"] and saved["gate_threshold"] == 100.0
+    assert saved["gate_saved"] and saved["gate_threshold"] == 100.0 and saved["gate_status"] == "set by the analyst"
 
 
 # --- narratives run only from their button -----------------------------------------------------------------------------------
@@ -442,38 +424,33 @@ def memo(client):
     return client.get(f"/api/audits/{AUDIT}/memo.md")
 
 
-def test_the_memo_is_refused_until_ratings_are_entered_and_then_built(run_api):
+def test_the_memo_is_built_with_no_rating_no_judgment_and_no_thesis_and_prints_the_computed_ones(run_api):
     ready_for_review(run_api, only_verified=True)
-    ids = run_api.get(f"/api/audits/{AUDIT}/verdict").json()["verdict"]["top5"]["proposed"]
-    run_api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"top5": ids, "thesis": THESIS, "judgment": JUDGMENT})
-    r = memo(run_api)
-    assert r.status_code == 409 and "rate Data reliability, Growth engine" in r.json()["detail"]
-    run_api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"ratings": RATINGS})
     r = memo(run_api)
     assert r.status_code == 200, r.text
+    assert "Data reliability |" in r.text and "Draft from computed text, editable" in r.text and "Reasons:" in r.text
 
 
 def test_the_reconciliation_blocker_is_on_the_review_summary_and_in_the_memo_not_hidden(run_api):
     ready_for_review(run_api, only_verified=True)
     kinds = [b["kind"] for b in review(run_api)["blockers"]]
     assert "revenue_reconciliation" in kinds, "the sample files differ from the sample P&L by more than 2%"
-    ids = run_api.get(f"/api/audits/{AUDIT}/verdict").json()["verdict"]["top5"]["proposed"]
-    run_api.put(f"/api/audits/{AUDIT}/ic-inputs", json={"top5": ids, "thesis": THESIS, "ratings": RATINGS, "judgment": JUDGMENT})
     r = memo(run_api)
     assert r.status_code == 200 and "Revenue file and P&L differ by" in r.text.split("## Key gates")[1].split("## Data gaps")[0]
 
 
 # --- the click count: from upload to the memo download -------------------------------------------------------------------------
-MAX_CLICKS = 15
-# 21 set by George (2026-10-11), plus the two analyst judgment fields the plan of 15 Oct 2026 requires before export
-# (claim-review-conclusion.md section 3). 23 accepted by George, 15 Oct 2026.
-MAX_CLICKS_FULL = 23
+# simplified-flow.md section 0: a TestCo run took 23 clicks, most of them confirmations of things Python already knows. The claim
+# approvals, the top-5 confirmation, the gate form, the two ratings and the two judgment fields are gone; what is left is the files,
+# Run audit, the mapping rows that still wait, the answers to the cards, and the download.
+MAX_CLICKS = 7
+MAX_CLICKS_FULL = 7
 
 
 def analyst_flow(client, only_verified):
     """The TestCo audit, from the file picker to the memo, the way the screens take it. Each line that counts an action is one
     thing the analyst does; the API calls beside it are the ones that action makes. What the app does by itself (the stages, the
-    claims within tolerance, the stages again once the last column is confirmed) is not counted."""
+    claims it enters, the stages again once the last column is confirmed) is not counted."""
     clicks = Clicks()
     clicks("pick the files in one picker: three data files and the deck")
     upload_files(client)
@@ -484,73 +461,36 @@ def analyst_flow(client, only_verified):
     for _ in range(waiting):
         clicks("Confirm a mapping row")
     if waiting:
-        results = run_audit_button(client)            # the review screen runs the stages again when the last row is decided
+        results = run_audit_button(client)            # the Audit page runs the stages again when the last row is decided
     assert [r["status"] for r in results] == ["done", "done", "done"], results
 
-    # Open claims: one click on "Approve all" for each category that still holds claims to review.
-    groups = sorted({server.deck_claims.type_group(c.get("claim_type")) for c in candidates(client) if c["status"] == "pending"})
-    for group in groups:
-        clicks(f"Approve all, category {group}")
-        r = client.post(f"/api/audits/{AUDIT}/decks/candidates/approve-all", json={"group": group})
-        assert r.status_code == 200, r.text
+    # The cards: a claim a check asks about is kept or fixed in one click. Everything else was entered by Python.
+    for c in [c for c in candidates(client) if c["status"] == "pending" and c.get("claim_type") not in server.deck_claims.OTHER_TYPES]:
+        clicks("answer a card: Keep")
+        assert client.put(f"/api/audits/{AUDIT}/decks/candidates/{c['id']}", json={"status": "approved"}).status_code == 200
 
-    clicks("Confirm the top 5")
-    ids = client.get(f"/api/audits/{AUDIT}/verdict").json()["verdict"]["top5"]["proposed"]
-    assert client.put(f"/api/audits/{AUDIT}/ic-inputs", json={"top5": ids}).status_code == 200
-
-    # The gates of the claims that are not Verified, prefilled from stored data. The analyst picks the budget decision on each (the
-    # first one is typed, the next ones are picked from the audit's list), fills what the prefill leaves blank, and presses Save all.
-    reg = client.get(f"/api/audits/{AUDIT}/claims").json()
-    register = {r["claim_id"]: r for r in reg["register"]}
-    gated = [cid for cid in ids if register[cid]["evidence_label"] != "Verified"]
-    batch = []
-    for n, cid in enumerate(gated):
-        fill = {**reg["gate_prefill"][cid]}
-        clicks("gate budget decision: typed after Other" if n == 0 else "gate budget decision: picked from the list")
-        for blank in ("gate_threshold", "gate_date"):
-            if blank not in fill:
-                clicks(f"gate {blank} (not prefilled)")
-                fill[blank] = 100.0 if blank == "gate_threshold" else "2024-06-30"
-        if register[cid]["reason"] in server.claim_matching.NO_APP_METRIC:
-            clicks("gate direction: at least / at most")
-            fill["gate_direction"] = "at least"
-        batch.append({"claim_id": cid, **fill, "gate_budget_decision": "the Series B hiring plan"})
-    if gated:
-        clicks("Save all gates")
-        assert client.put(f"/api/audits/{AUDIT}/claim-gates", json={"gates": batch}).status_code == 200
-    marked = [e["claim_id"] for e in batch if e.get("key_gate")]
-    if len(gated) >= 3:
-        for cid in gated[:3]:
-            if cid not in marked:
-                clicks("mark a key gate")
-                assert client.put(f"/api/audits/{AUDIT}/claims/{cid}", json={"key_gate": True}).status_code == 200
-
-    for part in ("plan", "evidence", "condition"):
-        clicks(f"deal thesis: {part}")
-    clicks("rating: Data reliability")
-    clicks("rating: Growth engine")
-    for part in ("reasons", "unresolved questions"):      # claim-review-conclusion.md section 3: the analyst judgment
-        clicks(f"analyst judgment: {part}")
-    assert client.put(f"/api/audits/{AUDIT}/ic-inputs", json={"thesis": THESIS, "ratings": RATINGS, "judgment": JUDGMENT}).status_code == 200
+    body = client.get(f"/api/audits/{AUDIT}/verdict").json()
+    assert body["verdict"]["status"] == "ok", "the conclusion is there at once: nothing was confirmed, no gate was filled, nothing rated"
+    gated = [g["claim_id"] for g in body["key_gates"]["sentences"]]
 
     clicks("Write all narratives")
     _, done = write_all(client)
     assert set(done.values()) == {"ok"}, done
 
-    clicks("Generate IC memo")
+    clicks("Download report")
     r = memo(client)
     assert r.status_code == 200, r.text
     return clicks, gated
 
 
-def test_a_clean_testco_audit_goes_from_upload_to_the_memo_in_no_more_than_15_clicks(run_api):
+def test_a_clean_testco_audit_goes_from_upload_to_the_memo_in_no_more_than_the_clean_budget(run_api):
     clicks, gated = analyst_flow(run_api, only_verified=True)
     print(f"\nCLICKS clean TestCo: {clicks.n} -> {clicks.log}")
-    assert gated == [], "fixture: a clean audit has no top-5 claim outside tolerance, so no gate to set"
+    assert gated == [], "fixture: a clean audit has no top-5 claim outside tolerance, so no key gate"
     assert clicks.n <= MAX_CLICKS, f"{clicks.n} clicks: {clicks.log}"
 
 
-def test_the_click_count_fails_above_15():
+def test_the_click_count_fails_above_the_budget():
     """The limit is enforced: a flow with one more action than the limit is refused by the same comparison."""
     spent = Clicks()
     for i in range(MAX_CLICKS + 1):
@@ -559,12 +499,9 @@ def test_the_click_count_fails_above_15():
         assert spent.n <= MAX_CLICKS
 
 
-def test_the_full_testco_audit_with_contradicted_top_5_claims_needs_more_clicks_than_a_clean_one(run_api):
+def test_the_full_testco_audit_with_contradicted_top_5_claims_needs_no_gate_edit_rating_or_judgment(run_api):
     clicks, gated = analyst_flow(run_api, only_verified=False)
-    print(f"\nCLICKS full TestCo (33 claims, top 5 outside tolerance): {clicks.n}")
-    assert len(gated) == 5 and clicks.n > MAX_CLICKS, "the budget decision of each gate is the analyst's: more than the clean audit"
-
-
-def test_the_full_testco_audit_goes_from_upload_to_the_memo_in_no_more_than_23_clicks(run_api):
-    clicks, _ = analyst_flow(run_api, only_verified=False)
+    print(f"\nCLICKS full TestCo (33 claims, top 5 outside tolerance): {clicks.n} -> {clicks.log}")
+    assert len(gated) == 5, "the five's gates are written from the claims: no click"
+    assert not [x for x in clicks.log if "gate" in x or "rating" in x or "judgment" in x or "thesis" in x or "top 5" in x]
     assert clicks.n <= MAX_CLICKS_FULL, f"{clicks.n} clicks: {clicks.log}"

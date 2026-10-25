@@ -64,7 +64,7 @@ def test_a_a_bar_chart_of_average_revenue_per_account_is_never_revenue_and_never
         assert not c.get("inconsistent_dates")
     rows = register_of(found)
     bar_rows = [r for r in rows if r["claim_type"] in ("arpa", "arpu")]
-    assert bar_rows and {r["evidence_label"] for r in bar_rows} == {"Unsupported"}
+    assert bar_rows and {r["evidence_label"] for r in bar_rows} == {"Unverified"}
     assert {r["reason"] for r in bar_rows} == {cm.UNIT_ECONOMICS_REASON}
     assert not any(r["claim_type"] == "revenue" and r["value"] in (5210.4, 6102.75, 7517.55, 8330.1) for r in rows)
 

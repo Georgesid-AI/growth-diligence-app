@@ -22,7 +22,7 @@ FIELDS = (
     "metric_set_by", "direction", "observed_value", "observed_at", "observed_source", "observed_citation", "gap", "gap_normalised",
     "gap_kind", "gloss", "evidence_label", "reason", "tolerance", "rank", "value_at_stake_arr", "vas_reason", "shortfall",
     "overlaps_with", "evidence_analysis", "evidence_source_key", "gate_sentence", "gate_threshold",
-    "gate_budget_decision", "gate_date", "gate_saved", "gate_metric_name", "gate_direction", "key_gate", "gate_needed",
+    "gate_budget_decision", "gate_date", "gate_saved", "gate_metric_name", "gate_direction", "key_gate", "gate_needed", "gate_status",
     "as_of_month", "as_of_defaulted", "turnover_state", "turnover_note", "turnover_set_by", "turnover_reason",
     "implied_take_rate", "implied_take_rate_source", "turnover_suggested", "deck_revenue_note", "definition_check",
     "definition_question", "period_coverage", "months_missing", "growth_basis", "population", "figure_type", "required_unknown",
@@ -39,6 +39,8 @@ SOURCE_FIELDS = frozenset({"observed_source"})
 
 WHOLE, NOT_IN_DATA = "Whole company", "Not in the data"
 NO_PERIOD = "no period stated"
+# The one Unsupported left (evidence-labels.md section 2, simplified-flow.md): the plan implies a figure and no slide states it.
+NO_CLAIMED_VALUE = "no claimed value"
 # George, 2026-10-19 (issue #136, decision 3): a claim whose period cannot be read is Unverified with this text and is never read at
 # the as-of month or the evidence end; the 7 Oct fallback to the whole company applies to the segment only.
 PERIOD_NOT_READ = "Period not read – set it in the claim row"
@@ -605,8 +607,9 @@ def needs_metric_name(row: dict) -> bool:
 
 
 def _is_saved(inputs: dict, needs_name: bool) -> bool:
-    """Threshold, budget decision and date are all filled; a row with no app metric also needs the metric and the direction."""
-    saved = inputs.get("gate_threshold") is not None and bool(inputs.get("gate_budget_decision")) and bool(inputs.get("gate_date"))
+    """The analyst edited the gate: threshold and date are filled (the budget decision is optional, simplified-flow.md); a row with no app
+    metric also needs the metric and the direction."""
+    saved = inputs.get("gate_threshold") is not None and bool(inputs.get("gate_date"))
     if needs_name:
         saved = saved and bool(inputs.get("gate_metric_name")) and inputs.get("gate_direction") in GATE_DIRECTIONS
     return saved
@@ -977,12 +980,14 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
     def finish(label: Optional[str], reason: str) -> dict:
         if qualified and population_differs and label == "Unsupported":     # no paying-customer figure: the reason names the population
             reason = QUALIFIED_NO_FIGURE.format(label=qualified_label(text, c["qualifier"]))
+        if label == "Unsupported" and reason != NO_CLAIMED_VALUE:       # evidence-labels.md section 2: a stated figure the app cannot test is Unverified
+            label = "Unverified"
         out.update(evidence_label=label, reason=reason)
         if out["evidence_analysis"] is None and reason.startswith("Missing:") and metric in METRICS:
             item = _missing_item(results, metric)
             if item:
                 out.update(evidence_analysis=str(item.get("metric")), evidence_source_key=MISSING_KEY)
-        _gate(out, c, inputs, spec, claim_unit, results, shown_claim[0])
+        _gate(out, c, inputs, spec, claim_unit, results, shown_claim[0], settings.get("first_quarterly_review"))
         return out
 
     fx = fx_view(c, settings, as_of)
@@ -1089,7 +1094,7 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         if observed is not None:
             out["observed_citation"] = citation(found[1], source, observed_at)
     if claimed_low is None:
-        return finish("Unsupported", "no claimed value")
+        return finish("Unsupported", NO_CLAIMED_VALUE)
     if partly:                                          # section 4: the figure over the months present, no test
         return finish(INCONCLUSIVE, partly_reason)
     if figure_type == "target" and not forecast:        # a plan for a period that has passed: shown, never tested as a result
@@ -1158,29 +1163,84 @@ def definition_basis(row: dict) -> dict:
             "period": [row.get("period_start"), row.get("period_end")], "as_of_month": row.get("as_of_month")}
 
 
+GATE_PROPOSED, GATE_SET = "proposed", "set by the analyst"
+# The claim types whose gate reads "at most" when the row has no app metric (simplified-flow.md section 3): lower is better.
+AT_MOST_TYPES = ("churn", "costs", "burn", "cac", "cac_payback", "months_to_profitability")
+_ISO_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def claim_name(row: dict) -> str:
+    """How a register row is called in a sentence: its metric (or claim type), the segment when not the whole company, the period."""
+    from .decks.claims import TYPE_NAMES
+    name = row.get("metric") or TYPE_NAMES.get(row.get("claim_type")) or str(row.get("claim_type") or "claim").replace("_", " ").capitalize()
+    if str(row.get("reason") or "").startswith(POPULATION_PREFIX):     # the app's metric counts other people: name the claim's own
+        name = TYPE_NAMES.get(row.get("claim_type")) or str(row.get("claim_type") or "claim").replace("_", " ").capitalize()
+    if row.get("segment") not in (None, WHOLE):
+        name = f"{name} · {row['segment']}"
+    if row.get("period"):
+        name = f"{name}, {row['period']}"
+    return name
+
+
+def _template(out: dict, c: dict, spec: Optional[dict], claim_unit: Optional[str], app_metric: bool, review: Optional[str]) -> Optional[dict]:
+    """The gate written from the claim (simplified-flow.md section 3): threshold = the claimed figure in the claim's unit (the converted
+    one in another currency), direction from the metric (higher: at least, lower: at most; no metric: at most for churn, cost, burn, CAC,
+    payback and sales-cycle claims), date = the end of the claim's period, never later than the first quarterly review, else the review
+    date. None when the claim states no figure or no date can be given."""
+    shown = out["claimed_converted"] if out.get("claimed_converted") is not None else out.get("claimed_value")
+    if shown is None:
+        return None
+    period_end = out.get("period_end") if _ISO_DAY.match(str(out.get("period_end") or "")) else None
+    valid_review = review if _ISO_DAY.match(str(review or "")) else None
+    date = min(period_end, valid_review) if period_end and valid_review else (period_end or valid_review)
+    if not date:
+        return None
+    if app_metric and spec:
+        threshold = _to_metric_unit(shown, claim_unit, spec["unit"]) if _fits(spec["unit"], claim_unit) else shown
+        direction = "at least" if spec["direction"] == "higher" else "at most"
+        return {"threshold": threshold, "date": date, "direction": direction, "name": None}
+    text = f"{c.get('snippet') or ''} {c.get('label_from') or ''}".lower()
+    lower = out.get("claim_type") in AT_MOST_TYPES or "sales cycle" in text
+    return {"threshold": shown, "date": date, "direction": "at most" if lower else "at least", "name": claim_name(out)[:GATE_METRIC_MAX]}
+
+
 def _gate(out: dict, c: dict, inputs: dict, spec: Optional[dict], claim_unit: Optional[str], results: dict,
-          claimed: Optional[float]) -> None:
-    """The gate of a row (verdict-and-memo.md section 3): saved when threshold, budget decision and date are filled (and, for a
-    row with no app metric, the metric name and the direction). Nothing is proposed. Sets gate_saved, gate_sentence,
-    gate_needed and key_gate; reads the label and the reason `finish` has just set."""
+          claimed: Optional[float], review: Optional[str] = None) -> None:
+    """The gate of a row (simplified-flow.md section 3): every row labelled Unverified, Inconclusive, Unsupported or Contradicted has one,
+    except the rows that are never tested. The analyst's edit wins (threshold and date filled; a row with no app metric also the metric
+    and the direction): status "set by the analyst". Otherwise the gate is written from the claim (`_template`): status "proposed".
+    Sets gate_saved (the analyst's edit), gate_sentence, gate_status, gate_needed (always false) and key_gate (the verdict marks it)."""
     app_metric = not needs_metric_name(out)
     saved = _is_saved(inputs, needs_name=not app_metric)
-    out["gate_saved"] = saved
-    out["key_gate"] = bool(inputs.get("key_gate")) and saved
-    out["gate_needed"] = out["evidence_label"] in NOT_VERIFIED and not saved
-    if not saved:
+    out["gate_saved"] = saved and out["evidence_label"] in NOT_VERIFIED
+    out["key_gate"] = False
+    out["gate_needed"] = False
+    if out["evidence_label"] not in NOT_VERIFIED or is_untested(out):
         return
+    if saved:
+        threshold, date, decision = inputs["gate_threshold"], inputs["gate_date"], inputs.get("gate_budget_decision")
+        name, direction, status = inputs.get("gate_metric_name"), inputs.get("gate_direction"), GATE_SET
+    else:
+        made = _template(out, c, spec, claim_unit, app_metric, review)
+        if made is None:
+            return
+        threshold, date, decision, name, direction, status = made["threshold"], made["date"], None, made["name"], made["direction"], GATE_PROPOSED
+        out.update(gate_threshold=threshold, gate_date=date, gate_direction=direction if not app_metric else None, gate_metric_name=name)
+    out["gate_status"] = status
+    before = f"Before {decision}, " if decision else ""
     if app_metric:
         metric, segment = out["metric"], out["segment"]
         shown = metric if segment == WHOLE else f"{metric} ({segment})"
         word = "least" if spec["direction"] == "higher" else "most"
         reporting = results.get("reporting_currency")
-        threshold = _format(spec["unit"], inputs["gate_threshold"], reporting)
+        shown_threshold = _format(spec["unit"], threshold, reporting)
     else:
-        shown = inputs["gate_metric_name"]
-        word = "least" if inputs["gate_direction"] == "at least" else "most"
-        threshold = format_figure(claim_unit, inputs["gate_threshold"], out["currency"], c.get("unit"))
-    start = f"Before {inputs['gate_budget_decision']}, {shown} must be at {word} {threshold} by {inputs['gate_date']}."
+        shown = name
+        word = "least" if direction == "at least" else "most"
+        shown_threshold = format_figure(claim_unit, threshold, out["currency"], c.get("unit"))
+    start = f"{before}{shown} must be at {word} {shown_threshold} by {date}."
+    if not before:
+        start = start[0].upper() + start[1:]
     period = out["period"] or NO_PERIOD
     if out["observed_value"] is not None and claimed is not None and spec is not None and app_metric:
         reporting = results.get("reporting_currency")
@@ -1546,38 +1606,39 @@ def build_register(candidates: List[dict], results: Optional[dict], settings: di
     return rows
 
 
-# Issue #155 (George, 2026-10-22): a claim Run audit approved on its own reads this in the register, the deck list, the CSV and the memo.
-AUTO_APPROVAL = "Auto-approved – matches revenue file (Δ {delta})"
-AUTO_REVOKED = "No longer matches – was auto-approved"      # the note of a claim sent back to "To review" (George, 2026-10-22)
+# Simplified flow (George, 2026-10-25): Python enters a claim it matched to its page when no check asks about it; the register row reads
+# `auto_approval` "auto" for such a row and nothing for a row the analyst answered, edited or added (memo Appendix A: "auto" / "analyst").
+AUTO_REVOKED = "Re-opened – a check now asks about it"      # the note of a claim sent back to "Needs your attention"
 AUTO_LABEL = "auto"
 ANALYST_LABEL = "analyst"          # the memo's Approval column for every other register row (George, PR 157)
 RATE_TOLERANCE_TEXT = "±1 pp"
 
 
+def entered_by_python(c: dict) -> bool:
+    """A claim Python entered on its own and the analyst has not touched since: `auto_accepted` on an approved claim that carries no edit."""
+    return bool(c.get("auto_accepted") and c.get("status") == "approved" and "parsed" not in c)
+
+
 def _mark_auto(row: dict, c: dict) -> dict:
-    """Sets `auto_approval` on the row of a claim Run audit approved on its own, while it still matches: approved (an edit clears the mark and
-    the claim becomes Analyst-edited), Verified within tolerance, not a beat, no Definition check, in the audit currency. Display only: no
-    label, gap, rank or gate reads it."""
-    if not (c.get("auto_accepted") and c.get("status") == "approved" and "parsed" not in c) or row["evidence_label"] != "Verified" \
-            or is_beat(row) or row["definition_check"] is not None or row["claimed_converted"] is not None:
-        return row
-    delta = f"{abs(row['gap']):.1f} pp" if row["tolerance"] == RATE_TOLERANCE_TEXT else f"{abs(row['gap_normalised'] or 0) * 100:.1f}%"
-    row["auto_approval"] = AUTO_APPROVAL.format(delta=delta)
+    """Sets `auto_approval` ("auto") on the row of a claim Python entered. Display and the memo's Approval column only: no label, gap,
+    rank or gate reads it."""
+    if entered_by_python(c):
+        row["auto_approval"] = AUTO_LABEL
     return row
 
 
 def auto_views(candidates: List[dict], results: Optional[dict], settings: dict) -> Dict[str, dict]:
-    """For each candidate Run audit approved on its own (and still matching): `auto_approval` and `auto_citation`, from the register's own
-    rows, keyed by candidate id. A table row of several values shows the value with the widest gap, and counts only when all of them match."""
+    """For each candidate Python entered on its own: `auto_approval` "auto" and the figure's citation when the register tested it,
+    keyed by candidate id."""
     if not results:
         return {}
-    marked = [c for c in candidates if c.get("auto_accepted") and c.get("status") == "approved"]
+    marked = [c for c in candidates if entered_by_python(c)]
     out: Dict[str, dict] = {}
     for cid in {c["id"] for c in marked}:
         mine = [r for r in build_register([c for c in marked if c["id"] == cid], results, settings) if r["claim_id"].split("#")[0] == cid]
-        if mine and all(r["auto_approval"] for r in mine):
+        if mine:
             widest = max(mine, key=lambda r: abs(r["gap_normalised"] or 0) + abs(r["gap"] or 0))
-            out[cid] = {"auto_approval": widest["auto_approval"], "auto_citation": widest["observed_citation"]}
+            out[cid] = {"auto_approval": AUTO_LABEL, "auto_citation": widest["observed_citation"]}
     return out
 
 
