@@ -61,7 +61,11 @@ test("plan 3 regression: the requested analysis date and the latest valid source
     expect(host.textContent).not.toContain("30 Jun 2026");
     expect(host.textContent).not.toContain("2026-06");
     expect(host.textContent).toContain("Jul 2017 – Jun 2019");
-    const years = host.textContent.match(/(?:\d{1,2} \w{3} )?2026(?:-\d{2}-\d{2})?/g) || [];
+    // the assumptions strip prints the as-of setting under its own name (simplified-flow.md, item 2); it is no figure's period
+    const strip = host.querySelector('[data-testid="assumptions-strip"]');
+    expect(strip.querySelector('[data-testid="assumption-as-of"]').textContent).toBe("As-of month June 2026");
+    const outside = host.textContent.replace(strip.textContent, "");
+    const years = outside.match(/(?:\d{1,2} \w{3} )?2026(?:-\d{2}-\d{2})?/g) || [];
     expect(years.every((y) => y === "15 Oct 2026" || y === "2026-10-15")).toBe(true);
   } finally { await done(); }
 });

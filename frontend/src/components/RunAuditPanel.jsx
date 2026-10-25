@@ -56,7 +56,7 @@ export default function RunAuditPanel({ auditId, pick, onRan, onRunning, blocked
     if (!alive.current) return;
     setRunning(false);
     onRan?.([...pick.current.data, ...pick.current.decks]);
-    if (out.status === "done" || out.status === "needs_review") nav(`/audit/${auditId}/review`);
+    if (out.status === "done" || out.status === "needs_review") nav(`/audit/${auditId}/dashboard`);
   }, [auditId, running, update, nav, pick, onRan, onRunning, readState]);
 
   const failed = STAGES.find((s) => stages[s.key].status === "failed");
@@ -64,7 +64,7 @@ export default function RunAuditPanel({ auditId, pick, onRan, onRunning, blocked
     <section className="mt-5" data-testid="run-audit-panel">
       <p className="text-sm text-slate-600 mb-3 max-w-3xl">
         Attach the files in the box below and press Run audit. The columns are mapped, the metrics calculated and the deck claims read.
-        You stop only where a decision is yours, on the review screen.
+        You stop only where a decision is yours, on the Audit page.
       </p>
       <Button data-testid="run-audit" onClick={() => start()} disabled={running || blocked} className="bg-sky-600 hover:bg-sky-500 gap-2">
         {running && <Loader2 className="h-4 w-4 animate-spin" />}{RUN_LABEL}

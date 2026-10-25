@@ -30,13 +30,25 @@ claim-review-conclusion → access-links).
   (verdict-and-memo.md §5) after `deck_reading`.
 
 ## 2. Evidence status values
-| Status | Meaning | Rule in the app |
+Amended 2026-10-25 (George, docs/design/simplified-flow.md, "Evidence labels"): the five names stay; the meaning of each is the one
+definition below, the same words on hover wherever a label appears, in the five printed under the findings and, in the build PR, in
+the memo's glossary. They live in one list, `frontend/src/lib/evidence_labels.json` (`definitions`), in the order Verified,
+Unverified, Unsupported, Contradicted, Inconclusive. Unverified never counts as Unsupported; Inconclusive counts as untested.
+| Status | Meaning (the definition, word for word) | Rule in the app |
 |---|---|---|
-| Verified | Tested against supplied company data; within tolerance | claim-matching.md §4, unchanged: a beat beyond tolerance up to the check limit is Verified, marked "(beat)" and listed under Worth flagging (13 Oct rule) |
-| Contradicted | Tested against supplied company data; misses by more than tolerance | claim-matching.md §4, unchanged |
-| Inconclusive | A test ran but cannot confirm or contradict the claim. Reason and computed figure shown | new, §3 |
-| Unverified | Testable metric, but the supplied files do not cover it, or an analyst answer is pending. Reason shown | claim-matching.md §4, unchanged |
-| Unsupported | The app does not compute this metric (product limitation). Never counted as a company finding | claim-matching.md §4, unchanged |
+| Verified | The raw data confirms the claim. | claim-matching.md §4, unchanged: a beat beyond tolerance up to the check limit is Verified, marked "(beat)" and listed under Worth flagging (13 Oct rule) |
+| Unverified | Management stated it in the deck or plan; the data to test it is not in the data room. | claim-matching.md §4, unchanged |
+| Unsupported | The plan depends on it, but nobody has stated it and nothing backs it. | claim-matching.md §4, unchanged (see the open point below) |
+| Contradicted | The raw data shows the claim is false. | claim-matching.md §4, unchanged |
+| Inconclusive | A test ran but cannot confirm or contradict the claim (§3). Reason and computed figure shown | new, §3 |
+
+- Replaces the earlier meanings: Verified "Tested against supplied company data; within tolerance"; Unverified "Testable metric, but
+  the supplied files do not cover it, or an analyst answer is pending"; Unsupported "The app does not compute this metric (product
+  limitation). Never counted as a company finding".
+- Open (George): the rules of claim-matching.md §4 are not touched by this amendment, which is presentation only. They still give
+  Unsupported to a claim whose metric the app does not compute, and Unverified to a claim an analyst answer is pending on; neither
+  is what the definitions say. The labelling rules are settled with the build PR; until then the definition is what the screen
+  prints and the rule is what assigns the label.
 
 ## 3. Inconclusive
 A row is Inconclusive when the app computed a figure for the claim but the figure cannot confirm or contradict it. The row

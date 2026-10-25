@@ -6,9 +6,9 @@ import { Input } from "@/components/ui/input";
 import { getMemo, putIcInputs } from "@/lib/api";
 import { describeRequestError } from "@/lib/requestError";
 import { seeGlossary } from "@/lib/glossary";
-import { LABEL_STYLE, labelText } from "@/lib/claimRegister";
+import ContradictionBanner from "@/components/ContradictionBanner";
 import {
-  CONFIRM, MEMO_BUTTON, OTHER_GATES, PART_FIVE, PART_GAPS, PART_INPUTS, PART_KEY_GATES, PART_REASONS, PROPOSED, REPLACE, REVIEW_LABEL,
+  CHANGE, CONFIRM, DETAIL_HEADING, MEMO_BUTTON, OTHER_GATES, PART_GAPS, PART_INPUTS, PART_KEY_GATES, PART_REASONS, PROPOSED, REPLACE, REVIEW_LABEL,
   THESIS_MAX, TOP5_HEADING, TOP5_STATEMENT, RATING_OPTIONS, candidateText, initialPicks, refusalText, replacePick, samePicks,
   CONCLUSION_HEADING, JUDGMENT_HEADING, JUDGMENT_MAX, NO_OTHER_CONTRADICTIONS, OTHER_CONTRADICTIONS, SCOPE_SENTENCE,
 } from "@/lib/verdict";
@@ -132,10 +132,18 @@ function Inputs({ auditId, verdict, onChanged }) {
       </div>
       <h3 className="text-sm font-semibold text-slate-900 mt-4 mb-2" data-testid="judgment-heading">{JUDGMENT_HEADING}</h3>
       <div className="grid gap-3 md:grid-cols-2 text-xs"><JudgmentFields verdict={verdict} save={save} /></div>
-      <Button size="sm" variant="outline" onClick={() => downloadMemo(auditId)} className="mt-3 h-8" data-testid="verdict-memo">
+    </div>
+  );
+}
+
+/** Download report: the IC memo. The server builds it from what is stored, or refuses and says why (toast). */
+export function ReportDownload({ auditId }) {
+  return (
+    <section className="mb-6" data-testid="report-download">
+      <Button size="sm" variant="outline" onClick={() => downloadMemo(auditId)} className="h-8" data-testid="verdict-memo">
         <Download className="h-3.5 w-3.5 mr-1.5" />{MEMO_BUTTON}
       </Button>
-    </div>
+    </section>
   );
 }
 
@@ -160,47 +168,58 @@ function OtherContradictions({ v }) {
   );
 }
 
-/** The claim-review conclusion section (docs/specs/claim-review-conclusion.md; verdict-and-memo.md section 6.4). `verdict` is
+/** The conclusion (docs/design/simplified-flow.md, The conclusion screen): the outcome with its one-line rule and the scope sentence,
+ *  the contradiction lines directly under them, the claims outside the five, and the one Change link of the top 5. `verdict` is
  *  GET /audits/{id}/verdict, read again by the parent after every change. The scope sentence and the other contradictions show
  *  whenever the section does; the outcome only once the conclusion is reached. */
-export default function Verdict({ auditId, verdict, onChanged }) {
+export function Conclusion({ auditId, verdict, onChanged }) {
   const [busy, setBusy] = useState(false);
+  const [changing, setChanging] = useState(false);
   if (!verdict) return null;
   const v = verdict.verdict;
   const confirm = (ids) => {
     setBusy(true);
-    return putIcInputs(auditId, { top5: ids }).then(() => onChanged && onChanged())
+    return putIcInputs(auditId, { top5: ids }).then(() => { setChanging(false); return onChanged && onChanged(); })
       .catch((e) => toast.error(describeRequestError(e).message))
       .finally(() => setBusy(false));
   };
-  const key = verdict.key_gates;
+  // A top 5 that waits for its confirmation is asked for in place; a confirmed one sits behind the one Change link.
+  const open = changing || !v.top5?.confirmed;
   return (
     <section className="mb-6 rounded-md border border-[#E5E7EB] bg-white p-4" data-testid="verdict">
       <h2 className="font-heading text-lg font-semibold text-slate-900 mb-1">{v.heading || CONCLUSION_HEADING}</h2>
-      <p className="text-xs text-slate-600 mb-3" data-testid="conclusion-scope">{v.scope_sentence || SCOPE_SENTENCE}</p>
-      {v.status !== "no_verdict" && <TopFive verdict={v} candidates={verdict.candidates || []} onConfirm={confirm} busy={busy} />}
-      {v.message && <p className="text-sm text-slate-800 mb-3" data-testid="verdict-message">{seeGlossary(v.message)}</p>}
+      {v.message && <p className="text-sm text-slate-800 mb-2" data-testid="verdict-message">{seeGlossary(v.message)}</p>}
       {v.status === "ok" && (
-        <div className="mb-4" data-testid="verdict-outcome">
+        <div className="mb-2" data-testid="verdict-outcome">
           <p className="text-base font-semibold text-slate-900">{v.outcome}</p>
           <p className="text-sm text-slate-700" data-testid="verdict-rule">{seeGlossary(v.rule)}</p>
         </div>
       )}
+      <p className="text-xs text-slate-600 mb-3" data-testid="conclusion-scope">{v.scope_sentence || SCOPE_SENTENCE}</p>
+      <ContradictionBanner auditId={auditId} />
       {v.status !== "no_verdict" && <OtherContradictions v={v} />}
-      {v.five?.length > 0 && (
-        <div className="mb-4" data-testid="verdict-five">
-          <h3 className="text-sm font-semibold text-slate-900 mb-1">{PART_FIVE}</h3>
-          <ul className="space-y-1 text-xs">
-            {v.five.map((f) => (
-              <li key={f.claim_id} data-testid="verdict-five-row">
-                <span className="font-mono text-slate-700">#{f.rank}</span> {f.claim}{" "}
-                <span className={`text-[10px] font-mono border rounded px-1.5 py-0.5 ${LABEL_STYLE[f.evidence_label] || ""}`}>{labelText(f)}</span>
-                <span className="text-slate-600"> · {f.reason}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
+      {v.status !== "no_verdict" && (
+        <>
+          {v.top5?.confirmed && (
+            <button type="button" className="text-xs text-sky-700 underline underline-offset-2" aria-expanded={changing} data-testid="top5-change"
+              onClick={() => setChanging((c) => !c)}>{CHANGE}</button>
+          )}
+          {open && <div className="mt-2"><TopFive verdict={v} candidates={verdict.candidates || []} onConfirm={confirm} busy={busy} /></div>}
+        </>
       )}
+    </section>
+  );
+}
+
+/** The detail of the conclusion, for Supporting detail: the three reasons, the key gates, the deal terms, the top data gaps and the
+ *  analyst's inputs. Nothing here is computed; every line is the server's. */
+export function VerdictDetail({ auditId, verdict, onChanged }) {
+  if (!verdict) return null;
+  const v = verdict.verdict;
+  const key = verdict.key_gates;
+  return (
+    <section className="mb-6 rounded-md border border-[#E5E7EB] bg-white p-4" data-testid="verdict-detail">
+      <h2 className="font-heading text-lg font-semibold text-slate-900 mb-3">{DETAIL_HEADING}</h2>
       {v.status === "ok" && (
         <>
           <div className="mb-4" data-testid="verdict-reasons">

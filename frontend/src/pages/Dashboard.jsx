@@ -18,7 +18,10 @@ import { GLOSSARY, seeGlossary } from "@/lib/glossary";
 import { SegmentPaths } from "@/components/SegmentPaths";
 import ClaimRegister from "@/components/ClaimRegister";
 import DataGaps from "@/components/DataGaps";
-import Verdict from "@/components/Verdict";
+import { Conclusion, VerdictDetail, ReportDownload } from "@/components/Verdict";
+import AssumptionsStrip from "@/components/AssumptionsStrip";
+import FiveClaims from "@/components/FiveClaims";
+import NeedsAttention from "@/components/NeedsAttention";
 import IntegrityCoverage from "@/components/IntegrityCoverage";
 import YearlyBasis from "@/components/YearlyBasis";
 import { describeRequestError, logRequestFailure } from "@/lib/requestError";
@@ -73,14 +76,24 @@ export default function Dashboard() {
     return () => { cancelled = true; };
   }, [id, data]);
 
+  const loadResults = useCallback(() => getResults(id)
+    .then((d) => { setError(null); setData(d); })
+    .catch((e) => setError(e.response?.data?.detail?.code === "results_stale" ? "stale"
+      : e.response?.status === 409 ? "not_computed" : "error")), [id]);
   useEffect(() => {
     reportUsage(id, { screen: "dashboard" });
     getAudit(id).then(setAudit).catch(() => {});
-    getResults(id)
-      .then(setData)
-      .catch((e) => setError(e.response?.data?.detail?.code === "results_stale" ? "stale"
-        : e.response?.status === 409 ? "not_computed" : "error"));
-  }, [id]);
+    loadResults();
+  }, [id, loadResults]);
+
+  // An answer on a "Needs your attention" card re-matches claims: the register, the five and the verdict are read again, and the
+  // results too, which a column answered before the first run lets the run produce.
+  const [registerKey, setRegisterKey] = useState(0);
+  const answered = useCallback(() => {
+    refreshVerdict(); setRegisterKey((k) => k + 1);
+    getAudit(id).then(setAudit).catch(() => {});
+    return loadResults();
+  }, [id, refreshVerdict, loadResults]);
 
   // Read-only on load: this returns a narrative someone already generated, or
   // nothing. It cannot call the model provider, so opening an audit never
@@ -127,6 +140,7 @@ export default function Dashboard() {
   if (error === "not_computed") {
     return (
       <Layout audit={audit}>
+        <NeedsAttention auditId={id} computed={false} onChanged={answered} />
         <div className="border border-dashed border-[#E5E7EB] rounded-xl py-24 text-center">
           <AlertTriangle className="h-10 w-10 text-amber-500 mx-auto mb-4" />
           <p className="text-slate-700 mb-4">This audit hasn't been computed yet.</p>
@@ -243,6 +257,28 @@ export default function Dashboard() {
       <div className="flex items-end justify-between mb-6 flex-wrap gap-3">
         <div>
           <h1 className="font-heading text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">{audit?.company_name}</h1>
+        </div>
+        <a href={exportUrl(id)} data-testid="export-results-button"
+          onClick={(e) => { e.preventDefault(); downloadFile(`/audits/${id}/export`, "results.xlsx").catch(() => toast.error("The export could not be downloaded.")); }}
+          className="inline-flex items-center gap-2 px-3.5 py-2 rounded-md bg-sky-50 border border-[#D1D5DB] text-sm text-slate-800 hover:bg-slate-100 transition-colors">
+          <Download className="h-4 w-4" /> Export results
+        </a>
+      </div>
+
+
+      <AssumptionsStrip audit={por} results={r} onChange={() => nav(`/audit/${id}/mapping`)} />
+
+      {/* The conclusion with its contradiction lines, the five selected claims, the questions, the report (docs/design/simplified-flow.md) */}
+      <Conclusion auditId={id} verdict={verdict} onChanged={refreshVerdict} />
+      <FiveClaims auditId={id} verdict={verdict} ccy={ccy} tick={verdictTick + registerKey} />
+      <NeedsAttention auditId={id} onChanged={answered} />
+      <ReportDownload auditId={id} />
+
+      {/* Everything else, collapsed. A native details element keeps its content in the page, so nothing below is unmounted. */}
+      <details className="mb-6 rounded-md border border-[#E5E7EB]" data-testid="supporting-detail">
+        <summary className="cursor-pointer px-4 py-3 font-heading text-lg font-semibold text-slate-900">Supporting detail</summary>
+        <div className="px-4 pb-4">
+        <div className="mb-6">
           <p data-testid="header-context-strip" className="text-slate-600 text-xs font-mono mt-1">
             Target: <span className="text-slate-800">{fmtCurrency(por?.target_arr, por?.reporting_currency ?? ccy)} ARR</span>{" "}
             by <span className="text-slate-800">{por?.target_date ?? "—"}</span> · FX: {fxDisplay}
@@ -255,12 +291,6 @@ export default function Dashboard() {
             {" "}Reporting currency {ccy}. Hover any figure for source lineage.
           </p>
         </div>
-        <a href={exportUrl(id)} data-testid="export-results-button"
-          onClick={(e) => { e.preventDefault(); downloadFile(`/audits/${id}/export`, "results.xlsx").catch(() => toast.error("The export could not be downloaded.")); }}
-          className="inline-flex items-center gap-2 px-3.5 py-2 rounded-md bg-sky-50 border border-[#D1D5DB] text-sm text-slate-800 hover:bg-slate-100 transition-colors">
-          <Download className="h-4 w-4" /> Export results
-        </a>
-      </div>
 
       {/* Generating is explicit and costed — see NarrativeControl. */}
       <NarrativeControl
@@ -314,11 +344,11 @@ export default function Dashboard() {
       </div>
 
       {/* Claim register: approved deck claims tested against the computed metrics (docs/specs/claim-matching.md section 8) */}
-      <ClaimRegister auditId={id} results={r} onChanged={refreshVerdict} />
+      <ClaimRegister key={registerKey} auditId={id} results={r} onChanged={refreshVerdict} />
 
       {/* Data gaps and the verdict (docs/specs/verdict-and-memo.md sections 4 and 6.4) */}
       <DataGaps auditId={id} verdict={verdict} onChanged={refreshVerdict} />
-      <Verdict auditId={id} verdict={verdict} onChanged={refreshVerdict} />
+      <VerdictDetail auditId={id} verdict={verdict} onChanged={refreshVerdict} />
 
       {/* Narrative — status tells the reader which figures were verified */}
       <Narrative state={generating ? { loading: true } : narrative} />
@@ -627,6 +657,8 @@ export default function Dashboard() {
           {disclosure.text}
         </p>
       )}
+        </div>
+      </details>
     </Layout>
   );
 }

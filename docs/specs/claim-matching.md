@@ -150,6 +150,8 @@ shorter for days and months; more or fewer for a count), the kind in brackets: (
 Tested = the metric has a figure for the claim's period and segment, and the period ended by the as-of month.
 Untested rows stay listed with a reason and observed "—" (a forecast shows its observed value).
 
+The meaning of each label, as the screen prints it, is the definition of evidence-labels.md §2 (amended 2026-10-25); the rules below assign the label and are unchanged.
+
 | Label | Rule |
 |---|---|
 | Verified | Tested and within tolerance: ±5% of the claimed value for amounts, counts and durations; ±1 percentage point for rates. The boundary is Verified. Or a beat outside tolerance up to the check limit of §4.1 (observed better than the claim: above it, or below it where lower is better), or a bigger beat whose Definition check is answered Yes: reason "beat: observed beats the claim by {gloss}", marked (beat). |
