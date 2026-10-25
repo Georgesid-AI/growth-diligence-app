@@ -25,10 +25,13 @@ export function openQuestions(views, candidates, attention) {
     rows.forEach((row) => columns.push({ key: `col-${view.dtype}-${row.column}`, kind: "mapping", view, row }));
   });
   const claims = [];
+  // a claim in the register whose reason asks the analyst to set or confirm something (the server names the reason in `set`)
+  const asked = new Map((attention || []).filter((a) => a.set).map((a) => [a.id, a.set]));
   (candidates || []).forEach((c) => {
     if (isOther(c)) return;
     if (c.status === "pending" && turnoverOf(c).open) claims.push({ key: `turnover-${c.id}`, kind: "turnover", c });
     else if (c.status === "pending" || (c.status !== "rejected" && definitionOf(c).open)) claims.push({ key: `claim-${c.id}`, kind: "claim", c });
+    else if (c.status !== "rejected" && asked.has(c.id)) claims.push({ key: `set-${c.id}`, kind: "set", c, reason: asked.get(c.id) });
   });
   const place = new Map((attention || []).map((a, i) => [a.id, { i, top: Boolean(a.in_top5) }]));
   const at = (item) => place.get(item.c.id) || { i: Number.MAX_SAFE_INTEGER, top: false };

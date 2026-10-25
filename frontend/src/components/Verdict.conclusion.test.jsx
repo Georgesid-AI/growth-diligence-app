@@ -16,7 +16,7 @@ beforeEach(() => {
 });
 
 const HEADING = "Claim-review conclusion — assessment of the five selected claims";
-const SCOPE = "This assesses the five claims the analyst selected. It is not an investment recommendation.";
+const SCOPE = "This assesses the five claims selected by the app by value at stake; the analyst may change the selection. It is not an investment recommendation.";
 const SELECTED = ["c01", "c21", "c23", "c27", "c31"];
 const five = SELECTED.map((id, n) => ({ claim_id: id, rank: n + 2, claim: `Claim ${id}`, evidence_label: "Verified", reason: "within ±5% of the claim" }));
 
@@ -115,11 +115,12 @@ test("the contradicted top-5 lines sit in the conclusion block, under the outcom
   } finally { await done(); }
 });
 
-test("the selection sentence and the one Change link; a changed set reads 'Top 5 changed by the analyst —' with a reset that sends top5 null", async () => {
+test("the selection sentence is the scope sentence, said once; the one Change link; a changed set reads 'Top 5 changed by the analyst —' with a reset that sends top5 null", async () => {
   const { host, done } = await mount(RESPONSE);
   try {
     expect(host.querySelector('[data-testid="verdict-top5"]')).toBeNull();
-    expect(host.querySelector('[data-testid="verdict-top5-note"]').textContent).toBe("Selected by the app by value at stake; the analyst may change the selection");
+    expect(host.querySelector('[data-testid="verdict-top5-note"]')).toBeNull();
+    expect(host.textContent.split("by value at stake").length - 1).toBe(1);
     expect(host.querySelector('[data-testid="top5-reset"]')).toBeNull();
     expect(host.querySelector('[data-testid="top5-change"]').textContent).toBe("Change");
     await act(async () => { host.querySelector('[data-testid="top5-change"]').click(); });

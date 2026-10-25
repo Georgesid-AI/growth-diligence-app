@@ -32,7 +32,7 @@ const ROW = (n, label, extra = {}) => ({
 const FIVE = [ROW(1, "Contradicted"), ROW(2, "Verified"), ROW(3, "Unverified"), ROW(4, "Unsupported"), ROW(5, "Inconclusive")];
 const VERDICT = {
   verdict: {
-    heading: "Claim-review conclusion — assessment of the five selected claims", scope_sentence: "This assesses the five claims the analyst selected. It is not an investment recommendation.",
+    heading: "Claim-review conclusion — assessment of the five selected claims", scope_sentence: "This assesses the five claims selected by the app by value at stake; the analyst may change the selection. It is not an investment recommendation.",
     status: "ok", outcome: "Selected claims not supported", outcome_code: "not_supported", rule: "1 selected claim is Contradicted.", message: null, blocked: [],
     five: FIVE.map((r) => ({ claim_id: r.claim_id, rank: r.rank, claim: `Claim ${r.rank}`, evidence_label: r.evidence_label, reason: r.reason })),
     reasons: ["#1 Claim 1: Contradicted."], other_contradictions: [], other_contradictions_text: "None found among tested claims.",
@@ -45,10 +45,10 @@ const VERDICT = {
 const DECKS = { decks: [], candidates: [{ id: "k1", claim_type: "revenue", status: "pending", value: 100, unit: "EUR", sources: [{ page: 3 }], flags: [] }] };
 
 async function mount({ audit = { ...sample.audit, target_arr: 1000000, target_date: "2026-12-31", fiscal_year_end: 3, as_of_month: null, reporting_currency: "EUR",
-  datasets: { revenue: { months: { first: "2023-01", last: "2024-02" } } } }, decks = { decks: [], candidates: [] } } = {}) {
+  datasets: { revenue: { months: { first: "2023-01", last: "2024-02" } } } }, decks = { decks: [], candidates: [] }, results = sample } = {}) {
   api.getBlockers.mockResolvedValue([{ kind: "claim_contradicted", text: LINE }]);
   api.getAudit.mockResolvedValue(audit);
-  api.getResults.mockResolvedValue(sample);
+  api.getResults.mockResolvedValue(results);
   api.readNarrative.mockResolvedValue({ narrative_status: "unavailable", reason: "x" });
   api.getDisclosure.mockResolvedValue(null);
   api.getClaimRegister.mockResolvedValue({ claims: [], register: FIVE });
@@ -107,6 +107,13 @@ test("the assumptions strip is read-only: currency, reporting period, target ARR
     await act(async () => { q(strip, "assumptions-change").click(); });
     expect(mockNavigate).toHaveBeenCalledWith("/audit/a1/mapping");
   } finally { await done(); }
+});
+
+test("the reporting period is the first and last month of the revenue data: from the revenue series when the dataset holds no months, else a dash", async () => {
+  const fromSeries = await mount({ audit: { ...sample.audit, datasets: {} }, results: { ...sample, results: { ...sample.results, revenue_series: { months: ["2023-03", "2023-04", "2024-01"], segments: [], data: [] } } } });
+  try { expect(q(fromSeries.host, "assumption-period").textContent).toBe("Reporting period Mar 2023 – Jan 2024"); } finally { await fromSeries.done(); }
+  const none = await mount({ audit: { ...sample.audit, datasets: {} }, results: { ...sample, results: { ...sample.results, revenue_series: null } } });
+  try { expect(q(none.host, "assumption-period").textContent).toBe("Reporting period —"); } finally { await none.done(); }
 });
 
 test("a set as-of month is not marked default", async () => {

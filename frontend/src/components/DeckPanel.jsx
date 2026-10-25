@@ -473,7 +473,7 @@ function DeckPageView({ auditId, deck, onAdd }) {
   );
 }
 
-function CandidateRow({ candidate: c, onSave, onAnswer, highlight, autoEdit = false }) {
+export function CandidateRow({ candidate: c, onSave, onAnswer, highlight, autoEdit = false }) {
   const [draft, setDraft] = useState(null);
   const [why, setWhy] = useState(false);
   const explanation = inconsistencyText(c);

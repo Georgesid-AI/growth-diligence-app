@@ -489,3 +489,6 @@ the flag `cell corrected` (counted as matched; an informational flag: the claim 
 no value that is not a date claim is dropped before it is stored. The register, the matching and the evidence label read the claim as before: the flags change no label and no contract.
 
 Every flag declares which kind it is (`checker.INFORMATIONAL_FLAGS`, `checker.REVIEW_FLAGS`; the screen reads `frontend/src/lib/informational_flags.json`): informational flags are a note on the row, review flags list the claim under Review and keep it out of the bulk approvals. A new flag is added to one list.
+
+### Amended 2026-10-25 (George, first live run)
+A claim whose period ends after the as-of month reads Unverified "Forecast period after the data (as-of {month}); cannot be tested until that period's revenue lines are supplied." in place of "no metric", "Missing: ..." and the former "forecast: the period ends after the as-of month". A row whose reason asks the analyst to set or confirm something (period not read, period unclear, period missing, required field unknown, growth basis unknown, churn rate unclear) is a card under "Needs your attention" with the claim's editor, and counts in the open-question count. The reporting period of the assumptions strip is the first and last month of the supplied revenue data.

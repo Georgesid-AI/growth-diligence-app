@@ -16,7 +16,7 @@ from test_claim_register_api import AUDIT  # noqa: E402
 from app import decks  # noqa: E402
 
 HEADING = "Claim-review conclusion — assessment of the five selected claims"
-SCOPE = "This assesses the five claims the analyst selected. It is not an investment recommendation."
+SCOPE = "This assesses the five claims selected by the app by value at stake; the analyst may change the selection. It is not an investment recommendation."
 SELECTED = ["c01", "c21", "c23", "c27", "c31"]          # five Verified claims with a stated period
 UNSELECTED_CONTRADICTED = "c05"                          # ARR €240,000 for FY2023: 198,142.68 observed
 

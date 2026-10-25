@@ -414,7 +414,7 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     # reasons and unresolved questions; the analyst's note after them, verbatim, when there is one (simplified-flow.md).
     others = ver.get("other_contradictions") or []
     out += [f"## {HEADINGS[0]}", vd.HEADING, f"Verdict: {ver['outcome']} – {ver['rule']}{notes.register(top_ranks)}", vd.SCOPE_SENTENCE,
-            f"{vd.SELECTION_CHANGED if ver['top5']['changed'] else vd.SELECTION_SENTENCE}.", ""]
+            *([f"{vd.SELECTION_CHANGED}."] if ver["top5"]["changed"] else []), ""]
     out += ["Other contradictions:"]
     out += [f"- {o['metric']}: {o['gap']}{notes.register([o['rank']])}" for o in others] or [vd.NO_OTHER_CONTRADICTIONS]
     out += ["", ANALYST_JUDGMENT, "Reasons:"]

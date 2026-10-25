@@ -1,0 +1,6 @@
+2026-10-25 · claude/modest-ritchie-7puiwj
+Deleted: the second selection line under "Other contradictions" (the scope sentence now says it), the "forecast: the period ends after the as-of month" text, the unused SELECTION_SENTENCE constant of the frontend.
+Decided: one closed forecast sentence for every period after the as-of month (one constant, month name from the formatter); the forecast check runs before "no metric" and "Missing:", so such a claim links to no Missing Data item; "asks the analyst" is a closed prefix list (ASK_REASONS) read from the register row, so no new field on the row; the card reuses the claims list's own row editor (CandidateRow) instead of a new form; the period of the strip falls back to the engine's revenue series when the dataset holds no months.
+Slow or unclear: whether the memo's request list may still ask for a file type already uploaded when an engine Missing Data item says so (left as is, see the PR).
+Root cause and rule: reasons were chosen in the order the code met them, not by what the analyst can do; the forecast check now comes first and the ask list sits next to the reasons in claim_matching.py, so a new ask reason is added in one place.
+Process change: ask George for the exact claim and run id of a live-run screenshot, so the failing test starts from the real row.

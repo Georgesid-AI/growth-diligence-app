@@ -40,8 +40,7 @@ the non-Verified claims among the five. The outcome rules of §2, the scope sent
 - Outcome codes in the API: `not_supported`, `insufficient`, `supported`, `partly_supported`.
 
 ## 3. Always shown next to the conclusion
-1. The scope sentence, word for word: "This assesses the five claims the analyst selected. It is not an investment
-   recommendation."
+1. The scope sentence, word for word: "This assesses the five claims selected by the app by value at stake; the analyst may change the selection. It is not an investment recommendation."
 2. "Other contradictions": every Contradicted register row outside the five, by rank, each with its metric (the claim's
    name, verdict.py `claim_name`), its gap (the gloss) and its source (analysis · source key · file · sheet · rows, and the
    deck page). None: "None found among tested claims."

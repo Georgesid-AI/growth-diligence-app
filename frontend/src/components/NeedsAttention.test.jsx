@@ -126,3 +126,26 @@ test("a card for a claim says Keep and Not a company claim; the old Approve and 
     expect(host.textContent).not.toMatch(/Approve/);
   } finally { await done(); }
 });
+
+test("an untested row whose reason asks the analyst to set something is a card with the claims list's editor and counts as a question", async () => {
+  const REASON = "Period not read – set it in the claim row";
+  const set = claim("s1", { status: "approved", target_date: null, snippet: "ARR of 200,000" });
+  const fine = claim("f1", { status: "approved" });
+  const { host, done } = await mount([set, fine], [], {}, [{ id: "s1", in_top5: true, set: REASON }]);
+  try {
+    expect(host.querySelectorAll('[data-testid="attention-card"]').length).toBe(1);
+    expect(q(host, "attention-count").textContent).toBe("1 question needs a word from you");
+    expect(q(host, "attention-set-reason").textContent).toBe(REASON);
+    expect(q(host, "candidate-row-s1")).not.toBeNull();
+    await act(async () => { q(host, "candidate-edit").click(); });
+    api.getDecks.mockResolvedValue({ decks: [], candidates: [{ ...set, target_date: "2024-02" }, fine], attention: [] });
+    api.updateCandidate.mockResolvedValue({});
+    await act(async () => { q(host, "edit-target-date").focus(); });
+    const input = q(host, "edit-target-date");
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    await act(async () => { setter.call(input, "2024-02"); input.dispatchEvent(new Event("input", { bubbles: true })); });
+    await act(async () => { q(host, "edit-save").click(); });
+    expect(api.updateCandidate).toHaveBeenCalledWith("a1", "s1", expect.objectContaining({ target_date: "2024-02" }));
+    expect(q(host, "needs-attention")).toBeNull();
+  } finally { await done(); }
+});

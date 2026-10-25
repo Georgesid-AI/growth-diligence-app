@@ -5,6 +5,12 @@ import { monthName, periodText } from "@/lib/periods";
 export const CHANGE_LABEL = "Change";
 export const DEFAULT_MARK = "default";
 
+/** The first and last month of the supplied revenue data: the dataset's own months, else the revenue series the engine read. */
+const revenuePeriod = (audit, results) => {
+  const months = (results?.revenue_series?.months || []).filter(Boolean).slice().sort();
+  return periodText(audit?.datasets?.revenue?.months) || (months.length ? periodText({ first: months[0], last: months[months.length - 1] }) : null);
+};
+
 /** The settings the results stand on, one read-only line (docs/design/simplified-flow.md, The Audit page, item 2): each shows its
  *  stored value, a defaulted as-of month is marked. One Change link opens the settings on Upload & Mapping, where they are edited. */
 export default function AssumptionsStrip({ audit, results, onChange }) {
@@ -12,7 +18,7 @@ export default function AssumptionsStrip({ audit, results, onChange }) {
   const asOf = audit?.as_of_month || results?.as_of_month;
   const items = [
     ["currency", "Currency", ccy || "—"],
-    ["period", "Reporting period", periodText(audit?.datasets?.revenue?.months) || "—"],
+    ["period", "Reporting period", revenuePeriod(audit, results) || "—"],
     ["target-arr", "Target ARR", Number(audit?.target_arr) ? fmtCurrency(audit.target_arr, ccy) : "—"],
     ["target-date", "Target date", audit?.target_date || "—"],
     ["as-of", "As-of month", asOf ? `${monthName(asOf)}${audit?.as_of_month ? "" : ` (${DEFAULT_MARK})`}` : "—"],

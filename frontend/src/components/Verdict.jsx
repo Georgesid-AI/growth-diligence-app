@@ -11,7 +11,7 @@ import GateEditor from "@/components/GateEditor";
 import { registerRows } from "@/lib/claimRegister";
 import {
   CHANGE, DETAIL_HEADING, GATE_EDIT, MEMO_BUTTON, NOTE_HELP, NOTE_LABEL, NOTE_MAX, PART_GAPS, PART_INPUTS, PART_KEY_GATES, PART_RATINGS, PART_REASONS,
-  PART_UNRESOLVED, RATING_DETAILS, RATING_RULES, REPLACE, RESET, REVIEW_LABEL, SELECTION_CHANGED, SELECTION_SENTENCE, THESIS_MAX, TOP5_HEADING,
+  PART_UNRESOLVED, RATING_DETAILS, RATING_RULES, REPLACE, RESET, REVIEW_LABEL, SELECTION_CHANGED, THESIS_MAX, TOP5_HEADING,
   USE_SELECTION, candidateText, initialPicks, refusalText, replacePick, samePicks,
   CONCLUSION_HEADING, NO_OTHER_CONTRADICTIONS, OTHER_CONTRADICTIONS, SCOPE_SENTENCE,
 } from "@/lib/verdict";
@@ -186,12 +186,11 @@ export function Conclusion({ auditId, verdict, onChanged }) {
       {v.status !== "no_verdict" && <OtherContradictions v={v} />}
       {v.status !== "no_verdict" && (
         <>
-          <p className="text-xs text-slate-600" data-testid="verdict-top5-note">
-            {changed ? SELECTION_CHANGED : (verdict.selection_sentence || SELECTION_SENTENCE)}
-            {changed && (
-              <> <button type="button" className="text-sky-700 underline underline-offset-2" disabled={busy} data-testid="top5-reset" onClick={reset}>{RESET}</button></>
-            )}
-          </p>
+          {changed && (
+            <p className="text-xs text-slate-600" data-testid="verdict-top5-note">
+              {SELECTION_CHANGED} <button type="button" className="text-sky-700 underline underline-offset-2" disabled={busy} data-testid="top5-reset" onClick={reset}>{RESET}</button>
+            </p>
+          )}
           <button type="button" className="text-xs text-sky-700 underline underline-offset-2" aria-expanded={changing} data-testid="top5-change"
             onClick={() => setChanging((c) => !c)}>{CHANGE}</button>
           {changing && <div className="mt-2"><TopFive verdict={v} candidates={verdict.candidates || []} onSave={use} busy={busy} /></div>}

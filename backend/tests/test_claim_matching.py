@@ -11,6 +11,7 @@ import pytest
 from claim_matching_support import engine_results, fixture
 
 from app import claim_matching as cm
+from app.formatting import fmt_month_name
 from app.decks import claims as deck_claims
 
 FIX = fixture()
@@ -343,7 +344,7 @@ def test_revenue_is_a_sum_so_with_no_period_it_is_unverified_not_unsupported():
 def test_a_sum_over_a_period_entirely_in_the_future_has_no_figure_to_date():
     row = run_claim({"claim_type": "revenue", "snippet": "Revenue €9M", "value": 9_000_000, "target_date": "2026"})
     assert (row["evidence_label"], row["observed_value"], row["gap_kind"]) == ("Unverified", None, None)
-    assert "forecast" in row["reason"]
+    assert row["reason"] == cm.forecast_after_data(row["as_of_month"])
 
 
 def test_a_forecast_of_a_quarter_figure_shows_the_latest_complete_quarter():
@@ -395,6 +396,31 @@ def test_a_revenue_claim_with_no_revenue_series_reads_no_observed_figure_and_ask
     assert (row["evidence_label"], row["reason"]) == ("Unverified", "Not computed – revenue series not available")
     assert all(row[k] is None for k in ("observed_value", "observed_at", "observed_source", "observed_citation", "gap", "gap_kind",
                                         "gloss", "definition_check", "definition_question", "evidence_analysis", "evidence_source_key"))
+
+
+FORECAST_READS = "Forecast period after the data (as-of {month}); cannot be tested until that period's revenue lines are supplied."
+
+
+def test_a_claim_for_a_period_after_the_as_of_month_reads_the_forecast_reason_not_no_metric_or_missing():
+    """George, 2026-10-25: 'no metric' and 'Missing: Upload revenue lines ...' are replaced for a period that ends after the as-of month;
+    the claim then links to no Missing Data item, so the memo's data requests do not ask for it."""
+    from app import verdict as vd
+    results = copy.deepcopy(results_for(RUNS["A"]))
+    as_of = results["as_of_month"]
+    year = int(as_of[:4]) + 1
+    results["cac_payback"] = None
+    results["missing_data"] = [{"metric": "CAC payback", "reason": "P&L not provided", "status": "Missing",
+                                "unlocked_by": "Upload P&L with month, S&M expense, revenue, cost of revenue", "file": "pnl"}]
+    expected = FORECAST_READS.format(month=fmt_month_name(as_of))
+    no_metric = run_claim({"claim_type": "unknown_kind", "snippet": "Something", "value": 5, "target_date": str(year)}, results=results)
+    assert no_metric["metric"] is None and (no_metric["evidence_label"], no_metric["reason"]) == ("Unverified", expected)
+    gm = {"claim_type": "gross_margin", "snippet": "Gross margin", "unit": "%", "currency": None, "value": 78}
+    missing = run_claim({**gm, "target_date": str(year)}, results=results)
+    assert (missing["evidence_label"], missing["reason"]) == ("Unverified", expected)
+    assert missing["evidence_analysis"] is None and missing["evidence_source_key"] is None
+    assert vd.data_gaps(results, [missing], [missing["claim_id"]])[0]["claims"] == [], "the gap blocks no forecast claim"
+    past = run_claim({**gm, "target_date": str(int(as_of[:4]) - 1)}, results=results)
+    assert past["reason"].startswith("Missing:"), "a period inside the data keeps the Missing reason"
 
 
 def test_cac_payback_is_tested_at_the_default_lag_and_the_headline_quarter():

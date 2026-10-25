@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ColumnRow } from "@/components/UploadChat";
 import { DefinitionCell, TurnoverCell } from "@/components/ClaimRegister";
+import { CandidateRow } from "@/components/DeckPanel";
 import { BLOCKERS_CHANGED } from "@/lib/useBlockers";
 import * as apiModule from "@/lib/api";
 import { answerDefinitionCheck, answerTurnover, decideColumns, getDatasets, getDecks, updateCandidate } from "@/lib/api";
@@ -68,6 +69,17 @@ function TurnoverCard({ item, answer }) {
   );
 }
 
+/** A claim in the register that its own reason asks the analyst to set or confirm (a period not read, a required field unknown): the claim as
+ *  the claims list prints it, with that list's own editor. */
+function SetCard({ item, save, answer }) {
+  return (
+    <div className="text-xs" data-testid="attention-set">
+      <div className="text-amber-800 mb-1" data-testid="attention-set-reason">{item.reason}</div>
+      <table className="w-full"><tbody><CandidateRow candidate={item.c} onSave={save} onAnswer={answer} /></tbody></table>
+    </div>
+  );
+}
+
 /** The questions that wait for the analyst, as cards on the Audit page: at most three, the rest behind "n more". An answer closes
  *  the card and the page reads the results again; nothing is deleted. Hidden at 0. `computed` is false while the results do not
  *  exist yet: the last answered column then carries the run on, as Review did. */
@@ -112,6 +124,11 @@ export default function NeedsAttention({ auditId, computed = true, onChanged }) 
     try { await answerTurnover(auditId, row.claim_id, payload); await changed(); } catch (e) { toast.error(describeRequestError(e).message); throw e; }
   };
 
+  // the claims list's save: true once stored, false after a refusal (the toast names it)
+  const save = async (candidate, payload) => {
+    try { await updateCandidate(auditId, candidate.id, payload); await changed(); return true; } catch (e) { toast.error(describeRequestError(e).message); return false; }
+  };
+
   const questions = openQuestions(views, candidates, attention);
   if (!questions.length) return null;
   const shown = all ? questions : questions.slice(0, SHOWN_QUESTIONS);
@@ -126,6 +143,7 @@ export default function NeedsAttention({ auditId, computed = true, onChanged }) 
             {item.kind === "mapping" && <MappingCard item={item} decide={decide} lastReason={lastReason} setLastReason={setLastReason} />}
             {item.kind === "claim" && <ClaimCard item={item} busy={busy} act={act} auditId={auditId} />}
             {item.kind === "turnover" && <TurnoverCard item={item} answer={answer} />}
+            {item.kind === "set" && <SetCard item={item} save={save} answer={answer} />}
           </li>
         ))}
       </ul>
