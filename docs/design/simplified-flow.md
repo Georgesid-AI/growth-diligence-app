@@ -1,6 +1,6 @@
 # Design note: the simplified flow
 
-Status: draft for decision, 2026-10-24. No code, test or spec change. Source: George's direction of 24 Oct 2026: from now on the
+Status: draft for decision, 2026-10-24; Audit page order, label definitions, assumptions strip and top-5 ranking added 2026-10-25. No code, test or spec change. Source: George's direction of 24 Oct 2026: from now on the
 app only removes and simplifies its interface; no computation is lost. The eight removals are decided; this note says what each
 one looks like on the screen and what it touches. Every engine field (`backend/schemas/metrics.py`) and every memo section
 (verdict-and-memo.md §7.2, Appendices A–D) stays.
@@ -17,7 +17,7 @@ unmatched value is a question, never a row). Nothing of removal 1 is built until
 Needed: a TestCo run takes 23 clicks today, most of them confirmations of things Python already knows (approve a matched
 claim, confirm a proposed top 5, fill a gate from prefilled fields, confirm a column mapped at 95). The simpler version: Python
 decides where it can, asks where it cannot, and shows its reasons. Deleted first: the Review page, the approval buttons and
-counts, the gate form, the top-5 picker, the two rating selects, the two judgment fields, the per-column mapping tables.
+counts, the gate form, the top-5 picker (replaced by a one-line change link), the two rating selects, the two judgment fields, the per-column mapping tables.
 
 ## 1. Screen by screen
 
@@ -37,31 +37,62 @@ A column, row or type that waits for an answer is not asked here: it becomes a c
 press Run audit" or "{n} questions wait on the Audit page".
 
 ### The question cards
-One box at the top of the Audit page, under the hard-blocker lines (rule 21), headed **"{n} claims need a word from you"**
-("1 claim", or hidden at 0). One card per question, each with the claim as the register prints it, the page reference, the
-question in one sentence and its closed answers (the same answers the row offers today: Yes / No, Revenue / Volume, MoM / YoY /
-Annualised / Cumulative, a period or metric pick, Keep / Fix / Not a company claim). "Fix" opens the editor of
-claim-types-and-correction.md §3 unchanged. A mapping card ("Is 'Cost of sales' the cost of revenue?") sits in the same box
-with Yes / No / Change. Cards are ordered: top-5 rows first, then by ARR at stake, then by rank. An answer closes the card,
-re-matches the claim (as today) and never deletes anything: a rejected claim stays stored, status rejected.
+Questions are no longer a box of their own: they are the **Needs your attention** block of the Audit page (below). One card per
+question, each with the claim as the register prints it, the page reference, the question in one sentence and its closed answers
+(the same answers the row offers today: Yes / No, Revenue / Volume, MoM / YoY / Annualised / Cumulative, a period or metric pick,
+Keep / Fix / Not a company claim). "Fix" opens the editor of claim-types-and-correction.md §3 unchanged. A mapping card ("Is
+'Cost of sales' the cost of revenue?") is a card of the same kind with Yes / No / Change. Cards are ordered: top-5 rows first,
+then by ARR at stake, then by rank. An answer closes the card, re-matches the claim (as today) and never deletes anything: a
+rejected claim stays stored, status rejected.
 
 ### The Audit page
-Order, unchanged where not named: hard blockers · the question box · metric cards · **Claim register** · **Data gaps** · **Verdict**
-· narratives · Data integrity · analysis cards · glossary. The sections change as follows.
-- **Claim register** (removal 5): four columns, Claim (rank, name, claimed figure, period; page in grey) · Observed (figure,
-  month; citation on hover) · Result (the five statuses of evidence-labels.md, "(beat)" kept) · Why (one plain sentence: the gloss
-  where a gap exists, else the reason). A **details** toggle per row opens the second line of today: segment, metric, tolerance,
-  extraction confidence, basis and case, flags, VaS, overlaps, the gate, and the lineage (analysis · source key · file · sheet ·
-  rows · rule). Every row carries **wrong? fix**, which opens the same editor. Rows with a card are listed in the box, not here.
-  "Download baseline (CSV)" stays; the CSV keeps every field.
-- **Verdict** (removals 2, 3, 6, 7): one line "Top 5 chosen by ARR at stake — change" (change opens today's replace list; a changed
-  set reads "Top 5 changed by the analyst — reset"); the outcome and its rule (A10, W8); the five claims with their results;
-  the three reasons (W11); **Key gates**: the proposed gates of the non-Verified top-5 rows, each ending "(proposed)" until the
-  analyst edits it here (threshold, date, metric, direction; the edited gate reads "set by the analyst"); gates on other rows
-  are in the register's details; "Deal terms" W13; the top three data gaps; **Ratings**, two lines "Data reliability: Strong
-  (Reliable; 5 of 5 checks)" and "Growth engine: Adequate (NRR 104%, gross churn 11%, CAC payback 14 months)" or "not rated –
-  data missing"; **Reasons** and **Unresolved questions** as computed lists; one optional **Analyst note** (max 1,000
-  characters, stored as `ic_inputs.note`, never sent to a model); "Download IC memo".
+Order, top to bottom. Nothing is added that the engine does not already compute; no new page, no chat UI, no memo editor.
+1. **Hard blockers** (rule 21), when there are any, above everything. On the Audit page the contradiction lines of rule 21 sit
+   directly above the claim register table, which is under Supporting detail (item 7).
+2. **Assumptions strip** (decision 9): one compact, editable line above the results, holding currency, reporting period, target
+   ARR, target date, as-of month and FY end, each with its stored value (a defaulted as-of month is marked "default"). Editing a
+   field is the same save as on Upload & Mapping and re-runs what depends on it, as today. An **Analysis settings** link opens
+   the full set-up fields, the FX settings and everything else of the Upload page's set-up block; nothing else is added.
+3. **Conclusion**: the outcome (A10 wording, decision 2), the scope sentence of claim-review-conclusion.md §3, and one line
+   saying why ("Re-plan: the plan's ARR growth is Contradicted by the revenue file"; the rule's own reason, W11 first row). When a
+   top-5 claim is **Contradicted**, that claim is shown directly next to the conclusion, in the same block, whatever its rank
+   in the five.
+4. **The five selected claims**, one row each, read "Plan assumes · Evidence shows · Result": the claimed figure and period; the
+   observed figure and month; the status of evidence-labels.md. Each row carries a **source link** (the citation: file, sheet,
+   rows; the deck page for the claim) and a **Details** toggle that opens today's second line (segment, metric, tolerance,
+   basis and case, flags, VaS, the gate, the lineage). Under the rows one memo line: "Selected by the app by value at stake; the
+   analyst may change the selection" with **change** (today's replace list; a changed set reads "Selection changed by the
+   analyst – reset"). The five are chosen by the rule of §3.
+5. **Needs your attention**: at most three questions (cards), in the order above, each answerable in place. When more are open
+   the block ends with "{n} more" and the link opens the rest in the same block; the count never hides a top-5 question, because
+   those come first. At 0 the block is hidden. Gates: the proposed gates of the non-Verified top-5 rows (the key gates) are
+   edited in the Verdict section of the memo (decision 8), not here.
+6. **Download report** (the IC memo) with one optional **Analyst note** beside it (max 1,000 characters, stored as
+   `ic_inputs.note`, never sent to a model).
+7. **Supporting detail**, one collapsed section holding everything else, in today's order: the contradiction lines (rule 21),
+   metric cards · **Claim register** · **Data gaps** · Verdict detail (key gates, deal terms W13, ratings, Reasons, Unresolved
+   questions) · narratives · Data integrity · analysis cards · glossary.
+- **Claim register** (removal 5, inside Supporting detail): four columns, Claim (rank, name, claimed figure, period; page in
+  grey) · Observed (figure, month; citation on hover) · Result (the five statuses of evidence-labels.md, "(beat)" kept) · Why
+  (one plain sentence: the gloss where a gap exists, else the reason). A **details** toggle per row opens the second line of
+  today: segment, metric, tolerance, extraction confidence, basis and case, flags, VaS, overlaps, the gate, and the lineage
+  (analysis · source key · file · sheet · rows · rule). Every row carries **wrong? fix**, which opens the same editor. Rows with
+  a card are listed in the cards, not here. "Download baseline (CSV)" stays; the CSV keeps every field.
+- **Verdict detail** (removals 2, 3, 6, 7): the outcome and its rule (A10, W8); the five claims with their results; the three
+  reasons (W11); **Key gates**: the gates of the non-Verified top-5 rows, each ending "(proposed)" until the analyst edits it
+  here (threshold, date, metric, direction; the edited gate reads "set by the analyst"); gates on other rows are in the
+  register's details; "Deal terms" W13; the top three data gaps; **Ratings**, two lines "Data reliability: Strong (Reliable; 5
+  of 5 checks)" and "Growth engine: Adequate (NRR 104%, gross churn 11%, CAC payback 14 months)" or "not rated – data
+  missing"; **Reasons** and **Unresolved questions** as computed lists.
+
+**Label definitions (decision 10).** Wherever a status label is printed (conclusion block, the five rows, the register's Result
+column, the cards, the Verdict detail, the memo's Summary and Appendix A, the CSV header note), the two labels that are not
+self-explaining carry a one-line definition, taken word for word from evidence-labels.md §3 and shown as the label's tooltip
+and, on the five rows and the memo, as a line under the table:
+- **Unverified** – testable metric, but the supplied files do not cover it, or an analyst answer is pending.
+- **Unsupported** – the app does not compute this metric (a product limitation, never a finding about the company).
+Verified, Contradicted and Inconclusive keep the explainer they have today. One source string, imported by the frontend and the
+memo (as the evidence-labels.md label map is), so the two cannot differ.
 
 ### The memo
 Sections and appendices unchanged. The lines that change: Summary prints "Verdict: {A10 outcome} – {rule}" and, after it, the
@@ -93,10 +124,11 @@ that cannot (an informational flag, a confirm-only reason) is never asked.
 
 | Element | Reads | Rule |
 |---|---|---|
-| Top 5 | register rows: `claim_type` in `verdict.PLAN_TYPES`, `value_at_stake_arr`, `claimed_converted`, `claimed_value` | `verdict.proposal` of 2026-10-24 unchanged; the set is in force without confirmation; the banner reads the same five |
+| Top 5 ("the five selected claims") | register rows: `claim_type` in `verdict.PLAN_TYPES`, `value_at_stake_arr`, `claimed_converted`, `claimed_value`, `evidence_label` | ranking = value at stake (VaS) first, then normalised shortfall, with Contradicted always above Unverified (decision 11); memo wording "Selected by the app by value at stake; the analyst may change the selection"; the set is in force without confirmation; the banner reads the same five |
 | Verdict | the five rows' `evidence_label` | A10, §6.2 order: Re-plan (a Contradicted miss, or 3+ Unsupported) · Underwrite (all Verified) · Underwrite with gates (else); Inconclusive counts as Unverified; an open Definition check makes the verdict "provisional – 1 question open" (decision 4); "Insufficient evidence" when no top-5 claim is tested and no gate exists (decision 3) |
 | Gate (template) | per non-Verified row: `metric` (else `claim_name`), `direction` (higher → at least, lower → at most; none → at least, at most for churn, cost, burn, CAC, payback, sales-cycle types), `claimed_converted` or `claimed_value` in the claim's unit, `period_end`, `ic_inputs.first_quarterly_review` | status proposed; date = period end, else the review date, never later than it; sentence W6 without "Before {decision}"; `gate_needed` is always false; an analyst edit stores the gate as today (`claim_inputs`) and wins |
-| Key gates | the gates of the top-5 rows | fewer than 3: W25 |
+| Gates | one per non-Verified claim (all rows) | the template above |
+| Key gates | the gates of the non-Verified top-5 rows | never padded: a Verified top-5 row has none, and gates of rows outside the five are not promoted; fewer than 3 prints W25 as today |
 | Reasons | `verdict.reason_text` of the lead rows (W11), then `other_contradictions` | the three reasons, then "Other contradictions: ..." |
 | Unresolved questions | `verdict.top_gaps` (from `missing_data`), open cards (count and claims), `integrity` Blocked checks, `questions_for_management` | one list, in that order, five lines then "and n more in Appendix B" |
 | Rating, data reliability | `integrity.conclusion` | Reliable → Strong · Needs clarification → Adequate · Material concerns → Weak · Insufficient assessment coverage → not rated – data missing |
@@ -172,3 +204,12 @@ No contract bump and no reseed: nothing stored changes meaning. The server appli
    (b) keep it read-only behind "show all claims".
 8. **Gates "editable in the memo only".** Read as: edited in the Verdict section that carries "Download IC memo", nowhere else.
    Confirm.
+9. **Assumptions strip.** The six fields (currency, reporting period, target ARR, target date, as-of month, FY end) become editable
+   on the Audit page as well as on Upload & Mapping. Options: (a) one strip, same save and re-run as Upload, full settings behind
+   "Analysis settings" (recommended); (b) read-only on the Audit page. This adds a control to a screen (rule 19.3).
+10. **Label definitions.** Unverified and Unsupported carry their evidence-labels.md §3 definitions wherever the label shows.
+    Options: (a) as §1 says, from one shared string (recommended); (b) only in the glossary. Rule 19.3: a changed label text.
+11. **Top-5 selection.** Ranking by VaS, then normalised shortfall, Contradicted above Unverified, replaces the 24 Oct "ARR at
+    stake" line; the engine's `verdict.proposal` order already breaks ties by normalised gap (session log 2026-10-07), so the
+    change is the Contradicted-first clause. Confirm that a Contradicted row outranks a larger-VaS Unverified row for a place
+    in the five.
