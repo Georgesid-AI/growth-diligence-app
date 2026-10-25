@@ -146,7 +146,9 @@ def test_h2_a_best_or_worst_case_is_entered_on_its_own_and_listed_under_scenario
     docs.append(es.claim("s3", basis="scenario", scenario="realistic"))
     rows = {r["claim_id"]: r for r in client.get(f"/api/audits/{es.AUDIT}/claims").json()["register"]}
     assert {"s1", "s2", "s3"} <= set(rows) and rows["s1"]["evidence_label"] == rows["s2"]["evidence_label"] == "Unverified"
-    assert rows["s3"]["evidence_label"] != "Unverified" or rows["s3"]["reason"] != cm.SCENARIO_NOTE.format(case="realistic")
+    assert (rows["s1"]["reason"], rows["s2"]["reason"]) == (cm.SCENARIO_NOTE.format(case="best"), cm.SCENARIO_NOTE.format(case="worst"))
+    assert cm.is_untested(rows["s1"]) and cm.is_untested(rows["s2"])
+    assert not cm.is_untested(rows["s3"]) and "scenario" not in rows["s3"]["reason"], "a realistic case is a plan target, tested as any claim"
 
 
 def test_h2_the_flag_words_stay_closed():

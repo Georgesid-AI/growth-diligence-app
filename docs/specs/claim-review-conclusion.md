@@ -3,6 +3,13 @@ Status: Agreed scope. Source: docs/plans/app-plan_V2_amendments_15_10_2026.md se
 15 Oct 2026, final). Location: docs/specs/claim-review-conclusion.md. Replaces verdict-and-memo.md §6.2 (the rule), W8 and
 the "Verdict" wording of §6.4, §7.2 item 1 and W15's verdict line. Implementation order: 5 of 6.
 
+Amended 2026-10-25 (George, review of PR #180, docs/design/simplified-flow.md): the five are the app's selection (value at stake, then
+normalised shortfall) and are in force without a confirmation; the conclusion is always computed, never blocked, so the "Conclusion
+blocked" and "No conclusion until the top 5 is confirmed" wordings of §1 are not shown; an open question is "1 question open." on the rule
+line. The analyst judgment fields of §3 are replaced by the computed Reasons and Unresolved questions and one optional Analyst note
+(`ic_inputs.note`, max 1,000 characters, never sent to a model); the memo is not refused for their absence. The key gates are the gates of
+the non-Verified claims among the five. The outcome rules of §2, the scope sentence and the contradiction lines stand.
+
 ## 0. Challenge and deletions (CLAUDE.md rule 4)
 - Needed: "Underwrite" and "Re-plan" read as an investment recommendation drawn from five claims. The simpler version: the
   same pure function over the same confirmed five, with outcome words that describe the claims, the contradictions outside

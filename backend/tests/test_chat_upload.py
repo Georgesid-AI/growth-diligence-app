@@ -751,7 +751,7 @@ def test_only_a_top_5_contradicted_claim_reaches_the_banner_and_a_beat_does_not(
     monkeypatch.setattr(server, "_claim_rows", fake_rows)
     _banner_audit(api, {"arr": None})
     blockers = api.get(f"/api/audits/{AUDIT}/blockers").json()["blockers"]
-    assert [b["claim_id"] for b in blockers] == ["c2", "c5", "c6"], "the banner reads the five the app selects, Contradicted first; a beat (c3) is Verified"
+    assert [b["claim_id"] for b in blockers] == ["c2", "c5"], "the banner reads the five the app selects by value at stake; a beat (c3) is Verified"
     assert blockers[0]["text"] == "Top-5 claim contradicted: revenue 100 EUR vs 80 EUR observed (board.pptx, slide 4)."
     rows[1]["evidence_label"] = rows[2]["evidence_label"] = rows[4]["evidence_label"] = rows[5]["evidence_label"] = "Verified"
     assert _kinds(api) == []
@@ -759,6 +759,9 @@ def test_only_a_top_5_contradicted_claim_reaches_the_banner_and_a_beat_does_not(
         r.update(evidence_label="Contradicted", observed_value=1.0, gap_kind="miss")
     rows.append({**rows[0], "claim_id": "c7", "rank": 7})
     assert len([b for b in api.get(f"/api/audits/{AUDIT}/blockers").json()["blockers"] if b["kind"] == "claim_contradicted"]) == 5, "at most five"
+    api.db["audits"].docs[0]["ic_inputs"] = {"top5": {"claim_ids": ["c2", "c3", "c4", "c5", "c6"], "set_at": "2026-10-25"}}
+    changed = [b["claim_id"] for b in api.get(f"/api/audits/{AUDIT}/blockers").json()["blockers"] if b["kind"] == "claim_contradicted"]
+    assert changed == ["c2", "c3", "c4", "c5", "c6"], "the banner reads the set in force: the analyst's change"
 
 
 def test_the_banner_shows_a_claim_in_another_currency_with_both_figures_and_the_observed_figure_in_the_audits_currency(api, monkeypatch):

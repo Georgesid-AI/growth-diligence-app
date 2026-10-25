@@ -119,7 +119,10 @@ def test_the_three_reasons_are_the_claims_that_made_the_rule_fire_each_citing_it
                                "Evidence: Revenue by month (revenue_series.data.total, CSV, rows 2–71 (70 rows), Oct–Dec 2023).")
     unsupported = [row(1, "Unsupported", gate=True), *[row(i, "Verified") for i in range(2, 6)]]
     again = vd.verdict(unsupported, {"reporting_currency": "EUR"}, {"claim_ids": [r["claim_id"] for r in unsupported]})
-    assert again["reasons"][0] == "#1 ARR, Feb 2024: Unsupported, reason 1. No figure in the supplied files."
+    assert again["reasons"][0] == "#1 ARR, Feb 2024: Unsupported, reason 1.", "an implied claim with no stated value: the files are not what is missing"
+    missing = [row(1, "Unverified", gate=True, reason="Missing: CRM export"), *[row(i, "Verified") for i in range(2, 6)]]
+    assert vd.verdict(missing, {"reporting_currency": "EUR"}, {"claim_ids": [r["claim_id"] for r in missing]})["reasons"][0] == \
+        "#1 ARR, Feb 2024: Unverified, Missing: CRM export. No figure in the supplied files."
 
 
 @pytest.mark.parametrize("run, expected", [("A", ("ok", "Selected claims not supported")), ("B", ("ok", "Selected claims partly supported")),
@@ -177,19 +180,19 @@ def test_the_five_are_in_force_without_a_confirmation_and_follow_the_selection_r
     v = vd.verdict(rows, results_for(RUNS["A"]), None)
     assert v["status"] == "ok" and v["top5"]["proposed"] == vd.proposal(rows) == v["top5"]["in_force"]
     assert v["top5"]["changed"] is False and "confirmed" not in v["top5"]
-    assert v["top5"]["proposed"] == ["c28", "c05", "c32", "c24", "c07"], "plan claims first, by normalised shortfall: no Target ARR on the fixture"
+    assert v["top5"]["proposed"] == ["c28", "c05", "c32", "c24", "c23"], "plan claims first, by normalised shortfall: no Target ARR on the fixture"
 
 
 def _sel(rank, label, vas=None, shortfall=None, claim_type="revenue", value=100.0):
     return row(rank, label, value_at_stake_arr=vas, shortfall=shortfall, claim_type=claim_type, claimed_value=value)
 
 
-def test_the_selection_ranks_by_value_at_stake_then_shortfall_with_contradicted_above_unverified():
-    """simplified-flow.md decision 11: VaS first, then the normalised shortfall; a Contradicted row outranks a larger-VaS Unverified row."""
+def test_the_selection_ranks_by_value_at_stake_then_shortfall_whatever_the_label():
+    """simplified-flow.md decision 11 (reversed): VaS first, then the normalised shortfall; the label is no key."""
     rows = [_sel(1, "Unverified", vas=900), _sel(2, "Verified", vas=800), _sel(3, "Contradicted", vas=100, shortfall=0.2),
             _sel(4, "Unverified", vas=700), _sel(5, "Unverified", vas=600), _sel(6, "Contradicted", vas=50, shortfall=0.1),
             _sel(7, "Unverified", vas=500)]
-    assert vd.proposal(rows) == ["r3", "r6", "r1", "r2", "r4"], "Contradicted first, each group by VaS"
+    assert vd.proposal(rows) == ["r1", "r2", "r4", "r5", "r7"], "pure VaS: a Contradicted row of small VaS (r3, r6) is not in the five"
     ties = [_sel(1, "Unverified", vas=100, shortfall=None), _sel(2, "Contradicted", vas=100, shortfall=0.1),
             _sel(3, "Contradicted", vas=100, shortfall=0.3), _sel(4, "Unverified", vas=None), _sel(5, "Unverified", vas=100),
             _sel(6, "Unverified", vas=100)]
@@ -209,7 +212,7 @@ def test_a_stored_set_the_analyst_changed_stays_in_force_and_one_equal_to_the_se
     same = vd.top5_state(rows, {"claim_ids": list(reversed(selection))})
     assert (same["changed"], same["in_force"]) == (False, selection)
     v = vd.verdict(rows, results_for(RUNS["A"]), {"claim_ids": swapped})
-    assert v["rule"] == "4 selected claims are Contradicted." and swapped[0] in [f["claim_id"] for f in v["five"]]
+    assert v["rule"] == "3 selected claims are Contradicted." and swapped[0] in [f["claim_id"] for f in v["five"]]
 
 
 @pytest.mark.parametrize("size", [0, 4, 6])
@@ -239,9 +242,13 @@ def test_a_changed_claim_leaving_the_register_drops_the_change_and_the_selection
     assert vd.top5_state(shuffled, stored)["changed"], "a new rank order alone does not drop the change"
 
 
-def test_the_banner_reads_the_five_the_app_selects():
+def test_the_banner_reads_the_five_in_force_the_apps_selection_or_the_set_the_analyst_changed():
     rows = register(RUNS["A"])
-    assert vd.banner_ids(rows) == vd.proposal(rows)
+    assert vd.banner_ids(rows) == vd.proposal(rows) and vd.banner_ids(rows, {"claim_ids": vd.proposal(rows)}) == vd.proposal(rows)
+    selection = vd.proposal(rows)
+    other = next(r["claim_id"] for r in vd.sortable(rows) if r["claim_id"] not in selection)
+    changed = [other, *selection[1:]]
+    assert set(vd.banner_ids(rows, {"claim_ids": changed})) == set(changed) != set(selection)
 
 
 # --- the verdict is never blocked -----------------------------------------------------------------------------------------------
@@ -395,15 +402,17 @@ def test_a_changed_claim_that_is_rejected_leaves_the_register_and_the_selection_
     assert v["status"] == "ok" and v["top5"]["changed"] is False and v["top5"]["in_force"] == v["top5"]["proposed"]
 
 
-def test_the_banner_reads_the_five_the_app_selects_after_the_analyst_changes_the_set(register_api):
+def test_the_banner_reads_the_set_in_force_after_the_analyst_changes_the_set(register_api):
     client, _ = register_api
-    before = client.get(f"/api/audits/{AUDIT}/blockers").json()["blockers"]
     register = _get(client)["register"]
-    verified = next(r for r in register if r["evidence_label"] == "Verified")["claim_id"]
-    _inputs(client, {"top5": [verified, *[r["claim_id"] for r in register[1:5]]]})
-    after = client.get(f"/api/audits/{AUDIT}/blockers").json()["blockers"]
-    assert after == before and {b["claim_id"] for b in after if b["kind"] == "claim_contradicted"} == \
-        {r["claim_id"] for r in register if r["claim_id"] in vd.proposal(register) and r["evidence_label"] == "Contradicted"}
+    selection = vd.proposal(register)
+    verified = next(r for r in register if r["evidence_label"] == "Verified" and r["claim_id"] not in selection)["claim_id"]
+    swapped = [verified, *selection[1:]]
+    in_force = lambda ids: {r["claim_id"] for r in register if r["claim_id"] in ids and r["evidence_label"] == "Contradicted"}   # noqa: E731
+    banner = lambda: {b["claim_id"] for b in client.get(f"/api/audits/{AUDIT}/blockers").json()["blockers"] if b["kind"] == "claim_contradicted"}  # noqa: E731
+    assert banner() == in_force(selection)
+    _inputs(client, {"top5": swapped})
+    assert banner() == in_force(swapped) != in_force(selection), "the claim that left the five leaves the banner (it stays in Other contradictions)"
 
 
 def test_the_verdict_reads_no_figure_of_results_that_fail_the_contract(register_api):
@@ -532,10 +541,12 @@ def test_the_thesis_and_the_analyst_note_are_stored_on_the_audit_and_the_note_cl
 
 def test_the_ratings_and_judgment_a_stored_audit_holds_stay_stored_and_are_not_read(register_api):
     client, db = register_api
-    db["audits"].docs[0]["ic_inputs"] = {"ratings": {"data_reliability": "Weak", "growth_engine": "Weak"},
+    db["audits"].docs[0]["ic_inputs"] = {"ratings": {"data_reliability": "Strong", "growth_engine": "Strong"},
                                          "judgment": {"reasons": "old reasons", "unresolved_questions": "old questions"}}
     body = _verdict(client)
-    assert body["ratings"]["data_reliability"]["rating"] != "Weak" or body["ratings"]["data_reliability"]["rule"].startswith("Weak:")
+    reliability = body["ratings"]["data_reliability"]
+    assert (reliability["rating"], reliability["line"]) == ("Weak", "Weak (Material concerns; 4 of 5 checks)"), "from the integrity conclusion"
+    assert reliability["rule"] == "Weak: at least one check Red, 4 of 5 completed"
     assert "old reasons" not in str(body), "the computed rating and lists show"
     assert _inputs(client, {"note": "kept"}).status_code == 200
     assert db["audits"].docs[0]["ic_inputs"]["judgment"]["reasons"] == "old reasons", "stored fields are untouched"

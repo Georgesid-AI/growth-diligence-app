@@ -1,7 +1,7 @@
 /**
  * "Needs your attention" on the Audit page (docs/design/simplified-flow.md, The Audit page, item 5): the claims a check asks about, the
  * Revenue / Volume and Definition questions and the columns that wait, one card each. Python enters every other claim on its own.
- * The claim questions come in the order the server ranks them (value at stake, then shortfall, Contradicted above Unverified), the
+ * The claim questions come in the order the server ranks them (value at stake, then shortfall), the
  * questions of the five selected claims first. Nothing is decided here.
  */
 import { definitionOf, turnoverOf } from "./claimRegister";

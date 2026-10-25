@@ -92,7 +92,7 @@ def test_the_memo_is_built_from_the_run_a_fixture_in_the_order_of_w15_with_the_f
     assert text.startswith("# Investment committee memo: TestCo\nDate: 2026-10-08\n")
     summary = head_of(text).split("## Summary\n")[1]
     assert summary.startswith("Claim-review conclusion — assessment of the five selected claims\n"
-                              "Verdict: Selected claims not supported – 5 selected claims are Contradicted.")
+                              "Verdict: Selected claims not supported – 4 selected claims are Contradicted.")
     assert "This assesses the five claims the analyst selected. It is not an investment recommendation." in summary
     assert "Conclusion:" not in text and "Evidence supports the plan" not in text
     assert text.count("Selected by the app by value at stake; the analyst may change the selection.") == 1
@@ -113,7 +113,7 @@ def test_the_run_a_memo_fits_1500_words_and_every_number_in_sections_1_to_6_has_
         numbers = [t for t in im._tokens(line) if t not in fixed]
         if numbers:
             assert re.search(r"\[\^\d+\]", line), f"a number without a footnote: {line!r}"
-    assert "[^1]: claim register, #1, #2, #3, #4, #5" in text
+    assert "[^1]: claim register, #1, #2, #3, #5, #6" in text
     assert re.search(r"\[\^\d+\]: Monthly MRR by Segment · arr.value · revenue.csv · CSV · rows 2–71", memo())
 
 
@@ -137,10 +137,24 @@ def test_the_memo_exports_with_no_confirmation_no_gate_edit_no_rating_no_judgmen
     assert "question open" not in text
 
 
+def test_a_never_tested_row_is_in_the_data_gaps_table_with_the_reason_it_cannot_be_measured():
+    kw = inputs()
+    last = kw["rows"][-1]
+    kw["rows"][-1] = {**last, "claim_type": "pricing", "reason": cm.PRICING_NOTE, "gate_sentence": None, "gate_status": None}
+    assert cm.is_untested(kw["rows"][-1])
+    text = im.build_memo(**kw)
+    section = text.split("## Data gaps and requests")[1].split("## Appendix A")[0]
+    assert "1 claim is never tested against data; the reason for each is in Appendix B" in section
+    table = text.split("## Appendix B")[1].split("Requests")[0]
+    assert f"#{last['rank']} " in table and f"Cannot be measured: {cm.PRICING_NOTE}." in table
+    assert "never tested against data" not in memo(), "a register of tested claims adds neither the line nor the rows"
+    assert "Cannot be measured" not in memo()
+
+
 def test_the_key_gates_are_those_of_the_non_verified_top_5_rows_never_padded():
     text = memo()
     section = head_of(text).split("## Key gates and deal terms")[1].split("## Worth flagging")[0]
-    assert section.count("\n- ") == 5 and section.count("(proposed)") == 5
+    assert section.count("\n- ") == 4 and section.count("(proposed)") == 4, "the fifth of the five is Verified: no gate"
     verified_five = inputs()
     top = vd.proposal(verified_five["rows"])
     fewer = [{**r, "gate_sentence": None, "gate_status": None} if r["rank"] > 2 else r for r in verified_five["rows"]]

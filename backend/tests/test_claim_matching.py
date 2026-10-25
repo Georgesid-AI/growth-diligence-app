@@ -600,7 +600,19 @@ def test_the_gate_date_is_the_end_of_the_period_never_later_than_the_first_revie
     assert run_claim(base, first_quarterly_review="2024-03-31")["gate_date"] == "2024-03-31", "capped at the review"
     assert run_claim(base, first_quarterly_review="2025-03-31")["gate_date"] == "2024-04-30"
     undated = run_claim({**base, "target_date": None, "period_text": None}, first_quarterly_review="2024-09-30")
-    assert undated["gate_date"] in (None, "2024-09-30")
+    assert undated["gate_date"] == "2024-09-30" and undated["gate_status"] == "proposed"
+
+
+@pytest.mark.parametrize("name", sorted(RUNS))
+def test_every_tested_row_that_is_not_verified_has_a_gate_in_every_fixture_run(name):
+    """Register-wide (simplified-flow.md section 3): the first quarterly review is always set on an audit (`verdict.with_review`), so no tested
+    Unverified, Inconclusive, Unsupported or Contradicted row, whatever its type, period or metric, is left without a gate."""
+    run = RUNS[name]
+    rows = cm.build_register(candidates_for(run), results_for(run), settings(run, first_quarterly_review="2024-09-30"))
+    needing = [r for r in rows if r["evidence_label"] in cm.NOT_VERIFIED and not cm.is_untested(r)]
+    assert needing, "the fixture run holds rows that need a gate"
+    assert [r["claim_id"] for r in needing if not r["gate_sentence"] or r["gate_status"] != "proposed" or not r["gate_date"]] == []
+    assert [r["claim_id"] for r in rows if (r["evidence_label"] == "Verified" or cm.is_untested(r)) and r["gate_sentence"]] == []
 
 
 def test_every_row_that_is_not_verified_has_a_proposed_gate_and_a_verified_row_has_none():

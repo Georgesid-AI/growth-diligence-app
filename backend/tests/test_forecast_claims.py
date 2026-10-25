@@ -260,7 +260,10 @@ def test_the_ic_memo_and_the_baseline_csv_carry_forecast_claims_whose_overlaps_a
     top = kw["ver"]["top5"]["claim_ids"]
     kw.update(rows=rows, ver=vd.verdict(rows, kw["results"], {"claim_ids": top}), key=vd.key_gates(rows, top))
     text = im.build_memo(**kw)
-    assert text.count(cm.FORECAST_NOTE) == len(added) == 6, "each forecast-table row is listed in the register appendix"
+    appendix_a = text.split("## Appendix A")[1].split("## Appendix B")[0]
+    appendix_b = text.split("## Appendix B")[1].split("Requests")[0]
+    assert appendix_a.count(cm.FORECAST_NOTE) == len(added) == 6, "each forecast-table row is listed in the register appendix"
+    assert appendix_b.count(f"Cannot be measured: {cm.FORECAST_NOTE}.") == 6, "and in the Data gaps table with the reason it cannot be measured"
     csv_rows, _, _ = vd.parse_baseline(vd.baseline_csv(rows, [], top, None))
     assert [r["overlaps_with"] for r in csv_rows if r["reason"] == cm.FORECAST_NOTE] == [[]] * 6, "a null reads back as no overlap"
 

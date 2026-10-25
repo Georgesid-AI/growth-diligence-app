@@ -527,6 +527,10 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     if len(gaps) > 5:
         out += [f"and {len(gaps) - 5} more in Appendix B{notes.source('Missing Data', 'missing_data')}"]
     out += [f"- {q}{notes.source('Questions for management', 'questions_for_management')}" for q in vd.management_questions(results)]
+    unmeasured = vd.unmeasured_claims(rows)
+    if unmeasured:
+        out += [f"- {len(unmeasured)} {'claim is' if len(unmeasured) == 1 else 'claims are'} never tested against data; the reason for each is in Appendix B"
+                f"{notes.register([u['rank'] for u in unmeasured])}."]
     head = "\n".join(_glossed(out, keep=set(verbatim))).rstrip() + "\n"
 
     # Appendices
@@ -549,7 +553,8 @@ def _build(*, audit, results, rows, ver, key, gaps, ic, blockers, narratives, fi
     review = ic.get("first_quarterly_review")
     app += [f"## {APPENDICES[1]}", f"First quarterly review: {review or '—'}", ""]
     app += [_table(["What the company cannot measure", "Why it matters", "Requested", "Target date"],
-                   [[g["item"], g["why"], g["requested"] or "", g["target_date"] or "—"] for g in gaps]) if gaps else "No data gaps.", ""]
+                   [[g["item"], g["why"], g["requested"] or "", g["target_date"] or "—"] for g in gaps]
+                   + [[u["item"], f"Cannot be measured: {u['why']}", "", "—"] for u in unmeasured]) if gaps or unmeasured else "No data gaps.", ""]
     asks = [f"- {g['requested']}" for g in gaps if g["requested"]]
     asks += [f"- {r}" for r in integrity["data_requests"]]        # a Blocked integrity check is a data request (integrity-coverage.md 3)
     asks += [f"- {q}" for q in vd.management_questions(results)]

@@ -8,6 +8,15 @@ Amended 2026-10-15 (docs/specs/dates-and-periods.md §2, §3): the memo's date l
 figure that is not a register figure carries its last month in brackets.
 Amended 2026-10-15 (docs/specs/evidence-labels.md §4): the memo summary counts Inconclusive under Unverified with its count in
 brackets; an Inconclusive row needs a gate like an Unverified one.
+Amended 2026-10-25 (George, review of PR #180, docs/design/simplified-flow.md): no confirmation is needed and no export is refused for a missing
+input. The five are selected by the app (value at stake, then normalised shortfall) and are in force at once; the analyst's Change replaces
+them and nothing confirms them. The verdict is always computed, never blocked. The memo refuses only on the number check, the 1,500 words and
+the contract (§7.1): not for an unconfirmed top 5, a blocked verdict, the number of key gates, a rating, a judgment or a thesis sentence. The key
+gates are the gates of the non-Verified claims among the five, never padded and never marked by hand. The ratings are computed. §3 (key mark),
+§6.1 (confirm, W23, W24), §6.3, §6.4 (Confirm, ratings and thesis inputs), §7.1 and Q2, Q5 are read as this paragraph says; W9, W9b, W23 and W24
+are not shown.
+Amended 2026-10-25 (George, review of PR #180): a never-tested register row (use of funds, acquisition channels, pricing, unit economics, pipeline, best and
+worst cases, forecast-file figures) is a row of the memo's Data gaps table (Appendix B) with the reason it cannot be measured, and section 6 counts them.
 Amended 2026-10-24 (George, PR 176): §6.1 reads as the new proposal rule; the memo's VaS column (Appendix A) prints the register's
 `value_at_stake_arr`, de-duplicated as Appendix D states (W16), and the row's stored `vas_reason` where it has no amount.
 Location: docs/specs/verdict-and-memo.md. Follows claim-matching.md (the register) and interface-contracts.md
@@ -97,9 +106,9 @@ or a quarter). The contract test pins every key (§9).
 - `gate_needed` is true on every row labelled Unverified, Unsupported or Contradicted until its gate is saved (W4). A
   Verified row may also carry a gate.
 - A row with no observed figure gets the sentence of W6. Rows with an observed figure keep claim-matching §5.
-- Key gate (decision Q2): any saved gate, on a Verified row too, may be marked key. At most 5 can be marked; a sixth
-  is refused (W5). The memo needs 3–5 key gates. When the register has fewer than 3 saved gates, every saved gate
-  counts as key and the memo says so (W25).
+- Key gate (amended 2026-10-25, replaces decision Q2): the key gates are the gates of the non-Verified claims among the five the app
+  selects. Nothing is marked by hand, a Verified claim of the five has none and a gate of a claim outside the five is not promoted. With
+  fewer than 3 the memo says so (W25); fewer than 3 never refuses the export.
 
 ## 4. Data gaps
 - One row per `missing_data` item with status Missing whose metric names an analysis: ARR / MRR; NRR (12-month); NRR by
@@ -137,13 +146,11 @@ again gives the same bytes.
   largest first; a plan claim with no value at stake follows those with one. Every other claim not left out comes after the plan
   claims, in register order. It proposes min(5, eligible rows) and the analyst fills any remaining place from the register.
   Use of funds rows (deck-parser.md, amended 2026-10-10) are not among the rows the top 5 counts, the banner reads or the verdict tests.
-- The analyst confirms the proposal, or replaces any of its rows with another register row, and confirms. The set
-  always holds min(5, register rows) claims. It is stored as an analyst decision in `audits.ic_inputs.top5`: the claim
-  ids, in pre-sort order, and when they were set.
-- There is no verdict until the top 5 is confirmed (W23). A confirmed set is void when one of its claims leaves the
-  register (rejected, or its table row re-read) and must be confirmed again (W23). A new rank order alone does not
-  void it.
-- The memo and the Verdict section state "Top 5 set by the analyst pending ARR bridge" (W24).
+- Amended 2026-10-25: the five are in force without a confirmation. The analyst may replace any of them with another register row; the set
+  then holds min(5, register rows) claims and is stored in `audits.ic_inputs.top5` (the claim ids and when they were set), and the screen
+  reads "Top 5 changed by the analyst — reset". A stored set is dropped when one of its claims leaves the register or it equals the
+  app's selection. There is no confirm step, no "no verdict until confirmed" and no W24; the memo states "Selected by the app by value
+  at stake; the analyst may change the selection".
 - The banner (rule 21, chat-upload §6.2) keeps rows 1–5 of the pre-sort, so an analyst's choice never removes a hard
   blocker.
 
@@ -159,8 +166,9 @@ The order matters only when 3 or more claims are Unsupported and none is Contrad
 1 and 3 then, and Re-plan wins. An audit with no results or no register rows has no verdict (W10).
 
 ### 6.3 Blocked
-The verdict is blocked while any top-5 claim that is not Verified has no saved gate. A blocked verdict shows no
-outcome, only the claims that need a gate (W9). The memo refuses while the verdict is blocked.
+Amended 2026-10-25: the verdict is never blocked. Every non-Verified tested claim has a gate written from the claim ("proposed" until
+the analyst edits it, then "set by the analyst"), and an open question is a count on the explanation line ("1 question open."). The
+paragraphs on W9 and W9b below are history.
 Amended 2026-10-14 (George, claim-matching.md §4.1): the verdict is also blocked while any register row has an open Definition
 check, wherever it ranks: "Verdict blocked: answer the definition check on {ranks}." (W9b), before W9 when both apply.
 
@@ -182,10 +190,9 @@ No new analysis: every part is a register row, a gap row or a stored input.
 ## 7. IC memo (A11)
 ### 7.1 File
 `GET /audits/{id}/memo.md` downloads `{company}_ic_memo.md` (text/markdown). It is built on request and never stored.
-It is refused, nothing is written and the reason is named (W19) when: the top 5 is not confirmed; the verdict is
-blocked; the key gates are not 3–5 (and the fewer-than-3 case of §3 does not apply); a rating or a thesis sentence is
-missing; the results fail MetricsPayload (§9); a number is not in the stored data (§7.4); or the text has more than
-1,500 words (§7.5).
+Amended 2026-10-25: it is refused, nothing is written and the reason is named (W19) only when the results fail MetricsPayload (§9), a
+number is not in the stored data (§7.4), or the text has more than 1,500 words (§7.5). There is no refusal for an unconfirmed top 5, a
+blocked verdict, the number of key gates, a missing rating, judgment or thesis sentence.
 
 ### 7.2 Sections, in this order (W15)
 Title "Investment committee memo: {company}" and a date line. The date is the export date; it is the only line the
@@ -333,7 +340,7 @@ are unchanged. So W16 and W24 below read "ARR (see glossary)" at their first ARR
 | W8 | verdict | Title: Verdict · Underwrite: All top-5 claims are Verified. · Underwrite with gates: No top-5 claim is Contradicted; {n} is (1) or are (2 or more) Unverified or Unsupported. · Re-plan: {n} top-5 claim(s) Contradicted. / {n} top-5 claims Unsupported (3 or more). · fewer rows: Top {n} (the register has {n} claims). |
 | W9 | blocked | Verdict blocked: set a gate on #{ranks} (top-5 claims that are not Verified). |
 | W10 | no verdict | No verdict: the register has no claims. / No verdict: compute the audit first. |
-| W11 | reason | #{rank} {claim}: {label}, {observed} against {claimed} ({gap in app format}). Evidence: {analysis} · {source key} ({file} · {sheet} · {rows}). Unsupported: #{rank} {claim}: Unsupported, {reason}. No figure in the supplied files. |
+| W11 | reason | #{rank} {claim}: {label}, {observed} against {claimed} ({gap in app format}). Evidence: {analysis} · {source key} ({file} · {sheet} · {rows}). Missing data (reason "Missing: …"): #{rank} {claim}: {label}, {reason}. No figure in the supplied files. Any other row without an observed figure ends at its reason (amended 2026-10-25: the phrase is only for a figure the files lack). |
 | W12 | key gates | No key gates marked. |
 | W13 | deal terms | Deal terms: not available – the execution capacity review has not been run. |
 | W14 | other gates | {n} other claims still need a gate. |

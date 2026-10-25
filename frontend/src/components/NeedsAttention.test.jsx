@@ -107,8 +107,15 @@ test("the claim questions follow the server's ranking and the questions of the f
 });
 
 test("without a ranking the claims keep the server's list order and the columns stay first", async () => {
-  const { host, done } = await mount([claim("k1"), claim("k2")]);
-  try { expect(host.querySelectorAll('[data-testid="attention-claim"]').length).toBe(2); } finally { await done(); }
+  const view = { dtype: "revenue", file: "revenue.csv", pending: 1, missing_required: [], fields: { required: ["amount"], optional: [] },
+    columns: [{ column: "Amt", field: "amount", state: "matched", pending: true, confidence: 70, decision: null }] };
+  const { host, done } = await mount([claim("k2", { value: 222 }), claim("k1", { value: 111 })], [view]);
+  try {
+    const cards = [...host.querySelectorAll('[data-testid="attention-card"]')];
+    expect(cards.map((card) => (card.querySelector('[data-testid="attention-mapping"]') ? "column" : "claim"))).toEqual(["column", "claim", "claim"]);
+    expect(cards[1].textContent).toContain("222");
+    expect(cards[2].textContent).toContain("111");
+  } finally { await done(); }
 });
 
 test("a card for a claim says Keep and Not a company claim; the old Approve and Reject words are gone", async () => {

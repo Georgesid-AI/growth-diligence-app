@@ -2861,7 +2861,7 @@ async def _blocker_list(audit_id: str, audit: dict) -> list:
         out.append({"kind": "revenue_file_missing", "text": "Revenue file uploaded – confirm the mapping to compute metrics."})
     if audit.get("results"):
         _, rows = await _claim_rows(audit_id, audit)
-        selected = set(verdict_mod.banner_ids(rows))
+        selected = set(verdict_mod.banner_ids(rows, (audit.get("ic_inputs") or {}).get("top5")))
         for r in rows:
             if r["claim_id"] in selected and r["evidence_label"] == "Contradicted":
                 claimed = _figure(r["claimed_value"], r["unit"], r["currency"])

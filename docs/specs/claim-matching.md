@@ -205,7 +205,7 @@ a share of the claim (`gap_normalised`); for a rate it is the gap in percentage 
   threshold is read: the tolerance gives the label, not the entry. A claim Python entered that a check now asks about (a re-run, a new file, an FX or as-of month change) goes
   back to pending with `auto_note` "Re-opened – a check now asks about it"; a claim the analyst answered (Keep, Edit, Reject) is never changed, and any status the analyst sets
   clears `auto_accepted`, so the row reads analyst. The row's `auto_approval` is "auto" for a claim Python entered and still holds; the CSV and the memo's Approval column
-  (auto / analyst) read it. The Audit page orders the questions by the selection rule of the top 5 (value at stake, normalised shortfall, Contradicted above Unverified), the
+  (auto / analyst) read it. The Audit page orders the questions by the selection rule of the top 5 (value at stake, normalised shortfall), the
   five's questions first (`GET /decks`, `attention`).
 - The baseline CSV (verdict-and-memo.md §5) downloads while a check is open, the row with an empty `evidence_label` and
   `definition_check` ask.

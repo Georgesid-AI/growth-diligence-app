@@ -85,7 +85,7 @@ def test_a_clean_claim_enters_and_a_flagged_or_unmatched_or_other_claim_waits_fo
     assert [got[c]["status"] for c in ("plain", "flagged", "unmatched", "matched", "other")] == ["approved", "pending", "pending", "approved", "pending"]
     assert [bool(got[c].get("auto_accepted")) for c in ("plain", "flagged", "matched")] == [True, False, True]
     assert res["entered"] == 2 and res["open"] == 2 and "accepted" not in res, "an Other figure is never a task, so it is not counted"
-    assert res["entered_ids"] == ["plain", "matched"] or sorted(res["entered_ids"]) == ["matched", "plain"]
+    assert sorted(res["entered_ids"]) == ["matched", "plain"]
     assert set(registered(run_api)) == {"plain", "matched"}, "only the entered claims are in the register"
 
 
@@ -238,3 +238,16 @@ def test_the_questions_come_ordered_by_the_selection_rule_the_top_5_ones_first(r
     order = body["attention"]
     assert [q["id"] for q in order][:1] == ["q_big"] and [q["id"] for q in order] == ["q_big", "q_small"]
     assert order[0]["in_top5"] is True and "in_top5" in order[1]
+
+
+def test_the_verdict_endpoint_counts_the_waiting_claims_and_the_open_definition_checks_and_the_rule_line_ends_with_the_count(run_api):
+    """simplified-flow.md section 1: an open question is a count on the explanation line, not a state; the count is the cards plus the open checks."""
+    prepared(run_api, claim("plain", value=150000), claim("ask", value=1000), claim("flagged", flags=["axis tick"]),
+             claim("unmatched", origin="ai", ai_status="unmatched"))
+    stage(run_api, "claims")
+    assert registered(run_api)["ask"]["definition_check"] == "ask"
+    body = run_api.get(f"/api/audits/{AUDIT}/verdict").json()
+    assert body["verdict"]["status"] == "ok"
+    assert body["verdict"]["rule"] == ("No selected claim is Contradicted; 1 of 2 are Verified, 1 untested. 3 questions open. "
+                                       "Top 2 (the register has 2 claims)."), "two claims wait for an answer and one Definition check is open"
+    assert "3 claim questions open on the Audit page." in body["unresolved_questions"]

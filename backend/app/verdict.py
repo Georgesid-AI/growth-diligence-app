@@ -2,7 +2,7 @@
 
 A pure module: it reads register rows (app.claim_matching), `audits.results` and the analyst's inputs, and returns
 dicts. It imports nothing from `app.llm`, calls no model and writes nothing. The top 5 is selected by the app (value at stake, then
-normalised shortfall, Contradicted above Unverified) and is in force without a confirmation; the verdict is always computed; the ratings
+normalised shortfall) and is in force without a confirmation; the verdict is always computed; the ratings
 are computed from the integrity checks and the metrics (CLAUDE.md rules 14, 17, 18).
 """
 from __future__ import annotations
@@ -117,12 +117,16 @@ def ranks_text(rows: List[dict]) -> str:
     return ", ".join(f"#{r['rank']}" for r in rows)
 
 
+MISSING_PREFIX = "Missing:"        # the reason of a claim whose metric the supplied files cannot give (claim_matching `Missing: {unlock}`)
+NO_FIGURE_IN_FILES = "No figure in the supplied files."
+
+
 def reason_text(row: dict, reporting_currency: Optional[str]) -> str:
     """One reason of the verdict, citing its evidence (W11)."""
     head = f"#{row['rank']} {claim_name(row)}: {row['evidence_label'] or 'Definition check open'}"
     if row.get("observed_value") is None:
         text = f"{head}, {row['reason']}."
-        return f"{text} No figure in the supplied files." if row["evidence_label"] == "Unsupported" else text
+        return f"{text} {NO_FIGURE_IN_FILES}" if str(row["reason"]).startswith(MISSING_PREFIX) else text
     gap = f" ({row['gloss']})" if row.get("gloss") else ""
     text = f"{head}, {observed_text(row, reporting_currency)} against {claimed_text(row, reporting_currency)}{gap}."
     src = row.get("observed_source") or {}
@@ -195,18 +199,18 @@ def sortable(rows: List[dict]) -> List[dict]:
 
 
 # George, 2026-10-24: the selection leaves out claims about the market, prices, the use of funds, people and the product; it takes the testable
-# plan claims first. George, 2026-10-25 (simplified-flow.md section 3): the app selects the five by value at stake, then normalised shortfall,
-# with a Contradicted claim always above an Unverified one; the set is in force without a confirmation.
+# plan claims first. George, 2026-10-25 (simplified-flow.md section 3): the app selects the five by value at stake, then normalised shortfall;
+# the set is in force without a confirmation. Every Contradicted claim is shown in the contradiction lines, so the ranking needs no label.
 PROPOSAL_EXCLUDED = ("market", "pricing", "use_of_funds", "other", "people", "product")
 PLAN_TYPES = ("revenue", "arr", "mrr", "churn", "nrr", "revenue_growth", "sales", "customers")
 
 
 def selection_key(r: dict) -> tuple:
-    """Contradicted first; then a plan claim before any other; then value at stake (a claim with none after those with one), the normalised
+    """A plan claim before any other; then value at stake (a claim with none after those with one), the normalised
     shortfall, the claimed amount; the register rank breaks a tie."""
     amount = abs(r["claimed_converted"] if r.get("claimed_converted") is not None else r.get("claimed_value") or 0)
     vas = r.get("value_at_stake_arr")
-    return (r.get("evidence_label") != "Contradicted", r.get("claim_type") not in PLAN_TYPES, vas is None, -(vas or 0),
+    return (r.get("claim_type") not in PLAN_TYPES, vas is None, -(vas or 0),
             -(r.get("shortfall") or 0), -amount, r.get("rank") or 0)
 
 
@@ -216,9 +220,10 @@ def proposal(rows: List[dict]) -> List[str]:
     return [r["claim_id"] for r in sorted(eligible, key=selection_key)[:TOP_N]]
 
 
-def banner_ids(rows: List[dict]) -> List[str]:
-    """The banner (CLAUDE.md rule 21) reads the five the app selects, whatever the analyst changed."""
-    return proposal(rows)
+def banner_ids(rows: List[dict], stored: Optional[dict] = None) -> List[str]:
+    """The banner (CLAUDE.md rule 21) reads the five in force: the app's selection, or the set the analyst changed. A Contradicted claim
+    that leaves the five stays in the contradiction lines ("Other contradictions")."""
+    return top5_state(rows, stored)["in_force"]
 
 
 def top5_state(rows: List[dict], stored: Optional[dict]) -> dict:
@@ -376,6 +381,16 @@ def data_gaps(results: Optional[dict], rows: List[dict], top5_ids: List[str], ta
                     "requested": item.get("unlocked_by"), "target_date": target_dates.get(metric), "index": index})
     out.sort(key=lambda g: (-g["blocks_top5"], -len(g["claims"]), g["index"]))
     return out
+
+
+NOT_MEASURED_REASON = "not tested against data"
+
+
+def unmeasured_claims(rows: List[dict]) -> List[dict]:
+    """The register rows that are never tested (use of funds, acquisition channels, pricing, unit economics, pipeline, best and worst cases,
+    forecast-file figures), each with the reason it cannot be measured: the memo's Data gaps table lists them (simplified-flow.md section 3)."""
+    return [{"claim_id": r["claim_id"], "rank": r["rank"], "item": f"#{r['rank']} {claim_name(r)}",
+             "why": str(r.get("reason") or NOT_MEASURED_REASON).rstrip(".") + "."} for r in rows if cm.is_untested(r)]
 
 
 def top_gaps(gaps: List[dict]) -> List[dict]:
