@@ -37,18 +37,19 @@ Unverified, Unsupported, Contradicted, Inconclusive. Unverified never counts as 
 | Status | Meaning (the definition, word for word) | Rule in the app |
 |---|---|---|
 | Verified | The raw data confirms the claim. | claim-matching.md §4, unchanged: a beat beyond tolerance up to the check limit is Verified, marked "(beat)" and listed under Worth flagging (13 Oct rule) |
-| Unverified | Management stated it in the deck or plan; the data to test it is not in the data room. | claim-matching.md §4, unchanged |
-| Unsupported | The plan depends on it, but nobody has stated it and nothing backs it. | claim-matching.md §4, unchanged (see the open point below) |
+| Unverified | Management stated it in the deck or plan; the data to test it is not in the data room. | claim-matching.md §4 (amended 2026-10-25): every stated figure the app cannot test, whatever the reason |
+| Unsupported | The plan depends on it, but nobody has stated it and nothing backs it. | claim-matching.md §4 (amended 2026-10-25): only a figure the plan implies and no slide states ("no claimed value") |
 | Contradicted | The raw data shows the claim is false. | claim-matching.md §4, unchanged |
 | Inconclusive | A test ran but cannot confirm or contradict the claim (§3). Reason and computed figure shown | new, §3 |
 
 - Replaces the earlier meanings: Verified "Tested against supplied company data; within tolerance"; Unverified "Testable metric, but
   the supplied files do not cover it, or an analyst answer is pending"; Unsupported "The app does not compute this metric (product
   limitation). Never counted as a company finding".
-- Open (George): the rules of claim-matching.md §4 are not touched by this amendment, which is presentation only. They still give
-  Unsupported to a claim whose metric the app does not compute, and Unverified to a claim an analyst answer is pending on; neither
-  is what the definitions say. The labelling rules are settled with the build PR; until then the definition is what the screen
-  prints and the rule is what assigns the label.
+- Settled with the build (2026-10-25, George): claim-matching.md §4 assigns the labels the definitions describe. A figure a slide or the
+  plan states and the app cannot test (no metric, a metric not computed for the period or by segment, a segment not in the data, a
+  contract value, transaction volume, unit economics, a pipeline column, a qualified Users claim with no figure) is Unverified; the
+  reason text still says why. Unsupported is the one implied figure with no stated value. A claim an analyst answer is pending on is
+  still Unverified, or has no label while a Definition check is open (§3 of claim-matching.md §4.1).
 
 ## 3. Inconclusive
 A row is Inconclusive when the app computed a figure for the claim but the figure cannot confirm or contradict it. The row
@@ -63,7 +64,7 @@ carries `observed_value`, `observed_at` and `observed_source` (the computed figu
 | The claim period is only partly covered (dates-and-periods.md §4) | dates-and-periods.md | `claim period partly covered (months missing: {list})` |
 
 - With no paying-customer figure at all (no revenue series, or a figure that is not a count), the qualified Users claim is
-  Unsupported with `population differs: deck label '{label}' is not paying customers`.
+  Unverified (amended 2026-10-25: it is stated, and the app cannot test it) with `population differs: deck label '{label}' is not paying customers`.
 - Order inside a row's rules: the period is read first. A qualified Users claim whose period has no Customer count in the
   data is not Inconclusive: it follows dates-and-periods.md §4 (Unverified, not covered).
 - Growth basis unknown: Unverified (dates-and-periods.md §5). Decided by George, 15 Oct 2026 (decision 2): plan section 5 is

@@ -1,7 +1,7 @@
 /**
  * Run audit, on the Upload & Mapping page: the three stages the analyst starts with one button, in order. The files go through the endpoints that already
  * exist; each stage then answers through POST /audits/{id}/run/{stage}. The runner stops at the first stage that is not done:
- * needs_review sends the analyst to the review screen, failed shows a plain-English message and a Retry stage button.
+ * needs_review sends the analyst to the questions on the Audit page, failed shows a plain-English message and a Retry stage button.
  */
 export const STAGES = [
   { key: "mapping", label: "File mapping" },

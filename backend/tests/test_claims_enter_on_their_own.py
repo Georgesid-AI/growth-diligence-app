@@ -17,7 +17,7 @@ pytest.importorskip("motor")
 
 from test_claim_matching import RUNS, results_for, settings  # noqa: E402
 from test_ic_memo import inputs  # noqa: E402
-from test_run_audit import AUDIT, confirm_open_columns, review, stage, upload_files  # noqa: E402
+from test_run_audit import AUDIT, confirm_open_columns, stage, upload_files  # noqa: E402
 
 from app import claim_matching as cm  # noqa: E402
 from app import decks, run_audit  # noqa: E402

@@ -1,6 +1,6 @@
 # Design note: the simplified flow
 
-Status: draft for decision, 2026-10-24; Audit page order, label definitions, assumptions strip and top-5 ranking added 2026-10-25. No code, test or spec change. Source: George's direction of 24 Oct 2026: from now on the
+Status: draft for decision, 2026-10-24; Audit page order, label definitions, assumptions strip and top-5 ranking added 2026-10-25. Built in part 2 (behaviour, 2026-10-25): the top five selected by the app, claims entered without approval, gates from the claim, computed ratings, no export blockers, the analyst note, the label rules, contract 9. Part 3 (the Upload & Mapping set-up, the question cards' Fix control, the claims table folded into the register) is not built. Source: George's direction of 24 Oct 2026: from now on the
 app only removes and simplifies its interface; no computation is lost. The eight removals are decided; this note says what each
 one looks like on the screen and what it touches. Every engine field (`backend/schemas/metrics.py`) and every memo section
 (verdict-and-memo.md §7.2, Appendices A–D) stays.
@@ -184,11 +184,12 @@ that cannot (an informational flag, a confirm-only reason) is never asked.
 | revenue-file-recognition.md | §7 S31 lines; one Correct button | one summary line; confirm-only parts accepted silently |
 | dates-and-periods.md | §5 one-click task | the card |
 | claim-types-and-correction.md | §3 editor | unchanged; reached through "Fix" and "wrong? fix" |
-| prompt-store.md, llm-structure-reading.md, interface-contracts.md | – | unchanged; no contract version change |
+| prompt-store.md, llm-structure-reading.md | – | unchanged |
+| interface-contracts.md | §1 version | built 2026-10-25: contract version 9 (the task of part 2 asked for the bump), so §5 below applies: results stored under 8 read "Stale – re-run audit" |
 
 ## 5. Stored audits on upgrade
 
-No contract bump and no reseed: nothing stored changes meaning. The server applies these on first read of each audit.
+Built with a contract bump (version 9, 2026-10-25) and a demo reseed: results stored under 8 read "Stale – re-run audit" until Run audit calculates again. The server applies the rest on read of each audit (a pending claim that qualifies reads as approved, "auto", and Run audit stores it).
 
 | Stored | Becomes |
 |---|---|

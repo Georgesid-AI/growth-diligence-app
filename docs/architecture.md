@@ -79,8 +79,9 @@ file, sheet and rows for a computed metric, file, slide or page and cell for a d
 number: the narrative path explains computed results and may not add a figure the engine did not produce (the
 gateway's numeric guard); the structure path labels the figures Python listed from redacted cells. Verification is
 Python's alone (rule 18): an item is Verified when Python read its value from its source cell and rebuilt its period
-from the cells; everything else is shown as "AI suggestion, not verified" or dropped. The analyst approves, edits
-or rejects every claim; nothing enters the claim register on its own.
+from the cells; everything else is shown as "AI suggestion, not verified" or dropped. Python enters every claim it matched
+to its page and tested against the data; the analyst answers the questions Python cannot: a claim a check flagged, a
+claim that is not matched, a Revenue / Volume or Definition question. The analyst can still correct or exclude any claim.
 
 ## Data boundary
 
@@ -103,7 +104,7 @@ model version, content hash, token counts and cost. Never deck text sent to the 
 
 The narrative path may read a count of deck documents per audit (number only). It never reads deck text, titles or file names.
 
-Claims within tolerance are approved by the analyst's Run audit press, listed under Show and rejectable one by one. Nothing is approved without that press.
+Python enters a matched claim on Run audit and tests it against the data, whatever its label; it enters nothing a check asks about. A claim Python entered stays correctable and excludable one by one; a claim the analyst answered, edited or added is never changed by a later run.
 
 ## The amendment of 2026-10-05
 

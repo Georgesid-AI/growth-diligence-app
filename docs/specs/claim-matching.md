@@ -1,6 +1,11 @@
 # Spec: Claim matching: approved claims tested against the computed metrics
 Status: Draft; decisions of 2026-10-07 applied (§10). Location: docs/specs/claim-matching.md.
 Follows deck-parser.md §6.
+Amended 2026-10-25 (George, docs/design/simplified-flow.md; contract 9): (1) the claim approval is gone: Python enters every claim it matched to its page and no check asks about,
+whatever its label (§4.1, "Entry"); the register holds those and the claims the analyst answered, edited or added. (2) A stated figure the app cannot test reads Unverified; Unsupported is
+left for a figure the plan implies and no slide states (§4, evidence-labels.md §2). (3) A gate is written from the claim for every Unverified, Inconclusive, Unsupported or Contradicted row
+(§5), and `gate_needed` is always false. (4) The register row gains `gate_status` (after `gate_needed`); `auto_approval` reads "auto" for a claim Python entered; `key_gate` is set by the
+verdict, on the gates of the non-Verified rows of the five in force.
 Amended 2026-10-24 (George, draft PR from main): (1) an approved claim the AI read is analyst-confirmed: within tolerance it is Verified (a beat as today), outside it Contradicted; the
 "AI suggestion, not verified until the analyst edits the claim" rule and its reason text are removed (§4, table 2b); an edit is never required to verify; the claim keeps `deck_reading`
 "AI suggestion, not verified" as its provenance. (2) Value at stake is computed for every approved, tested claim once the audit's Target ARR and Target date are both set (§6, §8): the claimed
@@ -156,8 +161,8 @@ The meaning of each label, as the screen prints it, is the definition of evidenc
 |---|---|
 | Verified | Tested and within tolerance: ±5% of the claimed value for amounts, counts and durations; ±1 percentage point for rates. The boundary is Verified. Or a beat outside tolerance up to the check limit of §4.1 (observed better than the claim: above it, or below it where lower is better), or a bigger beat whose Definition check is answered Yes: reason "beat: observed beats the claim by {gloss}", marked (beat). |
 | Contradicted | Tested and outside tolerance: a miss up to the check limit of §4.1, or a bigger miss whose Definition check is answered Yes. |
-| Unverified | Not testable yet; the reason names what would test it: a Missing file (the engine's `unlocked_by`), a forecast period, a period before the metric's first month, no saved FX rate for the claim's currency ("FX rate needed"), a direction with no figure, a revenue claim with no period ("no period stated"), months of the period missing from the data (named), a claim of a type that names an engine metric with no period and no fitting metric ("period missing; set it with Edit"); any other reason stands. A deck reading "AI suggestion, not verified" no longer changes the label (2026-10-24). A Definition check answered No: reason "definition mismatch". A Use of funds claim (deck-parser.md, amended 2026-10-10) and an Acquisition channels claim (chat-upload.md section 17, 2026-10-11) are always Unverified, with no metric, gap, value at stake or gate. |
-| Unsupported | The app gives no figure: no metric proposed or picked, the metric not computed for that period or by segment, the segment not in the data, or the engine's "not computable" reason. A Users claim with a `qualifier` (deck-parser.md §2) and no metric picked reads "deck label '{qualifier} {noun}' is not paying customers; the analyst can edit the type to Customers to test it" (2026-10-13, George). |
+| Unverified | A figure stated in the deck or plan that the app cannot test (amended 2026-10-25, evidence-labels.md §2: the data to test it is not in the data room, or the app computes no such metric). The reason names what would test it: a Missing file (the engine's `unlocked_by`), a forecast period, a period before the metric's first month, no saved FX rate for the claim's currency ("FX rate needed"), a direction with no figure, a revenue claim with no period ("no period stated"), months of the period missing from the data (named), a claim of a type that names an engine metric with no period and no fitting metric ("period missing; set it with Edit"); any other reason stands. A deck reading "AI suggestion, not verified" no longer changes the label (2026-10-24). A Definition check answered No: reason "definition mismatch". A Use of funds claim (deck-parser.md, amended 2026-10-10) and an Acquisition channels claim (chat-upload.md section 17, 2026-10-11) are always Unverified, with no metric, gap, value at stake or gate. Every claim that was Unsupported for want of a metric (no metric proposed or picked, the metric not computed for that period or by segment, the segment not in the data, the engine's "not computable" reason, a contract value, transaction volume, unit economics, a pipeline column, a Users claim with a `qualifier` and no figure) is Unverified with the same reason text. |
+| Unsupported | Amended 2026-10-25: the plan implies a figure and no slide states it. The one row the matcher gives it: a claim with no claimed value (reason "no claimed value"). A figure a slide or the plan states is never Unsupported, whatever the app can compute. Before 2026-10-25 this label also covered the Unverified cases listed above; the reason texts are unchanged. |
 
 ### 4.1 Definition check (2026-10-14, George; replaces D2)
 A tested row (not a forecast, not an AI suggestion) is read by the size of its gap. For an amount, a count or a duration the gap is
@@ -190,30 +195,21 @@ a share of the claim (`gap_normalised`); for a rate it is the gap in percentage 
   recompute after a new or corrected file, an FX rate change), the answer is not applied and the question is asked again. The
   explicit clears above remain a second guard. The answer changes no value, gap, gloss or rank.
 - While unanswered: the evidence label is null, the reason "definition check: the gap is beyond 50% of the claim" (for a rate,
-  "beyond 10 percentage points"), and the claim needs no gate. It blocks the verdict as long as it is open, wherever it ranks
-  (verdict-and-memo.md §6.3), and it is left out of every count by evidence label (the top 5's, the log lines', the memo's).
-- Approve all approves a claim whose check is open, like any other claim to review; the claim enters the register as an open
-  check, and blocks the verdict there. The toast reports it: ", Y with open definition check" (chat-upload.md §17). Run audit's
-  within-tolerance step accepts only rows within tolerance (Verified, not a beat, no check): a beat of 5% to 50% and a bigger
-  beat answered Yes stop at the review screen.
-- Amended 2026-10-22 (George, issue #155, option c). The within-tolerance step runs in Run audit's claims stage only, on pending claims, with
-  the tolerance and the Verified test above (no second threshold). It also leaves to the analyst: a claim the analyst entered (Add claim), picked
-  from a deck line (Add from deck, origin `deck_analyst`; George, 2026-10-22) or edited (a pending claim that carries `parsed`); a claim flagged as a deck inconsistency (`inconsistent_dates` or `inconsistencies` on the
-  candidate; the cross-deck check of integrity-coverage.md does not flag a claim); and a claim in a currency other than the audit's
-  (`claimed_converted` set on its row). Any metric stays eligible. The step approves ("approved", never "edited") and sets `auto_accepted`;
-  an edit of the claim clears it (the claim becomes Analyst-edited). The register row of a claim still approved, Verified, not a beat, with no
-  check and in the audit currency carries `auto_approval`: "Auto-approved – matches revenue file (Δ x.x%)", Δ the gap as a share of the
-  claim, one decimal ("Δ 0.5 pp" for a rate); otherwise null. Approve all touches pending claims only, so it skips an auto-approved one.
-- Amended 2026-10-22 (George, review of PR 157). (1) Any status the analyst sets (Reject, back to To review, Approve) clears `auto_accepted`, so a
-  later manual approval reads analyst. (2) An auto-approved claim (approved, `auto_accepted`) that no longer passes the within-tolerance test
-  after a re-run, a new file, an FX change or an as-of month change goes back to "To review" (pending, `auto_accepted` cleared) with `auto_note`
-  "No longer matches – was auto-approved", shown in the status cell. Tested with the register's own code at the end of every calculation and at
-  the start of the claims stage; with no results nothing is tested. A claim the analyst approved is never changed. A claim that later matches
-  again is approved on its own again and loses the note; any status the analyst sets clears it. (3) The review page's "claims within tolerance" and
-  the deck list's "(z auto)" both count approved claims with `auto_accepted`.
+  "beyond 10 percentage points"), and the claim has no gate. Amended 2026-10-25: it blocks nothing; the row counts as untested in the verdict, whose
+  explanation line adds "1 question open." (two: "2 questions open."), and it is left out of every count by evidence label (the log lines', the memo's).
+- Entry (amended 2026-10-25, replaces the "Approve all", "within-tolerance step", issue #155 and PR 157 paragraphs of 2026-10-22): there is no approval step. A pending
+  claim enters the register on its own (`app/run_audit.needs_a_word` false, no Revenue / Volume question open, not an Other figure): the register, the deck list and the
+  review summary read it as approved with `auto_accepted` true at once, and Run audit's claims stage (and every calculation) stores that. A claim waits, as a card on the Audit
+  page, when its page read is not matched ("AI suggestion, not matched"), when it carries a review flag (`checker.REVIEW_FLAGS`, "basis conflicts with period" included), or when its
+  Revenue / Volume question is open; an open Definition check enters and asks as a card. A best or worst case, a deck inconsistency and a claim in another currency enter. No
+  threshold is read: the tolerance gives the label, not the entry. A claim Python entered that a check now asks about (a re-run, a new file, an FX or as-of month change) goes
+  back to pending with `auto_note` "Re-opened – a check now asks about it"; a claim the analyst answered (Keep, Edit, Reject) is never changed, and any status the analyst sets
+  clears `auto_accepted`, so the row reads analyst. The row's `auto_approval` is "auto" for a claim Python entered and still holds; the CSV and the memo's Approval column
+  (auto / analyst) read it. The Audit page orders the questions by the selection rule of the top 5 (value at stake, normalised shortfall, Contradicted above Unverified), the
+  five's questions first (`GET /decks`, `attention`).
 - The baseline CSV (verdict-and-memo.md §5) downloads while a check is open, the row with an empty `evidence_label` and
   `definition_check` ask.
-- The register offers no "Set gate" button on a row with an open check; it has one again once the check is answered.
+- A row with an open check has no gate; it has one, written from the claim, once the check is answered.
 - The IC memo's summary reports how many Definition checks were answered Yes and No (verdict-and-memo.md §7.2).
 
 ### 4.2 Page-read claims: matched on the value; confidence from the flags (2026-10-23, George; chat-upload.md §28)
@@ -224,11 +220,15 @@ the period, the label and the metric (`other` included) never gate it. They set 
 stays "AI suggestion, not verified" for the register until the analyst edits it. Rows of the rules read and claims the analyst added keep the confidence of deck-parser.md §6.
 
 ## 5. Gate
-No gate is proposed and no threshold has a default. For every row with an observed value the screen shows the claimed
-and the observed figure beside an empty threshold field. The analyst sets the threshold, names the budget decision (max
-200 characters) and may change the date; the gate is saved only when threshold and decision are both filled, and then
-reads: "Before {budget decision}, {metric} must be at least (at most) {threshold} by {date}. Observed {value} ({month});
-claimed {value} ({period})." The date defaults to the last day of the first fiscal quarter ending after the as-of month.
+Amended 2026-10-25 (George, docs/design/simplified-flow.md section 3): the gate is written from the claim and needs no filling. Every row labelled Unverified, Inconclusive,
+Unsupported or Contradicted has one, except a row that is never tested (use of funds, acquisition channels, a forecast-table row, unit economics, a pipeline column, a best or
+worst case) and a claim with no figure or no date to give it. Threshold = the claimed figure in the claim's unit (the converted figure when the claim is in another currency; the
+metric's unit for a duration). Direction: the metric's (higher: "at least", lower: "at most"); a row with no app metric says "at most" for churn, cost, burn, CAC, payback and
+sales-cycle claims, else "at least", and takes the claim's name for the metric. Date = the last day of the claim's period, never later than the first quarterly review; the review
+date when the claim has no period. The sentence is W6 without the budget decision: "{Metric} must be at least (at most) {threshold} by {date}. Observed {value} ({month}); claimed
+{value} ({period})." with the status `gate_status` "proposed". The analyst edits it in the Verdict detail only: threshold and date filled (a row with no app metric also the metric
+name and the direction) make the gate the analyst's, `gate_status` "set by the analyst", and the optional budget decision then opens the sentence with "Before {decision}, ".
+Clearing the fields gives the proposal back. The memo prints "(proposed)" or "(set by the analyst)" after each gate. `gate_needed` is always false and nothing waits for a gate.
 
 ## 6. Claim register
 One row per claim, no deck text (no snippet, no label). GET /api/audits/{id}/claims returns the rows in rank order
@@ -255,14 +255,14 @@ under `register`, beside today's `claims`; `register` is empty when the audit ha
 | `gap`, `gap_normalised`, `gap_kind` | float or null | miss, beat, to go |
 | `gloss` | str or null | table 3 |
 | `evidence_label`, `reason`, `tolerance` | str | table 4 (null while a Definition check is open, §4.1); "±5%", "±1 pp" |
-| `auto_approval` | str or null | §4.1 (2026-10-22): "Auto-approved – matches revenue file (Δ 1.1%)" for a claim Run audit approved on its own while it still matches; else null |
+| `auto_approval` | str or null | §4.1 (amended 2026-10-25): "auto" for a claim Python entered and the analyst has not touched; else null |
 | `basis`, `scenario` | str or null, str | Contract 6, 2026-10-23 (chat-upload.md §28): the page reader's `basis` (actual, projection, scenario; null for a claim the parser read or the analyst entered) and `scenario` (best, realistic, worst, none). A `best` or `worst` claim is Unverified, "best case: a scenario, not the plan target; not tested against data", never ranked among tested claims, gated or in the top 5, with no value at stake. The last two fields |
 | `definition_check`, `definition_question` | str or null | §4.1: null (no gap beyond the limit), ask, yes, no; the question, set whenever `definition_check` is |
 | `rank` | int | §3 |
 | `value_at_stake_arr` | float or null | the ARR the claim stands for (2026-10-24, top of this spec); null while Target ARR or Target date is empty, and for a claim with no ARR link |
 | `vas_reason` | str or null | why `value_at_stake_arr` is null: "not yet computed: Target ARR empty" (and the other empty-field forms), "no ARR link: ..."; null when it is computed |
-| `gate_sentence` | str or null | §5; null until the gate is saved |
-| `gate_threshold`, `gate_budget_decision`, `gate_date`, `gate_saved` | float, str, date, bool | |
+| `gate_sentence`, `gate_status` | str or null | §5; the gate written from the claim, "proposed", or the analyst's, "set by the analyst"; null for a row with no gate |
+| `gate_threshold`, `gate_budget_decision`, `gate_date`, `gate_saved` | float, str, date, bool | the gate shown (the proposal, else the analyst's); `gate_saved` is true for the analyst's edit only |
 | `as_of_month`, `as_of_defaulted` | str, bool | |
 | `turnover_state`, `turnover_note`, `turnover_set_by`, `turnover_reason` | str or null | §11: null, ask, revenue, volume; the label or question; python, analyst; reason code |
 | `implied_take_rate`, `implied_take_rate_source` | float or null, str or null | §11: a fraction; "revenue: file · sheet · rows; volume: deck file · page" |

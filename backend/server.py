@@ -19,7 +19,7 @@ from datetime import date as date_type, datetime, time as time_type, timedelta, 
 from typing import Dict, List, Literal, Optional
 
 import pandas as pd
-from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from starlette.concurrency import run_in_threadpool
 
 import growth_engine as ge
@@ -1955,7 +1955,7 @@ async def list_deck_candidates(audit_id: str):
     # point 8), from the register's own code: read before the list adds its display fields to the candidates.
     current = await _current_audit(audit_id, audit, strict=False)
     turnover = claim_matching.turnover_views(candidates, current.get("results"), settings)
-    # A gap beyond 50% of the claim asks "Same metric and period?" on the review screen, approved or not (claim-matching.md 4.1).
+    # A gap beyond 50% of the claim asks "Same metric and period?" as a card on the Audit page, in the register or not (claim-matching.md 4.1).
     definition = claim_matching.definition_views(candidates, current.get("results"), settings)
     # A claim Run audit approved on its own reads "Auto-approved – matches revenue file (Δ x.x%)" with the figure's citation (issue #155).
     auto = claim_matching.auto_views(candidates, current.get("results"), settings)
@@ -2282,7 +2282,7 @@ async def update_candidate(audit_id: str, candidate_id: str, payload: CandidateU
 
 
 # ---------------------------------------------------------------------------
-# Run audit: three stages the analyst starts with one button, and the counts the review screen shows
+# Run audit: three stages the analyst starts with one button, and the counts the Audit page opens with
 # ---------------------------------------------------------------------------
 async def _open_turnover_ids(audit_id: str, audit: dict, found: list) -> set:
     current = await _current_audit(audit_id, audit, strict=False)
@@ -2371,9 +2371,9 @@ async def _mapping_counts(audit_id: str, audit: dict, datasets: list) -> tuple:
 
 @api.post("/audits/{audit_id}/run/{stage}")
 async def run_stage(audit_id: str, stage: str, background: BackgroundTasks):
-    """One stage of Run audit, in order: mapping (checks the files are mapped), engine (the calculations), claims (the deck claims
-    within tolerance are accepted). It answers 200 with a status: done, needs_review (the analyst must decide something on the
-    review screen), waiting (an earlier stage is not done), running (the decks are still being read; ask again) or failed (a
+    """One stage of Run audit, in order: mapping (checks the files are mapped), engine (the calculations), claims (every matched claim no
+    check asks about enters the register). It answers 200 with a status: done, needs_review (the analyst must answer a question on the
+    Audit page), waiting (an earlier stage is not done), running (the decks are still being read; ask again) or failed (a
     plain-English message, no exception text). Existing endpoints do the work; nothing here is new logic for the engine."""
     if stage not in run_audit.STAGES:
         raise HTTPException(404, "Unknown stage")
@@ -2432,13 +2432,14 @@ async def run_stage(audit_id: str, stage: str, background: BackgroundTasks):
 
 @api.get("/audits/{audit_id}/review")
 async def review_summary(audit_id: str):
-    """What the review screen opens with: the columns accepted without a click and the ones waiting, the claims accepted within
-    tolerance (their ids, to show them) and the ones waiting, the Revenue / Volume questions open and the hard blockers."""
+    """What the Audit page opens with: the columns accepted without a click and the ones waiting, the claims Python entered on its own
+    (their ids) and the ones waiting for an answer, the Revenue / Volume questions open and the hard blockers."""
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0})
     if not audit:
         raise HTTPException(404, "Audit not found")
     datasets = await _counted(audit_id, await db.datasets.find({"audit_id": audit_id}, {"_id": 0, "rows": 0}).to_list(10))
     found = await db[decks.CANDIDATES_COLLECTION].find({"audit_id": audit_id, "status": {"$ne": "rejected"}}, {"_id": 0}).to_list(10000)
+    found = await _with_entries(audit_id, audit, found)
     auto = [c["id"] for c in found if c.get("auto_accepted") and c.get("status") == "approved"]
     # Other figures are never a task (claim-types-and-correction.md section 4)
     pending = [c for c in found if c.get("status") == "pending" and c.get("claim_type") not in deck_claims.OTHER_TYPES]

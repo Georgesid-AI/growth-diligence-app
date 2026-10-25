@@ -1690,7 +1690,7 @@ DEFINITION_VIEW_FIELDS = ("claim_id", "period", "definition_check", "definition_
 
 def definition_rows(candidates: List[dict], results: Optional[dict], settings: dict) -> Dict[str, List[dict]]:
     """Section 4.1: the register rows with a Definition check (asked or answered), keyed by candidate id, computed by the register's
-    own code over every candidate not rejected, pending ones included, so the review screen can ask before a claim is approved.
+    own code over every candidate not rejected, pending ones included, so the Audit page can ask the question as a card.
     Empty before the first Calculate: no figure, no gap. Nothing is read from a model."""
     if not results:
         return {}

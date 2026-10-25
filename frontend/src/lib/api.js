@@ -87,8 +87,8 @@ export const reportUsage = (id, event) => api.post(`/audits/${id}/usage`, event)
 // The tester's monthly AI allowance and use (docs/specs/usage-and-allowance.md section 4); 404 for the owner token.
 export const getAllowance = () => api.get("/allowance").then((r) => r.data);
 
-// Board decks: upload parses the file and lists candidate claims; the analyst approves,
-// rejects or edits each one.
+// Board decks: upload parses the file and lists candidate claims; Python enters the ones no check asks about, the analyst keeps,
+// rejects or edits the others (docs/design/simplified-flow.md).
 export const uploadDeck = (id, file) => {
   const fd = new FormData();
   fd.append("file", file);
@@ -99,9 +99,6 @@ export const uploadDeck = (id, file) => {
 export const getDecks = (id) => api.get(`/audits/${id}/decks`, { timeout: READ_TIMEOUT_MS }).then((r) => r.data);
 export const removeDeck = (id, deckId) => api.delete(`/audits/${id}/decks/${deckId}`).then((r) => r.data);
 export const addClaim = (id, payload) => api.post(`/audits/${id}/decks/candidates`, payload).then((r) => r.data);
-// Approve every claim to review of one category in one call (docs/specs/chat-upload.md section 17); `deckId` limits it to a deck tab.
-export const approveAll = (id, group, deckId) =>
-  api.post(`/audits/${id}/decks/candidates/approve-all`, { group, ...(deckId ? { deck_id: deckId } : {}) }).then((r) => r.data);
 export const updateCandidate = (id, candidateId, payload) =>
   api.put(`/audits/${id}/decks/candidates/${candidateId}`, payload).then((r) => r.data);
 // Add from deck (docs/specs/claim-types-and-correction.md section 5): a stored page's lines, and a claim from one of them by reference.
@@ -112,7 +109,6 @@ export const addFromDeck = (id, deckId, { page, ref }) => api.post(`/audits/${id
 export const getClaimRegister = (id) => api.get(`/audits/${id}/claims`).then((r) => r.data);
 export const updateClaimInputs = (id, claimId, payload) =>
   api.put(`/audits/${id}/claims/${encodeURIComponent(claimId)}`, payload).then((r) => r.data);
-export const saveAllGatesCall = (id, gates) => api.put(`/audits/${id}/claim-gates`, { gates }).then((r) => r.data);
 // The audit's FX rates: they apply to the uploaded files and to the deck claims alike.
 export const saveFx = (id, fx) => api.put(`/audits/${id}/fx`, { fx }).then((r) => r.data);
 
@@ -149,7 +145,7 @@ export const generateNarrative = (id, step) =>
 export const getDisclosure = (id) => api.get(`/runs/${id}/disclosure`).then((r) => r.data.disclosure);
 
 // Run audit (one button): three stages in order, each answering done, needs_review, waiting, running or failed with a plain-English
-// message; and what the review screen opens with. The files themselves go through the endpoints above.
+// message; and what the Audit page opens with. The files themselves go through the endpoints above.
 export const runStage = (id, stage) => api.post(`/audits/${id}/run/${stage}`, null, { timeout: 120000 }).then((r) => r.data);
 export const getReview = (id) => api.get(`/audits/${id}/review`, { timeout: READ_TIMEOUT_MS }).then((r) => r.data);
 // What "Write all narratives" would run and its upper-bound cost; reads only, no provider call.

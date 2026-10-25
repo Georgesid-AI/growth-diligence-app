@@ -1,6 +1,6 @@
 import {
   ALL_DECKS, AI_SUGGESTION_LABEL, CLAIM_TYPES, INCONSISTENCY_LABEL, VERIFIED_LABEL, badgeText, deckRunLog, deckReadLine, aiReadStatus, REMOVE_DECK_CONFIRM, claimPeriod, conversionHover, claimSections, claimsForDeck, periodLabel, directionText, deckTabs, defaultDeck, CLAIMS_CHOICES, CLAIMS_HEADING, CLAIMS_INTRO, COLUMNS, claimValue, rowEdit, newClaimPayload, sourceRef, statusCounts, typeLabel,
-  approveAllToast, toReview, DECK_SCOPE_CANNOT, DECK_SCOPE_CANNOT_LEAD, DECK_SCOPE_INTRO, isDeckFile, DECK_SCOPE_OUTRO, EDIT_TYPES, isOther, readingChoices, confidenceText, otherFiguresTitle,
+  countLine, statusText, STATUS_LABELS, DECK_SCOPE_CANNOT, DECK_SCOPE_CANNOT_LEAD, DECK_SCOPE_INTRO, isDeckFile, DECK_SCOPE_OUTRO, EDIT_TYPES, isOther, readingChoices, confidenceText, otherFiguresTitle,
   claimFields, editLogText, CONSENT_OFF_LINE,
   CLAIMS_VIEW, REVIEW_VIEW, VIEW_LABELS, REVIEW_INTRO, claimsForView, isFlagged, flagsText, INFORMATIONAL_FLAGS,
   CLAIM_GROUPS, COLLAPSED_BY_DEFAULT, SCENARIO_GROUP, PROMPT_MISSING_LINE, scenarioText, isCase,
@@ -68,9 +68,9 @@ test("every column has a header", () => {
 test("instruction text is word for word", () => {
   expect([CLAIMS_HEADING, CLAIMS_INTRO, ...CLAIMS_CHOICES.map(([a, b]) => `${a} ${b}`)].join("\n")).toBe(
     "Claims found in the uploaded documents\n" +
-    "These figures were extracted automatically and inform the growth plan. While errors are possible, you only need to check claims that look incorrect or implausible against their source slides before making your selection.\n" +
-    "✓ Approve: Confirm this is a claim the company makes. It will be added to the claim register and tested against the data.\n" +
-    "✎ Edit: Correct the figure, type, unit or date, then approve the claim. It will be added to the claim register and tested against the data.\n" +
+    "These figures were read from the uploaded documents and tested against the data automatically. Errors are possible: check only the claims that look incorrect or implausible against their source slides, or that wait for your answer.\n" +
+    "✓ Keep: Shown on a claim a check asks about: confirm this is a claim the company makes. It is then tested against the data and enters the claim register.\n" +
+    "✎ Edit: Correct the figure, type, unit or date. The claim is tested again against the data.\n" +
     "✕ Reject: Exclude items that are not company claims, such as another company's figures, funds raised or chart axis labels. Rejected items remain in the record but are not used.",
   );
 });
@@ -311,11 +311,10 @@ describe("structure labelling in the approval list (docs/specs/structure-labelli
     expect([isOther({ claim_type: "other" }), isOther({ claim_type: "unknown" }), isOther({ claim_type: "product" })]).toEqual([true, true, false]);
   });
 
-  test("an Other figure is not a claim to review: neither counted nor approved by Approve all", () => {
+  test("an Other figure is not a claim that waits for an answer: it is not counted", () => {
     const claims = [{ id: 1, status: "pending", claim_type: "revenue" }, { id: 2, status: "pending", claim_type: "unknown" },
       { id: 3, status: "pending", claim_type: "other" }];
     expect(statusCounts(claims).pending).toBe(1);
-    expect(toReview({ claims }).map((c) => c.id)).toEqual([1]);
     expect([otherFiguresTitle(1), otherFiguresTitle(3)]).toEqual(["1 other figure", "3 other figures"]);
   });
 
@@ -401,26 +400,19 @@ describe("2026-10-08: the Period column, groups, a direction with no figure and 
 });
 
 
-describe("Approve all (docs/specs/chat-upload.md section 17)", () => {
-  test("the toast gives both counts", () => {
-    expect(approveAllToast(5, 2)).toBe("Approved 5 claims, 2 skipped (need Revenue / Volume or failed to save)");
-    expect(approveAllToast(1, 0)).toBe("Approved 1 claim, 0 skipped (need Revenue / Volume or failed to save)");
+describe("the status of a claim once Python enters it (docs/design/simplified-flow.md section 2)", () => {
+  test("the labels: needs your attention, in the register, rejected, edited; no claim 'to review' and none 'approved'", () => {
+    expect(STATUS_LABELS).toEqual({ pending: "Needs your attention", approved: "In the register", rejected: "Rejected", edited: "Edited" });
   });
-  test("an approved claim with an open definition check is counted apart, not as a skip (claim-matching.md section 4.1)", () => {
-    expect(approveAllToast(5, 1, 2)).toBe("Approved 5 claims, 1 skipped (need Revenue / Volume or failed to save), 2 with open definition check");
-    expect(approveAllToast(5, 2, 0)).toBe(approveAllToast(5, 2));
+  test("the count line names what waits and how many Python entered on its own", () => {
+    expect(countLine({ pending: 1, approved: 3, auto: 2, edited: 1, rejected: 0 })).toBe("1 needs your attention · 3 in the register (2 auto) · 1 edited · 0 rejected");
+    expect(countLine({ pending: 2, approved: 3, auto: 0, edited: 0, rejected: 1 })).toBe("2 need your attention · 3 in the register · 0 edited · 1 rejected");
   });
-  test("the upload page says where a definition check is answered; with none open it adds nothing", () => {
-    expect(approveAllToast(5, 1, 2, true)).toBe(
-      "Approved 5 claims, 1 skipped (need Revenue / Volume or failed to save), 2 with open definition check – answer on the review screen");
-    expect(approveAllToast(5, 2, 0, true)).toBe(approveAllToast(5, 2));
-  });
-  test("a flagged claim skipped by the server is named in the bracket (George, 2026-10-22, chat-upload.md section 28)", () => {
-    expect(approveAllToast(3, 2, 0, true, 1)).toBe("Approved 3 claims, 2 skipped (flagged for review, need Revenue / Volume or failed to save)");
-    expect(approveAllToast(3, 2, 0, true, 0)).toBe(approveAllToast(3, 2));
-  });
-  test("only a claim to review counts", () => {
-    expect(toReview({ claims: [{ id: 1, status: "pending" }, { id: 2, status: "approved" }, { id: 3, status: "rejected" }, { id: 4, status: "edited" }] }).map((c) => c.id)).toEqual([1]);
+  test("a claim Python entered reads Entered by the app; a re-opened claim carries its note", () => {
+    expect(statusText({ status: "approved", auto_approval: "auto" })).toBe("Entered by the app");
+    expect(statusText({ status: "approved", auto_approval: null })).toBe("In the register");
+    expect(statusText({ status: "pending", auto_note: "Re-opened – a check now asks about it" })).toBe("Re-opened – a check now asks about it");
+    expect(statusText({ status: "pending" })).toBe("Needs your attention");
   });
 });
 

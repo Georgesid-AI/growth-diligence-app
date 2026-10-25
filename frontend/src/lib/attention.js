@@ -1,7 +1,8 @@
 /**
- * "Needs your attention" on the Audit page (docs/design/simplified-flow.md, The Audit page, item 5): the questions the Review page
- * lists as open, one card each, taken from the same rules, so nothing that waited on Review is lost when Review leaves the menu.
- * Nothing is decided here; each card carries the control Review gave it.
+ * "Needs your attention" on the Audit page (docs/design/simplified-flow.md, The Audit page, item 5): the claims a check asks about, the
+ * Revenue / Volume and Definition questions and the columns that wait, one card each. Python enters every other claim on its own.
+ * The claim questions come in the order the server ranks them (value at stake, then shortfall, Contradicted above Unverified), the
+ * questions of the five selected claims first. Nothing is decided here.
  */
 import { definitionOf, turnoverOf } from "./claimRegister";
 import { isOther } from "./deckClaims";
@@ -15,19 +16,22 @@ export const lessLabel = "Show fewer";
 /** The views of the uploaded files that hold a column or a required field waiting for the analyst. */
 export const openViews = (views) => (views || []).filter((v) => v.pending > 0 || v.missing_required.length > 0);
 
-/** The questions, in the order Review lists them: columns, claims, then Revenue / Volume answers. An Other figure is never a task. */
-export function openQuestions(views, candidates) {
-  const out = [];
+/** The questions: the five's claim questions first, then the columns that wait, then the other claim questions; the claims keep the server's
+ *  ranking (`attention`: [{id, in_top5}], best first). An Other figure is never a task. */
+export function openQuestions(views, candidates, attention) {
+  const columns = [];
   openViews(views).forEach((view) => {
     const rows = view.missing_required.length ? view.columns : view.columns.filter((c) => c.pending);
-    rows.forEach((row) => out.push({ key: `col-${view.dtype}-${row.column}`, kind: "mapping", view, row }));
+    rows.forEach((row) => columns.push({ key: `col-${view.dtype}-${row.column}`, kind: "mapping", view, row }));
   });
+  const claims = [];
   (candidates || []).forEach((c) => {
     if (isOther(c)) return;
-    if ((c.status === "pending" && !turnoverOf(c).open) || (c.status !== "rejected" && definitionOf(c).open)) out.push({ key: `claim-${c.id}`, kind: "claim", c });
+    if (c.status === "pending" && turnoverOf(c).open) claims.push({ key: `turnover-${c.id}`, kind: "turnover", c });
+    else if (c.status === "pending" || (c.status !== "rejected" && definitionOf(c).open)) claims.push({ key: `claim-${c.id}`, kind: "claim", c });
   });
-  (candidates || []).forEach((c) => {
-    if (c.status === "pending" && turnoverOf(c).open) out.push({ key: `turnover-${c.id}`, kind: "turnover", c });
-  });
-  return out;
+  const place = new Map((attention || []).map((a, i) => [a.id, { i, top: Boolean(a.in_top5) }]));
+  const at = (item) => place.get(item.c.id) || { i: Number.MAX_SAFE_INTEGER, top: false };
+  claims.sort((a, b) => at(a).i - at(b).i);
+  return [...claims.filter((x) => at(x).top), ...columns, ...claims.filter((x) => !at(x).top)];
 }

@@ -12,7 +12,6 @@ jest.mock("@/lib/api", () => ({
   updateClaimInputs: jest.fn(),
   answerTurnover: jest.fn(),
   answerDefinitionCheck: jest.fn(),
-  saveAllGatesCall: jest.fn(),
   claimsCsvUrl: (id) => `http://api/api/audits/${id}/claims.csv`,
 }));
 jest.mock("sonner", () => ({ toast: { error: jest.fn(), success: jest.fn() } }));
@@ -29,7 +28,7 @@ const ROW = {
   reason: "within ±5% of the claim", tolerance: "±5%", rank: 1, value_at_stake_arr: null, shortfall: null, overlaps_with: [],
   evidence_analysis: "Monthly MRR by Segment", evidence_source_key: "mrr_series.data.total",
   gate_sentence: null, gate_threshold: null, gate_budget_decision: null, gate_metric_name: null, gate_direction: null,
-  key_gate: false, gate_needed: false, gate_date: null, gate_saved: false, deck_reading: "parser", page_ref: "slide 4",
+  key_gate: false, gate_needed: false, gate_status: null, gate_date: null, gate_saved: false, deck_reading: "parser", page_ref: "slide 4",
 };
 const RESULTS = { reporting_currency: "EUR", mrr_series: { segments: ["Enterprise", "SMB"] } };
 
@@ -40,11 +39,6 @@ async function mount(rows) {
   const root = createRoot(host);
   await act(async () => { root.render(<ClaimRegister auditId="a1" results={RESULTS} />); });
   return { host, root };
-}
-
-// A gate's fields show only after "Set gate" is clicked on its row.
-async function openGates(host) {
-  for (const button of host.querySelectorAll('[data-testid="register-set-gate"]')) await act(async () => { button.click(); });
 }
 
 test("the section has its title, the download button and one row per claim with the spec's columns", async () => {
@@ -73,8 +67,7 @@ test("the section has its title, the download button and one row per claim with 
   expect(row.querySelector('[data-testid="register-period"]').textContent).toBe("Feb 2024");
   expect(row.textContent).not.toContain("Value at stake");
   expect(row.querySelector('[data-testid="register-evidence-source"]').textContent).toBe("Monthly MRR by Segment · mrr_series.data.total (2024-02)");
-  expect(row.querySelector('[data-testid="register-gate-needed"]')).toBeNull();
-  expect(row.querySelector('[data-testid="register-gate-sentence"]')).toBeNull();
+  expect(row.querySelector('[data-testid="register-gate-sentence"]')).toBeNull();          // a Verified row has no gate
 });
 
 test("a period the parser read from 'in 2021' shows its note under the period; a row with no note or no period shows none (issue #151)", async () => {
@@ -86,7 +79,7 @@ test("a period the parser read from 'in 2021' shows its note under the period; a
 });
 
 test("the table has the seven columns, each claim's second line spans the row, and the layout cannot scroll sideways at 1280 px", async () => {
-  const { host } = await mount([ROW, { ...ROW, claim_id: "c02", rank: 2, evidence_label: "Unverified", gate_needed: true }]);
+  const { host } = await mount([ROW, { ...ROW, claim_id: "c02", rank: 2, evidence_label: "Unverified" }]);
   expect(REGISTER_COLUMNS).toEqual(["#", "Claim", "Segment", "Observed", "Gap", "Extraction confidence", "Evidence status"]);
   expect(REGISTER_COLUMN_WIDTHS.reduce((a, b) => a + b, 0)).toBe(100);
   const table = host.querySelector('[data-testid="claim-register-table"]');
@@ -108,35 +101,31 @@ test("the table has the seven columns, each claim's second line spans the row, a
     expect(second.querySelector("td").getAttribute("colspan")).toBe(String(REGISTER_COLUMNS.length));
     expect(second.querySelector('[data-testid="register-page"]')).not.toBeNull();
   }
-  // Save all gates and the download stay at the top
-  expect(host.querySelector('[data-testid="register-gates-save-all"]')).not.toBeNull();
+  // the download stays at the top; Save all gates is gone with the gate form (docs/design/simplified-flow.md)
+  expect(host.querySelector('[data-testid="register-gates-save-all"]')).toBeNull();
   expect(host.querySelector('[data-testid="claim-register-csv"]')).not.toBeNull();
 });
 
-test("a Verified row has no Set gate button; every other label has one, and a click opens the gate fields below the row", async () => {
-  const labels = ["Verified", "Contradicted", "Unverified", "Unsupported"];
-  const { host } = await mount(labels.map((evidence_label, i) => ({ ...ROW, claim_id: `c${i}`, rank: i + 1, evidence_label })));
-  const rows = [...host.querySelectorAll('[data-testid="claim-register-row"]')];
-  expect(rows.map((r) => r.querySelector('[data-testid="register-set-gate"]') !== null)).toEqual([false, true, true, true]);
-  expect(rows[0].querySelector('[data-testid="register-gate-threshold"]')).toBeNull();
-  expect(host.querySelector('[data-testid="register-gate-threshold"]')).toBeNull();           // closed until clicked
-  expect(rows[1].querySelector('[data-testid="register-set-gate"]').textContent).toBe("Set gate");
-  await act(async () => { rows[1].querySelector('[data-testid="register-set-gate"]').click(); });
-  const [claimLine, detailLine] = rows[1].querySelectorAll("tr");
-  expect(claimLine.querySelector('[data-testid="register-gate-threshold"]')).toBeNull();      // below the claim's line, not in it
-  for (const id of ["register-gate-threshold", "register-gate-date", "register-gate-save", "register-key-gate"]) {
-    expect(detailLine.querySelector(`[data-testid="${id}"]`)).not.toBeNull();
-  }
-  expect(host.querySelectorAll('[data-testid="register-gate-threshold"]').length).toBe(1);   // only the clicked row opened
-  await act(async () => { rows[1].querySelector('[data-testid="register-set-gate"]').click(); });
-  expect(host.querySelector('[data-testid="register-gate-threshold"]')).toBeNull();           // a second click closes it
+const PROPOSED = "ARR must be at least €200,000 by 2024-02-29. Observed €202,125 (2024-02); claimed €200,000 (Feb 2024).";
+
+test("the gate is read-only text in the row's details: the sentence written from the claim, tagged (proposed), then (set by the analyst); a Verified row has none", async () => {
+  const labels = ["Verified", "Contradicted", "Unverified"];
+  const rows = labels.map((evidence_label, i) => ({ ...ROW, claim_id: `c${i}`, rank: i + 1, evidence_label,
+    ...(evidence_label === "Verified" ? {} : { gate_sentence: PROPOSED, gate_status: i === 2 ? "set by the analyst" : "proposed", gate_saved: i === 2 }) }));
+  const { host } = await mount(rows);
+  const found = [...host.querySelectorAll('[data-testid="claim-register-row"]')];
+  expect(found.map((r) => r.querySelector('[data-testid="register-gate-sentence"]') !== null)).toEqual([false, true, true]);
+  expect(found[1].querySelector('[data-testid="register-gate-status"]').textContent).toBe("(proposed)");
+  expect(found[2].querySelector('[data-testid="register-gate-status"]').textContent).toBe("(set by the analyst)");
+  expect(found[1].querySelector('[data-testid="register-gate-sentence"]').textContent).toContain("must be at least €200,000");
 });
 
-test("a Verified row that already holds a saved gate still shows the gate as text, with no button", async () => {
-  const sentence = "Before the plan, ARR must be at least €195,000 by 2024-06-30.";
-  const { host } = await mount([{ ...ROW, gate_saved: true, gate_sentence: sentence }]);
-  expect(host.querySelector('[data-testid="register-gate-sentence"]').textContent).toContain("must be at least €195,000");
-  expect(host.querySelector('[data-testid="register-set-gate"]')).toBeNull();
+test("the register has no gate form: no Set gate, no threshold field, no key gate checkbox, no Save all gates, no Gate needed", async () => {
+  const { host } = await mount([{ ...ROW, evidence_label: "Contradicted", gate_sentence: PROPOSED, gate_status: "proposed" }]);
+  for (const id of ["register-set-gate", "register-gate-threshold", "register-gate-save", "register-key-gate", "register-gates-save-all", "register-gate-needed"]) {
+    expect(host.querySelector(`[data-testid="${id}"]`)).toBeNull();
+  }
+  expect(host.textContent).not.toMatch(/Set gate|Key gate|Gate needed|prefilled/);
 });
 
 test("overlaps show the other rows' ranks and a shortfall shows beside the value at stake", async () => {
@@ -171,73 +160,10 @@ test("choosing a segment saves it and the rows follow the server's answer", asyn
   expect(host.textContent).toContain("set by you");
 });
 
-test("Gate needed until it is saved, then its sentence; a row with no figure shows only the claimed one", async () => {
-  const saved = { ...ROW, claim_id: "c2", gate_saved: true, gate_threshold: 195000, gate_budget_decision: "the plan", gate_date: "2024-06-30",
-    gate_sentence: "Before the plan, ARR must be at least €195,000 by 2024-06-30. Observed €202,125 (2024-02); claimed €200,000 (Feb 2024)." };
-  const { host } = await mount([{ ...ROW, observed_value: null, evidence_label: "Unverified", gate_needed: true }, saved]);
-  const rows = host.querySelectorAll('[data-testid="claim-register-row"]');
-  expect(rows[0].querySelector('[data-testid="register-gate-needed"]').textContent).toBe("Gate needed");      // shown before the row is opened
-  await openGates(host);
-  expect(rows[0].querySelector('[data-testid="register-gate-context"]').textContent).toBe("Claimed 200,000 EUR (Feb 2024)");
-  expect(rows[0].querySelectorAll('[data-testid="register-gate-needed"]').length).toBe(1);
-  expect(rows[1].querySelector('[data-testid="register-gate-needed"]')).toBeNull();
-  expect(rows[1].querySelector('[data-testid="register-gate-sentence"]').textContent).toBe(
-    "Before the plan, ARR (see glossary) must be at least €195,000 by 2024-06-30. Observed €202,125 (2024-02); claimed €200,000 (Feb 2024).");
-  expect(rows[1].querySelector('[data-testid="register-gate-saved"]').textContent).toBe("Gate saved");
-  expect(rows[1].querySelector('[data-testid="register-value-at-stake"]').textContent).toMatch(/^VaS /);      // VaS keeps its glossary spelling
-});
-
-test("the key gate checkbox is off until the gate is saved, saves on a click and sends false to clear it", async () => {
-  const open = { ...ROW, evidence_label: "Unverified" };
-  const saved = { ...open, gate_saved: true, gate_threshold: 1, gate_budget_decision: "x", gate_date: "2024-06-30" };
-  const { host } = await mount([open, saved]);
-  await openGates(host);
-  const boxes = host.querySelectorAll('[data-testid="register-key-gate"]');
-  expect([boxes[0].disabled, boxes[1].disabled]).toEqual([true, false]);
-  expect(host.textContent).toContain("Key gate");
-  api.updateClaimInputs.mockResolvedValue({ register: [{ ...saved, key_gate: true }] });
-  await act(async () => { boxes[1].click(); });
-  expect(api.updateClaimInputs).toHaveBeenCalledWith("a1", "c01", { key_gate: true });
-  api.updateClaimInputs.mockResolvedValue({ register: [saved] });
-  await act(async () => { host.querySelector('[data-testid="register-key-gate"]').click(); });
-  expect(api.updateClaimInputs).toHaveBeenLastCalledWith("a1", "c01", { key_gate: false });
-});
-
-test("a refused key gate shows the server's reason", async () => {
-  const { toast } = require("sonner");
-  const saved = { ...ROW, evidence_label: "Unverified", gate_saved: true, gate_threshold: 1, gate_budget_decision: "x", gate_date: "2024-06-30" };
-  const { host } = await mount([saved]);
-  await openGates(host);
-  api.updateClaimInputs.mockRejectedValue({ response: { status: 400, data: { detail: "At most 5 key gates." } } });
-  await act(async () => { host.querySelector('[data-testid="register-key-gate"]').click(); });
-  expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("At most 5 key gates."));
-});
-
-test("a row with no metric of the app asks for the metric (max 100 characters) and At least / At most", async () => {
-  const none = { ...ROW, metric: null, reason: "no metric", observed_value: null, evidence_label: "Unsupported", evidence_analysis: null, gate_needed: true };
-  const { host } = await mount([none, { ...ROW, evidence_label: "Unverified" }]);
-  await openGates(host);
-  const rows = host.querySelectorAll('[data-testid="claim-register-row"]');
-  const name = rows[0].querySelector('[data-testid="register-gate-metric-name"]');
-  expect(name.getAttribute("placeholder")).toBe("Metric (max 100 characters)");
-  expect(name.maxLength).toBe(100);
-  expect([...rows[0].querySelector('[data-testid="register-gate-direction"]').options].map((o) => o.textContent)).toEqual(["", "At least", "At most"]);
-  expect(rows[1].querySelector('[data-testid="register-gate-metric-name"]')).toBeNull();
-});
-
-test("a qualified Users row asks for the metric and its direction too, as the server needs them to save its gate", async () => {
-  const qualified = { ...ROW, claim_type: "users", metric: null, reason: "deck label 'registered institutions' is not paying customers; the analyst can edit the type to Customers to test it",
-    observed_value: null, evidence_label: "Unsupported", evidence_analysis: null, gate_needed: true };
-  const { host } = await mount([qualified]);
-  await openGates(host);
-  const row = host.querySelector('[data-testid="claim-register-row"]');
-  expect(row.querySelector('[data-testid="register-gate-metric-name"]')).not.toBeNull();
-  expect(row.querySelector('[data-testid="register-gate-direction"]')).not.toBeNull();
-});
-
-test("no claim yet gives a line that says so", async () => {
+test("no claim yet gives a line that says so, and it does not tell the analyst to approve anything", async () => {
   const { host } = await mount([]);
   expect(host.querySelector('[data-testid="claim-register-empty"]')).not.toBeNull();
+  expect(host.querySelector('[data-testid="claim-register-empty"]').textContent).not.toMatch(/[Aa]pprove/);
   expect(host.querySelector("table")).toBeNull();
 });
 
@@ -410,79 +336,10 @@ test("a row with no saved rate says which rate is missing, and FX settings in it
   expect([link.textContent, link.getAttribute("href")]).toEqual(["FX settings", "/audit/a1/mapping#fx-settings"]);
 });
 
-// --- gate prefill: marked until saved, one Save all --------------------------------------------------------------------------
-const GATE_ROW = (id, extra = {}) => ({ ...ROW, claim_id: id, observed_value: null, evidence_label: "Unverified", gate_needed: true, ...extra });
-const FILL = { gate_threshold: 200000, gate_date: "2025-03-31", key_gate: true };
-
-async function mountGates(rows, prefill, budgets = []) {
-  api.getClaimRegister.mockResolvedValue({ claims: [], register: rows, gate_prefill: prefill, budget_decisions: budgets });
-  const host = document.createElement("div");
-  document.body.appendChild(host);
-  await act(async () => { createRoot(host).render(<ClaimRegister auditId="a1" results={RESULTS} />); });
-  await openGates(host);
-  return host;
-}
-
-async function choose(el, value) {
-  const proto = el.tagName === "SELECT" ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(proto, "value").set.call(el, value);
-    el.dispatchEvent(new Event(el.tagName === "SELECT" ? "change" : "input", { bubbles: true }));
-  });
-}
-
-test("a gate starts with the prefill, each prefilled field marked, and the budget decision blank", async () => {
-  const host = await mountGates([GATE_ROW("c01")], { c01: FILL });
-  const row = host.querySelector('[data-testid="claim-register-row"]');
-  expect(row.querySelector('[data-testid="register-gate-threshold"]').value).toBe("200000");
-  expect(row.querySelector('[data-testid="register-gate-date"]').value).toBe("31 Mar 2025");
-  expect(row.querySelector('[data-testid="register-key-gate"]').checked).toBe(true);
-  for (const f of ["threshold", "date", "key"]) expect(row.querySelector(`[data-testid="register-gate-prefilled-${f}"]`).textContent).toBe("prefilled – confirm");
-  expect(row.querySelector('[data-testid="register-gate-budget"]').value).toBe("");
-});
-
-test("editing a prefilled field removes its mark", async () => {
-  const host = await mountGates([GATE_ROW("c01")], { c01: FILL });
-  await choose(host.querySelector('[data-testid="register-gate-threshold"]'), "150000");
-  expect(host.querySelector('[data-testid="register-gate-prefilled-threshold"]')).toBeNull();
-  expect(host.querySelector('[data-testid="register-gate-prefilled-date"]')).not.toBeNull();
-});
-
-test("the budget dropdown lists the decisions already used and Other, which opens a text field", async () => {
-  const host = await mountGates([GATE_ROW("c01")], { c01: FILL }, ["Series B"]);
-  const pick = host.querySelector('[data-testid="register-gate-budget-pick"]');
-  expect([...pick.options].map((o) => o.textContent)).toEqual(["Budget decision…", "Series B", "Other"]);
-  expect(host.querySelector('[data-testid="register-gate-budget"]')).toBeNull();
-  await choose(pick, "Other");
-  expect(host.querySelector('[data-testid="register-gate-budget"]')).not.toBeNull();
-});
-
-test("Save all gates sends every gate with a budget decision, prefilled or edited, and leaves the unfilled ones", async () => {
-  const host = await mountGates([GATE_ROW("c01"), GATE_ROW("c02"), GATE_ROW("c03")],
-    { c01: FILL, c02: { ...FILL, key_gate: false }, c03: FILL }, ["Series B"]);
-  const picks = host.querySelectorAll('[data-testid="register-gate-budget-pick"]');
-  await choose(picks[0], "Series B");
-  await choose(picks[1], "Series B");
-  await choose(host.querySelectorAll('[data-testid="register-gate-threshold"]')[1], "150000");
-  api.saveAllGatesCall.mockResolvedValue({ register: [] });
-  await act(async () => { host.querySelector('[data-testid="register-gates-save-all"]').click(); });
-  expect(api.saveAllGatesCall).toHaveBeenCalledTimes(1);
-  expect(api.saveAllGatesCall).toHaveBeenCalledWith("a1", [
-    { claim_id: "c01", gate_threshold: 200000, gate_budget_decision: "Series B", gate_date: "2025-03-31", key_gate: true },
-    { claim_id: "c02", gate_threshold: 150000, gate_budget_decision: "Series B", gate_date: "2025-03-31" },
-  ]);
-});
-
 // claim-matching.md section 4.1: a gap beyond 50% of the claim asks "Same metric and period?" on the row.
 const CHECK = { ...ROW, claim_id: "k1", claim_type: "customers", claimed_value: 1, currency: null, unit: "customers", metric: "Customer count",
   observed_value: 26, gap: -25, gap_normalised: -25, gloss: "25 customers more (beat)", evidence_label: null, definition_check: "ask",
   definition_question: "Observed 26, claimed 1. Same metric and period?", reason: "definition check: the gap is beyond 50% of the claim" };
-
-test("a row with an open Definition check has no Set gate button; once answered it has one like any row that is not Verified", async () => {
-  const { host } = await mount([CHECK, { ...CHECK, claim_id: "k2", rank: 2, definition_check: "no", evidence_label: "Unverified" }]);
-  const rows = [...host.querySelectorAll('[data-testid="claim-register-row"]')];
-  expect(rows.map((r) => r.querySelector('[data-testid="register-set-gate"]') !== null)).toEqual([false, true]);
-});
 
 test("a row in Definition check reads so in the Evidence cell and asks its question with Yes and No on one line", async () => {
   const { host } = await mount([CHECK, ROW]);

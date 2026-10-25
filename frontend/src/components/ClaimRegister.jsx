@@ -2,20 +2,17 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Download, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { EvidenceLabel } from "@/components/EvidenceLabel";
 import { Provenance } from "@/components/Provenance";
-import DateField from "@/components/DateField";
 import { answerDefinitionCheck, answerTurnover, claimsCsvUrl, downloadFile, getClaimRegister, updateClaimInputs } from "@/lib/api";
 import {
-  DEFINITION_ANSWERS, DOWNLOAD_LABEL, GATE_BUDGET_MAX, GATE_DIRECTIONS, GATE_METRIC_MAX, GATE_METRIC_PLACEHOLDER, GATE_NEEDED, KEY_GATE_LABEL, NO_METRIC, OTHER_DECISION, PREFILLED, gateDraft,
-  REGISTER_COLUMNS, REGISTER_COLUMN_WIDTHS, REGISTER_HEADING, STALE_LABEL, SET_GATE_LABEL, TURNOVER_QUESTION, answerReady, reasonsFor, claimCellText, rateHover, takeRateText, evidenceLines, gapText, gateContext, gateEdit, metricOptions, needsMetricName,
+  DEFINITION_ANSWERS, DOWNLOAD_LABEL, GATE_TAGS, NO_METRIC,
+  REGISTER_COLUMNS, REGISTER_COLUMN_WIDTHS, REGISTER_HEADING, STALE_LABEL, TURNOVER_QUESTION, answerReady, reasonsFor, claimCellText, rateHover, takeRateText, evidenceLines, gapText, metricOptions,
   observedText, detailItems, registerRows, segmentOptions, COLUMN_EXPLAINERS, EVIDENCE_SUBTITLE,
   GROWTH_BASES, SET_GROWTH_BASIS,
 } from "@/lib/claimRegister";
 import { missingText } from "@/lib/periods";
 import { CALCULATE_CLASS } from "@/lib/chatUpload";
-import { useGateEdits } from "@/lib/useGateEdits";
 import { describeRequestError } from "@/lib/requestError";
 import { seeGlossary } from "@/lib/glossary";
 import FxText from "@/components/FxText";
@@ -28,99 +25,13 @@ const selectClass ="h-8 rounded-md border border-[#E5E7EB] bg-white px-2 text-xs
 // The options of a select, with the stored choice kept in the list even when it is no longer offered.
 const withCurrent = (options, current) => (options.includes(current) ? options : [...options, current]);
 
-/** The gate: the claimed and observed figures beside the threshold, the budget decision and the date. A gate not yet saved starts
- *  with the server's prefill (docs/specs/verdict-and-memo.md section 3), each prefilled field marked until the analyst edits or saves
- *  it; the budget decision starts blank. Nothing is saved until the threshold, the decision and the date are all filled; a row with
- *  no metric of the app also needs the analyst's metric and its direction. `edits` holds only what the analyst changed. */
-/** What a row says about its gate before any field is shown: "Gate needed", or the saved gate's sentence. */
+/** What a row says about its gate: the sentence, written from the claim, with "(proposed)" until the analyst edits it in Verdict detail, then
+ *  "(set by the analyst)". A Verified row has none. The gates are edited in that section only (docs/design/simplified-flow.md). */
 function GateStatus({ row }) {
+  if (!row.gate_sentence) return null;
   return (
-    <>
-      {row.gate_needed && <div className="text-[10px] font-mono text-amber-800" data-testid="register-gate-needed">{GATE_NEEDED}</div>}
-      {row.gate_sentence && <div className="text-slate-800" data-testid="register-gate-sentence">{seeGlossary(row.gate_sentence)}</div>}
-      {row.gate_saved && <div className="text-[10px] font-mono text-emerald-700" data-testid="register-gate-saved">Gate saved</div>}
-    </>
-  );
-}
-
-/** `inline` lays the fields out in a wrapping row (the register's expanded gate); the default is the narrow column of the Review page. */
-export function GateCell({ row, ccy, onSave, prefill, budgets = [], edits, onEdit, inline = false }) {
-  const { draft, prefilled } = gateDraft(row, prefill, edits);
-  const context = gateContext(row, ccy);
-  const named = needsMetricName(row);
-  const set = (k) => (e) => onEdit(row, { [k]: e.target.value });
-  const options = budgets.includes(row.gate_budget_decision) || !row.gate_budget_decision ? budgets : [...budgets, row.gate_budget_decision];
-  const other = edits?.budgetOther;
-  const pick = (value) => (value === OTHER_DECISION ? onEdit(row, { budgetOther: true, budget: "" }) : onEdit(row, { budgetOther: false, budget: value }));
-  const mark = (field) => prefilled.includes(field) && <span className="text-[10px] font-mono text-sky-700" data-testid={`register-gate-prefilled-${field}`}>{PREFILLED}</span>;
-  const save = () => {
-    let edit;
-    try { edit = gateEdit(row, draft); } catch (e) { toast.error(e.message); return; }
-    if (draft.key && !row.key_gate && !row.gate_saved) edit.key_gate = true;
-    if (Object.keys(edit).length) onSave(row, edit).catch(() => {});
-  };
-  return (
-    <div className={inline ? "flex flex-wrap items-start gap-x-3 gap-y-1" : "max-w-xs space-y-1"}>
-      <div className={inline ? "basis-full space-y-1" : "contents"}>
-        <GateStatus row={row} />
-        <div className="text-slate-600" data-testid="register-gate-context">{context}</div>
-      </div>
-      {named && (
-        <div className="flex gap-1 flex-wrap">
-          <Input value={draft.metricName} onChange={set("metricName")} maxLength={GATE_METRIC_MAX} placeholder={GATE_METRIC_PLACEHOLDER} className="h-7 text-xs" data-testid="register-gate-metric-name" />
-          <select value={draft.direction} onChange={set("direction")} className={selectClass} data-testid="register-gate-direction">
-            <option value="" />
-            {GATE_DIRECTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select>
-          {mark("metricName")}
-        </div>
-      )}
-      <div className={inline ? "w-36" : "contents"}>
-        <Input value={draft.threshold} onChange={set("threshold")} placeholder="Threshold" inputMode="decimal" className="h-7 text-xs font-mono" data-testid="register-gate-threshold" />
-        {mark("threshold")}
-      </div>
-      <div className={inline ? "w-72 space-y-1" : "contents"}>
-        {options.length ? (
-          <select value={other ? OTHER_DECISION : draft.budget} onChange={(e) => pick(e.target.value)} className={`${selectClass} w-full`} data-testid="register-gate-budget-pick">
-            <option value="">Budget decision…</option>
-            {options.map((d) => <option key={d} value={d}>{d}</option>)}
-            <option value={OTHER_DECISION}>{OTHER_DECISION}</option>
-          </select>
-        ) : null}
-        {(other || !options.length) && (
-          <Input value={draft.budget} onChange={set("budget")} maxLength={GATE_BUDGET_MAX} placeholder="Budget decision (max 200 characters)" className="h-7 text-xs" data-testid="register-gate-budget" />
-        )}
-      </div>
-      <div className={inline ? "w-40" : "contents"}>
-        <DateField testId="register-gate-date" value={draft.date} onChange={(v) => onEdit(row, { date: v })}
-          placeholder="Gate date" className="!mt-0 h-7 text-xs" />
-        {mark("date")}
-      </div>
-      <Button size="sm" onClick={save} className="h-7 bg-sky-600 hover:bg-sky-500" data-testid="register-gate-save">Save gate</Button>
-      <label className="flex items-center gap-1.5 text-slate-700 h-7">
-        <input type="checkbox" checked={draft.key} disabled={!row.gate_saved && !row.gate_needed} data-testid="register-key-gate"
-          onChange={(e) => (row.gate_saved ? onSave(row, { key_gate: e.target.checked }).catch(() => {}) : onEdit(row, { key: e.target.checked }))} />
-        {KEY_GATE_LABEL} {mark("key")}
-      </label>
-    </div>
-  );
-}
-
-/** The register's gate: nothing but the gate's status until the analyst clicks Set gate, which opens the fields below the row. A
- *  Verified row has no button (it needs no gate), nor has a row with an open Definition check (claim-matching.md section 4.1: it needs
- *  no gate until it is answered); a gate it already holds still shows as text. */
-function GateToggle({ row, ...gate }) {
-  const [open, setOpen] = useState(false);
-  const verified = row.evidence_label === "Verified" || row.definition_check === "ask";
-  return (
-    <div className="space-y-1" data-testid="register-gate">
-      {!open && <div className="flex flex-wrap items-baseline gap-x-3"><GateStatus row={row} /></div>}
-      {!verified && (
-        <Button size="sm" variant="outline" className="h-7" aria-expanded={open} onClick={() => setOpen(!open)} data-testid="register-set-gate">
-          {SET_GATE_LABEL}
-        </Button>
-      )}
-      {open && !verified && <GateCell row={row} inline {...gate} />}
+    <div className="text-slate-800" data-testid="register-gate-sentence">
+      {seeGlossary(row.gate_sentence)} <span className="text-[10px] font-mono text-slate-500" data-testid="register-gate-status">{GATE_TAGS[row.gate_status]}</span>
     </div>
   );
 }
@@ -178,7 +89,7 @@ export function TurnoverCell({ row, onAnswer, heading }) {
 }
 
 /** A gap beyond 50% of the claim (claim-matching.md section 4.1): "Observed 26, claimed 1. Same metric and period?" and Yes / No, on one
- *  line. The answer given stays marked and can be changed. The review screen passes `heading`: the period of a table row's value. */
+ *  line. The answer given stays marked and can be changed. A card on the Audit page passes `heading`: the period of a table row's value. */
 export function DefinitionCell({ row, onAnswer, heading }) {
   const answered = row.definition_check !== "ask";
   return (
@@ -211,14 +122,12 @@ export function GrowthBasisCell({ row, onSet }) {
 /** The claim register of one audit, in the order the server ranks it (docs/specs/claim-matching.md section 8). */
 export default function ClaimRegister({ auditId, results, onChanged }) {
   const [rows, setRows] = useState(null);
-  const [prefill, setPrefill] = useState({});
-  const [budgets, setBudgets] = useState([]);
   const [error, setError] = useState(null);
   const [stale, setStale] = useState(false);
   const ccy = results?.reporting_currency;
 
   const load = useCallback((d) => {
-    setRows(registerRows(d)); setPrefill(d.gate_prefill || {}); setBudgets(d.budget_decisions || []); setStale(Boolean(d.results_stale));
+    setRows(registerRows(d)); setStale(Boolean(d.results_stale));
   }, []);
 
   useEffect(() => {
@@ -229,18 +138,10 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
     return () => { cancelled = true; };
   }, [auditId, load]);
 
-  // A save gives the register back; the prefill and the budget list are read again beside it, since a saved gate leaves them.
-  const afterSave = useCallback((d) => {
-    setRows(registerRows(d));
-    getClaimRegister(auditId).then((x) => { setPrefill(x.gate_prefill || {}); setBudgets(x.budget_decisions || []); }).catch(() => {});
-    if (onChanged) onChanged();
-  }, [auditId, onChanged]);
-
-  const { edits, onEdit, clear, saveAll } = useGateEdits({ auditId, rows: rows || [], prefill, afterSave });
-
+  // A save gives the register back.
   const save = useCallback((row, edit) => updateClaimInputs(auditId, row.claim_id, edit)
-    .then((d) => { clear([row.claim_id]); afterSave(d); })
-    .catch((e) => { toast.error(describeRequestError(e).message); throw e; }), [auditId, afterSave, clear]);
+    .then((d) => { setRows(registerRows(d)); if (onChanged) onChanged(); })
+    .catch((e) => { toast.error(describeRequestError(e).message); throw e; }), [auditId, onChanged]);
 
   const answer = useCallback((row, payload) => answerTurnover(auditId, row.claim_id, payload)
     .then((d) => { setRows(registerRows(d)); if (onChanged) onChanged(); })
@@ -255,7 +156,6 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
       <div className="flex items-end justify-between flex-wrap gap-3 mb-3">
         <h2 className="font-heading text-lg font-semibold text-slate-900">{REGISTER_HEADING}</h2>
         <div className="flex gap-2">
-        <Button size="sm" onClick={saveAll} className="h-8 bg-sky-600 hover:bg-sky-500" data-testid="register-gates-save-all">Save all gates</Button>
         <Button asChild variant="outline" size="sm" className="h-8">
           <a href={claimsCsvUrl(auditId)} data-testid="claim-register-csv"
             onClick={(e) => { e.preventDefault(); downloadFile(`/audits/${auditId}/claims.csv`, "claims.csv").catch(() => toast.error("The CSV could not be downloaded.")); }}><Download className="h-3.5 w-3.5 mr-1.5" />{DOWNLOAD_LABEL}</a>
@@ -268,7 +168,7 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
         <p className="text-sm text-amber-800" data-testid="claim-register-stale">{STALE_LABEL}</p>
       )}
       {rows && rows.length === 0 && !stale && (
-        <p className="text-sm text-slate-600" data-testid="claim-register-empty">No approved claims yet. Approve claims in the deck list and they are tested here.</p>
+        <p className="text-sm text-slate-600" data-testid="claim-register-empty">No claims in the register yet. Run audit tests the claims found in the uploaded documents; the ones that need your word are under Needs your attention.</p>
       )}
       {rows && rows.length > 0 && (
         <div className="rounded-md border border-[#E5E7EB] bg-white" data-testid="claim-register-scroll">
@@ -329,7 +229,7 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
                     <td className="pt-2 px-3 font-mono text-slate-700"><span data-testid="register-confidence">{row.extraction_confidence || "—"}</span></td>
                     <td className="pt-2 px-3">
                       <EvidenceLabel row={row} testId="register-evidence" />
-                      {/* approved by Run audit on its own, the same as an approval (issue #155) */}
+                      {/* entered by Python on its own (simplified-flow.md section 2) */}
                       {row.auto_approval && <span className="ml-1 text-[10px] font-mono text-slate-500" data-testid="register-auto">auto</span>}
                     </td>
                   </tr>
@@ -350,7 +250,7 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
                         {row.turnover_state && <TurnoverCell row={row} onAnswer={answer} />}
                         {row.definition_check && <DefinitionCell row={row} onAnswer={answerDefinition} />}
                         {row.growth_basis === "unknown" && <GrowthBasisCell row={row} onSet={save} />}
-                        <GateToggle row={row} ccy={ccy} onSave={save} prefill={prefill[row.claim_id]} budgets={budgets} edits={edits[row.claim_id]} onEdit={onEdit} />
+                        <GateStatus row={row} />
                       </div>
                     </td>
                   </tr>

@@ -3,32 +3,33 @@ import { toast } from "sonner";
 import { Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { getMemo, putIcInputs } from "@/lib/api";
+import { getClaimRegister, getMemo, putIcInputs, updateClaimInputs } from "@/lib/api";
 import { describeRequestError } from "@/lib/requestError";
 import { seeGlossary } from "@/lib/glossary";
 import ContradictionBanner from "@/components/ContradictionBanner";
+import GateEditor from "@/components/GateEditor";
+import { registerRows } from "@/lib/claimRegister";
 import {
-  CHANGE, CONFIRM, DETAIL_HEADING, MEMO_BUTTON, OTHER_GATES, PART_GAPS, PART_INPUTS, PART_KEY_GATES, PART_REASONS, PROPOSED, REPLACE, REVIEW_LABEL,
-  THESIS_MAX, TOP5_HEADING, TOP5_STATEMENT, RATING_OPTIONS, candidateText, initialPicks, refusalText, replacePick, samePicks,
-  CONCLUSION_HEADING, JUDGMENT_HEADING, JUDGMENT_MAX, NO_OTHER_CONTRADICTIONS, OTHER_CONTRADICTIONS, SCOPE_SENTENCE,
+  CHANGE, DETAIL_HEADING, GATE_EDIT, MEMO_BUTTON, NOTE_HELP, NOTE_LABEL, NOTE_MAX, PART_GAPS, PART_INPUTS, PART_KEY_GATES, PART_RATINGS, PART_REASONS,
+  PART_UNRESOLVED, RATING_DETAILS, RATING_RULES, REPLACE, RESET, REVIEW_LABEL, SELECTION_CHANGED, SELECTION_SENTENCE, THESIS_MAX, TOP5_HEADING,
+  USE_SELECTION, candidateText, initialPicks, refusalText, replacePick, samePicks,
+  CONCLUSION_HEADING, NO_OTHER_CONTRADICTIONS, OTHER_CONTRADICTIONS, SCOPE_SENTENCE,
 } from "@/lib/verdict";
 
 const selectClass = "h-8 rounded-md border border-[#E5E7EB] bg-white px-2 text-xs";
 
-/** The top 5: the proposed or confirmed five, a pick per row from the register, and Confirm (verdict-and-memo.md section 6.1). */
-export function TopFive({ verdict, candidates, onConfirm, busy }) {
+/** The top 5 the analyst may change: the five in force, a pick per row from the register, and "Use this selection". The app's own selection
+ *  is in force without any confirmation (docs/design/simplified-flow.md section 3). */
+export function TopFive({ verdict, candidates, onSave, busy }) {
   const stored = initialPicks(verdict);
   const [picks, setPicks] = useState(stored);
   const key = stored.join("|");
   useEffect(() => setPicks(key ? key.split("|") : []), [key]);
   const byId = Object.fromEntries(candidates.map((c) => [c.claim_id, c]));
-  const confirmed = verdict.top5.confirmed;
-  const changed = !confirmed || !samePicks(picks, stored);
   return (
     <div className="mb-4" data-testid="verdict-top5">
       <h3 className="text-sm font-semibold text-slate-900">{TOP5_HEADING}</h3>
-      <p className="text-xs text-slate-600 mb-2" data-testid="verdict-top5-note">{confirmed ? TOP5_STATEMENT : PROPOSED}</p>
-      <ul className="space-y-1.5">
+      <ul className="space-y-1.5 mt-1">
         {picks.map((id, i) => (
           <li key={i} className="flex flex-wrap items-center gap-2 text-xs" data-testid="verdict-pick-row">
             <span className="text-slate-900 min-w-[16rem]">{byId[id] ? candidateText(byId[id]) : id}</span>
@@ -40,8 +41,8 @@ export function TopFive({ verdict, candidates, onConfirm, busy }) {
           </li>
         ))}
       </ul>
-      <Button size="sm" disabled={busy || !changed} onClick={() => onConfirm(picks)} className="mt-2 h-8 bg-sky-600 hover:bg-sky-500" data-testid="verdict-confirm">
-        {CONFIRM}
+      <Button size="sm" disabled={busy || samePicks(picks, stored)} onClick={() => onSave(picks)} className="mt-2 h-8 bg-sky-600 hover:bg-sky-500" data-testid="verdict-use">
+        {USE_SELECTION}
       </Button>
     </div>
   );
@@ -60,53 +61,22 @@ export async function downloadMemo(auditId) {
   } catch (e) { toast.error(refusalText(e)); return false; }
 }
 
-/** The ratings of the two assessed rows, one select each. `save` sends {ratings: {row: value}}. */
-export function RatingFields({ verdict, save }) {
-  const ic = verdict.ic_inputs || {};
-  return Object.entries(verdict.ratings_for || {}).map(([row, label]) => (
-    <label key={row} className="flex items-center gap-2 text-slate-700">
-      {label}
-      <select value={ic.ratings?.[row] ?? ""} className={selectClass} data-testid={`inputs-rating-${row}`}
-        onChange={(e) => save({ ratings: { [row]: e.target.value || null } })}>
-        <option value="" />
-        {RATING_OPTIONS.map((r) => <option key={r} value={r}>{r}</option>)}
-      </select>
-    </label>
-  ));
-}
-
-/** The three thesis sentences; each saves when the field loses focus with a changed text. */
+/** The three thesis sentences. They start as the draft the server writes from computed text (Plan, Evidence, Condition) and are editable; a
+ *  sentence is stored only once the analyst changes it, and an emptied one gives the draft back. */
 export function ThesisFields({ verdict, save }) {
   const ic = verdict.ic_inputs || {};
-  const [thesis, setThesis] = useState(ic.thesis || {});
-  const stored = JSON.stringify(ic.thesis || {});
-  useEffect(() => setThesis(JSON.parse(stored)), [stored]);
+  const draft = verdict.thesis_draft || {};
+  const baseline = (part) => ic.thesis?.[part] ?? draft[part] ?? "";
+  const [thesis, setThesis] = useState({});
+  const stored = JSON.stringify([ic.thesis || {}, draft]);
+  useEffect(() => setThesis({}), [stored]);
   return Object.entries(verdict.thesis_labels || {}).map(([part, label]) => (
     <label key={part} className="flex flex-col gap-1 text-slate-700 md:col-span-2">
-      {label}
-      <textarea value={thesis[part] ?? ""} maxLength={THESIS_MAX} rows={2} data-testid={`inputs-thesis-${part}`}
+      <span>{label}{ic.thesis?.[part] ? "" : <span className="text-[10px] font-mono text-slate-500" data-testid={`inputs-thesis-${part}-draft`}> · draft from computed text</span>}</span>
+      <textarea value={thesis[part] ?? baseline(part)} maxLength={THESIS_MAX} rows={2} data-testid={`inputs-thesis-${part}`}
         className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1 text-xs"
         onChange={(e) => setThesis((t) => ({ ...t, [part]: e.target.value }))}
-        onBlur={() => (thesis[part] ?? "") !== (ic.thesis?.[part] ?? "") && save({ thesis: { [part]: thesis[part] || null } })} />
-    </label>
-  ));
-}
-
-/** The analyst judgment (claim-review-conclusion.md section 3): Reasons and Unresolved questions, the analyst's own text, never
- *  pre-filled; each saves when the field loses focus with a changed text. Both are required before the memo is exported. */
-export function JudgmentFields({ verdict, save }) {
-  const ic = verdict.ic_inputs || {};
-  const [judgment, setJudgment] = useState(ic.judgment || {});
-  const stored = JSON.stringify(ic.judgment || {});
-  useEffect(() => setJudgment(JSON.parse(stored)), [stored]);
-  const max = verdict.judgment_max || JUDGMENT_MAX;
-  return Object.entries(verdict.judgment_labels || {}).map(([part, label]) => (
-    <label key={part} className="flex flex-col gap-1 text-slate-700 md:col-span-2">
-      {label}
-      <textarea value={judgment[part] ?? ""} maxLength={max} rows={3} data-testid={`judgment-${part}`}
-        className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1 text-xs"
-        onChange={(e) => setJudgment((j) => ({ ...j, [part]: e.target.value }))}
-        onBlur={() => (judgment[part] ?? "") !== (ic.judgment?.[part] ?? "") && save({ judgment: { [part]: judgment[part] || null } })} />
+        onBlur={() => thesis[part] !== undefined && thesis[part] !== baseline(part) && save({ thesis: { [part]: thesis[part].trim() || null } })} />
     </label>
   ));
 }
@@ -127,19 +97,35 @@ function Inputs({ auditId, verdict, onChanged }) {
           <Input type="date" value={ic.first_quarterly_review ?? ""} className="h-8 text-xs font-mono w-40" data-testid="inputs-review-date"
             onChange={(e) => save({ first_quarterly_review: e.target.value || null })} />
         </label>
-        <RatingFields verdict={verdict} save={save} />
         <ThesisFields verdict={verdict} save={save} />
       </div>
-      <h3 className="text-sm font-semibold text-slate-900 mt-4 mb-2" data-testid="judgment-heading">{JUDGMENT_HEADING}</h3>
-      <div className="grid gap-3 md:grid-cols-2 text-xs"><JudgmentFields verdict={verdict} save={save} /></div>
     </div>
   );
 }
 
-/** Download report: the IC memo. The server builds it from what is stored, or refuses and says why (toast). */
-export function ReportDownload({ auditId }) {
+/** The analyst note: one optional free text beside Download report, at most 1,000 characters, stored on the audit, one line in the
+ *  report, never sent to a model. It saves when the field loses focus with a changed text. */
+export function AnalystNote({ auditId, note }) {
+  const [text, setText] = useState(note ?? "");
+  useEffect(() => setText(note ?? ""), [note]);
+  const save = () => text.trim() !== (note ?? "") && putIcInputs(auditId, { note: text.trim() || null })
+    .catch((e) => toast.error(describeRequestError(e).message));
   return (
-    <section className="mb-6" data-testid="report-download">
+    <label className="flex flex-col gap-1 text-xs text-slate-700 w-full max-w-xl" data-testid="analyst-note">
+      {NOTE_LABEL}
+      <textarea value={text} maxLength={NOTE_MAX} rows={2} onChange={(e) => setText(e.target.value)} onBlur={save}
+        className="rounded-md border border-[#E5E7EB] bg-white px-2 py-1 text-xs" data-testid="analyst-note-text" />
+      <span className="text-[10px] text-slate-500">{NOTE_HELP}</span>
+    </label>
+  );
+}
+
+/** Download report: the IC memo, with the one optional analyst note beside it. Nothing is required first: the server builds the report from
+ *  what is stored, or refuses (toast) only for a number it cannot find, the word limit or results that fail the contract. */
+export function ReportDownload({ auditId, note }) {
+  return (
+    <section className="mb-6 flex flex-wrap items-start gap-4" data-testid="report-download">
+      <AnalystNote auditId={auditId} note={note} />
       <Button size="sm" variant="outline" onClick={() => downloadMemo(auditId)} className="h-8" data-testid="verdict-memo">
         <Download className="h-3.5 w-3.5 mr-1.5" />{MEMO_BUTTON}
       </Button>
@@ -169,22 +155,22 @@ function OtherContradictions({ v }) {
 }
 
 /** The conclusion (docs/design/simplified-flow.md, The conclusion screen): the outcome with its one-line rule and the scope sentence,
- *  the contradiction lines directly under them, the claims outside the five, and the one Change link of the top 5. `verdict` is
- *  GET /audits/{id}/verdict, read again by the parent after every change. The scope sentence and the other contradictions show
- *  whenever the section does; the outcome only once the conclusion is reached. */
+ *  the contradiction lines directly under them, the claims outside the five, the selection sentence and the one Change link of the top 5.
+ *  `verdict` is GET /audits/{id}/verdict, read again by the parent after every change. The conclusion is always computed: an open question
+ *  is a count in the rule line, not a state. */
 export function Conclusion({ auditId, verdict, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [changing, setChanging] = useState(false);
   if (!verdict) return null;
   const v = verdict.verdict;
-  const confirm = (ids) => {
+  const use = (ids) => {
     setBusy(true);
     return putIcInputs(auditId, { top5: ids }).then(() => { setChanging(false); return onChanged && onChanged(); })
       .catch((e) => toast.error(describeRequestError(e).message))
       .finally(() => setBusy(false));
   };
-  // A top 5 that waits for its confirmation is asked for in place; a confirmed one sits behind the one Change link.
-  const open = changing || !v.top5?.confirmed;
+  const reset = () => use(null);
+  const changed = Boolean(v.top5?.changed);
   return (
     <section className="mb-6 rounded-md border border-[#E5E7EB] bg-white p-4" data-testid="verdict">
       <h2 className="font-heading text-lg font-semibold text-slate-900 mb-1">{v.heading || CONCLUSION_HEADING}</h2>
@@ -200,23 +186,83 @@ export function Conclusion({ auditId, verdict, onChanged }) {
       {v.status !== "no_verdict" && <OtherContradictions v={v} />}
       {v.status !== "no_verdict" && (
         <>
-          {v.top5?.confirmed && (
-            <button type="button" className="text-xs text-sky-700 underline underline-offset-2" aria-expanded={changing} data-testid="top5-change"
-              onClick={() => setChanging((c) => !c)}>{CHANGE}</button>
-          )}
-          {open && <div className="mt-2"><TopFive verdict={v} candidates={verdict.candidates || []} onConfirm={confirm} busy={busy} /></div>}
+          <p className="text-xs text-slate-600" data-testid="verdict-top5-note">
+            {changed ? SELECTION_CHANGED : (verdict.selection_sentence || SELECTION_SENTENCE)}
+            {changed && (
+              <> <button type="button" className="text-sky-700 underline underline-offset-2" disabled={busy} data-testid="top5-reset" onClick={reset}>{RESET}</button></>
+            )}
+          </p>
+          <button type="button" className="text-xs text-sky-700 underline underline-offset-2" aria-expanded={changing} data-testid="top5-change"
+            onClick={() => setChanging((c) => !c)}>{CHANGE}</button>
+          {changing && <div className="mt-2"><TopFive verdict={v} candidates={verdict.candidates || []} onSave={use} busy={busy} /></div>}
         </>
       )}
     </section>
   );
 }
 
-/** The detail of the conclusion, for Supporting detail: the three reasons, the key gates, the deal terms, the top data gaps and the
- *  analyst's inputs. Nothing here is computed; every line is the server's. */
-export function VerdictDetail({ auditId, verdict, onChanged }) {
+/** The ratings, computed: two lines and the rule under details. Any rating that uses an industry threshold carries the label. */
+function Ratings({ verdict }) {
+  const ratings = verdict.ratings;
+  const [open, setOpen] = useState(false);
+  if (!ratings) return null;
+  const rows = [["Data reliability", ratings.data_reliability], ["Growth engine", ratings.growth_engine]];
+  return (
+    <div className="mb-4" data-testid="verdict-ratings">
+      <h3 className="text-sm font-semibold text-slate-900 mb-1">{PART_RATINGS}</h3>
+      <ul className="space-y-1 text-xs text-slate-800">
+        {rows.map(([label, r]) => (
+          <li key={label} data-testid="verdict-rating">
+            {label}: {r.line}
+            {r.benchmark && <span className="ml-1 text-[10px] font-mono text-slate-500" data-testid="rating-benchmark">{verdict.benchmark_label}</span>}
+          </li>
+        ))}
+      </ul>
+      <button type="button" className="text-xs text-sky-700 underline underline-offset-2" aria-expanded={open} data-testid="ratings-details" onClick={() => setOpen((o) => !o)}>{RATING_DETAILS}</button>
+      {open && <p className="mt-1 text-[11px] text-slate-600" data-testid="ratings-rules">{rows.map(([, r]) => r.rule).join(" · ")} · {RATING_RULES}</p>}
+    </div>
+  );
+}
+
+/** The key gates: the gate of each non-Verified claim of the five, "(proposed)" until the analyst edits it here, then "(set by the analyst)". */
+function KeyGates({ auditId, verdict, rows, ccy, onChanged }) {
+  const key = verdict.key_gates;
+  const [editing, setEditing] = useState(null);
+  const byId = Object.fromEntries((rows || []).map((r) => [r.claim_id, r]));
+  const save = (row, edit) => updateClaimInputs(auditId, row.claim_id, edit)
+    .then(() => { if (onChanged) onChanged(); })
+    .catch((e) => { toast.error(describeRequestError(e).message); throw e; });
+  return (
+    <div className="mb-4" data-testid="verdict-key-gates">
+      <h3 className="text-sm font-semibold text-slate-900 mb-1">{PART_KEY_GATES}</h3>
+      {key.note && <p className="text-xs text-slate-600">{seeGlossary(key.note)}</p>}
+      <ul className="space-y-1 text-xs text-slate-800">
+        {key.sentences.map((s) => (
+          <li key={s.claim_id} data-testid="key-gate">
+            {seeGlossary(s.text || s.sentence)}{" "}
+            {byId[s.claim_id] && (
+              <button type="button" className="text-sky-700 underline underline-offset-2" aria-expanded={editing === s.claim_id} data-testid="key-gate-edit"
+                onClick={() => setEditing(editing === s.claim_id ? null : s.claim_id)}>{GATE_EDIT}</button>
+            )}
+            {editing === s.claim_id && byId[s.claim_id] && <GateEditor key={`${s.claim_id}-${s.status}`} row={byId[s.claim_id]} ccy={ccy} onSave={save} />}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** The detail of the conclusion, for Supporting detail: the three reasons, the key gates (edited here only), the deal terms, the top data
+ *  gaps, the computed ratings and unresolved questions, and the inputs. `tick` reads the register rows the gate editor needs again. */
+export function VerdictDetail({ auditId, verdict, onChanged, ccy, tick }) {
+  const [rows, setRows] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    Promise.resolve(getClaimRegister(auditId)).then((d) => { if (!cancelled) setRows(registerRows(d)); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [auditId, tick, verdict]);
   if (!verdict) return null;
   const v = verdict.verdict;
-  const key = verdict.key_gates;
   return (
     <section className="mb-6 rounded-md border border-[#E5E7EB] bg-white p-4" data-testid="verdict-detail">
       <h2 className="font-heading text-lg font-semibold text-slate-900 mb-3">{DETAIL_HEADING}</h2>
@@ -226,18 +272,20 @@ export function VerdictDetail({ auditId, verdict, onChanged }) {
             <h3 className="text-sm font-semibold text-slate-900 mb-1">{PART_REASONS}</h3>
             <ol className="list-decimal pl-5 space-y-1 text-xs text-slate-800">{v.reasons.map((r) => <li key={r}>{seeGlossary(r)}</li>)}</ol>
           </div>
-          <div className="mb-4" data-testid="verdict-key-gates">
-            <h3 className="text-sm font-semibold text-slate-900 mb-1">{PART_KEY_GATES}</h3>
-            {key.note && <p className="text-xs text-slate-600">{seeGlossary(key.note)}</p>}
-            <ul className="space-y-1 text-xs text-slate-800">{key.sentences.map((s) => <li key={s.claim_id}>{seeGlossary(s.sentence)}</li>)}</ul>
-          </div>
+          <KeyGates auditId={auditId} verdict={verdict} rows={rows} ccy={ccy} onChanged={onChanged} />
           <p className="text-xs text-slate-700 mb-4" data-testid="verdict-deal-terms">{verdict.deal_terms}</p>
           <div className="mb-4" data-testid="verdict-top-gaps">
             <h3 className="text-sm font-semibold text-slate-900 mb-1">{PART_GAPS}</h3>
             <ul className="space-y-1 text-xs text-slate-800">{verdict.top_gaps.map((g) => <li key={g.item}>{g.item} · {seeGlossary(g.why)}</li>)}</ul>
           </div>
-          {verdict.gates_still_needed > 0 && <p className="text-xs text-slate-700 mb-4" data-testid="verdict-other-gates">{OTHER_GATES(verdict.gates_still_needed)}</p>}
         </>
+      )}
+      <Ratings verdict={verdict} />
+      {(verdict.unresolved_questions || []).length > 0 && (
+        <div className="mb-4" data-testid="verdict-unresolved">
+          <h3 className="text-sm font-semibold text-slate-900 mb-1">{PART_UNRESOLVED}</h3>
+          <ul className="space-y-1 text-xs text-slate-800 list-disc pl-5">{verdict.unresolved_questions.map((q) => <li key={q}>{seeGlossary(q)}</li>)}</ul>
+        </div>
       )}
       <Inputs auditId={auditId} verdict={verdict} onChanged={onChanged} />
     </section>

@@ -47,10 +47,10 @@ function ClaimCard({ item, busy, act, auditId }) {
           ))
         ) : (
           <>
-            <Button size="sm" variant="outline" className="h-7 mr-1.5" disabled={busy !== null} data-testid="attention-approve"
-              onClick={() => act(c.id, () => updateCandidate(auditId, c.id, { status: "approved" }))}>Approve</Button>
+            <Button size="sm" variant="outline" className="h-7 mr-1.5" disabled={busy !== null} data-testid="attention-keep"
+              onClick={() => act(c.id, () => updateCandidate(auditId, c.id, { status: "approved" }))}>Keep</Button>
             <Button size="sm" variant="ghost" className="h-7" disabled={busy !== null} data-testid="attention-reject"
-              onClick={() => act(c.id, () => updateCandidate(auditId, c.id, { status: "rejected" }))}>Reject</Button>
+              onClick={() => act(c.id, () => updateCandidate(auditId, c.id, { status: "rejected" }))}>Not a company claim</Button>
           </>
         )}
       </div>
@@ -74,6 +74,7 @@ function TurnoverCard({ item, answer }) {
 export default function NeedsAttention({ auditId, computed = true, onChanged }) {
   const [views, setViews] = useState([]);
   const [candidates, setCandidates] = useState([]);
+  const [attention, setAttention] = useState([]);
   const [all, setAll] = useState(false);
   const [busy, setBusy] = useState(null);
   const [lastReason, setLastReason] = useState("header_misleading");
@@ -83,7 +84,7 @@ export default function NeedsAttention({ auditId, computed = true, onChanged }) 
   const reload = useCallback(async () => {
     const [v, d] = await Promise.all([safe(() => getDatasets(auditId), []), safe(() => getDecks(auditId), { decks: [], candidates: [] })]);
     if (!alive.current) return;
-    setViews(v || []); setCandidates(d?.candidates || []);
+    setViews(v || []); setCandidates(d?.candidates || []); setAttention(d?.attention || []);
     return v || [];
   }, [auditId]);
   useEffect(() => { reload(); }, [reload]);
@@ -111,7 +112,7 @@ export default function NeedsAttention({ auditId, computed = true, onChanged }) 
     try { await answerTurnover(auditId, row.claim_id, payload); await changed(); } catch (e) { toast.error(describeRequestError(e).message); throw e; }
   };
 
-  const questions = openQuestions(views, candidates);
+  const questions = openQuestions(views, candidates, attention);
   if (!questions.length) return null;
   const shown = all ? questions : questions.slice(0, SHOWN_QUESTIONS);
   const more = questions.length - SHOWN_QUESTIONS;

@@ -35,10 +35,10 @@ export const DECK_SCOPE_OUTRO = "If a number you need sits in a picture, use Add
 
 // Shown above the approval list, word for word.
 export const CLAIMS_HEADING = "Claims found in the uploaded documents";
-export const CLAIMS_INTRO = "These figures were extracted automatically and inform the growth plan. While errors are possible, you only need to check claims that look incorrect or implausible against their source slides before making your selection.";
+export const CLAIMS_INTRO = "These figures were read from the uploaded documents and tested against the data automatically. Errors are possible: check only the claims that look incorrect or implausible against their source slides, or that wait for your answer.";
 export const CLAIMS_CHOICES = [
-  ["✓ Approve:", "Confirm this is a claim the company makes. It will be added to the claim register and tested against the data."],
-  ["✎ Edit:", "Correct the figure, type, unit or date, then approve the claim. It will be added to the claim register and tested against the data."],
+  ["✓ Keep:", "Shown on a claim a check asks about: confirm this is a claim the company makes. It is then tested against the data and enters the claim register."],
+  ["✎ Edit:", "Correct the figure, type, unit or date. The claim is tested again against the data."],
   ["✕ Reject:", "Exclude items that are not company claims, such as another company's figures, funds raised or chart axis labels. Rejected items remain in the record but are not used."],
 ];
 
@@ -102,7 +102,7 @@ export const COLUMNS = ["Type", "Value", "Period", "Extraction confidence", "Cla
 
 export const typeLabel = (t) => TYPE_LABELS[t] || t;
 
-export const STATUS_LABELS = { pending: "To review", approved: "Approved", rejected: "Rejected", edited: "Edited" };
+export const STATUS_LABELS = { pending: "Needs your attention", approved: "In the register", rejected: "Rejected", edited: "Edited" };
 
 // The structure a model reading cites, by its type (docs/specs/deck-parser.md section 7).
 export const STRUCTURE_NAMES = {
@@ -413,7 +413,7 @@ export function claimsForDeck(candidates, deckId) {
 
 // The two views of the claims table (George, 2026-10-22, docs/design/ai-reads-rules-check.md): a claim the checks flagged
 // (`flags`: closed words from the server's checker, e.g. "currency assumed") is listed under Review, never in the main list; a
-// flag never deletes or retypes a claim. The analyst approves, edits or rejects it there as anywhere else.
+// flag never deletes or retypes a claim. The analyst keeps, edits or rejects it there as anywhere else.
 export const CLAIMS_VIEW = "claims";
 export const REVIEW_VIEW = "review";
 export const VIEW_LABELS = { [CLAIMS_VIEW]: "Claims", [REVIEW_VIEW]: "Review" };
@@ -438,8 +438,8 @@ export const flagsText = (c) => (c?.flags || []).join(" · ");
 // slide or page. Other starts collapsed under its count (claim-types-and-correction.md section 4).
 // Acquisition channels and Use of funds are sections of their own, directly above Other (chat-upload.md section 17).
 export const OTHER_GROUP = 9;
-// A best-case or worst-case figure is no plan target: it is listed in its own section above Other, whatever its type, and approved one by
-// one (George, 2026-10-23, review of PR 164, H2). The server puts such a claim in this group.
+// A best-case or worst-case figure is no plan target: it is listed in its own section above Other, whatever its type, and enters the register
+// as Unverified (George, 2026-10-23, review of PR 164, H2). The server puts such a claim in this group.
 export const SCENARIO_GROUP = 6;
 // Pricing (group 10) and Use of funds start collapsed and are listed after Market size and before Other (George, 2026-10-23).
 export const PRICING_GROUP = 10;
@@ -454,8 +454,6 @@ export const isCase = (c) => c?.scenario === "best" || c?.scenario === "worst";
 const CASE_WORDS = { best: "Best case", realistic: "Realistic case", worst: "Worst case" };
 /** "Best case", "Realistic case", "Worst case"; empty for a claim that names no case. */
 export const scenarioText = (c) => CASE_WORDS[c?.scenario] || "";
-/** Whether Approve all may ever act on a section: not on Other, and not on Scenarios (flagged claims are already left out by the server). */
-export const bulkApprovable = (group) => group !== OTHER_GROUP && group !== SCENARIO_GROUP;
 export const COLLAPSED_BY_DEFAULT = [8, OTHER_GROUP, PRICING_GROUP];
 
 /** "1 other figure", "3 other figures": the header of the Other section, which has no review count. */
@@ -468,39 +466,22 @@ export function claimSections(claims) {
   })).filter((s) => s.claims.length > 0).map((s) => (s.group === OTHER_GROUP ? { ...s, title: otherFiguresTitle(s.claims.length) } : s));
 }
 
-// Approve all (docs/specs/chat-upload.md section 17): one button at the top and one at the bottom of every category section.
-export const APPROVE_ALL_LABEL = "Approve all";
-
-/** The claims Approve all would approve: the section's claims with status "To review"; an Other figure is never one. The server
- *  skips, and counts, the ones that still need a Revenue / Volume answer, and the ones whose save fails. */
-export const toReview = (section) => section.claims.filter((c) => c.status === "pending" && !isOther(c));
-
-// The upload page cannot answer a Definition check: its toast says where to (claim-matching.md section 4.1).
-export const DEFINITION_ELSEWHERE = " – answer on the review screen";
-
-/** The toast after Approve all: "Approved 5 claims, 2 skipped (need Revenue / Volume or failed to save)", then ", 1 with open definition
- *  check" when an approved claim waits for "Same metric and period?" (`open_definition` of the reply; such a claim is approved, not
- *  skipped); `elsewhere` adds where it is answered. A claim the checks flagged is never approved in bulk (George, 2026-10-22,
- *  chat-upload.md section 28): with `flagged` skipped the bracket names it first. */
-export const approveAllToast = (approved, skipped, openDefinition = 0, elsewhere = false, flagged = 0) =>
-  `Approved ${approved} claim${approved === 1 ? "" : "s"}, ${skipped} skipped (${flagged > 0 ? "flagged for review, " : ""}need Revenue / Volume or failed to save)`
-  + (openDefinition > 0 ? `, ${openDefinition} with open definition check${elsewhere ? DEFINITION_ELSEWHERE : ""}` : "");
-
-/** Counts per status, for the list header; `auto` is how many of the approved ones Run audit approved on its own (issue #155). Other
- *  figures are not claims to review and are not counted. */
+/** Counts per status, for the list header; `auto` is how many of the claims in the register Python entered on its own (simplified-flow.md
+ *  section 2). Other figures are not claims and are not counted. */
 export function statusCounts(candidates) {
   const out = { pending: 0, approved: 0, rejected: 0, edited: 0, auto: 0 };
   (candidates || []).filter((c) => !isOther(c)).forEach((c) => {
     out[c.status] = (out[c.status] || 0) + 1;
-    if (c.status === "approved" && c.auto_accepted) out.auto += 1;      // the field the review page counts
+    if (c.status === "approved" && c.auto_accepted) out.auto += 1;
   });
   return out;
 }
 
-/** "1 to review · 3 approved (2 auto) · 1 edited · 0 rejected" (issue #155); the bracket is left out when none was approved on its own. */
+/** "1 needs your attention · 3 in the register (2 auto) · 1 edited · 0 rejected"; the bracket is left out when Python entered none. */
 export const countLine = (counts) =>
-  `${counts.pending} to review · ${counts.approved}${counts.auto > 0 ? ` approved (${counts.auto} auto)` : " approved"} · ${counts.edited} edited · ${counts.rejected} rejected`;
+  `${counts.pending} need${counts.pending === 1 ? "s" : ""} your attention · ${counts.approved} in the register${counts.auto > 0 ? ` (${counts.auto} auto)` : ""} · ${counts.edited} edited · ${counts.rejected} rejected`;
 
-/** The status cell of a claim: "Auto-approved – matches revenue file (Δ x.x%)" for a claim Run audit approved on its own, else the status; a claim sent back to review because it no longer matches carries its note ("No longer matches – was auto-approved"). */
+/** The status cell of a claim: "Entered by the app" for a claim Python entered on its own, else the status; a claim re-opened because a check
+ *  now asks about it carries its note ("Re-opened – a check now asks about it"). */
 export const statusText = (c) =>
-  (c.status === "approved" && c.auto_approval) || (c.status === "pending" && c.auto_note) || STATUS_LABELS[c.status] || c.status;
+  (c.status === "approved" && c.auto_approval && "Entered by the app") || (c.status === "pending" && c.auto_note) || STATUS_LABELS[c.status] || c.status;
