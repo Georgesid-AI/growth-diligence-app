@@ -62,7 +62,7 @@ test("type labels", () => {
 });
 
 test("every column has a header", () => {
-  expect(COLUMNS).toEqual(["Type", "Value", "Period", "Extraction confidence", "Claim in the deck", "Source", "Status", "Action"]);
+  expect(COLUMNS).toEqual(["Type", "Value", "Period", "Claim in the deck", "Source", "Extraction confidence", "Status", "Action"]);
 });
 
 test("instruction text is word for word", () => {

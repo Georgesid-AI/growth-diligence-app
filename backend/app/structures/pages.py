@@ -193,7 +193,7 @@ def corrected_row(item: Dict, grid: Dict, deck: Dict, fiscal_year_end: int, page
         field, options = plan["field"], plan["options"]
         undo = corrections.row_fields(field, row_from_claim(corrections.restore_original(base, plan), grid, deck, fiscal_year_end))
         entry = {"field": field, "reason": plan["flag"], "original": plan["original_text"], "undo": undo}
-        if len(options) == 1:
+        if len(options) == 1 and field != "segment":
             base = corrections.apply_option(base, field, options[0])
             flags = [f for f in flags if f != plan["flag"]]
             entries.append({**entry, "state": "applied", "corrected": options[0]["value"], **_period_source(field, options[0])})
@@ -202,7 +202,7 @@ def corrected_row(item: Dict, grid: Dict, deck: Dict, fiscal_year_end: int, page
                         "corrected": options[0]["ref"], **_period_source(field, options[0])})
         else:
             entries.append({**entry, "state": "choose", "options": [
-                {"value": o["value"], **_period_source(field, o),
+                {"value": o["value"], **_period_source(field, o), **({"segment": o["segment"]} if field == "segment" else {}),
                  "set": corrections.row_fields(field, row_from_claim(corrections.apply_option(base, field, o), grid, deck, fiscal_year_end))}
                 for o in options]})
     row = row_from_claim({**base, "flags": flags}, grid, deck, fiscal_year_end)

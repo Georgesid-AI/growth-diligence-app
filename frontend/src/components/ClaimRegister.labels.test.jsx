@@ -93,7 +93,7 @@ test("the shared evidence_labels.json is the one list the register reads", async
 
 test("the deck list's Confidence column is named Extraction confidence and carries the same explainer", async () => {
   const deck = require("@/lib/deckClaims");
-  expect(deck.COLUMNS[3]).toBe("Extraction confidence");
+  expect(deck.COLUMNS[5]).toBe("Extraction confidence");
   expect(deck.CONFIDENCE_HOVER).toBe(EXTRACTION);
 });
 

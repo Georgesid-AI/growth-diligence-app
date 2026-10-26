@@ -202,6 +202,12 @@ CONTRADICTORY_ANSWERS = (("volume", "deck_says_gross_revenue"), ("revenue", "dec
 GROSS_REVENUE_NOTE = "Gross revenue (turnover)"
 ASK_NOTE = "Revenue or volume? Confirm below"
 ASK_REASON = "turnover or volume: confirm Revenue or Volume"
+SALES_CHOICES = ("revenue", "bookings")          # the answer to "Is 'Sales' in this deck revenue or bookings?", kept per deck on the audit
+SALES_ASK_REASON = "sales: confirm revenue or bookings"
+BOOKINGS_REASON = "bookings not in the data"
+# A money claim labelled Sales: the label is "Sales" alone or "Sales by <something>" (product, quarter ...), optionally with a unit in brackets or a
+# word in front ("Total sales"). "Sales cycle" and "Sales & Marketing" are not it; neither is any label that names revenue, ARR or bookings.
+_SALES_LABEL = re.compile(r"(?i)^\s*(?:(?:total|net|gross)\s+)?sales(?:\s+by\s+[a-z][\w /&-]*?)?\s*(?:\([^)]*\))?\s*$")
 NO_METRIC = "none"                      # what the analyst picks to say "no metric fits"
 
 _DURATIONS = ("days", "weeks", "months", "years")
@@ -765,6 +771,29 @@ RECURRING_METRIC = {"arr": "ARR", "mrr": "MRR", "churn": "Gross revenue churn", 
 METRIC_TYPES = (*RECURRING_METRIC, "customers", "users", "user_growth", "gross_margin", "revenue_growth")
 
 
+def is_sales_claim(c: dict, results: Optional[dict]) -> bool:
+    """A money claim labelled Sales with a past period (George, 2026-10-26): the deck's "Sales" may be revenue or bookings, so the analyst answers once
+    per deck. Past means the claim's period ends in or before the as-of month; a plan or scenario figure is not asked."""
+    as_of = (results or {}).get("as_of_month")
+    end = _month_of(c.get("period_end"))
+    return bool(as_of and end is not None and end <= _mi(as_of) and c.get("claim_type") in ("revenue", "sales") and c.get("currency")
+                and c.get("value") is not None and c.get("scenario") in (None, "none") and c.get("basis") != "projection"
+                and c.get("label_from") and _SALES_LABEL.match(c["label_from"]))
+
+
+def sales_questions(candidates: List[dict], results: Optional[dict], settings: dict) -> List[dict]:
+    """The decks that still owe the Sales answer: [{deck_id, file, claims}], one per deck, in the order the decks first appear. A deck with an
+    answer (settings["sales_choices"][deck_id]["as"]) is not asked again."""
+    answered = settings.get("sales_choices") or {}
+    out: Dict[Optional[str], dict] = {}
+    for c in candidates:
+        if c.get("status") == "rejected" or not is_sales_claim(c, results) or (answered.get(c.get("deck_id")) or {}).get("as") in SALES_CHOICES:
+            continue
+        entry = out.setdefault(c.get("deck_id"), {"deck_id": c.get("deck_id"), "file": c.get("file"), "claims": 0})
+        entry["claims"] += 1
+    return list(out.values())
+
+
 def propose_metric(claim_type: str, claim_unit: Optional[str], text: str) -> Optional[str]:
     """The metric a claim names by its type, a keyword in its snippet or borrowed label, and its unit (table 2a)."""
     found = _keyword_metric(claim_type, claim_unit, text)
@@ -1005,6 +1034,13 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         metric, metric_by = turn["metric"], turn["set_by"]
         hint = deck_revenue_hint(c, peers or []) if turn["state"] == "ask" else None
         suggested = VOLUME_CHOICE if hint or turn["suggested"] else None
+    sales_reason = None
+    if metric is None and metric_by == "python" and is_sales_claim(c, results):        # the deck-wide answer decides what "Sales" is
+        choice = ((settings.get("sales_choices") or {}).get(c.get("deck_id")) or {}).get("as")
+        if choice == "revenue":
+            metric = "Revenue"
+        else:
+            sales_reason = BOOKINGS_REASON if choice == "bookings" else SALES_ASK_REASON
     spec = METRICS.get(metric) if metric else None
 
     period = c.get("period_text") or c.get("target_date") or None
@@ -1083,6 +1119,8 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         return finish("Unverified", DIRECTION_ONLY)
     if turn and turn["verdict"]:
         return finish(*turn["verdict"])
+    if sales_reason:
+        return finish("Unverified", sales_reason)
     if out["claim_type"] in UNTESTED_TYPES:     # never matched, never ranked, never gated: not a claim about the business
         finish("Unverified", UNTESTED_TYPES[out["claim_type"]])
         out["gate_needed"] = False

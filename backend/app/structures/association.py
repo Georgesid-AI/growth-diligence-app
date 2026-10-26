@@ -47,9 +47,12 @@ BAR_REACH = 0.04              # a value stands on its bar: inside it, at most th
 CLUSTER_GAP = 0.05            # bars at most this far apart are one chart when no group says so
 CHART_MARGIN = 0.05           # the margin around a chart's bars that still belongs to the chart
 AXIS_REACH = 0.12             # an axis title stands at most this far outside the chart's bars
+LEGEND_ZONE = 0.25            # a legend item stands at most this far outside the box around the chart's bars
+MAX_LEGEND_ITEMS = 8          # a card offers at most this many
 LABEL_MAX = 59                # a legend label is at most this long (decks/parser.py LABEL_MAX): a longer line is a sentence, not a label
 MIN_BARS = 2                  # bars that make a chart when no group says so
 _WORDS = re.compile(r"[^\W\d_]{2,}")
+_NOT_A_LEGEND = re.compile(r"(?i):|\.\s*$|^\s*(?:sources?|notes?|footnotes?)\b")        # a source line, a note or a sentence is no legend item
 _YEAR = r"(?<![\w$€£.,'’])(?:(?:FY\s*)?(?:19|20)\d{2}|FY\s*\d{2})"
 _FORECAST = re.compile(r"(?i)" + _YEAR + r"[FBPE]\b|\b(?:forecasts?|forecasted|projected|projection|plan|planned|budget|estimate[sd]?|target)\b")
 _ACTUAL = re.compile(r"(?i)" + _YEAR + r"A\b|\b(?:actuals?|reported|historical)\b")
@@ -225,6 +228,35 @@ class Layout:
                 found.append(redact.cell_id(c))
         texts = {self.by_id[i]["text"].strip().lower() for i in found}
         return {"cells": sorted(found), "ambiguous": len(texts) > 1}
+
+    def legend_items(self, cell: Dict) -> List[str]:
+        """The ids of the short lines of words a figure printed in a chart may be named by, for a card that asks the analyst which one it is
+        (never paired automatically): lines of words with no figure, at most LABEL_MAX long, standing within LEGEND_ZONE of the chart's bars,
+        that are not a source line or a sentence, not the page heading, a heading of the top band, the chart's own title (the line over the bars, centred on them), an axis tick,
+        a date or period header, a rotated axis title, a table cell or page furniture. Empty when the figure is in no chart or the page was not measured."""
+        box = _box(cell.get("at"))
+        if not self.measured or not box:
+            return []
+        bar = self.bar_of(cell)
+        extents = self.extents()
+        scope = bar["scope"] if bar else next((s for s, e in extents.items() if self.is_chart(s) and _inside(_centre(box), e, CHART_MARGIN)), None)
+        if scope is None or scope not in extents or not self.is_chart(scope):
+            return []
+        ext = extents[scope]
+        zone = (ext[0] - LEGEND_ZONE, ext[1] - LEGEND_ZONE, ext[2] + LEGEND_ZONE, ext[3] + LEGEND_ZONE)
+        found = []
+        for c in self.cells:
+            at = _box(c.get("at"))
+            if c is cell or not at or c.get("rot") or c.get("table") is not None or c.get("title") or c.get("top_band") or c.get("tick") \
+                    or c.get("furniture") or not _is_label_text(c["text"]) or len(c["text"].strip()) > LABEL_MAX:
+                continue
+            if verify.is_date_line(c["text"]) or verify.period_header(c["text"]) or not _inside(_centre(at), zone) or _NOT_A_LEGEND.search(c["text"]):
+                continue
+            over = at[3] <= ext[1] + 1e-9 and ext[1] - at[3] <= AXIS_REACH and abs(_centre(at)[0] - _centre(ext)[0]) <= (ext[2] - ext[0]) / 4
+            if over:
+                continue            # the chart's own title
+            found.append((_gap(at, ext), redact.cell_id(c)))
+        return [i for _, i in sorted(found)[:MAX_LEGEND_ITEMS]]
 
     # -- marker annotations -------------------------------------------------------------------------------------------------------
     def is_annotation(self, cell: Dict) -> bool:

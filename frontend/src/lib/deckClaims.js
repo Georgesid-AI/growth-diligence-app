@@ -8,6 +8,7 @@
 import { displayDate } from "./datePicker";
 import evidenceLabels from "./evidence_labels.json";
 import informationalFlags from "./informational_flags.json";
+import listTexts from "./claims_list_texts.json";
 
 export const PLACEHOLDER = "—";
 export const NO_DATE = "no date";        // the Period column of a claim that states no date
@@ -98,7 +99,10 @@ export const COUNT_TYPES = ["customers", "users", "people", "trials_per_day", "a
 export const COUNT_UNIT = "count";
 
 // One header per column of the approval list, in column order.
-export const COLUMNS = ["Type", "Value", "Period", "Extraction confidence", "Claim in the deck", "Source", "Status", "Action"];
+export const COLUMNS = ["Type", "Value", "Period", "Claim in the deck", "Source", "Extraction confidence", "Status", "Action"];
+
+/** The pop-up of a heading (hover, or a tap on a phone): what the column holds and what its values mean. All texts: claims_list_texts.json. */
+export const columnText = (name) => listTexts.columns[name] || "";
 
 export const typeLabel = (t) => TYPE_LABELS[t] || t;
 
@@ -330,6 +334,26 @@ export const ADD_FROM_DECK_LABEL = "Add from deck";
  *  the checks the parser runs (never a model's own score); a row from an older server shows the placeholder. */
 export const confidenceText = (c) => c?.confidence?.text || PLACEHOLDER;
 
+const reasonOf = (word) => {
+  const year = /^year label below: (\d{4})$/.exec(word);
+  return year ? listTexts.year_label_below.replace("{year}", year[1]) : listTexts.reasons[word] || word;
+};
+/** The one-line plain reason under the confidence value, from the checks the server named in confidence.failed:
+ *  "Medium – the period comes from the page heading, not from the figure's own label." Empty for a row without a confidence. */
+export function confidenceReason(c) {
+  const conf = c?.confidence;
+  if (!conf) return "";
+  if (!conf.level) return listTexts.reasons[conf.text] || "";
+  if (!(conf.failed || []).length) return listTexts.reasons.High;
+  return `${conf.level} – ${conf.failed.map(reasonOf).join("; ")}`;
+}
+
+/** The claim cell of the list: the type, with the segment when one is set, and the "part of <metric> <period> total" line of a part of a group. */
+export function typeCellLines(c) {
+  const segment = c?.made_of?.segment;
+  return { title: segment ? `${typeLabel(c.claim_type)} · ${segment}` : typeLabel(c.claim_type), partOf: c?.made_of?.part_of || null };
+}
+
 // The deck panel's run log (docs/specs/llm-structure-reading.md sections 3, 4 and 9).
 export const DECK_AI_STATUS = {
   reading: "reading", waiting: "waiting for revenue file", read: "read", not_read: "not read", stopped: "not read",
@@ -457,7 +481,10 @@ export const POPULATION_ANSWERS = [["paying", "Paying customers"], ["registered"
 export const asksPopulationOnly = (reason) => /^required field unknown: population;/.test(reason || "");
 
 /** "currency assumed · scenario label not on page": the flags of a claim, as the checker wrote them. */
-export const flagsText = (c) => (c?.flags || []).join(" · ");
+export const LABEL_MISMATCH_FLAG = "label mismatch";
+export const LABEL_MISMATCH_QUESTION = listTexts.label_mismatch_question;
+// The closed word of the server stays; the screen asks the question (George, 2026-10-26).
+export const flagsText = (c) => (c?.flags || []).map((f) => (f === LABEL_MISMATCH_FLAG ? LABEL_MISMATCH_QUESTION : f)).join(" · ");
 
 // The order of the claims table (docs/specs/deck-parser.md section 6): the group of the claim's type, set by the server, then
 // slide or page. Other starts collapsed under its count (claim-types-and-correction.md section 4).

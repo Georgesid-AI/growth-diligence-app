@@ -1684,6 +1684,46 @@ def test_the_segment_a_label_names_is_the_segment_field_and_the_notes_built_from
     assert not {"segment", "segment_set_by", "segment_parts"} & decks.GATEWAY_READABLE_FIELDS
 
 
+def test_the_sales_question_the_made_of_line_and_the_legend_items_hold_no_deck_text_outside_their_own_fields(caplog):
+    """The claims list changes of 2026-10-26: the Sales reasons are closed words whatever the deck says; the answer is kept under the deck id; the
+    "part of <metric> <period> total" line holds the metric and the period only; a legend item reaches the candidate's own correction options and,
+    once clicked, the segment, never the stored page items, the Diagnostics lines, a log line or a model."""
+    import logging
+
+    from app import claim_groups
+    from app.decks import claims as deck_claims
+    from app.structures import pages as structure_pages
+    sentinel = "Zephyr Holdings"
+    c = {"id": "c1", "status": "approved", "claim_type": "revenue", "value": 100.0, "currency": "EUR", "target_date": "FY2020", "period_text": "FY2020",
+         "snippet": f"{sentinel} EUR 100", "label_from": "Sales", "file": "Secret_Board_Deck.pptx", "deck_id": "d1", "order": 1, "basis": "actual",
+         "sources": [{"file": "Secret_Board_Deck.pptx", "slide": 1}]}
+    deck_claims.resolve_period(c, 12)
+    base = {"fiscal_year_end": 12, "reporting_currency": "EUR", "fx": {"EUR": 1.0}}
+    for choices in ({}, {"d1": {"as": "revenue"}}, {"d1": {"as": "bookings"}}):
+        row, = claim_matching.build_register([c], RESULTS, {**base, "sales_choices": choices})
+        assert sentinel not in json.dumps(row, default=str), choices
+        assert row["reason"] in (claim_matching.SALES_ASK_REASON, claim_matching.BOOKINGS_REASON) or sentinel not in row["reason"]
+    questions = claim_matching.sales_questions([c], RESULTS, base)
+    assert set(questions[0]) == {"deck_id", "file", "claims"} and sentinel not in json.dumps(questions)
+    assert not {"made_of", "sales_questions", "sales_choices", "adds_up_to"} & decks.GATEWAY_READABLE_FIELDS
+    # the made-of line
+    parts = [{**c, "id": "c2", "value": 60.0, "label_from": sentinel, "order": 2, "snippet": "Revenue EUR 60"},
+             {**c, "id": "c3", "value": 40.0, "label_from": "Other Holdings", "order": 3, "snippet": "Revenue EUR 40"},
+             {**c, "id": "c4", "value": 100.0, "label_from": "Total revenue", "order": 4, "snippet": "Revenue EUR 100"}]
+    rows = claim_matching.build_register(parts, RESULTS, base)
+    for r in rows:
+        made = claim_groups.made_of(r, rows)
+        assert sentinel not in (made["part_of"] or "") and "Other Holdings" not in (made["part_of"] or "")
+    # a legend item reaches no stored page item, no Diagnostics line, no log line
+    kept = structure_pages._without_text({"corrections": [
+        {"flag": "label mismatch", "field": "segment", "original": "r9c1", "original_text": None,
+         "options": [{"value": sentinel, "ref": "r7c1", "segment": sentinel}]}]})
+    assert sentinel not in json.dumps(kept)
+    with caplog.at_level(logging.DEBUG):
+        claim_matching.sales_questions([c], RESULTS, base)
+    assert sentinel not in caplog.text
+
+
 def test_the_register_log_lines_name_counts_per_label_and_the_run_only():
     """Static: every log call in a register function names the run, the label counts or a row count, as format arguments
     and nothing else (no row, no claim, no gate, no value)."""
