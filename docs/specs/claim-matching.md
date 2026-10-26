@@ -517,3 +517,10 @@ A claim whose period ends after the as-of month reads Unverified "Forecast perio
    more than the population keeps the claims list's editor.
 5. **Keep all**: each section of the claims list has a Keep all button while it holds flagged pending rows; it keeps those rows only (status approved, as Keep), no other row of the section and no other section.
 6. **Undo on a rejected row**: rejecting stores the previous status (and whether Python entered it); a Rejected row shows Undo (`PUT {undo: true}`) which restores it.
+
+### Amended 2026-10-26 (George, source association; docs/specs/source-association.md)
+1. A period correction entry of a row, and its Diagnostics line, also carry `cells` (the ids of the cells the period was read from) and `marker` (`actual`, `forecast` or none, kept apart
+   from the period token); a stored item's correction keeps `sources` [{cells, marker}] beside its options. Never heading prose.
+2. Four review flags (`sources disagree`, `source ambiguous`, `source not associated`, `extraction incomplete`) list a claim under Review; the first two with several periods offer one button
+   per candidate and apply none. A new Diagnostics kind, `no printed source`, is a value on no cell of a page the reader read completely (point 2 of the entry of 2026-10-26 above applies
+   to it: no row, no card). The register, the matching and the evidence label read the claim as before.

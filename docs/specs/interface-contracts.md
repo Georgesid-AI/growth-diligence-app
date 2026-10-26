@@ -195,3 +195,6 @@ The xlsx export gains a "Churn Series" sheet (month, trailing-12-month rate, mon
 
 Amended 2026-10-24 (George, chat-upload.md §30 point 6): results are also "Stale – re-run audit" when a set-up input they were computed with changed since (audit field `setup_stale`: Reporting currency, Target ARR, Target date,
 As-of month, fiscal year-end, "Last month is complete", FX rates). `run_audit.results_stale` reads both; every reader of §7 above behaves the same. Run audit calculates again and clears the field. No engine output field and no contract version change.
+
+Amended 2026-10-26 (source association, docs/specs/source-association.md): no engine output field, no register field and no contract version change. The deck claim's `flags` may hold four
+more closed words (`sources disagree`, `source ambiguous`, `source not associated`, `extraction incomplete`); `DECK_CLAIM_FIELDS`, the baseline CSV and the memo's Appendix A are unchanged.

@@ -105,8 +105,10 @@ def test_a_scale_in_the_row_header_of_a_table_applies_and_the_period_comes_from_
     got = one(g, claim("r2c2", 1200000, unit="GBP", period="FY2025", period_cell="r1c2", label_cell="r2c1"))
     assert got["status"] == MATCHED and got["period"] == "2025" and got["period_cells"] == ["r1c2"] and got["label_cell"] == "r2c1"
     other = one(g, claim("r2c2", 1200000, unit="GBP", period="FY2026", period_cell="r1c3"))
-    assert other["status"] == MATCHED and other["period_cells"] == ["r1c3"] and other["checks"]["period_other"] is True, \
-        "another column's header is a cell of the page outside the figure's block: informational 'period from another cell' (George, 2026-10-23)"
+    assert other["status"] == MATCHED and other["period_cells"] == ["r1c2"] and other["period"] == "2025" and other["checks"]["period_other"] is False, \
+        "another column's header is not the figure's: its own column header takes precedence (source association, 2026-10-26; it replaces the " \
+        "informational 'period from another cell' of 2026-10-23 for a figure whose own sources state a period); the checker flags the disagreement"
+    assert other["association"]["flags"] == ["sources disagree"]
 
 
 def test_a_range_is_one_row_with_both_ends_checked():

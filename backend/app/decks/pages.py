@@ -8,6 +8,11 @@ its box, its "next_to" (the ids of the cells of other boxes directly next to its
 ("bar_year", issue #148) and an axis-tick mark; then each table of the page as rows below, its cells keeping their table, row and
 column. Layout fields (next_to, bar_year, tick, top_band, box, table) are kept with the grid and never sent.
 
+Layout evidence for the source association (docs/specs/source-association.md): with the deck's layout (parser.parse_deck), every cell also
+keeps "at", its place on the page as fractions [left, top, right, bottom], and "rot" when its text is turned a quarter; the grid keeps
+"layout" {"rects": [{"at", "fill", "scope"}], "gaps": [closed words]}. A grid built without the layout (a deck stored before this field,
+a hand-built test grid) has no "layout" key: its extraction is not measured, and nothing is dropped for it (structures/association.py).
+
     {"type": "page", "slide": 5, "header_rows": 0, "figure": True,
      "cells": [{"row": 1, "col": 1, "text": "Traction", "box": 1, "title": True, "next_to": ["r2c1"]}, ...],
      "tables": [{"table": 1, "header_rows": 1}]}
@@ -25,16 +30,18 @@ from typing import Dict, List, Optional
 from . import claims, parser
 
 
-def page_grids(blocks: List[Dict]) -> List[Dict]:
-    """One grid per page of the parsed deck that holds any text, in page order."""
+def page_grids(blocks: List[Dict], layout: Optional[List[Dict]] = None) -> List[Dict]:
+    """One grid per page of the parsed deck that holds any text, in page order. `layout` is the deck's layout (parser.parse_deck): one
+    entry per slide or page; a grid whose page has an entry keeps it."""
     excluded = claims.excluded_pages(blocks)
+    placed = {(e.get("slide"), e.get("page")): e for e in layout or ()}
     ticks = claims.tick_lines(blocks)
     pages: Dict = {}
     for b in blocks:
         pages.setdefault(parser._page_key(b), []).append(b)
     out = []
     for key in sorted(pages, key=lambda k: (k[0] or 0, k[1] or 0)):
-        grid = page_grid(pages[key], ticks)
+        grid = page_grid(pages[key], ticks, placed.get(key))
         if grid is None:
             continue
         if key in excluded:
@@ -43,8 +50,9 @@ def page_grids(blocks: List[Dict]) -> List[Dict]:
     return out
 
 
-def page_grid(blocks: List[Dict], ticks: set = frozenset()) -> Optional[Dict]:
-    """The grid of one page's blocks (all of one slide or page), or None when the page holds no text."""
+def page_grid(blocks: List[Dict], ticks: set = frozenset(), layout: Optional[Dict] = None) -> Optional[Dict]:
+    """The grid of one page's blocks (all of one slide or page), or None when the page holds no text. `layout` is the page's entry of the
+    deck's layout, kept on the grid with the cells' places."""
     # An axis tick is marked on the line itself (claims.tick_lines gives the ids of the page's blocks), so the grid cell keeps it.
     texts = [dict(b, tick=True) if id(b) in ticks else b for b in blocks if b["kind"] != "table" and b["text"].strip()]
     # Page furniture (a header or footer band line, the page's own number) is marked on the cell: the checker never looks for a value there.
@@ -69,22 +77,26 @@ def page_grid(blocks: List[Dict], ticks: set = frozenset()) -> Optional[Dict]:
     page_boxes = list(boxes.values()) + ([titles] if titles else [])
     others = [e for e in map(parser._extent, page_boxes) if e]
     years = claims.bar_years(texts, ticks)
-    cells = parser._band_cells(page_boxes, others, None, years, top_band=True) if page_boxes else []
+    cells = parser._band_cells(page_boxes, others, None, years, top_band=True, place=layout is not None) if page_boxes else []
     offset = max((c["row"] for c in cells), default=0)
     listed = []
     for t in sorted(tables):
         table_cells = [parser._cell(b) for b in tables[t]]
         header_rows = parser._header_rows(table_cells, claims)
-        for c in table_cells:
-            cells.append({**c, "row": offset + c["row"], "table": t, "trow": c["row"], "tcol": c["col"]})
+        for c, b in zip(table_cells, tables[t]):
+            cells.append({**c, "row": offset + c["row"], "table": t, "trow": c["row"], "tcol": c["col"],
+                          **({"at": b["bbox"]} if layout is not None and b.get("bbox") else {})})
         listed.append({"table": t, "header_rows": header_rows})
         offset = max(c["row"] for c in cells)
     where = parser._where(first)
     number = int(where.get("slide") or where.get("page") or 0)
     # A figure counts when it stands outside the page's furniture: the page number, a header or footer line, a phone number, a URL, an email.
     lines = [b["text"] for b in texts if not claims.page_furniture_line(b)] + [t["text"] for ts in tables.values() for t in ts]
-    return {"type": "page", **where, "header_rows": 0, "cells": cells, "tables": listed,
+    grid = {"type": "page", **where, "header_rows": 0, "cells": cells, "tables": listed,
             "figure": any(claims.page_figures(text, number) for text in lines)}
+    if layout is not None:
+        grid["layout"] = {"rects": [dict(r) for r in layout.get("rects") or ()], "gaps": list(layout.get("gaps") or ())}
+    return grid
 
 
 def has_digit_figure(grid: Dict) -> bool:

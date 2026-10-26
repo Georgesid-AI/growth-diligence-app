@@ -51,13 +51,27 @@ note on its row. NOT_PLAN_LINE never fires for the metrics market, pricing and u
 Added 2026-10-24 (George, chat-upload.md section 30): PERIOD_IS_RANGE, a period cited from a cell that holds a range of years (no period; "period not on page" stays quiet), and
 GROWTH_START_YEAR, a growth claim whose period is the year after "from" or "compared to" in its own value cell. Both are review flags.
 
+Added 2026-10-26 (source association, docs/specs/source-association.md; section 4 of docs/design/claim-review-simplified-design.md): four review
+flags and one drop kind, all closed words.
+- SOURCES_DISAGREE: the figure's own sources (its cell, its table header or label beside it, the legend label of its bar) state another period or
+  label than the broader source cited; the local one is used (it takes precedence) and the claim is listed under Review with both as buttons.
+- SOURCE_AMBIGUOUS: several candidates and none chosen: two legend labels for one bar colour (or one colour in two charts), two axis titles, own
+  sources stating several periods while a heading is cited, or two page headings stating different periods.
+- SOURCE_NOT_ASSOCIATED: the period or label rests on a source the figure has no association with: a marker annotation of a chart (a date printed in
+  its plot area), or a value found only in another cell with the period or label cited for the cell it was not in ("a matching number elsewhere does not
+  establish its metric or period").
+- EXTRACTION_INCOMPLETE: VALUE_NOT_ON_PAGE on a page whose extraction left something unread (a picture, a chart, a graphic, characters it could not
+  decode): the value may stand there, so the claim is kept for review instead of dropped.
+- NO_PRINTED_SOURCE (a drop kind, like DERIVED_FIGURE): the same claim on a page whose extraction is measured and complete: no row, one Diagnostics line.
+A page without the deck's layout (stored before this field) is not measured: nothing is dropped and no extraction flag is set.
+
 Every flag is a closed string of FLAGS (backend/tests/test_gateway_data_boundary.py); no flag carries deck text.
 """
 import re
 from typing import Dict, List, Optional
 
 from ..decks import claims, parser
-from . import corrections, page_check, verify
+from . import association, corrections, page_check, verify
 
 VALUE_NOT_ON_PAGE = "value not on page"
 CURRENCY_ASSUMED = "currency assumed"
@@ -81,13 +95,18 @@ PERIOD_FROM_HEADING = "period from page heading"
 PERIOD_FROM_OTHER_CELL = "period from another cell"
 PERIOD_IS_RANGE = "period is a range"
 GROWTH_START_YEAR = "growth dated to start year"
+SOURCES_DISAGREE = association.SOURCES_DISAGREE
+SOURCE_AMBIGUOUS = association.SOURCE_AMBIGUOUS
+SOURCE_NOT_ASSOCIATED = association.SOURCE_NOT_ASSOCIATED
+EXTRACTION_INCOMPLETE = "extraction incomplete"
+NO_PRINTED_SOURCE = "no printed source"
 LABEL_MISMATCH = "label mismatch"        # the reason of a label correction, and the review flag of a cited label with no candidate cell (hotfix of PR 182)
 DERIVED_FIGURE = corrections.DERIVED_FIGURE
 LAUNCH_NO_PRODUCT = corrections.LAUNCH_NO_PRODUCT
 FLAGS = (VALUE_NOT_ON_PAGE, CURRENCY_ASSUMED, UNIT_ASSUMED, SCENARIO_NOT_ON_PAGE, PERIOD_NOT_ON_PAGE, PAGE_OUT_OF_RANGE,
          USE_OF_FUNDS, ACQUISITION_CHANNEL, TURNOVER, BAR_YEAR, PIPELINE_COLUMN, AXIS_TICK, NOT_PLAN_LINE, MATCHES_ANALYST,
          BASIS_SCENARIO_DISAGREE, BASIS_CONFLICT, CELL_CORRECTED, SIGN_NOT_ON_PAGE, PERIOD_FROM_HEADING, PERIOD_FROM_OTHER_CELL,
-         PERIOD_IS_RANGE, GROWTH_START_YEAR, LABEL_MISMATCH)
+         PERIOD_IS_RANGE, GROWTH_START_YEAR, LABEL_MISMATCH, SOURCES_DISAGREE, SOURCE_AMBIGUOUS, SOURCE_NOT_ASSOCIATED, EXTRACTION_INCOMPLETE)
 INFORMATIONAL_FLAGS = claims.INFORMATIONAL_FLAGS        # a note on the row; the claim stays in the main list (George, 2026-10-23)
 REVIEW_FLAGS = tuple(f for f in FLAGS if f not in INFORMATIONAL_FLAGS)      # the claim is listed under Review
 review_flags = claims.review_flags
@@ -270,6 +289,7 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, blocks
     listed = {id(s): page_check.items.list_items(s, titles=True) for s in [grid_views["boxes"], *grid_views["tables"].values()]}
     by_id = {page_check._id(c): c for c in grid["cells"]}
     lines = rule_lines(blocks, file)
+    lay = association.Layout(grid)
     furniture = frozenset(i for i, c in by_id.items() if c.get("furniture"))
     kept = [c for c in page_claims if c["value_cell"] in by_id]
     assert len(kept) == len(checked["items"])
@@ -308,8 +328,15 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, blocks
         flags += [f for f in rule_flags(grid, grid_views, cell, claim, lines, fiscal_year_end) if f not in flags]
         if corrections.label_options(grid_views, claim, item, cell) == []:
             flags.append(LABEL_MISMATCH)            # a cited label no cell of the figure's row or column can replace: a card, no correction
+        found = item.get("association") or {}
+        flags += [f for f in found.get("flags") or () if f not in flags]
+        headings = corrections.heading_periods(grid, grid_views, fiscal_year_end) if item["checks"]["period_heading"] else []
+        if len(headings) > 1 and SOURCE_AMBIGUOUS not in flags:
+            flags.append(SOURCE_AMBIGUOUS)          # the period was taken from a page heading while the page states several: none is chosen
+        if VALUE_NOT_ON_PAGE in flags and claim.get("value") is not None and lay.complete is False:
+            flags.append(EXTRACTION_INCOMPLETE)
         item["corrections"] = corrections.plan(grid, grid_views, claim, item, cell, flags, LABEL_MISMATCH, fiscal_year_end)
-        item["drop"] = drop_reason(claim, cell, by_id.get(claim.get("label_cell")), flags, listed, furniture)
+        item["drop"] = drop_reason(claim, cell, by_id.get(claim.get("label_cell")), flags, listed, furniture, lay.complete)
         item["flags"] = flags
         item["basis"] = claim.get("basis")
         item["scenario"] = claim.get("scenario") or NO_SCENARIO
@@ -317,13 +344,18 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, blocks
     return checked
 
 
-def drop_reason(claim: Dict, cell: Dict, label: Optional[Dict], flags: List[str], listed: Dict, furniture: frozenset) -> Optional[str]:
+def drop_reason(claim: Dict, cell: Dict, label: Optional[Dict], flags: List[str], listed: Dict, furniture: frozenset,
+                complete: Optional[bool] = None) -> Optional[str]:
     """Why the claim never enters the register though the model read it (George, 2026-10-26): DERIVED_FIGURE, a value on no cell that the
-    figures of the page compute; LAUNCH_NO_PRODUCT, a launch date whose text names no product. None otherwise."""
+    figures of the page compute; LAUNCH_NO_PRODUCT, a launch date whose text names no product; NO_PRINTED_SOURCE, a value on no cell of a page whose
+    extraction is measured and complete (`complete` True: nothing on the page was left unread, so the absence is established). None otherwise;
+    with `complete` False the claim is kept and flagged EXTRACTION_INCOMPLETE, with None (not measured) it stays as before."""
     if VALUE_NOT_ON_PAGE in flags and corrections.computable(claim.get("value"), corrections.page_figures(listed, furniture)):
         return DERIVED_FIGURE
     if corrections.launch_without_product(claim, cell["text"], label["text"] if label else None):
         return LAUNCH_NO_PRODUCT
+    if VALUE_NOT_ON_PAGE in flags and claim.get("value") is not None and complete is True:
+        return NO_PRINTED_SOURCE
     return None
 
 

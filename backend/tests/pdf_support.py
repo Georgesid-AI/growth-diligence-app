@@ -8,13 +8,23 @@ def _escape(text: str) -> bytes:
     return text.encode("cp1252").replace(b"\\", b"\\\\").replace(b"(", b"\\(").replace(b")", b"\\)")
 
 
-def pdf_page(texts, rects=()) -> bytes:
-    """texts: (x, y, size, text); rects: (x, y, width, height) drawn as 1-point lines."""
+def pdf_page(texts, rects=(), fills=(), rotated=(), pictures=()) -> bytes:
+    """texts: (x, y, size, text); rects: (x, y, width, height) drawn as 1-point lines.
+    fills: (x, y, width, height, (r, g, b)) filled rectangles, colours 0 to 1 (bars, legend swatches); rotated: (x, y, size, text,
+    "up" | "down") text turned a quarter, reading upward (a y-axis title) or downward; pictures: (x, y, width, height) a one-pixel
+    inline image scaled to the box (a picture the reader cannot read)."""
     stream = b"1 w\n"
     for x, y, w, h in rects:
         stream += b"%g %g %g %g re S\n" % (x, y, w, h)
+    for x, y, w, h, (r, g, b) in fills:
+        stream += b"%g %g %g rg %g %g %g %g re f\n0 g\n" % (r, g, b, x, y, w, h)
     for x, y, size, text in texts:
         stream += b"BT /F1 %g Tf %g %g Td (" % (size, x, y) + _escape(text) + b") Tj ET\n"
+    for x, y, size, text, way in rotated:
+        matrix = b"0 1 -1 0" if way == "up" else b"0 -1 1 0"
+        stream += b"BT /F1 %g Tf %s %g %g Tm (" % (size, matrix, x, y) + _escape(text) + b") Tj ET\n"
+    for x, y, w, h in pictures:
+        stream += b"q %g 0 0 %g %g %g cm\nBI /W 1 /H 1 /CS /G /BPC 8 ID \x80\nEI Q\n" % (w, h, x, y)
     objects = [b"<< /Type /Catalog /Pages 2 0 R >>",
                b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %d %d] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>"

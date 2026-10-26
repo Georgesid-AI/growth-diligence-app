@@ -196,17 +196,24 @@ def corrected_row(item: Dict, grid: Dict, deck: Dict, fiscal_year_end: int, page
         if len(options) == 1:
             base = corrections.apply_option(base, field, options[0])
             flags = [f for f in flags if f != plan["flag"]]
-            entries.append({**entry, "state": "applied", "corrected": options[0]["value"]})
+            entries.append({**entry, "state": "applied", "corrected": options[0]["value"], **_period_source(field, options[0])})
+            # A period is logged as its token with the cells it was read from and its marker, never the heading's prose (section 4 of the design).
             log.append({"page": page, "kind": "corrected", "field": field, "reason": plan["flag"], "original": plan["original"],
-                        "corrected": options[0]["ref"]})
+                        "corrected": options[0]["ref"], **_period_source(field, options[0])})
         else:
             entries.append({**entry, "state": "choose", "options": [
-                {"value": o["value"], "set": corrections.row_fields(field, row_from_claim(corrections.apply_option(base, field, o), grid, deck, fiscal_year_end))}
+                {"value": o["value"], **_period_source(field, o),
+                 "set": corrections.row_fields(field, row_from_claim(corrections.apply_option(base, field, o), grid, deck, fiscal_year_end))}
                 for o in options]})
     row = row_from_claim({**base, "flags": flags}, grid, deck, fiscal_year_end)
     if entries:
         row["corrections"] = entries
     return row, log
+
+
+def _period_source(field: str, option: Dict) -> Dict:
+    """The cells a period option was read from and its actual/forecast marker, kept beside the token (none for a label)."""
+    return {"cells": list(option.get("period_cells") or []), "marker": option.get("marker")} if field == "period" else {}
 
 
 def row_out_of_range(claim: Dict, page: int, deck: Dict) -> Dict:
@@ -238,10 +245,14 @@ def stored_items(checked: List[Dict]) -> Dict:
 
 
 def _without_text(item: Dict) -> Dict:
-    """A checked claim as it is stored: the corrections keep their cell ids and period labels, never the text of a label cell (rule 17)."""
+    """A checked claim as it is stored: the corrections keep their cell ids and period labels, never the text of a label cell (rule 17); a
+    period option keeps its token, the cells it was read from and its marker (section 4 of docs/design/claim-review-simplified-design.md)."""
     out = dict(item)
     if out.get("corrections"):
-        out["corrections"] = [{"flag": p["flag"], "field": p["field"], "original": p["original"], "options": [o["ref"] for o in p["options"]]}
+        out["corrections"] = [{"flag": p["flag"], "field": p["field"], "original": p["original"],
+                               "options": [o["ref"] for o in p["options"]],
+                               **({"sources": [{"cells": list(o.get("period_cells") or []), "marker": o.get("marker")} for o in p["options"]]}
+                                  if p["field"] == "period" else {})}
                               for p in out["corrections"]]
     return out
 
@@ -255,7 +266,7 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
     audit = await db.audits.find_one({"id": audit_id}, {"_id": 0, "id": 1, "company_name": 1, "fiscal_year_end": 1,
                                                        "structure_reading_consent": 1})
     deck = await db[TEXT_COLLECTION].find_one({"audit_id": audit_id, "deck_id": deck_id},
-                                              {"_id": 0, "file": 1, "page_unit": 1, "pages": 1, "blocks": 1, "page_reads": 1, "retry_pages": 1,
+                                              {"_id": 0, "file": 1, "page_unit": 1, "pages": 1, "blocks": 1, "layout": 1, "page_reads": 1, "retry_pages": 1,
                                                "diagnostics": 1})
     if not audit or not deck:
         return NOT_READ
@@ -265,7 +276,7 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
         return await _deck_status(db, audit_id, deck_id, WAITING, WAITING_TEXT)
     mapping = await llm_redaction.get_map(db, audit_id)
     year_end = int(audit.get("fiscal_year_end") or 12)
-    grids = page_grids_mod.page_grids(deck.get("blocks") or [])
+    grids = page_grids_mod.page_grids(deck.get("blocks") or [], deck.get("layout"))
     by_page = {page_grids_mod.page_number(g): g for g in grids}
     page_count = deck.get("pages") or (max(by_page) if by_page else None)
     reviewed = await db[CANDIDATES_COLLECTION].find({"audit_id": audit_id, "file": deck["file"]}, {"_id": 0}).to_list(100000)
