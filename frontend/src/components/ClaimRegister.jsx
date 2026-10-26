@@ -139,6 +139,7 @@ function RowDetails({ row, rows, ccy, results, save }) {
               {parts.map((p) => (
                 <li key={p.claim_id} data-testid="register-group-part">
                   {p.group_role === "repeat" && <span className="text-slate-600">Also stated: </span>}
+                  {p.group_role === "segment_part" && <span className="text-slate-900">{p.segment} · </span>}
                   <span className="text-slate-900">{claimCellText(p, ccy)}</span>
                   {p.group_role === "repeat" && <span className="font-mono text-slate-500"> · {p.page_ref}</span>}
                   <span className="font-mono text-slate-500"> · {p.period || NO_DATE}</span> · <EvidenceLabel row={p} testId="register-group-part-evidence" />
@@ -216,7 +217,7 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
     .catch((e) => { toast.error(describeRequestError(e).message); throw e; }), [auditId, onChanged]);
 
   return (
-    <section className="mb-6" data-testid="claim-register">
+    <section id="claim-register" className="mb-6" data-testid="claim-register">
       <div className="flex items-end justify-between flex-wrap gap-3 mb-3">
         <h2 className="font-heading text-lg font-semibold text-slate-900">{REGISTER_HEADING}</h2>
         <div className="flex gap-2">

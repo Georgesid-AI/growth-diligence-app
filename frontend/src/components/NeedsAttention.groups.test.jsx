@@ -97,3 +97,29 @@ test("a conflict that stays after a choice is still a card, names the chosen fig
     expect(api.undoGroupChoice).toHaveBeenCalledWith("a1", "r1");
   } finally { await done(); }
 });
+
+test("a conflict of more than four candidates shows one line and a button to the claims list, and offers no candidate", async () => {
+  const many = { ...TOTAL_OPEN, candidates: [1, 2, 3, 4, 5].map((i) => candidate(`a${i}`, 1000000 + i * 100000, { source: `testco_board.pptx slide ${i}` })) };
+  const section = document.createElement("section");
+  section.id = "claim-register";
+  section.scrollIntoView = jest.fn();
+  document.body.appendChild(section);
+  const { host, done } = await mount({ reviews: [many], conflicts: [many] });
+  try {
+    expect(all(host, "attention-group-candidate").length).toBe(0);
+    expect(all(host, "attention-group-choose").length).toBe(0);
+    expect(q(host, "attention-group-too-many").textContent).toBe("5 annual figures are stated for this period; too many to choose from here. Review them in the claims list.");
+    await act(async () => { q(host, "attention-group-open-claims").click(); });
+    expect(section.scrollIntoView).toHaveBeenCalled();
+    expect(api.chooseGroup).not.toHaveBeenCalled();
+  } finally { await done(); section.remove(); }
+});
+
+test("a conflict of four candidates still lists each of them", async () => {
+  const four = { ...TOTAL_OPEN, candidates: [1, 2, 3, 4].map((i) => candidate(`a${i}`, 1000000 + i * 100000)) };
+  const { host, done } = await mount({ reviews: [four], conflicts: [four] });
+  try {
+    expect(all(host, "attention-group-candidate").length).toBe(4);
+    expect(q(host, "attention-group-too-many")).toBeNull();
+  } finally { await done(); }
+});

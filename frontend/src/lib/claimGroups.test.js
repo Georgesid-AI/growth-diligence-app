@@ -1,6 +1,6 @@
 // docs/specs/claim-groups.md: the screen reads the server's roles, groups and questions; it relates, sums and chooses nothing.
 import {
-  KEPT_NOTE, countsOf, countsText, detailsLabel, figureText, groupQuestions, partsLabel, partsOf, questionTitle, visibleRows,
+  KEPT_NOTE, MAX_CANDIDATES, TOO_MANY_NOTE, tooMany, countsOf, countsText, detailsLabel, figureText, groupQuestions, partsLabel, partsOf, questionTitle, visibleRows,
 } from "./claimGroups";
 
 const total = { claim_id: "a1", group_id: "g1", group_role: "total", rank: 1 };
@@ -62,4 +62,22 @@ test("a candidate figure reads in its own currency and a question names its metr
   expect(figureText({ value: 120, currency: null, unit: "customers" })).toBe("120 customers");
   expect(questionTitle({ kind: "total", metric: "Revenue", period: "FY2024" })).toBe("Which annual figure should the audit use? Revenue, FY2024");
   expect(KEPT_NOTE).toContain("stay as claims");
+});
+
+test("a part by segment is shown under its total's Details, counted apart from the period parts, and is no item of its own", () => {
+  const sp1 = { claim_id: "s1", group_id: "g1", group_role: "segment_part", rank: 10 };
+  const sp2 = { claim_id: "s2", group_id: "g1", group_role: "segment_part", rank: 11, evidence_label: "Contradicted" };
+  const all = [...rows, sp1, sp2];
+  expect(visibleRows(all).map((r) => r.claim_id)).toEqual(["a1", "a2", "x1"]);
+  expect(partsOf(total, all).map((r) => r.claim_id)).toEqual(["q1", "q2", "s1", "s2"]);
+  expect(detailsLabel(partsOf(total, all))).toBe("Details · 2 parts · 2 by segment · 1 contradicted");
+  expect(detailsLabel([sp1])).toBe("Details · 1 by segment");
+  expect(countsOf(all)).toEqual({ items: 3, claims: 7, groups: 1 });
+});
+
+test("a question with more than four candidates offers none: one line and the claims list", () => {
+  expect(MAX_CANDIDATES).toBe(4);
+  expect(tooMany({ candidates: [1, 2, 3, 4] })).toBe(false);
+  expect(tooMany({ candidates: [1, 2, 3, 4, 5] })).toBe(true);
+  expect(TOO_MANY_NOTE(5)).toBe("5 annual figures are stated for this period; too many to choose from here. Review them in the claims list.");
 });

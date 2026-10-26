@@ -1479,6 +1479,9 @@ REGISTER_NAMES = frozenset({"claim_inputs", "gate_sentence", "gate_budget_decisi
                             "NOTE_DIFFERS", "NOTE_PARTIAL", "NOTE_AMBIGUOUS", "NOTE_TAKEN", "NOTE_CONFLICT", "NOTE_ALTERNATIVE", "NOTE_CHOOSE",
                             "REASON_TOTAL", "NO_EXPOSURE", "SUBORDINATE", "context_hash", "annotate", "relate", "GroupChoice",
                             "has_open_question", "scope_period", "is_repeat_of_listed",
+                            # docs/design/segment-partitions.md: the segment a label names, the segment parts and their notes
+                            "label_segment", "SEGMENT_PART", "SEGMENT_LIMIT", "NOTE_SEGMENTS", "NOTE_SEGMENT_PART", "NOTE_SEGMENTS_DIFFER",
+                            "segment_parts", "segment_set_by",
                             # docs/specs/crm-dedup-clustering.md: the won-deal counts, the repeated rows and the clustering bands
                             "won_deal_closes", "rows_list", "CLUSTERING_DAYS", "CLUSTERING_MIN_DEALS", "CLUSTERING_FEW",
                             "CLUSTERING_AMBER_PCT", "CLUSTERING_RED_PCT", "CLUSTERING_FINDING",
@@ -1655,6 +1658,32 @@ def test_a_relationship_note_and_an_exposure_reason_name_a_rank_and_a_page_never
     assert any("also reconcile" in (r["relationship"] or "") for r in done) and not any(secret in (r["relationship"] or "") for r in done)
 
 
+SEGMENT_FIELDS = ("segment", "relationship", "gate_sentence")       # the segment, and the sentences built from it (the gate names the segment: "Revenue (Product A) must ...")
+
+
+def test_the_segment_a_label_names_is_the_segment_field_and_the_notes_built_from_it_and_no_other_field():
+    """docs/design/segment-partitions.md section 1: the cited label of a money figure may become the row's segment, the one deck text a register
+    row holds (computed on read, never stored, logged or sent to a model). A sentinel in the label reaches that field and the sentences built from
+    it (the gate sentence, the relationship note); the snippet, the file name, the reasons, the gloss and every other field never hold it."""
+    from app.decks import claims as deck_claims
+    sentinel, secret = "Zephyr Holdings", "Secret_Board_Deck.pptx"
+
+    def cand(cid, value, label):
+        c = {"id": cid, "status": "approved", "claim_type": "revenue", "value": value, "currency": "EUR", "target_date": "FY2026",
+             "period_text": "FY2026", "snippet": f"{secret} revenue EUR {value}", "label_from": label, "file": secret, "order": int(cid[1:]),
+             "sources": [{"file": secret, "slide": int(cid[1:])}]}
+        return deck_claims.resolve_period(c, 12)
+    rows = claim_matching.build_register([cand("c1", 100.0, "Total revenue"), cand("c2", 60.0, sentinel), cand("c3", 40.0, "Other Holdings")], RESULTS,
+                                         {"fiscal_year_end": 12, "reporting_currency": "EUR", "fx": {"EUR": 1.0}})
+    got = {r["claim_id"]: r for r in rows}
+    assert got["c2"]["segment"] == sentinel and got["c2"]["group_role"] == "segment_part", "fixture: the label became the segment of a part"
+    for r in rows:
+        assert sentinel not in json.dumps({k: v for k, v in r.items() if k not in SEGMENT_FIELDS}, default=str), r["claim_id"]
+        assert secret not in json.dumps({k: v for k, v in r.items() if k not in ("deck_file",)}, default=str), r["claim_id"]
+        assert sentinel not in (r["relationship"] or "") or r["claim_id"] == "c2", "only the segment's own note names it"
+    assert not {"segment", "segment_set_by", "segment_parts"} & decks.GATEWAY_READABLE_FIELDS
+
+
 def test_the_register_log_lines_name_counts_per_label_and_the_run_only():
     """Static: every log call in a register function names the run, the label counts or a row count, as format arguments
     and nothing else (no row, no claim, no gate, no value)."""
@@ -1696,7 +1725,7 @@ def test_the_beat_reason_is_the_closed_prefix_and_the_gloss_and_holds_no_deck_te
     by {gloss}": the gloss is a figure and closed words (section 3), so a sentinel in the snippet or the label reaches no field."""
     sentinel = "Zephyr Holdings"
     row = {"id": "x1", "status": "approved", "claim_type": "revenue", "value": 4800.0, "currency": "EUR", "target_date": "2026-12",
-           "period_text": "Dec 2026", "snippet": f"{sentinel} ARR EUR 4,800", "label_from": f"{sentinel} ARR", "file": "deck.pptx",
+           "period_text": "Dec 2026", "snippet": f"{sentinel} ARR EUR 4,800", "label_from": "ARR", "file": "deck.pptx",
            "order": 0, "sources": [{"file": "deck.pptx", "slide": 3}]}
     from app.decks import claims as deck_claims
     deck_claims.resolve_period(row, 12)
@@ -1714,7 +1743,7 @@ def test_the_definition_check_question_and_reasons_hold_figures_and_closed_words
     sentences. A sentinel in the snippet or the label reaches no field of the row, asked or answered, nor the deck list's view."""
     sentinel = "Zephyr Holdings"
     row = {"id": "x1", "status": "approved", "claim_type": "revenue", "value": 100.0, "currency": "EUR", "target_date": "2026-12",
-           "period_text": "Dec 2026", "snippet": f"{sentinel} ARR EUR 100", "label_from": f"{sentinel} ARR", "file": "deck.pptx",
+           "period_text": "Dec 2026", "snippet": f"{sentinel} ARR EUR 100", "label_from": "ARR", "file": "deck.pptx",
            "order": 0, "sources": [{"file": "deck.pptx", "slide": 3}]}
     from app.decks import claims as deck_claims
     deck_claims.resolve_period(row, 12)
