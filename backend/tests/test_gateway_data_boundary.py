@@ -3412,7 +3412,7 @@ def test_the_checker_flags_basis_and_scenario_are_closed_words_and_never_gateway
                              "turnover, not revenue", "year under bar differs", "pipeline column", "axis tick", "not a plan line",
                              "matches analyst claim", "basis and scenario disagree", "basis conflicts with period",
                              "cell corrected", "sign not on page", "period from page heading", "period from another cell",
-                             "period is a range", "growth dated to start year")
+                             "period is a range", "growth dated to start year", "label mismatch")
     assert (checker.DERIVED_FIGURE, checker.LAUNCH_NO_PRODUCT) == ("derived figure, not a claim", "launch date without product name"), \
         "the two Diagnostics kinds of a dropped claim are closed words (George, 2026-10-26)"
     assert checker.INFORMATIONAL_FLAGS == ("cell corrected", "currency assumed", "unit assumed", "period from page heading", "period from another cell"), \
@@ -3531,7 +3531,7 @@ def test_corrections_and_dropped_claims_log_values_and_cell_ids_never_deck_text(
     import test_claim_corrections as cc
     from app.llm import gateway as _gateway
     tc = cc.tc
-    parsed = tc.deck([(50, 500, 12, "Paying customers"), (50, 480, 12, "800"), (400, 200, 12, "Footnote words"),
+    parsed = tc.deck([(50, 560, 12, "Overview"), (50, 500, 12, "Paying customers"), (50, 480, 12, "800"), (400, 200, 12, "Footnote words"),
                       (50, 440, 12, "Launch Q3 2025"), (50, 420, 12, "$150,000 annual revenue run rate")])
     db = tc._page_db(parsed)
     launch = tc.claim(cc.at(parsed, "Launch Q3 2025"), None, metric="product", unit=None, period="2025-Q3", period_cell=cc.at(parsed, "Launch Q3 2025"))

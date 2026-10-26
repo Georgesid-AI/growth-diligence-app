@@ -84,14 +84,15 @@ def test_uber_page_20_gives_exactly_four_scenario_claims_with_one_currency_flag(
     rows = [(i["metric"], i["value"], i["value_high"], i["unit"], i["basis"], i["scenario"], i["status"], i["flags"]) for i in out["items"]]
     assert rows == [
         ("revenue", 1_000_000_000, None, "USD", "scenario", "best", "matched", []),
-        ("market_share", 5, None, "%", "scenario", "realistic", "matched", []),
+        # The model cited a label far from the 5% and the page offers only its title: no correction, the review flag (hotfix of PR 182).
+        ("market_share", 5, None, "%", "scenario", "realistic", "matched", [checker.LABEL_MISMATCH]),
         # Matched since 2026-10-23 (George): "Matched to page" means the figure is in the cited cell, and "20-30M+" is in it. The unit
         # ("USD" is not next to it) no longer gates the match; it stays the informational flag "currency assumed", so the claim is not in Review.
         ("net_profit", 20_000_000, 30_000_000, "USD", "scenario", "realistic", "matched", [checker.CURRENCY_ASSUMED]),
         ("customers", 100, None, "count", "scenario", "worst", "matched", []),
     ]
     assert all(i["basis"] == "scenario" for i in out["items"])
-    assert {k: v for k, v in out.items() if k != "items"} == {"matched": 4, "unmatched": 0, "dropped": 0, "periods_corrected": 0, "flagged": 0}
+    assert {k: v for k, v in out.items() if k != "items"} == {"matched": 4, "unmatched": 0, "dropped": 0, "periods_corrected": 0, "flagged": 1}
     assert [i["value_cell"] for i in out["items"]] == ["r2c5", "r2c6", "r3c6", "r2c7"]
 
 
@@ -107,8 +108,8 @@ def test_uber_page_20_qualitative_lines_are_flagged_and_never_matched():
     assert len(out["items"]) == 6, "flagged, not deleted"
     for item in out["items"][4:]:
         assert item["status"] == "unmatched" and checker.VALUE_NOT_ON_PAGE in item["flags"]
-    assert [i["flags"] for i in out["items"][:4]] == [[], [], [checker.CURRENCY_ASSUMED], []], "the four claims are unchanged"
-    assert out["flagged"] == 2, "the profit claim's currency flag is informational since 2026-10-23: only the two invented claims are flagged"
+    assert [i["flags"] for i in out["items"][:4]] == [[], [checker.LABEL_MISMATCH], [checker.CURRENCY_ASSUMED], []], "the four claims are unchanged"
+    assert out["flagged"] == 3, "the profit claim's currency flag is informational since 2026-10-23: the two invented claims and the far label of the market share are flagged"
 
 
 # ---------------------------------------------------------------------------
@@ -251,7 +252,7 @@ def test_an_axis_tick_and_a_funds_raised_line_are_flagged_not_dropped():
 
 
 def test_every_flag_is_a_closed_string_and_a_cell_the_page_does_not_have_is_still_dropped():
-    assert len(set(checker.FLAGS)) == len(checker.FLAGS) == 22 and all(f == f.strip() and f.lower() == f for f in checker.FLAGS)
+    assert len(set(checker.FLAGS)) == len(checker.FLAGS) == 23 and all(f == f.strip() and f.lower() == f for f in checker.FLAGS)
     assert set(PAGE_BASES) == {"actual", "projection", "scenario"} and set(PAGE_SCENARIOS) == {"best", "realistic", "worst", "none"}
     parsed = deck([TITLE, *LINES])
     out = checker.check(grid_of(parsed), page_check.by_page([claim("p1r9c9", 1)])[1], 12)

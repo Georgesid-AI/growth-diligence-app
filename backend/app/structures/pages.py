@@ -325,8 +325,11 @@ async def process_deck_pages(db, audit_id: str, deck_id: str, adapter=None, slee
             # A page read again (Run audit, a new upload of the file): the rows an earlier run stored for this reply that nobody has touched
             # (pending, origin "ai") are replaced by the rows checked now, so a row stored before a check existed does not outlive it
             # (live bug, 2026-10-23: rows kept "unmatched" with no flags). A row the analyst approved, edited or rejected stays.
-            stale = [c for c in reviewed if c.get("origin") == "ai" and c.get("status") == "pending" and c.get("structure_key") == result.key
-                     and c["id"] not in fresh]
+            # Untouched means pending, or entered by Python on its own with no analyst action (claim_matching.entered_by_python: "auto", no
+            # edit, no Keep or reject); both are replaced. A row the analyst approved, edited or rejected keeps its values (PR 183).
+            from ..claim_matching import entered_by_python
+            stale = [c for c in reviewed if c.get("origin") == "ai" and (c.get("status") == "pending" or entered_by_python(c))
+                     and c.get("structure_key") == result.key and c["id"] not in fresh]
             stale_orders = sorted(c.get("order", 0) for c in stale)
             for c in stale:
                 await db[CANDIDATES_COLLECTION].delete_one({"audit_id": audit_id, "id": c["id"]})

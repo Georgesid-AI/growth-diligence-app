@@ -310,7 +310,7 @@ def test_m6_run_audit_names_the_missing_prompt_and_reads_the_deck_again_once_it_
 # ---------------------------------------------------------------------------
 # Lows fixed in the same round (each under an hour)
 # ---------------------------------------------------------------------------
-def test_l2_uber_page_20_lists_all_four_claims_under_claims_and_none_under_review():
+def test_l2_uber_page_20_lists_all_four_claims_under_claims_and_only_the_far_label_under_review():
     """The pipeline view of the recorded p20 reply: best and worst under Scenarios, the realistic market share and profit under their types;
     the profit claim keeps the informational flag "currency assumed" (matched since 2026-10-23, so no longer under Review). (The reply's basis and scenario are the author's, kept as the spec until the
     first live run is recorded again: George, 2026-10-23.)"""
@@ -319,10 +319,12 @@ def test_l2_uber_page_20_lists_all_four_claims_under_claims_and_none_under_revie
     deck = {"file": "06-uber.pdf", "page_unit": "page", "blocks": parsed["blocks"]}
     rows = [structures.pages.row_from_claim(item, grid, deck, 12) for item in out["items"]]
     listing = [(r["claim_type"], deck_claims.claim_group(r), bool(r["flags"])) for r in rows]
-    assert listing == [("revenue", deck_claims.SCENARIO_GROUP, False), ("market", deck_claims.type_group("market"), False),
+    assert listing == [("revenue", deck_claims.SCENARIO_GROUP, False), ("market", deck_claims.type_group("market"), True),
                        ("net_profit", deck_claims.type_group("net_profit"), True), ("customers", deck_claims.SCENARIO_GROUP, False)]
-    # Since 2026-10-23 (George) the profit claim is matched and its "currency assumed" flag is informational: no claim is under Review.
-    assert not any(deck_claims.review_flags(r["flags"]) for r in rows) and [r["flags"] for r in rows if r["flags"]] == [[checker.CURRENCY_ASSUMED]]
+    # Since 2026-10-23 (George) the profit claim is matched and its "currency assumed" flag is informational. The market share cites a label
+    # far from the figure with only the page title as fallback: not corrected, flagged for a card (hotfix of PR 182).
+    assert [r["flags"] for r in rows if r["flags"]] == [[checker.LABEL_MISMATCH], [checker.CURRENCY_ASSUMED]]
+    assert [r["claim_type"] for r in rows if deck_claims.review_flags(r["flags"])] == ["market"]
 
 
 def test_l3_a_flag_survives_the_merge_into_a_row_still_to_review(monkeypatch):
