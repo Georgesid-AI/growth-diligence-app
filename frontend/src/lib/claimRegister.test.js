@@ -20,7 +20,7 @@ describe("the Claim register section of the Dashboard (spec section 8)", () => {
   test("its title, its download button and its columns are those of the spec", () => {
     expect(REGISTER_HEADING).toBe("Claim register");
     expect(DOWNLOAD_LABEL).toBe("Download baseline (CSV)");
-    expect(REGISTER_COLUMNS).toEqual(["#", "Claim", "Segment", "Observed", "Gap", "Extraction confidence", "Evidence status"]);
+    expect(REGISTER_COLUMNS).toEqual(["Claim and period", "Evidence / calculation", "Result", "Source"]);
   });
 
   test("the segment, the metric and the gate are editable; everything else is read-only", () => {
@@ -186,9 +186,10 @@ describe("the columns and the gate of verdict-and-memo.md sections 2 and 3", () 
     expect(valueAtStakeText({ ...ARR_ROW, vas_reason: "no ARR link: untested claim" })).toBe("no ARR link: untested claim");
   });
 
-  test("W2: overlaps show the ranks of the rows, a dash when none", () => {
-    const rows = [{ claim_id: "a", rank: 7 }, { claim_id: "b", rank: 3 }, { claim_id: "c", rank: 9 }];
-    expect(overlapsText({ overlaps_with: ["a", "b"] }, rows)).toBe("#3, #7");
+  test("W2: overlaps name the other rows, no rank prefix (design note section 6), a dash when none", () => {
+    const rows = [{ claim_id: "a", rank: 7, metric: "ARR", period: "Feb 2024", segment: "Whole company" },
+      { claim_id: "b", rank: 3, metric: "Revenue", period: "FY2023", segment: "Enterprise" }, { claim_id: "c", rank: 9 }];
+    expect(overlapsText({ overlaps_with: ["a", "b"] }, rows)).toBe("Revenue · Enterprise, FY2023 · ARR, Feb 2024");
     expect(overlapsText({ overlaps_with: [] }, rows)).toBe("—");
     expect(overlapsText({}, rows)).toBe("—");
   });

@@ -154,7 +154,7 @@ def test_3_the_verdict_reason_and_the_memo_register_cite_the_figure_with_its_per
     assert vd.reason_text(quarter, "EUR").endswith(f"Evidence: Revenue by month {quarter['observed_citation']}.")
     assert quarter["observed_citation"] in vd._source_text(quarter)
     appendix = memo().split("## Appendix A")[1].split("## Appendix B")[0]
-    line = next(line for line in appendix.splitlines() if line.startswith(f"| #{quarter['rank']} "))
+    line = next(line for line in appendix.splitlines() if f"| #{quarter['rank']} |" in line)
     assert f"Revenue by month {quarter['observed_citation']}" in line
 
 

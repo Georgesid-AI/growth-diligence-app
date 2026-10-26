@@ -4,6 +4,7 @@
 - `register_api`: the claim register (docs/specs/claim-matching.md), with run A's claims.
 - `entry_api`: the claims Python enters on its own (docs/design/simplified-flow.md section 2), with a claim of each kind.
 - `run_api`: the run audit stages, with a provider that echoes its payload.
+- `claims_for`: a builder of an audit holding the given deck claims (test_claim_groups_api.make_db), returning (client, db).
 
 Pytest hands them to any test here that asks for them, so no file imports them: an imported fixture is a redefinition to
 the linter, and ignoring that across the test tree also hid a test defined twice in one file. A file that sets up its own
@@ -76,3 +77,17 @@ def run_api(monkeypatch):
     client = TestClient(server.app, raise_server_exceptions=False)
     client.db, client.adapter = db, adapter
     return client
+
+
+@pytest.fixture()
+def claims_for(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import server
+    from test_claim_groups_api import make_db
+
+    def build(claims):
+        db = make_db(claims)
+        monkeypatch.setattr(server, "db", db)
+        return TestClient(server.app, raise_server_exceptions=False), db
+    return build

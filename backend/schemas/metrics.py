@@ -24,7 +24,7 @@ from typing import Annotated, Any, Dict, Iterator, List, Literal, Optional, Tupl
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, ValidationInfo
 
-CONTRACT_VERSION = 9          # 9: the simplified flow (docs/design/simplified-flow.md): claims enter the register without an approval, a stated figure the app cannot test
+CONTRACT_VERSION = 10         # 10: the yearly-basis block names two annual payback proxies, the S&M scope and the fiscal year (docs/specs/forecast-and-payback.md section 4.5); 9: the simplified flow (docs/design/simplified-flow.md): claims enter the register without an approval, a stated figure the app cannot test
                               #    reads Unverified, gates are written from the claim, the ratings are computed and the memo carries the optional analyst note
                               #    (`ic_inputs.note`); no engine block changes, and results and claim matches stored under 8 read "Stale – re-run audit".
                               # 8: ARR, MRR, Churn, NRR and CAC payback are claim types of their own, and the page reader's list gains cac_payback; gross_churn gains monthly_series (docs/specs/interface-contracts.md);
@@ -559,13 +559,22 @@ class CohortRetention(Block):
 # ---------------------------------------------------------------------------
 class YearlyYear(Block):
     period: str
+    period_start: Optional[str] = None              # the fiscal year's first and last month, "YYYY-MM" (10: forecast-and-payback.md section 4.5)
+    period_end: Optional[str] = None
     revenue: Optional[Currency]
     new_revenue: Optional[Currency]
     sm_pct_revenue: Optional[GapFraction]           # S&M ÷ revenue: a young company can spend more than it earns
+    sm_expense: Optional[Currency] = None           # the year's S&M, and what the line covers: a marketing-only line is never total S&M
+    sm_scope: Optional[Literal["sales and marketing", "marketing only", "sales only", "unknown"]] = None
     gross_margin_pct: Optional[SignedFraction]
     gross_margin_change: Optional[GapFraction]      # this year's margin less last year's, as a fraction (points ÷ 100)
-    cac_payback_months: Optional[Months]
+    cac_payback_months: Optional[Months]            # the revenue-growth proxy: 12 × S&M ÷ (new revenue × gross margin)
     cac_payback_reason: Optional[str]
+    arr_year_end: Optional[Currency] = None         # the net-new-ARR proxy: year-end ARR less the prior year-end ARR, ARR = recurring MRR × 12
+    arr_prior_year_end: Optional[Currency] = None
+    net_new_arr: Optional[Currency] = None
+    cac_payback_net_new_arr_months: Optional[Months] = None
+    cac_payback_net_new_arr_reason: Optional[str] = None
     basis: str
     source: Citation
 
@@ -649,7 +658,7 @@ class MetricPeriod(Block):
 
 class MetricsPayload(Block):
     """The full engine output. A block the engine could not compute is null; the reason is in `missing_data`."""
-    contract_version: Literal[9]
+    contract_version: Literal[10]
     reporting_currency: str                         # the one currency code; no value repeats it
     as_of_month: Optional[str]
     arr: Optional[Arr]

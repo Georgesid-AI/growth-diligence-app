@@ -189,3 +189,21 @@ test("with no conflict the block is not on the page", async () => {
   const { host, done } = await mount({ ...RESPONSE, verdict: { ...RESPONSE.verdict, conflicts: [] } });
   try { expect(host.querySelector('[data-testid="unresolved-conflicts"]')).toBeNull(); } finally { await done(); }
 });
+
+// docs/specs/forecast-and-payback.md section 7: only open annual conflicts left: Insufficient evidence with the count, never "No testable claims".
+test("open conflicts and nothing else testable read Insufficient evidence with the conflict count, and list the conflicts", async () => {
+  const response = { ...RESPONSE, verdict: { ...RESPONSE.verdict, outcome: "Insufficient evidence", outcome_code: "insufficient",
+    rule: "No claim can be tested yet; 1 conflict open.", five: [], other_contradictions: [], other_contradictions_text: "None found among tested claims.",
+    top5: { proposed: [], changed: false, claim_ids: [], set_at: null, in_force: [] }, open_questions: 1,
+    conflicts: [{ id: "q1", state: "open", text: "Revenue FY2023: two annual figures, 187,700 EUR (deck, slide 1) and 250,000 EUR (deck, slide 2). No figure chosen.",
+      reason: "x", metric: "Revenue", period: "FY2023", candidates: [] }] }, candidates: [] };
+  const { host, done } = await mount(response);
+  try {
+    const block = host.querySelector('[data-testid="verdict"]');
+    expect(block.querySelector('[data-testid="verdict-outcome"]').textContent).toContain("Insufficient evidence");
+    expect(block.querySelector('[data-testid="verdict-rule"]').textContent).toBe("No claim can be tested yet; 1 conflict open.");
+    expect(block.querySelector('[data-testid="verdict-message"]')).toBeNull();
+    expect(block.querySelectorAll('[data-testid="unresolved-conflict"]').length).toBe(1);
+    expect(block.textContent).not.toContain("No testable claims");
+  } finally { await done(); }
+});

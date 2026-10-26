@@ -5,6 +5,7 @@
  */
 import metricUnits from "./claim_metrics.json";
 import evidenceLabels from "./evidence_labels.json";
+import claimColumns from "./claim_columns.json";
 import { PLACEHOLDER, fmtCount, fmtCurrency } from "./format";
 import { NO_DATE, STALE_LABEL, rateMissingText, typeLabel } from "./deckClaims";
 import { dateRangeError, displayDate } from "./datePicker";
@@ -13,17 +14,19 @@ export const REGISTER_HEADING = "Claim register";
 /** George, 2026-10-20: figures stored under an older engine contract are never shown as current; Run audit calculates them again. */
 export { STALE_LABEL };
 export const DOWNLOAD_LABEL = "Download baseline (CSV)";
-// The register is seven columns so it fits 1280 px without a horizontal scroll (claim-matching.md section 8). Page, "Read from deck",
-// gloss, VaS (value at stake, in the glossary), overlaps and the evidence path sit on the second, smaller line of each row. How well
-// the deck was read and how the claim compares with the data are two columns, never one (docs/specs/evidence-labels.md section 1).
-export const REGISTER_COLUMNS = ["#", "Claim", "Segment", "Observed", "Gap", "Extraction confidence", "Evidence status"];
+// The register is four columns, the same four on the five selected claims and in the memo's Appendix A (docs/specs/forecast-and-payback.md section 5;
+// claim_columns.json, pinned by the backend): Claim and period · Evidence / calculation · Result · Source. The segment and metric, the extraction
+// confidence, how the deck was read, the gloss, VaS (value at stake, in the glossary), overlaps, the formula inputs and the gate sit under Details.
+export const REGISTER_COLUMNS = claimColumns.columns;
 // The width of each column as a share of the table, in the order of REGISTER_COLUMNS; the table is fixed-layout, so they sum to 100.
-export const REGISTER_COLUMN_WIDTHS = [4, 30, 14, 18, 12, 10, 12];
-// The hover explainers of the two label columns, word for word from the shared list (evidence_labels.json, pinned by the backend).
+export const REGISTER_COLUMN_WIDTHS = [26, 32, 24, 18];
+/** The one sentence shown whenever a forecast appears (design note section 6): once above the register, once under the five, never on a row. */
+export const FORECAST_NOTE = claimColumns.forecast_note;
+// The hover explainers of the label, word for word from the shared list (evidence_labels.json, pinned by the backend).
 export const EXTRACTION_EXPLAINER = evidenceLabels.explainers.extraction_confidence;
 export const EVIDENCE_EXPLAINER = evidenceLabels.explainers.evidence_status;
 export const EVIDENCE_STATUSES = evidenceLabels.statuses;
-export const COLUMN_EXPLAINERS = { "Extraction confidence": EXTRACTION_EXPLAINER, "Evidence status": EVIDENCE_EXPLAINER };
+export const COLUMN_EXPLAINERS = { Result: EVIDENCE_EXPLAINER };
 export const EVIDENCE_SUBTITLE = "(within the supplied evidence)";
 // One style per evidence status, shared by the register and the conclusion section.
 export const LABEL_STYLE = {
@@ -162,12 +165,24 @@ export function valueAtStakeText(row, ccy) {
   return row.shortfall == null ? base : `${base} · shortfall ${(row.shortfall * 100).toFixed(1)}%`;
 }
 
-/** W2: the ranks of the rows it overlaps with, "#3, #7"; none: a dash. */
-export function overlapsText(row, rows) {
-  const rank = Object.fromEntries(rows.map((r) => [r.claim_id, r.rank]));
-  const ranks = (row.overlaps_with || []).map((id) => rank[id]).filter((n) => n != null).sort((a, b) => a - b);
-  return ranks.length ? ranks.map((n) => `#${n}`).join(", ") : PLACEHOLDER;
+/** How a claim is called in a sentence (the backend's claim_name): its metric or type, the segment when not the whole company, the period. */
+export function claimName(row) {
+  const base = row.metric || typeLabel(row.claim_type);
+  const named = row.segment && row.segment !== WHOLE_COMPANY ? `${base} · ${row.segment}` : base;
+  return row.period ? `${named}, ${row.period}` : named;
 }
+
+/** W2: the other rows it overlaps with, by name (no rank prefix, design note section 6); none: a dash. */
+export function overlapsText(row, rows) {
+  const byId = Object.fromEntries(rows.map((r) => [r.claim_id, r]));
+  const names = (row.overlaps_with || []).map((id) => byId[id]).filter(Boolean).sort((a, b) => a.rank - b.rank).map(claimName);
+  return names.length ? names.join(" · ") : PLACEHOLDER;
+}
+
+/** Whether a row is a forecast: classified a target by its source, for a period after the as-of month (the backend's is_forecast_row). */
+export const isForecastRow = (row) => row.figure_type === "target" && Boolean(row.period_end) && Boolean(row.as_of_month)
+  && String(row.period_end).slice(0, 7) > String(row.as_of_month).slice(0, 7);
+export const hasForecast = (rows) => (rows || []).some(isForecastRow);
 
 /** W3: the label and reason, then the analysis and source key the figure was read from, with the month or quarter. */
 export function evidenceLines(row) {
@@ -177,16 +192,14 @@ export function evidenceLines(row) {
   return { first, second: `${row.evidence_analysis} · ${row.evidence_source_key}${at}` };
 }
 
-/** The second, smaller line of a claim: page, how the deck was read, gloss, value at stake, overlaps, reason, how it was approved, the
- *  growth basis. [text, testId] pairs; `prefix` keeps the test ids of a second copy (the five selected claims) apart from the register's. */
+/** The Details of a claim: how the deck was read, gloss, value at stake, overlaps, how it was approved, the growth basis (the page and the
+ *  reason sit in the Source and Result columns). [text, testId] pairs; `prefix` keeps the test ids of a second copy (the five selected claims) apart from the register's. */
 export function detailItems(row, rows, ccy, prefix = "register-") {
   return [
-    [row.page_ref || "—", "page"],
     [readingText(row.deck_reading), "reading"],
     [row.gloss || "—", "gloss"],
     [`${VAS_LABEL} ${valueAtStakeText(row, ccy)}`, "value-at-stake"],
     [`Overlaps with ${overlapsText(row, rows)}`, "overlaps"],
-    [row.reason, "evidence-reason"],
     ...(row.auto_approval ? [[row.auto_approval, "auto-approval"]] : []),
     ...(growthBasisLabel(row.growth_basis) ? [[`Growth basis ${growthBasisLabel(row.growth_basis)}`, "growth-basis-set"]] : []),
   ].map(([text, id]) => [text, `${prefix}${id}`]);

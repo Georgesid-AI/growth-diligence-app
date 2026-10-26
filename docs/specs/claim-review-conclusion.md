@@ -16,6 +16,10 @@ reads Contradicted when any member is, so a verified annual total cannot hide a 
 its source, "No figure chosen." or "Preferred: ..."), also when no single figure can be in the five; the memo's summary carries the same lines, and each unresolved conflict counts as an open question on the rule line.
 The outcome rules of §2 stand.
 
+Amended 2026-10-26 (George, forecast-and-payback.md section 7): when every annual figure of the register is in an open conflict and no other claim can be one of the five, the conclusion is "Insufficient evidence"
+(`insufficient`) with the rule line "No claim can be tested yet; {n} conflict(s) open." (the conflicts are an open question already and are not counted twice on that line), in the verdict and in the memo's summary; "No testable claims
+found" (W10) is shown only when the register holds no claim and no conflict. The reasons name a claim by its words and period, no rank.
+
 ## 0. Challenge and deletions (CLAUDE.md rule 4)
 - Needed: "Underwrite" and "Re-plan" read as an investment recommendation drawn from five claims. The simpler version: the
   same pure function over the same confirmed five, with outcome words that describe the claims, the contradictions outside

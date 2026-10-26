@@ -11,7 +11,6 @@ import pytest
 from claim_matching_support import engine_results, fixture
 
 from app import claim_matching as cm
-from app.formatting import fmt_month_name
 from app.decks import claims as deck_claims
 
 FIX = fixture()
@@ -342,14 +341,16 @@ def test_revenue_is_a_sum_so_with_no_period_it_is_unverified_not_unsupported():
 
 
 def test_a_sum_over_a_period_entirely_in_the_future_has_no_figure_to_date():
-    row = run_claim({"claim_type": "revenue", "snippet": "Revenue €9M", "value": 9_000_000, "target_date": "2026"})
+    unclassified = run_claim({"claim_type": "revenue", "snippet": "Revenue €9M", "value": 9_000_000, "target_date": "2026"})
+    assert unclassified["reason"].startswith("claim period not in supplied data"), "a later period alone is missing coverage, not a forecast"
+    row = run_claim({"claim_type": "revenue", "snippet": "Revenue €9M", "value": 9_000_000, "target_date": "2026", "basis": "projection"})
     assert (row["evidence_label"], row["observed_value"], row["gap_kind"]) == ("Unverified", None, None)
-    assert row["reason"] == cm.forecast_after_data(row["as_of_month"])
+    assert row["reason"] == "Forecast: required growth 263.3% a year", "the calculation or why there is none (forecast-and-payback.md section 3), not a repeated disclaimer"
 
 
 def test_a_forecast_of_a_quarter_figure_shows_the_latest_complete_quarter():
     row = run_claim({"claim_type": "gross_margin", "snippet": "Gross margin", "unit": "%", "currency": None, "value": 80,
-                     "target_date": "2025-Q2"})
+                     "target_date": "2025-Q2", "basis": "projection"})
     assert (row["evidence_label"], row["observed_value"], row["observed_at"], row["gap_kind"]) == ("Unverified", 78.0, "2023-Q4", "to go")
     assert row["gloss"] == "2.0 points lower (to go by Jun 2025)"
 
@@ -398,12 +399,13 @@ def test_a_revenue_claim_with_no_revenue_series_reads_no_observed_figure_and_ask
                                         "gloss", "definition_check", "definition_question", "evidence_analysis", "evidence_source_key"))
 
 
-FORECAST_READS = "Forecast period after the data (as-of {month}); cannot be tested until that period's revenue lines are supplied."
+FORECAST_READS = "Forecast: no comparison is calculated for this metric"
 
 
 def test_a_claim_for_a_period_after_the_as_of_month_reads_the_forecast_reason_not_no_metric_or_missing():
-    """George, 2026-10-25: 'no metric' and 'Missing: Upload revenue lines ...' are replaced for a period that ends after the as-of month;
-    the claim then links to no Missing Data item, so the memo's data requests do not ask for it."""
+    """George, 2026-10-25, amended 2026-10-26 (forecast-and-payback.md section 2): 'no metric' and 'Missing: Upload revenue lines ...' are
+    replaced for a forecast, a claim the source classification calls a projection for a period that ends after the as-of month; the claim then
+    links to no Missing Data item, so the memo's data requests do not ask for it. The same claim with no classification is missing coverage."""
     from app import verdict as vd
     results = copy.deepcopy(results_for(RUNS["A"]))
     as_of = results["as_of_month"]
@@ -411,11 +413,12 @@ def test_a_claim_for_a_period_after_the_as_of_month_reads_the_forecast_reason_no
     results["cac_payback"] = None
     results["missing_data"] = [{"metric": "CAC payback", "reason": "P&L not provided", "status": "Missing",
                                 "unlocked_by": "Upload P&L with month, S&M expense, revenue, cost of revenue", "file": "pnl"}]
-    expected = FORECAST_READS.format(month=fmt_month_name(as_of))
-    no_metric = run_claim({"claim_type": "unknown_kind", "snippet": "Something", "value": 5, "target_date": str(year)}, results=results)
+    expected = FORECAST_READS
+    no_metric = run_claim({"claim_type": "unknown_kind", "snippet": "Something", "value": 5, "target_date": str(year), "basis": "projection"},
+                          results=results)
     assert no_metric["metric"] is None and (no_metric["evidence_label"], no_metric["reason"]) == ("Unverified", expected)
     gm = {"claim_type": "gross_margin", "snippet": "Gross margin", "unit": "%", "currency": None, "value": 78}
-    missing = run_claim({**gm, "target_date": str(year)}, results=results)
+    missing = run_claim({**gm, "target_date": str(year), "basis": "projection"}, results=results)
     assert (missing["evidence_label"], missing["reason"]) == ("Unverified", expected)
     assert missing["evidence_analysis"] is None and missing["evidence_source_key"] is None
     assert vd.data_gaps(results, [missing], [missing["claim_id"]])[0]["claims"] == [], "the gap blocks no forecast claim"
@@ -692,7 +695,7 @@ def test_a_saved_gate_on_a_lower_is_better_metric_says_at_most_and_a_forecast_ro
                                                                       "gate_date": "2024-03-31"}}})
     assert sales["gate_sentence"] == ("Before the SDR hires, Median sales cycle must be at most 50.0 days by 2024-03-31. "
                                       "Observed 58.5 days (2024-02); claimed 45.0 days (2024-02).")
-    forecast = run_claim({"claim_type": "revenue", "snippet": "ARR", "value": 5_000_000, "target_date": "2026",
+    forecast = run_claim({"claim_type": "revenue", "snippet": "ARR", "value": 5_000_000, "target_date": "2026", "basis": "projection",
                           "claim_inputs": {"x1": {"gate_threshold": 1_000_000, "gate_budget_decision": "the plan",
                                                                      "gate_date": "2024-03-31"}}})
     assert forecast["gate_sentence"].startswith("Before the plan, ARR must be at least €1,000,000 by 2024-03-31. Observed €202,125 (2024-02)")
@@ -710,7 +713,7 @@ def test_a_register_row_has_exactly_the_fields_of_section_6_and_the_verdict_spec
                  "as_of_defaulted turnover_state turnover_note turnover_set_by turnover_reason implied_take_rate "
                  "implied_take_rate_source turnover_suggested deck_revenue_note definition_check definition_question "
                  "period_coverage months_missing growth_basis population figure_type required_unknown auto_approval basis scenario "
-                 "group_id group_role relationship").split()
+                 "group_id group_role relationship calc_lines calc_details").split()
     assert list(register(RUNS["A"])[0]) == section_6 == list(cm.FIELDS)
 
 

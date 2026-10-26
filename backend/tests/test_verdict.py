@@ -115,14 +115,14 @@ def test_the_three_reasons_are_the_claims_that_made_the_rule_fire_each_citing_it
     rows = register(RUNS["A"])
     v = vd.verdict(rows, results_for(RUNS["A"]), None)
     assert v["outcome"] == "Selected claims not supported" and len(v["reasons"]) == 3
-    assert v["reasons"][0] == ("#1 Revenue, Q4 2023: Contradicted, €49,047 against €60,000 (€10,953 lower (miss)). "
+    assert v["reasons"][0] == ("Revenue, Q4 2023: Contradicted, €49,047 against €60,000 (€10,953 lower (miss)). "
                                "Evidence: Revenue by month (revenue_series.data.total, CSV, rows 2–71 (70 rows), Oct–Dec 2023).")
     unsupported = [row(1, "Unsupported", gate=True), *[row(i, "Verified") for i in range(2, 6)]]
     again = vd.verdict(unsupported, {"reporting_currency": "EUR"}, {"claim_ids": [r["claim_id"] for r in unsupported]})
-    assert again["reasons"][0] == "#1 ARR, Feb 2024: Unsupported, reason 1.", "an implied claim with no stated value: the files are not what is missing"
+    assert again["reasons"][0] == "ARR, Feb 2024: Unsupported, reason 1.", "an implied claim with no stated value: the files are not what is missing"
     missing = [row(1, "Unverified", gate=True, reason="Missing: CRM export"), *[row(i, "Verified") for i in range(2, 6)]]
     assert vd.verdict(missing, {"reporting_currency": "EUR"}, {"claim_ids": [r["claim_id"] for r in missing]})["reasons"][0] == \
-        "#1 ARR, Feb 2024: Unverified, Missing: CRM export. No figure in the supplied files."
+        "ARR, Feb 2024: Unverified, Missing: CRM export. No figure in the supplied files."
 
 
 @pytest.mark.parametrize("run, expected", [("A", ("ok", "Selected claims not supported")), ("B", ("ok", "Selected claims partly supported")),
@@ -463,7 +463,7 @@ def test_the_fixture_gaps_are_the_three_path_to_plan_items_and_say_what_they_blo
     assert gaps[2]["requested"] == "Provide at least 25 months of revenue lines"
 
 
-def test_a_gap_that_blocks_register_claims_names_their_ranks_and_sorts_first():
+def test_a_gap_that_blocks_register_claims_names_the_claims_and_sorts_first():
     run = copy.deepcopy(RUNS["B"])
     for entry in run["claims"]:                 # the win rate claim, dated at the as-of month: a claim with no period is not matched
         if entry["claim_id"] == "c11":
@@ -472,7 +472,7 @@ def test_a_gap_that_blocks_register_claims_names_their_ranks_and_sorts_first():
     gaps = vd.data_gaps(results_for(run), rows, [r["claim_id"] for r in rows[:5]])
     first = gaps[0]
     assert first["item"] == "Sales cycle & win rate" and first["blocks_top5"] == 1
-    assert first["why"].startswith("Blocks Sales cycle and Win rate; claims #1. ")
+    assert first["why"].startswith("Blocks Sales cycle and Win rate; claims Win rate, Feb 2024. "), "the claim by name, no rank prefix"
     assert [g["blocks_top5"] for g in gaps] == sorted((g["blocks_top5"] for g in gaps), reverse=True)
     assert [g["item"] for g in vd.top_gaps(gaps)] == [g["item"] for g in gaps[:3]]
 

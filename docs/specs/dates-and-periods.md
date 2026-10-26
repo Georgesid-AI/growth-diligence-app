@@ -86,8 +86,8 @@ not in the data for NRR and growth).
 
 Details of Not covered: `before {metric}'s first month, {first}`; `after the latest valid source period, {evidence_to}`;
 `after {metric}'s last month, {last}` (a P&L metric); `months missing: {list}`; `{month} is possibly partial (tick 'Last
-month is complete' to use it)`. A forecast (period ends after the as-of month) stays a forecast (claim-matching.md table 2b),
-so a claim for a month between `evidence_to` and the as-of month is Not covered, never a forecast.
+month is complete' to use it)`. A forecast (a claim classified a target whose period ends after the as-of month, claim-matching.md table 2b, amended 2026-10-26) stays a forecast,
+so a claim for a month between `evidence_to` and the as-of month is Not covered, never a forecast, and a claim of an actual type for a period after the data is Not covered too.
 
 Replaced reasons: "before {metric}'s first month, {month}" and "months missing from the data: {months}" (claim-matching.md
 table 2b, Q2) now read through this table.

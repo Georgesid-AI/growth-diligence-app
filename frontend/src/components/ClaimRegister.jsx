@@ -3,20 +3,18 @@ import { toast } from "sonner";
 import { Download, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EvidenceLabel } from "@/components/EvidenceLabel";
-import { Provenance } from "@/components/Provenance";
+import { ForecastNote, fourCells } from "@/components/ClaimFourColumns";
 import { answerDefinitionCheck, answerTurnover, claimsCsvUrl, downloadFile, getClaimRegister, updateClaimInputs } from "@/lib/api";
 import {
   DEFINITION_ANSWERS, DOWNLOAD_LABEL, GATE_TAGS, NO_METRIC,
-  REGISTER_COLUMNS, REGISTER_COLUMN_WIDTHS, REGISTER_HEADING, STALE_LABEL, TURNOVER_QUESTION, answerReady, reasonsFor, claimCellText, rateHover, takeRateText, evidenceLines, gapText, metricOptions,
-  observedText, detailItems, registerRows, segmentOptions, COLUMN_EXPLAINERS, EVIDENCE_SUBTITLE,
+  REGISTER_COLUMNS, REGISTER_COLUMN_WIDTHS, REGISTER_HEADING, STALE_LABEL, TURNOVER_QUESTION, answerReady, reasonsFor, claimCellText, takeRateText, metricOptions,
+  detailItems, hasForecast, registerRows, segmentOptions, COLUMN_EXPLAINERS, EVIDENCE_SUBTITLE, EXTRACTION_EXPLAINER,
   GROWTH_BASES, SET_GROWTH_BASIS,
 } from "@/lib/claimRegister";
-import { missingText } from "@/lib/periods";
-import { countsOf, countsText, detailsLabel, partsOf, visibleRows } from "@/lib/claimGroups";
+import { GROUP_DETAILS, countsOf, countsText, detailsLabel, partsOf, visibleRows } from "@/lib/claimGroups";
 import { CALCULATE_CLASS } from "@/lib/chatUpload";
 import { describeRequestError } from "@/lib/requestError";
 import { seeGlossary } from "@/lib/glossary";
-import FxText from "@/components/FxText";
 import { NO_DATE } from "@/lib/deckClaims";
 
 // The button the dropdown points at is drawn like Map and Compute; the other is the same style, paler. Any other reason: both pale.
@@ -120,30 +118,66 @@ export function GrowthBasisCell({ row, onSet }) {
   );
 }
 
-/** The parts of a reconciled annual total, the parts of another set that reconciles too and the figures stated again, under the row's Details:
- *  every one keeps its own claim, period, label and reason, and a contradicted one is counted on the collapsed line
- *  (docs/specs/claim-groups.md section 4). */
-function GroupParts({ row, rows, ccy }) {
+/** The Details of a row, one control (docs/specs/forecast-and-payback.md section 5.1, claim-groups.md section 4): the collapsed line carries the
+ *  contradiction of a part ("Details · 4 parts · 1 contradicted"); opened it shows the parts of a reconciled annual total, the parts of another set
+ *  and the figures stated again, each with its own claim, period, label and reason; the formula inputs of a calculation; and the corrections: the
+ *  segment and metric, the extraction confidence, how the deck was read, the gloss, value at stake, overlaps and the gate. The questions a row asks
+ *  (turnover, definition check, growth basis) stay outside it. */
+function RowDetails({ row, rows, ccy, results, save }) {
   const [open, setOpen] = useState(false);
   const parts = partsOf(row, rows);
-  if (!parts.length) return null;
+  const detail = detailItems(row, rows, ccy);
   return (
-    <div data-testid="register-group">
-      <button type="button" className="text-sky-700 underline underline-offset-2" aria-expanded={open} data-testid="register-group-toggle"
-        onClick={() => setOpen((o) => !o)}>{detailsLabel(parts)}</button>
+    <div data-testid="register-details">
+      <button type="button" className="text-sky-700 underline underline-offset-2" aria-expanded={open}
+        data-testid={parts.length ? "register-group-toggle" : "register-details-toggle"}
+        onClick={() => setOpen((o) => !o)}>{parts.length ? detailsLabel(parts) : GROUP_DETAILS}</button>
       {open && (
-        <ul className="mt-1 space-y-1 border-l-2 border-[#E5E7EB] pl-3" data-testid="register-group-parts">
-          {parts.map((p) => (
-            <li key={p.claim_id} data-testid="register-group-part">
-              <span className="font-mono text-slate-700">#{p.rank}</span> {p.group_role === "repeat" && <span className="text-slate-600">Also stated: </span>}
-              <span className="text-slate-900">{claimCellText(p, ccy)}</span>
-              {p.group_role === "repeat" && <span className="font-mono text-slate-500"> · {p.page_ref}</span>}
-              <span className="font-mono text-slate-500"> · {p.period || NO_DATE}</span> · <EvidenceLabel row={p} testId="register-group-part-evidence" />
-              <span className="text-slate-600"> · {p.reason}</span>
-              {p.relationship && <span className="text-slate-500"> · {p.relationship}</span>}
-            </li>
-          ))}
-        </ul>
+        <div className="mt-1 space-y-1 border-l-2 border-[#E5E7EB] pl-3" data-testid="register-details-body">
+          {parts.length > 0 && (
+            <ul className="space-y-1" data-testid="register-group-parts">
+              {parts.map((p) => (
+                <li key={p.claim_id} data-testid="register-group-part">
+                  {p.group_role === "repeat" && <span className="text-slate-600">Also stated: </span>}
+                  <span className="text-slate-900">{claimCellText(p, ccy)}</span>
+                  {p.group_role === "repeat" && <span className="font-mono text-slate-500"> · {p.page_ref}</span>}
+                  <span className="font-mono text-slate-500"> · {p.period || NO_DATE}</span> · <EvidenceLabel row={p} testId="register-group-part-evidence" />
+                  <span className="text-slate-600"> · {p.reason}</span>
+                  {p.relationship && <span className="text-slate-500"> · {p.relationship}</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+          {(row.calc_details || []).length > 0 && (
+            <ul className="font-mono text-slate-600" data-testid="register-calc-details">
+              {row.calc_details.map((line, i) => <li key={i}>{line}</li>)}
+            </ul>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-1">Segment
+              <select value={row.segment} onChange={(e) => save(row, { segment: e.target.value }).catch(() => {})} className={selectClass} data-testid="register-segment">
+                {withCurrent(segmentOptions(results), row.segment).map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </label>
+            <span className="text-[10px] text-slate-500">{row.segment_set_by === "analyst" ? "set by you" : "proposed"}</span>
+            <label className="flex items-center gap-1">Metric
+              <select value={row.metric ?? NO_METRIC} onChange={(e) => save(row, { metric: e.target.value }).catch(() => {})} className={selectClass} data-testid="register-metric">
+                {withCurrent(metricOptions(row), row.metric ?? NO_METRIC).map((m) => (
+                  <option key={m} value={m}>{m === NO_METRIC ? "none" : m}</option>
+                ))}
+              </select>
+            </label>
+            <span className="font-mono text-slate-700" title={EXTRACTION_EXPLAINER}>
+              Extraction confidence <span data-testid="register-confidence">{row.extraction_confidence || "—"}</span>
+            </span>
+          </div>
+          <div>
+            {detail.map(([text, testId], i) => (
+              <span key={testId}>{i > 0 && " · "}<span data-testid={testId}>{text}</span></span>
+            ))}
+          </div>
+          <GateStatus row={row} />
+        </div>
       )}
     </div>
   );
@@ -201,6 +235,7 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
         <p className="text-sm text-slate-600" data-testid="claim-register-empty">No claims in the register yet. Run audit tests the claims found in the uploaded documents; the ones that need your word are under Needs your attention.</p>
       )}
       {rows && countsText(countsOf(rows)) && <p className="text-xs text-slate-600 mb-2" data-testid="claim-register-counts">{countsText(countsOf(rows))}</p>}
+      {rows && hasForecast(rows) && <ForecastNote testId="forecast-note" />}
       {rows && rows.length > 0 && (
         <div className="rounded-md border border-[#E5E7EB] bg-white" data-testid="claim-register-scroll">
           <table className="w-full table-fixed text-xs" data-testid="claim-register-table">
@@ -210,81 +245,31 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
                 {REGISTER_COLUMNS.map((c) => (
                   <th key={c} className="py-2 px-3 font-medium" title={COLUMN_EXPLAINERS[c]}>
                     {c}
-                    {c === "Evidence status" && <div className="normal-case tracking-normal text-[10px] text-slate-400">{EVIDENCE_SUBTITLE}</div>}
+                    {c === "Result" && <div className="normal-case tracking-normal text-[10px] text-slate-400">{EVIDENCE_SUBTITLE}</div>}
                   </th>
                 ))}
               </tr>
             </thead>
-            {/* one tbody per claim: the claim's line, then a second smaller grey line spanning the row */}
+            {/* one tbody per claim: the four columns, then a smaller line spanning the row with the questions it asks and its Details */}
             {visibleRows(rows).map((row) => {
-              const observed = observedText(row, ccy);
-              const path = evidenceLines(row).second;
-              const detail = detailItems(row, rows, ccy);
+              const cells = fourCells({ row, ccy, auditId });
               return (
                 <tbody key={row.claim_id} className="border-b border-[#F1F5F9] align-top break-words" data-testid="claim-register-row">
                   <tr>
-                    <td className="pt-2 px-3 font-mono text-slate-700">{row.rank}</td>
-                    <td className="pt-2 px-3 text-slate-900">
-                      <span title={rateHover(row, ccy) || undefined} data-testid="register-claim">
-                        <FxText text={claimCellText(row, ccy)} href={`/audit/${auditId}/mapping#fx-settings`} testId="register-claim-fx-link" />
-                      </span>
-                      <div className="font-mono text-[11px] text-slate-500" data-testid="register-period">{row.period || NO_DATE}</div>
-                      {row.period && row.period_note ? <div className="text-[11px] text-slate-500" data-testid="register-period-note">{row.period_note}</div> : null}
-                    </td>
-                    <td className="pt-2 px-3">
-                      <select value={row.segment} onChange={(e) => save(row, { segment: e.target.value }).catch(() => {})} className={`${selectClass} w-full`} data-testid="register-segment">
-                        {withCurrent(segmentOptions(results), row.segment).map((s) => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                      <div className="text-[10px] text-slate-500 mt-0.5">{row.segment_set_by === "analyst" ? "set by you" : "proposed"}</div>
-                    </td>
-                    <td className="pt-2 px-3">
-                      <div className="font-mono text-slate-900" data-testid="register-observed">
-                        <Provenance source={row.observed_source}>{observed.value}</Provenance>
-                        {observed.at && <span className="text-[10px] text-slate-500"> · {observed.at}</span>}
-                      </div>
-                      {/* the figure's own citation, beside the number: source key, sheet, rows, period (George, 2026-10-19, issue #136) */}
-                      {row.observed_citation && (
-                        <div className="text-[10px] font-mono text-slate-500 break-words" data-testid="register-observed-citation">{row.observed_citation}</div>
-                      )}
-                      {/* the months of the claim's period the data lacks, beside the value (dates-and-periods.md section 4) */}
-                      {missingText({ missing: row.months_missing }) && (
-                        <div className="text-[10px] font-mono text-amber-800" data-testid="register-months-missing">{missingText({ missing: row.months_missing })}</div>
-                      )}
-                      <select value={row.metric ?? NO_METRIC} onChange={(e) => save(row, { metric: e.target.value }).catch(() => {})} className={`${selectClass} w-full mt-1`} data-testid="register-metric">
-                        {withCurrent(metricOptions(row), row.metric ?? NO_METRIC).map((m) => (
-                          <option key={m} value={m}>{m === NO_METRIC ? "none" : m}</option>
-                        ))}
-                      </select>
-                    </td>
-                    <td className="pt-2 px-3 font-mono text-slate-800" data-testid="register-gap">{gapText(row, ccy)}</td>
-                    <td className="pt-2 px-3 font-mono text-slate-700"><span data-testid="register-confidence">{row.extraction_confidence || "—"}</span></td>
-                    <td className="pt-2 px-3">
-                      <EvidenceLabel row={row} testId="register-evidence" />
-                      {/* entered by Python on its own (simplified-flow.md section 2) */}
-                      {row.auto_approval && <span className="ml-1 text-[10px] font-mono text-slate-500" data-testid="register-auto">auto</span>}
-                    </td>
+                    <td className="pt-2 px-3 text-slate-900">{cells.claim}</td>
+                    <td className="pt-2 px-3">{cells.evidence}</td>
+                    <td className="pt-2 px-3">{cells.result}</td>
+                    <td className="pt-2 px-3">{cells.source}</td>
                   </tr>
                   <tr>
                     <td colSpan={REGISTER_COLUMNS.length} className="pb-2 px-3 text-[11px] text-slate-500 space-y-1" data-testid="register-detail">
-                      <div>
-                        {detail.map(([text, testId], i) => (
-                          <span key={testId}>{i > 0 && " · "}<span data-testid={testId}>{text}</span></span>
-                        ))}
-                        {String(row.reason || "").startsWith("FX rate needed") && (
-                          <a href={`/audit/${auditId}/mapping#fx-settings`} className="ml-1 text-sky-700 underline" data-testid="register-fx-link">FX settings</a>
-                        )}
-                        {path && (
-                          <> · <span data-testid="register-evidence-source"><Provenance source={row.observed_source}>{path}</Provenance></span></>
-                        )}
-                      </div>
                       {row.relationship && <div className="text-slate-600" data-testid="register-relationship">{row.relationship}</div>}
-                      <GroupParts row={row} rows={rows} ccy={ccy} />
                       <div className="text-xs text-slate-700 space-y-1">
                         {row.turnover_state && <TurnoverCell row={row} onAnswer={answer} />}
                         {row.definition_check && <DefinitionCell row={row} onAnswer={answerDefinition} />}
                         {row.growth_basis === "unknown" && <GrowthBasisCell row={row} onSet={save} />}
-                        <GateStatus row={row} />
                       </div>
+                      <RowDetails row={row} rows={rows} ccy={ccy} results={results} save={save} />
                     </td>
                   </tr>
                 </tbody>

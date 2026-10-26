@@ -1,7 +1,7 @@
 # Spec: Claim groups and conflict resolution
 Status: Agreed scope, the task of 2026-10-26: sections 1 and 2 of docs/design/claim-review-simplified-design.md (that design note is not amended).
-Location: docs/specs/claim-groups.md. Code: `backend/app/claim_groups.py`. Sections 3 to 6 of the design note (forecast diagnostics, source association,
-annual payback, the four-column rendering) are other changes and are not built here.
+Location: docs/specs/claim-groups.md. Code: `backend/app/claim_groups.py`. Sections 3 to 6 of the design note are other changes and are not built here: forecast diagnostics, annual payback and the four-column
+rendering are docs/specs/forecast-and-payback.md (2026-10-26), source association is docs/specs/source-association.md.
 No architecture change: the module is pure like `claim_matching`, nothing reaches a model, and the engine output (`schemas/metrics.py`) is unchanged.
 
 ## 0. Challenge and deletions (CLAUDE.md rule 4)
@@ -52,7 +52,7 @@ Two rows are related only when every part of this key is equal and known; a row 
 - Incomplete, non-reconciling or ambiguous parts stay independent claims; the total's `relationship` says which and why ("Quarters: 3 of 4 stated; kept as independent
   claims", "Quarters sum to €1,040,000, outside ±2% of €1,000,000; kept as independent claims").
 - The same figure stated again (the same scope and period, within the tolerance) folds into the row of its first statement, the lead: the repeat has role `repeat`, the lead's `group_id` (the group's, or, when no
-  group forms or the lead is a conflict candidate, an id of the two statements), the note "Same figure as #{rank} ({page}); counted once" and no value at stake. Both sources stay visible under the lead's
+  group forms or the lead is a conflict candidate, an id of the two statements), the note "Same figure as the one stated on {page}; counted once" (amended 2026-10-26, forecast-and-payback.md section 5.2: no rank on a screen) and no value at stake. Both sources stay visible under the lead's
   Details ("Also stated: ..."). The fold applies to every annual figure, also when no group forms, and to a part stated twice inside a formed group.
 
 ## 4. Group presentation

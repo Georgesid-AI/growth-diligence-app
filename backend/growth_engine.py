@@ -1447,14 +1447,52 @@ def _gross_margin(fields: dict):
     return None, []
 
 
+def _arr_at(mrr_series: dict | None, month: str | None) -> float | None:
+    """ARR of a month: the recurring MRR total of the revenue file × 12 (the register's ARR), None when the month is not in the series."""
+    for d in (mrr_series or {}).get("data") or ():
+        if d.get("month") == month and isinstance(d.get("total"), (int, float)):
+            return d["total"] * 12
+    return None
+
+
+def _month_back(month: str | None, months: int) -> str | None:
+    if not month:
+        return None
+    p = pd.Period(month, "M") - months
+    return _period_str(p)
+
+
+YEARLY_PAYBACK_RULE = ("CAC payback = 12 × S&M ÷ (incremental annual recurring value × gross margin): the revenue-growth proxy takes revenue growth "
+                       "(revenue − last year's revenue), the net-new-ARR proxy takes net new ARR (year-end ARR − prior year-end ARR); "
+                       "S&M % = S&M ÷ revenue; gross margin = (revenue − cost of revenue) ÷ revenue")
+
+
+def _payback(sm: dict | None, denominator: float | None, gm: float | None, missing: str, invalid: str) -> tuple:
+    """(months, reason) of one proxy: 12 × S&M ÷ (denominator × gross margin), the first input that is missing or not positive naming itself."""
+    if not sm:
+        return None, "no S&M line"
+    if sm["value"] <= 0:
+        return None, "S&M not positive"
+    if denominator is None:
+        return None, missing
+    if denominator <= 0:
+        return None, invalid
+    if gm is None or gm <= 0:
+        return None, "gross margin not positive or missing"
+    return _round(12 * sm["value"] / (denominator * gm)), None
+
+
 def compute_yearly_basis(yearly: dict | None, results: dict, revenue_series: dict | None) -> dict | None:
-    """The yearly-basis block: per actual year revenue, new revenue, S&M as % of revenue, gross margin and its change, and CAC
-    payback (yearly basis) = 12 × yearly S&M ÷ (new revenue × gross margin), in months, shown only when new revenue and the margin
-    are positive; past forecasts against actuals; the company-reported actuals against the revenue file; and the metrics that need
-    monthly data and were not computed. None without an actual year."""
+    """The yearly-basis block: per actual year revenue, new revenue, S&M as % of revenue, gross margin and its change, and the annual CAC
+    payback (yearly basis) = 12 × yearly S&M ÷ (incremental annual recurring value × gross margin), in months, with two named proxies: the
+    revenue-growth proxy (new revenue) and the net-new-ARR proxy (year-end ARR less the prior year-end ARR), each shown only when its denominator
+    and the margin are positive, with the S&M line's scope (docs/specs/forecast-and-payback.md section 4); past forecasts against actuals; the
+    company-reported actuals against the revenue file; and the metrics that need monthly data and were not computed. None without an actual
+    year."""
     if not yearly or not yearly.get("actual"):
         return None
     years, by_year = [], {}
+    mrr = results.get("mrr_series")
     for item in sorted(yearly["actual"], key=lambda y: y.get("year") or 0):
         fields = item["fields"]
         rev = (fields.get("revenue") or {}).get("value")
@@ -1463,27 +1501,33 @@ def compute_yearly_basis(yearly: dict | None, results: dict, revenue_series: dic
         prev = by_year.get((item.get("year") or 0) - 1)
         prev_rev = ((prev or {}).get("fields", {}).get("revenue") or {}).get("value")
         new_rev = rev - prev_rev if rev is not None and prev_rev is not None else None
-        row = {"period": item["period"], "revenue": _round(rev) if rev is not None else None,
+        end = item.get("end")
+        arr_end, arr_prior = _arr_at(mrr, end), _arr_at(mrr, _month_back(end, 12))
+        net_new = arr_end - arr_prior if arr_end is not None and arr_prior is not None else None
+        if not (mrr or {}).get("months"):
+            arr_missing = "no ARR series (revenue file)"
+        elif arr_end is None:
+            arr_missing = "no ARR for the year-end"
+        else:
+            arr_missing = "no ARR for the year-end before"
+        row = {"period": item["period"], "period_start": item.get("start"), "period_end": end, "revenue": _round(rev) if rev is not None else None,
                "new_revenue": _round(new_rev) if new_rev is not None else None,
                "sm_pct_revenue": _round(sm["value"] / rev, 4) if sm and rev else None,
+               "sm_expense": _round(sm["value"]) if sm else None, "sm_scope": (sm.get("scope") or "unknown") if sm else None,
                "gross_margin_pct": _round(gm, 4) if gm is not None else None,
-               "gross_margin_change": None, "cac_payback_months": None, "cac_payback_reason": None, "basis": YEARLY_BASIS}
+               "gross_margin_change": None, "cac_payback_months": None, "cac_payback_reason": None,
+               "arr_year_end": _round(arr_end) if arr_end is not None else None,
+               "arr_prior_year_end": _round(arr_prior) if arr_prior is not None else None,
+               "net_new_arr": _round(net_new) if net_new is not None else None,
+               "cac_payback_net_new_arr_months": None, "cac_payback_net_new_arr_reason": None, "basis": YEARLY_BASIS}
         prev_gm = _gross_margin(prev["fields"])[0] if prev else None
         if gm is not None and prev_gm is not None:
             row["gross_margin_change"] = _round(gm - prev_gm, 4)
-        if not sm:
-            row["cac_payback_reason"] = "no S&M line"
-        elif new_rev is None:
-            row["cac_payback_reason"] = "no revenue for the year before"
-        elif new_rev <= 0:
-            row["cac_payback_reason"] = "new revenue not positive"
-        elif gm is None or gm <= 0:
-            row["cac_payback_reason"] = "gross margin not positive or missing"
-        else:
-            row["cac_payback_months"] = _round(12 * sm["value"] / (new_rev * gm))
+        row["cac_payback_months"], row["cac_payback_reason"] = _payback(sm, new_rev, gm, "no revenue for the year before", "new revenue not positive")
+        row["cac_payback_net_new_arr_months"], row["cac_payback_net_new_arr_reason"] = _payback(sm, net_new, gm, arr_missing, "net new ARR not positive")
         cells = sorted({c for f in fields.values() for c in f["cells"]} | set(gm_cells), key=lambda c: (len(c), c))
-        row["source"] = _yearly_source(yearly, cells, "S&M % = S&M ÷ revenue; gross margin = (revenue − cost of revenue) ÷ revenue; "
-                                                      "CAC payback = 12 × S&M ÷ (revenue − last year's revenue) × gross margin")
+        scope = f"; S&M line: {row['sm_scope']}" if sm else ""
+        row["source"] = _yearly_source(yearly, cells, YEARLY_PAYBACK_RULE + scope)
         years.append(row)
         if item.get("year") is not None:
             by_year[item["year"]] = item
@@ -1519,7 +1563,7 @@ def compute_yearly_basis(yearly: dict | None, results: dict, revenue_series: dic
     rec = results.get("revenue_reconciliation") or {}
     needs = (("NRR (12-month)", results.get("nrr")), ("Gross revenue churn", results.get("gross_churn")),
              ("Integrity tests (revenue reconciliation)", rec if rec.get("available") else None),
-             ("Median sales cycle", results.get("sales_cycle")), ("CAC payback (monthly)", results.get("cac_payback")))
+             ("Median sales cycle", results.get("sales_cycle")), ("CAC payback (monthly timing)", results.get("cac_payback")))
     return {"basis": YEARLY_BASIS, "years": years, "track_record": track, "reported_vs_file": reported,
             "missing": [{"metric": name, "text": NEEDS_MONTHLY} for name, found in needs if not found],
             "source": _yearly_source(yearly, [f"A{r}" for r in yearly.get("rows") or ()],

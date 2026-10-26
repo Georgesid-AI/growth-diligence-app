@@ -203,7 +203,7 @@ def test_the_engine_rounds_counts_and_days_once_and_percents_are_fractions():
     assert isinstance(s["acv_path"]["required_net_new_per_year"], int)
     assert 0 < s["nrr"]["overall_pct"] < 10 and 0 <= s["win_rate"]["win_rate_pct"] <= 1
     assert all(0 <= v <= 10 for r in s["cohort_retention"]["data"] for v in r["values"].values())
-    assert s["contract_version"] == metrics.CONTRACT_VERSION == 9 and s["reporting_currency"] == "EUR"
+    assert s["contract_version"] == metrics.CONTRACT_VERSION == 10 and s["reporting_currency"] == "EUR"
 
 
 @pytest.mark.parametrize("model, value, expected", [
@@ -543,7 +543,7 @@ def test_the_integrity_smoothness_is_the_integrity_modules_own_with_no_second_ca
 # Contract 6: what a deck claim carries (chat-upload.md section 28; review of PR 164, H2)
 # ---------------------------------------------------------------------------
 def test_contract_6_names_the_deck_claim_fields_and_the_register_row_and_the_csv_carry_them():
-    assert metrics.CONTRACT_VERSION == 9 and metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags")
+    assert metrics.CONTRACT_VERSION == 10 and metrics.DECK_CLAIM_FIELDS == ("basis", "scenario", "flags")
     assert {"basis", "scenario"} <= set(cm.FIELDS), "the register row, the baseline CSV and the memo's Appendix A"
     assert "flags" not in cm.FIELDS, "flags ride the deck list, not the register"
     assert not set(metrics.DECK_CLAIM_FIELDS) & gateway.OUTBOUND_FIELDS, "server-only: none of the three reaches the gateway"
@@ -578,7 +578,7 @@ def api(monkeypatch):
 STALE = "Stale – re-run audit"
 
 
-@pytest.mark.parametrize("stored_version", [None, 1, 2, 3, 4, 8])      # 8: the contract before the simplified flow (George, 2026-10-25)
+@pytest.mark.parametrize("stored_version", [None, 1, 2, 3, 4, 8, 9])      # 8: before the simplified flow (George, 2026-10-25); 9: before the annual payback proxies (forecast-and-payback.md)
 def test_results_of_an_older_contract_are_stale_not_recomputed_and_not_shown(api, stored_version):
     """Version 0 (no version) holds whole-number percents, 1 to 4 lack the fields added since: whichever it is, a read never calculates
     and never answers with the figures, and `/results` says "Stale – re-run audit" until Run audit calculates again."""
@@ -736,6 +736,13 @@ def test_every_source_key_of_the_memos_evidence_table_is_a_path_the_model_declar
             assert _declared(MetricsPayload, _pattern(key).split(".")), f"{metric}: {key} is not declared by MetricsPayload"
     assert set(cm.EVIDENCE) == set(cm.METRICS) - {cm.VOLUME, cm.CONTRACT_VALUE, *cm.UNIT_ECONOMICS.values()}, \
         "every metric of the register has an evidence row, but transaction volume, contract value, ARPA and ARPU (no engine source)"
+
+
+def test_the_annual_payback_source_keys_are_paths_the_model_declares():
+    """forecast-and-payback.md section 4: an annual CAC payback claim cites the yearly-basis block, not a quarter of the monthly P&L."""
+    for key in cm.ANNUAL_KEYS.values():
+        assert _declared(MetricsPayload, key.split(".")), f"{key} is not declared by MetricsPayload"
+    assert not _declared(MetricsPayload, "yearly_basis.years.cac_payback_gross_new_arr_months".split("."))
 
 
 def test_a_wrong_source_key_is_caught_by_the_declared_path_check():

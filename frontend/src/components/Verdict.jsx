@@ -145,7 +145,7 @@ function OtherContradictions({ v }) {
         <ul className="space-y-1 text-xs text-slate-800">
           {others.map((o) => (
             <li key={o.claim_id} data-testid="other-contradiction-row">
-              <span className="font-mono text-slate-700">#{o.rank}</span> {o.metric}: {o.gap}
+              {o.metric}: {o.gap}
               <span className="block text-[11px] font-mono text-slate-500">{o.source}</span>
             </li>
           ))}

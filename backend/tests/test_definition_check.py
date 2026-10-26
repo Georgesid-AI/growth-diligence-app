@@ -67,7 +67,7 @@ def test_claimed_1_observed_26_asks_then_yes_is_a_verified_beat_worth_flagging_a
     yes = customers(1, 26, "yes")
     assert state(yes) == ("Verified", "yes", "beat") and cm.is_beat(yes)
     assert vd.flagged_rows([yes]) == [yes]
-    assert vd.flag_text(yes) == ("#1 Customer count, Feb 2024: Verified, 25 customers more (beat). "
+    assert vd.flag_text(yes) == ("Customer count, Feb 2024: Verified, 25 customers more (beat). "
                                  "Same metric and period confirmed by the analyst.")
     no = customers(1, 26, "no")
     assert state(no) == ("Unverified", "no", "beat") and no["reason"] == "definition mismatch"

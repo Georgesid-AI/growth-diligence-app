@@ -52,7 +52,7 @@ def test_plan_1_five_verified_selected_claims_and_one_contradicted_unselected_sh
     assert HEADING in summary and "Verdict: Selected claims supported – All 5 selected claims are Verified." in summary
     assert SCOPE in summary
     assert re.search(r"Other contradictions:\n- ARR(?: \(see glossary\))?, FY2023: €41,857 lower \(miss\)", summary), summary
-    assert "Reasons:\n- #" in summary and "Unresolved questions:" in summary, "computed, not typed"
+    assert "Reasons:\n- ARR (see glossary), Feb 2024: Verified, €202,125 against €212,700 (€10,575 lower (miss))." in summary and "Unresolved questions:" in summary, "computed, not typed"
 
 
 def test_no_other_contradiction_reads_none_found_among_tested_claims(register_api):
@@ -71,7 +71,7 @@ def test_the_reasons_and_unresolved_questions_are_computed_and_the_memo_needs_no
     memo = client.get(f"/api/audits/{AUDIT}/memo.md")
     assert memo.status_code == 200, memo.text
     summary = memo.text.split("## Summary")[1].split("## Deal thesis")[0]
-    assert "Reasons:\n- #" in summary and "Unresolved questions:" in summary and "Analyst note:" not in summary
+    assert "Reasons:\n- ARR (see glossary), Feb 2024: Verified, €202,125 against €212,700 (€10,575 lower (miss))." in summary and "Unresolved questions:" in summary and "Analyst note:" not in summary
     assert client.put(f"/api/audits/{AUDIT}/ic-inputs", json={"note": "Agree."}).status_code == 200
     again = client.get(f"/api/audits/{AUDIT}/memo.md").text
     assert "Analyst note: Agree." in again.split("## Deal thesis")[0]

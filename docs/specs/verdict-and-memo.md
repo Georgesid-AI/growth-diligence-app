@@ -19,6 +19,11 @@ Amended 2026-10-25 (George, review of PR #180): a never-tested register row (use
 worst cases, forecast-file figures) is a row of the memo's Data gaps table (Appendix B) with the reason it cannot be measured, and section 6 counts them.
 Amended 2026-10-24 (George, PR 176): §6.1 reads as the new proposal rule; the memo's VaS column (Appendix A) prints the register's
 `value_at_stake_arr`, de-duplicated as Appendix D states (W16), and the row's stored `vas_reason` where it has no amount.
+Amended 2026-10-26 (George, docs/specs/forecast-and-payback.md section 5): the memo's Appendix A opens with the four columns of the screen, "Claim and period · Evidence / calculation · Result · Source" (the Evidence cell is the row's
+calculation lines, else the observed figure with its period and gap; the Result cell the label and the reason; the Source cell the figure's citation and the deck page), then "Ref" (the rank, the position the footnotes and "counted in"
+notes cite), Approval, Basis, Case, Relationship, VaS, Overlaps with, Gate, Key gate and Top 5; the Label column is the first word of the Result cell. The summary prints the one forecast sentence ("Forecast calculations describe
+assumptions; future outcomes are unverified.") when a forecast row exists. W11, the Worth flagging lines and the data-gap lines name a claim by its words and period, no rank prefix. "Verdict: Insufficient evidence – No claim can be
+tested yet; {n} conflict(s) open." when only open annual conflicts remain (claim-review-conclusion.md).
 Amended 2026-10-26 (George, docs/specs/claim-groups.md): the baseline CSV (§5) carries the register's last three fields, `group_id`, `group_role` and `relationship`; the memo's Appendix A gains a Relationship column after Case
 ("—" for a claim that relates to nothing) and its VaS cell adds a row's "run-rate: ..." mark; the summary gains "Grouping: n items are shown for m claims; ..." when a group formed and "Unresolved conflicts:" lines when an annual
 conflict is open (claim-review-conclusion.md). The proposal of §6.1 takes a reconciled group once (claim-matching.md, amended 2026-10-26).
@@ -343,7 +348,7 @@ are unchanged. So W16 and W24 below read "ARR (see glossary)" at their first ARR
 | W8 | verdict | Title: Verdict · Underwrite: All top-5 claims are Verified. · Underwrite with gates: No top-5 claim is Contradicted; {n} is (1) or are (2 or more) Unverified or Unsupported. · Re-plan: {n} top-5 claim(s) Contradicted. / {n} top-5 claims Unsupported (3 or more). · fewer rows: Top {n} (the register has {n} claims). |
 | W9 | blocked | Verdict blocked: set a gate on #{ranks} (top-5 claims that are not Verified). |
 | W10 | no verdict | No verdict: the register has no claims. / No verdict: compute the audit first. |
-| W11 | reason | #{rank} {claim}: {label}, {observed} against {claimed} ({gap in app format}). Evidence: {analysis} · {source key} ({file} · {sheet} · {rows}). Missing data (reason "Missing: …"): #{rank} {claim}: {label}, {reason}. No figure in the supplied files. Any other row without an observed figure ends at its reason (amended 2026-10-25: the phrase is only for a figure the files lack). |
+| W11 | reason | {claim}: {label}, {observed} against {claimed} ({gap in app format}). Evidence: {analysis} · {source key} ({file} · {sheet} · {rows}). Missing data (reason "Missing: …"): {claim}: {label}, {reason}. No figure in the supplied files. Any other row without an observed figure ends at its reason (amended 2026-10-25: the phrase is only for a figure the files lack). |
 | W12 | key gates | No key gates marked. |
 | W13 | deal terms | Deal terms: not available – the execution capacity review has not been run. |
 | W14 | other gates | {n} other claims still need a gate. |

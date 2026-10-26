@@ -146,7 +146,7 @@ def test_a_never_tested_row_is_in_the_data_gaps_table_with_the_reason_it_cannot_
     section = text.split("## Data gaps and requests")[1].split("## Appendix A")[0]
     assert "1 claim is never tested against data; the reason for each is in Appendix B" in section
     table = text.split("## Appendix B")[1].split("Requests")[0]
-    assert f"#{last['rank']} " in table and f"Cannot be measured: {cm.PRICING_NOTE}." in table
+    assert f"{cm.claim_name(last)} " in table and f"Cannot be measured: {cm.PRICING_NOTE}." in table
     assert "never tested against data" not in memo(), "a register of tested claims adds neither the line nor the rows"
     assert "Cannot be measured" not in memo()
 
@@ -322,7 +322,7 @@ def test_the_summary_counts_the_definition_checks_answered_and_worth_flagging_li
     summary = head_of(text).split("## Deal thesis")[0]
     assert re.search(r"^Definition checks: 1 answered Yes, 0 answered No\.\[\^\d+\]$", summary, re.M), summary
     section = head_of(text).split("## Worth flagging")[1].split("## Data gaps")[0]
-    line = "- #1 New MRR (see glossary), Q4 2023: Contradicted, €5,000 lower (miss). Same metric and period confirmed by the analyst."
+    line = "- New MRR (see glossary), Q4 2023: Contradicted, €5,000 lower (miss). Same metric and period confirmed by the analyst."
     assert sum(1 for item in section.splitlines() if item.startswith(line)) == 1, section
     banner = {"kind": "claim_contradicted", "claim_id": "c37", "text": "Top-5 claim contradicted: revenue 5,000 EUR vs 0 EUR observed."}
     shown = head_of(memo(run="D", answers={"c37": "yes"}, blockers=[banner])).split("## Worth flagging")[1].split("## Data gaps")[0]
@@ -340,7 +340,7 @@ def test_worth_flagging_lists_every_verified_beat_with_its_gloss_after_the_block
     section = head_of(text).split("## Worth flagging")[1].split("## Data gaps")[0]
     items = [line for line in section.split("\n") if line.startswith("- ")]
     assert items[0] == f"- {blocker['text']}"
-    assert re.fullmatch(r"- #10 Customer count, Feb 2024: Verified, 1 customer more \(beat\)\.\[\^\d+\]", items[1])
+    assert re.fullmatch(r"- Customer count, Feb 2024: Verified, 1 customer more \(beat\)\.\[\^\d+\]", items[1])
     assert items[2].startswith("- Win rate is below the claim."), "the narrative's items follow"
     assert len(items) == 3, "c01, a beat within tolerance, is not listed"
     marker = re.search(r"\[\^(\d+)\]$", items[1]).group(1)
@@ -390,7 +390,7 @@ def test_the_appendices_carry_the_register_the_gaps_and_the_tables_and_no_cost_t
     tables = [{"sheet": "Headline", "rows": [["Metric", "Value"], ["Company", "TestCo"]]}]
     text = memo(tables=tables)
     a = text.split("## Appendix A")[1].split("## Appendix B")[0]
-    assert a.count("\n| #") == 33 + 1 and "top 5" in a and "key" in a
+    assert len([ln for ln in a.splitlines() if ln.startswith("| ")]) == 33 + 1 and "top 5" in a and "key" in a, "a header and one row per claim"
     b = text.split("## Appendix B")[1].split("## Appendix C")[0]
     assert "First quarterly review: 2024-09-30" in b and "Required vs observed net-new customers (12m)" in b
     assert "Headline[^" in text.split("## Appendix C")[1]
@@ -621,9 +621,11 @@ def test_the_time_in_the_ai_disclosure_is_not_a_number_the_memo_must_find_in_the
 # --- value at stake in Appendix A (George, 2026-10-24, PR 176 item 2) -----------------------------------------------------------
 
 def _vas_cells(text):
-    header = next(line for line in text.split("\n") if line.startswith("| #") and "| VaS |" in line)
-    col = [c.strip() for c in header.strip("|").split("|")].index("VaS")
-    return {line.split("|")[1].strip(): line.strip("|").split("|")[col].strip() for line in text.split("\n") if re.match(r"\| #\d+ ", line)}
+    header = next(line for line in text.split("\n") if line.startswith("| Claim and period") and "| VaS |" in line)
+    names = [c.strip() for c in header.strip("|").split("|")]
+    col, ref = names.index("VaS"), names.index("Ref")
+    cells = [[c.strip() for c in line.strip("|").split("|")] for line in text.split("\n") if line.startswith("| ")]
+    return {c[ref]: c[col] for c in cells if len(c) == len(names) and re.fullmatch(r"#\d+", c[ref])}
 
 
 def _memo_with_vas(amounts, **kw):

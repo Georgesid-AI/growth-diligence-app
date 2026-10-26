@@ -54,6 +54,11 @@ RULE_INSUFFICIENT = "No selected claim is Contradicted; {u} of {n} are untested 
 RULE_SUPPORTED = "All {n} selected claims are Verified."
 RULE_PARTLY = "No selected claim is Contradicted; {v} of {n} are Verified, {u} untested."
 NO_OTHER_CONTRADICTIONS = "None found among tested claims."
+# docs/specs/forecast-and-payback.md section 3.7: the one sentence shown whenever a forecast appears, on no row.
+FORECAST_NOTE = "Forecast calculations describe assumptions; future outcomes are unverified."
+# The four columns of a claim, on the register, the five selected claims and the memo's Appendix A (frontend/src/lib/claim_columns.json is the same list).
+FOUR_COLUMNS = ("Claim and period", "Evidence / calculation", "Result", "Source")
+RULE_CONFLICTS = "No claim can be tested yet; {n} {conflicts} open."      # forecast-and-payback.md section 7: only open annual conflicts left
 OPEN_QUESTION = "{n} question open."
 OPEN_QUESTIONS = "{n} questions open."
 
@@ -114,8 +119,19 @@ def observed_text(row: dict, reporting_currency: Optional[str]) -> str:
     return cm.format_figure(spec["unit"] if spec else None, row["observed_value"], reporting_currency)
 
 
+def is_forecast_row(row: dict) -> bool:
+    """A claim classified a forecast whose period ends after the as-of month (claim_matching `_figure_type`)."""
+    end, as_of = str(row.get("period_end") or "")[:7], str(row.get("as_of_month") or "")[:7]
+    return row.get("figure_type") == "target" and bool(end) and bool(as_of) and end > as_of
+
+
+def has_forecast(rows: Iterable[dict]) -> bool:
+    return any(is_forecast_row(r) for r in rows)
+
+
 def ranks_text(rows: List[dict]) -> str:
-    return ", ".join(f"#{r['rank']}" for r in rows)
+    """The claims by name (design note section 6: no rank prefix on a screen), joined by " · " since a name holds a comma."""
+    return " · ".join(claim_name(r) for r in rows)
 
 
 MISSING_PREFIX = "Missing:"        # the reason of a claim whose metric the supplied files cannot give (claim_matching `Missing: {unlock}`)
@@ -124,7 +140,7 @@ NO_FIGURE_IN_FILES = "No figure in the supplied files."
 
 def reason_text(row: dict, reporting_currency: Optional[str]) -> str:
     """One reason of the verdict, citing its evidence (W11)."""
-    head = f"#{row['rank']} {claim_name(row)}: {row['evidence_label'] or 'Definition check open'}"
+    head = f"{claim_name(row)}: {row['evidence_label'] or 'Definition check open'}"
     if row.get("observed_value") is None:
         text = f"{head}, {row['reason']}."
         return f"{text} {NO_FIGURE_IN_FILES}" if str(row["reason"]).startswith(MISSING_PREFIX) else text
@@ -146,9 +162,9 @@ def flagged_rows(rows: List[dict], listed: Iterable[str] = ()) -> List[dict]:
 
 
 def flag_text(row: dict) -> str:
-    """A row of `flagged_rows` with its label and gloss: "#14 Customer count, Feb 2024: Verified, 1 customer more (beat)."; a confirmed
+    """A row of `flagged_rows` with its label and gloss: "Customer count, Feb 2024: Verified, 1 customer more (beat)."; a confirmed
     definition says so after it. The gloss is the register's own text, so the memo's number check reads its figures as stored."""
-    text = f"#{row['rank']} {claim_name(row)}: {row['evidence_label']}, {row['gloss']}."
+    text = f"{claim_name(row)}: {row['evidence_label']}, {row['gloss']}."
     return f"{text} {DEFINITION_CONFIRMED}" if row.get("definition_check") == "yes" else text
 
 
@@ -314,6 +330,13 @@ def verdict(rows: List[dict], results: Optional[dict], stored_top5: Optional[dic
             "conflicts": shown}
     if not results:
         return {**base, "status": "no_verdict", "message": W10_NOT_COMPUTED}
+    if not rows and shown:        # every annual figure is in an open conflict and nothing else can be tested: not "no testable claims"
+        n = len(shown)
+        rule = RULE_CONFLICTS.format(n=n, conflicts=_plural(n, "conflict", "conflicts"))
+        if open_questions > n:    # a conflict is an open question already; the others are counted once
+            rest = open_questions - n
+            rule = f"{rule} {(OPEN_QUESTION if rest == 1 else OPEN_QUESTIONS).format(n=rest)}"
+        return {**base, "status": "ok", "outcome": OUTCOMES["insufficient"], "outcome_code": "insufficient", "rule": rule}
     if not rows:
         return {**base, "status": "no_verdict", "message": W10_NO_CLAIMS}
     by_id = {r["claim_id"]: r for r in rows}
@@ -423,7 +446,7 @@ NOT_MEASURED_REASON = "not tested against data"
 def unmeasured_claims(rows: List[dict]) -> List[dict]:
     """The register rows that are never tested (use of funds, acquisition channels, pricing, unit economics, pipeline, best and worst cases,
     forecast-file figures), each with the reason it cannot be measured: the memo's Data gaps table lists them (simplified-flow.md section 3)."""
-    return [{"claim_id": r["claim_id"], "rank": r["rank"], "item": f"#{r['rank']} {claim_name(r)}",
+    return [{"claim_id": r["claim_id"], "rank": r["rank"], "item": claim_name(r),
              "why": str(r.get("reason") or NOT_MEASURED_REASON).rstrip(".") + "."} for r in rows if cm.is_untested(r)]
 
 
