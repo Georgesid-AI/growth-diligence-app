@@ -281,3 +281,23 @@ def test_pages_with_a_stored_label_correction_are_marked_so_a_run_audit_reads_th
     deck_doc, = db[TEXT_COLLECTION].docs
     assert deck_doc["retry_pages"] == [1] and [r["status"] for r in deck_doc["page_reads"]] == ["stale", "read"]
     assert asyncio.run(structures.mark_label_corrections_stale(db)) == 0
+
+
+def test_a_page_read_again_replaces_an_auto_entered_row_and_keeps_an_analyst_edited_one():
+    # PR 183: untouched means pending or entered by Python on its own; only a row with an analyst action keeps its values
+    parsed = tc.deck([(50, 560, 12, "Overview"), (50, 500, 12, "Paying customers"), (50, 480, 12, "800"), (50, 440, 12, "$150,000 annual revenue run rate")])
+    customers, revenue = at(parsed, "800"), at(parsed, "$150,000 annual revenue run rate")
+    reply = json.dumps({"type": PAGE_CLAIMS, "claims": [tc.claim(customers, 800, metric="customers", unit="count", label_cell=at(parsed, "Paying customers")),
+                                                       tc.claim(revenue, 150_000)]})
+    db = tc._page_db(parsed)
+    asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=t.FakeAdapter(replies=[reply]), sleep=t._noop_sleep))
+    auto, edited = sorted(db[CANDIDATES_COLLECTION].docs, key=lambda r: r["order"])
+    assert auto["claim_type"] == "customers" and auto["label_from"] == "Paying customers"
+    auto.update(status="approved", auto_accepted=True, label_from="Overview")                  # entered by Python, with the wrong label
+    edited.update(status="edited", parsed={"value": 150_000}, label_from="My label")            # the analyst's edit
+    auto_id, edited_id = auto["id"], edited["id"]
+    asyncio.run(structures.process_deck(db, AUDIT, "d1", adapter=t.FakeAdapter(replies=[reply]), sleep=t._noop_sleep))
+    rows = {r["claim_type"]: r for r in db[CANDIDATES_COLLECTION].docs}
+    assert len(db[CANDIDATES_COLLECTION].docs) == 2
+    assert rows["customers"]["id"] != auto_id and rows["customers"]["label_from"] == "Paying customers"
+    assert rows["revenue"]["id"] == edited_id and rows["revenue"]["label_from"] == "My label" and rows["revenue"]["status"] == "edited"
