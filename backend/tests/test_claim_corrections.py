@@ -92,7 +92,7 @@ def test_a_period_on_no_cell_with_one_heading_period_is_applied_and_with_two_it_
 
 def test_a_label_cell_the_figure_is_not_next_to_is_applied_with_one_candidate_and_left_alone_with_several():
     # the label the model cited stands far from the figure; the page offers "Paying customers" above it and nothing else
-    one = tc.deck([(50, 500, 12, "Paying customers"), (50, 480, 12, "800"), (400, 200, 12, "Footnote words")])
+    one = tc.deck([(50, 560, 12, "Overview"), (50, 500, 12, "Paying customers"), (50, 480, 12, "800"), (400, 200, 12, "Footnote words")])
     cell, far = at(one, "800"), at(one, "Footnote words")
     item = tc.one(one, tc.claim(cell, 800, metric="customers", unit="count", label_cell=far))
     plan, = item["corrections"]
@@ -102,17 +102,33 @@ def test_a_label_cell_the_figure_is_not_next_to_is_applied_with_one_candidate_an
     assert (entry["state"], entry["reason"], entry["corrected"]) == ("applied", checker.LABEL_MISMATCH, "Paying customers")
     assert row["label_from"] == "Paying customers" and checker.LABEL_MISMATCH not in row["flags"]
     assert entry["undo"]["label_from"] is None
-    # a title and a line above: two candidates, nothing changes and no card is asked (a label that stays as the model cited it)
+    # a title and a line above: the title is no candidate (hotfix of PR 182), so the line above is the one and is applied
     many = tc.deck([tc.TITLE, (50, 500, 12, "Paying customers"), (50, 480, 12, "800"), (400, 200, 12, "Footnote words")])
     cell, far = at(many, "800"), at(many, "Footnote words")
     item = tc.one(many, tc.claim(cell, 800, metric="customers", unit="count", label_cell=far))
-    assert item["corrections"] == [] and item["flags"] == [] and item["label_cell"] is None
-    row, = read(many, tc.claim(cell, 800, metric="customers", unit="count", label_cell=far))[0]
-    assert "corrections" not in row and row["flags"] == []
+    assert [o["value"] for o in item["corrections"][0]["options"]] == ["Paying customers"]
+
+
+def test_a_label_cited_far_from_the_figure_with_only_the_title_as_fallback_is_not_corrected_and_the_row_is_flagged():
+    # the page offers no cell in the figure's row or column but its title (r1c1): nothing is corrected, the row is flagged for a card
+    parsed = tc.deck([tc.TITLE, (50, 480, 12, "800"), (400, 200, 12, "Footnote words")])
+    cell, far = at(parsed, "800"), at(parsed, "Footnote words")
+    item = tc.one(parsed, tc.claim(cell, 800, metric="customers", unit="count", label_cell=far))
+    assert item["corrections"] == [] and item["label_cell"] is None and checker.LABEL_MISMATCH in item["flags"]
+    row, = read(parsed, tc.claim(cell, 800, metric="customers", unit="count", label_cell=far))[0]
+    assert "corrections" not in row and row["label_from"] is None and checker.LABEL_MISMATCH in row["flags"]
+    assert checker.review_flags(row["flags"]), "the flag sends the row to Needs your attention"
+
+
+def test_a_heading_row_cell_is_never_a_label_candidate():
+    parsed = tc.deck([(50, 560, 12, "Customers by plan"), (50, 480, 12, "800"), (400, 200, 12, "Footnote words")])
+    cell, far = at(parsed, "800"), at(parsed, "Footnote words")
+    item = tc.one(parsed, tc.claim(cell, 800, metric="customers", unit="count", label_cell=far))
+    assert not any(o["ref"].startswith("r1c") for p in item["corrections"] for o in p["options"])
 
 
 def test_a_label_in_the_log_is_a_cell_id_never_its_text():
-    parsed = tc.deck([(50, 500, 12, "Paying customers"), (50, 480, 12, "800"), (400, 200, 12, "Footnote words")])
+    parsed = tc.deck([(50, 560, 12, "Overview"), (50, 500, 12, "Paying customers"), (50, 480, 12, "800"), (400, 200, 12, "Footnote words")])
     cell = at(parsed, "800")
     _, deck = read(parsed, tc.claim(cell, 800, metric="customers", unit="count", label_cell=at(parsed, "Footnote words")))
     assert "Paying customers" not in json.dumps(deck["diagnostics"]) and "Footnote" not in json.dumps(deck["diagnostics"])
@@ -251,3 +267,17 @@ def test_a_users_claim_whose_label_names_the_population_asks_nothing_and_one_tha
             "period_text": "Feb 2024", "snippet": "10,000 users", "file": "deck.pptx", "order": 0, "sources": [{"file": "deck.pptx", "page": 3}]}
     assert cm.candidate_fields({**base, "label_from": "Paying users"}, None)["population"] == "paying"
     assert cm.candidate_fields({**base, "label_from": "Users"}, None)["population"] is None
+
+
+def test_pages_with_a_stored_label_correction_are_marked_so_a_run_audit_reads_them_again():
+    # hotfix of PR 182: rows corrected to the title (r1c1) in stored results are stale; the mark is idempotent and touches no other page
+    db = tc._db()
+    db[TEXT_COLLECTION].docs.append({
+        "audit_id": AUDIT, "deck_id": "d1", "file": "deck.pdf", "ai_status": "read", "retry_pages": [],
+        "page_reads": [{"pages": [1], "status": "read"}, {"pages": [2], "status": "read"}],
+        "diagnostics": [{"page": 1, "kind": "corrected", "field": "label", "reason": checker.LABEL_MISMATCH, "original": "r2c2", "corrected": "r1c1"},
+                        {"page": 2, "kind": "corrected", "field": "period", "reason": "x", "original": "a", "corrected": "b"}]})
+    assert asyncio.run(structures.mark_label_corrections_stale(db)) == 1
+    deck_doc, = db[TEXT_COLLECTION].docs
+    assert deck_doc["retry_pages"] == [1] and [r["status"] for r in deck_doc["page_reads"]] == ["stale", "read"]
+    assert asyncio.run(structures.mark_label_corrections_stale(db)) == 0

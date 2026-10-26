@@ -10,9 +10,11 @@ Pure: no I/O, no model, no database. checker.check calls this after its flags ar
   * BAR_YEAR: the year label under the bar is the one candidate.
   * PERIOD_NOT_ON_PAGE: the model's period stands on no cell; the candidates are the periods the page's heading cells (title cell, top 20%)
     state, one option each.
-  * LABEL_MISMATCH (a reason, no flag): the label cell the model cited is not next to the figure and the page offers exactly one cell where a
-    label may stand (page_check.label_cells) that holds words and no figure. With several candidates nothing changes, as before: the
-    label is left out and the confidence reads "no heading" (a card per such claim would swamp the page, George to decide).
+  * LABEL_MISMATCH: the label cell the model cited is not next to the figure and the page offers exactly one cell where a label may stand
+    (page_check.label_cells) that holds words and no figure, in the figure's row or column, outside the heading row (r1) and never a title
+    cell (hotfix of PR 182, 2026-10-26: the title was picked as the label). With several candidates nothing changes: the label is left out
+    and the confidence reads "no heading" (a card per such claim would swamp the page, George to decide). With none, nothing is corrected
+    and the row carries the review flag LABEL_MISMATCH, for a card.
 - `drop`: DERIVED_FIGURE (the value is on no cell but can be computed from figures of the same page) or LAUNCH_NO_PRODUCT (a launch date
   whose text names no product). Such a claim never enters the register; the pipeline writes a Diagnostics line.
 
@@ -35,6 +37,7 @@ MAX_DERIVED_FIGURES = 30            # triples of more figures than this are not 
 _PAGE_FIELDS = {"period": ("target_date", "period_text", "date_from", "period_start", "period_end", "period_cells", "period_read_note"),
                 "label": ("label_from", "type_from")}
 FIELDS = tuple(_PAGE_FIELDS)
+HEADING_ROW = 1                    # the row of the cell ids ("r1c1") a label is never corrected to
 _WORDS = re.compile(r"[^\W\d_]{3,}")
 # The words of a launch line that name no product: the launch itself, a date, a filler.
 _LAUNCH_FILLER = frozenset("""launch launches launched launching release released releases go live golive rollout roll out available availability
@@ -120,15 +123,24 @@ def _heading_periods(grid: Dict, grid_views: Dict, fiscal_year_end: int) -> List
 
 
 def label_candidates(structure: Dict, cell: Dict) -> List[Dict]:
-    """The cells where the label of `cell` may stand that hold words and no figure, distinct by text, the value cell itself excluded."""
+    """The cells where the label of `cell` may stand that hold words and no figure, distinct by text, the value cell itself excluded; only
+    cells in the figure's row or column, never the heading row (r1) or a title cell."""
     out, texts = [], set()
     for c in page_check.label_cells(structure, cell):
         text = (c["text"] or "").strip()
-        if c is cell or not _WORDS.search(text) or verify.figures(text) or page_check._is_date_source(text) or text in texts:
+        if c is cell or c.get("title") or c["row"] == HEADING_ROW or not (c["row"] == cell["row"] or c["col"] == cell["col"]) \
+                or not _WORDS.search(text) or verify.figures(text) or page_check._is_date_source(text) or text in texts:
             continue
         texts.add(text)
         out.append({"label_cell": page_check._id(c), "value": text, "ref": page_check._id(c)})
     return out
+
+
+def label_options(grid_views: Dict, claim: Dict, item: Dict, cell: Dict) -> Optional[List[Dict]]:
+    """The candidates for a label the model cited from a cell the figure is not next to; None when the label stands."""
+    if claim.get("label_cell") and item.get("label_cell") is None:
+        return label_candidates(page_check.view_of(grid_views, cell), cell)
+    return None
 
 
 def plan(grid: Dict, grid_views: Dict, claim: Dict, item: Dict, cell: Dict, flags: List[str], label_mismatch: str,
@@ -149,8 +161,8 @@ def plan(grid: Dict, grid_views: Dict, claim: Dict, item: Dict, cell: Dict, flag
         options = _heading_periods(grid, grid_views, fiscal_year_end)
         if options:
             out.append({"flag": checker.PERIOD_NOT_ON_PAGE, "field": "period", "original": claim.get("period"), "original_text": claim.get("period"), "options": options})
-    if claim.get("label_cell") and item.get("label_cell") is None:
-        options = label_candidates(page_check.view_of(grid_views, cell), cell)
+    options = label_options(grid_views, claim, item, cell)
+    if options is not None:
         if len(options) == 1:
             cited = next((c["text"] for c in grid["cells"] if page_check._id(c) == claim["label_cell"]), None)
             out.append({"flag": label_mismatch, "field": "label", "original": claim["label_cell"], "original_text": cited, "options": options})

@@ -123,7 +123,7 @@ def test_a_unit_not_next_to_the_cell_is_the_informational_currency_assumed():
 def test_a_label_never_counts():
     far = grid([line(1, "Traction", 1, title=True), line(2, "€1.5M revenue in 2026", 2), line(3, "Far away heading", 3)])
     item = one(far, claim("r2c1", 1_500_000, period="2026", period_cell="r2c1", label_cell="r3c1"))
-    assert item["status"] == page_check.MATCHED and item["label_cell"] is None and item["flags"] == []
+    assert item["status"] == page_check.MATCHED and item["label_cell"] is None and item["flags"] == [checker.LABEL_MISMATCH]
 
 
 def test_a_metric_other_is_matched_like_any_other():

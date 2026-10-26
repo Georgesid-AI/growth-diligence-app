@@ -378,6 +378,27 @@ STALE_READING_SECONDS = 600     # a deck "reading" for longer is taken as not re
 RESTARTED = "restarted"         # the deck's ai_message after such a restart; the panel shows "AI read: restarted" until the first page is read
 
 
+STALE = "stale"          # a page read whose stored rows an earlier check wrote wrongly: Run audit reads it again (the cache serves the reply)
+
+
+async def mark_label_corrections_stale(db) -> int:
+    """Hotfix of PR 182 (2026-10-26): the label correction used to pick the page title (r1c1) as the label. Every deck page whose
+    Diagnostics hold a label correction is marked for a new read: its page_reads entry turns "stale" and the page joins `retry_pages`,
+    so the next Run audit reads it again and the checks replace its rows nobody touched (pending rows; a cached reply costs no call).
+    Idempotent. Returns the number of pages marked."""
+    marked = 0
+    for deck in await db[TEXT_COLLECTION].find({"diagnostics": {"$elemMatch": {"kind": "corrected", "field": "label"}}},
+                                               {"_id": 0, "audit_id": 1, "deck_id": 1, "diagnostics": 1, "page_reads": 1, "retry_pages": 1}).to_list(100000):
+        pages = {d["page"] for d in deck["diagnostics"] if d.get("kind") == "corrected" and d.get("field") == "label"}
+        reads = [{**r, "status": STALE} if r.get("status") == READ and pages & set(r.get("pages") or ()) else r for r in deck.get("page_reads") or []]
+        retry = sorted(set(deck.get("retry_pages") or ()) | pages)
+        if reads != (deck.get("page_reads") or []) or retry != (deck.get("retry_pages") or []):
+            await db[TEXT_COLLECTION].update_one({"audit_id": deck["audit_id"], "deck_id": deck["deck_id"]},
+                                                 {"$set": {"page_reads": reads, "retry_pages": retry}})
+            marked += len(pages)
+    return marked
+
+
 async def queue_stale_reading(db, audit_id: str, now: Optional[datetime] = None) -> List[str]:
     """Run audit reads again, with no new upload, every deck "reading" since more than STALE_READING_SECONDS (a read that never ended:
     the server restarted, the task died): marks it "reading" again with the message "restarted" and returns the ids, for the caller to

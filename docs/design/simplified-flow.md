@@ -139,7 +139,7 @@ A claim or column raises a card when, and only when, one row of this table holds
 
 | Source | Card when | Answers | Closes with |
 |---|---|---|---|
-| Page read (`checker.REVIEW_FLAGS`) | the claim is "AI suggestion, not matched", or carries a review flag (value, sign or period not on page, period is a range, growth dated to start year, scenario label not on page, use-of-funds share, acquisition channel, turnover not revenue, year under bar differs, pipeline column, axis tick, not a plan line, basis and scenario disagree) | Keep · Fix · Not a company claim | status approved / edited / rejected |
+| Page read (`checker.REVIEW_FLAGS`) | the claim is "AI suggestion, not matched", or carries a review flag (value, sign or period not on page, period is a range, growth dated to start year, scenario label not on page, use-of-funds share, acquisition channel, turnover not revenue, year under bar differs, pipeline column, axis tick, not a plan line, basis and scenario disagree, label mismatch: a cited label far from the figure with no cell of its row or column to replace it) | Keep · Fix · Not a company claim | status approved / edited / rejected |
 | Page read, a correction (claim-matching.md, Amended 2026-10-26) | a check offers more than one candidate for the field it failed on (a period the page's headings state twice); with exactly one the app applies it ("Corrected: ..." with Undo, no card) | one button per candidate · Keep · Not a company claim | the field set, status approved |
 | Population (Users, User growth) | the label names none or several of paying, registered, active | Paying customers · Registered users | the stored population |
 | Informational flags (`INFORMATIONAL_FLAGS`, "year label below") | never: a note in the row's details | – | – |

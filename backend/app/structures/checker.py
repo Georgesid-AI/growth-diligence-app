@@ -81,13 +81,13 @@ PERIOD_FROM_HEADING = "period from page heading"
 PERIOD_FROM_OTHER_CELL = "period from another cell"
 PERIOD_IS_RANGE = "period is a range"
 GROWTH_START_YEAR = "growth dated to start year"
-LABEL_MISMATCH = "label mismatch"        # the reason of a label correction; no review flag, a label with several candidates stays as the model cited it
+LABEL_MISMATCH = "label mismatch"        # the reason of a label correction, and the review flag of a cited label with no candidate cell (hotfix of PR 182)
 DERIVED_FIGURE = corrections.DERIVED_FIGURE
 LAUNCH_NO_PRODUCT = corrections.LAUNCH_NO_PRODUCT
 FLAGS = (VALUE_NOT_ON_PAGE, CURRENCY_ASSUMED, UNIT_ASSUMED, SCENARIO_NOT_ON_PAGE, PERIOD_NOT_ON_PAGE, PAGE_OUT_OF_RANGE,
          USE_OF_FUNDS, ACQUISITION_CHANNEL, TURNOVER, BAR_YEAR, PIPELINE_COLUMN, AXIS_TICK, NOT_PLAN_LINE, MATCHES_ANALYST,
          BASIS_SCENARIO_DISAGREE, BASIS_CONFLICT, CELL_CORRECTED, SIGN_NOT_ON_PAGE, PERIOD_FROM_HEADING, PERIOD_FROM_OTHER_CELL,
-         PERIOD_IS_RANGE, GROWTH_START_YEAR)
+         PERIOD_IS_RANGE, GROWTH_START_YEAR, LABEL_MISMATCH)
 INFORMATIONAL_FLAGS = claims.INFORMATIONAL_FLAGS        # a note on the row; the claim stays in the main list (George, 2026-10-23)
 REVIEW_FLAGS = tuple(f for f in FLAGS if f not in INFORMATIONAL_FLAGS)      # the claim is listed under Review
 review_flags = claims.review_flags
@@ -306,6 +306,8 @@ def check(grid: Dict, page_claims: List[Dict], fiscal_year_end: int = 12, blocks
         if claim.get("metric") in claims.GROWTH_TYPES and starts_at_period(cell["text"], claim.get("period"), fiscal_year_end):
             flags.append(GROWTH_START_YEAR)
         flags += [f for f in rule_flags(grid, grid_views, cell, claim, lines, fiscal_year_end) if f not in flags]
+        if corrections.label_options(grid_views, claim, item, cell) == []:
+            flags.append(LABEL_MISMATCH)            # a cited label no cell of the figure's row or column can replace: a card, no correction
         item["corrections"] = corrections.plan(grid, grid_views, claim, item, cell, flags, LABEL_MISMATCH, fiscal_year_end)
         item["drop"] = drop_reason(claim, cell, by_id.get(claim.get("label_cell")), flags, listed, furniture)
         item["flags"] = flags

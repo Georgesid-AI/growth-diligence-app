@@ -3844,6 +3844,11 @@ async def seed_demo():
 
 
 @app.on_event("startup")
+async def mark_stale_label_corrections():
+    await structures.mark_label_corrections_stale(db)      # hotfix of PR 182: label corrections to the page title are read again
+
+
+@app.on_event("startup")
 async def ensure_llm_indexes():
     await llm_gateway.guards.ensure_indexes(db)
 
