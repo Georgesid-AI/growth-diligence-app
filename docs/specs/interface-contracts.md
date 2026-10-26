@@ -1,6 +1,8 @@
 # Spec: Interface contracts on two handoffs
 Status: Draft; the agreed scope is the task of 2026-10-08. Location: docs/specs/interface-contracts.md.
 No architecture change: the engine stays pure, the gateway stays the only caller of a model, the export stays in the API.
+Amended 2026-10-26 (George, docs/specs/claim-groups.md): no engine output field changes and `contract_version` stays 9. `group_id`, `group_role` and `relationship` are register fields (claim-matching.md §6) and `audits.group_choices` is
+an analyst decision stored on the audit (hashes, no deck text); none is a results key, so `schemas/metrics.py` and `test_interface_contracts.py` do not change.
 Amended 2026-10-25 (George, docs/design/simplified-flow.md): `contract_version` 9 marks the simplified flow. No engine block changes. What changes is how the stored
 claims read: they enter the register without an approval, a stated figure the app cannot test reads Unverified, gates are written from the claim and the ratings
 are computed, so results and claim matches stored under version 8 read "Stale – re-run audit" until Run audit calculates again. `ic_inputs.note` (the optional analyst note,

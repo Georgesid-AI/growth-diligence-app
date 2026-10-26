@@ -13,6 +13,7 @@ import re
 from datetime import datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Tuple
 
+from app import claim_groups as cg
 from app import claim_matching as cm
 from app.decks import claims as deck_claims
 
@@ -194,8 +195,10 @@ def budget_decisions(rows: List[dict]) -> List[str]:
 
 def sortable(rows: List[dict]) -> List[dict]:
     """The rows the top 5 is taken from: a use-of-funds row (an allocation share of the raise), an acquisition-channels row (a count per
-    platform) or a claim read from a forecast table (chat-upload.md section 20) is never one of them."""
-    return [r for r in rows if not cm.is_untested(r)]
+    platform) or a claim read from a forecast table (chat-upload.md section 20) is never one of them. A reconciled group is one item, its
+    annual total: its parts are shown under it, never selected on their own; the annual figures of an unresolved conflict wait for
+    the analyst's choice (claim-groups.md sections 4 and 5)."""
+    return [r for r in rows if not cm.is_untested(r) and not cg.is_ineligible(r)]
 
 
 # George, 2026-10-24: the selection leaves out claims about the market, prices, the use of funds, people and the product; it takes the testable
@@ -205,19 +208,22 @@ PROPOSAL_EXCLUDED = ("market", "pricing", "use_of_funds", "other", "people", "pr
 PLAN_TYPES = ("revenue", "arr", "mrr", "churn", "nrr", "revenue_growth", "sales", "customers")
 
 
-def selection_key(r: dict) -> tuple:
+def selection_key(r: dict, by_group: Optional[dict] = None) -> tuple:
     """A plan claim before any other; then value at stake (a claim with none after those with one), the normalised
-    shortfall, the claimed amount; the register rank breaks a tie."""
+    shortfall, the claimed amount; the register rank breaks a tie. A group's item carries the annual headline's value at stake and the
+    largest shortfall among its members: its priority is its most material unresolved issue (claim-groups.md section 4)."""
     amount = abs(r["claimed_converted"] if r.get("claimed_converted") is not None else r.get("claimed_value") or 0)
     vas = r.get("value_at_stake_arr")
+    shortfall = cg.group_shortfall(r, by_group) if by_group else r.get("shortfall")
     return (r.get("claim_type") not in PLAN_TYPES, vas is None, -(vas or 0),
-            -(r.get("shortfall") or 0), -amount, r.get("rank") or 0)
+            -(shortfall or 0), -amount, r.get("rank") or 0)
 
 
 def proposal(rows: List[dict]) -> List[str]:
     """The five the app selects: min(5, rows) claims of the register, in the order of `selection_key`."""
     eligible = [r for r in sortable(rows) if r.get("claim_type") not in PROPOSAL_EXCLUDED]
-    return [r["claim_id"] for r in sorted(eligible, key=selection_key)[:TOP_N]]
+    by_group = cg.members(rows)
+    return [r["claim_id"] for r in sorted(eligible, key=lambda r: selection_key(r, by_group))[:TOP_N]]
 
 
 def banner_ids(rows: List[dict], stored: Optional[dict] = None) -> List[str]:
@@ -267,37 +273,53 @@ def _source_text(row: dict) -> str:
 
 def other_contradictions(rows: List[dict], five_ids: Iterable[str]) -> List[dict]:
     """Every Contradicted register row outside the five, by rank, with its metric, its gap and its source (claim-review-conclusion.md
-    section 3)."""
+    section 3). The members of a group whose total is among the five are inside it, not outside."""
     five = set(five_ids)
+    by_group = cg.members(rows)
+    five |= {m["claim_id"] for r in rows if r["claim_id"] in five and r.get("group_role") == cg.TOTAL for m in by_group.get(r["group_id"], ())}
     return [{"claim_id": r["claim_id"], "rank": r["rank"], "metric": claim_name(r), "gap": r.get("gloss"), "source": _source_text(r)}
             for r in rows if r["evidence_label"] == "Contradicted" and r["claim_id"] not in five]
 
 
-def verdict(rows: List[dict], results: Optional[dict], stored_top5: Optional[dict], open_questions: int = 0) -> dict:
+def verdict(rows: List[dict], results: Optional[dict], stored_top5: Optional[dict], open_questions: int = 0,
+            conflicts: Iterable[dict] = ()) -> dict:
     """The claim-review conclusion of the five in force (claim-review-conclusion.md, simplified-flow.md): always computed, never blocked.
     `status`: no_verdict (nothing computed, or no testable claim) or ok. An open question is a count on the explanation line
-    (`open_questions`: the claim questions the Audit page lists), not a state; a row with an open Definition check counts as untested."""
+    (`open_questions`: the claim questions the Audit page lists), not a state; a row with an open Definition check counts as untested.
+    A group's item takes the label of its worst member (a Contradicted part is a Contradicted item), and the unresolved conflicts between
+    annual figures (`conflicts`, claim_groups.relate) stand beside the contradictions even when no figure can be in the five."""
     state = top5_state(rows, stored_top5)
+    everything = rows
+    by_group = cg.members(everything)
     rows = sortable(rows)
     reporting = (results or {}).get("reporting_currency")
-    others = other_contradictions(rows, state["in_force"]) if results else []
+    others = other_contradictions(everything, state["in_force"]) if results else []
+    shown = [{"id": c["id"], "state": c["state"], "text": c.get("text"), "reason": c["reason"], "metric": c.get("metric"),
+              "period": c.get("period"), "candidates": c["candidates"]} for c in conflicts] if results else []
     base = {"top5": state, "outcome": None, "outcome_code": None, "rule": None, "message": None, "five": [],
             "reasons": [], "fewer": None, "heading": HEADING, "scope_sentence": SCOPE_SENTENCE, "other_contradictions": others,
-            "other_contradictions_text": None if others else NO_OTHER_CONTRADICTIONS, "open_questions": open_questions}
+            "other_contradictions_text": None if others else NO_OTHER_CONTRADICTIONS, "open_questions": open_questions,
+            "conflicts": shown}
     if not results:
         return {**base, "status": "no_verdict", "message": W10_NOT_COMPUTED}
     if not rows:
         return {**base, "status": "no_verdict", "message": W10_NO_CLAIMS}
     by_id = {r["claim_id"]: r for r in rows}
     five = [by_id[i] for i in state["in_force"]]
-    summary = [{"claim_id": r["claim_id"], "rank": r["rank"], "claim": claim_name(r), "evidence_label": r["evidence_label"],
-                "reason": r["reason"], "definition_check": r.get("definition_check")} for r in five]
+    label = {r["claim_id"]: cg.effective_label(r, by_group) for r in five}
+    lead_of = {r["claim_id"]: (cg.contradicted_members(r, by_group) or [r])[0] if label[r["claim_id"]] != r["evidence_label"] else r
+               for r in five}           # a group whose total is not Contradicted but a part is: the part is what the item reports
+    summary = [{"claim_id": r["claim_id"], "rank": r["rank"], "claim": claim_name(r), "evidence_label": label[r["claim_id"]],
+                "reason": lead_of[r["claim_id"]]["reason"], "definition_check": r.get("definition_check"),
+                "group": None if r.get("group_role") != cg.TOTAL else {
+                    "id": r["group_id"], "parts": sum(1 for m in by_group[r["group_id"]] if m.get("group_role") == cg.PART),
+                    "contradicted": [m["claim_id"] for m in cg.contradicted_members(r, by_group)]}} for r in five]
     # In this order: Contradicted, Insufficient evidence, Supported, Partly supported. A beat is Verified; a row with an open
     # Definition check has no label yet and counts as untested.
     n = len(five)
-    contradicted = [r for r in five if r["evidence_label"] == "Contradicted"]
-    untested = [r for r in five if r["evidence_label"] in UNVERIFIED_LABELS or r["evidence_label"] is None]
-    verified = [r for r in five if r["evidence_label"] == "Verified"]
+    contradicted = [r for r in five if label[r["claim_id"]] == "Contradicted"]
+    untested = [r for r in five if label[r["claim_id"]] in UNVERIFIED_LABELS or label[r["claim_id"]] is None]
+    verified = [r for r in five if label[r["claim_id"]] == "Verified"]
     if contradicted:
         code, lead = "not_supported", contradicted
         rule = RULE_CONTRADICTED.format(n=len(contradicted), claim=_plural(len(contradicted), "claim is", "claims are"))
@@ -315,7 +337,7 @@ def verdict(rows: List[dict], results: Optional[dict], stored_top5: Optional[dic
         rule = f"{rule} {fewer}"
     ordered = lead + [r for r in five if r not in lead]
     return {**base, "status": "ok", "outcome": OUTCOMES[code], "outcome_code": code, "rule": rule, "fewer": fewer,
-            "five": summary, "reasons": [reason_text(r, reporting) for r in ordered[:3]]}
+            "five": summary, "reasons": [reason_text(lead_of[r["claim_id"]], reporting) for r in ordered[:3]]}
 
 
 # --- data gaps (section 4) -------------------------------------------------------------------------------------------------

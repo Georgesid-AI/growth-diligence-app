@@ -123,6 +123,10 @@ export const answerTurnover = (id, claimId, payload) =>
 export const answerDefinitionCheck = (id, claimId, answer) =>
   api.put(`/audits/${id}/claims/${encodeURIComponent(claimId)}/definition-check`, { answer }).then((r) => r.data);
 export const claimsCsvUrl = (id) => `${API}/audits/${id}/claims.csv`;
+// The question a group raises (docs/specs/claim-groups.md section 5): which annual figure, or which set of parts. The choice is the candidate's
+// identity (or the name of a set); Undo asks the question again. Both give the register and the groups back.
+export const chooseGroup = (id, reviewId, choice) => api.put(`/audits/${id}/claim-groups/${reviewId}`, { choice }).then((r) => r.data);
+export const undoGroupChoice = (id, reviewId) => api.delete(`/audits/${id}/claim-groups/${reviewId}`).then((r) => r.data);
 
 // Verdict, data gaps and the IC memo (docs/specs/verdict-and-memo.md): computed on read by the server from the register, the
 // results and the analyst's inputs. No model is called.

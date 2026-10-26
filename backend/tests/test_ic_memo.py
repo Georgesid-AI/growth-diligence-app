@@ -92,7 +92,7 @@ def test_the_memo_is_built_from_the_run_a_fixture_in_the_order_of_w15_with_the_f
     assert text.startswith("# Investment committee memo: TestCo\nDate: 2026-10-08\n")
     summary = head_of(text).split("## Summary\n")[1]
     assert summary.startswith("Claim-review conclusion — assessment of the five selected claims\n"
-                              "Verdict: Selected claims not supported – 4 selected claims are Contradicted.")
+                              "Verdict: Selected claims not supported – 3 selected claims are Contradicted.")
     assert "This assesses the five claims selected by the app by value at stake; the analyst may change the selection. It is not an investment recommendation." in summary
     assert "Conclusion:" not in text and "Evidence supports the plan" not in text
     assert text.count("by value at stake; the analyst may change the selection") == 1, "said once, in the scope sentence"
@@ -113,7 +113,7 @@ def test_the_run_a_memo_fits_1500_words_and_every_number_in_sections_1_to_6_has_
         numbers = [t for t in im._tokens(line) if t not in fixed]
         if numbers:
             assert re.search(r"\[\^\d+\]", line), f"a number without a footnote: {line!r}"
-    assert "[^1]: claim register, #1, #2, #3, #5, #6" in text
+    assert "[^1]: claim register, #1, #3, #5, #6, #7" in text      # two FY2023 ARR figures conflict: neither is in the five until one is chosen
     assert re.search(r"\[\^\d+\]: Monthly MRR by Segment · arr.value · revenue.csv · CSV · rows 2–71", memo())
 
 
@@ -154,10 +154,10 @@ def test_a_never_tested_row_is_in_the_data_gaps_table_with_the_reason_it_cannot_
 def test_the_key_gates_are_those_of_the_non_verified_top_5_rows_never_padded():
     text = memo()
     section = head_of(text).split("## Key gates and deal terms")[1].split("## Worth flagging")[0]
-    assert section.count("\n- ") == 4 and section.count("(proposed)") == 4, "the fifth of the five is Verified: no gate"
+    assert section.count("\n- ") == 3 and section.count("(proposed)") == 3, "the fourth and fifth of the five are Verified: no gate"
     verified_five = inputs()
     top = vd.proposal(verified_five["rows"])
-    fewer = [{**r, "gate_sentence": None, "gate_status": None} if r["rank"] > 2 else r for r in verified_five["rows"]]
+    fewer = [{**r, "gate_sentence": None, "gate_status": None} if r["rank"] not in (1, 3) else r for r in verified_five["rows"]]      # ranks 1 and 3 are in the five
     verified_five.update(rows=fewer, key=vd.key_gates(fewer, top))
     text = im.build_memo(**verified_five)
     assert "2 gates set; all are key gates." in text
@@ -630,6 +630,8 @@ def _memo_with_vas(amounts, **kw):
     ins = inputs(**kw)
     for r in ins["rows"]:
         r["value_at_stake_arr"] = amounts.get(r["rank"])
+        if r["value_at_stake_arr"] is not None:
+            r["vas_reason"] = None          # a row with an amount holds no reason, unless its short period was annualised
     return ins, im.build_memo(**ins)
 
 

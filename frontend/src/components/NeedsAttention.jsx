@@ -6,7 +6,9 @@ import { DefinitionCell, TurnoverCell } from "@/components/ClaimRegister";
 import { CandidateRow } from "@/components/DeckPanel";
 import { BLOCKERS_CHANGED } from "@/lib/useBlockers";
 import * as apiModule from "@/lib/api";
-import { answerCorrection, answerDefinitionCheck, answerTurnover, decideColumns, getDatasets, getDecks, updateCandidate } from "@/lib/api";
+import { answerCorrection, answerDefinitionCheck, answerTurnover, chooseGroup, decideColumns, getClaimRegister, getDatasets, getDecks, undoGroupChoice, updateCandidate } from "@/lib/api";
+import { CHOOSE_FIGURE, CHOOSE_SET, CHOSEN, EXCLUDE, EXCLUDE_REASON, KEPT_NOTE, UNDO_CHOICE, figureText, questionTitle, sourceText } from "@/lib/claimGroups";
+import { EDIT_REASONS } from "@/lib/deckClaims";
 import { POPULATION_ANSWERS, POPULATION_QUESTION, asksPopulationOnly, claimPeriod, claimValue, flagsText, scenarioText, sourceRef, typeLabel, waitingCorrections } from "@/lib/deckClaims";
 import { definitionOf, turnoverHeading, turnoverOf } from "@/lib/claimRegister";
 import { MAPPING_HEADERS, S13_status } from "@/lib/chatUpload";
@@ -64,6 +66,53 @@ function ClaimCard({ item, busy, act, auditId }) {
   );
 }
 
+/** A question the groups raise (docs/specs/claim-groups.md section 5): which annual figure, or which set of parts, with each candidate, its source
+ *  and the reconciliation hint. Nothing is selected for the analyst. A figure passed over stays a claim; it can be excluded here with a reason,
+ *  or corrected or scoped in the claims list. A conflict that stays after a choice offers Undo. */
+function GroupCard({ item, busy, act, auditId }) {
+  const q = item.q;
+  const [reason, setReason] = useState("");
+  const chosen = q.candidates.some((c) => c.chosen);
+  return (
+    <div className="text-xs" data-testid="attention-group">
+      <div className="text-slate-900 font-medium" data-testid="attention-group-title">{questionTitle(q)}</div>
+      <div className="text-amber-800 mb-1" data-testid="attention-group-reason">{q.reason}</div>
+      <ul className="space-y-1.5">
+        {q.candidates.map((c) => (
+          <li key={c.identity || c.partition} className="flex flex-wrap items-start justify-between gap-2" data-testid="attention-group-candidate">
+            <div>
+              <span className="font-mono text-slate-900">{q.kind === "partition" ? c.label : figureText(c)}</span>
+              {q.kind === "total" && <span className="font-mono text-slate-500"> · {sourceText(c)}</span>}
+              {c.hint && <div className="text-[11px] text-slate-600" data-testid="attention-group-hint">{c.hint}</div>}
+            </div>
+            <div className="whitespace-nowrap">
+              {c.chosen ? <span className="text-[11px] font-mono text-slate-600 mr-1.5" data-testid="attention-group-chosen">{CHOSEN}</span> : (
+                <Button size="sm" variant="outline" className="h-7 mr-1.5" disabled={busy !== null} data-testid="attention-group-choose"
+                  onClick={() => act(q.id, () => chooseGroup(auditId, q.id, c.identity || c.partition))}>{q.kind === "partition" ? CHOOSE_SET : CHOOSE_FIGURE}</Button>
+              )}
+              {q.kind === "total" && !c.chosen && (c.claim_ids || [c.claim_id]).every((id) => !String(id).includes("#")) && (
+                <>
+                  <select value={reason} onChange={(e) => setReason(e.target.value)} className="h-7 rounded-md border border-[#E5E7EB] bg-white px-1 text-xs mr-1.5" data-testid="attention-group-reason-select" aria-label={EXCLUDE_REASON}>
+                    <option value="">{EXCLUDE_REASON}</option>
+                    {EDIT_REASONS.map(([code, label]) => <option key={code} value={code}>{label}</option>)}
+                  </select>
+                  <Button size="sm" variant="ghost" className="h-7" disabled={busy !== null || !reason} data-testid="attention-group-exclude"
+                    onClick={() => act(q.id, () => Promise.all((c.claim_ids || [c.claim_id]).map((id) => updateCandidate(auditId, id.split("#")[0], { status: "rejected", reason }))))}>{EXCLUDE}</Button>
+                </>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
+      {q.kind === "total" && <p className="mt-1 text-[11px] text-slate-500" data-testid="attention-group-kept">{KEPT_NOTE}</p>}
+      {chosen && (
+        <Button size="sm" variant="ghost" className="h-7 mt-1" disabled={busy !== null} data-testid="attention-group-undo"
+          onClick={() => act(q.id, () => undoGroupChoice(auditId, q.id))}>{UNDO_CHOICE}</Button>
+      )}
+    </div>
+  );
+}
+
 function TurnoverCard({ item, answer }) {
   const { c } = item;
   return (
@@ -104,6 +153,7 @@ export default function NeedsAttention({ auditId, computed = true, onChanged }) 
   const [views, setViews] = useState([]);
   const [candidates, setCandidates] = useState([]);
   const [attention, setAttention] = useState([]);
+  const [groups, setGroups] = useState(null);
   const [all, setAll] = useState(false);
   const [busy, setBusy] = useState(null);
   const [lastReason, setLastReason] = useState("header_misleading");
@@ -111,9 +161,10 @@ export default function NeedsAttention({ auditId, computed = true, onChanged }) 
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
 
   const reload = useCallback(async () => {
-    const [v, d] = await Promise.all([safe(() => getDatasets(auditId), []), safe(() => getDecks(auditId), { decks: [], candidates: [] })]);
+    const [v, d, g] = await Promise.all([safe(() => getDatasets(auditId), []), safe(() => getDecks(auditId), { decks: [], candidates: [] }),
+      safe(() => getClaimRegister(auditId), null)]);
     if (!alive.current) return;
-    setViews(v || []); setCandidates(d?.candidates || []); setAttention(d?.attention || []);
+    setViews(v || []); setCandidates(d?.candidates || []); setAttention(d?.attention || []); setGroups(g);
     return v || [];
   }, [auditId]);
   useEffect(() => { reload(); }, [reload]);
@@ -146,7 +197,7 @@ export default function NeedsAttention({ auditId, computed = true, onChanged }) 
     try { await updateCandidate(auditId, candidate.id, payload); await changed(); return true; } catch (e) { toast.error(describeRequestError(e).message); return false; }
   };
 
-  const questions = openQuestions(views, candidates, attention);
+  const questions = openQuestions(views, candidates, attention, groups);
   if (!questions.length) return null;
   const shown = all ? questions : questions.slice(0, SHOWN_QUESTIONS);
   const more = questions.length - SHOWN_QUESTIONS;
@@ -161,6 +212,7 @@ export default function NeedsAttention({ auditId, computed = true, onChanged }) 
             {item.kind === "claim" && <ClaimCard item={item} busy={busy} act={act} auditId={auditId} />}
             {item.kind === "turnover" && <TurnoverCard item={item} answer={answer} />}
             {item.kind === "set" && <SetCard item={item} save={save} answer={answer} />}
+            {item.kind === "group" && <GroupCard item={item} busy={busy} act={act} auditId={auditId} />}
           </li>
         ))}
       </ul>

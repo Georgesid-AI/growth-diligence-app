@@ -6,6 +6,7 @@
  */
 import { definitionOf, turnoverOf } from "./claimRegister";
 import { isOther } from "./deckClaims";
+import { groupQuestions } from "./claimGroups";
 
 export const ATTENTION_HEADING = "Needs your attention";
 export const SHOWN_QUESTIONS = 3;
@@ -18,7 +19,7 @@ export const openViews = (views) => (views || []).filter((v) => v.pending > 0 ||
 
 /** The questions: the five's claim questions first, then the columns that wait, then the other claim questions; the claims keep the server's
  *  ranking (`attention`: [{id, in_top5}], best first). An Other figure is never a task. */
-export function openQuestions(views, candidates, attention) {
+export function openQuestions(views, candidates, attention, groups) {
   const columns = [];
   openViews(views).forEach((view) => {
     const rows = view.missing_required.length ? view.columns : view.columns.filter((c) => c.pending);
@@ -36,5 +37,7 @@ export function openQuestions(views, candidates, attention) {
   const place = new Map((attention || []).map((a, i) => [a.id, { i, top: Boolean(a.in_top5) }]));
   const at = (item) => place.get(item.c.id) || { i: Number.MAX_SAFE_INTEGER, top: false };
   claims.sort((a, b) => at(a).i - at(b).i);
-  return [...claims.filter((x) => at(x).top), ...columns, ...claims.filter((x) => !at(x).top)];
+  // the questions the groups raise (which annual figure, which parts) and the conflicts that stay unresolved: after the claims that wait
+  const related = groupQuestions(groups).map((q) => ({ key: `group-${q.id}`, kind: "group", q }));
+  return [...claims.filter((x) => at(x).top), ...columns, ...claims.filter((x) => !at(x).top), ...related];
 }

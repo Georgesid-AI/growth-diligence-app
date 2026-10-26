@@ -171,3 +171,21 @@ test("no key gate has a checkbox, a Set gate button or a Save all gates button, 
     expect(host.textContent).not.toMatch(/Set gate|Save all gates|Gate needed|Key gate\b|Confirm top 5/);
   } finally { await done(); }
 });
+
+
+// docs/specs/claim-groups.md section 5: an unresolved conflict between annual figures stays in the conclusion, with no figure in the five.
+test("an unresolved conflict is listed under the conclusion, also when it is open and no figure can be in the five", async () => {
+  const conflicts = [{ id: "r1", state: "open", reason: "x", metric: "Revenue", period: "FY2024", candidates: [],
+    text: "Revenue, FY2024: €1,250,000 (testco_board.pptx slide 8) against €1,000,000 (testco_board.pptx slide 3). No figure chosen." }];
+  const { host, done } = await mount({ ...RESPONSE, verdict: { ...RESPONSE.verdict, conflicts } });
+  try {
+    const block = host.querySelector('[data-testid="unresolved-conflicts"]');
+    expect(block.querySelector("h3").textContent).toBe("Unresolved conflicts");
+    expect([...block.querySelectorAll('[data-testid="unresolved-conflict"]')].map((li) => li.textContent)).toEqual([conflicts[0].text]);
+  } finally { await done(); }
+});
+
+test("with no conflict the block is not on the page", async () => {
+  const { host, done } = await mount({ ...RESPONSE, verdict: { ...RESPONSE.verdict, conflicts: [] } });
+  try { expect(host.querySelector('[data-testid="unresolved-conflicts"]')).toBeNull(); } finally { await done(); }
+});

@@ -10,6 +10,12 @@ line. The analyst judgment fields of §3 are replaced by the computed Reasons an
 (`ic_inputs.note`, max 1,000 characters, never sent to a model); the memo is not refused for their absence. The key gates are the gates of
 the non-Verified claims among the five. The outcome rules of §2, the scope sentence and the contradiction lines stand.
 
+Amended 2026-10-26 (George, docs/design/claim-review-simplified-design.md sections 1 and 2; docs/specs/claim-groups.md): a reconciled group (an annual total with its parts) is one of the five, its total; the item
+reads Contradicted when any member is, so a verified annual total cannot hide a contradicted quarter, and the reasons name the contradicted part. A Contradicted member of a group inside the five is not repeated under
+"Other contradictions"; one of a group outside the five is listed there. Beside the contradictions the conclusion lists the unresolved conflicts between annual figures ("Unresolved conflicts": the claim, each figure with
+its source, "No figure chosen." or "Preferred: ..."), also when no single figure can be in the five; the memo's summary carries the same lines, and each unresolved conflict counts as an open question on the rule line.
+The outcome rules of §2 stand.
+
 ## 0. Challenge and deletions (CLAUDE.md rule 4)
 - Needed: "Underwrite" and "Re-plan" read as an investment recommendation drawn from five claims. The simpler version: the
   same pure function over the same confirmed five, with outcome words that describe the claims, the contradictions outside

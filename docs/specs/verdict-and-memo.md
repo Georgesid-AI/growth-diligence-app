@@ -19,6 +19,9 @@ Amended 2026-10-25 (George, review of PR #180): a never-tested register row (use
 worst cases, forecast-file figures) is a row of the memo's Data gaps table (Appendix B) with the reason it cannot be measured, and section 6 counts them.
 Amended 2026-10-24 (George, PR 176): §6.1 reads as the new proposal rule; the memo's VaS column (Appendix A) prints the register's
 `value_at_stake_arr`, de-duplicated as Appendix D states (W16), and the row's stored `vas_reason` where it has no amount.
+Amended 2026-10-26 (George, docs/specs/claim-groups.md): the baseline CSV (§5) carries the register's last three fields, `group_id`, `group_role` and `relationship`; the memo's Appendix A gains a Relationship column after Case
+("—" for a claim that relates to nothing) and its VaS cell adds a row's "run-rate: ..." mark; the summary gains "Grouping: n items are shown for m claims; ..." when a group formed and "Unresolved conflicts:" lines when an annual
+conflict is open (claim-review-conclusion.md). The proposal of §6.1 takes a reconciled group once (claim-matching.md, amended 2026-10-26).
 Location: docs/specs/verdict-and-memo.md. Follows claim-matching.md (the register) and interface-contracts.md
 (MetricsPayload). The method's lists (evidence categories, appendices, thesis labels, rating scale) are as given on
 2026-10-08; the method text itself stays out of the repo.

@@ -12,6 +12,7 @@ import {
   GROWTH_BASES, SET_GROWTH_BASIS,
 } from "@/lib/claimRegister";
 import { missingText } from "@/lib/periods";
+import { GROUP_DETAILS, countsOf, countsText, partsLabel, partsOf, visibleRows } from "@/lib/claimGroups";
 import { CALCULATE_CLASS } from "@/lib/chatUpload";
 import { describeRequestError } from "@/lib/requestError";
 import { seeGlossary } from "@/lib/glossary";
@@ -119,6 +120,32 @@ export function GrowthBasisCell({ row, onSet }) {
   );
 }
 
+/** The parts of a reconciled annual total, under its Details: every part keeps its own claim, period, label and reason
+ *  (docs/specs/claim-groups.md section 4). */
+function GroupParts({ row, rows, ccy }) {
+  const [open, setOpen] = useState(false);
+  const parts = partsOf(row, rows);
+  if (!parts.length) return null;
+  return (
+    <div data-testid="register-group">
+      <button type="button" className="text-sky-700 underline underline-offset-2" aria-expanded={open} data-testid="register-group-toggle"
+        onClick={() => setOpen((o) => !o)}>{GROUP_DETAILS} · {partsLabel(parts.filter((p) => p.group_role === "part").length)}</button>
+      {open && (
+        <ul className="mt-1 space-y-1 border-l-2 border-[#E5E7EB] pl-3" data-testid="register-group-parts">
+          {parts.map((p) => (
+            <li key={p.claim_id} data-testid="register-group-part">
+              <span className="font-mono text-slate-700">#{p.rank}</span> <span className="text-slate-900">{claimCellText(p, ccy)}</span>
+              <span className="font-mono text-slate-500"> · {p.period || NO_DATE}</span> · <EvidenceLabel row={p} testId="register-group-part-evidence" />
+              <span className="text-slate-600"> · {p.reason}</span>
+              {p.relationship && <span className="text-slate-500"> · {p.relationship}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 /** The claim register of one audit, in the order the server ranks it (docs/specs/claim-matching.md section 8). */
 export default function ClaimRegister({ auditId, results, onChanged }) {
   const [rows, setRows] = useState(null);
@@ -170,6 +197,7 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
       {rows && rows.length === 0 && !stale && (
         <p className="text-sm text-slate-600" data-testid="claim-register-empty">No claims in the register yet. Run audit tests the claims found in the uploaded documents; the ones that need your word are under Needs your attention.</p>
       )}
+      {rows && countsText(countsOf(rows)) && <p className="text-xs text-slate-600 mb-2" data-testid="claim-register-counts">{countsText(countsOf(rows))}</p>}
       {rows && rows.length > 0 && (
         <div className="rounded-md border border-[#E5E7EB] bg-white" data-testid="claim-register-scroll">
           <table className="w-full table-fixed text-xs" data-testid="claim-register-table">
@@ -185,7 +213,7 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
               </tr>
             </thead>
             {/* one tbody per claim: the claim's line, then a second smaller grey line spanning the row */}
-            {rows.map((row) => {
+            {visibleRows(rows).map((row) => {
               const observed = observedText(row, ccy);
               const path = evidenceLines(row).second;
               const detail = detailItems(row, rows, ccy);
@@ -246,6 +274,8 @@ export default function ClaimRegister({ auditId, results, onChanged }) {
                           <> · <span data-testid="register-evidence-source"><Provenance source={row.observed_source}>{path}</Provenance></span></>
                         )}
                       </div>
+                      {row.relationship && <div className="text-slate-600" data-testid="register-relationship">{row.relationship}</div>}
+                      <GroupParts row={row} rows={rows} ccy={ccy} />
                       <div className="text-xs text-slate-700 space-y-1">
                         {row.turnover_state && <TurnoverCell row={row} onAnswer={answer} />}
                         {row.definition_check && <DefinitionCell row={row} onAnswer={answerDefinition} />}

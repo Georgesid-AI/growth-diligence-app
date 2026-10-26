@@ -15,6 +15,7 @@ import {
   USE_SELECTION, candidateText, initialPicks, refusalText, replacePick, samePicks,
   CONCLUSION_HEADING, NO_OTHER_CONTRADICTIONS, OTHER_CONTRADICTIONS, SCOPE_SENTENCE,
 } from "@/lib/verdict";
+import { CONFLICTS_HEADING } from "@/lib/claimGroups";
 
 const selectClass = "h-8 rounded-md border border-[#E5E7EB] bg-white px-2 text-xs";
 
@@ -154,6 +155,19 @@ function OtherContradictions({ v }) {
   );
 }
 
+/** The annual figures that conflict and stay unresolved (docs/specs/claim-groups.md section 5): beside the contradictions, shown even when no
+ *  single figure can be in the five, until one is corrected, scoped or excluded. */
+function UnresolvedConflicts({ conflicts }) {
+  return (
+    <div className="mb-4" data-testid="unresolved-conflicts">
+      <h3 className="text-sm font-semibold text-slate-900 mb-1">{CONFLICTS_HEADING}</h3>
+      <ul className="space-y-1 text-xs text-slate-800">
+        {conflicts.map((c) => <li key={c.id} data-testid="unresolved-conflict">{c.text}</li>)}
+      </ul>
+    </div>
+  );
+}
+
 /** The conclusion (docs/design/simplified-flow.md, The conclusion screen): the outcome with its one-line rule and the scope sentence,
  *  the contradiction lines directly under them, the claims outside the five, the selection sentence and the one Change link of the top 5.
  *  `verdict` is GET /audits/{id}/verdict, read again by the parent after every change. The conclusion is always computed: an open question
@@ -184,6 +198,7 @@ export function Conclusion({ auditId, verdict, onChanged }) {
       <p className="text-xs text-slate-600 mb-3" data-testid="conclusion-scope">{v.scope_sentence || SCOPE_SENTENCE}</p>
       <ContradictionBanner auditId={auditId} />
       {v.status !== "no_verdict" && <OtherContradictions v={v} />}
+      {(v.conflicts || []).length > 0 && <UnresolvedConflicts conflicts={v.conflicts} />}
       {v.status !== "no_verdict" && (
         <>
           {changed && (
