@@ -656,25 +656,24 @@ def _is_turnover_claim(c: dict, text: str) -> bool:
 
 
 def _file_revenue(results: dict, segment: str, start: Optional[int], end: Optional[int],
-                  as_of_i: Optional[int]) -> Tuple[Optional[float], Optional[dict]]:
+                  as_of_i: Optional[int], forecast: bool) -> Tuple[Optional[float], Optional[dict]]:
     """(the revenue file's revenue for the claim period and segment, its source), or (None, None) when no file covers the
-    period: no revenue file, months missing, no period, or a forecast (section 11 point 4)."""
-    forecast = end is not None and as_of_i is not None and end > as_of_i
+    period: no revenue file, months missing, no period, or a forecast (section 11 point 4). `forecast` is the claim's classification."""
     if as_of_i is None or start is None or end is None or forecast:
         return None, None
-    got, _, src, _ = _observe(_Figures(results, "Revenue", segment), METRICS["Revenue"], "Revenue", start, end, as_of_i)
+    got, _, src, _ = _observe(_Figures(results, "Revenue", segment), METRICS["Revenue"], "Revenue", start, end, as_of_i, forecast=False)
     return (float(got), src) if isinstance(got, (int, float)) else (None, None)
 
 
 def _turnover(c: dict, inputs: dict, results: dict, settings: dict, rate: Optional[float], start: Optional[int],
-              end: Optional[int], as_of_i: Optional[int], segment: str = WHOLE) -> dict:
+              end: Optional[int], as_of_i: Optional[int], segment: str = WHOLE, forecast: bool = False) -> dict:
     """Section 11: whether a turnover claim is revenue, transaction volume or still a question. Only the analyst's answer
     makes it revenue or volume (amended 2026-10-09, George): until then it asks, whatever the revenue file or the deck
     says. Returns state, metric, note, set_by, reason, an optional verdict (label, reason), `fx_needed`, `suggested`
     ("volume" when no file covers the period and the deck says "take rate") and the file revenue for the period (of the
     claim's segment) when one covers it. `rate` is None when the claim's currency has no saved rate."""
     low = c.get("value")
-    file_revenue, source = _file_revenue(results, segment, start, end, as_of_i)
+    file_revenue, source = _file_revenue(results, segment, start, end, as_of_i, forecast)
     choice, reason, by = inputs.get("turnover_as"), inputs.get("turnover_reason"), "analyst"
     if choice not in TURNOVER_CHOICES:
         saved = (settings.get("turnover_choices") or {}).get(turnover_key(c)) or {}
@@ -957,7 +956,7 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
     turn = None
     if metric_by == "python" and _is_turnover_claim(c, text) and c.get("origin") != FORECAST_FILE:   # section 11
         fx0 = fx_view(c, settings, as_of)
-        turn = _turnover(c, inputs, results, settings, fx0["rate"] if fx0 else 1.0, start, end, as_of_i, segment)
+        turn = _turnover(c, inputs, results, settings, fx0["rate"] if fx0 else 1.0, start, end, as_of_i, segment, forecast)
         if turn["fx_needed"]:
             turn["verdict"] = ("Unverified", f"{FX_NEEDED}: {currency}→{fx0['currency']}")
         metric, metric_by = turn["metric"], turn["set_by"]
@@ -1356,7 +1355,7 @@ def _forecast_view(results: dict, metric: Optional[str], segment: str, start: Op
     money = (lambda v: _money(v, currency)) if metric != "Customer count" else (lambda v: f"{v:,.0f}")
     shown = money(low) if high is None else f"{money(min(low, high))}–{money(max(low, high))}"
     if mismatch:
-        view = forecast_calc.unavailable(mismatch, shown, start, end, fiscal_year_end)
+        view = forecast_calc.unavailable(mismatch, shown, start, end, fiscal_year_end, flow=metric in forecast_calc.FLOWS)
     else:
         got = _Figures(results, metric, segment).monthly()
         values = got[0] if got else {}
@@ -1422,12 +1421,19 @@ def _not_covered(span: "_Span", read: List[int], cov: dict) -> str:
     return f"Unverified|{NOT_COVERED_REASON.format(detail=span.detail(read))}"
 
 
+def _after_data(span: "_Span", end: int, as_of_i: int, cov: dict) -> str:
+    """Not covered: the claim's period ends after the as-of month (the engine has no block, or no figure, for it)."""
+    cov.update(coverage=NOT_COVERED, missing=[_ms(end)])
+    detail = span.detail([end]) if span.known and end > span.last else f"after {_short(span.metric)}'s last month, {_ms(as_of_i)}"
+    return f"Unverified|{NOT_COVERED_REASON.format(detail=detail)}"
+
+
 def _observe(figures: "_Figures", spec: dict, metric: str, start: Optional[int], end: Optional[int], as_of_i: Optional[int],
-             span: Optional["_Span"] = None, cov: Optional[dict] = None, forecast: Optional[bool] = None):
+             span: Optional["_Span"] = None, cov: Optional[dict] = None, forecast: bool = False):
     """(observed, observed_at, source, reason) read as table 2b says, with the claim-period coverage of dates-and-periods.md
     section 4 written into `cov` (coverage, missing months). `observed` is a number, None, or a "Label|reason" verdict string
     when the claim cannot be tested; None with observed_at "missing" when the engine holds no figure for the metric at all.
-    `forecast` is the claim's classification (docs/specs/forecast-and-payback.md section 2); None reads it from the period, as the turnover check does."""
+    `forecast` is the claim's classification (docs/specs/forecast-and-payback.md section 2), never inferred from the period."""
     kind = spec["kind"]
     cov = {} if cov is None else cov
     span = span or _Span(figures.results, metric)
@@ -1435,8 +1441,8 @@ def _observe(figures: "_Figures", spec: dict, metric: str, start: Optional[int],
         return None, "missing", None, None
     if end is None:                 # decision 3 of 2026-10-19: no as-of or latest figure stands in for a period that was not read
         return f"Unverified|{PERIOD_NOT_READ}", None, None, None
-    if forecast is None:
-        forecast = end > as_of_i
+    if end > as_of_i and not forecast and kind in ("asof", "month"):      # an actual after the data is missing coverage, whatever the kind
+        return _after_data(span, end, as_of_i, cov), None, None, None
 
     if kind == "asof":
         got = figures.asof()
@@ -1818,8 +1824,9 @@ def turnover_views(candidates: List[dict], results: Optional[dict], settings: di
         row = _row(c, results, settings, claims)
         if row["turnover_state"] is None:
             continue
-        covered, _ = _file_revenue(results, row["segment"], _month_of(c.get("period_start")), _month_of(c.get("period_end")),
-                                   as_of_i)
+        end = _month_of(c.get("period_end"))
+        covered, _ = _file_revenue(results, row["segment"], _month_of(c.get("period_start")), end, as_of_i,
+                                   row["figure_type"] == "target" and end is not None and as_of_i is not None and end > as_of_i)
         out.setdefault(c["id"], []).append({**{k: row[k] for k in TURNOVER_VIEW_FIELDS},
                                             "file_note": None if covered is not None else NO_FILE_PERIOD})
     return out

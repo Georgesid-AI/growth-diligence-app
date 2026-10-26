@@ -39,7 +39,8 @@ references stay as they are. The engine output changes only in the yearly-basis 
   `projection` or `scenario` **and** the period ends after the as-of month; else `actual` when the period is known; else unknown. A `basis` of `projection` for a period on or before the
   as-of month stays `actual` with the existing flag "basis conflicts with period" (claim-matching.md, M2).
 - A claim of type `actual` whose period ends after the as-of month is not a forecast: its months are not in the data, so the existing coverage rule applies ("claim period not in
-  supplied data: after the latest valid source period, {month}" or "months missing: ..."), label Unverified, no calculation, no "to go".
+  supplied data: after the latest valid source period, {month}", "after {metric}'s last month, {month}" or "months missing: ..."), label Unverified, no calculation, no "to go". This holds for every
+  metric kind: a month metric with or without a `metric_periods` block, and the as-of figures (ACV, sales cycle, win rate, NRR by segment).
 - A forecast is never Verified or Contradicted and has no "beat": its label is Unverified, whatever the calculation says. A target for a period that has passed keeps
   "target figure: the deck states a plan for this period, not a result".
 
@@ -79,7 +80,8 @@ A period that is not twelve, three or one month long is not calculated ("period 
 
 ### 3.5 Ranges
 A claim with a range (`claimed_high`) shows the range, not the end that compares best: `Required growth: 20.1% to 33.4% a year (...)`, and the difference as a range. Both ends must pass
-section 3.1; if either does not, no growth is calculated and the reason names the end.
+section 3.1; if either does not, no growth is calculated and the reason names the end: "low end of the forecast range not positive" or "both ends of the forecast range not positive". A balance
+(ARR, MRR, customer count) is shown for its endpoint month, not as a twelve-month window.
 
 ### 3.6 Remaining target
 When months of the claim's period are already in the data (a fiscal year partly actual, a flow), the remaining amount is the claimed amount less the actual to date, labelled as a calculation:
@@ -149,7 +151,7 @@ The seven-column register, the three-column five ("Plan assumes · Evidence show
 amended.
 ### 5.2 No rank prefix
 No screen shows `#rank`. A claim is named by its words and period; its stable reference is `claim_id`, which the API, the CSV and the memo's Appendix A keep. Texts the server writes for a
-screen no longer cite a rank: the repeat note reads "Same figure as the one stated on {page}; counted once"; the reasons, the Worth flagging lines, the data-gap lines and the unmeasured list
+screen no longer cite a rank: the repeat note reads "Same figure as {amount} stated on {page}; counted once", so two figures on one page stay distinguishable; the reasons, the Worth flagging lines, the data-gap lines and the unmeasured list
 name the claim ("Revenue, FY2025"). The memo keeps its rank column and footnote numbers in Appendix A and the footnotes, the position references of that printed document; the CSV keeps `rank` and `claim_id`.
 ### 5.3 Same values everywhere
 The screen reads the register row; the memo's Appendix A and the baseline CSV read the same row. Value, evidence label, relationship, source and calculation lines are the same strings in
@@ -173,18 +175,19 @@ shown only when the register holds no claim and no conflict. The conflicts stay 
 | Forecast diagnostics: like-duration bases | annual against fiscal year, trailing 12 months when no fiscal year is complete, a quarter against the same quarter, a month against the same month, a balance against its latest observation; a quarter never against an annual total; March year-end | `test_forecast_calc.py` |
 | Insufficient history, missing periods | no comparator window; months missing in the base or comparator window; pace indicator named apart, with dates and interval, "limited" under 12 months, observations apart from elapsed months | `test_forecast_calc.py` |
 | Zero and negative inputs | base, forecast, elapsed and comparator base zero or negative: a specific reason, never a number | `test_forecast_calc.py` |
-| Ranges | both ends shown, never the better end; an invalid end blocks the calculation | `test_forecast_calc.py` |
+| Ranges | both ends shown, never the better end; an invalid end blocks the calculation and the reason names the end; a balance names its endpoint month | `test_forecast_calc.py` |
 | Remaining target | the part-year actual, the remaining amount labelled as a calculation, none for a balance without a gap | `test_forecast_calc.py` |
 | No verification of future outcomes | a forecast is Unverified however large the gap; no beat; no pass or fail; the note once, not on a row | `test_forecast_register.py` |
-| Actual or forecast from the classification | period alone is missing coverage; projection and target cue are forecasts; the analyst's type wins | `test_forecast_register.py` |
+| Actual or forecast from the classification | period alone is missing coverage for every metric kind (ARR, ACV, win rate, NRR by segment); projection and target cue are forecasts; the analyst's type wins; the turnover path takes the flag | `test_forecast_register.py`, `test_claim_matching.py` |
 | Annual payback: matching and mismatching definitions | the claim states denominator, margin and cost basis; one differs or is unstated: Unverified, "definition not compared" | `test_annual_payback.py` |
-| Annual payback: proxies | revenue-growth and net-new-ARR proxies both kept and named; neither verifies a differently defined claim | `test_annual_payback.py`, `test_growth_engine.py` |
+| Annual payback: proxies | revenue-growth and net-new-ARR proxies both kept and named; neither verifies a differently defined claim; "fully loaded" and "blended" are no cost basis, so such a claim reads "definition not compared" | `test_annual_payback.py`, `test_growth_engine.py` |
 | Annual payback: missing years or costs, invalid denominator | each reason of section 4.2; a marketing-only line named as such | `test_annual_payback.py`, `test_growth_engine.py` |
 | Correctly scoped data requests | the answered claim leaves the request; another year, another definition and monthly timing keep it | `test_annual_payback.py` |
 | Consistent outputs | the same values, status, relationship, source and calculation lines in the register payload, the baseline CSV and the memo's Appendix A | `test_consistent_outputs.py` |
 | The four columns, one note, no rank | the register and the five render the four columns and the note once; no `#` prefix; the corrections under Details; the two proxies in the Years table | `ClaimRegister.forecast.test.jsx`, `FiveClaims.forecast.test.jsx`, `claimColumns.test.js`, `YearlyBasis.test.jsx` |
-| Conclusion with open conflicts | Insufficient evidence with "n conflicts open" in the verdict and the memo; "No testable claims" only for an empty register | `test_conclusion_conflicts.py`, `Verdict.conclusion.test.jsx` |
-| Boundary | no gateway module names the new fields; closed reasons; no log line | `test_gateway_data_boundary.py` |
+| Repeat note | the note names the repeated figure and its page, no rank | `test_claim_groups.py`, `test_consistent_outputs.py` |
+| Conclusion with open conflicts | Insufficient evidence with "n conflicts open" in the verdict and the memo; "No testable claims" only for an empty register | `test_conclusion.py`, `test_conclusion_conflicts.py`, `Verdict.conclusion.test.jsx` |
+| Boundary | no gateway module names the new fields; closed reasons, the annual "not calculated" reason with its period token and the unavailable-calculation path; no log line | `test_gateway_data_boundary.py` |
 
 ## 9. Decided (engineering, rule 19) and left out
 - The pace indicator is named apart and carries no difference in points: it is not annual growth (design note section 3).

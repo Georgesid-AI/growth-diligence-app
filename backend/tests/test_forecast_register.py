@@ -147,3 +147,55 @@ def test_the_calculation_lists_survive_the_baseline_csv_round_trip():
     assert parsed[0]["calc_lines"] == rows[0]["calc_lines"] and parsed[0]["calc_details"] == rows[0]["calc_details"]
     assert verdict_mod.rewrite_baseline(parsed, [], None) == text, "the same bytes"
     assert cm.FIELDS[-2:] == ("calc_lines", "calc_details") or {"calc_lines", "calc_details"} <= set(cm.FIELDS)
+
+
+# --- 4. an actual after the data is missing coverage for every metric kind (Opus review M1) -------------------------------------------
+
+@pytest.mark.parametrize("metric_periods", [False, True])
+def test_an_actual_ARR_after_the_data_reads_not_covered(metric_periods):
+    results = long_results()
+    if metric_periods:
+        results["metric_periods"] = {"mrr_series": {"first": "2022-01", "last": "2024-12", "missing": []}}
+    for basis in ("actual", None):
+        row = row_of(claim("ARR €1.7M in Dec 2025", 1_728_000, "Dec 2025", "2025-12", claim_type="arr", basis=basis), results=results)
+        assert row["evidence_label"] == "Unverified" and row["reason"].startswith("claim period not in supplied data: after "), row["reason"]
+
+
+def test_an_actual_win_rate_after_the_data_reads_not_covered():
+    results = long_results()
+    row = row_of(claim("Win rate 30% in Dec 2025", 30, "Dec 2025", "2025-12", claim_type="sales", unit="%", currency=None, basis="actual"),
+                 results=results)
+    assert row["metric"] == "Win rate" and row["evidence_label"] == "Unverified"
+    assert row["reason"].startswith("claim period not in supplied data: after "), row["reason"]
+
+
+def test_an_actual_acv_and_segment_nrr_after_the_data_read_not_covered():
+    acv = row_of(claim("ACV €30k in Dec 2025", 30_000, "Dec 2025", "2025-12", claim_type="sales", unit=None, basis="actual"))
+    assert acv["metric"] == "ACV" and acv["reason"].startswith("claim period not in supplied data: after "), acv["reason"]
+    nrr = row_of(claim("Enterprise NRR 120% in Dec 2025", 120, "Dec 2025", "2025-12", claim_type="retention", unit="%", currency=None,
+                       basis="actual", segment="Enterprise"))
+    assert nrr["metric"] == "NRR (12-month)" and nrr["reason"].startswith("claim period not in supplied data: after "), nrr["reason"]
+
+
+# --- 5. the turnover path and _observe take the forecast flag, never infer it from the period (Opus review L1) -------------------------------
+
+def test_observe_does_not_infer_a_forecast_from_the_period():
+    import inspect
+    results = long_results()
+    figures = cm._Figures(results, "ARR", cm.WHOLE)
+    after = cm._mi("2025-12")
+    got = cm._observe(figures, cm.METRICS["ARR"], "ARR", after - 11, after, cm._mi("2024-12"))
+    assert isinstance(got[0], str) and got[0].startswith("Unverified|claim period not in supplied data: after "), got
+    assert inspect.signature(cm._observe).parameters["forecast"].default is False
+    assert inspect.signature(cm._file_revenue).parameters["forecast"].default is inspect.Parameter.empty
+
+
+def test_the_turnover_path_passes_the_classification_to_observe(monkeypatch):
+    seen = []
+    real = cm._observe
+    monkeypatch.setattr(cm, "_observe", lambda *a, **k: seen.append(k.get("forecast")) or real(*a, **k))
+    results = long_results()
+    assert cm._file_revenue(results, cm.WHOLE, cm._mi("2024-01"), cm._mi("2024-12"), cm._mi("2024-12"), False)[0] == 1_440_000
+    assert cm._file_revenue(results, cm.WHOLE, cm._mi("2025-01"), cm._mi("2025-12"), cm._mi("2024-12"), True) == (None, None)
+    assert cm._file_revenue(results, cm.WHOLE, cm._mi("2025-01"), cm._mi("2025-12"), cm._mi("2024-12"), False) == (None, None)
+    assert seen == [False, False], "the flag goes to _observe as given; a forecast never reaches it"

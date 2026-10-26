@@ -139,7 +139,8 @@ def test_a_bare_sales_line_in_a_cost_section_is_total_s_and_m_as_the_statement_r
     ("marketing spend only over net-new ARR, margin adjusted", {"denominator": "net new ARR", "margin": "gross margin", "cost": "marketing only"}),
     ("CAC payback of 18 months", {"denominator": None, "margin": None, "cost": None}),
     ("payback on new ARR", {"denominator": "gross new ARR", "margin": None, "cost": None}),
-    ("revenue-based payback, unadjusted, fully loaded", {"denominator": None, "margin": "none", "cost": "sales and marketing"}),
+    ("revenue-based payback, unadjusted, fully loaded", {"denominator": None, "margin": "none", "cost": None}),
+    ("blended CAC payback on net new ARR", {"denominator": "net new ARR", "margin": None, "cost": None}),
 ])
 def test_the_definition_is_read_from_the_claims_own_words_and_unstated_is_unknown(text, expected):
     assert pd_.claimed_definition(text) == expected
@@ -150,6 +151,13 @@ def test_a_part_the_claim_does_not_state_is_never_assumed_equal():
     assert pd_.compare(pd_.claimed_definition("12 x S&M over net new ARR at gross margin"), proxy) is None
     for text in ("S&M over net new ARR", "over net new ARR at gross margin", "S&M at gross margin", "payback"):
         assert pd_.compare(pd_.claimed_definition(text), proxy).startswith("definition not compared: "), text
+
+
+def test_fully_loaded_and_blended_are_no_cost_basis_so_such_a_claim_is_not_compared():
+    proxy = {"denominators": ("net new ARR", "revenue growth"), "margin": "gross margin", "cost": "sales and marketing"}
+    for text in ("fully loaded CAC payback over net new ARR at gross margin", "blended CAC payback over net new ARR at gross margin"):
+        got = pd_.compare(pd_.claimed_definition(text), proxy)
+        assert got is not None and got.startswith("definition not compared: ") and "cost basis" in got, text
 
 
 # --- 5. the claim against the annual figures -----------------------------------------------------------------------------------------

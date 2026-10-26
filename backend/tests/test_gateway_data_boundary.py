@@ -3690,3 +3690,21 @@ def test_the_calculation_lines_hold_figures_and_closed_words_never_the_claims_wo
     annual = fs.row_of(fs.payback_claim(f"CAC payback 16 months in FY2024, {secret}, sales and marketing over net new ARR, gross margin", 16),
                        results=fs.payback_results())
     assert annual["calc_lines"] and all(secret not in str(v) for v in (*annual["calc_lines"], *annual["calc_details"], annual["reason"]))
+
+
+def test_the_not_calculated_reasons_hold_closed_words_and_a_period_token_never_the_claims_words():
+    """The annual payback reason (ANNUAL_NOT_CALCULATED) names the fiscal year of the claim's period and a closed reason; the forecast reason of a
+    claim whose amounts are not comparable (forecast_calc.unavailable) holds the closed mismatch text and the figures. A sentinel in the claim's
+    words reaches neither (CLAUDE.md rules 14 and 17)."""
+    import forecast_support as fs
+    secret = "Falcon Orchid hiring plan"
+    assert claim_matching.ANNUAL_NOT_CALCULATED.format(year="FY2021", reason=claim_matching.ANNUAL_NO_YEAR) == \
+        "annual payback not calculated for FY2021: no actual year in the yearly P&L"
+    text = f"CAC payback 16 months in FY2021, {secret}, sales and marketing over net new ARR, gross margin"
+    row = fs.row_of(fs.payback_claim(text, 16, year=2021), results=fs.payback_results())
+    assert row["reason"] == "annual payback not calculated for FY2021: no actual year in the yearly P&L", row["reason"]
+    unavailable = fs.row_of(fs.claim(f"180 registered users in FY2026, {secret}", 180, "FY2026", "2026", claim_type="customers", currency=None,
+                                     basis="projection", population="registered"))
+    assert unavailable["calc_lines"][0].startswith("Required growth: not calculated – population differs")
+    for r in (row, unavailable):
+        assert all(secret not in str(v) for v in (*r["calc_lines"], *r["calc_details"], r["reason"], r["relationship"], r["gloss"]))

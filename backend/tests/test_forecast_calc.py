@@ -285,10 +285,13 @@ def test_a_range_is_never_reduced_to_the_end_that_compares_best():
 
 def test_a_range_with_an_end_that_is_not_positive_calculates_no_growth():
     found = run(series=TWO_YEARS, last="2024-12", start="2025-01", end="2025-12", low=-10, high=2_160_000)
-    assert found["required"] is None and found["reason"] == "forecast not positive"
+    assert found["required"] is None and found["reason"] == "low end of the forecast range not positive"
     found = run(series=TWO_YEARS, last="2024-12", start="2025-01", end="2025-12", low=1_728_000, high=0)
-    assert found["required"] is None and found["reason"] == "forecast not positive"
-    assert "Required growth: not calculated – forecast not positive" in lines_of(found)
+    assert found["required"] is None and found["reason"] == "low end of the forecast range not positive"
+    found = run(series=TWO_YEARS, last="2024-12", start="2025-01", end="2025-12", low=-5, high=0)
+    assert found["reason"] == "both ends of the forecast range not positive"
+    assert "Required growth: not calculated – both ends of the forecast range not positive" in lines_of(found)
+    assert run(series=TWO_YEARS, last="2024-12", start="2025-01", end="2025-12", low=0)["reason"] == "forecast not positive", "a single figure"
 
 
 def test_a_range_given_in_either_order_reads_low_then_high():
@@ -358,3 +361,14 @@ def test_the_calculation_depends_only_on_its_inputs():
     one = run(series=TWO_YEARS, last="2024-12", start="2026-01", end="2026-12", low=2_073_600)
     two = run(series=dict(reversed(list(TWO_YEARS.items()))), last="2024-12", start="2026-01", end="2026-12", low=2_073_600)
     assert one == two
+
+
+def test_a_balance_forecast_names_its_endpoint_month_not_a_twelve_month_window():
+    arr = months("2023-01", "2024-12", 1_000_000)
+    found = run(metric="ARR", series=arr, last="2024-12", start="2025-01", end="2025-12", low=1_500_000)
+    text = lines_of(found)
+    assert "for 2025-12 against" in text and "2025-01 to 2025-12" not in text and "Target" not in text
+    assert not any("2025-01 to 2025-12" in d for d in found["details"]) and any("forecast €1,500,000 for 2025-12" in d for d in found["details"])
+    shown = fc.unavailable("population differs", "180", m("2025-01"), m("2025-12"), 12, flow=False)
+    assert shown["lines"][1] == "Target: 180 for 2025-12"
+    assert fc.unavailable("population differs", "180", m("2025-01"), m("2025-12"))["lines"][1] == "Target: 180 for FY2025"

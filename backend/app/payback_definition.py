@@ -21,7 +21,7 @@ _DENOMINATORS = (
 _MARGIN_NONE = re.compile(r"(?i)\b(?:unadjusted|not (?:gross[- ])?margin[- ]adjusted|revenue[- ]based|before (?:gross )?margin|without (?:gross )?margin)\b")
 _MARGIN = re.compile(r"(?i)\bgross[- ]margin\b|\bmargin[- ]adjusted\b|\bgross profit\b")
 _COSTS = (
-    (TOTAL_SM, re.compile(r"(?i)\bsales\s*(?:and|&|/)\s*marketing\b|\bs\s*&\s*m\b|\bfully[- ]loaded\b|\bblended\b")),
+    (TOTAL_SM, re.compile(r"(?i)\bsales\s*(?:and|&|/)\s*marketing\b|\bs\s*&\s*m\b")),
     (MARKETING_ONLY, re.compile(r"(?i)\bmarketing[- ](?:spend|only|expenses?|costs?)\b|\bpaid (?:marketing|acquisition)\b|\bad(?:vertising)? spend\b")),
     (SALES_ONLY, re.compile(r"(?i)\bsales (?:only|costs?|expenses?|spend)\b")),
 )

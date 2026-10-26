@@ -20,13 +20,15 @@ R_NO_WINDOW = "no actual revenue for the same {unit} of an earlier year (missing
 R_NO_OBSERVATION = "no actual observation of {metric}"
 R_BASE = "base not positive"
 R_FORECAST = "forecast not positive"
+R_FORECAST_LOW = "low end of the forecast range not positive"
+R_FORECAST_BOTH = "both ends of the forecast range not positive"
 R_ELAPSED = "elapsed months not positive"
 R_COMPARATOR_BASE = "comparator base not positive"
 R_NO_YEAR_BEFORE = "insufficient history: no complete 12 months before {window}"
 R_NO_UNIT_BEFORE = "insufficient history: no complete {unit} a year before {window}"
 R_COMPARATOR_HOLES = "insufficient history: months missing in the comparator window {window}: {months}"
 R_NO_OBSERVATION_BEFORE = "insufficient history: no observation of {metric} at {month}"
-REASONS = (R_PERIOD, R_NO_YEAR, R_NO_WINDOW, R_NO_OBSERVATION, R_BASE, R_FORECAST, R_ELAPSED, R_COMPARATOR_BASE, R_NO_YEAR_BEFORE,
+REASONS = (R_PERIOD, R_NO_YEAR, R_NO_WINDOW, R_NO_OBSERVATION, R_BASE, R_FORECAST, R_FORECAST_LOW, R_FORECAST_BOTH, R_ELAPSED, R_COMPARATOR_BASE, R_NO_YEAR_BEFORE,
            R_NO_UNIT_BEFORE, R_COMPARATOR_HOLES, R_NO_OBSERVATION_BEFORE)
 
 
@@ -49,6 +51,11 @@ def window_name(start: int, end: int, fye: int) -> str:
     if end - start == 11 and end % 12 + 1 == fye:
         return f"FY{end // 12}"
     return _range_name(start, end)
+
+
+def _period_name(flow: bool, start: int, end: int, fye: int) -> str:
+    """A flow is forecast for its window; a balance for its endpoint month."""
+    return window_name(start, end, fye) if flow else ms(end)
 
 
 def _pct(fraction: float) -> str:
@@ -156,7 +163,7 @@ def diagnose(*, metric: str, series: Dict[int, float], last: Optional[int], star
     """
     flow = metric in FLOWS
     lo, hi = (low, None) if high is None else tuple(sorted((low, high)))
-    pname = window_name(start, end, fye) if flow else _range_name(start, end)
+    pname = _period_name(flow, start, end, fye)
     shown = money(lo) if hi is None else f"{money(lo)}–{money(hi)}"
     out = {"lines": [], "details": [], "reason": None, "text": "", "required": None, "base": None, "historical": None, "historical_reason": None,
            "pace": None, "difference": None, "remaining": None}
@@ -172,7 +179,7 @@ def diagnose(*, metric: str, series: Dict[int, float], last: Optional[int], star
         if base["value"] <= 0:
             why = R_BASE
         elif lo <= 0 or (hi is not None and hi <= 0):
-            why = R_FORECAST
+            why = R_FORECAST if hi is None else R_FORECAST_BOTH if hi <= 0 else R_FORECAST_LOW
         elif base["elapsed"] <= 0:
             why = R_ELAPSED
     out["reason"] = why
@@ -216,7 +223,7 @@ def diagnose(*, metric: str, series: Dict[int, float], last: Optional[int], star
     out["remaining"], line = _remaining(series, flow, start, end, last, lo, hi, base, money)
     if line:
         out["lines"].append(line)
-    out["details"] = _details(out, pname, start, end, shown, base, historical, money)
+    out["details"] = _details(out, flow, pname, start, end, shown, base, historical, money)
     out["text"] = _row_text(out)
     return out
 
@@ -230,9 +237,9 @@ def _row_text(found: dict) -> str:
     return text + (f" against {_pct(found['historical']['value'])} historical" if found["historical"] else "")
 
 
-def unavailable(reason: str, shown: str, start: int, end: int, fye: int = 12) -> dict:
+def unavailable(reason: str, shown: str, start: int, end: int, fye: int = 12, flow: bool = True) -> dict:
     """The diagnostics of a claim whose amounts are not comparable (a population that differs): the target and the reason, no growth."""
-    pname = window_name(start, end, fye) if end - start + 1 in PERIOD_LENGTHS else _range_name(start, end)
+    pname = _period_name(flow, start, end, fye) if not flow or end - start + 1 in PERIOD_LENGTHS else _range_name(start, end)
     return {"lines": [f"Required growth: not calculated – {reason}", f"Target: {shown} for {pname}"], "details": [FORMULA], "reason": reason,
             "text": reason, "required": None, "base": None, "historical": None, "historical_reason": None, "pace": None, "difference": None,
             "remaining": None}
@@ -257,11 +264,11 @@ def _remaining(series, flow, start, end, last, lo, hi, base, money) -> Tuple[Opt
     return rest, f"Remaining to reach the target: {amount} (calculation: target less the latest observation, {base['window']})"
 
 
-def _details(out, pname, start, end, shown, base, historical, money) -> List[str]:
+def _details(out, flow, pname, start, end, shown, base, historical, money) -> List[str]:
     """The formula and every input with its window (section 5.1, Details)."""
     lines = [FORMULA]
     period = _range_name(start, end)
-    lines.append(f"forecast {shown} for {pname}" + (f" ({period})" if pname != period else ""))
+    lines.append(f"forecast {shown} for {pname}" + (f" ({period})" if flow and pname != period else ""))
     if base is not None:
         window = _range_name(*base["bounds"])
         lines.append(f"base {money(base['value'])} for {base['window']}" + (f" ({window})" if base["window"] != window else "")

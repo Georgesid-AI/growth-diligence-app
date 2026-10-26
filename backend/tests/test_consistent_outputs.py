@@ -141,7 +141,7 @@ def test_no_text_the_server_writes_for_a_screen_cites_a_rank(claims_for):
 def test_the_repeat_note_names_the_page_not_a_rank(claims_for):
     client, _ = claims_for([("c1", 187_700, "2023"), ("c6", 187_700, "2023")])
     repeat = next(r for r in get(client, "/claims")["register"] if r["group_role"] == "repeat")
-    assert repeat["relationship"] == "Same figure as the one stated on slide 1; counted once"
+    assert repeat["relationship"] == "Same figure as €187,700 stated on slide 1; counted once"
 
 
 def test_the_reasons_the_flagged_lines_and_the_gap_lists_name_the_claim(claims_for):
