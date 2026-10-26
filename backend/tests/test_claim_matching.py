@@ -738,6 +738,9 @@ def test_the_as_of_month_set_on_the_audit_is_not_defaulted():
     assert row["as_of_defaulted"] is False
 
 
+SEGMENT_TEXT = ("segment", "relationship", "gate_sentence")      # the fields that carry the segment a cited label names, or a sentence built from it
+
+
 def test_no_deck_text_reaches_a_register_row():
     run = RUNS["A"]
     sentinel = "DECKTEXT Jane Doe"
@@ -748,7 +751,8 @@ def test_no_deck_text_reaches_a_register_row():
         c["date_from"] = sentinel
         c["sources"] = [{**s, "text": sentinel} for s in c["sources"]]
     rows = cm.build_register(cands, results_for(run), settings(run))
-    assert sentinel not in repr(rows) and "snippet" not in rows[0] and "label_from" not in rows[0]
+    # the one deck text a row may hold: the segment its cited label names (docs/design/segment-partitions.md; test_gateway_data_boundary.py)
+    assert sentinel not in repr([{k: v for k, v in r.items() if k not in SEGMENT_TEXT} for r in rows]) and "snippet" not in rows[0] and "label_from" not in rows[0]
 
 
 def test_the_matching_does_not_change_the_candidates_or_the_results():

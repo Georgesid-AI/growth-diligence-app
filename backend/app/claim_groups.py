@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 from decimal import Decimal
+from itertools import combinations
 from typing import Dict, Iterable, List, NamedTuple, Optional, Tuple
 
 from . import claim_matching as cm
@@ -27,15 +28,20 @@ PART_WORDS = {"month": "months", "quarter": "quarters", "half": "halves", YEAR_E
 BASES = ("actual", "projection", "scenario")
 
 TOTAL, PART = "total", "part"
+SEGMENT_PART = "segment_part"       # a figure of one segment in a set of segments that reconciles with the company total (docs/design/segment-partitions.md)
+SEGMENT_LIMIT = 12                  # segments searched for a reconciling set: 2^12 subsets at most
 ALSO = "also"            # a part of a coarser set that reconciles with the total too: under the total's Details beside the finer set
 REPEAT = "repeat"        # the same figure stated again: folded into the row of its first statement, both sources under Details
 PENDING = "pending_part"    # a part of a candidate's reconciling set while the annual conflict is open: no top-five slot, no exposure of its own
 CANDIDATE, ALTERNATIVE = "candidate", "alternative"      # an annual figure in a conflict: none chosen yet, or passed over for the preferred one
 KIND_TOTAL = "total"           # what a review asks: which total
-SUBORDINATE = (PART, ALSO, REPEAT)      # shown under another row's Details, never an item of their own
+SUBORDINATE = (PART, ALSO, REPEAT, SEGMENT_PART)      # shown under another row's Details, never an item of their own
 
 NOTE_TOTAL = "Annual total: {parts} reconcile with it ({sum} against {total}, within " + TOLERANCE_TEXT + ")"
 NOTE_PART = "Part of the annual total for {period}"
+NOTE_SEGMENTS = "{parts} reconcile with it ({sum} against {total}, within " + TOLERANCE_TEXT + ")"
+NOTE_SEGMENT_PART = "{segment}: part of the company total for {period}, by segment"
+NOTE_SEGMENTS_DIFFER = "Segment figures sum to {sum}, outside " + TOLERANCE_TEXT + " of the company total {total}; kept as independent claims"
 NOTE_REPEAT = "Same figure as {figure} stated on {page}; counted once"
 NOTE_ALSO = "{parts} also reconcile with this total; shown under its Details"
 NOTE_PENDING = "Part of a set that reconciles with one of the annual figures still in conflict; no exposure of its own until one is chosen"
@@ -200,6 +206,45 @@ def _evaluate(clusters: Dict[tuple, List[List[_Fig]]], key: tuple, start: int, e
     return out
 
 
+def _whole(key: tuple) -> bool:
+    return key[3] in (None, "", cm.WHOLE)
+
+
+def _segment_set(by_segment: Dict[tuple, List[_Fig]], key: tuple, start: int, end: int, total: Decimal) -> dict:
+    """The segment partition of a company total (docs/design/segment-partitions.md section 2): among the figures of the same scope and period
+    that carry a segment, one figure per segment, the set of two or more whose sum is within the tolerance of `total` (the smallest difference,
+    then one page, then the earliest). `parts` are the segments' clusters; `rest` the segment figures outside it, with their sum, for the note
+    of a set that does not reconcile."""
+    out = {"state": "none", "parts": [], "rest": [], "sum": Decimal(0), "rest_sum": Decimal(0)}
+    if not _whole(key):
+        return out
+    per: Dict[str, List[_Fig]] = {}
+    for fig in by_segment.get((key[:3] + key[4:], start, end), ()):
+        per.setdefault(fig.key[3], []).append(fig)
+    clusters = []
+    for figs in per.values():
+        found = _clusters(figs)
+        if len(found) == 1:        # a segment with two different figures is ambiguous: it takes no part in a set
+            clusters.append(found[0])
+    if len(clusters) < 2 or len(clusters) > SEGMENT_LIMIT:
+        return out
+    best = None
+    for size in range(2, len(clusters) + 1):
+        for combo in combinations(clusters, size):
+            added = sum((c[0].value for c in combo), Decimal(0))
+            if within(added, total):
+                pages = {(c[0].row.get("deck_file"), c[0].row.get("page_ref")) for c in combo}
+                rank = (abs(added - total), len(pages) > 1, min(c[0].index for c in combo))
+                if best is None or rank < best[0]:
+                    best = (rank, combo, added)
+    if best is not None:
+        chosen = {id(c) for c in best[1]}
+        rest = [c for c in clusters if id(c) not in chosen]
+        return {"state": "reconciles", "parts": sorted(best[1], key=lambda c: c[0].index), "sum": best[2], "rest": rest,
+                "rest_sum": sum((c[0].value for c in rest), Decimal(0))}
+    return {"state": "differs", "parts": [], "sum": Decimal(0), "rest": clusters, "rest_sum": sum((c[0].value for c in clusters), Decimal(0))}
+
+
 def _conflict_text(found: List[List[_Fig]], preferred: Optional[List[_Fig]]) -> str:
     """The conflict as one line for the conclusion and the memo: the claim, then each figure with its source; the preferred one is named."""
     lead = found[0][0].row
@@ -252,8 +297,11 @@ def relate(rows: List[dict], choices: Optional[dict] = None, fiscal_year_end: Op
     by_slot: Dict[tuple, List[_Fig]] = {}
     for fig in figs:
         by_slot.setdefault((fig.key, fig.start, fig.end), []).append(fig)
+    by_segment: Dict[tuple, List[_Fig]] = {}      # the figures that carry a segment, by their scope without it and their period
     for slot, members in by_slot.items():
         clusters[slot] = _clusters(members)
+        if not _whole(slot[0]) and slot[0][3] != cm.NOT_IN_DATA:
+            by_segment.setdefault((slot[0][:3] + slot[0][4:], slot[1], slot[2]), []).extend(members)
     out = {"groups": [], "reviews": [], "conflicts": [], "roles": {}, "notes": {}, "folded": set()}
     taken: set = set()
     annual = sorted((s for s in by_slot if s[2] - s[1] + 1 == ANNUAL), key=lambda s: min(f.index for f in by_slot[s]))
@@ -268,6 +316,9 @@ def relate(rows: List[dict], choices: Optional[dict] = None, fiscal_year_end: Op
             # the question is bound to the candidates and to the parts that reconcile with each: an edit to those parts is a new question
             sets = [f"{c[0].identity}:{name}:{'.'.join(p[0].identity for p in e['parts'])}"
                     for c, ev in zip(found, evaluations) for name, e in ev.items() if e["state"] == "reconciles"]
+            segment_sets = [_segment_set(by_segment, key, start, end, c[0].value) for c in found]
+            sets += [f"{c[0].identity}:segments:{'.'.join(p[0].identity for p in e['parts'])}" for c, e in zip(found, segment_sets)
+                     if e["state"] == "reconciles"]
             total_ctx = context_hash(KIND_TOTAL, key, start, end, [f.identity for c in found for f in c] + sets, fiscal_year_end)
             pick = _saved(choices, total_id, total_ctx)
             preferred = next((c for c in found if pick in {f.identity for f in c}), None) if pick else None
@@ -288,43 +339,50 @@ def relate(rows: List[dict], choices: Optional[dict] = None, fiscal_year_end: Op
                     if preferred is None or c is not preferred:        # a figure the analyst has not chosen is no item of the top five
                         out["roles"][fig.row["claim_id"]] = (total_id, CANDIDATE if preferred is None else ALTERNATIVE)
             if preferred is None:
-                for ev in evaluations:       # the parts of every candidate's reconciling set wait with the question: no slot, no exposure
-                    for e in ev.values():
-                        if e["state"] == "reconciles":
-                            for cluster in e["parts"]:
-                                for fig in cluster:
-                                    out["roles"][fig.row["claim_id"]] = (total_id, PENDING)
-                                    out["notes"][fig.row["claim_id"]] = NOTE_PENDING
+                for e in [e for ev in evaluations for e in ev.values()] + segment_sets:       # the parts of every candidate's reconciling set wait with the question: no slot, no exposure
+                    if e["state"] == "reconciles":
+                        for cluster in e["parts"]:
+                            for fig in cluster:
+                                out["roles"][fig.row["claim_id"]] = (total_id, PENDING)
+                                out["notes"][fig.row["claim_id"]] = NOTE_PENDING
                 continue
         evaluation = evaluations[found.index(preferred)]
         total = preferred[0]
         reconciling = [name for name, e in evaluation.items() if e["state"] == "reconciles"]
-        if not reconciling:
+        seg = _segment_set(by_segment, key, start, end, total.value)       # the segments of the company total: a partition of its own
+        segment_clusters = seg["parts"] if seg["state"] == "reconciles" else []
+        if not reconciling and not segment_clusters:
             note = _why_not(evaluation, total)
             if note:
                 out["notes"][total.row["claim_id"]] = note
+            _note_rest(out, seg, total)
             continue
-        name, others = reconciling[0], reconciling[1:]       # the finer set is the group (months, quarters, halves); the coarser ones go under Details
-        part_clusters = evaluation[name]["parts"]
+        name, others = (reconciling[0], reconciling[1:]) if reconciling else (None, [])       # the finer set is the group (months, quarters, halves); the coarser ones go under Details
+        part_clusters = evaluation[name]["parts"] if name else []
         also_clusters = [c for n in others for c in evaluation[n]["parts"]]
-        members = [c[0].row["claim_id"] for c in [preferred] + part_clusters + also_clusters]
+        members = [c[0].row["claim_id"] for c in [preferred] + part_clusters + also_clusters + segment_clusters]
         if taken & set(members):
             out["notes"][total.row["claim_id"]] = NOTE_TAKEN
             continue
         taken |= set(members)
         group_id = _digest("group", *key, start, end, total.identity)
-        e = evaluation[name]
+        e = evaluation[name] if name else seg
         period = total.row.get("period")
         out["groups"].append({
-            "id": group_id, "kind": key[0], "partition": name, "total": total.row["claim_id"], "period": period,
+            "id": group_id, "kind": key[0], "partition": name or "segment", "total": total.row["claim_id"], "period": period,
             "parts": [c[0].row["claim_id"] for c in part_clusters], "other_partitions": others,
             "other_parts": [c[0].row["claim_id"] for c in also_clusters],
+            "segment_parts": [c[0].row["claim_id"] for c in segment_clusters],
             "total_value": float(total.value), "parts_value": float(e["sum"]), "difference": float(e["sum"] - total.value),
             "tolerance": float(TOLERANCE), "metric": total.row.get("metric"), "segment": total.row.get("segment"),
             "currency": total.row.get("currency"), "unit": total.row.get("unit"), "chosen": used})
         out["roles"][total.row["claim_id"]] = (group_id, TOTAL)
-        out["notes"][total.row["claim_id"]] = NOTE_TOTAL.format(parts=PART_WORDS[name], sum=_amount(e["sum"], total.row),
-                                                                total=_amount(total.value, total.row))
+        clauses = ([NOTE_TOTAL.format(parts=PART_WORDS[name], sum=_amount(evaluation[name]["sum"], total.row), total=_amount(total.value, total.row))]
+                   if name else [])
+        if segment_clusters:
+            said = NOTE_SEGMENTS.format(parts="segments", sum=_amount(seg["sum"], total.row), total=_amount(total.value, total.row))
+            clauses.append(said if name else "Annual total: " + said)
+        out["notes"][total.row["claim_id"]] = "; ".join(clauses)
         for c in part_clusters:
             out["roles"][c[0].row["claim_id"]] = (group_id, PART)
             out["notes"][c[0].row["claim_id"]] = NOTE_PART.format(period=period or "the year")
@@ -332,7 +390,11 @@ def relate(rows: List[dict], choices: Optional[dict] = None, fiscal_year_end: Op
             for c in evaluation[n]["parts"]:
                 out["roles"][c[0].row["claim_id"]] = (group_id, ALSO)
                 out["notes"][c[0].row["claim_id"]] = NOTE_ALSO.format(parts=PART_WORDS[n].capitalize())
-        for c in [preferred] + part_clusters + also_clusters:
+        for c in segment_clusters:
+            out["roles"][c[0].row["claim_id"]] = (group_id, SEGMENT_PART)
+            out["notes"][c[0].row["claim_id"]] = NOTE_SEGMENT_PART.format(segment=c[0].row.get("segment"), period=period or "the year")
+        _note_rest(out, seg, total)
+        for c in [preferred] + part_clusters + also_clusters + segment_clusters:
             _fold(out, c, group_id)
     for slot in annual:               # an annual figure stated twice folds also when no group forms and for the candidates of a conflict
         for cluster in clusters[slot]:
@@ -343,6 +405,17 @@ def relate(rows: List[dict], choices: Optional[dict] = None, fiscal_year_end: Op
                 _fold(out, cluster, same)
     out["notes"] = {k: v for k, v in out["notes"].items() if v}
     return out
+
+
+def _note_rest(out: dict, seg: dict, total: _Fig) -> None:
+    """The segment figures outside a reconciling set (all of them when none reconciles): two or more of them that do not reconcile with the company
+    total stay independent claims, each with the note that says so."""
+    if len(seg["rest"]) < 2 or within(seg["rest_sum"], total.value):
+        return
+    note = NOTE_SEGMENTS_DIFFER.format(sum=_amount(seg["rest_sum"], total.row), total=_amount(total.value, total.row))
+    for cluster in seg["rest"]:
+        for fig in cluster:
+            out["notes"].setdefault(fig.row["claim_id"], note)
 
 
 def _why_not(evaluation: Dict[str, dict], total: _Fig) -> Optional[str]:
@@ -362,7 +435,7 @@ def _why_not(evaluation: Dict[str, dict], total: _Fig) -> Optional[str]:
     return None
 
 
-NO_EXPOSURE = {PART: VAS_IN_TOTAL, ALSO: VAS_IN_TOTAL, PENDING: VAS_PENDING, REPEAT: VAS_REPEAT}      # the roles that add no value at stake of their own
+NO_EXPOSURE = {PART: VAS_IN_TOTAL, ALSO: VAS_IN_TOTAL, SEGMENT_PART: VAS_IN_TOTAL, PENDING: VAS_PENDING, REPEAT: VAS_REPEAT}      # the roles that add no value at stake of their own
 
 
 def annotate(rows: List[dict], choices: Optional[dict] = None, fiscal_year_end: Optional[int] = None) -> dict:

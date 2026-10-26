@@ -7,7 +7,7 @@ import { CandidateRow } from "@/components/DeckPanel";
 import { BLOCKERS_CHANGED } from "@/lib/useBlockers";
 import * as apiModule from "@/lib/api";
 import { answerCorrection, answerDefinitionCheck, answerTurnover, chooseGroup, decideColumns, getClaimRegister, getDatasets, getDecks, undoGroupChoice, updateCandidate } from "@/lib/api";
-import { CHOOSE_FIGURE, CHOSEN, EXCLUDE, EXCLUDE_REASON, KEPT_NOTE, UNDO_CHOICE, figureText, questionTitle, sourceText } from "@/lib/claimGroups";
+import { CHOOSE_FIGURE, CHOSEN, CLAIMS_LIST_ID, EXCLUDE, EXCLUDE_REASON, KEPT_NOTE, OPEN_CLAIMS, TOO_MANY_NOTE, UNDO_CHOICE, figureText, questionTitle, sourceText, tooMany } from "@/lib/claimGroups";
 import { EDIT_REASONS } from "@/lib/deckClaims";
 import { POPULATION_ANSWERS, POPULATION_QUESTION, asksPopulationOnly, claimPeriod, claimValue, flagsText, scenarioText, sourceRef, typeLabel, waitingCorrections } from "@/lib/deckClaims";
 import { definitionOf, turnoverHeading, turnoverOf } from "@/lib/claimRegister";
@@ -77,8 +77,15 @@ function GroupCard({ item, busy, act, auditId }) {
     <div className="text-xs" data-testid="attention-group">
       <div className="text-slate-900 font-medium" data-testid="attention-group-title">{questionTitle(q)}</div>
       <div className="text-amber-800 mb-1" data-testid="attention-group-reason">{q.reason}</div>
+      {tooMany(q) && (
+        <div className="flex flex-wrap items-center gap-2" data-testid="attention-group-too-many-line">
+          <span className="text-slate-900" data-testid="attention-group-too-many">{TOO_MANY_NOTE(q.candidates.length)}</span>
+          <Button size="sm" variant="outline" className="h-7" data-testid="attention-group-open-claims"
+            onClick={() => document.getElementById(CLAIMS_LIST_ID)?.scrollIntoView({ behavior: "smooth", block: "start" })}>{OPEN_CLAIMS}</Button>
+        </div>
+      )}
       <ul className="space-y-1.5">
-        {q.candidates.map((c) => (
+        {(tooMany(q) ? [] : q.candidates).map((c) => (
           <li key={c.identity} className="flex flex-wrap items-start justify-between gap-2" data-testid="attention-group-candidate">
             <div>
               <span className="font-mono text-slate-900">{figureText(c)}</span>

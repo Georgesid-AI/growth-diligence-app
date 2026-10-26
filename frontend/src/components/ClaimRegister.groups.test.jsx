@@ -112,3 +112,20 @@ test("a figure stated twice with no group is one row with Details holding the re
     expect(q(host, "claim-register-counts")).toBeNull();
   } finally { await done(); }
 });
+
+test("the segment parts of a total sit under its Details with the segment named, beside the period parts, and are no rows of the list", async () => {
+  const rows = [...GROUPED,
+    row("p1", 7, "FY2024", 600000, { group_id: "g1", group_role: "segment_part", segment: "Product A", relationship: "Product A: part of the company total for FY2024, by segment" }),
+    row("p2", 8, "FY2024", 400000, { group_id: "g1", group_role: "segment_part", segment: "Product B", relationship: "Product B: part of the company total for FY2024, by segment" })];
+  const { host, done } = await mount(rows);
+  try {
+    expect(host.querySelectorAll('[data-testid="claim-register-row"]').length).toBe(2);
+    expect(q(host, "register-group-toggle").textContent).toBe("Details · 4 parts · 2 by segment · 1 contradicted");
+    await act(async () => { q(host, "register-group-toggle").click(); });
+    const items = [...host.querySelectorAll('[data-testid="register-group-part"]')];
+    expect(items.length).toBe(6);
+    expect(items[4].textContent).toContain("Product A");
+    expect(items[5].textContent).toContain("Product B");
+    expect(items[4].textContent).toContain("part of the company total for FY2024, by segment");
+  } finally { await done(); }
+});

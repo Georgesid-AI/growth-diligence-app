@@ -5,7 +5,7 @@
  */
 import { PLACEHOLDER, fmtCurrency } from "./format";
 
-export const PART_ROLES = ["part", "also", "repeat"];     // shown under another row's Details: a part, a part of a coarser set, a figure stated again
+export const PART_ROLES = ["part", "segment_part", "also", "repeat"];     // shown under another row's Details: a part, a part by segment, a part of a coarser set, a figure stated again
 export const CONFLICTS_HEADING = "Unresolved conflicts";
 export const GROUP_DETAILS = "Details";
 export const GROUP_COLUMNS = ["Claim and period", "Result"];
@@ -15,6 +15,10 @@ export const UNDO_CHOICE = "Undo choice";
 export const EXCLUDE = "Not a company claim";
 export const EXCLUDE_REASON = "Reason…";
 export const KEPT_NOTE = "The other figures stay as claims until they are corrected, scoped or excluded. Edit a claim in the claims list to correct it or set its scope.";
+export const MAX_CANDIDATES = 4;       // a card lists at most this many candidates (docs/design/segment-partitions.md section 3)
+export const TOO_MANY_NOTE = (n) => `${n} annual figures are stated for this period; too many to choose from here. Review them in the claims list.`;
+export const OPEN_CLAIMS = "Open the claims list";
+export const CLAIMS_LIST_ID = "claim-register";
 export const QUESTION_HEADINGS = { total: "Which annual figure should the audit use?" };
 
 /** The rows the claims list shows as items: a part of a reconciled total is shown under its total. */
@@ -36,6 +40,7 @@ export function detailsLabel(parts) {
   const n = (role) => parts.filter((p) => p.group_role === role).length;
   const bits = [];
   if (n("part")) bits.push(partsLabel(n("part")));
+  if (n("segment_part")) bits.push(`${n("segment_part")} by segment`);
   if (n("also")) bits.push(`${n("also")} in another set`);
   if (n("repeat")) bits.push(`${n("repeat")} ${n("repeat") === 1 ? "repeat" : "repeats"}`);
   const bad = parts.filter((p) => p.evidence_label === "Contradicted").length;
@@ -56,6 +61,9 @@ export function groupQuestions(data) {
   const seen = new Set();
   return [...(data?.reviews || []), ...(data?.conflicts || [])].filter((q) => !seen.has(q.id) && seen.add(q.id));
 }
+
+/** A question with more candidates than a card lists offers none: one line, and the claims list. */
+export const tooMany = (q) => (q.candidates || []).length > MAX_CANDIDATES;
 
 export const questionTitle = (q) => `${QUESTION_HEADINGS[q.kind] || QUESTION_HEADINGS.total} ${q.metric || ""}${q.period ? `, ${q.period}` : ""}`.trim();
 export const sourceText = (c) => c.source || PLACEHOLDER;

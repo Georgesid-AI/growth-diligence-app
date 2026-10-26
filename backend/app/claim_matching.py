@@ -4,7 +4,7 @@ Spec: docs/specs/claim-matching.md. A pure module: it reads the register's candi
 `audits.results`, and returns one register row per claim with its metric, observed figure, gap, evidence
 label and proposed gate. It imports nothing from `app.llm` and nothing reaches a model (CLAUDE.md rules
 14, 17, 18); the deck text a row was found in (snippet, borrowed label) is read here to propose a metric
-and a segment and is never copied into a row. Only Python sets Verified or Contradicted.
+and a segment and is never copied into a row, except the name a cited label gives the segment (docs/design/segment-partitions.md). Only Python sets Verified or Contradicted.
 """
 from __future__ import annotations
 
@@ -718,6 +718,47 @@ def data_segments(results: dict) -> List[str]:
     return sorted(_segments(results)[1])
 
 
+# docs/design/segment-partitions.md section 1: the segment a money figure's cited label names besides the metric. The label is read on read and
+# the name is the row's segment only; it is never stored, never logged and never sent to a model (the register is outside the gateway).
+_LABEL_NOISE = re.compile(
+    r"(?i)\([^)]*\)|\bby\s+\w+|\b(?:FY|CY)?\d{2,4}(?:[-/]\d{2,4})?\b|\b[QH][1-4]?\b|"
+    r"\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b|[€$£]|\b(?:eur|usd|gbp|chf)\b|\b(?:mm|bn|million|millions|thousand|billion)\b")
+_LABEL_WORDS = frozenset((
+    "total totals company group overall consolidated whole all annual annually yearly monthly quarterly recurring current net new existing "
+    "forecast forecasts projected projection projections plan planned budget target targets actual actuals expected base case best worst "
+    "realistic scenario run rate year years month months quarter quarters fy ytd ttm ending end of the and in per for vs to from at on with "
+    "mix split breakdown share contribution overview summary key kpi kpis metric metrics financial financials figures numbers highlights "
+    "performance average avg gross").split())
+_LABEL_DIMENSIONS = frozenset((
+    "product products segment segments customer customers client clients region regions channel channels line lines market markets tier tiers "
+    "plan plans country countries geography use cohort cohorts vertical verticals type types category categories business unit units").split())
+LABEL_SEGMENT_MAX_WORDS = 4
+
+
+def label_segment(label: Optional[str]) -> Optional[str]:
+    """The segment a cited label names, or None when it names the metric, the period, the company or a scenario only. The metric words, the
+    period, currency and scale words and the closed words above are taken out; what is left must be one to four capitalised words (a product,
+    a customer, a use case, a segment or a legend item as the deck writes it). A dimension word alone ("Product"), a sentence and a lower-case
+    phrase name no segment, so the claim stays the whole company's."""
+    if not label:
+        return None
+    from .decks import claims as deck_claims
+    text = label
+    for _, rx in deck_claims._KEYWORDS:
+        text = rx.sub(" ", text)
+    text = _LABEL_NOISE.sub(" ", text)
+    text = re.sub(r"[|:;,/\\\u2013\u2014]|\s-\s|\s[-.]+\s", " ", text)
+    tokens = [t.strip(".,&'") for t in text.split()]
+    tokens = [t for t in tokens if t and t.lower() not in _LABEL_WORDS]
+    while tokens and tokens[0].lower() in ("a", "an"):
+        tokens = tokens[1:]
+    if not tokens or len(tokens) > LABEL_SEGMENT_MAX_WORDS or all(t.lower() in _LABEL_DIMENSIONS for t in tokens):
+        return None
+    if tokens[0].isdigit() or not all(t[0].isupper() or t.isdigit() for t in tokens):
+        return None
+    return " ".join(tokens)
+
+
 # The engine metric each recurring claim type is tested against (George, 2026-10-23; docs/specs/claim-matching.md table 2a).
 RECURRING_METRIC = {"arr": "ARR", "mrr": "MRR", "churn": "Gross revenue churn", "nrr": "NRR (12-month)", "cac_payback": "CAC payback"}
 # George, 2026-10-24: a claim of a type that names an engine metric, with no period, is Unverified for the period, not Unsupported for the metric.
@@ -949,7 +990,9 @@ def _row(c: dict, results: dict, settings: dict, peers: Optional[List[dict]] = N
         segment, segment_by = inputs["segment"], "analyst"
     else:
         named = [s for s in revenue_segments if re.search(rf"(?i)(?<!\w){re.escape(s)}(?!\w)", text)]
-        segment, segment_by = (named[0] if len(named) == 1 else WHOLE), "python"
+        # a name in the data wins; two named is the whole company; with none, the label of a money figure may name a product, customer or use case
+        segment, segment_by = (named[0] if len(named) == 1 else
+                               (label_segment(c.get("label_from")) if not named and c.get("claim_type") in MONEY_TYPES else None) or WHOLE), "python"
     start, end = _month_of(c.get("period_start")), _month_of(c.get("period_end"))
     figure_type = _figure_type(c, text, end, as_of_i)
     forecast = figure_type == "target" and end is not None and as_of_i is not None and end > as_of_i     # the classification says so
